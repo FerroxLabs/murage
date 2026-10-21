@@ -16,6 +16,7 @@ import { admissibleSentenceRanges, claimEntity, claimsCompatible, claimsContradi
 import { boundQuote, ownerSourceStillAdmissible, type AdmittedSource } from "./pip-admission.ts";
 import { reconcilePipStances, type StanceBinding } from "./pip-stance.ts";
 import { learningWriteDecision } from "./learning-guard.ts";
+import { inheritEdge } from "./revoke-commit.ts";
 
 export interface Handle { sourceId: string; revision: number; start: number; end: number }
 export type TargetKind = "commitment" | "self-trait";
@@ -59,7 +60,7 @@ function insertVersion(db: DatabaseSync, v: Version): number {
   db.prepare("INSERT INTO memory_records VALUES(?,?,?,?,?,?,'active',?,?,NULL,?,?)").run(v.id, version, v.scopeId, v.kind, redactSecretsInText(v.text), v.assertion, previous?.owner_pinned ?? 0, now, previous ? v.id : null, now);
   db.prepare("UPDATE memory_record_details SET partition='identity',attention='current',confidence_basis=?,entities=?,claim_status=? WHERE record_id=? AND record_version=?")
     .run(v.basis, JSON.stringify(v.entities), v.claimStatus ?? "provisional", v.id, version);
-  for (const h of v.handles ?? []) db.prepare("INSERT OR IGNORE INTO memory_evidence VALUES(?,?,?,?,?,?)").run(v.id, version, h.sourceId, h.revision, h.start, h.end);
+  for (const h of v.handles ?? []) { db.prepare("INSERT OR IGNORE INTO memory_evidence VALUES(?,?,?,?,?,?)").run(v.id, version, h.sourceId, h.revision, h.start, h.end); inheritEdge(db, { kind: "record", id: v.id, version }, { kind: "source", id: h.sourceId }); }
   invalidatePipRender(db, v.botId);
   return version;
 }

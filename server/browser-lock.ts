@@ -24,6 +24,9 @@ export const BROWSER_REFUSALS = {
   browser_protected_owner_input: `Murage's browser is protecting this page because the owner typed or clicked in it, so you cannot read it or act on it. Ask the owner to open your Browser panel and choose Take control, then Reopen blank page, then hand control back. ${DO_NOT_ROUTE_AROUND}`,
   browser_protected_sensitive_page: `Murage's browser is protecting this page because it has a password, one-time-code or payment field, an embedded frame, or content Murage cannot inspect, so you cannot read it or act on it. You can leave it by calling ${murageToolOnThisServer("agent_browser_open")} with a different address; if that page is protected too, ask the owner to open your Browser panel and choose Take control, then Reopen blank page. ${DO_NOT_ROUTE_AROUND}`,
   browser_held: `The owner has taken control of this browser, so it refuses your reads and actions until they hand it back. Wait, or ask the owner in chat. ${DO_NOT_ROUTE_AROUND}`,
+  // The engine stopped (often its idle exit) and could not start again in
+  // time. Nothing about the page: the next call starts it again.
+  browser_not_running: `Murage's browser is not running right now, so this step did not run. Your next browser call starts it again, so try the same step once more. If it still does not start, ask the owner to open your Browser panel and choose Restart browser. ${DO_NOT_ROUTE_AROUND}`,
   browser_control_changed: "Browser control changed while this action ran, so its result was discarded. Take a fresh snapshot before you continue.",
   browser_not_authorized: "This turn can no longer use the browser.",
   // "Use my Chrome" (server/user-chrome.ts). Remote debugging off or Chrome

@@ -885,6 +885,12 @@ export const PROMPT_BODY_READERS = {
   findExec: ["-exec", "-execdir", "-ok", "-okdir"],
 } as const;
 
+/** Whether a program (a bare name or a path, `.exe` optional, any case) is PowerShell, by the PowerShell names above. */
+export function isPowerShellProgram(program: string): boolean {
+  const base = program.slice(Math.max(program.lastIndexOf("/"), program.lastIndexOf("\\")) + 1).toLowerCase();
+  return (PROMPT_BODY_READERS.powershell as readonly string[]).includes(base.endsWith(".exe") ? base.slice(0, -4) : base);
+}
+
 /** The leading reserved words of a shell command, skipped before its program word. */
 export const SHELL_LEADING_WORDS: readonly string[] = ["if", "then", "else", "elif", "do", "while", "until", "!", "coproc"];
 

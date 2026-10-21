@@ -3,86 +3,18 @@
 // Bash call left running) is background work that must not outlive the turn
 // inside a process we keep warm, so the driver recycles the process instead.
 import { execFile } from "node:child_process";
+import { windowsProcessTable, type WindowsProcessRow } from "./win-process-table.ts";
 import { realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
 import { platformListTree, platformProcessHooks } from "../platform-process-hooks.ts";
 
-/** One row of the Windows process table: pid, parent pid, creation time
- * (`start`: FILETIME ticks as text, the identity; `startMs`: epoch ms) and
- * working set in bytes (the warm pool's resident size). A value Windows does
- * not report (System, Idle) is null / "". */
-export interface WindowsProcessRow { pid: number; ppid: number; startMs: number | null; start: string; rssBytes: number | null }
+export { type WindowsProcessRow } from "./win-process-table.ts";
 
-// Win32_Process via CIM: one "pid ppid filetime workingset" line per process
-// ("-" for a value Windows withholds), then a
-// sentinel so a truncated answer is a failed probe. CreationDate is local
-// time; ToFileTimeUtc makes it absolute. No shell is involved: powershell.exe
-// is run by absolute path with the script as -EncodedCommand.
-const WIN_LIST_SCRIPT = [
-  "$ErrorActionPreference = 'Stop'",
-  "$rows = Get-CimInstance -ClassName Win32_Process | ForEach-Object { $c = $_.CreationDate; $t = if ($c) { $c.ToFileTimeUtc() } else { '-' }; $w = if ($null -ne $_.WorkingSetSize) { $_.WorkingSetSize } else { '-' }; \"$($_.ProcessId) $($_.ParentProcessId) $t $w\" }",
-  "[Console]::Out.Write(($rows -join \"`n\") + \"`nEND`n\")",
-].join("; ");
-// Shorter than the Claude driver's 5 s baseline wait (claude.ts BASELINE_WAIT_MS),
-// so a probe that finishes late is a failed probe here, never a result the
-// consumer's race already gave up on.
-const WIN_TIMEOUT_MS = 4_000;
-const FILETIME_EPOCH_OFFSET_MS = 11_644_473_600_000;
-
-function powershellPath(): string {
-  return join(process.env.SystemRoot ?? process.env.windir ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-}
-
-/** Exported for tests: the argv of the Windows listing probe. */
-export function windowsListingArgs(): string[] {
-  return ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(WIN_LIST_SCRIPT, "utf16le").toString("base64")];
-}
-
-/** Exported for tests: parse the Windows listing. Null unless the END
- * sentinel closes it and every line before it is a well-formed row with
- * nothing after it (a cut-off or damaged answer proves nothing). A parent link whose
- * parent started AFTER the child is dropped: Windows keeps a dead parent's
- * pid in ParentProcessId, and that pid may since belong to another process. */
-export function parseWindowsListing(stdout: string): WindowsProcessRow[] | null {
-  const lines = stdout.split(/\r?\n/).map((line) => line.trim());
-  const end = lines.indexOf("END");
-  if (end < 0) return null;
-  // Anything after the sentinel means the answer is not the one we asked for.
-  if (lines.slice(end + 1).some((line) => line !== "")) return null;
-  const rows: WindowsProcessRow[] = [];
-  for (const line of lines.slice(0, end)) {
-    if (line === "") continue;
-    const match = /^(\d+)\s+(\d+)\s+(\d+|-)\s+(\d+|-)$/.exec(line);
-    // One malformed row could be a vanished child: reject the whole listing.
-    if (!match) return null;
-    const ticks = match[3] === "-" ? null : match[3]!;
-    const startMs = ticks ? Math.floor(Number(ticks) / 10_000) - FILETIME_EPOCH_OFFSET_MS : null;
-    const rssBytes = match[4] === "-" ? null : Number(match[4]);
-    rows.push({ pid: Number(match[1]), ppid: Number(match[2]), startMs, start: ticks ?? "", rssBytes });
-  }
-  const startOf = new Map(rows.map((row) => [row.pid, row.startMs]));
-  return rows.map((row) => {
-    const parentStart = startOf.get(row.ppid);
-    const stale = row.pid === row.ppid || (parentStart != null && row.startMs !== null && parentStart > row.startMs);
-    return stale ? { ...row, ppid: 0 } : row;
-  });
-}
-
-/** The Windows process table; null when the probe failed, timed out or its
- * answer was incomplete (callers then fail closed: never reuse). */
-export function windowsListing(): Promise<WindowsProcessRow[] | null> {
-  return new Promise((resolve) => {
-    try {
-      execFile(powershellPath(), windowsListingArgs(), { timeout: WIN_TIMEOUT_MS, killSignal: "SIGKILL", maxBuffer: 16 * 1024 * 1024, windowsHide: true }, (error, stdout) => {
-        if (error) return resolve(null);
-        resolve(parseWindowsListing(String(stdout ?? "")));
-      });
-    } catch {
-      resolve(null);
-    }
-  });
+/** The Windows process table (see win-process-table.ts: the app's native process list, no PowerShell); null when it could not be read
+ * in full (callers then fail closed: never reuse). `memory` also reads the working sets. */
+export function windowsListing(options: { memory?: boolean } = {}): Promise<WindowsProcessRow[] | null> {
+  return windowsProcessTable(options);
 }
 
 /** Windows baselines are pid + creation time: a pid alone is reused by the
@@ -109,7 +41,7 @@ function hookBaseline(pids: ReadonlySet<number>, starts: ProcessIdentities | nul
 const winWalkLines = (rows: readonly WindowsProcessRow[]) => rows.map((row) => `${row.pid} ${row.ppid}`).join("\n");
 
 /** Every descendant pid of `root`, or null where the probe failed (on Windows
- * the table comes from Win32_Process, see windowsListing). Callers treat null as "no extra evidence". */
+ * the table comes from the native process list, see windowsListing). Callers treat null as "no extra evidence". */
 export function descendantPids(root: number): Promise<Set<number> | null> {
   return processTreeWalk(root, null);
 }

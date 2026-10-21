@@ -13,9 +13,10 @@ import { isolateOpenCodeFromPersonalSetup } from "./acp/opencode-go.ts";
 import { buildAntigravityScopedHome } from "./antigravity-scope.ts";
 import { codexIsolationArgs, codexPersonalSkillFiles } from "./codex-isolation.ts";
 import { codexConfigMcpServerNames } from "./codex-mcp-names.ts";
-import { cliSig, isolationStats, knownCliVersion, rememberCliVersion, noteVersionProbe, resetIsolationCache, VERSION_PROBE_BACKOFF_MAX_MS, VERSION_PROBE_BACKOFF_MIN_MS, versionProbeAllowed } from "./isolation-cache.ts";
+import { cliSig, engineLaunchFile, isolationStats, knownCliVersion, rememberCliVersion, noteVersionProbe, resetIsolationCache, VERSION_PROBE_BACKOFF_MAX_MS, VERSION_PROBE_BACKOFF_MIN_MS, versionProbeAllowed } from "./isolation-cache.ts";
 import { piIsolationArgs } from "./pi.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
+import { resolveCliSpawn } from "../env-path.ts";
 
 const dirs: string[] = [];
 const tmp = (prefix: string) => { const d = mkdtempSync(join(tmpdir(), prefix)); dirs.push(d); return d; };
@@ -186,5 +187,38 @@ describe("a successful version probe is remembered per binary", () => {
     expect(knownCliVersion("k|gone", "unresolved")).toBeUndefined();
     resetIsolationCache();
     expect(knownCliVersion("k|engine", sig)).toBeUndefined();
+  });
+});
+
+describe.skipIf(process.platform === "win32")("engineLaunchFile: the engine file a turn spawns is the one found on the probe's PATH", () => {
+  const made: string[] = [];
+  afterEach(() => { for (const dir of made.splice(0)) removeTempDirSync(dir); });
+  const dirWith = (name: string): string => {
+    const dir = mkdtempSync(join(tmpdir(), "murage-launch-file-"));
+    made.push(dir);
+    writeFileSync(join(dir, name), "#!/bin/sh\n", { mode: 0o755 });
+    return dir;
+  };
+
+  it("pins a bare name to the probe PATH's file, ahead of any other PATH", () => {
+    const probed = dirWith("eng");
+    expect(engineLaunchFile("eng", { PATH: `${dirWith("other")}:${probed}` })).toBe(join(probed, "eng"));
+  });
+
+  it("pins the head word of a cli with fixed arguments, and the launcher splits it back to the same argv", () => {
+    const probed = join(dirWith("ag"));
+    const pinned = engineLaunchFile("ag claude 'two words'", { PATH: probed });
+    expect(resolveCliSpawn(pinned, ["--x"])).toEqual({ command: join(probed, "ag"), args: ["claude", "two words", "--x"] });
+  });
+
+  it("leaves a cli that names a path as it is, so spawn reports its own ENOENT", () => {
+    expect(engineLaunchFile("/no/such/eng", { PATH: "" })).toBe("/no/such/eng");
+    expect(engineLaunchFile('"/usr/local/bin/node" "/tmp/x.mjs"', { PATH: "" })).toBe('"/usr/local/bin/node" "/tmp/x.mjs"');
+  });
+
+  it("throws ENOENT for a bare name the probe PATH lacks, never handing the name to another PATH", () => {
+    let thrown: NodeJS.ErrnoException | undefined;
+    try { engineLaunchFile("eng", { PATH: dirWith("other") }); } catch (error) { thrown = error as NodeJS.ErrnoException; }
+    expect(thrown?.code).toBe("ENOENT");
   });
 });

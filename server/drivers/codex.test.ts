@@ -2374,6 +2374,20 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
     await recorder.until((e: any) => e.type === "turn.completed" && e.turnId === asked.turnId);
   });
 
+  // Real codex 0.163 raised a second card (mcpServer/elicitation/request, codex_approval_kind mcp_tool_call) for Murage's own
+  // `computer` mount behind the hook's card. Gated turns mount Murage's own servers with "approve"; legacy keeps "auto"; custom stays unquieted.
+  it("mounts Murage's own servers with approve behind the hook gate so codex raises no second card", async () => {
+    const own = { command: process.execPath, args: ["-e", ""], env: {} };
+    for (const [version, gated] of [["codex-cli 0.147.0", false], ["codex-cli 0.163.0", true]] as const) {
+      await recreate(version);
+      const r = await run(`t-appr-${version}`, [], () => null, { integrations: { agents: AGENTS, localComputer: own } });
+      const argv = r.dump().argv.join(" ");
+      expect(argv.includes('mcp_servers.computer.default_tools_approval_mode="approve"')).toBe(gated);
+      expect(argv.includes('mcp_servers.computer.default_tools_approval_mode="auto"')).toBe(!gated);
+      expect(argv).not.toContain("mcp_servers.notes.default_tools_approval_mode");
+    }
+  });
+
   // T91
   it("keeps the retired policy below the version that refuses it and gates from there", async () => {
     for (const [version, gated] of [["codex-cli 0.147.0", false], ["codex-cli 0.148.0", false], ["codex-cli 0.149.0", true], ["codex-cli 0.163.0", true]] as const) {

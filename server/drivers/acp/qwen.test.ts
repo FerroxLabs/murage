@@ -38,7 +38,7 @@ let recorder: EventRecorder | undefined;
 const settingsPath = () => join(home, ".qwen", "settings.json");
 
 /** The isolation switches every Qwen turn now carries (qwenIsolationArgs); these tests are about the rest of the argv. */
-const withoutQwenIsolation = (argv: string[]): string[] => argv.filter((arg, i) => !arg.startsWith("--allowed-mcp-server-names=") && arg !== "--exclude-tools=skill" && !(arg === "-e" && argv[i + 1] === "none") && !(arg === "none" && argv[i - 1] === "-e"));
+const withoutQwenIsolation = (argv: string[]): string[] => argv.filter((arg, i) => !arg.startsWith("--allowed-mcp-server-names=") && arg !== "--exclude-tools=skill" && !(arg === "-e" && argv[i + 1] === "none") && !(arg === "none" && argv[i - 1] === "-e") && !(arg === "--approval-mode" && argv[i + 1] === "default") && !(arg === "default" && argv[i - 1] === "--approval-mode"));
 
 /** Run one turn and hand back exactly what the CLI was spawned with. */
 async function spawnFor(model: string | undefined): Promise<{ argv: string[]; env: Record<string, string> }> {

@@ -15,13 +15,15 @@
 // ~/.factory/settings.json selected. Model and autonomy are session config
 // options set over the wire (session/set_model, session/set_mode), which is
 // why both live in configureSession() below and NOT in spawnArgs.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { decodeInjectId, hostApiKey, localHost, mergeLocalInject, type LocalHost } from "../local-inject.ts";
 import { isPlainObject, readNativeJsonConfig } from "../native-config-file.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
+import type { SendTurnInput } from "../../contracts.ts";
 import { pathExists, readText } from "../isolation-cache.ts";
 import { currentScopeHome, engineUpdateRequired, registerScopeReconstructor, scopedCliHome, scopedCliHomeRoot, type ScopedCliHomeSpec } from "../scoped-cli-home.ts";
 
@@ -306,7 +308,50 @@ export function scopeDroidHome(env: Record<string, string | undefined>, cliVersi
   env.FACTORY_HOME_OVERRIDE = scopedCliHome(droidScopeSpec(realFactory, botId));
 }
 
-const support: AcpSupport = {
+/**
+ * Host-computer tools run unasked by the engine; Murage asks (support.hostComputerAskedByMurage).
+ * Real droid 0.245.0: an MCP tool call raises session/request_permission with kind "other" at the
+ * "normal" mode, unless <home>/.factory/mcp.json holds `persistentPermissions.servers.<name>` for that
+ * server (the file the "Always allow all <server> tools" option writes) with a `serverIdentity` equal
+ * to the first 32 hex of sha256(JSON.stringify({type:"stdio",command,args})) and an impactLevel at
+ * least the tool's ("high" covers all). The file is read when the process starts (a write after
+ * session/new is not honoured), so it is written before the spawn, from spawnArgs, into the Murage-owned
+ * scoped home only. The grant is bound to the server name AND its exact command and arguments: another
+ * server, or a VM computer (a different command), is not covered. Shell, edits and other servers keep asking.
+ * A turn without the host computer removes the grant.
+ */
+export function droidServerIdentity(command: string, args: readonly string[]): string {
+  return createHash("sha256").update(JSON.stringify({ type: "stdio", command, args })).digest("hex").slice(0, 32);
+}
+
+export function applyDroidHostComputerGrant(turn: Pick<SendTurnInput, "integrations">, env: Record<string, string | undefined> | undefined): void {
+  const home = env?.FACTORY_HOME_OVERRIDE;
+  // Only ever the Murage-owned scoped home: with no scope there is nothing to write (droid then asks itself).
+  if (!home || !home.startsWith(scopedCliHomeRoot("droid"))) return;
+  const path = join(home, ".factory", "mcp.json");
+  const local = turn.integrations?.localComputer;
+  let doc: Record<string, unknown> = {};
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    if (isPlainObject(parsed)) doc = { ...parsed };
+  } catch { /* none yet, or unreadable: start from an empty document */ }
+  const perms = isPlainObject(doc.persistentPermissions) ? { ...doc.persistentPermissions } : {};
+  const servers = isPlainObject(perms.servers) ? { ...perms.servers } : {};
+  if (local) servers.computer = { approvedAt: new Date().toISOString(), impactLevel: "high", serverIdentity: droidServerIdentity(local.command, local.args ?? []) };
+  else if ("computer" in servers) delete servers.computer;
+  else return;
+  perms.servers = servers;
+  doc.persistentPermissions = perms;
+  if (!isPlainObject(doc.mcpServers)) doc.mcpServers = {};
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    const tmp = `${path}.${process.pid}.tmp`;
+    writeFileSync(tmp, `${JSON.stringify(doc, null, 2)}\n`);
+    renameSync(tmp, path);
+  } catch { /* no grant: droid asks for the computer tools itself, which is the stricter result */ }
+}
+
+export const droidSupport: AcpSupport = {
   driverKind: "droidAgent",
   // Droid starts the servers handed at session/new (rig 0.238.0: only Murage's
   // servers start once the owner's are scoped out), with no readiness signal.
@@ -329,7 +374,9 @@ const support: AcpSupport = {
 
   // No model/mode flags here on purpose: see the header note. `-o acp` is the
   // ACP entry point; everything else is negotiated over the protocol.
-  spawnArgs: () => ["exec", "-o", "acp"],
+  // The host-computer grant is written here: after the scoped home is set (applyMountEnv) and before the spawn.
+  spawnArgs: (_config, turn, ctx) => { applyDroidHostComputerGrant(turn, ctx?.env); return ["exec", "-o", "acp"]; },
+  hostComputerAskedByMurage: true,
   // The version gates the scoped home below.
   spawnNeedsCliVersion: true,
   credentialEnv: ["FACTORY_API_KEY"],
@@ -368,4 +415,4 @@ const support: AcpSupport = {
   buildPromptText: (turn) => (turn.system ? `${turn.system}\n\n${turn.text}` : turn.text),
 };
 
-export const DroidAgentDriver = createAcpDriver(support);
+export const DroidAgentDriver = createAcpDriver(droidSupport);
