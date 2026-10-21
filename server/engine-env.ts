@@ -231,9 +231,11 @@ export async function execEnvNow(session: string, shell: readonly string[], hand
   return execEnvOf(handed, cwd, shell, { ok: false, why: CHANGED_WHILE_CHECKED });
 }
 
-/** The F12 record of an ask that runs no command: the handed map, unchecked. */
-export function execEnvHanded(handed: HandedEnv, cwd: string, shell: readonly string[]): ExecEnv {
-  return execEnvOf(handed, cwd, shell);
+/** The F12 record of an ask that runs no command: the handed map, unchecked. A Claude PowerShell command on the inherit path
+ *  (WIN-NOBASH-DESIGN-r2 3.5) opens with this too, carrying `provenance`: informational, read by no verdict, so its prompts
+ *  are those of a Bash command whose check passed with nothing removed (never U20). */
+export function execEnvHanded(handed: HandedEnv, cwd: string, shell: readonly string[], info: Pick<ExecEnv, "provenance" | "managedEnv"> = {}): ExecEnv {
+  return { ...execEnvOf(handed, cwd, shell), ...(info.provenance ? { provenance: info.provenance } : {}), ...(info.managedEnv?.length ? { managedEnv: info.managedEnv } : {}) };
 }
 
 /** The names a driver's own sanitizing decides for a turn (its routing, credential and account names) belong to the turn,

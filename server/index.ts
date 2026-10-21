@@ -353,7 +353,7 @@ import { GRANT_SCHEMA, isAppShapeKey, isStaleGrant, withoutStaleGrants } from ".
 import { actionGrantSet, stampedToolCall, type GrantCall } from "../shared/app-action-grant.ts";
 import { grantRequestFor, routineCardFields, routineDecisionKeys } from "./approval-grant-request.ts";
 import { requestOwnerId } from "./request-owner.ts";
-import { approvalKey, approvalHoldNote, isCommandTool, exactAllowKeyFor, exactCommandForRequest, fullAccessCovers, hasFullAccess, isQuestionGrant, isQuestionTool, withoutQuestionGrants, type AutoContext, type FullAccessOrigin } from "./auto-approve.ts";
+import { approvalKey, approvalHoldNote, isBareCommandGrant, isCommandTool, exactAllowKeyFor, exactCommandForRequest, fullAccessCovers, hasFullAccess, isQuestionGrant, isQuestionTool, realKeyPaths, withoutBareCommandGrants, withoutQuestionGrants, type AutoContext, type FullAccessOrigin } from "./auto-approve.ts";
 import { approvalIsCut, cardAuditSummary, cardDetail } from "./approval-text.ts";
 import { isOwnWorkspaceBookkeeping, ownWorkspaceRoots } from "./own-workspace-approval.ts";
 import { isOwnToolResultRead } from "./own-tool-results.ts";
@@ -2106,7 +2106,11 @@ import { admissionComputerClaims, computerResourceKeys, screenResourceKey, unuse
 import { startupMark } from "./startup-trace.ts";
 import { logPid1ReaperCheck } from "./pid1-reaper-check.ts";
 import { staticCacheControl } from "./static-cache.ts";
+import { sweepClaudePrivate } from "./drivers/claude-private.ts";
 startupMark("module.loaded");
+// WIN-NOBASH-DESIGN-r2 section 14, boot crash recovery: the private Claude overlay folders a Murage process that is gone left
+// behind (they hold restated settings values) are removed before any turn runs.
+try { sweepClaudePrivate(); } catch { /* the next boot tries again */ }
 // A push hook that fails leaves one content-free line (hook and error class,
 // once a minute per hook) and never fails what raised it. Declared here, up
 // top, so hooks that run while the module is still loading can use it.
@@ -7580,7 +7584,7 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
       const routineOffered = routineLevel?.executing === true ? routineLevel : null;
       // AMEND-13 Rules 78, 81, 82: the engine's call as the grant readers take it,
       // every operation in call order with its findings, and the routine offer.
-      const grantCall: GrantCall = { toolCall: event.toolCall, toolIdentity: event.toolIdentity, toolKind: event.toolKind, mcpMounts: event.mcpMounts, truncated: !!inputCut, engine: event.toolEngine, inputMissing: event.toolInputMissing };
+      const grantCall: GrantCall = { toolCall: event.toolCall, toolIdentity: event.toolIdentity, toolKind: event.toolKind, mcpMounts: event.mcpMounts, truncated: !!inputCut, engine: event.toolEngine, inputMissing: event.toolInputMissing, ...(event.commandShell ? { commandShell: event.commandShell } : {}) };
       const grantRequest = permission && asker && event.requestId && !questionAsk
         ? grantRequestFor({
             ask: { ...grantCall, tool: event.tool, summary: event.summary }, stopHit, ...(stopRows ? { stopRows } : {}), ...(exactAllowKey ? { exactAllowKey } : {}),
@@ -7615,6 +7619,13 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
             context: {
               exactCommand,
               ...wholeCommand,
+              // 1.0.4 09-1: where the paths this call names really are, links
+              // followed, and the engine gate's own key-file hold
+              ...((): Pick<AutoContext, "realPaths" | "realPathCannot"> => {
+                const { paths, cannot } = realKeyPaths(event.toolCall?.input, event.filePaths, turnCwdByThread.get(event.threadId));
+                return { ...(paths.length ? { realPaths: paths } : {}), ...(cannot ? { realPathCannot: cannot } : {}) };
+              })(),
+              ...(event.localHold ? { localHold: event.localHold } : {}),
               ...(inputCut ? { inputCut: true } : {}),
               // the routine carve-out: only a direct scheduled or manual run,
               // whose history records what it lets through (below)
@@ -7720,7 +7731,10 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
             // that counts up and opens to list them. Every other automatic
             // answer keeps its own chip, and the decision log below keeps
             // one row per step either way.
-            if (verdict.source === "full-access" || verdict.source === "no-limits") noteFullAccessStep(event.threadId, event.turnId, `${tool}: ${summary.slice(0, 120)}`, pushMessage, verdict.source === "no-limits" ? "No limits" : "Full access");
+            // Murage's own unasked tool (memory, the roster) already shows as
+            // its activity row, as on Claude and Codex: no second chip.
+            if (verdict.source === "own-unasked") { /* the tool row says it */ }
+            else if (verdict.source === "full-access" || verdict.source === "no-limits") noteFullAccessStep(event.threadId, event.turnId, `${tool}: ${summary.slice(0, 120)}`, pushMessage, verdict.source === "no-limits" ? "No limits" : "Full access");
             // Reading its own saved result is said in words, never as the
             // raw `cat …/call_00_….json | python3 …` line the engine ran.
             else pushMessage({
@@ -23888,6 +23902,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       // A card an older build rendered may still carry a grant over every
       // connected-app action (or every "other" tool); it is never stored.
       if (allowKey && isStaleGrant(allowKey)) return json(res, 400, { error: "This approval can only be allowed once." });
+      // nor a command tool's bare name, which an older build offered on a PowerShell card (1.0.4 G09-3)
+      if (allowKey && isBareCommandGrant(allowKey)) return json(res, 400, { error: "This approval can only be allowed once." });
       // A card raised while this bot was answering in a ROOM sits on the
       // room's thread, which is not one of the bot's own tasks. The client
       // still offers "Always allow" there, and this route answered every one
@@ -23922,7 +23938,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       if (!grantKeys) {
         return json(res, 409, { error: "that grant is not on a pending approval for this bot" });
       }
-      if (grantKeys.some((key) => isQuestionGrant(key) || isStaleGrant(key))) return json(res, 400, { error: "This approval can only be allowed once." });
+      if (grantKeys.some((key) => isQuestionGrant(key) || isStaleGrant(key) || isBareCommandGrant(key))) return json(res, 400, { error: "This approval can only be allowed once." });
       // A13-FIX-DESIGN C1 (Rules 81a, 81b, amended): through the one choke
       // point. The set is saved on the bot's defaults and this task in ONE
       // durable write (a room card: the bot's defaults, which a room turn
@@ -24291,7 +24307,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         // A13-FIX-DESIGN C1: this is the owner's desktop settings authority
         // (route-policy "desktop", the same request that may switch on Full
         // access), not a card decision; no card's approval is written here.
-        patch.alwaysAllow = withoutStaleGrants(withoutQuestionGrants([...new Set(body.alwaysAllow as string[])])).slice(0, 200);
+        patch.alwaysAllow = withoutBareCommandGrants(withoutStaleGrants(withoutQuestionGrants([...new Set(body.alwaysAllow as string[])]))).slice(0, 200);
       }
       if (existingBot?.computer === "local" && body.computer !== undefined && body.computer !== "local") {
         if (existingBot.busy) noteHostStoppedTurn(existingBot.threadId, existingBot.id, "this computer was switched off for the bot");

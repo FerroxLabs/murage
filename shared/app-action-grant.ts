@@ -61,6 +61,10 @@ export interface GrantCall {
   inputMissing?: string;
   /** The driver that filed the ask (Rule 55's per-driver tables). */
   engine?: EngineKind;
+  /** 1.0.4 F1: the driver runs this command tool's text under PowerShell
+   * (Codex and ACP engines on Windows pin `powershell.exe -Command`), so the
+   * text is read, and its "Always allow" keyed, as PowerShell's. */
+  commandShell?: "pwsh";
 }
 
 /** The execute tool every app action runs through, by its internal id. */
