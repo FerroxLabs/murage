@@ -1,0 +1,121 @@
+# Real-engine computer-use gate on the PACKAGED Mac app (journeys C1, A1, A2 of the real engine gate).
+# A real engine turn takes a screenshot and clicks a known target window through the app's embedded
+# Cua Driver; Ask raises a card, deny stops it, Auto runs without one. Runs on a disposable
+# GitHub-hosted macOS runner: SIP is off there, so Screen Recording + Accessibility are granted to
+# the app copy by code requirement (mac-tcc-grant.sh). The engine runs on the Flux test key secret.
+name: Mac computer gate (real engine)
+on:
+  workflow_dispatch:
+    inputs:
+      artifact_run_id:
+        description: Run id of a successful "Mac artifact qualification" run (empty = newest on artifact_branch)
+        required: false
+        type: string
+      artifact_branch:
+        description: Branch whose newest successful Mac artifact run to use when artifact_run_id is empty
+        required: false
+        default: ci/try-20db986c7ce9
+        type: string
+      engines:
+        description: Comma-separated gate engines
+        required: false
+        default: fuigo
+        type: string
+  push:
+    branches: ["ci/mac-computer-gate-*"]
+permissions:
+  actions: read
+  contents: read
+concurrency:
+  group: mac-computer-gate-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  computer:
+    runs-on: macos-14
+    timeout-minutes: 100
+    defaults:
+      run:
+        shell: bash
+    env:
+      ARTIFACT_RUN_ID: ${{ inputs.artifact_run_id }}
+      ARTIFACT_BRANCH: ${{ inputs.artifact_branch || 'ci/try-20db986c7ce9' }}
+      ENGINES: ${{ inputs.engines || 'fuigo' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.20.0
+      - name: Find and download the packaged Mac app
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          test "$(id -un)" = runner
+          ROOT="$RUNNER_TEMP/mac-computer-gate"
+          EV="$ROOT/evidence"; echo "EV=$EV" >> "$GITHUB_ENV"
+          mkdir -p "$EV/screens" "$ROOT/artifact" "$ROOT/producer-evidence"
+          if [ -z "$ARTIFACT_RUN_ID" ]; then
+            ARTIFACT_RUN_ID=$(gh run list -R "$GITHUB_REPOSITORY" -w package-mac-qualification.yml -b "$ARTIFACT_BRANCH" --status success -L 1 --json databaseId -q '.[0].databaseId')
+          fi
+          test -n "$ARTIFACT_RUN_ID"
+          echo "ARTIFACT_RUN_ID=$ARTIFACT_RUN_ID" >> "$GITHUB_ENV"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ARTIFACT_RUN_ID" > "$EV/producer.json"
+          python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); assert r["conclusion"]=="success", r["conclusion"]; print(r["html_url"], r["head_branch"], r["head_sha"])' "$EV/producer.json" | tee "$EV/producer.txt"
+          SHA=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["head_sha"])' "$EV/producer.json")
+          gh run download "$ARTIFACT_RUN_ID" -R "$GITHUB_REPOSITORY" -n "mac-qualification-arm64-$SHA" -D "$ROOT/artifact"
+          gh run download "$ARTIFACT_RUN_ID" -R "$GITHUB_REPOSITORY" -p "mac-qualification-evidence-$ARTIFACT_RUN_ID-*" -D "$ROOT/producer-evidence"
+          SUMS=$(find "$ROOT/producer-evidence" -name SHA256SUMS | head -1)
+          (cd "$ROOT/artifact" && sed 's#release/##' "$SUMS" | shasum -a 256 -c -) | tee "$EV/artifact-sha256-check.txt"
+          ZIP=$(ls "$ROOT"/artifact/Murage-*-arm64.zip); echo "ZIP=$ZIP" >> "$GITHUB_ENV"
+          ls -la "$ROOT/artifact" | tee "$EV/artifact-ls.txt"
+          sw_vers | tee "$EV/macos.txt"; csrutil status | tee -a "$EV/macos.txt" || true
+      - name: Screen Recording for the evidence screenshots (runner shell only)
+        run: |
+          set -euo pipefail
+          for db in "/Library/Application Support/com.apple.TCC/TCC.db" "$HOME/Library/Application Support/com.apple.TCC/TCC.db"; do
+            [ -f "$db" ] || continue
+            for c in /usr/sbin/screencapture /bin/bash; do
+              sudo sqlite3 "$db" "INSERT OR REPLACE INTO access (service,client,client_type,auth_value,auth_reason,auth_version,flags,last_modified) VALUES('kTCCServiceScreenCapture','$c',1,2,4,1,0,CAST(strftime('%s','now') AS INTEGER));"
+            done
+          done
+          chmod +x scripts/qualification/real-engine-gate/mac-tcc-grant.sh
+      - name: Real engine computer journeys C1, A1, A2
+        env:
+          FLUX_TEST_KEY: ${{ secrets.FLUX_CONTRACT_KEY }}
+          GATE_FUIGO_ON_FLUX: "1"
+          GATE_MAC_TCC_HOOK: ${{ github.workspace }}/scripts/qualification/real-engine-gate/mac-tcc-grant.sh
+        run: |
+          set -uo pipefail
+          umask 077
+          KEYDIR="$RUNNER_TEMP/gate-secrets"; mkdir -p "$KEYDIR"
+          if [ -z "$FLUX_TEST_KEY" ]; then echo "::error::FLUX_CONTRACT_KEY secret is not set"; exit 1; fi
+          printf '%s' "$FLUX_TEST_KEY" > "$KEYDIR/flux-test.key"; unset FLUX_TEST_KEY
+          ( i=0; while [ $i -lt 400 ]; do screencapture -x -t jpg "$EV/screens/$(date +%H%M%S).jpg" 2>/dev/null; i=$((i+1)); sleep 12; done ) &
+          SHOTS=$!
+          node scripts/qualification/real-engine-gate/real-engine-gate.mjs --artifact "$ZIP" --engines "$ENGINES" --journeys computer \
+            --gate-user runner --gate-home "$HOME/gate" --out "$EV/gate-out" --flux-key-file "$KEYDIR/flux-test.key" 2>&1 | tee "$EV/harness.log"
+          RC=${PIPESTATUS[0]}
+          kill "$SHOTS" 2>/dev/null || true
+          screencapture -x -t jpg "$EV/screens/zz-final.jpg" 2>/dev/null || true
+          echo "harness exit $RC" | tee -a "$EV/harness.log"
+          exit "$RC"
+      - name: Keep the key out of the evidence
+        if: always()
+        run: |
+          set -uo pipefail
+          K="$RUNNER_TEMP/gate-secrets/flux-test.key"
+          if [ -s "$K" ]; then
+            HITS=$(grep -rlF -f "$K" "$EV" 2>/dev/null || true)
+            if [ -n "$HITS" ]; then printf '%s\n' "$HITS" | while read -r f; do rm -f "$f"; echo "removed (contained the key): ${f#$EV/}"; done | tee "$EV/key-scrub.txt"; else echo "no evidence file contains the key" | tee "$EV/key-scrub.txt"; fi
+          fi
+          rm -rf "$RUNNER_TEMP/gate-secrets"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: mac-computer-gate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/mac-computer-gate/evidence/
+          if-no-files-found: warn
+          retention-days: 14

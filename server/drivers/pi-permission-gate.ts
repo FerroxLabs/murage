@@ -58,13 +58,13 @@ const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
   },
   {
     id: "ssh",
-    re: /\.ssh\/|id_rsa|id_ed25519|authorized_keys/i,
+    re: /\.ssh[\\/]|id_rsa|id_ed25519|authorized_keys/i,
     read: ["~/.ssh/**"],
     bash: ["*.ssh/*", "*id_rsa*", "*id_ed25519*", "*authorized_keys*"],
   },
   {
     id: "credential-files",
-    re: /\.aws\/credentials|\.netrc|\.npmrc|\.pypirc|\.docker\/config\.json/i,
+    re: /\.aws[\\/]credentials|\.netrc|\.npmrc|\.pypirc|\.docker[\\/]config\.json/i,
     read: ["~/.aws/credentials", "~/.netrc", "~/.npmrc", "~/.pypirc", "~/.docker/config.json"],
     bash: ["*.aws/credentials*", "*.netrc*", "*.npmrc*", "*.pypirc*", "*.docker/config.json*"],
   },
@@ -85,7 +85,7 @@ const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
   },
   {
     id: "harness-keys",
-    re: /\.codex\/auth\.json|\.claude\/\.credentials|provider-keys|\.murage\/config\.json/i,
+    re: /\.codex[\\/]auth\.json|\.claude[\\/]\.credentials|provider-keys|\.murage[\\/]config\.json/i,
     read: ["~/.codex/auth.json", "~/.claude/.credentials*", "~/.murage/config.json", "**/provider-keys*"],
     bash: ["*.codex/auth.json*", "*.claude/.credentials*", "*provider-keys*", "*.murage/config.json*"],
   },
@@ -761,9 +761,11 @@ function mcpTable(): Map<string, McpToolEntry> | undefined {
 /** The message a gate ask carries: the whole call (Rule 15). One too large to
  *  send, or one that cannot be written as JSON, carries the tool and
  *  `truncated: true` instead of its input. */
-export function piGateMessage(tool: string, input: Record<string, unknown> | undefined, entry?: McpToolEntry, note?: string): string {
+export function piGateMessage(tool: string, input: Record<string, unknown> | undefined, entry?: McpToolEntry, note?: string, sensitive?: string): string {
   const head = entry ? { tool, mount: entry.mount, mcpTool: entry.mcpTool } : { tool };
-  const extra = note ? { note } : {};
+  // `sensitive`: this gate held the call as a key file, links followed; the
+  // server keeps that verdict, so no mode answers it as an ordinary read
+  const extra = { ...(note ? { note } : {}), ...(sensitive ? { sensitive } : {}) };
   try {
     const full = JSON.stringify({ ...head, ...(input === undefined ? {} : { input }), ...extra });
     if (typeof full === "string" && Buffer.byteLength(full, "utf8") <= PI_GATE_MESSAGE_MAX) return full;
@@ -949,12 +951,12 @@ export default function piPermissionGate(pi: GateApi, options: GateOptions = {})
     }
   }
 
-  const ask = async (event: GateEvent, ctx: GateContext, entry?: McpToolEntry): Promise<GateBlock | undefined> => {
+  const ask = async (event: GateEvent, ctx: GateContext, entry?: McpToolEntry, held?: string): Promise<GateBlock | undefined> => {
     if (!ctx.hasUI) return block(PI_GATE_NO_UI);
     const tool = entry ? entry.piName : event.toolName;
     const note = staleNote;
     staleNote = undefined;
-    const answer = await ctx.ui.editor(`${PI_GATE_TITLE_PREFIX}${secret}`, piGateMessage(tool, isObject(event.input) ? event.input : undefined, entry, note));
+    const answer = await ctx.ui.editor(`${PI_GATE_TITLE_PREFIX}${secret}`, piGateMessage(tool, isObject(event.input) ? event.input : undefined, entry, note, held));
     if (typeof answer !== "string" || !answer.trim()) return block(PI_GATE_NOT_ALLOWED);
     const parsed: unknown = JSON.parse(answer);
     if (!isObject(parsed)) return block(PI_GATE_NOT_ALLOWED);
@@ -969,8 +971,10 @@ export default function piPermissionGate(pi: GateApi, options: GateOptions = {})
     return undefined;
   };
 
-  /** Whether an own tool runs with no ask, a block, or an ask. */
-  const quiet = (event: GateEvent, cwd: string): "run" | "ask" | GateBlock => {
+  /** Whether an own tool runs with no ask, a block, or an ask; an ask over a
+   * key file carries the rule that held it. */
+  const quiet = (event: GateEvent, cwd: string): "run" | "ask" | GateBlock | { held: string } => {
+    const asked = (check: InProjectResult): "ask" | { held: string } => (!check.ok && check.reason === "sensitive" ? { held: check.rule } : "ask");
     const name = event.toolName;
     const input = event.input;
     if (only || !isObject(input)) return "ask";
@@ -978,7 +982,7 @@ export default function piPermissionGate(pi: GateApi, options: GateOptions = {})
     if (name === "read") {
       if (typeof input.path !== "string") return "ask";
       const check = inProjectCheck(input.path, cwd, undefined, { home });
-      if (!check.ok) return "ask";
+      if (!check.ok) return asked(check);
       if (event.toolCallId) pending.set(event.toolCallId, now());
       return "run";
     }
@@ -994,7 +998,7 @@ export default function piPermissionGate(pi: GateApi, options: GateOptions = {})
       const content = name === "write" ? input.content : JSON.stringify([input.oldText ?? null, input.newText ?? null, input.edits ?? null]);
       if (name === "write" && typeof content !== "string") return "ask";
       const check = inProjectCheck(input.path, cwd, content, { home });
-      if (!check.ok) return "ask";
+      if (!check.ok) return asked(check);
       // Rule 64: a template file's body is read by the verdict, so it asks.
       const base = input.path.split(/[\\/]/).pop() ?? "";
       if (TEMPLATE_BASENAMES.includes(base.toLowerCase())) return "ask";
@@ -1005,7 +1009,7 @@ export default function piPermissionGate(pi: GateApi, options: GateOptions = {})
       const given = input.path === undefined ? "." : input.path;
       if (typeof given !== "string" || !given) return "ask";
       const check = inProjectCheck(given, cwd, undefined, { home });
-      if (!check.ok) return "ask";
+      if (!check.ok) return asked(check);
       if (filterTrusted) {
         if (event.toolCallId) pending.set(event.toolCallId, now());
         return "run";
@@ -1041,8 +1045,9 @@ export default function piPermissionGate(pi: GateApi, options: GateOptions = {})
     }
     const verdict = quiet(event, ctx.cwd);
     if (verdict === "run") return undefined;
-    if (verdict !== "ask") return verdict;
-    return ask(event, ctx);
+    if (verdict === "ask") return ask(event, ctx);
+    if ("held" in verdict) return ask(event, ctx, undefined, verdict.held);
+    return verdict;
   };
 
   pi.on("tool_call", async (event, ctx) => {

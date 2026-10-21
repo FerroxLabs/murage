@@ -399,6 +399,12 @@ const support: AcpSupport = {
   effortLevels: ["low", "medium", "high"],
   defaultCli: "grok",
   nativeSource: "grok.acp",
+  // Grok Build stamps `_meta["x.ai/tool"]` (namespace grok_build) where Fuigo
+  // stamps `fuigo/tool` (fuigo_build): the same CanonicalToolMeta in both
+  // binaries (grok 1.0.62, fuigo 1.0.31). Without this every Grok ask was
+  // unstamped kind "other", so Murage's own tools could not be proven and
+  // held a card at Auto.
+  toolStamp: { key: "x.ai/tool", namespaces: { grok_build: "fuigo_build", grok_build_concise: "fuigo_build_concise", grok_build_hashline: "fuigo_build_hashline" } },
   loginNote: "Grok CLI is not signed in: run `grok login` in a terminal",
 
   // No Windows one-liner: the installer is a POSIX shell script, and offering
