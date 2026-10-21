@@ -26,7 +26,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 const require = createRequire(import.meta.url);
-const { createCuaConnectionStore } = require("./cua-connection.cjs");
+const { createCuaConnectionStore, macLocalControlStatus } = require("./cua-connection.cjs");
 const {
   createLinuxCuaPreferenceStore,
   createLinuxCuaRuntime,
@@ -387,7 +387,9 @@ export function registerCuaIpc(ipcMain = electronIpcMain) {
   ipcMain.handle("cua:linux-status", () =>
     process.platform === "linux"
       ? ensureLinuxRuntime().getStatus()
-      : { enabled: false, status: "unavailable", reasonCode: "unsupported-platform" },
+      : process.platform === "darwin"
+        ? macLocalControlStatus(connectionStore.get())
+        : { enabled: false, status: "unavailable", reasonCode: "unsupported-platform" },
   );
   ipcMain.handle("cua:linux-enable", async () => {
     if (process.platform !== "linux") {

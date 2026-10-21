@@ -53,6 +53,8 @@ import { appendNative } from "./native.ts";
 import { customMountEntries } from "../custom-mcp-mounts.ts";
 import { engineClosedLine } from "./stop-copy.ts";
 import { acpEngineExitStderrText } from "./acp/core.ts";
+import { writeFileAtomic } from "../atomic.ts";
+import { ASK_STOP_NOTE, ASK_STOP_PROMPT, replyCarriesAskStopNote } from "./ask-stop.ts";
 
 const DRIVER_KIND = "antigravityAgent";
 export const ANTIGRAVITY_STREAM_INPUT_MIN_VERSION = "1.1.15";
@@ -61,6 +63,47 @@ export const ANTIGRAVITY_STREAM_INPUT_MIN_VERSION = "1.1.15";
  * limit an owner can choose (24 hours), so a turn is stopped only by the
  * thread's silence watch, the owner's Stop or a budget stop. */
 export const ANTIGRAVITY_PRINT_TIMEOUT = "8760h";
+
+/** The Ask hard stop for agy (./ask-stop.ts). `--mode accept-edits` writes with no ask, and the 1.0.3 real-CLI probe
+ * saw it run shell commands too. On an Ask turn the scoped home carries one Murage-owned
+ * `hooks.json` PreToolUse hook (matcher "*") that allows only the read tools below and denies every other tool
+ * before it runs, with ASK_STOP_NOTE as its reason (agy 1.4.4: a denied run_command and write_file never ran;
+ * read_file still read; a hook that fails or crashes also blocks the tool). Names are agy's hook and stream names
+ * (read_file, write_file, run_command, ...), not the tool list `init` prints. */
+export const ANTIGRAVITY_ASK_READS = [
+  "read_file", "view_file", "list_dir", "list_directory", "grep_search", "find_by_name",
+  "view_file_outline", "view_code_item", "view_content_chunk", "search_web",
+] as const;
+
+/** The hook program. Fail closed: anything it cannot read as one of the allowed reads is denied. */
+export const ANTIGRAVITY_ASK_HOOK_SOURCE = `"use strict";
+const READS = new Set(${JSON.stringify(ANTIGRAVITY_ASK_READS)});
+const REASON = ${JSON.stringify(ASK_STOP_NOTE)};
+let raw = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { raw += chunk; });
+process.stdin.on("end", () => {
+  let name = "";
+  try { const call = JSON.parse(raw); name = call && call.toolCall && typeof call.toolCall.name === "string" ? call.toolCall.name : ""; } catch { name = ""; }
+  process.stdout.write(JSON.stringify(READS.has(name) ? { decision: "allow" } : { decision: "deny", reason: REASON }));
+});
+`;
+
+/** Write the hook program under Murage's data dir (once per content) and return the hooks.json an Ask turn's scoped
+ *  home carries. The hook runs as `<this program> <script>`; the child gets ELECTRON_RUN_AS_NODE so a packaged app
+ *  runs it as node. agy runs a hook through `sh -c` (Windows: `cmd /c`, which keeps an outer pair of quotes). */
+export function antigravityAskStopHooks(dataDir = DATA_DIR, execPath = process.execPath, platform: NodeJS.Platform = process.platform): string {
+  const dir = join(dataDir, "native", "antigravity-ask");
+  const script = join(dir, `ask-hook-${createHash("sha256").update(ANTIGRAVITY_ASK_HOOK_SOURCE).digest("hex").slice(0, 16)}.cjs`);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  let existing: string | null = null;
+  try { existing = readFileSync(script, "utf8"); } catch { existing = null; }
+  if (existing !== ANTIGRAVITY_ASK_HOOK_SOURCE) writeFileAtomic(script, ANTIGRAVITY_ASK_HOOK_SOURCE, { mode: 0o600 });
+  const forward = (path: string) => (platform === "win32" ? path.replace(/\\/g, "/") : path);
+  const quoted = `"${forward(execPath)}" "${forward(script)}"`;
+  const command = platform === "win32" ? `"${quoted}"` : quoted;
+  return `${JSON.stringify({ "murage-ask-stop": { PreToolUse: [{ matcher: "*", hooks: [{ type: "command", command, timeout: 15 }] }] } }, null, 2)}\n`;
+}
 
 /** The owner's real home, which the scoped homes mirror. */
 const realHomeOf = (env: Record<string, string | undefined>): string => env.HOME || env.USERPROFILE || homedir();
@@ -84,28 +127,44 @@ export interface AntigravityConfig {
   fullAuto: boolean;
 }
 
-// model catalog from `agy models` (agy 1.1.12)
+// Fallback catalog, mirroring a live `agy models` on agy 1.4.3. The running
+// agy's own list (read in refreshModels) wins over this whenever it answers.
 export const STATIC_ANTIGRAVITY_MODELS: ModelCatalog = {
-  default: "gemini-3.1-pro-high",
+  default: "gemini-4-argon-high",
   options: [
-    { id: "gemini-3.1-pro-high", label: "Gemini 3.1 Pro (High)" },
-    { id: "gemini-3.1-pro-low", label: "Gemini 3.1 Pro (Low)" },
-    // 3.8 ids confirmed by live `agy models` on 2026-09-09.
+    { id: "gemini-4-argon-high", label: "Gemini 4 Argon (High)" },
+    { id: "gemini-4-argon-medium", label: "Gemini 4 Argon (Medium)" },
+    { id: "gemini-4-argon-low", label: "Gemini 4 Argon (Low)" },
     { id: "gemini-3.8-flash-high", label: "Gemini 3.8 Flash (High)" },
     { id: "gemini-3.8-flash-medium", label: "Gemini 3.8 Flash (Medium)" },
     { id: "gemini-3.8-flash-low", label: "Gemini 3.8 Flash (Low)" },
-    // 3.7 ids confirmed against the agy 1.1.12 binary's own model table
-    { id: "gemini-3.7-flash-high", label: "Gemini 3.7 Flash (High)" },
-    { id: "gemini-3.7-flash-medium", label: "Gemini 3.7 Flash (Medium)" },
-    { id: "gemini-3.7-flash-low", label: "Gemini 3.7 Flash (Low)" },
-    { id: "gemini-3.6-flash-high", label: "Gemini 3.6 Flash (High)" },
-    { id: "gemini-3.6-flash-medium", label: "Gemini 3.6 Flash (Medium)" },
-    { id: "gemini-3.6-flash-low", label: "Gemini 3.6 Flash (Low)" },
-    { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6 (Thinking)" },
-    { id: "claude-opus-4-6-thinking", label: "Claude Opus 4.6 (Thinking)" },
+    { id: "claude-opus-5-5-high", label: "Claude Opus 5.5 (High)" },
+    { id: "claude-opus-5-5-medium", label: "Claude Opus 5.5 (Medium)" },
+    { id: "claude-opus-5-5-low", label: "Claude Opus 5.5 (Low)" },
+    { id: "claude-sonnet-5-5-high", label: "Claude Sonnet 5.5 (High)" },
+    { id: "claude-sonnet-5-5-medium", label: "Claude Sonnet 5.5 (Medium)" },
+    { id: "claude-sonnet-5-5-low", label: "Claude Sonnet 5.5 (Low)" },
     { id: "gpt-oss-120b-medium", label: "GPT-OSS 120B (Medium)" },
   ],
 };
+
+/** Parse `agy models` output: "<id>\t<label>" per line; other lines (progress text) are ignored. */
+export function parseAntigravityModelsOutput(stdout: string): Array<{ id: string; label: string }> {
+  const rows: Array<{ id: string; label: string }> = [];
+  for (const line of stdout.split(/\r?\n/)) {
+    const [id, ...rest] = line.split("\t");
+    if (!id || rest.length === 0 || !AGY_MODEL_ID.test(id.trim())) continue;
+    rows.push({ id: id.trim(), label: rest.join(" ").trim() || id.trim() });
+  }
+  return rows;
+}
+
+/** The catalog agy itself reported; the default is the static default when listed, else the first row. */
+export function catalogFromAgyList(rows: Array<{ id: string; label: string }>, base: ModelCatalog = STATIC_ANTIGRAVITY_MODELS): ModelCatalog {
+  if (!rows.length) return base;
+  const has = rows.some((row) => row.id === base.default);
+  return { default: has ? base.default : rows[0]!.id, options: rows.map((row) => ({ ...row })), source: "live" };
+}
 
 function antigravityEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...cloudTurnEnvironment("antigravity", { ...process.env, ...overrides }), PATH: augmentedPath() };
@@ -312,6 +371,19 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         // local host. Hidden rather than listed and failing later.
         const resolved = readAntigravityModelCatalog(catalogEnv);
         if (resolved.options.length) models = resolved;
+        // The installed agy's own list wins: ids it no longer accepts must not stay selectable.
+        const listed = await new Promise<string>((resolve) => {
+          try {
+            execCli(config.cli, ["models"], { timeout: 8000, env }, (err, stdout) => resolve(err ? "" : String(stdout)));
+          } catch { resolve(""); }
+        });
+        const live = parseAntigravityModelsOutput(listed);
+        if (live.length) {
+          const fromAgy = catalogFromAgyList(live);
+          const seen = new Set(fromAgy.options.map((option) => option.id));
+          const custom = resolved.options.filter((option) => option.custom && !seen.has(option.id));
+          models = { default: fromAgy.default, options: [...fromAgy.options, ...custom], source: "live" };
+        }
       } catch {
         // Keep the last usable catalog when settings.json is unreadable.
       }
@@ -387,6 +459,11 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       // runs in accept-edits (file edits only, no shell, no mounted tools)
       // rather than doing those three without anyone asked.
       const skipPermissions = config.fullAuto && !turn.stopLine && !turn.routeAsks;
+      // The Ask hard stop (ANTIGRAVITY_ASK_READS): reads only, every other tool denied by a hook before it runs.
+      const askStop = turn.askLevel === true && !skipPermissions;
+      /** Something was refused at Ask: the note is due unless the reply already carries it. */
+      let askStopRefused = false;
+      let askStopReply = "";
       const { threadId } = turn;
       if (disposed) throw new Error("Antigravity instance is disposed");
       if (active.has(threadId) || pending.has(threadId)) throw new Error("a turn is already running on this thread");
@@ -443,7 +520,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       // line is much smaller than the prompts a channel can legitimately
       // build, and putting this on `--print <prompt>` caused ENAMETOOLONG.
       turn = renderMurageTurn(turn, NEUTRAL_TOOL_SURFACE, { agents: antigravityMcpServers(turn.integrations)[ANTIGRAVITY_AGENTS_MCP_KEY] ? ANTIGRAVITY_AGENTS_MCP_KEY : undefined });
-      const prompt = turn.system ? `${turn.system}\n\n${turn.text}` : turn.text;
+      const prompt = `${askStop ? `${ASK_STOP_PROMPT}\n\n` : ""}${turn.system ? `${turn.system}\n\n${turn.text}` : turn.text}`;
       const resumeCursor = typeof turn.resumeCursor === "string" ? turn.resumeCursor : null;
 
       let settled = false;
@@ -481,6 +558,11 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         settled = true;
         active.delete(threadId);
         armPostSettleCleanup();
+        if (askStopRefused && !replyCarriesAskStopNote(askStopReply)) {
+          const itemId = `ask-stop-${turnId}`;
+          emit({ ...base(threadId, turnId), type: "item.started", itemId, itemType: "tool", origin: "murage", title: ASK_STOP_NOTE, toolKind: "notice" });
+          emit({ ...base(threadId, turnId), type: "item.completed", itemId, itemType: "tool", ok: true });
+        }
         emit({ ...base(threadId, turnId), type: "turn.completed", ok, stopReason, cost, ...(usage ? { usage } : {}) });
       };
 
@@ -522,6 +604,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
           scopeRoot: antigravityScopeRoot(),
           name: `${tag}-${turnId}`.slice(0, 120),
           servers: mountedServers,
+          ...(askStop ? { askStopHooks: antigravityAskStopHooks() } : {}),
         });
         childEnv = { ...env, HOME: scoped.home, USERPROFILE: scoped.home };
       } catch (error) {
@@ -550,6 +633,8 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       // The instance environment is shared by every turn; this turn's copy names its bot.
       const turnEnv: NodeJS.ProcessEnv = { ...childEnv };
       cloudTurnBot(turnEnv, turn.warmIdentity?.botId);
+      // the Ask hook runs as `<this program> <script>`; a packaged app is its own node only with this set
+      if (askStop) turnEnv.ELECTRON_RUN_AS_NODE = "1";
       let child: ReturnType<typeof spawnCli>;
       try {
         child = spawnCli(config.cli, args, {
@@ -635,7 +720,14 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
                 emit({ ...base(threadId, turnId), type: "item.started", itemType: "tool", origin: "engine", itemId, title: payload.tool_name });
               } else if (payload.state === "DONE") {
                 emit({ ...base(threadId, turnId), type: "item.completed", itemType: "tool", itemId, ok: true });
+                // A tool that is not a read finished on an Ask turn: the hook did not hold. Stop the turn at once.
+                if (askStop && !(ANTIGRAVITY_ASK_READS as readonly string[]).includes(String(payload.tool_name ?? "")) && !settled && !stopRequested) {
+                  askStopRefused = true;
+                  console.warn(`${ENGINE} ask stop: ${String(payload.tool_name ?? "a tool")} ran on an Ask turn; stopping the turn`);
+                  requestStop();
+                }
               } else if (payload.state === "ERROR") {
+                if (askStop && /denied by pre-tool hook/i.test(String(payload.tool_info?.error?.message ?? ""))) askStopRefused = true;
                 emit({ ...base(threadId, turnId), type: "item.completed", itemType: "tool", itemId, ok: false });
               } else {
                 working(stepFingerprint(payload));
@@ -656,6 +748,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
             if (stopRequested) return; // root/group close owns cancellation
             // agy delivers the assistant text in result.response (not streamed)
             const response = typeof payload.response === "string" ? payload.response : "";
+            askStopReply = response;
             if (response) {
               emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "assistant_text", delta: response });
               emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", origin: "engine", text: response });
@@ -833,7 +926,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
             [
               "--input-format", "stream-json",
               "--output-format", "stream-json",
-              "--model", "gemini-3.6-flash-low",
+              "--model", "gemini-3.8-flash-low",
             ],
             // This call's copy of the scoped text environment names the bot it is made for.
             { env: (() => { const callEnv: NodeJS.ProcessEnv = { ...textEnv }; cloudTurnBot(callEnv, botId); return callEnv; })(), stdio: ["pipe", "pipe", "pipe"] },

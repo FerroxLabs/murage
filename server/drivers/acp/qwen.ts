@@ -153,7 +153,11 @@ export const QWEN_ISOLATION_MIN = [0, 10, 0] as const;
 export function qwenIsolationArgs(serverNames: readonly string[] | undefined, cliVersion: string | undefined): string[] {
   requireQwenIsolationVersion(cliVersion);
   const names = serverNames?.length ? serverNames : ["murage-no-servers"];
-  return [...names.map((name) => `--allowed-mcp-server-names=${name}`), "-e", "none", "--exclude-tools=skill"];
+  // Qwen's ask mode, whatever its own default or the owner's setting: in its
+  // "auto" mode Qwen's own classifier approves a shell command or a computer
+  // click without asking Murage (qwen 0.25.3 ran them at Ask with no card), so
+  // Murage's access level never applied.
+  return [...names.map((name) => `--allowed-mcp-server-names=${name}`), "-e", "none", "--exclude-tools=skill", "--approval-mode", "default"];
 }
 
 /** Throws the update-required error for a Qwen that is unknown or older than QWEN_ISOLATION_MIN. Also run when the turn's env is

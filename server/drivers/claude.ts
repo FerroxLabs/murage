@@ -34,6 +34,7 @@ import { backgroundCapNote, backgroundWaitCapMs, SubtaskTracker } from "../subta
 import { DATA_DIR, stripCapturedProviderEnv, stripRoutingEnv, stripWorkspaceCredentialEnv } from "../config.ts";
 import { writeFileAtomic } from "../atomic.ts";
 import { augmentedPath, envGeneration } from "../env-path.ts";
+import { engineLaunchFile } from "./isolation-cache.ts";
 import { CLAUDE_ACCOUNT_ENV_KEYS, claudeAccountEnvironment,resolveClaudeConfigDir } from "../claude-accounts.ts";
 import { customMountEntries } from "../custom-mcp-mounts.ts";
 import { toolFilePaths } from "../own-workspace-approval.ts";
@@ -112,7 +113,7 @@ import { gitBashPath } from "../tool-discovery.ts";
 import { TurnRefusal } from "./turn-refusal.ts";
 import { NarrowDenials } from "../narrow-denials.ts";
 import { appendDecision } from "../decision-log.ts";
-import { EXEC_ENV_FILE, murageExecPrefix, writeExecEnvFile } from "./murage-exec.ts";
+import { EXEC_ENV_FILE, EXEC_KEEP, murageExecPrefix, withExecKeep, writeExecEnvFile } from "./murage-exec.ts";
 
 /** Whether `claude` has been signed in.
  *
@@ -197,8 +198,9 @@ export function claudeEnvironment(
   fluxMemory: FluxMemoryDecision = fluxMemoryDecision(),
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...cloudTurnEnvironment("claudeAgent", source, process.env.MURAGE_CLOUD_ROLE === "home" ? [] : ["CLAUDE_CODE_OAUTH_TOKEN"]), PATH: augmentedPath(), NPM_CONFIG_LOGLEVEL: "error" };
-  delete env.CLAUDECODE;
-  delete env.CLAUDE_CODE_ENTRYPOINT;
+  // A Murage started from a terminal running Claude Code inherits that session's own names (its id, entrypoint,
+  // messaging socket and token, AI_AGENT); none of them are this turn's.
+  stripClaudeSessionEnv(env);
   // Plugins loaded from this variable need no settings entry, so the isolation's per-id disable
   // cannot reach them (claudeIsolation also sets it empty at flag level, over a settings `env`).
   delete env.CLAUDE_CODE_PLUGIN_DIRS;
@@ -227,6 +229,26 @@ export function claudeEnvironment(
   return env;
 }
 
+/** The CLAUDE_CODE_* names that belong to one running Claude Code session (identity, IPC, plugin loading), exact. Any
+ * other CLAUDE_CODE_* name is an owner's setting (login, gateway, certificates, extra body, ...) and is kept. */
+const CLAUDE_SESSION_EXACT: ReadonlySet<string> = new Set([
+  "CLAUDECODE", "AI_AGENT", "CLAUDE_PID", "CLAUDE_EFFORT", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_CHILD_SESSION",
+  "CLAUDE_CODE_EXECPATH", "CLAUDE_CODE_SSE_PORT", "CLAUDE_CODE_PLUGIN_DIRS",
+  // a remote session's own authentication (Claude Code reads the token file and the descriptor as session credentials)
+  "CLAUDE_SESSION_INGRESS_TOKEN_FILE", "CLAUDE_CODE_WEBSOCKET_AUTH_FILE_DESCRIPTOR", "CLAUDE_CODE_REMOTE_SESSION_ID",
+]);
+const CLAUDE_SESSION_PREFIXES: readonly string[] = ["CLAUDE_CODE_SESSION_", "CLAUDE_CODE_MESSAGING_"];
+
+/** Remove (in place) what a running Claude Code session hands its children: CLAUDECODE, AI_AGENT, CLAUDE_PID,
+ * CLAUDE_EFFORT and the session-only names above (session id, entrypoint, exec path, messaging socket and token, a remote
+ * session's ingress token file, websocket auth descriptor and id, ...). Every other CLAUDE_CODE_* name stays. Names are matched upper-cased (Windows names ignore case). */
+export function stripClaudeSessionEnv(map: Record<string, string | undefined>): void {
+  for (const name of Object.keys(map)) {
+    const upper = name.toUpperCase();
+    if (CLAUDE_SESSION_EXACT.has(upper) || CLAUDE_SESSION_PREFIXES.some((prefix) => upper.startsWith(prefix))) delete map[name];
+  }
+}
+
 /** Every name claudeEnvironment and the account environment decide for a turn, removed from the owner's CAPTURED shell
  * map before the turn's own names are written back (in place). The capture can hold names this process never had (a
  * Finder launch: a provider switcher's ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN exported only in the shell), and
@@ -234,7 +256,8 @@ export function claudeEnvironment(
  * subscription conversation went to the shell's provider. With a named account its login names are the account's. */
 export function stripClaudeOwnedEnv(map: Record<string, string | undefined>, configDir?: string, platform: NodeJS.Platform = process.platform): void {
   stripCapturedProviderEnv(map, platform);
-  for (const name of ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_PLUGIN_DIRS"]) delete map[name];
+  stripClaudeSessionEnv(map);
+  delete map.CLAUDE_CODE_PLUGIN_DIRS;
   if (!configDir?.trim()) return;
   for (const name of Object.keys(map)) {
     const upper = name.toUpperCase();
@@ -2449,6 +2472,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // at the reconnect bound, so neither can hold a turn past the budgets in
       // mcp-readiness.ts (claudeMcpStartupEnv).
       const cliIdentity = claudeExecutableIdentity(config.cli, env);
+      // The CLI this turn spawns is the file requireClaudeCliVersion probed and cliIdentity signs, both on Murage's own PATH
+      // (claudeEnvironment); env becomes the handed map below, whose PATH is the owner's captured shell PATH and can find
+      // another, older claude first (1.0.3 gate). That PATH stays the child's own; only the engine file is pinned
+      // (isolation-cache.ts engineLaunchFile).
+      const launchPath = { PATH: env.PATH };
       Object.assign(env, claudeMcpStartupEnv(claudeMcpStatusSupport.get(cliIdentity) !== "unsupported"));
       // The launcher scopes this turn's state by bot and refuses a non-probe turn without one.
       cloudTurnBot(env, turn.warmIdentity?.botId);
@@ -2483,6 +2511,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       const execShell = await claudeExecShell(process.platform, handed.env, envGeneration());
       const shellRefusal = claudeShellRefusal(process.platform, execShell);
       if (shellRefusal) throw new ClaudeTurnRefused(shellRefusal);
+      // MURAGE_EXEC_KEEP belongs on MCP server stanzas only: in Claude's own environment it would reach every Bash command.
+      delete handed.env[EXEC_KEEP];
       if (execShell) {
         handed.env.CLAUDE_CODE_SHELL_PREFIX = murageExecPrefix();
         handed.env.CLAUDE_CODE_SHELL = execShell;
@@ -2909,7 +2939,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         }
         // Write once, only after the broker has selected its real endpoint.
         if (mcpConfigPath) {
-          const mcpJson = JSON.stringify({ mcpServers: cred ? bindCredentialPath(stableServers, cred.path) : stableServers });
+          // Claude starts each stdio server through the shell prefix (murage-exec), whose `env -i` keeps only the names
+          // MURAGE_EXEC_KEEP lists: without it ELECTRON_RUN_AS_NODE and the credential-file names are lost (1.0.3).
+          const bound = cred ? bindCredentialPath(stableServers, cred.path) : stableServers;
+          const mcpJson = JSON.stringify({ mcpServers: execShell ? withExecKeep(bound) : bound });
           if (process.env.MURAGE_CLOUD_ROLE === "home") cloudTurnRender(env, "mcp", cloudRenderMcp(stableServers));
           else writeFileSync(mcpConfigPath, mcpJson, { mode: 0o600 });
         }
@@ -2951,7 +2984,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         // reset that began during setup, or a quarantined predecessor, means
         // this launch would run beside a tree that may still be live.
         if (resetBarriers.has(threadId) || resetBlocked.has(threadId)) throw new Error(NOT_STOPPED_MESSAGE);
-        child = spawnCli(config.cli, args, {
+        const launchCli = engineLaunchFile(config.cli, launchPath);
+        child = spawnCli(launchCli, args, {
           cwd,
           env,
           stdio: ["pipe", "pipe", "pipe"],
@@ -4012,10 +4046,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       }, turnEnv);
       const env = handed.env;
       return new Promise((resolve, reject) => {
+        // The claude whose --version the review was gated on (turnEnv: Murage's own PATH), not the handed PATH's first.
+        const launchCli = engineLaunchFile(config.cli, turnEnv);
         // Same isolation as a turn: no MCP server, hook, plugin or personal CLAUDE.md of the
         // owner's, with the owner's login untouched. A proposal also gets no tools at all.
         const child = spawnCli(
-          config.cli,
+          launchCli,
           // stream-json so the call knows when the CLI started work (`init`): only what it printed
           // before then is read as a refusal of Murage's own flags, the same rule as a turn.
           ["-p", "--model", proposalModel ?? "claude-haiku-4-5", "--output-format", "stream-json", "--verbose",

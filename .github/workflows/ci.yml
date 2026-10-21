@@ -151,8 +151,9 @@ jobs:
         continue-on-error: true
         env:
           # Keep the canary honest: no --no-sandbox or sandbox-disabling flags.
-          # When electron/electron#51761 is resolved, make this blocking first,
-          # then remove the production Windows gate in browser-platform.cjs.
+          # The production Windows gate in browser-platform.cjs is gone (Electron
+          # 43.7.7 no longer crashes). This stays continue-on-error until it has
+          # proven stable on hosted runners; making it blocking is the follow-up.
           MURAGE_SKIP_REAL_ELECTRON_BROWSER_FIXTURE: "0"
         run: pnpm exec vitest run electron/browser-closed-shadow.electron.test.mjs
       - run: pnpm check:electron

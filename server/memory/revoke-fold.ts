@@ -26,12 +26,17 @@ import { bumpDenyGeneration, HOLD_PREFIX, hasFoldMap, hasWritetime, markPending,
 export const FOLD_CAUSE = "fold";
 /** Tests only (a per-job baseline run for the differential test): false leaves every job to walk on its own. */
 export const REVOKE_FOLD = { enabled: true };
+/** The fold's pending copy and closure certificate (DRAIN-104 section 4). A test knob, as REVOKE_FOLD: off is 1.0.3's fold (the frontier stage
+ * goes straight to "holds" and ignores a `pk` cursor; no closureIds, no narrow), the fail-first control of the section-4 tests. */
+export const FOLD_CLOSURE = { enabled: true };
 /** Rows opening a bulk writes (revoke-commit.ts BULK_OPEN_COST): a member's root re-commit is admitted with room for it too (F1.3). */
 const FOLD_OPEN_COST = 8;
 export type FoldCohort = { lo: number; hi: number; ids: number[] };
 type Stage = "enrol" | "root" | "frontier" | "holds" | "clean" | "sweep";
 /** `after`: the last frontier seq copied; `key`: the last hold thread_id copied (both resume a member's copy mid-way, F1.5). */
-type FoldCursor = { stage: Stage; job: number; after?: number; key?: string };
+/** `pk`: the member's pending copy (DRAIN-104 section 4), present iff it is running: [table (0 threads, 1 scopes), key, since] of the last
+ * row copied. Inside stage "frontier", so a 1.0.3 that resumes the cursor finds no frontier row after `after`, moves to "holds" and ignores it. */
+type FoldCursor = { stage: Stage; job: number; after?: number; key?: string; pk?: [number, string, number] };
 type Candidate = { id: number; kind: string; root: Record<string, any>; rootLsn: number; started: number };
 
 const SEEDING_FOLD = `SELECT revoke_id,root,cursor FROM memory_revoke_jobs WHERE state='seeding' AND kind='bulk' AND json_valid(root)
@@ -142,6 +147,17 @@ function nextSeq(db: DatabaseSync, revokeId: number): number {
   return Math.max(0, Number(last ?? 0)) + 1;
 }
 
+/** Adds a member's cohort index to B's root.closureIds (sorted, no duplicates; at most FLIP_DRAIN_MAX small integers). */
+function noteClosure(db: DatabaseSync, B: number, index: number): void {
+  const row = st(db, "SELECT root FROM memory_revoke_jobs WHERE revoke_id=?").get(B);
+  let root: Record<string, unknown>;
+  try { root = JSON.parse(String(row?.root)); } catch { return; } // unreadable: not certified, '*' stays to the tidy
+  const ids = Array.isArray(root.closureIds) ? (root.closureIds as unknown[]).map(Number).filter(Number.isSafeInteger) : [];
+  if (ids.includes(index)) return;
+  root.closureIds = [...ids, index].sort((x, y) => x - y);
+  st(db, "UPDATE memory_revoke_jobs SET root=? WHERE revoke_id=?").run(JSON.stringify(root), B);
+}
+
 /** Moves the seeding fold bulk B by whole steps within the budget. */
 function runFold(db: DatabaseSync, B: number, rootJson: string, cursorJson: string, budget: FoldBudget): boolean | "blocked" {
   let cohort: FoldCohort;
@@ -181,6 +197,25 @@ function runFold(db: DatabaseSync, B: number, rootJson: string, cursorJson: stri
       }
       budget.spend(wrote(1));
       c = { stage: "frontier", job: c.job, after: Number.MIN_SAFE_INTEGER };
+    } else if (c.stage === "frontier" && c.pk !== undefined && FOLD_CLOSURE.enabled) {
+      // (c2) the member's pending rows become flow seeds of B (DRAIN-104 section 4): the threads and scopes its flow closure expanded before
+      // the fold, whose windows the clean stage deletes; markPending keeps the smallest since per node and a row above B's commit stays an
+      // inherit hold. Keyed inserts, a page per step on the primary key from `pk`; the '*' rows are B's own (step 0). The page that completes
+      // the copy records the member's index in root.closureIds (a set: repairFoldMap's rewind re-runs the copy).
+      const id = ids[c.job]!, [table, key, since] = c.pk;
+      const rows = (table === 0
+        ? st(db, "SELECT thread_id AS k,since_lsn AS s FROM memory_deny_pending WHERE revoke_id=?1 AND (thread_id,since_lsn)>(?2,?3) ORDER BY thread_id,since_lsn LIMIT ?4").all(id, key, since, n)
+        : st(db, "SELECT scope_id AS k,since_lsn AS s FROM memory_deny_pending_scope WHERE revoke_id=?1 AND (scope_id,since_lsn)>(?2,?3) ORDER BY scope_id,since_lsn LIMIT ?4").all(id, key, since, n)) as Array<{ k: string; s: number }>;
+      for (const row of rows) {
+        if (table === 0 ? row.k === PENDING_ALL_THREADS : row.k === PENDING_ALL_SCOPES) continue;
+        seedFlow(db, B, table === 0 ? String(row.k) : `scope:${row.k}`, Number(row.s));
+      }
+      if (rows.length) { const last = rows[rows.length - 1]!; c.pk = [table, String(last.k), Number(last.s)]; }
+      if (rows.length < n) {
+        if (table === 0) c.pk = [1, "", Number.MIN_SAFE_INTEGER];
+        else { noteClosure(db, B, c.job); c = { stage: "holds", job: c.job }; }
+      }
+      budget.spend(wrote(rows.length + 1));
     } else if (c.stage === "frontier") {
       // (c) every frontier row of the member in seq order: flow items re-seeded under B, mark nodes copied with fresh seqs
       const id = ids[c.job]!;
@@ -198,7 +233,7 @@ function runFold(db: DatabaseSync, B: number, rootJson: string, cursorJson: stri
       }
       budget.spend(wrote(rows.length));
       if (rows.length) c.after = Number(rows[rows.length - 1]!.seq);
-      if (rows.length < n) c = { stage: "holds", job: c.job };
+      if (rows.length < n) c = FOLD_CLOSURE.enabled ? { ...c, pk: [0, "", Number.MIN_SAFE_INTEGER] } : { stage: "holds", job: c.job }; // then its pending copy (c2), in this stage
     } else if (c.stage === "holds") {
       // (d) only hold: rows (B walks every thread itself), a page per step in thread_id order from the saved key (a member's rows are
       // static while B seeds: holdRevoke and releaseHold resolve its id to B); (e) the member retires in the transaction of the last page
@@ -231,6 +266,12 @@ function runFold(db: DatabaseSync, B: number, rootJson: string, cursorJson: stri
       budget.spend(wrote(gone));
       if (gone >= n) { moved = true; continue; }
       st(db, "UPDATE memory_revoke_jobs SET cursor='' WHERE revoke_id=?").run(B);
+      // certified closure (DRAIN-104 section 4): every member's pending rows were copied into B's flow, so B's flow phase covers the union of
+      // the members' closures and its '*' window can end at its flow gate (revoke-marker.ts); a member copied by 1.0.3 is not in the set
+      const root = st(db, "SELECT root FROM memory_revoke_jobs WHERE revoke_id=?").get(B)?.root;
+      let closure: number[] = [];
+      try { const got = JSON.parse(String(root)).closureIds; if (Array.isArray(got)) closure = got.map(Number); } catch { closure = []; }
+      if (ids.every((_, index) => closure.includes(index))) st(db, "UPDATE memory_revoke_jobs SET root=json_set(root,'$.narrow',1) WHERE revoke_id=?").run(B);
       activateBulkRevoke(db, B);
       return true;
     }

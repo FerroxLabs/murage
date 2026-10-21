@@ -24,8 +24,7 @@ import {
 import type { Readable, Writable } from "node:stream";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { writeFileSync } from "node:fs";
-import { powershellArgs, stopWindowsJob } from "./memory/pip-job.ts";
+import { assignPipJob, closePipJob, createPipJob, stopWindowsJob } from "./memory/pip-job.ts";
 import { createHash } from "node:crypto";
 import { resolveCliSpawn, type ResolvedSpawn } from "./env-path.ts";
 import { platformConfirmStopped, recordProcessHandle } from "./platform-process-hooks.ts";
@@ -92,6 +91,10 @@ interface CliOwnership {
   escalate?: () => void;
   observations: StopRouteObservation[];
   observers: Set<StopRouteObserver>;
+  /** Windows PIP: the root's `exit` was seen (its streams may stay open while a job member holds them). */
+  exited?: boolean;
+  /** Windows PIP: the CLI could not be put in its job. It was ended at once and the run is refused (PIP_JOB_REFUSAL). */
+  jobRefused?: boolean;
 }
 // Evidence belongs to this exact spawn/handle, never a PID recovered after a
 // server restart. A retained live session is not stopped until requested.
@@ -101,7 +104,7 @@ export function spawnCli(
   cli: string,
   args: string[],
   opts: SpawnOptions,
-  job?: { name: string; argsFile: string },
+  job?: { name: string },
   /** Cloud home only: the Docker client the SERVER itself runs against the owner's own
    * server (vps-computer.ts). It is not an engine turn, holds the home's ssh key and
    * must not go through the turn launcher. Nothing else may ask for this. */
@@ -110,12 +113,10 @@ export function spawnCli(
   const resolved = resolveCli(cli, args);
   assertSafeCliArgv(resolved);
   const launch = mode?.serverTool === "docker" && cli === "docker" ? null : cloudTurnLaunch(resolved.command, resolved.args, opts.env, opts.cwd);
-  let command = launch?.command ?? resolved.command, launchArgs = launch?.args ?? resolved.args;
-  if (process.platform === "win32" && job && !launch) {
-    writeFileSync(job.argsFile, JSON.stringify(resolved), { mode: 0o600 });
-    command = "powershell.exe";
-    launchArgs = [...powershellArgs, "-JobName", job.name, "-Cwd", String(opts.cwd), "-ArgsFile", job.argsFile];
-  }
+  const command = launch?.command ?? resolved.command, launchArgs = launch?.args ?? resolved.args;
+  // Windows PIP: the job exists before the CLI does (a taken name or a missing addon refuses the run before anything starts), and the
+  // CLI is put in it right after it starts (memory/pip-job.ts, THE WINDOW).
+  const pipJob = process.platform === "win32" && job && !launch ? createPipJob(job.name) : undefined;
   const { stdio, closeStdin } = launchStdio(opts.stdio);
   const rest: SpawnOptions = { ...opts };
   delete rest.detached;
@@ -135,7 +136,20 @@ export function spawnCli(
     // PIP uses a named job; other CLIs use taskkill /T.
     ...(process.platform === "win32" ? { windowsHide: true } : { detached: true }),
   }) as ChildProcessByStdio<Writable, Readable, Readable>; // callers always pipe all three
-  if (closeStdin) child.stdin?.end();
+  // The assignment is the next synchronous call after spawn() and completes before spawnCli returns, so before any caller can write
+  // a byte to the CLI's stdin: a CLI never reads its prompt outside its job. A failed assignment (the addon could not open or assign
+  // the process; it has then ended it with PIP_JOB_REFUSAL where it could) ends the CLI here too, through Node's own handle, closes
+  // its stdin unwritten and refuses the run (cliJobRefused); no pid: nothing started.
+  let jobRefused = false;
+  if (pipJob && (child.pid === undefined || !assignPipJob(pipJob, child.pid))) {
+    jobRefused = child.pid !== undefined;
+    closePipJob(pipJob);
+    if (jobRefused) {
+      try { child.kill(); } catch { /* the addon's terminate, or already gone */ }
+      try { child.stdin?.destroy(); } catch { /* nothing is written to a refused CLI */ }
+    }
+  }
+  if (closeStdin && !jobRefused) child.stdin?.end();
 
   if (launch) {
     registerCloudTurnUnit(child.pid, launch.unit); // so the Cloud process hooks find the turn's scope without /proc
@@ -156,16 +170,30 @@ export function spawnCli(
   // is where every one of them settles the turn — so it is swallowed, not
   // logged.
   child.stdin?.on("error", () => {});
-  const ownership: CliOwnership = { pid: child.pid, platform: process.platform, jobName: job?.name, closed: false, stopped: false, observations: [], observers: new Set() };
+  const ownership: CliOwnership = { pid: child.pid, platform: process.platform, jobName: job?.name, closed: false, stopped: false, observations: [], observers: new Set(), ...(jobRefused ? { jobRefused } : {}) };
   cliOwnership.set(child, ownership);
   recordProcessHandle(child, [command, ...launchArgs].join(" "), opts.env);
+  // As the 1.0.2 supervisor did when its CLI exited: closing the last handle ends every process the CLI left in the job. On the
+  // root's `exit`, not `close`: a descendant that inherited stdout or stderr keeps the streams (and so `close`) open until the job
+  // ends it, and waiting for `close` would wait for that descendant forever.
+  child.once("exit", () => {
+    ownership.exited = true;
+    if (pipJob) closePipJob(pipJob);
+  });
   child.once("close", () => {
     ownership.closed = true;
+    if (pipJob) closePipJob(pipJob);
     // Root close keeps ownership of POSIX group members and Windows job
     // members until the corresponding tree confirmation finishes.
     if (ownership.platform !== "win32" || ownership.jobName) void awaitCliTreeStopped(child);
   });
   return child;
+}
+
+/** Windows PIP: true when spawnCli could not put this CLI in its job, ended it and refused the run (the caller reads it as the
+ *  PIP_JOB_REFUSAL path, whatever exit code the ended CLI reports). */
+export function cliJobRefused(child: ChildProcess): boolean {
+  return cliOwnership.get(child)?.jobRefused === true;
 }
 
 export function execCli(
@@ -400,18 +428,20 @@ function stopOwnedCli(child: ChildProcess, owned: CliOwnership, observer?: StopR
       if (owned.jobName) {
         const jobName = owned.jobName;
         owned.escalate = () => { void stopWindowsJob(jobName, CLI_FORCE_WAIT_MS); };
-        // End the exact supervisor first, including its pre-job startup window.
-        // Its last handle closes on exit and terminates every job member.
-        if (!owned.closed) {
-          const closed = await new Promise<boolean>(resolve => {
-            const onClose = () => { clearTimeout(timer); resolve(true); };
-            const timer = setTimeout(() => { child.off("close", onClose); resolve(false); }, termGraceMs + CLI_FORCE_WAIT_MS);
-            child.once("close", onClose);
-            try { child.kill(); } catch { /* confirmation still required */ }
-          });
-          if (!closed) return false;
-        }
-        return stopWindowsJob(owned.jobName, termGraceMs + CLI_FORCE_WAIT_MS);
+        // Terminate the job first (the CLI and every member, by name) and confirm it is empty, never waiting on the root's streams
+        // before that: a descendant that inherited stdout or stderr holds them open until the job ends it. Then the root itself must
+        // have exited (a refused CLI was never in the job; Node's own handle ends it).
+        const emptied = await stopWindowsJob(jobName, termGraceMs + CLI_FORCE_WAIT_MS);
+        const rootGone = () => owned.exited === true || owned.closed || child.exitCode !== null || child.signalCode !== null;
+        if (rootGone()) return emptied;
+        const exited = await new Promise<boolean>(resolve => {
+          const onExit = () => { clearTimeout(timer); child.off("close", onExit); resolve(true); };
+          const timer = setTimeout(() => { child.off("exit", onExit); child.off("close", onExit); resolve(rootGone()); }, CLI_FORCE_WAIT_MS);
+          child.once("exit", onExit);
+          child.once("close", onExit);
+          try { child.kill(); } catch { /* confirmation still required */ }
+        });
+        return emptied && exited;
       }
       // Windows without a job keeps EXACTLY the 1.0.1 stop semantics: one
       // `taskkill /PID <pid> /T /F` while the root is known alive, root close

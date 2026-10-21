@@ -5,7 +5,7 @@
 // (Claude's review/proposal/text helper, PIP's text-only turns, the browser checker's review) to
 // the bot each call is made for. spawnCli is replaced: nothing is launched.
 import { readFileSync } from "node:fs";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -30,6 +30,7 @@ import { claudeTextOnlyTurn } from "./headless-text-only.ts";
 import { readCodexAppServerModelCatalog } from "./codex-catalog.ts";
 import { resolveCheckerConnection } from "../browser-action-checker-connection.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
+import { resetPathCacheForTests } from "../env-path.ts";
 
 let base: string;
 beforeEach(() => { spawned.length = 0; base = mkdtempSync(join(tmpdir(), "cloud-bot-sites-")); });
@@ -54,6 +55,12 @@ describe("one-shot Cloud spawns name their bot", () => {
   });
 
   it("Claude's review spawn carries the handed Rule 74 pins, on a Cloud home and off it", async () => {
+    // off Cloud the review launches the claude-fixture found on Murage's own PATH (isolation-cache.ts engineLaunchFile)
+    const bin = join(base, "bin");
+    mkdirSync(bin);
+    writeFileSync(join(bin, "claude-fixture"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    vi.stubEnv("MURAGE_EXTRA_PATH", bin);
+    resetPathCacheForTests();
     const instance = await ClaudeDriver.create({ instanceId: "claude-pins", displayName: "Claude", environment: {}, enabled: true, config: ClaudeDriver.decodeConfig({ cli: "claude-fixture" }) });
     try {
       // off Cloud: the owner map with the pins on top
@@ -61,6 +68,7 @@ describe("one-shot Cloud spawns name their bot", () => {
       await expect(instance.generateText!("title", "bot-scribe")).rejects.toThrow();
       const plain = spawned.slice(before).filter((s) => s.args.includes("-p"));
       expect(plain).toHaveLength(1);
+      if (process.platform !== "win32") expect(plain[0].cli).toBe(join(bin, "claude-fixture"));
       for (const [name, value] of valuePins(process.platform)) expect(plain[0].env[name], name).toBe(value);
       for (const name of ABSENT_PINS) expect(plain[0].env, name).not.toHaveProperty(name);
       // on a Cloud home: the pins ride on top of the cloudTurnEnvironment map, whose turn markers stay
@@ -76,6 +84,7 @@ describe("one-shot Cloud spawns name their bot", () => {
       for (const name of ABSENT_PINS) expect(cloud[0].env, name).not.toHaveProperty(name);
     } finally {
       vi.unstubAllEnvs();
+      resetPathCacheForTests();
       await instance.dispose();
     }
   });

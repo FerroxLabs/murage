@@ -1,3 +1,4 @@
+import { enforceProxyLaunchGuard } from "./proxy-launch-guard.mjs";
 import { FluxSigninError, assertFluxDesktopSigninEnabled, cancelFluxDesktopSignin, runFluxDesktopSignin } from "./flux-desktop-signin.mjs";
 import { writeCallTrace } from "./call-trace.mjs";
 import { createProviderBankReconciliation, fenceProviderDocumentUpdate, mutateProviderCredentials } from "./provider-connection-control.mjs";
@@ -157,6 +158,9 @@ import capabilitiesModule from "./capabilities.cjs";
 
 // Explicit fixture/profile isolation must precede credentials and the instance lock.
 // Ordinary installed launches keep Electron's default paths unchanged.
+// A server proxy or worker started without ELECTRON_RUN_AS_NODE would otherwise run on as a second app (G5): it exits
+// here, before any other work and before the single-instance lock.
+enforceProxyLaunchGuard();
 const closedBackupRequested=process.argv.includes(CLOSED_DUE_FLAG)||process.argv.includes(CLOSED_DESCRIPTOR_FLAG);
 function writeClosedBackupResult(status){fs.writeSync(1,JSON.stringify({type:"murage:closed-backup-result",status})+"\n");}
 let closedBackupInvocation=null,closedBackupDescriptor=null;

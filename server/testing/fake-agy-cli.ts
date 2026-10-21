@@ -15,9 +15,16 @@
 //     global MCP config, calls list_bots then ask_bot, and returns the peer's
 //     real reply. This pins the Antigravity/Gemini comms path end to end.
 //
+//   FAKE_AGY_TOOL=<name>
+//     the tool step's name (default write_to_file).
+//   FAKE_AGY_RUN_HOOKS=1
+//     before the tool runs, run every PreToolUse hook in HOME/.gemini/config/hooks.json as agy does (`sh -c`,
+//     Windows `cmd /c`, JSON on stdin, cwd the hooks.json folder); a "deny" (or a hook that fails) ends the step in
+//     ERROR "tool call denied by pre-tool hook: <reason>", as agy 1.4.4 does.
+//
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
 import { fixtureDumpEnvironment } from "./fixture-dump.ts";
-import { spawn } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { logProposalTurn, proposalReply } from "./fake-mcp-propose.ts";
@@ -218,7 +225,33 @@ if (process.env.FAKE_AGY_DUMP) {
   writeFileSync(process.env.FAKE_AGY_DUMP, JSON.stringify({ argv, env: fixtureDumpEnvironment(), prompt }, null, 2));
 }
 
-const toolName = mode === "ask-peer" ? "ask_bot" : "write_to_file";
+const toolName = process.env.FAKE_AGY_TOOL || (mode === "ask-peer" ? "ask_bot" : "write_to_file");
+/** agy's PreToolUse hooks for this tool: the first deny (or failed hook) wins. */
+function hookDenial(name: string): string | null {
+  if (process.env.FAKE_AGY_RUN_HOOKS !== "1") return null;
+  const home = process.env.HOME || process.env.USERPROFILE || "";
+  const file = join(home, ".gemini", "config", "hooks.json");
+  if (!existsSync(file)) return null;
+  const spec = JSON.parse(readFileSync(file, "utf8")) as Record<string, { enabled?: boolean; PreToolUse?: Array<{ matcher?: string; hooks?: Array<{ command: string }> }> }>;
+  for (const hook of Object.values(spec)) {
+    if (hook.enabled === false) continue;
+    for (const group of hook.PreToolUse ?? []) {
+      const matcher = group.matcher ?? "";
+      if (!(matcher === "*" || matcher === "" || new RegExp(`^(?:${matcher})$`).test(name))) continue;
+      for (const handler of group.hooks ?? []) {
+        let answer = "";
+        try {
+          answer = execSync(handler.command, { input: JSON.stringify({ toolCall: { name, args: {} }, stepIdx: 0, conversationId: CONV }), cwd: join(home, ".gemini", "config"), encoding: "utf8", timeout: 15_000 });
+        } catch (error) {
+          return `hook failed (${(error as Error).message.split("\n")[0]})`;
+        }
+        const decision = JSON.parse(answer || "{}") as { decision?: string; reason?: string };
+        if (decision.decision === "deny") return decision.reason ?? "denied";
+      }
+    }
+  }
+  return null;
+}
 out({ event: "init", conversation_id: CONV, init: { cwd: process.cwd(), tools: ["run_command", "write_to_file", ...(mode === "ask-peer" ? ["list_bots", "ask_bot"] : [])], permission_mode: "accept-edits" } });
 out({ event: "step_update", conversation_id: CONV, step_update: { conversation_id: CONV, step_index: 0, state: "ACTIVE", step_type: "tool", tool_name: toolName, tool_info: { name: toolName, parameters: {} } } });
 // FAKE_AGY_EXTRA_STEPS=1: steps agy streams that carry no chat content
@@ -274,7 +307,14 @@ if (mode === "ask-peer") {
   }
 }
 
-out({ event: "step_update", conversation_id: CONV, step_update: { conversation_id: CONV, step_index: 0, state: "DONE", step_type: "tool", tool_name: toolName, tool_info: { name: toolName, parameters: {} } } });
+const denial = hookDenial(toolName);
+if (denial !== null) {
+  out({ event: "step_update", conversation_id: CONV, step_update: { conversation_id: CONV, step_index: 0, state: "ERROR", step_type: "tool", tool_name: toolName, tool_info: { name: toolName, parameters: {}, error: { type: "TOOL_ERROR", message: `tool call denied by pre-tool hook: ${denial}` } } } });
+  if (process.env.FAKE_AGY_DUMP) writeFileSync(`${process.env.FAKE_AGY_DUMP}.hook.json`, JSON.stringify({ tool: toolName, denial }));
+} else {
+  if (process.env.FAKE_AGY_DUMP && process.env.FAKE_AGY_RUN_HOOKS === "1") writeFileSync(`${process.env.FAKE_AGY_DUMP}.hook.json`, JSON.stringify({ tool: toolName, denial: null }));
+  out({ event: "step_update", conversation_id: CONV, step_update: { conversation_id: CONV, step_index: 0, state: "DONE", step_type: "tool", tool_name: toolName, tool_info: { name: toolName, parameters: {} } } });
+}
 out({ event: "step_update", conversation_id: CONV, step_update: { conversation_id: CONV, step_index: 1, state: "DONE", step_type: "agent_response", usage: { input_tokens: 100, output_tokens: 20, thinking_tokens: 0, cache_read_tokens: 5, total_tokens: 125 } } });
 out({ event: "result", conversation_id: CONV, result: { conversation_id: CONV, status: "SUCCESS", response, duration_seconds: 1, num_turns: 1, usage: { input_tokens: 100, output_tokens: 20, thinking_tokens: 0, cache_read_tokens: 5, total_tokens: 125 } } });
 // FAKE_AGY_POST_RESULT_STEP=1: a step line written after the result, while
