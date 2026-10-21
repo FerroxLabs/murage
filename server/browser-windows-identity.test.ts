@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { parse } from "yaml";
-import { nativeAuthenticodeIn, requireBrowserSignature, verifyWindowsBrowserImage, verifyWindowsBrowserSignatures, WINDOWS_BROWSER_PUBLISHER, windowsBrowserSignatureScript, windowsSignaturePowerShell, type UnsignedPePin } from "./browser-windows-identity.ts";
+import { nativeAuthenticodeIn, requireBrowserSignature, verifyWindowsBrowserImage, verifyWindowsBrowserSignatures, WINDOWS_BROWSER_PUBLISHER, type UnsignedPePin } from "./browser-windows-identity.ts";
 
 function fixture() {
   const original = Buffer.alloc(512, 0x41), pe = 64, optional = pe + 24, security = optional + 144;
@@ -44,18 +44,9 @@ describe("Windows browser original-byte binding", () => {
     if (kind === "trailing-data") bytes = Buffer.concat([bytes, Buffer.alloc(8)]);
     expect(() => verifyWindowsBrowserImage(bytes, pin)).toThrow(/pinned original/);
   });
-  it("binds the signature command to the child Windows PowerShell module set before loading cmdlets", () => {
-    const script = windowsBrowserSignatureScript(["C:\\fixture\\browser's.exe"]);
-    expect(script.startsWith(String.raw`$env:PSModulePath=$PSHOME+'\Modules';`)).toBe(true);
-    expect(script).toContain("Get-AuthenticodeSignature -LiteralPath $file");
-    expect(script).toContain("browser''s.exe");
-  });
-  it("starts Windows PowerShell hidden, with no profile and no prompt", () => {
-    const run = windowsSignaturePowerShell("Write-Output 1", "D:\\Win");
-    expect(run.command.replaceAll("/", "\\")).toBe("D:\\Win\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
-    expect(run.args.slice(0, 5)).toEqual(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand"]);
-    expect(Buffer.from(run.args[5], "base64").toString("utf16le")).toBe("Write-Output 1");
-    expect(run.options).toMatchObject({ windowsHide: true, timeout: 20_000 });
+  it("without the native check it refuses, and there is no PowerShell fallback left to start", async () => {
+    await expect(verifyWindowsBrowserSignatures(["C:\\ok.exe"], "C:\\Windows", null)).rejects.toMatchObject({ signatureStatus: "helper-missing" });
+    expect(readFileSync(new URL("./browser-windows-identity.ts", import.meta.url), "utf8").split("\n").filter((line) => !/^\s*(\/\/|\/\*|\*)/.test(line)).join("\n")).not.toMatch(/powershell|Get-AuthenticodeSignature -LiteralPath|child_process/i);
   });
   it("the native check needs no PowerShell and is exactly as strict", async () => {
     const answers: Record<string, unknown> = {

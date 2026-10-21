@@ -457,6 +457,43 @@ export function inheritMarks(tx: DatabaseSync, child: InheritChild, refs: readon
   wakeIfStarted();
 }
 
+/** A late edge's parent: a memory object, or a stored line (a capture's message). */
+export type EdgeParent = MemoryRef | { readonly threadId: string; readonly messageId: string };
+const scopeOf = (tx: DatabaseSync, ref: MemoryRef): string | undefined => {
+  if (ref.scopeId) return ref.scopeId;
+  const row = ref.kind === "source" ? st(tx, "SELECT scope_id FROM memory_sources WHERE id=?").get(ref.id)
+    : ref.kind === "record" ? (ref.version && ref.version > 0 ? st(tx, "SELECT scope_id FROM memory_records WHERE id=? AND version=?").get(ref.id, ref.version)
+      : st(tx, "SELECT scope_id FROM memory_records WHERE id=? LIMIT 1").get(ref.id)) : undefined;
+  return typeof row?.scope_id === "string" ? row.scope_id : undefined;
+};
+/** Late cap-free fan-out inherits at write (DRAIN-104 2.11): a memory object written by a background job or an owner action with an edge
+ * the walk follows (evidence, a derivation, a capture, a copy) inherits its parent's marks in the writer's transaction, as lines, turns,
+ * sessions and records written in a turn do (lineage-write.ts carryOnto). So a source captured from a denied line, a record extracted or
+ * derived from a denied object, or a copy of a denied source, written after a walk passed, is marked under the denying revoke (or held
+ * pending while it is in flight) at its own lsn: the record's created lsn, a source's current lsn. A line with no lineage row is UNKNOWN_LSN,
+ * which every revoke of its thread matches (fail closed). O(parents) seeks. Call once per inserted edge, after the child row is written. */
+export function inheritEdge(tx: DatabaseSync, child: MemoryRef, parent: EdgeParent): void {
+  if (!hasWritetime(tx)) return;
+  const scopeId = scopeOf(tx, child);
+  const ref: MemoryRef = scopeId ? { ...child, scopeId } : child;
+  const lsn = child.kind === "record" ? recordCreated(tx, child.id, child.version) : currentLsn(tx);
+  if ("threadId" in parent) {
+    const line = lineOf(tx, parent.threadId, parent.messageId);
+    const at = line ? Number(line.lsn) : UNKNOWN_LSN;
+    inheritMarks(tx, { kind: "record", ref, lsn }, [], [{ threadId: parent.threadId, from: at, to: at }]);
+    return;
+  }
+  const parentScope = scopeOf(tx, parent);
+  inheritMarks(tx, { kind: "record", ref, lsn }, [{ kind: "memory", ref: parentScope ? { ...parent, scopeId: parentScope } : parent }]);
+}
+/** inheritEdge for every evidence source and derivation parent of one record version (the copy sites: INSERT ... SELECT of a version's edges). */
+export function inheritEdges(tx: DatabaseSync, child: { id: string; version: number }): void {
+  if (!hasWritetime(tx)) return;
+  const ref: MemoryRef = { kind: "record", id: child.id, version: child.version };
+  for (const row of st(tx, "SELECT DISTINCT source_id AS s FROM memory_evidence WHERE record_id=? AND record_version=?").all(child.id, child.version)) inheritEdge(tx, ref, { kind: "source", id: String(row.s) });
+  for (const row of st(tx, "SELECT parent_id AS p,parent_version AS v FROM memory_derivations WHERE child_id=? AND child_version=?").all(child.id, child.version)) inheritEdge(tx, ref, { kind: "record", id: String(row.p), version: Number(row.v) });
+}
+
 /** Rows opening and activating a bulk writes (its job and audience rows, the generation). */
 const BULK_OPEN_COST = 8;
 /** Rows committing a receipt root writes before its hold: the commit slot, the job's root, the frontier node, pending and seed rows, the

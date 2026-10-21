@@ -9,6 +9,7 @@ import { removeTempDir } from "../../testing/cleanup.ts";
 import { recordEvents } from "../../testing/events.ts";
 import {
   classifyOpenCodeError,
+  discoverOpenCodeModels,
   canListOpenCodeModels,
   createOpenCodeDriver,
   murageOwnsWorkingFolder,
@@ -30,8 +31,8 @@ describe("OpenCode catalog", () => {
     const models = parseOpenCodeModelsOutput([
       "openrouter/vendor/model-v2",
       JSON.stringify({ name: "Vendor Model", status: "active" }, null, 2),
-      "opencode/x-preview-f-free",
-      JSON.stringify({ name: "Ox Alpha Free", status: "active", limit: { context: 1_000_000 } }, null, 2),
+      "opencode/beam-free",
+      JSON.stringify({ name: "Beam Free", status: "active", limit: { context: 1_000_000 } }, null, 2),
       "opencode-go/minimax-m3",
       JSON.stringify({ name: "MiniMax M3", status: "active" }, null, 2),
       "ollama/qwen3",
@@ -42,12 +43,12 @@ describe("OpenCode catalog", () => {
       JSON.stringify({ name: "Retired", status: "deprecated" }, null, 2),
     ].join("\n"));
 
-    expect(models?.default).toBe("opencode/x-preview-f-free");
+    expect(models?.default).toBe("opencode/beam-free");
     expect(models?.options).toEqual([
       expect.objectContaining({ id: "openrouter/vendor/model-v2", label: "OpenRouter · Vendor Model" }),
       expect.objectContaining({
-        id: "opencode/x-preview-f-free",
-        label: "Zen · Ox Alpha Free",
+        id: "opencode/beam-free",
+        label: "Zen · Beam Free",
         contextWindow: 1_000_000,
       }),
       expect.objectContaining({ id: "opencode-go/minimax-m3", label: "Go · MiniMax M3" }),
@@ -56,8 +57,13 @@ describe("OpenCode catalog", () => {
     ]);
   });
 
+  it("falls back to a model opencode 1.19.3 lists, not the retired x-preview-f-free", () => {
+    const parsed = parseOpenCodeModelsOutput("openrouter/vendor/model-v2\nopencode/beam-free\n");
+    expect(parsed?.default).toBe("opencode/beam-free");
+  });
+
   it("caches the anonymous model probe across authentication checks", async () => {
-    const runModels = vi.fn(async () => "opencode/x-preview-f-free\n");
+    const runModels = vi.fn(async () => "opencode/beam-free\n");
 
     await expect(canListOpenCodeModels({}, "counting-opencode", runModels)).resolves.toBe(true);
     await expect(canListOpenCodeModels({}, "counting-opencode", runModels)).resolves.toBe(true);
@@ -68,13 +74,13 @@ describe("OpenCode catalog", () => {
   it("accepts header-only output from older CLIs and rejects malformed lines", () => {
     const models = parseOpenCodeModelsOutput([
       "Available models",
-      "opencode/x-preview-f-free",
+      "opencode/beam-free",
       "bad model/with space",
       "openrouter/anthropic/claude-sonnet-5",
     ].join("\n"));
 
     expect(models?.options.map((option) => option.id)).toEqual([
-      "opencode/x-preview-f-free",
+      "opencode/beam-free",
       "openrouter/anthropic/claude-sonnet-5",
     ]);
   });
@@ -84,7 +90,7 @@ describe("OpenCode catalog", () => {
     const driver = createOpenCodeDriver(async () => {
       calls += 1;
       const id = calls === 1
-        ? "opencode/x-preview-f-free"
+        ? "opencode/beam-free"
         : calls === 2
           ? "opencode-go/extra-two"
           : "openrouter/vendor/extra-three";
@@ -98,7 +104,7 @@ describe("OpenCode catalog", () => {
       config: driver.defaultConfig(),
     });
 
-    expect(instance.models.default).toBe("opencode/x-preview-f-free");
+    expect(instance.models.default).toBe("opencode/beam-free");
     expect(instance.models.options.some((option) => option.custom)).toBe(false);
     await instance.refreshModels?.();
     expect(instance.models.options.some((option) => option.id === "opencode-go/extra-two" && !option.custom)).toBe(true);
@@ -108,7 +114,7 @@ describe("OpenCode catalog", () => {
   });
 
   it("keeps the driver optional and declares the OpenCode CLI setup", () => {
-    const driver = createOpenCodeDriver(async () => catalog("opencode/x-preview-f-free"));
+    const driver = createOpenCodeDriver(async () => catalog("opencode/beam-free"));
     expect(driver.driverKind).toBe("opencodeGo");
     expect(driver.metadata.displayName).toBe("OpenCode");
     expect(driver.decodeConfig(undefined)).toEqual({ cli: "opencode", fullAuto: false, workspace: undefined });
@@ -118,7 +124,7 @@ describe("OpenCode catalog", () => {
 
   it("migrates the retired Ox preview id without changing current ids", () => {
     expect(normalizeLegacyOpenCodeModel("opencode-go/ox-alpha-free", {})).toBe(
-      "opencode/x-preview-f-free",
+      "opencode/beam-free",
     );
     expect(normalizeLegacyOpenCodeModel("opencode-go/ox-alpha-free", { OPENCODE_API_KEY: "configured" })).toBe(
       "opencode-go/x-preview-f-free",
@@ -183,7 +189,7 @@ describe("OpenCode catalog", () => {
     writeFileSync(join(authDir, "auth.json"), JSON.stringify({
       opencode: { type: "oauth", access: "acc-token", refresh: "ref-token" },
     }));
-    const driver = createOpenCodeDriver(async () => catalog("opencode/x-preview-f-free"));
+    const driver = createOpenCodeDriver(async () => catalog("opencode/beam-free"));
     const instance = await driver.create({
       instanceId: "opencode-oauth-auth",
       displayName: "OpenCode",
@@ -207,7 +213,7 @@ describe("OpenCode catalog", () => {
   // turn still runs and the screen stops claiming a login nobody performed.
   it("treats OpenCode's anonymous free catalog as runnable, but not as signed in", async () => {
     const scratch = mkdtempSync(join(tmpdir(), "murage-opencode-free-"));
-    const driver = createOpenCodeDriver(async () => catalog("opencode/x-preview-f-free"));
+    const driver = createOpenCodeDriver(async () => catalog("opencode/beam-free"));
     const instance = await driver.create({
       instanceId: "opencode-free",
       displayName: "OpenCode",
@@ -215,7 +221,7 @@ describe("OpenCode catalog", () => {
         HOME: scratch,
         USERPROFILE: scratch,
         XDG_DATA_HOME: join(scratch, "data"),
-        FAKE_ACP_MODELS: "opencode/x-preview-f-free",
+        FAKE_ACP_MODELS: "opencode/beam-free",
       },
       enabled: true,
       config: { cli: FAKE_CLI, fullAuto: false },
@@ -235,14 +241,14 @@ describe("OpenCode catalog", () => {
     writeFileSync(join(authDir, "auth.json"), JSON.stringify({
       opencode: { type: "api", key: "zen-only-secret" },
     }));
-    const driver = createOpenCodeDriver(async () => catalog("opencode/x-preview-f-free"));
+    const driver = createOpenCodeDriver(async () => catalog("opencode/beam-free"));
     const instance = await driver.create({
       instanceId: "opencode-zen-only",
       displayName: "OpenCode",
       environment: {
         XDG_DATA_HOME: scratch,
         OPENCODE_API_KEY: "",
-        FAKE_ACP_MODELS: "opencode/x-preview-f-free",
+        FAKE_ACP_MODELS: "opencode/beam-free",
       },
       enabled: true,
       config: { cli: FAKE_CLI, fullAuto: false },
@@ -252,12 +258,12 @@ describe("OpenCode catalog", () => {
       await instance.adapter.sendTurn({
         threadId: "t-opencode-zen-only",
         text: "hello",
-        model: "opencode/x-preview-f-free",
+        model: "opencode/beam-free",
       });
       const done = await recorder.until((event) => event.type === "turn.completed");
       expect(done).toMatchObject({ ok: true });
       expect(recorder.events).toEqual(expect.arrayContaining([
-        expect.objectContaining({ type: "session.started", model: "opencode/x-preview-f-free" }),
+        expect.objectContaining({ type: "session.started", model: "opencode/beam-free" }),
       ]));
     } finally {
       recorder.stop();
@@ -410,7 +416,7 @@ describe("OpenCode Flux routing", () => {
   });
 
   async function instanceWith(extra: Record<string, string> = {}) {
-    const driver = createOpenCodeDriver(async () => catalog("opencode/x-preview-f-free"));
+    const driver = createOpenCodeDriver(async () => catalog("opencode/beam-free"));
     return await driver.create({
       instanceId: "opencode-flux",
       displayName: "OpenCode",
@@ -521,7 +527,7 @@ describe("OpenCode Flux routing", () => {
     mkdirSync(emptyData, { recursive: true });
     const bare = { ...env, XDG_DATA_HOME: emptyData, OPENCODE_API_KEY: "" } as Record<string, string>;
 
-    const before = await createOpenCodeDriver(async () => catalog("opencode/x-preview-f-free")).create({
+    const before = await createOpenCodeDriver(async () => catalog("opencode/beam-free")).create({
       instanceId: "opencode-flux-auth-before",
       displayName: "OpenCode",
       environment: bare,
@@ -537,7 +543,7 @@ describe("OpenCode Flux routing", () => {
     resetOpenCodeModelCache();
     await connectOpenCodeFlux({ key: FLUX_KEY, env });
 
-    const after = await createOpenCodeDriver(async () => catalog("opencode/x-preview-f-free")).create({
+    const after = await createOpenCodeDriver(async () => catalog("opencode/beam-free")).create({
       instanceId: "opencode-flux-auth-after",
       displayName: "OpenCode",
       environment: bare,
@@ -563,5 +569,13 @@ describe("OpenCode Flux routing", () => {
     expect(config.provider.flux.options.apiKey).toBe(FLUX_KEY);
     expect(openCodeFluxRouted(env)).toBe(true);
     expect(existsSync(configPath)).toBe(true);
+  });
+});
+
+describe("OpenCode model source", () => {
+  it("a failed `opencode models` is static, never live", async () => {
+    resetOpenCodeModelCache();
+    const failed = await discoverOpenCodeModels({}, join(tmpdir(), "murage-no-such-opencode"));
+    expect(failed.source).toBe("static");
   });
 });

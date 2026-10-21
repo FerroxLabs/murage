@@ -11,15 +11,15 @@ import { oneShots } from "../engine-one-shots.ts";
 import { fluxCallHeaders, fuigoConfigOverlay } from "../flux-memory-headers.ts";
 import { copyFileSync, existsSync, chmodSync, readFileSync, lstatSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { PIP_JOB_REFUSAL } from "../memory/pip-job.ts";
+import { PIP_JOB_REFUSAL, PipJobRefusedError } from "../memory/pip-job.ts";
 import { join } from "node:path";
 import { reportMemoryUsage } from "../memory/extract.ts";
 import { augmentedPath } from "../env-path.ts";
-import { awaitCliTreeStopped, spawnCli } from "../procs.ts";
+import { awaitCliTreeStopped, cliJobRefused, spawnCli } from "../procs.ts";
 import { cloudTurnBot } from "../cloud-home/turn-process.ts";
 import { registerChild } from "../memory/pip-reaper.ts";
 import {
-  DEFAULT_ALLOWED_ROOT_NEW, FIRST_BYTE_MS, MAX_OUTPUT_BYTES, RUN_BOUND_MS, assertSupportedSchema, bindReflectionRoute, buildIsolationReport, buildReflectionEnv, createTempRoot,
+  FIRST_BYTE_MS, MAX_OUTPUT_BYTES, RUN_BOUND_MS, assertSupportedSchema, bindReflectionRoute, buildIsolationReport, buildReflectionEnv, createTempRoot,
   gateRun, isReportedOverLimit, listFiles, newFiles, parseHeadlessMessages, preflightRoute, removeTempRoot, runAdmissionFence,
   type AdmissionFenceAnswer, type BootEpoch, type JsonSchema, type MissHistory, type PipEngine, type PreflightOptions, type TempRoot, type TextOnlyTurnInput,
   type TextOnlyTurnResult, type TransportHooks, type Verdict,
@@ -63,7 +63,7 @@ export function runHeadlessCli(o: HeadlessRunOptions): Promise<TextOnlyTurnResul
   return oneShots.run(o.engine, o.signal, (signal) => runHeadlessCliNow({ ...o, signal }));
 }
 async function runHeadlessCliNow(o: HeadlessRunOptions): Promise<TextOnlyTurnResult> {
-  const job = process.platform === "win32" ? { name: `Local\\murage-pip-${randomUUID()}`, argsFile: join(o.temp.root, "job-args.json") } : undefined;
+  const job = process.platform === "win32" ? { name: `Local\\murage-pip-${randomUUID()}` } : undefined;
   const max = o.maxOutputBytes ?? MAX_OUTPUT_BYTES;
   const now = Date.now();
   const deadlineAt = o.deadlineAt ?? now + RUN_BOUND_MS;
@@ -96,7 +96,12 @@ async function runHeadlessCliNow(o: HeadlessRunOptions): Promise<TextOnlyTurnRes
   const env: Record<string, string | undefined> = { ...o.env };
   cloudTurnBot(env, o.context?.botId);
   try { child = spawnCli(o.cli, o.args, { cwd: o.cwd, env, stdio: ["pipe", "pipe", "pipe"] }, job); }
-  catch (error) { finish(true); throw error; }
+  catch (error) {
+    finish(true);
+    // No job, no CLI: the run is refused for isolation, exactly as a failed assignment is (jobRefusal below).
+    if (error instanceof PipJobRefusedError) return settledWithout({ state: "refused", reason: "isolation", detail: "job-assignment-failed", counted: false });
+    throw error;
+  }
 
   let exitCode: number | null = null;
   const closed = new Promise<void>((done) => { child.once("close", (code) => { exitCode = code; done(); }); child.once("error", () => done()); });
@@ -138,7 +143,7 @@ async function runHeadlessCliNow(o: HeadlessRunOptions): Promise<TextOnlyTurnRes
   const notConfirmed = () => aborted ? "abort-exit-not-confirmed" : deadlineHit ? "deadline-exit-not-confirmed" : overBytes ? "overflow-exit-not-confirmed" : timedOut ? "first-byte-exit-not-confirmed" : "exit-not-confirmed";
 
   const jobRefusal = (exited: boolean): TextOnlyTurnResult | null => {
-    if (!job || exitCode !== PIP_JOB_REFUSAL || !exited) return null;
+    if (!job || (exitCode !== PIP_JOB_REFUSAL && !cliJobRefused(child)) || !exited) return null;
     finish(true);
     return settledWithout({ state: "refused", reason: "isolation", detail: "job-assignment-failed", counted: false });
   };
@@ -180,7 +185,7 @@ async function runHeadlessCliNow(o: HeadlessRunOptions): Promise<TextOnlyTurnRes
       finish(exited);
       return { text: "", usage: accountUsage(), isolation: { ...noProcessReport(), exited }, verdict: { state: "uncertain-transport", reason: "inventory-unreadable" } };
     }
-    const observation = { parsed, homeNewFiles, cwdNewFiles, rootNewFiles, exited, outputSchema: o.outputSchema, history: o.history, overBytes, allowedHomeNew: o.allowedHomeNew, allowedRootNew: job ? [...(o.allowedRootNew ?? DEFAULT_ALLOWED_ROOT_NEW), /^job-args\.json$/] : o.allowedRootNew, engine: o.engine, structuredTool: o.engine === "claude" };
+    const observation = { parsed, homeNewFiles, cwdNewFiles, rootNewFiles, exited, outputSchema: o.outputSchema, history: o.history, overBytes, allowedHomeNew: o.allowedHomeNew, allowedRootNew: o.allowedRootNew, engine: o.engine, structuredTool: o.engine === "claude" };
     const isolation = buildIsolationReport(observation);
     // A first byte that never arrived is a start-up delay, not a bad answer.
     let verdict: Verdict = timedOut && bytes === 0 && exited

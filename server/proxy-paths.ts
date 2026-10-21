@@ -19,6 +19,7 @@
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { SPAWNED_PROXY_FILES } from "../shared/spawned-proxies.mjs";
 
 /** The directory holding the server's runtime files: server/ in dev, the
  * extraResources copy of dist-server/ (Resources/server) in the packaged app. */
@@ -32,36 +33,8 @@ export function resolveProxy(relative: string): string {
 
 /** Every file the server spawns as its own process. Single source of truth so
  * the smoke test can assert each one actually exists in a packaged layout —
- * the check that would have caught the 0.1.24 breakage. */
-export const SPAWNED_PROXIES = {
-  memory: resolveProxy("drivers/memory-proxy"),
-  memoryWorker: resolveProxy("memory/worker"),
-  // The WhatsApp bridge child (Baileys socket). Built by its own esbuild call in scripts/bundle-server.mjs, not
-  // listed in ENTRY_POINTS, because that build would inline Baileys; `baileys` and `jimp` stay external.
-  whatsappBridge: resolveProxy("channels/whatsapp/bridge"),
-  // A worker thread, not a process: reads a large import off the main thread.
-  importGuardWorker: resolveProxy("bot-package-guard-worker"),
-  // A worker thread: removes a deleted conversation's history from the engines' own files off the main thread.
-  engineHistoryWorker: resolveProxy("engine-history-worker"),
-  transcriptReadWorker: resolveProxy("transcript-read-worker"),
-  inboxFillWorker: resolveProxy("inbox-fill-worker"),
-  computer: resolveProxy("computer-proxy"),
-  permission: resolveProxy("permission-proxy"),
-  containerMcp: resolveProxy("container-mcp"),
-  vpsContainerMcp: resolveProxy("vps-container-mcp"),
-  vpsRelayMcp: resolveProxy("cloud-home/vps-relay-mcp"),
-  agents: resolveProxy("drivers/agents-proxy"),
-  dweb: resolveProxy("drivers/dweb-proxy"),
-  connectors: resolveProxy("connector-proxy"),
-  remoteMcp: resolveProxy("drivers/remote-mcp-proxy"),
-  phone: resolveProxy("drivers/phone-proxy"),
-  browser: resolveProxy("drivers/browser-proxy"),
-  headlessBrowser: resolveProxy("drivers/headless-browser-proxy"),
-  unifiedBrowser: resolveProxy("drivers/unified-browser-proxy"),
-  hostComputer: resolveProxy("drivers/host-computer-proxy"),
-  // Loaded by the external `pi` process via `-e`, not by this server — but
-  // resolved through the same single source of truth so the packaged layout
-  // check can assert it ships.
-  piMcpExtension: resolveProxy("drivers/pi-mcp-extension"),
-  piPermissionGate: resolveProxy("drivers/pi-permission-gate"),
-} as const;
+ * the check that would have caught the 0.1.24 breakage. The names live in
+ * shared/spawned-proxies.mjs, which the desktop main process reads too. */
+export const SPAWNED_PROXIES = Object.fromEntries(
+  Object.entries(SPAWNED_PROXY_FILES).map(([name, relative]) => [name, resolveProxy(relative)]),
+) as { readonly [K in keyof typeof SPAWNED_PROXY_FILES]: string };

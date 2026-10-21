@@ -65,7 +65,7 @@ describe.skipIf(!built || !posix)("the real addon, with real second processes", 
 
   it("loads, and says what it is", () => {
     const addon = loadExclusionAddon()!;
-    expect(addon.version()).toBe(7);
+    expect(addon.version()).toBe(8);
     expect(Object.keys(addon).sort()).toEqual(["bootId", "fullSync", "lock", "processes", "renameNoReplace", "version", "writers"]);
   });
 

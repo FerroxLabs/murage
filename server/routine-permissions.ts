@@ -82,10 +82,11 @@ export function peerTurnAuthority(peer: AutoApprover, parentRun: RoutinePeerSour
   };
 }
 
-/** Every turn reaches the broker, without changing other instance modes. */
-export function turnPermissionEnforcement(bot: AutoApprover): Pick<SendTurnInput, "routeAsks" | "stopLine"> {
+/** Every turn reaches the broker, without changing other instance modes. An Ask turn also says so (askLevel), so an
+ *  engine that cannot ask before every change runs it read-only (server/drivers/ask-stop.ts). */
+export function turnPermissionEnforcement(bot: AutoApprover): Pick<SendTurnInput, "routeAsks" | "stopLine" | "askLevel"> {
   const mode = botPermissionMode(bot);
-  return mode === "ask" || mode === "auto" ? { routeAsks: true } : { stopLine: true };
+  return mode === "ask" ? { routeAsks: true, askLevel: true } : mode === "auto" ? { routeAsks: true } : { stopLine: true };
 }
 
 /** AMEND-13 Rule 76b: a routine's remembered keys reach only the bot the

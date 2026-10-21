@@ -19,6 +19,7 @@ import { saveProjectCloseLesson, saveMemoryCandidate, saveGroundedMemory, assert
 import { MEMORY_HANDLE_PATTERN } from "../../shared/memory.ts";
 import { enqueueProcedureCorrectionReview } from "./procedure-review.ts";
 import { revokeRecordDisclosures } from "./revocation.ts";
+import { inheritEdge } from "./revoke-commit.ts";
 
 /** Resolves the turn-local handles of the dispatch this capability belongs to
  * (MemoryDispatchReceipt.resolveHandle). Absent when no dispatch is live. */
@@ -123,6 +124,7 @@ export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAcc
         if(recorded.some(row=>row.parent_id!==target.id||Number(row.parent_version)!==target.version))throw new Error("MEMORY_IDEMPOTENCY_CONFLICT");
         db.prepare("UPDATE memory_records SET supersedes_id=? WHERE id=? AND version=1").run(target.id,candidateId);
         db.prepare("INSERT OR IGNORE INTO memory_derivations VALUES(?,?,?,1)").run(target.id,target.version,candidateId);
+        inheritEdge(db,{kind:"record",id:candidateId,version:1},{kind:"record",id:target.id,version:target.version});
         return candidateId;
       });
       let refusal=ownerLearningRefusal(db,input.evidence);

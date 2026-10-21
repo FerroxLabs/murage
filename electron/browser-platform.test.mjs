@@ -12,8 +12,23 @@ describe("built-in browser platform gate", () => {
     expect(browserSurfaceSupported("linux")).toBe(true);
   });
 
-  it("fails closed on Windows until its real sandbox fixture can block CI", () => {
-    expect(browserSurfaceSupported("win32")).toBe(false);
+  it("offers the surface on Windows (Electron 43.7.7 no longer crashes)", () => {
+    expect(browserSurfaceSupported("win32")).toBe(true);
+  });
+
+  it("keeps the inline preload predicate in step with the shared helper", () => {
+    const preload = readFileSync(fileURLToPath(new URL("./preload.cjs", import.meta.url)), "utf8");
+    const m = preload.match(/const browserSurfaceSupported = ([^;\n]+);/);
+    expect(m).not.toBeNull();
+    const inline = (platform) => new Function("process", `return ${m[1]};`)({ platform });
+    for (const platform of ["darwin", "linux", "win32", "freebsd", "aix"]) {
+      expect(inline(platform), platform).toBe(browserSurfaceSupported(platform));
+    }
+  });
+
+  it("has no Windows-only 'unavailable' copy left in Settings", () => {
+    const settings = readFileSync(fileURLToPath(new URL("../src/components/SettingsModal.tsx", import.meta.url)), "utf8");
+    expect(settings).not.toMatch(/browserBlockedOnWindows|Temporarily unavailable on Windows/);
   });
 
   it("fails closed on unknown platforms", () => {
