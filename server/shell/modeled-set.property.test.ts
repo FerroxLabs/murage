@@ -227,7 +227,7 @@ const UNMODELED: Payload[] = [
   { text: "f(){ cd /usr; }; f; rm -rf x", simple: false },
   { text: "D=/usr; false && D=/tmp; rm -rf \"$D\"", simple: false },
   { text: "if true; then f(){ ls; }; else f(){ pwd; }; fi; f", simple: false },
-  { text: 'powershell -c "\\$x=Get-ChildItem"', simple: true },
+  { text: 'powershell -c "\\$x=iex y"', simple: true }, // 1.0.4 F1: an assignment's right side is read; a read-only one is ordinary
   { text: 'powershell -c "Remove-Item -f ~"', simple: true },
   { text: "rm $FLAGS /", simple: true },
   { text: "echo $'\\q'", simple: true },

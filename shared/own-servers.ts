@@ -115,6 +115,51 @@ export function isOwnUnasked(mountId: string, tool: string): boolean {
   return OWN_UNASKED.some((row) => row.mount === mountId && row.tools.includes(tool));
 }
 
+/** Whether an own tool asks on every engine: its mount and exact name are an OWN_ALWAYS_ASK row. */
+export function isOwnAlwaysAsk(mountId: string, tool: string): boolean {
+  return OWN_ALWAYS_ASK.some((row) => row.mount === mountId && row.tool === tool);
+}
+
+/** The OWN_ALWAYS_ASK pair an engine's MCP-qualified name spells
+ * (`mcp__<server>__<tool>`, or `<server>__<tool>` as a dispatcher names it),
+ * as `own:<builtin>/<tool>`, or undefined. A bare tool name never matches:
+ * it could be an engine's own tool of the same name. */
+export function ownAlwaysAskByName(name: string | undefined): string | undefined {
+  if (!name) return undefined;
+  const bare = name.startsWith("mcp__") ? name.slice("mcp__".length) : name;
+  for (const row of OWN_ALWAYS_ASK) {
+    const server = OWN_BUILTINS[row.mount.slice("own:".length) as OwnBuiltin];
+    if (bare === `${server}__${row.tool}`) return `${row.mount}/${row.tool}`;
+  }
+  return undefined;
+}
+
+/** The two tables never name the same mount and tool: one tool cannot both
+ * run unasked and ask on every engine. Checked when this module loads. */
+export function assertOwnAskTablesDisjoint(
+  unasked: readonly OwnUnaskedRow[] = OWN_UNASKED,
+  always: readonly { mount: string; tool: string }[] = OWN_ALWAYS_ASK,
+): void {
+  const both = always.filter((row) => unasked.some((u) => u.mount === row.mount && u.tools.includes(row.tool)));
+  if (both.length) throw new Error(`own-servers: OWN_ALWAYS_ASK and OWN_UNASKED both name ${both.map((row) => `${row.mount}/${row.tool}`).join(", ")}`);
+}
+assertOwnAskTablesDisjoint();
+
+/** The OWN_UNASKED rows that only read Murage's own records: the roster
+ * and its lookups, memory search and get, dweb status. These run with no
+ * card at every level on every engine (Claude and Codex never ask for
+ * them), Ask included. Every other own tool keeps its level's rules. */
+export const OWN_READS: readonly { mount: `own:${OwnBuiltin}`; tools: readonly string[] }[] = [
+  { mount: "own:memory", tools: ["memory_search", "memory_get"] },
+  { mount: "own:agents", tools: OWN_UNASKED.find((row) => row.mount === "own:agents")!.tools },
+  { mount: "own:dweb", tools: ["dweb_status", "dweb_repo_status", "dweb_opencode_models"] },
+];
+
+/** Whether an own tool only reads: its mount and exact name are an OWN_READS row (and so also an OWN_UNASKED one). */
+export function isOwnRead(mountId: string, tool: string): boolean {
+  return OWN_READS.some((row) => row.mount === mountId && row.tools.includes(tool)) && isOwnUnasked(mountId, tool);
+}
+
 /** Rule 56a step 1: operation-level classifications that outrank the key
  * vocabularies, keyed by (mount, tool, key). `*` matches every tool of the
  * mount. These leaves are handles Murage resolves, never people. */
@@ -128,3 +173,20 @@ export const OWN_SCHEMA_OVERRIDES: readonly { mount: `own:${OwnBuiltin}`; tool: 
   { mount: "own:agents", tool: "*", key: "assignee_bot_id", as: "object" },
   { mount: "own:agents", tool: "*", key: "reviewer_bot_id", as: "object" },
 ];
+
+/** Murage's own computer mount (`own:computer`, the host computer's tools):
+ * the actions that only look at the screen and never change it. They run with
+ * no card at every level on every engine, Ask included, as Claude's own reads
+ * do; every other computer action (click, type, key, drag, scroll, open,
+ * clipboard, browser, app launch and kill) keeps its level's rules and asks
+ * once at Ask. The clipboard and browser reads are not here: they can return
+ * text the screen does not show. */
+export const OWN_COMPUTER_READS: readonly string[] = [
+  "list_windows", "list_apps", "get_window_state", "get_desktop_state", "get_accessibility_tree",
+  "get_screen_size", "get_cursor_position", "screenshot", "zoom",
+];
+
+/** Whether a call on the own computer mount only looks at the screen. */
+export function isOwnComputerRead(mountId: string, tool: string): boolean {
+  return mountId === "own:computer" && OWN_COMPUTER_READS.includes(tool);
+}

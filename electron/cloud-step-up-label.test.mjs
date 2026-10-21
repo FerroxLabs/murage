@@ -15,7 +15,7 @@ const SAMPLES = [
   ["POST", "/api/cloud/own-server"], ["POST", "/api/cloud/pairing"], ["POST", "/api/cloud/devices/d1"],
   ["POST", "/api/bots/b1/computer/join"], ["GET", "/api/mcp-grants"], ["POST", "/api/mcp-grants"], ["DELETE", "/api/mcp-grants/g1"], ["POST", "/api/routines/r1/run"],
   ["GET", "/api/bots/b1/browser-extension/activity"], ["POST", "/api/bots/b1/browser-extension/mode"], ["POST", "/api/bots/b1/browser-extension/sites"],
-  ["POST", "/api/bots/b1/browser-extension/check"], ["POST", "/api/bots/b1/browser-extension/start-task"], ["GET", "/api/browser-extension/clients"],
+  ["POST", "/api/bots/b1/browser-extension/check"], ["POST", "/api/bots/b1/browser-extension/start-task"], ["GET", "/api/browser-extension/clients"], ["POST", "/api/browser/linux-sandbox/enable"],
   ["PATCH", "/api/groups/g1/project/budget"], ["POST", "/api/groups/g1/project/budget"], ["PUT", "/api/groups/g1/project/work-roots"],
   ["PATCH", "/api/groups/g1/project/work-profile"], ["PATCH", "/api/groups/g1/project/settings"],
   ["PATCH", "/api/bots/b1/sharing"], ["POST", "/api/bots/b1/sharing/skills"], ["POST", "/api/bots/b1/sharing/copy"],

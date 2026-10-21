@@ -406,7 +406,7 @@ describe.skipIf(!built || !posix)("real addon: writers() and a file a renamed wr
 
   it("writers() names a process with the file open for writing, by its identity, and not a reader, a zombie or this process", () => {
     const addon = loadExclusionAddon()!;
-    expect(addon.version()).toBe(7);
+    expect(addon.version()).toBe(8);
     const file = join(mkdtempSync(join(scratch, "w-")), "f.jsonl");
     writeFileSync(file, "x\n");
     const own = openSync(file, "a");

@@ -7,6 +7,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { commitRevoke, inheritMarks, undoRevoke } from "./revoke-commit.ts";
 import { holdRevoke, MARKER_STEP_RESERVE, markerSlice, markerWorkPending, setScopeFlowEdgesRecorded } from "./revoke-marker.ts";
 import { foldCohorts, REVOKE_FOLD } from "./revoke-fold.ts";
+import * as foldModule from "./revoke-fold.ts";
+import { activateRevokesAtUpgrade } from "./schema.ts";
 import { closeTurnLineage, openTurnLineage } from "./lineage-write.ts";
 import { denyLookup, refsLookup } from "./deny-read.ts";
 import { FLIP_DRAIN_MAX } from "./receipt-outputs.ts";
@@ -78,9 +80,11 @@ describe("T1 backlog fold", () => {
       expect(n(db, "SELECT count(*) AS n FROM memory_revoke_frontier WHERE revoke_id=? AND seq>0", B!.r)).toBe(sourceMarks + 122);
       expect(n(db, "SELECT count(*) AS n FROM memory_revoke_frontier WHERE revoke_id=? AND node LIKE '%inh-%'", B!.r)).toBe(2);
       expect(n(db, "SELECT count(*) AS n FROM memory_revoke_reached WHERE revoke_id=?", B!.r)).toBe(1);
-      // B's flow phase leaves its '*' rows (the gate does not run for a fold bulk); they go with its tidy
+      // every member's pending rows were copied into B's flow (DRAIN-104 section 4): B's closure is certified, so its '*' rows end at its
+      // flow gate (before 1.0.4 they went with its tidy)
+      expect(JSON.parse(foldJob(db)[0]!.root)).toMatchObject({ narrow: 1, closureIds: jobs.map((_, i) => i) });
       for (let k = 0; k < 10_000 && foldJob(db)[0]!.phase === "flow"; k++) slice(db, 64);
-      expect(n(db, "SELECT count(*) AS n FROM memory_deny_pending WHERE thread_id='*' AND revoke_id=?", B!.r)).toBe(1);
+      expect(n(db, "SELECT count(*) AS n FROM memory_deny_pending WHERE thread_id='*' AND revoke_id=?", B!.r)).toBe(0);
       drainAll(db);
       expect(n(db, "SELECT count(*) AS n FROM memory_revoke_jobs WHERE revoke_id IN (SELECT value FROM json_each(?))", JSON.stringify(jobs))).toBe(0);
       expect(n(db, "SELECT count(*) AS n FROM memory_deny_pending WHERE revoke_id=?", B!.r)).toBe(0);
@@ -142,6 +146,8 @@ describe("T2 crash mid-fold, writes between stages", () => {
       expect(folds[0]!.state).toBe("active");
       const B = folds[0]!.r;
       expect(n(fx.db, "SELECT count(*) AS n FROM memory_revoke_fold WHERE bulk_id=?", B)).toBe(12);
+      // the pending copy ran for every member across the restarts, each counted once (DRAIN-104 section 4)
+      expect(JSON.parse(folds[0]!.root)).toMatchObject({ narrow: 1, closureIds: Array.from({ length: 12 }, (_, i) => i) });
       // each written line once (under B, or under the member and then copied); no duplicate root
       expect(n(fx.db, "SELECT count(*) AS n FROM memory_revoke_frontier WHERE revoke_id=? AND node LIKE '%\"late\"%'", B)).toBe(written);
       expect(n(fx.db, "SELECT count(*) AS n FROM memory_revoke_frontier WHERE revoke_id=? AND seq>0", B)).toBe(sourceMarks + 12 + written);
@@ -153,7 +159,7 @@ describe("T2 crash mid-fold, writes between stages", () => {
 });
 
 describe("T3 undo", () => {
-  it("undo of one root is refused at every stage, of B, and after B is pruned or recreated by inheritance; a drain bulk still undoes", () => {
+  it("undo of one root is refused at every stage, of B, and after B is pruned or recreated by inheritance; a drain bulk is refused too (DRAIN-104 2.5)", () => {
     const { fx, jobs } = legacy(6);
     const db = fx.db;
     const snap = () => ["memory_revoke_jobs", "memory_deny_pending", "memory_revoke_frontier", "memory_revoke_fold"].map(t => n(db, `SELECT count(*) AS n FROM ${t}`)).join(",");
@@ -187,9 +193,11 @@ describe("T3 undo", () => {
       flipAll(s);
       slice(s.db);
       const [bulk] = ids(s.db, "SELECT revoke_id AS r FROM memory_revoke_jobs WHERE kind='bulk' AND state='active'");
-      tx(s.db, () => undoRevoke(s.db, bulk!));
+      const before = n(s.db, "SELECT count(*) AS n FROM memory_revoke_jobs WHERE state='undoing'");
+      expect(() => tx(s.db, () => undoRevoke(s.db, bulk!))).toThrow("MEMORY_REVOKE_UNDO_BULK");
+      expect(n(s.db, "SELECT count(*) AS n FROM memory_revoke_jobs WHERE state='undoing'")).toBe(before);
       drainAll(s.db);
-      expect(n(s.db, "SELECT count(*) AS n FROM memory_deny_memory WHERE revoke_id=?", bulk!)).toBe(0);
+      expect(n(s.db, "SELECT count(*) AS n FROM memory_deny_memory WHERE revoke_id=?", bulk!)).toBeGreaterThan(0);
     } finally { s.close(); }
   });
 });
@@ -428,6 +436,99 @@ describe("T8 no backlog", () => {
       expect(foldJob(fx.db)).toHaveLength(0);
       expect(n(fx.db, "SELECT count(*) AS n FROM memory_revoke_fold")).toBe(0);
       expect(refsLookup(fx.db, [{ kind: "memory", ref: SHARED }], CONTENT).state).toBe("withheld");
+    } finally { fx.close(); }
+  });
+});
+
+describe("T8 DRAIN-104 section 4: a certified fold bulk ends its '*' window at its flow gate", () => {
+  // read through the namespace so this block loads (and fails on its assertions) against the 1.0.3 fold too
+  const knob = () => (foldModule as unknown as { FOLD_CLOSURE?: { enabled: boolean } }).FOLD_CLOSURE ?? { enabled: false };
+  const X = ["x-t1", "x-t2", "x-t3"];
+  afterEach(() => { knob().enabled = true; });
+  /** legacy(6): member 0 (flow phase) expanded x-t1 (its pending row) and still holds a flow item for x-t2; the mid member (mark phase) holds
+   * rows for x-t3 and a scope. */
+  function closureLegacy(): { fx: WritetimeFixture; jobs: number[] } {
+    const L = legacy(6);
+    const db = L.fx.db, A = L.jobs[0]!, M = L.jobs[3]!;
+    tx(db, () => {
+      db.prepare("INSERT INTO memory_deny_pending(thread_id,since_lsn,revoke_id) VALUES(?,5,?)").run(X[0]!, A);
+      db.prepare("INSERT INTO memory_revoke_frontier(revoke_id,seq,node) VALUES(?,-90,?)").run(A, JSON.stringify({ node: X[1], since: 5 }));
+      db.prepare("INSERT INTO memory_deny_pending(thread_id,since_lsn,revoke_id) VALUES(?,5,?)").run(X[2]!, M);
+      db.prepare("INSERT INTO memory_deny_pending_scope(scope_id,since_lsn,revoke_id) VALUES('s-x',5,?)").run(M);
+    });
+    setScopeFlowEdgesRecorded(true);
+    return L;
+  }
+  const cursor = (db: Db, B: number) => JSON.parse(String((db.prepare("SELECT cursor FROM memory_revoke_jobs WHERE revoke_id=?").get(B) as { cursor: string }).cursor) || "{}").fold as { stage: string; job: number; pk?: unknown } | undefined;
+  /** Slices until B has left its flow phase (the gate ran); returns B's row then. */
+  function toGate(db: Db, rows = 64): ReturnType<typeof foldJob>[number] {
+    for (let k = 0; k < 10_000; k++) { const [B] = foldJob(db); if (B && B.state === "active" && B.phase !== "flow") return B; slice(db, rows); }
+    throw new Error("unbounded");
+  }
+  const star = (db: Db, B: number) => n(db, "SELECT count(*) AS n FROM memory_deny_pending WHERE thread_id='*' AND revoke_id=?", B) + n(db, "SELECT count(*) AS n FROM memory_deny_pending_scope WHERE scope_id='*' AND revoke_id=?", B);
+  const held = (db: Db, B: number) => [...X.map(T => n(db, "SELECT count(*) AS n FROM memory_deny_pending WHERE thread_id=? AND revoke_id=?", T, B)), n(db, "SELECT count(*) AS n FROM memory_deny_pending_scope WHERE scope_id='s-x' AND revoke_id=?", B)];
+
+  it("a member's expanded thread, its flow item and a mark-phase member's rows are B's after its gate, and no '*' row is left", () => {
+    const { fx } = closureLegacy();
+    try {
+      const B = toGate(fx.db);
+      expect(JSON.parse(B.root)).toMatchObject({ narrow: 1, closureIds: [0, 1, 2, 3, 4, 5] });
+      expect(star(fx.db, B.r)).toBe(0);
+      expect(held(fx.db, B.r)).toEqual([1, 1, 1, 1]);
+    } finally { fx.close(); }
+  });
+
+  it("stopped mid pending copy and resumed by the 1.0.3 fold on the same file: holds next, no early sweep, '*' kept", () => {
+    const { fx, jobs } = closureLegacy();
+    const file = pathOf(fx.db);
+    try {
+      let k = 0;
+      for (; k < 10_000; k++) { const [B] = foldJob(fx.db); const c = B && cursor(fx.db, B.r); if (c?.stage === "frontier" && c.pk !== undefined && c.job === 3) break; slice(fx.db, 1); }
+      const B = foldJob(fx.db)[0]!.r;
+      const later = memberRows(fx.db, jobs.slice(4)), own = n(fx.db, "SELECT count(*) AS n FROM memory_deny_pending WHERE revoke_id=?", jobs[3]!);
+      expect(later).toBeGreaterThan(0);
+      knob().enabled = false; // the 1.0.3 fold: reads stage "frontier" past the member's last seq, moves to "holds", ignores pk
+      const db = new DatabaseSync(file);
+      try {
+        slice(db, 1);
+        expect(cursor(db, B)).toMatchObject({ stage: "holds", job: 3 });
+        expect(cursor(db, B)!.pk).toBeUndefined();
+        expect(memberRows(db, jobs.slice(4))).toBe(later); // nothing swept early
+        expect(n(db, "SELECT count(*) AS n FROM memory_deny_pending WHERE revoke_id=?", jobs[3]!)).toBe(own); // the member's rows wait for its clean
+        const row = toGate(db);
+        expect(JSON.parse(row.root).narrow).toBeUndefined();
+        expect(star(db, B)).toBeGreaterThan(0); // not certified: '*' kept to the tidy
+      } finally { db.close(); }
+    } finally { fx.close(); }
+  });
+
+  it("a fold with one member cleaned before the rule gets no narrow and keeps '*'", () => {
+    const { fx } = closureLegacy();
+    try {
+      knob().enabled = false;
+      for (let k = 0; k < 10_000; k++) { const [B] = foldJob(fx.db); const c = B && cursor(fx.db, B.r); if (c && c.job >= 1 && c.stage === "root") break; slice(fx.db, 1); }
+      knob().enabled = true;
+      const B = toGate(fx.db);
+      expect(JSON.parse(B.root).closureIds).toEqual([1, 2, 3, 4, 5]);
+      expect(JSON.parse(B.root).narrow).toBeUndefined();
+      expect(star(fx.db, B.r)).toBeGreaterThan(0);
+    } finally { fx.close(); }
+  });
+
+  it("rewound by repairFoldMap after a v10 round trip: the member counted once, and '*' kept (reupgraded)", () => {
+    const { fx } = closureLegacy();
+    const db = fx.db;
+    try {
+      for (let k = 0; k < 10_000; k++) { const [B] = foldJob(db); const c = B && cursor(db, B.r); if (c?.stage === "holds" && c.job === 2) break; slice(db, 1); }
+      const B = foldJob(db)[0]!.r;
+      expect(JSON.parse(foldJob(db)[0]!.root).closureIds).toEqual([0, 1, 2]);
+      // the v10 round trip: the map is lost, the upgrade marks the bulk reupgraded and the repair rewinds B to member 2's frontier copy
+      db.exec("DELETE FROM memory_revoke_fold");
+      tx(db, () => { activateRevokesAtUpgrade(db); foldModule.repairFoldMap(db); });
+      expect(cursor(db, B)).toMatchObject({ stage: "frontier", job: 2 });
+      const row = toGate(db);
+      expect(JSON.parse(row.root)).toMatchObject({ reupgraded: 1, closureIds: [0, 1, 2, 3, 4, 5] });
+      expect(star(db, B)).toBeGreaterThan(0);
     } finally { fx.close(); }
   });
 });

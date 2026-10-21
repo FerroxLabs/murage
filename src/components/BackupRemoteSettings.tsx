@@ -1,6 +1,7 @@
 import {useEffect,useRef,useState} from "react";
 import {resticS3TargetSchema,resticS3CredentialsSchema,sftpFolderSchema,sftpHostSchema,sftpPortSchema,sftpUserSchema} from "../../server/backup-restic-target";
 import type {BackupRemoteStatus} from "../../server/backup-remote-host";
+import {UNKNOWN_ACCOUNT_FIX} from "../../shared/windows-sddl.mjs";
 type RetentionPolicy={keepLast?:number;keepDaily?:number;keepWeekly?:number;keepMonthly?:number};
 // Retention methods are optional: an older desktop bridge simply does not offer removal.
 type RemoteBridge=NonNullable<NonNullable<Window["muragebox"]>["backupRemote"]>&{
@@ -87,6 +88,8 @@ export function remoteBackupStatus(value:unknown):BackupRemoteStatus{
 const DATA_FOLDER_SHARED_TEXT="Other accounts on this computer can change the folder that holds Murage's data folder, so Murage does not keep off-site keys there. Remove their write access to that folder, then refresh.";
 export function remoteBackupError(cause:unknown){
  const code=cause instanceof Error?cause.message:"";
+ // Windows lists an account Murage cannot identify on the file: the same plain fix-it sentence the check itself carries.
+ if(code.includes("ACCOUNT_UNKNOWN_WINDOWS"))return UNKNOWN_ACCOUNT_FIX;
  if(code.includes("DOWNLOAD_FOLDER_SHARED"))return "Other accounts on this computer can change the folder you chose, so Murage didn't save the backup there. Download again and choose your home folder, or a folder only you can change.";
  if(code.includes("DATA_FOLDER_SHARED"))return DATA_FOLDER_SHARED_TEXT;
  if(code.includes("HOST_KEY_CHANGED"))return "The server's identity is not the one you trusted, so Murage did not connect. If the server was not reinstalled or replaced, ask whoever runs it before going further. If it was, choose Change destination and save it again to check the new fingerprint.";
@@ -131,7 +134,7 @@ export function remoteBackupError(cause:unknown){
  * failure locks connection and upload actions until status is refreshed. */
 export function leavesStatusCurrent(cause:unknown){
  const code=String(cause instanceof Error?cause.message:cause);
- return /BACKUP_REMOTE_PASSWORD_FILE_(?:PLACE|KIND|SHARED|SHARED_WINDOWS|FORMAT|UNREADABLE)\b/.test(code);
+ return /BACKUP_REMOTE_PASSWORD_(?:FILE_(?:PLACE|KIND|SHARED|SHARED_WINDOWS|FORMAT|UNREADABLE)|ACCOUNT_UNKNOWN_WINDOWS)\b/.test(code);
 }
 const inputClass="mt-1 min-h-11 w-full min-w-0 rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink focus-visible:ring-2 focus-visible:ring-accent-border disabled:opacity-50";
 const buttonClass="min-h-11 rounded-lg border border-hairline/40 bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus disabled:opacity-50";

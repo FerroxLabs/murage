@@ -1058,6 +1058,7 @@ function handle(msg: any) {
         sessionId: newSessionId,
         ...(opts ? { configOptions: opts } : {}),
         ...(mdls ? { models: mdls } : {}),
+        ...(process.env.FAKE_ACP_SESSION_MODES ? { modes: JSON.parse(process.env.FAKE_ACP_SESSION_MODES) } : {}),
       });
       announceMcpReady(newSessionId, servers);
       // Fuigo 1.0.x and Grok Build advertise their "/" commands right after
@@ -1107,7 +1108,7 @@ function handle(msg: any) {
       const mdls = sessionModels();
       if (typeof msg.params?.sessionId === "string") liveSession = msg.params.sessionId;
       liveServers = loadServers;
-      result(msg.id, { ...(opts ? { configOptions: opts } : {}), ...(mdls ? { models: mdls } : {}) });
+      result(msg.id, { ...(opts ? { configOptions: opts } : {}), ...(mdls ? { models: mdls } : {}), ...(process.env.FAKE_ACP_SESSION_MODES ? { modes: JSON.parse(process.env.FAKE_ACP_SESSION_MODES) } : {}) });
       if (serversChanged && typeof msg.params?.sessionId === "string" && process.env.FAKE_ACP_MCP_READY_NEW_ONLY !== "1") announceMcpReady(msg.params.sessionId, msg.params?.mcpServers);
       // the real engine runs the trust prompt after session/load too
       // (`load_session_inner`), so a resumed turn is gated like a new one
@@ -1348,6 +1349,20 @@ function handle(msg: any) {
       if (mode === "cancel-ack" || mode === "cancel-rpc-error" || mode === "cancel-reject" || mode === "cancel-other-reason") {
         pendingCancelAckPrompt = msg.id;
         out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: "fixture cancellation ready" } } } });
+        setInterval(() => {}, 1_000);
+        return;
+      }
+      // unasked-edit: an engine that changes a file with no permission ask (Cursor in its agent mode, OpenClaw
+      // without read-only), then keeps working until it is cancelled. refused-edit: the engine's own read-only
+      // switch fails the same edit, and the turn ends normally.
+      if (mode === "unasked-edit" || mode === "refused-edit") {
+        pendingCancelAckPrompt = msg.id;
+        const tool = (update: Record<string, unknown>) =>
+          out({ jsonrpc: "2.0", method: "session/update", params: { update: { toolCallId: "tc-edit", ...update } } });
+        tool({ sessionUpdate: "tool_call", title: "Write notes.txt", kind: "edit", status: "pending", rawInput: { file_path: "notes.txt" } });
+        tool({ sessionUpdate: "tool_call_update", status: mode === "unasked-edit" ? "completed" : "failed" });
+        out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: "fixture after edit" } } } });
+        if (mode === "refused-edit") { pendingCancelAckPrompt = null; result(msg.id, { stopReason: "end_turn" }); return; }
         setInterval(() => {}, 1_000);
         return;
       }
@@ -2223,7 +2238,7 @@ function handle(msg: any) {
         pendingCancelAckPrompt = null;
         break;
       }
-      if (mode === "cancel-ack" && pendingCancelAckPrompt !== null) {
+      if ((mode === "cancel-ack" || mode === "unasked-edit") && pendingCancelAckPrompt !== null) {
         // A cooperative agent acknowledges promptly but only exits when the
         // client terminates it — the gap close-confirmed stop must cover.
         const id = pendingCancelAckPrompt;

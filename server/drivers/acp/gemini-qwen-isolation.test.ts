@@ -251,10 +251,10 @@ describe("Gemini personal setup isolation", () => {
 describe("Qwen personal setup isolation", () => {
   it("allows only the servers Murage mounts, drops extensions and skills, and fails open on an unknown or old CLI", () => {
     expect(qwenIsolationArgs(["agents", "computer"], "0.15.6")).toEqual([
-      "--allowed-mcp-server-names=agents", "--allowed-mcp-server-names=computer", "-e", "none", "--exclude-tools=skill",
+      "--allowed-mcp-server-names=agents", "--allowed-mcp-server-names=computer", "-e", "none", "--exclude-tools=skill", "--approval-mode", "default",
     ]);
     // no Murage servers: a name nothing matches, because an empty allow list means every server
-    expect(qwenIsolationArgs([], "0.10.0")).toEqual(["--allowed-mcp-server-names=murage-no-servers", "-e", "none", "--exclude-tools=skill"]);
+    expect(qwenIsolationArgs([], "0.10.0")).toEqual(["--allowed-mcp-server-names=murage-no-servers", "-e", "none", "--exclude-tools=skill", "--approval-mode", "default"]);
     expect(qwenIsolationArgs(undefined, "1.2.3")[0]).toBe("--allowed-mcp-server-names=murage-no-servers");
     // fails closed: an older, unknown or unreadable Qwen is rejected (update-required), never started without the switches
     for (const version of ["0.9.9", undefined, "not a version"]) {
@@ -264,6 +264,17 @@ describe("Qwen personal setup isolation", () => {
       expect((error as ScopeUnavailableError).code).toBe("update-required");
       expect((error as ScopeUnavailableError).engine).toBe("Qwen");
     }
+  });
+
+  // Real-engine gate (Linux, qwen 0.25.3, 2026-10-21): at Ask, qwen ran `echo GATE-APPROVE-...` and the host computer's
+  // click with no card and no session/request_permission. Its own chat log records every one of those turns with
+  // `"executionContext":{"modelId":"flux-auto","authType":"openai","approvalMode":"auto"}`: Qwen's classifier mode,
+  // where Qwen's own model call decides and only a classifier "block" reaches Murage. The real CLI on a probe did the
+  // same (classifier answered {"shouldBlock":false}: the shell ran, nothing was asked). Murage must decide every call.
+  it("every bot turn runs Qwen in its ask mode (approval mode default), never its own auto classifier", async () => {
+    expect(qwenIsolationArgs(["agents"], "0.25.3")).toEqual(expect.arrayContaining(["--approval-mode", "default"]));
+    const at = qwenIsolationArgs(["agents"], "0.25.3").indexOf("--approval-mode");
+    expect(qwenIsolationArgs(["agents"], "0.25.3")[at + 1]).toBe("default");
   });
 
   it("turns the owner's hooks off in the system settings file", () => {

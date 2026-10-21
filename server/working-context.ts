@@ -45,7 +45,7 @@ import { isMurageVoice } from "./murage-voice.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { projectTableExists } from "./project-turn-engine.ts";
 import { database } from "./database.ts";
-import { isWorkspaceOwner, threadHumanPrincipal } from "./human-principals.ts";
+import { isWorkspaceOwner, threadHumanPrincipal, withBindingScope } from "./human-principals.ts";
 import { capturedMessageVerdict, messageSourceForgotten, type LineageAllowance } from "./memory/replay-lineage.ts";
 import { ownerOnly } from "./owner-audience.ts";
 import { copiedFromOwner } from "./memory/bring-in.ts";
@@ -467,7 +467,11 @@ function projectCardLines(db: DatabaseSync, group: { id: string; name: string },
   });
 }
 
+/** (thread bindings remembered for the build: human-principals.ts withBindingScope) */
 function buildWorkingContext(allowance: LineageAllowance, input: WorkingContextInput, db: DatabaseSync, refs: LineageRef[] = []): { text: string; quoted: WorkingContextQuote[] } {
+  return withBindingScope(() => buildWorkingContextScoped(allowance, input, db, refs));
+}
+function buildWorkingContextScoped(allowance: LineageAllowance, input: WorkingContextInput, db: DatabaseSync, refs: LineageRef[]): { text: string; quoted: WorkingContextQuote[] } {
   // a scheduled or webhook run is not a turn with the owner: no block, and no work for it
   if (input.trigger === "schedule" || input.trigger === "webhook") return { text: "", quoted: [] };
   const who = subject(input);
