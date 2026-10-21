@@ -151,6 +151,7 @@ server/browser-floor-recipients.test.ts	extended
 server/browser-native-relay.test.ts	extended
 server/browser-profile-precondition-api.test.ts	extended
 server/browser-profile-precondition.test.ts	extended
+server/browser-restore-real.test.ts	real agent-browser engine against a 120-origin saved session; timing, needs the bundled engine
 server/browser-route-401-codes-api.test.ts	delete (pending review; runs here until then)
 server/browser-socket-teardown.test.ts	extended
 server/byte-order-mark.test.ts	extended
@@ -1378,3 +1379,6 @@ tools/flux-stream-conformance/pack.test.ts	extended
 tools/flux-stream-conformance/wer.test.ts	delete (pending review; runs here until then)
 tools/flux-stream-sim/providers/assemblyai.test.ts	extended
 tools/flux-stream-sim/sim.test.ts	extended
+server/drivers/win-process-table.test.ts	extended
+server/memory/pip-reaper-win32.test.ts	extended
+server/memory/record-keys-budget.test.ts	the record-keys backfill write budget (perf-shaped io-hotpath check)

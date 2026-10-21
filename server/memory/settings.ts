@@ -44,6 +44,7 @@ import { forgetParkedThreads } from "./park.ts";
 import { revokeAllDisclosures } from "./revocation.ts";
 import { reviewBack, reviewEdit, reviewKeep, reviewKeepAll, reviewLater, reviewList, reviewSources, reviewSummary, reviewUndo } from "./review.ts";
 import { sealedTurnSummary } from "./reset-watch.ts";
+import { inheritEdge } from "./revoke-commit.ts";
 
 const SETTINGS="memory-owner-settings";
 type Configuration={excludedThreadIds:string[];extractorInstanceId:string|null};
@@ -504,7 +505,7 @@ export async function memoryOwnerRoute(path:string,body:unknown,ticket:object,ro
   if(input.action==="promote"){
     return transaction(()=>{const original=getRecord(input.id,input.version);if(original.state!=="active"&&original.state!=="candidate")throw new Error("MEMORY_VERSION_CONFLICT");
       if(!db.prepare("SELECT 1 FROM memory_scopes WHERE id=?").get(input.scopeId))throw new Error("MEMORY_SCOPE_UNKNOWN");
-      const copy=randomUUID();db.prepare("INSERT INTO memory_records VALUES(?,1,?,?,?,'owner-statement','active',0,?,NULL,NULL,?)").run(copy,input.scopeId,original.kind,original.text,Date.now(),Date.now());db.prepare("INSERT INTO memory_derivations VALUES(?,?,?,1)").run(original.id,original.version,copy);
+      const copy=randomUUID();db.prepare("INSERT INTO memory_records VALUES(?,1,?,?,?,'owner-statement','active',0,?,NULL,NULL,?)").run(copy,input.scopeId,original.kind,original.text,Date.now(),Date.now());db.prepare("INSERT INTO memory_derivations VALUES(?,?,?,1)").run(original.id,original.version,copy);inheritEdge(db,{kind:"record",id:copy,version:1},{kind:"record",id:original.id,version:original.version});
       db.exec("UPDATE memory_meta SET policy_revision=policy_revision+1");reindex(copy,1);return {record:getRecord(copy,1)};});
   }
   if(input.action==="forget")return forgetMemory(ticket,input);

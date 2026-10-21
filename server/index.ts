@@ -22,6 +22,7 @@ import { attachCloudUpgradeGate } from "./cloud-home/upgrade-gate.ts";
 import { createEngineLoginRelay } from "./cloud-home/engine-login.ts";
 import { createVpsMcpRelay } from "./cloud-home/vps-mcp-relay.ts";
 import { cloudHomeCopy } from "./cloud-home/copy.ts";
+import { cloudEngineChoiceRefusal, isCloudHiddenEngine } from "./cloud-home/runnable-engines.ts";
 import { handleOwnServerApi } from "./cloud-home/own-server.ts";
 import { cloudIdentity } from "./cloud-request-identity.ts";
 import { validateOwnerTimeZone, writeOwnerTimeZone } from "./cloud-home/timezone.ts";
@@ -353,7 +354,7 @@ import { GRANT_SCHEMA, isAppShapeKey, isStaleGrant, withoutStaleGrants } from ".
 import { actionGrantSet, stampedToolCall, type GrantCall } from "../shared/app-action-grant.ts";
 import { grantRequestFor, routineCardFields, routineDecisionKeys } from "./approval-grant-request.ts";
 import { requestOwnerId } from "./request-owner.ts";
-import { approvalKey, approvalHoldNote, isCommandTool, exactAllowKeyFor, exactCommandForRequest, fullAccessCovers, hasFullAccess, isQuestionGrant, isQuestionTool, withoutQuestionGrants, type AutoContext, type FullAccessOrigin } from "./auto-approve.ts";
+import { approvalKey, approvalHoldNote, isBareCommandGrant, isCommandTool, exactAllowKeyFor, exactCommandForRequest, fullAccessCovers, hasFullAccess, isQuestionGrant, isQuestionTool, realKeyPaths, withoutBareCommandGrants, withoutQuestionGrants, type AutoContext, type FullAccessOrigin } from "./auto-approve.ts";
 import { approvalIsCut, cardAuditSummary, cardDetail } from "./approval-text.ts";
 import { isOwnWorkspaceBookkeeping, ownWorkspaceRoots } from "./own-workspace-approval.ts";
 import { isOwnToolResultRead } from "./own-tool-results.ts";
@@ -425,7 +426,9 @@ import { capabilitiesPrimer, turnCapabilityFacts, type ImageConnectionFact } fro
 import { murageToolOnThisServer } from "./murage-tool-surface.ts";
 import { UnifiedBrowserController } from "./browser-control.ts";
 import { browserOwnerRequest, browserOwnerId } from "./browser-owner-api.ts";
+const USER_CHROME_ALLOW_PANEL_MESSAGE = "Chrome did not let Murage connect. When Chrome asks \"Allow remote debugging?\", click Allow, then try again.";
 import { browserRefusal, isBrowserRefusal, type BrowserProtection } from "./browser-lock.ts";
+import { enableLinuxBrowserSandbox, isLinuxSandboxEnableProblem, LINUX_SANDBOX_ENABLE_CODE } from "./browser-sandbox.ts";
 import { unifiedBrowserSystemPrompt, warmBrowserEngineCheck, settledBrowserEngineStatus, TURN_BROWSER_WAIT_MS, browserEngineEncryptionKey, browserSessionId, userChromeSessionId, agentBrowserIntegration, closeAgentBrowserSession, verifyAgentBrowserBinary, type AgentBrowserSpec } from "./browser-engine.ts";
 import { readUserChromeEndpoint, USER_CHROME_ALLOW_WAIT_MS, USER_CHROME_SETUP_MESSAGE, userChromeTrouble } from "./user-chrome.ts";
 import { restoredConnectionProfile } from "../electron/restored-connections.mjs";
@@ -446,6 +449,7 @@ import {
 } from "./container-computer.ts";
 import {
   ensureDirs,
+  allInstanceConfigs,
   instanceConfigs,
   loadConfig,
   localVmMaxInstances,
@@ -2838,6 +2842,8 @@ function checkedModelSelection(
   if (current?.busy && changed) {
     return { ok: false, status: 409, error: "the bot is working: stop it before changing models" };
   }
+  const hidden = cloudEngineChoiceRefusal(cloudHome, allInstanceConfigs(cfg)[selection.instanceId]?.driver, !current || Boolean(changed));
+  if (hidden) return { ok: false, status: 403, error: hidden };
   const target = registry.get(selection.instanceId);
   // Model IDs remain free-form at the app's general API boundary. Custom
   // engines can accept IDs that are not in their discovery catalog, and
@@ -7580,7 +7586,7 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
       const routineOffered = routineLevel?.executing === true ? routineLevel : null;
       // AMEND-13 Rules 78, 81, 82: the engine's call as the grant readers take it,
       // every operation in call order with its findings, and the routine offer.
-      const grantCall: GrantCall = { toolCall: event.toolCall, toolIdentity: event.toolIdentity, toolKind: event.toolKind, mcpMounts: event.mcpMounts, truncated: !!inputCut, engine: event.toolEngine, inputMissing: event.toolInputMissing };
+      const grantCall: GrantCall = { toolCall: event.toolCall, toolIdentity: event.toolIdentity, toolKind: event.toolKind, mcpMounts: event.mcpMounts, truncated: !!inputCut, engine: event.toolEngine, inputMissing: event.toolInputMissing, ...(event.commandShell ? { commandShell: event.commandShell } : {}) };
       const grantRequest = permission && asker && event.requestId && !questionAsk
         ? grantRequestFor({
             ask: { ...grantCall, tool: event.tool, summary: event.summary }, stopHit, ...(stopRows ? { stopRows } : {}), ...(exactAllowKey ? { exactAllowKey } : {}),
@@ -7615,6 +7621,13 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
             context: {
               exactCommand,
               ...wholeCommand,
+              // 1.0.4 09-1: where the paths this call names really are, links
+              // followed, and the engine gate's own key-file hold
+              ...((): Pick<AutoContext, "realPaths" | "realPathCannot"> => {
+                const { paths, cannot } = realKeyPaths(event.toolCall?.input, event.filePaths, turnCwdByThread.get(event.threadId));
+                return { ...(paths.length ? { realPaths: paths } : {}), ...(cannot ? { realPathCannot: cannot } : {}) };
+              })(),
+              ...(event.localHold ? { localHold: event.localHold } : {}),
               ...(inputCut ? { inputCut: true } : {}),
               // the routine carve-out: only a direct scheduled or manual run,
               // whose history records what it lets through (below)
@@ -7720,7 +7733,10 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
             // that counts up and opens to list them. Every other automatic
             // answer keeps its own chip, and the decision log below keeps
             // one row per step either way.
-            if (verdict.source === "full-access" || verdict.source === "no-limits") noteFullAccessStep(event.threadId, event.turnId, `${tool}: ${summary.slice(0, 120)}`, pushMessage, verdict.source === "no-limits" ? "No limits" : "Full access");
+            // Murage's own unasked tool (memory, the roster) already shows as
+            // its activity row, as on Claude and Codex: no second chip.
+            if (verdict.source === "own-unasked") { /* the tool row says it */ }
+            else if (verdict.source === "full-access" || verdict.source === "no-limits") noteFullAccessStep(event.threadId, event.turnId, `${tool}: ${summary.slice(0, 120)}`, pushMessage, verdict.source === "no-limits" ? "No limits" : "Full access");
             // Reading its own saved result is said in words, never as the
             // raw `cat …/call_00_….json | python3 …` line the engine ran.
             else pushMessage({
@@ -9031,6 +9047,8 @@ async function finalScreenFrame(botId: string, threadId: string): Promise<Frame 
 
 // ── turn dispatch (upstream ProviderCommandReactor, miniature) ──────────
 function unavailableModelMessage(instanceId: string): string {
+  // A bot left on an engine this Cloud home hides gets the plain line, not a connection error.
+  if (cloudHome && isCloudHiddenEngine(allInstanceConfigs(cfg)[instanceId.trim()]?.driver)) return cloudHomeCopy.engineNotOnCloud;
   return instanceId.trim()
     ? "This bot's AI connection is unavailable. Choose another model, or reconnect your provider in App Settings."
     : "Choose a model for this bot to get started. If you haven't connected a provider yet, add your Flux Router key or connect another provider in App Settings.";
@@ -19655,6 +19673,18 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
           shared: { chrome: sharedRegistrationBrowsers("chrome"), edge: sharedRegistrationBrowsers("edge"), brave: sharedRegistrationBrowsers("brave") },
           reason: browserExtension?.setupProblem() || (status.profiles.length ? undefined : browserExtensionSetupReason(listing)) } });
     }
+    // Linux AppImage: Enable browser in the browser panel. The system's
+    // administrator prompt installs the AppArmor profile for Murage's copy of
+    // its browser; closing the prompt changes nothing (browser-sandbox-linux-engine.ts).
+    if (path === "/api/browser/linux-sandbox/enable") {
+      if (method !== "POST") return json(res, 405, { error: "POST required" });
+      if (requestSurface(req.headers, url.searchParams) !== "desktop") return json(res, 404, { error: "no such route" });
+      try { return json(res, 200, { outcome: await enableLinuxBrowserSandbox() }); }
+      catch (error) {
+        const failure = error as { status?: number; code?: unknown };
+        return json(res, failure.status ?? 500, { error: error instanceof Error ? error.message : String(error), ...(typeof failure.code === "string" ? { code: failure.code } : {}) });
+      }
+    }
     if ((m = path.match(/^\/api\/bots\/([^/]+)\/browser(\/frame)?$/))) {
       const desktop = requestSurface(req.headers, url.searchParams) === "desktop";
       const paired = companionAuthorized(req.headers);
@@ -19688,8 +19718,14 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
           });
         }
         const off = (await userChromeTrouble()) === "off";
-        return json(res, 409, { error: off ? USER_CHROME_SETUP_MESSAGE : "Chrome did not let Murage connect. When Chrome asks \"Allow remote debugging?\", click Allow, then try again." });
+        return json(res, 409, { error: off ? USER_CHROME_SETUP_MESSAGE : USER_CHROME_ALLOW_PANEL_MESSAGE });
       }
+      // A status that could not reach the owner's Chrome carries the same words.
+      if (bot.useMyChrome && result && typeof result === "object" && typeof (result as { problem?: unknown }).problem === "string") {
+        (result as { problem: string }).problem = (await userChromeTrouble()) === "off" ? USER_CHROME_SETUP_MESSAGE : USER_CHROME_ALLOW_PANEL_MESSAGE;
+      }
+      // Linux AppImage: the panel offers Enable browser for this problem.
+      if (!bot.useMyChrome && result && typeof result === "object" && isLinuxSandboxEnableProblem((result as { problem?: unknown }).problem)) (result as { problemCode?: string }).problemCode = LINUX_SANDBOX_ENABLE_CODE;
       res.setHeader("Cache-Control", "no-store"); return json(res, 200, result);
     }
 
@@ -23888,6 +23924,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       // A card an older build rendered may still carry a grant over every
       // connected-app action (or every "other" tool); it is never stored.
       if (allowKey && isStaleGrant(allowKey)) return json(res, 400, { error: "This approval can only be allowed once." });
+      // nor a command tool's bare name, which an older build offered on a PowerShell card (1.0.4 G09-3)
+      if (allowKey && isBareCommandGrant(allowKey)) return json(res, 400, { error: "This approval can only be allowed once." });
       // A card raised while this bot was answering in a ROOM sits on the
       // room's thread, which is not one of the bot's own tasks. The client
       // still offers "Always allow" there, and this route answered every one
@@ -23922,7 +23960,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       if (!grantKeys) {
         return json(res, 409, { error: "that grant is not on a pending approval for this bot" });
       }
-      if (grantKeys.some((key) => isQuestionGrant(key) || isStaleGrant(key))) return json(res, 400, { error: "This approval can only be allowed once." });
+      if (grantKeys.some((key) => isQuestionGrant(key) || isStaleGrant(key) || isBareCommandGrant(key))) return json(res, 400, { error: "This approval can only be allowed once." });
       // A13-FIX-DESIGN C1 (Rules 81a, 81b, amended): through the one choke
       // point. The set is saved on the bot's defaults and this task in ONE
       // durable write (a room card: the bot's defaults, which a room turn
@@ -24291,7 +24329,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         // A13-FIX-DESIGN C1: this is the owner's desktop settings authority
         // (route-policy "desktop", the same request that may switch on Full
         // access), not a card decision; no card's approval is written here.
-        patch.alwaysAllow = withoutStaleGrants(withoutQuestionGrants([...new Set(body.alwaysAllow as string[])])).slice(0, 200);
+        patch.alwaysAllow = withoutBareCommandGrants(withoutStaleGrants(withoutQuestionGrants([...new Set(body.alwaysAllow as string[])]))).slice(0, 200);
       }
       if (existingBot?.computer === "local" && body.computer !== undefined && body.computer !== "local") {
         if (existingBot.busy) noteHostStoppedTurn(existingBot.threadId, existingBot.id, "this computer was switched off for the bot");
@@ -26548,7 +26586,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       const { discovered: instances, owner } = await ownerEnvAfterDiscovery(fresh, () => describedInstances({ catalogs: fresh ? "fresh" : "due" }));
       // Delta 5: one line per owner ssh setting engines do not use, or no OpenSSH found (engine-env.ts sshPinNotes)
       const sshNotes = sshPinNotes();
-      return json(res, 200, { instances, ...(owner ? { shellEnvironment: { capture: owner.capture, ...(owner.capturedAt ? { capturedAt: owner.capturedAt } : {}), ...(owner.cause ? { cause: owner.cause } : {}), ...(sshNotes.length ? { sshNotes } : {}) } } : {}) });
+      return json(res, 200, { instances, ...(cloudHome ? { engineNote: cloudHomeCopy.engineNotOnCloud } : {}), ...(owner ? { shellEnvironment: { capture: owner.capture, ...(owner.capturedAt ? { capturedAt: owner.capturedAt } : {}), ...(owner.cause ? { cause: owner.cause } : {}), ...(sshNotes.length ? { sshNotes } : {}) } } : {}) });
     }
 
     // ── CLI binary discovery for the Engines "detected" dropdown ──

@@ -17,7 +17,7 @@ import { FUIGO_VERSION, verifyFuigoExecutable } from "./prepare-fuigo.mjs";
 import { validateFuigoProbeResources, stampSignedFuigoProbe } from "./fuigo-probe-resources.mjs";
 import { verifyBrowserBundle } from "./prepare-browser.mjs";
 import { browserBundlePaths } from "../server/browser-bundle-release.ts";
-import { verifyWindowsBrowserImage, verifyWindowsBrowserSignatures, WINDOWS_BROWSER_IMAGE_PINS } from "../server/browser-windows-identity.ts";
+import { nativeAuthenticodeIn, verifyWindowsBrowserImage, verifyWindowsBrowserSignatures, WINDOWS_BROWSER_IMAGE_PINS } from "../server/browser-windows-identity.ts";
 import { verifyWindowsBackupTools } from "./prepare-windows-backup-tools.mjs";
 import { verifyGepaBundle } from "../server/gepa-resource.ts";
 
@@ -397,7 +397,10 @@ export default async function afterPack(context) {
       if (!verifyWindowsBrowserImage(await readFile(file), pin).signed) throw new Error("Packaged Windows browser signing left an unsigned image");
     }
     verifyWindowsBackupTools(backupDirectory);
-    await verifyWindowsBrowserSignatures([browser.engine, browser.chrome, recovery, backupHelper, ...(fuigoProbe ? [fuigoProbe.file] : [])], process.env.SystemRoot);
+    // The packaged addon's own WinVerifyTrust check (no PowerShell anywhere: murage-releases #1); a package without it was refused above.
+    const nativeSignatures = nativeAuthenticodeIn(resources);
+    if (!nativeSignatures) throw new Error("Packaged Windows signature check needs the engine-exclusion addon (version " + ENGINE_EXCLUSION_ADDON_VERSION + ")");
+    await verifyWindowsBrowserSignatures([browser.engine, browser.chrome, recovery, backupHelper, ...(fuigoProbe ? [fuigoProbe.file] : [])], process.env.SystemRoot, nativeSignatures);
     if (fuigoProbe) await stampSignedFuigoProbe(fuigoProbe);
   }
 

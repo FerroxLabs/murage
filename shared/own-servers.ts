@@ -115,6 +115,21 @@ export function isOwnUnasked(mountId: string, tool: string): boolean {
   return OWN_UNASKED.some((row) => row.mount === mountId && row.tools.includes(tool));
 }
 
+/** The OWN_UNASKED rows that only read Murage's own records: the roster
+ * and its lookups, memory search and get, dweb status. These run with no
+ * card at every level on every engine (Claude and Codex never ask for
+ * them), Ask included. Every other own tool keeps its level's rules. */
+export const OWN_READS: readonly { mount: `own:${OwnBuiltin}`; tools: readonly string[] }[] = [
+  { mount: "own:memory", tools: ["memory_search", "memory_get"] },
+  { mount: "own:agents", tools: OWN_UNASKED.find((row) => row.mount === "own:agents")!.tools },
+  { mount: "own:dweb", tools: ["dweb_status", "dweb_repo_status", "dweb_opencode_models"] },
+];
+
+/** Whether an own tool only reads: its mount and exact name are an OWN_READS row (and so also an OWN_UNASKED one). */
+export function isOwnRead(mountId: string, tool: string): boolean {
+  return OWN_READS.some((row) => row.mount === mountId && row.tools.includes(tool)) && isOwnUnasked(mountId, tool);
+}
+
 /** Rule 56a step 1: operation-level classifications that outrank the key
  * vocabularies, keyed by (mount, tool, key). `*` matches every tool of the
  * mount. These leaves are handles Murage resolves, never people. */

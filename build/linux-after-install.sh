@@ -72,9 +72,11 @@ repair_chromium_sandbox() {
 # Ubuntu 24.04 lets a program create user namespaces only under its own
 # AppArmor profile. A restarted Murage (Back up now, returning from a backup)
 # runs with no_new_privs, where the setuid sandbox cannot help, so without the
-# profile it crashes and no window comes back. electron-builder ships the
-# profile in resources/ and its default hook installs it; this hook replaces
-# that default, so it installs the profile here the same way. An AppArmor that
+# profile it crashes and no window comes back. The bundled Chrome the bot
+# browser launches needs the same, or it stops with "No usable sandbox!".
+# electron-builder ships build/linux-apparmor-profile.tpl, which names both,
+# in resources/ and its default hook installs it; this hook replaces that
+# default, so it installs the profile here the same way. An AppArmor that
 # cannot parse the profile (older than 4.0) needs none: the package still
 # installs without it.
 install_apparmor_profile() {

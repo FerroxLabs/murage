@@ -412,7 +412,7 @@ describe("restart rows and the reaper", () => {
     const jobRunner = vi.fn(async () => ({ ok: true, out: '{"state":"present","activeProcesses":0}' }));
     const r = rig({ epoch: NEW, reaper: { platform: "win32", jobRunner, sweep: async () => [] } });
     await reconcilePipRuns(r.deps);
-    expect(jobRunner).toHaveBeenCalledWith("powershell.exe", expect.arrayContaining(["-JobName", jobName, "-Stop"]), expect.any(Number));
+    expect(jobRunner).toHaveBeenCalledWith(jobName, expect.any(Number));
     expect(existsSync(root)).toBe(false);
     if (terminal === "requested") expect(state().run!.families.lived).toMatchObject({ state: "pending", attempt: 2 });
     else expect(state().run).toBeUndefined();

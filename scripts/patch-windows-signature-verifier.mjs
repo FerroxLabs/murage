@@ -1,8 +1,12 @@
 // Reviewed electron-updater source: fail closed when Authenticode evidence is
-// unavailable. Publisher DN/CN matching is deliberately left unchanged.
-// PowerShell runs hidden, with a bound that fits a large installer on a busy
-// machine, and one more try after a timeout only; a refusal says which check
-// failed (murage-releases #2: a 20 s timeout read as "download again").
+// unavailable. The upstream verifier is first patched as reviewed (every
+// shape assertion below still has to match, so a moved upstream fails the
+// bundle), then replaced whole: upstream's check starts PowerShell
+// (Get-AuthenticodeSignature), and Murage starts no PowerShell by itself
+// (murage-releases #1). The shipped default refuses every update without
+// starting anything; the app sets its native check
+// (electron/windows-update-signature.mjs: WinVerifyTrust through the
+// engine-exclusion addon, upstream's DN/CN publisher rules) on the updater.
 import { createHash } from "node:crypto";
 
 export const WINDOWS_VERIFIER_VERSION = "6.8.9";
@@ -78,5 +82,25 @@ export function patchWindowsSignatureVerifier(source) {
   // These imports/temporaries existed only for the removed compatibility bypass.
   verifier = replaceExactly(verifier, /    var os = require\("os"\);\n/g, "", 1, "obsolete OS import");
   verifier = replaceExactly(verifier, /          var _a;\n/g, "", 1, "obsolete catch temporary");
-  return source.replace(modulePattern, () => verifier);
+  const key = /^var require_windowsExecutableCodeSignatureVerifier = __commonJS\(\{\n  ("[^"\n]+")\(exports2\) \{\n/.exec(verifier)?.[1];
+  if (!key) throw new Error("Expected the Windows signature module's key; review upstream before releasing");
+  return source.replace(modulePattern, () => windowsVerifierWithoutPowerShell(key));
+}
+
+/** The shipped verifier module: no child process, no PowerShell; it refuses, and says the native check was not set. */
+export function windowsVerifierWithoutPowerShell(key) {
+  return `var require_windowsExecutableCodeSignatureVerifier = __commonJS({
+  ${key}(exports2) {
+    "use strict";
+    Object.defineProperty(exports2, "__esModule", { value: true });
+    exports2.verifySignature = verifySignature;
+    var builder_util_runtime_1 = require_out();
+    function verifySignature(publisherNames, unescapedTempUpdateFile, logger) {
+      const failure = (0, builder_util_runtime_1.newError)("Windows signature verification unavailable: the native signature check was not set on the updater", "ERR_UPDATER_INVALID_SIGNATURE");
+      failure.signatureCheck = "unavailable";
+      logger.warn(failure.message);
+      return Promise.reject(failure);
+    }
+  }
+});`;
 }

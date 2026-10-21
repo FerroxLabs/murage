@@ -11,6 +11,7 @@ import { APP_LOOKUPS, appAction, ownAppTool } from "../shared/app-action-words.t
 import type { ApprovalActionRow, ApprovalGrantRequest, ApprovalRowFinding, RoutineGrantOffer, RoutineStopOffer } from "../shared/approval-grant-request.ts";
 import { isRoutineGrantKey } from "./routine-permissions.ts";
 import { rowDestinations, stopFindings, stopLineKey, type StopHit } from "./stop-line.ts";
+import { redactSecretsForCard } from "./redact.ts";
 
 const finding = (hit: StopHit): ApprovalRowFinding => {
   const key = stopLineKey(hit);
@@ -52,7 +53,9 @@ function actionRows(input: GrantRequestInput): ApprovalActionRow[] {
         ...(row.account ? { account: row.account } : {}),
         destinations: rowDestinations(row.arguments),
         findings: (input.stopRows?.[index] ?? []).map(finding),
-        arguments: row.arguments ?? {},
+        // shown under "Show the details it sends" and kept with the card:
+        // scrubbed as the card's title and summary are (1.0.4, 09-3)
+        arguments: redactedArguments(row.arguments ?? {}),
       };
     });
   }
@@ -61,8 +64,13 @@ function actionRows(input: GrantRequestInput): ApprovalActionRow[] {
   const resolved = resolveCall(input.ask);
   return [{
     index: 0, kind: "lookup", operation: lookup, app: "Connected apps", action: APP_LOOKUPS[lookup]!, destinations: [], findings: [],
-    arguments: resolved.kind === "mcp" ? resolved.input ?? {} : input.ask.toolCall?.input ?? {},
+    arguments: redactedArguments(resolved.kind === "mcp" ? resolved.input ?? {} : input.ask.toolCall?.input ?? {}),
   }];
+}
+
+function redactedArguments(args: unknown): Record<string, unknown> {
+  const out = redactSecretsForCard(args);
+  return out && typeof out === "object" && !Array.isArray(out) ? (out as Record<string, unknown>) : {};
 }
 
 /** "Always allow for this routine" as offered on this card (Rules 76, 80, 81c). */

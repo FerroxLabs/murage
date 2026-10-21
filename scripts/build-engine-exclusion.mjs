@@ -1,4 +1,4 @@
-// Builds native/engine-exclusion/exclusion.c (N-API 9) for the platform it runs on, into dist-native/engine-exclusion/<platform>-<arch>/.
+// Builds native/engine-exclusion/exclusion.c (+ exclusion-lsa.c on Windows) (N-API 9) for the platform it runs on, into dist-native/engine-exclusion/<platform>-<arch>/.
 // macOS: both architectures with clang. Linux: gcc (or $CC), -Wall -Werror. Windows: cl.exe /MD, run inside the Visual Studio developer
 // environment (the current one, or VsDevCmd found with vswhere, as scripts/build-fuigo-probe.mjs does); it links against an import
 // library made here from the napi_* names the source uses, and the source resolves them in the host executable at load time.
@@ -30,7 +30,10 @@ export function msvcCommand(tool,args,{env=process.env,environmentFile}={}){
 export function buildEngineExclusion({platform=process.platform,exec=execFileSync,env=process.env,environmentFile,headerDirectory=env.NODE_HEADERS_DIR||path.resolve(path.dirname(realpathSync(process.execPath)),"../include/node"),outputRoot=path.join(root,"dist-native/engine-exclusion")}={}){
  for(const name of HEADERS)if(!existsSync(path.join(headerDirectory,name)))throw Error("ENGINE_EXCLUSION_HEADERS_REQUIRED: "+headerDirectory+" has no "+name+" (set NODE_HEADERS_DIR)");
  const source=path.join(root,"native/engine-exclusion/exclusion.c"),text=readFileSync(source);
- const sourceSha256=createHash("sha256").update(text).digest("hex");
+ const lsaSource=path.join(root,"native/engine-exclusion/exclusion-lsa.c"),lsaHeader=path.join(root,"native/engine-exclusion/exclusion-lsa.h");
+ // exclusion-lsa.c is its own translation unit (Windows only): <ntsecapi.h> and <winternl.h> clash in one MSVC file (C2371).
+ const hash=createHash("sha256").update(text);if(platform==="win32")hash.update(readFileSync(lsaSource)).update(readFileSync(lsaHeader));
+ const sourceSha256=hash.digest("hex");
  const targets=platform==="darwin"?[["arm64","arm64"],["x64","x86_64"]]:[[process.arch,process.arch]];
  const outputs=[];
  for(const [arch,target] of targets){
@@ -47,7 +50,7 @@ export function buildEngineExclusion({platform=process.platform,exec=execFileSyn
    writeFileSync(def,"LIBRARY node.exe\nEXPORTS\n"+names.map(name=>"  "+name).join("\n")+"\n");
    const run=(tool,args,timeout)=>{const c=msvcCommand(tool,args,{env,environmentFile});exec(c.command,c.args,{timeout,stdio:"inherit",...(c.verbatim?{windowsVerbatimArguments:true}:{})});};
    run("lib.exe",["/nologo","/def:"+def,"/machine:"+(arch==="arm64"?"arm64":"x64"),"/out:"+lib],60000);
-   run("cl.exe",["/nologo","/O2","/W3","/MD","/LD","/DNAPI_VERSION=9","/I"+headerDirectory,source,"/Fo"+path.join(directory,"exclusion.obj"),"/Fe"+output,"/link","/DELAYLOAD:node.exe","delayimp.lib","Advapi32.lib","Shell32.lib",lib],120000);
+   run("cl.exe",["/nologo","/O2","/W3","/MD","/LD","/DNAPI_VERSION=9","/I"+headerDirectory,source,lsaSource,"/Fo"+directory.replace(/\\/g,"/")+"/","/Fe"+output,"/link","/DELAYLOAD:node.exe","delayimp.lib","Advapi32.lib","Shell32.lib","Ole32.lib",lib],120000);
   }else throw Error("ENGINE_EXCLUSION_PLATFORM_UNSUPPORTED: "+platform);
   const receipt={version:1,target:platform+"-"+arch,napiVersion:9,sourceSha256,sha256:createHash("sha256").update(readFileSync(output)).digest("hex")};
   writeFileSync(path.join(directory,"build.json"),JSON.stringify(receipt,null,2)+"\n");outputs.push(receipt);

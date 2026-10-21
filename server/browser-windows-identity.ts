@@ -3,15 +3,11 @@
 // fields. Restore those exact pinned fields, then hash EVERY original byte.
 // Windows itself validates the signature; this is not signature verification.
 import { createHash } from "node:crypto";
-import { execFile } from "node:child_process";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { browserBundleSpec } from "./browser-bundle-release.ts";
 import { ADDON_VERSION } from "./engine-exclusion.ts";
 export const WINDOWS_BROWSER_PUBLISHER = "Ferrox Labs, LLC";
-// A pwsh parent may pass PowerShell 7 modules through Node to Windows
-// PowerShell 5.1. Load only this child shell's own trusted built-in modules.
-export const WINDOWS_BROWSER_POWERSHELL_SETUP = String.raw`$env:PSModulePath=$PSHOME+'\Modules'; $ErrorActionPreference='Stop'; `;
 export type UnsignedPePin = { bytes: number; sha256: string; checksum: number };
 const bundle = browserBundleSpec("win32-x64");
 export const WINDOWS_BROWSER_IMAGE_PINS = {
@@ -46,20 +42,6 @@ export function requireBrowserSignature(result: unknown): void {
     throw Object.assign(new Error("Windows browser requires a valid Ferrox Labs signature"), { signatureStatus: status === "Valid" ? "publisher" : status });
   }
 }
-export function windowsBrowserSignatureScript(files: string[]): string {
-  const quote = (value: string) => `'${value.replaceAll("'", "''")}'`;
-  return WINDOWS_BROWSER_POWERSHELL_SETUP + `$result=@(foreach($file in @(${files.map(quote).join(",")})){ $sig=Get-AuthenticodeSignature -LiteralPath $file; $publisher=if($sig.SignerCertificate){$sig.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName,$false)}else{''}; @{status=[string]$sig.Status;publisher=$publisher} }); ConvertTo-Json -InputObject $result -Compress`;
-}
-/** The one hidden Windows PowerShell 5.1 shape for signature checks: no
- * profile, no prompt, no console window (Node's windowsHide plus PowerShell's
- * own -WindowStyle Hidden), and a bounded run. */
-export function windowsSignaturePowerShell(script: string, systemRoot = "C:\\Windows") {
-  return {
-    command: join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
-    args: ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")],
-    options: { windowsHide: true, timeout: 20_000, maxBuffer: 8192 },
-  };
-}
 /** The packaged native check (engine-exclusion.node's authenticode: WinVerifyTrust on a worker thread). */
 export interface NativeAuthenticode { authenticode(path: string): Promise<unknown> }
 const nativeChecks = new Map<string, NativeAuthenticode | null>();
@@ -76,17 +58,13 @@ export function nativeAuthenticodeIn(resourcesPath: string | undefined): NativeA
   nativeChecks.set(file, found);
   return found;
 }
-/** Windows' own answer for each file, as strict as the PowerShell check: Valid and the exact Ferrox Labs publisher, or a refusal. */
+/** Windows' own answer for each file: Valid and the exact Ferrox Labs publisher, or a refusal. */
 export async function verifyWindowsSignaturesNatively(native: NativeAuthenticode, files: string[]): Promise<void> {
   for (const file of files) requireBrowserSignature(await native.authenticode(file));
 }
-/** With the packaged native check (pass `native`, or the app's resources folder in MURAGE_RESOURCES_PATH), no PowerShell starts.
- * Without it (a build machine, a source checkout) the hidden PowerShell check runs instead. */
-export async function verifyWindowsBrowserSignatures(files: string[], systemRoot = "C:\\Windows", native: NativeAuthenticode | null = nativeAuthenticodeIn(process.env.MURAGE_RESOURCES_PATH)): Promise<void> {
-  if (native) return verifyWindowsSignaturesNatively(native, files);
-  const { command, args, options } = windowsSignaturePowerShell(windowsBrowserSignatureScript(files), systemRoot);
-  const output = await new Promise<string>((done, fail) => execFile(command, args, options, (error, stdout, stderr) => error ? fail(Object.assign(new Error(`Windows browser signature verification failed (code ${error.code ?? "unknown"}, signal ${error.signal ?? "none"}): ${stderr.trim().slice(0, 2048)}`), { code: error.code, signal: error.signal, killed: error.killed })) : done(stdout)));
-  const results: unknown = JSON.parse(output.replace(/^\uFEFF/, ""));
-  if (!Array.isArray(results) || results.length !== files.length) throw new Error("Windows browser signature receipt is incomplete");
-  for (const result of results) requireBrowserSignature(result);
+/** Windows' own answer (WinVerifyTrust in the packaged engine-exclusion addon) for every file. There is no other check: without the
+ * addon (a source checkout or build machine without a build) this refuses, it never starts PowerShell instead (murage-releases #1). */
+export async function verifyWindowsBrowserSignatures(files: string[], _systemRoot = "C:\\Windows", native: NativeAuthenticode | null = nativeAuthenticodeIn(process.env.MURAGE_RESOURCES_PATH)): Promise<void> {
+  if (!native) throw Object.assign(new Error("Windows signature check needs Murage's native helper (engine-exclusion.node). Reinstall Murage to repair it."), { signatureStatus: "helper-missing" });
+  return verifyWindowsSignaturesNatively(native, files);
 }
