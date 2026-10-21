@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { BrowserPanelAlerts, browserChoicePatch, MY_CHROME, MyChromeConsent, ProtectedBrowserNotice } from "./UnifiedBrowserPanel";
+import { BrowserNotRunningNotice, BrowserPanelAlerts, BrowserRestartNotice, browserChoicePatch, MY_CHROME, MyChromeConsent, ProtectedBrowserNotice } from "./UnifiedBrowserPanel";
 
 describe("Use my Chrome choice", () => {
   it("asks before attaching, and changes nothing until confirmed", () => {
@@ -104,5 +104,33 @@ describe("a raw route/auth string cannot reach connectionError or error (fix rou
       'setError(describeDesktopOnlyRouteError(cause instanceof Error ? routeErrorFrom(cause) : { message: "Browser action failed" }));',
     );
     expect(source).not.toMatch(/setError\(cause instanceof Error \? cause\.message/);
+  });
+});
+
+describe("a browser that stopped answering, told to the owner", () => {
+  const render = (held: boolean) => renderToStaticMarkup(createElement(BrowserRestartNotice, { botName: "Petra", held, pending: false, onReopen: () => {} }));
+  it("offers Reopen blank page once the owner holds the browser, and says to take control first otherwise", () => {
+    const held = render(true), free = render(false);
+    expect(held).toContain("Reopen a blank page to restart Petra&#x27;s browser.");
+    expect(held).toContain("Reopen blank page</button>");
+    expect(held).not.toContain('disabled=""');
+    expect(free).toContain("Take control, then reopen a blank page to restart Petra&#x27;s browser.");
+    expect(free).toContain('disabled=""');
+    for (const html of [held, free]) expect(html).not.toMatch(/\u2014|\bsafe|unsafe|safety/i);
+  });
+});
+
+describe("a browser that is not running, told to the owner", () => {
+  it("says the browser is not running and offers Restart browser without taking control, never the page-lock words", () => {
+    const html = renderToStaticMarkup(createElement(BrowserNotRunningNotice, { botName: "Petra", pending: false, onRestart: () => {} }));
+    expect(html).toContain("Petra&#x27;s browser is not running. Restart it to give Petra its browser back.");
+    expect(html).toMatch(/<button(?![^>]*disabled="")[^>]*>.*Restart browser<\/button>/);
+    expect(html.replace(/<[^>]*>/g, " ")).not.toMatch(/password|code|card|payment|\u2014|\bsafe|unsafe|safety/i);
+  });
+  it("shows it on the not-running state, and the page-lock note only on a real lock", () => {
+    const source = readFileSync(fileURLToPath(new URL("./UnifiedBrowserPanel.tsx", import.meta.url)), "utf8");
+    expect(source).toContain("{status?.notRunning && !bot.useMyChrome && status.owned !== false && <BrowserNotRunningNotice");
+    expect(source).toContain('onRestart={() => void action("restart")}');
+    expect(source).toContain("{status?.protectedDocument && <ProtectedBrowserNotice");
   });
 });

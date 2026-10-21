@@ -275,6 +275,14 @@ export type RuntimeEvent = RuntimeEventBase &
         /** Additive (1.0.3), F5: a field the driver's contract needs was
          * absent on the wire; the driver never substitutes one. */
         toolInputMissing?: string;
+        /** Additive (1.0.4, 09-1): the driver's own gate held this call as a
+         * key file (Pi's gate resolves links itself); the rule it named. It
+         * only ever adds a hold. Server-side only. */
+        localHold?: string;
+        /** Additive (1.0.4, F1): the driver runs this command's text under
+         * PowerShell (`powershell.exe -Command`, Codex and ACP on Windows),
+         * so the gates read it as PowerShell whatever it starts with. */
+        commandShell?: "pwsh";
         /** Additive (1.0.3), F12 (Rule 74): the exact environment the driver
          * handed the engine process, the names it removed, the command's
          * starting directory, the pinned shell form, and where the map came

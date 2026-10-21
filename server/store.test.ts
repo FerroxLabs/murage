@@ -689,6 +689,23 @@ describe("Store", () => {
     expect(again.find((candidate) => candidate.id === bot.id)?.alwaysAllow).toEqual(["Bash:git", "Read"]);
   });
 
+  it("drops a remembered bare PowerShell grant on load, so its next command asks again (1.0.4 G09-3)", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const botsFile = join(DATA_DIR, "bots.json");
+    const legacy: BotRecord[] = JSON.parse(readFileSync(botsFile, "utf8"));
+    const record = legacy.find((candidate) => candidate.id === bot.id)!;
+    record.alwaysAllow = ["PowerShell", "Bash:git", "local-computer:PowerShell", "PowerShell:Get-ChildItem"];
+    record.tasks![0]!.alwaysAllow = ["PowerShell", "pwsh", "Read"];
+    writeFileSync(botsFile, JSON.stringify(legacy));
+
+    const reloaded = new Store(selection);
+    const saved = (JSON.parse(readFileSync(botsFile, "utf8")) as BotRecord[]).find((candidate) => candidate.id === bot.id)!;
+    expect(saved.alwaysAllow).toEqual(["Bash:git", "PowerShell:Get-ChildItem"]);
+    expect(saved.tasks![0]!.alwaysAllow).toEqual(["Read"]);
+    expect(reloaded.taskByThread(bot.id, saved.tasks![0]!.threadId)?.alwaysAllow).toEqual(["Read"]);
+  });
+
   it("drops remembered grants that cover more than one action on load (1.0.3 app grant)", () => {
     const store = new Store(selection);
     const bot = store.createBot();

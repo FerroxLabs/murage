@@ -463,6 +463,7 @@ server/drivers/host-computer-proxy.test.ts	all	Stop withdraws in-flight host act
 server/drivers/lifecycle-diagnostic.test.ts	all	refuses secret-shaped identity in diagnostics (secrets)
 server/drivers/local-inject-matrix.test.ts	all	host credentials in settings.env, not model rows or argv
 server/drivers/local-inject.test.ts	all	credentials never on argv (secrets)
+server/drivers/murage-exec-mcp.test.ts	linux+mac	every Claude turn reaches its MCP servers (permission cards, memory, agents)
 server/drivers/openai-chat.test.ts	all	chat engine stream contract
 server/drivers/pi-isolation.test.ts	all	Pi personal setup isolated per bot
 server/drivers/pi-permission-gate.test.ts	all	Pi permission gate blocks unknown tools

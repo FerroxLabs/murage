@@ -124,6 +124,9 @@ const ACP: Record<string, (input: Input, call: GrantCall) => ContractRead> = {
   fetch: () => OK,
 };
 
+/** The ACP kinds whose contract also binds a stamped native tool filed under them. */
+const STAMPED_KIND_ROWS = new Set(["execute", "edit", "delete"]);
+
 const PI: Record<string, Row> = {
   bash: fields({ need: { command: "string" }, may: { timeout: "integer" } }),
   powershell: fields({ need: { command: "string" }, may: { timeout: "integer" } }),
@@ -197,7 +200,11 @@ export function requiredFields(engine: EngineKind | undefined, resolved: Resolve
   if (!isObject(input)) return bad("input");
   if (resolved.kind === "mcp") return generic(`mcp__${resolved.name}`, input);
   if (resolved.kind === "engine" && engine === "acp") {
-    const row = resolved.byKind ? ACP[resolved.name] : undefined;
+    // A native tool the engine stamped (Fuigo's or Grok Build's run_terminal_command,
+    // write, delete) is held to the contract of the protocol kind it was filed under,
+    // as an unstamped one is: an execute needs its command, an edit or delete a path.
+    const kind = resolved.byKind ? resolved.name : !resolved.wrapped && STAMPED_KIND_ROWS.has(call?.toolKind ?? "") ? call!.toolKind! : undefined;
+    const row = kind ? ACP[kind] : undefined;
     return row ? row(input, call ?? {}) : OK;
   }
   const name = resolved.kind === "engine" ? resolved.name : call?.toolCall?.name ?? "";
