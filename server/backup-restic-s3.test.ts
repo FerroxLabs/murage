@@ -58,6 +58,12 @@ it("refused guard and private callbacks fail safely without persisting credentia
  const f=fixture({authorizeInitialization:async()=>{throw Error(credentials.secretAccessKey);}});await expect(f.adapter.initialize()).rejects.toThrow("INITIALIZATION_REFUSED");expect(f.run).not.toHaveBeenCalled();
  const g=fixture({password:async()=>{throw Error(credentials.secretAccessKey);}});await expect(g.adapter.connect()).rejects.toThrow("PASSWORD_UNAVAILABLE");expect(g.run).not.toHaveBeenCalled();
 });
+it("a password file Windows lists an unidentifiable account on keeps its own name through connect and create (nops B, read path)",async()=>{
+ const CODE="BACKUP_REMOTE_PASSWORD_ACCOUNT_UNKNOWN_WINDOWS";
+ const g=fixture({password:async()=>{throw Error(CODE);}});await expect(g.adapter.connect()).rejects.toThrow(CODE);expect(g.run).not.toHaveBeenCalled();
+ const h=fixture({password:async()=>{throw Error(CODE);},authorizeInitialization:async()=>{}});h.config.exists=false;await expect(h.adapter.initialize()).rejects.toThrow(CODE);
+ const i=fixture({password:async()=>{throw Error(CODE);}});await expect(i.adapter.store(i.input,i.receipt)).rejects.not.toThrow(/REMOTE_OPERATION_FAILED|PASSWORD_UNAVAILABLE/);
+});
 it("binds verified upload to exact repository and reuses journal without another backup",async()=>{
  const f=fixture();await expect(f.adapter.store(f.input,f.receipt)).rejects.toThrow("CONNECTION_REQUIRED");expect(f.run).not.toHaveBeenCalled();expect(await f.adapter.connect()).toEqual({connected:true,remoteRef:target.remoteRef,revision:1,repositoryId});
  expect(await f.adapter.store(f.input,f.receipt)).toMatchObject({state:"verified",snapshotId:id,remoteRef:target.remoteRef,revision:1,repositoryId,jobId:f.receipt.jobId,archiveSha256:f.receipt.sha256});await f.adapter.store(f.input,f.receipt);expect(f.calls.filter(call=>operation(call.args)==="backup")).toHaveLength(1);

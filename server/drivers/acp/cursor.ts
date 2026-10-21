@@ -316,11 +316,11 @@ export async function fetchCursorModels(
     const stdout = await execText(run, cli, [...args], env);
     if (stdout == null) continue;
     const fromText = decodeCursorModelText(stdout);
-    if (fromText) return fromText;
+    if (fromText) return { ...fromText, source: "live" };
     const fromJson = decodeCursorModelCatalog(firstJsonValue(stdout));
-    if (fromJson) return fromJson;
+    if (fromJson) return { ...fromJson, source: "live" };
   }
-  return STATIC_CURSOR_MODELS;
+  return { ...STATIC_CURSOR_MODELS, source: "static" };
 }
 
 export function classifyCursorError(error: unknown): ProviderErrorCode | undefined {

@@ -62,13 +62,13 @@ const ROWS: Row[] = [
   { cmd: "echo 'rm -rf ~' | wsl", rule: "delete-home", why: "5 wsl with nothing to run" },
   { cmd: "echo 'rm -rf ~' | wsl -e bash", rule: "delete-home", why: "5 wsl exec" },
   { cmd: "echo 'rm -rf ~' | wsl bash", rule: "delete-home", why: "5 wsl words" },
-  { cmd: "Write-Output 'rm -rf ~' | wsl", rule: "delete-home", why: "5 PowerShell into wsl" },
+  { cmd: "Write-Output 'rm -rf ~' | wsl", rule: "unreadable", why: "5 PowerShell into wsl" },
   { cmd: "Write-Output 'dd if=/dev/zero of=/dev/sda' | wsl bash", rule: "disk-erase", why: "5 disk write through wsl" },
-  { cmd: "Write-Output ':(){ :|:& };:' | wsl", rule: "fork-bomb", why: "5 fork bomb through wsl" },
-  { cmd: "Write-Output 'rm -rf ~' | pwsh -Command bash", rule: "delete-home", why: "5 nested PowerShell" },
-  { cmd: "Write-Output 'rm -rf ~' | cmd /c bash", rule: "delete-home", why: "5 nested cmd" },
-  { cmd: "echo 'rm -rf ~' | cmd /c bash", rule: "delete-home", why: "5 POSIX into cmd" },
-  { cmd: "echo 'rm -rf ~' | pwsh -Command \"bash -c 'sh'\"", rule: "delete-home", why: "5 POSIX into PowerShell into shells" },
+  { cmd: "Write-Output ':(){ :|:& };:' | wsl", rule: "unreadable", why: "5 fork bomb through wsl" },
+  { cmd: "Write-Output 'rm -rf ~' | pwsh -Command bash", rule: "unreadable", why: "5 nested PowerShell" },
+  { cmd: "Write-Output 'rm -rf ~' | cmd /c bash", rule: "unreadable", why: "5 nested cmd" },
+  { cmd: "echo 'rm -rf ~' | cmd /c bash", rule: "unreadable", why: "5 POSIX into cmd" },
+  { cmd: "echo 'rm -rf ~' | pwsh -Command \"bash -c 'sh'\"", rule: "unreadable", why: "5 POSIX into PowerShell into shells" },
   { cmd: "echo 'Remove-Item -Recurse -Force ~' | pwsh", rule: "delete-home", why: "5 PowerShell reads its program" },
 
   // 6. glued output options cover extensionless names
@@ -97,7 +97,7 @@ const ROWS: Row[] = [
   { cmd: "python3 -c \"model = 'x'; print(model, '~')\"", rule: null, why: "fa model carries no del" },
   { cmd: "python3 -c \"print('{}/{}'.format('a', '/'))\"", rule: "unreadable", why: "fa format given a root as an argument (10.3, r5)" },
   { cmd: "python3 -c \"print('{}/{}'.format('a', 'b'), '/')\"", rule: null, why: "fa format beside a root is data (10.3, r5)" },
-  { cmd: "Get-Content /tmp/setup.sh | bash", rule: null, why: "fa PowerShell reader with an absolute POSIX path" },
+  { cmd: "Get-Content /tmp/setup.sh | bash", rule: "unreadable", why: "fa from PowerShell, bash is a launcher and asks (1.0.4 F1)" },
 
   // device names: a folder named dev is no device, streams stay streams
   { cmd: "echo hi > ~/dev/x.log", rule: null, why: "dev a folder under home" },

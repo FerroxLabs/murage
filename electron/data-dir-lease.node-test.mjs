@@ -40,7 +40,7 @@ const WORKER = `
   import fs from 'node:fs';
   import os from 'node:os';
   import cp from 'node:child_process';
-  import { syncBuiltinESMExports } from 'node:module';
+  import { createRequire, syncBuiltinESMExports } from 'node:module';
   import { spawnSync } from 'node:child_process';
   // Probe faults are confined to this disposable process, before ESM imports.
   const bootProbe = () => {
@@ -60,38 +60,29 @@ const WORKER = `
   if (process.env.LEASE_TEST_PID_EPERM) process.kill = () => {
     throw Object.assign(new Error('not permitted'), {code:'EPERM'});
   };
-  // Windows creation-identity seam: only the PowerShell path is simulated.
-  // Answers are keyed by queried PID ("self" = this worker); absent keys fail.
+  // Windows creation-identity seam: only the engine-exclusion addon's processStart is simulated (no PowerShell is involved any more,
+  // murage-releases #1). Answers are keyed by queried PID ("self" = this worker); absent keys fail. An answer "<pid>:<start>" for the
+  // queried pid gives <start>; anything else is handed back as it is (and must be refused as malformed).
   const probes = [];
   if (process.env.LEASE_TEST_WIN32) Object.defineProperty(process, 'platform', { value: 'win32' });
   const seam = process.env.LEASE_TEST_PS === undefined ? {} : { probes };
   if (process.env.LEASE_TEST_PS !== undefined) {
     const table = JSON.parse(process.env.LEASE_TEST_PS);
-    const answer = (mode, path, args, options) => {
-      const script = Buffer.from(String(args.at(-1)), 'base64').toString('utf16le');
-      const pid = Number(/GetProcessById\\((\\d+)\\)/.exec(script)?.[1]);
-      probes.push({ mode, path, flags: args.slice(0, -1), pid, timeout: options?.timeout, maxBuffer: options?.maxBuffer, windowsHide: options?.windowsHide });
-      const entry = pid === process.pid && table.self !== undefined ? table.self.replace('SELF_PID', String(process.pid)) : table[String(pid)];
-      if (entry === undefined || entry === 'throw') throw Object.assign(new Error('probe failed'), { code: 'ETIMEDOUT' });
-      return entry;
+    const native = {
+      version: () => 9,
+      processStart(pid) {
+        probes.push({ mode: 'sync', pid });
+        const entry = pid === process.pid && table.self !== undefined ? table.self.replace('SELF_PID', String(process.pid)) : table[String(pid)];
+        if (entry === undefined || entry === 'throw') throw Object.assign(new Error('probe failed'), { code: 'EIO' });
+        return entry.startsWith(pid + ':') ? entry.slice(String(pid).length + 1) : entry;
+      },
     };
-    const powershell = (path) => String(path).toLowerCase().endsWith('powershell.exe');
-    const syncExec = cp.execFileSync;
-    cp.execFileSync = (path, args, options) => powershell(path) ? answer('sync', path, args, options) : syncExec(path, args, options);
-    const asyncExec = cp.execFile;
-    cp.execFile = (path, args, options, callback) => {
-      if (!powershell(path)) return asyncExec(path, args, options, callback);
-      const hold = process.env.LEASE_TEST_PS_HOLD;
-      const run = () => {
-        let output;
-        try { output = answer('async', path, args, options); } catch (error) { callback(error, ''); return; }
-        callback(null, output);
-        if (hold) setImmediate(() => fs.writeFileSync(hold + '.done', 'settled'));
-      };
-      const wait = () => !hold || fs.existsSync(hold) ? run() : setTimeout(wait, 5);
-      setImmediate(wait);
-      return { unref() {}, stdout: { unref() {} }, stderr: { unref() {} } };
-    };
+    const fakeDir = fs.mkdtempSync(os.tmpdir() + '/lease-native-');
+    fs.writeFileSync(fakeDir + '/engine-exclusion.node', '');
+    process.env.MURAGE_RESOURCES_PATH = fakeDir;
+    const Module = createRequire(import.meta.url)('node:module');
+    const loadNative = Module._extensions['.node'];
+    Module._extensions['.node'] = (module, filename) => { if (filename.startsWith(fakeDir)) { module.exports = native; return; } loadNative(module, filename); };
   }
   // Windows share-none seam (simulated win32 only): a share-none open leaves a
   // marker naming this process; any other open of that file is refused with
@@ -922,7 +913,7 @@ test("changed boot metadata invalidates an old release handle", () => {
 });
 
 // ---- Windows same-boot PID reuse (creation identity), simulated on any host ----
-// A disposable worker reports win32 and answers only its PowerShell probe.
+// A disposable worker reports win32 and answers only its native creation-time probe.
 // The "reused" PID always belongs to a sleeper this test spawned itself.
 const SYSTEM_ROOT = "C:\\Windows";
 // A simulated-win32 worker case-folds the data directory before hashing its
@@ -978,14 +969,7 @@ test("Windows identity: a live true owner with matching creation identity stays 
   assert.equal(outcome.code, "LEASE_BUSY");
   const probes = syncProbes(outcome);
   assert.ok(probes.length >= 1);
-  for (const probe of probes) {
-    assert.equal(probe.pid, holder.pid);
-    assert.equal(probe.path, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
-    assert.deepEqual(probe.flags, ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand"]);
-    assert.equal(probe.timeout, 5000);
-    assert.equal(probe.maxBuffer, 64);
-    assert.equal(probe.windowsHide, true);
-  }
+  for (const probe of probes) assert.equal(probe.pid, holder.pid);
   assert.deepEqual(JSON.parse(readFileSync(f.leasePath, "utf8")), owner);
   assert.deepEqual(JSON.parse(readFileSync(identityOf(f.leasePath, owner), "utf8")), identity);
   assert.equal(stillRunning(holder), true);

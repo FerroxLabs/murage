@@ -9,6 +9,7 @@ import { claimEntity, parseAuthoredStatement } from "./pip-claims.ts";
 import type { MemoryBundle } from "../../shared/memory.ts";
 import { applyRecordTombstone } from "./restore.ts";
 import { revokeRecordDisclosures, revokeAllDisclosures } from "./revocation.ts";
+import { inheritEdge } from "./revoke-commit.ts";
 
 const key = z.string().regex(/^[a-zA-Z0-9_-]{1,120}$/);
 export const identityWriteSchema = z.object({
@@ -124,7 +125,7 @@ export function writeBotIdentity(ticket:object,input:IdentityWrite,roster:Memory
         applyRecordTombstone(db,counter);
       }
     }
-    if(input.canon)db.prepare("INSERT INTO memory_derivations VALUES(?,?,?,?)").run(input.canon.id,input.canon.version,id,version);
+    if(input.canon){db.prepare("INSERT INTO memory_derivations VALUES(?,?,?,?)").run(input.canon.id,input.canon.version,id,version);inheritEdge(db,{kind:"record",id,version},{kind:"record",id:input.canon.id,version:input.canon.version});}
     // Continuity rows are never projected into the shared recall index (PIP):
     // no lexical or embedding receipt, so the FTS corpus the other rows rank
     // against is the same with or without them. Owner browsing reads the

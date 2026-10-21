@@ -57,6 +57,13 @@
  },
  {
   "file": "server/atomic.ts",
+  "function": "syncParentDirectory",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/atomic.ts",
   "function": "writeFileAtomicInner",
   "callee": "openSync",
   "root": "data-dir",
@@ -379,14 +386,56 @@
  },
  {
   "file": "server/browser-native-relay.ts",
-  "function": "close",
+  "function": "daemonStartCheck",
   "callee": "readFileSync",
   "root": "browser",
-  "count": 2
+  "count": 1
  },
  {
   "file": "server/browser-native-relay.ts",
-  "function": "command",
+  "function": "endpoint",
+  "callee": "readFileSync",
+  "root": "browser",
+  "count": 1
+ },
+ {
+  "file": "server/browser-native-relay.ts",
+  "function": "run",
+  "callee": "readFileSync",
+  "root": "browser",
+  "count": 1
+ },
+ {
+  "file": "server/browser-native-relay.ts",
+  "function": "sessionPid",
+  "callee": "readFileSync",
+  "root": "browser",
+  "count": 1
+ },
+ {
+  "file": "server/browser-restore-store.ts",
+  "function": "readBounded",
+  "callee": "openSync",
+  "root": "browser",
+  "count": 1
+ },
+ {
+  "file": "server/browser-restore-store.ts",
+  "function": "readBounded",
+  "callee": "readSync",
+  "root": "browser",
+  "count": 1
+ },
+ {
+  "file": "server/browser-sandbox-linux-engine.ts",
+  "function": "chromeInventory",
+  "callee": "readFileSync",
+  "root": "browser",
+  "count": 1
+ },
+ {
+  "file": "server/browser-sandbox-linux-engine.ts",
+  "function": "verifyLinuxEngineCopy",
   "callee": "readFileSync",
   "root": "browser",
   "count": 1
@@ -396,7 +445,28 @@
   "function": "ensureBrowserSandboxAccess",
   "callee": "readFileSync",
   "root": "browser",
-  "count": 2
+  "count": 1
+ },
+ {
+  "file": "server/browser-windows-identity.ts",
+  "function": "windowsBrowserImageState",
+  "callee": "openSync",
+  "root": "browser",
+  "count": 1
+ },
+ {
+  "file": "server/browser-windows-identity.ts",
+  "function": "windowsBrowserImageState",
+  "callee": "readFileSync",
+  "root": "browser",
+  "count": 1
+ },
+ {
+  "file": "server/browser-sandbox.ts",
+  "function": "readKernelSetting",
+  "callee": "readFileSync",
+  "root": "browser",
+  "count": 1
  },
  {
   "file": "server/calendar-calls.ts",

@@ -17,12 +17,14 @@ export async function browserOwnerRequest(controller: UnifiedBrowserController, 
   valid(); const { owner, profileKey } = authority!;
   if (method === "GET") {
     if (frameGeneration !== undefined) return controller.frame(profileKey, frameGeneration);
-    await controller.connect(profileKey); valid(); return { ...controller.status(profileKey), owned: controller.status(profileKey).owner === owner, canReclaim: authority!.canReclaim === true };
+    // Answered at once, even while the browser cannot connect, so the panel
+    // always has the current hold and generation to hand control back with.
+    const status = await controller.refresh(profileKey); valid(); return { ...status, owned: status.owner === owner, canReclaim: authority!.canReclaim === true };
   }
   if (method !== "POST") throw Object.assign(new Error("Browser route requires GET or POST"), { status: 405 });
   if (JSON.stringify(body).length > 16_384) throw Object.assign(new Error("Browser input exceeds its bound"), { status: 413 });
   const generation = body.generation;
-  if (body.action !== "take" && !Number.isSafeInteger(generation)) throw Object.assign(new Error("A current browser generation is required"), { status: 400 });
+  if (body.action !== "take" && body.action !== "restart" && !Number.isSafeInteger(generation)) throw Object.assign(new Error("A current browser generation is required"), { status: 400 });
   switch (body.action) {
     case "reclaim": if (!authority!.canReclaim) throw Object.assign(new Error("Only the desktop owner may reclaim control"), { status: 403 }); await controller.reclaim(profileKey, owner); break;
     case "take": await controller.take(profileKey, owner); break;
@@ -30,6 +32,8 @@ export async function browserOwnerRequest(controller: UnifiedBrowserController, 
     case "navigate": if (typeof body.url !== "string") throw new Error("A browser address is required"); await controller.navigate(profileKey, owner, generation as number, body.url); break;
     case "input": if (!body.event || typeof body.event !== "object" || Array.isArray(body.event)) throw new Error("A browser input event is required"); controller.input(profileKey, owner, generation as number, body.event as Record<string, unknown>); break;
     case "reopen": await controller.reopen(profileKey, owner, generation as number); break;
+    // The browser is not running: start it again. No hold needed, and the page lock is untouched.
+    case "restart": await controller.restart(profileKey, owner); break;
     default: throw Object.assign(new Error("Unknown browser action"), { status: 400 });
   }
   valid(); const status = controller.status(profileKey); return { ...status, owned: status.owner === owner, canReclaim: authority!.canReclaim === true };

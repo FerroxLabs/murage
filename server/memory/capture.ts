@@ -18,7 +18,7 @@ import { threadCaptureScope } from "./capture-scope.ts";
 import { withoutImageTags } from "../../src/lib/composer-attachments.ts";
 import { scopeRow } from "./scope-id.ts";
 import { revokeThreadDisclosures } from "./revocation.ts";
-import { commitRevoke } from "./revoke-commit.ts";
+import { commitRevoke, inheritEdge } from "./revoke-commit.ts";
 import { writeCaptureLineage } from "./lineage-write.ts";
 import { startBranchChange } from "./branch-change.ts";
 import { noteTurnCaptureJob } from "./turn-capture-jobs.ts";
@@ -73,7 +73,9 @@ export function captureSource(db: DatabaseSync, source: {id: string; threadId: s
     .run(source.id,scope,source.threadId,source.messageId??null,source.turnId??null,revision,hash,source.kind,source.speaker,source.outcome,source.parentId??null,source.excluded?"retired":"active");
   db.prepare("INSERT INTO memory_source_versions VALUES(?,?,?,?,?)").run(source.id,revision,hash,payload,Date.now());
   // the line -> source edge the marker follows when the line is revoked (DESIGN-WRITETIME 2.6)
-  if(source.messageId)writeCaptureLineage(db,{threadId:source.threadId,messageId:source.messageId},source.id);
+  if(source.messageId){writeCaptureLineage(db,{threadId:source.threadId,messageId:source.messageId},source.id);
+    // a source captured from a denied line is marked at its write (DRAIN-104 2.11): the walk that passed the line may be done
+    inheritEdge(db,{kind:"source",id:source.id},{threadId:source.threadId,messageId:source.messageId});}
   db.prepare("UPDATE memory_jobs SET status='cancelled',lease_generation=lease_generation+1 WHERE source_id=? AND status NOT IN ('complete','cancelled')").run(source.id);
   forgetParkedSource(db,source.id);
   const meta = db.prepare("SELECT policy_revision,deletion_epoch FROM memory_meta WHERE id=1").get()!;

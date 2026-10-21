@@ -8,10 +8,17 @@
 // a private key only when no other principal can read it, and this is the
 // ACL it expects. Tools run by absolute System32 path, never PATH.
 import {spawnSync,execFile} from "node:child_process";
+import {mkdtempSync,readFileSync,rmSync} from "node:fs";
+import {tmpdir} from "node:os";
+import {join as joinPath} from "node:path";
+import {aclFail as sharedAclFail,parseSddlAcl as parseSharedSddlAcl,savedAclEntries} from "../shared/windows-sddl.mjs";
+import {windowsNative} from "./windows-native.mjs";
 
 const system32=()=>{const root=process.env.SystemRoot;if(typeof root!=="string"||!/^[A-Za-z]:\\[^"\x00-\x1f]*$/.test(root))throw Error("BACKUP_WINDOWS_ACL_UNAVAILABLE");return `${root.replace(/\\+$/,"")}\\System32`;};
-// PowerShell can take well over 20 s to start on a busy or slow Windows machine; a timeout here fails the
-// owner-only step outright, so wait up to a minute. The signed job helper replaces these calls.
+// No PowerShell anywhere in this file (murage-releases #1: an antivirus notice and a visible PowerShell start per call):
+// only plain System32 programs (whoami, icacls), each run by absolute path, and the engine-exclusion addon for what no
+// program's output can be trusted to say (a file's owner, the volume's file system, the computer's domains). A slow or
+// busy machine can still take a while to start one, so wait up to a minute.
 const run=(file,args,options={})=>spawnSync(file,args,{encoding:"utf8",windowsHide:true,timeout:60000,maxBuffer:1024*1024,...options});
 // The same tools, without blocking: the password store runs in Electron's
 // main process, where spawnSync froze the window for each PowerShell start
@@ -22,7 +29,6 @@ const runAsync=(file,args,options={})=>new Promise(resolve=>{
  try{execFile(file,args,{encoding:"utf8",windowsHide:true,timeout:60000,maxBuffer:1024*1024,...options},(error,stdout)=>resolve({status:error?(Number.isInteger(error.code)?error.code:1):0,stdout:String(stdout??"")}));}
  catch{resolve({status:1,stdout:""});}
 });
-const powershell=()=>`${system32()}\\WindowsPowerShell\\v1.0\\powershell.exe`;
 
 // The account SIDs a signed-in person can have (W-A1). Both shapes are an
 // authority prefix and exactly four 32-bit sub-authorities:
@@ -39,8 +45,7 @@ export function isUserSid(sid){
 }
 let cachedSid=null;
 /** The SID of the user this process runs as: the TokenUser of the process
- * token, which is what whoami /user prints (and, if whoami is unusable,
- * WindowsIdentity.GetCurrent().User reads the same token). */
+ * token, which is what whoami /user prints. */
 export function currentUserSid({runTool=run}={}){
  if(cachedSid)return cachedSid;
  // CSV, no header: "<domain>\<name>","<sid>". The name may hold commas or
@@ -48,11 +53,8 @@ export function currentUserSid({runTool=run}={}){
  const result=runTool(`${system32()}\\whoami.exe`,["/user","/fo","csv","/nh"]);
  const line=String(result?.stdout??"").split(/\r?\n/).map(text=>text.trim()).filter(Boolean).at(-1)??"";
  let sid=/,"(S-1-[0-9-]+)"$/.exec(line)?.[1];
- if(result?.status!==0||!isUserSid(sid)){
-  const fallback=runTool(powershell(),["-NoProfile","-NonInteractive","-Command","[Security.Principal.WindowsIdentity]::GetCurrent().User.Value"]);
-  sid=String(fallback?.stdout??"").trim();
-  if(fallback?.status!==0||!isUserSid(sid))throw Error("BACKUP_WINDOWS_ACL_UNAVAILABLE");
- }
+ // whoami is the token's own answer; there is no second source that does not start a script host, so a failure is a refusal.
+ if(result?.status!==0||!isUserSid(sid))throw Error("BACKUP_WINDOWS_ACL_UNAVAILABLE");
  return cachedSid=sid;
 }
 /** Test seam: forget the cached SID. */
@@ -73,38 +75,72 @@ export function sddlIsOwnerOnly(sddl,sid){
  return aces.length>0&&aces.every(ace=>{const parts=ace.split(";");return parts[0]==="A"&&parts.at(-1)===sid;});
 }
 
-// The ACL as SIDs, never names or SDDL aliases: SDDL writes some accounts as
-// two-letter aliases ("LA" for the built-in Administrator), which a SID
-// compare would misread. One line each: O:<owner sid>, P:<1 when inheritance
-// is removed>, then <0 allow|1 deny>;<sid>;<hex access mask>;<1 inherited>.
-//
-// .NET reads the ACL directly, never the Get-Acl cmdlet. Get-Acl lives in a
-// module PowerShell has to find first, and with the stripped environment below
-// (no LOCALAPPDATA, so no module analysis cache) finding it meant reading every
-// module installed on the computer: on a machine with many modules (a GitHub
-// Windows runner) each read took over 20 s and hit the timeout, so every
-// owner-only step failed. The module path is pinned to PowerShell's own so no
-// installed module is ever searched or loaded.
-const ACL_SCRIPT=["$env:PSModulePath=$PSHOME+'\\Modules'","$p=$env:MURAGE_ACL_TARGET",
- "$a=if([IO.Directory]::Exists($p)){[IO.Directory]::GetAccessControl($p)}else{[IO.File]::GetAccessControl($p)}","$s=[Security.Principal.SecurityIdentifier]",
- "'O:'+$a.GetOwner($s).Value","'P:'+[int]$a.AreAccessRulesProtected",
- "foreach($r in $a.GetAccessRules($true,$true,$s)){'{0};{1};{2};{3}' -f [int]$r.AccessControlType,$r.IdentityReference.Value,[Convert]::ToString([int]$r.FileSystemRights,16),[int]$r.IsInherited}"].join(";");
-/** Parses the lines ACL_SCRIPT prints. Anything unexpected fails closed. */
-export function parseAclListing(text){
- const lines=String(text).split(/\r?\n/).map(line=>line.trim()).filter(Boolean);
- const owner=/^O:(S-1-[0-9-]+)$/.exec(lines[0]??"")?.[1],protectedFlag=/^P:([01])$/.exec(lines[1]??"")?.[1];
- if(!owner||protectedFlag===undefined)throw Error("BACKUP_WINDOWS_ACL_FAILED");
- const rules=lines.slice(2).map(line=>{
-  const match=/^([01]);(S-1-[0-9-]+);([0-9a-fA-F]{1,8});([01])$/.exec(line);if(!match)throw Error("BACKUP_WINDOWS_ACL_FAILED");
-  return{allow:match[1]==="0",sid:match[2],mask:parseInt(match[3],16)>>>0,inherited:match[4]==="1"};
- });
- return{owner,protected:protectedFlag==="1",rules};
+// The ACL is read with icacls /save, which writes the DACL as SDDL (locale-independent, unlike icacls' own listing), parsed by
+// shared/windows-sddl.mjs into SIDs, so every comparison below is by SID, never by name. The result is one object:
+//   owner     the owner's SID, or null when it was not asked for or could not be told (see readOwnerSid);
+//   protected inheritance removed (the DACL's P flag);
+//   rules     [{allow, sid, mask, inherited, inheritOnly}] in the file's order.
+// Anything the parser does not recognise fails closed. A numeric SID is taken as written; a domain-relative alias resolves only
+// against the domain Windows means, read by the addon (domainSids: this computer's account domain, the joined domain, its forest
+// root), never against the signed-in user's or this computer's SID in its place; one that cannot be resolved is refused with a
+// plain sentence in the error's `fix` (shared/windows-sddl.mjs UNKNOWN_ACCOUNT_FIX).
+const aclFail=()=>sharedAclFail();
+/** The addon's domainSids(), or null (no addon, or the policy could not be read): then only numeric SIDs and fixed aliases resolve. */
+export function domainSidsOf(native=windowsNative()){
+ try{const domains=typeof native?.domainSids==="function"?native.domainSids():null;return domains&&typeof domains==="object"?domains:null;}catch{return null;}
 }
-export function readAcl(target,{runTool=run}={}){
+/** Parses the DACL line icacls /save writes ("D:PAI(A;OICIID;FA;;;BA)…"). `domains` resolves the domain-relative aliases. */
+export function parseSddlAcl(sddl,{domains=domainSidsOf()}={}){
+ return parseSharedSddlAcl(sddl,{domains});
+}
+/** The icacls arguments that write the target's DACL to `file` (UTF-16, one line for the name and one for the SDDL). */
+export function aclSaveArguments(target,file){
+ if(typeof target!=="string"||!/^[A-Za-z]:\\/.test(target)||/["\x00-\x1f]/.test(target))throw Error("BACKUP_WINDOWS_ACL_PATH_INVALID");
+ return [target,"/save",file,"/q"];
+}
+/** What icacls /save wrote for one file: its SDDL line. */
+export function sddlFromSavedAcl(bytes){
+ const entries=savedAclEntries(bytes);
+ if(entries.length!==1)throw aclFail();
+ return entries[0].sddl;
+}
+const readSavedFile=file=>readFileSync(file);
+/** Runs icacls /save into a private temp folder, hands back the SDDL and removes the folder. */
+function withSavedAcl(target,runTool,readSaved,domains){
+ const folder=mkdtempSync(joinPath(tmpdir(),"murage-acl-"));
+ try{
+  const file=joinPath(folder,"acl.txt");
+  const result=runTool(`${system32()}\\icacls.exe`,aclSaveArguments(target,file));
+  if(result?.status!==0)throw aclFail();
+  return parseSddlAcl(sddlFromSavedAcl(readSaved(file)),{domains});
+ }finally{try{rmSync(folder,{recursive:true,force:true});}catch{/* a leftover private temp folder holds only an ACL line */}}
+}
+async function withSavedAclAsync(target,runTool,readSaved,domains){
+ const folder=mkdtempSync(joinPath(tmpdir(),"murage-acl-"));
+ try{
+  const file=joinPath(folder,"acl.txt");
+  const result=await runTool(`${system32()}\\icacls.exe`,aclSaveArguments(target,file));
+  if(result?.status!==0)throw aclFail();
+  return parseSddlAcl(sddlFromSavedAcl(readSaved(file)),{domains});
+ }finally{try{rmSync(folder,{recursive:true,force:true});}catch{/* a leftover private temp folder holds only an ACL line */}}
+}
+
+// The owner is not in what icacls /save writes. It is read as a SID by the engine-exclusion addon's fileOwnerSid (GetSecurityInfo on
+// the file itself, a link not followed), and only there: no owner is ever read from a program's output or taken from the end of an
+// account name. Without the addon the owner is unknown (null), and an unknown owner is refused by aclIsPrivateToOwner.
+const SID_TEXT=/^S-1-\d+(?:-\d+)+$/;
+/** The owner's SID of a file, or null (see above). Windows only. */
+export function readOwnerSid(target,{native=windowsNative()}={}){
+ if(typeof native?.fileOwnerSid!=="function")return null;
+ try{const sid=native.fileOwnerSid(target);return typeof sid==="string"&&SID_TEXT.test(sid)?sid:null;}catch{return null;}
+}
+export async function readOwnerSidAsync(target,options={}){return readOwnerSid(target,options);}
+/** The ACL of `target` as SIDs. `withOwner` also reads the owner (one more plain program), which only
+ * assertPrivateToOwner needs. `readSaved` is the test seam for the file icacls writes. */
+export function readAcl(target,{runTool=run,readSaved=readSavedFile,withOwner=false,native=windowsNative()}={}){
  if(typeof target!=="string"||/[\x00-\x1f]/.test(target))throw Error("BACKUP_WINDOWS_ACL_PATH_INVALID");
- const result=runTool(powershell(),["-NoProfile","-NonInteractive","-Command",ACL_SCRIPT],{env:{SystemRoot:process.env.SystemRoot,MURAGE_ACL_TARGET:target}});
- if(result?.status!==0)throw Error("BACKUP_WINDOWS_ACL_FAILED");
- return parseAclListing(result.stdout);
+ const acl=withSavedAcl(target,runTool,readSaved,domainSidsOf(native));
+ return withOwner?{...acl,owner:readOwnerSid(target,{native})}:acl;
 }
 /** What restrictToOwner leaves: inheritance removed and every entry an
  * allow for the owner. SYSTEM and Administrators are not listed either. */
@@ -116,7 +152,8 @@ export function aclIsOwnerOnly(acl,sid){
 // count like root on Mac and Linux, which can always read a file too; any
 // other account or group (Users, Everyone, Authenticated Users, another
 // person) that may read, write or re-permission the file makes it shared.
-const ROOT_LIKE=new Set(["S-1-5-18","S-1-5-32-544"]);
+// SYSTEM, Administrators and TrustedInstaller (the account Windows' own files belong to), by SID.
+const ROOT_LIKE=new Set(["S-1-5-18","S-1-5-32-544","S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"]);
 const OWNER_ALIASES=new Set(["S-1-3-0","S-1-3-4"]); // CREATOR OWNER, OWNER RIGHTS
 // Rights that reveal nothing and change nothing: synchronize, read the
 // security descriptor, read attributes and extended attributes.
@@ -153,18 +190,19 @@ export function restrictToOwner(target,{directory=false,runTool=run,readSddl,rea
 export function assertPrivateToOwner(target,{runTool=run,readAcl:readListing}={}){
  if(process.platform!=="win32"&&!readListing)return;
  const sid=currentUserSid({runTool});
- if(!aclIsPrivateToOwner((readListing??(file=>readAcl(file,{runTool})))(target),sid))throw Error("BACKUP_WINDOWS_ACL_SHARED");
+ if(!aclIsPrivateToOwner((readListing??(file=>readAcl(file,{runTool,withOwner:true})))(target),sid))throw Error("BACKUP_WINDOWS_ACL_SHARED");
 }
-/** False only for a drive whose file system has no ACLs at all (FAT, FAT32,
- * exFAT: the usual USB stick), where owner-only can't be expressed. Anything
- * else, including a failure to tell, is treated as keeping ACLs. */
-export function volumeKeepsAcls(target,{runTool=run}={}){
+// A volume that has no ACLs (FAT, FAT32, exFAT: the usual USB stick). Its file system is the addon's driveInfo (GetVolumeInformationW
+// on the volume that holds the path), never a word found in a program's output. Without the addon the answer cannot be had, and the
+// save is refused (BACKUP_WINDOWS_ACL_UNAVAILABLE); a volume the addon cannot read is treated as keeping ACLs, so the owner-only
+// step runs and refuses when it cannot be done.
+const NO_ACL_FILE_SYSTEM=/^(?:FAT|FAT12|FAT16|FAT32|exFAT)$/i;
+/** False only for a drive whose file system has no ACLs at all, where owner-only can't be expressed. Throws without the addon. */
+export function volumeKeepsAcls(target,{native=windowsNative()}={}){
+ if(typeof native?.driveInfo!=="function")throw Error("BACKUP_WINDOWS_ACL_UNAVAILABLE");
  if(typeof target!=="string"||!/^[A-Za-z]:\\/.test(target)||/[\x00-\x1f]/.test(target))return true;
- const script="([IO.DriveInfo]::new([IO.Path]::GetPathRoot($env:MURAGE_ACL_TARGET))).DriveFormat";
- try{
-  const result=runTool(powershell(),["-NoProfile","-NonInteractive","-Command",script],{env:{SystemRoot:process.env.SystemRoot,MURAGE_ACL_TARGET:target}});
-  return !(result?.status===0&&/^(?:FAT|FAT12|FAT16|FAT32|exFAT)$/i.test(String(result.stdout).trim()));
- }catch{return true;}
+ let info=null;try{info=native.driveInfo(target);}catch{/* unclear: keeps ACLs */}
+ return !(typeof info?.format==="string"&&NO_ACL_FILE_SYSTEM.test(info.format.trim()));
 }
 
 // Asynchronous forms for Electron's main process (see runAsync). Same rules,
@@ -174,18 +212,13 @@ export async function currentUserSidAsync({runTool=runAsync}={}){
  const result=await runTool(`${system32()}\\whoami.exe`,["/user","/fo","csv","/nh"]);
  const line=String(result?.stdout??"").split(/\r?\n/).map(text=>text.trim()).filter(Boolean).at(-1)??"";
  let sid=/,"(S-1-[0-9-]+)"$/.exec(line)?.[1];
- if(result?.status!==0||!isUserSid(sid)){
-  const fallback=await runTool(powershell(),["-NoProfile","-NonInteractive","-Command","[Security.Principal.WindowsIdentity]::GetCurrent().User.Value"]);
-  sid=String(fallback?.stdout??"").trim();
-  if(fallback?.status!==0||!isUserSid(sid))throw Error("BACKUP_WINDOWS_ACL_UNAVAILABLE");
- }
+ if(result?.status!==0||!isUserSid(sid))throw Error("BACKUP_WINDOWS_ACL_UNAVAILABLE");
  return cachedSid=sid;
 }
-export async function readAclAsync(target,{runTool=runAsync}={}){
+export async function readAclAsync(target,{runTool=runAsync,readSaved=readSavedFile,withOwner=false,native=windowsNative()}={}){
  if(typeof target!=="string"||/[\x00-\x1f]/.test(target))throw Error("BACKUP_WINDOWS_ACL_PATH_INVALID");
- const result=await runTool(powershell(),["-NoProfile","-NonInteractive","-Command",ACL_SCRIPT],{env:{SystemRoot:process.env.SystemRoot,MURAGE_ACL_TARGET:target}});
- if(result?.status!==0)throw Error("BACKUP_WINDOWS_ACL_FAILED");
- return parseAclListing(result.stdout);
+ const acl=await withSavedAclAsync(target,runTool,readSaved,domainSidsOf(native));
+ return withOwner?{...acl,owner:readOwnerSid(target,{native})}:acl;
 }
 export async function restrictToOwnerAsync(target,{directory=false,runTool=runAsync,readAcl:readListing}={}){
  if(process.platform!=="win32"&&!readListing)return;
@@ -200,13 +233,6 @@ export async function restrictToOwnerAsync(target,{directory=false,runTool=runAs
 export async function assertPrivateToOwnerAsync(target,{runTool=runAsync,readAcl:readListing}={}){
  if(process.platform!=="win32"&&!readListing)return;
  const sid=await currentUserSidAsync({runTool});
- if(!aclIsPrivateToOwner(await (readListing??(file=>readAclAsync(file,{runTool})))(target),sid))throw Error("BACKUP_WINDOWS_ACL_SHARED");
+ if(!aclIsPrivateToOwner(await (readListing??(file=>readAclAsync(file,{runTool,withOwner:true})))(target),sid))throw Error("BACKUP_WINDOWS_ACL_SHARED");
 }
-export async function volumeKeepsAclsAsync(target,{runTool=runAsync}={}){
- if(typeof target!=="string"||!/^[A-Za-z]:\\/.test(target)||/[\x00-\x1f]/.test(target))return true;
- const script="([IO.DriveInfo]::new([IO.Path]::GetPathRoot($env:MURAGE_ACL_TARGET))).DriveFormat";
- try{
-  const result=await runTool(powershell(),["-NoProfile","-NonInteractive","-Command",script],{env:{SystemRoot:process.env.SystemRoot,MURAGE_ACL_TARGET:target}});
-  return !(result?.status===0&&/^(?:FAT|FAT12|FAT16|FAT32|exFAT)$/i.test(String(result.stdout).trim()));
- }catch{return true;}
-}
+export async function volumeKeepsAclsAsync(target,options={}){return volumeKeepsAcls(target,options);}

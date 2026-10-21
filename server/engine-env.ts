@@ -14,7 +14,7 @@
 
 import { createHash } from "node:crypto";
 import { delimiter } from "node:path";
-import { ABSENT_PINS, ENV_PINS, resolvePins, valuePins, type PinRun, type SshResolution } from "../shared/arg-vocabulary.ts";
+import { ABSENT_PINS, ENV_PINS, isPowerShellProgram, resolvePins, valuePins, type PinRun, type SshResolution } from "../shared/arg-vocabulary.ts";
 import type { PromptFacts } from "../shared/prompt-capable.ts";
 import { CHECK_BYTES, CHECK_MS } from "../shared/scan-limits.ts";
 import type { EnvCapture, ExecEnv } from "../shared/mount-identity.ts";
@@ -191,6 +191,9 @@ function checkExecEnv(at: number, session: string, shell: readonly string[], han
     if (!program) return resolve({ ok: false, why: "no shell form" });
     // A Cloud home's launcher builds the engine's environment itself (pinned names win, others dropped) and runs only
     // manifest engines, so the server cannot run the pinned form there: the record is U20, never the hand read as checked.
+    // The check's script is a POSIX one (`env -0; printf; pwd`). PowerShell, the Windows shell form, cannot run it, so starting it only
+    // ever produced the same U20 after a hidden PowerShell start (murage-releases #1): the record is U20 without starting anything.
+    if (isPowerShellProgram(program)) return resolve({ ok: false, why: "the shell form is PowerShell, which the environment check cannot read" });
     if (process.env.MURAGE_CLOUD_ROLE === "home") return resolve({ ok: false, why: "a Cloud home's launcher sets the engine's environment" });
     // Through the shared launcher (Rule 74c): the engine's shell form runs with no controlling terminal.
     execCli(program, [...args, "env -0; printf '\\0'; pwd"], { env: handed.env, cwd, timeout: CHECK_MS, maxBuffer: CHECK_BYTES }, (error, stdout) => {

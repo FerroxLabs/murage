@@ -6,7 +6,7 @@ import { database } from "./database.ts";
 import { botDeleted } from "./owner-deletions.ts";
 import { threadHasKeyed } from "./message-db.ts";
 import { type BotRecord, type GroupRecord, type Store, type TaskRecord, sectionKey, isWorkspaceChief, isIndividualAssistant } from "./store.ts";
-import { OWNER, assertHumanPrincipal, bindHumanThread, humanTask, isLocalOwner, threadHumanPrincipal, type HumanPrincipal } from "./human-principals.ts";
+import { OWNER, assertHumanPrincipal, bindHumanThread, humanTask, isLocalOwner, threadHumanPrincipal, withBindingScope, type HumanPrincipal } from "./human-principals.ts";
 import { teamIdFor, teamMemoryKey } from "./team-identities.ts";
 import { outOfReachLine } from "./coordination-target.ts";
 import { isAutomationThread, mayMessage } from "./message-allow.ts";
@@ -109,14 +109,26 @@ export function isOwnUnsharedThread(bot: BotRecord | undefined, threadId: string
     && JSON.stringify(threadHumanPrincipal(threadId)) === JSON.stringify(OWNER));
 }
 export function homeThread(bot: BotRecord): TaskRecord {
+  // (thread bindings remembered for the whole selection: human-principals.ts withBindingScope)
+  return withBindingScope(() => homeThreadScoped(bot));
+}
+function homeThreadScoped(bot: BotRecord): TaskRecord {
   const store = currentStore; if (!store) throw new Error("Execution store is unavailable");
   const active = bot.tasks?.find(t => t.threadId === bot.threadId);
   if (bot.partitionedAt === undefined && active && isLocalOwner(threadHumanPrincipal(active.threadId))) return active;
   const owner = OWNER;
+  const ownerKey = JSON.stringify(owner);
   const eligible = (task: TaskRecord) => !task.sharedWork && isHomePartition(threadPartition(bot, task.threadId))
-    && JSON.stringify(threadHumanPrincipal(task.threadId)) === JSON.stringify(owner)
+    && JSON.stringify(threadHumanPrincipal(task.threadId)) === ownerKey
     && !threadHasKeyed(task.threadId, "routineRun");
-  const task = bot.tasks?.find(t => t.threadId === bot.threadId && eligible(t)) ?? bot.tasks?.filter(eligible).sort((a, b) => b.createdAt - a.createdAt)[0];
+  // the active task when it fits, else the newest that does: tasks are tried newest first and the first that fits is taken (the same task
+  // the old filter-then-sort chose, ties kept in list order), so the checks stop there instead of running over every task of the bot
+  // (1.0.3 io: 2,400 tasks a call, several calls a second, each check one binding read). A task with a missing or non-finite createdAt
+  // makes the comparator inconsistent, and sorting all tasks is not then the same as sorting the eligible ones (Astra iohot2 Low): any
+  // such task anywhere in the list takes the old path, exactly as it was.
+  const task = (bot.tasks ?? []).every(t => Number.isFinite(t.createdAt))
+    ? (active && eligible(active) ? active : undefined) ?? (bot.tasks ?? []).filter(t => t !== active).sort((a, b) => b.createdAt - a.createdAt).find(eligible)
+    : bot.tasks?.find(t => t.threadId === bot.threadId && eligible(t)) ?? bot.tasks?.filter(eligible).sort((a, b) => b.createdAt - a.createdAt)[0];
   if (task) return task;
   const created = store.createTask(bot.id, "Direct chat", false); if (!created) throw new Error("Unknown bot");
   bindHumanThread(created.threadId, owner); return created;

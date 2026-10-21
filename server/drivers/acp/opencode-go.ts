@@ -31,12 +31,11 @@ import {
 } from "../../opencode-config.ts";
 
 const STATIC_MODELS: ModelCatalog = {
-  default: "opencode/x-preview-f-free",
+  default: "opencode/beam-free",
   options: [
     {
-      id: "opencode/x-preview-f-free",
-      label: "Zen · Ox Alpha Free",
-      contextWindow: 1_000_000,
+      id: "opencode/beam-free",
+      label: "Zen · Beam Free",
     },
   ],
 };
@@ -181,9 +180,10 @@ export async function discoverOpenCodeModels(
     const catalog = parseOpenCodeModelsOutput(await runOpenCodeModels(cli, environment, true));
     if (!catalog) throw new Error("OpenCode returned no usable models");
     lastSuccessfulCatalog = catalog;
-    return catalog;
+    return { ...catalog, source: "live" };
   } catch {
-    return lastSuccessfulCatalog ?? STATIC_MODELS;
+    // A failed probe is never live, even when an earlier list is reused.
+    return { ...(lastSuccessfulCatalog ?? STATIC_MODELS), source: "static" };
   }
 }
 
@@ -366,7 +366,7 @@ export function normalizeLegacyOpenCodeModel(
   if (model !== "opencode-go/ox-alpha-free") return model;
   return env.OPENCODE_API_KEY
     ? "opencode-go/x-preview-f-free"
-    : "opencode/x-preview-f-free";
+    : "opencode/beam-free"; // x-preview-f-free is gone from opencode 1.19.3
 }
 
 /** Whether a turn works inside a folder Murage owns: a bot's own workspace or
@@ -702,11 +702,16 @@ const support = (loadCatalog: OpenCodeCatalogLoader): AcpSupport => ({
   // dev-mode key), overlaid with `environment` so an instance-specific HOME /
   // XDG_CONFIG_HOME / OPENCODE_CONFIG_DIR still decides WHICH opencode.json
   // the connector gate inspects.
-  resolveModels: async (environment, config) => mergeFluxCatalog(
-    await mergeLocalInject(await loadCatalog(environment, config.cli), environment),
-    "opencodeGo",
-    { ...process.env, ...environment } as NodeJS.ProcessEnv,
-  ),
+  resolveModels: async (environment, config) => {
+    const listed = await loadCatalog(environment, config.cli);
+    const merged = await mergeFluxCatalog(
+      await mergeLocalInject(listed, environment),
+      "opencodeGo",
+      { ...process.env, ...environment } as NodeJS.ProcessEnv,
+    );
+    // The merges build new catalogs; the source of the CLI list is carried over.
+    return listed.source ? { ...merged, source: listed.source } : merged;
+  },
   buildPromptText: (turn) => turn.system ? `${turn.system}\n\n${turn.text}` : turn.text,
 });
 

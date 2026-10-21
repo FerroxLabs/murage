@@ -4,8 +4,8 @@
 // Loads the native addon that takes real exclusion on a coding engine's file (native/engine-exclusion/exclusion.c): the engine's
 // own whole-file lock, the list of running processes (so Murage knows whether an engine is open), an atomic rename that never
 // replaces, (Windows) handles nobody else can open, and (Windows) a tree removal by handle that never follows a junction
-// (link-removal.ts). Node has none of these. Only engine-fs.ts imports this module, and it exposes the
-// result as `exclOps`.
+// (link-removal.ts), plus (Windows) the calls that replaced Murage's own PowerShell starts. Node has none of these. engine-fs.ts
+// exposes the engine-file result as `exclOps`; the Windows-only callers take it through requireWindowsAddon().
 //
 // Where it looks: the app's resources folder ($MURAGE_RESOURCES_PATH/engine-exclusion.node) and dist-native/engine-exclusion/
 // <platform>-<arch>/ in a source checkout. $MURAGE_ENGINE_EXCLUSION_PATH (a test stand-in or a test build) is honoured ONLY when
@@ -58,6 +58,32 @@ export interface ExclusionAddon {
    * below `path` again (link-removal.ts). true removed, false nothing there; throws with a Node errno name as `code`.
    * `beforeFolder` (tests) runs after each folder is opened and before it is listed. Absent in an older build. */
   removeTree?(path: string, beforeFolder?: (relative: string) => void): boolean;
+  // Windows, version 8: the calls that replaced every PowerShell Murage started itself (murage-releases #1).
+  /** A new named job (Local\\murage-pip-<id>), KILL_ON_JOB_CLOSE, whose only handle is this process's. Throws EEXIST when the name is taken. */
+  jobCreate?(name: string): NativeHandle;
+  /** Puts `pid` in the job; when that fails the process is ended at once with `refusalCode` and the answer is false. */
+  jobAssign?(job: NativeHandle, pid: number, refusalCode: number): boolean;
+  /** Closes this process's handle: Windows then ends every process still in the job. */
+  jobClose?(job: NativeHandle): void;
+  /** Opens the job by name, terminates it and waits up to waitMs for its members to be gone (worker thread). Rejects when it cannot. */
+  jobStop?(name: string, waitMs: number): Promise<{ state: "absent" } | { state: "present"; activeProcesses: number }>;
+  /** The process's creation FILETIME in decimal (.NET StartTime.ToFileTimeUtc()), or null when it cannot be read. */
+  processStart?(pid: number): string | null;
+  /** The drive type (.NET DriveInfo names: Fixed, Removable, Network, ...) and file system of the volume holding `path`, or null. */
+  driveInfo?(path: string): { type: string; format: string } | null;
+  /** The owner SID of the file or folder itself (a link is not followed), or null. */
+  fileOwnerSid?(path: string): string | null;
+  /** LookupAccountNameW's SID for an account name in any display language, or null. */
+  accountSid?(name: string): string | null;
+  /** This computer's own account-domain SID, or null. */
+  machineSid?(): string | null;
+  /** Version 9: this computer's account domain, the AD domain it is joined to and that domain's forest root (LSA policy), each a
+   * domain SID or null (a workgroup computer has no primary or forest root). Throws when the policy cannot be read. */
+  domainSids?(): { account: string | null; primary: string | null; forestRoot: string | null };
+  /** The installed SAPI voices: { name (the id System.Speech gives), culture, description }. */
+  speechVoices?(): Promise<Array<{ name: string; culture: string; description: string }>>;
+  /** One utterance (plain text) to a 22,050 Hz 16-bit mono WAV file; true when `voice` was found and used, false for the default voice. */
+  speechToWave?(text: string, voice: string, path: string): Promise<boolean>;
 }
 
 /** A running process as the addon reports it. `mine`: this user's (null: could not be told). `exe` "" is a process with no program
@@ -80,8 +106,9 @@ export interface FileWriters { writers: Array<{ pid: number; index: number }>; u
  * until a later start reads the bytes again and finds them as written (engine-exec.ts durableBarrier). */
 export type Barrier = "full" | "fallback" | "none";
 
-/** 7: fullSync says which barrier it gave. */
-export const ADDON_VERSION = 7;
+/** 7: fullSync says which barrier it gave. 8: the Windows calls that replaced PowerShell. 9: domainSids, and jobAssign ends a
+ * process it cannot open. */
+export const ADDON_VERSION = 9;
 
 /** The override is for tests only: not in a packaged app, and never outside a test process. */
 export function overrideAllowed(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -103,16 +130,27 @@ function candidates(): string[] {
 }
 
 const HANDLE_FUNCTIONS = ["openFile", "handleRead", "handleWrite", "handleSync", "handleLock", "handleMarkDelete", "handleId", "handleSize", "handleClose"] as const;
+/** Windows, version 9: what replaced Murage's own PowerShell starts. A packaged build that lacks one is refused when it is assembled
+ * (scripts/engine-exclusion-resource.mjs). */
+export const WINDOWS_NATIVE_FUNCTIONS = ["authenticode", "jobCreate", "jobAssign", "jobClose", "jobStop", "processStart", "driveInfo", "fileOwnerSid", "accountSid", "machineSid", "domainSids", "speechVoices", "speechToWave"] as const;
 
 function usable(addon: Partial<ExclusionAddon>): addon is ExclusionAddon {
   if (typeof addon.lock !== "function" || typeof addon.processes !== "function" || typeof addon.renameNoReplace !== "function" || typeof addon.version !== "function") return false;
   try { if (addon.version() !== ADDON_VERSION) return false; } catch { return false; }
-  if (process.platform === "win32") for (const name of HANDLE_FUNCTIONS) if (typeof addon[name] !== "function") return false;
+  if (process.platform === "win32") for (const name of [...HANDLE_FUNCTIONS, ...WINDOWS_NATIVE_FUNCTIONS]) if (typeof addon[name] !== "function") return false;
   if (process.platform !== "win32" && (typeof addon.writers !== "function" || typeof addon.fullSync !== "function")) return false;
   return true;
 }
 
 let loaded: ExclusionAddon | null | undefined;
+
+/** The addon for one of the Windows calls that replaced a PowerShell start. Never a silent fallback: without it the call throws a
+ * plain sentence (a packaged build always carries it; a source checkout without a build refuses the feature). */
+export function requireWindowsAddon(): ExclusionAddon {
+  const addon = loadExclusionAddon();
+  if (!addon) throw Object.assign(new Error("Murage's Windows helper (engine-exclusion.node) is missing or out of date. Reinstall Murage to repair it."), { code: "ENGINE_EXCLUSION_MISSING" });
+  return addon;
+}
 
 /** Looks for the addon again on the next use (tests that switch between the stand-in and the real build). */
 export function forgetExclusionAddon(): void { loaded = undefined; }

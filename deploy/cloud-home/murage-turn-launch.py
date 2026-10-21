@@ -484,7 +484,7 @@ def trusted_session_file(root, bot, session, kind, flags, owner=0):
     liveness lock ("live") and its activity clock ("active") live here, never
     in the browser-writable profile. Refused unless it is a single-link regular
     file owned by `owner` with no group/other write; raises OSError/ValueError."""
-    if kind not in {"live", "active"} or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", bot) or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", session):
+    if kind not in {"live", "active", "restore"} or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", bot) or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", session):
         raise ValueError("Invalid cloud browser session state")
     fd = os.open(root + "/." + kind + "-" + bot + "." + session, flags | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, 0o600)
     try:
@@ -1089,7 +1089,7 @@ def spawn_session_host(request, lock, enter=None):
             os.close(readfd)
     return ready
 
-def ensure_session_host(request, home, root=None, alive=session_alive, spawn=spawn_session_host, wait=HOST_READY_WAIT, owner=0, fence=None, live=None):
+def ensure_session_host(request, home, root=None, alive=session_alive, spawn=spawn_session_host, wait=HOST_READY_WAIT, owner=0, fence=None, live=None, split=None):
     """Called by a root launch of `--json open` or `mcp` before its client runs,
     and by the MCP pump when a request finds no host. Concurrent starts of one bot
     serialize on the id's host lock; a live host (its root launcher holds the
@@ -1106,6 +1106,8 @@ def ensure_session_host(request, home, root=None, alive=session_alive, spawn=spa
             if os.path.lexists(root + "/.cleanup-" + bot):
                 raise ValueError("Cloud browser cleanup is pending")
             (fence or fence_server_instance)(request)
+            # Every host generation starts from a split saved session (browser-restore modes).
+            (split or split_for_host)(request, home, root, owner)
             ready = spawn(request, lock)
         finally:
             os.close(lock)
@@ -1572,6 +1574,369 @@ def launch_browser(request):
             if fd is not None:
                 os.close(fd)
     sys.exit(status if status >= 0 else 128 - status)
+
+# The saved browser session (server/browser-restore-store.ts). The home server cannot read
+# /data/browser/<bot>, so the launcher runs the store's steps as the browser user and hands the
+# answer back on stdout. The rules live in one place: this launcher runs the server's own bundled
+# step (server/browser-restore-cli.ts, pinned in the engine manifest as "browserRestore"), it holds
+# no copy of them.
+#
+# Generations: every browser host (ensure_session_host) starts from a freshly split saved session,
+# whoever starts it, the server or the MCP pump after an idle exit. The split gets a generation id,
+# kept root-side next to the host's live lock (.restore-<bot>.<session>: "<32 hex> split|hosted").
+# The server reads the current generation's snapshot (browser-restore) and every visit mark names the
+# generation it belongs to (browser-restore-mark): a mark from an obsolete generation is answered
+# "stale" and never written, so it can never make a later merge drop storage the new run never touched.
+#
+# Isolation: every step runs in its own mount and pid namespace (run_browser_restore_step) that holds
+# only this bot's browser home, bound from a descriptor opened without following links, over an empty
+# /data/browser, with its own /proc and /tmp. All bots share the browser uid, so this, not a path
+# check, is what keeps a link or a rename planted by the sandboxed browser from reaching another bot.
+# The server-asked modes run in their own limited scope (scope_plan) and the step's whole tree ends at
+# its deadline; the step refuses oversize input itself (browser-restore-cli.ts).
+BROWSER_RESTORE_MODES = frozenset({"browser-restore", "browser-restore-mark"})
+BROWSER_RESTORE_KEYS = frozenset({"mode", "bot", "args", "settings", "instance"})
+BROWSER_RESTORE_SETTINGS = frozenset({"AGENT_BROWSER_SESSION", "AGENT_BROWSER_ENCRYPTION_KEY", "AGENT_BROWSER_RESTORE_SAVE", "AGENT_BROWSER_RESTORE"})
+BROWSER_RESTORE_SCRIPT = "browser-restore-cli"
+BROWSER_RESTORE_OUTPUT_MAX = 32 * 1024 * 1024  # a long-used profile's saved storage, as JSON
+BROWSER_RESTORE_WAIT = 25.0
+BROWSER_RESTORE_HEAP_MB = 512
+BROWSER_RESTORE_SCOPE_PROPERTIES = ["TasksMax=64", "MemoryMax=768M", "TimeoutStopSec=5", "BindsTo=murage-home.service", "After=murage-home.service", "RuntimeMaxSec=90"]
+BROWSER_RESTORE_GENERATION = re.compile(r"[a-f0-9]{32}", re.ASCII)
+CLONE_NEWNS, CLONE_NEWPID = 0x00020000, 0x20000000
+MS_NOSUID, MS_NODEV, MS_NOEXEC, MS_BIND, MS_REC, MS_PRIVATE = 2, 4, 8, 4096, 16384, 262144
+# An origin as the browser names it (location.origin): scheme, host and an optional port. Nothing else.
+BROWSER_RESTORE_ORIGIN = re.compile(r"https?://(?:[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?|\[[0-9A-Fa-f:.]{2,45}\])(?::([0-9]{1,5}))?", re.ASCII)
+BROWSER_RESTORE_ORIGIN_MAX = 300
+
+def browser_restore_origin(value):
+    if not isinstance(value, str) or len(value) > BROWSER_RESTORE_ORIGIN_MAX:
+        return False
+    match = BROWSER_RESTORE_ORIGIN.fullmatch(value)
+    return match is not None and (match.group(1) is None or 1 <= int(match.group(1)) <= 65535)
+
+def validate_browser_restore_request(request, browser_root="/data/browser"):
+    """{"mode":"browser-restore","args":[]} or {"mode":"browser-restore-mark","args":[<generation>, <origin>]},
+    with the bot, the server instance and the session settings every browser request carries. Strict: no
+    other key, no other setting, the key a 64-character hex string, restore on. Returns the plan the step runs."""
+    if not isinstance(request, dict) or set(request) != BROWSER_RESTORE_KEYS or request["mode"] not in BROWSER_RESTORE_MODES:
+        raise ValueError("Invalid cloud browser restore request")
+    bot = request["bot"]
+    if not isinstance(bot, str) or not re.fullmatch(r"[\w-]{1,64}", bot, flags=re.ASCII):
+        raise ValueError("Invalid cloud browser identity")
+    if not valid_instance(request["instance"]):
+        raise ValueError("Invalid cloud browser server instance")
+    args, mark = request["args"], request["mode"] == "browser-restore-mark"
+    if not isinstance(args, list) or not all(isinstance(arg, str) for arg in args) or (len(args) != 2 or not BROWSER_RESTORE_GENERATION.fullmatch(args[0]) or not browser_restore_origin(args[1]) if mark else args != []):
+        raise ValueError("Invalid cloud browser restore arguments")
+    settings = request["settings"]
+    if not isinstance(settings, dict) or not {"AGENT_BROWSER_SESSION", "AGENT_BROWSER_ENCRYPTION_KEY", "AGENT_BROWSER_RESTORE_SAVE"} <= set(settings) <= BROWSER_RESTORE_SETTINGS:
+        raise ValueError("Invalid cloud browser settings")
+    session, key = settings["AGENT_BROWSER_SESSION"], settings["AGENT_BROWSER_ENCRYPTION_KEY"]
+    if not isinstance(session, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", session, flags=re.ASCII):
+        raise ValueError("Invalid cloud browser session")
+    if not isinstance(key, str) or not re.fullmatch(r"[a-f0-9]{64}", key, flags=re.ASCII):
+        raise ValueError("Invalid cloud browser key")
+    if settings["AGENT_BROWSER_RESTORE_SAVE"] != "auto" or settings.get("AGENT_BROWSER_RESTORE", session) != session:
+        raise ValueError("Invalid cloud browser restore")
+    home = browser_root + "/" + bot
+    # The step's whole environment: these five names, nothing is inherited.
+    env = {"HOME": home, "PATH": "/usr/local/bin:/usr/bin:/bin", "AGENT_BROWSER_RESTORE": session,
+           "AGENT_BROWSER_ENCRYPTION_KEY": key, "AGENT_BROWSER_RESTORE_SAVE": "auto"}
+    return {"user": "murage-browser", "bot": bot, "home": home, "session": session, "mark": mark, "generation": args[0] if mark else None,
+            "argv": ["mark", args[1]] if mark else ["prepare"], "env": env}
+
+def browser_restore_script(manifest_path=ENGINE_MANIFEST, manifest_uid=0, cache_root=None, node=None, script_root=None):
+    """The step's bundled script, root-owned, immutable and matching its manifest digest
+    (engine-manifest.json "browserRestore"), under the verified node: the checks proxy_script makes."""
+    cache_root = DIGEST_CACHE if cache_root is None else cache_root
+    path = (script_root or MCP_PROXY_ROOT) + "/" + BROWSER_RESTORE_SCRIPT + ".js"
+    try:
+        real = immutable_path(path, manifest_uid)
+        immutable_path(node or NODE, manifest_uid)
+    except FileNotFoundError:
+        raise Refusal("Cloud browser restore step is missing")
+    immutable_path(manifest_path, manifest_uid)
+    fd = os.open(manifest_path, os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(fd, "r", encoding="utf-8") as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != manifest_uid or info.st_mode & 0o022:
+            raise Refusal("Cloud engine manifest must be root-owned and immutable")
+        manifest = json.load(stream)
+    entries = manifest.get("browserRestore") if isinstance(manifest, dict) else None
+    entry = next((item for item in entries if isinstance(item, dict) and item.get("path") == path), None) if isinstance(entries, list) else None
+    if not entry or not isinstance(entry.get("sha256"), str) or len(entry["sha256"]) != 64:
+        raise Refusal("Cloud browser restore step is not listed")
+    fd = os.open(real, os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(fd, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != manifest_uid or info.st_mode & 0o022:
+            raise Refusal("Cloud browser restore step is not immutable")
+        stamp = file_stamp(info)
+        if not cached_digest(cache_root, manifest_uid, real, stamp, entry["sha256"]):
+            if hash_stream(stream) != entry["sha256"]:
+                raise Refusal("Cloud browser restore step digest mismatch")
+            store_digest(cache_root, manifest_uid, real, stamp, entry["sha256"])
+    return path
+
+def browser_restore_home(home, uid):
+    """True when the bot's browser home and its saved-session directories are the browser user's own plain
+    directories (never a link, never another owner); False when there is no home yet. Anything else raises:
+    the sandboxed browser can plant a link in its own home, and the step must never follow one out of it."""
+    try:
+        info = os.lstat(home)
+    except FileNotFoundError:
+        return False
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != uid or stat.S_IMODE(info.st_mode) != 0o700:
+        raise ValueError("Invalid cloud browser profile")
+    current = home
+    for part in (".agent-browser", "sessions"):
+        current += "/" + part
+        try:
+            info = os.lstat(current)
+        except FileNotFoundError:
+            return True
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != uid:
+            raise ValueError("Invalid cloud browser profile")
+    return True
+
+def read_restore_generation(root, bot, session, owner=0):
+    """(generation, "split" | "hosted") last recorded for this session, or None. Root-side only: the file sits
+    in the root-owned browser directory, beside the host's live lock, where no browser process can write."""
+    try:
+        fd = trusted_session_file(root, bot, session, "restore", os.O_RDONLY, owner)
+    except (OSError, ValueError):
+        return None
+    try:
+        data = os.read(fd, 64)
+    finally:
+        os.close(fd)
+    match = re.fullmatch(rb"([a-f0-9]{32}) (split|hosted)\n", data)
+    return (match.group(1).decode("ascii"), match.group(2).decode("ascii")) if match else None
+
+def write_restore_generation(root, bot, session, generation, state, owner=0):
+    if not BROWSER_RESTORE_GENERATION.fullmatch(generation) or state not in {"split", "hosted"}:
+        raise ValueError("Invalid cloud browser restore generation")
+    fd = trusted_session_file(root, bot, session, "restore", os.O_WRONLY | os.O_CREAT, owner)
+    try:
+        os.ftruncate(fd, 0)
+        os.write(fd, (generation + " " + state + "\n").encode("ascii"))
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+def drop_restore_generation(root, bot, session):
+    """No current generation: marks are stale and a snapshot has nothing to read until the next split."""
+    try:
+        os.unlink(root + "/.restore-" + bot + "." + session)
+    except FileNotFoundError:
+        pass
+
+def confine_restore_step(plan, root, uid, libc=None):
+    """In the step's root child, already in its own mount namespace: nothing propagates out, /data/browser
+    (root) is an empty tmpfs holding only this bot's home, bound from a descriptor opened without following
+    a link (so a rename or link the browser planted meanwhile binds nothing else), and /tmp, /var/tmp and
+    /dev/shm are private. Returns the home's path inside the namespace."""
+    libc = libc or ctypes.CDLL(None, use_errno=True)
+    libc.mount.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_ulong, ctypes.c_char_p]
+    def mount(source, target, kind, flags, data):
+        if libc.mount(source, target.encode(), kind, flags, data) != 0:
+            raise OSError(ctypes.get_errno(), "Cloud browser restore mount failed")
+    mount(None, "/", None, MS_REC | MS_PRIVATE, None)
+    home = os.open(plan["home"], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        info = os.fstat(home)
+        if info.st_uid != uid or stat.S_IMODE(info.st_mode) != 0o700:
+            raise ValueError("Invalid cloud browser profile")
+        mount(b"tmpfs", root, b"tmpfs", MS_NOSUID | MS_NODEV | MS_NOEXEC, b"mode=0711,size=64k")
+        target = root + "/" + plan["bot"]
+        os.mkdir(target, 0o700)
+        mount(("/proc/self/fd/%d" % home).encode(), target, None, MS_BIND, None)
+    finally:
+        os.close(home)
+    for path in ("/tmp", "/var/tmp", "/dev/shm"):
+        if os.path.isdir(path) and not os.path.islink(path):
+            mount(b"tmpfs", path, b"tmpfs", MS_NOSUID | MS_NODEV, b"mode=1777,size=1m")
+    return target
+
+def run_browser_restore_step(plan, argv, node, script, uid, gid, wait=BROWSER_RESTORE_WAIT, limit=BROWSER_RESTORE_OUTPUT_MAX, drop=True,
+                             isolate=True, root=BROWSER_ROOT):
+    """node script <argv> as the browser user with the plan's environment and nothing else, working in the
+    pinned home, stdin and stderr closed, stdout read back (bounded, with a deadline). Returns the bytes.
+
+    The child below is the step's whole tree: a session of its own and, isolated (always, outside tests),
+    new mount and pid namespaces whose init is the step (confine_restore_step). At the deadline, or past
+    the output bound, that child is killed: its init then gets its parent-death signal, and the kernel ends
+    every process in the namespace with it, a forked or detached one included."""
+    readfd, writefd = os.pipe()
+    parent = os.getpid()
+    child = os.fork()
+    if child == 0:
+        try:
+            os.close(readfd)
+            os.setsid()
+            arm_death_signal(parent)
+            home = plan["home"]
+            if isolate:
+                libc = ctypes.CDLL(None, use_errno=True)
+                libc.unshare.argtypes = [ctypes.c_int]
+                if libc.unshare(CLONE_NEWNS | CLONE_NEWPID) != 0:
+                    os._exit(1)
+                home = confine_restore_step(plan, root, uid, libc)
+            middle = os.getpid()
+            # Held open by the middle child for its whole life: the step's race check that the middle is still
+            # there once its death signal is armed (from inside the new pid namespace getppid() is 0).
+            alive_read, alive_write = os.pipe()
+            step = os.fork()
+            if step == 0:
+                try:
+                    os.close(alive_write)
+                    if isolate:
+                        libc.mount.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_ulong, ctypes.c_char_p]
+                        if libc.mount(b"proc", b"/proc", b"proc", MS_NOSUID | MS_NODEV | MS_NOEXEC, None) != 0:
+                            os._exit(1)
+                    pinned = os.open(home, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+                    os.fchdir(pinned)
+                    null = os.open(os.devnull, os.O_RDWR)
+                    os.dup2(null, 0); os.dup2(writefd, 1); os.dup2(null, 2)
+                    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+                    if drop:
+                        os.setgroups([]); os.setgid(gid); os.setuid(uid)
+                        if os.getuid() == 0 or os.geteuid() == 0:
+                            os._exit(1)
+                    # After the uid drop (commit_creds clears the setting): die with the middle child.
+                    if ctypes.CDLL(None, use_errno=True).prctl(PR_SET_PDEATHSIG, int(signal.SIGKILL), 0, 0, 0):
+                        os._exit(1)
+                    if select.select([alive_read], [], [], 0)[0]:
+                        os._exit(1)  # the middle is already gone: its end of the pipe closed
+                    maximum = resource.getrlimit(resource.RLIMIT_NOFILE)[1]
+                    os.closerange(3, maximum if maximum != resource.RLIM_INFINITY else 1048576)
+                    os.execve(node, [node, "--max-old-space-size=%d" % BROWSER_RESTORE_HEAP_MB, script] + argv, plan["env"])
+                finally:
+                    os._exit(1)
+            os.close(alive_read)
+            os.close(writefd)
+            _, status = os.waitpid(step, 0)
+            os._exit(os.waitstatus_to_exitcode(status) if os.WIFEXITED(status) else 1)
+        finally:
+            os._exit(1)
+    os.close(writefd)
+    chunks, size, failed = [], 0, False
+    deadline = time.monotonic() + wait
+    try:
+        while True:
+            left = deadline - time.monotonic()
+            if left <= 0 or not select.select([readfd], [], [], left)[0]:
+                failed = True
+                break
+            part = os.read(readfd, 1024 * 1024)
+            if not part:
+                break
+            size += len(part)
+            if size > limit:
+                failed = True
+                break
+            chunks.append(part)
+    finally:
+        os.close(readfd)
+        if failed:
+            for kill in (lambda: os.killpg(child, signal.SIGKILL), lambda: os.kill(child, signal.SIGKILL)):
+                try:
+                    kill()
+                except (ProcessLookupError, PermissionError):
+                    pass
+        _, status = os.waitpid(child, 0)
+    if failed or status != 0:
+        raise Refusal("Cloud browser restore failed")
+    return b"".join(chunks)
+
+def restore_step(plan, argv, account, node=None, script=None, **options):
+    node = node or NODE
+    script = script or browser_restore_script(node=node)
+    return run_browser_restore_step(plan, argv, node, script, account.pw_uid, account.pw_gid, **options)
+
+def launch_browser_restore(request, root=BROWSER_ROOT, account=None, fence=None, alive=session_alive, live=host_live, owner=0,
+                           node=None, script=None, drop=True, out=None, wait=BROWSER_RESTORE_WAIT, limit=BROWSER_RESTORE_OUTPUT_MAX, isolate=True):
+    """Runs one restore step for the bot under the id's lock (so no browser launch, host start or cleanup of the
+    same id overlaps it), fenced to the current server instance. Writes the step's one JSON line to `out`.
+
+    browser-restore: a running host (or a split no host has used yet) answers its generation's snapshot,
+    read only; with no host it splits now and records a new generation, which the next host start takes
+    over without splitting again. A running session's daemon is never split under.
+    browser-restore-mark: only for the current generation, else {"state":"stale"} and nothing is written."""
+    plan = validate_browser_restore_request(request, root)
+    account = account or pwd.getpwnam(plan["user"])
+    out = out or sys.stdout.buffer
+    bot, session = request["bot"], plan["session"]
+    nothing = b'{"state":"none","logs":[]}\n'
+    stale = b'{"state":"stale"}\n'
+    if not os.path.lexists(root):
+        out.write(stale if plan["mark"] else nothing); out.flush()
+        return
+    parent = os.lstat(root)
+    if not stat.S_ISDIR(parent.st_mode) or parent.st_uid != owner or stat.S_IMODE(parent.st_mode) != 0o711:
+        raise ValueError("Invalid cloud browser directory")
+    step = lambda argv: restore_step(plan, argv, account, node, script, wait=wait, limit=limit, drop=drop, isolate=isolate, root=root)
+    lock = browser_lock(root, bot, owner=owner)
+    try:
+        (fence or fence_server_instance)(request)
+        if os.path.lexists(root + "/.cleanup-" + bot):
+            raise ValueError("Cloud browser cleanup is pending")
+        current = read_restore_generation(root, bot, session, owner)
+        if plan["mark"]:
+            if current is None or current[0] != plan["generation"]:
+                data = stale
+            elif not browser_restore_home(plan["home"], account.pw_uid):
+                raise Refusal("Cloud browser restore has no store to mark")
+            else:
+                data = step(plan["argv"])
+        elif not browser_restore_home(plan["home"], account.pw_uid):
+            data = nothing
+        elif live(root, bot, session, owner) or alive(plan["home"], session) or (current and current[1] == "split"):
+            data = step(["snapshot", current[0]]) if current else nothing
+        else:
+            generation = secrets.token_hex(16)
+            drop_restore_generation(root, bot, session)
+            data = step(["prepare", generation])
+            write_restore_generation(root, bot, session, generation, "split", owner)
+    finally:
+        os.close(lock)
+    out.write(data); out.flush()
+
+def split_for_host(request, home, root=None, owner=0, alive=session_alive, live=host_live, account=None, **options):
+    """Called by ensure_session_host with the id's lock held, right before a new host starts: that host's engine
+    run starts from a split saved session, so it restores only cookies at launch and every origin is eligible
+    for lazy restore again. A split the server made since the last host (still "split") is taken over as is.
+    Best effort: a failure leaves no generation (the engine restores as before) and never stops the host.
+    Returns the new host's generation or None."""
+    root = root or BROWSER_ROOT
+    settings = request.get("settings") if isinstance(request.get("settings"), dict) else {}
+    if settings.get("AGENT_BROWSER_RESTORE_SAVE") != "auto":
+        return None
+    bot, session = request.get("bot"), settings.get("AGENT_BROWSER_SESSION")
+    try:
+        current = read_restore_generation(root, bot, session, owner)
+        if current and current[1] == "split":
+            write_restore_generation(root, bot, session, current[0], "hosted", owner)
+            return current[0]
+        drop_restore_generation(root, bot, session)
+        if live(root, bot, session, owner) or alive(home, session):
+            return None
+        plan = validate_browser_restore_request({"mode": "browser-restore", "bot": bot, "args": [], "instance": request.get("instance"),
+                                                 "settings": {key: value for key, value in settings.items() if key in BROWSER_RESTORE_SETTINGS}}, root)
+        account = account or pwd.getpwnam(plan["user"])
+        if plan["home"] != home or not browser_restore_home(home, account.pw_uid):
+            return None
+        generation = secrets.token_hex(16)
+        restore_step(plan, ["prepare", generation], account, root=root, **options)
+        write_restore_generation(root, bot, session, generation, "hosted", owner)
+        return generation
+    except Exception:
+        try:
+            drop_restore_generation(root, bot, session)
+        except Exception:
+            pass
+        return None
 
 def immutable_path(path, owner_uid):
     # Check both the lookup path and canonical target. Root-owned filesystem
@@ -2958,6 +3323,8 @@ WORKSPACE_DIR = Shape("WORKSPACE_DIR", workspace_dir, path=True)
 CODEX_OVERRIDES = {
     "features.browser_use": "false", "features.browser_use_external": "false", "features.computer_use": "false",
     "features.shell_tool": "false", "features.apps": "false", "web_search": '"disabled"',
+    # codex.ts: Murage fences what a bot remembers, so Codex's own memories stay off on every turn.
+    "features.memories": "false",
     "plugins": '{ "browser@openai-bundled" = { enabled = false }, "computer-use@openai-bundled" = { enabled = false }, "unified-computer-use@openai-bundled" = { enabled = false } }',
 }
 
@@ -2988,8 +3355,8 @@ ARGV_RULES = {
     }, required=("-p", "--output-format", "--input-format", "--verbose", "--include-partial-messages", "--strict-mcp-config"), repeat=("--add-dir",)),
     # codex.ts 232-250, 516-531; routes and MCP servers are rendered, never -c
     "codex": ArgvRule({"-c": CODEX_C}, repeat=("-c",), literals=("app-server",), first="app-server"),
-    # grok.ts 248-257
-    "grokAgent": ArgvRule({"--permission-mode": PERMISSION_MODES, "-m": MODEL_ID, "--reasoning-effort": EFFORT},
+    # grok.ts 248-257; spawnArgs always sends --no-memory (Murage owns persistent memory) and, on a CLI 1.x, --no-leader
+    "grokAgent": ArgvRule({"--permission-mode": PERMISSION_MODES, "--no-memory": None, "--no-leader": None, "-m": MODEL_ID, "--reasoning-effort": EFFORT},
                           required=("--permission-mode",), literals=("agent", "stdio"), tail=("stdio",)),
     # kimi.ts 573-576
     "kimiAgent": ArgvRule({"-m": MODEL_ID}, literals=("acp",), tail=("acp",)),
@@ -4453,6 +4820,11 @@ def scope_plan(request):
     mode = request.get("mode")
     if mode in {"engine-signin-cleanup", "browser-cleanup", "bot-state-release", "bot-state-query"}:
         return None
+    if mode in BROWSER_RESTORE_MODES:
+        # The saved-session steps read and decrypt files the browser wrote: limited like a browser launch,
+        # in a murage-browser-<bot>.* scope, so a cleanup of the bot finds and ends them too.
+        validate_browser_restore_request(request)
+        return ("murage-browser-" + request["bot"] + "." + secrets.token_hex(4) + ".scope", BROWSER_SLICE, BROWSER_RESTORE_SCOPE_PROPERTIES)
     if mode == "login":
         validate_login_request(request)
         return (turn_unit(request), TURN_SLICE, LOGIN_SCOPE_PROPERTIES)
@@ -5537,6 +5909,8 @@ def main():
             verify_admission(ADMISSION, found[1] if found else "", turn.get("bot"))
             sys.exit(publish_login(turn))
         launch(turn, login=True)
+    elif request.get("mode") in BROWSER_RESTORE_MODES:
+        launch_browser_restore(request)
     elif request.get("mode") in {"browser", "browser-host", "browser-cleanup"}:
         launch_browser(request)
     else:

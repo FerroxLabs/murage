@@ -212,7 +212,17 @@ describe("Rules 60 and 63: reads and searches", () => {
     symlinkSync(join(outside, ".ssh", "id_rsa"), join(project, "link.txt"));
     for (const path of [".env", join(outside, "plain.txt"), "link.txt", "a\u0000b"]) await gate.call({ toolName: "read", input: { path } });
     expect(gate.asked).toHaveLength(4);
-    expect(JSON.parse(gate.asked[0]!.prefill)).toEqual({ tool: "read", input: { path: ".env" } });
+    expect(JSON.parse(gate.asked[0]!.prefill)).toEqual({ tool: "read", input: { path: ".env" }, sensitive: "env" });
+  });
+
+  it("1.0.4 09-1: a link to a key file asks with the gate's own verdict, so no mode answers it as an ordinary read", async () => {
+    symlinkSync(join(outside, ".ssh", "id_rsa"), join(project, "config-link"));
+    const gate = rig();
+    await gate.call({ toolName: "read", input: { path: "config-link" } });
+    await gate.call({ toolName: "read", input: { path: join(outside, "plain.txt") } });
+    expect(JSON.parse(gate.asked[0]!.prefill)).toEqual({ tool: "read", input: { path: "config-link" }, sensitive: "ssh" });
+    // outside the project is not a key file: no verdict rides along
+    expect(JSON.parse(gate.asked[1]!.prefill)).toEqual({ tool: "read", input: { path: join(outside, "plain.txt") } });
   });
 
   it("T86: link/../x climbs from the link's target and is outside", async () => {

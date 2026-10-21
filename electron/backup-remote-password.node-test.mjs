@@ -81,6 +81,12 @@ async function windowsSelect(t,acl){
   checkPrivate:target=>{checked.push(target);if(acl instanceof Error)throw acl;if(!aclIsPrivateToOwner(acl,ME))throw Error("BACKUP_WINDOWS_ACL_SHARED");}});
  return{store,checked,file,document:()=>document};
 }
+test("Windows: a file listing an account Murage cannot identify is refused by name, so the window shows the fix-it sentence (nops B)",async t=>{
+ const {aclFail,UNKNOWN_ACCOUNT_FIX}=await import("../shared/windows-sddl.mjs");
+ const f=await windowsSelect(t,aclFail(UNKNOWN_ACCOUNT_FIX));
+ await assert.rejects(f.store.select(),/^Error: BACKUP_REMOTE_PASSWORD_ACCOUNT_UNKNOWN_WINDOWS$/);
+ assert.deepEqual(f.document(),{});
+});
 test("Windows: a chosen password file other accounts can open is refused by name (W-A5)",async t=>{
  const f=await windowsSelect(t,PUBLIC_ACL);
  await assert.rejects(f.store.select(),/^Error: BACKUP_REMOTE_PASSWORD_FILE_SHARED_WINDOWS$/);
@@ -192,4 +198,28 @@ test("main makes the off-site password in the key's folder, then home, then (Win
  const copy=main.slice(main.indexOf('title:"Save a copy of your off-site password"')-600,main.indexOf('title:"Save a copy of your off-site password"')+1400);
  assert.match(copy,/hostCloudFolder\(path\.dirname\(answer\.filePath\)\)/);
  assert.match(copy,/This folder syncs to \$\{provider\}\./);
+});
+test("Windows: an account Murage cannot identify keeps its own name on create, copy and read, not only on select (nops B)",async t=>{
+ const {aclFail,UNKNOWN_ACCOUNT_FIX}=await import("../shared/windows-sddl.mjs");
+ const unknown=()=>aclFail(UNKNOWN_ACCOUNT_FIX);
+ const NAME=/^Error: BACKUP_REMOTE_PASSWORD_ACCOUNT_UNKNOWN_WINDOWS$/;
+ const root=realpathSync.native(mkdtempSync(path.join(tmpdir(),"murage-remote-password-unknown-")));t.after(()=>safeWipeSync(root));
+ const documents=path.join(root,"Documents"),usb=path.join(root,"usb"),source=path.join(root,"password.txt");mkdirSync(documents);mkdirSync(usb);writeFileSync(source,"FAKE_UNKNOWN_CANARY\n");
+ let document={},refuseDirectory=false,refuseCheck=false;
+ asWindows(t);
+ const store=createRemotePasswordStore({chooseFile:async()=>source,excludedRoots:()=>[],readProtected:async()=>document,updateProtected:async derive=>{document=derive(document);},createId:()=>"ref1",stageId:()=>"stage-1",
+  createFolders:()=>[documents],chooseCopyFile:async()=>path.join(usb,"copy.txt"),keepsAcls:async()=>true,
+  restrictDirectory:()=>{if(refuseDirectory)throw unknown();},restrict:()=>{},checkPrivate:()=>{if(refuseCheck)throw unknown();}});
+ // create: the folder the new file is born in lists an account Windows cannot name.
+ refuseDirectory=true;await assert.rejects(store.create(),NAME);refuseDirectory=false;
+ // create: the new file's own check.
+ refuseCheck=true;await assert.rejects(store.create(),NAME);refuseCheck=false;
+ assert.deepEqual(readdirSync(documents),[]);
+ // copy: the chosen folder lists such an account.
+ await store.select();
+ refuseDirectory=true;await assert.rejects(store.saveCopy("ref1"),NAME);refuseDirectory=false;
+ // read: the saved file's check.
+ refuseCheck=true;
+ await assert.rejects(store.saveCopy("ref1"),NAME);
+ await assert.rejects(store.read("ref1"),NAME);
 });

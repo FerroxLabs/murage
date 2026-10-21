@@ -274,6 +274,10 @@ export const MARKER_SLICE_MS = 8;
 export const MARKER_SLICE_ROWS = 256;
 /** deny_range's sticky coalesced row of audience-only revokes (memory_revoke_audience): -1 is the coalesced row of the others. */
 export const AUDIENCE_COALESCED = -2;
+/** memory_revoke_reached's reserved ids (DRAIN-104 2.1, 2.6): an audience job's cover rows (what it walked and under which cap), and the
+ * audience walker. No job id is ever below 1, so tidy, undo and the fold's copies (all keyed by a job's id) never touch them. */
+export const COVER_REVOKE = -3;
+export const WALKER_REVOKE = -5;
 export const BACKFILL_SLICE_MS = 50;
 
 /** Calls made to an S0 fail-closed stub, by function name. A slice replaces its stubs; a count left after S5 names a stub still live. */
