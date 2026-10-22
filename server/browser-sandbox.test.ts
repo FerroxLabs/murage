@@ -114,7 +114,8 @@ describe("Chrome's own sandbox verdict", () => {
 
 describe("the message a person sees", () => {
   const namespaces = { off: false, restricted: true };
-  it("tells a .deb install how to load the rule it installed", () => {
+  // linuxDebChromePath() is a Linux path joined by the host's path module; on Windows it is not /opt/Murage/....
+  it.skipIf(process.platform === "win32")("tells a .deb install how to load the rule it installed", () => {
     expect(linuxSandboxBlockedMessage({ chrome: linuxDebChromePath(), namespaces })).toBe("The bot browser can't start: Ubuntu hasn't loaded the AppArmor rule Murage installed for it. Restart your computer, or run: sudo apparmor_parser -r /etc/apparmor.d/murage");
   });
   it("tells an AppImage to install the .deb", () => {
@@ -218,7 +219,9 @@ describe.skipIf(process.platform !== "linux")("ensureLinuxChromeSandbox", () => 
   });
 });
 
-describe("AppImage detection", () => {
+// Linux-only paths (/opt/Murage, an AppImage's /tmp/.mount_*) read through the host's path module: on Windows they
+// resolve to a drive letter and backslashes, so these run on the POSIX hosts.
+describe.skipIf(process.platform === "win32")("AppImage detection", () => {
   it("knows Chrome inside the mounted AppImage", () => {
     expect(isAppImageChrome("/tmp/.mount_MuragenLkoDc/resources/browser-engine/chrome/x/chrome-headless-shell", {})).toBe(true);
     expect(isAppImageChrome("/run/user/1000/app/resources/x", { APPDIR: "/run/user/1000/app" })).toBe(true);

@@ -5,7 +5,7 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { enforceProxyLaunchGuard, PROXY_LAUNCH_EXIT_CODE, proxyLaunchRefusal } from "./proxy-launch-guard.mjs";
+import { enforceProxyLaunchGuard, HOOK_LAUNCH_EXIT_CODE, hookLaunchRefusal, PROXY_LAUNCH_EXIT_CODE, proxyLaunchRefusal } from "./proxy-launch-guard.mjs";
 import { SERVER_ROOT, SPAWNED_PROXIES } from "../server/proxy-paths.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -105,4 +105,28 @@ test("main.mjs runs the guard before any other statement and before the single-i
   // no top-level statement of the app runs first (everything above it is imports and comments)
   const firstStatement = source.search(/^(const|let|var|if|function|app\.|process\.)/m);
   assert.ok(firstStatement > call, "the first top-level statement");
+});
+
+test("an engine hook script started without ELECTRON_RUN_AS_NODE exits 2 with the hook's block line and never starts the app", () => {
+  const scripts = [
+    "C:\\Users\\Jo Smith\\AppData\\Roaming\\Murage\\scopes\\codex\\b1\\murage-hook.mjs",
+    "/Users/alex/Library/Application Support/Murage/scopes/codex/b1/murage-hook.mjs",
+    "/home/jo/.config/Murage/native/antigravity-ask/ask-hook-0123456789abcdef.cjs",
+  ];
+  for (const script of scripts) {
+    for (const exe of ["C:\\Users\\Jo Smith\\AppData\\Local\\Programs\\Murage\\Murage.exe", "/Applications/Murage.app/Contents/MacOS/Murage"]) {
+      assert.equal(hookLaunchRefusal([exe, script], {}), "Murage blocked this call: hook started without node mode", script);
+      assert.equal(hookLaunchRefusal([exe, script], { ELECTRON_RUN_AS_NODE: "1" }), null, script);
+      const codes = []; const lines = [];
+      assert.equal(enforceProxyLaunchGuard([exe, script], {}, (code) => codes.push(code), (line) => lines.push(line)), true);
+      assert.deepEqual(codes, [HOOK_LAUNCH_EXIT_CODE]);
+      assert.equal(HOOK_LAUNCH_EXIT_CODE, 2);
+      assert.deepEqual(lines, ["Murage blocked this call: hook started without node mode\n"]);
+      assert.equal(enforceProxyLaunchGuard([exe, script], { ELECTRON_RUN_AS_NODE: "1" }, () => assert.fail("exited"), () => {}), false);
+    }
+  }
+  // an ordinary launch, a document and a look-alike name start the app as before
+  for (const argv of [["/x/Murage"], ["/x/Murage", "/tmp/notes-murage-hook.mjs.txt"], ["/x/Murage", "murage://open/murage-hook.mjs"], ["/x/Murage", "/tmp/my-murage-hook.mjs"]]) {
+    assert.equal(hookLaunchRefusal(argv, {}), null, argv.join(" "));
+  }
 });

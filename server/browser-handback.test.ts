@@ -21,6 +21,11 @@ import { BrowserEngineError, createNativeBrowser, engineReason, windowsDaemonSto
 import { BROWSER_REFUSALS } from "./browser-lock.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
+// The engine here is a fixture, never Murage's verified bundled Chromium, so the Windows launch gate
+// (ensureBrowserSandboxAccess: the bundle and its Authenticode identity) is out of scope for these cases, as in
+// cloud-home/browser-restore.test.ts. Linux and macOS already pass it for a fixture.
+vi.mock("./browser-sandbox.ts", async (importOriginal) => ({ ...await importOriginal<typeof import("./browser-sandbox.ts")>(), ensureBrowserSandboxAccess: async () => {} }));
+
 const children: ChildProcess[] = [];
 const directories: string[] = [];
 afterEach(() => {

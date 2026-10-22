@@ -18,6 +18,10 @@
 export interface SensitivePathRow {
   id: string;
   re: RegExp;
+  /** The shape read instead of `re` on a folder a path only passes through
+   * on the way to its target, or a folder a directory walk meets. Absent:
+   * `re` is read there too. */
+  ancestor?: RegExp;
   /** Claude `permissions.ask` Read rules for this row: in-project rows
    * relative, home rows as `~/`. */
   read: readonly string[];
@@ -120,6 +124,33 @@ export const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
     read: ["**/murage-exec*/**", "**/murage-exec*"],
     bash: ["*murage-exec*"],
   },
+  // 1.0.3 (hook self-guard): the hook programs Murage writes for an engine and
+  // the folders they live in (DATA_DIR/native/antigravity-relay, -ask, -scope
+  // and codex-scope). The engine re-reads them on every call, so a write to one
+  // would replace the guard that judges every later call.
+  {
+    id: "murage-engine-hooks",
+    re: /(?<![\w.-])(?:(?:antigravity-(?:relay|ask|scope)|codex-scope)(?:[\\/]|$|["'\s;|&)>`])|murage-agy-relay|murage-hook\.(?:mjs|cmd|env)\b|ask-hook-[\w.-]*\.cjs\b)/i,
+    read: ["**/native/antigravity-relay/**", "**/native/antigravity-ask/**", "**/native/antigravity-scope/**", "**/native/codex-scope/**", "**/murage-agy-relay*", "**/murage-hook.mjs", "**/murage-hook.cmd", "**/murage-hook.env", "**/ask-hook-*.cjs"],
+    bash: ["*native/antigravity-relay*", "*native/antigravity-ask*", "*native/antigravity-scope*", "*native/codex-scope*", "*murage-agy-relay*", "*murage-hook.mjs*", "*murage-hook.cmd*", "*murage-hook.env*", "*ask-hook-*.cjs*"],
+  },
+  // agy 1.4.4 loads the hooks of the workspace's customization root (.agents, .agent, _agents, _agent: hooks.json,
+  // plugins.json, plugins/<name>/hooks.json, and agents/*.md, whose front matter can carry hooks) beside Murage's
+  // own, with no switch to turn that off. A bot that writes one would have its own hook run (and answer) on the next
+  // turn, so a call naming one, or moving a file into the root folder itself, is held. The root folder alone is
+  // read only as a PATH: after a separator, at a line or argument start, as a whole quoted shell argument or a
+  // quoted call's only argument (os.chdir of ".agents"), and ending a line, an argument or a path (a `\` before a quote is
+  // an escape, not a separator). So code (`turn.integrations?.agents;`, `const _agents = []`, `"_agent"`,
+  // `".agents"` among other arguments) and prose ("the .agents folder") never match, while a quoted root followed by a quoted
+  // hook-file segment (`".agents", "hooks.json"`) still does. A folder a path only passes through, or a walk meets,
+  // reads only the hook files (`ancestor`), so .agents/skills and the rest of the folder stay ordinary files.
+  {
+    id: "agy-workspace-hooks",
+    re: /(?<![\w.-])[._]agents?[\\/](?:hooks\.json|plugins\.json|(?:plugins|agents)(?:[\\/]|$|["'\s;|&)>`]))|(?<=^|[\s"'=\\/])[._]agents?(?:\/|\\(?!["']))(?=$|["'\s;|&)>])|(?<=^|[\s=\\/])\.agents?(?=$|[\r\n"']|[ \t]*[;|&>)])|(?<=(?:^|[\s=])["'])\.agents?(?=["'](?:$|[\r\n]|[ \t]*(?:[;|>]|&&)))|(?<=\(["'])\.agents?(?=["']\))|(?<=[ \t=]["'])_agents?(?=["'](?:$|[\r\n]|[ \t]*(?:[;|>]|&&)))|(?<=^|[\s=\\/])_agents?(?=$|[\r\n"']|[ \t]*(?:[;|>]|&&))|(?<=["'])[._]agents?["'][ \t]*,[ \t]*["'](?:hooks\.json|plugins\.json|plugins|agents)["']/i,
+    ancestor: /(?<![\w.-])[._]agents?[\\/](?:hooks\.json|plugins\.json|(?:plugins|agents)(?:[\\/]|$|["'\s;|&)>`]))/i,
+    read: [".agents/hooks.json", ".agent/hooks.json", "_agents/hooks.json", "_agent/hooks.json", ".agents/plugins.json", ".agent/plugins.json", "_agents/plugins.json", "_agent/plugins.json", ".agents/plugins/**", ".agent/plugins/**", "_agents/plugins/**", "_agent/plugins/**", ".agents/agents/**", ".agent/agents/**", "_agents/agents/**", "_agent/agents/**"],
+    bash: ["*.agents/hooks.json*", "*.agent/hooks.json*", "*_agents/hooks.json*", "*_agent/hooks.json*", "*.agents/plugins*", "*.agent/plugins*", "*_agents/plugins*", "*_agent/plugins*", "*.agents/agents*", "*.agent/agents*", "*_agents/agents*", "*_agent/agents*"],
+  },
   {
     id: "envrc",
     re: /(^|[\s/"'])\.envrc\b/i,
@@ -200,12 +231,14 @@ function basename(path: string): string {
 }
 
 /** The first sensitive PATH row a path matches, by id, with the template
- * carve-out applied when the path is inside the project. */
-export function sensitivePathRow(path: string, inProject: boolean): string | null {
+ * carve-out applied when the path is inside the project. `onTheWay`: the
+ * path is a folder passed through (or met by a walk), read by each row's
+ * `ancestor` shape where it has one. */
+export function sensitivePathRow(path: string, inProject: boolean, onTheWay = false): string | null {
   const template = inProject && TEMPLATE_BASENAMES.includes(basename(path).toLowerCase());
   for (const row of SENSITIVE_PATHS) {
     if (template && row.id === "env") continue;
-    if (row.re.test(path)) return row.id;
+    if ((onTheWay && row.ancestor ? row.ancestor : row.re).test(path)) return row.id;
   }
   return null;
 }

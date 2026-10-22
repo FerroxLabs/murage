@@ -38,6 +38,8 @@ function protect(e: Entry, reason: BrowserProtection) {
 }
 
 
+const OWNER_INPUT_WAIT_MS = 10_000;
+const BROWSER_STILL_RECONNECTING = "The browser view is still reconnecting. Try again.";
 export class UnifiedBrowserController {
   private entries = new Map<string, Entry>();
   private readonly stateFile: string;
@@ -148,13 +150,33 @@ export class UnifiedBrowserController {
     this.human(e, owner, nextGeneration); e.url = url.toString();
     return this.refresh(key);
   }
-  input(key: string, owner: string, generation: number, event: Record<string, unknown>) {
+  /** The owner's input. Take control, Return to bot and every bot step drop the
+   * live view and reconnect it in the background (refresh), so the owner's first
+   * click can arrive before the stream is back (1.0.3 gate B4b: 500 "Browser
+   * stream disconnected or busy" right after Take control). Input waits for that
+   * reconnect, then checks control again before anything reaches the page. */
+  input(key: string, owner: string, generation: number, event: Record<string, unknown>): Promise<void> {
     const e = this.entry(key); this.human(e, owner, generation);
     if (JSON.stringify(event).length > 8192 || !["input_mouse", "input_keyboard", "input_touch"].includes(String(event.type))) throw new Error("Invalid browser input");
     if (event.type === "input_mouse" && (!["mousePressed", "mouseReleased", "mouseMoved", "mouseWheel"].includes(String(event.eventType)) || ![event.x, event.y].every(v => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 10000))) throw new Error("Invalid pointer input");
     if (event.type === "input_keyboard" && (!["keyDown", "keyUp", "char"].includes(String(event.eventType)) || ["key", "code", "text"].some(k => event[k] !== undefined && (typeof event[k] !== "string" || (event[k] as string).length > 100)))) throw new Error("Invalid keyboard input");
     if (e.protectedReason !== "owner-input" && (event.type !== "input_mouse" || event.eventType === "mousePressed")) { e.protectedDocument = true; e.protectedReason = "owner-input"; this.save(); }
-    this.native(e).input(event);
+    if (e.connected) { this.native(e).input(event); return Promise.resolve(); }
+    // The wait is bounded: a Take control that lands mid-handshake can leave the
+    // pending connect unresolved for good, so the owner gets a retry message, not a hang.
+    return (async () => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const deadline = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(Object.assign(new Error(BROWSER_STILL_RECONNECTING), { status: 503 })), OWNER_INPUT_WAIT_MS);
+      });
+      try {
+        // An attempt started before the last control change ends without connecting: one more, for this generation.
+        await Promise.race([this.connect(key), deadline]);
+        this.human(e, owner, generation);
+        if (!e.connected) await Promise.race([this.connect(key), deadline]);
+        this.human(e, owner, generation); this.native(e).input(event);
+      } finally { clearTimeout(timer); }
+    })();
   }
   async reopen(key: string, owner: string, generation: number) {
     const e = this.entry(key); this.human(e, owner, generation);

@@ -306,11 +306,15 @@ describe("optional browser resolver and installation", () => {
     const override = join(dataDir, "override");
     writeFileSync(pathBinary, "fixture", { mode: 0o700 });
     writeFileSync(override, "fixture", { mode: 0o700 });
-    expect(resolveAgentBrowserBinary({ dataDir, env: { PATH: dataDir } })).toBe(pathBinary);
+    // Windows admits a PATH copy only by the signed-image rule (fd84fa0d6, windowsBrowserImageState), which a fixture
+    // never meets; elsewhere any executable on PATH resolves.
+    const windows = process.platform === "win32";
+    expect(resolveAgentBrowserBinary({ dataDir, env: { PATH: dataDir } })).toBe(windows ? null : pathBinary);
     expect(resolveAgentBrowserBinary({ dataDir, env: { PATH: dataDir, MURAGE_AGENT_BROWSER_PATH: override } })).toBe(override);
     expect(resolveAgentBrowserBinary({ dataDir, env: { PATH: dataDir, MURAGE_AGENT_BROWSER_PATH: dataDir } })).toBeNull();
     expect(resolveAgentBrowserBinary({ dataDir, env: { PATH: dataDir, MURAGE_AGENT_BROWSER_PATH: join(dataDir, "missing") } })).toBeNull();
-    expect(browserEngineStatus({ dataDir, env: { PATH: dataDir } })).toMatchObject({ kind: "ready", version: null, runtimeVerified: false });
+    if (!windows) expect(browserEngineStatus({ dataDir, env: { PATH: dataDir } })).toMatchObject({ kind: "ready", version: null, runtimeVerified: false });
+    else expect(browserEngineStatus({ dataDir, env: { PATH: dataDir } })).toMatchObject({ kind: "unavailable" });
     if (process.platform !== "win32") {
       chmodSync(override, 0o600);
       expect(resolveAgentBrowserBinary({ dataDir, env: { MURAGE_AGENT_BROWSER_PATH: override } })).toBeNull();

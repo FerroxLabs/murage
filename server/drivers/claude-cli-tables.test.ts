@@ -6,12 +6,13 @@
 // diffed against 2.1.305 on the bundles (Ng, applySafeConfigEnvironmentVariables, the child-env builder, VERTEX/AWS names,
 // CLAUDE_ENV_FILE: same; the untrusted-source refusal list gained BUN_TLS_REFUSE_DISTRUSTED_KEYS).
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { valuePins } from "../../shared/arg-vocabulary.ts";
 import * as claude from "./claude.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const mod = claude as unknown as Record<string, any>;
 const VERSIONS = ["2.1.305", "2.1.307", "2.1.999"] as const;
@@ -84,7 +85,7 @@ describe("2.1.305, 2.1.307 and an unknown 2.1.999 behave the same on the real tu
         expect([...answer.env].sort(), version).toEqual(["ANTHROPIC_BASE_URL", "BUN_TLS_REFUSE_DISTRUSTED_KEYS", "NO_PROXY"].filter((n) => version !== "2.1.305" || n !== "BUN_TLS_REFUSE_DISTRUSTED_KEYS").sort());
         expect(answer.env, version).not.toContain("UNRELATED");
       }
-    } finally { rmSync(dir, { recursive: true, force: true }); }
+    } finally { removeTempDirSync(dir); }
   });
 
   it("NO_PROXY: a routing name and a held name in 2.1.305 AND 2.1.307 (measured: still on the CLI's untrusted-source refusal list, still off the project allowlist)", () => {
@@ -119,7 +120,7 @@ describe("artifact-upload endpoints are owner routing names: owner's value, else
   };
   const handed = (extra: Record<string, string> = {}) => ({ PATH: "/bin", HOME: "/home/o", ...extra });
   const overlay = (hand: Record<string, string>, files: Array<{ path: string; source: string }>, cli: string) => mod.claudeOverlayEnv("linux", MODE, hand, files, [], cli);
-  afterAll(() => { for (const dir of dirs) rmSync(dir, { recursive: true, force: true }); });
+  afterAll(() => { for (const dir of dirs) removeTempDirSync(dir); });
 
   it.each(NAMES)("%s is a routing name on every version", (name) => {
     for (const cli of VS) expect(mod.isClaudeOwnerRoutingName(name, cli, "linux"), `${name} ${cli}`).toBe(true);

@@ -23,7 +23,8 @@ import { channelOriginSchema, routineEventForRun, type ChannelOrigin, type Routi
 import type { RoutineWatchBinding, RoutineWatchInput, RoutineWatchObservation, RoutineWatchRun, RoutineWatchSource } from "../shared/routine-watch.ts";
 import { completeRoutineWatchCheck, createRoutineWatchState, pauseRoutineWatch, reserveRoutineWatchCheck } from "./routine-watch-state.ts";
 import { readRoutineWatchBinding, routineWatchInputSchema } from "./routine-watch-integration.ts";
-import { turnStopped, turnSucceeded } from "./turn-outcome.ts";
+import { turnAskStopped, turnStopped, turnSucceeded } from "./turn-outcome.ts";
+import { ASK_STOP_NOTE } from "./drivers/ask-stop.ts";
 import { isUnseenRoutineProblem } from "../shared/routine-problems.ts";
 import { ROUTINE_RUN_ON, ROUTINE_RUN_STATUSES, ROUTINE_RUN_TRIGGERS, ROUTINE_TARGETS } from "../shared/record-values.ts";
 import { ROUTINE_GRANTS_MAX, isRoutineGrantKey, loadRoutinePermissionMode, routineGrantKeys, routinePermissionModeInput, type RoutinePermissionMode } from "./routine-permissions.ts";
@@ -2556,7 +2557,10 @@ export class RoutineManager {
         // A bare "error" or "tool_error" says less than the runtime.error that
         // came before it; keep the detailed one (OpenMausBot #2214, Apache-2.0).
         const genericStopReason = event.stopReason === "error" || event.stopReason === "tool_error";
-        this.failRun(run, turnStopped(event)
+        // Murage's own Ask stop (a change ran anyway on an Ask run) fails the run with the Ask note, not as completed work.
+        this.failRun(run, turnAskStopped(event)
+          ? ASK_STOP_NOTE
+          : turnStopped(event)
           ? "The run was stopped before it finished"
           : (genericStopReason ? run.error : undefined) ?? event.stopReason ?? run.error ?? "The bot did not complete this run");
         queueMicrotask(() => void this.tick());

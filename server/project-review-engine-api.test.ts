@@ -59,7 +59,9 @@ beforeAll(async () => {
     cfg.instances['rev-grok']={driver:'grokAgent',displayName:'Grok reviewer',environment:{...pass,...grokReady},config:{cli:acp,fullAuto:true}};
     cfg.instances['rev-gemini']={driver:'geminiAgent',displayName:'Gemini reviewer',environment:{...pass,GEMINI_API_KEY:'fixture',FAKE_ACP_AUTH:'1'},config:{cli:acp,fullAuto:true}};
     cfg.instances['rev-pi']={driver:'piAgent',displayName:'Pi reviewer',environment:pass,config:{cli:${JSON.stringify(FAKE_PI)},fullAuto:true}};
-    cfg.instances['rev-agy']={driver:'antigravityAgent',displayName:'Antigravity reviewer',environment:pass,config:{cli:${JSON.stringify(FAKE_AGY)},fullAuto:true}};
+    // agy runs its PreToolUse hooks before every tool (agy 1.4.4); the reviewer is at Ask, so Murage's Ask hook
+    // refuses the fake's write before it runs, as on a real agy, and the verdict still comes back
+    cfg.instances['rev-agy']={driver:'antigravityAgent',displayName:'Antigravity reviewer',environment:{...pass,FAKE_AGY_RUN_HOOKS:'1'},config:{cli:${JSON.stringify(FAKE_AGY)},fullAuto:true}};
     cfg.instances['rev-silent']={driver:'grokAgent',displayName:'Silent reviewer',environment:{...grokReady,FAKE_REVIEW_VERDICT:'none'},config:{cli:acp,fullAuto:true}};
     fs.writeFileSync(file,JSON.stringify(cfg));
   ` });

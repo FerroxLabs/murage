@@ -193,6 +193,19 @@ it("treats a stopped turn (ok:true, stopReason cancelled) like a cancelled one: 
   expect(receipts[0]!.messageId).toBeUndefined();
 });
 
+it("treats Murage's own Ask stop (ok:true, stopReason ask_stop) as a stop: receipts retained, nothing registered or announced", async () => {
+  const f = fixture();
+  f.dispatch();
+  f.write("outputs/partial.html", "<p>half-written</p>");
+  await f.complete(true, "ask_stop");
+  expect(f.hostMessages()).toEqual([]);
+  expect(f.cards()).toEqual([]);
+  expect(listArtifacts(database(), storage(), {}, f.access).total).toBe(0);
+  const receipts = f.receipts();
+  expect(receipts).toEqual([expect.objectContaining({ stage: "retained", sha256: sha("<p>half-written</p>"), pathToken: "outputs/partial.html" })]);
+  expect(receipts[0]!.artifactId).toBeUndefined();
+});
+
 it("never snapshots or publishes an unmanaged workspace", async () => {
   const f = fixture();
   f.dispatch(false);

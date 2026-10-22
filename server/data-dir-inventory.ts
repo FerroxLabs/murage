@@ -151,6 +151,9 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   "native": excluded(RUNTIME), "decider-log": excluded("Decision-model call log (no message text); regenerates and expires after 180 days"), "pending-deletions.json": excluded(RUNTIME), "memory-index": excluded(RUNTIME),
   // The settings overlays of running Claude turns (claude-private.ts): restated values, removed at turn end and at startup.
   "claude-private": excluded("Settings of a running Claude turn, removed when it ends and at startup; not restored"),
+  // The owner's remembered answers to the Claude sign-in card (drivers/claude-signin-answers.ts): HMACs keyed by a per-install secret salt, so a
+  // restored copy would match nothing and carry a salt that belongs to the old install. Never restored; the card asks again.
+  "claude-signin-answers.json": excluded("Remembered answers to the Claude sign-in card, keyed by this install's own secret salt; not restored, the card asks again"),
   "models": excluded(RUNTIME), "logs": excluded(RUNTIME), "tmp": excluded(RUNTIME), "connector-tools-cache": excluded(DOWNLOADED), "browser-profiles": excluded(RUNTIME),
   "browser-engine": excluded(RUNTIME),
   "engine-redo": excluded("Crash journal of a coding-engine history rewrite (offsets and fill kinds, never any text); finished at the next start and removed; not restored"),
@@ -291,6 +294,8 @@ export const DATA_DIR_PATTERNS: ReadonlyArray<{ pattern: RegExp; entry: DataDirE
   // secureWorkspaceConfig) and the startup settings (savePreferences) through
   // `<name>.<pid>.tmp` and a rename (electron/main.mjs). A crash between the
   // two leaves that name; it is a partial copy of a file that is backed up.
+  // The sign-in answers file's own write-then-rename temp (claude-signin-answers.ts): `<name>.<8 hex>.tmp`; it holds the install's salt.
+  { pattern: /^claude-signin-answers\.json\.[a-f0-9]{8}\.tmp$/, entry: excluded(LEFTOVER), example: "claude-signin-answers.json.0f8e2b1a.tmp" },
   { pattern: /^(?:config|startup-background)\.json\.\d+\.tmp$/, entry: excluded(LEFTOVER), example: "startup-background.json.48213.tmp" },
   // A bot-package import's per-file replacement (package-import-transaction.ts).
   { pattern: /^[^/\\]+\.package-[\w-]+\.tmp$/, entry: excluded(LEFTOVER), example: "bots.json.package-0f8e2b1a.tmp" },

@@ -703,7 +703,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "url": "https://murage.app/docs/changelog/v1-0-3#apps-and-engine-settings-in-1-0-3",
-    "text": "- Each app gets only the grants you give it. A connected app asks before it reaches a new tool, and what you allow stays with that app and that bot.\n- A routine's remembered approvals stay with the bot that runs it. Another bot cannot borrow them.\n- The settings that decide what an engine may do are protected. A bot cannot change them from inside a turn; you change them in Settings."
+    "text": "- Each app gets only the grants you give it. A connected app asks before it reaches a new tool, and what you allow stays with that app and that bot.\n- A routine's remembered approvals stay with the bot that runs it. Another bot cannot borrow them.\n- The settings that decide what an engine may do are protected. A bot cannot change them from inside a turn; you change them in Settings.\n- Murage's own approval hooks stay Murage's. Bots cannot change them, at any access level, including Full access and No limits."
   },
   {
     "id": "changelog/v1-0-3#approvals-on-your-phone-and-in-calls-in-1-0-3",
@@ -783,7 +783,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "url": "https://murage.app/docs/changelog/v1-0-3#engines-in-1-0-3",
-    "text": "- Fuigo 1.0.31. Murage 1.0.3 comes with Fuigo 1.0.31 bundled."
+    "text": "- Fuigo 1.0.31. Murage 1.0.3 comes with Fuigo 1.0.31 bundled.\n- Antigravity at Auto asks first in projects with their own hooks. When a project carries its own Antigravity hooks file, the turn runs as at Ask, so every change waits for you.\n- OpenClaw 2026.8.1 or newer. Murage works with OpenClaw from version 2026.8.1. At Ask, OpenClaw asks before it runs anything. At Auto and Full access it follows your own OpenClaw command settings, as in 1.0.2."
   },
   {
     "id": "changelog/v1-0-3#murage-cloud-in-1-0-3",
@@ -813,7 +813,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "url": "https://murage.app/docs/changelog/v1-0-3#windows-in-1-0-3",
-    "text": "- On Windows, Codex sessions start cleanly. Murage hands Codex its session hook in a form the Windows command line reads exactly, so every Codex session starts with its approval check connected.\n- On Windows, in-project files are recognized even under short folder names. Murage reads every part of a path by its full folder name, so a path written in the short form (such as RUNNER~1) is still known to be inside your project.\n- Engines on Windows always get the live environment. Every engine start reads Murage's current environment, so a value Murage sets or removes later reaches the next engine.\n- Skill links are replaced in place.…"
+    "text": "- On Windows, Codex sessions start cleanly. Murage hands Codex its session hook in a form the Windows command line reads exactly, so every Codex session starts with its approval check connected.\n- On Windows, in-project files are recognized even under short folder names. Murage reads every part of a path by its full folder name, so a path written in the short form (such as RUNNER~1) is still known to be inside your project.\n- Engines on Windows always get the live environment. Every engine start reads Murage's current environment, so a value Murage sets or removes later reaches the next engine.\n- On Windows with Git installed, every Ask shows its approval card.…"
   },
   {
     "id": "changelog/v1-0-3#moving-to-1-0-2-and-back-in-1-0-3",

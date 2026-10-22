@@ -10,7 +10,7 @@
 import type { ChildProcess } from "node:child_process";
 
 import type { ProviderStopResult } from "../contracts.ts";
-import { awaitCliTreeStopped } from "../procs.ts";
+import { awaitCliTreeStopped, cliStopDelivery, type StopDelivery } from "../procs.ts";
 
 /** Wait for `close` after termination was requested. Same bound codex uses. */
 export const PROVIDER_CLOSE_DEADLINE_MS = 5_000;
@@ -64,10 +64,16 @@ export class ChildTeardown {
   readonly #onClosed: Array<() => void> = [];
   private readonly child: ChildProcess;
   private readonly confirm: (child: ChildProcess) => Promise<boolean>;
+  private readonly delivery: (child: ChildProcess) => StopDelivery;
 
-  constructor(child: ChildProcess, confirm: (child: ChildProcess) => Promise<boolean> = awaitCliTreeStopped) {
+  constructor(
+    child: ChildProcess,
+    confirm: (child: ChildProcess) => Promise<boolean> = awaitCliTreeStopped,
+    delivery: (child: ChildProcess) => StopDelivery = cliStopDelivery,
+  ) {
     this.child = child;
     this.confirm = confirm;
+    this.delivery = delivery;
     // spawn() assigns the pid synchronously on success. No pid means the OS
     // never created a process (ENOENT, EACCES): there is nothing to close.
     this.#closed = child.pid === undefined;
@@ -130,8 +136,29 @@ export class ChildTeardown {
 
   #armClose(waiter: Waiter): void {
     if (waiter.closeTimer) return;
-    waiter.closeTimer = setTimeout(() => this.#expire(waiter), waiter.closeMs);
+    this.#closeIn(waiter, waiter.closeMs);
+  }
+
+  #closeIn(waiter: Waiter, ms: number): void {
+    waiter.closeTimer = setTimeout(() => this.#closeElapsed(waiter), ms);
     waiter.closeTimer.unref?.();
+  }
+
+  // The close budget counts from delivered termination. A route still in
+  // flight (Windows taskkill, which can take seconds to answer or refuse)
+  // has not terminated anything yet: wait for it, then give the child its
+  // full budget. The absolute cap (maxTimer) still bounds every wait.
+  #closeElapsed(waiter: Waiter): void {
+    if (!this.#waiters.has(waiter)) return;
+    const { pending, settledAt } = this.delivery(this.child);
+    if (pending) {
+      waiter.closeTimer = null;
+      void pending.then(() => { if (this.#waiters.has(waiter) && !waiter.closeTimer) this.#closeIn(waiter, waiter.closeMs); });
+      return;
+    }
+    const left = settledAt === null ? 0 : settledAt + waiter.closeMs - Date.now();
+    if (left > 0) { this.#closeIn(waiter, left); return; }
+    this.#expire(waiter);
   }
 
   #expire(waiter: Waiter): void {
@@ -163,13 +190,18 @@ export class ChildTeardown {
 export class TurnTeardowns {
   readonly #byTurn = new Map<string, { threadId: string; teardown: ChildTeardown }>();
   private readonly confirm: (child: ChildProcess) => Promise<boolean>;
+  private readonly delivery: (child: ChildProcess) => StopDelivery;
 
-  constructor(confirm: (child: ChildProcess) => Promise<boolean> = awaitCliTreeStopped) {
+  constructor(
+    confirm: (child: ChildProcess) => Promise<boolean> = awaitCliTreeStopped,
+    delivery: (child: ChildProcess) => StopDelivery = cliStopDelivery,
+  ) {
     this.confirm = confirm;
+    this.delivery = delivery;
   }
 
   track(threadId: string, turnId: string, child: ChildProcess): ChildTeardown {
-    const teardown = new ChildTeardown(child, this.confirm);
+    const teardown = new ChildTeardown(child, this.confirm, this.delivery);
     if (!teardown.closed) {
       const entry = { threadId, teardown };
       this.#byTurn.set(turnId, entry);
@@ -193,6 +225,19 @@ export class TurnTeardowns {
       .filter(([id, entry]) => entry.threadId === threadId && (turnId === undefined || id === turnId))
       .map(([, entry]) => entry.teardown);
     return combine(entries, budget);
+  }
+
+  /** Resolves once every child now tracked for `turnId` (every child on the
+   * thread when no turn is named) has closed, observed only through
+   * ChildTeardown.onClosed. It holds no timer: a child that never closes, or
+   * whose close a platform hook vetoes, leaves it pending. The children are
+   * captured at the call, because a close drops them from this map, so call
+   * it before waiting on the same turn. Nothing tracked resolves at once. */
+  closed(threadId: string, turnId: string | undefined): Promise<void> {
+    const entries = [...this.#byTurn.entries()]
+      .filter(([id, entry]) => entry.threadId === threadId && (turnId === undefined || id === turnId))
+      .map(([, entry]) => entry.teardown);
+    return Promise.all(entries.map((teardown) => new Promise<void>((resolve) => teardown.onClosed(resolve)))).then(() => undefined);
   }
 
   /** Close of every child on the thread except the one that served `exceptTurnId`

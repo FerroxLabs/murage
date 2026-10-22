@@ -68,6 +68,11 @@ describe("delegate_bot to an OpenClaw own-tools teammate (fake ACP CLI)", () => 
     await api("PATCH", `/api/bots/${seeded.id}`, { hidden: true });
     const mate = (await api("POST", "/api/bots")).body.bot;
     await api("PATCH", `/api/bots/${mate.id}`, { name: "Claw", modelSelection: { instanceId: "ocmate", model: "openclaw-default" } });
+    // Claw runs at Auto. At Ask an OpenClaw turn first sets the Gateway session read-only, and refuses the turn on a
+    // version below the permissionMode floor (the Ask hard stop, drivers/ask-stop.test.ts). The fake CLI is no
+    // OpenClaw Gateway, so at Ask the delegated turn is refused before it runs. At Auto (option A) the prompt carries
+    // no /exec directive and the owner's own OpenClaw settings apply, which is the path this delegation test covers.
+    expect((await api("PATCH", `/api/bots/${mate.id}`, { autoApprove: true, acknowledgeLocalAuto: true })).status).toBe(200);
     const chief = (await api("POST", "/api/bots")).body.bot;
     await api("PATCH", `/api/bots/${chief.id}`, { name: "Chief", modelSelection: { instanceId: "chief", model: "fake-model" } });
 
