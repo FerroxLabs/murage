@@ -1,0 +1,176 @@
+{
+  "_about": "Every shipped code LINE that holds a PowerShell program name, by fingerprint (the first 16 hex digits of the sha256 of the trimmed line; the text beside it is only a reminder). names_only: lines that hold the name without starting it (they classify a command an engine proposes, or label the owner's shell). user_terminal: the ONE place Murage opens PowerShell, the person's own Open terminal when Windows Terminal is missing (MurageMain, nops round 3: the commands Murage shows for pasting on Windows are PowerShell, so the fallback window is PowerShell, never cmd). open_spawns: Murage-own code that still starts PowerShell; EMPTY for 1.0.3 (MurageMain, no deferral) and the guard keeps it so. A changed or new line fails the guard until it is reviewed here; any launch of PowerShell fails wherever it is, unless it is the user_terminal line (server/no-powershell-spawn.test.ts). Murage must not start PowerShell by itself on Windows (murage-releases #1: an antivirus notice and a visible start; the packaged smoke step 5 fails on any app-spawned powershell.exe).",
+  "names_only": {
+    "electron/terminal-launch.mjs": {
+      "reason": "label: WINDOWS_FALLBACK_SHELL names the shell the Open terminal fallback window runs, so its tests can compare it with the shell the shown commands are written for; starts nothing",
+      "lines": {
+        "3cb6ed7f021c0807": "export const WINDOWS_FALLBACK_SHELL = \"powershell\";"
+      }
+    },
+    "server/always-ask.ts": {
+      "reason": "recognizer: rule table that classifies a proposed command; starts nothing",
+      "lines": {
+        "f798c6c601f85705": "if (matches.length !== 1) throw new Unreadable(\"pwsh\", matches.length ? `-${given} is ambi",
+        "34c511b1f6deaab9": "if (text === \"--%\") throw new Unreadable(\"pwsh\", \"--% stops parsing\");",
+        "fd802efc925dde44": "if (parameter[2] !== undefined) throw new Unreadable(\"pwsh\", `${text}: a parameter with a ",
+        "44dbaba2e814a529": "if (!value) throw new Unreadable(\"pwsh\", `${text} without a value`);",
+        "e8d8d03c8c792cb7": "export function alwaysAskCommand(text: string | undefined, cwd?: string, mode: \"command\" |",
+        "733a71ce7ca81653": "function read(text: string, cwd: string | undefined, shell?: \"pwsh\"): AlwaysAskHit | null ",
+        "6348bf7838a7c242": "return (shell === \"pwsh\" ? walkPwsh(text, newContext(cwd || undefined), visitor) : readRul",
+        "5224e533a4b1c64f": "export function alwaysAskRoutineCommand(text: string | undefined, cwd?: string, shell?: \"p",
+        "dc0d467803f91f89": "case \"pwsh\": return walkPwsh(text, ctx, visitor);"
+      }
+    },
+    "server/auto-approve.ts": {
+      "reason": "recognizer: the command-tool names ('powershell', 'pwsh') and the PowerShell dialect of a remembered approval key; classifies a proposed command, starts nothing",
+      "lines": {
+        "a82a0188806e4666": "const COMMAND_TOOLS = new Set([\"bash\", \"shell\", \"execute\", \"exec_command\", \"run_command\", ",
+        "f66ec09b84cdfaf5": "const POWERSHELL_TOOLS = new Set([\"powershell\", \"pwsh\"]);",
+        "476755901dcc1868": "function simpleProgram(summary: string, dialect: \"posix\" | \"pwsh\" = \"posix\"): string | und",
+        "5945fbeb2c17e4c0": "if (dialect === \"pwsh\" && /[\\u2018-\\u201E\\u2013-\\u2015]/.test(summary)) return undefined;",
+        "12e9f537632338f4": "if (dialect === \"pwsh\" && (words[0]?.assignment || words[0]?.quoted || words[0]?.value.toL",
+        "18937de8359a9c38": "if (dialect === \"pwsh\" && executable.includes(\"/\") && !/\\.(exe|com)$/i.test(executable)) r",
+        "203bdd47c0c1c407": "const program = simpleProgram(summary, isPowerShellTool(tool) || call?.commandShell === \"p",
+        "7d1492fed80afe89": "const shell = isPowerShellTool(tool) || (commandTool && context?.call?.commandShell === \"p",
+        "cf3fd17ebff44577": "const pinShell = isPowerShellTool(tool) || (isCommandTool(tool) && context?.call?.commandS"
+      }
+    },
+    "server/claude-accounts.ts": {
+      "reason": "label: tells the sign-in screen which shell the pasted sign-in command is written for; starts nothing",
+      "lines": {
+        "4d973dd536a0e033": "return {configDir,managed:!!configDir,isDefault:instanceId===\"claude\",signInCommand:claude"
+      }
+    },
+    "server/contracts.ts": {
+      "reason": "label: the 'pwsh' value of a type field that names which shell a command is written for; starts nothing",
+      "lines": {
+        "49c4fbde829c2bee": "commandShell?: \"pwsh\";"
+      }
+    },
+    "server/drivers/acp/core.ts": {
+      "reason": "label: same as codex.ts, the owner's shell form for the F12 record; nothing is started from it on Windows",
+      "lines": {
+        "8cb86bbb080abbce": "const acpShellForm: readonly string[] = process.platform === \"win32\" ? [\"powershell.exe\", "
+      }
+    },
+    "server/drivers/claude.ts": {
+      "reason": "recognizer and label: the Claude Code tool name 'PowerShell' in the ask list, in an ask's tool field, in the mode's --disallowedTools entry and its tool type; and CLAUDE_POWERSHELL_FORM, the F12 shell form a PowerShell tool command is recorded with (the CLI runs its own PowerShell tool on the inherit path; server/engine-env.ts checkExecEnv refuses a PowerShell shell form as U20 without starting it); starts nothing",
+      "lines": {
+        "2101e5911314cb27": "ask: [...CLAUDE_BARE_ASK_TOOLS, ...(platform === \"win32\" ? [\"PowerShell\"] : []), ...claude",
+        "353828da41736378": "export const CLAUDE_POWERSHELL_FORM: readonly string[] = [\"powershell.exe\", \"-NoProfile\", ",
+        "d72924dab298f88c": "const modeTool = (mode: ClaudeShellMode): \"Bash\" | \"PowerShell\" => (mode.kind === \"murage-",
+        "b8ef6f3f62521f0f": "deny.push(\"PowerShell\");",
+        "d82f002d5d3e1ebe": "if (ask.kind === \"permission\" && (ask.tool === \"Bash\" || ask.tool === \"PowerShell\") && inh",
+        "fff8d4827d9e7359": "else if (ask.kind === \"permission\" && (ask.tool === \"Bash\" || ask.tool === \"PowerShell\")) "
+      }
+    },
+    "server/drivers/codex.ts": {
+      "reason": "label: names the owner's Windows shell form for the F12 environment record; the environment check no longer starts it on Windows (server/engine-env.ts resolves U20 without a spawn)",
+      "lines": {
+        "1bec92323babde07": "const shellForm: readonly string[] = process.platform === \"win32\" ? [\"powershell.exe\", \"-N"
+      }
+    },
+    "server/drivers/pi.ts": {
+      "reason": "recognizer: the pi engine's tool name 'powershell' and its display name; starts nothing (the engine's own shell is the engine's business)",
+      "lines": {
+        "31c6d7b6132bed33": "const display = tool === \"bash\" ? \"Bash\" : tool === \"powershell\" ? \"PowerShell\" : tool ===",
+        "148716009b9dbaa0": "if (tool === \"bash\" || tool === \"powershell\") {",
+        "3cfcd9af3561916c": "if (gate && !questions && (gate.tool === \"Bash\" || gate.tool === \"PowerShell\")) void execE"
+      }
+    },
+    "server/index.ts": {
+      "reason": "recognizer: tool-name comparison on a permission event; starts nothing",
+      "lines": {
+        "f17418f396ccd9f7": "...(event.execEnv?.unread && (exactCommand !== undefined || isCommandTool(event.tool) || e"
+      }
+    },
+    "server/mobile-push-risk.ts": {
+      "reason": "recognizer: classifies a proposed command for a phone push; starts nothing",
+      "lines": {
+        "07806a9d63d0e951": "const INTERPRETERS = new Set([\"python\", \"python2\", \"python3\", \"pypy\", \"pypy3\", \"ruby\", \"pe",
+        "61008ae8c0ed54a4": "const COMMAND_TOOLS = new Set([\"bash\", \"shell\", \"sh\", \"zsh\", \"powershell\", \"pwsh\", \"execut"
+      }
+    },
+    "server/shell/lex.ts": {
+      "reason": "recognizer: command-name table of the shell lexer; starts nothing",
+      "lines": {
+        "3209729a8573b123": "| \"wrapper-option\" | \"dynamic-name\" | \"dynamic-eval\" | \"branch\" | \"pwsh\" | \"depth\" | \"nest"
+      }
+    },
+    "server/shell/pwsh.ts": {
+      "reason": "recognizer: the PowerShell lexer for the always-ask rules; parses a command an engine proposes, starts nothing",
+      "lines": {
+        "09d2bf808b29b4fa": "export const POWERSHELLS = new Set([\"powershell\", \"powershell.exe\", \"pwsh\", \"pwsh.exe\"]);",
+        "1e488447888185b3": "if (lead?.kind === \"var\" || lead?.kind === \"subst\") throw new Unreadable(\"pwsh\", \"an assig",
+        "c19a9eb30a1a137a": "if (!text.startsWith(\"-\")) return name === \"powershell\" ? { kind: \"text\", words: args.slic",
+        "cf822222c93d11ea": "if (option === \"-ec\" || abbreviates(option, \"-encodedcommand\") || abbreviates(option, \"-en",
+        "33b5a96c564d490a": "if (!ctx.written.has(resolveWritten(ctx, path))) throw new Unreadable(\"pwsh\", \"a shell run",
+        "8a7858771328d279": "function scriptFile(spelled: string, name: string, dialect: \"pwsh\" | \"cmd\"): boolean {",
+        "3470ab6abf3d1e05": "function unmodelled(name: string, spelled: string, args: Word[], stdin: Provenance | undef",
+        "010785822862ee19": "export function shellDialectOf(form: readonly string[] | undefined): \"pwsh\" | undefined {",
+        "017242b6056ce69c": "return program !== undefined && (programBase(program) === \"powershell\" || programBase(prog",
+        "5b6978843826ba92": "throw new Unreadable(\"pwsh\", \"a .NET call\");",
+        "dbfbdb7a8bcbb2e9": "if (!set) throw new Unreadable(\"pwsh\", \"Set-Variable with a value the reader does not foll",
+        "987d8b811a9778d6": "if (dashed && slashed) throw new Unreadable(\"pwsh\", `${program} with both -Parameters and ",
+        "ef8ccf162d4eef25": "unmodelled(name, renderPwshWord(call[0]!), args, stdin, \"pwsh\");",
+        "a387e386e017f5c9": "if ((program === \"foreach-object\" || program === \"%\") && callsMember(args)) throw new Unre",
+        "416c8c274eae452f": "export function looksLikePowerShell(text: string): \"pwsh\" | \"cmd\" | \"both\" | null {",
+        "470ad91e307cab39": "if (/^\\s*\\[[A-Za-z][\\w.]*\\]::[A-Za-z]/.test(text)) return \"pwsh\";",
+        "fe7db5fc453ccf18": "if (/^\\s*\\$[A-Za-z_][\\w:]*\\s*=/.test(text)) return \"pwsh\";",
+        "93246a19243b672f": "if (/^[A-Z][a-z]+-[A-Z]/.test(first)) return \"pwsh\";",
+        "4d1662205ce5d0a0": "if (POWERSHELLS.has(lower)) return \"pwsh\";",
+        "b2a8a5d6d9a7c37a": "return [\"format-volume\", \"clear-disk\", \"initialize-disk\", \"remove-item\", \"ri\", \"set-locati"
+      }
+    },
+    "server/startup-files.ts": {
+      "reason": "recognizer: set of command-tool names in engine events; starts nothing",
+      "lines": {
+        "ba5ff2d501540723": "const COMMAND_TOOL_NAMES = new Set([\"bash\", \"shell\", \"sh\", \"zsh\", \"powershell\", \"pwsh\", \"e"
+      }
+    },
+    "server/stop-line.ts": {
+      "reason": "recognizer: the command-tool names of an engine's tool call for the stop line, and a PowerShell command line it reads; starts nothing",
+      "lines": {
+        "977069360b0adadf": "const COMMAND_TOOLS = new Set([\"bash\", \"shell\", \"execute\", \"exec_command\", \"run_command\", ",
+        "f66ec09b84cdfaf5": "const POWERSHELL_TOOLS = new Set([\"powershell\", \"pwsh\"]);"
+      }
+    },
+    "shared/app-action-grant.ts": {
+      "reason": "label: the 'pwsh' value of a type field that names which shell a granted command is written for; starts nothing",
+      "lines": {
+        "49c4fbde829c2bee": "commandShell?: \"pwsh\";"
+      }
+    },
+    "shared/approval-plain.ts": {
+      "reason": "recognizer: the set of command-tool names ('powershell' among them) that the plain approval text reads as a shell command; starts nothing",
+      "lines": {
+        "dfccc5342c2b2bc4": "const SHELL_TOOLS = new Set([\"bash\", \"shell\", \"execute\", \"powershell\", \"run_terminal_cmd\","
+      }
+    },
+    "shared/arg-vocabulary.ts": {
+      "reason": "recognizer: the PowerShell program names in the argument vocabulary that classifies a proposed command; starts nothing",
+      "lines": {
+        "a02255b9b1a42dba": "powershell: [\"powershell\", \"pwsh\"],"
+      }
+    },
+    "shared/prompt-capable.ts": {
+      "reason": "recognizer: the 'pwsh' dialect flag that reads a proposed PowerShell command with PowerShell's own spellings for the pin-override check (Rule 68f U19); classifies a proposed command, starts nothing",
+      "lines": {
+        "157d38cc85d2dda0": "export function pinOverrideIn(text: string, pins: ReadonlyMap<string, string>, shell?: \"pw",
+        "8f9595f034647086": "return (shell === \"pwsh\" ? pwshPinTouch(text) : null) ?? pinTouch(text, pins) ?? judgeText"
+      }
+    }
+  },
+  "user_terminal": {
+    "electron/terminal-launch.mjs": {
+      "reason": "user_terminal: the program of the Open terminal fallback window (cmd's start of powershell.exe -NoExit, argv exactly that, in the home folder with the person's own environment without Murage's names); only the person's Open terminal action reaches it (electron/terminal-launch.test.mjs)",
+      "lines": {
+        "decdb0377baf6682": "const powershell = win32.join(root, \"System32\", \"WindowsPowerShell\", \"v1.0\", \"powershell.e"
+      },
+      "launches": {
+        "02888f66d7a8dad5": "out.push([cmd, [\"/d\", \"/c\", `start \"\" \"${powershell}\" -NoExit`], { ... }, \"user_terminal\"]);"
+      }
+    }
+  },
+  "open_spawns": {}
+}

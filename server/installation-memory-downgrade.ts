@@ -102,9 +102,10 @@ export function resetIncarnatedSessionCursors(root: string, db: DatabaseSync): n
  * writes again (data-dir-inventory.ts says why each is never restored): the repairs note and its unfinished write (the repairs run again and change nothing), the
  * model catch-up marker (re-queues only records still owed), this month's "Leave paused" choice (the item is asked again), the kept login-shell
  * environment (the next capture writes it), approvals still waiting for their answer (asked again; none was ever a grant), the
- * first-run backup record (missing means not owed) and the frozen-replies recovery cursor (a later 1.0.3 start reads again from the start and
+ * first-run backup record (missing means not owed), a Claude turn's settings overlays (claude-private/: only a crash leaves one, and 1.0.2
+ * has no turn that reads it), the Claude sign-in card's remembered answers (claude-signin-answers.json: 1.0.2 has no such card, and the card simply asks again) and the frozen-replies recovery cursor (a later 1.0.3 start reads again from the start and
  * changes nothing a second time). The Cloud-only names are never on a desktop that reinstalls 1.0.2. */
-export const DATA_DIR_NAMES_AFTER_102 = ["env", "frozen-replies-recovery.json", "learning-paused-left.json", "memory-model-adopted.json", "memory-model-adopted.json.tmp", "memory-repairs.json", "memory-repairs.json.tmp", "pending-grants.json", "setup-backup.json"] as const;
+export const DATA_DIR_NAMES_AFTER_102 = ["claude-private", "claude-signin-answers.json", "env", "frozen-replies-recovery.json", "learning-paused-left.json", "memory-model-adopted.json", "memory-model-adopted.json.tmp", "memory-repairs.json", "memory-repairs.json.tmp", "pending-grants.json", "setup-backup.json"] as const;
 /** Removes those names from the data folder (a link is removed, never followed). Idempotent; returns the names removed. */
 export function removeDataDirNamesAfter102(root: string): string[] {
   const removed: string[] = [];

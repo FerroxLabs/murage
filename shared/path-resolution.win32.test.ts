@@ -84,6 +84,7 @@ const inProject = await import("./in-project.ts");
 const { diskFacts } = await import("./disk-facts.ts");
 const { HookDecisionTable } = await import("../server/drivers/codex-hook.ts");
 const stopLineState = await import("../server/stop-line-state.ts");
+const { realKeyPaths } = await import("../server/auto-approve.ts");
 
 const dir = (path: string) => {
   const n = win32.normalize(path);
@@ -190,5 +191,23 @@ describe("the hook table and the stop-line state on win32", () => {
   it("the stop-line resolver resolves in order, and an unreadable root is dropped", () => {
     expect(asWindows(() => stopLineState.stopLineRealpath("C:\\w\\proj\\link\\..\\y"))).toBe("C:\\out\\y");
     expect(asWindows(() => stopLineState.stopLineRoots(["C:\\w\\proj", "C:\\gone"]))).toEqual(["C:\\w\\proj"]);
+  });
+});
+
+describe("the link-followed key guard on win32 (1.0.4 F1)", () => {
+  it("follows a junction to a key file with either separator, keeps a missing tail, and holds what it cannot follow", () => {
+    for (const d of ["C:\\Users", "C:\\Users\\Alice", "C:\\Users\\Alice\\.aws", "C:\\w\\proj\\cfg"]) dir(d);
+    file("C:\\Users\\Alice\\.aws\\credentials", "[default]\n");
+    link("C:\\w\\proj\\awsdir", "C:\\Users\\Alice\\.aws");
+    link("C:\\w\\proj\\cfg\\key", "C:\\Users\\Alice\\.aws\\credentials");
+    const opts = { ...W, home: "C:\\Users\\Alice" };
+    const creds = "C:\\Users\\Alice\\.aws\\credentials";
+    expect(realKeyPaths({ path: "awsdir\\credentials" }, undefined, "C:\\w\\proj", opts)).toEqual({ paths: [creds], cannot: null });
+    expect(realKeyPaths({ path: "awsdir/credentials" }, undefined, "C:\\w\\proj", opts)).toEqual({ paths: [creds], cannot: null });
+    expect(realKeyPaths({ file_path: "C:\\w\\proj\\cfg/key" }, undefined, undefined, opts)).toEqual({ paths: [creds], cannot: null });
+    expect(realKeyPaths({ path: "~\\.aws\\credentials" }, undefined, undefined, opts)).toEqual({ paths: [creds], cannot: null });
+    expect(realKeyPaths({ path: "awsdir\\new.txt" }, undefined, "C:\\w\\proj", opts)).toEqual({ paths: ["C:\\Users\\Alice\\.aws\\new.txt"], cannot: null });
+    expect(realKeyPaths({ path: "C:awsdir\\credentials" }, undefined, "C:\\w\\proj", opts).cannot).toEqual(expect.any(String));
+    expect(realKeyPaths({ path: "gone\\..\\x" }, undefined, "C:\\w\\proj", opts).cannot).toEqual(expect.any(String));
   });
 });

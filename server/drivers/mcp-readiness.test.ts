@@ -5,6 +5,8 @@ import {
   isUnsupportedAnswer,
   McpBackoff,
   McpStatusSupport,
+  mcpFirstAnswerMs,
+  MCP_STATUS_ANSWER_MS,
   NOT_DONE_PREFIX,
   parseMcpStatus,
   splitMcpServers,
@@ -207,5 +209,61 @@ describe("required MCP servers", () => {
     expect(toolsUnavailableRunError(["connected apps"])).toBe("Connected apps were not ready when this run started, and the run needed them.");
     expect(toolsUnavailableRunError(["memory"])).toBe("Memory was not ready when this run started, and the run needed it.");
     expect(toolsUnavailableNotice(["connected apps", "memory"])).toContain("connected apps and memory were not ready");
+  });
+});
+
+// 1.0.3 gate, Windows (CLI 2.1.307): no first mcp_status answer within 3 s on any new
+// process, so every turn went ahead unchecked with the CLI's own start-up hold off.
+describe("a fresh engine's first status answer", () => {
+  /** An engine that reads its control requests only from `readyAt` on: a request
+   * that times out before then gets nothing, one still open then is answered. */
+  function slowStart(readyAt: number) {
+    let now = 0;
+    const asked: number[] = [];
+    const slow: string[][] = [];
+    return {
+      asked, slow, clock: () => now,
+      io: {
+        now: () => now,
+        sleep: async (ms: number) => { await new Promise((resolve) => setImmediate(resolve)); now += ms; },
+        stopped: () => false,
+        status: async (ms: number) => {
+          asked.push(ms);
+          // The answer takes real time to come back, as a pipe read does.
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          if (now + ms < readyAt) { now += ms; return null; }
+          now = Math.max(now, readyAt);
+          return new Map<string, McpServerState>([["composio", "connected"], ["muragebox", "connected"]]);
+        },
+        reconnect: async () => {},
+        onSlow: (names: string[]) => { slow.push(names); },
+      },
+    };
+  }
+
+  it("Windows gives the first answer the required-server wait; Linux and macOS keep 3 s", () => {
+    expect(mcpFirstAnswerMs("win32")).toBe(15_000);
+    expect(mcpFirstAnswerMs("linux")).toBe(MCP_STATUS_ANSWER_MS);
+    expect(mcpFirstAnswerMs("darwin")).toBe(MCP_STATUS_ANSWER_MS);
+  });
+
+  it("an engine that first answers at 5 s is checked, not waved through as unknown, on Windows", async () => {
+    const engine = slowStart(5_000);
+    const result = await awaitRequiredMcp({ required: ["composio"], optional: ["muragebox"] }, engine.io, { ...budgets, firstAnswerMs: mcpFirstAnswerMs("win32") });
+    expect(result).toMatchObject({ unchecked: false, readiness: "ready", missing: [] });
+    expect(engine.asked[0]).toBe(15_000);
+    // The wait is long enough to notice, so it says what it is waiting for.
+    expect(engine.slow).toEqual([["composio", "muragebox"]]);
+  });
+
+  it("the default stays one 3 s ask, and a build that never answers still costs only the first-answer window", async () => {
+    const quick = slowStart(5_000);
+    expect(await awaitRequiredMcp({ required: ["composio"], optional: [] }, quick.io, budgets)).toMatchObject({ unchecked: true, uncheckedReason: "no-answer" });
+    expect(quick.asked).toEqual([MCP_STATUS_ANSWER_MS]);
+    expect(quick.slow).toEqual([]);
+    const silent = slowStart(Number.POSITIVE_INFINITY);
+    const result = await awaitRequiredMcp({ required: ["composio"], optional: [] }, silent.io, { ...budgets, firstAnswerMs: 15_000 });
+    expect(result).toMatchObject({ unchecked: true, uncheckedReason: "no-answer" });
+    expect(silent.asked).toEqual([15_000]);
   });
 });

@@ -86,7 +86,7 @@ async function verifySandboxedPreload() {
   try {
     await probe.loadURL(`${origin}/`);
     const exposed = await inspect();
-    const expectedBrowser = process.platform === "win32" ? "undefined" : "object";
+    const expectedBrowser = "object";
     if (exposed.muragebox !== "object" || exposed.platform !== process.platform || exposed.browser !== expectedBrowser) {
       throw new Error(`sandboxed preload bridge was not exposed correctly: ${JSON.stringify(exposed)}`);
     }

@@ -24,6 +24,20 @@ import { GATE_MESSAGE_BYTES, HOOK_LIVENESS_MS } from "../../shared/scan-limits.t
 import type { McpMountRecord } from "../../shared/mount-identity.ts";
 
 export { HOOK_LIVENESS_MS };
+/** Rule 68c on Windows: the SessionStart bound also covers Codex starting its PowerShell wrapper, two cmd.exe and a cold start of the
+ *  packaged Murage binary, under load or an antivirus scan (1.0.3 RUN B: the wrapper alone started 10 s in), so it is wider there. It
+ *  runs from the turn/start request, the latest point before Codex can run SessionStart (it runs the handlers once the turn begins,
+ *  core/src/hook_runtime.rs run_pending_session_start_hooks), after thread/start and the hooks/list handshake. Expiry still refuses
+ *  the turn, and a late proof is never taken. */
+export const HOOK_LIVENESS_WIN32_MS = 45_000;
+export interface HookLivenessSetting { ms: number; source: "env" | "win32" | "default" }
+/** The effective bound and where it came from: MURAGE_CODEX_HOOK_LIVENESS_MS when it is a positive number, else the platform's. */
+export function hookLivenessSetting(platform: NodeJS.Platform = process.platform, env: NodeJS.ProcessEnv = process.env): HookLivenessSetting {
+  const override = Number(env.MURAGE_CODEX_HOOK_LIVENESS_MS);
+  if (override > 0) return { ms: override, source: "env" };
+  return platform === "win32" ? { ms: HOOK_LIVENESS_WIN32_MS, source: "win32" } : { ms: HOOK_LIVENESS_MS, source: "default" };
+}
+export const hookLivenessBound = (platform: NodeJS.Platform = process.platform, env: NodeJS.ProcessEnv = process.env): number => hookLivenessSetting(platform, env).ms;
 
 /** Rule 68g: the oldest Codex whose hooks Murage builds the gate on. Probed offline (lane ag103-cx3, 2026-10-18): 0.129.0 and 0.163.0
  *  list a `hooks.json` handler pair from the scoped home, take the trust write through `config/batchWrite` and list both as trusted. */
@@ -109,25 +123,34 @@ export const HOOK_TIMEOUT_SEC = Math.ceil(HOOK_ASK_BOUND_MS / 1000) + 30;
 /** The script's own deadline: shorter than the handler timeout, so Codex never times the hook out while the script is alive. */
 export const HOOK_SCRIPT_DEADLINE_MS = HOOK_ASK_BOUND_MS + 10_000;
 
-/** Rule 68d. Whole body in one `try`; the only outcomes are an allow (a clean exit, silent), a deny (printed, with its reason), or exit 2 with the reason on stderr. The socket path and
+/** Rule 68d. Whole body in one `try`; the only outcomes are an allow (a clean exit, silent) or a deny (printed, with its reason, and a
+ *  clean exit: Codex 0.163.0 reads the printed decision only on exit 0, hooks/src/events/pre_tool_use.rs:213-244, and a Windows shell
+ *  turns exit 2 into 1). A SessionStart that cannot post exits 2 with the reason on stderr (no proof: the turn is refused). The socket path and
  *  the per-turn token are read from the env file beside this script (never argv, never hooks.json). The script runs with whatever
  *  environment Codex gives a hook, so it touches nothing but its own folder and the socket. */
 export const CODEX_HOOK_SCRIPT = `// Murage pre-execution hook. Generated; do not edit.
-import { readFileSync } from "node:fs";
+import { readFileSync, writeSync } from "node:fs";
 import net from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const DEADLINE_MS = ${HOOK_SCRIPT_DEADLINE_MS};
+let hookEvent;
 const block = (why) => {
-  try { process.stderr.write("Murage blocked this call: " + String(why).slice(0, 300) + "\\n"); } catch {}
-  process.exit(2);
+  const reason = "Murage blocked this call: " + String(why).slice(0, 300);
+  try { writeSync(2, reason + "\\n"); } catch {}
+  if (hookEvent === "SessionStart") process.exit(2);
+  // Any other call: the documented deny on stdout with a clean exit, which Codex blocks on whatever the shell does to an exit code
+  // (Windows: Codex's PowerShell -Command wrapper turns exit 2 into 1, a non-blocking failure). Written synchronously.
+  try { writeSync(1, JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason } })); } catch {}
+  process.exit(0);
 };
 try {
   const timer = setTimeout(() => block("the check took too long"), DEADLINE_MS);
   const chunks = [];
   for await (const chunk of process.stdin) chunks.push(chunk);
   const input = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  hookEvent = input && input.hook_event_name;
   const here = dirname(fileURLToPath(import.meta.url));
   const env = {};
   for (const line of readFileSync(join(here, ${JSON.stringify(HOOK_ENV_FILE)}), "utf8").split("\\n")) {
@@ -172,30 +195,78 @@ try {
 }
 `;
 
-/** The hook's launch line: Murage's node running the script, each path quoted. */
-export const hookLaunchLine = (execPath: string, scriptPath: string): string => `"${execPath}" "${scriptPath}"`;
+/** 1.0.3 packaged gate: Murage's "node" is process.execPath, which in the packaged app is the Murage binary itself (Electron). It runs
+ *  a script only with ELECTRON_RUN_AS_NODE=1; without it the binary starts as a second app instance, the script never runs, no
+ *  SessionStart proof arrives and every gated Codex turn is refused. The app's server (an Electron utilityProcess) does not carry the
+ *  variable, and Codex hands a hook the environment Murage gave Codex, so the launch line sets it itself: it never depends on the
+ *  environment surviving Codex, and Codex's own commands never inherit it (an Electron app the owner runs from a turn stays an app).
+ *  Under plain node the variable is ignored. */
+export const HOOK_RUN_AS_NODE = "ELECTRON_RUN_AS_NODE";
+/** The hook's launch line (POSIX): `/usr/bin/env` sets the variable and runs Murage's runtime on the script, each path quoted. The
+ *  same in sh, bash, zsh and fish, and still right if a Codex build splits the line into argv instead of handing it to a shell. */
+export const hookLaunchLine = (execPath: string, scriptPath: string): string => `/usr/bin/env ${HOOK_RUN_AS_NODE}=1 "${execPath}" "${scriptPath}"`;
 
-/** Windows: Codex runs a handler as `cmd.exe /C <command>`, and Codex 0.153.3 escapes the inner quotes of a quoted launch line as `\"`,
- *  which cmd cannot read (rig: "hook exited with code 1", so no SessionStart proof and every gated turn refused). The Windows command
- *  therefore holds no path and no quote: cmd expands this variable, which the driver sets in the app-server's environment to the
- *  launch line, and then reads the quotes itself. It survives both the escaped form and the raw `"<command>"` form of later builds. */
+/** The Windows launcher written beside the script: a batch file the inner cmd runs, which sets the variable and runs Murage's runtime
+ *  on the script. A batch file, not `set X=1&& ...` in the variable: when the OUTER shell is cmd (`%COMSPEC% /C`, Codex's fallback
+ *  with no PowerShell) it expands the variable before it parses operators, so an `&&` in the value would split the line in the outer
+ *  shell and the variable would be set in the wrong process. The file is pure ASCII and names no path: cmd reads a batch file in the
+ *  OEM code page, so a non-ASCII user or folder name written into it would break (Fable, 1.0.3). The runtime comes from
+ *  MURAGE_CODEX_EXE (set beside MURAGE_CODEX_HOOK; an expanded variable keeps its Unicode) and the script from the launcher's own
+ *  folder (`%~dp0`). With no MURAGE_CODEX_EXE nothing runs: no SessionStart proof, the turn is refused. */
+export const HOOK_LAUNCHER_FILE = "murage-hook.cmd";
+export const CODEX_HOOK_EXE_ENV = "MURAGE_CODEX_EXE";
+export function hookWindowsLauncher(): string {
+  return [
+    "@echo off",
+    `if not defined ${CODEX_HOOK_EXE_ENV} exit /b 2`,
+    `set "${HOOK_RUN_AS_NODE}=1"`,
+    `"%${CODEX_HOOK_EXE_ENV}%" "%~dp0${HOOK_SCRIPT_FILE}"`,
+    "exit /b %ERRORLEVEL%",
+    "",
+  ].join("\r\n");
+}
+
+/** Windows (F3, 1.0.3 gate): Codex picks the shell a hook runs in, and Murage cannot. Every gated build (0.149.0 .. 0.163.0, source
+ *  hooks/src/engine/command_runner.rs `build_command`, core/src/session/mod.rs `build_hooks_config`) runs the handler string under the
+ *  turn's user shell, which on Windows is PowerShell (`pwsh`, else `powershell`) as `-NoProfile -Command <command>`, with cmd.exe
+ *  `/c` when no PowerShell is found, and `%COMSPEC% /C "<command>"` when the turn has no environment. There is no argv form: the
+ *  handler is a string. So the string must mean the same thing in cmd and in PowerShell:
+ *  - its program is cmd.exe by a bare absolute path with no space, no quote and no variable (both shells run a bare path the same way;
+ *    an absolute path keeps cmd's current-folder lookup out of it, so a project cannot plant a `cmd.exe` of its own);
+ *  - its arguments hold no character either shell treats specially, except the one `%MURAGE_CODEX_HOOK%`, which PowerShell hands to
+ *    cmd unread and cmd expands (the old bare `%MURAGE_CODEX_HOOK%` was a cmd-only string: PowerShell never expanded it, so the hook
+ *    never started and every Codex turn was refused);
+ *  - `/d` skips the AutoRun commands of the registry, `/v:off` keeps a `!` in a path literal.
+ *  The variable holds the launch line behind an `@` (hookWindowsLaunchValue): when the OUTER shell is cmd it expands the variable
+ *  first, and a line that started with a quote would lose its first and last quote to the inner cmd's `/c` rule. */
 export const CODEX_HOOK_LAUNCH_ENV = "MURAGE_CODEX_HOOK";
-export const CODEX_HOOK_WINDOWS_COMMAND = `%${CODEX_HOOK_LAUNCH_ENV}%`;
+const PLAIN_SYSTEM_ROOT = /^[A-Za-z]:\\[A-Za-z0-9_.-]+(?:\\[A-Za-z0-9_.-]+)*$/;
+/** The system cmd.exe by absolute path. A system folder that is not a plain path falls back to the default one, which then fails
+ *  closed (no hook starts, no SessionStart proof, the turn is refused) rather than putting a space or a quote in the command. */
+export function windowsCmdPath(systemRoot: string | undefined = process.env.SystemRoot ?? process.env.SYSTEMROOT): string {
+  return `${systemRoot && PLAIN_SYSTEM_ROOT.test(systemRoot) ? systemRoot : "C:\\Windows"}\\System32\\cmd.exe`;
+}
+export function codexHookWindowsCommand(systemRoot?: string): string {
+  return `${windowsCmdPath(systemRoot)} /d /v:off /c %${CODEX_HOOK_LAUNCH_ENV}%`;
+}
+/** The value of MURAGE_CODEX_HOOK: the quoted launcher path, led by `@` so it never starts with a quote. */
+export const hookWindowsLaunchValue = (launcherPath: string): string => `@"${launcherPath}"`;
 
 /** Rule 68a: the hooks.json of the scope. One matcher-free PreToolUse handler and one SessionStart handler, each a `command`
  *  handler running the script with Murage's own node. The content never changes between turns (the hash stays stable), so trust
  *  survives; the socket path and the token live in the env file. */
 export function codexHooksJson(execPath: string, scriptPath: string): string {
   const command = hookLaunchLine(execPath, scriptPath);
-  const handler = { type: "command", command, command_windows: CODEX_HOOK_WINDOWS_COMMAND, timeout: HOOK_TIMEOUT_SEC };
+  const handler = { type: "command", command, command_windows: codexHookWindowsCommand(), timeout: HOOK_TIMEOUT_SEC };
   return JSON.stringify({ hooks: { PreToolUse: [{ hooks: [handler] }], SessionStart: [{ hooks: [handler] }] } }, null, 2) + "\n";
 }
 
-export interface HookFiles { hooksJson: string; script: string; envFile: string }
+export interface HookFiles { hooksJson: string; script: string; envFile: string; launcher: string }
 
 /** Rule 68c: what a SessionStart proof was given under. A kept process's proof carries to the next turn only while this is unchanged. */
 export function hookConfigOf(scopedHome: string, execPath = process.execPath): string {
-  return createHash("sha256").update(codexHooksJson(execPath, join(scopedHome, HOOK_SCRIPT_FILE))).update("\0").update(CODEX_HOOK_SCRIPT).digest("hex");
+  const script = join(scopedHome, HOOK_SCRIPT_FILE);
+  return createHash("sha256").update(codexHooksJson(execPath, script)).update("\0").update(hookWindowsLauncher()).update("\0").update(CODEX_HOOK_SCRIPT).digest("hex");
 }
 
 /** Writes hooks.json and the script (unchanged content is not rewritten) and the turn's env file (0600). */
@@ -204,12 +275,14 @@ export function writeHookFiles(scopedHome: string, socketPath: string, token: st
   const script = join(scopedHome, HOOK_SCRIPT_FILE);
   const hooksJson = join(scopedHome, HOOKS_JSON_FILE);
   const envFile = join(scopedHome, HOOK_ENV_FILE);
+  const launcher = join(scopedHome, HOOK_LAUNCHER_FILE);
   writeIfChanged(script, CODEX_HOOK_SCRIPT, 0o600);
+  writeIfChanged(launcher, hookWindowsLauncher(), 0o600);
   writeIfChanged(hooksJson, codexHooksJson(execPath, script), 0o600);
   try { if (existsSync(envFile)) unlinkSync(envFile); } catch { /* replaced below */ }
   writeFileSync(envFile, `SOCKET=${socketPath}\nTOKEN=${token}\n`, { mode: 0o600 });
   try { chmodSync(envFile, 0o600); } catch { /* the mode was set at creation where chmod is not honoured */ }
-  return { hooksJson, script, envFile };
+  return { hooksJson, script, envFile, launcher };
 }
 
 function writeIfChanged(path: string, content: string, mode: number): void {
@@ -479,6 +552,12 @@ const str = (value: unknown): string | undefined => (typeof value === "string" &
 const record = (value: unknown): Record<string, unknown> | undefined => (value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined);
 
 /** Rule 68e. Never throws: an input that cannot be read is an ask that says which field was absent (F5), never a stand-in. */
+/** A mount's name as Codex writes it inside a tool name (`mcp__<server>__<tool>`): every character outside
+ *  [A-Za-z0-9_] becomes `_`. */
+export function codexToolServerName(name: string): string {
+  return name.replace(/[^A-Za-z0-9_]/g, "_");
+}
+
 export function routeDelivery(delivery: HookDelivery, ctx: RouteContext): HookRoute {
   const name = str(delivery.tool_name);
   const cwd = str(delivery.cwd) ?? ctx.project;
@@ -516,12 +595,16 @@ export function routeDelivery(delivery: HookDelivery, ctx: RouteContext): HookRo
     const at = rest.indexOf("__");
     const server = at > 0 ? rest.slice(0, at) : "";
     const tool = at > 0 ? rest.slice(at + 2) : "";
-    const matches = (ctx.mounts ?? []).filter((r) => r.engineName === server);
-    const ask = (): HookRoute => ({ route: "ask", tool: tool || name, summary: tool || name, toolCall: { name, ...(delivery.tool_input === undefined ? {} : { input: delivery.tool_input }) },
+    // Codex writes a server's name into its tool names with every character outside [A-Za-z0-9_] as `_` (real codex:
+    // the `murage-memory` mount's tool arrives as `mcp__murage_memory__memory_search`), so a record matches by its
+    // name as mounted or as Codex writes it. Two records that fit the same written name prove nothing.
+    const matches = (ctx.mounts ?? []).filter((r) => r.engineName === server || codexToolServerName(r.engineName) === server);
+    const ask = (asName = name): HookRoute => ({ route: "ask", tool: tool || name, summary: tool || name, toolCall: { name: asName, ...(delivery.tool_input === undefined ? {} : { input: delivery.tool_input }) },
       ...(delivery.tool_input === undefined ? { toolInputMissing: "tool_input" } : {}) });
     if (!server || !tool || matches.length !== 1) return ask();
     const mount = matches[0]!;
-    if (mount.provenance === "own") return isOwnUnasked(mount.mountId, tool) ? { route: "allow", final: true, why: "own-unasked" } : ask();
+    // asked under the mount's own name, so the verdict proves the call on this turn's record (Rule 11)
+    if (mount.provenance === "own") return isOwnUnasked(mount.mountId, tool) ? { route: "allow", final: true, why: "own-unasked" } : ask(`mcp__${mount.engineName}__${tool}`);
     // a custom or external mount: allowed here, judged by the approval path Codex still raises for it
     return { route: "allow", final: false, why: mount.provenance };
   }

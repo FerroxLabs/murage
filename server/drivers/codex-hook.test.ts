@@ -11,8 +11,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   CODEX_FLOORS, CODEX_GATE_MIN, CODEX_HOOK_SCRIPT, CODEX_LOCAL_ORDINARY, CODEX_SHELL_FORM_FEATURES, CODEX_UNTRUSTED_RETIRED_MIN,
-  CODEX_HOOK_LAUNCH_ENV, CODEX_HOOK_WINDOWS_COMMAND, CodexHookGate, HOOK_ASK_BOUND_MS, HOOK_SCRIPT_DEADLINE_MS, HOOK_TIMEOUT_SEC, HookDecisionTable, codexGatePlan, codexHooksJson, codexShellFormArgs,
-  hookConfigOf, hookLaunchLine, hookSocketPath, parseApplyPatch, routeDelivery, stripOwnerHooks, tripwireLine, trustHooks, writeHookFiles,
+  CODEX_HOOK_LAUNCH_ENV, CodexHookGate, HOOK_ASK_BOUND_MS, HOOK_SCRIPT_DEADLINE_MS, HOOK_TIMEOUT_SEC, HookDecisionTable, codexGatePlan, codexHooksJson, codexShellFormArgs,
+  codexHookWindowsCommand, hookConfigOf, hookLaunchLine, hookLivenessBound, hookLivenessSetting, hookSocketPath, hookWindowsLauncher, hookWindowsLaunchValue, HOOK_LAUNCHER_FILE, CODEX_HOOK_EXE_ENV, HOOK_LIVENESS_MS, HOOK_LIVENESS_WIN32_MS, windowsCmdPath, parseApplyPatch, routeDelivery, stripOwnerHooks, tripwireLine, trustHooks, writeHookFiles,
   type HookAnswer, type HookDelivery, type RouteContext,
 } from "./codex-hook.ts";
 import { codexTurnPolicy } from "./codex-isolation.ts";
@@ -83,12 +83,11 @@ describe("T100a: what Murage writes into the scoped home", () => {
       expect(json.hooks[event][0].hooks).toHaveLength(1);
       const handler = json.hooks[event][0].hooks[0];
       expect(handler.type).toBe("command");
-      expect(handler.command).toBe(`"/usr/bin/node" "${files.script}"`);
-      // Windows: cmd.exe /C drops a command whose quoted paths Codex escapes (rig, Codex 0.153.3: "hook exited with code 1"), so the
-      // Windows command names no path and no quote; the launch line rides in the app-server's environment and cmd expands it.
-      expect(handler.command_windows).toBe(CODEX_HOOK_WINDOWS_COMMAND);
-      expect(handler.command_windows).toBe(`%${CODEX_HOOK_LAUNCH_ENV}%`);
-      expect(handler.command_windows).not.toMatch(/["\s]/);
+      expect(handler.command).toBe(`/usr/bin/env ELECTRON_RUN_AS_NODE=1 "/usr/bin/node" "${files.script}"`);
+      // Windows: the command names no quote and no spaced path (Codex escapes inner quotes, rig 0.153.3) and reads the same in cmd and
+      // PowerShell (F3: Codex 0.163.0 runs it under `powershell -NoProfile -Command`); the launch line rides in the environment.
+      expect(handler.command_windows).toBe(codexHookWindowsCommand());
+      expect(handler.command_windows).not.toMatch(/"/);
       expect(handler.timeout).toBe(HOOK_TIMEOUT_SEC);
     }
     expect(HOOK_TIMEOUT_SEC).toBe(Math.ceil(HOOK_ASK_BOUND_MS / 1000) + 30);
@@ -103,12 +102,47 @@ describe("T100a: what Murage writes into the scoped home", () => {
     expect(readFileSync(files.hooksJson, "utf8")).toBe(before);
     expect(readFileSync(files.envFile, "utf8")).toContain("tok-456");
     expect(codexHooksJson("/usr/bin/node", files.script)).toBe(before);
-    expect(hookLaunchLine("/usr/bin/node", files.script)).toBe(`"/usr/bin/node" "${files.script}"`);
+    expect(hookLaunchLine("/usr/bin/node", files.script)).toBe(`/usr/bin/env ELECTRON_RUN_AS_NODE=1 "/usr/bin/node" "${files.script}"`);
+    expect(files.launcher).toBe(join(home, HOOK_LAUNCHER_FILE));
+    expect(readFileSync(files.launcher, "utf8")).toBe(hookWindowsLauncher());
     // the launch line is part of the hook configuration, so a kept process whose node or script moved waits for a fresh proof
     expect(hookConfigOf(home, "/usr/bin/node")).not.toBe(hookConfigOf(home, "/opt/node/bin/node"));
   });
 
-  it.runIf(process.platform === "win32")("runs the Windows command under cmd.exe /C both ways Codex quotes it, from a node path with a space", async () => {
+  // F3 (1.0.3 Windows gate): Codex picks the hook's shell (PowerShell `-NoProfile -Command`, cmd `/c`, or `%COMSPEC% /C "<command>"`;
+  // codex-rs hooks/src/engine/command_runner.rs build_command). A string is shell-independent when its program is a bare absolute path
+  // (no space, quote or variable: both shells run it the same way) and its arguments hold nothing special to PowerShell's argument
+  // mode or to cmd outside quotes, except the one launch variable, which PowerShell passes on unread and the inner cmd expands.
+  const shellIndependent = (command: string): boolean => {
+    const [program, ...args] = command.split(" ");
+    if (!program || !/^[A-Za-z]:\\[A-Za-z0-9_.\\-]+\.exe$/i.test(program)) return false;
+    const launch = `%${CODEX_HOOK_LAUNCH_ENV}%`;
+    if (!args.every((arg) => arg === launch || /^[A-Za-z0-9_/:.\\-]+$/.test(arg))) return false;
+    // the variable is read by an explicit inner cmd (`/c` right before it), never by whichever shell Codex picked
+    return /\\cmd\.exe$/i.test(program) && args.at(-1) === launch && args.at(-2)?.toLowerCase() === "/c" && args.includes("/d");
+  };
+
+  it("hands Codex a Windows hook command that means the same in cmd and in PowerShell (F3)", () => {
+    // the 1.0.3-rc command: cmd expanded it, PowerShell ran `%` (ForEach-Object) and the hook never started
+    expect(shellIndependent(`%${CODEX_HOOK_LAUNCH_ENV}%`)).toBe(false);
+    expect(shellIndependent(`& "C:\\Program Files\\nodejs\\node.exe" "x.mjs"`)).toBe(false);
+    expect(shellIndependent(`"C:\\Program Files\\nodejs\\node.exe" "x.mjs"`)).toBe(false);
+    const written = JSON.parse(codexHooksJson("C:\\Users\\Jo Smith\\node.exe", "C:\\Users\\Jo Smith\\scope\\murage-hook.mjs")).hooks;
+    for (const event of ["PreToolUse", "SessionStart"]) expect(shellIndependent(written[event][0].hooks[0].command_windows)).toBe(true);
+    expect(codexHookWindowsCommand("D:\\WINNT")).toBe(`D:\\WINNT\\System32\\cmd.exe /d /v:off /c %${CODEX_HOOK_LAUNCH_ENV}%`);
+    // a system folder that is not a plain path never reaches the command
+    for (const odd of ["C:\\Win dows", "C:\\W\"in", "%SystemRoot%", "C:\\$x", "relative", ""]) {
+      expect(windowsCmdPath(odd)).toBe("C:\\Windows\\System32\\cmd.exe");
+      expect(shellIndependent(codexHookWindowsCommand(odd))).toBe(true);
+    }
+    // the launch line never starts with a quote, so the inner cmd's /c rule cannot strip its first and last quote when an outer cmd
+    // expanded the variable first
+    const value = hookWindowsLaunchValue("C:\\Users\\Jo Smith\\scope\\murage-hook.cmd");
+    expect(value).toBe(`@"C:\\Users\\Jo Smith\\scope\\murage-hook.cmd"`);
+    expect(value.startsWith("\"")).toBe(false);
+  });
+
+  it.runIf(process.platform === "win32")("runs the Windows command under cmd.exe /C both ways Codex quotes it and under PowerShell -NoProfile -Command, from a node path with a space", async () => {
     const home = join(dir, "scope win");
     const gate = new CodexHookGate(hookSocketPath());
     await gate.listen();
@@ -117,18 +151,124 @@ describe("T100a: what Murage writes into the scoped home", () => {
       const sessions: string[] = [];
       gate.arm({ token: "win-token", onSession: (id) => { sessions.push(id); }, onPreTool: async () => ({ decision: "allow" }) });
       const command = JSON.parse(readFileSync(files.hooksJson, "utf8")).hooks.SessionStart[0].hooks[0].command_windows as string;
-      const env = { ...process.env, [CODEX_HOOK_LAUNCH_ENV]: hookLaunchLine(process.execPath, files.script) };
+      const env: NodeJS.ProcessEnv = { ...process.env, [CODEX_HOOK_LAUNCH_ENV]: hookWindowsLaunchValue(files.launcher), [CODEX_HOOK_EXE_ENV]: process.execPath };
+      delete env.ELECTRON_RUN_AS_NODE;
       const comspec = process.env.COMSPEC ?? "cmd.exe";
-      const runCmd = (args: string[], verbatim: boolean, id: string) => new Promise<number | null>((resolve) => {
-        const child = spawn(comspec, args, { env, windowsVerbatimArguments: verbatim, stdio: ["pipe", "ignore", "ignore"] });
+      const runCmd = (args: string[], verbatim: boolean, id: string, program = comspec) => new Promise<number | null>((resolve) => {
+        const child = spawn(program, args, { env, windowsVerbatimArguments: verbatim, stdio: ["pipe", "ignore", "ignore"] });
         child.on("close", (code) => resolve(code));
         child.stdin.end(JSON.stringify({ hook_event_name: "SessionStart", session_id: id, source: "startup" }));
       });
       // Codex 0.153.3 (std arg escaping) and the raw `"<command>"` form of later builds
       expect(await runCmd(["/C", command], false, "escaped")).toBe(0);
       expect(await runCmd(["/C", `"${command}"`], true, "raw")).toBe(0);
-      expect(sessions).toEqual(["escaped", "raw"]);
+      // Codex 0.163.0 with PowerShell as the user shell (F3)
+      expect(await runCmd(["-NoProfile", "-Command", command], false, "powershell", "powershell.exe")).toBe(0);
+      expect(sessions).toEqual(["escaped", "raw", "powershell"]);
     } finally { gate.close(); }
+  });
+
+  // 1.0.3 packaged gate (Windows, Codex 0.163.0): process.execPath is the Murage binary (Electron), which runs a script only with
+  // ELECTRON_RUN_AS_NODE=1. The server (a utilityProcess) does not carry it and Codex hands hooks Murage's env, so every launch form
+  // sets it itself.
+  const PACKAGED_WIN = "C:\\Users\\Jo Smith\\AppData\\Local\\Programs\\Murage\\Murage.exe";
+  const SCOPE_WIN = "C:\\Users\\Jo Smith\\AppData\\Roaming\\Murage\\scopes\\codex\\b1\\murage-hook.mjs";
+  it("runs the packaged Murage binary in node mode from every launch form (exact command and launcher)", () => {
+    expect(hookLaunchLine("/Applications/Murage.app/Contents/MacOS/Murage", "/Users/alex/Library/Application Support/Murage/s/murage-hook.mjs"))
+      .toBe(`/usr/bin/env ELECTRON_RUN_AS_NODE=1 "/Applications/Murage.app/Contents/MacOS/Murage" "/Users/alex/Library/Application Support/Murage/s/murage-hook.mjs"`);
+    expect(hookWindowsLauncher()).toBe(
+      `@echo off\r\nif not defined MURAGE_CODEX_EXE exit /b 2\r\nset "ELECTRON_RUN_AS_NODE=1"\r\n"%MURAGE_CODEX_EXE%" "%~dp0murage-hook.mjs"\r\nexit /b %ERRORLEVEL%\r\n`);
+    expect(CODEX_HOOK_EXE_ENV).toBe("MURAGE_CODEX_EXE");
+    // cmd reads a batch file in the OEM code page: the file is pure ASCII and names no path, whatever the user's name
+    const home = join(dir, "scope Jos\u00e9 M\u00fcller \u6771\u4eac");
+    const files = writeHookFiles(home, hookSocketPath("abc"), "tok", join(dir, "Murage Jos\u00e9", "Murage.exe"));
+    const bytes = readFileSync(files.launcher);
+    expect(bytes.length).toBeGreaterThan(0);
+    expect([...bytes].every((b) => b < 0x80)).toBe(true);
+    expect(bytes.toString("latin1")).toBe(hookWindowsLauncher());
+    // the variable holds only a quoted path behind `@`: no operator an outer cmd could act on after expanding it
+    const value = hookWindowsLaunchValue("C:\\Users\\Jo Smith\\AppData\\Roaming\\Murage\\scopes\\codex\\b1\\murage-hook.cmd");
+    expect(value).not.toMatch(/[&|<>^%]/);
+    // the hooks.json Windows command is unchanged and still names no quote
+    const written = JSON.parse(codexHooksJson(PACKAGED_WIN, SCOPE_WIN)).hooks.SessionStart[0].hooks[0];
+    expect(written.command_windows).toBe(codexHookWindowsCommand());
+    // a moved binary is a new hook configuration (the launcher is part of it)
+    expect(hookConfigOf(join(dir, "s"), PACKAGED_WIN)).not.toBe(hookConfigOf(join(dir, "s"), "C:\\Other\\Murage.exe"));
+  });
+
+  it("gives a cold packaged start on Windows a wider SessionStart bound, and honours the override", () => {
+    expect(HOOK_LIVENESS_MS).toBe(10_000);
+    expect(hookLivenessBound("linux", {})).toBe(HOOK_LIVENESS_MS);
+    expect(hookLivenessBound("darwin", {})).toBe(HOOK_LIVENESS_MS);
+    expect(hookLivenessBound("win32", {})).toBe(HOOK_LIVENESS_WIN32_MS);
+    expect(HOOK_LIVENESS_WIN32_MS).toBe(45_000);
+    // RUN B: Codex's PowerShell wrapper started 10 s in; a hook that starts at 12 s or 40 s is inside the Windows bound
+    for (const startsAt of [12_000, 40_000]) expect(startsAt).toBeLessThan(hookLivenessBound("win32", {}));
+    expect(12_000).toBeGreaterThan(hookLivenessBound("linux", {}));
+    expect(hookLivenessBound("win32", { MURAGE_CODEX_HOOK_LIVENESS_MS: "400" })).toBe(400);
+    expect(hookLivenessSetting("win32", { MURAGE_CODEX_HOOK_LIVENESS_MS: "3000" })).toEqual({ ms: 3000, source: "env" });
+    expect(hookLivenessSetting("linux", { MURAGE_CODEX_HOOK_LIVENESS_MS: "3000" })).toEqual({ ms: 3000, source: "env" });
+    expect(hookLivenessSetting("win32", {})).toEqual({ ms: 45_000, source: "win32" });
+    expect(hookLivenessSetting("darwin", {})).toEqual({ ms: 10_000, source: "default" });
+    // not a positive number: the platform's bound
+    for (const bad of ["0", "-5", "abc", ""]) expect(hookLivenessSetting("win32", { MURAGE_CODEX_HOOK_LIVENESS_MS: bad })).toEqual({ ms: 45_000, source: "win32" });
+  });
+
+  it.runIf(process.platform !== "win32")("proves SessionStart through a packaged-style binary (spaced path, refuses to run a script without ELECTRON_RUN_AS_NODE)", async () => {
+    const home = join(dir, "scope pkg");
+    const app = join(dir, "Murage Pkg", "Murage");
+    mkdirSync(join(dir, "Murage Pkg"));
+    // stands in for Electron: without the variable it starts "as the app" (exit 86, like the launch guard), with it it is node
+    writeFileSync(app, `#!/bin/sh\n[ "$ELECTRON_RUN_AS_NODE" = "1" ] || { echo "started as the app" >&2; exit 86; }\nexec "${process.execPath}" "$@"\n`, { mode: 0o755 });
+    const gate = new CodexHookGate(hookSocketPath());
+    await gate.listen();
+    try {
+      const files = writeHookFiles(home, gate.path, "pkg-token", app);
+      const sessions: string[] = [];
+      gate.arm({ token: "pkg-token", onSession: (id) => { sessions.push(id); }, onPreTool: async () => ({ decision: "allow" }) });
+      const command = JSON.parse(readFileSync(files.hooksJson, "utf8")).hooks.SessionStart[0].hooks[0].command as string;
+      const env: NodeJS.ProcessEnv = { ...process.env };
+      delete env.ELECTRON_RUN_AS_NODE;
+      const run = (program: string, args: string[], id: string) => new Promise<number | null>((resolve) => {
+        const child = spawn(program, args, { env, stdio: ["pipe", "ignore", "ignore"] });
+        child.on("close", (code) => resolve(code));
+        child.stdin.end(JSON.stringify({ hook_event_name: "SessionStart", session_id: id, source: "startup" }));
+      });
+      expect(await run("sh", ["-c", command], "sh")).toBe(0);
+      // a Codex build that splits the line into argv instead of a shell
+      expect(await run("/usr/bin/env", ["ELECTRON_RUN_AS_NODE=1", app, files.script], "argv")).toBe(0);
+      expect(sessions).toEqual(["sh", "argv"]);
+      // control: the 1.0.3-rc line (no variable) never reaches the script
+      expect(await run("sh", ["-c", `"${app}" "${files.script}"`], "old")).toBe(86);
+      expect(sessions).toEqual(["sh", "argv"]);
+    } finally { gate.close(); }
+  });
+
+  it.runIf(process.platform === "win32")("the Windows launcher hands the runtime ELECTRON_RUN_AS_NODE=1 under cmd both ways and PowerShell, from spaced non-ASCII exe and scope paths", async () => {
+    const pkg = join(dir, "Murage Pkg Jos\u00e9");
+    mkdirSync(pkg);
+    const exe = join(pkg, "Murage.exe");
+    writeFileSync(exe, readFileSync(process.execPath));
+    const scope = join(dir, "scope pkg M\u00fcller \u6771\u4eac");
+    mkdirSync(scope);
+    const probe = join(scope, "murage-hook.mjs");
+    const out = join(dir, "out.txt");
+    writeFileSync(probe, `import { appendFileSync } from "node:fs"; let s = ""; for await (const c of process.stdin) s += c; appendFileSync(${JSON.stringify(out)}, String(process.env.ELECTRON_RUN_AS_NODE) + ":" + JSON.parse(s).session_id + "\\n");`);
+    const launcher = join(scope, HOOK_LAUNCHER_FILE);
+    writeFileSync(launcher, hookWindowsLauncher());
+    const env: NodeJS.ProcessEnv = { ...process.env, [CODEX_HOOK_LAUNCH_ENV]: hookWindowsLaunchValue(launcher), [CODEX_HOOK_EXE_ENV]: exe };
+    delete env.ELECTRON_RUN_AS_NODE;
+    const command = codexHookWindowsCommand();
+    const comspec = process.env.COMSPEC ?? "cmd.exe";
+    const run = (program: string, args: string[], verbatim: boolean, id: string) => new Promise<number | null>((resolve) => {
+      const child = spawn(program, args, { env, windowsVerbatimArguments: verbatim, stdio: ["pipe", "ignore", "ignore"] });
+      child.on("close", (code) => resolve(code));
+      child.stdin.end(JSON.stringify({ hook_event_name: "SessionStart", session_id: id }));
+    });
+    expect(await run(comspec, ["/C", command], false, "escaped")).toBe(0);
+    expect(await run(comspec, ["/C", `"${command}"`], true, "raw")).toBe(0);
+    expect(await run("powershell.exe", ["-NoProfile", "-Command", command], false, "powershell")).toBe(0);
+    expect(readFileSync(out, "utf8").split(/\r?\n/).filter(Boolean)).toEqual(["1:escaped", "1:raw", "1:powershell"]);
   });
 
   it("gives the script a deadline shorter than the handler timeout and no way to print ask", () => {
@@ -282,26 +422,38 @@ describe("T100d: the script can only allow, deny or exit 2", () => {
     expect(sessions).toEqual(["thread-9"]);
   });
 
-  it("exits 2 with the reason on stderr for every other outcome", async () => {
+  // Codex 0.163.0 reads a printed decision only on exit 0 (hooks/src/events/pre_tool_use.rs:213-244) and Windows' PowerShell wrapper
+  // turns exit 2 into 1 (a non-blocking failure), so every failure of a call is the printed deny with a clean exit
+  const blocked = (r: { code: number | null; stdout: string; stderr: string }) => {
+    expect(r.code).toBe(0);
+    expect(r.stderr).toContain("Murage blocked this call");
+    const out = JSON.parse(r.stdout).hookSpecificOutput;
+    expect(out).toMatchObject({ hookEventName: "PreToolUse", permissionDecision: "deny" });
+    expect(out.permissionDecisionReason).toMatch(/^Murage blocked this call: /);
+  };
+  it("answers every other outcome of a call with the printed deny and a clean exit, and a SessionStart that cannot post exits 2", async () => {
     // no turn armed: the token is refused
     gate.disarm();
-    const refused = await run(home, pre());
-    expect(refused.code).toBe(2);
-    expect(refused.stderr).toContain("Murage blocked this call");
+    blocked(await run(home, pre()));
     // a wrong token in the env file
     writeFileSync(join(home, "murage-hook.env"), `SOCKET=${gate.path}\nTOKEN=other\n`);
     arm({ decision: "allow" });
-    expect((await run(home, pre())).code).toBe(2);
+    blocked(await run(home, pre()));
     // socket refused
     writeFileSync(join(home, "murage-hook.env"), `SOCKET=${hookSocketPath("nobody-listens")}\nTOKEN=good-token\n`);
-    expect((await run(home, pre())).code).toBe(2);
+    blocked(await run(home, pre()));
+    // a SessionStart that cannot post: exit 2, nothing printed (no proof reaches Murage, so the turn is refused at the bound)
+    const session = await run(home, { hook_event_name: "SessionStart", session_id: "s1", source: "startup" });
+    expect(session.code).toBe(2);
+    expect(session.stdout).toBe("");
+    expect(session.stderr).toContain("Murage blocked this call");
     // no env file, malformed stdin, an unknown event
     writeHookFiles(home, gate.path, "good-token");
-    expect((await run(home, "not json")).code).toBe(2);
-    expect((await run(home, { hook_event_name: "Stop" })).code).toBe(2);
+    blocked(await run(home, "not json"));
+    blocked(await run(home, { hook_event_name: "Stop" }));
     // a malformed answer from the gate
     gate.arm({ token: "good-token", onSession: () => {}, onPreTool: async () => ({ decision: "ask" } as never) });
-    expect((await run(home, pre())).code).toBe(2);
+    blocked(await run(home, pre()));
     // a gate that throws answers deny, never silence
     gate.arm({ token: "good-token", onSession: () => {}, onPreTool: async () => { throw new Error("boom"); } });
     const thrown = await run(home, pre());
@@ -389,6 +541,20 @@ describe("T86 and T103: a Codex delivery as a decision", () => {
     expect(routeDelivery(delivery("mcp__agents__", {}), ctx())).toMatchObject({ route: "ask" });
     expect(routeDelivery(delivery("mcp__agents__list_bots", undefined), ctx())).toMatchObject({ route: "allow" });
     expect(routeDelivery(delivery("mcp__agents__publish_site", undefined), ctx())).toMatchObject({ route: "ask", toolInputMissing: "tool_input" });
+  });
+
+  it("matches the server name the way Codex writes it in a tool name (real codex: a hyphen becomes an underscore)", () => {
+    // Real-engine gate (Linux, d612d17e0): the hook got `mcp__murage_memory__memory_search` for the
+    // `murage-memory` mount; no record matched, the read was asked as unproven and the turn waited on the card.
+    expect(routeDelivery(delivery("mcp__murage_memory__memory_search", { query: "gate" }), ctx())).toEqual({ route: "allow", final: true, why: "own-unasked" });
+    // a tool that asks is asked under the mount's own name, so the verdict proves it on this turn's record
+    expect(routeDelivery(delivery("mcp__murage_memory__thread_read", { x: 1 }), ctx())).toMatchObject({ route: "ask", tool: "thread_read", toolCall: { name: "mcp__murage-memory__thread_read", input: { x: 1 } } });
+    // two mounts that Codex would write the same way prove nothing
+    const twin = ctx({ mounts: [
+      { engineName: "my-crm", mountId: "custom:my-crm", provenance: "custom" },
+      { engineName: "my_crm", mountId: "custom:my_crm", provenance: "custom" },
+    ] });
+    expect(routeDelivery(delivery("mcp__my_crm__lookup", {}), twin)).toMatchObject({ route: "ask" });
   });
 
   it("lets exactly update_plan through as an ordinary local tool, judges view_image like a read, and denies the rest", () => {

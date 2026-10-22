@@ -328,7 +328,7 @@ export function approvalGrants(pending: Pending, opts: { desktop: boolean | unde
   };
 }
 
-const PROGRAM_GRANT = /^(?:bash|shell|execute|exec_command|run_command|computer_exec|terminal):([^:\s]+)$/i;
+const PROGRAM_GRANT = /^(?:bash|shell|execute|exec_command|run_command|computer_exec|terminal|powershell|pwsh):([^:\s]+)$/i;
 
 /** The per-program grant's button, naming what it covers so it reads apart
  * from the exact one beside it. */

@@ -1,4 +1,4 @@
-import { cliSig, knownCliVersion, memoDeps, noteVersionProbe, pathExists, rememberCliVersion, versionProbeAllowed } from "./isolation-cache.ts";
+import { cliSig, engineLaunchFile, knownCliVersion, memoDeps, noteVersionProbe, pathExists, rememberCliVersion, versionProbeAllowed } from "./isolation-cache.ts";
 import { engineUpdateRequired } from "./scoped-cli-home.ts";
 import { cloudTurnBot, cloudTurnEnvironment } from "../cloud-home/turn-process.ts";
 import { cloudHomeCopy } from "../cloud-home/copy.ts";
@@ -608,6 +608,9 @@ export interface PiGateAsk {
   truncated?: true;
   /** F5: a field the contract needs was absent on the wire. */
   toolInputMissing?: string;
+  /** 1.0.4 09-1: the gate held this call as a key file (it resolves links
+   * itself); the rule it named. Only ever adds a hold. */
+  localHold?: string;
   /** Rule 13/16: a mounted MCP tool is filed as `{namespace: "mcp", name:
    * "<engineName>__<mcpTool>"}`, resolved against F4 by exact engineName; a
    * call the gate could not tie to a mount is `{namespace: "", name: ""}`
@@ -633,6 +636,14 @@ const PI_GATE_CUT_REASON = "Murage could not read this call whole, so it did not
  * as if that named the tool (Astra r3).
  */
 export function piGateAsk(message: string, mounts: readonly McpMountRecord[] = []): PiGateAsk {
+  const ask = piGateCall(message, mounts);
+  // 1.0.4 09-1: the gate's own key-file verdict (it follows links); it can only add a hold
+  let hold: unknown;
+  try { hold = (JSON.parse(message) as { sensitive?: unknown } | null)?.sensitive; } catch { hold = undefined; }
+  return typeof hold === "string" && hold ? { ...ask, localHold: hold.slice(0, 80) } : ask;
+}
+
+function piGateCall(message: string, mounts: readonly McpMountRecord[]): PiGateAsk {
   let parsed: { tool?: unknown; input?: unknown; truncated?: unknown; mount?: unknown; mcpTool?: unknown; note?: unknown } = {};
   let readable = false;
   try {
@@ -722,6 +733,9 @@ export const PiDriver: ProviderDriver<PiConfig> = {
     let piVersion = "";
     // The CLI file the version came from: replaced by an update, it is re-probed; otherwise never.
     let piCliSig = "";
+    /** The one env pi is found on: its `--version` probe runs here, its signature (piCliSig) is taken here, and the turn
+     *  spawns the file found here (engineLaunchFile), so the version that decides the isolation flags is the running pi's. */
+    const piProbeEnv = () => piEnvironment({ ...process.env, ...input.environment });
     // The engine as Settings names this instance, for every line the chat shows.
     const ENGINE = input.displayName?.trim() || "pi";
     const { instanceId, config } = input;
@@ -828,13 +842,13 @@ export const PiDriver: ProviderDriver<PiConfig> = {
 
       // The isolation switches depend on pi's version: read it now (a failed or backed-off probe is tried once more), before any
       // credential-bearing temp file exists, and reject the turn when it is unknown or too old (piIsolationArgs).
-      if (piVersion && cliSig(config.cli, { ...process.env, ...input.environment }) !== piCliSig) piVersion = "";
+      if (piVersion && cliSig(config.cli, piProbeEnv()) !== piCliSig) piVersion = "";
       if (!piVersion) {
-        const sig = cliSig(config.cli, { ...process.env, ...input.environment });
+        const sig = cliSig(config.cli, piProbeEnv());
         const known = knownCliVersion(`pi|${config.cli}`, sig);
         if (known) { piVersion = known; piCliSig = sig; }
       }
-      if (!piVersion && versionProbeAllowed(`pi|${config.cli}`, cliSig(config.cli, { ...process.env, ...input.environment }))) await probePiVersion();
+      if (!piVersion && versionProbeAllowed(`pi|${config.cli}`, cliSig(config.cli, piProbeEnv()))) await probePiVersion();
       if (!piVersion) await probePiVersion();
       piIsolationArgs(piVersion, undefined, "");
 
@@ -867,15 +881,15 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           throw err;
         }
       }
-      if (piVersion && cliSig(config.cli, { ...process.env, ...input.environment }) !== piCliSig) piVersion = "";
+      if (piVersion && cliSig(config.cli, piProbeEnv()) !== piCliSig) piVersion = "";
       // A pi whose `--version` keeps failing is re-probed on a bounded backoff
       // (isolation-cache.ts), not on every turn; the version stays unknown meanwhile.
       if (!piVersion) {
-        const sig = cliSig(config.cli, { ...process.env, ...input.environment });
+        const sig = cliSig(config.cli, piProbeEnv());
         const known = knownCliVersion(`pi|${config.cli}`, sig);
         if (known) { piVersion = known; piCliSig = sig; }
       }
-      if (!piVersion && versionProbeAllowed(`pi|${config.cli}`, cliSig(config.cli, { ...process.env, ...input.environment }))) await probePiVersion();
+      if (!piVersion && versionProbeAllowed(`pi|${config.cli}`, cliSig(config.cli, piProbeEnv()))) await probePiVersion();
       const childArgs = [
         ...PI_ARGS,
         ...piIsolationArgs(piVersion, turn.cwd, input.environment.HOME || process.env.HOME || input.environment.USERPROFILE || process.env.USERPROFILE || homedir()),
@@ -919,7 +933,9 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       // not be left on disk — settle() never runs because no child existed.
       const child = (() => {
         try {
-          return spawnCli(config.cli, childArgs, {
+          // The pi whose --version gated piIsolationArgs (piProbeEnv: Murage's own PATH), not the handed PATH's first.
+          const launchCli = engineLaunchFile(config.cli, piProbeEnv());
+          return spawnCli(launchCli, childArgs, {
             stdio: ["pipe", "pipe", "pipe"],
             cwd: turn.cwd,
             env: handed.env,
@@ -1187,6 +1203,8 @@ export const PiDriver: ProviderDriver<PiConfig> = {
                   ...(gate?.truncated ? { toolInputTruncated: true } : {}),
                   // F5: a field the contract needs was absent; nothing stands in for it
                   ...(gate?.toolInputMissing ? { toolInputMissing: gate.toolInputMissing } : {}),
+                  // 1.0.4 09-1: the gate's own key-file verdict, kept so no mode answers it
+                  ...(gate?.localHold ? { localHold: gate.localHold } : {}),
                   // Rule 54: the servers in the mcp.json this turn wrote, no external records
                   // Rule 13: a permission that did not come from this turn's gate
                   // (any other extension's confirm) is unproven: no grant, stop,
@@ -1369,7 +1387,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       const version = await new Promise<string | null>((resolve) => {
         const child = spawnCli(config.cli, ["--version"], {
           stdio: ["ignore", "pipe", "pipe"],
-          env: piEnvironment({ ...process.env, ...input.environment }),
+          env: piProbeEnv(),
         });
         let out = "";
         child.stdout?.setEncoding("utf8");
@@ -1392,7 +1410,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           resolve(out.trim() || null);
         });
       });
-      const sig = cliSig(config.cli, { ...process.env, ...input.environment });
+      const sig = cliSig(config.cli, piProbeEnv());
       noteVersionProbe(`pi|${config.cli}`, sig, Boolean(version));
       if (version) { piVersion = version; piCliSig = sig; rememberCliVersion(`pi|${config.cli}`, sig, version); }
       return version;

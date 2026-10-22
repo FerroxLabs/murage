@@ -18,6 +18,7 @@ import { createAcpDriver, type AcpSupport } from "./core.ts";
 import { fuigoToolResultDirs, sessionFolders } from "../../own-tool-results.ts";
 import { scopeGrokHome } from "./grok-scope.ts";
 import { engineFolderUnavailable } from "../scoped-cli-home.ts";
+import { AskStopRefusal, ASK_STOP_GROK_OLD_NOTE } from "../ask-stop.ts";
 
 export const STATIC_GROK_MODELS: ModelCatalog = {
   default: "grok-4.6",
@@ -367,6 +368,19 @@ function semver(text: string | undefined): [number, number, number] | null {
 }
 const atLeast = (v: readonly number[], min: readonly number[]) => v[0]! !== min[0]! ? v[0]! > min[0]! : v[1]! !== min[1]! ? v[1]! > min[1]! : v[2]! >= min[2]!;
 
+/** The first grok proven to send session/request_permission for every shell command, edit and write under the
+ *  scoped config's `[permission] ask` rules (grok-scope.ts GROK_ASK_RULES), its own read-only commands included
+ *  (live, grok 1.0.62 on the Linux gate box). At Ask a grok below it, or one whose version cannot be read, is refused
+ *  before it runs (ASK_STOP_GROK_OLD_NOTE): it could run echo, touch or mkdir with no card. Auto and Full access run. */
+export const GROK_ASK_HOLD_MIN = [1, 0, 62] as const;
+
+/** Throws the Ask refusal for a grok that cannot be held at Ask (GROK_ASK_HOLD_MIN). */
+export function requireGrokAskHold(askLevel: boolean | undefined, cliVersion: string | undefined): void {
+  if (!askLevel) return;
+  const version = semver(cliVersion);
+  if (!version || !atLeast(version, GROK_ASK_HOLD_MIN)) throw new AskStopRefusal(ASK_STOP_GROK_OLD_NOTE);
+}
+
 /** `--no-leader` (every 1.x) and `--plugin-dir <stub>` per personal plugin
  *  (1.0.50+, where it shadows). A CLI whose version is unknown or below 1.0.0
  *  gets neither: fail open, the turn runs rather than meet a flag it rejects. */
@@ -399,6 +413,12 @@ const support: AcpSupport = {
   effortLevels: ["low", "medium", "high"],
   defaultCli: "grok",
   nativeSource: "grok.acp",
+  // Grok Build stamps `_meta["x.ai/tool"]` (namespace grok_build) where Fuigo
+  // stamps `fuigo/tool` (fuigo_build): the same CanonicalToolMeta in both
+  // binaries (grok 1.0.62, fuigo 1.0.31). Without this every Grok ask was
+  // unstamped kind "other", so Murage's own tools could not be proven and
+  // held a card at Auto.
+  toolStamp: { key: "x.ai/tool", namespaces: { grok_build: "fuigo_build", grok_build_concise: "fuigo_build_concise", grok_build_hashline: "fuigo_build_hashline" } },
   loginNote: "Grok CLI is not signed in: run `grok login` in a terminal",
 
   // No Windows one-liner: the installer is a POSIX shell script, and offering
@@ -431,20 +451,26 @@ const support: AcpSupport = {
   mcpProgressNotification: "_x.ai/mcp/init_progress",
   mcpListMethod: "_x.ai/mcp/list",
 
-  spawnArgs: (config, turn, ctx) => [
-    "--permission-mode",
-    config.fullAuto ? "bypassPermissions" : "default",
-    // Murage owns persistent memory (same flag Fuigo and the headless reflection argv pass).
-    "--no-memory",
-    "agent",
-    // The owner's personal plugins off for this process (see grokIsolationArgs).
-    ...grokIsolationArgs(ctx?.env ?? process.env, ctx?.cliVersion),
-    ...(turn.model ? ["-m", turn.model] : []),
-    // long form on purpose: `--effort` is documented as an alias, and an
-    // alias is the part a CLI is free to rename
-    ...(turn.effort ? ["--reasoning-effort", turn.effort] : []),
-    "stdio",
-  ],
+  spawnArgs: (config, turn, ctx) => {
+    // Fails closed at Ask on a grok its ask rules are not proven on (GROK_ASK_HOLD_MIN).
+    requireGrokAskHold(turn.askLevel, ctx?.cliVersion);
+    return [
+      "--permission-mode",
+      // `default` still runs grok's own read-only shell commands unasked; the scoped config's `[permission] ask`
+      // rules (grok-scope.ts GROK_ASK_RULES) send every shell command, edit and write to Murage instead.
+      config.fullAuto ? "bypassPermissions" : "default",
+      // Murage owns persistent memory (same flag Fuigo and the headless reflection argv pass).
+      "--no-memory",
+      "agent",
+      // The owner's personal plugins off for this process (see grokIsolationArgs).
+      ...grokIsolationArgs(ctx?.env ?? process.env, ctx?.cliVersion),
+      ...(turn.model ? ["-m", turn.model] : []),
+      // long form on purpose: `--effort` is documented as an alias, and an
+      // alias is the part a CLI is free to rename
+      ...(turn.effort ? ["--reasoning-effort", turn.effort] : []),
+      "stdio",
+    ];
+  },
   spawnNeedsCliVersion: true,
 
   // -m on argv is necessary but not sufficient: session/new still starts on

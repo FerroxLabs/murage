@@ -53,7 +53,7 @@ export interface WindowsBackupResourceDependencies {
   lstat(path: string): BigIntStats;
   realpath(path: string): string;
   observeFile(path: string, maxBytes: number): WindowsBackupFileObservation;
-  /** `native`: the app's own WinVerifyTrust check, so no PowerShell starts (murage-releases #1); null: the hidden PowerShell check. */
+  /** `native`: the app's own WinVerifyTrust check (murage-releases #1: no PowerShell); null refuses (no other check exists). */
   verifySignatures(files: string[], native: NativeAuthenticode | null): Promise<void>;
   nativeAuthenticode(resourcesPath: string): NativeAuthenticode | null;
 }

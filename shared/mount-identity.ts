@@ -177,7 +177,51 @@ export interface ExecEnv {
   /** What THIS engine's hand did with the owner's ssh setting (Rule 74c delta 5): the per-repository core.sshCommand row
    *  reads the requesting engine's own source, never another session's. */
   ssh?: { source: SshSource; kept: boolean };
+  /** WIN-NOBASH-DESIGN-r2 3.5, informational only (no verdict reads it): the command runs on the CLI's own PowerShell tool
+   *  with the CLI's environment (powershell-inherit), so `env` is the hand plus what that CLI version adds (`adds`), and
+   *  `unenforceable` names the absence pins an empty settings value cannot clear. */
+  provenance?: ExecEnvProvenance;
+  /** Section 11 D1, informational: the names a managed settings file's `env` sets that redefine a pinned or turn-owned
+   *  name (managed settings outrank Murage's overlay: org policy, said, not fought). */
+  managedEnv?: readonly string[];
 }
+
+export interface ExecEnvProvenance {
+  kind: "inherited";
+  cli: string;
+  adds: readonly string[];
+  unenforceable: readonly string[];
+  /** Section 14: the CLI login/routing names the owner's user or managed settings set, kept with the owner's value and so
+   *  visible to commands (owner routing). Names only. */
+  ownerRouting?: readonly string[];
+}
+
+/** Astra #9: the value-free view of an F12 record that may leave the server (a card's F12 panel, the thread's event log):
+ *  names, the shell form and where the map came from, never a value. */
+export interface ExecEnvInfo {
+  names: readonly string[];
+  absent: readonly string[];
+  shell: readonly string[];
+  capture: EnvCapture;
+  unread?: "U20";
+  provenance?: ExecEnvProvenance;
+  managedEnv?: readonly string[];
+}
+
+/** The value-free projection of an F12 record (raw values stay server-side). */
+export function envInfoOf(record: ExecEnv): ExecEnvInfo {
+  return {
+    names: Object.keys(record.env).sort(),
+    absent: [...record.absent],
+    shell: [...record.shell],
+    capture: record.capture,
+    ...(record.unread ? { unread: "U20" as const } : {}),
+    ...(record.provenance ? { provenance: { ...record.provenance, adds: [...record.provenance.adds], unenforceable: [...record.provenance.unenforceable], ...(record.provenance.ownerRouting ? { ownerRouting: [...record.provenance.ownerRouting] } : {}) } } : {}),
+    ...(record.managedEnv ? { managedEnv: [...record.managedEnv] } : {}),
+  };
+}
+
+const stringList = (value: unknown): boolean => Array.isArray(value) && value.every((item) => typeof item === "string");
 
 /** Whether an F12 record is well formed; a malformed one is not trusted. */
 export function isExecEnv(value: unknown): value is ExecEnv {
@@ -200,5 +244,12 @@ export function isExecEnv(value: unknown): value is ExecEnv {
     if (!ssh || typeof ssh.kept !== "boolean" || !source || typeof source !== "object") return false;
     if (source.setting !== "none" && !(["GIT_SSH_COMMAND", "GIT_SSH", "core.sshCommand"].includes(source.setting as string) && typeof source.value === "string")) return false;
   }
+  if (record.provenance !== undefined) {
+    const provenance = record.provenance as Record<string, unknown> | null;
+    if (!provenance || typeof provenance !== "object" || provenance.kind !== "inherited" || typeof provenance.cli !== "string") return false;
+    if (!stringList(provenance.adds) || !stringList(provenance.unenforceable)) return false;
+    if (provenance.ownerRouting !== undefined && !stringList(provenance.ownerRouting)) return false;
+  }
+  if (record.managedEnv !== undefined && !stringList(record.managedEnv)) return false;
   return record.capture === "session" || record.capture === "kept" || record.capture === "fallback";
 }

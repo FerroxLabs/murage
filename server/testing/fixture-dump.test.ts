@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, it, vi } from "vitest";
 import { removeTempDirSync } from "./cleanup.ts";
-it.each(["fake-claude-cli.ts", "fake-codex-app-server.ts", "fake-agy-cli.ts", "../drivers/acp/fuigo.test.ts"])("%s never dumps the inherited environment", file => {
+it.each(["fake-claude-cli.ts", "fake-codex-app-server.ts", "fake-agy-cli.ts", "pip-stub-cli.mjs", "../drivers/acp/fuigo.test.ts"])("%s never dumps the inherited environment", file => {
   // A child the fake starts the way the real engine does (Codex runs a hook with its own environment) is not a dump;
   // anything else that hands over process.env whole, a written dump above all, is.
   const source = readFileSync(new URL(file, import.meta.url), "utf8")
@@ -56,6 +56,17 @@ it("the ACP fake fingerprints credential-named MCP env in its dump, its mcp file
   expect(env(JSON.parse(texts[1]),"agents").MURAGE_COMMS_TOKEN===fixtureCredentialFingerprint("synthetic-comms-two")).toBe(true);
   const load=texts[2].split("\n").filter(Boolean).map(line=>JSON.parse(line)).find(entry=>entry.method==="session/load");
   expect(load.agentsToken===fixtureCredentialFingerprint("synthetic-comms-two")).toBe(true);
+ }finally{removeTempDirSync(dir);}
+});
+it("the Claude fake's probe log holds only the pinned names, never an inherited credential",()=>{
+ const dir=mkdtempSync(join(tmpdir(),"murage-claude-probe-log-")),log=join(dir,"probes.jsonl");
+ try{
+  for(const args of [["--version"],["auth","status"]])execFileSync(process.execPath,[fileURLToPath(new URL("./fake-claude-cli.ts", import.meta.url)),...args],{encoding:"utf8",timeout:5_000,
+   env:{PATH:process.env.PATH,HOME:dir,FAKE_CLAUDE_PROBE_LOG:log,PAGER:"cat",GIT_EDITOR:"probe-editor",ANTHROPIC_API_KEY:"synthetic-anthropic-secret",CLAUDE_CODE_OAUTH_TOKEN:"synthetic-oauth-secret",PF_UNLISTED_SECRET:"fixture-canary"}});
+  const text=readFileSync(log,"utf8"),lines=text.trim().split("\n").map(line=>JSON.parse(line));
+  expect(["synthetic-anthropic-secret","synthetic-oauth-secret","fixture-canary"].some(secret=>text.includes(secret))).toBe(false);
+  expect(lines.map(line=>line.probe)).toEqual(["version","auth"]);
+  for(const line of lines)expect(line.env).toEqual({PAGER:"cat",GIT_EDITOR:"probe-editor"});
  }finally{removeTempDirSync(dir);}
 });
 it("the 0152 candidate script keeps an allowlist of the server environment, never all of it",()=>{

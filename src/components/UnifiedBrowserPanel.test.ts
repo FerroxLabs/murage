@@ -3,7 +3,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { BrowserPanelAlerts, browserChoicePatch, MY_CHROME, MyChromeConsent, ProtectedBrowserNotice } from "./UnifiedBrowserPanel";
+import { BROWSER_SANDBOX_ENABLE_CODE, BrowserNotRunningNotice, BrowserPanelAlerts, BrowserRestartNotice, BrowserSandboxEnable, browserChoicePatch, MY_CHROME, MyChromeConsent, ProtectedBrowserNotice } from "./UnifiedBrowserPanel";
+import { LINUX_SANDBOX_ENABLE_CODE } from "../../server/browser-sandbox";
 
 describe("Use my Chrome choice", () => {
   it("asks before attaching, and changes nothing until confirmed", () => {
@@ -104,5 +105,55 @@ describe("a raw route/auth string cannot reach connectionError or error (fix rou
       'setError(describeDesktopOnlyRouteError(cause instanceof Error ? routeErrorFrom(cause) : { message: "Browser action failed" }));',
     );
     expect(source).not.toMatch(/setError\(cause instanceof Error \? cause\.message/);
+  });
+});
+
+describe("a browser that stopped answering, told to the owner", () => {
+  const render = (held: boolean) => renderToStaticMarkup(createElement(BrowserRestartNotice, { botName: "Petra", held, pending: false, onReopen: () => {} }));
+  it("offers Reopen blank page once the owner holds the browser, and says to take control first otherwise", () => {
+    const held = render(true), free = render(false);
+    expect(held).toContain("Reopen a blank page to restart Petra&#x27;s browser.");
+    expect(held).toContain("Reopen blank page</button>");
+    expect(held).not.toContain('disabled=""');
+    expect(free).toContain("Take control, then reopen a blank page to restart Petra&#x27;s browser.");
+    expect(free).toContain('disabled=""');
+    for (const html of [held, free]) expect(html).not.toMatch(/\u2014|\bsafe|unsafe|safety/i);
+  });
+});
+
+describe("a browser that is not running, told to the owner", () => {
+  it("says the browser is not running and offers Restart browser without taking control, never the page-lock words", () => {
+    const html = renderToStaticMarkup(createElement(BrowserNotRunningNotice, { botName: "Petra", pending: false, onRestart: () => {} }));
+    expect(html).toContain("Petra&#x27;s browser is not running. Restart it to give Petra its browser back.");
+    expect(html).toMatch(/<button(?![^>]*disabled="")[^>]*>.*Restart browser<\/button>/);
+    expect(html.replace(/<[^>]*>/g, " ")).not.toMatch(/password|code|card|payment|\u2014|\bsafe|unsafe|safety/i);
+  });
+  it("shows it on the not-running state, and the page-lock note only on a real lock", () => {
+    const source = readFileSync(fileURLToPath(new URL("./UnifiedBrowserPanel.tsx", import.meta.url)), "utf8");
+    expect(source).toContain("{status?.notRunning && !bot.useMyChrome && status.owned !== false && <BrowserNotRunningNotice");
+    expect(source).toContain('onRestart={() => void action("restart")}');
+    expect(source).toContain("{status?.protectedDocument && <ProtectedBrowserNotice");
+  });
+});
+
+describe("Linux AppImage Enable browser", () => {
+  it("offers one button for the administrator prompt and shows what happened after it", () => {
+    const html = renderToStaticMarkup(createElement(BrowserSandboxEnable, { pending: false, note: "", onEnable: () => {} }));
+    expect(html).toContain(">Enable browser</button>");
+    const waiting = renderToStaticMarkup(createElement(BrowserSandboxEnable, { pending: true, note: "The administrator prompt was closed, so nothing changed.", onEnable: () => {} }));
+    expect(waiting).toContain("disabled");
+    expect(waiting).toContain("Waiting for the administrator prompt");
+    expect(waiting).toContain("The administrator prompt was closed, so nothing changed.");
+  });
+  it("shows the button only for the refusal the server marks as fixable", () => {
+    expect(BROWSER_SANDBOX_ENABLE_CODE).toBe(LINUX_SANDBOX_ENABLE_CODE);
+    const source = readFileSync(fileURLToPath(new URL("./UnifiedBrowserPanel.tsx", import.meta.url)), "utf8");
+    expect(source).toContain("setCanEnable(cause instanceof Error && routeErrorFrom(cause).code === BROWSER_SANDBOX_ENABLE_CODE)");
+    expect(source).toContain('api("/api/browser/linux-sandbox/enable", { method: "POST", body: "{}" })');
+    // The status poll carries it too, once a command has failed with it; Reopen would only fail again.
+    expect(source).toContain("status?.problemCode === BROWSER_SANDBOX_ENABLE_CODE)) && <BrowserSandboxEnable");
+    expect(source).toContain("status.problemCode !== BROWSER_SANDBOX_ENABLE_CODE && !status.notRunning");
+    // A poll with no page yet must not wipe "the prompt was closed" the moment it appears.
+    expect(source).toContain('setConnectionError(""); setCanEnable(false); if (next) setEnableNote("");');
   });
 });

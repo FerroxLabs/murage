@@ -90,6 +90,7 @@ describe("WhatsApp runtime pin (committed sources)", () => {
 describe("WhatsApp bridge build wiring (committed sources)", () => {
   const bundler = readFileSync(join(root, "scripts", "bundle-server.mjs"), "utf8");
   const proxies = readFileSync(join(root, "server", "proxy-paths.ts"), "utf8");
+  const spawnedProxyFiles = readFileSync(join(root, "shared", "spawned-proxies.mjs"), "utf8");
 
   it("builds the bridge with its own ESM esbuild call, baileys and jimp external", () => {
     const call = bundler.slice(bundler.indexOf("const WHATSAPP_ENTRY_POINTS"), bundler.indexOf('await import("./stage-whatsapp-runtime.mjs")'));
@@ -106,7 +107,9 @@ describe("WhatsApp bridge build wiring (committed sources)", () => {
   });
 
   it("lists the bridge among the spawned proxies so the packaged smoke checks it exists", () => {
-    expect(proxies).toContain('whatsappBridge: resolveProxy("channels/whatsapp/bridge")');
+    // The names live in shared/spawned-proxies.mjs (read by the desktop main process too); proxy-paths.ts resolves each one.
+    expect(spawnedProxyFiles).toContain('whatsappBridge: "channels/whatsapp/bridge"');
+    expect(proxies).toContain("Object.entries(SPAWNED_PROXY_FILES).map(([name, relative]) => [name, resolveProxy(relative)])");
   });
 });
 

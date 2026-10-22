@@ -55,7 +55,7 @@ describe("unified browser ownership boundary",()=>{
   });
   it("allows an explicitly authorized desktop reclaim without clearing protected-document state",async()=>{
     const f=fixture();const first=await f.controller.take("shared","phone");
-    f.controller.input("shared","phone",first.generation,{type:"input_keyboard",eventType:"char",text:"fake"});
+    await f.controller.input("shared","phone",first.generation,{type:"input_keyboard",eventType:"char",text:"fake"});
     const next=await f.controller.reclaim("shared","desktop");
     expect(next).toMatchObject({held:true,owner:"desktop",protectedDocument:true});
     expect(()=>f.controller.input("shared","phone",first.generation,{type:"input_keyboard",eventType:"char",text:"old"})).toThrow();
@@ -71,7 +71,7 @@ describe("unified browser ownership boundary",()=>{
   });
   it("keeps ownership and human document taint across disconnect and server restart",async()=>{
     const f=fixture();const held=await f.controller.take("shared","owner");
-    f.controller.input("shared","owner",held.generation,{type:"input_keyboard",eventType:"keyDown",key:"x"});
+    await f.controller.input("shared","owner",held.generation,{type:"input_keyboard",eventType:"keyDown",key:"x"});
     f.disconnect();expect(f.controller.status("shared").held).toBe(true);
     const restored=new UnifiedBrowserController({stateFile:f.stateFile,createNative:()=>f.native});restored.register("shared",f.spec);
     expect(restored.status("shared")).toMatchObject({held:true,protectedDocument:true,connected:false});
@@ -84,7 +84,7 @@ describe("unified browser ownership boundary",()=>{
   });
   it("requires current owner reopen to clear taint and never authorizes revoked turns",async()=>{
     const f=fixture();let held=await f.controller.take("shared","owner");
-    f.controller.input("shared","owner",held.generation,{type:"input_keyboard",eventType:"keyDown",key:"x"});
+    await f.controller.input("shared","owner",held.generation,{type:"input_keyboard",eventType:"keyDown",key:"x"});
     held=await f.controller.reopen("shared","owner",held.generation);expect(held.protectedDocument).toBe(false);
     await f.controller.release("shared","owner",held.generation);
     await expect(f.controller.dispatch("shared","tools/call",{name:"agent_browser_snapshot"},()=>false)).rejects.toThrow();expect(f.called()).toBe(0);
@@ -97,7 +97,7 @@ describe("a protected browser explains itself",()=>{
   const refusalOf=async(promise:Promise<unknown>)=>{try{await promise;}catch(error){return error as Error&{code?:string;status?:number};}throw new Error("expected a refusal");};
   it("keeps listing tools after the owner typed in the page, and refuses reads with the owner's way out",async()=>{
     const f=fixture();const held=await f.controller.take("shared","owner");
-    f.controller.input("shared","owner",held.generation,{type:"input_keyboard",eventType:"char",text:"x"});
+    await f.controller.input("shared","owner",held.generation,{type:"input_keyboard",eventType:"char",text:"x"});
     await f.controller.release("shared","owner",(f.controller.status("shared")).generation);
     const listed=await f.controller.dispatch("shared","tools/list",{},()=>true) as {tools:Array<{name:string}>};
     expect(listed.tools.map(tool=>tool.name)).toEqual(["agent_browser_snapshot","agent_browser_open"]);
@@ -111,7 +111,7 @@ describe("a protected browser explains itself",()=>{
   });
   it("does not let the bot navigate away from a page the owner typed in",async()=>{
     const f=fixture();const held=await f.controller.take("shared","owner");
-    f.controller.input("shared","owner",held.generation,{type:"input_mouse",eventType:"mousePressed",x:1,y:1});
+    await f.controller.input("shared","owner",held.generation,{type:"input_mouse",eventType:"mousePressed",x:1,y:1});
     await f.controller.release("shared","owner",f.controller.status("shared").generation);
     const refused=await refusalOf(f.controller.dispatch("shared","tools/call",{name:"agent_browser_open",arguments:{url:"https://example.com/"}},()=>true));
     expect(refused.code).toBe("browser_protected_owner_input");
@@ -141,7 +141,7 @@ describe("a protected browser explains itself",()=>{
     const f=fixture();f.protect();
     await expect(f.controller.dispatch("shared","tools/call",snapshot,()=>true)).rejects.toMatchObject({code:"browser_protected_sensitive_page"});
     const held=await f.controller.take("shared","owner");
-    f.controller.input("shared","owner",held.generation,{type:"input_keyboard",eventType:"char",text:"x"});
+    await f.controller.input("shared","owner",held.generation,{type:"input_keyboard",eventType:"char",text:"x"});
     await f.controller.release("shared","owner",f.controller.status("shared").generation);
     f.protect(false);
     await expect(f.controller.dispatch("shared","tools/call",{name:"agent_browser_open",arguments:{url:"https://example.com/"}},()=>true)).rejects.toMatchObject({code:"browser_protected_owner_input"});

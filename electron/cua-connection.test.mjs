@@ -5,7 +5,19 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
-const { createCuaConnectionStore } = require("./cua-connection.cjs");
+const { createCuaConnectionStore, macLocalControlStatus } = require("./cua-connection.cjs");
+
+describe("macOS local control status", () => {
+  it("reports ready when computer use works, not unsupported-platform", () => {
+    expect(macLocalControlStatus({ mode: "embedded" })).toEqual({ enabled: true, status: "ready" });
+    expect(macLocalControlStatus({ mode: "standalone" }).status).toBe("ready");
+  });
+  it("reports the real reason when it is not ready", () => {
+    const off = macLocalControlStatus({ mode: "unavailable", reason: "no permission" });
+    expect(off).toMatchObject({ enabled: false, status: "unavailable", reasonCode: "permissions-required", message: "no permission" });
+    expect(macLocalControlStatus(null).reasonCode).not.toBe("unsupported-platform");
+  });
+});
 
 describe("CUA connection persistence", () => {
   it("keeps the previous in-memory and on-disk descriptor when replacement fails", () => {
