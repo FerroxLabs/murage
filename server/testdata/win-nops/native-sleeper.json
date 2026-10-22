@@ -1,0 +1,1 @@
+{"pid":5296,"ppid":60408,"mine":true,"uid":null,"start":13437025438.808437,"comm":"node.exe","exe":"C:\\Program Files\\nodejs\\node.exe","argv":["C:\\Program Files\\nodejs\\node.exe","-e","const s=require('net').createServer(()=>{}).listen(0,'127.0.0.1',()=>{});setTimeout(()=>{},120000)","F:\\Temp\\Codex\\nops-cap\\port.txt"]}

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vitest";
 import { acpPromptImages, engineTakesImages, recordProbedImages, resetProbedImagesForTest } from "./drivers/acp/core.ts";
-import { COMPUTER_UNAVAILABLE, peerTaskPrompt, directTurnLayers, type DirectTurnShapeInput } from "./bot-shapes.ts";
+import { COMPUTER_UNAVAILABLE, COMPUTER_LOCAL_CONTROL_OFF, peerTaskPrompt, directTurnLayers, type DirectTurnShapeInput } from "./bot-shapes.ts";
 
 const input = (over: Partial<DirectTurnShapeInput>): DirectTurnShapeInput => ({
   houseRules: "", persona: "P", computerKind: null, vmPerBot: false, driverKind: "openai-chat", connectors: "", requiredApps: "",
@@ -15,6 +15,14 @@ describe("computer unavailable layer", () => {
   it("tells the bot it has no computer this turn, calmly", () => {
     expect(text({ computerUnavailable: true })).toContain(COMPUTER_UNAVAILABLE);
     expect(COMPUTER_UNAVAILABLE).not.toMatch(/—|safe|safety|unsafe/i);
+  });
+  it("tells the bot how to enable local control when this computer is chosen but control is off", () => {
+    const said = text({ localControlOff: true });
+    expect(said).toContain(COMPUTER_LOCAL_CONTROL_OFF);
+    expect(said).toContain("Settings > Computer");
+    expect(said).not.toContain("setup card");
+    expect(COMPUTER_LOCAL_CONTROL_OFF).not.toMatch(/—|\bsafe|safety|unsafe/i);
+    expect(text({ localControlOff: true, computerKind: "local" })).not.toContain("local control is not enabled yet");
   });
   it("adds nothing when the engine can mount it or the flag is off", () => {
     expect(text({})).not.toContain("cannot control the computer this turn");

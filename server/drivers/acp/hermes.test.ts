@@ -624,3 +624,77 @@ describe("hermesFluxHeaderGate (managed-scope minimum 0.17.0)", () => {
     for (const v of ["", "0.2.0", "0.16.9", "0.21.3"]) expect(hermesFluxHeaderGate(v && banner(v), dec("on", "on"))).toBeNull();
   });
 });
+
+describe("hermes ask hook: every action asks at Ask (real hermes 0.22.2: an ordinary shell command ran unasked)", () => {
+  const dirs: string[] = [];
+  afterEach(async () => { for (const d of dirs.splice(0)) await removeTempDir(d); });
+  const turnEnv = (extra: Record<string, string | undefined> = {}) => {
+    const root = mkdtempSync(join(tmpdir(), "murage-hermes-ask-"));
+    dirs.push(root);
+    return { MURAGE_DATA_DIR: root, HERMES_MANAGED_DIR: join(root, "no-admin"), ...extra } as Record<string, string | undefined>;
+  };
+  const overlayOf = (env: Record<string, string | undefined>) => parseYaml(readFileSync(join(env.HERMES_MANAGED_DIR!, "config.yaml"), "utf8")) as { hooks: Record<string, any[]>; model?: unknown };
+  const matches = (matcher: string, tool: string) => new RegExp(`^(?:${matcher})$`).test(tool);
+
+  it("registers a pre_tool_call hook, accepted for this process, in a Murage-owned overlay", async () => {
+    const { hermesAcpSupport } = await import("./hermes.ts");
+    const env = turnEnv();
+    hermesAcpSupport.spawnArgs({} as any, { integrations: {} } as any, { env });
+    const hook = overlayOf(env).hooks.pre_tool_call[0];
+    expect(hook.fail_closed).toBe(true);
+    expect(hook.command).toContain("ask-hook-");
+    expect(env.HERMES_ACCEPT_HOOKS).toBe("1");
+    expect(env.HERMES_MANAGED_DIR!.startsWith(join(env.MURAGE_DATA_DIR!, "native", "hermes-ask"))).toBe(true);
+  });
+
+  it("removes the Hermes auto-approve switches an owner exported, so the hook gate cannot be skipped", async () => {
+    const { hermesAcpSupport } = await import("./hermes.ts");
+    const env = turnEnv({ HERMES_YOLO_MODE: "1", HERMES_ACP_AUTO_APPROVE: "1" });
+    hermesAcpSupport.spawnArgs({} as any, { integrations: {} } as any, { env });
+    expect("HERMES_YOLO_MODE" in env).toBe(false);
+    expect("HERMES_ACP_AUTO_APPROVE" in env).toBe(false);
+    expect(overlayOf(env).hooks.pre_tool_call[0].fail_closed).toBe(true);
+  });
+
+  it("asks for shell, code and every MCP tool, and leaves reads and Hermes's own edit approval alone", async () => {
+    const { hermesAskMatcher } = await import("./hermes.ts");
+    const m = hermesAskMatcher(false);
+    for (const tool of ["terminal", "execute_code", "process_manage", "browser_exec", "computer_use", "delegate_task", "cronjob_manage", "mcp__computer__click", "mcp__other__thing"]) expect(matches(m, tool)).toBe(true);
+    for (const tool of ["read_file", "search_files", "tool_describe", "write_file", "patch", "web_search"]) expect(matches(m, tool)).toBe(false);
+  });
+
+  it("lets Murage's computer mount through only on a host-computer turn", async () => {
+    const { hermesAcpSupport, hermesAskMatcher } = await import("./hermes.ts");
+    expect(hermesAcpSupport.hostComputerAskedByMurage).toBe(true);
+    expect(matches(hermesAskMatcher(true), "mcp__computer__click")).toBe(false);
+    expect(matches(hermesAskMatcher(true), "mcp__other__click")).toBe(true);
+    expect(matches(hermesAskMatcher(true), "terminal")).toBe(true);
+    const host = turnEnv();
+    hermesAcpSupport.spawnArgs({} as any, { integrations: { localComputer: { command: "node", args: [], scope: "local-computer" } } } as any, { env: host });
+    expect(overlayOf(host).hooks.pre_tool_call[0].matcher).toBe(hermesAskMatcher(true));
+    const cloud = turnEnv();
+    hermesAcpSupport.spawnArgs({} as any, { integrations: { computer: { url: "https://vm" } } } as any, { env: cloud });
+    expect(overlayOf(cloud).hooks.pre_tool_call[0].matcher).toBe(hermesAskMatcher(false));
+  });
+
+  it("keeps the managed config it was given (Flux Memory headers, an administrator's hooks) and drops the owner's other hooks", async () => {
+    const { hermesAcpSupport } = await import("./hermes.ts");
+    const root = mkdtempSync(join(tmpdir(), "murage-hermes-admin-"));
+    dirs.push(root);
+    writeFileSync(join(root, "config.yaml"), "model:\n  extra_headers:\n    x-flux-memory-capture: on\nhooks:\n  pre_tool_call:\n    - command: /opt/admin-hook\n  post_tool_call:\n    - command: /opt/other\n");
+    const env = turnEnv({ HERMES_MANAGED_DIR: root });
+    hermesAcpSupport.spawnArgs({} as any, { integrations: {} } as any, { env });
+    const overlay = overlayOf(env);
+    expect((overlay.model as any).extra_headers["x-flux-memory-capture"]).toBe("on");
+    expect(overlay.hooks.pre_tool_call.map((h) => h.command)).toEqual([expect.stringContaining("ask-hook-"), "/opt/admin-hook"]);
+    expect(overlay.hooks.post_tool_call).toEqual([]);
+  });
+
+  it("the hook program answers approve with the command, whatever it is told", async () => {
+    const { HERMES_ASK_HOOK_SOURCE } = await import("./hermes.ts");
+    const { spawnSync } = await import("node:child_process");
+    const run = (stdin: string) => JSON.parse(spawnSync(process.execPath, ["-e", HERMES_ASK_HOOK_SOURCE], { input: stdin, encoding: "utf8" }).stdout);
+    expect(run(JSON.stringify({ tool_name: "terminal", tool_input: { command: "echo PROBE > ran.txt" } }))).toEqual({ action: "approve", message: "terminal: echo PROBE > ran.txt" });
+    expect(run("not json").action).toBe("approve");
+  });
+});

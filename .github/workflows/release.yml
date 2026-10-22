@@ -165,6 +165,10 @@ jobs:
           # wall-clock budgets on the build host perf job) must be green, on this
           # commit or an ancestor, and under 72 h old. No waiver covers it.
           NIGHTLY_WORKFLOW: nightly.yml
+          # The Windows owner-only ACL tests (MURAGE_REQUIRE_WINDOWS_NATIVE=1) run in
+          # native-addon-msvc.yml, not in ci.yml: its newest completed run on this
+          # history must be green and no watched file may have changed since. No waiver.
+          NATIVE_ADDON_WORKFLOW: native-addon-msvc.yml
           # A waiver is a workflow_dispatch input only; a push-started run
           # never carries one (and the script refuses one on any other event).
           # It is read from the dispatch commit (a descendant of the pinned
@@ -386,6 +390,11 @@ jobs:
               || { echo "::error::backup tools missing or unpinned in $app"; exit 1; }
             echo "ok: $app"
           done
+
+      - name: "Gate: packaged Codex hook blocks cleanly in node mode and the guard refuses a lost node mode"
+        # 1.0.3: the hook runs as `<Murage binary> <script>`. Proves, on the final packaged arm64 app with a throwaway HOME and a
+        # 20 s timeout per run, that the node-mode shape blocks with the script's own reason and the old shape exits 2 with no app.
+        run: node scripts/prove-codex-hook-packaged-mac.mjs release/mac-arm64/Murage.app
 
       - name: "Gate: both packaged servers start and every helper path resolves"
         run: |
@@ -741,10 +750,10 @@ jobs:
           # Our backup helper still requires a valid Ferrox signature.
           $verifyBackup = @'
           import { verifyWindowsBackupTools } from './scripts/prepare-windows-backup-tools.mjs';
-          import { verifyWindowsBrowserSignatures } from './server/browser-windows-identity.ts';
+          import { nativeAuthenticodeIn, verifyWindowsBrowserSignatures } from './server/browser-windows-identity.ts';
           const backup = 'release/win-unpacked/resources/backup-tools/x64';
           verifyWindowsBackupTools(backup);
-          await verifyWindowsBrowserSignatures([backup + '/murage-backup-age.exe'], process.env.SystemRoot);
+          await verifyWindowsBrowserSignatures([backup + '/murage-backup-age.exe'], process.env.SystemRoot, nativeAuthenticodeIn('release/win-unpacked/resources'));
           '@
           & node --input-type=module -e $verifyBackup
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

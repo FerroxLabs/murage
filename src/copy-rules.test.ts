@@ -186,6 +186,7 @@ const MODEL_FACING: Record<string, string> = {
   "server/computer-proxy.ts": "computer tool descriptions a model reads",
   "server/drivers/agents-proxy.ts": "bot tool descriptions a model reads",
   "server/desktop-policy.ts": "route purposes for the audit log",
+  "server/shell/pwsh.ts": "PowerShell tokenizer tables (the typographic dashes PowerShell reads as '-'), matched against a command and never shown",
   "server/memory/wasm-parity-corpus.ts": "fixed inputs the local model embeds for the WebAssembly parity check, pinned by stored native vectors (testdata/wasm-native-reference.json); never shown",
 };
 

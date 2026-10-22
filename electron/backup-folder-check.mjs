@@ -11,21 +11,18 @@
 // macOS and Linux have no such limit: a drive without hard links (exFAT,
 // FAT32) is published by rename (server/publish-file.ts), so every folder
 // that exists and is not inside Murage's own data folder is accepted there.
-import { spawnSync } from "node:child_process";
+import { windowsNative } from "./windows-native.mjs";
 export { BACKUP_FOLDER_REFUSALS } from "../shared/backup-folder-refusals.mjs";
 
-/** Drive type and format for `folder` on Windows, through .NET's DriveInfo,
- * run by absolute System32 path. The path goes in the environment, never in
- * the command text. */
-function windowsDrive(folder, { spawn = spawnSync, env = process.env } = {}) {
-  const root = env.SystemRoot;
-  if (typeof root !== "string" || !/^[A-Za-z]:\\[^"\x00-\x1f]*$/.test(root)) return null;
-  const powershell = `${root.replace(/\\+$/, "")}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
-  const script = "$d=[System.IO.DriveInfo]::new([System.IO.Path]::GetPathRoot($env:MURAGE_BACKUP_FOLDER));[Console]::Out.Write($d.DriveType.ToString()+'|'+$d.DriveFormat)";
-  const result = spawn(powershell, ["-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8", windowsHide: true, timeout: 20000, env: { SystemRoot: root, MURAGE_BACKUP_FOLDER: folder } });
-  if (result?.status !== 0) return null;
-  const [type, format] = String(result.stdout).trim().split("|");
-  return type ? { type, format: format ?? "" } : null;
+/** Drive type (.NET DriveInfo's names: Fixed, Removable, Network, ...) and format of the volume holding `folder` on Windows, from the
+ * engine-exclusion addon (GetVolumePathNameW, GetDriveTypeW, GetVolumeInformationW). No PowerShell (murage-releases #1). Null when it
+ * cannot be told, which refuses the folder as unchecked. */
+function windowsDrive(folder, { native = windowsNative() } = {}) {
+  if (typeof native?.driveInfo !== "function") return null;
+  try {
+    const info = native.driveInfo(folder);
+    return info && typeof info.type === "string" && info.type ? { type: info.type, format: typeof info.format === "string" ? info.format : "" } : null;
+  } catch { return null; }
 }
 
 /** Null when `folder` can hold backups, or the refusal code. `folder` is the

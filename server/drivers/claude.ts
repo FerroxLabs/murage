@@ -18,7 +18,7 @@ import { notePromptSent } from "../turn-hold.ts";
 //   - the bot's cloud computer (box.ascii.dev) via server/computer-proxy.ts
 //     — screenshot/exec/open_url, the CUA-on-the-box bridge
 import { boundedEnvMs } from "./env-ms.ts";
-import { awaitRequiredMcp, isUnsupportedAnswer, McpBackoff, mcpReconnectWaitMs, McpStatusSupport, mcpWaitChipTitle, parseMcpStatus, splitMcpServers, toolsMayBeLoadingNotice, toolsUnavailableNotice, unavailableLabels, type McpReadiness, type McpStatusAnswer } from "./mcp-readiness.ts";
+import { awaitRequiredMcp, isUnsupportedAnswer, McpBackoff, mcpFirstAnswerMs, mcpReconnectWaitMs, McpStatusSupport, mcpWaitChipTitle, parseMcpStatus, splitMcpServers, toolsMayBeLoadingNotice, toolsUnavailableNotice, unavailableLabels, type McpReadiness, type McpStatusAnswer } from "./mcp-readiness.ts";
 import { applyProviderRoute, type ProviderTurnRoute } from "../provider-routing.ts";
 import { claudeTextOnlyTurn } from "./headless-text-only.ts";
 import { execFileSync } from "node:child_process";
@@ -26,14 +26,17 @@ import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, closeSync, existsSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { parseDocument as parseYamlDocument } from "yaml";
 import { createServer as createNetServer } from "node:net";
-import { CLAUDE_UPDATE_MESSAGE, claudeExecutableIdentity, claudeLaunchRefusal, claudeLaunchRefusalError, ClaudeUpdateRequired, claudeVersionVerdict, requireClaudeCliVersion, type ClaudeLaunchRefusal } from "./claude-guards.ts";
+import { CLAUDE_UPDATE_MESSAGE, claudeExecutableIdentity, claudeLaunchRefusal, claudeLaunchRefusalError, ClaudeUpdateRequired, claudeVersionVerdict, knownClaudeCliVersion, requireClaudeCliVersion, type ClaudeLaunchRefusal } from "./claude-guards.ts";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, dirname } from "node:path";
 import { backgroundCapNote, backgroundWaitCapMs, SubtaskTracker } from "../subtasks.ts";
 
 import { DATA_DIR, stripCapturedProviderEnv, stripRoutingEnv, stripWorkspaceCredentialEnv } from "../config.ts";
+import { CLAUDE_SETTINGS_ENV_ALLOWLIST_2_1_305 } from "./claude-settings-env-allowlist-2.1.305.ts";
+import { CLAUDE_SIGNIN_ANSWERS_FILE, ClaudeSigninAnswers, type ClaudeSigninScope } from "./claude-signin-answers.ts";
 import { writeFileAtomic } from "../atomic.ts";
 import { augmentedPath, envGeneration } from "../env-path.ts";
+import { engineLaunchFile } from "./isolation-cache.ts";
 import { CLAUDE_ACCOUNT_ENV_KEYS, claudeAccountEnvironment,resolveClaudeConfigDir } from "../claude-accounts.ts";
 import { customMountEntries } from "../custom-mcp-mounts.ts";
 import { toolFilePaths } from "../own-workspace-approval.ts";
@@ -108,11 +111,13 @@ import { OWN_BUILTINS, type OwnBuiltin } from "../../shared/own-servers.ts";
 import { inProjectCheck, realDir, realPathInOrder, walkRoot } from "../../shared/in-project.ts";
 import { SENSITIVE_TEXT, claudeSensitiveAskRules } from "../../shared/sensitive-paths.ts";
 import { execEnvHanded, execEnvNow, handedEngineEnv, ownedTurnNames, type HandedEnv } from "../engine-env.ts";
-import { gitBashPath } from "../tool-discovery.ts";
+import { gitBashDiscovery, type GitBashFound, type GitBashMiss } from "../tool-discovery.ts";
+import { ABSENT_PINS, ENV_PINS } from "../../shared/arg-vocabulary.ts";
+import { ClaudeGateRecord, ClaudeOverlayStore } from "./claude-private.ts";
 import { TurnRefusal } from "./turn-refusal.ts";
 import { NarrowDenials } from "../narrow-denials.ts";
 import { appendDecision } from "../decision-log.ts";
-import { EXEC_ENV_FILE, murageExecPrefix, writeExecEnvFile } from "./murage-exec.ts";
+import { EXEC_ENV_FILE, EXEC_KEEP, murageExecPrefix, withExecKeep, writeExecEnvFile } from "./murage-exec.ts";
 
 /** Whether `claude` has been signed in.
  *
@@ -197,8 +202,9 @@ export function claudeEnvironment(
   fluxMemory: FluxMemoryDecision = fluxMemoryDecision(),
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...cloudTurnEnvironment("claudeAgent", source, process.env.MURAGE_CLOUD_ROLE === "home" ? [] : ["CLAUDE_CODE_OAUTH_TOKEN"]), PATH: augmentedPath(), NPM_CONFIG_LOGLEVEL: "error" };
-  delete env.CLAUDECODE;
-  delete env.CLAUDE_CODE_ENTRYPOINT;
+  // A Murage started from a terminal running Claude Code inherits that session's own names (its id, entrypoint,
+  // messaging socket and token, AI_AGENT); none of them are this turn's.
+  stripClaudeSessionEnv(env);
   // Plugins loaded from this variable need no settings entry, so the isolation's per-id disable
   // cannot reach them (claudeIsolation also sets it empty at flag level, over a settings `env`).
   delete env.CLAUDE_CODE_PLUGIN_DIRS;
@@ -227,6 +233,26 @@ export function claudeEnvironment(
   return env;
 }
 
+/** The CLAUDE_CODE_* names that belong to one running Claude Code session (identity, IPC, plugin loading), exact. Any
+ * other CLAUDE_CODE_* name is an owner's setting (login, gateway, certificates, extra body, ...) and is kept. */
+const CLAUDE_SESSION_EXACT: ReadonlySet<string> = new Set([
+  "CLAUDECODE", "AI_AGENT", "CLAUDE_PID", "CLAUDE_EFFORT", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_CHILD_SESSION",
+  "CLAUDE_CODE_EXECPATH", "CLAUDE_CODE_SSE_PORT", "CLAUDE_CODE_PLUGIN_DIRS",
+  // a remote session's own authentication (Claude Code reads the token file and the descriptor as session credentials)
+  "CLAUDE_SESSION_INGRESS_TOKEN_FILE", "CLAUDE_CODE_WEBSOCKET_AUTH_FILE_DESCRIPTOR", "CLAUDE_CODE_REMOTE_SESSION_ID",
+]);
+const CLAUDE_SESSION_PREFIXES: readonly string[] = ["CLAUDE_CODE_SESSION_", "CLAUDE_CODE_MESSAGING_"];
+
+/** Remove (in place) what a running Claude Code session hands its children: CLAUDECODE, AI_AGENT, CLAUDE_PID,
+ * CLAUDE_EFFORT and the session-only names above (session id, entrypoint, exec path, messaging socket and token, a remote
+ * session's ingress token file, websocket auth descriptor and id, ...). Every other CLAUDE_CODE_* name stays. Names are matched upper-cased (Windows names ignore case). */
+export function stripClaudeSessionEnv(map: Record<string, string | undefined>): void {
+  for (const name of Object.keys(map)) {
+    const upper = name.toUpperCase();
+    if (CLAUDE_SESSION_EXACT.has(upper) || CLAUDE_SESSION_PREFIXES.some((prefix) => upper.startsWith(prefix))) delete map[name];
+  }
+}
+
 /** Every name claudeEnvironment and the account environment decide for a turn, removed from the owner's CAPTURED shell
  * map before the turn's own names are written back (in place). The capture can hold names this process never had (a
  * Finder launch: a provider switcher's ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN exported only in the shell), and
@@ -234,7 +260,8 @@ export function claudeEnvironment(
  * subscription conversation went to the shell's provider. With a named account its login names are the account's. */
 export function stripClaudeOwnedEnv(map: Record<string, string | undefined>, configDir?: string, platform: NodeJS.Platform = process.platform): void {
   stripCapturedProviderEnv(map, platform);
-  for (const name of ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_PLUGIN_DIRS"]) delete map[name];
+  stripClaudeSessionEnv(map);
+  delete map.CLAUDE_CODE_PLUGIN_DIRS;
   if (!configDir?.trim()) return;
   for (const name of Object.keys(map)) {
     const upper = name.toUpperCase();
@@ -1284,7 +1311,7 @@ function syncedSkillNames(root: string): string[] {
  * Unchanged by the flags: apiKeyHelper reading a settings-only env var, ANTHROPIC_DEFAULT_SONNET_MODEL,
  * custom headers, a project gateway winning over the user's, a stored claude.ai OAuth login, and
  * `auth status` with these flags. */
-export function claudeIsolationSettings(env: NodeJS.ProcessEnv, cwd: string, platform: NodeJS.Platform = process.platform): Record<string, unknown> {
+export function claudeIsolationSettings(env: NodeJS.ProcessEnv, cwd: string, platform: NodeJS.Platform = process.platform, overlayEnv: Readonly<Record<string, string>> = {}): Record<string, unknown> {
   const personal = [...new Set([env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude"), join(homedir(), ".claude")])];
   const files = [
     ...personal.flatMap((dir) => [join(dir, "settings.json"), join(dir, "settings.local.json")]),
@@ -1325,7 +1352,8 @@ export function claudeIsolationSettings(env: NodeJS.ProcessEnv, cwd: string, pla
   return {
     disableAllHooks: true,
     enabledPlugins: Object.fromEntries([...plugins].sort().map((id) => [id, false])),
-    env: { CLAUDE_CODE_PLUGIN_DIRS: "" },
+    // WIN-NOBASH-DESIGN-r2 3.4 / D1: the hand restated over every settings `env` (claudeOverlayEnv)
+    env: { ...overlayEnv, CLAUDE_CODE_PLUGIN_DIRS: "" },
     claudeMdExcludes,
     outputStyle: "default",
     agent: "",
@@ -1341,30 +1369,880 @@ export function claudeIsolationSettings(env: NodeJS.ProcessEnv, cwd: string, pla
 }
 
 /** Rule 74b: the shell the wrapper runs and CLAUDE_CODE_SHELL names (a bash or zsh that exists), from the HANDED environment.
- * On Windows it is Git Bash, the bash.exe Claude Code itself runs its Bash tool through (server/tool-discovery.ts: the handed
- * CLAUDE_CODE_GIT_BASH_PATH when it is a real bash.exe, else from `git --exec-path`), so the shell the model is told of is the
- * shell that runs; null there refuses the turn (claudeShellRefusal). */
+ * On Windows it is Git Bash, the bash.exe Claude Code itself would run its Bash tool through (server/tool-discovery.ts).
+ * Murage's wrapper needs Git Bash; without it Claude runs on its PowerShell tool (powershell-inherit, claudeShellMode). */
+export async function claudeShellDiscovery(
+  platform: NodeJS.Platform,
+  handed: Readonly<Record<string, string>>,
+  generation: number,
+  deps: { exists?: (path: string) => boolean; gitBash?: (handed: Readonly<Record<string, string>>, generation: number) => Promise<string | null | GitBashFound> } = {},
+): Promise<GitBashFound> {
+  if (platform === "win32") {
+    const found = await (deps.gitBash ?? gitBashDiscovery)(handed, generation);
+    if (found === null || typeof found === "string") return found ? { bash: found } : { bash: null, reason: "no-git-bash" };
+    return found.bash ? { bash: found.bash } : { bash: null, reason: found.reason ?? "no-git-bash" };
+  }
+  const exists = deps.exists ?? existsSync;
+  for (const path of ["/bin/bash", "/usr/bin/bash", "/bin/zsh"]) if (exists(path)) return { bash: path };
+  return { bash: null };
+}
+
+/** claudeShellDiscovery's shell alone. */
 export async function claudeExecShell(
   platform: NodeJS.Platform,
   handed: Readonly<Record<string, string>>,
   generation: number,
-  deps: { exists?: (path: string) => boolean; gitBash?: (handed: Readonly<Record<string, string>>, generation: number) => Promise<string | null> } = {},
+  deps: Parameters<typeof claudeShellDiscovery>[3] = {},
 ): Promise<string | null> {
-  if (platform === "win32") return (deps.gitBash ?? gitBashPath)(handed, generation);
-  const exists = deps.exists ?? existsSync;
-  for (const path of ["/bin/bash", "/usr/bin/bash", "/bin/zsh"]) if (exists(path)) return path;
-  return null;
+  return (await claudeShellDiscovery(platform, handed, generation, deps)).bash;
 }
 
-/** The line a Claude turn on Windows is refused with when no Git Bash is found: Claude Code's own Windows requirement. */
-export const CLAUDE_GIT_BASH_MISSING = "Claude's command wrapper could not be set up: Git Bash was not found";
+/** WIN-NOBASH-DESIGN-r2 section 1: the one shell a Claude turn's commands run on, each mode enforcing its tools.
+ * - `murage-exec`: bash found (POSIX, and Windows with Git Bash): every Bash command through the wrapper; on Windows the
+ *   PowerShell tool is switched off and denied, so no unwrapped shell sits beside the wrapped one.
+ * - `powershell-inherit`: Windows with no Git Bash (or an override the wrapper cannot run): the CLI's own PowerShell tool with
+ *   the curated hand as its environment, the Bash tool denied. */
+export type ClaudeShellMode =
+  | { kind: "murage-exec"; shell: string }
+  | { kind: "powershell-inherit"; reason: GitBashMiss };
 
-/** Section (a)'s one refusal state for a Claude turn whose wrapper cannot be set up (Windows with no Git Bash); null otherwise. */
+/** The mode for a discovery; null where the turn is refused (POSIX with no bash or zsh, claudeShellRefusal). */
+export function claudeShellMode(platform: NodeJS.Platform, found: GitBashFound | string | null): ClaudeShellMode | null {
+  const shell = typeof found === "string" ? found : found?.bash ?? null;
+  if (shell) return { kind: "murage-exec", shell };
+  if (platform !== "win32") return null;
+  return { kind: "powershell-inherit", reason: (typeof found === "object" && found?.reason) || "no-git-bash" };
+}
+
+/** The line a Claude turn on macOS or Linux is refused with when none of /bin/bash, /usr/bin/bash or /bin/zsh exists (Q6). */
+export const CLAUDE_POSIX_SHELL_MISSING = "Claude's turn was not started: Murage's command wrapper needs bash or zsh, and none of /bin/bash, /usr/bin/bash or /bin/zsh was found. Install bash (for example `sudo apt install bash`) and send the message again.";
+
+/** The one refusal state for a Claude turn whose shell cannot be set up: POSIX with no bash or zsh. Windows never refuses
+ * here: with no Git Bash the turn runs on the CLI's PowerShell tool (powershell-inherit). */
 export function claudeShellRefusal(platform: NodeJS.Platform, shell: string | null): TurnRefusal | null {
-  if (platform !== "win32" || shell !== null) return null;
+  if (platform === "win32" || shell !== null) return null;
+  return refusalOf(CLAUDE_POSIX_SHELL_MISSING);
+}
+
+function refusalOf(cause: string): TurnRefusal {
   const refusal = new TurnRefusal();
-  refusal.refuse(CLAUDE_GIT_BASH_MISSING);
+  refusal.refuse(cause);
   return refusal;
+}
+
+/** The F12 shell form of a PowerShell tool command (the CLI's own `-NoProfile`; no Murage PowerShell is spawned for it). */
+export const CLAUDE_POWERSHELL_FORM: readonly string[] = ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command"];
+
+/** The version-keyed tables below are read ONLY through claudeTableFor. Claude Code updates itself daily, so a version no table
+ * names (2.1.308, or one never probed) must use the newest version a table does name, never an empty or missing one. Versions
+ * compare as numbers (2.1.1000 is newer than 2.1.305). */
+function claudeVersionParts(version: string): number[] {
+  return version.split(".").map((part) => Number.parseInt(part, 10) || 0);
+}
+export function claudeNewestKey(table: Readonly<Record<string, unknown>>): string {
+  const keys = Object.keys(table);
+  if (!keys.length) throw new Error("a version-keyed Claude table has no entries");
+  return keys.reduce((best, key) => {
+    const a = claudeVersionParts(key), b = claudeVersionParts(best);
+    for (let i = 0; i < Math.max(a.length, b.length); i++) if ((a[i] ?? 0) !== (b[i] ?? 0)) return (a[i] ?? 0) > (b[i] ?? 0) ? key : best;
+    return best;
+  });
+}
+export function claudeTableFor<T>(table: Readonly<Record<string, T>>, cli?: string | null): T {
+  return (cli != null && Object.prototype.hasOwnProperty.call(table, cli) ? table[cli] : table[claudeNewestKey(table)]) as T;
+}
+
+/** What the CLI and its PowerShell children add to the hand on the inherit path, per CLI version (WIN-NOBASH-DESIGN-r2 3.2 (a)
+ * and (b)). 2.1.305: measured live on the Vultr "Windows, no Git" box (real-engine-gate evidence 20261021-135620-win-nogit),
+ * plus CLAUDE_EFFORT, which that run did not pass an effort to: the bundle's child-environment builder (`P8e`, beside CLAUDE_PID)
+ * adds it whenever the turn has an effort level, and Murage passes `--effort` when the turn names one. CLAUDE_CODE_SSE_PORT is
+ * only read by 2.1.305 (IDE auto-connect, terminal detection), never added. A new name this does not list fails that gate. */
+const CLAUDE_INHERIT_ADDS_2_1_305: readonly string[] = ["AI_AGENT", "CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_CODE_SESSION_ATTENDED", "CLAUDE_CODE_SESSION_ID", "CLAUDE_EFFORT", "CLAUDE_PID", "COREPACK_ENABLE_AUTO_PIN", "NO_COLOR", "NoDefaultCurrentDirectoryInExePath", "PSExecutionPolicyPreference", "PYTHONIOENCODING"];
+/** 2.1.307: the child-environment builder (P8e/iXe), the start-up env settings and the PowerShell defaults are the same as 2.1.305. */
+export const CLAUDE_INHERIT_ADDS: Readonly<Record<string, readonly string[]>> = {
+  "2.1.305": CLAUDE_INHERIT_ADDS_2_1_305,
+  "2.1.307": CLAUDE_INHERIT_ADDS_2_1_305,
+};
+/** The absence pins an empty settings value cannot clear (GNU getopt and git count an empty value as set). */
+export const CLAUDE_UNENFORCEABLE_ABSENT: readonly string[] = ["POSIXLY_CORRECT", "GIT_SSH"];
+
+/** The tool each mode runs commands on. */
+const modeTool = (mode: ClaudeShellMode): "Bash" | "PowerShell" => (mode.kind === "murage-exec" ? "Bash" : "PowerShell");
+
+export interface ClaudeShellSetup {
+  /** The hand with the mode's names written (and the other mode's removed). */
+  env: Record<string, string>;
+  /** argv with the mode's tool appended to `--disallowedTools` (the owner's entries kept, `--tools` untouched). */
+  args: string[];
+  /** The fields the dispatch line carries. */
+  dispatch: string;
+  /** Lines for the app log. */
+  logs: string[];
+}
+
+/** Writes one name, on Windows removing every other spelling of it first (names there ignore case). */
+function setEnvName(env: Record<string, string>, name: string, value: string, platform: NodeJS.Platform): void {
+  if (platform === "win32") for (const key of Object.keys(env)) if (key !== name && key.toUpperCase() === name) delete env[key];
+  env[name] = value;
+}
+function deleteEnvName(env: Record<string, string>, name: string, platform: NodeJS.Platform): void {
+  for (const key of Object.keys(env)) if (key === name || (platform === "win32" && key.toUpperCase() === name)) delete env[key];
+}
+
+/** Section 1, pure: the hand, argv and dispatch fields of a mode. `prefix` is the wrapper's path (murageExecPrefix()). */
+export function claudeShellSetup(platform: NodeJS.Platform, mode: ClaudeShellMode, handed: Readonly<Record<string, string>>, args: readonly string[], prefix: string, owner: { tools?: readonly string[]; disallowedTools?: readonly string[] } = {}): ClaudeShellSetup {
+  const env: Record<string, string> = { ...handed };
+  const logs: string[] = [];
+  const deny: string[] = [];
+  const fields: string[] = [];
+  if (mode.kind === "murage-exec") {
+    setEnvName(env, "CLAUDE_CODE_SHELL_PREFIX", prefix, platform);
+    setEnvName(env, "CLAUDE_CODE_SHELL", mode.shell, platform);
+    setEnvName(env, EXEC_ENV_FILE, "", platform);
+    fields.push(`shell=murage-exec:${mode.shell}`);
+    if (platform === "win32") {
+      setEnvName(env, "CLAUDE_CODE_GIT_BASH_PATH", mode.shell, platform);
+      // the 1.0.3 pin is not bypassable by an owner CLAUDE_CODE_USE_POWERSHELL_TOOL=1 (stripClaudeSessionEnv keeps it)
+      const owned = Object.entries(handed).find(([name]) => name.toUpperCase() === "CLAUDE_CODE_USE_POWERSHELL_TOOL")?.[1];
+      // Astra #7: the line names the override, never the owner's value
+      if (owned !== undefined && owned !== "0") logs.push("claude powershell-tool=off reason=bash-wrapped");
+      setEnvName(env, "CLAUDE_CODE_USE_POWERSHELL_TOOL", "0", platform);
+      deny.push("PowerShell");
+      fields.push("powershell-tool=off");
+    }
+  } else {
+    for (const name of ["CLAUDE_CODE_SHELL_PREFIX", "CLAUDE_CODE_SHELL", EXEC_ENV_FILE, "CLAUDE_CODE_GIT_BASH_PATH"]) deleteEnvName(env, name, platform);
+    setEnvName(env, "CLAUDE_CODE_USE_POWERSHELL_TOOL", "1", platform);
+    setEnvName(env, "CLAUDE_CODE_DISABLE_WINDOWS_SHELL_LAUNCHER", "1", platform);
+    deny.push("Bash");
+    fields.push(`shell=powershell-inherit reason=${mode.reason}`);
+  }
+  const out = [...args];
+  if (deny.length) {
+    const at = out.indexOf("--disallowedTools");
+    if (at >= 0 && at + 1 < out.length) out[at + 1] = [...new Set([...out[at + 1]!.split(",").filter(Boolean), ...deny])].join(",");
+    else out.push("--disallowedTools", deny.join(","));
+  }
+  // the owner's lists are respected, never rewritten: a list that leaves the mode's tool off runs with no command tool
+  const tool = modeTool(mode);
+  if ((owner.tools !== undefined && !owner.tools.includes(tool)) || owner.disallowedTools?.includes(tool)) fields.push("command-tool=none reason=owner-tools");
+  return { env, args: out, dispatch: fields.join(" "), logs };
+}
+
+/** The stdio server stanzas a mode writes: the wrapper keeps their env by MURAGE_EXEC_KEEP; on the inherit path the CLI spawns
+ * them itself, with no keep list. */
+export function claudeShellServers(mode: ClaudeShellMode | null, servers: Record<string, unknown>): Record<string, unknown> {
+  return mode?.kind === "murage-exec" ? withExecKeep(servers) : servers;
+}
+
+// ---- WIN-NOBASH-DESIGN-r2 3.4 and section 11 D1: the overlay's `env` restates the hand over every settings `env` ------------
+
+/** The documented members of the ANTHROPIC_DEFAULT_ family, pinned on every turn like every exact name (14.2 N1). */
+const DEFAULT_MODEL_NAMES: readonly string[] = ["ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME", "ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION", "ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME", "ANTHROPIC_DEFAULT_SONNET_MODEL_DESCRIPTION", "ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES", "ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME", "ANTHROPIC_DEFAULT_HAIKU_MODEL_DESCRIPTION", "ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES", "ANTHROPIC_DEFAULT_FABLE_MODEL", "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME", "ANTHROPIC_DEFAULT_FABLE_MODEL_DESCRIPTION", "ANTHROPIC_DEFAULT_FABLE_MODEL_SUPPORTED_CAPABILITIES", "ANTHROPIC_DEFAULT_MODEL"];
+
+/** 14.3 item 1: the exact VERTEX_REGION_CLAUDE_ members Claude Code 2.1.305 reads (its bundle and its documentation agree). */
+const VERTEX_REGION_NAMES: readonly string[] = ["VERTEX_REGION_CLAUDE_3_5_HAIKU", "VERTEX_REGION_CLAUDE_3_5_SONNET", "VERTEX_REGION_CLAUDE_3_7_SONNET", "VERTEX_REGION_CLAUDE_4_0_OPUS", "VERTEX_REGION_CLAUDE_4_0_SONNET", "VERTEX_REGION_CLAUDE_4_1_OPUS", "VERTEX_REGION_CLAUDE_4_5_OPUS", "VERTEX_REGION_CLAUDE_4_5_SONNET", "VERTEX_REGION_CLAUDE_4_6_OPUS", "VERTEX_REGION_CLAUDE_4_6_SONNET", "VERTEX_REGION_CLAUDE_4_7_OPUS", "VERTEX_REGION_CLAUDE_4_8_OPUS", "VERTEX_REGION_CLAUDE_5_5_OPUS", "VERTEX_REGION_CLAUDE_5_5_SONNET", "VERTEX_REGION_CLAUDE_5_OPUS", "VERTEX_REGION_CLAUDE_5_SONNET", "VERTEX_REGION_CLAUDE_FABLE_5", "VERTEX_REGION_CLAUDE_FABLE_5_1", "VERTEX_REGION_CLAUDE_HAIKU_4_5", "VERTEX_REGION_CLAUDE_HAIKU_5_5"];
+
+/** 14.3 item 1: the per-service AWS endpoint names 2.1.305 reads (AWS_ENDPOINT_URL itself is an exact row). */
+const AWS_ENDPOINT_NAMES: readonly string[] = ["AWS_ENDPOINT_URL_BEDROCK", "AWS_ENDPOINT_URL_BEDROCK_RUNTIME", "AWS_ENDPOINT_URL_STS", "AWS_ENDPOINT_URL_SSO", "AWS_ENDPOINT_URL_SSO_OIDC"];
+
+/** Section 14 and 14.3 item 1: the CLI's own login and routing names (Claude Code 2.1.305), whose owner value (user or managed
+ * settings, or the hand) a repository's settings can never override and which user and managed settings keep. The inventory is
+ * read from the 2.1.305 bundle and checked against its documentation (code.claude.com/docs/en/env-vars):
+ * - `vg` + `U7n` + `kg` (`fhn`): the names the CLI itself treats as the host's provider, login and routing when the host manages
+ *   the provider (CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST): selectors (`RY`), base URLs (`k1`, `MB`), login tokens (`T1`), the
+ *   skip-auth switches (`N7n`), cloud credential chains (`VWt`, `F7n`, `owt`), regions, model mappings (`To`, `$7n`), plus the
+ *   VERTEX_REGION_CLAUDE_ and AWS_ENDPOINT_URL families;
+ * - `Nl`: the names the CLI refuses from a settings source it has not verified (proxy and TLS `Ro`, the OAuth and federation
+ *   login names, the bridge and local-OAuth endpoints);
+ * - the documented login, gateway and helper names not in either set.
+ * Left out, with the reason: NODE_OPTIONS (always "" in the overlay), the process-location and settings-location names in
+ * CLAUDE_SIGNIN_UNPINNED_NAMES (an empty value counts as set for them, so a pin to "" would move the owner's own login store or
+ * break commands; they are restated when a repository names them and the sign-in hold asks about them), and Nl's
+ * API_FORCE_IDLE_TIMEOUT, CLAUDE_CODE_ENVIRONMENT_KIND and CLAUDE_CODE_REMOTE_SESSION_ID (a timeout and cloud-session labels, not
+ * login or routing). A `prefix` row covers a family; its `members` are the exact names 2.1.305 reads, pinned on every turn. Never a
+ * shell or start-up pin (a test proves the table and the pins share no name). */
+const CLAUDE_OWNER_ROUTING_2_1_305: ReadonlyArray<{ name: string; prefix?: true; members?: readonly string[]; why: string }> = [
+    // where the API is (bundle MB, and Vi's apiKeyHelper dependency)
+    { name: "ANTHROPIC_BASE_URL", why: "first-party API base URL; apiKeyHelper dependency (Vi)" },
+    { name: "_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL", why: "apiKeyHelper dependency (Vi)" },
+    { name: "ANTHROPIC_BEDROCK_BASE_URL", why: "Bedrock base URL (MB; awsAuthRefresh/awsCredentialExport dependency)" },
+    { name: "ANTHROPIC_BEDROCK_MANTLE_BASE_URL", why: "Bedrock Mantle base URL (MB; aws helper dependency)" },
+    { name: "ANTHROPIC_AWS_BASE_URL", why: "Anthropic-on-AWS base URL (MB; aws helper dependency)" },
+    { name: "ANTHROPIC_VERTEX_BASE_URL", why: "Vertex base URL (MB; gcpAuthRefresh dependency)" },
+    { name: "ANTHROPIC_GOOGLE_CLOUD_BASE_URL", why: "Anthropic-on-Google-Cloud base URL (MB; gcpAuthRefresh dependency)" },
+    { name: "ANTHROPIC_FOUNDRY_BASE_URL", why: "Foundry base URL (MB)" },
+    // which provider, project and region (bundle N3, Ao, and the region names the provider clients read)
+    { name: "CLAUDE_CODE_USE_BEDROCK", why: "provider selection (N3)" },
+    { name: "CLAUDE_CODE_USE_VERTEX", why: "provider selection (N3)" },
+    { name: "CLAUDE_CODE_USE_FOUNDRY", why: "provider selection (N3)" },
+    { name: "CLAUDE_CODE_USE_ANTHROPIC_AWS", why: "provider selection (N3)" },
+    { name: "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD", why: "provider selection (N3)" },
+    { name: "CLAUDE_CODE_USE_MANTLE", why: "provider selection (N3)" },
+    { name: "CLAUDE_CODE_USE_GATEWAY", why: "provider selection (N3)" },
+    { name: "ANTHROPIC_FOUNDRY_RESOURCE", why: "provider project (N3)" },
+    { name: "ANTHROPIC_VERTEX_PROJECT_ID", why: "provider project (N3)" },
+    { name: "ANTHROPIC_AWS_WORKSPACE_ID", why: "provider project (N3)" },
+    { name: "ANTHROPIC_GOOGLE_CLOUD_PROJECT", why: "provider project (N3)" },
+    { name: "ANTHROPIC_GOOGLE_CLOUD_LOCATION", why: "provider region (N3)" },
+    { name: "ANTHROPIC_GOOGLE_CLOUD_WORKSPACE_ID", why: "provider project (N3)" },
+    { name: "CLOUD_ML_REGION", why: "Vertex region (N3)" },
+    { name: "VERTEX_REGION_CLAUDE_", prefix: true, members: VERTEX_REGION_NAMES, why: "per-model Vertex region overrides (fhn's U7n prefix; members: the 20 names 2.1.305 reads)" },
+    { name: "AWS_REGION", why: "Bedrock region" },
+    { name: "AWS_DEFAULT_REGION", why: "Bedrock region fallback" },
+    { name: "AWS_PROFILE", why: "Bedrock credential profile" },
+    { name: "ANTHROPIC_BEDROCK_REGION_PREFIX", why: "Bedrock inference-profile region prefix" },
+    { name: "ANTHROPIC_SMALL_FAST_MODEL_AWS_REGION", why: "Bedrock region of the small model" },
+    { name: "CLAUDE_CODE_SKIP_BEDROCK_AUTH", why: "Bedrock login through a gateway" },
+    { name: "CLAUDE_CODE_SKIP_VERTEX_AUTH", why: "Vertex login through a gateway" },
+    { name: "CLAUDE_CODE_SKIP_FOUNDRY_AUTH", why: "Foundry login through a gateway" },
+    // which model (the documented model mappings)
+    { name: "ANTHROPIC_MODEL", why: "model" },
+    { name: "ANTHROPIC_DEFAULT_", prefix: true, members: DEFAULT_MODEL_NAMES, why: "model mappings (ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU,FABLE}_MODEL and their _NAME, _DESCRIPTION, _SUPPORTED_CAPABILITIES; ANTHROPIC_DEFAULT_MODEL)" },
+    { name: "ANTHROPIC_SMALL_FAST_MODEL", why: "small model" },
+    { name: "CLAUDE_CODE_SUBAGENT_MODEL", why: "subagent model" },
+    { name: "ANTHROPIC_CUSTOM_MODEL_OPTION", why: "model picker entry" },
+    // the login itself (a gateway's token, a provider key, the helper's refresh interval)
+    { name: "ANTHROPIC_API_KEY", why: "API key login" },
+    { name: "ANTHROPIC_AUTH_TOKEN", why: "gateway bearer login" },
+    { name: "AWS_BEARER_TOKEN_BEDROCK", why: "Bedrock API key login" },
+    { name: "ANTHROPIC_FOUNDRY_API_KEY", why: "Foundry API key login" },
+    { name: "CLAUDE_CODE_API_KEY_HELPER_TTL_MS", why: "apiKeyHelper refresh interval" },
+    { name: "ANTHROPIC_CUSTOM_HEADERS", why: "gateway headers" },
+    // reaching it: proxy and TLS (the CLI's own HTTP client reads these for every API call and for login)
+    { name: "HTTPS_PROXY", why: "proxy to the API" },
+    { name: "https_proxy", why: "proxy to the API" },
+    { name: "HTTP_PROXY", why: "proxy to the API" },
+    { name: "http_proxy", why: "proxy to the API" },
+    { name: "NO_PROXY", why: "proxy bypass" },
+    { name: "no_proxy", why: "proxy bypass" },
+    { name: "NODE_EXTRA_CA_CERTS", why: "a gateway's or proxy's CA, needed for login over TLS" },
+    { name: "CLAUDE_CODE_CLIENT_CERT", why: "mTLS login" },
+    { name: "CLAUDE_CODE_CLIENT_KEY", why: "mTLS login" },
+    { name: "CLAUDE_CODE_CLIENT_KEY_PASSPHRASE", why: "mTLS login" },
+    // 14.3 item 1, from the 2.1.305 bundle's own sets. Where the API is: the remaining base URLs and endpoints
+    { name: "CLAUDE_CODE_API_BASE_URL", why: "first-party API base URL (Nl)" },
+    { name: "ANTHROPIC_UNIX_SOCKET", why: "API reached over a local socket (Nl)" },
+    { name: "AWS_ENDPOINT_URL", why: "AWS endpoint for every service (Nl; the kg family)" },
+    { name: "AWS_ENDPOINT_URL_", prefix: true, members: AWS_ENDPOINT_NAMES, why: "per-service AWS endpoints: Bedrock, Bedrock runtime, STS, SSO (Nl; fhn's kg prefix)" },
+    { name: "CLAUDE_CODE_ARTIFACTS_API_BASE_URL", why: "artifacts API (vg)" },
+    { name: "CLAUDE_CODE_ARTIFACTS_API_TOKEN", why: "artifacts API login (vg)" },
+    { name: "CLAUDE_CODE_ARTIFACT_ASSET_BASE_URL", why: "artifacts endpoint (vg)" },
+    { name: "CLAUDE_CODE_ARTIFACT_LIVE_BASE_URL", why: "artifacts endpoint (vg)" },
+    { name: "CLAUDE_CODE_ARTIFACT_SYNC_BASE_URL", why: "artifacts endpoint (vg)" },
+    { name: "CLAUDE_CODE_ARTIFACT_VIEWER_BASE_URL", why: "artifacts endpoint (vg)" },
+    { name: "CLAUDE_CODE_MEMORY_API_BASE_URL", why: "memory API (vg)" },
+    { name: "CLAUDE_CODE_MEMORY_API_TOKEN", why: "memory API login (vg)" },
+    { name: "CLAUDE_CODE_GB_BASE_URL", why: "feature-flag endpoint (Nl)" },
+    { name: "DISABLE_GROWTHBOOK", why: "feature-flag fetch switch (vg)" },
+    { name: "CLAUDE_CODE_MODEL_CATALOG_URL", why: "model catalog endpoint (bundle)" },
+    { name: "CLAUDE_BRIDGE_BASE_URL", why: "bridge endpoint (Nl)" },
+    { name: "CLAUDE_BRIDGE_OAUTH_TOKEN", why: "bridge login (Nl)" },
+    { name: "CLAUDE_BRIDGE_SESSION_INGRESS_URL", why: "bridge endpoint (Nl)" },
+    { name: "CLAUDE_REMOTE_TOOLS_BRIDGE_URL", why: "bridge endpoint (Nl)" },
+    // which provider, project and region: the remaining selectors and cloud-project names
+    { name: "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST", why: "provider managed by the host (vg)" },
+    { name: "CLAUDE_CODE_SKIP_ANTHROPIC_AWS_AUTH", why: "provider login through a gateway (N7n)" },
+    { name: "CLAUDE_CODE_SKIP_ANTHROPIC_GOOGLE_CLOUD_AUTH", why: "provider login through a gateway (N7n)" },
+    { name: "CLAUDE_CODE_SKIP_MANTLE_AUTH", why: "provider login through a gateway (N7n)" },
+    { name: "CLAUDE_CODE_SKIP_AWS_CRED_CACHE", why: "Bedrock credential cache (docs)" },
+    { name: "ANTHROPIC_BEDROCK_SERVICE_TIER", why: "Bedrock routing tier (vg)" },
+    { name: "GOOGLE_CLOUD_PROJECT", why: "Vertex project (VWt)" },
+    { name: "GCLOUD_PROJECT", why: "Vertex project (vg)" },
+    { name: "GOOGLE_CLOUD_QUOTA_PROJECT", why: "Vertex quota project (vg)" },
+    { name: "ANTHROPIC_WORKSPACE_ID", why: "first-party workspace (Nl)" },
+    { name: "ANTHROPIC_ORGANIZATION_ID", why: "federated login organization (Nl)" },
+    { name: "ANTHROPIC_PROFILE", why: "first-party login profile (Nl)" },
+    { name: "ANTHROPIC_CONFIG_DIR", why: "first-party login profile folder (Nl; an empty value falls back)" },
+    // which model: the remaining model choices the CLI routes by
+    { name: "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME", why: "model picker entry (To)" },
+    { name: "ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION", why: "model picker entry (To)" },
+    { name: "ANTHROPIC_CUSTOM_MODEL_OPTION_SUPPORTED_CAPABILITIES", why: "model picker entry (To)" },
+    { name: "CLAUDE_CODE_WORKFLOW_SUBAGENT_MODEL", why: "workflow subagent model (To)" },
+    { name: "CLAUDE_CODE_SUBAGENT_MODEL_FORCE", why: "subagent model (vg)" },
+    { name: "CLAUDE_CODE_AUTO_MODE_MODEL", why: "auto-mode model (vg)" },
+    { name: "CLAUDE_CODE_BG_CLASSIFIER_MODEL", why: "classifier model (vg)" },
+    { name: "CLAUDE_CODE_DISABLE_LEGACY_MODEL_REMAP", why: "model id remapping (docs)" },
+    { name: "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", why: "gateway model list (docs)" },
+    { name: "CLAUDE_CODE_3P_PROBE_WROTE_SONNET_DEFAULT", why: "provider default model marker ($7n)" },
+    { name: "CLAUDE_CODE_3P_PROBE_WROTE_OPUS_DEFAULT", why: "provider default model marker ($7n)" },
+    { name: "CLAUDE_CODE_3P_PROBE_WROTE_HAIKU_DEFAULT", why: "provider default model marker ($7n)" },
+    { name: "CLAUDE_CODE_3P_SEEDED_SONNET_DEFAULT", why: "provider default model marker ($7n)" },
+    { name: "CLAUDE_CODE_3P_SEEDED_OPUS_DEFAULT", why: "provider default model marker ($7n)" },
+    // the login itself: tokens, keys, OAuth, federation, the host's credentials, gateway headers
+    { name: "CLAUDE_CODE_OAUTH_TOKEN", why: "subscription login token (T1)" },
+    { name: "CLAUDE_CODE_OAUTH_REFRESH_TOKEN", why: "subscription login refresh (Nl)" },
+    { name: "CLAUDE_CODE_OAUTH_SCOPES", why: "subscription login scopes (Nl)" },
+    { name: "CLAUDE_CODE_OAUTH_CLIENT_ID", why: "OAuth client (Nl)" },
+    { name: "CLAUDE_CODE_CUSTOM_OAUTH_URL", why: "OAuth endpoint (Nl)" },
+    { name: "CLAUDE_CODE_SESSION_ACCESS_TOKEN", why: "session login token (Nl)" },
+    { name: "CLAUDE_SESSION_INGRESS_TOKEN_FILE", why: "session login token file (Nl)" },
+    { name: "USE_LOCAL_OAUTH", why: "OAuth endpoint switch (Nl)" },
+    { name: "USE_STAGING_OAUTH", why: "OAuth endpoint switch (Nl)" },
+    { name: "CLAUDE_LOCAL_OAUTH_API_BASE", why: "OAuth endpoint (Nl)" },
+    { name: "CLAUDE_LOCAL_OAUTH_APPS_BASE", why: "OAuth endpoint (Nl)" },
+    { name: "CLAUDE_LOCAL_OAUTH_CONSOLE_BASE", why: "OAuth endpoint (Nl)" },
+    { name: "ANTHROPIC_FOUNDRY_AUTH_TOKEN", why: "Foundry bearer login (T1)" },
+    { name: "ANTHROPIC_AWS_API_KEY", why: "Anthropic-on-AWS key login (T1)" },
+    { name: "CLAUDE_CODE_GATEWAY_TOKEN", why: "gateway login (bundle)" },
+    { name: "CLAUDE_CODE_GATEWAY_HINT_HEADERS", why: "gateway headers (docs)" },
+    { name: "ANTHROPIC_FEDERATION_RULE_ID", why: "federated login (Nl)" },
+    { name: "ANTHROPIC_SERVICE_ACCOUNT_ID", why: "federated login (Nl)" },
+    { name: "ANTHROPIC_IDENTITY_TOKEN", why: "federated login token (Nl)" },
+    { name: "ANTHROPIC_IDENTITY_TOKEN_FILE", why: "federated login token file (Nl)" },
+    { name: "ANTHROPIC_SCOPE", why: "federated login scope (Nl)" },
+    { name: "CLAUDE_CODE_HOST_AUTH_ENV_VAR", why: "the host's login (vg)" },
+    { name: "CLAUDE_CODE_SDK_HAS_HOST_AUTH_REFRESH", why: "the host's login refresh (vg)" },
+    { name: "CLAUDE_CODE_HOST_AUTH_REFRESH_TIMEOUT_MS", why: "the host's login refresh (vg)" },
+    { name: "CLAUDE_CODE_HOST_CREDS_FILE", why: "the host's credentials file (vg)" },
+    { name: "CLAUDE_CODE_DISABLE_AUTH_REFRESH_LOCK", why: "login refresh lock (docs)" },
+    // cloud credential chains the Bedrock and Vertex clients read (VWt, F7n, owt)
+    { name: "AWS_ACCESS_KEY_ID", why: "Bedrock credentials (VWt)" },
+    { name: "AWS_SECRET_ACCESS_KEY", why: "Bedrock credentials (VWt)" },
+    { name: "AWS_SESSION_TOKEN", why: "Bedrock credentials (VWt)" },
+    { name: "AWS_CONFIG_FILE", why: "Bedrock credential chain (VWt)" },
+    { name: "AWS_SHARED_CREDENTIALS_FILE", why: "Bedrock credential chain (VWt)" },
+    { name: "AWS_CONTAINER_CREDENTIALS_FULL_URI", why: "Bedrock credential endpoint (owt)" },
+    { name: "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", why: "Bedrock credential endpoint (owt)" },
+    { name: "AWS_CONTAINER_AUTHORIZATION_TOKEN", why: "Bedrock credential endpoint login (owt)" },
+    { name: "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE", why: "Bedrock credential endpoint login (owt)" },
+    { name: "AWS_EC2_METADATA_SERVICE_ENDPOINT", why: "Bedrock credential endpoint (owt)" },
+    { name: "AWS_EC2_METADATA_SERVICE_ENDPOINT_MODE", why: "Bedrock credential endpoint (owt)" },
+    { name: "AWS_WEB_IDENTITY_TOKEN_FILE", why: "Bedrock federated credentials (owt)" },
+    { name: "AWS_ROLE_ARN", why: "Bedrock federated credentials (owt)" },
+    { name: "GOOGLE_APPLICATION_CREDENTIALS", why: "Vertex credentials (VWt)" },
+    { name: "GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES", why: "Vertex credential helper programs (Nl)" },
+    { name: "CLOUDSDK_CONFIG", why: "Vertex credential folder (Nl)" },
+    { name: "GCE_METADATA_HOST", why: "Vertex credential endpoint (F7n)" },
+    { name: "GCE_METADATA_ROOT", why: "Vertex credential endpoint (F7n)" },
+    { name: "GCE_METADATA_IP", why: "Vertex credential endpoint (F7n)" },
+    // reaching it: the remaining proxy and TLS names (Ro)
+    { name: "ALL_PROXY", why: "proxy to the API (Ro)" },
+    { name: "all_proxy", why: "proxy to the API" },
+    { name: "NPM_CONFIG_HTTPS_PROXY", why: "proxy (Ro)" },
+    { name: "NPM_CONFIG_HTTP_PROXY", why: "proxy (Ro)" },
+    { name: "NPM_CONFIG_PROXY", why: "proxy (Ro)" },
+    { name: "NODE_TLS_REJECT_UNAUTHORIZED", why: "TLS checking of the API and login (Ro)" },
+    { name: "CLAUDE_CODE_CERT_STORE", why: "the CA store login trusts (Ro)" },
+    { name: "CLAUDE_CODE_HTTP_PROXY", why: "proxy to the API (bundle)" },
+    { name: "CLAUDE_CODE_HTTPS_PROXY", why: "proxy to the API (bundle)" },
+    { name: "CLAUDE_CODE_PROXY_RESOLVES_HOSTS", why: "proxy name resolution (Nl)" },
+    { name: "CLAUDE_CODE_ENABLE_PROXY_AUTH_HELPER", why: "proxy login helper (Nl)" },
+    { name: "CLAUDE_CODE_PROXY_AUTH_HELPER_TTL_MS", why: "proxy login helper (Nl)" },
+];
+
+/** 2.1.307 (measured against @anthropic-ai/claude-code-linux-x64@2.1.307 on the build host, diffed with 2.1.305): every set this table was
+ * read from is the same except the untrusted-source refusal list (Ro in 2.1.305, Io in 2.1.307), whose last member NODE_TLS_REJECT_UNAUTHORIZED
+ * became the pair NODE_TLS_REJECT_UNAUTHORIZED + BUN_TLS_REFUSE_DISTRUSTED_KEYS. NO_PROXY, no_proxy and the other proxy names
+ * stay in that list and out of the project/local settings-env allowlist, exactly as in 2.1.305, so they stay routing names here.
+ * (2.1.307 did change NO_PROXY inside the sandbox-profile env builder, Ett/jkn: a settings or session NO_PROXY is no longer handed to a
+ * sandboxed command. That builder is not the CLI's own routing and is not modelled by this table.) */
+const CLAUDE_OWNER_ROUTING_2_1_307: ReadonlyArray<{ name: string; prefix?: true; members?: readonly string[]; why: string }> = [
+  ...CLAUDE_OWNER_ROUTING_2_1_305,
+  { name: "BUN_TLS_REFUSE_DISTRUSTED_KEYS", why: "TLS checking of the API and login (Io; new in 2.1.307)" },
+];
+
+/** The owner login/routing names per CLI version. Read it through claudeTableFor, never by indexing: an unknown (newer) version uses the newest. */
+export const CLAUDE_OWNER_ROUTING_NAMES: Readonly<Record<string, ReadonlyArray<{ name: string; prefix?: true; members?: readonly string[]; why: string }>>> = {
+  "2.1.305": CLAUDE_OWNER_ROUTING_2_1_305,
+  "2.1.307": CLAUDE_OWNER_ROUTING_2_1_307,
+};
+
+/** 14.3 item 1: names in the CLI's own sets that are not pinned, because an empty value counts as set for them (the bundle reads
+ * `!==void 0`) or reaches every command (SSL_CERT_FILE/SSL_CERT_DIR point every TLS client at nothing; METADATA_SERVER_DETECTION
+ * accepts only its listed values): a pin to "" would move the owner's own login store or break commands. They are restated when
+ * a repository's file names them, and the sign-in hold (claudeSigninHold) asks about a repository value that differs. */
+export const CLAUDE_SIGNIN_UNPINNED_NAMES: readonly string[] = ["CLAUDE_CONFIG_DIR", "CLAUDE_SECURESTORAGE_CONFIG_DIR", "CLAUDE_CODE_MANAGED_SETTINGS_PATH", "CLAUDE_CODE_REMOTE_SETTINGS_PATH", "CLAUDE_CODE_MOCK_REMOTE_SETTINGS", "CLAUDE_CODE_DISABLE_ADMIN_ENV_UNION", "CLAUDE_CODE_FEDERATION_CACHE_DIR", "SSL_CERT_FILE", "SSL_CERT_DIR", "METADATA_SERVER_DETECTION", "HOME", "XDG_CONFIG_HOME", "APPDATA", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "PROGRAMDATA", "ALLUSERSPROFILE"];
+
+/** Routing names whose empty string is NOT the same as absence in Claude Code 2.1.305 (the 14.4/14.5 audit, kept as the record
+ * of why; 14.6 now leaves EVERY name out of the overlay rather than pin it to "", see CLAUDE_OVERLAY_EMPTY_ALLOWED). They stay in
+ * the sign-in hold's scope (isClaudeHeldEnvName), and a name the owner's files set carries the owner's settings value.
+ * Audit of the 2.1.305 bundle (the 1.0.3 empty-pin regression, Astra astra-nobash-final):
+ * - AWS_EC2_METADATA_SERVICE_ENDPOINT_MODE: the SDK's config loader returns "" (it only skips undefined), then `switch` throws
+ *   "Unsupported endpoint mode" (breaks instance-role auth); it also masks the ~/.aws/config mode;
+ * - AWS_EC2_METADATA_SERVICE_ENDPOINT: the same loader returns "" and masks the ~/.aws/config `ec2_metadata_service_endpoint`;
+ * - AWS_REGION: the SDK's region loader (`fromTemporaryCredentials`, STS/assume-role clients) returns "" and masks the
+ *   ~/.aws/config region, and one read is `?? process.env.AWS_REGION` (an empty region used as-is);
+ * - HTTP_PROXY, http_proxy, HTTPS_PROXY, https_proxy, NO_PROXY, no_proxy: the proxy resolver reads `HTTP_PROXY ?? http_proxy`
+ *   (and the HTTPS and NO_PROXY pairs), so a pinned "" hides the owner's value in the other case and drops the proxy;
+ * - CLAUDE_SESSION_INGRESS_TOKEN_FILE: read as `?? <well-known path>`, so "" opens an empty path instead of the default;
+ * - CLAUDE_LOCAL_OAUTH_API_BASE, CLAUDE_LOCAL_OAUTH_APPS_BASE, CLAUDE_LOCAL_OAUTH_CONSOLE_BASE: read as `?.replace() ?? <default>`,
+ *   so "" is used as the base URL;
+ * - AWS_CONFIG_FILE, AWS_SHARED_CREDENTIALS_FILE (14.5, Fable): not on the settings-env allowlist, but the CLI's full settings pass
+ *   still copies them into its own environment, and a helper it runs (apiKeyHelper, awsCredentialExport) inherits them: botocore
+ *   and the AWS CLI read "" as the file "" and lose every profile, the same failure as AWS_PROFILE="". */
+export const CLAUDE_EMPTY_UNSAFE_NAMES: readonly string[] = [
+  "AWS_EC2_METADATA_SERVICE_ENDPOINT_MODE", "AWS_EC2_METADATA_SERVICE_ENDPOINT", "AWS_REGION",
+  "HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "NO_PROXY", "no_proxy",
+  "CLAUDE_SESSION_INGRESS_TOKEN_FILE", "CLAUDE_LOCAL_OAUTH_API_BASE", "CLAUDE_LOCAL_OAUTH_APPS_BASE", "CLAUDE_LOCAL_OAUTH_CONSOLE_BASE",
+  "AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE",
+];
+
+/** Whether `name` is one of CLAUDE_EMPTY_UNSAFE_NAMES (names ignore case on Windows, where the proxy pairs are the same variable). */
+export function isClaudeEmptyUnsafeName(name: string, platform: NodeJS.Platform = process.platform): boolean {
+  return CLAUDE_EMPTY_UNSAFE_NAMES.some((known) => (platform === "win32" ? known.toUpperCase() === name.toUpperCase() : known === name));
+}
+
+/** 14.5: each CLI version's settings-env allowlist (claude-settings-env-allowlist-<version>.ts, derived from that bundle). */
+export const CLAUDE_SETTINGS_ENV_ALLOWLISTS: Readonly<Record<string, readonly string[]>> = { "2.1.305": CLAUDE_SETTINGS_ENV_ALLOWLIST_2_1_305, "2.1.307": CLAUDE_SETTINGS_ENV_ALLOWLIST_2_1_305 /* Ng is identical in 2.1.307 (tm), 216 names */ };
+const allowlistSets = new Map<readonly string[], Set<string>>();
+
+/** Whether the CLI copies `name` from a settings file's `env` into its own process environment (the allowlist; compared
+ * upper-cased on every platform, as the CLI does). */
+export function isClaudeSettingsEnvAllowlisted(name: string, cli?: string | null): boolean {
+  const list = claudeTableFor(CLAUDE_SETTINGS_ENV_ALLOWLISTS, cli);
+  let set = allowlistSets.get(list);
+  if (!set) allowlistSets.set(list, (set = new Set(list.map((known) => known.toUpperCase()))));
+  return set.has(name.toUpperCase());
+}
+
+/** The CLI's settings-env allowlist (Ng) and the audited empty-unsafe names (CLAUDE_EMPTY_UNSAFE_NAMES). 14.6: this no longer
+ * decides which names may be "" - the overlay pins NO name to "" (claudeOverlayEnv), because 2.1.305 copies the user, flag
+ * (our overlay) and policy settings env into its own process.env wholesale, "" included, and Ng filters only project and local
+ * settings. It now names the scope of the sign-in hold (isClaudeHeldEnvName) and, for a name the owner's files set, says the
+ * overlay carries the owner's settings value rather than the handed one. */
+export function isClaudeNeverBlankName(name: string, platform: NodeJS.Platform = process.platform, cli?: string | null): boolean {
+  return isClaudeSettingsEnvAllowlisted(name, cli) || isClaudeEmptyUnsafeName(name, platform);
+}
+
+/** 14.6 (MurageMain, after Fable's third REVISE): the overlay never pins "" for any name; a name is the owner's non-empty value,
+ * Murage's non-empty neutral value, or absent. 2.1.305's applySafeConfigEnvironmentVariables copies the user, flag (this
+ * overlay) and policy settings `env` into its own process.env WHOLESALE, "" included (Ng filters only project and local), so a
+ * "" pin reached apiKeyHelper / gcpAuthRefresh / aws* helpers (GOOGLE_APPLICATION_CREDENTIALS="" breaks google-auth ADC).
+ * The enforcement-critical names (flag settings are the only layer above the owner's user settings) take a non-empty neutral
+ * value where one cannot break a helper child: BASH_ENV and ENV name /dev/null on every platform (bash and sh source an empty
+ * file; MSYS/Git Bash maps /dev/null; nothing else reads them). */
+export const CLAUDE_OVERLAY_NEUTRAL: Readonly<Record<string, string>> = { BASH_ENV: "/dev/null", ENV: "/dev/null" };
+
+/** 14.6, ruled by MurageMain (FROZEN: claude-nopin.test.ts asserts the overlay's "" names equal exactly this list): the
+ * enforcement-critical names with no non-empty neutral value, which the overlay pins to "": CLAUDE_CODE_SHELL_PREFIX (inherit
+ * path: any value is a program the CLI runs), NODE_OPTIONS (every value is an option), GIT_ASKPASS (any value is a program git
+ * runs), CLAUDE_ENV_FILE (a file the CLI sources), PYTHONINSPECT (any non-empty value turns inspect mode on),
+ * CLAUDE_CODE_PLUGIN_DIRS (isolation: any value is a directory list the CLI loads). Each reader takes "" as unset, so none
+ * changes what a helper child does: the spawn env already carries NODE_OPTIONS="" and GIT_ASKPASS=""; node and python read an
+ * empty NODE_OPTIONS / PYTHONINSPECT as unset; the CLI tests CLAUDE_CODE_SHELL_PREFIX and CLAUDE_ENV_FILE for truthiness
+ * (2.1.305, `strings -n 8` offsets 27487109 `a.CLAUDE_CODE_SHELL_PREFIX;if(ft)` and 25098417
+ * `h=a.CLAUDE_ENV_FILE;if(h)try{...readFile(h)}`), so "" is never read or stat'ed as a path. */
+export const CLAUDE_OVERLAY_EMPTY_ALLOWED: readonly string[] = ["CLAUDE_CODE_SHELL_PREFIX", "NODE_OPTIONS", "GIT_ASKPASS", "CLAUDE_ENV_FILE", "PYTHONINSPECT", "CLAUDE_CODE_PLUGIN_DIRS"];
+
+export function isClaudeOverlayEmptyAllowed(name: string, platform: NodeJS.Platform = process.platform): boolean {
+  return CLAUDE_OVERLAY_EMPTY_ALLOWED.some((known) => (platform === "win32" ? known.toUpperCase() === name.toUpperCase() : known === name));
+}
+
+/** Whether `name` is one of the CLI version's owner login/routing names (names ignore case on Windows). */
+export function isClaudeOwnerRoutingName(name: string, cli?: string | null, platform: NodeJS.Platform = process.platform): boolean {
+  const table = claudeTableFor(CLAUDE_OWNER_ROUTING_NAMES, cli);
+  const same = (a: string, b: string) => (platform === "win32" ? a.toUpperCase() === b.toUpperCase() : a === b);
+  return table.some((row) => (row.prefix ? (platform === "win32" ? name.toUpperCase().startsWith(row.name.toUpperCase()) : name.startsWith(row.name)) && name.length > row.name.length : same(name, row.name)));
+}
+
+/** Where a settings file sits in the CLI's order: the owner's (user, managed) or the repository's (project, local). */
+export type ClaudeSettingsSource = "user" | "project" | "local";
+export interface ClaudeSettingsFile { path: string; source: ClaudeSettingsSource }
+
+/** Exactly the settings files Claude Code 2.1.305 loads for a turn whose `env` it applies (Astra #6; the bundle's `F6`/`nyn`):
+ * user settings in the config dir the turn runs with (a named account's CLAUDE_CONFIG_DIR, else the default; never both),
+ * `cowork_settings.json` there instead when CLAUDE_CODE_USE_COWORK_PLUGINS is set; project settings at the cwd; local settings
+ * at the cwd and at its git root (the CLI's `rU(cwd, canonicalGitRoot)`). Refusals apply to these files only. */
+export function claudeSettingsEnvFiles(env: NodeJS.ProcessEnv, cwd: string): ClaudeSettingsFile[] {
+  const configDir = env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
+  const out: ClaudeSettingsFile[] = [
+    { path: join(configDir, env.CLAUDE_CODE_USE_COWORK_PLUGINS ? "cowork_settings.json" : "settings.json"), source: "user" },
+    { path: join(cwd, ".claude", "settings.json"), source: "project" },
+  ];
+  for (const root of [...new Set([cwd, ...claudeGitRoots(cwd)])]) out.push({ path: join(root, ".claude", "settings.local.json"), source: "local" });
+  const seen = new Set<string>();
+  return out.filter((file) => (seen.has(file.path) ? false : (seen.add(file.path), true)));
+}
+
+/** A settings file's `env` block; {} when the file is absent; `{ cannot }` when it exists but cannot be read as a settings
+ * object (fail closed: the turn is refused, never passed). Values are read only for the routing names (section 14). */
+function settingsEnvBlock(file: string): Record<string, unknown> | { cannot: string } {
+  let text: string;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return code === "ENOENT" || code === "ENOTDIR" ? {} : { cannot: `it could not be read (${code ?? "error"})` };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return { cannot: "it is not valid JSON" };
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { cannot: "it is not a settings object" };
+  const block = (parsed as { env?: unknown }).env;
+  if (block === undefined) return {};
+  if (!block || typeof block !== "object" || Array.isArray(block)) return { cannot: "its \"env\" is not an object" };
+  return { env: block as Record<string, unknown> };
+}
+const envOf = (read: Record<string, unknown>): Record<string, unknown> => (read.env ?? {}) as Record<string, unknown>;
+
+/** The names managed settings outrank Murage on that it reports: the pins, PATH, NODE_OPTIONS and the account, routing and
+ * session names Murage strips or sets (the canary class). */
+const managedReported = (name: string): boolean => {
+  const upper = name.toUpperCase();
+  return ENV_PINS.some((pin) => pin.name === upper) || upper === "PATH" || upper === "NODE_OPTIONS" || upper === "PSMODULEPATH" || /^(ANTHROPIC_|CLAUDE|AI_AGENT$|MURAGE_)/.test(upper);
+};
+
+export type ClaudeOverlayEnv = { env: Record<string, string>; managed: string[]; ownerRouting: string[] } | { refusal: string };
+
+/** The overlay's `env` for a turn (3.4, section 11 D1, the section 14 ruling and 14.6). 14.6: NO name is ever "" here (a value
+ * is the owner's non-empty one, Murage's non-empty neutral one, or absent), except the six ruled names (CLAUDE_OVERLAY_EMPTY_ALLOWED).
+ * In order: every value and resolved pin with a non-empty handed value, the handed PATH, the
+ * mode's names, NODE_OPTIONS (""), PSModulePath as handed, BASH_ENV and ENV at /dev/null (CLAUDE_OVERLAY_NEUTRAL),
+ * CLAUDE_ENV_FILE and PYTHONINSPECT (""), then each name a loaded settings file's `env` sets:
+ * - every routing name (CLAUDE_OWNER_ROUTING_NAMES), on every turn (14.2 N1): the owner's effective non-empty value (user
+ *   settings, then managed, then the hand), else left out; a repository's file that sets one differently raises the sign-in
+ *   card (claudeSigninHold), so a repository never overrides owner routing unasked;
+ * - project and local (the repository's): every other name with its non-empty handed value (an allowlisted or audited name:
+ *   the owner's non-empty value), else left out;
+ * - user and managed (the owner's): the same, so the owner's own value reaches the CLI; the routing names they set come back in
+ *   `ownerRouting` ("visible to commands (owner routing)"), names only.
+ * A name the spawn env must not carry is stripped there (the child-env build), not here. POSIXLY_CORRECT and GIT_SSH are never
+ * restated (an empty value still counts as set): a settings file naming one refuses the turn, as does a settings file that
+ * cannot be read. Managed settings outrank the overlay: their reported names come back in `managed`. */
+export function claudeOverlayEnv(platform: NodeJS.Platform, mode: ClaudeShellMode, handed: Readonly<Record<string, string>>, files: readonly ClaudeSettingsFile[], managedFiles: readonly string[] = [], cli?: string | null): ClaudeOverlayEnv {
+  const lookup = (name: string): string | undefined => {
+    if (name in handed) return handed[name];
+    if (platform !== "win32") return undefined;
+    const key = Object.keys(handed).find((k) => k.toUpperCase() === name.toUpperCase());
+    return key === undefined ? undefined : handed[key];
+  };
+  const out: Record<string, string> = {};
+  // 14.6: the names this section fixes, whether or not they end up in the overlay (a dropped "" is still Murage's name, so a
+  // settings file naming it is not restated below)
+  const fixedNames: string[] = [];
+  /** 14.6: a fixed name carries its handed value only when it is non-empty; an empty one is left out of the overlay (the spawn
+   * env still carries it, unchanged), except a ruled name (CLAUDE_OVERLAY_EMPTY_ALLOWED). */
+  const restate = (name: string, fallback?: string) => {
+    fixedNames.push(name);
+    const value = lookup(name) ?? fallback;
+    if (value === undefined) return;
+    if (value !== "" || isClaudeOverlayEmptyAllowed(name, platform)) out[name] = value;
+  };
+  for (const pin of ENV_PINS) if (!("absent" in pin)) restate(pin.name);
+  restate("PATH");
+  if (mode.kind === "murage-exec") {
+    for (const name of ["CLAUDE_CODE_SHELL_PREFIX", "CLAUDE_CODE_SHELL", EXEC_ENV_FILE]) restate(name);
+    if (platform === "win32") for (const name of ["CLAUDE_CODE_GIT_BASH_PATH", "CLAUDE_CODE_USE_POWERSHELL_TOOL"]) restate(name);
+  } else {
+    restate("CLAUDE_CODE_USE_POWERSHELL_TOOL");
+    restate("CLAUDE_CODE_DISABLE_WINDOWS_SHELL_LAUNCHER");
+    // 14.6 ruled "": any non-empty value is a prefix program the CLI runs
+    fixedNames.push("CLAUDE_CODE_SHELL_PREFIX");
+    out.CLAUDE_CODE_SHELL_PREFIX = "";
+  }
+  // 3.4: NODE_OPTIONS is "" whatever was handed (the driver writes "" into the hand too, so the record agrees); 14.6 ruled ""
+  fixedNames.push("NODE_OPTIONS");
+  out.NODE_OPTIONS = "";
+  restate("PSModulePath");
+  // 14.6: an absence pin takes its non-empty neutral value (BASH_ENV, ENV: /dev/null), or the ruled ""
+  // (CLAUDE_ENV_FILE, PYTHONINSPECT); POSIXLY_CORRECT and GIT_SSH are never restated (CLAUDE_UNENFORCEABLE_ABSENT)
+  for (const name of ABSENT_PINS) {
+    if (CLAUDE_UNENFORCEABLE_ABSENT.includes(name)) continue;
+    fixedNames.push(name);
+    const neutral = CLAUDE_OVERLAY_NEUTRAL[name];
+    if (neutral !== undefined) out[name] = neutral;
+    else if (isClaudeOverlayEmptyAllowed(name, platform)) out[name] = "";
+  }
+  const fixed = new Set([...fixedNames, ...Object.keys(out)].map((name) => (platform === "win32" ? name.toUpperCase() : name)));
+  const isFixed = (name: string) => fixed.has(platform === "win32" ? name.toUpperCase() : name);
+  const routing = (name: string) => !isFixed(name) && isClaudeOwnerRoutingName(name, cli, platform);
+  const blocks: Array<{ file: ClaudeSettingsFile | { path: string; source: "managed" }; env: Record<string, unknown> }> = [];
+  for (const file of files) {
+    const read = settingsEnvBlock(file.path);
+    if ("cannot" in read) return { refusal: `Claude's turn was not started: Murage cannot check the "env" block of ${file.path} because ${read.cannot}. Fix or remove that file and send the message again.` };
+    blocks.push({ file, env: envOf(read) });
+  }
+  for (const path of managedFiles) {
+    const read = settingsEnvBlock(path);
+    blocks.push({ file: { path, source: "managed" }, env: "cannot" in read ? {} : envOf(read) });
+  }
+  for (const { file, env } of blocks) {
+    if (file.source === "managed") continue;
+    for (const name of Object.keys(env)) {
+      if (CLAUDE_UNENFORCEABLE_ABSENT.includes(name.toUpperCase())) {
+        return { refusal: `Claude's turn was not started: ${file.path} sets ${name} in its "env" block, and Murage cannot clear that name (an empty value still counts as set). Remove "${name}" from that file's "env" block and send the message again.` };
+      }
+    }
+  }
+  /** The owner's value of a routing name: user settings, then managed, then the hand, else "". */
+  const ownerValue = (name: string): string => {
+    for (const source of ["user", "managed"] as const) {
+      for (const block of blocks) {
+        if (block.file.source !== source) continue;
+        const key = Object.keys(block.env).find((k) => (platform === "win32" ? k.toUpperCase() === name.toUpperCase() : k === name));
+        if (key !== undefined && typeof block.env[key] === "string") return block.env[key] as string;
+        if (key !== undefined && (typeof block.env[key] === "number" || typeof block.env[key] === "boolean")) return String(block.env[key]);
+      }
+    }
+    return lookup(name) ?? "";
+  };
+  /** 14.6: what a routing name is pinned to: the owner's non-empty value, else nothing (left out of the overlay; the sign-in
+   * card asks when a repository's file sets it). Never "". */
+  const pinFor = (name: string): string | undefined => {
+    const value = ownerValue(name);
+    return value === "" ? undefined : value;
+  };
+  /** 14.6: any other name a settings file sets: a name on the CLI's settings-env allowlist or the audited list carries the
+   * owner's non-empty value (so the owner's own setting reaches the CLI unchanged); every other name its non-empty handed value.
+   * Otherwise it is left out. Never "". */
+  const restateNamed = (name: string) => {
+    const value = isClaudeNeverBlankName(name, platform, cli) ? ownerValue(name) : lookup(name) ?? "";
+    if (value !== "") out[name] = value;
+  };
+  const ownerRouting = new Set<string>();
+  // 14.2 N1: every routing name is pinned on every turn at flag precedence to the owner's non-empty value (else left out, 14.6), whatever the
+  // repository's files say now or later: each exact name, each documented family member, and each member a file or the hand
+  // names. Nothing here depends on what the repository's files held when they were read.
+  const table = claudeTableFor(CLAUDE_OWNER_ROUTING_NAMES, cli);
+  const named = [...Object.keys(handed), ...blocks.flatMap(({ env }) => Object.keys(env))];
+  for (const row of table) {
+    const names = row.prefix ? [...(row.members ?? []), ...named.filter((name) => isClaudeOwnerRoutingName(name, cli, platform) && (platform === "win32" ? name.toUpperCase() : name).startsWith(row.name))] : [row.name];
+    for (const name of names) {
+      if (isFixed(name) || name in out) continue;
+      const pin = pinFor(name);
+      if (pin !== undefined) out[name] = pin;
+    }
+  }
+  // the repository's files: every name restated, routing names with the owner's value
+  for (const { file, env } of blocks) {
+    if (file.source !== "project" && file.source !== "local") continue;
+    for (const name of Object.keys(env)) {
+      if (isFixed(name) || name in out) continue;
+      if (routing(name)) {
+        const pin = pinFor(name);
+        if (pin !== undefined) out[name] = pin;
+        continue;
+      }
+      restateNamed(name);
+    }
+  }
+  // the owner's files: every name but the routing names restated; those carry the owner's value (pinned above) and are said
+  for (const { file, env } of blocks) {
+    if (file.source !== "user" && file.source !== "managed") continue;
+    for (const name of Object.keys(env)) {
+      if (routing(name)) { ownerRouting.add(name); continue; }
+      if (isFixed(name) || name in out) continue;
+      restateNamed(name);
+    }
+  }
+  // the plugin directory variable stays empty whatever a settings file says (claudeIsolationSettings); 14.6 ruled ""
+  out.CLAUDE_CODE_PLUGIN_DIRS = "";
+  const managed = new Set<string>();
+  for (const path of managedFiles) {
+    const read = settingsEnvBlock(path);
+    if ("cannot" in read) { managed.add(`unreadable:${path}`); continue; }
+    for (const name of Object.keys(envOf(read))) if (managedReported(name)) managed.add(name);
+  }
+  return { env: out, managed: [...managed].sort(), ownerRouting: [...ownerRouting].sort() };
+}
+
+// ---- Final round item 5: a probe of the CLI (--version, auth status) is handed the pins like a turn -------------------------
+
+/** The environment a probe of the CLI runs with: the same finished map a turn and a review are handed (handedEngineEnv: the
+ * owner's captured environment, the pins written on it, the absence pins taken out, the names this account owns put back),
+ * never the raw owner environment. */
+export async function claudeProbeEnv(env: NodeJS.ProcessEnv, configDir: string | undefined, cwd: string = process.cwd()): Promise<NodeJS.ProcessEnv> {
+  const baseline: NodeJS.ProcessEnv = process.env;
+  const names: Record<string, string> = {};
+  for (const [name, value] of Object.entries(env)) if (typeof value === "string" && name !== "PATH" && baseline[name] !== value) names[name] = value;
+  const stripOwned = (map: Record<string, string | undefined>) => stripClaudeOwnedEnv(map, process.env.MURAGE_CLOUD_ROLE === "home" ? undefined : configDir);
+  const handed = await handedEngineEnv({
+    cwd,
+    strip: (map) => {
+      for (const name of Object.keys(baseline)) if (!(name in env)) delete map[name];
+      stripOwned(map);
+      delete map.CLAUDE_ENV_FILE;
+      return map;
+    },
+    extra: { ...ownedTurnNames(env, stripOwned), ...names },
+  }, env);
+  return handed.env;
+}
+
+// ---- WIN-NOBASH-DESIGN-r2 14.3 item 2: the sign-in hold --------------------------------------------------------------------
+
+/** The settings keys that change how Claude Code signs in or routes its model calls: credential and header helpers and the
+ * per-version model id map. A repository's project or local settings setting one to anything but the owner's value hold the
+ * turn on a card. */
+export const CLAUDE_SIGNIN_SETTINGS_KEYS: readonly string[] = ["apiKeyHelper", "awsAuthRefresh", "awsCredentialExport", "gcpAuthRefresh", "otelHeadersHelper", "modelOverrides"];
+
+/** The env names the hold reads: the pinned inventory and the names left unpinned on purpose (CLAUDE_SIGNIN_UNPINNED_NAMES). */
+export function isClaudeSigninEnvName(name: string, cli?: string | null, platform: NodeJS.Platform = process.platform): boolean {
+  if (isClaudeOwnerRoutingName(name, cli, platform)) return true;
+  return CLAUDE_SIGNIN_UNPINNED_NAMES.some((known) => (platform === "win32" ? known.toUpperCase() === name.toUpperCase() : known === name));
+}
+
+/** A settings file as an object: {} when it is absent or cannot be read as one (the overlay has already refused such a file). */
+function settingsObjectOf(file: string): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(file, "utf8"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+}
+
+/** What a repository's settings change about signing in: the settings keys and env names, names only, never values. */
+export interface ClaudeSigninHold { keys: string[]; env: string[] }
+
+/** 14.3 item 2: whether this turn's project or local settings (the CLI's own files for the turn) set a sign-in settings key or an
+ * inventory env name to a value that differs from the owner's: user settings, then managed, then (env only) the hand, else none.
+ * A name managed settings set is the owner's whatever the repository says (managed outranks project and local), so it never
+ * holds. Values are compared, never returned or logged. Null when nothing differs. */
+export function claudeSigninHold(platform: NodeJS.Platform, handed: Readonly<Record<string, string>>, files: readonly ClaudeSettingsFile[], managedFiles: readonly string[] = [], cli?: string | null): ClaudeSigninHold | null {
+  const read = files.map((file) => ({ file, settings: settingsObjectOf(file.path) }));
+  const repo = read.filter(({ file }) => file.source === "project" || file.source === "local");
+  if (!repo.length) return null;
+  const user = read.filter(({ file }) => file.source === "user").map(({ settings }) => settings);
+  const managed = managedFiles.map(settingsObjectOf);
+  const same = (a: string, b: string) => (platform === "win32" ? a.toUpperCase() === b.toUpperCase() : a === b);
+  const envOfSettings = (settings: Record<string, unknown>): Record<string, unknown> => {
+    const block = settings.env;
+    return block && typeof block === "object" && !Array.isArray(block) ? block as Record<string, unknown> : {};
+  };
+  const envValue = (settings: Record<string, unknown>, name: string): { found: boolean; value?: unknown } => {
+    const env = envOfSettings(settings);
+    const key = Object.keys(env).find((k) => same(k, name));
+    return key === undefined ? { found: false } : { found: true, value: env[key] };
+  };
+  const text = (value: unknown): string | undefined => (typeof value === "string" ? value : typeof value === "number" || typeof value === "boolean" ? String(value) : undefined);
+  const canonical = (value: unknown): string => JSON.stringify(value, (_key, inner: unknown) => (inner && typeof inner === "object" && !Array.isArray(inner) ? Object.fromEntries(Object.entries(inner as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) : inner)) ?? "undefined";
+  const keys = new Set<string>();
+  for (const key of CLAUDE_SIGNIN_SETTINGS_KEYS) {
+    if (managed.some((settings) => key in settings)) continue;
+    const owner = [...user].reverse().find((settings) => key in settings)?.[key];
+    for (const { settings } of repo) if (key in settings && canonical(settings[key]) !== canonical(owner)) keys.add(key);
+  }
+  const env = new Set<string>();
+  for (const { settings } of repo) {
+    for (const name of Object.keys(envOfSettings(settings))) {
+      if (!isClaudeHeldEnvName(name, cli, platform)) continue;
+      if (managed.some((m) => envValue(m, name).found)) continue;
+      const fromUser = user.map((u) => envValue(u, name)).find((hit) => hit.found);
+      const handedKey = Object.keys(handed).find((k) => same(k, name));
+      const owner = fromUser ? text(fromUser.value) : handedKey === undefined ? "" : handed[handedKey]!;
+      const value = text(envValue(settings, name).value);
+      if (value === undefined || value !== (owner ?? "")) env.add(name);
+    }
+  }
+  if (!keys.size && !env.size) return null;
+  return { keys: [...keys].sort(), env: [...env].sort() };
+}
+
+/** 14.5: the env names the hold reads: the sign-in names and every never-blank name (a repository value of one reaches the CLI
+ * when the owner has none, because the overlay never pins it to ""). */
+function isClaudeHeldEnvName(name: string, cli: string | null | undefined, platform: NodeJS.Platform): boolean {
+  return isClaudeSigninEnvName(name, cli, platform) || isClaudeNeverBlankName(name, platform, cli);
+}
+
+/** 14.5: what a sign-in hold is about, for remembering the owner's answer (claude-signin-answers.ts): the repository settings
+ * files (project, local) that set a sign-in key or a held env name, and a canonical sorted list of exactly those keys and
+ * names with their values. It carries values, so it is never logged; the store keeps only salted HMACs of it. */
+export function claudeSigninScope(platform: NodeJS.Platform, files: readonly ClaudeSettingsFile[], cli?: string | null): ClaudeSigninScope {
+  const sorted = <T,>(entries: Array<[string, T]>): Array<[string, T]> => entries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  const canonical = (value: unknown): string => JSON.stringify(value, (_key, inner: unknown) => (inner && typeof inner === "object" && !Array.isArray(inner) ? Object.fromEntries(sorted(Object.entries(inner as Record<string, unknown>))) : inner)) ?? "undefined";
+  const parts: Array<{ path: string; set: Array<[string, string]> }> = [];
+  for (const file of files) {
+    if (file.source !== "project" && file.source !== "local") continue;
+    const settings = settingsObjectOf(file.path);
+    const set: Array<[string, string]> = [];
+    for (const key of CLAUDE_SIGNIN_SETTINGS_KEYS) if (key in settings) set.push([`key:${key}`, canonical(settings[key])]);
+    const block = settings.env;
+    if (block && typeof block === "object" && !Array.isArray(block)) {
+      for (const [name, value] of Object.entries(block as Record<string, unknown>)) if (isClaudeHeldEnvName(name, cli, platform)) set.push([`env:${platform === "win32" ? name.toUpperCase() : name}`, canonical(value)]);
+    }
+    if (set.length) parts.push({ path: file.path, set: sorted(set) });
+  }
+  parts.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  return { files: parts.map((part) => part.path), canonical: JSON.stringify(parts) };
+}
+
+/** The owner's remembered sign-in answers, in the data folder. */
+export const claudeSigninAnswers = new ClaudeSigninAnswers(() => join(DATA_DIR, CLAUDE_SIGNIN_ANSWERS_FILE));
+
+/** The sign-in card: one question, two answers. */
+export const CLAUDE_SIGNIN_QUESTION_ID = "signin";
+export const CLAUDE_SIGNIN_TOOL = "claude_signin_settings";
+export const CLAUDE_SIGNIN_OPTIONS = { allow: "Allow", deny: "Don't allow" } as const;
+export const CLAUDE_SIGNIN_CARD_TEXT = "This project's settings change how Claude signs in. Allow?";
+/** The turn's own failure when the owner says no (plain words: no setting or variable name). */
+export const CLAUDE_SIGNIN_DENIED = "Claude's turn was not started: this project's settings would change how Claude signs in, and you chose not to allow that. You won't be asked again unless those settings change.";
+/** 14.5: the turn's failure when nobody answered the card (a timeout, a Stop, a prewarm): nothing is remembered. */
+export const CLAUDE_SIGNIN_UNANSWERED = "Claude's turn was not started: this project's settings would change how Claude signs in, and nobody answered the question. Send the message again to be asked again.";
+
+export function claudeSigninQuestion(): QuestionSpec {
+  return {
+    id: CLAUDE_SIGNIN_QUESTION_ID,
+    header: "Sign-in",
+    question: CLAUDE_SIGNIN_CARD_TEXT,
+    options: [
+      { label: CLAUDE_SIGNIN_OPTIONS.allow, description: "Run this turn with the project's sign-in settings, as Claude Code would." },
+      { label: CLAUDE_SIGNIN_OPTIONS.deny, description: "Don't run this turn." },
+    ],
+    multiSelect: false,
+    allowOther: false,
+  };
+}
+
+/** The owner's answer to the sign-in card: allow only on the Allow pick (or a plain allow); anything else is no. */
+export function claudeSigninAllowed(decision: { behavior: string; answers?: readonly QuestionAnswer[] }): boolean {
+  if (decision.behavior === "allow") return true;
+  if (decision.behavior !== "answer") return false;
+  const answer = decision.answers?.find((a) => a.id === CLAUDE_SIGNIN_QUESTION_ID) ?? decision.answers?.[0];
+  return answer?.selected?.length === 1 && answer.selected[0] === CLAUDE_SIGNIN_OPTIONS.allow;
+}
+
+/** On Allow, the overlay lets the repository's values of the names it asked about through (the CLI's own precedence). */
+export function claudeOverlayAllowing(platform: NodeJS.Platform, env: Record<string, string>, names: readonly string[]): Record<string, string> {
+  const out = { ...env };
+  for (const key of Object.keys(out)) if (names.some((name) => (platform === "win32" ? name.toUpperCase() === key.toUpperCase() : name === key))) delete out[key];
+  return out;
+}
+
+// ---- WIN-NOBASH-DESIGN-r2 5.4 (owner-approved amendment): the gate's record of the handed map ---------------------------------
+// Only when MURAGE_GATE_MCP_RECORD names a file. The hand holds owner secrets, so no value is ever written: each name carries
+// sha256(salt + value) and the value's length, with one salt per run. One JSON line per turn, names sorted, the file replaced by
+// create-then-rename (0600, exclusive create of the temp), never through a symlink.
+
+const GATE_SALT = randomBytes(16).toString("hex");
+
+/** The record line for one turn's handed map. */
+export function claudeGateRecordLine(handed: Readonly<Record<string, string>>, mode: ClaudeShellMode["kind"], salt: string = GATE_SALT): string {
+  const names = Object.keys(handed).sort();
+  const map: Record<string, { sha256: string; len: number }> = {};
+  for (const name of names) map[name] = { sha256: createHash("sha256").update(salt + handed[name]!).digest("hex"), len: handed[name]!.length };
+  return JSON.stringify({ v: 1, salt, handed: map, mode });
+}
+
+const gateRecord = new ClaudeGateRecord();
+
+/** Appends this turn's line to the gate record at `path` (unset: nothing). Astra #3/#4 and MurageMain's ruling: the folder the
+ * path names must be private (0700 and this user's, or the owner-only ACL on Windows) or nothing is written; the whole record
+ * (this run's lines, kept in memory) is written to a fresh exclusive temp in it and renamed into place; a prior file or link at
+ * the path is unlinked, never read, followed or copied. */
+export function writeClaudeGateRecord(path: string | undefined, handed: Readonly<Record<string, string>>, mode: ClaudeShellMode["kind"], record: ClaudeGateRecord = gateRecord): boolean {
+  if (!path) return false;
+  try {
+    record.append(path, claudeGateRecordLine(handed, mode));
+    return true;
+  } catch {
+    console.warn("claude gate record refused: its folder is not private, or the file could not be written");
+    return false;
+  }
+}
+
+/** The managed settings files whose `env` outranks the overlay: each policy file and its `managed-settings.d` drop-ins. */
+export function claudeManagedSettingsFiles(paths: readonly string[] = managedClaudeSettingsPaths()): string[] {
+  return paths.flatMap((path) => {
+    const dir = join(dirname(path), "managed-settings.d");
+    let dropIns: string[] = [];
+    try { dropIns = readdirSync(dir).filter((name) => name.endsWith(".json")).sort().map((name) => join(dir, name)); } catch { dropIns = []; }
+    return [path, ...dropIns];
+  });
 }
 
 /** Thrown before launch when the turn is refused (claudeShellRefusal); the dispatch settles it as the turn's own failure. */
@@ -1440,6 +2318,10 @@ export function bashTargetsOf(_command: string): { available: false } {
   return { available: false };
 }
 
+/** Section 14 / 14.2 N2: the overlays of this process's Claude launches (claude-private.ts), flat in one owner-only root in
+ * the data folder. */
+export const claudeOverlays = new ClaudeOverlayStore(() => join(DATA_DIR, "claude-private"));
+
 let isolationDir: string | null = null;
 /** Writes the overlay to a private file named by its content hash and returns the path. A large
  * personal inventory inline on argv would pass Windows' command-line limit and cost the owner
@@ -1465,8 +2347,8 @@ function isolationSettingsFile(settings: Record<string, unknown>): { path: strin
 
 /** The isolation flags for a spawn: `--strict-mcp-config` (only Murage's own `--mcp-config`
  * servers run, never the owner's) and `--settings <file>` with claudeIsolationSettings. */
-export function claudeIsolation(env: NodeJS.ProcessEnv, cwd: string, platform: NodeJS.Platform = process.platform): string[] {
-  return ["--strict-mcp-config", "--settings", isolationSettingsFile(claudeIsolationSettings(env, cwd, platform)).path];
+export function claudeIsolation(env: NodeJS.ProcessEnv, cwd: string, platform: NodeJS.Platform = process.platform, overlayEnv: Readonly<Record<string, string>> = {}): string[] {
+  return ["--strict-mcp-config", "--settings", isolationSettingsFile(claudeIsolationSettings(env, cwd, platform, overlayEnv)).path];
 }
 
 export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
@@ -1495,13 +2377,15 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     /** Rule 72: what each pending permission ask asked, and the one 3-strike counter of narrowing denials. */
     const askCalls = new Map<string, { turn: string; tool: string; text: string }>();
     const narrowDenials = new NarrowDenials();
+    /** 14.3 item 2: the open sign-in cards, by thread and request: each settles its turn's hold. */
+    const signinAsks = new Map<string, (allowed: boolean, source: AskResolutionSource) => void>();
     const accountEnvironment=()=>claudeAccountEnvironment(cloudTurnEnvironment("claudeAgent", {...process.env,...input.environment}, process.env.MURAGE_CLOUD_ROLE === "home" ? [] : ["CLAUDE_CODE_OAUTH_TOKEN"]),process.env.MURAGE_CLOUD_ROLE === "home" ? undefined : config.configDir);
     const prepareTextOnlyTurn = (selection: string, providerRoute?: ProviderTurnRoute) => {
       const account = accountEnvironment();
       const env = claudeEnvironment(providerRoute?.model || selection, account, providerRoute);
       const model = providerRoute?.model || claudeRouting({ ...env }, selection).model || selection;
       return { model, turn: async (turn: import("../memory/pip-transport.ts").TextOnlyTurnInput) => {
-        await requireClaudeCliVersion(config.cli, env, turn.signal);
+        await requireClaudeCliVersion(config.cli, env, turn.signal, execCli, () => claudeProbeEnv(env, config.configDir));
         return claudeTextOnlyTurn({ ...turn, model, providerRoute }, {
           cli: config.cli, tmpBase: join(DATA_DIR, "pip-tmp"), env,
           credentialsDir: providerRoute ? undefined : resolveClaudeConfigDir(config.configDir, account),
@@ -2043,7 +2927,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           chipId = `mcp-wait-${chipTurnId}`;
           emit({ ...base(threadId, chipTurnId), type: "item.started", itemType: "tool", origin: "murage", itemId: chipId, title: mcpWaitChipTitle(unavailableLabels(waitingFor)) });
         },
-      });
+      }, { firstAnswerMs: mcpFirstAnswerMs() });
       if (!outcome.stopped) {
         claudeMcpStatusSupport.observe(identity, !outcome.unchecked ? "answered" : outcome.uncheckedReason === "unsupported" ? "unsupported" : "no-answer");
       }
@@ -2089,6 +2973,36 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       turnId,
       createdAt: new Date().toISOString(),
     });
+    /** 14.3 item 2: the sign-in card, a question never auto-answered (like the folder-trust card): true only on the owner's
+     * Allow. A Stop, the question timeout (none on a turn that holds its asks) or a prewarm, which nobody sees, is no. */
+    const askClaudeSignin = (threadId: string, turnId: string, stopped: Promise<void>, holds: boolean): Promise<{ allowed: boolean; byOwner: boolean }> => {
+      if (prewarmTurns.has(turnId)) return Promise.resolve({ allowed: false, byOwner: false });
+      const requestId = newId();
+      const key = `${threadId}\u0000${requestId}`;
+      const question = claudeSigninQuestion();
+      return new Promise<{ allowed: boolean; byOwner: boolean }>((resolve) => {
+        const finish = (allowed: boolean, source: AskResolutionSource) => {
+          if (!signinAsks.delete(key)) return;
+          clearTimeout(timer);
+          emit({ ...base(threadId, turnId), type: "request.resolved", requestId, behavior: allowed ? "answer" : "deny", source });
+          resolve({ allowed, byOwner: source === "user" });
+        };
+        const timer = holds ? undefined : setTimeout(() => finish(false, "timeout"), questionTimeoutFor(config.questionTimeoutMs));
+        timer?.unref?.();
+        signinAsks.set(key, finish);
+        void stopped.then(() => finish(false, "system"));
+        emit({
+          ...base(threadId, turnId),
+          type: "request.opened",
+          requestId,
+          requestType: "question",
+          tool: CLAUDE_SIGNIN_TOOL,
+          summary: question.question,
+          choices: question.options.map((option) => option.label),
+          questions: [question],
+        });
+      });
+    };
     // retry bookkeeping lives PER THREAD, not per sendTurn call: a relaunch
     // is a fresh sendTurn, and the attempt cap must survive across launches
     const retryState = new Map<string, { attempt: number; cancelled: boolean }>();
@@ -2188,8 +3102,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           emit({ ...base(threadId, turnId), type: "turn.completed", ok: false, stopReason: "update_required", cost: null });
           return { turnId };
         }
-        // A turn refused before launch (no Git Bash for the wrapper on Windows): the refusal is the turn's own failure, said in
-        // its cause, and no process is started.
+        // A turn refused before launch (macOS or Linux with no bash or zsh for the wrapper, or a settings file whose "env" Murage
+        // cannot restate): the refusal is the turn's own failure, said in its cause, and no process is started. Windows with no
+        // Git Bash is not refused: Claude runs on its PowerShell tool (powershell-inherit).
         if (error instanceof ClaudeTurnRefused && !turn.prewarm) {
           if (active.get(threadId)?.turnId === turnId) forgetActive(threadId);
           retryState.delete(threadId);
@@ -2298,7 +3213,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // a Stop during the probe ends the wait and assertSoleDispatch reports it.
       const probeStop = new AbortController();
       void ctl.stopped.then(() => probeStop.abort());
-      await requireClaudeCliVersion(config.cli, claudeEnvironment(undefined, turnEnvironment), probeStop.signal);
+      const probeBase = claudeEnvironment(undefined, turnEnvironment);
+      await requireClaudeCliVersion(config.cli, probeBase, probeStop.signal, execCli, () => claudeProbeEnv(probeBase, config.configDir));
       assertSoleDispatch();
       // argv and the process-reuse key below must come from the SAME routing
       // decision the spawn env gets from `claudeEnvironment`. A throwaway copy
@@ -2449,6 +3365,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // at the reconnect bound, so neither can hold a turn past the budgets in
       // mcp-readiness.ts (claudeMcpStartupEnv).
       const cliIdentity = claudeExecutableIdentity(config.cli, env);
+      // The CLI this turn spawns is the file requireClaudeCliVersion probed and cliIdentity signs, both on Murage's own PATH
+      // (claudeEnvironment); env becomes the handed map below, whose PATH is the owner's captured shell PATH and can find
+      // another, older claude first (1.0.3 gate). That PATH stays the child's own; only the engine file is pinned
+      // (isolation-cache.ts engineLaunchFile).
+      const launchPath = { PATH: env.PATH };
       Object.assign(env, claudeMcpStartupEnv(claudeMcpStatusSupport.get(cliIdentity) !== "unsupported"));
       // The launcher scopes this turn's state by bot and refuses a non-probe turn without one.
       cloudTurnBot(env, turn.warmIdentity?.botId);
@@ -2460,8 +3381,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // (A Cloud home renders its own settings and managed policy through the launcher, which refuses inline --mcp-config and --settings.)
       if (process.env.MURAGE_CLOUD_ROLE !== "home") {
         if (!mcpConfigPath) args.push("--mcp-config", '{"mcpServers":{}}');
-        args.push(...claudeIsolation(env, cwd));
       }
+      const isolationEnv: NodeJS.ProcessEnv = { ...env };
       // Rule 74a..b / 69f: the CLI is handed the finished F12 map as its explicit env, and every Bash
       // command runs through murage-exec as `env -i <that map> <shell> -c "$1"` from the turn's cwd.
       const baseline: NodeJS.ProcessEnv = process.env;
@@ -2479,21 +3400,85 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         },
         extra: { ...ownedTurnNames(env, stripOwned), ...claudeNames, CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR: "1" },
       }, env); // a Cloud home hands the pins on top of this turn's cloudTurnEnvironment map
-      // The wrapper's shell is found from the handed map (no pin names it, so writing these after the pins undoes none)
-      const execShell = await claudeExecShell(process.platform, handed.env, envGeneration());
-      const shellRefusal = claudeShellRefusal(process.platform, execShell);
+      // WIN-NOBASH-DESIGN-r2 section 1: the shell is found from the handed map (no pin names it, so writing the mode's names
+      // after the pins undoes none); each mode enforces its tools
+      const discovered = await claudeShellDiscovery(process.platform, handed.env, envGeneration());
+      const shellRefusal = claudeShellRefusal(process.platform, discovered.bash);
       if (shellRefusal) throw new ClaudeTurnRefused(shellRefusal);
-      if (execShell) {
-        handed.env.CLAUDE_CODE_SHELL_PREFIX = murageExecPrefix();
-        handed.env.CLAUDE_CODE_SHELL = execShell;
-        handed.env[EXEC_ENV_FILE] = "";
-        if (process.platform === "win32") handed.env.CLAUDE_CODE_GIT_BASH_PATH = execShell;
-      }
+      const shellMode = claudeShellMode(process.platform, discovered)!;
+      // MURAGE_EXEC_KEEP belongs on MCP server stanzas only: in Claude's own environment it would reach every Bash command.
+      delete handed.env[EXEC_KEEP];
+      const execShell = shellMode.kind === "murage-exec" ? shellMode.shell : null;
+      const shellSetup = claudeShellSetup(process.platform, shellMode, handed.env, args, execShell ? murageExecPrefix() : "", { tools: config.tools, disallowedTools: config.disallowedTools });
+      args.splice(0, args.length, ...shellSetup.args);
+      handed.env = shellSetup.env;
+      // 3.4 (Astra #8): NODE_OPTIONS is "" in the overlay, so it is "" in the hand and the F12 record too
+      if (process.env.MURAGE_CLOUD_ROLE !== "home") setEnvName(handed.env, "NODE_OPTIONS", "", process.platform);
+      for (const line of shellSetup.logs) console.info(line);
       assertSoleDispatch();
-      const shellForm = [execShell ?? "/bin/sh", "-c"];
+      const shellForm = execShell ? [execShell, "-c"] : [...CLAUDE_POWERSHELL_FORM];
       const childEnv = Object.fromEntries(Object.entries(handed.env).filter(([name]) => name !== "CLAUDE_CODE_SHELL_PREFIX" && name !== "CLAUDE_CODE_SHELL" && name !== EXEC_ENV_FILE));
       const childHanded: HandedEnv = { ...handed, env: childEnv };
       if (execShell) handed.env[EXEC_ENV_FILE] = writeExecEnvFile(threadId, childEnv, cwd, execShell);
+      // 3.4 / section 11 D1: the isolation overlay (`--settings`, which outranks user, project and local settings) restates the
+      // hand over every name a loaded settings file's `env` sets; a file that cannot be read, or a name an empty value cannot
+      // clear, refuses the turn. Managed settings outrank the overlay: what they redefine is named, not fought.
+      // Section 14: the overlay holds restated values, so it lives in this process's private folder (claude-private.ts), is
+      // written only when a process is launched with it, and goes when the last process launched with it exits.
+      let managedEnv: string[] = [];
+      let ownerRouting: string[] = [];
+      let overlayText: string | null = null;
+      if (process.env.MURAGE_CLOUD_ROLE !== "home") {
+        const settingsFiles = claudeSettingsEnvFiles(isolationEnv, cwd);
+        const managedFiles = claudeManagedSettingsFiles();
+        // the probed CLI version picks each version-keyed table (claudeTableFor: an unknown or newer version uses the newest known)
+        const cliVersion = await knownClaudeCliVersion(config.cli);
+        const overlay = claudeOverlayEnv(process.platform, shellMode, handed.env, settingsFiles, managedFiles, cliVersion);
+        if ("refusal" in overlay) throw new ClaudeTurnRefused(refusalOf(overlay.refusal));
+        managedEnv = overlay.managed;
+        ownerRouting = overlay.ownerRouting;
+        let overlayEnv = overlay.env;
+        // 14.3 item 2: a repository's project or local settings that change how Claude signs in hold the turn on a card (names
+        // only in the log; the card says it in plain words). Allow runs the turn as the CLI would, with the repository's values
+        // of the names asked about; anything else ends the turn before anything is launched.
+        // 14.5: the owner's answer is remembered for these exact files and sign-in values (claude-signin-answers.ts), so a
+        // routine or unattended turn in the same repository runs (or is refused) with no card until those values change.
+        const signin = claudeSigninHold(process.platform, handed.env, settingsFiles, managedFiles, cliVersion);
+        if (signin) {
+          console.info(`claude sign-in hold: project settings set ${[...signin.keys, ...signin.env].join(",")}`);
+          const scope = claudeSigninScope(process.platform, settingsFiles, cliVersion);
+          const remembered = claudeSigninAnswers.recall(scope);
+          let allowed: boolean;
+          let byOwner = remembered !== undefined;
+          if (remembered !== undefined) {
+            allowed = remembered;
+            console.info(`claude sign-in hold: the owner's remembered answer (${allowed ? "allow" : "don't allow"})`);
+          } else if (turn.prewarm) {
+            allowed = false;
+          } else {
+            const answer = await askClaudeSignin(threadId, turnId, ctl.stopped, turn.holdProjectAsks === true);
+            allowed = answer.allowed;
+            byOwner = answer.byOwner;
+            if (answer.byOwner) claudeSigninAnswers.remember(scope, answer.allowed);
+          }
+          if (!allowed) {
+            assertSoleDispatch();
+            throw new ClaudeTurnRefused(refusalOf(byOwner ? CLAUDE_SIGNIN_DENIED : CLAUDE_SIGNIN_UNANSWERED));
+          }
+          assertSoleDispatch();
+          overlayEnv = claudeOverlayAllowing(process.platform, overlayEnv, signin.env);
+        }
+        overlayText = JSON.stringify(claudeIsolationSettings(isolationEnv, cwd, process.platform, overlayEnv));
+        args.push("--strict-mcp-config", "--settings", claudeOverlays.pathFor(overlayText));
+      }
+      // 3.5: on the inherit path a command card opens with the hand and an informational provenance, never a U20 check
+      const inheritProvenance = shellMode.kind === "powershell-inherit"
+        ? await knownClaudeCliVersion(config.cli).then((cli) => ({ kind: "inherited" as const, cli: cli ?? "unknown", adds: claudeTableFor(CLAUDE_INHERIT_ADDS, cli), unenforceable: CLAUDE_UNENFORCEABLE_ABSENT, ...(ownerRouting.length ? { ownerRouting } : {}) }))
+        : undefined;
+      assertSoleDispatch();
+      // 5.4: the real-engine gate's hashed record of the hand (only when the gate names a file)
+      if (process.env.MURAGE_GATE_MCP_RECORD) writeClaudeGateRecord(process.env.MURAGE_GATE_MCP_RECORD, handed.env, shellMode.kind);
+      const shellDispatch = `${shellSetup.dispatch}${managedEnv.length ? ` managed-env=${managedEnv.join(",")}` : ""}${ownerRouting.length ? ` owner-routing=${ownerRouting.join(",")}` : ""}`;
       for (const name of Object.keys(env)) delete env[name];
       Object.assign(env, handed.env);
       // Everything that shapes the process, minus session/turn-specific temp
@@ -2599,7 +3584,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           // the bridge filed that this engine was handed only the stand-in list and has not listed again since
           ?? (anyMountIncomplete(mountRefs) ? "connector-mount-incomplete" : null);
       if (spawnReason !== null && live) clearMountsIncomplete(mountRefs);
-      const dispatchTrace = `claude dispatch thread=${threadId} process=${spawnReason === null ? "reused reason=unchanged" : `spawned reason=${spawnReason}`}`;
+      const dispatchTrace = `claude dispatch thread=${threadId} process=${spawnReason === null ? "reused reason=unchanged" : `spawned reason=${spawnReason}`} ${shellDispatch}`;
       console.info(dispatchTrace);
       if (spawnReason !== null && env.ANTHROPIC_CUSTOM_HEADERS) logFluxMemoryHeaders(DRIVER_KIND, fluxMemory);
       appendNative(threadId, { dir: "out", source: "claude.session", msg: { dispatch: dispatchTrace } });
@@ -2849,8 +3834,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
               // F12 when the card opens (Rule 74d): the check of the generation the card opens in, never one made at spawn
               // only a command ask is checked (and so only a command card can carry U20); a file or MCP permission reports
               // the map as handed, unchecked, as Codex and the ACP engines do
-              if (ask.kind === "permission" && (ask.tool === "Bash" || ask.tool === "PowerShell")) void execEnvNow(threadId, shellForm, childHanded, cwd).then(open, () => open(undefined));
-              else if (ask.kind === "permission") open(execEnvHanded(childHanded, cwd, shellForm));
+              const withManaged = (record: ExecEnv): ExecEnv => (managedEnv.length ? { ...record, managedEnv } : record);
+              if (ask.kind === "permission" && (ask.tool === "Bash" || ask.tool === "PowerShell") && inheritProvenance) open(withManaged(execEnvHanded(childHanded, cwd, shellForm, { provenance: inheritProvenance })));
+              else if (ask.kind === "permission" && (ask.tool === "Bash" || ask.tool === "PowerShell")) void execEnvNow(threadId, shellForm, childHanded, cwd).then((record) => open(withManaged(record)), () => open(undefined));
+              else if (ask.kind === "permission") open(withManaged(execEnvHanded(childHanded, cwd, shellForm)));
               else open(undefined);
             },
             onResolve: (resolved) => {
@@ -2909,7 +3896,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         }
         // Write once, only after the broker has selected its real endpoint.
         if (mcpConfigPath) {
-          const mcpJson = JSON.stringify({ mcpServers: cred ? bindCredentialPath(stableServers, cred.path) : stableServers });
+          // Claude starts each stdio server through the shell prefix (murage-exec), whose `env -i` keeps only the names
+          // MURAGE_EXEC_KEEP lists: without it ELECTRON_RUN_AS_NODE and the credential-file names are lost (1.0.3).
+          const bound = cred ? bindCredentialPath(stableServers, cred.path) : stableServers;
+          const mcpJson = JSON.stringify({ mcpServers: claudeShellServers(shellMode, bound) });
           if (process.env.MURAGE_CLOUD_ROLE === "home") cloudTurnRender(env, "mcp", cloudRenderMcp(stableServers));
           else writeFileSync(mcpConfigPath, mcpJson, { mode: 0o600 });
         }
@@ -2946,12 +3936,22 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       }
 
       let child: ReturnType<typeof spawnCli>;
+      let overlayHeld: string | null = null;
+      const releaseOverlay = () => {
+        if (overlayHeld === null) return;
+        const path = overlayHeld;
+        overlayHeld = null;
+        claudeOverlays.release(path);
+      };
       try {
         // Ownership is rechecked right here, with no await before the spawn: a
         // reset that began during setup, or a quarantined predecessor, means
         // this launch would run beside a tree that may still be live.
         if (resetBarriers.has(threadId) || resetBlocked.has(threadId)) throw new Error(NOT_STOPPED_MESSAGE);
-        child = spawnCli(config.cli, args, {
+        // Section 14: the overlay is written for this launch and held by it (released when it exits, below)
+        overlayHeld = overlayText === null ? null : claudeOverlays.acquire(overlayText);
+        const launchCli = engineLaunchFile(config.cli, launchPath);
+        child = spawnCli(launchCli, args, {
           cwd,
           env,
           stdio: ["pipe", "pipe", "pipe"],
@@ -2959,9 +3959,13 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       } catch (error) {
         // The fence above released the prompt to a write that will not happen (turn-attribution.ts, I14).
         turn.notWritten?.();
+        releaseOverlay();
         cleanupUnownedLaunch();
         throw error;
       }
+      // the overlay goes when this process exits, or fails to start
+      child.once("exit", releaseOverlay);
+      child.once("error", releaseOverlay);
       const launchTurn: SessionTurn = {
         turnId,
         settled: false,
@@ -3947,14 +4951,18 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
 
     const snapshot = async (): Promise<ProviderSnapshot> => {
       const env = claudeEnvironment(undefined, accountEnvironment());
-      const probed = await cachedCliVersion(config.cli, env, execCli);
+      // item 5: both probes run on the handed map a turn gets, never the raw owner environment
+      let probeEnv: NodeJS.ProcessEnv;
+      try { probeEnv = await claudeProbeEnv(env, config.configDir); }
+      catch (error) { return { state: "unavailable", reason: `Murage could not prepare Claude's environment: ${(error as Error).message}` }; }
+      const probed = await cachedCliVersion(config.cli, probeEnv, execCli);
       const version = probed.error ? null : probed.stdout.trim();
       if (!version) return { state: "unavailable", reason: `\`${config.cli}\` CLI not found` };
       // Below the qualified minimum a turn would be refused: offer the update, not a sign-in.
       if (claudeVersionVerdict(version) === "below") return { state: "unavailable", version, reason: CLAUDE_UPDATE_MESSAGE };
       // The probe runs with the flags a turn gets, so it judges the login a turn will have.
       // (A Cloud home's launcher refuses the inline isolation flags; its rendered settings carry the same policy.)
-      const auth = await claudeAuthStatus(config.cli, env, execCli, process.env.MURAGE_CLOUD_ROLE === "home" ? [] : ["--mcp-config", '{"mcpServers":{}}', ...claudeIsolation(env, process.cwd())]);
+      const auth = await claudeAuthStatus(config.cli, probeEnv, execCli, process.env.MURAGE_CLOUD_ROLE === "home" ? [] : ["--mcp-config", '{"mcpServers":{}}', ...claudeIsolation(env, process.cwd())]);
       // A CLI that refused those flags is not signed out: say what will fix it.
       if (auth.refusal) return { state: "unavailable", version, reason: auth.refusal.message };
       // A probe that gave no status at all (a spawn error, a crash, a launch the OS refused) is not
@@ -3977,7 +4985,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     const generateReview = (prompt: string, signal?: AbortSignal, proposalModel?: string, botId?: string, memory?: { cwd: string }): Promise<string> =>
       oneShots.run("claude", signal, async (runSignal) => {
         // Below the qualified minimum the call is refused with code update_required, before any launch.
-        await requireClaudeCliVersion(config.cli, claudeEnvironment(proposalModel ?? "claude-haiku-4-5", accountEnvironment()), runSignal);
+        const probeBase = claudeEnvironment(proposalModel ?? "claude-haiku-4-5", accountEnvironment());
+        await requireClaudeCliVersion(config.cli, probeBase, runSignal, execCli, () => claudeProbeEnv(probeBase, config.configDir));
         return runReview(prompt, runSignal, proposalModel, botId, memory);
       }, true);
     /** Learning on this login (cli-memory-learning.ts): the review call with every tool off, no session file, an empty working folder. */
@@ -4012,10 +5021,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       }, turnEnv);
       const env = handed.env;
       return new Promise((resolve, reject) => {
+        // The claude whose --version the review was gated on (turnEnv: Murage's own PATH), not the handed PATH's first.
+        const launchCli = engineLaunchFile(config.cli, turnEnv);
         // Same isolation as a turn: no MCP server, hook, plugin or personal CLAUDE.md of the
         // owner's, with the owner's login untouched. A proposal also gets no tools at all.
         const child = spawnCli(
-          config.cli,
+          launchCli,
           // stream-json so the call knows when the CLI started work (`init`): only what it printed
           // before then is read as a refusal of Murage's own flags, the same rule as a turn.
           ["-p", "--model", proposalModel ?? "claude-haiku-4-5", "--output-format", "stream-json", "--verbose",
@@ -4180,6 +5191,13 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           }
         },
         respondToRequest: async (threadId, requestId, decision) => {
+          // 14.3 item 2: the sign-in card is this driver's own, never the broker's
+          const signinAsk = signinAsks.get(`${threadId}\u0000${requestId}`);
+          if (signinAsk) {
+            const allowed = claudeSigninAllowed(decision);
+            signinAsk(allowed, "user");
+            return allowed ? "answered" : "rejected";
+          }
           // fail-closed by construction: no broker, or an ask that already
           // timed out / settled, is `unavailable` — the caller denies
           const broker = sessions.get(threadId)?.broker ?? active.get(threadId)?.broker;

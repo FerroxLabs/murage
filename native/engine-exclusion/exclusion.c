@@ -42,6 +42,12 @@
 //                                  HashMismatch, NotTrusted, UnknownError); `publisher` is the signer certificate's simple name when
 //                                  Valid, else ""; `code` is WinVerifyTrust's own result. Murage checks its own signed files with it,
 //                                  so opening Murage starts no PowerShell (murage-releases #1).
+//   jobCreate / jobAssign / jobClose / jobStop, processStart, driveInfo, fileOwnerSid, accountSid, machineSid, speechVoices,
+//   speechToWave                   Windows (version 8): the calls that replaced every PowerShell Murage used to start itself: the
+//                                  memory-maintenance job object, a process's exact creation time, a folder's drive type and format,
+//                                  a file's owner SID and account-name lookups, and SAPI speech. Each is described where it is defined.
+//   domainSids                     Windows (version 9): this computer's account, joined and forest-root domain SIDs (LSA policy), for
+//                                  the SDDL domain aliases. Version 9 also ends a process jobAssign cannot open.
 // Nothing here reads or writes a file on POSIX: Node does that through its own descriptor (writers() on Linux opens a file read only,
 // only to ask for a lease, and reads nothing). Only a process that is confirmed gone
 // (ESRCH/ENOENT on that process) is left out of processes(). Built per platform by scripts/build-engine-exclusion.mjs (N-API 9).
@@ -79,7 +85,7 @@
 #endif
 #endif
 
-#define ADDON_VERSION 7
+#define ADDON_VERSION 9
 #define LOCK_WAIT_MS 1000
 #define LOCK_STEP_MS 10
 
@@ -1509,6 +1515,7 @@ typedef struct {
   wchar_t *path;
   LONG result;
   wchar_t publisher[512];
+  wchar_t subject[2048];
 } AuthenticodeWork;
 
 static const char *authenticode_status(LONG result) {
@@ -1526,6 +1533,7 @@ static void authenticode_execute(napi_env env, void *data) {
   (void)env;
   AuthenticodeWork *job = data;
   job->publisher[0] = L'\0';
+  job->subject[0] = L'\0';
   WINTRUST_FILE_INFO file;
   memset(&file, 0, sizeof file);
   file.cbStruct = sizeof file;
@@ -1544,7 +1552,13 @@ static void authenticode_execute(napi_env env, void *data) {
     CRYPT_PROVIDER_DATA *provider = WTHelperProvDataFromStateData(trust.hWVTStateData);
     CRYPT_PROVIDER_SGNR *signer = provider ? WTHelperGetProvSignerFromChain(provider, 0, FALSE, 0) : NULL;
     CRYPT_PROVIDER_CERT *leaf = signer ? WTHelperGetProvCertFromChain(signer, 0) : NULL;
-    if (leaf && leaf->pCert) CertGetNameStringW(leaf->pCert, CERT_NAME_SIMPLE_DISPLAY_TYPE, 0, NULL, job->publisher, 512);
+    if (leaf && leaf->pCert) {
+      CertGetNameStringW(leaf->pCert, CERT_NAME_SIMPLE_DISPLAY_TYPE, 0, NULL, job->publisher, 512);
+      // Version 9: the signer's whole subject, as .NET's X500DistinguishedName.Name writes it ("CN=..., O=..., C=..."), for the
+      // updater's publisher check (electron/windows-update-signature.mjs).
+      if (!CertNameToStrW(X509_ASN_ENCODING, &leaf->pCert->pCertInfo->Subject, CERT_X500_NAME_STR | CERT_NAME_STR_REVERSE_FLAG, job->subject, 2048))
+        job->subject[0] = L'\0';
+    }
     // A Valid answer whose signer cannot be named is not a Valid signature from anyone in particular.
     if (job->publisher[0] == L'\0') job->result = TRUST_E_NO_SIGNER_CERT;
   }
@@ -1562,6 +1576,10 @@ static void authenticode_complete(napi_env env, napi_status status, void *data) 
     napi_create_string_utf8(env, publisher ? publisher : "", NAPI_AUTO_LENGTH, &value);
     free(publisher);
     napi_set_named_property(env, result, "publisher", value);
+    char *subject = wide_to_utf8(job->subject, (int)wcslen(job->subject));
+    napi_create_string_utf8(env, subject ? subject : "", NAPI_AUTO_LENGTH, &value);
+    free(subject);
+    napi_set_named_property(env, result, "subject", value);
     napi_create_int64(env, (int64_t)(uint32_t)job->result, &value);
     napi_set_named_property(env, result, "code", value);
     napi_resolve_deferred(env, job->deferred, result);
@@ -1598,6 +1616,541 @@ static napi_value authenticode(napi_env env, napi_callback_info info) {
 }
 #endif
 
+#ifdef _WIN32
+// ---- The calls that replaced Murage's own PowerShell starts (murage-releases #1). Version 8. ----
+#include <sddl.h>
+#include <aclapi.h>
+#include "exclusion-lsa.h"
+#define COBJMACROS
+#include <sapi.h>
+#pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "advapi32.lib")
+
+/** A UTF-16 string argument of 1..max code units, NUL-ended, in memory the caller frees; NULL when it is not one (no exception). */
+static wchar_t *get_wide(napi_env env, napi_value value, size_t max) {
+  size_t length = 0;
+  if (napi_get_value_string_utf16(env, value, NULL, 0, &length) != napi_ok || length == 0 || length > max) return NULL;
+  wchar_t *out = malloc((length + 1) * sizeof(wchar_t));
+  if (!out) return NULL;
+  if (napi_get_value_string_utf16(env, value, (char16_t *)out, length + 1, &length) != napi_ok) { free(out); return NULL; }
+  out[length] = L'\0';
+  return out;
+}
+static napi_value make_wide(napi_env env, const wchar_t *text) {
+  napi_value out;
+  if (!text) return make_null(env);
+  napi_create_string_utf16(env, (const char16_t *)text, wcslen(text), &out);
+  return out;
+}
+static napi_value make_sid(napi_env env, PSID sid) {
+  wchar_t *text = NULL;
+  if (!sid || !IsValidSid(sid) || !ConvertSidToStringSidW(sid, &text)) return make_null(env);
+  napi_value out = make_wide(env, text);
+  LocalFree(text);
+  return out;
+}
+
+// jobCreate(name) / jobAssign(job, pid, refusalCode) / jobClose(job) / jobStop(name, waitMs): the memory-maintenance (PIP) job.
+// The job is named Local\murage-pip-<id>, KILL_ON_JOB_CLOSE, and its only handle is this process's (not inheritable): when the
+// server ends, however it ends, Windows ends every process in the job. jobAssign puts a process in it; when that fails the process
+// is ended at once with `refusalCode`, so a CLI never runs outside its job. jobStop opens the job by name, terminates it and waits
+// up to waitMs for its members to be gone, on a worker thread.
+typedef struct { HANDLE job; int closed; } JobHeld;
+static void job_finalize(napi_env env, void *data, void *hint) {
+  (void)env; (void)hint;
+  JobHeld *held = data;
+  if (!held) return;
+  if (!held->closed && held->job) CloseHandle(held->job);
+  free(held);
+}
+static int job_name_ok(const wchar_t *name) {
+  static const wchar_t prefix[] = L"Local\\murage-pip-";
+  size_t length = wcslen(prefix);
+  if (wcsncmp(name, prefix, length) != 0 || name[length] == L'\0') return 0;
+  for (const wchar_t *c = name + length; *c; c++)
+    if (!((*c >= L'a' && *c <= L'z') || (*c >= L'A' && *c <= L'Z') || (*c >= L'0' && *c <= L'9') || *c == L'-')) return 0;
+  return 1;
+}
+static napi_value job_create(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value argv[1], out;
+  napi_get_cb_info(env, info, &argc, argv, NULL, NULL);
+  wchar_t *name = argc >= 1 ? get_wide(env, argv[0], 200) : NULL;
+  if (!name || !job_name_ok(name)) { free(name); return fail(env, "jobCreate needs a Local\\murage-pip- name"); }
+  SetLastError(ERROR_SUCCESS);
+  HANDLE job = CreateJobObjectW(NULL, name);
+  DWORD error = GetLastError();
+  free(name);
+  if (!job) return fail_code(env, "EJOB", "the job could not be created");
+  if (error == ERROR_ALREADY_EXISTS) { CloseHandle(job); return fail_code(env, "EEXIST", "a job with this name exists"); }
+  JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits;
+  memset(&limits, 0, sizeof limits);
+  limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+  if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof limits)) { CloseHandle(job); return fail_code(env, "EJOB", "the job could not be limited"); }
+  JobHeld *held = calloc(1, sizeof(JobHeld));
+  if (!held) { CloseHandle(job); return fail(env, "out of memory"); }
+  held->job = job;
+  if (napi_create_external(env, held, job_finalize, NULL, &out) != napi_ok) { CloseHandle(job); free(held); return fail(env, "the job could not be handed back"); }
+  return out;
+}
+static JobHeld *job_of(napi_env env, napi_value value) {
+  napi_valuetype type;
+  void *data = NULL;
+  if (napi_typeof(env, value, &type) != napi_ok || type != napi_external || napi_get_value_external(env, value, &data) != napi_ok || !data) {
+    fail(env, "not a job of this addon");
+    return NULL;
+  }
+  return data;
+}
+static napi_value job_assign(napi_env env, napi_callback_info info) {
+  size_t argc = 3;
+  napi_value argv[3];
+  uint32_t pid = 0, code = 0;
+  napi_get_cb_info(env, info, &argc, argv, NULL, NULL);
+  if (argc < 3 || napi_get_value_uint32(env, argv[1], &pid) != napi_ok || napi_get_value_uint32(env, argv[2], &code) != napi_ok || pid == 0)
+    return fail(env, "jobAssign needs a job, a pid and a refusal code");
+  JobHeld *held = job_of(env, argv[0]);
+  if (!held) return NULL;
+  if (held->closed) return fail_code(env, "EBADF", "the job is closed");
+  HANDLE process = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+  if (!process) {
+    // Version 9: a process that cannot be opened for assignment is still ended (terminate-only access), so no CLI runs outside its
+    // job; the caller ends it again through its own handle and refuses the run.
+    HANDLE end = OpenProcess(PROCESS_TERMINATE, FALSE, pid);
+    if (end) { TerminateProcess(end, code); CloseHandle(end); }
+    return make_bool(env, 0);
+  }
+  BOOL ok = AssignProcessToJobObject(held->job, process);
+  if (!ok) TerminateProcess(process, code);
+  CloseHandle(process);
+  return make_bool(env, ok);
+}
+static napi_value job_close(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value argv[1];
+  napi_get_cb_info(env, info, &argc, argv, NULL, NULL);
+  if (argc < 1) return fail(env, "jobClose needs a job");
+  JobHeld *held = job_of(env, argv[0]);
+  if (!held) return NULL;
+  if (!held->closed) { CloseHandle(held->job); held->closed = 1; held->job = NULL; }
+  return NULL;
+}
+typedef struct {
+  napi_async_work work;
+  napi_deferred deferred;
+  wchar_t *name;
+  DWORD wait_ms;
+  int absent, failed;
+  DWORD active;
+} JobStopWork;
+static void job_stop_execute(napi_env env, void *data) {
+  (void)env;
+  JobStopWork *w = data;
+  HANDLE job = OpenJobObjectW(JOB_OBJECT_TERMINATE | JOB_OBJECT_QUERY, FALSE, w->name);
+  if (!job) { if (GetLastError() == ERROR_FILE_NOT_FOUND) w->absent = 1; else w->failed = 1; return; }
+  if (!TerminateJobObject(job, 1)) { w->failed = 1; CloseHandle(job); return; }
+  ULONGLONG started = GetTickCount64();
+  for (;;) {
+    JOBOBJECT_BASIC_ACCOUNTING_INFORMATION accounting;
+    if (!QueryInformationJobObject(job, JobObjectBasicAccountingInformation, &accounting, sizeof accounting, NULL)) { w->failed = 1; break; }
+    if (accounting.ActiveProcesses == 0 || GetTickCount64() - started >= w->wait_ms) { w->active = accounting.ActiveProcesses; break; }
+    Sleep(25);
+  }
+  CloseHandle(job);
+}
+static void job_stop_complete(napi_env env, napi_status status, void *data) {
+  JobStopWork *w = data;
+  napi_value result, value;
+  if (status == napi_ok && !w->failed && napi_create_object(env, &result) == napi_ok) {
+    napi_create_string_utf8(env, w->absent ? "absent" : "present", NAPI_AUTO_LENGTH, &value);
+    napi_set_named_property(env, result, "state", value);
+    if (!w->absent) { napi_create_uint32(env, w->active, &value); napi_set_named_property(env, result, "activeProcesses", value); }
+    napi_resolve_deferred(env, w->deferred, result);
+  } else {
+    napi_value message, error;
+    napi_create_string_utf8(env, "the job could not be stopped", NAPI_AUTO_LENGTH, &message);
+    napi_create_error(env, NULL, message, &error);
+    napi_reject_deferred(env, w->deferred, error);
+  }
+  napi_delete_async_work(env, w->work);
+  free(w->name);
+  free(w);
+}
+static napi_value job_stop(napi_env env, napi_callback_info info) {
+  size_t argc = 2;
+  napi_value argv[2], promise, name;
+  uint32_t wait_ms = 0;
+  napi_get_cb_info(env, info, &argc, argv, NULL, NULL);
+  if (argc < 2 || napi_get_value_uint32(env, argv[1], &wait_ms) != napi_ok) return fail(env, "jobStop needs a name and a wait");
+  wchar_t *job_name = get_wide(env, argv[0], 200);
+  if (!job_name || !job_name_ok(job_name)) { free(job_name); return fail(env, "jobStop needs a Local\\murage-pip- name"); }
+  JobStopWork *w = calloc(1, sizeof(JobStopWork));
+  if (!w) { free(job_name); return fail(env, "out of memory"); }
+  w->name = job_name;
+  w->wait_ms = wait_ms;
+  if (napi_create_promise(env, &w->deferred, &promise) != napi_ok
+      || napi_create_string_utf8(env, "jobStop", NAPI_AUTO_LENGTH, &name) != napi_ok
+      || napi_create_async_work(env, NULL, name, job_stop_execute, job_stop_complete, w, &w->work) != napi_ok
+      || napi_queue_async_work(env, w->work) != napi_ok) {
+    free(w->name); free(w);
+    return fail(env, "could not start the job stop");
+  }
+  return promise;
+}
+
+// processStart(pid): the process's kernel creation time as a FILETIME in decimal (what .NET's StartTime.ToFileTimeUtc() gives), or
+// null when it cannot be read. data-dir-lease.mjs compares it with a version 1 lease record.
+static napi_value process_start(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value argv[1];
+  uint32_t pid = 0;
+  napi_get_cb_info(env, info, &argc, argv, NULL, NULL);
+  if (argc < 1 || napi_get_value_uint32(env, argv[0], &pid) != napi_ok || pid == 0) return fail(env, "processStart needs a pid");
+  HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+  if (!process) return make_null(env);
+  FILETIME created, exited, kernel, user;
+  BOOL ok = GetProcessTimes(process, &created, &exited, &kernel, &user);
+  CloseHandle(process);
+  if (!ok) return make_null(env);
+  char text[32];
+  snprintf(text, sizeof text, "%llu", ((unsigned long long)created.dwHighDateTime << 32) | created.dwLowDateTime);
+  napi_value out;
+  napi_create_string_utf8(env, text, NAPI_AUTO_LENGTH, &out);
+  return out;
+}
+
+// driveInfo(path): { type, format } of the volume that holds `path` (GetVolumePathNameW, GetDriveTypeW, GetVolumeInformationW),
+// with .NET DriveInfo's type names; null when it cannot be told.
+static napi_value drive_info(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value argv[1], out, value;
+  napi_get_cb_info(env, info, &argc, argv, NULL, NULL);
+  wchar_t *path = argc >= 1 ? get_wide(env, argv[0], 32767) : NULL;
+  if (!path) return fail(env, "driveInfo needs a path");
+  wchar_t root[MAX_PATH + 1], format[MAX_PATH + 1];
+  BOOL ok = GetVolumePathNameW(path, root, MAX_PATH + 1);
+  free(path);
+  if (!ok) return make_null(env);
+  format[0] = L'\0';
+  const char *type;
+  switch (GetDriveTypeW(root)) {
+    case DRIVE_NO_ROOT_DIR: type = "NoRootDirectory"; break;
+    case DRIVE_REMOVABLE: type = "Removable"; break;
+    case DRIVE_FIXED: type = "Fixed"; break;
+    case DRIVE_REMOTE: type = "Network"; break;
+    case DRIVE_CDROM: type = "CDRom"; break;
+    case DRIVE_RAMDISK: type = "Ram"; break;
+    default: type = "Unknown"; break;
+  }
+  if (!GetVolumeInformationW(root, NULL, 0, NULL, NULL, NULL, format, MAX_PATH + 1)) return make_null(env);
+  napi_create_object(env, &out);
+  napi_create_string_utf8(env, type, NAPI_AUTO_LENGTH, &value);
+  napi_set_named_property(env, out, "type", value);
+  napi_set_named_property(env, out, "format", make_wide(env, format));
+  return out;
+}
+
+// fileOwnerSid(path): the owner of the file or folder itself (a link is not followed) as an S-1-… string, or null.
+static napi_value file_owner_sid(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value argv[1];
+  napi_get_cb_info(env, info, &argc, argv, NULL, NULL);
+  wchar_t *path = argc >= 1 ? get_wide(env, argv[0], 32767) : NULL;
+  if (!path) return fail(env, "fileOwnerSid needs a path");
+  HANDLE file = CreateFileW(path, READ_CONTROL, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING,
+                            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+  free(path);
+  if (file == INVALID_HANDLE_VALUE) return make_null(env);
+  PSID owner = NULL;
+  PSECURITY_DESCRIPTOR descriptor = NULL;
+  DWORD error = GetSecurityInfo(file, SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION, &owner, NULL, NULL, NULL, &descriptor);
+  CloseHandle(file);
+  napi_value out = error == ERROR_SUCCESS ? make_sid(env, owner) : make_null(env);
+  if (descriptor) LocalFree(descriptor);
+  return out;
+}
+
+// accountSid(name): LookupAccountNameW's SID for an account name in any display language ("NT-AUTORITÄT\SYSTEM"), or null when the
+// name maps to no account. machineSid(): this computer's own account-domain SID (the prefix of its local accounts), or null.
+static napi_value lookup_sid(napi_env env, const wchar_t *name, int want_domain) {
+  BYTE sid[SECURITY_MAX_SID_SIZE];
+  DWORD sid_size = sizeof sid, domain_size = 256;
+  wchar_t domain[256];
+  SID_NAME_USE use;
+  if (!LookupAccountNameW(NULL, name, sid, &sid_size, domain, &domain_size, &use)) return make_null(env);
+  if (want_domain && use != SidTypeDomain) return make_null(env);
+  return make_sid(env, (PSID)sid);
+}
+static napi_value account_sid(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value argv[1];
+  napi_get_cb_info(env, info, &argc, argv, NULL, NULL);
+  wchar_t *name = argc >= 1 ? get_wide(env, argv[0], 512) : NULL;
+  if (!name) return fail(env, "accountSid needs a name");
+  napi_value out = lookup_sid(env, name, 0);
+  free(name);
+  return out;
+}
+static napi_value machine_sid(napi_env env, napi_callback_info info) {
+  (void)info;
+  wchar_t name[MAX_COMPUTERNAME_LENGTH + 2];
+  DWORD size = MAX_COMPUTERNAME_LENGTH + 1;
+  if (!GetComputerNameW(name, &size)) return make_null(env);
+  return lookup_sid(env, name, 1);
+}
+
+// domainSids(): { account, primary, forestRoot } (version 9), each an S-1-5-21-a-b-c domain SID or null, read from this computer's
+// LSA policy (LsaQueryInformationPolicy), never derived from a user or machine SID. `account`: this computer's own account domain
+// (its local accounts: SDDL LA, LG). `primary`: the Active Directory domain it is joined to (SDDL DA, DU, DG, ...), null in a workgroup.
+// `forestRoot`: that domain's forest root (SDDL EA, SA, RO, EK): the primary domain when the forest's DNS name is the domain's own,
+// else the SID Windows' account lookup gives for the forest's DNS name (SidTypeDomain only), null when it cannot be told.
+static napi_value sid_or_null(napi_env env, PSID sid) { return sid && IsValidSid(sid) ? make_sid(env, sid) : make_null(env); }
+static napi_value domain_sids(napi_env env, napi_callback_info info) {
+  (void)info;
+  MurLsaDomainSids lsa;
+  if (mur_lsa_domain_sids(&lsa) != 0) return fail(env, "the computer's domain could not be read");
+  napi_value out;
+  napi_create_object(env, &out);
+  napi_set_named_property(env, out, "account", sid_or_null(env, lsa.has_account ? (PSID)lsa.account_sid : NULL));
+  PSID primary = lsa.has_primary ? (PSID)lsa.primary_sid : NULL;
+  napi_set_named_property(env, out, "primary", sid_or_null(env, primary));
+  napi_value root = make_null(env);
+  if (primary && lsa.forest_present) {
+    if (lsa.forest_is_domain) root = make_sid(env, primary);
+    else if (!lsa.forest_too_long) root = lookup_sid(env, lsa.forest_name, 1);
+  }
+  napi_set_named_property(env, out, "forestRoot", root);
+  return out;
+}
+
+// speechVoices() / speechToWave(text, voice, path): the installed SAPI voices (the same list .NET's System.Speech gives: the
+// HKLM\SOFTWARE\Microsoft\Speech\Voices category, each token's Name attribute as the id, its Language as a culture name and its
+// description), and one utterance written to a 22,050 Hz 16-bit mono WAV file. The text is spoken as plain text, never as SAPI XML.
+// `voice` "" or a name no installed voice has keeps the machine's default voice. Both run on a worker thread; speaking is bounded
+// at 30 s and stopped (purged) when it runs past that.
+static const GUID MUR_CLSID_SpVoice = {0x96749377, 0x3391, 0x11d2, {0x9e, 0xe3, 0x00, 0xc0, 0x4f, 0x79, 0x73, 0x96}};
+static const GUID MUR_IID_ISpVoice = {0x6c44df74, 0x72b9, 0x4992, {0xa1, 0xec, 0xef, 0x99, 0x6e, 0x04, 0x22, 0xd4}};
+static const GUID MUR_CLSID_SpStream = {0x715d9c59, 0x4442, 0x11d2, {0x96, 0x05, 0x00, 0xc0, 0x4f, 0x8e, 0xe6, 0x28}};
+static const GUID MUR_IID_ISpStream = {0x12e3cca9, 0x7518, 0x44c5, {0xa5, 0xe7, 0xba, 0x5a, 0x79, 0xcb, 0x92, 0x9e}};
+static const GUID MUR_CLSID_SpObjectTokenCategory = {0xa910187f, 0x0c7a, 0x45ac, {0x92, 0xcc, 0x59, 0xed, 0xaf, 0xb7, 0x7b, 0x53}};
+static const GUID MUR_IID_ISpObjectTokenCategory = {0x2d3d3845, 0x39af, 0x4850, {0xbb, 0xf9, 0x40, 0xb4, 0x97, 0x80, 0x01, 0x1d}};
+static const GUID MUR_SPDFID_WaveFormatEx = {0xc31adbae, 0x527f, 0x4ff5, {0xa2, 0x30, 0xf6, 0x2b, 0xb6, 0x1f, 0xf7, 0x0c}};
+#define MUR_SPCAT_VOICES L"HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Speech\\Voices"
+#define SPEAK_BOUND_MS 30000
+
+static HRESULT voice_tokens(IEnumSpObjectTokens **out) {
+  ISpObjectTokenCategory *category = NULL;
+  HRESULT hr = CoCreateInstance(&MUR_CLSID_SpObjectTokenCategory, NULL, CLSCTX_ALL, &MUR_IID_ISpObjectTokenCategory, (void **)&category);
+  if (FAILED(hr)) return hr;
+  hr = ISpObjectTokenCategory_SetId(category, MUR_SPCAT_VOICES, FALSE);
+  if (SUCCEEDED(hr)) hr = ISpObjectTokenCategory_EnumTokens(category, NULL, NULL, out);
+  ISpObjectTokenCategory_Release(category);
+  return hr;
+}
+/** A token's Attributes\<name> value (CoTaskMemFree it), or NULL. */
+static wchar_t *voice_attribute(ISpObjectToken *token, const wchar_t *name) {
+  ISpDataKey *key = NULL;
+  wchar_t *value = NULL;
+  if (SUCCEEDED(ISpObjectToken_OpenKey(token, L"Attributes", &key)) && key) {
+    if (FAILED(ISpDataKey_GetStringValue(key, name, &value))) value = NULL;
+    ISpDataKey_Release(key);
+  }
+  return value;
+}
+
+typedef struct { char *name, *culture, *description; } VoiceRow;
+typedef struct {
+  napi_async_work work;
+  napi_deferred deferred;
+  VoiceRow *rows;
+  size_t count, capacity;
+  HRESULT hr;
+} VoicesWork;
+static char *co_to_utf8(wchar_t *text) {
+  char *out = text ? wide_to_utf8(text, (int)wcslen(text)) : _strdup("");
+  if (text) CoTaskMemFree(text);
+  return out ? out : _strdup("");
+}
+static void voices_execute(napi_env env, void *data) {
+  (void)env;
+  VoicesWork *w = data;
+  HRESULT init = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+  IEnumSpObjectTokens *tokens = NULL;
+  w->hr = voice_tokens(&tokens);
+  if (SUCCEEDED(w->hr) && tokens) {
+    ISpObjectToken *token = NULL;
+    wchar_t ui[16];
+    swprintf(ui, 16, L"%x", (unsigned)GetUserDefaultUILanguage());
+    while (IEnumSpObjectTokens_Next(tokens, 1, &token, NULL) == S_OK && token) {
+      wchar_t *name = voice_attribute(token, L"Name");
+      if (name && name[0]) {
+        if (w->count == w->capacity) {
+          size_t capacity = w->capacity ? w->capacity * 2 : 16;
+          VoiceRow *rows = realloc(w->rows, capacity * sizeof(VoiceRow));
+          if (!rows) { CoTaskMemFree(name); ISpObjectToken_Release(token); w->hr = E_OUTOFMEMORY; break; }
+          w->rows = rows; w->capacity = capacity;
+        }
+        VoiceRow *row = &w->rows[w->count++];
+        row->name = co_to_utf8(name);
+        name = NULL;
+        // Culture: the first LCID of the Language attribute ("409;9"), as a culture name ("en-US").
+        wchar_t *language = voice_attribute(token, L"Language");
+        wchar_t culture[LOCALE_NAME_MAX_LENGTH];
+        culture[0] = L'\0';
+        if (language) {
+          unsigned long lcid = wcstoul(language, NULL, 16);
+          if (lcid == 0 || LCIDToLocaleName((LCID)lcid, culture, LOCALE_NAME_MAX_LENGTH, 0) == 0) culture[0] = L'\0';
+          CoTaskMemFree(language);
+        }
+        row->culture = wide_to_utf8(culture, (int)wcslen(culture));
+        if (!row->culture) row->culture = _strdup("");
+        // Description: the value named for the display language, else the token's default value (as System.Speech reads it).
+        wchar_t *description = NULL;
+        if (FAILED(ISpObjectToken_GetStringValue(token, ui, &description))) description = NULL;
+        if (!description && FAILED(ISpObjectToken_GetStringValue(token, NULL, &description))) description = NULL;
+        row->description = co_to_utf8(description);
+      }
+      if (name) CoTaskMemFree(name);
+      ISpObjectToken_Release(token);
+      token = NULL;
+    }
+    IEnumSpObjectTokens_Release(tokens);
+  }
+  if (SUCCEEDED(init)) CoUninitialize();
+}
+static void voices_complete(napi_env env, napi_status status, void *data) {
+  VoicesWork *w = data;
+  napi_value list, item, value;
+  if (status == napi_ok && SUCCEEDED(w->hr) && napi_create_array_with_length(env, w->count, &list) == napi_ok) {
+    for (size_t i = 0; i < w->count; i++) {
+      napi_create_object(env, &item);
+      napi_create_string_utf8(env, w->rows[i].name, NAPI_AUTO_LENGTH, &value); napi_set_named_property(env, item, "name", value);
+      napi_create_string_utf8(env, w->rows[i].culture, NAPI_AUTO_LENGTH, &value); napi_set_named_property(env, item, "culture", value);
+      napi_create_string_utf8(env, w->rows[i].description, NAPI_AUTO_LENGTH, &value); napi_set_named_property(env, item, "description", value);
+      napi_set_element(env, list, (uint32_t)i, item);
+    }
+    napi_resolve_deferred(env, w->deferred, list);
+  } else {
+    char text[64];
+    snprintf(text, sizeof text, "the voices could not be listed (0x%08lx)", (unsigned long)w->hr);
+    napi_value message, error;
+    napi_create_string_utf8(env, text, NAPI_AUTO_LENGTH, &message);
+    napi_create_error(env, NULL, message, &error);
+    napi_reject_deferred(env, w->deferred, error);
+  }
+  for (size_t i = 0; i < w->count; i++) { free(w->rows[i].name); free(w->rows[i].culture); free(w->rows[i].description); }
+  free(w->rows);
+  napi_delete_async_work(env, w->work);
+  free(w);
+}
+static napi_value speech_voices(napi_env env, napi_callback_info info) {
+  (void)info;
+  napi_value promise, name;
+  VoicesWork *w = calloc(1, sizeof(VoicesWork));
+  if (!w) return fail(env, "out of memory");
+  if (napi_create_promise(env, &w->deferred, &promise) != napi_ok
+      || napi_create_string_utf8(env, "speechVoices", NAPI_AUTO_LENGTH, &name) != napi_ok
+      || napi_create_async_work(env, NULL, name, voices_execute, voices_complete, w, &w->work) != napi_ok
+      || napi_queue_async_work(env, w->work) != napi_ok) {
+    free(w);
+    return fail(env, "could not start the voice list");
+  }
+  return promise;
+}
+
+typedef struct {
+  napi_async_work work;
+  napi_deferred deferred;
+  wchar_t *text, *voice, *path;
+  HRESULT hr;
+  int selected, timed_out;
+} SpeakWork;
+static void speak_execute(napi_env env, void *data) {
+  (void)env;
+  SpeakWork *w = data;
+  HRESULT init = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+  ISpVoice *voice = NULL;
+  ISpStream *stream = NULL;
+  w->hr = CoCreateInstance(&MUR_CLSID_SpVoice, NULL, CLSCTX_ALL, &MUR_IID_ISpVoice, (void **)&voice);
+  if (SUCCEEDED(w->hr) && w->voice && w->voice[0]) {
+    // The exact name first, as System.Speech's SelectVoice; then the same name in another case. None: the default voice.
+    for (int pass = 0; pass < 2 && !w->selected; pass++) {
+      IEnumSpObjectTokens *tokens = NULL;
+      if (FAILED(voice_tokens(&tokens)) || !tokens) break;
+      ISpObjectToken *token = NULL;
+      while (!w->selected && IEnumSpObjectTokens_Next(tokens, 1, &token, NULL) == S_OK && token) {
+        wchar_t *name = voice_attribute(token, L"Name");
+        if (name && (pass == 0 ? wcscmp(name, w->voice) == 0 : _wcsicmp(name, w->voice) == 0) && SUCCEEDED(ISpVoice_SetVoice(voice, token))) w->selected = 1;
+        if (name) CoTaskMemFree(name);
+        ISpObjectToken_Release(token);
+        token = NULL;
+      }
+      IEnumSpObjectTokens_Release(tokens);
+    }
+  }
+  if (SUCCEEDED(w->hr)) w->hr = CoCreateInstance(&MUR_CLSID_SpStream, NULL, CLSCTX_ALL, &MUR_IID_ISpStream, (void **)&stream);
+  if (SUCCEEDED(w->hr)) {
+    WAVEFORMATEX format;
+    memset(&format, 0, sizeof format);
+    format.wFormatTag = WAVE_FORMAT_PCM;
+    format.nChannels = 1;
+    format.nSamplesPerSec = 22050;
+    format.wBitsPerSample = 16;
+    format.nBlockAlign = 2;
+    format.nAvgBytesPerSec = 44100;
+    w->hr = ISpStream_BindToFile(stream, w->path, SPFM_CREATE_ALWAYS, &MUR_SPDFID_WaveFormatEx, &format, 0);
+  }
+  if (SUCCEEDED(w->hr)) w->hr = ISpVoice_SetOutput(voice, (IUnknown *)stream, TRUE);
+  if (SUCCEEDED(w->hr)) w->hr = ISpVoice_Speak(voice, w->text, SPF_ASYNC | SPF_IS_NOT_XML, NULL);
+  if (SUCCEEDED(w->hr)) {
+    HRESULT done = ISpVoice_WaitUntilDone(voice, SPEAK_BOUND_MS);
+    if (done == S_FALSE) { w->timed_out = 1; ISpVoice_Speak(voice, NULL, SPF_PURGEBEFORESPEAK, NULL); w->hr = HRESULT_FROM_WIN32(ERROR_TIMEOUT); }
+    else if (FAILED(done)) w->hr = done;
+  }
+  if (voice) { ISpVoice_SetOutput(voice, NULL, TRUE); ISpVoice_Release(voice); }
+  if (stream) { ISpStream_Close(stream); ISpStream_Release(stream); }
+  if (SUCCEEDED(init)) CoUninitialize();
+}
+static void speak_complete(napi_env env, napi_status status, void *data) {
+  SpeakWork *w = data;
+  napi_value result;
+  if (status == napi_ok && SUCCEEDED(w->hr)) {
+    napi_get_boolean(env, w->selected != 0, &result);
+    napi_resolve_deferred(env, w->deferred, result);
+  } else {
+    char text[64];
+    snprintf(text, sizeof text, w->timed_out ? "speaking ran past its bound" : "the voice could not speak (0x%08lx)", (unsigned long)w->hr);
+    napi_value message, error;
+    napi_create_string_utf8(env, text, NAPI_AUTO_LENGTH, &message);
+    napi_create_error(env, NULL, message, &error);
+    napi_reject_deferred(env, w->deferred, error);
+  }
+  napi_delete_async_work(env, w->work);
+  free(w->text); free(w->voice); free(w->path);
+  free(w);
+}
+static napi_value speech_to_wave(napi_env env, napi_callback_info info) {
+  size_t argc = 3, voice_length = 0;
+  napi_value argv[3], promise, name;
+  napi_get_cb_info(env, info, &argc, argv, NULL, NULL);
+  if (argc < 3) return fail(env, "speechToWave needs text, a voice and a path");
+  SpeakWork *w = calloc(1, sizeof(SpeakWork));
+  if (!w) return fail(env, "out of memory");
+  w->text = get_wide(env, argv[0], 1000000);
+  w->path = get_wide(env, argv[2], 32767);
+  if (napi_get_value_string_utf16(env, argv[1], NULL, 0, &voice_length) == napi_ok && voice_length > 0) w->voice = get_wide(env, argv[1], 512);
+  if (!w->text || !w->path || (voice_length > 0 && !w->voice)) { free(w->text); free(w->path); free(w->voice); free(w); return fail(env, "speechToWave needs text, a voice and a path"); }
+  if (napi_create_promise(env, &w->deferred, &promise) != napi_ok
+      || napi_create_string_utf8(env, "speechToWave", NAPI_AUTO_LENGTH, &name) != napi_ok
+      || napi_create_async_work(env, NULL, name, speak_execute, speak_complete, w, &w->work) != napi_ok
+      || napi_queue_async_work(env, w->work) != napi_ok) {
+    free(w->text); free(w->path); free(w->voice); free(w);
+    return fail(env, "could not start speaking");
+  }
+  return promise;
+}
+#endif
+
 static void add(napi_env env, napi_value exports, const char *name, napi_callback fn) {
   napi_value value;
   if (napi_create_function(env, name, NAPI_AUTO_LENGTH, fn, NULL, &value) == napi_ok) napi_set_named_property(env, exports, name, value);
@@ -1623,6 +2176,18 @@ NAPI_MODULE_INIT() {
   add(env, exports, "handleClose", handle_close);
   add(env, exports, "authenticode", authenticode);
   add(env, exports, "removeTree", remove_tree);
+  add(env, exports, "jobCreate", job_create);
+  add(env, exports, "jobAssign", job_assign);
+  add(env, exports, "jobClose", job_close);
+  add(env, exports, "jobStop", job_stop);
+  add(env, exports, "processStart", process_start);
+  add(env, exports, "driveInfo", drive_info);
+  add(env, exports, "fileOwnerSid", file_owner_sid);
+  add(env, exports, "accountSid", account_sid);
+  add(env, exports, "machineSid", machine_sid);
+  add(env, exports, "domainSids", domain_sids);
+  add(env, exports, "speechVoices", speech_voices);
+  add(env, exports, "speechToWave", speech_to_wave);
 #endif
   add(env, exports, "bootId", boot_id);
   add(env, exports, "version", version);

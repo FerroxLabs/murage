@@ -38,7 +38,7 @@ describe.skipIf(!built || !windows)("the real addon on Windows", () => {
 
   it("loads, says its version, and offers the handle functions", () => {
     const addon = loadExclusionAddon()!;
-    expect(addon.version()).toBe(7);
+    expect(addon.version()).toBe(9);
     for (const name of ["openFile", "handleRead", "handleWrite", "handleSync", "handleLock", "handleMarkDelete", "handleId", "handleSize", "handleClose", "renameNoReplace", "processes"] as const) expect(typeof addon[name], name).toBe("function");
   });
 

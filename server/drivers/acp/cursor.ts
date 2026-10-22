@@ -8,8 +8,14 @@
 // `cursor_login`, and takes `--force` / `--model` as global flags before the
 // `acp` subcommand. `session/set_model` is attempted when the CLI supports it;
 // a missing method falls back to the argv `--model` pin.
-import type { ModelCatalog, ProviderErrorCode } from "../../contracts.ts";
+import { existsSync, lstatSync, mkdirSync, readFileSync, symlinkSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { writeFileAtomic } from "../../atomic.ts";
+import { DATA_DIR } from "../../config.ts";
+import type { ModelCatalog, ProviderErrorCode, SendTurnInput } from "../../contracts.ts";
 import { execCli } from "../../procs.ts";
+import { OWN_BUILTINS, OWN_READS } from "../../../shared/own-servers.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 
 /** Translate an argv `--model` slug into the id this ACP session will accept.
@@ -316,11 +322,11 @@ export async function fetchCursorModels(
     const stdout = await execText(run, cli, [...args], env);
     if (stdout == null) continue;
     const fromText = decodeCursorModelText(stdout);
-    if (fromText) return fromText;
+    if (fromText) return { ...fromText, source: "live" };
     const fromJson = decodeCursorModelCatalog(firstJsonValue(stdout));
-    if (fromJson) return fromJson;
+    if (fromJson) return { ...fromJson, source: "live" };
   }
-  return STATIC_CURSOR_MODELS;
+  return { ...STATIC_CURSOR_MODELS, source: "static" };
 }
 
 export function classifyCursorError(error: unknown): ProviderErrorCode | undefined {
@@ -341,7 +347,74 @@ export function classifyCursorError(error: unknown): ProviderErrorCode | undefin
   return undefined;
 }
 
-const support = (run: typeof execCli): AcpSupport => ({
+/** The permission cursor-agent is given on a host-computer turn, beside the own reads: Murage's own `computer` MCP tools run without
+ *  a session/request_permission, because Murage's computer service asks per action by the exact tool name. Cursor's
+ *  own ask for them says only kind "other" (never trusted), so it could not be judged. Shell, edits and every other
+ *  MCP tool keep cursor's own allowlist approval. (cursor-agent 2026.10.19: `Mcp(<server>:<tool>)` in the
+ *  `permissions.allow` of cli-config.json under CURSOR_CONFIG_DIR.) */
+export const CURSOR_HOST_COMPUTER_ALLOW = "Mcp(computer:*)";
+
+/** The config dir cursor-agent reads: CURSOR_CONFIG_DIR, else $XDG_CONFIG_HOME/cursor, else ~/.cursor. */
+function cursorConfigDir(env: Record<string, string | undefined>): string {
+  if (nonBlank(env.CURSOR_CONFIG_DIR)) return env.CURSOR_CONFIG_DIR!;
+  if (nonBlank(env.XDG_CONFIG_HOME)) return join(env.XDG_CONFIG_HOME!, "cursor");
+  return join(env.HOME || homedir(), ".cursor");
+}
+
+/** Murage's own reads (shared/own-servers.ts OWN_READS: the roster, memory search, ...) on the own servers this turn
+ *  hands cursor, one `Mcp(<server>:<tool>)` entry per tool, never a wildcard. They run with no card at every level on
+ *  every engine (auto-approve.ts, own-unasked), but cursor's own ask for them says only kind "other" and a title
+ *  ("agents-list_bots: list_bots", real cursor-agent 2026.10.19), which is never trusted (Rule 9): the read was held
+ *  as a call Murage could not read whole, at every level, and the turn waited on the card. Allowed here, cursor runs
+ *  them without asking, exactly as Claude does. Every tool that acts keeps cursor's own ask and Murage's card. */
+export function cursorOwnReadAllow(turn: Pick<SendTurnInput, "integrations">): string[] {
+  const allow: string[] = [];
+  const add = (server: string, mount: string) => {
+    for (const tool of OWN_READS.find((row) => row.mount === mount)?.tools ?? []) allow.push(`Mcp(${server}:${tool})`);
+  };
+  if (turn.integrations?.agents) add(turn.integrations.agents.serverName ?? OWN_BUILTINS.agents, "own:agents");
+  if (turn.integrations?.memory) add(OWN_BUILTINS.memory, "own:memory");
+  return allow;
+}
+
+/** Point this child at a Murage-owned config dir that carries `allow` (the own reads above, and on a host-computer
+ *  turn the computer server). The owner's own cursor config is never written: it is neither edited nor copied, so
+ *  the owner's allowlist does not apply on this turn (shell asks as it would for a fresh install). Sign-in is
+ *  untouched: cursor-agent keeps auth.json outside CURSOR_CONFIG_DIR (verified on 2026.10.19: Linux
+ *  $XDG_CONFIG_HOME/cursor, macOS ~/.cursor). Sessions live in `acp-sessions` of the config dir, so that one folder
+ *  is linked through to the real one and a session resumes whichever kind of turn opened it. */
+export function scopeCursorHostComputerConfig(env: Record<string, string | undefined>, botId?: string, allow: readonly string[] = [CURSOR_HOST_COMPUTER_ALLOW]): string {
+  const real = cursorConfigDir(env);
+  const root = join(DATA_DIR, "native", "cursor-host-config");
+  const dir = join(root, (botId ?? "shared").replace(/[^A-Za-z0-9_-]/g, "_"));
+  if (real === dir) return dir;
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const sessions = join(dir, "acp-sessions");
+  let linked = false;
+  try { linked = lstatSync(sessions).isSymbolicLink(); } catch { /* absent */ }
+  if (!linked && !existsSync(sessions)) {
+    mkdirSync(join(real, "acp-sessions"), { recursive: true, mode: 0o700 });
+    symlinkSync(join(real, "acp-sessions"), sessions, "dir");
+  }
+  // The CLI rewrites this file (model, display); keep what it wrote and set only the permissions.
+  const file = join(dir, "cli-config.json");
+  let config: Record<string, unknown> = {};
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(file, "utf8"));
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) config = parsed as Record<string, unknown>;
+  } catch { /* absent or unreadable: start from the minimum */ }
+  const permissions = config.permissions as { allow?: unknown; deny?: unknown } | undefined;
+  const settled = config.approvalMode === "allowlist" && Array.isArray(permissions?.allow)
+    && permissions.allow.length === allow.length && allow.every((entry, i) => (permissions.allow as unknown[])[i] === entry)
+    && Array.isArray(permissions.deny) && permissions.deny.length === 0;
+  if (!settled) {
+    writeFileAtomic(file, `${JSON.stringify({ version: 1, ...config, approvalMode: "allowlist", permissions: { allow: [...allow], deny: [] } }, null, 2)}\n`, { mode: 0o600 });
+  }
+  env.CURSOR_CONFIG_DIR = dir;
+  return dir;
+}
+
+export const cursorSupport = (run: typeof execCli): AcpSupport => ({
   driverKind: "cursorAgent",
   displayName: "Cursor",
   models: STATIC_CURSOR_MODELS,
@@ -371,11 +444,24 @@ const support = (run: typeof execCli): AcpSupport => ({
   // Global flags must precede `acp` (cursor.com/docs/cli/reference/parameters).
   // `--force` is the documented auto-approve switch (`--yolo` is an alias);
   // `--model` is the reliable pin — ACP session/set_model is best-effort below.
-  spawnArgs: (config, turn) => [
+  // Host-computer turns only: Murage asks for each `computer` action itself (see CURSOR_HOST_COMPUTER_ALLOW).
+  // spawnArgs is the one hook that sees the turn and the child's own env, and the env is the spawn contract.
+  hostComputerAskedByMurage: true,
+  // The Ask hard stop (../ask-stop.ts): Cursor writes inside the project with no permission ask, so an Ask turn runs
+  // in Cursor's own "ask" session mode (no edits, no commands; cursor-agent 2026.10.19 refused a write and a shell
+  // command there, an override in the prompt included, and still read). `--mode` is ignored by `acp`, so the mode is
+  // set over the wire, and a later Auto or Full access turn puts the session back in "agent".
+  askStop: { sessionMode: { readOnly: "ask", normal: "agent" } },
+  // Every turn that mounts Murage's own servers: their reads run unasked (cursorOwnReadAllow).
+  spawnArgs: (config, turn, ctx) => {
+    const allow = [...cursorOwnReadAllow(turn), ...(turn.integrations?.localComputer?.scope === "local-computer" ? [CURSOR_HOST_COMPUTER_ALLOW] : [])];
+    if (allow.length && ctx?.env) scopeCursorHostComputerConfig(ctx.env, turn.warmIdentity?.botId, allow);
+    return [
     ...(config.fullAuto ? ["--force"] : []),
     ...(turn.model ? ["--model", turn.model] : []),
     "acp",
-  ],
+    ];
+  },
   credentialEnv: ["CURSOR_API_KEY", "CURSOR_AUTH_TOKEN"],
 
   resolveModels: (environment, config) => fetchCursorModels(config.cli || "cursor-agent", environment, run),
@@ -412,7 +498,7 @@ const support = (run: typeof execCli): AcpSupport => ({
 });
 
 export function createCursorAgentDriver(run: typeof execCli = execCli) {
-  return createAcpDriver(support(run));
+  return createAcpDriver(cursorSupport(run));
 }
 
 export const CursorAgentDriver = createCursorAgentDriver();

@@ -45,6 +45,26 @@ describe("a permission ask leaving the server", () => {
     expect(out).toMatchObject({ type: "request.opened", requestId: "r-1", threadId: "t-creds", turnId: "turn-1", tool: "Bash", summary: "ls -la", toolInput: "{\"command\":\"ls -la\"}", toolKind: "execute", toolEngine: "claudeAgent" });
   });
 
+  it("Astra #9: carries the value-free projection of the record (names, shell, provenance, managed names) to the card and the log", () => {
+    const { raw: _raw, ...base } = ask() as RuntimeEvent & { execEnv: Record<string, unknown>; raw?: unknown };
+    const event = { ...base, execEnv: { ...base.execEnv, provenance: { kind: "inherited", cli: "2.1.305", adds: ["CLAUDECODE"], unenforceable: ["POSIXLY_CORRECT", "GIT_SSH"], ownerRouting: ["ANTHROPIC_BASE_URL"] }, managedEnv: ["PAGER"] } } as unknown as RuntimeEvent;
+    const forged = { ...event, envInfo: { names: [FAKE_SHELL_VALUE] } } as unknown as RuntimeEvent;
+    for (const out of [windowRuntimeEvent(event), loggedRuntimeEvent(event), windowRuntimeEvent(forged)]) {
+      const info = (out as { envInfo?: Record<string, unknown> }).envInfo;
+      expect(info).toEqual({
+        names: ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "HOME", "PATH", "PROVIDER_LOOKALIKE"],
+        absent: ["BASH_ENV"], shell: ["/bin/sh", "-c"], capture: "session",
+        provenance: { kind: "inherited", cli: "2.1.305", adds: ["CLAUDECODE"], unenforceable: ["POSIXLY_CORRECT", "GIT_SSH"], ownerRouting: ["ANTHROPIC_BASE_URL"] },
+        managedEnv: ["PAGER"],
+      });
+      const text = JSON.stringify(out);
+      expect(text).not.toContain(FAKE_PROVIDER_KEY);
+      expect(text).not.toContain(FAKE_SHELL_VALUE);
+      expect(text).not.toContain("provider.invalid");
+      expect(Object.hasOwn(out, "execEnv")).toBe(false);
+    }
+  });
+
   it("is allowlisted even when the ask carries no tool call or mounts", () => {
     const { toolCall: _call, mcpMounts: _mounts, ...rest } = ask() as RuntimeEvent & { toolCall?: unknown; mcpMounts?: unknown };
     expect(JSON.stringify(windowRuntimeEvent(rest as RuntimeEvent))).not.toContain(FAKE_PROVIDER_KEY);

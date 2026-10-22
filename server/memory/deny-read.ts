@@ -78,6 +78,9 @@ function threadDenied(db: DatabaseSync, threadId: string): boolean {
  * readers only: the content judge (the owner's direct chat and rooms, reader.audience null) and memory recall skip them, as the RC did
  * (replay-lineage.ts: `audience !== null && row.state === "revoked"`). One primary-key seek per mark row. */
 const NOT_AUDIENCE_ONLY = "revoke_id NOT IN (SELECT revoke_id FROM memory_revoke_audience)";
+/** A memory mark under the coalesced audience row (AUDIENCE_COALESCED) is audience-only too: a late edge's child under it is marked with
+ * that id at its write (revoke-commit.ts inheritMarks). */
+const NOT_AUDIENCE_MEMORY = `${NOT_AUDIENCE_ONLY} AND revoke_id<>${AUDIENCE_COALESCED}`;
 /** The lowest since_lsn of any pending revoke covering this thread (its own rows and the `*` rows), or null. Two seeks on the primary key.
  * A content reader skips audience-only revokes, and receipt flips not yet committed (those are audience-only too). */
 function pendingSince(db: DatabaseSync, threadId: string, content: boolean): number | null {
@@ -321,8 +324,8 @@ function memoryVerdict(db: DatabaseSync, ref: MemoryRef, memo: MemoryMemo): Line
     return memoryScopeVerdict(db, String(batched.scope_id), num(batched.created_lsn), memo);
   }
   const marked = version
-    ? one(db, `SELECT 1 AS x FROM memory_deny_memory WHERE kind=? AND id=? AND version IN (0,?) AND ${NOT_AUDIENCE_ONLY} LIMIT 1`, ref.kind, ref.id, version)
-    : one(db, `SELECT 1 AS x FROM memory_deny_memory WHERE kind=? AND id=? AND ${NOT_AUDIENCE_ONLY} LIMIT 1`, ref.kind, ref.id);
+    ? one(db, `SELECT 1 AS x FROM memory_deny_memory WHERE kind=? AND id=? AND version IN (0,?) AND ${NOT_AUDIENCE_MEMORY} LIMIT 1`, ref.kind, ref.id, version)
+    : one(db, `SELECT 1 AS x FROM memory_deny_memory WHERE kind=? AND id=? AND ${NOT_AUDIENCE_MEMORY} LIMIT 1`, ref.kind, ref.id);
   if (marked) return withheld("deny-memory");
   let scopeId: string | null = ref.scopeId ?? null, created: number | null = null;
   if (ref.kind === "record") {
@@ -459,7 +462,7 @@ function batchRecords(db: DatabaseSync, refs: readonly MemoryRef[], memo: Memory
     const slice = wanted.slice(at, at + BATCH);
     for (const ref of slice) memo.records.set(memoryRefKey(ref), null);
     const rows = all(db, `SELECT r.id,r.version,r.scope_id${hasCreatedLsn(db, "memory_records") ? ",r.created_lsn" : ""},
-        EXISTS (SELECT 1 FROM memory_deny_memory dm WHERE dm.kind='record' AND dm.id=r.id AND dm.version IN (0,r.version) AND dm.${NOT_AUDIENCE_ONLY}) AS marked,
+        EXISTS (SELECT 1 FROM memory_deny_memory dm WHERE dm.kind='record' AND dm.id=r.id AND dm.version IN (0,r.version) AND dm.${NOT_AUDIENCE_ONLY} AND dm.revoke_id<>${AUDIENCE_COALESCED}) AS marked,
         EXISTS (SELECT 1 FROM memory_tombstones t WHERE t.target_type='record' AND t.target_id=r.id AND (t.revision IS NULL OR t.revision=r.version)) AS tomb
       FROM json_each(?) j JOIN memory_records r ON r.id=json_extract(j.value,'$[0]') AND r.version=json_extract(j.value,'$[1]')`, JSON.stringify(slice.map(ref => [ref.id, ref.version])));
     for (const row of rows) memo.records.set(memoryRefKey({ kind: "record", id: String(row.id), version: Number(row.version) }), row);

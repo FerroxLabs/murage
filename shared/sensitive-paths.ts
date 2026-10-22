@@ -34,13 +34,13 @@ export const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
   },
   {
     id: "ssh",
-    re: /\.ssh\/|id_rsa|id_ed25519|authorized_keys/i,
+    re: /\.ssh[\\/]|id_rsa|id_ed25519|authorized_keys/i,
     read: ["~/.ssh/**"],
     bash: ["*.ssh/*", "*id_rsa*", "*id_ed25519*", "*authorized_keys*"],
   },
   {
     id: "credential-files",
-    re: /\.aws\/credentials|\.netrc|\.npmrc|\.pypirc|\.docker\/config\.json/i,
+    re: /\.aws[\\/]credentials|\.netrc|\.npmrc|\.pypirc|\.docker[\\/]config\.json/i,
     read: ["~/.aws/credentials", "~/.netrc", "~/.npmrc", "~/.pypirc", "~/.docker/config.json"],
     bash: ["*.aws/credentials*", "*.netrc*", "*.npmrc*", "*.pypirc*", "*.docker/config.json*"],
   },
@@ -61,7 +61,7 @@ export const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
   },
   {
     id: "harness-keys",
-    re: /\.codex\/auth\.json|\.claude\/\.credentials|provider-keys|\.murage\/config\.json/i,
+    re: /\.codex[\\/]auth\.json|\.claude[\\/]\.credentials|provider-keys|\.murage[\\/]config\.json/i,
     read: ["~/.codex/auth.json", "~/.claude/.credentials*", "~/.murage/config.json", "**/provider-keys*"],
     bash: ["*.codex/auth.json*", "*.claude/.credentials*", "*provider-keys*", "*.murage/config.json*"],
   },

@@ -10,6 +10,7 @@ import { z } from "zod";
 import { writeFileAtomic } from "./atomic.ts";
 import { assertNoCloudPlaintext, withCloudCredentials, syncCloudCredentialMemory } from "./cloud-home/credentials.ts";
 import { DEFAULT_INSTANCES } from "./default-instances.ts";
+import { isCloudHiddenEngine } from "./cloud-home/runnable-engines.ts";
 import { EFFORT_LEVELS, type EffortLevel, type InstanceConfig, type InstanceConfigMap } from "./contracts.ts";
 import { isRemoteMcpServer, parseAnyStoredMcpServer, parseStoredMcpServer } from "./mcp-registry.ts";
 import { mcpEnvHeld, resolveHeldEnv } from "./mcp-secrets.ts";
@@ -1172,7 +1173,7 @@ function injectedEnvironment(cfg: AppConfig, driver: string): Map<string, string
 // Config-file keys are injected as per-instance environment so drivers
 // see them without needing real process env vars — but only into the
 // driver that consumes each key (injectedEnvironment above).
-export function instanceConfigs(cfg: AppConfig): InstanceConfigMap {
+export function allInstanceConfigs(cfg: AppConfig): InstanceConfigMap {
   // The default `grok` instance rides the `grokAgent` driver, not the API-key
   // one: like claude and codex it needs no credential from us, just the CLI
   // installed and logged in (it shows up unavailable otherwise). The API-key
@@ -1252,6 +1253,16 @@ export function instanceConfigs(cfg: AppConfig): InstanceConfigMap {
     }
   }
   return map;
+}
+
+/** The engines this process offers. On a Cloud home an engine the home cannot run
+ * (no launcher argv rule or no image install, cloud-home/runnable-engines.ts) is left
+ * out, so the registry, the picker and every engine list never carry it. The desktop
+ * keeps the whole map. */
+export function instanceConfigs(cfg: AppConfig, env: NodeJS.ProcessEnv = process.env): InstanceConfigMap {
+  const all = allInstanceConfigs(cfg);
+  if (env.MURAGE_CLOUD_ROLE !== "home") return all;
+  return Object.fromEntries(Object.entries(all).filter(([, entry]) => !isCloudHiddenEngine(entry.driver)));
 }
 
 // ── user-configured MCP servers ─────────────────────────────────────────

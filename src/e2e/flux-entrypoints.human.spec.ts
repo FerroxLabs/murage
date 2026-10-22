@@ -93,7 +93,10 @@ test('Models Flux paste navigates without saving or carrying the pasted key',asy
   await page.getByRole('button',{name:'Look for keys',exact:true}).click();
   await expect(page.getByText('Manage Flux Router in Models.',{exact:false})).toBeVisible();
   expect(writes).toEqual([]);
-  await page.getByRole('button',{name:'Open Flux Router in Models',exact:true}).click();
+  // The pasted Flux row's own button: the Models page can also show the Fuigo engine's "Open Flux Router in Models"
+  // (EngineSetup's FluxKeyCard) while Fuigo waits on a key, so the name alone is not one element.
+  const fluxPasteRow=page.getByTestId('paste-key-row').filter({hasText:'FLUX_API_KEY'});
+  await fluxPasteRow.getByRole('button',{name:'Open Flux Router in Models',exact:true}).click();
   await expect(page.getByRole('alert').filter({hasText:'Save or dismiss the other pasted keys'})).toBeVisible();
   await expect(page.getByTestId('paste-key-row')).toHaveCount(2);
   // nothing moved: the cursor stays with the pasted keys
@@ -102,7 +105,7 @@ test('Models Flux paste navigates without saving or carrying the pasted key',asy
   await page.screenshot({path:testInfo.outputPath('tools-pending-keys-390.png')});
   await page.getByTestId('paste-key-row').filter({hasText:'BOX_TOKEN'}).getByRole('button',{name:'Ignore',exact:true}).click();
   await expect(page.getByTestId('paste-key-row')).toHaveCount(1);
-  await page.getByRole('button',{name:'Open Flux Router in Models',exact:true}).click();
+  await fluxPasteRow.getByRole('button',{name:'Open Flux Router in Models',exact:true}).click();
   await expect(page.getByLabel('Flux Router key',{exact:true})).toHaveValue('');
   await expect(page.getByLabel('Flux Router key',{exact:true})).toBeFocused();
   expect(writes).toEqual([]);expect(await page.content()).not.toContain(key);

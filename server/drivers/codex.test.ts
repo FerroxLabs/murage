@@ -10,13 +10,13 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSy
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import * as procs from "../procs.ts";
 
 import type { ProviderInstance } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { CODEX_MCP_TOOL_TIMEOUT_SEC, CodexDriver, codexCloudBilling } from "./codex.ts";
-import { setCodexFloorsForTests } from "./codex-hook.ts";
+import { HOOK_LIVENESS_WIN32_MS, setCodexFloorsForTests } from "./codex-hook.ts";
 import { DATA_DIR } from "../config.ts";
 import { flushDecisionLog } from "../decision-log.ts";
 import { resetIsolationCache } from "./isolation-cache.ts";
@@ -2374,6 +2374,20 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
     await recorder.until((e: any) => e.type === "turn.completed" && e.turnId === asked.turnId);
   });
 
+  // Real codex 0.163 raised a second card (mcpServer/elicitation/request, codex_approval_kind mcp_tool_call) for Murage's own
+  // `computer` mount behind the hook's card. Gated turns mount Murage's own servers with "approve"; legacy keeps "auto"; custom stays unquieted.
+  it("mounts Murage's own servers with approve behind the hook gate so codex raises no second card", async () => {
+    const own = { command: process.execPath, args: ["-e", ""], env: {} };
+    for (const [version, gated] of [["codex-cli 0.147.0", false], ["codex-cli 0.163.0", true]] as const) {
+      await recreate(version);
+      const r = await run(`t-appr-${version}`, [], () => null, { integrations: { agents: AGENTS, localComputer: own } });
+      const argv = r.dump().argv.join(" ");
+      expect(argv.includes('mcp_servers.computer.default_tools_approval_mode="approve"')).toBe(gated);
+      expect(argv.includes('mcp_servers.computer.default_tools_approval_mode="auto"')).toBe(!gated);
+      expect(argv).not.toContain("mcp_servers.notes.default_tools_approval_mode");
+    }
+  });
+
   // T91
   it("keeps the retired policy below the version that refuses it and gates from there", async () => {
     for (const [version, gated] of [["codex-cli 0.147.0", false], ["codex-cli 0.148.0", false], ["codex-cli 0.149.0", true], ["codex-cli 0.163.0", true]] as const) {
@@ -2426,6 +2440,31 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
       expect(methods).not.toContain("turn/start");
     }
   });
+
+  // 1.0.3 RUN B (Windows): the hook started past 10 s and the turn was refused. On win32 the bound is HOOK_LIVENESS_WIN32_MS (45 s);
+  // this runs the driver at a tenth of real time through the bound's own override: a hook starting at 12 s and at 40 s (1.2 s, 4 s)
+  // is proven and the turn completes, one that never starts is refused at the bound (4.5 s), not before.
+  it("proves a Windows-slow SessionStart inside the wider bound and refuses one that never starts at the bound", async () => {
+    const scale = 10;
+    const warned: string[] = [];
+    const warn = vi.spyOn(console, "warn").mockImplementation((...args: unknown[]) => { warned.push(args.map(String).join(" ")); });
+    onTestFinished(() => warn.mockRestore());
+    process.env.MURAGE_CODEX_HOOK_LIVENESS_MS = String(HOOK_LIVENESS_WIN32_MS / scale);
+    for (const startsAt of [12_000, 40_000]) {
+      process.env.FAKE_CODEX_SESSION_DELAY_MS = String(startsAt / scale);
+      await recreate();
+      const r = await run(`t-slow-${startsAt}`, [], () => null);
+      expect(r.done, `hook at ${startsAt} ms`).toMatchObject({ ok: true });
+    }
+    delete process.env.FAKE_CODEX_SESSION_DELAY_MS;
+    process.env.FAKE_CODEX_HOOKS = "dead";
+    await recreate();
+    const started = Date.now();
+    const dead = await run("t-slow-dead", [], () => null);
+    expect(dead.done).toMatchObject({ ok: false, stopReason: "scope_unavailable" });
+    expect(Date.now() - started).toBeGreaterThanOrEqual(HOOK_LIVENESS_WIN32_MS / scale);
+    expect(warned.some((line) => line === `codex hook-liveness bound_ms=${HOOK_LIVENESS_WIN32_MS / scale} source=env`)).toBe(true);
+  }, 30_000);
 
   it("interrupts and refuses when the SessionStart handler never posts", async () => {
     process.env.FAKE_CODEX_HOOKS = "dead";

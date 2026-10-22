@@ -7,6 +7,7 @@ import { accessSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, open
 import { dirname, join, resolve, sep } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { browserBundlePaths, browserBundleSpec } from "./browser-bundle-release.ts";
+import { lastWindowsBrowserImageState, nativeAuthenticodeIn, settleWindowsBrowserImageChecks, WINDOWS_BROWSER_IMAGE_PINS, windowsBrowserImageChecksRunning, windowsBrowserImageState, type NativeAuthenticode, type UnsignedPePin } from "./browser-windows-identity.ts";
 import { checkPackagedMacBrowserAsync, packagedMacBrowserState, verifyPackagedMacBrowserAsync } from "./browser-macos-identity.ts";
 import { BROWSER_CHECKING_REASON, BROWSER_CHECK_UNFINISHED_REASON } from "../shared/browser-unavailable.ts";
 import { isUserChromeEndpoint } from "./user-chrome.ts";
@@ -19,7 +20,7 @@ import { browserLaunchFailure, CLOUD_BROWSER_BOT, spawnCloudBrowser } from "./cl
 import { cloudHomeCopy } from "./cloud-home/copy.ts";
 
 const KEY_FILE = "browser-engine-key";
-type ResolveOptions = { dataDir?: string; env?: NodeJS.ProcessEnv; platform?: NodeJS.Platform; arch?: string; musl?: boolean; /** false: read what is already known and never launch a signature check. */ startCheck?: boolean };
+type ResolveOptions = { dataDir?: string; env?: NodeJS.ProcessEnv; platform?: NodeJS.Platform; arch?: string; musl?: boolean; /** false: read what is already known and never launch a signature check. */ startCheck?: boolean; /** Windows' signature check (test seam); default: the packaged engine-exclusion addon. */ authenticode?: NativeAuthenticode | null };
 export type BrowserEngineStatus =
   | { kind: "ready"; binaryPath: string; version: string | null; runtimeVerified: false }
   | { kind: "unavailable"; reason: string; installable: boolean; /** The packaged browser is being checked right now: it will be ready in a moment, nothing failed. */ checking?: true; /** The check could not finish this time (busy machine). Nothing was refused; the next attempt asks again. */ unfinished?: true };
@@ -140,10 +141,18 @@ function admissionIdentity(resources: string, bundle: { directory: string; engin
     })]);
   } catch { return null; }
 }
+/** On Windows every browser image (packaged, downloaded or on PATH) is admitted by the one shared rule: the pinned original bytes plus
+ * only an Authenticode table, AND a Valid Ferrox Labs signature from Windows itself. */
+function windowsImage(file: string, pin: UnsignedPePin, options: ResolveOptions) {
+  const env = options.env ?? process.env;
+  const native = options.authenticode !== undefined ? options.authenticode : nativeAuthenticodeIn(env.MURAGE_RESOURCES_PATH ?? env.OMB_RESOURCES_PATH);
+  return windowsBrowserImageState(file, pin, native, options.startCheck !== false);
+}
 function matchesPin(file: string, options: ResolveOptions): boolean {
   const platform = options.platform ?? process.platform;
   const asset = resolveAgentBrowserReleaseAsset(platform, options.arch ?? process.arch, options.musl ?? isMusl(platform));
   if (!asset || !executable(file, platform)) return false;
+  if (platform === "win32") return asset.sha256 === WINDOWS_BROWSER_IMAGE_PINS.engine.sha256 && windowsImage(file, WINDOWS_BROWSER_IMAGE_PINS.engine, options) === "ok";
   try {
     if (lstatSync(file).size !== asset.bytes) return false;
     return createHash("sha256").update(readFileSync(file)).digest("hex") === asset.sha256;
@@ -167,9 +176,12 @@ export function resolveAgentBrowserBinary(options: ResolveOptions = {}): string 
       // Fast path ONLY for a byte-identical, already-admitted bundle: every
       // stat field below changes on any write, replace, chmod or re-sign.
       if (key && hit && Date.now() - hit.at < ADMISSION_CACHE_TTL_MS && executable(bundle.engine, platform) && executable(bundle.chrome, platform)) return hit.binary;
-      const raw = matchesPin(bundle.engine, options) && executable(bundle.chrome, platform)
-        && createHash("sha256").update(readFileSync(bundle.chrome)).digest("hex") === pin.chrome.executableSha256
-        && lstatSync(bundle.manifest).isFile() && lstatSync(bundle.licenses).isDirectory();
+      // Both images are looked at every time, so Windows checks the engine and Chrome together.
+      const engine = matchesPin(bundle.engine, options);
+      const chrome = executable(bundle.chrome, platform) && (platform === "win32"
+        ? pin.chrome.executableSha256 === WINDOWS_BROWSER_IMAGE_PINS.chrome.sha256 && windowsImage(bundle.chrome, WINDOWS_BROWSER_IMAGE_PINS.chrome, options) === "ok"
+        : createHash("sha256").update(readFileSync(bundle.chrome)).digest("hex") === pin.chrome.executableSha256);
+      const raw = engine && chrome && lstatSync(bundle.manifest).isFile() && lstatSync(bundle.licenses).isDirectory();
       const admitted = raw ? bundle.engine
         : target === "darwin-arm64" && executable(bundle.engine, platform) && executable(bundle.chrome, platform)
           && packagedMacBrowserState(resources, process.execPath, options.startCheck !== false) === "ok" ? bundle.engine : null;
@@ -189,7 +201,7 @@ export function resolveAgentBrowserBinary(options: ResolveOptions = {}): string 
     const dir = part.trim().replace(/^"|"$/gu, "");
     if (!dir) continue;
     const candidate = resolve(dir, platform === "win32" ? "agent-browser.exe" : "agent-browser");
-    if (executable(candidate, platform)) return candidate;
+    if (platform === "win32" ? matchesPin(candidate, options) : executable(candidate, platform)) return candidate;
   }
   return null;
 }
@@ -204,7 +216,9 @@ export function packagedBrowserRefusedReason(resources: string, platform: string
 /** Start the packaged browser's signature check now (at start-up) and wait on the one shared run. Resolves when it has finished. */
 export async function warmBrowserEngineCheck(env: NodeJS.ProcessEnv = process.env): Promise<void> {
   const resources = env.MURAGE_RESOURCES_PATH ?? env.OMB_RESOURCES_PATH;
-  if (process.platform !== "darwin" || !resources || env.MURAGE_AGENT_BROWSER_PATH?.trim()) return;
+  if (!resources || env.MURAGE_AGENT_BROWSER_PATH?.trim()) return;
+  if (process.platform === "win32") { resolveAgentBrowserBinary({ env }); await settleWindowsBrowserImageChecks(); return; }
+  if (process.platform !== "darwin") return;
   try { await verifyPackagedMacBrowserAsync(resources); } catch { /* the status reads the outcome */ }
 }
 export { BROWSER_CHECK_UNFINISHED_REASON };
@@ -218,14 +232,24 @@ export async function settledBrowserEngineStatus(options: ResolveOptions = {}, s
   if (status.kind !== "unavailable" || !status.checking) return status;
   const env = options.env ?? process.env;
   const resources = env.MURAGE_RESOURCES_PATH ?? env.OMB_RESOURCES_PATH;
-  if (!resources) return status;
+  const windows = (options.platform ?? process.platform) === "win32";
+  if (!resources && !windows) return status;
   try { settle.onChecking?.(status.reason); } catch { /* a note that cannot be written must not stop the turn */ }
   let outcome: "ok" | "failed" | "unfinished" = "unfinished";
-  try { outcome = await checkPackagedMacBrowserAsync(resources, process.execPath, settle.waitMs, settle.cancelled); } catch { /* the status below reads the outcome */ }
+  if (windows) outcome = await settleWindowsBrowserImageChecks(settle.waitMs, settle.cancelled) ? "ok" : "unfinished";
+  else try { outcome = await checkPackagedMacBrowserAsync(resources!, process.execPath, settle.waitMs, settle.cancelled); } catch { /* the status below reads the outcome */ }
   const final = browserEngineStatus({ ...options, startCheck: false });
   // The wait's own answer is kept: a check still running when the wait ended is "unfinished", not "checking" again.
   if (outcome === "unfinished" && final.kind === "unavailable" && final.checking) return { kind: "unavailable", installable: false, unfinished: true, reason: BROWSER_CHECK_UNFINISHED_REASON };
   return final;
+}
+/** What the last admission look found for the packaged Windows images, for the owner's message: a refusal says reinstall, a check
+ * in flight says checking, anything else (a native call that threw, a file that moved) is unfinished and asked again. */
+function packagedWindowsBrowserState(bundle: { engine: string; chrome: string }): "checking" | "failed" | "unfinished" {
+  const states = [bundle.engine, bundle.chrome].map(lastWindowsBrowserImageState);
+  if (states.includes("failed")) return "failed";
+  if (states.includes("checking") && windowsBrowserImageChecksRunning()) return "checking";
+  return states.every(state => state === "ok") ? "failed" : "unfinished";
 }
 export function browserEngineStatus(options: ResolveOptions = {}): BrowserEngineStatus {
   const binaryPath = resolveAgentBrowserBinary(options);
@@ -240,7 +264,8 @@ export function browserEngineStatus(options: ResolveOptions = {}): BrowserEngine
     const target = `${platform}-${options.arch ?? process.arch}`;
     let present = false;
     try { present = lstatSync(browserBundlePaths(join((env.MURAGE_RESOURCES_PATH ?? env.OMB_RESOURCES_PATH)!, "browser-engine"), target).engine).isFile(); } catch { /* missing */ }
-    const state = present && platform === "darwin" ? packagedMacBrowserState((env.MURAGE_RESOURCES_PATH ?? env.OMB_RESOURCES_PATH)!, process.execPath, options.startCheck !== false) : "failed";
+    const state = present && platform === "darwin" ? packagedMacBrowserState((env.MURAGE_RESOURCES_PATH ?? env.OMB_RESOURCES_PATH)!, process.execPath, options.startCheck !== false)
+      : present && platform === "win32" ? packagedWindowsBrowserState(browserBundlePaths(join((env.MURAGE_RESOURCES_PATH ?? env.OMB_RESOURCES_PATH)!, "browser-engine"), target)) : "failed";
     if (state === "checking") {
       return { kind: "unavailable", installable: false, checking: true, reason: BROWSER_CHECKING_REASON };
     }
@@ -250,6 +275,7 @@ export function browserEngineStatus(options: ResolveOptions = {}): BrowserEngine
       ? packagedBrowserRefusedReason((env.MURAGE_RESOURCES_PATH ?? env.OMB_RESOURCES_PATH)!, platform)
       : "The browser that comes with Murage is missing. Reinstall Murage from the download to fix it." };
   }
+  if (platform === "win32" && windowsBrowserImageChecksRunning()) return { kind: "unavailable", installable: false, checking: true, reason: BROWSER_CHECKING_REASON };
   const asset = resolveAgentBrowserReleaseAsset(platform, options.arch ?? process.arch, options.musl ?? isMusl(platform));
   return { kind: "unavailable", reason: (options.env ?? process.env).MURAGE_AGENT_BROWSER_PATH
     ? "MURAGE_AGENT_BROWSER_PATH is not a readable executable file"
