@@ -41,10 +41,12 @@
 // mode (only read-only blocks it), so a write cannot be asked: at Ask the turn
 // runs read-only instead (the Ask hard stop, ../ask-stop.ts). Before the prompt
 // the Gateway session's permission mode is set to "read-only" (`openclaw
-// gateway call sessions.patch`, OpenClaw 2026.10.10-beta.3 and later: mutation tools are
+// gateway call sessions.patch`, OpenClaw 2026.8.1 and later: mutation tools are
 // left out and exec is denied) and the prompt's directive is
-// `/exec security=deny`. Older releases (2026.10.5) reject permissionMode on sessions.patch, so there an Ask turn is
-// refused before anything runs (ASK_STOP_OPENCLAW_OLD_NOTE). The mode it replaced is recorded under Murage's data
+// `/exec security=deny`. Releases before 2026.8.1 (2026.7.35 and earlier) have no permissionMode on sessions.patch
+// (the closed schema rejects it), so there an Ask turn is refused before anything runs (ASK_STOP_OPENCLAW_OLD_NOTE).
+// The Gateway's answer to the patch is the session entry it stored, and the turn runs only when that entry shows
+// "read-only". The mode it replaced is recorded under Murage's data
 // dir and put back by the next turn that is not at Ask, so Auto and Full
 // access run exactly as before. A mode that cannot be set refuses the turn.
 //
@@ -107,9 +109,11 @@ export function openclawPromptText(turn: { system?: string; text: string; askLev
 export const OPENCLAW_READ_ONLY_MODE = "read-only";
 const GATEWAY_CALL_TIMEOUT_MS = 30_000;
 
-/** The first OpenClaw release whose `sessions.patch` takes `permissionMode` (2026.10.10-beta.3). The released 2026.10.5
- *  rejects the field (additionalProperties false), so an Ask turn there cannot be stopped before changes. */
-export const OPENCLAW_PERMISSION_MODE_FLOOR = "2026.10.10-beta.3";
+/** The first OpenClaw release whose `sessions.patch` takes `permissionMode` (2026.8.1). Checked by unpacking the npm
+ *  packages: 2026.8.1, 2026.8.35, 2026.9.1, 2026.9.33 (extended-stable) and 2026.10.5 (latest) all carry it in
+ *  SessionsPatchMutationProperties with the "read-only" mode; 2026.7.35 and earlier do not, and their closed schema
+ *  (additionalProperties false) rejects the field, so an Ask turn there cannot be stopped before changes. */
+export const OPENCLAW_PERMISSION_MODE_FLOOR = "2026.8.1";
 
 /** Parse "2026.10.5", "OpenClaw 2026.10.10-beta.3 (abc)" into [y, m, d, beta] (beta Infinity for a release); null when unreadable. */
 export function parseOpenclawVersion(text: string): [number, number, number, number] | null {
@@ -127,6 +131,12 @@ export function openclawHasPermissionMode(versionText: string): boolean {
     if (v[i]! !== floor[i]!) return v[i]! > floor[i]!;
   }
   return true;
+}
+
+/** The line setup and engine detection show beside an OpenClaw version below the floor (the same one a refused Ask
+ *  turn shows); undefined at or above it. */
+export function openclawVersionNote(versionText: string): string | undefined {
+  return openclawHasPermissionMode(versionText) ? undefined : ASK_STOP_OPENCLAW_OLD_NOTE;
 }
 
 /** Ask the installed binary for its version (`openclaw --version`). Throws on failure. */
@@ -203,6 +213,8 @@ export async function applyOpenclawAskStop(ctx: { env: Record<string, string | u
       mkdirSync(join(dataDir, "native", "openclaw-ask-stop"), { recursive: true, mode: 0o700 });
       writeFileAtomic(recordPath, `${JSON.stringify({ key, previous })}\n`, { mode: 0o600 });
     }
+    // The answer's `entry` is the session row the Gateway stored after the patch (OpenClaw's projectSessionPatchResult),
+    // not our request echoed back: a Gateway that took the call but did not apply the mode shows no "read-only" here.
     const patched = await call(cli, "sessions.patch", { key, permissionMode: OPENCLAW_READ_ONLY_MODE }, ctx.env);
     const entry = patched.entry as Record<string, unknown> | undefined;
     if (patched.ok !== true || entry?.permissionMode !== OPENCLAW_READ_ONLY_MODE) {
@@ -250,6 +262,7 @@ export const openclawSupport: AcpSupport = {
   isAuthenticated: () => true,
   buildPromptText: openclawPromptText,
   askStop: { apply: (ctx) => applyOpenclawAskStop(ctx) },
+  versionNote: openclawVersionNote,
 };
 
 export { DEFAULT_OPENCLAW_AGENT };

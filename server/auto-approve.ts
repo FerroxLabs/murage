@@ -978,7 +978,10 @@ function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, con
   }
   if (!destructive && !sensitive && !context?.scope && resolved.kind === "mcp" && resolved.provenance === "own") {
     const app = resolved.own ? ownAppTool(`mcp__${CONNECTED_APPS_SERVER}__${resolved.tool}`) : undefined;
-    const read = app !== undefined ? APP_LOOKUPS[app] !== undefined : isOwnRead(resolved.mountId, resolved.tool);
+    // A connected-app lookup is a read on an ordinary turn. On a routine's own run the four lookups are what the
+    // routine remembers (Rule 76a): each is answered only by its own saved key (the routine grants, below), so a
+    // remembered search never answers a schema read or any other lookup.
+    const read = app !== undefined ? APP_LOOKUPS[app] !== undefined && context?.routineLevel !== true : isOwnRead(resolved.mountId, resolved.tool);
     if (read || (bot.autoApprove && isOwnUnasked(resolved.mountId, resolved.tool))) {
       return { approve: `auto-approved ${resolved.name} (Murage's own tool)`, source: "own-unasked", rule: `${resolved.mountId}/${resolved.tool}` };
     }

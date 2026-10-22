@@ -2,6 +2,7 @@
 // Runs only under vitest: `node pip-stub-cli.mjs --stub=<scenario> --stub-out=<file> <real argv...>`.
 // It appends one JSON record per invocation (argv, env, cwd, prompt, pid) and emits scripted lines.
 import { appendFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 
 const raw = process.argv.slice(2);
 const stub = {};
@@ -19,7 +20,12 @@ const ls = (d) => { try { return d ? readdirSync(d).sort() : null; } catch { ret
 const settingsArg = after("--settings");
 let settingsContent = null;
 try { if (settingsArg && !settingsArg.startsWith("{")) settingsContent = readFileSync(settingsArg, "utf8"); } catch { settingsContent = null; }
-const record = (extra = {}) => appendFileSync(stub["stub-out"], JSON.stringify({ homeFiles: ls(process.env.FUIGO_HOME || process.env.GROK_HOME || process.env.CLAUDE_CONFIG_DIR), argv, env: process.env, cwd: process.cwd(), prompt, pid: process.pid, scenario, settingsContent, ...extra }) + "\n");
+// The environment the driver handed this stub, by name. A credential-named value is recorded as its sha256 fingerprint (what
+// fixture-dump.ts fixtureCredentialFingerprint gives), never as the value, so no record file holds a secret (fixture-dump.test.ts).
+const CREDENTIAL_NAME = /(?:^|_)(?:KEY|TOKEN|SECRET|PASSWORD|PASSPHRASE|CREDENTIALS?)$/i;
+const recordedEnv = () => Object.fromEntries(Object.entries(process.env).map(([name, value]) =>
+  [name, typeof value === "string" && CREDENTIAL_NAME.test(name) ? createHash("sha256").update(value).digest("hex") : value]));
+const record = (extra = {}) => appendFileSync(stub["stub-out"], JSON.stringify({ homeFiles: ls(process.env.FUIGO_HOME || process.env.GROK_HOME || process.env.CLAUDE_CONFIG_DIR), argv, env: recordedEnv(), cwd: process.cwd(), prompt, pid: process.pid, scenario, settingsContent, ...extra }) + "\n");
 const engineHome = () => process.env.FUIGO_HOME || process.env.GROK_HOME || process.env.CLAUDE_CONFIG_DIR;
 record();
 if (after("--debug-file")) writeFileSync(after("--debug-file"), "text-only fixture started");

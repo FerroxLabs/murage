@@ -200,9 +200,12 @@ function refuseLaunchFlags(): void {
   }
 }
 
-// FAKE_CLAUDE_PROBE_LOG: one JSON line per probe (--version, auth status) with the environment it was handed.
+// FAKE_CLAUDE_PROBE_LOG: one JSON line per probe (--version, auth status) with the pinned names it was handed, and only those: never
+// the whole inherited environment, which holds the owner's credentials (fixture-dump.test.ts). A name the probe was not handed is absent.
+const PROBE_LOG_NAMES = ["BASH_ENV", "CLAUDE_ENV_FILE", "GIT_EDITOR", "GIT_SSH", "PAGER"] as const;
 if (process.env.FAKE_CLAUDE_PROBE_LOG && (argv[0] === "--version" || (argv.includes("auth") && argv[argv.indexOf("auth") + 1] === "status"))) {
-  appendFileSync(process.env.FAKE_CLAUDE_PROBE_LOG, JSON.stringify({ probe: argv[0] === "--version" ? "version" : "auth", env: process.env }) + "\n");
+  const pinned = Object.fromEntries(PROBE_LOG_NAMES.filter((name) => process.env[name] !== undefined).map((name) => [name, process.env[name]]));
+  appendFileSync(process.env.FAKE_CLAUDE_PROBE_LOG, JSON.stringify({ probe: argv[0] === "--version" ? "version" : "auth", env: pinned }) + "\n");
 }
 
 // Snapshot probes: both answer on argv alone and exit without reading stdin.
@@ -432,6 +435,15 @@ const callPermissionPromptTool = (args: Record<string, unknown>): Promise<string
     let answered = false;
     const send = (message: unknown) => child.stdin.write(JSON.stringify(message) + "\n");
     child.on("error", reject);
+    // The server must answer `initialize` promptly; a tool call after that may wait on a person for as long as it likes.
+    // One that never answers fails the call with the reason, instead of holding the turn until the suite's own timeout.
+    const startDeadline = setTimeout(() => {
+      if (answered) return;
+      answered = true;
+      child.kill();
+      reject(new Error(`the ${match[1]} server did not answer initialize within ${Number(process.env.FAKE_CLAUDE_MCP_START_MS) || 30_000} ms${stderr.trim() ? `: ${stderr.trim()}` : ""}`));
+    }, Number(process.env.FAKE_CLAUDE_MCP_START_MS) || 30_000);
+    startDeadline.unref();
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk: string) => { stderr = (stderr + chunk).slice(-2000); });
     // A server that exits before answering fails the call, as the real CLI reports a server that did not come up:
@@ -453,6 +465,7 @@ const callPermissionPromptTool = (args: Record<string, unknown>): Promise<string
           continue;
         }
         if (message.id === 1) {
+          clearTimeout(startDeadline);
           // what the real CLI reports when the server's own env was lost on the way (1.0.3: no MCP server came up)
           const lost = lostServerEnv(child.pid, server.env ?? {});
           if (lost.length) {

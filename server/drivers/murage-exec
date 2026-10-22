@@ -73,6 +73,10 @@ case "$(uname -s 2>/dev/null)" in
     done
     ;;
 esac
+# `env` below is found through this process's PATH. A turn whose handed PATH is empty or lacks /usr/bin (a login shell that
+# set none, as on a stock Ubuntu) would otherwise fail every command and every MCP server with "env: not found". Only
+# this script's own PATH is widened, and only when `env` is not on it; both execs run `env -i`, so no command sees it.
+if ! command -v env >/dev/null 2>&1; then PATH="/usr/bin:/bin${PATH:+:$PATH}"; fi
 cd -- "$cwd" || exit 126
 if [ "${#murage_exec_kept[@]}" -eq 0 ]; then
   exec env -i "${args[@]}" "$shell" -c "$1"

@@ -116,6 +116,11 @@ jobs:
           set -euo pipefail
           node scripts/mac-artifact-qualification.mjs | tee qualification-evidence/package-gates.json
           MURAGE_SMOKE_DIST="$PWD/release/mac-arm64/Murage.app/Contents/Resources/server" node scripts/smoke-packaged-server.mjs > qualification-evidence/packaged-server.txt 2>&1
+      - name: "Gate: packaged Codex hook blocks cleanly in node mode and the guard refuses a lost node mode"
+        # 1.0.3: the hook runs as `<Murage binary> <script>`. Proves, on the final packaged arm64 app with a throwaway HOME and a
+        # 20 s timeout per run, that the node-mode shape blocks with the script's own reason and the old shape exits 2 with no app.
+        run: node scripts/prove-codex-hook-packaged-mac.mjs release/mac-arm64/Murage.app
+
       # The FINAL packaged build.json, not a pre-build directory (handoff 9):
       # release mode, the store identity, no development ID.
       - name: Murage for Chrome identity in the packaged app

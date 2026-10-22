@@ -914,6 +914,8 @@ export interface InstanceInfo {
     reason?: string;
     authenticated?: boolean;
     version?: string | null;
+    /** a line shown beside the detected version (OpenClaw below its Ask floor) */
+    versionNote?: string;
     /** a reported cost on a subscription is notional; the UI says so */
     billing?: "metered" | "subscription";
     /** Cloud home: offer this engine's sign-in again (Claude's token is near expiry or no longer accepted) */

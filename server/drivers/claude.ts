@@ -18,7 +18,7 @@ import { notePromptSent } from "../turn-hold.ts";
 //   - the bot's cloud computer (box.ascii.dev) via server/computer-proxy.ts
 //     — screenshot/exec/open_url, the CUA-on-the-box bridge
 import { boundedEnvMs } from "./env-ms.ts";
-import { awaitRequiredMcp, isUnsupportedAnswer, McpBackoff, mcpReconnectWaitMs, McpStatusSupport, mcpWaitChipTitle, parseMcpStatus, splitMcpServers, toolsMayBeLoadingNotice, toolsUnavailableNotice, unavailableLabels, type McpReadiness, type McpStatusAnswer } from "./mcp-readiness.ts";
+import { awaitRequiredMcp, isUnsupportedAnswer, McpBackoff, mcpFirstAnswerMs, mcpReconnectWaitMs, McpStatusSupport, mcpWaitChipTitle, parseMcpStatus, splitMcpServers, toolsMayBeLoadingNotice, toolsUnavailableNotice, unavailableLabels, type McpReadiness, type McpStatusAnswer } from "./mcp-readiness.ts";
 import { applyProviderRoute, type ProviderTurnRoute } from "../provider-routing.ts";
 import { claudeTextOnlyTurn } from "./headless-text-only.ts";
 import { execFileSync } from "node:child_process";
@@ -46,7 +46,7 @@ import { fluxKey } from "../flux-config.ts";
 import { applyFluxSurface, isFluxModel } from "../flux-routing.ts";
 import { claudeCustomHeadersValue, fluxMemoryContextForTurn, fluxMemoryDecision, logFluxMemoryHeaders, type FluxMemoryDecision } from "../flux-memory-headers.ts";
 import { mergeFluxCatalog } from "../flux-surface.ts";
-import { awaitCliTreeStopped, CLI_CALLER_DEADLINE_MS, cliTreeConfirmedStopped, cliTreeStoppedSignal, forceCliTreeStopped, brokerSocketPath, describeSpawnFailure, execCli, killCliTree, spawnCli } from "../procs.ts";
+import { awaitCliTreeStopped, CLI_CALLER_DEADLINE_MS, cliTreeConfirmedStopped, cliTreeStoppedSignal, forceCliTreeStopped, brokerSocketPath, describeSpawnFailure, engineJob, execCli, killCliTree, spawnCli } from "../procs.ts";
 import { cachedCliVersion } from "../cli-version-cache.ts";
 import { anyMountIncomplete, bindCredentialPath, clearMountsIncomplete, connectorMountRefsOf, connectorScopeOf, createTurnCredentialStore, splitTurnSecrets, type TurnCredentialStore } from "./turn-credentials.ts";
 import { descendantBaseline, untrackedDescendants, processNames } from "./process-tree.ts";
@@ -2927,7 +2927,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           chipId = `mcp-wait-${chipTurnId}`;
           emit({ ...base(threadId, chipTurnId), type: "item.started", itemType: "tool", origin: "murage", itemId: chipId, title: mcpWaitChipTitle(unavailableLabels(waitingFor)) });
         },
-      });
+      }, { firstAnswerMs: mcpFirstAnswerMs() });
       if (!outcome.stopped) {
         claudeMcpStatusSupport.observe(identity, !outcome.unchecked ? "answered" : outcome.uncheckedReason === "unsupported" ? "unsupported" : "no-answer");
       }
@@ -3955,7 +3955,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           cwd,
           env,
           stdio: ["pipe", "pipe", "pipe"],
-        });
+        }, engineJob());
       } catch (error) {
         // The fence above released the prompt to a write that will not happen (turn-attribution.ts, I14).
         turn.notWritten?.();

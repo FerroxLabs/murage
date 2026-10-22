@@ -667,6 +667,11 @@ export interface ProviderAdapter {
    * does. interruptTurn and resetSession close the idle child and confirm its
    * exit. */
   awaitTurnTeardown?(threadId: ThreadId, turnId?: TurnId): Promise<ProviderStopResult>;
+  /** Resolves when the exact turn's child has closed, however late, observed
+   * only by its confirmed close and never by a timer; a child that never
+   * closes leaves it pending. Call it before awaitTurnTeardown: the adapter
+   * forgets a child once it closed. A retained direct run is released by it. */
+  awaitTurnClose?(threadId: ThreadId, turnId?: TurnId): Promise<void>;
   /** Retire retained native state for exactly this thread, including idle
    * sessions. Resolves after retirement; callers must omit stale resume cursors.
    * Unlike interruptTurn, this must prevent implicit reuse on the next turn. */
@@ -729,6 +734,8 @@ export interface ProviderSnapshot {
   reason?: string;
   authenticated?: boolean;
   version?: string | null;
+  /** A line shown beside the detected version (OpenClaw below its Ask floor: ASK_STOP_OPENCLAW_OLD_NOTE). */
+  versionNote?: string;
   /** How this instance is paid for, when the driver can tell: a reported
    * cost on a subscription is notional and the UI labels it as such. */
   billing?: "metered" | "subscription";
