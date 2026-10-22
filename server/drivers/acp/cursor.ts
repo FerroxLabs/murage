@@ -15,6 +15,7 @@ import { writeFileAtomic } from "../../atomic.ts";
 import { DATA_DIR } from "../../config.ts";
 import type { ModelCatalog, ProviderErrorCode, SendTurnInput } from "../../contracts.ts";
 import { execCli } from "../../procs.ts";
+import { removeLink } from "../../link-removal.ts";
 import { OWN_BUILTINS, OWN_READS } from "../../../shared/own-servers.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 
@@ -383,6 +384,25 @@ export function cursorOwnReadAllow(turn: Pick<SendTurnInput, "integrations">): s
  *  untouched: cursor-agent keeps auth.json outside CURSOR_CONFIG_DIR (verified on 2026.10.19: Linux
  *  $XDG_CONFIG_HOME/cursor, macOS ~/.cursor). Sessions live in `acp-sessions` of the config dir, so that one folder
  *  is linked through to the real one and a session resumes whichever kind of turn opened it. */
+export type SessionsSymlink = (target: string, path: string, type: "dir" | "junction") => void;
+
+/** The `acp-sessions` link. A directory symlink needs admin rights or Developer Mode on Windows, which an ordinary
+ *  account lacks, so there it is a directory junction (no privilege; the target is absolute). If the link cannot be
+ *  made at all the turn still runs, on a sessions folder of its own, rather than failing before spawn. */
+export function linkCursorSessions(target: string, link: string, platform: NodeJS.Platform = process.platform, symlink: SessionsSymlink = symlinkSync): void {
+  try {
+    symlink(target, link, platform === "win32" ? "junction" : "dir");
+  } catch (error) {
+    if (platform !== "win32") throw error;
+    mkdirSync(link, { recursive: true, mode: 0o700 });
+  }
+}
+
+/** Removes the `acp-sessions` link and never what it points to (a junction is dropped as an entry, not followed). */
+export function removeCursorSessionsLink(link: string, platform: NodeJS.Platform = process.platform): boolean {
+  return removeLink(link, undefined, platform);
+}
+
 export function scopeCursorHostComputerConfig(env: Record<string, string | undefined>, botId?: string, allow: readonly string[] = [CURSOR_HOST_COMPUTER_ALLOW]): string {
   const real = cursorConfigDir(env);
   const root = join(DATA_DIR, "native", "cursor-host-config");
@@ -394,7 +414,7 @@ export function scopeCursorHostComputerConfig(env: Record<string, string | undef
   try { linked = lstatSync(sessions).isSymbolicLink(); } catch { /* absent */ }
   if (!linked && !existsSync(sessions)) {
     mkdirSync(join(real, "acp-sessions"), { recursive: true, mode: 0o700 });
-    symlinkSync(join(real, "acp-sessions"), sessions, "dir");
+    linkCursorSessions(join(real, "acp-sessions"), sessions);
   }
   // The CLI rewrites this file (model, display); keep what it wrote and set only the permissions.
   const file = join(dir, "cli-config.json");

@@ -317,8 +317,8 @@ export function scopeDroidHome(env: Record<string, string | undefined>, cliVersi
  * least the tool's ("high" covers all). The file is read when the process starts (a write after
  * session/new is not honoured), so it is written before the spawn, from spawnArgs, into the Murage-owned
  * scoped home only. The grant is bound to the server name AND its exact command and arguments: another
- * server, or a VM computer (a different command), is not covered. Shell, edits and other servers keep asking.
- * A turn without the host computer removes the grant.
+ * server is not covered. Only a host-computer turn (localComputer.scope === "local-computer") is granted: a Local VM
+ * or VPS computer keeps asking. Shell, edits and other servers keep asking. Any other turn removes the grant.
  */
 export function droidServerIdentity(command: string, args: readonly string[]): string {
   return createHash("sha256").update(JSON.stringify({ type: "stdio", command, args })).digest("hex").slice(0, 32);
@@ -329,7 +329,9 @@ export function applyDroidHostComputerGrant(turn: Pick<SendTurnInput, "integrati
   // Only ever the Murage-owned scoped home: with no scope there is nothing to write (droid then asks itself).
   if (!home || !home.startsWith(scopedCliHomeRoot("droid"))) return;
   const path = join(home, ".factory", "mcp.json");
-  const local = turn.integrations?.localComputer;
+  // Host computer only (the same check as core.ts controlsHost): a Local VM or VPS computer carries no
+  // `scope`, so it gets no grant and droid raises its own request_permission, which is the Ask card.
+  const local = turn.integrations?.localComputer?.scope === "local-computer" ? turn.integrations.localComputer : undefined;
   let doc: Record<string, unknown> = {};
   try {
     const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;

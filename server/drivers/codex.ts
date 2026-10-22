@@ -29,8 +29,8 @@ import { computerProxyEnv } from "../container-computer.ts";
 import { CODEX_APPROVAL_PIN_ARGS, codexIsolationArgs, codexTurnPolicy, scopedCodexHome } from "./codex-isolation.ts";
 import { ScopeUnavailableError, engineUpdateRequired, scopeLocalFailureOf, withScopeRetry } from "./scoped-cli-home.ts";
 import {
-  CODEX_GATE_MIN, CodexHookGate, HOOK_ASK_BOUND_MS, HOOK_LIVENESS_MS, HookDecisionTable, codexGatePlan, codexShellFormArgs,
-  CODEX_HOOK_LAUNCH_ENV, hookConfigOf, hookWindowsLaunchValue, newHookToken, routeDelivery, tripwireLine, trustHooks, versionAtLeast, writeHookFiles,
+  CODEX_GATE_MIN, CodexHookGate, HOOK_ASK_BOUND_MS, HookDecisionTable, hookLivenessSetting, codexGatePlan, codexShellFormArgs,
+  CODEX_HOOK_EXE_ENV, CODEX_HOOK_LAUNCH_ENV, hookConfigOf, hookWindowsLaunchValue, newHookToken, routeDelivery, tripwireLine, trustHooks, versionAtLeast, writeHookFiles,
   type CodexGatePlan, type HookAnswer, type HookDelivery, type HookRoute,
 } from "./codex-hook.ts";
 import { execEnvHanded, execEnvNow, handedEngineEnv, ownedTurnNames, type HandedEnv } from "../engine-env.ts";
@@ -44,7 +44,7 @@ import { customMountEntries } from "../custom-mcp-mounts.ts";
 import { codexConfigMcpServerNames, externalMcpRecords, mountedMcpServerNames } from "./codex-mcp-names.ts";
 import type { ExecEnv, McpMountRecord } from "../../shared/mount-identity.ts";
 import { createPrewarmGate, createTurnMemory, spawnInputsOf, TAKEOVER_FAILED_MESSAGE, warmPool, pastWarmMaxAge, spawnedAtOf } from "./warm-pool.ts";
-import { awaitCliTreeStopped, describeSpawnFailure, execCli, killCliTree, spawnCli } from "../procs.ts";
+import { awaitCliTreeStopped, describeSpawnFailure, engineJob, execCli, killCliTree, spawnCli } from "../procs.ts";
 import { cachedCliVersion } from "../cli-version-cache.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
 
@@ -1012,8 +1012,12 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         }
         const hookFiles = gated && hookGate ? writeHookFiles(scopedHome!, hookGate.path, hookToken) : null;
         // Windows: the hooks.json command is `<system cmd.exe> /d /v:off /c %MURAGE_CODEX_HOOK%` (codex-hook.ts), the same in cmd and
-        // PowerShell; the launch line it expands to rides in this process's environment, which Codex hands each hook it runs.
-        if (hookFiles && !reuse && process.platform === "win32") env[CODEX_HOOK_LAUNCH_ENV] = hookWindowsLaunchValue(process.execPath, hookFiles.script);
+        // PowerShell; it expands to the quoted path of the scope's launcher (murage-hook.cmd, which sets ELECTRON_RUN_AS_NODE and runs
+        // the script with MURAGE_CODEX_EXE, this program), and that value rides in this process's environment, which Codex hands each hook it runs.
+        if (hookFiles && !reuse && process.platform === "win32") {
+          env[CODEX_HOOK_LAUNCH_ENV] = hookWindowsLaunchValue(hookFiles.launcher);
+          env[CODEX_HOOK_EXE_ENV] = process.execPath;
+        }
         // the process's SessionStart proof, kept with it between turns
         const proof: HookProof | undefined = reuse?.proof ?? (gated ? new HookProof(hookConfigOf(scopedHome!)) : undefined);
         // On a home the launcher stages only the rollout this process will thread/resume (its
@@ -1033,7 +1037,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
               cwd: turnCwd,
               env,
               stdio: ["pipe", "pipe", "pipe"],
-            });
+            }, engineJob());
           }
         } catch (error) {
           if (!reuse) hookGate?.close();
@@ -1303,7 +1307,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         if (refusal.hookLive) return Promise.resolve(true);
         if (refusal.refused) return Promise.resolve(false);
         liveness ??= new Promise<boolean>((resolveLive) => {
-          const bound = Number(process.env.MURAGE_CODEX_HOOK_LIVENESS_MS) > 0 ? Number(process.env.MURAGE_CODEX_HOOK_LIVENESS_MS) : HOOK_LIVENESS_MS;
+          const setting = hookLivenessSetting();
+          const bound = setting.ms;
+          // one line per Codex process (its one SessionStart wait): the effective bound and its source, no other value
+          console.warn(`codex hook-liveness bound_ms=${bound} source=${setting.source}`);
           const timer = setTimeout(() => { refuseUnproven(); resolveLive(false); }, bound);
           timer.unref?.();
           // a proof after the refusal is not taken (acceptProof answers false): late proof cannot revive the turn

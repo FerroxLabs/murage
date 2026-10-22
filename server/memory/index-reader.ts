@@ -234,7 +234,7 @@ function handle(): Open | null {
   let db: DatabaseSync | null = null;
   try {
     db = new DatabaseSync(path, { readOnly: true });
-    db.exec(`PRAGMA busy_timeout=${BUSY_MS}`);
+    db.exec(`PRAGMA busy_timeout=${BUSY_MS}; PRAGMA cache_size=-${READER_CACHE_KIB}`);
     // A file the helper has not finished creating has no word table yet.
     db.prepare("SELECT 1 FROM entries LIMIT 1").get();
     const authIno = authorityIno();
@@ -376,6 +376,12 @@ async function sortSliced<T>(rows: readonly T[], order: (a: T, b: T) => number, 
   }
   return runs[0]!;
 }
+/** Page cache of each read-only connection on the index, in KiB (negative cache_size = KiB). The SQLite default is 2 MiB, which a scan
+ * over a 70 MB index outgrows within one search, so every miss became a pread (on macOS, a syscall and context switch each). Pages are
+ * allocated only as they are read, so a small index costs no more than its own size. Open at once: the shared reader (1) plus the
+ * scans, which are the idle pool (SCAN_POOL_MAX = 2) and any overlapping searches (one more each, closed when they finish). Three
+ * resident in steady state, four while two searches overlap, so at most 4 x 16 MiB = 64 MiB, and 48 MiB at rest. */
+const READER_CACHE_KIB = 16384;
 /** A scan reads on its own connection, so searches that overlap each hold their own snapshot. Idle ones wait here for the next. */
 interface Scan { db: DatabaseSync; ino: number; dev: number; authIno: number; eligible: boolean; statements: Map<string, StatementSync>; epoch: number }
 const scanPool: Scan[] = [];
@@ -388,7 +394,7 @@ function borrowScan(current: Open): Scan | null {
   let db: DatabaseSync | null = null;
   try {
     db = new DatabaseSync(current.path, { readOnly: true });
-    db.exec(`PRAGMA busy_timeout=${BUSY_MS}`);
+    db.exec(`PRAGMA busy_timeout=${BUSY_MS}; PRAGMA cache_size=-${READER_CACHE_KIB}`);
     return { db, ino: current.ino, dev: current.dev, authIno: current.authIno, eligible: current.eligible && attachAuthority(db), statements: new Map(), epoch };
   } catch (error) { try { db?.close(); } catch { /* already closed */ } logSwallowed("recall", error); return null; }
 }

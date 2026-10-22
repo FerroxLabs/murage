@@ -288,6 +288,24 @@ describe("local setup failures", () => {
     expect(markup).not.toContain("This request hit a problem");
   });
 
+  // Windows: Claude's private folders need Murage's native helper. A missing or quarantined helper is this device's setup,
+  // worded from its code (runtimeError.local.windows-helper.*); the raw code stays under Technical details only.
+  it.each(["windows_browser_helper_missing", "windows_browser_private_storage_unavailable"])("gives a Windows helper failure (%s) the windows-helper card, never Provider settings", (code) => {
+    const message = `Claude needs Murage's Windows helper (murage-browser-host.exe) to start (${code}).`;
+    const markup = render({ message, localFailure: "windows-helper", onRetry: () => {} });
+    expect(markup).toContain('data-runtime-error="local-setup"');
+    expect(markup).toContain('data-local-failure="windows-helper"');
+    const [visible, details] = markup.split("<details");
+    expect(visible).toContain(rendered(en["runtimeError.local.windows-helper.title"]!));
+    expect(visible).toContain(rendered(en["runtimeError.local.windows-helper.message"]!));
+    expect(visible).toContain(rendered(en["runtimeError.local.windows-helper.resolution"]!));
+    expect(en["runtimeError.local.windows-helper.message"]).toBe("Claude needs Murage's Windows helper (murage-browser-host.exe) to start. If your antivirus moved it to quarantine, restore it, or reinstall Murage. Then send your message again. Codex and Fuigo keep working.");
+    expect(visible).not.toContain(code);
+    expect(details).toContain(code);
+    expect(markup).not.toMatch(providerAdvice);
+    expect(markup).not.toContain("This request hit a problem");
+  });
+
   // Turns saved by earlier builds, when a browser check failed the whole
   // turn, carry no tag. Their Murage-authored copy still gets the honest card.
   it.each([

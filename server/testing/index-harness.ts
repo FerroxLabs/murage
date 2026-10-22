@@ -674,7 +674,10 @@ beforeAll(async () => {
 
   // The isolated negative control selects a preserved pre-change harness;
   // production never gains an authorization bypass or test mint endpoint.
-  child = spawn(process.execPath, ["--import", browserFixturePrelude, "--import", pathToFileURL(join(SERVER_DIR, "testing", "search-fetch-preload.mjs")).href, process.env.MURAGE_IDENTITY_CONTROL_ENTRY ?? join(SERVER_DIR, "index.ts")], {
+  // A test file that sets MURAGE_TEST_UNBOUNDED_REVOKE_BUDGET=1 before this harness starts gets a child with the revoke marker's
+  // per-minute write budget lifted (revoke-budget-preload.mjs); every other file runs the child exactly as before.
+  const revokeBudgetPreload = process.env.MURAGE_TEST_UNBOUNDED_REVOKE_BUDGET === "1" ? ["--import", pathToFileURL(join(SERVER_DIR, "testing", "revoke-budget-preload.mjs")).href] : [];
+  child = spawn(process.execPath, ["--import", browserFixturePrelude, "--import", pathToFileURL(join(SERVER_DIR, "testing", "search-fetch-preload.mjs")).href, ...revokeBudgetPreload, process.env.MURAGE_IDENTITY_CONTROL_ENTRY ?? join(SERVER_DIR, "index.ts")], {
     cwd: ROOT,
     env: {
       ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
@@ -691,6 +694,7 @@ beforeAll(async () => {
         MURAGE_FLUX_COMPOSIO_BROKER_URL: `http://127.0.0.1:${boxStubPort}${FAKE_FLUX_BROKER_PREFIX}`,
         MURAGE_FLUX_COMPOSIO_BROKER_TOKEN: FAKE_FLUX_BROKER_TOKEN,
       } : {}),
+      ...(process.env.MURAGE_TEST_UNBOUNDED_REVOKE_BUDGET === "1" ? { MURAGE_TEST_UNBOUNDED_REVOKE_BUDGET: "1" } : {}),
       MURAGE_STATIC_DIR: staticDir,
       // The preload isolates only native execution; authority uses the real harness.
       MURAGE_AGENT_BROWSER_PATH: process.execPath,

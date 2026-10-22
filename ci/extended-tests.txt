@@ -1383,3 +1383,4 @@ server/drivers/win-process-table.test.ts	extended
 server/memory/pip-reaper-win32.test.ts	extended
 server/memory/record-keys-budget.test.ts	the record-keys backfill write budget (perf-shaped io-hotpath check)
 server/browser-engine-windows-signed-real.test.ts	real signed Windows browser images from a packaged installer (needs WIN_SIGNED_BROWSER_RESOURCES; skipped otherwise)
+server/lee-phantom-scenario.test.ts	extended

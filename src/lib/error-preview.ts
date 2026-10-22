@@ -9,7 +9,7 @@
 // api_error: …". A preview is one plain sentence chosen the same way the card
 // chooses its heading, and never the engine's text.
 import { t } from "@/lib/i18n";
-import { engineErrorCategory, isEngineFolderFailure, type ProviderErrorInfo } from "../../shared/provider-error";
+import { engineErrorCategory, isWordedLocalFailure, type ProviderErrorInfo } from "../../shared/provider-error";
 import { isProviderSafetyBlock } from "../../shared/provider-safety";
 import { plainTurnError } from "../../shared/turn-error-code";
 
@@ -34,7 +34,7 @@ const sentence = (text: string) => (/[.!?]$/.test(text.trim()) ? text.trim() : `
 export function errorPreview(tool: { name: string; setup?: boolean; errorKind?: string; errorDetails?: string; providerError?: ProviderErrorInfo; localFailure?: string; localFailureEngine?: string; /** a sidebar line's reading of the details (shared/sidebar-line.ts) */ blocked?: true } | undefined | null): string | undefined {
   if (!tool || !tool.name.startsWith("error:")) return undefined;
   if (tool.providerError) return sentence(providerErrorTitle(tool.providerError));
-  if (isEngineFolderFailure(tool.localFailure)) {
+  if (isWordedLocalFailure(tool.localFailure)) {
     return sentence(t(`runtimeError.local.${tool.localFailure}.title`, { engine: tool.localFailureEngine || "Engine" }));
   }
   if (tool.setup) return "This engine needs setup.";

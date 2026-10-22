@@ -93,6 +93,9 @@ export const LOCAL_SETUP_FAILURES = [
   "engine-symlink-required", "engine-login-link-lost",
   // The owner's engine settings file that a bot's copy is made from cannot be read: the copy is removed and the turn does not start.
   "engine-config-invalid",
+  // Windows: Murage's native helper (murage-browser-host.exe) that makes Claude's owner-only folders is missing or could not run
+  // (antivirus quarantine is the usual cause). Fail-closed: the turn does not start. Worded from the code (runtimeError.local.windows-helper.*).
+  "windows-helper",
 ] as const;
 export type LocalSetupFailure = (typeof LOCAL_SETUP_FAILURES)[number];
 /** The failures worded from their code in the owner's language with the engine named (runtimeError.local.<code>.*). */
@@ -101,6 +104,8 @@ export const ENGINE_FOLDER_FAILURES = [
 ] as const satisfies readonly LocalSetupFailure[];
 export type EngineFolderFailure = (typeof ENGINE_FOLDER_FAILURES)[number];
 export const isEngineFolderFailure = (value: unknown): value is EngineFolderFailure => (ENGINE_FOLDER_FAILURES as readonly unknown[]).includes(value);
+/** The failures whose card body is worded from the code (runtimeError.local.<code>.message), not the recorded English line. */
+export const isWordedLocalFailure = (value: unknown): value is EngineFolderFailure | "windows-helper" => isEngineFolderFailure(value) || value === "windows-helper";
 
 /** The browser engine's own failure copy (server/browser-engine.ts), as
  * earlier builds recorded it when a browser check failed the whole turn.

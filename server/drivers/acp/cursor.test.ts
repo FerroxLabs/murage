@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, lstatSync, mkdtempSync, readFileSync, readlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, symlinkSync, writeFileSync } from "node:fs";
 import { fixtureCredentialFingerprint } from "../../testing/fixture-dump.ts";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -24,6 +24,8 @@ import {
   STATIC_CURSOR_MODELS,
   resolveCursorAcpModelId,
   fetchCursorModels,
+  linkCursorSessions,
+  removeCursorSessionsLink,
 } from "./cursor.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testing", "fake-acp-cli.ts");
@@ -554,5 +556,41 @@ describe("Murage's own reads run unasked by cursor on every turn (real-engine ga
     const second: Record<string, string | undefined> = { CURSOR_CONFIG_DIR: real };
     argsOf(turn(own), second);
     expect(JSON.parse(readFileSync(file, "utf8")).permissions.allow).toEqual(cursorOwnReadAllow(turn(own)));
+  });
+});
+
+describe("cursor acp-sessions link on Windows (no symlink privilege)", () => {
+  const dirs: string[] = [];
+  afterEach(async () => { while (dirs.length) await removeTempDir(dirs.pop()!); });
+  const scratch = () => { const d = mkdtempSync(join(tmpdir(), "cursor-link-")); dirs.push(d); return d; };
+
+  it("win32 makes a junction; POSIX keeps the directory symlink", () => {
+    const calls: string[] = [];
+    linkCursorSessions("T", "L", "win32", (t, p, type) => { calls.push(`${type} ${t} ${p}`); });
+    linkCursorSessions("T", "L", "darwin", (t, p, type) => { calls.push(`${type} ${t} ${p}`); });
+    expect(calls).toEqual(["junction T L", "dir T L"]);
+  });
+
+  it("win32 where even a junction is refused still gets a sessions folder; POSIX errors still throw", () => {
+    const root = scratch();
+    const refuse = () => { throw Object.assign(new Error("EPERM"), { code: "EPERM" }); };
+    linkCursorSessions("T", join(root, "s"), "win32", refuse);
+    expect(lstatSync(join(root, "s")).isDirectory()).toBe(true);
+    expect(() => linkCursorSessions("T", join(root, "p"), "linux", refuse)).toThrow(/EPERM/);
+  });
+
+  it("removing the link removes only the link, never the sessions it points to", () => {
+    const root = scratch();
+    const target = join(root, "real", "acp-sessions");
+    mkdirSync(target, { recursive: true });
+    writeFileSync(join(target, "s1.json"), "keep");
+    const link = join(root, "cfg-acp-sessions");
+    symlinkSync(target, link, process.platform === "win32" ? "junction" : "dir");
+    expect(removeCursorSessionsLink(link)).toBe(true);
+    expect(existsSync(link)).toBe(false);
+    expect(readFileSync(join(target, "s1.json"), "utf8")).toBe("keep");
+    mkdirSync(join(root, "plain"));
+    expect(() => removeCursorSessionsLink(join(root, "plain"))).toThrow();
+    expect(existsSync(join(root, "plain"))).toBe(true);
   });
 });

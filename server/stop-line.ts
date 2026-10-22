@@ -796,6 +796,9 @@ function splitPowerShell(line: string): { commands: PsCommand[]; complex: boolea
       dynamic = true; inWord = true; word += line.slice(i, close + 1); i = close; continue;
     }
     if (ch === "=" && inWord && /^(\[[\w.]+\])?\$[\w:]+$/.test(word)) { endWord(); current.push({ text: "=", dynamic: false }); continue; }
+    // `$x+=…`, `$x??=…`: every PowerShell assignment operator splits off as `=` does (1.0.3 G-b3-1)
+    const compound = ch === "=" && inWord ? /^((?:\[[\w.]+\])?\$[\w:]+)([+\-*/%]|\?\?)$/.exec(word) : null;
+    if (compound) { word = compound[1]!; endWord(); current.push({ text: `${compound[2]}=`, dynamic: false }); continue; }
     if (ch === "(") {
       if (call) { call += 1; opaqueCall = true; endWord(); continue; }
       if (inWord && /::\w+$/.test(word)) { endWord(); call = 1; continue; }
@@ -855,6 +858,8 @@ function expandPs(word: Word, vars: ReadonlyMap<string, string>, home: string, c
   return { text: restore(text), dynamic: unknown };
 }
 
+/** PowerShell's assignment operators. */
+const PS_ASSIGN = /^([+\-*/%]|\?\?)?=$/;
 const PS_DELETE = new Set(["remove-item", "rm", "del", "erase", "rd", "rmdir", "ri"]);
 const PS_PATH_PARAMS = /^-(path|literalpath|lp|pspath|p)$/i;
 /** Parameters that take a value that is not a place. */
@@ -1007,6 +1012,9 @@ function psHit(line: string, place: StopLinePlace, depth = 0): StopHit | null {
     if (variable) {
       const name = (variable[1] ?? variable[2]!).toLowerCase();
       vars.delete(name);
+      // `+= -= *= /= %= ??=` read their right side as `=` does; only `=`
+      // binds a known value (the others leave it unknown, deleted above)
+      const assigns = PS_ASSIGN.test(raw[1]?.text ?? "");
       if (raw[1]?.text === "=") {
         const value = expandAll(raw.slice(2));
         if (value.length === 1 && !value[0]!.dynamic) vars.set(name, value[0]!.text);
@@ -1019,7 +1027,7 @@ function psHit(line: string, place: StopLinePlace, depth = 0): StopHit | null {
       // `$x = Remove-Item -Recurse ~` runs the command on its right (1.0.4,
       // G09-1): read the right side as a command too. A literal value read
       // that way names no delete, so it changes nothing.
-      if (raw[1]?.text !== "=" || raw.length < 3) continue;
+      if (!assigns || raw.length < 3) continue;
       raw = raw.slice(2);
     }
     const cmd = expandAll(raw);

@@ -51,6 +51,8 @@ const PATH_SEP = WIN ? ";" : ":";
 const hostPath = (): string => [GIT_USR_BIN, process.env.PATH ?? (WIN ? "" : "/usr/bin:/bin")].filter(Boolean).join(PATH_SEP);
 /** Names a Windows process (the Git Bash launcher, node) needs to start at all. */
 const winBase = (): Record<string, string> => (WIN ? Object.fromEntries(["SystemRoot", "windir", "TEMP", "TMP", "COMSPEC"].flatMap((name) => (process.env[name] ? [[name, process.env[name]!]] : []))) : {});
+/** A real turn's map always carries HOME. On a macOS runner a Homebrew shim on PATH prints "$HOME must be set to run brew" to stderr when it runs under `env -i` without one. */
+const homeBase = (): Record<string, string> => (!WIN && process.env.HOME ? { HOME: process.env.HOME } : {});
 const sameDir = (a: string, b: string): boolean => realpathSync.native(a).toLowerCase() === realpathSync.native(b).toLowerCase();
 
 describe.skipIf(!BASH)(`murage-exec in front of MCP servers${BASH ? "" : " (skipped: Git for Windows bash not found; set CLAUDE_CODE_GIT_BASH_PATH)"}`, () => {
@@ -60,7 +62,7 @@ describe.skipIf(!BASH)(`murage-exec in front of MCP servers${BASH ? "" : " (skip
   beforeEach(() => {
     proj = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-exec-mcp-")));
     wrapper = installMurageExec();
-    envFile = writeExecEnvFile(`t-mcp-${process.pid}`, { ...winBase(), PATH: hostPath(), SHARED: "turn" }, proj, BASH!);
+    envFile = writeExecEnvFile(`t-mcp-${process.pid}`, { ...winBase(), ...homeBase(), PATH: hostPath(), SHARED: "turn" }, proj, BASH!);
   });
   afterEach(() => removeTempDirSync(proj));
   // Run the wrapper as Claude's shell does (through bash: a Windows file has no shebang to execute).

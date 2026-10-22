@@ -61,7 +61,7 @@ import { decodeInjectId } from "../local-inject.ts";
 import { createFuigoFailureObservations, failureKind } from "./failure-diagnostics.ts";
 import { withCliMemoryLearning } from "../cli-memory-learning.ts";
 import { DIAGNOSTIC_RPC_METHODS, parseRuntimeErrorDiagnostic } from "../../../shared/error-diagnostic.ts";
-import { describeSpawnFailure, execCli, killCliTree, spawnCli } from "../../procs.ts";
+import { describeSpawnFailure, engineJob, execCli, killCliTree, spawnCli } from "../../procs.ts";
 import { cachedCliVersion } from "../../cli-version-cache.ts";
 import { claudeExecutableIdentity } from "../claude-guards.ts";
 import { ProviderStopUnconfirmedError, providerCloseDeadlineMs, TurnTeardowns, type ChildTeardown, type TeardownWait } from "../child-teardown.ts";
@@ -912,6 +912,9 @@ export interface AcpSupport {
   versionFailure?(
     env: Record<string, string | undefined>, config: AcpConfig, detail: string,
   ): { reason: string; setupAction?: "repair" } | undefined;
+  /** A line engine detection shows beside a detected version (ProviderSnapshot.versionNote), e.g. OpenClaw below its
+   *  Ask floor; undefined for none. */
+  versionNote?(version: string): string | undefined;
   /** CLI argv AFTER the binary name to enter ACP stdio mode. `turn.model` is
    *  the CLI-native id `resolveTurnModel` settled on; `ctx.requestedModel` is
    *  the id the picker asked for (a `host::model` local pick keeps its host
@@ -3893,7 +3896,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 cwd,
                 env,
                 stdio: ["pipe", "pipe", "pipe"],
-              });
+              }, engineJob());
             } catch (error) {
               lifecycle.record("spawn_failed", { errno: errnoCategory(error) });
               throw error;
@@ -4822,7 +4825,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         }
         lastCliVersion = probe.version;
         lastCliSigSeen = cliSig(config.cli, env);
-        return { state: "available", version: probe.version, authenticated: await support.isAuthenticated(env, config) };
+        const versionNote = support.versionNote?.(probe.version);
+        return { state: "available", version: probe.version, authenticated: await support.isAuthenticated(env, config), ...(versionNote ? { versionNote } : {}) };
       };
 
       return withCliMemoryLearning({
@@ -4910,6 +4914,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             if (!closed.closeConfirmed) throw new ProviderStopUnconfirmedError(DRIVER_KIND, closed);
           },
           awaitTurnTeardown: (threadId, turnId) => teardowns.wait(threadId, turnId, acpStopBudget()),
+          awaitTurnClose: (threadId, turnId) => teardowns.closed(threadId, turnId),
           askHostAction: async (threadId, call, signal) => {
             const turn = active.get(threadId);
             return turn?.askHostAction ? turn.askHostAction(call, signal) : null;

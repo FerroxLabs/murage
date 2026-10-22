@@ -10,12 +10,13 @@ export function resolveWindowsBrowserHelper({ resources = process.resourcesPath 
   if (!resources && exists(sibling)) return sibling;
   const root = resources ? path.join(resources, 'browser-extension') : fileURLToPath(new URL('../dist-native/browser-extension/', import.meta.url));
   const helper = path.join(root, `win32-${arch}`, 'murage-browser-host.exe');
-  if (!exists(helper)) throw Error('windows_browser_helper_missing');
+  // code and helperPath let a caller word this for the owner (the Claude driver's windows-helper card); the message stays the code.
+  if (!exists(helper)) throw Object.assign(Error('windows_browser_helper_missing'), { code: 'windows_browser_helper_missing', helperPath: helper });
   return helper;
 }
 function invoke(args, { input, helper = resolveWindowsBrowserHelper(), exec = execFileSync } = {}) {
   try { return exec(helper, args, { input, windowsHide: true, maxBuffer: MAX + 1024, timeout: 15000, stdio: ['pipe', 'pipe', 'pipe'] }); }
-  catch { throw Error('windows_browser_private_storage_unavailable'); }
+  catch { throw Object.assign(Error('windows_browser_private_storage_unavailable'), { code: 'windows_browser_private_storage_unavailable', helperPath: helper }); }
 }
 export function createPrivateWindowsDirectory(directory, options) {
   if (!path.win32.isAbsolute(directory)) throw Error('absolute_private_path_required');

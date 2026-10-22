@@ -13,8 +13,9 @@
 // stdout is the MCP channel — never console.log here.
 import { connect } from "node:net";
 import { randomUUID } from "node:crypto";
+import { BROKER_UNAVAILABLE_NOTE, brokerPathFromArgv } from "./permission-pipe.ts";
 
-const socketPath = process.argv[2] ?? "";
+const socketPath = brokerPathFromArgv(process.argv[2] ?? "");
 
 const waiting = new Map<string, (msg: any) => void>();
 const conn = connect(socketPath);
@@ -26,11 +27,26 @@ interface AllowPermissionResult {
 }
 const dead = () => {
   for (const resolve of waiting.values()) {
-    resolve({ behavior: "deny", message: "Murage: permission broker unavailable, so skip this action" });
+    resolve({ behavior: "deny", message: BROKER_UNAVAILABLE_NOTE });
   }
   waiting.clear();
 };
-conn.on("error", dead);
+// A broker that cannot be reached is said once, on stderr (stdout is the MCP channel; the CLI shows a server's
+// stderr when it fails, and the app log line comes from the driver, which sees the deny note in the tool result).
+// A connect that never completes ends this process with that error instead of leaving the CLI waiting on a server
+// that will never answer.
+const CONNECT_DEADLINE_MS = 10_000;
+const connectTimer = setTimeout(() => {
+  process.stderr.write(`murage-permissions: the permission broker at ${socketPath || "(no socket path)"} did not accept a connection within ${CONNECT_DEADLINE_MS / 1000} s\n`);
+  process.exit(1);
+}, CONNECT_DEADLINE_MS);
+connectTimer.unref();
+conn.once("connect", () => clearTimeout(connectTimer));
+conn.on("error", (error: Error & { code?: string }) => {
+  clearTimeout(connectTimer);
+  process.stderr.write(`murage permission proxy: cannot reach the broker at ${JSON.stringify(socketPath)} (${error.code ?? error.message}); every ask is denied\n`);
+  dead();
+});
 conn.on("close", dead);
 
 // Decode as a stream: a multi-byte character split across two reads must not

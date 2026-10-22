@@ -1,8 +1,10 @@
-import type { ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { describe, expect, it } from "vitest";
 
 import {
   assertSafeCliArgv,
+  confirmWindowsRootClose,
   describeSpawnFailure,
   estimatedWindowsCommandLineChars,
   killCliTree,
@@ -97,6 +99,35 @@ describe("killCliTree stop-route observation", () => {
     expect(kills).toEqual([undefined]);
   });
 
+  // 1.0.3 Windows gate (fuigo.1): taskkill took 5.3 s to refuse with "Access denied" in a session without WMI access, the
+  // fallback kill went out after that, and a close deadline counted from the request had already expired. The route reports
+  // when termination has actually been delivered, so the close budget can start there.
+  it("reports delivery only once taskkill answered and, on failure, the fallback kill went out (mocked)", () => {
+    const order: string[] = [];
+    let answer: ((error: Error | null) => void) | undefined;
+    const { child } = fakeChild();
+    const kill = child.kill;
+    child.kill = (signal) => { order.push("fallback kill"); return kill(signal); };
+    killCliTreeWith(child, undefined, deps("win32", { execFile: (_command, _args, _options, callback) => { answer = callback; } }), () => order.push("delivered"));
+    expect(order).toEqual([]);
+    answer?.(errno("EPERM"));
+    expect(order).toEqual(["fallback kill", "delivered"]);
+
+    const ok: string[] = [];
+    let succeed: ((error: Error | null) => void) | undefined;
+    killCliTreeWith(fakeChild().child, undefined, deps("win32", { execFile: (_command, _args, _options, callback) => { succeed = callback; } }), () => ok.push("delivered"));
+    expect(ok).toEqual([]);
+    succeed?.(null);
+    expect(ok).toEqual(["delivered"]);
+  });
+
+  it("reports delivery at once for a synchronous route or an exited child", () => {
+    const delivered: string[] = [];
+    killCliTreeWith(fakeChild().child, undefined, deps("darwin", { killProcess: () => {} }), () => delivered.push("posix"));
+    killCliTreeWith(fakeChild({ exitCode: 0 }).child, undefined, deps("win32"), () => delivered.push("exited"));
+    expect(delivered).toEqual(["posix", "exited"]);
+  });
+
   it("an exited child needs no route and touches no OS seam", () => {
     const seen: StopRouteObservation[] = [];
     const { child, kills } = fakeChild({ exitCode: 0 });
@@ -156,5 +187,72 @@ describe("Windows CLI argument safety", () => {
       setup: false,
     });
     expect(failure.message).not.toContain("private prompt contents");
+  });
+});
+
+// 1.0.3 Windows gate: Fuigo (fuigo.1) and Codex both end a turn with taskkill /PID <engine> /T /F. In a session without WMI
+// access taskkill took ~5.3 s to refuse; the fallback kill went out after that, and the engine's MCP proxies (Murage.exe
+// grandchildren holding its inherited stdio) let the root close only then. A 5 s confirmation timer started at the request
+// read that as "did not close after Stop".
+describe("confirmWindowsRootClose", () => {
+  const fakeRoot = () => new EventEmitter() as unknown as ChildProcess;
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  it("confirms a root whose stdio closes only after a slow kill route delivered (grandchildren held the pipes until then)", async () => {
+    const root = fakeRoot();
+    const owned: { closed: boolean; delivering?: Promise<void>; deliveredAt?: number } = { closed: false };
+    const answer = confirmWindowsRootClose(root, owned, (done) => {
+      setTimeout(() => { done(); setTimeout(() => (root as unknown as EventEmitter).emit("close", 1, null), 20); }, 150);
+    }, 50, 2_000);
+    await expect(answer).resolves.toBe(true);
+    expect(owned.delivering).toBeUndefined();
+    expect(typeof owned.deliveredAt).toBe("number");
+  });
+
+  it("joins a route already in flight instead of starting a second taskkill", async () => {
+    const root = fakeRoot();
+    let deliver!: () => void;
+    const owned = { closed: false, delivering: new Promise<void>((resolve) => { deliver = resolve; }) };
+    let started = 0;
+    const answer = confirmWindowsRootClose(root, owned, () => { started++; }, 50, 2_000);
+    await sleep(150);
+    deliver();
+    await sleep(10);
+    (root as unknown as EventEmitter).emit("close", 1, null);
+    await expect(answer).resolves.toBe(true);
+    expect(started).toBe(0);
+  });
+
+  it("stays fail-closed for a root that does not close after delivery", async () => {
+    const answer = confirmWindowsRootClose(fakeRoot(), { closed: false }, (done) => done(), 50, 2_000);
+    await expect(answer).resolves.toBe(false);
+  });
+
+  it("stays fail-closed when the kill route never answers, at the absolute cap", async () => {
+    const answer = confirmWindowsRootClose(fakeRoot(), { closed: false }, () => {}, 20, 150);
+    await expect(answer).resolves.toBe(false);
+  });
+
+  // A real process tree: the root dies, its grandchild still holds the inherited stdout, so Node's close (all stdio at EOF)
+  // has not happened and the stop is not confirmed; once the grandchild is gone the close lands and confirms.
+  // On Windows the root (a Node process) puts every child it starts in libuv's own KILL_ON_JOB_CLOSE job, so a plain grandchild
+  // dies with the root, its handles close, and the root's close truthfully confirms. The grandchild that outlives its root (one
+  // a CLI started outside that job) is the detached one: it stays in the test's job only, alive and holding the pipe.
+  it("does not confirm while a live grandchild holds the root's stdio, and confirms once it is gone", async () => {
+    const script = "const {spawn}=require('child_process');const g=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:['ignore','inherit','inherit'],detached:process.platform==='win32'});process.stdout.write(String(g.pid)+'\\n');setInterval(()=>{},1000);";
+    const root = spawn(process.execPath, ["-e", script], { stdio: ["pipe", "pipe", "pipe"] });
+    const grandchild = await new Promise<number>((resolve) => root.stdout.once("data", (chunk) => resolve(Number(String(chunk).trim()))));
+    try {
+      const owned = { closed: false };
+      const held = await confirmWindowsRootClose(root, owned, (done) => { root.kill("SIGKILL"); done(); }, 300, 2_000);
+      expect(root.exitCode !== null || root.signalCode !== null).toBe(true);
+      expect(() => process.kill(grandchild, 0)).not.toThrow(); // the grandchild really outlived its root
+      expect(held).toBe(false);
+      const after = confirmWindowsRootClose(root, { closed: false }, (done) => { process.kill(grandchild, "SIGKILL"); done(); }, 3_000, 5_000);
+      await expect(after).resolves.toBe(true);
+    } finally {
+      try { process.kill(grandchild, "SIGKILL"); } catch { /* gone */ }
+      try { root.kill("SIGKILL"); } catch { /* gone */ }
+    }
   });
 });

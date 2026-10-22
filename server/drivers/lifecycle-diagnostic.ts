@@ -47,7 +47,7 @@ export const LIFECYCLE_STOP_REASONS = [
 export type LifecycleStopReason = (typeof LIFECYCLE_STOP_REASONS)[number];
 
 const STOP_ROUTES = [
-  "windows_taskkill", "windows_child_kill", "posix_group_sigterm", "posix_child_sigterm", "already_exited",
+  "windows_job", "windows_taskkill", "windows_child_kill", "posix_group_sigterm", "posix_child_sigterm", "already_exited",
 ] as const satisfies readonly StopRoute[];
 const STOP_ROUTE_RESULTS = ["requested", "succeeded", "failed", "fallback"] as const satisfies readonly StopRouteResult[];
 

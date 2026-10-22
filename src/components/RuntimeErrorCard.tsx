@@ -1,6 +1,6 @@
 import { useId, type ReactNode } from "react";
 import { AlertTriangle, Hourglass, MonitorX, RefreshCw, Settings2 } from "lucide-react";
-import { isEngineFolderFailure, classifyLocalResourceConflict, classifyLocalSetupFailure, engineErrorCategory, type LocalResourceConflict, type LocalSetupFailure } from "../../shared/provider-error";
+import { isWordedLocalFailure, classifyLocalResourceConflict, classifyLocalSetupFailure, engineErrorCategory, type LocalResourceConflict, type LocalSetupFailure } from "../../shared/provider-error";
 import { t } from "@/lib/i18n";
 import { isProviderSafetyBlock } from "../../shared/provider-safety";
 import { plainEngineError } from "../../shared/plain-engine-error";
@@ -113,7 +113,8 @@ function LocalSetupFailureCard({ failure, engine, message, details, diagnostic, 
 }) {
   const titleId = useId();
   // A bot's engine folder failure is worded from its code in the owner's language; the engine's own English line stays in the details.
-  const engineFailure = isEngineFolderFailure(failure);
+  // So is the Windows helper failure: the recorded line is English, the card speaks the owner's language.
+  const engineFailure = isWordedLocalFailure(failure);
   const params = { engine: engine || "Engine" };
   return <div className="flex justify-start">
     <section role="alert" aria-labelledby={titleId} data-runtime-error="local-setup" data-local-failure={failure} className="w-full max-w-[42rem] rounded-xl border border-danger/30 bg-card p-4 text-ink shadow-sm sm:p-5">

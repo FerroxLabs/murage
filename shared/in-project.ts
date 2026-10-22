@@ -232,19 +232,61 @@ export function placePath(path: string, root: string, opts: PlaceOptions = {}): 
   return { kind: within(realRoot, placed.real, platform) ? "inside" : "outside", real: placed.real, intermediates: placed.intermediates };
 }
 
-/** The spellings the key guard reads for one path: as given, and with
- * backslashes as `/` (the separator part of Rule 34's canonical form). */
-function spellings(text: string): string[] {
-  const slashed = text.replace(/\\/g, "/");
-  return slashed === text ? [text] : [text, slashed];
+/**
+ * The Win32 half of Rule 34's canonical form, for the key guard: the
+ * spelling Win32 reads a path as (lanes/release103/SG-WIN-PATHTRICKS.md).
+ * `\\?\X:` and `\\.\X:` lose their prefix and `\\?\UNC\` reads as `\\`; an
+ * admin share `\\host\X$\rest` reads as `X:\rest` whatever the host (a
+ * loopback cannot be told from a far host without a lookup, so both read as
+ * the local drive: a far path that looks like a hook file is held, never
+ * passed). In each part after the drive a stream suffix (`hooks.json::$DATA`,
+ * `hooks.json:evil`) is cut and trailing dots and spaces are stripped (Win32
+ * strips the last part's; stripping every part can only hold more); `.` and
+ * `..` keep theirs. Separators and case stay as given: `spellings` adds the
+ * `/` form and the rows read case-insensitively. On POSIX the path is
+ * returned as given: every one of these is a file name there.
+ */
+export function win32Canonical(path: string, platform: NodeJS.Platform = process.platform): string {
+  if (platform !== "win32") return path;
+  const unwrapped = path
+    .replace(/^[\\/]{2}[?.][\\/]UNC(?=[\\/])/i, "\\")
+    .replace(/^[\\/]{2}[?.][\\/](?=[A-Za-z]:)/, "")
+    .replace(/^[\\/]{2}[^\\/]+[\\/]([A-Za-z])\$(?=[\\/]|$)/, "$1:");
+  const name = (part: string): string => {
+    if (part === "." || part === "..") return part;
+    const bare = part.replace(/:.*$/, "").replace(/[. ]+$/, "");
+    return bare === "" ? part : bare;
+  };
+  // split with the separators kept, so `\` and `/` land back where they were
+  return unwrapped.split(/([\\/])/).map((part, i) => {
+    if (i % 2 === 1) return part;
+    if (i === 0) {
+      const drive = /^([A-Za-z]:)(.*)$/.exec(part);
+      if (drive) return drive[1] + (drive[2] === "" ? "" : name(drive[2]!));
+    }
+    return name(part);
+  }).join("");
+}
+
+/** The spellings the key guard reads for one path: as given, with
+ * backslashes as `/` (the separator part of Rule 34's canonical form), and
+ * on Windows the Win32 canonical form of each (`win32Canonical`). */
+function spellings(text: string, platform: NodeJS.Platform): string[] {
+  const out = [text];
+  const add = (spelling: string) => { if (!out.includes(spelling)) out.push(spelling); };
+  add(text.replace(/\\/g, "/"));
+  const canonical = win32Canonical(text, platform);
+  add(canonical);
+  add(canonical.replace(/\\/g, "/"));
+  return out;
 }
 
 /** Rule 63 step 3 over every spelling of every path: the first sensitive
- * row hit, by id. */
-function keyGuard(paths: readonly string[], inProject: boolean): string | null {
+ * row hit, by id. `onTheWay`: the paths are folders passed through. */
+function keyGuard(paths: readonly string[], inProject: boolean, platform: NodeJS.Platform, onTheWay = false): string | null {
   for (const path of paths) {
-    for (const spelling of spellings(path)) {
-      const row = sensitivePathRow(spelling, inProject);
+    for (const spelling of spellings(path, platform)) {
+      const row = sensitivePathRow(spelling, inProject, onTheWay);
       if (row) return row;
     }
   }
@@ -265,9 +307,10 @@ export type InProjectResult =
  * string no larger than the gate's message cap, else the call is unread.
  */
 export function inProjectCheck(path: string, root: string, content?: unknown, opts: PlaceOptions = {}): InProjectResult {
+  const platform = opts.platform ?? process.platform;
   const placed = placePath(path, root, opts);
   const inside = placed.kind === "inside";
-  const rule = keyGuard([path, ...(placed.kind === "cannot-place" ? [] : [...placed.intermediates, placed.real])], inside);
+  const rule = keyGuard([path], inside, platform) ?? (placed.kind === "cannot-place" ? null : keyGuard(placed.intermediates, inside, platform, true) ?? keyGuard([placed.real], inside, platform));
   if (rule) return { ok: false, reason: "sensitive", rule };
   if (placed.kind === "cannot-place") return { ok: false, reason: "cannot-place", why: placed.why };
   if (placed.kind === "outside") return { ok: false, reason: "outside", real: placed.real };
@@ -276,7 +319,7 @@ export function inProjectCheck(path: string, root: string, content?: unknown, op
     if (Buffer.byteLength(content, "utf8") > GATE_MESSAGE_BYTES) return { ok: false, reason: "unread", why: "the content is too large to read whole" };
     // Rule 64: the body of a write to an in-project template file is read by the secret-shape rules as if it left the project, so a
     // real key pasted into `.env.example` is sensitive (the carve-out covers the name, never the body)
-    const baseOf = (text: string) => ((opts.platform ?? process.platform) === "win32" ? text.split(/[\\/]/) : text.split("/")).pop()?.toLowerCase() ?? "";
+    const baseOf = (text: string) => (platform === "win32" ? win32Canonical(text, platform).split(/[\\/]/) : text.split("/")).pop()?.toLowerCase() ?? "";
     if (TEMPLATE_BASENAMES.includes(baseOf(placed.real)) || TEMPLATE_BASENAMES.includes(baseOf(path))) {
       const shape = secretShapeIn(content);
       if (shape) return { ok: false, reason: "sensitive", rule: shape };
@@ -372,7 +415,7 @@ export function walkRoot(root: string, project: string, opts: WalkOptions = {}):
       const inside = within(realProject, real, platform);
       // A repository's `.git` holds its config and hooks rows and the rest of
       // its history: the walk treats it as one sensitive directory (Rule 73a).
-      const rule = isDir && name === ".git" ? "project-git" : keyGuard([rel, abs, real], inside);
+      const rule = isDir && name === ".git" ? "project-git" : keyGuard([rel, abs, real], inside, platform, isDir);
       if (rule) {
         hits.push({ path: rel, dir: isDir, rule });
         continue;

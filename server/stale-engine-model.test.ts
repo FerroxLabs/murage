@@ -50,3 +50,13 @@ describe("wiring in index.ts", () => {
     expect(src).toMatch(/existingBot\?\.computer === "local" && body\.computer !== undefined && body\.computer !== "local"\) \{\s*if \(existingBot\.localControlOffNoted\) patch\.localControlOffNoted = false;/);
   });
 });
+
+describe("the real Antigravity driver kind", () => {
+  it("is covered: a retired model on the registered driver is replaced, with its notice", async () => {
+    const { BUILT_IN_DRIVERS } = await import("./drivers/builtIn.ts");
+    const kind = BUILT_IN_DRIVERS.find((driver) => driver.metadata.displayName === "Antigravity")!.driverKind;
+    expect(kind).toBe("antigravityAgent");
+    expect(staleModelReplacement(kind, "gemini-3.1-pro-high", catalog)).toBe("gemini-4-argon-high");
+    expect(staleModelNotice(kind, "a", "b")).toMatch(/^Antigravity no longer offers a;/);
+  });
+});

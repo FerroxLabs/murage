@@ -22,8 +22,16 @@ export const ASK_STOP_PROMPT = [
   `${ASK_STOP_NOTE}]`,
 ].join(" ");
 
-/** The note for an OpenClaw too old to take a session permission mode (before 2026.10.10-beta.3). */
-export const ASK_STOP_OPENCLAW_OLD_NOTE = "At Ask, this OpenClaw version cannot stop before changes. Update OpenClaw, or choose Auto to let me act.";
+/** The stop reason a turn settles with (ok:true) when Murage itself halted it at the Ask boundary, because a change ran
+ *  anyway (Antigravity: the hook did not hold). ACP engines (Cursor, OpenClaw, Grok) halt through session/cancel and
+ *  settle "cancelled"; a refused change there does not halt the turn, and a refused start fails it (ok:false). */
+export const ASK_STOP_REASON = "ask_stop";
+/** Every Ask stop reason a driver may settle with: turnStopped (../turn-outcome.ts) treats each as a stop. */
+export const ASK_STOP_REASONS = [ASK_STOP_REASON] as const;
+
+/** The note for an OpenClaw too old to take a session permission mode (before 2026.8.1): refused Ask turns,
+ *  setup's CLI test and engine detection all show this one line. */
+export const ASK_STOP_OPENCLAW_OLD_NOTE = "At Ask, this OpenClaw version cannot stop before changes. Choose Auto to let me act, or install OpenClaw 2026.8.1 or newer.";
 
 /** The note for a Grok older than GROK_ASK_HOLD_MIN (grok.ts): its `[permission] ask` rules are not proven there, so
  *  an Ask turn is refused before it runs. */

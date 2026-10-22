@@ -910,6 +910,20 @@
   "count": 1
  },
  {
+  "file": "server/drivers/acp/cursor.ts",
+  "function": "scopeCursorHostComputerConfig",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/acp/droid.ts",
+  "function": "applyDroidHostComputerGrant",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
   "file": "server/drivers/acp/droid.ts",
   "function": "ensureDroidInjectModel",
   "callee": "readFileSync",
@@ -950,6 +964,13 @@
   "callee": "readFileSync",
   "root": "engine-home",
   "count": 1
+ },
+ {
+  "file": "server/drivers/acp/hermes.ts",
+  "function": "applyHermesAskHook",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 3
  },
  {
   "file": "server/drivers/acp/hermes.ts",
@@ -1001,11 +1022,39 @@
   "count": 1
  },
  {
+  "file": "server/drivers/acp/openclaw.ts",
+  "function": "readRecord",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
   "file": "server/drivers/acp/opencode-go.ts",
   "function": "hasStoredOpenCodeAuth",
   "callee": "readFileSync",
   "root": "engine-home",
   "count": 1
+ },
+ {
+  "file": "server/drivers/antigravity-relay.ts",
+  "function": "agentFileHasHooks",
+  "callee": "readFileSync",
+  "root": "workspace",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/antigravity-relay.ts",
+  "function": "look",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/antigravity-relay.ts",
+  "function": "openAntigravityRelay",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 2
  },
  {
   "file": "server/drivers/antigravity-scope.ts",
@@ -1044,7 +1093,21 @@
  },
  {
   "file": "server/drivers/antigravity.ts",
+  "function": "antigravityAskStopHooks",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/antigravity.ts",
   "function": "readAntigravityModelCatalog",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/antigravity.ts",
+  "function": "sendTurn",
   "callee": "readFileSync",
   "root": "engine-home",
   "count": 1
@@ -1067,6 +1130,13 @@
   "file": "server/drivers/claude-private.ts",
   "function": "writePrivateFile",
   "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/claude-signin-answers.ts",
+  "function": "load",
+  "callee": "readFileSync",
   "root": "data-dir",
   "count": 1
  },
@@ -1108,6 +1178,13 @@
  {
   "file": "server/drivers/claude.ts",
   "function": "settingsEnvBlock",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/claude.ts",
+  "function": "settingsObjectOf",
   "callee": "readFileSync",
   "root": "engine-home",
   "count": 1

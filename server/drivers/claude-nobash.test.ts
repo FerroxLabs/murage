@@ -13,9 +13,17 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ABSENT_PINS, valuePins } from "../../shared/arg-vocabulary.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 import * as claude from "./claude.ts";
+import { ClaudeGateRecord } from "./claude-private.ts";
 
 // The module's own exports, read loosely so this file fails as a test (not as a type error) at a base without them.
 const mod = claude as unknown as Record<string, (...args: unknown[]) => any>;
+/** Windows: the owner-only ACL comes from the native murage-browser-host.exe, which vitest does not build; a stand-in fs keeps the
+ * real record logic under test (the native helper itself is covered in electron/browser-extension-windows tests). */
+function gateRecordFor(): ClaudeGateRecord | undefined {
+  if (process.platform !== "win32") return undefined;
+  return new ClaudeGateRecord({ platform: "win32", makeWindowsDir: () => undefined, writeWindowsFile: (path, data) => writeFileSync(path, data), uid: () => undefined });
+}
+
 
 const WIN_BASH = "C:\\Program Files\\Git\\bin\\bash.exe";
 const PREFIX = "C:/Users/o/AppData/Roaming/Murage/murage-exec-abc";
@@ -183,8 +191,9 @@ describe("5.4: the gate's hashed record of the hand (MURAGE_GATE_MCP_RECORD)", (
 
   it("holds no value, only salted hashes and lengths, names sorted, one line per turn", () => {
     const file = join(dir, "record.jsonl");
-    expect(mod.writeClaudeGateRecord(file, handed, "powershell-inherit")).toBe(true);
-    expect(mod.writeClaudeGateRecord(file, handed, "murage-exec")).toBe(true);
+    const record = gateRecordFor();
+    expect(mod.writeClaudeGateRecord(file, handed, "powershell-inherit", record)).toBe(true);
+    expect(mod.writeClaudeGateRecord(file, handed, "murage-exec", record)).toBe(true);
     const bytes = readFileSync(file, "utf8");
     for (const value of Object.values(handed)) if (value.length > 3) expect(bytes.includes(value), value).toBe(false);
     expect(bytes.includes("MURAGE-SENTINEL")).toBe(false);
@@ -207,7 +216,7 @@ describe("5.4: the gate's hashed record of the hand (MURAGE_GATE_MCP_RECORD)", (
     writeFileSync(target, "keep\n");
     const link = join(dir, "link.jsonl");
     symlinkSync(target, link);
-    expect(mod.writeClaudeGateRecord(link, handed, "murage-exec")).toBe(true);
+    expect(mod.writeClaudeGateRecord(link, handed, "murage-exec", gateRecordFor())).toBe(true);
     expect(readFileSync(target, "utf8")).toBe("keep\n");
     expect(lstatSync(link).isSymbolicLink()).toBe(false);
     expect(readFileSync(link, "utf8")).not.toContain("keep");

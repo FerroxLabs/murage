@@ -1666,9 +1666,9 @@ function shellScript(args: Word[], stdin: Provenance | undefined, ctx: WalkConte
 /** Inline-code options of the interpreters (`INTERPRETERS`). */
 export const INLINE_CODE: Record<string, RegExp> = {
   python: /^-[A-Za-z]*c$/,
-  node: /^(-e|--eval|-p|--print)$/,
+  node: /^(-e|--eval|-p|--print|-pe)$/,
   deno: /^(eval)$/,
-  bun: /^(-e|--eval|-p|--print)$/,
+  bun: /^(-e|--eval|-p|--print|-pe)$/,
   perl: /^-[A-Za-z]*[eE]$/,
   ruby: /^-[A-Za-z]*e$/,
   php: /^-r$/,
@@ -1679,6 +1679,67 @@ export const INLINE_CODE: Record<string, RegExp> = {
 };
 /** Interpreter options that take the next word as a value. */
 export const INTERPRETER_VALUES = new Set(["-W", "-X", "-r", "--require", "--import", "--loader", "-C", "--conditions", "-I", "-M", "-l", "-x"]);
+
+/** Letters `INTERPRETER_VALUES` lists that are plain flags in a bundle for
+ * this interpreter: perl's `-l` takes digits only, ruby's `-l` none, and
+ * python's `-I` none. */
+const BUNDLE_FLAGS: Record<string, string> = { perl: "l", ruby: "l", python: "I" };
+
+/** Does this interpreter option take the next word as its value? Not the
+ * `BUNDLE_FLAGS` letters: perl's `-l` takes only attached digits (`-l015`),
+ * ruby's `-l` and python's `-I` nothing, so `perl -l -e <code>` reads its
+ * code as `perl -e <code>` does. */
+export function takesValue(key: string, text: string): boolean {
+  if (!INTERPRETER_VALUES.has(text)) return false;
+  return !(text.length === 2 && (BUNDLE_FLAGS[key] ?? "").includes(text[1]!));
+}
+
+/** Where the code starts in an inline-code option written with its code
+ * attached (1.0.3 A-b1-1): `--eval=CODE` and `--print=CODE` (the option is
+ * the part before `=`), `-eCODE`, `-pCODE`, `-rCODE`, and a short-option
+ * bundle whose inline letter takes the rest (`-lneCODE`, `-IcCODE`). A letter
+ * that takes a value (`INTERPRETER_VALUES`, python's `-m`) ends the bundle:
+ * `-Wonce` and `-rjson` are not code. */
+function attachedAt(key: string, text: string): number | undefined {
+  const inline = INLINE_CODE[key];
+  if (!inline || !text.startsWith("-") || text === "-") return undefined;
+  if (text.startsWith("--")) {
+    const eq = text.indexOf("=");
+    return eq > 2 && inline.test(text.slice(0, eq)) ? eq + 1 : undefined;
+  }
+  for (let k = 2; k <= text.length; k++) {
+    if (inline.test(text.slice(0, k))) return k;
+    const letter = text[k - 1]!;
+    if (key === "python" && letter === "m") return undefined;
+    if (INTERPRETER_VALUES.has(`-${letter}`) && !(BUNDLE_FLAGS[key] ?? "").includes(letter)) return undefined;
+  }
+  return undefined;
+}
+
+/** The code of an inline-code option written with its code attached, as a
+ * word of its own (its quoting and any expansion kept), or undefined when the
+ * word is not one. Shared by the POSIX and PowerShell readers. */
+export function attachedInlineCode(key: string, word: Word): Word | undefined {
+  let head = "";
+  for (const part of word.parts) {
+    if (part.kind !== "lit") break;
+    head += part.text;
+  }
+  const at = attachedAt(key, head);
+  if (at === undefined) return undefined;
+  const parts: Part[] = [];
+  let skip = at;
+  for (const part of word.parts) {
+    if (skip > 0 && part.kind === "lit") {
+      if (part.text.length <= skip) { skip -= part.text.length; continue; }
+      parts.push({ ...part, text: part.text.slice(skip) });
+      skip = 0;
+      continue;
+    }
+    parts.push(part);
+  }
+  return parts.length ? { parts } : undefined;
+}
 
 export function interpreterKey(name: string): string | undefined {
   if (/^python[0-9.]*$/.test(name)) return "python";
@@ -1700,8 +1761,15 @@ function interpreterProgram(key: string, args: Word[], ctx: WalkContext): Interp
   const inlineCode = (): InterpreterProgram => ({ kind: "code", words: code, rest: args.slice(last + 1) });
   for (let i = 0; i < args.length; i++) {
     const text = literalText(args[i]!);
+    // the option on its own (`-e`, `-pe`) takes the next word, below
+    const attached = text !== undefined && inline.test(text) ? undefined : attachedInlineCode(key, args[i]!);
+    if (attached) {
+      code.push(attached);
+      last = i;
+      if (key === "python" || key === "node" || key === "php" || key === "deno") break;
+      continue;
+    }
     if (text === undefined) return code.length ? inlineCode() : interpreterFile(args[i]!, ctx);
-    if (key === "python" && /^-c./.test(text)) { code.push({ parts: [{ kind: "lit", text: text.slice(2), quote: "single" }] }); last = i; break; }
     if (text !== "" && inline.test(text)) {
       const word = args[i + 1];
       if (!word) throw new Unreadable("opaque", `${text} without code`);
@@ -1716,7 +1784,7 @@ function interpreterProgram(key: string, args: Word[], ctx: WalkContext): Interp
     if (text === "--" || text === "run") return args[i + 1] ? interpreterFile(args[i + 1]!, ctx) : { kind: "none" };
     if (text === "-") return { kind: "stdin" };
     if (key === "python" && text === "-m") return { kind: "none" };
-    if (text.startsWith("-")) { if (INTERPRETER_VALUES.has(text)) i++; continue; }
+    if (text.startsWith("-")) { if (takesValue(key, text)) i++; continue; }
     return interpreterFile(args[i]!, ctx);
   }
   return code.length ? inlineCode() : { kind: "stdin" };

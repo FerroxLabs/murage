@@ -42,6 +42,10 @@ const WALK_MS = 3_000;
 interface SensitivePathRow {
   id: string;
   re: RegExp;
+  /** The shape read instead of `re` on a folder a path only passes through
+   * on the way to its target, or a folder a directory walk meets. Absent:
+   * `re` is read there too. */
+  ancestor?: RegExp;
   /** Claude `permissions.ask` Read rules for this row: in-project rows
    * relative, home rows as `~/`. */
   read: readonly string[];
@@ -144,6 +148,35 @@ const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
     read: ["**/murage-exec*/**", "**/murage-exec*"],
     bash: ["*murage-exec*"],
   },
+  // 1.0.3 (hook self-guard): the hook programs Murage writes for an engine and
+  // the folders they live in (DATA_DIR/native/antigravity-relay, -ask, -scope
+  // and codex-scope). The engine re-reads them on every call, so a write to one
+  // would replace the guard that judges every later call.
+  {
+    id: "murage-engine-hooks",
+    re: /(?<![\w.-])(?:(?:antigravity-(?:relay|ask|scope)|codex-scope)[. ]*(?:[\\/:]|$|["'\s;|&)>`])|murage-agy-relay|murage-hook\.(?:mjs|cmd|env)\b|ask-hook-[\w.-]*\.cjs\b)/i,
+    read: ["**/native/antigravity-relay/**", "**/native/antigravity-ask/**", "**/native/antigravity-scope/**", "**/native/codex-scope/**", "**/murage-agy-relay*", "**/murage-hook.mjs", "**/murage-hook.cmd", "**/murage-hook.env", "**/ask-hook-*.cjs"],
+    bash: ["*native/antigravity-relay*", "*native/antigravity-ask*", "*native/antigravity-scope*", "*native/codex-scope*", "*murage-agy-relay*", "*murage-hook.mjs*", "*murage-hook.cmd*", "*murage-hook.env*", "*ask-hook-*.cjs*"],
+  },
+  // agy 1.4.4 loads the hooks of the workspace's customization root (.agents, .agent, _agents, _agent: hooks.json,
+  // plugins.json, plugins/<name>/hooks.json, and agents/*.md, whose front matter can carry hooks) beside Murage's
+  // own, with no switch to turn that off. A bot that writes one would have its own hook run (and answer) on the next
+  // turn, so a call naming one, or moving a file into the root folder itself, is held. The root folder alone is
+  // read only as a PATH: after a separator, at a line or argument start, as a whole quoted shell argument or a
+  // quoted call's only argument (os.chdir of ".agents"), and ending a line, an argument or a path (a `\` before a quote is
+  // an escape, not a separator). So code (`turn.integrations?.agents;`, `const _agents = []`, `"_agent"`,
+  // `".agents"` among other arguments) and prose ("the .agents folder") never match, while a quoted root followed by a quoted
+  // hook-file segment (`".agents", "hooks.json"`) still does. A folder a path only passes through, or a walk meets,
+  // reads only the hook files (`ancestor`), so .agents/skills and the rest of the folder stay ordinary files.
+  // The plugins and agents folders may end in dots or spaces or carry a stream suffix (`.agents\plugins.`,
+  // `plugins::$DATA`): Win32 reads those as the folder (lanes/release103/SG-WIN-PATHTRICKS.md), so the row does too.
+  {
+    id: "agy-workspace-hooks",
+    re: /(?<![\w.-])[._]agents?[\\/](?:hooks\.json|plugins\.json|(?:plugins|agents)[. ]*(?:[\\/:]|$|["'\s;|&)>`]))|(?<=^|[\s"'=\\/])[._]agents?(?:\/|\\(?!["']))(?=$|["'\s;|&)>])|(?<=^|[\s=\\/])\.agents?(?=$|[\r\n"']|[ \t]*[;|&>)])|(?<=(?:^|[\s=])["'])\.agents?(?=["'](?:$|[\r\n]|[ \t]*(?:[;|>]|&&)))|(?<=\(["'])\.agents?(?=["']\))|(?<=[ \t=]["'])_agents?(?=["'](?:$|[\r\n]|[ \t]*(?:[;|>]|&&)))|(?<=^|[\s=\\/])_agents?(?=$|[\r\n"']|[ \t]*(?:[;|>]|&&))|(?<=["'])[._]agents?["'][ \t]*,[ \t]*["'](?:hooks\.json|plugins\.json|plugins|agents)["']/i,
+    ancestor: /(?<![\w.-])[._]agents?[\\/](?:hooks\.json|plugins\.json|(?:plugins|agents)[. ]*(?:[\\/:]|$|["'\s;|&)>`]))/i,
+    read: [".agents/hooks.json", ".agent/hooks.json", "_agents/hooks.json", "_agent/hooks.json", ".agents/plugins.json", ".agent/plugins.json", "_agents/plugins.json", "_agent/plugins.json", ".agents/plugins/**", ".agent/plugins/**", "_agents/plugins/**", "_agent/plugins/**", ".agents/agents/**", ".agent/agents/**", "_agents/agents/**", "_agent/agents/**"],
+    bash: ["*.agents/hooks.json*", "*.agent/hooks.json*", "*_agents/hooks.json*", "*_agent/hooks.json*", "*.agents/plugins*", "*.agent/plugins*", "*_agents/plugins*", "*_agent/plugins*", "*.agents/agents*", "*.agent/agents*", "*_agents/agents*", "*_agent/agents*"],
+  },
   {
     id: "envrc",
     re: /(^|[\s/"'])\.envrc\b/i,
@@ -224,12 +257,14 @@ function basename(path: string): string {
 }
 
 /** The first sensitive PATH row a path matches, by id, with the template
- * carve-out applied when the path is inside the project. */
-function sensitivePathRow(path: string, inProject: boolean): string | null {
+ * carve-out applied when the path is inside the project. `onTheWay`: the
+ * path is a folder passed through (or met by a walk), read by each row's
+ * `ancestor` shape where it has one. */
+function sensitivePathRow(path: string, inProject: boolean, onTheWay = false): string | null {
   const template = inProject && TEMPLATE_BASENAMES.includes(basename(path).toLowerCase());
   for (const row of SENSITIVE_PATHS) {
     if (template && row.id === "env") continue;
-    if (row.re.test(path)) return row.id;
+    if ((onTheWay && row.ancestor ? row.ancestor : row.re).test(path)) return row.id;
   }
   return null;
 }
@@ -457,19 +492,61 @@ function placePath(path: string, root: string, opts: PlaceOptions = {}): Placeme
   return { kind: within(realRoot, placed.real, platform) ? "inside" : "outside", real: placed.real, intermediates: placed.intermediates };
 }
 
-/** The spellings the key guard reads for one path: as given, and with
- * backslashes as `/` (the separator part of Rule 34's canonical form). */
-function spellings(text: string): string[] {
-  const slashed = text.replace(/\\/g, "/");
-  return slashed === text ? [text] : [text, slashed];
+/**
+ * The Win32 half of Rule 34's canonical form, for the key guard: the
+ * spelling Win32 reads a path as (lanes/release103/SG-WIN-PATHTRICKS.md).
+ * `\\?\X:` and `\\.\X:` lose their prefix and `\\?\UNC\` reads as `\\`; an
+ * admin share `\\host\X$\rest` reads as `X:\rest` whatever the host (a
+ * loopback cannot be told from a far host without a lookup, so both read as
+ * the local drive: a far path that looks like a hook file is held, never
+ * passed). In each part after the drive a stream suffix (`hooks.json::$DATA`,
+ * `hooks.json:evil`) is cut and trailing dots and spaces are stripped (Win32
+ * strips the last part's; stripping every part can only hold more); `.` and
+ * `..` keep theirs. Separators and case stay as given: `spellings` adds the
+ * `/` form and the rows read case-insensitively. On POSIX the path is
+ * returned as given: every one of these is a file name there.
+ */
+function win32Canonical(path: string, platform: NodeJS.Platform = process.platform): string {
+  if (platform !== "win32") return path;
+  const unwrapped = path
+    .replace(/^[\\/]{2}[?.][\\/]UNC(?=[\\/])/i, "\\")
+    .replace(/^[\\/]{2}[?.][\\/](?=[A-Za-z]:)/, "")
+    .replace(/^[\\/]{2}[^\\/]+[\\/]([A-Za-z])\$(?=[\\/]|$)/, "$1:");
+  const name = (part: string): string => {
+    if (part === "." || part === "..") return part;
+    const bare = part.replace(/:.*$/, "").replace(/[. ]+$/, "");
+    return bare === "" ? part : bare;
+  };
+  // split with the separators kept, so `\` and `/` land back where they were
+  return unwrapped.split(/([\\/])/).map((part, i) => {
+    if (i % 2 === 1) return part;
+    if (i === 0) {
+      const drive = /^([A-Za-z]:)(.*)$/.exec(part);
+      if (drive) return drive[1] + (drive[2] === "" ? "" : name(drive[2]!));
+    }
+    return name(part);
+  }).join("");
+}
+
+/** The spellings the key guard reads for one path: as given, with
+ * backslashes as `/` (the separator part of Rule 34's canonical form), and
+ * on Windows the Win32 canonical form of each (`win32Canonical`). */
+function spellings(text: string, platform: NodeJS.Platform): string[] {
+  const out = [text];
+  const add = (spelling: string) => { if (!out.includes(spelling)) out.push(spelling); };
+  add(text.replace(/\\/g, "/"));
+  const canonical = win32Canonical(text, platform);
+  add(canonical);
+  add(canonical.replace(/\\/g, "/"));
+  return out;
 }
 
 /** Rule 63 step 3 over every spelling of every path: the first sensitive
- * row hit, by id. */
-function keyGuard(paths: readonly string[], inProject: boolean): string | null {
+ * row hit, by id. `onTheWay`: the paths are folders passed through. */
+function keyGuard(paths: readonly string[], inProject: boolean, platform: NodeJS.Platform, onTheWay = false): string | null {
   for (const path of paths) {
-    for (const spelling of spellings(path)) {
-      const row = sensitivePathRow(spelling, inProject);
+    for (const spelling of spellings(path, platform)) {
+      const row = sensitivePathRow(spelling, inProject, onTheWay);
       if (row) return row;
     }
   }
@@ -490,9 +567,10 @@ type InProjectResult =
  * string no larger than the gate's message cap, else the call is unread.
  */
 function inProjectCheck(path: string, root: string, content?: unknown, opts: PlaceOptions = {}): InProjectResult {
+  const platform = opts.platform ?? process.platform;
   const placed = placePath(path, root, opts);
   const inside = placed.kind === "inside";
-  const rule = keyGuard([path, ...(placed.kind === "cannot-place" ? [] : [...placed.intermediates, placed.real])], inside);
+  const rule = keyGuard([path], inside, platform) ?? (placed.kind === "cannot-place" ? null : keyGuard(placed.intermediates, inside, platform, true) ?? keyGuard([placed.real], inside, platform));
   if (rule) return { ok: false, reason: "sensitive", rule };
   if (placed.kind === "cannot-place") return { ok: false, reason: "cannot-place", why: placed.why };
   if (placed.kind === "outside") return { ok: false, reason: "outside", real: placed.real };
@@ -501,7 +579,7 @@ function inProjectCheck(path: string, root: string, content?: unknown, opts: Pla
     if (Buffer.byteLength(content, "utf8") > GATE_MESSAGE_BYTES) return { ok: false, reason: "unread", why: "the content is too large to read whole" };
     // Rule 64: the body of a write to an in-project template file is read by the secret-shape rules as if it left the project, so a
     // real key pasted into `.env.example` is sensitive (the carve-out covers the name, never the body)
-    const baseOf = (text: string) => ((opts.platform ?? process.platform) === "win32" ? text.split(/[\\/]/) : text.split("/")).pop()?.toLowerCase() ?? "";
+    const baseOf = (text: string) => (platform === "win32" ? win32Canonical(text, platform).split(/[\\/]/) : text.split("/")).pop()?.toLowerCase() ?? "";
     if (TEMPLATE_BASENAMES.includes(baseOf(placed.real)) || TEMPLATE_BASENAMES.includes(baseOf(path))) {
       const shape = secretShapeIn(content);
       if (shape) return { ok: false, reason: "sensitive", rule: shape };
@@ -597,7 +675,7 @@ function walkRoot(root: string, project: string, opts: WalkOptions = {}): WalkRe
       const inside = within(realProject, real, platform);
       // A repository's `.git` holds its config and hooks rows and the rest of
       // its history: the walk treats it as one sensitive directory (Rule 73a).
-      const rule = isDir && name === ".git" ? "project-git" : keyGuard([rel, abs, real], inside);
+      const rule = isDir && name === ".git" ? "project-git" : keyGuard([rel, abs, real], inside, platform, isDir);
       if (rule) {
         hits.push({ path: rel, dir: isDir, rule });
         continue;

@@ -4,9 +4,9 @@
 // turn would fail every time. Only engines whose CLI is verified to reject
 // unlisted ids belong here (opencodeGo: its models are live from `opencode
 // models`; cursorAgent: guard, cursor-agent rejects unlisted ids); engines that accept custom ids are never touched.
-const STRICT_LIST_ENGINES = new Set(["antigravity", "opencodeGo", "cursorAgent"]);
+const STRICT_LIST_ENGINES = new Set(["antigravityAgent", "antigravity", "opencodeGo", "cursorAgent"]);
 
-const ENGINE_NAME: Record<string, string> = { antigravity: "Antigravity", opencodeGo: "OpenCode", cursorAgent: "Cursor" };
+const ENGINE_NAME: Record<string, string> = { antigravityAgent: "Antigravity", antigravity: "Antigravity", opencodeGo: "OpenCode", cursorAgent: "Cursor" };
 
 export function staleModelReplacement(
   driverKind: string,

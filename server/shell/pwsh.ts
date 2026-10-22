@@ -18,7 +18,7 @@
 // that is not a recognized delete or disk command is ordinary.
 
 import { isPlain, literalText, MAX_TEXT_CHARS, Unreadable, type Part, type Quote, type Word } from "./lex.ts";
-import { candidatesOf, expandWord, fork, fromFileWord, INLINE_CODE, interpreterKey, INTERPRETER_VALUES, MAX_DEPTH, PHYSICAL_DRIVE, resolveName, resolveWritten, runsRemote, simpleCommand, walkForeignExecutor, type Provenance, type Visitor, type WalkContext } from "./walk.ts";
+import { attachedInlineCode, candidatesOf, expandWord, fork, fromFileWord, INLINE_CODE, interpreterKey, MAX_DEPTH, PHYSICAL_DRIVE, resolveName, resolveWritten, runsRemote, simpleCommand, takesValue, walkForeignExecutor, type Provenance, type Visitor, type WalkContext } from "./walk.ts";
 
 export const POWERSHELLS = new Set(["powershell", "powershell.exe", "pwsh", "pwsh.exe"]);
 const CMDS = new Set(["cmd", "cmd.exe"]);
@@ -372,7 +372,10 @@ const NUMBER = /^-?\d+(\.\d+)?(kb|mb|gb|tb|pb|l|d)?$/i;
  * `at` is that word's index (0 inside the first word). */
 interface Assignment { lhs: Part[]; op: string; rhs: Word[]; at: number }
 
-function assignmentRhs(words: Word[]): Assignment | undefined {
+function assignmentRhs(input: Word[]): Assignment | undefined {
+  // the lexer reads `*` as a wildcard; `*` right before `=` is the operator
+  // `*=` (`$x *= …`, `$x*=…`, 1.0.3 G-b3-1)
+  const words = input.map(starEquals);
   const tail = (text: string, rest: Part[]): Word[] => {
     const parts: Part[] = [...(text ? [{ kind: "lit", text, quote: "none" } as Part] : []), ...rest];
     return parts.length ? [{ parts }] : [];
@@ -393,6 +396,17 @@ function assignmentRhs(words: Word[]): Assignment | undefined {
     if (op) return { lhs: words.slice(0, i).flatMap((word) => word.parts), op: op[1]!, rhs: [...tail(lead.text.slice(op[0].length), words[i]!.parts.slice(1)), ...words.slice(i + 1)], at: i };
   }
   return undefined;
+}
+
+/** The word with a wildcard `*` that opens an `=` (not `==`) as the text `*=`. */
+function starEquals(word: Word): Word {
+  const at = word.parts.findIndex((part, i) => {
+    const next = word.parts[i + 1];
+    return part.kind === "glob" && part.text === "*" && next?.kind === "lit" && next.quote === "none" && /^=(?!=)/.test(next.text);
+  });
+  if (at < 0) return word;
+  const next = word.parts[at + 1] as Extract<Part, { kind: "lit" }>;
+  return { parts: [...word.parts.slice(0, at), { kind: "lit", text: `*${next.text}`, quote: "none" }, ...word.parts.slice(at + 2)] };
 }
 
 /** The statement's assignment, when it is one PowerShell makes: a variable
@@ -618,6 +632,8 @@ export function nestedProgram(program: string, args: Word[]): NestedProgram {
     for (let i = 0; i < args.length; i++) {
       const text = (literalText(args[i]!) ?? "").toLowerCase();
       if (text === "/c" || text === "/k" || text === "/r") return { kind: "text", words: args.slice(i + 1) };
+      // `cmd /cdel x`: the text may follow the switch with no space
+      if (/^\/[ckr]./.test(text)) return { kind: "text", words: [{ parts: [{ kind: "lit", text: literalText(args[i]!)!.slice(2), quote: "single" }] }, ...args.slice(i + 1)] };
     }
     return { kind: "stdin", explicit: false };
   }
@@ -630,13 +646,16 @@ export function nestedProgram(program: string, args: Word[]): NestedProgram {
     if (!text.startsWith("-")) return name === "powershell" ? { kind: "text", words: args.slice(i) } : { kind: "file", word: args[i]! };
     const option = text.replace(/:.*$/, "");
     if (option === "-ec" || abbreviates(option, "-encodedcommand") || abbreviates(option, "-encodedarguments", 9) || option === "-ea") throw new Unreadable("pwsh", "-EncodedCommand");
+    // `-Command:<text>`, `-File:<path>`: the value after the colon is the
+    // option's own value (1.0.3 A-b1-1), as the colon form of any parameter
+    const glued: Word[] = /:./.test(text) ? [{ parts: [{ kind: "lit", text: raw.slice(raw.indexOf(":") + 1), quote: "single" }] }] : [];
     if (option === "-cwa" || abbreviates(option, "-commandwithargs", 9) || abbreviates(option, "-command")) {
-      const rest = args.slice(i + 1);
+      const rest = [...glued, ...args.slice(i + 1)];
       if (rest.length === 0 || literalText(rest[0]!) === "-") return { kind: "stdin", explicit: true };
       return { kind: "text", words: rest };
     }
     if (abbreviates(option, "-file")) {
-      const script = args[i + 1];
+      const script = glued[0] ?? args[i + 1];
       if (!script || literalText(script) === "-") return { kind: "stdin", explicit: true };
       return { kind: "file", word: script };
     }
@@ -773,10 +792,12 @@ function interpreterRuns(base: string, args: Word[], stdin: Provenance | undefin
     if (text === undefined) return "an interpreter given a value";
     if (key === "python" && /^-[A-Za-z]*c/.test(text)) return "inline code";
     if (inline && text !== "" && inline.test(text)) return "inline code";
+    // `node --eval=<code>`, `perl -e<code>` (1.0.3 A-b1-1)
+    if (attachedInlineCode(key, args[i]!)) return "inline code";
     if (text === "-") return "code from its input";
     if (key === "python" && text === "-m") return undefined;
     if (text === "--") return args[i + 1] ? "a script file" : undefined;
-    if (text.startsWith("-")) { if (INTERPRETER_VALUES.has(text)) i++; continue; }
+    if (text.startsWith("-")) { if (takesValue(key, text)) i++; continue; }
     // deno and bun take a subcommand (`bun install`, `deno test`); `run`
     // names a package script, or a file when it has a folder or an extension
     if (key === "deno" || key === "bun") {
