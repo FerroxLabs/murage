@@ -22,7 +22,7 @@ import { NEUTRAL_TOOL_SURFACE, renderMurageTurn } from "../murage-tool-surface.t
 // instances only; the host desktop stays off (no approval channel in print
 // mode, ever).
 import { registerIntake } from "../harness/intake.ts";
-import { awaitCliTreeStopped, describeSpawnFailure, execCli, killCliTree, spawnCli } from "../procs.ts";
+import { awaitCliTreeStopped, describeSpawnFailure, engineJob, execCli, killCliTree, spawnCli } from "../procs.ts";
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -54,7 +54,7 @@ import { customMountEntries } from "../custom-mcp-mounts.ts";
 import { engineClosedLine } from "./stop-copy.ts";
 import { acpEngineExitStderrText } from "./acp/core.ts";
 import { writeFileAtomic } from "../atomic.ts";
-import { ASK_STOP_NOTE, ASK_STOP_PROMPT, replyCarriesAskStopNote } from "./ask-stop.ts";
+import { ASK_STOP_NOTE, ASK_STOP_PROMPT, ASK_STOP_REASON, replyCarriesAskStopNote } from "./ask-stop.ts";
 
 /** Shown when agy ran under accept-edits, denied an action (a shell command) and wrote no reply. Print mode cannot
  *  ask, so Murage never lets this engine run commands on a bot turn at any level (sendTurn, skipPermissions):
@@ -69,6 +69,10 @@ export const ANTIGRAVITY_STREAM_INPUT_MIN_VERSION = "1.1.15";
  * limit an owner can choose (24 hours), so a turn is stopped only by the
  * thread's silence watch, the owner's Stop or a budget stop. */
 export const ANTIGRAVITY_PRINT_TIMEOUT = "8760h";
+
+/** The stopReason of an Ask turn Murage ended because a change ran anyway: a stop (turnStopped), never finished work,
+ *  and not "cancelled" (the owner's Stop), so the chat shows ASK_STOP_NOTE and no "Stopped by you". */
+export const ANTIGRAVITY_ASK_STOP_REASON = ASK_STOP_REASON;
 
 /** The Ask hard stop for agy (./ask-stop.ts). `--mode accept-edits` writes with no ask, and the 1.0.3 real-CLI probe
  * saw it run shell commands too. On an Ask turn the scoped home carries one Murage-owned
@@ -470,6 +474,9 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       /** Something was refused at Ask: the note is due unless the reply already carries it. */
       let askStopRefused = false;
       let askStopReply = "";
+      /** Murage ended this Ask turn because a change ran (the hook did not hold). Not the owner's Stop: the turn
+       *  settles as ended with the note (ANTIGRAVITY_ASK_STOP_REASON), keeps whatever reply agy gave, and runs nothing more. */
+      let askStopHalted = false;
       const { threadId } = turn;
       if (disposed) throw new Error("Antigravity instance is disposed");
       if (active.has(threadId) || pending.has(threadId)) throw new Error("a turn is already running on this thread");
@@ -540,7 +547,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       // state), and nothing is reported once the turn settled or was stopped.
       const shownSteps = new Set<string>();
       const working = (step?: string) => {
-        if (settled || stopRequested) return;
+        if (settled || stopRequested || askStopHalted) return;
         if (step !== undefined) {
           if (shownSteps.has(step)) return;
           if (shownSteps.size >= 1_000) shownSteps.clear();
@@ -647,7 +654,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
           cwd,
           env: turnEnv,
           stdio: ["pipe", "pipe", "pipe"],
-        });
+        }, engineJob());
       } catch (error) {
         restoreMcp();
         pending.delete(threadId);
@@ -681,6 +688,11 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         void awaitCliTreeStopped(child).then((stopped) => {
           if (stopped) closeFinalizers.get(child)?.();
         });
+      };
+      /** The Ask hard stop's own end: the child is stopped at once, as for a Stop, but the turn is not the owner's. */
+      const haltForAskStop = () => {
+        askStopHalted = true;
+        stop();
       };
       const requestStop = () => {
         stopRequested = true;
@@ -726,11 +738,12 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
                 emit({ ...base(threadId, turnId), type: "item.started", itemType: "tool", origin: "engine", itemId, title: payload.tool_name });
               } else if (payload.state === "DONE") {
                 emit({ ...base(threadId, turnId), type: "item.completed", itemType: "tool", itemId, ok: true });
-                // A tool that is not a read finished on an Ask turn: the hook did not hold. Stop the turn at once.
-                if (askStop && !(ANTIGRAVITY_ASK_READS as readonly string[]).includes(String(payload.tool_name ?? "")) && !settled && !stopRequested) {
+                // A tool that is not a read finished on an Ask turn: the hook did not hold. Stop the child at once; the
+                // turn then ends with the note, as Murage's Ask stop and not as the owner's Stop (haltForAskStop).
+                if (askStop && !(ANTIGRAVITY_ASK_READS as readonly string[]).includes(String(payload.tool_name ?? "")) && !settled && !stopRequested && !askStopHalted) {
                   askStopRefused = true;
                   console.warn(`${ENGINE} ask stop: ${String(payload.tool_name ?? "a tool")} ran on an Ask turn; stopping the turn`);
-                  requestStop();
+                  haltForAskStop();
                 }
               } else if (payload.state === "ERROR") {
                 if (askStop && /denied by pre-tool hook/i.test(String(payload.tool_info?.error?.message ?? ""))) askStopRefused = true;
@@ -776,7 +789,8 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
             // requested stop is the user's Stop, not an engine failure:
             // same cancelled state as the close path (STOP1).
             const stoppedResult = stopRequested && payload.status !== "SUCCESS";
-            if (payload.status !== "SUCCESS" && !stoppedResult) {
+            // After the Ask stop halted the child, its result (whatever its status) ends the turn as that stop.
+            if (payload.status !== "SUCCESS" && !stoppedResult && !askStopHalted) {
               const errorMessage = typeof payload.message === "string" && payload.message 
                 ? payload.message 
                 : typeof payload.error === "string" && payload.error 
@@ -791,8 +805,8 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
             // result.usage is the turn total (the per-step agent_response
             // figures above are its parts, not additions to it)
             settle(
-              stoppedResult || payload.status === "SUCCESS",
-              stoppedResult ? "cancelled" : payload.status ?? null,
+              stoppedResult || askStopHalted || payload.status === "SUCCESS",
+              stoppedResult ? "cancelled" : askStopHalted ? ANTIGRAVITY_ASK_STOP_REASON : payload.status ?? null,
               null,
               payload.usage
                 ? {
@@ -846,6 +860,9 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
           // cancelled like the ACP, Pi, Claude and Codex drivers, with no
           // runtime error card and no Retry (STOP1).
           settle(true, "cancelled");
+          } else if (!settled && askStopHalted) {
+          // The process ended because the Ask stop halted it: the turn ends, with the note, and no error card.
+          settle(true, ANTIGRAVITY_ASK_STOP_REASON);
           } else if (!settled) {
           emit({
             ...base(threadId, turnId),

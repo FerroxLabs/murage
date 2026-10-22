@@ -15,6 +15,16 @@ import {safeWipeSync} from "../server/testing/safe-wipe.mjs";
 import {ensureRemoteControlDirectory,remoteWorkDirectory,remoteSshDirectory} from "./backup-remote-runtime.mjs";
 import {createRemotePasswordStore} from "./backup-remote-password.mjs";
 import {closedControlDirectory} from "./backup-closed-controller.mjs";
+import {windowsNative} from "./windows-native.mjs";
+
+// The real-Windows owner-only tests need the engine-exclusion addon. Without it Murage resolves no domain-relative SDDL alias (LA, the
+// built-in Administrator a hosted runner signs in as) and reads no file owner, and refuses: that is the documented behaviour of a
+// source checkout without a build (windows-native.mjs); the packaged app always carries the addon (after-pack refuses one without it).
+// The quality-gates job builds no addon, so there they are skipped by name; the Native addon MSVC job builds it and sets
+// MURAGE_REQUIRE_WINDOWS_NATIVE=1, which turns a missing addon into a failure, never a skip.
+const NEEDS_ADDON="needs the engine-exclusion addon (run by the Native addon MSVC job; always in the packaged app)";
+const realWindows=reason=>process.platform!=="win32"?reason:process.env.MURAGE_REQUIRE_WINDOWS_NATIVE==="1"||windowsNative()?false:NEEDS_ADDON;
+const requireAddon=()=>{if(process.env.MURAGE_REQUIRE_WINDOWS_NATIVE==="1")assert.ok(typeof windowsNative()?.domainSids==="function","the engine-exclusion addon did not load");};
 
 /** The native realpath of a Windows filesystem: same folder, its own casing. */
 function nativeCasing(t){
@@ -49,7 +59,8 @@ test("a refused control folder is named as such, not as a bad password file (W-D
  assert.equal(readFileSync(file,"utf8"),"FAKE_PASSWORD\n");
 });
 
-test("real Windows: control folder, work tree and password file work through the case-folded spelling, owner-only (W-D2)",{skip:process.platform!=="win32"&&"real NTFS and icacls only"},async t=>{
+test("real Windows: control folder, work tree and password file work through the case-folded spelling, owner-only (W-D2)",{skip:realWindows("real NTFS and icacls only")},async t=>{
+ requireAddon();
  const root=realpathSync.native(mkdtempSync(path.join(tmpdir(),"Murage Remote Win-")));t.after(()=>safeWipeSync(root));
  const home=path.join(root,"Sam Lee");mkdirSync(path.join(home,".murage"),{recursive:true});
  const installation=path.join(home,".murage").toLowerCase(),control=closedControlDirectory(installation);
@@ -107,7 +118,8 @@ test("local app data is read from the environment in its real spelling, never as
  assert.equal(localAppDataDirectory({LOCALAPPDATA:"H:\\x"},{realpath:()=>"\\\\?\\UNC\\fs01\\x"}),null);
 });
 
-test("real Windows: the off-site folder is created under local app data, owner-only below it (W-A4)",{skip:process.platform!=="win32"&&"real NTFS and icacls only"},async()=>{
+test("real Windows: the off-site folder is created under local app data, owner-only below it (W-A4)",{skip:realWindows("real NTFS and icacls only")},async()=>{
+ requireAddon();
  const {remoteControlDirectory,localAppDataDirectory,ensureRemoteControlDirectory,remoteSshDirectory}=await import("./backup-remote-runtime.mjs");
  const local=localAppDataDirectory();assert.ok(local);
  const control=remoteControlDirectory({control:`c:\\nowhere\\${"f".repeat(64)}`,userData:"\\\\fs01\\redirected",localAppData:local,platform:"win32"});

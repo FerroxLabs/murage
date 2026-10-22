@@ -215,6 +215,7 @@ server/browser-cloud-host.test.ts	all	Browser refuses container signals, root, f
 server/browser-connection.test.ts	all	browser descriptor loopback-only, per-turn capabilities
 server/browser-content-probe.test.ts	all	detects instruction injection in page text
 server/browser-control.test.ts	all	browser ownership boundary human versus bot
+server/browser-control-takectl.test.ts	all	take control owner-input wait is bounded
 server/browser-document-guard-chromereal.test.ts	all	Private inputs detected by label and password
 server/browser-engine-policy.test.ts	all	headless browser rejects forged scope and destinations
 server/browser-engine.test.ts	all	browser install verified signed with no fallback
@@ -429,6 +430,8 @@ server/desktop-stop-control-api.test.ts	all	Stop takes the screen back
 server/destructive-inside.test.ts	all	Auto guard on deletes inside roots
 server/direct-owner-integrations-api.test.ts	all	Integrations mount only for owner words
 server/direct-replay-without-memory.test.ts	all	reply using forgotten memory is withheld
+server/direct-late-close-api.test.ts	all	retained run released when engine closes later (API)
+server/direct-late-close.test.ts	all	retained run released once when engine closes later
 server/direct-run-late-close.test.ts	all	message after Stop runs despite late close
 server/discord-api.test.ts	all	Discord owner binding, restart, revocation
 server/discord-config.test.ts	all	Discord token, owner identity and private authority

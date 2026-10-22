@@ -3,6 +3,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {ownerOnlyIcaclsArguments,restrictToOwner,sddlIsOwnerOnly} from "./backup-windows-acl.mjs";
+import {windowsNative} from "./windows-native.mjs";
+
+// The real-Windows owner-only tests need the engine-exclusion addon. Without it Murage resolves no domain-relative SDDL alias (LA, the
+// built-in Administrator a hosted runner signs in as) and reads no file owner, and refuses: that is the documented behaviour of a
+// source checkout without a build (windows-native.mjs); the packaged app always carries the addon (after-pack refuses one without it).
+// The quality-gates job builds no addon, so there they are skipped by name; the Native addon MSVC job builds it and sets
+// MURAGE_REQUIRE_WINDOWS_NATIVE=1, which turns a missing addon into a failure, never a skip.
+const NEEDS_ADDON="needs the engine-exclusion addon (run by the Native addon MSVC job; always in the packaged app)";
+const realWindows=reason=>process.platform!=="win32"?reason:process.env.MURAGE_REQUIRE_WINDOWS_NATIVE==="1"||windowsNative()?false:NEEDS_ADDON;
+const requireAddon=()=>{if(process.env.MURAGE_REQUIRE_WINDOWS_NATIVE==="1")assert.ok(typeof windowsNative()?.domainSids==="function","the engine-exclusion addon did not load");};
 
 const sid="S-1-5-21-1111111111-2222222222-3333333333-1001";
 test("icacls leaves one explicit ACE for the owner, inherited by everything in a folder",()=>{
@@ -178,7 +188,8 @@ test("entries written on the file itself (an administrator's default ACL) are re
  }
  assert.throws(()=>removeIcaclsArguments("C:\\x","S-1-5-18;x"),/ACL_FAILED/);assert.throws(()=>removeIcaclsArguments("\\\\server\\x","S-1-5-18"),/PATH_INVALID/);
 });
-test("real Windows: this account's SID comes from the token and a new file is made owner-only (W-A1)",{skip:process.platform!=="win32"&&"real icacls and ACL read only"},async t=>{
+test("real Windows: this account's SID comes from the token and a new file is made owner-only (W-A1)",{skip:realWindows("real icacls and ACL read only")},async t=>{
+ requireAddon();
  const {currentUserSid,readAcl,restrictToOwner,aclIsOwnerOnly,resetCurrentUserSid}=await import("./backup-windows-acl.mjs");
  const {mkdtempSync,writeFileSync}=await import("node:fs");const {tmpdir}=await import("node:os");const path=(await import("node:path")).default;
  const {safeWipeSync}=await import("../server/testing/safe-wipe.mjs");

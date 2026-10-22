@@ -1,4 +1,5 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { ASK_STOP_NOTE } from "./drivers/ask-stop.ts";
 import { readRoutinesWithRuns } from "./routine-runs-journal.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -2019,6 +2020,29 @@ describe("RoutineManager", () => {
 
     expect(h.manager.listRuns()[0]).toMatchObject({ threadId: "thread-1", status: "failed", error: "The run was stopped before it finished" });
     expect(h.failed).toMatchObject([{ routineName: "Stopped report", status: "failed" }]);
+  });
+
+  it("fails, not completes, a run whose turn Murage halted at the Ask boundary (ok:true, stopReason ask_stop)", async () => {
+    const h = harness();
+    const routine = h.manager.create({
+      name: "Ask stopped report",
+      prompt: "Write the report",
+      botId: "ember-ask-stopped",
+      schedule: { type: "once", at: new Date(2026, 7, 17, 8, 1).getTime() },
+    });
+    h.setNow(routine.nextRunAt!);
+    await h.manager.tick();
+    h.manager.handleRuntimeEvent({
+      eventId: "ask-stopped",
+      provider: "fake",
+      threadId: "thread-1",
+      createdAt: new Date().toISOString(),
+      type: "turn.completed",
+      ok: true,
+      stopReason: "ask_stop",
+    });
+    expect(h.manager.listRuns()[0]).toMatchObject({ threadId: "thread-1", status: "failed", error: ASK_STOP_NOTE });
+    expect(h.failed).toMatchObject([{ routineName: "Ask stopped report", status: "failed" }]);
   });
 
   it("keeps recurring history while advancing the definition", async () => {

@@ -11,6 +11,10 @@ on:
       - 'scripts/build-engine-exclusion.mjs'
       - 'scripts/build-fuigo-probe.mjs'
       - 'scripts/windows-native-imports.mjs'
+      - 'electron/windows-native.mjs'
+      - 'electron/backup-windows-acl*.mjs'
+      - 'electron/backup-remote-*.mjs'
+      - 'shared/windows-sddl.mjs'
       - '.github/workflows/native-addon-msvc.yml'
   push:
     paths:
@@ -18,6 +22,10 @@ on:
       - 'scripts/build-engine-exclusion.mjs'
       - 'scripts/build-fuigo-probe.mjs'
       - 'scripts/windows-native-imports.mjs'
+      - 'electron/windows-native.mjs'
+      - 'electron/backup-windows-acl*.mjs'
+      - 'electron/backup-remote-*.mjs'
+      - 'shared/windows-sddl.mjs'
       - '.github/workflows/native-addon-msvc.yml'
   workflow_dispatch:
 
@@ -56,6 +64,14 @@ jobs:
       - name: Refuse any import beyond Windows system DLLs
         shell: bash
         run: node scripts/windows-native-imports.mjs dist-native/engine-exclusion/win32-x64/engine-exclusion.node dist-native/fuigo-probe/win32-x64/launcher.exe
+      - name: Real-Windows owner-only ACL tests on the built addon
+        # The quality-gates job builds no addon, so these skip there (a source checkout without it refuses, by design). Here the
+        # addon is the one just built: the runner's built-in Administrator is SDDL "LA", which only the addon's domainSids resolves,
+        # and owners are read only through fileOwnerSid. MURAGE_REQUIRE_WINDOWS_NATIVE=1 fails, never skips, without the addon.
+        shell: bash
+        env:
+          MURAGE_REQUIRE_WINDOWS_NATIVE: "1"
+        run: node --import ./server/testing/safe-wipe-preload.mjs --test electron/backup-windows-acl.node-test.mjs electron/backup-windows-acl-native.node-test.mjs electron/backup-remote-windows-spelling.node-test.mjs
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: native-addon-msvc

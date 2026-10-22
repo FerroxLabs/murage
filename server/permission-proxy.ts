@@ -30,6 +30,20 @@ const dead = () => {
   }
   waiting.clear();
 };
+// A broker that cannot be reached is said once, on stderr (the CLI shows a server's stderr when it fails), and a
+// connect that never completes ends this process with that error instead of leaving the CLI waiting on a server that
+// will never answer.
+const CONNECT_DEADLINE_MS = 10_000;
+const connectTimer = setTimeout(() => {
+  process.stderr.write(`murage-permissions: the permission broker at ${socketPath || "(no socket path)"} did not accept a connection within ${CONNECT_DEADLINE_MS / 1000} s\n`);
+  process.exit(1);
+}, CONNECT_DEADLINE_MS);
+connectTimer.unref();
+conn.once("connect", () => clearTimeout(connectTimer));
+conn.once("error", (error) => {
+  clearTimeout(connectTimer);
+  process.stderr.write(`murage-permissions: the permission broker at ${socketPath || "(no socket path)"} is unreachable: ${error.message}\n`);
+});
 conn.on("error", dead);
 conn.on("close", dead);
 

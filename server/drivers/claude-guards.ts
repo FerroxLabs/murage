@@ -7,6 +7,7 @@
 import { realpathSync, statSync } from "node:fs";
 import { delimiter, isAbsolute, join } from "node:path";
 import { execCli, resolveCli } from "../procs.ts";
+import { engineLaunchFile } from "./isolation-cache.ts";
 
 /** The oldest Claude Code Murage runs a bot on: 2.1.280, the floor Murage 1.0.1 already had (the
  * CLI itself answers "version 2.1.280 or newer is required" to anything older, claude.ts), so no
@@ -114,7 +115,12 @@ export async function requireClaudeCliVersion(cli: string, env: NodeJS.ProcessEn
     fresh.version = (probeEnv ? probeEnv().catch(() => null) : Promise.resolve(env)).then((spawnEnv) => new Promise<string | null>((resolveVersion) => {
       const failed = () => { fresh.failed = true; fresh.at = Date.now(); resolveVersion(null); };
       if (!spawnEnv) return failed();
-      run(cli, ["--version"], { timeout: 8000, env: spawnEnv }, (err, stdout) => {
+      // The file probed is the file the turn launches: resolved from the Murage env's PATH (engineLaunchFile), never the handed
+      // map's shell PATH, which can name another build first. The handed map is only the env the probe runs with. No file
+      // on that PATH is a failed probe, as an unspawnable cli always was.
+      let probeFile: string;
+      try { probeFile = engineLaunchFile(cli, { PATH: env.PATH }); } catch { return failed(); }
+      run(probeFile, ["--version"], { timeout: 8000, env: spawnEnv }, (err, stdout) => {
         const answer = err ? null : String(stdout ?? "").trim();
         // the backoff runs from the failure, not from when the probe started
         if (answer === null) return failed();

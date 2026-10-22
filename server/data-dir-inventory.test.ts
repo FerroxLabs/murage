@@ -34,6 +34,7 @@ const ROOT = join(import.meta.dirname, "..");
 const NOT_THE_DATA_FOLDER: Record<string, Record<string, string>> = {
   "server/cloud-home/supervisor.ts": { "<<name>>": "Fixed root volume layout under /data (home, home/secrets, server-home, proxy, caddy, browser); the application DATA_DIR is /data/home, not this volume root" },
   "server/setup-backup.ts": { "<<SETUP_BACKUP_FILE_NAME>>": "setup-backup.json (classified), the name shared/setup-backup-record.mjs exports" },
+  "server/drivers/claude.ts": { "<<CLAUDE_SIGNIN_ANSWERS_FILE>>": "claude-signin-answers.json (classified): the sign-in card's remembered answers, the name drivers/claude-signin-answers.ts exports" },
   "server/user-chrome.ts": { DevToolsActivePort: "Chrome's own user-data folder, read only" },
   "server/env-path.ts": { shims: "mise's own data folder (MISE_DATA_DIR), read for PATH only" },
   "server/engine-plan-acp.ts": {

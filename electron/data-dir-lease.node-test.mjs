@@ -39,6 +39,7 @@ async function until(predicate, detail) {
 const WORKER = `
   import fs from 'node:fs';
   import os from 'node:os';
+  import nodePath from 'node:path';
   import cp from 'node:child_process';
   import { createRequire, syncBuiltinESMExports } from 'node:module';
   import { spawnSync } from 'node:child_process';
@@ -77,12 +78,16 @@ const WORKER = `
         return entry.startsWith(pid + ':') ? entry.slice(String(pid).length + 1) : entry;
       },
     };
-    const fakeDir = fs.mkdtempSync(os.tmpdir() + '/lease-native-');
-    fs.writeFileSync(fakeDir + '/engine-exclusion.node', '');
+    // require() hands the loader the file's resolved path: on macOS the temp folder /var/folders/... resolves to /private/var/...,
+    // and on Windows it has backslashes and may be an 8.3 short name, so the fake is told by its own unique folder name, never by
+    // a prefix of the unresolved spelling (that missed on both, and the real addon lookup then found nothing).
+    const fakeDir = fs.realpathSync.native(fs.mkdtempSync(nodePath.join(os.tmpdir(), 'lease-native-')));
+    fs.writeFileSync(nodePath.join(fakeDir, 'engine-exclusion.node'), '');
     process.env.MURAGE_RESOURCES_PATH = fakeDir;
     const Module = createRequire(import.meta.url)('node:module');
     const loadNative = Module._extensions['.node'];
-    Module._extensions['.node'] = (module, filename) => { if (filename.startsWith(fakeDir)) { module.exports = native; return; } loadNative(module, filename); };
+    const isFake = (filename) => nodePath.basename(filename) === 'engine-exclusion.node' && nodePath.basename(nodePath.dirname(filename)) === nodePath.basename(fakeDir);
+    Module._extensions['.node'] = (module, filename) => { if (isFake(filename)) { module.exports = native; return; } loadNative(module, filename); };
   }
   // Windows share-none seam (simulated win32 only): a share-none open leaves a
   // marker naming this process; any other open of that file is refused with

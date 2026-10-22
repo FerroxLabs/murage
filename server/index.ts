@@ -294,6 +294,7 @@ import { isDiskSpaceCode } from "../shared/attachment-storage.ts";
 import type { ArtifactKind } from "../shared/artifacts.ts";
 import { newClaudeAccount, claudeAccountInfo, assertSeparateClaudeAccount, createClaudeAccountSchema, claudeAccountSettingsSchema, resolveClaudeConfigDir } from "./claude-accounts.ts";
 import { fluxHermesHome, HERMES_CONFIG_MODEL_ID } from "./drivers/acp/hermes.ts";
+import { openclawVersionNote } from "./drivers/acp/openclaw.ts";
 import { hermesInstanceProfiles, hermesProfileOf, listHermesProfiles, planHermesImport, planHermesProfilePins, type HermesPin } from "./hermes-profiles.ts";
 import { hermesPinNoteActivityName } from "../shared/hermes-pin-note.ts";
 import { ConversationDeletions, ENGINE_FOR_DRIVER, ENGINE_LABEL, engineHomeFor, runConversationDeletion, type DeletionEngineHome, type DeletionInput, type DeletionReport } from "./conversation-deletion.ts";
@@ -580,7 +581,7 @@ import {
 } from "./question-normalize.ts";
 import { isQuestionCard, questionFromChoices, questionsForCard } from "../shared/questions.ts";
 import { promptWithReply, transcriptText } from "./replies.ts";
-import { _loadPending, onOwedHandoffReply, FINALIZER_WRITES, discardDelegations, forgetDelegationsForThreads, drainDelegations, dropUnreachableDelegations, findDelegationReceipt, pendingDelegationInfo, pendingDelegationSnapshot, pendingThreads, recordDelegationReceipt, releaseDelegationsWaitingOn, releaseParkedDelegations, hasActiveDelegationWork, DRAIN_PAGE, stopWaitingDelegation, settleStartedDelegations, resendHeldDelegation, dismissHeldDelegation, heldLineId, appendHeldLine, releaseHeld, idleReleaseHasMore, DELEGATION_DELETED, DELEGATION_NOT_STARTABLE, DELETED_NOTE, alreadyPickedUpText, type HeldDelegation, } from "./delegations.ts";
+import { _loadPending, onOwedHandoffReply, FINALIZER_WRITES, discardDelegations, forgetDelegationsForThreads, drainDelegations, settleQueuedDelegations, dropUnreachableDelegations, findDelegationReceipt, pendingDelegationInfo, pendingDelegationSnapshot, pendingThreads, recordDelegationReceipt, releaseDelegationsWaitingOn, releaseParkedDelegations, hasActiveDelegationWork, DRAIN_PAGE, stopWaitingDelegation, settleStartedDelegations, resendHeldDelegation, dismissHeldDelegation, heldLineId, appendHeldLine, releaseHeld, idleReleaseHasMore, DELEGATION_DELETED, DELEGATION_NOT_STARTABLE, DELETED_NOTE, alreadyPickedUpText, type HeldDelegation, } from "./delegations.ts";
 import {
   cancelSteeredMessage,
   drainSteeredMessages,
@@ -940,7 +941,7 @@ import { workspaceFilesRoute } from "./workspace-files.ts";
 import { mediaAssetsRoute } from "./media-assets.ts";
 import { resolveImageReferenceRoute } from "./image-reference-resolver.ts";
 import { BrowserCheckTurns, runBrowserCheck } from "./browser-check-state.ts";
-import { turnOutcome, turnStopped, turnSucceeded, TURN_INTERRUPTED_NOTE, TURN_STOPPED_DESKTOP_ACTION_NOTE, TURN_STOPPED_NOTE } from "./turn-outcome.ts";
+import { turnAskStopped, turnOutcome, turnStopped, turnSucceeded, TURN_INTERRUPTED_NOTE, TURN_STOPPED_DESKTOP_ACTION_NOTE, TURN_STOPPED_NOTE } from "./turn-outcome.ts";
 import { hostStoppedActivityName, hostStoppedReason } from "../shared/host-stop.ts";
 import { isSendNoticeCode } from "../shared/send-notice.ts";
 import { BROWSER_HELD_FOR_ANSWER_REASON, browserUnavailableActivityName, USER_CHROME_ALLOW_REASON, USER_CHROME_UNREACHABLE_REASON } from "../shared/browser-unavailable.ts";
@@ -2106,6 +2107,7 @@ async function releaseAllBrowserCapabilities(): Promise<void> {
 
 import { giveBackAdmitted, startAdmittedTurn, type AdmittedPhase, type AdmittedTurnState } from "./admitted-turn.ts";
 import { IndependentThreadRuns, MAX_CONCURRENT_BOT_THREADS, RESOURCE_WAIT_TIMEOUT_MS, requireDirectThreadTarget, type DirectThreadRun, type ResourceBlocker, type ResourceYield } from "./independent-thread-runs.ts";
+import { ENGINE_CLOSED_LATE_NOTE, releaseOnLateClose } from "./direct-late-close.ts";
 import type { TurnOwner } from "./turn-resources.ts";
 import { handoffCanStart, type HandoffAdmission } from "./handoff-admission.ts";
 import { admissionComputerClaims, computerResourceKeys, screenResourceKey, unusedComputerClaims, workspaceResource } from "./turn-resources.ts";
@@ -8094,10 +8096,12 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
       // the person did not press Stop, so "Stopped by you" would be untrue.
       // A stop that caught a desktop action mid-flight says so instead.
       const desktopActionStopped = desktopActionCaughtByStop(event.threadId);
+      // Murage's own Ask stop is a stop (never finished work), but the person did not press Stop: ASK_STOP_NOTE already says why.
+      const askStopped = turnAskStopped(event);
       // The checking note (if any) is this turn's stopped line; a desktop action caught mid-flight refines its wording.
-      const checkCarriesStop = replacementOwnsThread ? false : browserCheckTurns.terminal(event.threadId, { stopped: turnStopped(event), desktopAction: desktopActionStopped });
+      const checkCarriesStop = replacementOwnsThread ? false : browserCheckTurns.terminal(event.threadId, { stopped: turnStopped(event) && !askStopped, desktopAction: desktopActionStopped });
       if (checkCarriesStop) { /* no second stop line */ }
-      else if (turnStopped(event) && !replacementOwnsThread && !hostStopNotedSinceLastUserMessage(event.threadId)) {
+      else if (turnStopped(event) && !askStopped && !replacementOwnsThread && !hostStopNotedSinceLastUserMessage(event.threadId)) {
         pushMessage({
           role: "bot",
           kind: "activity",
@@ -8164,7 +8168,20 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
             ? registry.get(event.providerInstanceId??directRun.snapshot.modelSelection.instanceId)?.adapter
             : undefined;
           if(!directRun||!teardownAdapter?.awaitTurnTeardown){releaseDirect();return;}
-          const retain=()=>{if(directRuns.current(directRun))reportUnconfirmedDirectStop(event.threadId,directRun.generation);};
+          // Captured before the bounded wait: the adapter forgets a child once it closed.
+          const lateClose=teardownAdapter.awaitTurnClose?.(event.threadId,event.turnId);
+          const retain=()=>{
+            if(!directRuns.current(directRun))return;
+            reportUnconfirmedDirectStop(event.threadId,directRun.generation);
+            // RETAINED -> RELEASED_LATE: only the engine's confirmed later close releases it.
+            if(lateClose)releaseOnLateClose({
+              closed:lateClose,
+              owns:()=>directRuns.current(directRun),
+              threadExists:()=>Boolean(store.taskByThread(bot.id,event.threadId)),
+              note:()=>{store.appendMessage(event.threadId,murageLine({role:"bot",kind:"activity",tool:{name:ENGINE_CLOSED_LATE_NOTE,ok:true}}));},
+              release:releaseDirect,
+            });
+          };
           void teardownAdapter.awaitTurnTeardown(event.threadId,event.turnId).then(result=>result.closeConfirmed?releaseDirect():retain(),retain);
         };
         const routineReportThread = routineRun ? routineSourceThread(routineRun) : null;
@@ -8176,7 +8193,7 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
         // A turn the person stopped is not news to them: their own Stop does
         // not mark the conversation unread (a host stop, which they did not
         // cause, still does).
-        const stoppedByPerson = turnStopped(event) && !hostStopNotedSinceLastUserMessage(event.threadId);
+        const stoppedByPerson = turnStopped(event) && !turnAskStopped(event) && !hostStopNotedSinceLastUserMessage(event.threadId);
         if (!routineReportGroup && !replacementOwnsThread && !stoppedByPerson) store.patchTask(bot.id,event.threadId, { unread: true });
         if (routineRun?.status !== "failed" && !replacementOwnsThread && !turnStopped(event)) {
           // the frame carries the bot's avatar so every desktop client can
@@ -8784,8 +8801,7 @@ bus.subscribe((event: RuntimeEvent) => {
   // the rule in discardDelegations that an item which has already outlived a
   // turn is never collateral.
   // (a wake turn that ended badly restarts nothing; the done ids stay for the one rebuild a late memory refusal schedules, asker-wake.ts failed)
-  if (!turnSucceeded(event)) { discardDelegations(commsBus, event.threadId, store.botByThread(event.threadId)?.id); askerWakes.failed(event.threadId); }
-  else drainDelegations(commsBus, approvalBus, event.threadId);
+  if (settleQueuedDelegations(commsBus, approvalBus, event.threadId, event, store.botByThread(event.threadId)?.id) === "discarded") askerWakes.failed(event.threadId);
   // Every owed wake is tried, not only this thread's: a wake held back while
   // its bot was busy in a room or on three threads is freed by a turn that
   // ended somewhere else. wakeAsker starts nothing for a thread still busy.
@@ -17483,7 +17499,7 @@ bus.subscribe((event: RuntimeEvent) => {
 async function testCliBinary(
   cli: string,
   driver: (typeof BUILT_IN_DRIVERS)[number] | undefined,
-): Promise<{ ok: boolean; version?: string; message?: string; install?: (typeof BUILT_IN_DRIVERS)[number]["install"] }> {
+): Promise<{ ok: boolean; version?: string; message?: string; note?: string; install?: (typeof BUILT_IN_DRIVERS)[number]["install"] }> {
   if (cloudHome && (!driver || !(CLOUD_ENGINES as readonly string[]).includes(driver.driverKind))) return { ok: false, message: "This cloud engine probe is unavailable" };
   return new Promise((resolve) => {
     execCli(
@@ -17517,7 +17533,10 @@ async function testCliBinary(
           resolve({ ok: false, message, ...(driver?.install && isSpawnError ? { install: driver.install } : {}) });
           return;
         }
-        resolve({ ok: true, version: stdout.trim().split("\n")[0] });
+        const version = stdout.trim().split("\n")[0];
+        // OpenClaw below its Ask floor: the same line engine detection and a refused Ask turn show.
+        const note = driver?.driverKind === "openclawAgent" ? openclawVersionNote(stdout) : undefined;
+        resolve({ ok: true, version, ...(note ? { note } : {}) });
       },
     );
   });

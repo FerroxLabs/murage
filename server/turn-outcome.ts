@@ -1,5 +1,6 @@
 import type { RuntimeEvent } from "./contracts.ts";
 import { STOPPED_MID_DESKTOP_ACTION } from "../shared/host-stop.ts";
+import { ASK_STOP_REASONS } from "./drivers/ask-stop.ts";
 
 type TerminalTurn = Pick<Extract<RuntimeEvent, { type: "turn.completed" }>, "ok" | "stopReason">;
 
@@ -8,7 +9,14 @@ type TerminalTurn = Pick<Extract<RuntimeEvent, { type: "turn.completed" }>, "ok"
  * the normal stopped state instead of an engine error). `ok` alone therefore
  * means "not an engine failure", never "the work finished". */
 export function turnStopped(event: TerminalTurn): boolean {
-  return event.stopReason === "cancelled";
+  return event.stopReason === "cancelled" || turnAskStopped(event);
+}
+
+/** Murage itself ended the turn at the Ask boundary (./drivers/ask-stop.ts): the engine settles ok:true with an Ask
+ * stop reason (Antigravity's "ask_stop"). It is a stop, never finished work, so turnStopped holds for it and
+ * turnSucceeded does not; but the person did not press Stop, so no "Stopped by you" line: ASK_STOP_NOTE stands. */
+export function turnAskStopped(event: TerminalTurn): boolean {
+  return typeof event.stopReason === "string" && (ASK_STOP_REASONS as readonly string[]).includes(event.stopReason);
 }
 
 /** The turn ran to its end. Anything that treats a turn's result as finished
