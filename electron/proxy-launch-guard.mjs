@@ -62,8 +62,29 @@ export function proxyLaunchRefusal(argv = process.argv, env = process.env) {
   return null;
 }
 
-/** Exit (86) with the reason on stderr when this launch is a spawned server file that lost ELECTRON_RUN_AS_NODE. */
+// An engine's pre-execution hook (Codex: <scope>/murage-hook.mjs; Antigravity: native/antigravity-ask/ask-hook-<hash>.cjs) is run
+// as `<Murage binary> <script>`. Started without ELECTRON_RUN_AS_NODE it must never become the app: it exits 2, which the engine
+// reads as a blocked call, with the hook's own stderr line (1.0.3 packaged Windows gate: Codex turns refused, stray app launches).
+export const HOOK_LAUNCH_EXIT_CODE = 2;
+const HOOK_SCRIPT = /(?:^|\/)(?:murage-hook\.mjs|antigravity-ask\/ask-hook-[0-9a-f]{16}\.cjs)$/;
+
+/** The hook's block line when this launch is an engine hook script without ELECTRON_RUN_AS_NODE, or null. */
+export function hookLaunchRefusal(argv = process.argv, env = process.env) {
+  if (env.ELECTRON_RUN_AS_NODE) return null;
+  const script = scriptArgument(argv);
+  if (!script || !HOOK_SCRIPT.test(script.replace(/\\/g, "/").toLowerCase())) return null;
+  return "Murage blocked this call: hook started without node mode";
+}
+
+/** Exit with the reason on stderr when this launch is a spawned server file (86) or an engine hook script (2) that lost
+ *  ELECTRON_RUN_AS_NODE. */
 export function enforceProxyLaunchGuard(argv = process.argv, env = process.env, exit = (code) => process.exit(code), write = (line) => process.stderr.write(line)) {
+  const hook = hookLaunchRefusal(argv, env);
+  if (hook) {
+    write(`${hook}\n`);
+    exit(HOOK_LAUNCH_EXIT_CODE);
+    return true;
+  }
   const reason = proxyLaunchRefusal(argv, env);
   if (!reason) return false;
   write(`${reason}\n`);

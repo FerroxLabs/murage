@@ -7,8 +7,8 @@ import { ProjectFolderLeaseError } from "./project-folder-leases.ts";
 
 export class LocalSetupError extends Error {
   readonly localFailure: LocalSetupFailure;
-  constructor(localFailure: LocalSetupFailure, message: string) {
-    super(message);
+  constructor(localFailure: LocalSetupFailure, message: string, options?: { cause?: unknown }) {
+    super(message, options);
     this.name = "LocalSetupError";
     this.localFailure = localFailure;
   }

@@ -10,13 +10,13 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSy
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import * as procs from "../procs.ts";
 
 import type { ProviderInstance } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { CODEX_MCP_TOOL_TIMEOUT_SEC, CodexDriver, codexCloudBilling } from "./codex.ts";
-import { setCodexFloorsForTests } from "./codex-hook.ts";
+import { HOOK_LIVENESS_WIN32_MS, setCodexFloorsForTests } from "./codex-hook.ts";
 import { DATA_DIR } from "../config.ts";
 import { flushDecisionLog } from "../decision-log.ts";
 import { resetIsolationCache } from "./isolation-cache.ts";
@@ -35,6 +35,10 @@ import { isMountRecord } from "../../shared/mount-identity.ts";
 import { autoVerdict } from "../auto-approve.ts";
 import { execChecks, gate, resetExecChecks } from "../testing/exec-check-spy.ts";
 import { approveStartupWrite } from "../testing/startup-write.ts";
+import { isPowerShellProgram } from "../../shared/arg-vocabulary.ts";
+
+// Rule 74d's check script is POSIX: a PowerShell shell form (Windows) is never started for it, and the record reads U20 (engine-env.ts).
+const checkable = (execEnv: { shell: string[] }): boolean => !isPowerShellProgram(execEnv.shell[0] ?? "");
 
 vi.mock("node:child_process", async (original) => (await import("../testing/exec-check-spy.ts")).withExecCheckSpy(await original()));
 
@@ -2337,6 +2341,11 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
       return { behavior: "allow" };
     });
     expect(r.opened.map((e) => e.tool)).toEqual(["shell", "shell"]);
+    if (!checkable(r.opened[1].execEnv)) {
+      expect(runsAtOpen).toEqual([0, 0]);
+      expect(r.opened[1].execEnv).toMatchObject({ cwd: scratch, env: {}, unread: { code: "U20" } });
+      return;
+    }
     expect(runsAtOpen).toEqual([1, 2]);
     expect(r.opened[1].execEnv).toMatchObject({ cwd: scratch, env: { PAGER: "cat" } });
   });
@@ -2354,6 +2363,11 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
       runsAtOpen.push(execChecks.runs);
       return { behavior: "allow" };
     });
+    if (!checkable(r.opened[0].execEnv)) {
+      expect(runsAtOpen).toEqual([0]);
+      expect(r.opened[0].execEnv).toMatchObject({ cwd: scratch, env: {}, unread: { code: "U20" } });
+      return;
+    }
     expect(runsAtOpen).toEqual([2]);
     expect(r.opened[0].execEnv).toMatchObject({ cwd: scratch, env: { PAGER: "cat" } });
   });
@@ -2440,6 +2454,31 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
       expect(methods).not.toContain("turn/start");
     }
   });
+
+  // 1.0.3 RUN B (Windows): the hook started past 10 s and the turn was refused. On win32 the bound is HOOK_LIVENESS_WIN32_MS (45 s);
+  // this runs the driver at a tenth of real time through the bound's own override: a hook starting at 12 s and at 40 s (1.2 s, 4 s)
+  // is proven and the turn completes, one that never starts is refused at the bound (4.5 s), not before.
+  it("proves a Windows-slow SessionStart inside the wider bound and refuses one that never starts at the bound", async () => {
+    const scale = 10;
+    const warned: string[] = [];
+    const warn = vi.spyOn(console, "warn").mockImplementation((...args: unknown[]) => { warned.push(args.map(String).join(" ")); });
+    onTestFinished(() => warn.mockRestore());
+    process.env.MURAGE_CODEX_HOOK_LIVENESS_MS = String(HOOK_LIVENESS_WIN32_MS / scale);
+    for (const startsAt of [12_000, 40_000]) {
+      process.env.FAKE_CODEX_SESSION_DELAY_MS = String(startsAt / scale);
+      await recreate();
+      const r = await run(`t-slow-${startsAt}`, [], () => null);
+      expect(r.done, `hook at ${startsAt} ms`).toMatchObject({ ok: true });
+    }
+    delete process.env.FAKE_CODEX_SESSION_DELAY_MS;
+    process.env.FAKE_CODEX_HOOKS = "dead";
+    await recreate();
+    const started = Date.now();
+    const dead = await run("t-slow-dead", [], () => null);
+    expect(dead.done).toMatchObject({ ok: false, stopReason: "scope_unavailable" });
+    expect(Date.now() - started).toBeGreaterThanOrEqual(HOOK_LIVENESS_WIN32_MS / scale);
+    expect(warned.some((line) => line === `codex hook-liveness bound_ms=${HOOK_LIVENESS_WIN32_MS / scale} source=env`)).toBe(true);
+  }, 30_000);
 
   it("interrupts and refuses when the SessionStart handler never posts", async () => {
     process.env.FAKE_CODEX_HOOKS = "dead";
@@ -2683,8 +2722,10 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
     expect(shell).toMatchObject({ requestType: "permission", toolEngine: "codex", toolCall: { name: "shell", input: { command: "ls -la", cwd: scratch } } });
     expect(shell.mcpMounts).toEqual(expect.arrayContaining([expect.objectContaining({ engineName: "agents", mountId: "own:agents", provenance: "own" })]));
     // F12: the handed map with the pins and the absence set, from the delivery's cwd
-    expect(shell.execEnv).toMatchObject({ cwd: scratch, env: { PAGER: "cat", GIT_TERMINAL_PROMPT: "0" } });
-    expect(shell.execEnv.absent).toEqual(expect.arrayContaining(["PYTHONINSPECT", "BASH_ENV"]));
+    if (checkable(shell.execEnv)) {
+      expect(shell.execEnv).toMatchObject({ cwd: scratch, env: { PAGER: "cat", GIT_TERMINAL_PROMPT: "0" } });
+      expect(shell.execEnv.absent).toEqual(expect.arrayContaining(["PYTHONINSPECT", "BASH_ENV"]));
+    } else expect(shell.execEnv).toMatchObject({ cwd: scratch, env: {}, absent: [], unread: { code: "U20" } });
     expect(shell.execEnv.env.PYTHONINSPECT).toBeUndefined();
     expect(edit).toMatchObject({ tool: "edit", toolCall: { name: "edit", input: { paths: ["../outside.txt"] } } });
     expect(own).toMatchObject({ tool: "publish_site", toolCall: { name: "mcp__agents__publish_site", input: { site: "x" } } });

@@ -59,6 +59,28 @@ describe("droid host computer grant", () => {
     expect(Object.keys(JSON.parse(readFileSync(mcpPath(root), "utf8")).persistentPermissions.servers)).toEqual(["other"]);
   });
 
+  it("a Local VM or VPS computer (no host scope) gets no grant at any level, so droid raises its own card", () => {
+    // The shapes containerComputerMcp and vpsComputerMcp hand over: integrations.localComputer with no `scope`.
+    const vm = { command: process.execPath, args: ["/app/container-computer-mcp.mjs", "docker", "murage-vm", "/tmp/cua.sock"], env: { ELECTRON_RUN_AS_NODE: "1" } } as never;
+    const vps = { command: process.execPath, args: ["/app/vps-container-mcp.mjs", "my-vps", "murage-bot"], env: { ELECTRON_RUN_AS_NODE: "1" } } as never;
+    for (const localComputer of [vm, vps]) {
+      for (const config of [{}, { fullAuto: true }, { fullAuto: false }]) {
+        const root = scoped("vm-bot");
+        droidSupport.spawnArgs(config as never, { integrations: { localComputer } } as never, { env: { FACTORY_HOME_OVERRIDE: root } });
+        expect(existsSync(mcpPath(root))).toBe(false);
+      }
+    }
+  });
+
+  it("a Local VM or VPS turn after a host turn removes the host grant", () => {
+    const root = scoped("switch-bot");
+    applyDroidHostComputerGrant({ integrations: { localComputer: local } }, { FACTORY_HOME_OVERRIDE: root });
+    expect(JSON.parse(readFileSync(mcpPath(root), "utf8")).persistentPermissions.servers.computer).toBeDefined();
+    const vm = { command: process.execPath, args: ["/app/container-computer-mcp.mjs", "docker", "murage-vm", "/tmp/cua.sock"] } as never;
+    applyDroidHostComputerGrant({ integrations: { localComputer: vm } }, { FACTORY_HOME_OVERRIDE: root });
+    expect(JSON.parse(readFileSync(mcpPath(root), "utf8")).persistentPermissions.servers.computer).toBeUndefined();
+  });
+
   it("never writes outside a Murage-owned scoped home, and writes nothing when there is nothing to remove", () => {
     const plain = mkdtempSync(join(tmpdir(), "murage-droid-plain-"));
     homes.push(plain);

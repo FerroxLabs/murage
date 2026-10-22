@@ -3,7 +3,9 @@
 // replies, routine status, memory settlement) reads these three helpers, so
 // their answers for each shape an engine can settle with are pinned here.
 import { describe, expect, it } from "vitest";
-import { turnOutcome, turnStopped, turnSucceeded } from "./turn-outcome.ts";
+import { turnAskStopped, turnOutcome, turnStopped, turnSucceeded } from "./turn-outcome.ts";
+import { ASK_STOP_REASONS } from "./drivers/ask-stop.ts";
+import { ANTIGRAVITY_ASK_STOP_REASON } from "./drivers/antigravity.ts";
 import { hostStoppedActivityName, hostStoppedReason, HOST_STOPPED_PREFIX } from "../shared/host-stop.ts";
 
 const classify = (event: { ok: boolean; stopReason?: string | null }) => ({
@@ -44,6 +46,15 @@ describe("turn outcome", () => {
       expect(hostStoppedReason(notice)).toBe(reason);
       expect(classify({ ok: true, stopReason: "cancelled" })).toEqual({ stopped: true, succeeded: false, outcome: "cancelled" });
     }
+  });
+
+  it("Murage's own Ask stop (ok:true, every Ask stop reason) is a stop, never success, and not the person's Stop", () => {
+    expect(ASK_STOP_REASONS).toContain(ANTIGRAVITY_ASK_STOP_REASON);
+    for (const stopReason of ASK_STOP_REASONS) {
+      expect(classify({ ok: true, stopReason })).toEqual({ stopped: true, succeeded: false, outcome: "cancelled" });
+      expect(turnAskStopped({ ok: true, stopReason })).toBe(true);
+    }
+    for (const stopReason of ["cancelled", "end_turn", null, undefined]) expect(turnAskStopped({ ok: true, stopReason })).toBe(false);
   });
 
   it("ok:false with a 'cancelled' reason is still a stop, not a failure", () => {

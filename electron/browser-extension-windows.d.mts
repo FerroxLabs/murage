@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Duplex } from 'node:stream';
 export function resolveWindowsBrowserHelper(options?: {resources?:string;arch?:string;exists?:(path:string)=>boolean}): string;
-export function createPrivateWindowsDirectory(path:string):void;
+/** Errors carry code (windows_browser_helper_missing | windows_browser_private_storage_unavailable) and helperPath when the helper is at fault. */
+export function createPrivateWindowsDirectory(path:string,options?:{helper?:string}):void;
 export function readPrivateWindowsJson(path:string):unknown;
 export function writePrivateWindowsJson(path:string,value:unknown):void;
 export function writePrivateWindowsData(path:string,value:Buffer|string):void;

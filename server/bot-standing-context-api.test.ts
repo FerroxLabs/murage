@@ -4,10 +4,12 @@
 // member by name reaches that member rather than the room lead. Real server,
 // memory active, the repository's fake Claude CLI dumping every request.
 // Synthetic fixture text only; loopback server, no network or credentials.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
+import { removeTempDir } from "./testing/cleanup.ts";
 
 const SECTION = "Ops";
 const SECTION_BRIEF = "SECTION_BRIEF_CANARY the Ops team ships on Thursdays.";
@@ -53,13 +55,59 @@ async function roomTurn(text: string) {
   await api("POST", `/api/groups/${room.id}/messages`, { text: `${text} ${tag}` });
   return captured(tag);
 }
+// Test-only revoke status, from the fixture's own instrumentation (main thread of the server child, never a product route): on request
+// (a .revoke-status.req file in a temp dir of its own, outside the data dir) it writes whether the revoke marker still has work (revocationWorkPending, which includes
+// markerWorkPending) and the revokes in flight, by kind, state, phase and cause only. A record written while a revoke is in flight is held
+// "checking" until that revoke's last mark (DRAIN-104 r6 2.11, inheritEdge), so a turn sent before then rightly leaves it out.
+const SERVER_URL = (path: string) => JSON.stringify(new URL(path, import.meta.url).href);
+const STATUS_DIR = mkdtempSync(join(tmpdir(), "murage-revoke-status-"));
+const REVOKE_STATUS_HOOK = `
+const { existsSync, rmSync, writeFileSync, renameSync } = await import("node:fs");
+const { join } = await import("node:path");
+const base = ${JSON.stringify(STATUS_DIR)};
+setInterval(async () => {
+  const req = join(base, ".revoke-status.req");
+  if (!existsSync(req)) return;
+  const { database } = await import(${SERVER_URL("./database.ts")});
+  const { revocationWorkPending } = await import(${SERVER_URL("./memory/memory-revocation.ts")});
+  const { markerWorkPending } = await import(${SERVER_URL("./memory/revoke-marker.ts")});
+  const db = database();
+  let jobs = [];
+  try {
+    jobs = db.prepare("SELECT revoke_id AS id, kind, state, phase, root, revoke_id IN (SELECT revoke_id FROM memory_revoke_audience) AS audience FROM memory_revoke_jobs WHERE state IN ('active','undoing')").all()
+      .map(row => { let root = {}; try { root = JSON.parse(row.root); } catch {} return { id: row.id, kind: row.kind, state: row.state, phase: row.phase, audience: Boolean(row.audience), rootKind: root.kind, cause: root.cause }; });
+  } catch {}
+  const status = { marker: markerWorkPending(db), revocation: revocationWorkPending(db), jobs };
+  rmSync(req, { force: true });
+  writeFileSync(join(base, ".revoke-status.json.tmp"), JSON.stringify(status));
+  renameSync(join(base, ".revoke-status.json.tmp"), join(base, ".revoke-status.json"));
+}, 25).unref();
+`;
+type RevokeStatus = { marker: boolean; revocation: boolean; jobs: { id: number; kind: string; state: string; phase: string; audience: boolean; rootKind?: string; cause?: string }[] };
+async function revokeStatus(): Promise<RevokeStatus> {
+  const answer = join(STATUS_DIR, ".revoke-status.json");
+  rmSync(answer, { force: true });
+  writeFileSync(join(STATUS_DIR, ".revoke-status.req"), "");
+  let status: RevokeStatus | null = null;
+  await expect.poll(() => (status = readJson(answer)) !== null, { timeout: 10_000, message: "the fixture's revoke status hook never answered" }).toBe(true);
+  return status!;
+}
+/** Waits until the revoke marker has no work left, and logs what was in flight when the wait began (and any send-fence refusal so far). */
+async function markerIdle(label: string) {
+  const first = await revokeStatus();
+  console.log(`[revoke-status] ${label}: ${JSON.stringify(first)}`);
+  if (existsSync(fixture.info.logPath)) for (const line of readFileSync(fixture.info.logPath, "utf8").split("\n")) if (line.includes("send fence refused")) console.log(`[revoke-status] ${line}`);
+  if (!first.marker && !first.revocation) return;
+  await expect.poll(async () => { const now = await revokeStatus(); return !now.marker && !now.revocation; }, { timeout: TURN_EVENT_BOUND_MS, message: "the revoke marker never went idle" }).toBe(true);
+}
+
 // The owner's House Rules open every prompt (server/house-rules.ts); the
 // speaker line comes right after them.
 const speaker = (system: string) => /^(?:<house-rules>[\s\S]*?<\/house-rules>\s*)?You are ([^,]+), a bot in the room/.exec(system)?.[1];
 
 posixOnly("a bot carries its own notebook, memory, skills and team brief into every turn", () => {
   beforeAll(async () => {
-    fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: "process.env.FAKE_CLAUDE_DUMP_EACH_TURN='1';" });
+    fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: "process.env.FAKE_CLAUDE_DUMP_EACH_TURN='1';\n" + REVOKE_STATUS_HOOK });
     headers = { "x-murage-surface": "desktop", "x-murage-surface-secret": (await (await fetch(`${fixture.info.url}/api/desktop-secret`)).json() as { secret: string }).secret };
     expect((await api("GET", "/api/memory/status")).mode).toBe("active");
     const model = (await api("GET", "/api/instances")).instances.find((engine: any) => engine.instanceId === "verification").models.options[0].id;
@@ -74,7 +122,7 @@ posixOnly("a bot carries its own notebook, memory, skills and team brief into ev
     await api("POST", `/api/bots/${sable.id}/skills/library`, { ids: ["academic-writer"] });
     room = (await api("POST", "/api/groups", { name: "Ops room", memberIds: [sable.id, moss.id], setup: { bulletin: "", defaultResponder: { kind: "member", botId: sable.id } } })).group;
   }, 60000);
-  afterAll(async () => { await fixture?.close(); });
+  afterAll(async () => { await fixture?.close(); await removeTempDir(STATUS_DIR); });
 
   it("delivers the section's shared brief to its bots' direct turns and room member turns only", async () => {
     await api("PUT", `/api/section-context?section=${SECTION}`, { text: SECTION_BRIEF });
@@ -133,6 +181,9 @@ posixOnly("a bot carries its own notebook, memory, skills and team brief into ev
     // Owner-private continuity: it must stay out of rooms without failing the turn. (The brief is a PIP kind
     // since P2, so it can no longer be pinned; the room skip alone keeps it out.)
     await api("POST", "/api/memory/action", { action: "identity-write", botId: moss.id, expectedVersion: 0, basis: "fiction", audience: "owner-private", kind: "continuity-brief", key: "core", text: MOSS_CONTINUITY });
+    // The pinned imports inherit the marks of any revoke still in flight (the roster revokes from creating the bots and the room), and
+    // read "checking" until its last mark: the room turn is sent once the marker is idle, not on a guess at how long that takes.
+    await markerIdle("before the member turn");
 
     const member = await roomTurn("@Moss please answer briefly.");
     expect(speaker(member.system)).toBe("Moss");
@@ -142,7 +193,9 @@ posixOnly("a bot carries its own notebook, memory, skills and team brief into ev
     expect(member.prompt + member.system).not.toContain(MOSS_CONTINUITY);
     // The same private continuity still reaches Moss's own direct turn.
     expect((await directTurn(moss)).prompt).toContain(MOSS_CONTINUITY);
-  }, 120000);
+    // The member's room turn after the imports and the team change can wait up to three 5 s settles (the 1.0.3 known limit
+    // "a team member's next room reply can take up to 15 seconds longer"), on top of the marker wait and the direct turn.
+  }, 180000);
 
   it("routes a message that addresses a member by name to that member, and tells members not to answer for each other", async () => {
     const addressed = await roomTurn("Moss, can you confirm you are here?");

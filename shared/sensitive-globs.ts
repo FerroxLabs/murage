@@ -1,5 +1,6 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { win32Canonical } from "./in-project.ts";
 import { SENSITIVE_PATHS } from "./sensitive-paths.ts";
 
 // 1.0.4 (09-1 Low): a glob that could match a key file is a read of it.
@@ -86,11 +87,13 @@ function globCouldMatch(glob: string[], sample: string[]): boolean {
 }
 
 /** The sensitive row a glob in this command text could read, by its rule's
- * source (the name the verdict logs), or null. */
-export function globKeyRead(text: string): string | null {
+ * source (the name the verdict logs), or null. On Windows each token is read
+ * in its Win32 canonical spelling (shared/in-project.ts win32Canonical), so
+ * `\\?\C:\Users\me\.aw?\credentials` is the home glob it names. */
+export function globKeyRead(text: string, platform: NodeJS.Platform = process.platform): string | null {
   if (!text || !GLOB_CHARS.test(text)) return null;
   for (const raw of text.split(/[\s;|&()<>,"'`‘-„]+/)) {
-    const token = raw.replace(/^--?[\w-]+[:=]/, "");
+    const token = win32Canonical(raw.replace(/^--?[\w-]+[:=]/, ""), platform);
     if (!GLOB_CHARS.test(token)) continue;
     const glob = homeForm(token).replace(/^(\.\/)+/, "").split("/").filter((segment, k) => segment !== "." || k === 0);
     // leading `..` steps reach a folder the reader cannot name: drop them, so the glob is read relative

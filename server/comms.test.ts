@@ -22,6 +22,7 @@ import { queuedDelegationsByThread } from "./pending-delegations-schema.ts";
 
 import { mentionedBots, normalizeGroupDefaultResponder, roomResponders } from "./store.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { ASK_STOP_NOTE } from "./drivers/ask-stop.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
@@ -228,6 +229,12 @@ describe("comms e2e (fake ACP fleet)", () => {
             environment: { FAKE_AGY_MODE: "ask-peer" },
             config: { cli: FAKE_AGY_CLI, fullAuto: true },
           },
+          // A plain Antigravity bot whose write runs anyway at Ask: Murage halts its turn (stopReason ask_stop).
+          geminiAskStop: {
+            driver: "antigravityAgent",
+            environment: { FAKE_AGY_TOOL: "write_file" },
+            config: { cli: FAKE_AGY_CLI, fullAuto: true },
+          },
           // a separate asker instance for the async-handoff e2e. B can stay
           // on `grok` because its depth-1 turn runs without the agents
           // integration either way (the depth guard), so it just plays
@@ -401,14 +408,17 @@ describe("comms e2e (fake ACP fleet)", () => {
     40_000,
   );
 
-  // S3b (5f1db7b26): every turn now reaches Murage's permission broker (Ask and
-  // Auto route asks, Full access keeps the stop line), and Antigravity print
-  // mode has no approval channel. So its turns run without the skip flag and no
-  // token-bearing MCP (agents, computer, custom) is mounted at ANY level. Peer
-  // calls stay covered by the ACP-based tests in this file (grok `ask-peer`).
+  // S3b (5f1db7b26): every turn reaches Murage's permission broker. Antigravity
+  // print mode has no approval channel, so at Ask it runs read-only with no
+  // token-bearing MCP mounted. At Auto and Full access it runs with Murage's
+  // relay hook in front of every tool (drivers/antigravity-relay.ts): the peer
+  // tools are mounted and each call is answered by this server's broker.
   for (const level of ["ask", "auto", "full"] as const) {
+    const reaches = level !== "ask";
     it(
-      `does not offer peer tools to a Gemini Antigravity bot at ${level} access, and the turn ends with a plain message`,
+      reaches
+        ? `offers peer tools to a Gemini Antigravity bot at ${level} access through Murage's check, and the peer answers`
+        : `does not offer peer tools to a Gemini Antigravity bot at ${level} access, and the turn ends with a plain message`,
       async () => {
         const section = `Gemini agents MCP e2e ${level}`;
         const helper = (await api("POST", "/api/bots")).body.bot;
@@ -442,7 +452,7 @@ describe("comms e2e (fake ACP fleet)", () => {
           helperBot = state.bots.find((bot: any) => bot.id === helper.id);
           const ended = askerBot.messages.some(
             (message: any) => message.kind === "text" && message.role === "bot" && message.turnTerminal === true
-              && message.text?.includes("peer error: agents MCP not mounted"),
+              && message.text?.includes(reaches ? "peer says:" : "peer error: agents MCP not mounted"),
           );
           if (ended && !askerBot.busy) break;
           if (Date.now() > deadline) {
@@ -451,9 +461,14 @@ describe("comms e2e (fake ACP fleet)", () => {
           await new Promise((resolve) => setTimeout(resolve, 250));
         }
 
-        // The turn ended (terminal, not busy) and the helper was never reached.
-        expect(askerBot.messages.some((m: any) => m.text?.includes("peer says:"))).toBe(false);
-        expect(helperBot.messages.some((m: any) => m.role === "user" && m.text?.includes("[Message from @"))).toBe(false);
+        // The turn ended (terminal, not busy); the helper was reached only through the relay.
+        expect(askerBot.messages.some((m: any) => m.text?.includes("peer says:"))).toBe(reaches);
+        // At Ask the turn ends as the Ask stop, with its note, never as the owner's Stop.
+        if (level === "ask") {
+          expect(askerBot.messages.some((m: any) => m.kind === "activity" && m.tool?.notice === true && m.tool?.name === ASK_STOP_NOTE)).toBe(true);
+          expect(askerBot.messages.some((m: any) => m.kind === "activity" && m.tool?.name === "Stopped by you")).toBe(false);
+        }
+        if (!reaches) expect(helperBot.messages.some((m: any) => m.role === "user" && m.text?.includes("[Message from @"))).toBe(false);
 
         // Nothing token-bearing was left in (or put into) agy's global MCP config.
         await expect.poll(
@@ -1798,5 +1813,46 @@ describe("comms e2e (fake ACP fleet)", () => {
       throw error;
     });
   }, 45000);
+
+  it(
+    "an ask_bot to an Antigravity bot whose turn Murage halts at Ask gets no reply receipt: a stop, with the Ask note and no \"Stopped by you\"",
+    async () => {
+      // deterministic roster: only these two are visible, so the asker's list_bots picks the helper
+      for (const bot of (await api("GET", "/api/bots?messages=0")).body.bots) await api("PATCH", `/api/bots/${bot.id}`, { hidden: true });
+      const section = "Ask stop receipt e2e";
+      const helper = (await api("POST", "/api/bots")).body.bot;
+      await api("PATCH", `/api/bots/${helper.id}`, { name: "Agy Helper", section, modelSelection: { instanceId: "geminiAskStop", model: "gemini-3.7-flash-high" } });
+      const asker = (await api("POST", "/api/bots")).body.bot;
+      // the asker runs at Auto (the fake grok reports a version below the Ask floor); the helper stays at Ask
+      expect((await api("PATCH", `/api/bots/${asker.id}`, { name: "Agy Asker", section, modelSelection: { instanceId: "grok", model: "fake-model" }, autoApprove: true, acknowledgeLocalAuto: true })).status).toBe(200);
+
+      expect((await api("POST", `/api/bots/${asker.id}/messages`, { text: "hey @Agy Helper write the notes" })).status).toBe(202);
+
+      const deadline = Date.now() + 30_000;
+      let askerBot: any;
+      let helperBot: any;
+      for (;;) {
+        const state = (await api("GET", "/api/bots")).body;
+        askerBot = state.bots.find((b: any) => b.id === asker.id);
+        helperBot = state.bots.find((b: any) => b.id === helper.id);
+        const settled = askerBot.messages.some((m: any) => m.kind === "text" && m.role === "bot" && /peer (says|error):/.test(m.text ?? ""));
+        if (settled && !askerBot.busy && !helperBot.busy) break;
+        if (Date.now() > deadline) {
+          throw new Error(`asker never settled. asker tail: ${JSON.stringify(askerBot.messages.slice(-6))}\nhelper tail: ${JSON.stringify(helperBot.messages.slice(-6))}\nstderr: ${stderr.slice(-2000)}`);
+        }
+        await new Promise((r) => setTimeout(r, 250));
+      }
+
+      // the helper's turn ended as Murage's Ask stop: its reply shows, with the note, never "Stopped by you"
+      expect(helperBot.messages.some((m: any) => m.role === "bot" && m.kind === "text" && (m.text ?? "").length > 0)).toBe(true);
+      expect(helperBot.messages.some((m: any) => m.kind === "activity" && m.tool?.notice === true && m.tool?.name === ASK_STOP_NOTE)).toBe(true);
+      expect(helperBot.messages.some((m: any) => m.kind === "activity" && m.tool?.name === "Stopped by you")).toBe(false);
+
+      // the asker was told the turn stopped before it finished, not handed a finished reply
+      const reply = askerBot.messages.findLast((m: any) => m.kind === "text" && m.role === "bot");
+      expect(reply.text).toContain("the bot's turn was stopped before it finished");
+    },
+    45_000,
+  );
 
 });

@@ -1,6 +1,5 @@
 # GATE tests: they block CI and a release. One file per line: path <TAB> OSes <TAB> the user failure it prevents.
 # OSes: all, or linux / mac / windows joined by + (only where the behaviour exists). Rule: docs/testing.md.
-# Exception to the 60-second rule: server/lee-phantom-scenario.test.ts (about 6 min) stays GATE on Linux only, as the end-to-end proof of the Lee_J/Phantom user bug.
 companion/test/approval-door-headers.test.ts	all	push delivery and approval integrity
 companion/test/browser-code.test.ts	all	phone door credential handling (credentials)
 companion/test/browser-inbox.test.ts	all	security boundary or path/file access
@@ -215,6 +214,7 @@ server/browser-cloud-host.test.ts	all	Browser refuses container signals, root, f
 server/browser-connection.test.ts	all	browser descriptor loopback-only, per-turn capabilities
 server/browser-content-probe.test.ts	all	detects instruction injection in page text
 server/browser-control.test.ts	all	browser ownership boundary human versus bot
+server/browser-control-takectl.test.ts	all	take control owner-input wait is bounded
 server/browser-document-guard-chromereal.test.ts	all	Private inputs detected by label and password
 server/browser-engine-policy.test.ts	all	headless browser rejects forged scope and destinations
 server/browser-engine.test.ts	all	browser install verified signed with no fallback
@@ -429,6 +429,8 @@ server/desktop-stop-control-api.test.ts	all	Stop takes the screen back
 server/destructive-inside.test.ts	all	Auto guard on deletes inside roots
 server/direct-owner-integrations-api.test.ts	all	Integrations mount only for owner words
 server/direct-replay-without-memory.test.ts	all	reply using forgotten memory is withheld
+server/direct-late-close-api.test.ts	all	retained run released when engine closes later (API)
+server/direct-late-close.test.ts	all	retained run released once when engine closes later
 server/direct-run-late-close.test.ts	all	message after Stop runs despite late close
 server/discord-api.test.ts	all	Discord owner binding, restart, revocation
 server/discord-config.test.ts	all	Discord token, owner identity and private authority
@@ -456,9 +458,10 @@ server/drivers/acp/pool.test.ts	all	ACP process pool turn reuse and teardown
 server/drivers/acp/qwen.test.ts	all	Qwen Flux routing, workspace key never leaked
 server/drivers/agents-proxy.test.ts	all	agents MCP tool surface and rule rows
 server/drivers/agents-result.test.ts	all	credential masked in parked copy (secrets)
-server/drivers/antigravity-denied.test.ts	linux+mac	a command denied at Auto shows a plain line, never a blank reply
+server/drivers/antigravity-auto.test.ts	linux+mac	Antigravity at Auto/Full runs commands and Murage tools only through Murage's check; stop line holds; unloaded hook refuses the turn
+server/drivers/antigravity-denied.test.ts	linux+mac	a command denied in accept-edits shows a plain line (Ask: the Ask note), never a blank reply
 server/drivers/antigravity-scope.test.ts	all	scoped home never writes owner files
-server/drivers/antigravity.test.ts	all	never skips permissions for Ask/Auto bots; strips credentials
+server/drivers/antigravity.test.ts	all	skips agy permissions only with the relay hook (Auto/Full), never at Ask; strips credentials
 server/drivers/browser-extension-mcp-deadline.test.ts	all	owner approval card answerable after wait
 server/drivers/browser-extension-mcp.test.ts	all	does not forward approval or identity methods
 server/drivers/captured-env-routing.test.ts	all	subscription turn not routed to shell provider
@@ -642,7 +645,6 @@ server/launch-no-tty.behaviour.test.ts	all	engine processes have no controlling 
 server/launch-secret.test.ts	all	Launch secret passed privately, not in env
 server/learning-destination.test.ts	all	learning scope and approval rules
 server/lee-phantom-gate.test.ts	all	a fresh delegated reply in the owner's own chat is not hidden as withheld
-server/lee-phantom-scenario.test.ts	linux	user-flow scenario, 6 min; the Linux shard carries it
 server/lineage-r3.test.ts	all	withheld lines excluded from replay lineage
 server/lineage-read-path.test.ts	all	forgotten owner line stays withheld
 server/link-removal.test.ts	all	removing link keeps target folder files
@@ -942,6 +944,7 @@ server/publish/site-files.test.ts	all	site files exclude secrets, symlinks refus
 server/question-normalize.test.ts	all	secret questions dropped; question vs permission told apart
 server/rc3f-downgrade.test.ts	all	pending branch change finished before downgrade
 server/rc4a2-session-cursors.test.ts	all	downgrade leaves no stale provider sessions
+server/reader-attached-forms-103.test.ts	all	an interpreter's attached inline code or a PowerShell compound assignment slipping past Always ask or the stop line (approval boundary)
 server/recovery-engine-discovery.test.ts	all	restore never resurrects default engine fleet
 server/redact.test.ts	all	secrets masked in logs and sessions
 server/remote-computer.test.ts	all	checksummed driver, no command injection via bot name
@@ -1144,6 +1147,7 @@ shared/backup-capture-cause.test.ts	all	protects user-visible behaviour in core 
 shared/exact-command.test.ts	all	protects user-visible behaviour in core flows
 shared/guarded-http.test.ts	all	security boundary or path/file access
 shared/in-project.test.ts	all	security boundary or path/file access
+shared/in-project.win32.test.ts	windows	a bot on Windows writing a Murage hook file through a spelling Win32 reads as that file (trailing dot, stream suffix, \\?\ or a loopback share)
 shared/installation-backup.test.ts	all	protects user-visible behaviour in core flows
 shared/key-extract.test.ts	all	credentials, pairing and access control
 shared/mcp-paste.test.ts	all	protects user-visible behaviour in core flows
@@ -1255,3 +1259,7 @@ server/cloud-home/runnable-engines.test.ts	linux	a Cloud home offering an engine
 server/stale-engine-model.test.ts	all	a bot staying on a model its engine no longer lists, so every turn fails
 scripts/windows-native-imports.test.mjs	all	a Windows build whose native addon imports a DLL beyond system DLLs (the /MT addon failing to load on a clean Windows)
 server/browser-windows-identity-admission.test.ts	all	a signed or tampered Windows browser image admitted or refused on the wrong path, so the browser fails to start or runs unverified
+server/hook-selfguard.test.ts	all	a bot rewriting Murage's own engine hooks at Full access or No limits, so later calls skip the approval check
+server/memory/resume-race-renewal.test.ts	all	a bot forgetting the conversation on its first turn after a restart (resume race reset)
+server/permission-pipe.test.ts	all	a Windows Ask with Git installed denied with no approval card (broker pipe path lost through Git Bash)
+server/drivers/acp/cursor-win-junction.win32.test.ts	windows	a Cursor turn on Windows as a standard user failing with EPERM when it links its sessions folder

@@ -18,7 +18,7 @@ import { notePromptSent } from "../turn-hold.ts";
 //   - the bot's cloud computer (box.ascii.dev) via server/computer-proxy.ts
 //     — screenshot/exec/open_url, the CUA-on-the-box bridge
 import { boundedEnvMs } from "./env-ms.ts";
-import { awaitRequiredMcp, isUnsupportedAnswer, McpBackoff, mcpReconnectWaitMs, McpStatusSupport, mcpWaitChipTitle, parseMcpStatus, splitMcpServers, toolsMayBeLoadingNotice, toolsUnavailableNotice, unavailableLabels, type McpReadiness, type McpStatusAnswer } from "./mcp-readiness.ts";
+import { awaitRequiredMcp, isUnsupportedAnswer, McpBackoff, mcpFirstAnswerMs, mcpReconnectWaitMs, McpStatusSupport, mcpWaitChipTitle, parseMcpStatus, splitMcpServers, toolsMayBeLoadingNotice, toolsUnavailableNotice, unavailableLabels, type McpReadiness, type McpStatusAnswer } from "./mcp-readiness.ts";
 import { applyProviderRoute, type ProviderTurnRoute } from "../provider-routing.ts";
 import { claudeTextOnlyTurn } from "./headless-text-only.ts";
 import { execFileSync } from "node:child_process";
@@ -46,7 +46,7 @@ import { fluxKey } from "../flux-config.ts";
 import { applyFluxSurface, isFluxModel } from "../flux-routing.ts";
 import { claudeCustomHeadersValue, fluxMemoryContextForTurn, fluxMemoryDecision, logFluxMemoryHeaders, type FluxMemoryDecision } from "../flux-memory-headers.ts";
 import { mergeFluxCatalog } from "../flux-surface.ts";
-import { awaitCliTreeStopped, CLI_CALLER_DEADLINE_MS, cliTreeConfirmedStopped, cliTreeStoppedSignal, forceCliTreeStopped, brokerSocketPath, describeSpawnFailure, execCli, killCliTree, spawnCli } from "../procs.ts";
+import { awaitCliTreeStopped, CLI_CALLER_DEADLINE_MS, cliTreeConfirmedStopped, cliTreeStoppedSignal, forceCliTreeStopped, brokerSocketPath, describeSpawnFailure, engineJob, execCli, killCliTree, spawnCli } from "../procs.ts";
 import { cachedCliVersion } from "../cli-version-cache.ts";
 import { anyMountIncomplete, bindCredentialPath, clearMountsIncomplete, connectorMountRefsOf, connectorScopeOf, createTurnCredentialStore, splitTurnSecrets, type TurnCredentialStore } from "./turn-credentials.ts";
 import { descendantBaseline, untrackedDescendants, processNames } from "./process-tree.ts";
@@ -101,6 +101,7 @@ import { appendNative } from "./native.ts";
 import { createBoundedLineSplitter, FRAME_TOO_LARGE, frameOverflowMessage } from "./bounded-lines.ts";
 import { registerIntake } from "../harness/intake.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
+import { BROKER_UNAVAILABLE_NOTE, brokerPathForArgv } from "../permission-pipe.ts";
 import { normalizeEngineCommands } from "../engine-commands.ts";
 import { engineCommandText } from "../../shared/engine-commands.ts";
 import { engineClosedLine } from "./stop-copy.ts";
@@ -114,6 +115,7 @@ import { execEnvHanded, execEnvNow, handedEngineEnv, ownedTurnNames, type Handed
 import { gitBashDiscovery, type GitBashFound, type GitBashMiss } from "../tool-discovery.ts";
 import { ABSENT_PINS, ENV_PINS } from "../../shared/arg-vocabulary.ts";
 import { ClaudeGateRecord, ClaudeOverlayStore } from "./claude-private.ts";
+import { LocalSetupError } from "../local-setup-failure.ts";
 import { TurnRefusal } from "./turn-refusal.ts";
 import { NarrowDenials } from "../narrow-denials.ts";
 import { appendDecision } from "../decision-log.ts";
@@ -480,6 +482,13 @@ export function readClaudeModelCatalog(env: Record<string, string | undefined> =
 // far. See server/proxy-paths.ts.
 const PROXY_PATH = SPAWNED_PROXIES.computer;
 const PERM_PROXY_PATH = SPAWNED_PROXIES.permission;
+/** A tool result's text, whether the CLI sent a string or content blocks. */
+const toolResultText = (content: unknown): string =>
+  typeof content === "string"
+    ? content
+    : Array.isArray(content)
+      ? content.map((part) => (part && typeof part === "object" && typeof (part as { text?: unknown }).text === "string" ? (part as { text: string }).text : "")).join("\n")
+      : "";
 const DWEB_PROXY_PATH = SPAWNED_PROXIES.dweb;
 // in the packaged app process.execPath is the Electron binary — this env
 // makes it behave as plain node for the spawned MCP proxies (harmless in dev)
@@ -2322,6 +2331,30 @@ export function bashTargetsOf(_command: string): { available: false } {
  * the data folder. */
 export const claudeOverlays = new ClaudeOverlayStore(() => join(DATA_DIR, "claude-private"));
 
+/** The two codes Murage's Windows helper (electron/browser-extension-windows.mjs) throws when it is missing or cannot run. */
+const WINDOWS_HELPER_FAILURES = new Set(["windows_browser_helper_missing", "windows_browser_private_storage_unavailable"]);
+const windowsHelperCode = (error: unknown): string | undefined => {
+  if (!(error instanceof Error)) return undefined;
+  const code = (error as { code?: unknown }).code;
+  if (typeof code === "string" && WINDOWS_HELPER_FAILURES.has(code)) return code;
+  return WINDOWS_HELPER_FAILURES.has(error.message) ? error.message : undefined;
+};
+/** Writes and holds the launch's overlay. On Windows its owner-only folder needs the native helper; when the helper is missing
+ *  or cannot run, the turn still does not start (never an unprotected folder), but it fails as this device's setup, so the card
+ *  names the helper instead of pointing at Provider settings. Every other failure is rethrown as it was. */
+export function acquireClaudeOverlay(text: string, store: Pick<ClaudeOverlayStore, "acquire"> = claudeOverlays): string {
+  try {
+    return store.acquire(text);
+  } catch (error) {
+    const code = windowsHelperCode(error);
+    if (!code) throw error;
+    // The app log's only line for this: the code and where the helper was looked for (an install path), never the overlay's content.
+    const helperPath = (error as { helperPath?: unknown }).helperPath;
+    console.warn(`claude private folder setup refused: ${code} helper=${typeof helperPath === "string" ? JSON.stringify(helperPath) : "unknown"}`);
+    throw new LocalSetupError("windows-helper", `Claude needs Murage's Windows helper (murage-browser-host.exe) to start (${code}). If your antivirus moved it to quarantine, restore it, or reinstall Murage. Then send your message again. Codex and Fuigo keep working.`, { cause: error });
+  }
+}
+
 let isolationDir: string | null = null;
 /** Writes the overlay to a private file named by its content hash and returns the path. A large
  * personal inventory inline on argv would pass Windows' command-line limit and cost the owner
@@ -2927,7 +2960,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           chipId = `mcp-wait-${chipTurnId}`;
           emit({ ...base(threadId, chipTurnId), type: "item.started", itemType: "tool", origin: "murage", itemId: chipId, title: mcpWaitChipTitle(unavailableLabels(waitingFor)) });
         },
-      });
+      }, { firstAnswerMs: mcpFirstAnswerMs() });
       if (!outcome.stopped) {
         claudeMcpStatusSupport.observe(identity, !outcome.unchecked ? "answered" : outcome.uncheckedReason === "unsupported" ? "unsupported" : "no-answer");
       }
@@ -3329,7 +3362,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       {
         socketPath = permissionSocketPath(threadId);
         args.push("--permission-prompt-tool", "mcp__muragebox__approve");
-        mcpServers.muragebox = { command: process.execPath, args: [PERM_PROXY_PATH, socketPath], env: { ...NODE_ENV_FLAG } };
+        // Windows: the pipe in its forward-slash spelling, which survives Git Bash's
+        // reading of the murage-exec command line (permission-pipe.ts).
+        mcpServers.muragebox = { command: process.execPath, args: [PERM_PROXY_PATH, brokerPathForArgv(socketPath)], env: { ...NODE_ENV_FLAG } };
         allowed.push("mcp__muragebox");
       }
       // The MCP config carries credentials — a Composio consumer key in a
@@ -3860,7 +3895,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           // the base path: the nonce is not part of the spawn contract, and a
           // retained session keeps its own broker object anyway.
           if (broker.socketPath !== socketPath && mcpConfigPath) {
-            stableServers.muragebox = { command: process.execPath, args: [PERM_PROXY_PATH, broker.socketPath], env: { ...NODE_ENV_FLAG } };
+            stableServers.muragebox = { command: process.execPath, args: [PERM_PROXY_PATH, brokerPathForArgv(broker.socketPath)], env: { ...NODE_ENV_FLAG } };
           }
         }
 
@@ -3949,13 +3984,13 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         // this launch would run beside a tree that may still be live.
         if (resetBarriers.has(threadId) || resetBlocked.has(threadId)) throw new Error(NOT_STOPPED_MESSAGE);
         // Section 14: the overlay is written for this launch and held by it (released when it exits, below)
-        overlayHeld = overlayText === null ? null : claudeOverlays.acquire(overlayText);
+        overlayHeld = overlayText === null ? null : acquireClaudeOverlay(overlayText);
         const launchCli = engineLaunchFile(config.cli, launchPath);
         child = spawnCli(launchCli, args, {
           cwd,
           env,
           stdio: ["pipe", "pipe", "pipe"],
-        });
+        }, engineJob());
       } catch (error) {
         // The fence above released the prompt to a write that will not happen (turn-attribution.ts, I14).
         turn.notWritten?.();
@@ -4376,6 +4411,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             for (const b of Array.isArray(o.message?.content) ? o.message.content : []) {
               if (b.type === "tool_result") {
                 emit({ ...base(threadId, currentTurnId()), type: "item.completed", itemType: "tool", itemId: b.tool_use_id, ok: !b.is_error, result: b.content });
+                // The proxy fails closed when it cannot reach the broker, and its own
+                // stderr only reaches the engine's MCP log: say so in the app log.
+                if (toolResultText(b.content).includes(BROKER_UNAVAILABLE_NOTE)) {
+                  console.error(`claude permission broker unreachable thread=${threadId} tool_use=${JSON.stringify(String(b.tool_use_id ?? ""))} broker=${JSON.stringify(session.broker?.socketPath ?? null)}: the engine's permission proxy could not reach the broker, so the call was denied and no card opened`);
+                }
                 // The chip above was all this branch ever read. An image the
                 // tool answered with was dropped here, never reaching the
                 // attachment pipeline that has always been waiting for it.

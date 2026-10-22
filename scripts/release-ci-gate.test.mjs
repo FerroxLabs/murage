@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 
-import { ciVerdict, nightlyPending, nightlyRetryable, nightlyVerdict, parseWaiver, waiverVerdict } from "./release-ci-gate.mjs";
+import { ciVerdict, nativeAddonVerdict, nightlyPending, nightlyRetryable, nightlyVerdict, parseWaiver, waiverVerdict } from "./release-ci-gate.mjs";
 
 const SHA = "a".repeat(40);
 const OTHER = "b".repeat(40);
@@ -217,5 +217,32 @@ describe("the nightly is rechecked after the CI wait", () => {
     expect(source.slice(pass, pass + 120)).toContain("recheckNightly();");
     const waived = source.indexOf("const result = waiverVerdict(");
     expect(source.slice(waived, waived + 400)).toContain("recheckNightly();");
+  });
+});
+
+describe("the Windows ACL tests (native-addon-msvc) are required", () => {
+  const sha = "a".repeat(40);
+  const old = "d".repeat(40);
+  const ok = { ancestor: () => true, stale: () => false, runsAcl: () => true };
+  const native = (over = {}) => run({ id: 7, head_sha: sha, conclusion: "success", ...over });
+  it("passes on a green run of the pinned commit", () => {
+    expect(nativeAddonVerdict([native()], sha, ok).ok).toBe(true);
+  });
+  it("passes on a green ancestor run when no watched file changed since", () => {
+    expect(nativeAddonVerdict([native({ head_sha: old })], sha, ok).ok).toBe(true);
+  });
+  it("refuses an ancestor run when a watched file changed since", () => {
+    expect(nativeAddonVerdict([native({ head_sha: old })], sha, { ...ok, stale: () => true }).reason).toContain("changed between");
+  });
+  it("refuses no run, a red run, or a newer red run over an older green one", () => {
+    expect(nativeAddonVerdict([], sha, ok).ok).toBe(false);
+    expect(nativeAddonVerdict([native({ conclusion: "failure" })], sha, ok).ok).toBe(false);
+    expect(nativeAddonVerdict([native({ head_sha: old, created_at: "2026-10-10T00:00:00Z" }), native({ id: 8, conclusion: "failure", created_at: "2026-10-11T00:00:00Z" })], sha, ok).ok).toBe(false);
+  });
+  it("refuses a run whose workflow did not require the ACL tests", () => {
+    expect(nativeAddonVerdict([native()], sha, { ...ok, runsAcl: () => false }).reason).toContain("MURAGE_REQUIRE_WINDOWS_NATIVE");
+  });
+  it("refuses a run that is not on this history", () => {
+    expect(nativeAddonVerdict([native({ head_sha: old })], sha, { ...ok, ancestor: () => false }).ok).toBe(false);
   });
 });

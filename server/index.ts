@@ -294,6 +294,7 @@ import { isDiskSpaceCode } from "../shared/attachment-storage.ts";
 import type { ArtifactKind } from "../shared/artifacts.ts";
 import { newClaudeAccount, claudeAccountInfo, assertSeparateClaudeAccount, createClaudeAccountSchema, claudeAccountSettingsSchema, resolveClaudeConfigDir } from "./claude-accounts.ts";
 import { fluxHermesHome, HERMES_CONFIG_MODEL_ID } from "./drivers/acp/hermes.ts";
+import { openclawVersionNote } from "./drivers/acp/openclaw.ts";
 import { hermesInstanceProfiles, hermesProfileOf, listHermesProfiles, planHermesImport, planHermesProfilePins, type HermesPin } from "./hermes-profiles.ts";
 import { hermesPinNoteActivityName } from "../shared/hermes-pin-note.ts";
 import { ConversationDeletions, ENGINE_FOR_DRIVER, ENGINE_LABEL, engineHomeFor, runConversationDeletion, type DeletionEngineHome, type DeletionInput, type DeletionReport } from "./conversation-deletion.ts";
@@ -426,7 +427,6 @@ import { capabilitiesPrimer, turnCapabilityFacts, type ImageConnectionFact } fro
 import { murageToolOnThisServer } from "./murage-tool-surface.ts";
 import { UnifiedBrowserController } from "./browser-control.ts";
 import { browserOwnerRequest, browserOwnerId } from "./browser-owner-api.ts";
-const USER_CHROME_ALLOW_PANEL_MESSAGE = "Chrome did not let Murage connect. When Chrome asks \"Allow remote debugging?\", click Allow, then try again.";
 import { browserRefusal, isBrowserRefusal, type BrowserProtection } from "./browser-lock.ts";
 import { enableLinuxBrowserSandbox, isLinuxSandboxEnableProblem, LINUX_SANDBOX_ENABLE_CODE } from "./browser-sandbox.ts";
 import { unifiedBrowserSystemPrompt, warmBrowserEngineCheck, settledBrowserEngineStatus, TURN_BROWSER_WAIT_MS, browserEngineEncryptionKey, browserSessionId, userChromeSessionId, agentBrowserIntegration, closeAgentBrowserSession, verifyAgentBrowserBinary, type AgentBrowserSpec } from "./browser-engine.ts";
@@ -580,7 +580,7 @@ import {
 } from "./question-normalize.ts";
 import { isQuestionCard, questionFromChoices, questionsForCard } from "../shared/questions.ts";
 import { promptWithReply, transcriptText } from "./replies.ts";
-import { _loadPending, onOwedHandoffReply, FINALIZER_WRITES, discardDelegations, forgetDelegationsForThreads, drainDelegations, dropUnreachableDelegations, findDelegationReceipt, pendingDelegationInfo, pendingDelegationSnapshot, pendingThreads, recordDelegationReceipt, releaseDelegationsWaitingOn, releaseParkedDelegations, hasActiveDelegationWork, DRAIN_PAGE, stopWaitingDelegation, settleStartedDelegations, resendHeldDelegation, dismissHeldDelegation, heldLineId, appendHeldLine, releaseHeld, idleReleaseHasMore, DELEGATION_DELETED, DELEGATION_NOT_STARTABLE, DELETED_NOTE, alreadyPickedUpText, type HeldDelegation, } from "./delegations.ts";
+import { _loadPending, onOwedHandoffReply, FINALIZER_WRITES, discardDelegations, forgetDelegationsForThreads, drainDelegations, settleQueuedDelegations, dropUnreachableDelegations, findDelegationReceipt, pendingDelegationInfo, pendingDelegationSnapshot, pendingThreads, recordDelegationReceipt, releaseDelegationsWaitingOn, releaseParkedDelegations, hasActiveDelegationWork, DRAIN_PAGE, stopWaitingDelegation, settleStartedDelegations, resendHeldDelegation, dismissHeldDelegation, heldLineId, appendHeldLine, releaseHeld, idleReleaseHasMore, DELEGATION_DELETED, DELEGATION_NOT_STARTABLE, DELETED_NOTE, alreadyPickedUpText, type HeldDelegation, } from "./delegations.ts";
 import {
   cancelSteeredMessage,
   drainSteeredMessages,
@@ -940,7 +940,7 @@ import { workspaceFilesRoute } from "./workspace-files.ts";
 import { mediaAssetsRoute } from "./media-assets.ts";
 import { resolveImageReferenceRoute } from "./image-reference-resolver.ts";
 import { BrowserCheckTurns, runBrowserCheck } from "./browser-check-state.ts";
-import { turnOutcome, turnStopped, turnSucceeded, TURN_INTERRUPTED_NOTE, TURN_STOPPED_DESKTOP_ACTION_NOTE, TURN_STOPPED_NOTE } from "./turn-outcome.ts";
+import { turnAskStopped, turnOutcome, turnStopped, turnSucceeded, TURN_INTERRUPTED_NOTE, TURN_STOPPED_DESKTOP_ACTION_NOTE, TURN_STOPPED_NOTE } from "./turn-outcome.ts";
 import { hostStoppedActivityName, hostStoppedReason } from "../shared/host-stop.ts";
 import { isSendNoticeCode } from "../shared/send-notice.ts";
 import { BROWSER_HELD_FOR_ANSWER_REASON, browserUnavailableActivityName, USER_CHROME_ALLOW_REASON, USER_CHROME_UNREACHABLE_REASON } from "../shared/browser-unavailable.ts";
@@ -987,6 +987,9 @@ holdTranscriptBackfillUntil(startupWritesReady());
 // servers and bot commands start from this environment, and must not write
 // their own compiled code into the app's cache folder.
 delete process.env.NODE_COMPILE_CACHE;
+
+// Kept below installServerChildCrashObserver(): nothing executable may precede it (server-child-crash.test.ts).
+const USER_CHROME_ALLOW_PANEL_MESSAGE = "Chrome did not let Murage connect. When Chrome asks \"Allow remote debugging?\", click Allow, then try again.";
 
 const PORT = Number(process.env.MURAGE_PORT || process.env.MURAGEBOX_PORT || 8799);
 const WEBHOOK_PORT = Number(process.env.MURAGE_WEBHOOK_PORT || PORT + 1);
@@ -2106,6 +2109,7 @@ async function releaseAllBrowserCapabilities(): Promise<void> {
 
 import { giveBackAdmitted, startAdmittedTurn, type AdmittedPhase, type AdmittedTurnState } from "./admitted-turn.ts";
 import { IndependentThreadRuns, MAX_CONCURRENT_BOT_THREADS, RESOURCE_WAIT_TIMEOUT_MS, requireDirectThreadTarget, type DirectThreadRun, type ResourceBlocker, type ResourceYield } from "./independent-thread-runs.ts";
+import { ENGINE_CLOSED_LATE_NOTE, releaseOnLateClose } from "./direct-late-close.ts";
 import type { TurnOwner } from "./turn-resources.ts";
 import { handoffCanStart, type HandoffAdmission } from "./handoff-admission.ts";
 import { admissionComputerClaims, computerResourceKeys, screenResourceKey, unusedComputerClaims, workspaceResource } from "./turn-resources.ts";
@@ -8094,10 +8098,12 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
       // the person did not press Stop, so "Stopped by you" would be untrue.
       // A stop that caught a desktop action mid-flight says so instead.
       const desktopActionStopped = desktopActionCaughtByStop(event.threadId);
+      // Murage's own Ask stop is a stop (never finished work), but the person did not press Stop: ASK_STOP_NOTE already says why.
+      const askStopped = turnAskStopped(event);
       // The checking note (if any) is this turn's stopped line; a desktop action caught mid-flight refines its wording.
-      const checkCarriesStop = replacementOwnsThread ? false : browserCheckTurns.terminal(event.threadId, { stopped: turnStopped(event), desktopAction: desktopActionStopped });
+      const checkCarriesStop = replacementOwnsThread ? false : browserCheckTurns.terminal(event.threadId, { stopped: turnStopped(event) && !askStopped, desktopAction: desktopActionStopped });
       if (checkCarriesStop) { /* no second stop line */ }
-      else if (turnStopped(event) && !replacementOwnsThread && !hostStopNotedSinceLastUserMessage(event.threadId)) {
+      else if (turnStopped(event) && !askStopped && !replacementOwnsThread && !hostStopNotedSinceLastUserMessage(event.threadId)) {
         pushMessage({
           role: "bot",
           kind: "activity",
@@ -8164,7 +8170,20 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
             ? registry.get(event.providerInstanceId??directRun.snapshot.modelSelection.instanceId)?.adapter
             : undefined;
           if(!directRun||!teardownAdapter?.awaitTurnTeardown){releaseDirect();return;}
-          const retain=()=>{if(directRuns.current(directRun))reportUnconfirmedDirectStop(event.threadId,directRun.generation);};
+          // Captured before the bounded wait: the adapter forgets a child once it closed.
+          const lateClose=teardownAdapter.awaitTurnClose?.(event.threadId,event.turnId);
+          const retain=()=>{
+            if(!directRuns.current(directRun))return;
+            reportUnconfirmedDirectStop(event.threadId,directRun.generation);
+            // RETAINED -> RELEASED_LATE: only the engine's confirmed later close releases it.
+            if(lateClose)releaseOnLateClose({
+              closed:lateClose,
+              owns:()=>directRuns.current(directRun),
+              threadExists:()=>Boolean(store.taskByThread(bot.id,event.threadId)),
+              note:()=>{store.appendMessage(event.threadId,murageLine({role:"bot",kind:"activity",tool:{name:ENGINE_CLOSED_LATE_NOTE,ok:true}}));},
+              release:releaseDirect,
+            });
+          };
           void teardownAdapter.awaitTurnTeardown(event.threadId,event.turnId).then(result=>result.closeConfirmed?releaseDirect():retain(),retain);
         };
         const routineReportThread = routineRun ? routineSourceThread(routineRun) : null;
@@ -8176,7 +8195,7 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
         // A turn the person stopped is not news to them: their own Stop does
         // not mark the conversation unread (a host stop, which they did not
         // cause, still does).
-        const stoppedByPerson = turnStopped(event) && !hostStopNotedSinceLastUserMessage(event.threadId);
+        const stoppedByPerson = turnStopped(event) && !turnAskStopped(event) && !hostStopNotedSinceLastUserMessage(event.threadId);
         if (!routineReportGroup && !replacementOwnsThread && !stoppedByPerson) store.patchTask(bot.id,event.threadId, { unread: true });
         if (routineRun?.status !== "failed" && !replacementOwnsThread && !turnStopped(event)) {
           // the frame carries the bot's avatar so every desktop client can
@@ -8784,8 +8803,7 @@ bus.subscribe((event: RuntimeEvent) => {
   // the rule in discardDelegations that an item which has already outlived a
   // turn is never collateral.
   // (a wake turn that ended badly restarts nothing; the done ids stay for the one rebuild a late memory refusal schedules, asker-wake.ts failed)
-  if (!turnSucceeded(event)) { discardDelegations(commsBus, event.threadId, store.botByThread(event.threadId)?.id); askerWakes.failed(event.threadId); }
-  else drainDelegations(commsBus, approvalBus, event.threadId);
+  if (settleQueuedDelegations(commsBus, approvalBus, event.threadId, event, store.botByThread(event.threadId)?.id) === "discarded") askerWakes.failed(event.threadId);
   // Every owed wake is tried, not only this thread's: a wake held back while
   // its bot was busy in a room or on three threads is freed by a turn that
   // ended somewhere else. wakeAsker starts nothing for a thread still busy.
@@ -9103,7 +9121,8 @@ async function startTurn(...args: DropFirst<Parameters<typeof startTurnAdmitting
   // context, recall, the continuation check, the replay window and the output roots all draw on it. The setup runs in the detached task
   // startTurnAdmitting starts, which closes the allowance right after the output roots are taken (and again when the task ends): a check the
   // running engine asks later owns a scope of its own, so what the lineage work of a turn costs follows the allowance, never the history
-  // behind it. It is passed, never looked up: a reader given none does not compile.
+  // behind it. It is passed, never looked up: a reader given none does not compile. A turn whose resumed session is reset renews it ONCE
+  // at that decision (LineageAllowance.renew), so its lineage work is at most two allowances, the second only on the reset path.
   const allowance = LineageAllowance.turn();
   return startTurnAdmitting(allowance, ...args);
 }
@@ -10278,6 +10297,8 @@ async function startTurnAdmitting(
           const reason=earlyWhy.reason&&earlyWhy.reason!==revokedWhy.reason?`${earlyWhy.reason} (then ${revokedWhy.reason??"check-failed"})`:(revokedWhy.reason??"check-failed");
           console.warn(`memory continuation reset thread=${threadId} engine=${instanceId} reason=${reason}`);
           noteContinuationReset(threadId,instanceId,reason);
+          // the reset is decided: the rebuild (replay, recall) gets one fresh allowance (RESUME-RACE-DESIGN.md Part A)
+          allowance.renew();
         }
         // The stamp the post-recall recheck compares against: right after a full check passed.
         const checkedStamp=!resumeCursor||revoked?undefined:earlyVerdictHolds?earlyCheckStamp:authorityStamp();
@@ -10366,6 +10387,9 @@ async function startTurnAdmitting(
           if(pre.sync("after.recall",()=>resumedSessionInvalidAfterRecall(allowance,threadId,instanceId,resumeKey().nativeSession,access,checkedStamp,lateWhy))){
             console.warn(`memory continuation reset thread=${threadId} engine=${instanceId} reason=after-recall ${lateWhy.reason??"check-failed"}`);
             noteContinuationReset(threadId,instanceId,`after-recall ${lateWhy.reason??"check-failed"}`);
+            // The reset is decided: recall may have spent the turn's allowance (the first turn after a restart), so the replay
+            // re-filter and the memory block below get one fresh allowance, and the replay filtered on the spent one is redone.
+            if(allowance.renew())replayStamp=undefined;
             earlyBundle?.cancel();
             bundle=undefined;resumeCursor=undefined;sessionReset=true;memoryRefreshed=true;
           }
@@ -10436,6 +10460,8 @@ async function startTurnAdmitting(
         if (resumeCursor && retainedSessionInvalid(allowance, threadId, instanceId, resumeKey().nativeSession, offWhy, sessionReader)) {
           console.warn(`memory continuation reset thread=${threadId} engine=${instanceId} reason=memory-${memoryState().mode} ${offWhy.reason ?? "check-failed"}`);
           noteContinuationReset(threadId, instanceId, `memory-${memoryState().mode} ${offWhy.reason ?? "check-failed"}`);
+          // the reset is decided: the floor transcript below gets one fresh allowance (RESUME-RACE-DESIGN.md Part A)
+          allowance.renew();
           earlyBundle?.cancel();
           resumeCursor = undefined; sessionReset = true;
           if (instance.adapter.resetSession) await instance.adapter.resetSession(threadId);
@@ -10596,7 +10622,9 @@ async function startTurnAdmitting(
       const nowLine = nowPrompt(new Date(), routineTimeZone());
       // "What I've been working on" rides the message too (working-context.ts):
       // owner audience only, and only when this session does not have it yet.
-      const working = engineCommand || memoryLastResort ? { text: "", quoted: [] } : pre.sync("working-context", () => workingContextBlock(allowance, surfacesForOwner, { botId: bot.id, currentThreadId: threadId, bots: store.bots, groups: store.groups, routines: () => routines?.listRoutineNames() ?? [], now: Date.now(), trigger: opts?.automationSource }));
+      const working = engineCommand || memoryLastResort ? { text: "", quoted: [] } : pre.sync("working-context", () => workingContextBlock(allowance, surfacesForOwner, { botId: bot.id, currentThreadId: threadId, bots: store.bots, groups: store.groups, routines: () => routines?.listRoutineNames() ?? [], now: Date.now(), trigger: opts?.automationSource }, undefined,
+        // the quoted lines are judged for the reader the send fence judges for (directFence below)
+        directOwnerAudience ? { audience: null } : { audience: { owner: surfacesForOwner, scopeIds: memoryReceipt ? [...memoryReceipt.access.scopeIds] : [] } }));
       const workingBlock = workingContextForTurn(`${threadId}:${instanceId}`, working.text, resumeCursor === undefined || sessionReset);
       // What it learned (memory/lessons.ts): the owner's lessons ride the message, pinned for this turn.
       const learnedBlock = engineCommand || memoryLastResort ? { text: "", lessonIds: [], feedbackIds: [], digest: "" }
@@ -10674,7 +10702,7 @@ async function startTurnAdmitting(
       // setup's lineage work is done: whatever asks later owns a scope of its own, and a reader that missed one is refused, never freed
       allowance.close();
       // a turn whose checks ran out gives the warmer a short guaranteed slice, so back-to-back turns cannot starve it
-      if (allowance.hit) guaranteeLineageWarmSlice();
+      if (allowance.everHit) guaranteeLineageWarmSlice();
       // Held until the engine has the prompt, not released before it starts.
       releaseWhenPromptSent(threadId, releaseTurnHold);
       if (memoryState().mode === "active") pre.finish({ route: /fluxrouter/i.test(providerRoute?.baseUrl ?? "") ? "flux" : "native", engine: instance.driverKind, resumed: Boolean(resumeCursor),
@@ -15371,6 +15399,8 @@ async function runGroupMemberTurn(
         noteContinuationReset(threadId,instance.instanceId,`room-memory-${memoryState().mode} ${sessionWhy.reason??"check-failed"}`);
       }
       if(roomLastResort||sessionBad||(retained&&(retained.disclosed||outputRootsBad(allowance,retained.roots)))){
+        // the reset is decided: the member's floor below gets one fresh allowance (RESUME-RACE-DESIGN.md Part A)
+        allowance.renew();
         await resetRoomMemberSession();
         roomRetainedMemory.delete(roomRetainedKey);
         roomMemoryReset=true;
@@ -15620,7 +15650,9 @@ async function runGroupMemberTurn(
       const nowLine = nowPrompt(new Date(), routineTimeZone());
       // The member's own recent work (working-context.ts), owner audience
       // only. A room turn carries its whole context every time.
-      const working = roomLastResort ? { text: "", quoted: [], part: promptPart("", [noneRef("murage")]) } : workingContextBlock(allowance, roomOwnerAudience, { botId: bot.id, currentThreadId: threadId, bots: store.bots, groups: store.groups, routines: () => routines?.listRoutineNames() ?? [], now: Date.now(), trigger: turnAutomation?.kind });
+      const working = roomLastResort ? { text: "", quoted: [], part: promptPart("", [noneRef("murage")]) } : workingContextBlock(allowance, roomOwnerAudience, { botId: bot.id, currentThreadId: threadId, bots: store.bots, groups: store.groups, routines: () => routines?.listRoutineNames() ?? [], now: Date.now(), trigger: turnAutomation?.kind }, undefined,
+        // the quoted lines are judged for the reader the send fence judges for (roomFence below): the room reads as an audience even for the owner
+        { audience: { owner: roomOwnerAudience, scopeIds: memoryReceipt ? [...memoryReceipt.access.scopeIds] : [] } });
       const workingBlock = workingContextForTurn(`${threadId}:${bot.id}:${instance.instanceId}`, working.text, true);
       const learnedBlock = roomLastResort ? { text: "", lessonIds: [], feedbackIds: [], digest: "" } : pinLearnedForTurn(`${threadId}:${bot.id}:${internalGeneration}`, () => renderLearnedBlock(database(), { botId: bot.id, threadId, ownerAudience: roomOwnerAudience, onPath: onActiveBranch(threadId) }), () => memoryGate(database(), "render-learned") === "ok");
       const learnedText = learnedForTurn(`${threadId}:${bot.id}:${instance.instanceId}`, learnedBlock, true);
@@ -15671,7 +15703,7 @@ async function runGroupMemberTurn(
       }
       // setup's lineage work is done: a check the running engine asks later owns a scope of its own, and a reader that missed one is refused
       allowance.close();
-      if (allowance.hit) guaranteeLineageWarmSlice();
+      if (allowance.everHit) guaranteeLineageWarmSlice();
       const inspectToolSurface: NonNullable<SendTurnInput["onToolSurface"]> = (surface, mounts, body) => recordTurnShapes(bot.id, { where: "room", threadId, layers: [...roomSystemLayers, shapeLayer("project-status", projectStatus), shapeLayer("working-context", workingBlock), shapeLayer("learned", learnedBlock.text), shapeLayer("now", nowLine)] }, Date.now(), surface, mounts, body);
       recordTurnShapes(bot.id, { where: "room", threadId, layers: [...roomSystemLayers, shapeLayer("project-status", projectStatus), shapeLayer("working-context", workingBlock), shapeLayer("learned", learnedBlock.text), shapeLayer("now", nowLine)] });
       // write-time (DESIGN-WRITETIME 2, Enforcement (a)): the member's engine input is a BuiltPrompt; its part names the room's own context up
@@ -17483,7 +17515,7 @@ bus.subscribe((event: RuntimeEvent) => {
 async function testCliBinary(
   cli: string,
   driver: (typeof BUILT_IN_DRIVERS)[number] | undefined,
-): Promise<{ ok: boolean; version?: string; message?: string; install?: (typeof BUILT_IN_DRIVERS)[number]["install"] }> {
+): Promise<{ ok: boolean; version?: string; message?: string; note?: string; install?: (typeof BUILT_IN_DRIVERS)[number]["install"] }> {
   if (cloudHome && (!driver || !(CLOUD_ENGINES as readonly string[]).includes(driver.driverKind))) return { ok: false, message: "This cloud engine probe is unavailable" };
   return new Promise((resolve) => {
     execCli(
@@ -17517,7 +17549,10 @@ async function testCliBinary(
           resolve({ ok: false, message, ...(driver?.install && isSpawnError ? { install: driver.install } : {}) });
           return;
         }
-        resolve({ ok: true, version: stdout.trim().split("\n")[0] });
+        const version = stdout.trim().split("\n")[0];
+        // OpenClaw below its Ask floor: the same line engine detection and a refused Ask turn show.
+        const note = driver?.driverKind === "openclawAgent" ? openclawVersionNote(stdout) : undefined;
+        resolve({ ok: true, version, ...(note ? { note } : {}) });
       },
     );
   });

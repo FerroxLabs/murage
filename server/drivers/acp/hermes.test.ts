@@ -677,6 +677,27 @@ describe("hermes ask hook: every action asks at Ask (real hermes 0.22.2: an ordi
     expect(overlayOf(cloud).hooks.pre_tool_call[0].matcher).toBe(hermesAskMatcher(false));
   });
 
+  it("keeps the computer tools on the ask hook for a Local VM or VPS computer (no host scope), at every level", async () => {
+    const { hermesAcpSupport, hermesAskMatcher } = await import("./hermes.ts");
+    // The shapes containerComputerMcp and vpsComputerMcp hand over: integrations.localComputer with no `scope`.
+    const vm = { command: process.execPath, args: ["/app/container-computer-mcp.mjs", "docker", "murage-vm", "/tmp/cua.sock"], env: { ELECTRON_RUN_AS_NODE: "1" } };
+    const vps = { command: process.execPath, args: ["/app/vps-container-mcp.mjs", "my-vps", "murage-bot"], env: { ELECTRON_RUN_AS_NODE: "1" } };
+    for (const localComputer of [vm, vps]) {
+      for (const config of [{}, { fullAuto: true }, { fullAuto: false }]) {
+        const env = turnEnv();
+        hermesAcpSupport.spawnArgs(config as any, { integrations: { localComputer } } as any, { env });
+        const matcher = overlayOf(env).hooks.pre_tool_call[0].matcher;
+        expect(matcher).toBe(hermesAskMatcher(false));
+        expect(matches(matcher, "mcp__computer__click")).toBe(true);
+        expect(matches(matcher, "mcp__computer__screenshot")).toBe(true);
+      }
+    }
+    // The host computer keeps today's exemption.
+    const host = turnEnv();
+    hermesAcpSupport.spawnArgs({} as any, { integrations: { localComputer: { command: "node", args: [], scope: "local-computer" } } } as any, { env: host });
+    expect(matches(overlayOf(host).hooks.pre_tool_call[0].matcher, "mcp__computer__click")).toBe(false);
+  });
+
   it("keeps the managed config it was given (Flux Memory headers, an administrator's hooks) and drops the owner's other hooks", async () => {
     const { hermesAcpSupport } = await import("./hermes.ts");
     const root = mkdtempSync(join(tmpdir(), "murage-hermes-admin-"));

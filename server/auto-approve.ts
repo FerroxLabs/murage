@@ -22,7 +22,7 @@ import { globKeyRead } from "../shared/sensitive-globs.ts";
 import { powershellRunner } from "./shell/pwsh.ts";
 import { requiredFields } from "./drivers/contracts.ts";
 import { homedir } from "node:os";
-import { realPathInOrder, type PlaceOptions } from "../shared/in-project.ts";
+import { realPathInOrder, win32Canonical, type PlaceOptions } from "../shared/in-project.ts";
 import { isOwnAlwaysAsk, isOwnComputerRead, isOwnRead, isOwnUnasked, ownAlwaysAskByName } from "../shared/own-servers.ts";
 import { APP_LOOKUPS, ownAppTool } from "../shared/app-action-words.ts";
 import { pinOverrideIn, promptVerdict, type PromptFacts } from "../shared/prompt-capable.ts";
@@ -978,7 +978,10 @@ function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, con
   }
   if (!destructive && !sensitive && !context?.scope && resolved.kind === "mcp" && resolved.provenance === "own") {
     const app = resolved.own ? ownAppTool(`mcp__${CONNECTED_APPS_SERVER}__${resolved.tool}`) : undefined;
-    const read = app !== undefined ? APP_LOOKUPS[app] !== undefined : isOwnRead(resolved.mountId, resolved.tool);
+    // A connected-app lookup is a read on an ordinary turn. On a routine's own run the four lookups are what the
+    // routine remembers (Rule 76a): each is answered only by its own saved key (the routine grants, below), so a
+    // remembered search never answers a schema read or any other lookup.
+    const read = app !== undefined ? APP_LOOKUPS[app] !== undefined && context?.routineLevel !== true : isOwnRead(resolved.mountId, resolved.tool);
     if (read || (bot.autoApprove && isOwnUnasked(resolved.mountId, resolved.tool))) {
       return { approve: `auto-approved ${resolved.name} (Murage's own tool)`, source: "own-unasked", rule: `${resolved.mountId}/${resolved.tool}` };
     }
@@ -1041,15 +1044,23 @@ export function realKeyPaths(input: unknown, filePaths: readonly string[] | unde
     }
   }
   const home = opts.home ?? homedir();
+  const platform = opts.platform ?? process.platform;
   const paths: string[] = [];
+  const add = (spelling: string) => { if (spelling !== "" && !paths.includes(spelling)) paths.push(spelling); };
   let cannot: string | null = given.length > 64 ? "the call names more paths than the key guard follows" : null;
   for (const path of given.slice(0, 64)) {
+    // the Win32 spelling of the path as given (`\\?\`, `\\host\C$\`, `::$DATA`, a trailing dot: SG-WIN-PATHTRICKS.md)
+    // is read even when it cannot be placed: a hook file named that way is held either way
+    const canonical = win32Canonical(path, platform);
+    if (canonical !== path) add(canonical);
     const placed = realPathInOrder(path, cwd ?? "", { ...opts, home });
     if ("cannot" in placed) {
       cannot ??= `${path}: ${placed.cannot}`;
       continue;
     }
-    if (placed.real !== path && !paths.includes(placed.real)) paths.push(placed.real);
+    if (placed.real !== path) add(placed.real);
+    const realCanonical = win32Canonical(placed.real, platform);
+    if (realCanonical !== path) add(realCanonical);
   }
   return { paths, cannot };
 }

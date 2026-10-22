@@ -54,9 +54,9 @@ import { redactSecretsInText } from "./redact.ts";
 import { titleFromMessage, UNTITLED_TASK, type Message } from "./store.ts";
 import { threadActivitySeq, threadsChangedSince } from "./thread-activity.ts";
 import { ioBudget } from "./io-budget.ts";
-import type { LineageRef, PromptPart } from "./memory/lineage-types.ts";
+import type { LineageReader, LineageRef, LineageVerdict, PromptPart } from "./memory/lineage-types.ts";
 import { fileRef, lineRefs, memoryRefs, murageObjectRef, noneRef, promptPart } from "./memory/prompt-parts.ts";
-import { memoryLookup } from "./memory/deny-read.ts";
+import { denyLookup, memoryLookup } from "./memory/deny-read.ts";
 import { memoryRefKey, type MemoryRef } from "./memory/lineage-types.ts";
 
 export const WORKING_CONTEXT_MAX_BYTES = 1536;
@@ -406,7 +406,7 @@ function candidateLine(allowance: LineageAllowance, input: WorkingContextInput, 
  *  door (LINEAGE-DESIGN-S6 rule 16) judges the rows they carry in one operation (bot-read.ts rowsShown: no row read again, the per-operation
  *  state read once). Only when the door leaves some out are the next threads' candidates gathered and judged, so the work follows the lines
  *  shown, never the history. */
-function shownLines(allowance: LineageAllowance, input: WorkingContextInput, db: DatabaseSync, kept: Kept, eligible: Eligible, excluded: ReadonlySet<string>, room: number): QuoteCandidate[] {
+function shownLines(allowance: LineageAllowance, input: WorkingContextInput, db: DatabaseSync, kept: Kept, eligible: Eligible, excluded: ReadonlySet<string>, room: number, reader?: LineageReader): QuoteCandidate[] {
   const shown: QuoteCandidate[] = [];
   const viewer = botViewer(input.botId);
   let next = 0;
@@ -419,9 +419,30 @@ function shownLines(allowance: LineageAllowance, input: WorkingContextInput, db:
     }
     if (!batch.length) break;
     const verdicts = rowsShown(db, viewer, batch);
-    batch.forEach((candidate, index) => { if (verdicts[index]) shown.push(candidate); });
+    const fenced = readerShown(db, batch, reader);
+    batch.forEach((candidate, index) => { if (verdicts[index] && fenced[index]) shown.push(candidate); });
   }
   return shown;
+}
+/** The candidates the turn's own reader shows, by the send fence's rule for a quoted line of another thread (deny-read.ts refsLookup: the
+ *  line's marks for that reader). The door above reads as the bot's content reader; an audience reader (a room, a surface not proven the
+ *  owner's) also withholds a reply under an audience-only mark, such as the receipt revoke every memory settings change, import, canon
+ *  write and roster change commits on every receipt. Judged here so the block never carries a line the fence would refuse: the refusal
+ *  rebuilt the same block from this door three times and then sent the last-resort prompt, with no memory frame and so none of the
+ *  owner's pinned records (1.0.3 room deny-line). A content reader, or no reader, adds nothing. Fail closed: a lookup that throws leaves
+ *  the batch out. */
+function readerShown(db: DatabaseSync, batch: readonly QuoteCandidate[], reader: LineageReader | undefined): boolean[] {
+  if (!reader || reader.audience === null) return batch.map(() => true);
+  try {
+    const byThread = new Map<string, string[]>();
+    for (const candidate of batch) byThread.set(candidate.threadId, [...(byThread.get(candidate.threadId) ?? []), candidate.messageId]);
+    const verdicts = new Map<string, LineageVerdict>();
+    for (const [threadId, ids] of byThread) {
+      const page = denyLookup(db, { threadId, lines: ids.map(messageId => ({ messageId, author: "generated" as const })) }, reader);
+      for (const [messageId, verdict] of page) verdicts.set(`${threadId}\u0000${messageId}`, verdict);
+    }
+    return batch.map(candidate => verdicts.get(`${candidate.threadId}\u0000${candidate.messageId}`)?.state === "shown");
+  } catch { return batch.map(() => false); }
 }
 
 /** Whether a thread's human is the owner, kept per thread. Only asked of a thread that already has messages (its
@@ -468,10 +489,10 @@ function projectCardLines(db: DatabaseSync, group: { id: string; name: string },
 }
 
 /** (thread bindings remembered for the build: human-principals.ts withBindingScope) */
-function buildWorkingContext(allowance: LineageAllowance, input: WorkingContextInput, db: DatabaseSync, refs: LineageRef[] = []): { text: string; quoted: WorkingContextQuote[] } {
-  return withBindingScope(() => buildWorkingContextScoped(allowance, input, db, refs));
+function buildWorkingContext(allowance: LineageAllowance, input: WorkingContextInput, db: DatabaseSync, refs: LineageRef[] = [], reader?: LineageReader): { text: string; quoted: WorkingContextQuote[] } {
+  return withBindingScope(() => buildWorkingContextScoped(allowance, input, db, refs, reader));
 }
-function buildWorkingContextScoped(allowance: LineageAllowance, input: WorkingContextInput, db: DatabaseSync, refs: LineageRef[]): { text: string; quoted: WorkingContextQuote[] } {
+function buildWorkingContextScoped(allowance: LineageAllowance, input: WorkingContextInput, db: DatabaseSync, refs: LineageRef[], reader?: LineageReader): { text: string; quoted: WorkingContextQuote[] } {
   // a scheduled or webhook run is not a turn with the owner: no block, and no work for it
   if (input.trigger === "schedule" || input.trigger === "webhook") return { text: "", quoted: [] };
   const who = subject(input);
@@ -490,7 +511,7 @@ function buildWorkingContextScoped(allowance: LineageAllowance, input: WorkingCo
   }
   const quoted: WorkingContextQuote[] = [];
   const kept = discovered(input, db, who, eligible, excluded);
-  for (const shown of shownLines(allowance, input, db, kept, eligible, excluded, MAX_THREADS - lines.length)) {
+  for (const shown of shownLines(allowance, input, db, kept, eligible, excluded, MAX_THREADS - lines.length, reader)) {
     lines.push(shown.line);
     quoted.push({ threadId: shown.threadId, messageId: shown.messageId });
   }
@@ -512,10 +533,11 @@ export function workingContextPrompt(allowance: LineageAllowance, ownerAudience:
 }
 
 /** The surface with the replies it quotes, for the dispatch's receipt. */
-export function workingContextBlock(allowance: LineageAllowance, ownerAudience: boolean, input: WorkingContextInput, db: DatabaseSync = database()): { text: string; quoted: WorkingContextQuote[]; part: PromptPart } {
+/** `reader`: the turn's send-fence reader (index.ts directFence, roomFence); the quoted lines are judged for it at the build (readerShown). */
+export function workingContextBlock(allowance: LineageAllowance, ownerAudience: boolean, input: WorkingContextInput, db: DatabaseSync = database(), reader?: LineageReader): { text: string; quoted: WorkingContextQuote[]; part: PromptPart } {
   let quoted: WorkingContextQuote[] = [];
   const refs: LineageRef[] = [];
-  const text = ownerOnly("working-context", ownerAudience, () => { const built = buildWorkingContext(allowance, input, db, refs); quoted = built.quoted; return built.text; });
+  const text = ownerOnly("working-context", ownerAudience, () => { const built = buildWorkingContext(allowance, input, db, refs, reader); quoted = built.quoted; return built.text; });
   return { text, quoted: text ? quoted : [], part: workingContextPart(text, text ? quoted : [], text ? refs : []) };
 }
 

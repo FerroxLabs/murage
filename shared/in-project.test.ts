@@ -10,7 +10,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { inProjectCheck, joinReal, placePath, realDir, realPathInOrder, WalkCache, walkRoot } from "./in-project.ts";
+import { inProjectCheck, joinReal, placePath, realDir, realPathInOrder, WalkCache, walkRoot, win32Canonical } from "./in-project.ts";
 import { removeTempDirSync } from "../server/testing/cleanup.ts";
 
 let base: string;
@@ -227,5 +227,54 @@ describe("realPathInOrder, realDir and joinReal", () => {
     const dir = realDir(project)!;
     expect(joinReal(dir, "src", "a.ts")).toEqual({ path: join(project, "src", "a.ts") });
     for (const bad of ["a/b", "a\\b", "..", ".", "", "a\u0000b"]) expect(joinReal(dir, bad), bad).toMatchObject({ cannot: expect.any(String) });
+  });
+});
+
+// lanes/release103/SG-WIN-PATHTRICKS.md: the spellings Win32 reads as one file, with path.win32 rules on any host
+describe("win32Canonical: the Win32 spellings the key guard reads as one path", () => {
+  it("unwraps \\\\?\\ and \\\\.\\, reads an admin share as its drive, cuts a stream suffix and strips trailing dots and spaces", () => {
+    const real = "C:\\work\\proj\\.agents\\hooks.json";
+    for (const form of [
+      real, "\\\\?\\C:\\work\\proj\\.agents\\hooks.json", "\\\\.\\C:\\work\\proj\\.agents\\hooks.json", "//?/C:\\work\\proj\\.agents\\hooks.json",
+      "\\\\localhost\\C$\\work\\proj\\.agents\\hooks.json", "\\\\127.0.0.1\\C$\\work\\proj\\.agents\\hooks.json", "\\\\::1\\C$\\work\\proj\\.agents\\hooks.json",
+      "\\\\?\\UNC\\localhost\\C$\\work\\proj\\.agents\\hooks.json", "\\\\MYPC\\C$\\work\\proj\\.agents\\hooks.json",
+      "C:\\work\\proj\\.agents\\hooks.json.", "C:\\work\\proj\\.agents\\hooks.json ", "C:\\work\\proj\\.agents\\hooks.json. . ",
+      "C:\\work\\proj\\.agents\\hooks.json::$DATA", "C:\\work\\proj\\.agents\\hooks.json:evil", "C:\\work\\proj\\.agents\\hooks.json:evil:$DATA",
+      "C:\\work\\proj\\.agents.\\hooks.json", "C:\\work\\proj. \\.agents \\hooks.json.", "\\\\?\\C:\\work\\proj\\.agents\\hooks.json. ::$DATA",
+    ]) expect(win32Canonical(form, "win32"), form).toBe(real);
+    expect(win32Canonical("C:/work/proj/.agents/hooks.json.", "win32")).toBe("C:/work/proj/.agents/hooks.json");
+    expect(win32Canonical(".agents\\plugins.", "win32")).toBe(".agents\\plugins");
+    expect(win32Canonical("..\\.agents\\agents::$DATA", "win32")).toBe("..\\.agents\\agents");
+    expect(win32Canonical("\\\\server\\share\\x.", "win32")).toBe("\\\\server\\share\\x");
+    expect(win32Canonical("C:foo:bar", "win32")).toBe("C:foo");
+    expect(win32Canonical("...", "win32")).toBe("...");
+  });
+
+  it("leaves an ordinary path alone, and every path on POSIX", () => {
+    for (const path of ["C:\\work\\proj\\src\\a.ts", "src\\a.ts", "C:/work/a.b.c/x.y", "\\\\server\\share\\x", "..\\a", ".\\a"]) expect(win32Canonical(path, "win32"), path).toBe(path);
+    for (const path of ["/p/.agents/hooks.json.", "/p/a:b", "\\\\?\\C:\\x", "/p/x::$DATA", "/p/dir./f"]) {
+      expect(win32Canonical(path, "linux"), path).toBe(path);
+      expect(win32Canonical(path, "darwin"), path).toBe(path);
+    }
+  });
+
+  it("with Windows path rules every spelling of a hook file is sensitive, and ordinary files are untouched", () => {
+    const root = mkdtempSync(join(tmpdir(), "in-project-win32-"));
+    try {
+      const hooks = [
+        "C:\\work\\proj\\.agents\\hooks.json.", "C:\\work\\proj\\.agents\\hooks.json ", "C:\\work\\proj\\.agents\\hooks.json::$DATA", "C:\\work\\proj\\.agents\\hooks.json:evil",
+        "\\\\?\\C:\\work\\proj\\.agents\\hooks.json", "\\\\.\\C:\\work\\proj\\.agents\\hooks.json", "\\\\localhost\\C$\\work\\proj\\.agents\\hooks.json", "\\\\?\\UNC\\127.0.0.1\\C$\\work\\proj\\.agents\\plugins.json",
+        ".agents\\plugins.", ".agents\\agents. ", ".agents\\plugins::$DATA", ".agents\\plugins:$I30:$INDEX_ALLOCATION", ".agents.\\hooks.json", "_agent\\agents\\a.md.", ".agents\\hooks.json. ::$DATA",
+        "\\\\?\\C:\\work\\proj\\.env", "\\\\localhost\\C$\\work\\proj\\.git\\hooks\\pre-commit.", "C:\\Users\\jo\\.ssh\\id_rsa::$DATA",
+      ];
+      for (const path of hooks) expect(inProjectCheck(path, root, "x", { platform: "win32" }), path).toMatchObject({ ok: false, reason: "sensitive" });
+      for (const path of hooks.slice(0, 15)) expect(inProjectCheck(path, root, "x", { platform: "win32" }), path).toMatchObject({ rule: "agy-workspace-hooks" });
+      for (const path of [".agents\\skills\\lint\\SKILL.md.", ".agents\\workflows\\ship.md::$DATA", "src\\a.ts ", "\\\\?\\C:\\work\\proj\\src\\a.ts", "C:\\work\\proj\\plugins.\\x.ts", "agents.\\x.md"]) {
+        expect(inProjectCheck(path, root, "x", { platform: "win32" }), path).not.toMatchObject({ reason: "sensitive" });
+      }
+      // the template carve-out needs a placed path: shared/in-project.win32.test.ts reads `.env.example.` on a real tree
+    } finally {
+      removeTempDirSync(root);
+    }
   });
 });

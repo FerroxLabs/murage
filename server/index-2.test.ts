@@ -12,11 +12,15 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { readBotPackageArchive } from "./bot-package-archive.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { openSse } from "./testing/sse.ts";
 import { connectorSystemPrompt, requiredAppsSystemPrompt } from "./composio.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { parseBotPackage } from "./bot-package.ts";
+// This file fires many revokes within a minute (bots, rooms, language and skill changes). The revoke marker's per-minute write
+// budget (server/memory/revoke-budget.ts) has its own tests; here it is lifted in the server child, as revoke-bounded.test.ts lifts
+// it in-process, so a turn is not held behind marker work the budget is pacing. Set before the harness module starts the child.
+vi.hoisted(() => { process.env.MURAGE_TEST_UNBOUNDED_REVOKE_BUDGET = "1"; });
 import { BASE, DESKTOP_HEADERS, PAIRED_PHONE, SERVER_DIR, STATE_ONLY_SELECTION, api, delayedJsonBody, desktopApi, fakeClaudeDump, home, readJsonFileWhenReady, startInternalFixtureTurn } from "./testing/index-harness.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 

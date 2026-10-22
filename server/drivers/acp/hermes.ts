@@ -841,10 +841,11 @@ const support: AcpSupport = {
     signInCommand: "hermes setup",
   },
   // The ask hook (applyHermesAskHook) runs Murage's `computer` mount without Hermes asking, on a host-computer
-  // turn only; Murage's computer service asks per action instead.
+  // turn only (localComputer.scope === "local-computer", as core.ts controlsHost); Murage's computer service asks per
+  // action instead. A Local VM or VPS computer carries no scope, so its tools stay on the ask hook and get a card.
   hostComputerAskedByMurage: true,
   spawnArgs: (config, turn, ctx) => {
-    if (ctx?.env) applyHermesAskHook(ctx.env, { hostComputer: Boolean(turn?.integrations?.localComputer) });
+    if (ctx?.env) applyHermesAskHook(ctx.env, { hostComputer: turn?.integrations?.localComputer?.scope === "local-computer" });
     return hermesSpawnArgs(config, ctx?.env);
   },
   /**

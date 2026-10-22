@@ -750,6 +750,52 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(existsSync(claudeOverlays.dir()) ? readdirSync(claudeOverlays.dir()) : []).toEqual([]);
   });
 
+  // Windows: the overlay's owner-only folder is made by Murage's native helper. The helper's own code makes each error here (a
+  // resolver that finds no helper; a helper path that cannot run), on any OS. The turn does not start and the failure is this
+  // device's setup (windows-helper), so the card names the helper rather than Provider settings.
+  for (const [code, helperOptions] of [
+    ["windows_browser_helper_missing", () => { process.env.MURAGE_RESOURCES_PATH = scratch; return undefined; }],
+    ["windows_browser_private_storage_unavailable", () => ({ helper: join(scratch, "quarantined", "murage-browser-host.exe") })],
+  ] as const) {
+    it(`Windows helper ${code}: the turn does not start and fails as windows-helper local setup, holding no overlay`, async () => {
+      const { createPrivateWindowsDirectory } = await import("../../electron/browser-extension-windows.mjs");
+      const mod = await import("./claude.ts");
+      const savedResources = process.env.MURAGE_RESOURCES_PATH;
+      const warned: string[] = [];
+      const warn = vi.spyOn(console, "warn").mockImplementation((...args: unknown[]) => { warned.push(args.map(String).join(" ")); });
+      const spy = vi.spyOn(mod.claudeOverlays, "acquire").mockImplementation(() => {
+        createPrivateWindowsDirectory(join(scratch, "claude-private-win"), helperOptions());
+        throw new Error("unreachable: the helper made a folder");
+      });
+      try {
+        await create();
+        const failure = await instance.adapter.sendTurn({ threadId: `t-${code}`, text: "WINHELPER_USER_TEXT", cwd: scratch }).then(() => undefined, (error: unknown) => error);
+        expect(failure).toMatchObject({ name: "LocalSetupError", localFailure: "windows-helper" });
+        expect((failure as Error).message).toContain(code);
+        expect(((failure as Error).cause as { code?: string; helperPath?: string })).toMatchObject({ code, helperPath: expect.stringContaining("murage-browser-host.exe") });
+        expect(mod.claudeOverlays.holds().size).toBe(0);
+        // the app log names the code and the helper path, and nothing of the turn
+        const line = warned.find((entry) => entry.startsWith("claude private folder setup refused:"));
+        expect(line).toBeDefined();
+        expect(line).toContain(code);
+        expect(line).toMatch(/helper=".*murage-browser-host\.exe"/);
+        expect(line).not.toContain("WINHELPER_USER_TEXT");
+      } finally {
+        warn.mockRestore();
+        spy.mockRestore();
+        if (savedResources === undefined) delete process.env.MURAGE_RESOURCES_PATH; else process.env.MURAGE_RESOURCES_PATH = savedResources;
+      }
+    });
+  }
+
+  it("Windows helper mapping is narrow: any other overlay failure is rethrown unchanged", async () => {
+    const { acquireClaudeOverlay } = await import("./claude.ts");
+    const other = new Error("private folder refused: others can open it");
+    expect(() => acquireClaudeOverlay("{}", { acquire: () => { throw other; } })).toThrow(other);
+    const coded = Object.assign(new Error("windows_browser_helper_missing"), { code: "windows_browser_helper_missing" });
+    expect(() => acquireClaudeOverlay("{}", { acquire: () => { throw coded; } })).toThrow(expect.objectContaining({ localFailure: "windows-helper", cause: coded }));
+  });
+
   it("section 14.1: an owner's login token reaches the private overlay only: no log line, event, provenance or envInfo field, not the dispatch line", async () => {
     const sentinel = "OWNERTOKENSENTINEL7f3a9c2e";
     const config = join(scratch, "owner-config");
@@ -1206,7 +1252,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
 
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     expect(seen.argv[seen.argv.indexOf("--tools") + 1]).toBe("Read,WebFetch");
-    expect(seen.argv[seen.argv.indexOf("--disallowedTools") + 1]).toBe("Bash(git *),Edit");
+    expect(seen.argv[seen.argv.indexOf("--disallowedTools") + 1]).toBe(process.platform === "win32" ? "Bash(git *),Edit,PowerShell" : "Bash(git *),Edit"); // Windows: the wrapped Bash turn denies the CLI's PowerShell tool (claudeShellSetup)
   });
 
   it("passes an explicit empty available set to disable every Claude built-in", async () => {
@@ -1219,7 +1265,9 @@ describe("ClaudeDriver turns (fake CLI)", () => {
 
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     expect(seen.argv[seen.argv.indexOf("--tools") + 1]).toBe("");
-    expect(seen.argv).not.toContain("--disallowedTools");
+    // Windows: the murage-exec turn always denies the CLI's PowerShell tool (claudeShellSetup), so the owner's empty list gains just that
+    if (process.platform === "win32") expect(seen.argv[seen.argv.indexOf("--disallowedTools") + 1]).toBe("PowerShell");
+    else expect(seen.argv).not.toContain("--disallowedTools");
   });
 
   it("mounts the dweb proxy from the drivers directory and pre-allows its tools", async () => {
