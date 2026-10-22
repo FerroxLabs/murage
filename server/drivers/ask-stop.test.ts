@@ -27,6 +27,7 @@ import {
   openclawAskStopRecordPath,
   openclawPromptText,
   openclawSupport,
+  openclawVersionNote,
   type OpenclawGatewayCall,
 } from "./acp/openclaw.ts";
 import { buildAntigravityScopedHome } from "./antigravity-scope.ts";
@@ -57,7 +58,7 @@ const notes = (events: RuntimeEvent[]) =>
 
 const FAKE_ENV = [
   "FAKE_ACP_MODE", "FAKE_ACP_DUMP", "FAKE_ACP_PROMPT_DUMP", "FAKE_ACP_SESSION_MODES", "FAKE_ACP_PERMISSION_COMMAND",
-  "FAKE_AGY_DUMP", "FAKE_AGY_TOOL", "FAKE_AGY_RUN_HOOKS", "FAKE_AGY_HOME_DUMP",
+  "FAKE_AGY_DUMP", "FAKE_AGY_TOOL", "FAKE_AGY_RUN_HOOKS", "FAKE_AGY_HOME_DUMP", "FAKE_ACP_VERSION",
 ];
 
 describe("Ask hard stop: copy and the level a turn carries", () => {
@@ -253,11 +254,11 @@ describe("Ask hard stop: OpenClaw (Gateway session read-only mode)", () => {
   const config = { cli: "openclaw", fullAuto: false, agent: "fred" } as never;
   const okVersion = async () => "OpenClaw 2026.10.10-beta.3 (abc1234)";
 
-  it("on a release with no permissionMode (2026.10.5), an Ask turn is refused before anything runs, with one plain note", async () => {
+  it("on a release below the floor (2026.7.35: no permissionMode on sessions.patch), an Ask turn is refused before anything runs, with one plain note", async () => {
     const gw = gateway("guarded");
-    const old = async () => "OpenClaw 2026.10.5 (1b58cb9)";
+    const old = async () => "OpenClaw 2026.7.35 (1b58cb9)";
     await expect(applyOpenclawAskStop({ env: {}, config, askLevel: true }, gw.call, dataDir, old))
-      .rejects.toThrow("At Ask, this OpenClaw version cannot stop before changes. Update OpenClaw, or choose Auto to let me act.");
+      .rejects.toThrow("At Ask, this OpenClaw version cannot stop before changes. Choose Auto to let me act, or install OpenClaw 2026.8.1 or newer.");
     expect(gw.calls).toEqual([]);
     expect(existsSync(openclawAskStopRecordPath("openclaw", "agent:fred:main", dataDir))).toBe(false);
     // an unreadable version fails closed too
@@ -268,9 +269,41 @@ describe("Ask hard stop: OpenClaw (Gateway session read-only mode)", () => {
     expect(gw.calls).toEqual([]);
   });
 
-  it("the permissionMode floor: beta.3 and later pass; earlier betas and releases fail", () => {
-    for (const v of ["2026.10.10-beta.3", "2026.10.10-beta.4", "2026.10.10", "2026.10.11", "2026.11.1", "2027.1.1", "OpenClaw 2026.10.10 (x)"]) expect(openclawHasPermissionMode(v)).toBe(true);
-    for (const v of ["2026.10.5", "2026.10.10-beta.2", "2026.10.9", "2026.9.30", "", "latest"]) expect(openclawHasPermissionMode(v)).toBe(false);
+  it("the permissionMode floor is 2026.8.1: it and later pass (extended-stable 2026.9.33, latest 2026.10.5); earlier releases and its betas fail", () => {
+    for (const v of ["2026.8.1", "2026.8.35", "2026.9.1", "2026.9.33", "OpenClaw 2026.10.5 (1b58cb9)", "2026.10.10-beta.3", "2026.10.10", "2026.11.1", "2027.1.1"]) expect(openclawHasPermissionMode(v), v).toBe(true);
+    for (const v of ["2026.7.35", "2026.7.1-2", "2026.8.1-beta.1", "2026.6.1", "2025.12.31", "", "latest"]) expect(openclawHasPermissionMode(v), v).toBe(false);
+  });
+
+  it("on the npm latest release (2026.10.5), an Ask turn passes the version gate and runs read-only", async () => {
+    const gw = gateway("guarded");
+    await applyOpenclawAskStop({ env: {}, config, askLevel: true }, gw.call, dataDir, async () => "OpenClaw 2026.10.5 (1b58cb9)");
+    expect(gw.mode()).toBe("read-only");
+    expect(gw.calls.map((c) => c.method)).toEqual(["sessions.list", "sessions.patch"]);
+  });
+
+  it("fails closed on the Gateway's stored state, not our request: a patch answer without a read-only entry refuses the Ask turn", async () => {
+    const answers: Array<Record<string, unknown>> = [
+      { ok: true, key: "agent:fred:main", entry: {} }, // the field was taken but not applied
+      { ok: true, key: "agent:fred:main", entry: { permissionMode: "guarded" } }, // an older mode left in place
+      { ok: true, key: "agent:fred:main" }, // no entry at all
+      { ok: true, key: "agent:fred:main", permissionMode: "read-only" }, // our request echoed, no stored entry
+      { ok: false, entry: { permissionMode: "read-only" } },
+    ];
+    for (const answer of answers) {
+      const call: OpenclawGatewayCall = async (_cli, method) =>
+        method === "sessions.list" ? { sessions: [{ key: "agent:fred:main", permissionMode: "guarded" }] } : answer;
+      await expect(applyOpenclawAskStop({ env: {}, config, askLevel: true }, call, dataDir, async () => "OpenClaw 2026.10.5 (1b58cb9)"),
+        JSON.stringify(answer)).rejects.toThrow(/did not confirm read-only/);
+    }
+  });
+
+  it("setup and engine detection show the same line beside an OpenClaw version below the floor, and none at or above it", () => {
+    for (const v of ["OpenClaw 2026.7.35 (1b58cb9)", "2026.8.1-beta.1", ""]) {
+      expect(openclawVersionNote(v)).toBe(ASK_STOP_OPENCLAW_OLD_NOTE);
+      expect(openclawSupport.versionNote?.(v)).toBe(ASK_STOP_OPENCLAW_OLD_NOTE);
+    }
+    for (const v of ["OpenClaw 2026.10.5 (1b58cb9)", "2026.8.1", "OpenClaw 2026.10.10-beta.3 (abc1234)", "2026.10.10", "2026.11.1"]) expect(openclawSupport.versionNote?.(v)).toBeUndefined();
+    expect(ASK_STOP_OPENCLAW_OLD_NOTE).toBe("At Ask, this OpenClaw version cannot stop before changes. Choose Auto to let me act, or install OpenClaw 2026.8.1 or newer.");
   });
 
   it("at Ask, records the session's mode once, then sets read-only and requires the Gateway to confirm it", async () => {
@@ -348,6 +381,14 @@ describe("Ask hard stop: OpenClaw (Gateway session read-only mode)", () => {
       expect(typeof openclawSupport.askStop?.apply).toBe("function");
     });
 
+    it("engine detection carries the version line for an OpenClaw below the floor", async () => {
+      process.env.FAKE_ACP_VERSION = "OpenClaw 2026.7.35 (1b58cb9)";
+      await create(async () => {});
+      const snap = await instance!.snapshot();
+      expect(snap).toMatchObject({ state: "available", versionNote: ASK_STOP_OPENCLAW_OLD_NOTE });
+      expect(snap.version).toContain("2026.7.35");
+    });
+
     it("at Ask, read-only is set before the prompt, which starts with the deny directive and the Ask line", async () => {
       const promptDump = join(scratch, "prompt.json");
       process.env.FAKE_ACP_PROMPT_DUMP = promptDump;
@@ -378,7 +419,7 @@ describe("Ask hard stop: OpenClaw (Gateway session read-only mode)", () => {
       const done = await recorder!.until((e) => e.type === "turn.completed");
       expect(done).toMatchObject({ ok: false });
       const err = recorder!.events.find((e) => e.type === "runtime.error") as { message: string } | undefined;
-      expect(err?.message).toContain("At Ask, this OpenClaw version cannot stop before changes. Update OpenClaw, or choose Auto to let me act.");
+      expect(err?.message).toContain("At Ask, this OpenClaw version cannot stop before changes. Choose Auto to let me act, or install OpenClaw 2026.8.1 or newer.");
       expect(recorder!.events.some((e) => e.type === "content.delta")).toBe(false);
     });
 
@@ -515,7 +556,36 @@ describe("Ask hard stop: Antigravity (PreToolUse hook)", () => {
     expect(notes(recorder!.events)).toHaveLength(1);
   });
 
-  it("at Auto, nothing changes: no hook file, no Ask line, the write runs as before", async () => {
+  it("at Ask, a change that ran anyway ends the turn as Murage's Ask stop, never as the owner's Stop", async () => {
+    // The comms GATE "Gemini Antigravity at ask": the turn ended "cancelled" (shown as "Stopped by you") and agy's
+    // reply was dropped, so the chat never got its closing reply.
+    process.env.FAKE_AGY_TOOL = "write_file";
+    await create();
+    await instance!.adapter.sendTurn({ threadId: "t-agy-halt", text: "write notes", routeAsks: true, askLevel: true });
+    const done = await recorder!.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true, stopReason: "ask_stop" });
+    expect(notes(recorder!.events)).toHaveLength(1);
+    expect(recorder!.events.some((e) => e.type === "runtime.error")).toBe(false);
+  });
+
+  it("at Ask, the halted turn still shows agy's reply: content.delta and assistant_text come before the settle", async () => {
+    process.env.FAKE_AGY_TOOL = "write_file";
+    await create();
+    await instance!.adapter.sendTurn({ threadId: "t-agy-halt-reply", text: "write notes", routeAsks: true, askLevel: true });
+    await recorder!.until((e) => e.type === "turn.completed");
+    const events = recorder!.events;
+    const settled = events.findIndex((e) => e.type === "turn.completed");
+    const delta = events.findIndex((e) => e.type === "content.delta" && (e as { streamKind?: string }).streamKind === "assistant_text");
+    const text = events.findIndex((e) => e.type === "item.completed" && (e as { itemType?: string }).itemType === "assistant_text");
+    expect(events[settled]).toMatchObject({ ok: true, stopReason: "ask_stop" });
+    expect(delta).toBeGreaterThanOrEqual(0);
+    expect(delta).toBeLessThan(settled);
+    expect(text).toBeGreaterThanOrEqual(0);
+    expect(text).toBeLessThan(settled);
+    expect(String((events[text] as { text?: string }).text ?? "").length).toBeGreaterThan(0);
+  });
+
+  it("at Auto, no Ask hook and no Ask line: the write goes through Murage's relay and runs", async () => {
     const dump = join(scratch, "dump.json");
     const homeDump = join(scratch, "home.json");
     process.env.FAKE_AGY_DUMP = dump;
@@ -523,14 +593,20 @@ describe("Ask hard stop: Antigravity (PreToolUse hook)", () => {
     process.env.FAKE_AGY_TOOL = "write_file";
     process.env.FAKE_AGY_RUN_HOOKS = "1";
     await create();
+    const off = instance!.adapter.onEvent((e) => {
+      if (e.type === "request.opened") void instance!.adapter.respondToRequest(e.threadId, (e as { requestId: string }).requestId, { behavior: "allow" });
+    });
     await instance!.adapter.sendTurn({ threadId: "t-agy-auto", text: "write notes", routeAsks: true });
     const done = await recorder!.until((e) => e.type === "turn.completed");
+    off();
     expect(done).toMatchObject({ ok: true });
     expect(JSON.parse(readFileSync(`${dump}.hook.json`, "utf8"))).toEqual({ tool: "write_file", denial: null });
     const seen = JSON.parse(readFileSync(dump, "utf8"));
-    expect(seen.argv).toContain("accept-edits");
+    expect(seen.argv).toContain("--dangerously-skip-permissions");
+    expect(seen.argv).not.toContain("accept-edits");
     expect(seen.prompt.startsWith(ASK_STOP_PROMPT)).toBe(false);
-    expect((JSON.parse(readFileSync(homeDump, "utf8")).seen as string[]).some((p) => p.endsWith("hooks.json"))).toBe(false);
+    expect((JSON.parse(readFileSync(homeDump, "utf8")).seen as string[]).some((p) => p.endsWith("hooks.json"))).toBe(true);
+    expect(recorder!.events.some((e) => e.type === "request.opened" && (e as { tool?: string }).tool === "write_file")).toBe(true);
     expect(notes(recorder!.events)).toEqual([]);
   });
 });

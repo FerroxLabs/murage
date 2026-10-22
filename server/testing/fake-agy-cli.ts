@@ -17,6 +17,20 @@
 //
 //   FAKE_AGY_TOOL=<name>
 //     the tool step's name (default write_to_file).
+//   FAKE_AGY_TOOL_CALLS=<json [{name, args}]>
+//     the tool steps, in order (step_index 0..n-1), in place of the one FAKE_AGY_TOOL step; with FAKE_AGY_RUN_HOOKS=1
+//     each runs the hooks first, and an allowed run_command really runs its CommandLine (sh -c, in the cwd).
+//   FAKE_AGY_SKIP_HOOKS=1
+//     agy runs the tools without its hooks (an agy that ignored them).
+//   --log-file <path>
+//     agy's start-up hooks_manager line, from HOME/.gemini/config/hooks.json and the project's <cwd>/.agents/hooks.json,
+//     written before stdin is read (FAKE_AGY_HOOKS_IGNORED=1: it loads none from HOME). A file it cannot parse is
+//     named in a "failed to parse hooks.json at <path>" line and adds no hooks.
+//   FAKE_AGY_CREATE_REPO_HOOK=1
+//     writes a project <cwd>/.agents/hooks.json at start-up, before the hook-load line (one that appeared after
+//     Murage looked).
+//   FAKE_AGY_UNHOOKED_ERROR=1
+//     each tool step ends in ERROR (the tool failed) without its hooks having run.
 //   FAKE_AGY_RUN_HOOKS=1
 //     before the tool runs, run every PreToolUse hook in HOME/.gemini/config/hooks.json as agy does (`sh -c`,
 //     Windows `cmd /c`, JSON on stdin, cwd the hooks.json folder); a "deny" (or a hook that fails) ends the step in
@@ -25,7 +39,7 @@
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
 import { fixtureDumpEnvironment } from "./fixture-dump.ts";
 import { execSync, spawn } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { logProposalTurn, proposalReply } from "./fake-mcp-propose.ts";
 import { fakeReviewReply } from "./fake-review.ts";
@@ -62,6 +76,8 @@ function agentsMcpEntry(): McpEntry | null {
 function driveMcp(
   entry: McpEntry,
   calls: Array<{ name: string; args: (previous: string) => object }>,
+  /** agy's PreToolUse hooks for each call (a relayed turn): a refusal ends the run with it. */
+  gate?: (name: string, args: object, index: number) => string | null,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const env = { ...process.env, ...entry.env };
@@ -87,6 +103,8 @@ function driveMcp(
       step += 1;
       if (step >= calls.length) return finish();
       const call = calls[step];
+      const refused = gate?.(call.name, call.args(last), step);
+      if (refused) return finish(new Error(`denied by pre-tool hook: ${refused}`));
       write({
         jsonrpc: "2.0",
         id: step + 2,
@@ -199,6 +217,32 @@ if (process.env.FAKE_AGY_HOME_DUMP) {
 const out = (obj: unknown) => process.stdout.write(JSON.stringify(obj) + "\n");
 const CONV = "conv-fake-123";
 
+// agy 1.4.4 logs which hooks it loaded at start-up, before it reads the prompt (hooks_manager.go).
+const logAt = argv.indexOf("--log-file");
+if (logAt !== -1 && argv[logAt + 1]) {
+  // FAKE_AGY_HOME_OVERRIDE: the HOME agy really ends up with (a Cloud launcher replaces the turn's HOME)
+  const home = process.env.FAKE_AGY_HOME_OVERRIDE || process.env.HOME || process.env.USERPROFILE || "";
+  // FAKE_AGY_CREATE_REPO_HOOK=1: a project hooks file appears after Murage looked (written here, before agy loads)
+  if (process.env.FAKE_AGY_CREATE_REPO_HOOK === "1") {
+    mkdirSync(join(process.cwd(), ".agents"), { recursive: true });
+    writeFileSync(join(process.cwd(), ".agents", "hooks.json"), JSON.stringify({ "repo-allow": { PreToolUse: [{ matcher: "*", hooks: [{ type: "command", command: "echo '{\"decision\":\"allow\"}'" }] }] } }));
+  }
+  const files = [...(process.env.FAKE_AGY_HOOKS_IGNORED === "1" ? [] : [join(home, ".gemini", "config", "hooks.json")]), join(process.cwd(), ".agents", "hooks.json")];
+  const lines: string[] = [];
+  let named = 0;
+  let loadedFiles = 0;
+  for (const file of files.filter((path) => existsSync(path))) {
+    try {
+      named += Object.keys(JSON.parse(readFileSync(file, "utf8"))).length;
+      loadedFiles++;
+    } catch (error) {
+      lines.push(`failed to parse hooks.json at ${file}: ${(error as Error).message}`);
+    }
+  }
+  lines.push(`loaded ${named} named hooks from ${loadedFiles} hooks.json file(s)`);
+  writeFileSync(argv[logAt + 1]!, lines.map((line) => `I1022 00:00:00.000000       1 hooks_manager.go:53] ${line}\n`).join(""));
+}
+
 const streamInput = argv[argv.indexOf("--input-format") + 1] === "stream-json";
 let prompt: string | undefined;
 if (streamInput) {
@@ -227,9 +271,9 @@ if (process.env.FAKE_AGY_DUMP) {
 
 const toolName = process.env.FAKE_AGY_TOOL || (mode === "ask-peer" ? "ask_bot" : "write_to_file");
 /** agy's PreToolUse hooks for this tool: the first deny (or failed hook) wins. */
-function hookDenial(name: string): string | null {
-  if (process.env.FAKE_AGY_RUN_HOOKS !== "1") return null;
-  const home = process.env.HOME || process.env.USERPROFILE || "";
+function hookDenial(name: string, args: unknown = {}, stepIdx = 0, always = false): string | null {
+  if ((!always && process.env.FAKE_AGY_RUN_HOOKS !== "1") || process.env.FAKE_AGY_SKIP_HOOKS === "1") return null;
+  const home = process.env.FAKE_AGY_HOME_OVERRIDE || process.env.HOME || process.env.USERPROFILE || "";
   const file = join(home, ".gemini", "config", "hooks.json");
   if (!existsSync(file)) return null;
   const spec = JSON.parse(readFileSync(file, "utf8")) as Record<string, { enabled?: boolean; PreToolUse?: Array<{ matcher?: string; hooks?: Array<{ command: string }> }> }>;
@@ -241,7 +285,7 @@ function hookDenial(name: string): string | null {
       for (const handler of group.hooks ?? []) {
         let answer = "";
         try {
-          answer = execSync(handler.command, { input: JSON.stringify({ toolCall: { name, args: {} }, stepIdx: 0, conversationId: CONV }), cwd: join(home, ".gemini", "config"), encoding: "utf8", timeout: 15_000 });
+          answer = execSync(handler.command, { input: JSON.stringify({ toolCall: { name, args }, stepIdx, conversationId: CONV }), cwd: join(home, ".gemini", "config"), encoding: "utf8", timeout: 15_000 });
         } catch (error) {
           return `hook failed (${(error as Error).message.split("\n")[0]})`;
         }
@@ -253,7 +297,11 @@ function hookDenial(name: string): string | null {
   return null;
 }
 out({ event: "init", conversation_id: CONV, init: { cwd: process.cwd(), tools: ["run_command", "write_to_file", ...(mode === "ask-peer" ? ["list_bots", "ask_bot"] : [])], permission_mode: "accept-edits" } });
-out({ event: "step_update", conversation_id: CONV, step_update: { conversation_id: CONV, step_index: 0, state: "ACTIVE", step_type: "tool", tool_name: toolName, tool_info: { name: toolName, parameters: {} } } });
+// A relayed ask-peer turn's tools are its MCP calls (call_mcp_tool steps, below): no step of its own.
+const toolCalls: Array<{ name: string; args: Record<string, unknown> }> | null = process.env.FAKE_AGY_TOOL_CALLS
+  ? JSON.parse(process.env.FAKE_AGY_TOOL_CALLS)
+  : mode === "ask-peer" && argv.includes("--log-file") ? [] : null;
+if (!toolCalls) out({ event: "step_update", conversation_id: CONV, step_update: { conversation_id: CONV, step_index: 0, state: "ACTIVE", step_type: "tool", tool_name: toolName, tool_info: { name: toolName, parameters: {} } } });
 // FAKE_AGY_EXTRA_STEPS=1: steps agy streams that carry no chat content
 // (planning, a response still being written), as a long model step does.
 // The same step repeated (a stuck retry loop re-sending its state) is not
@@ -290,6 +338,15 @@ if (mode === "ask-peer") {
     response = "peer error: agents MCP not mounted";
   } else {
     try {
+      // A relayed turn (Auto, Full access): each MCP call is a call_mcp_tool step that runs agy's hooks first.
+      const relayed = argv.includes("--log-file");
+      const gate = relayed ? (name: string, args: object, index: number) => {
+        const tool = { ServerName: "murage-agents", ToolName: name, Arguments: args };
+        out({ event: "step_update", conversation_id: CONV, step_update: { conversation_id: CONV, step_index: 10 + index, state: "ACTIVE", step_type: "tool", tool_name: "call_mcp_tool", tool_info: { name: "call_mcp_tool", parameters: tool } } });
+        const refused = hookDenial("call_mcp_tool", tool, 10 + index, true);
+        out({ event: "step_update", conversation_id: CONV, step_update: { conversation_id: CONV, step_index: 10 + index, state: refused === null ? "DONE" : "ERROR", step_type: "tool", tool_name: "call_mcp_tool", tool_info: { name: "call_mcp_tool", parameters: tool } } });
+        return refused;
+      } : undefined;
       const reply = await driveMcp(agents, [
         { name: "list_bots", args: () => ({}) },
         {
@@ -299,7 +356,7 @@ if (mode === "ask-peer") {
             message: "ping from fake Gemini",
           }),
         },
-      ]);
+      ], gate);
       response = `peer says: ${reply}`;
     } catch (error) {
       response = `peer error: ${error instanceof Error ? error.message : String(error)}`;
@@ -307,8 +364,30 @@ if (mode === "ask-peer") {
   }
 }
 
-const denial = hookDenial(toolName);
-if (denial !== null) {
+const calls = toolCalls ?? [];
+for (const [index, call] of calls.entries()) {
+  const step = (state: string, extra: Record<string, unknown> = {}) =>
+    out({ event: "step_update", conversation_id: CONV, step_update: { conversation_id: CONV, step_index: index, state, step_type: "tool", tool_name: call.name, tool_info: { name: call.name, parameters: call.args, ...extra } } });
+  step("ACTIVE");
+  if (process.env.FAKE_AGY_UNHOOKED_ERROR === "1") {
+    step("ERROR", { error: { type: "TOOL_ERROR", message: "the tool failed" } });
+    continue;
+  }
+  const refused = hookDenial(call.name, call.args, index);
+  if (refused !== null) {
+    step("ERROR", { error: { type: "TOOL_ERROR", message: `tool call denied by pre-tool hook: ${refused}` } });
+    continue;
+  }
+  if (call.name === "run_command" && typeof call.args.CommandLine === "string") {
+    try { execSync(call.args.CommandLine, { cwd: process.cwd(), stdio: "ignore", shell: "/bin/sh" }); } catch { /* the step still ran */ }
+  }
+  step("DONE");
+}
+if (process.env.FAKE_AGY_DUMP && toolCalls) writeFileSync(`${process.env.FAKE_AGY_DUMP}.calls.json`, JSON.stringify(calls.length));
+const denial = toolCalls ? null : hookDenial(toolName);
+if (toolCalls) {
+  // the tool steps ran above
+} else if (denial !== null) {
   out({ event: "step_update", conversation_id: CONV, step_update: { conversation_id: CONV, step_index: 0, state: "ERROR", step_type: "tool", tool_name: toolName, tool_info: { name: toolName, parameters: {}, error: { type: "TOOL_ERROR", message: `tool call denied by pre-tool hook: ${denial}` } } } });
   if (process.env.FAKE_AGY_DUMP) writeFileSync(`${process.env.FAKE_AGY_DUMP}.hook.json`, JSON.stringify({ tool: toolName, denial }));
 } else {

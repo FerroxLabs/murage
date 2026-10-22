@@ -120,6 +120,27 @@ export const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
     read: ["**/murage-exec*/**", "**/murage-exec*"],
     bash: ["*murage-exec*"],
   },
+  // 1.0.3 (hook self-guard): the hook programs Murage writes for an engine and
+  // the folders they live in (DATA_DIR/native/antigravity-relay, -ask, -scope
+  // and codex-scope). The engine re-reads them on every call, so a write to one
+  // would replace the guard that judges every later call.
+  {
+    id: "murage-engine-hooks",
+    re: /(?<![\w.-])(?:(?:antigravity-(?:relay|ask|scope)|codex-scope)(?:[\\/]|$|["'\s;|&)>`])|murage-agy-relay|murage-hook\.(?:mjs|cmd|env)\b|ask-hook-[\w.-]*\.cjs\b)/i,
+    read: ["**/native/antigravity-relay/**", "**/native/antigravity-ask/**", "**/native/antigravity-scope/**", "**/native/codex-scope/**", "**/murage-agy-relay*", "**/murage-hook.mjs", "**/murage-hook.cmd", "**/murage-hook.env", "**/ask-hook-*.cjs"],
+    bash: ["*native/antigravity-relay*", "*native/antigravity-ask*", "*native/antigravity-scope*", "*native/codex-scope*", "*murage-agy-relay*", "*murage-hook.mjs*", "*murage-hook.cmd*", "*murage-hook.env*", "*ask-hook-*.cjs*"],
+  },
+  // agy 1.4.4 loads the hooks of the workspace's customization root (.agents, .agent, _agents, _agent: hooks.json,
+  // plugins.json, plugins/<name>/hooks.json, and agents/*.md, whose front matter can carry hooks) beside Murage's
+  // own, with no switch to turn that off. A bot that
+  // writes one would have its own hook run (and answer) on the next turn, so a call naming one, or moving a file
+  // into the root folder itself, is held.
+  {
+    id: "agy-workspace-hooks",
+    re: /(?<![\w.-])[._]agents?(?:[\\/](?:hooks\.json|plugins\.json|(?:plugins|agents)(?:[\\/]|$|["'\s;|&)>`]))|[\\/]?(?=$|["'\s;|&)>`]))/i,
+    read: [".agents/hooks.json", ".agent/hooks.json", "_agents/hooks.json", "_agent/hooks.json", ".agents/plugins.json", ".agent/plugins.json", "_agents/plugins.json", "_agent/plugins.json", ".agents/plugins/**", ".agent/plugins/**", "_agents/plugins/**", "_agent/plugins/**", ".agents/agents/**", ".agent/agents/**", "_agents/agents/**", "_agent/agents/**"],
+    bash: ["*.agents/hooks.json*", "*.agent/hooks.json*", "*_agents/hooks.json*", "*_agent/hooks.json*", "*.agents/plugins*", "*.agent/plugins*", "*_agents/plugins*", "*_agent/plugins*", "*.agents/agents*", "*.agent/agents*", "*_agents/agents*", "*_agent/agents*"],
+  },
   {
     id: "envrc",
     re: /(^|[\s/"'])\.envrc\b/i,

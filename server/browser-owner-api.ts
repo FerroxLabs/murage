@@ -30,7 +30,7 @@ export async function browserOwnerRequest(controller: UnifiedBrowserController, 
     case "take": await controller.take(profileKey, owner); break;
     case "release": await controller.release(profileKey, owner, generation as number); break;
     case "navigate": if (typeof body.url !== "string") throw new Error("A browser address is required"); await controller.navigate(profileKey, owner, generation as number, body.url); break;
-    case "input": if (!body.event || typeof body.event !== "object" || Array.isArray(body.event)) throw new Error("A browser input event is required"); controller.input(profileKey, owner, generation as number, body.event as Record<string, unknown>); break;
+    case "input": if (!body.event || typeof body.event !== "object" || Array.isArray(body.event)) throw new Error("A browser input event is required"); await controller.input(profileKey, owner, generation as number, body.event as Record<string, unknown>); break;
     case "reopen": await controller.reopen(profileKey, owner, generation as number); break;
     // The browser is not running: start it again. No hold needed, and the page lock is untouched.
     case "restart": await controller.restart(profileKey, owner); break;

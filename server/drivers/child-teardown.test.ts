@@ -6,6 +6,7 @@ import type { ChildProcess } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 import { ChildTeardown, PROVIDER_CLOSE_DEADLINE_MS, providerCloseDeadlineMs, TurnTeardowns } from "./child-teardown.ts";
+import type { StopDelivery } from "../procs.ts";
 
 const closedFakes = new WeakSet<ChildProcess>();
 const fakeChild = (pid: number | null = 4242) => {
@@ -69,6 +70,57 @@ describe("ChildTeardown", () => {
     child.emit("close", null, "SIGTERM");
     await expect(waiting).resolves.toEqual({ closeConfirmed: true });
     expect(teardown.closed).toBe(true);
+  });
+
+  // 1.0.3 Windows gate (fuigo.1): the turn ended cleanly, its stop went out through taskkill, taskkill took 5.3 s to refuse
+  // ("Access denied", no WMI for the session) before the fallback kill, and the 5 s close budget counted from the request had
+  // already run out: the run was retained, the bot read busy forever and the thread said "restart Murage".
+  it("counts the close budget from delivered termination, not from a stop route still in flight", async () => {
+    const child = fakeChild();
+    let deliver!: () => void;
+    let delivery: StopDelivery = { pending: new Promise<void>((resolve) => { deliver = () => { delivery = { pending: null, settledAt: Date.now() }; resolve(); }; }), settledAt: null };
+    const teardown = new ChildTeardown(child, confirmFake, () => delivery);
+    teardown.markStopRequested();
+    const waiting = teardown.wait({ closeMs: 40, maxMs: 2_000 });
+    let settled = false;
+    void waiting.then(() => (settled = true));
+    await new Promise((resolve) => setTimeout(resolve, 150)); // several close budgets while taskkill is still answering
+    expect(settled).toBe(false);
+    deliver();
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    child.emit("close", null, "SIGTERM");
+    await expect(waiting).resolves.toEqual({ closeConfirmed: true });
+  });
+
+  it("still times out when the child does not close within its budget after delivery", async () => {
+    const child = fakeChild();
+    const delivery: StopDelivery = { pending: null, settledAt: Date.now() };
+    const teardown = new ChildTeardown(child, confirmFake, () => delivery);
+    teardown.markStopRequested();
+    const started = Date.now();
+    await expect(teardown.wait({ closeMs: 40, maxMs: 2_000 })).resolves.toEqual({ closeConfirmed: false, reason: "timeout" });
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  it("a stop route that never finishes is still bounded by the absolute cap", async () => {
+    const child = fakeChild();
+    const delivery: StopDelivery = { pending: new Promise<void>(() => {}), settledAt: null };
+    const teardown = new ChildTeardown(child, confirmFake, () => delivery);
+    teardown.markStopRequested();
+    await expect(teardown.wait({ closeMs: 20, maxMs: 120 })).resolves.toEqual({ closeConfirmed: false, reason: "timeout" });
+  });
+
+  it("TurnTeardowns hands its delivery seam to every tracked child", async () => {
+    const child = fakeChild();
+    let deliver!: () => void;
+    let delivery: StopDelivery = { pending: new Promise<void>((resolve) => { deliver = () => { delivery = { pending: null, settledAt: Date.now() }; resolve(); }; }), settledAt: null };
+    const teardowns = new TurnTeardowns(confirmFake, () => delivery);
+    teardowns.track("thread", "turn", child).markStopRequested();
+    const waiting = teardowns.wait("thread", "turn", { closeMs: 40, maxMs: 2_000 });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    deliver();
+    child.emit("close", null, "SIGTERM");
+    await expect(waiting).resolves.toEqual({ closeConfirmed: true });
   });
 
   it("reports timeout once termination was requested, then observes a late close", async () => {

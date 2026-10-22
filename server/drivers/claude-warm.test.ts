@@ -1527,6 +1527,47 @@ describe("ClaudeDriver intent prewarm (fake CLI)", () => {
     await eventually(() => lines.filter((l) => l.includes("claude close thread=t-pw-release reason=activity window")).length === 2);
   });
 
+  // 1.0.3 Windows gate (thread ba2a7f9a): after the engine went away and a fresh one started, an Ask tool call was
+  // denied as "permission broker unavailable" with no card. The respawned engine must reach a live broker.
+  it("after the engine goes away and a fresh one starts, an Ask tool call raises a card", async () => {
+    await create();
+    await goCold("t-brokerrsp-respawn");
+    process.env.FAKE_CLAUDE_PERM_TOOL = "Bash";
+    process.env.FAKE_CLAUDE_PERM_INPUT = JSON.stringify({ command: "rm -rf ~/Documents" });
+    try {
+      const sent = await instance.adapter.sendTurn({ threadId: "t-brokerrsp-respawn", text: "__fixture_permission_tool__", ...base, resumeCursor: sessions.get("t-brokerrsp-respawn") });
+      expect(dispatches().at(-1)).toMatch(/process=spawned reason=(no-process|process-exited)/);
+      const opened = await recorder.until((e) => e.type === "request.opened" && e.threadId === "t-brokerrsp-respawn");
+      await instance.adapter.respondToRequest(opened.threadId, opened.requestId!, { behavior: "deny" });
+      await recorder.until((e) => e.type === "item.completed" && e.threadId === "t-brokerrsp-respawn" && e.itemType === "assistant_text" && /permission: denied/.test(e.text));
+      await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
+    } finally {
+      delete process.env.FAKE_CLAUDE_PERM_TOOL;
+      delete process.env.FAKE_CLAUDE_PERM_INPUT;
+    }
+  });
+
+  it("a proxy that cannot reach the broker still denies, opens no card, and the app log says why", async () => {
+    const errors: string[] = [];
+    const error = vi.spyOn(console, "error").mockImplementation((line: unknown) => { if (typeof line === "string") errors.push(line); });
+    await create();
+    process.env.FAKE_CLAUDE_PERM_TOOL = "Bash";
+    process.env.FAKE_CLAUDE_PERM_INPUT = JSON.stringify({ command: "rm -rf ~/Documents" });
+    process.env.FAKE_CLAUDE_PERM_SOCKET = join(scratch, "brokerrsp-nothing-listens.sock");
+    try {
+      const sent = await instance.adapter.sendTurn({ threadId: "t-brokerrsp-down", text: "__fixture_permission_tool__", ...base });
+      await recorder.until((e) => e.type === "item.completed" && e.threadId === "t-brokerrsp-down" && e.itemType === "assistant_text" && /permission: denied/.test(e.text));
+      await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
+      expect(recorder.events.some((e) => e.type === "request.opened" && e.threadId === "t-brokerrsp-down")).toBe(false);
+      expect(errors.some((line) => line.startsWith("claude permission broker unreachable thread=t-brokerrsp-down"))).toBe(true);
+    } finally {
+      delete process.env.FAKE_CLAUDE_PERM_TOOL;
+      delete process.env.FAKE_CLAUDE_PERM_INPUT;
+      delete process.env.FAKE_CLAUDE_PERM_SOCKET;
+      error.mockRestore();
+    }
+  });
+
   it("holdIdle (a deleted conversation is being removed from the engine's files) closes the idle engine, warms nothing while held, and allows it again after", async () => {
     await create();
     await run("t-hold", "one", base);

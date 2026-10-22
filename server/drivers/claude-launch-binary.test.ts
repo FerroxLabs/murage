@@ -85,6 +85,18 @@ function twoBinaries(): { probedLog: string; shellLog: string } {
   return { probedLog, shellLog };
 }
 
+// 1.0.3: the turn spawn asks for the Windows engine job (procs.ts engineJob). engineJob answers only on Windows, so here it is
+// a fixed stand-in and every spawnCli job argument is recorded; the real spawnCli still runs (off Windows a job changes nothing).
+const jobProbe = vi.hoisted(() => ({ job: { name: "Local\\murage-pip-eng-probe", fallback: "no-job" as const }, jobs: [] as unknown[] }));
+vi.mock("../procs.ts", async (original) => {
+  const actual = await original<typeof import("../procs.ts")>();
+  return {
+    ...actual,
+    engineJob: () => jobProbe.job,
+    spawnCli: (...args: Parameters<typeof actual.spawnCli>) => { jobProbe.jobs.push(args[3]); return actual.spawnCli(...args); },
+  };
+});
+
 describe.skipIf(process.platform === "win32")("the Claude turn binary", () => {
   it("is the claude Murage probed, not the first one on the owner's shell PATH", async () => {
     const { probedLog, shellLog } = twoBinaries();
@@ -92,6 +104,7 @@ describe.skipIf(process.platform === "win32")("the Claude turn binary", () => {
     recorder = recordEvents(instance.adapter);
     await instance.adapter.sendTurn({ threadId: "t-claude-launch", text: "hi" });
     await recorder.until((e) => e.type === "turn.completed");
+    expect(jobProbe.jobs).toContainEqual(jobProbe.job); // the turn CLI was started in the engine job
 
     const probed = lines(probedLog);
     expect(probed).toContain("--version");

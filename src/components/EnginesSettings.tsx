@@ -27,6 +27,8 @@ interface ProbeResult {
   ok: boolean;
   version?: string;
   message?: string;
+  /** a line about this version (OpenClaw below its Ask floor) */
+  note?: string;
 }
 
 function CustomPicker({ instance, cliDefault, onClose, onSaved }: {
@@ -172,6 +174,9 @@ function CustomPicker({ instance, cliDefault, onClose, onSaved }: {
       {probe?.ok && probe.version && (
         <div className="text-[12px] text-success">Test passed: {probe.version}</div>
       )}
+      {probe?.ok && probe.note && (
+        <div role="status" className="text-[12px] text-warning">{probe.note}</div>
+      )}
       {error && <div role="alert" className="text-[12px] text-danger">{error}</div>}
       <div className="flex justify-end gap-2">
         <button
@@ -280,6 +285,10 @@ function EngineRow({ instance }: { instance: InstanceInfo }) {
       </p>
       {/* Cloud home (CLOUD-ENGINES-DESIGN.md r8 R3.1): Claude's long-lived token is due for renewal. The sign-in
           runs from the desktop app, which holds the home's pairing. */}
+      {/* A line about the detected version (OpenClaw below its Ask floor), the same one a refused Ask turn shows. */}
+      {instance.enabled !== false && instance.snapshot.state === "available" && instance.snapshot.versionNote && (
+        <p role="status" className="mt-1 text-[12px] text-warning">{instance.snapshot.versionNote}</p>
+      )}
       {instance.snapshot.renewSignIn === true && (
         <p role="status" className="mt-1 text-[12px] text-ink">{ENGINE_RENEW_COPY}</p>
       )}

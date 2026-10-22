@@ -47,8 +47,14 @@ export class LineageAllowance {
   readonly reason: string | undefined;
   remaining: number;
   spent = 0;
-  /** Set once the allowance ran out or refused work: what it withheld may be only unproven, not bad. */
-  hit = false;
+  /** Set once the allowance ran out or refused work: what it withheld may be only unproven, not bad. A renewal (renew) clears it. */
+  get hit(): boolean { return this.hitNow; }
+  set hit(value: boolean) { this.hitNow = value; if (value) this.everHit = true; }
+  private hitNow = false;
+  /** Whether the allowance ever ran out or refused work, renewals included (the warmer's guaranteed slice follows this). */
+  everHit = false;
+  /** How many times the allowance was renewed (renew): at most once. */
+  private renewals = 0;
   /** Rows read and not yet paid for (a node pays for ROWS_PER_NODE rows). */
   debt = 0;
   closed = false;
@@ -60,8 +66,10 @@ export class LineageAllowance {
   /** Receipts per thread, counted once for the whole allowance (a strategy figure, never a verdict). */
   counts?: Map<string, number>;
 
+  /** The nodes the allowance started with (a renewal restores them). */
+  private readonly nodesAtStart: number;
   private constructor(scope: AllowanceScope, nodes: number, reason?: string, msBudget = Infinity) {
-    this.scope = scope; this.remaining = nodes; this.reason = reason; this.msBudget = msBudget;
+    this.scope = scope; this.remaining = nodes; this.nodesAtStart = nodes; this.reason = reason; this.msBudget = msBudget;
   }
   private static nodes(nodes?: number): number { return nodes ?? turnNodesOverride ?? TURN_LINEAGE_NODES; }
   /** A direct turn's setup (startTurn): one allowance for working context, replay, recall, the continuation check and output roots. */
@@ -92,6 +100,19 @@ export class LineageAllowance {
   }
   /** Stops the allowance: whatever spends on it later is refused, never free. */
   close(): void { this.closed = true; }
+  /** 1.0.3 resume race (RESUME-RACE-DESIGN.md Part A): a turn whose resumed session was just reset (fail closed) rebuilds its replay and
+   * memory block on this allowance. When recall or the check spent it first, that rebuild withheld everything it could not pay for and
+   * the bot forgot the conversation. Renewing gives the rebuild a fresh budget, ONCE per allowance (a loop of resets cannot refill it),
+   * so a turn's lineage work is at most two allowances, the second only on the reset path. It decides nothing about resuming: every
+   * revoke and forget check still runs, and a line that cannot be paid for is still withheld. A closed allowance (setup over) and one
+   * renewed before are refused: false. */
+  renew(): boolean {
+    if (this.closed || this.renewals >= 1 || this.depth > 0) return false;
+    this.renewals++;
+    this.remaining = this.nodesAtStart;
+    this.debt = 0; this.msUsed = 0; this.hitNow = false;
+    return true;
+  }
 
   /** What may still be spent (0: closed or spent). */
   room(): number { return this.closed || this.overTime() ? 0 : Math.max(0, this.remaining); }

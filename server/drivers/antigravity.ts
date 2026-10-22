@@ -6,8 +6,9 @@ import { NEUTRAL_TOOL_SURFACE, renderMurageTurn } from "../murage-tool-surface.t
 // turns via `--conversation <id>` (the resumeCursor is agy's conversation_id).
 // Stream-JSON input requires agy 1.1.15 or newer.
 //
-// Unlike claude, print mode has NO interactive permission hook: there is no
-// per-action broker here. `--mode accept-edits` allows file edits but
+// Unlike claude, print mode has NO interactive permission channel. At Auto and
+// Full access a Murage PreToolUse hook relays every tool call to the broker
+// (antigravity-relay.ts). `--mode accept-edits` allows file edits but
 // auto-denies shell (`run_command` comes back as a tool ERROR); the default
 // `request-review` auto-denies; `--dangerously-skip-permissions` (fullAuto)
 // approves everything. Real per-action approval cards are a future path via
@@ -22,7 +23,7 @@ import { NEUTRAL_TOOL_SURFACE, renderMurageTurn } from "../murage-tool-surface.t
 // instances only; the host desktop stays off (no approval channel in print
 // mode, ever).
 import { registerIntake } from "../harness/intake.ts";
-import { awaitCliTreeStopped, describeSpawnFailure, execCli, killCliTree, spawnCli } from "../procs.ts";
+import { awaitCliTreeStopped, describeSpawnFailure, engineJob, execCli, killCliTree, spawnCli } from "../procs.ts";
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -54,13 +55,29 @@ import { customMountEntries } from "../custom-mcp-mounts.ts";
 import { engineClosedLine } from "./stop-copy.ts";
 import { acpEngineExitStderrText } from "./acp/core.ts";
 import { writeFileAtomic } from "../atomic.ts";
-import { ASK_STOP_NOTE, ASK_STOP_PROMPT, replyCarriesAskStopNote } from "./ask-stop.ts";
+import { ASK_STOP_NOTE, ASK_STOP_PROMPT, ASK_STOP_REASON, replyCarriesAskStopNote } from "./ask-stop.ts";
+import { ANTIGRAVITY_RELAY_ASK_MS, antigravityMountRecords, antigravityRelayAsk, antigravityWorkspaceHookFiles, awaitRelayHookLoaded, openAntigravityRelay, type AntigravityRelay } from "./antigravity-relay.ts";
+import type { HookAnswer, HookDelivery } from "./codex-hook.ts";
 
-/** Shown when agy ran under accept-edits, denied an action (a shell command) and wrote no reply. Print mode cannot
- *  ask, so Murage never lets this engine run commands on a bot turn at any level (sendTurn, skipPermissions):
- *  the line names what the owner can do instead of a level that would not change it. */
+/** Shown when agy ran under accept-edits, denied an action (a shell command) and wrote no reply. At Auto and Full
+ *  access agy runs commands through Murage's check (antigravity-relay.ts), so this line is left for a turn that ran
+ *  in accept-edits anyway: an instance that does not skip agy's own permissions, or a turn whose check could not be
+ *  set up. An Ask turn shows ASK_STOP_NOTE instead. */
 export const ANTIGRAVITY_DENIED_NOTE =
-  "Antigravity could not run a command, because it cannot ask you first. For work that needs commands, choose another engine for this bot, such as Claude or Codex.";
+  "Antigravity could not run a command on this turn, so it stopped without a reply.";
+/** Shown when agy started without Murage's check loaded: the turn is refused before the prompt reaches it. */
+export const ANTIGRAVITY_HOOK_NOT_LOADED =
+  "Antigravity did not load Murage's check for commands and tools, so Murage did not start this turn. Try again; if it keeps happening, update Antigravity with `agy update`.";
+/** Shown when the turn's folder has its own Antigravity hooks file: agy would load it beside Murage's check (agy 1.4.4
+ *  has no switch to leave it out), so an Auto or Full access turn runs as at Ask instead. */
+export const antigravityWorkspaceHooksNote = (file: string): string =>
+  `This project has its own Antigravity hooks file (${file}). Antigravity would run it beside Murage's check, so this turn runs as at Ask: it can read and plan, not make changes. Remove or rename that file to use Auto or Full access.`;
+/** Shown when agy's log names a hooks file that is not Murage's: the turn is refused before the prompt reaches agy. */
+export const antigravityForeignHooksNote = (file: string): string =>
+  `Antigravity loaded a hooks file that is not Murage's (${file}), so Murage did not start this turn.`;
+/** Shown when agy ran a tool that never reached Murage's check: the turn is stopped at once. */
+export const ANTIGRAVITY_HOOK_SKIPPED =
+  "Antigravity ran a tool without Murage's check, so Murage stopped this turn.";
 
 const DRIVER_KIND = "antigravityAgent";
 export const ANTIGRAVITY_STREAM_INPUT_MIN_VERSION = "1.1.15";
@@ -69,6 +86,10 @@ export const ANTIGRAVITY_STREAM_INPUT_MIN_VERSION = "1.1.15";
  * limit an owner can choose (24 hours), so a turn is stopped only by the
  * thread's silence watch, the owner's Stop or a budget stop. */
 export const ANTIGRAVITY_PRINT_TIMEOUT = "8760h";
+
+/** The stopReason of an Ask turn Murage ended because a change ran anyway: a stop (turnStopped), never finished work,
+ *  and not "cancelled" (the owner's Stop), so the chat shows ASK_STOP_NOTE and no "Stopped by you". */
+export const ANTIGRAVITY_ASK_STOP_REASON = ASK_STOP_REASON;
 
 /** The Ask hard stop for agy (./ask-stop.ts). `--mode accept-edits` writes with no ask, and the 1.0.3 real-CLI probe
  * saw it run shell commands too. On an Ask turn the scoped home carries one Murage-owned
@@ -407,7 +428,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
     try { removeAntigravityLegacyMcpEntries(realHomeOf(env)); } catch { /* the file keeps its bytes */ }
     const listeners = new Set<RuntimeEventListener>();
     // one active turn per thread; a second send while busy is a caller bug
-    const active = new Map<string, { stop: () => void; turnId: string }>();
+    const active = new Map<string, { stop: () => void; turnId: string; asks: Map<string, (behavior: "allow" | "deny", source: "user" | "timeout" | "system", message?: string) => boolean> }>();
     const pending = new Set<string>();
     // a Stop for a turn still reading the engine version, before it starts
     const earlyStops = new Set<string>();
@@ -461,15 +482,25 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
     const sendTurn = async (turn: SendTurnInput) => {
       // Murage's Full access still stops before deleting outside its folder,
       // paying and messaging someone new (server/stop-line.ts). Print mode has
-      // no way to ask, so under it this engine never skips permissions: it
-      // runs in accept-edits (file edits only, no shell, no mounted tools)
-      // rather than doing those three without anyone asked.
+      // no way to ask, so agy's own permissions are skipped on a bot turn only
+      // with Murage's relay hook in front of every tool (relayWanted below);
+      // without it the turn runs in accept-edits (file edits only, no shell,
+      // no mounted tools).
       const skipPermissions = config.fullAuto && !turn.stopLine && !turn.routeAsks;
       // The Ask hard stop (ANTIGRAVITY_ASK_READS): reads only, every other tool denied by a hook before it runs.
-      const askStop = turn.askLevel === true && !skipPermissions;
+      let askStop = turn.askLevel === true && !skipPermissions;
+      // Auto and Full access (lanes/release103/AGY-AUTO-DESIGN.md): skip agy's own permissions, and relay every tool
+      // call to Murage's broker through a hook first (antigravity-relay.ts). A relay that cannot be set up keeps
+      // accept-edits with no tools. The Chief's proposal turn keeps accept-edits (server/index.ts, proposalOnly).
+      let relayWanted = config.fullAuto && !askStop && !turn.proposalOnly && (turn.stopLine === true || turn.routeAsks === true);
+      /** This turn's relayed asks, by request id, answered by respondToRequest. */
+      const relayAsks = new Map<string, (behavior: "allow" | "deny", source: "user" | "timeout" | "system", message?: string) => boolean>();
       /** Something was refused at Ask: the note is due unless the reply already carries it. */
       let askStopRefused = false;
       let askStopReply = "";
+      /** Murage ended this Ask turn because a change ran (the hook did not hold). Not the owner's Stop: the turn
+       *  settles as ended with the note (ANTIGRAVITY_ASK_STOP_REASON), keeps whatever reply agy gave, and runs nothing more. */
+      let askStopHalted = false;
       const { threadId } = turn;
       if (disposed) throw new Error("Antigravity instance is disposed");
       if (active.has(threadId) || pending.has(threadId)) throw new Error("a turn is already running on this thread");
@@ -520,6 +551,15 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         }
       }
       const cwd = turn.cwd ?? workspace;
+      // agy loads the workspace's own hooks (<cwd>/.agents/hooks.json and the rest, every turn) beside Murage's relay
+      // hook, and nothing turns that off: one could answer or run on its own. Checked at every turn start; a turn that
+      // finds one runs as at Ask, with a line that names the file.
+      const workspaceHooks = relayWanted ? antigravityWorkspaceHookFiles([cwd]) : [];
+      if (workspaceHooks.length) {
+        console.warn(`${ENGINE} relay: the turn's folder has its own hooks file (${workspaceHooks[0]}); this turn runs as at Ask`);
+        askStop = true;
+        relayWanted = false;
+      }
 
       // agy 1.1.15+ accepts one JSON user event per line on stdin. Keep the
       // complete room/persona payload there: Windows' CreateProcess command
@@ -540,7 +580,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       // state), and nothing is reported once the turn settled or was stopped.
       const shownSteps = new Set<string>();
       const working = (step?: string) => {
-        if (settled || stopRequested) return;
+        if (settled || stopRequested || askStopHalted) return;
         if (step !== undefined) {
           if (shownSteps.has(step)) return;
           if (shownSteps.size >= 1_000) shownSteps.clear();
@@ -563,6 +603,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         if (settled) return;
         settled = true;
         active.delete(threadId);
+        for (const finish of [...relayAsks.values()]) finish("deny", "system", "the turn has ended");
         armPostSettleCleanup();
         if (askStopRefused && !replyCarriesAskStopNote(askStopReply)) {
           const itemId = `ask-stop-${turnId}`;
@@ -601,7 +642,49 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       // integrations in safe mode. Enforce the same boundary here so a
       // direct adapter caller cannot expose token-bearing tools to a child
       // that has no interactive permission channel.
-      const mountedServers = antigravityMcpServers(skipPermissions ? turn.integrations : undefined);
+      let relay: AntigravityRelay | null = null;
+      let mcpMounts: ReturnType<typeof antigravityMountRecords> = [];
+      const relayDir = join(DATA_DIR, "native", "antigravity-relay", `${tag}-${turnId}`.slice(0, 120));
+      if (relayWanted) {
+        const relayPreTool = (delivery: HookDelivery): Promise<HookAnswer> => new Promise((answer) => {
+          if (settled || stopRequested) return answer({ decision: "deny", reason: "the turn has ended" });
+          const ask = antigravityRelayAsk(delivery, cwd, relayDir);
+          const requestId = newId();
+          const finish = (behavior: "allow" | "deny", source: "user" | "timeout" | "system", message?: string) => {
+            if (!relayAsks.delete(requestId)) return false;
+            clearTimeout(timer);
+            answer(behavior === "allow" ? { decision: "allow" } : { decision: "deny", reason: message?.trim() || (source === "timeout" ? "nobody answered in time, so it did not run" : "the owner did not allow it") });
+            emit({ ...base(threadId, turnId), type: "request.resolved", requestId, behavior, source });
+            return true;
+          };
+          const timer = setTimeout(() => finish("deny", "timeout"), ANTIGRAVITY_RELAY_ASK_MS);
+          timer.unref?.();
+          relayAsks.set(requestId, finish);
+          emit({
+            ...base(threadId, turnId),
+            type: "request.opened",
+            requestId,
+            requestType: "permission",
+            tool: ask.tool,
+            summary: ask.summary.slice(0, 300),
+            toolCall: ask.toolCall,
+            ...(ask.toolIdentity ? { toolIdentity: ask.toolIdentity } : {}),
+            ...(ask.filePaths ? { filePaths: ask.filePaths } : {}),
+            ...(ask.toolInputMissing ? { toolInputMissing: ask.toolInputMissing } : {}),
+            mcpMounts,
+            toolEngine: "antigravity" as const,
+          });
+        });
+        try {
+          relay = await openAntigravityRelay(relayDir, relayPreTool);
+        } catch (error) {
+          console.warn(`${ENGINE} relay: could not set up Murage's check (${error instanceof Error ? error.message : String(error)}); this turn runs in accept-edits`);
+          relay = null;
+        }
+      }
+      const relayed = relay !== null;
+      const mountedServers = antigravityMcpServers(skipPermissions || relayed ? turn.integrations : undefined);
+      mcpMounts = antigravityMountRecords(mountedServers, { computer: ANTIGRAVITY_COMPUTER_MCP_KEY, agents: ANTIGRAVITY_AGENTS_MCP_KEY });
       let scoped: ReturnType<typeof buildAntigravityScopedHome> | null = null;
       let childEnv = env;
       try {
@@ -610,27 +693,35 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
           scopeRoot: antigravityScopeRoot(),
           name: `${tag}-${turnId}`.slice(0, 120),
           servers: mountedServers,
-          ...(askStop ? { askStopHooks: antigravityAskStopHooks() } : {}),
+          ...(askStop ? { askStopHooks: antigravityAskStopHooks() } : relay ? { askStopHooks: relay.hooksJson } : {}),
         });
+        // The relay's hooks.json is what keeps a skip-permissions turn in check: it must read back exactly as written.
+        if (relay && readFileSync(join(scoped.home, ".gemini", "config", "hooks.json"), "utf8") !== relay.hooksJson) {
+          throw new Error("the scoped hooks.json did not read back as written");
+        }
         childEnv = { ...env, HOME: scoped.home, USERPROFILE: scoped.home };
       } catch (error) {
         // Fails closed: never a start in the owner's real home with their personal MCP servers, hooks and skills.
+        scoped?.dispose();
+        relay?.close();
         pending.delete(threadId);
         // A structured code, rendered in the owner's language by the chat (ScopeUnavailableError); the cause stays attached.
         throw engineFolderUnavailable(ENGINE, error);
       }
-      const restoreMcp = () => scoped?.dispose();
+      const restoreMcp = () => { scoped?.dispose(); relay?.close(); };
 
       const args = [
         "--input-format", "stream-json",
         "--output-format", "stream-json",
         "--print-timeout", ANTIGRAVITY_PRINT_TIMEOUT,
         "--add-dir", cwd,
-        // fullAuto approves everything; otherwise accept-edits allows file
-        // edits but auto-denies shell (no interactive channel in print mode)
-        skipPermissions ? "--dangerously-skip-permissions" : "--mode",
+        // fullAuto approves everything (at Auto and Full only through the relay
+        // hook); otherwise accept-edits allows file edits but auto-denies shell
+        // (no interactive channel in print mode)
+        skipPermissions || relayed ? "--dangerously-skip-permissions" : "--mode",
       ];
-      if (!skipPermissions) args.push("accept-edits");
+      if (!skipPermissions && !relayed) args.push("accept-edits");
+      if (relay) args.push("--log-file", relay.logPath);
       if (turn.model) args.push("--model", turn.model);
       if (resumeCursor) args.push("--conversation", resumeCursor);
 
@@ -640,14 +731,14 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       const turnEnv: NodeJS.ProcessEnv = { ...childEnv };
       cloudTurnBot(turnEnv, turn.warmIdentity?.botId);
       // the Ask hook runs as `<this program> <script>`; a packaged app is its own node only with this set
-      if (askStop) turnEnv.ELECTRON_RUN_AS_NODE = "1";
+      if (askStop || relayed) turnEnv.ELECTRON_RUN_AS_NODE = "1";
       let child: ReturnType<typeof spawnCli>;
       try {
         child = spawnCli(config.cli, args, {
           cwd,
           env: turnEnv,
           stdio: ["pipe", "pipe", "pipe"],
-        });
+        }, engineJob());
       } catch (error) {
         restoreMcp();
         pending.delete(threadId);
@@ -681,6 +772,11 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         void awaitCliTreeStopped(child).then((stopped) => {
           if (stopped) closeFinalizers.get(child)?.();
         });
+      };
+      /** The Ask hard stop's own end: the child is stopped at once, as for a Stop, but the turn is not the owner's. */
+      const haltForAskStop = () => {
+        askStopHalted = true;
+        stop();
       };
       const requestStop = () => {
         stopRequested = true;
@@ -720,17 +816,27 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
             break;
           }
           case "step_update": {
+            // A tool agy finished (DONE) or failed (ERROR) that never reached the relay ran, or started, without
+            // Murage's check: the turn stops at once. A call the relay denied is answered, so its ERROR is not one.
+            if (relay && payload.step_type === "tool" && (payload.state === "DONE" || payload.state === "ERROR") && !relay.answered(`${payload.conversation_id ?? o.conversation_id ?? conversationId}:${payload.step_index}`) && !settled && !stopRequested) {
+              console.warn(`${ENGINE} relay: ${String(payload.tool_name ?? "a tool")} ran without Murage's check; stopping the turn`);
+              const itemId = `relay-skipped-${turnId}`;
+              emit({ ...base(threadId, turnId), type: "item.started", itemId, itemType: "tool", origin: "murage", title: ANTIGRAVITY_HOOK_SKIPPED, toolKind: "notice" });
+              emit({ ...base(threadId, turnId), type: "item.completed", itemId, itemType: "tool", ok: true });
+              requestStop();
+            }
             if (payload.step_type === "tool") {
               const itemId = `${conversationId ?? o.conversation_id ?? "conv"}:${payload.step_index}`;
               if (payload.state === "ACTIVE") {
                 emit({ ...base(threadId, turnId), type: "item.started", itemType: "tool", origin: "engine", itemId, title: payload.tool_name });
               } else if (payload.state === "DONE") {
                 emit({ ...base(threadId, turnId), type: "item.completed", itemType: "tool", itemId, ok: true });
-                // A tool that is not a read finished on an Ask turn: the hook did not hold. Stop the turn at once.
-                if (askStop && !(ANTIGRAVITY_ASK_READS as readonly string[]).includes(String(payload.tool_name ?? "")) && !settled && !stopRequested) {
+                // A tool that is not a read finished on an Ask turn: the hook did not hold. Stop the child at once; the
+                // turn then ends with the note, as Murage's Ask stop and not as the owner's Stop (haltForAskStop).
+                if (askStop && !(ANTIGRAVITY_ASK_READS as readonly string[]).includes(String(payload.tool_name ?? "")) && !settled && !stopRequested && !askStopHalted) {
                   askStopRefused = true;
                   console.warn(`${ENGINE} ask stop: ${String(payload.tool_name ?? "a tool")} ran on an Ask turn; stopping the turn`);
-                  requestStop();
+                  haltForAskStop();
                 }
               } else if (payload.state === "ERROR") {
                 if (askStop && /denied by pre-tool hook/i.test(String(payload.tool_info?.error?.message ?? ""))) askStopRefused = true;
@@ -758,7 +864,10 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
             if (response) {
               emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "assistant_text", delta: response });
               emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", origin: "engine", text: response });
-            } else if (Array.isArray(payload.denied_actions) && payload.denied_actions.length > 0 && !askStopRefused) {
+            } else if (Array.isArray(payload.denied_actions) && payload.denied_actions.length > 0 && askStop) {
+              // At Ask the refusal is the Ask stop's: its own note, once (settle).
+              askStopRefused = true;
+            } else if (Array.isArray(payload.denied_actions) && payload.denied_actions.length > 0 && !askStopRefused && !relayed) {
               // accept-edits denied an action (a shell command) and agy wrote no reply: one plain line, not a blank turn.
               const itemId = `denied-${turnId}`;
               emit({ ...base(threadId, turnId), type: "item.started", itemId, itemType: "tool", origin: "murage", title: ANTIGRAVITY_DENIED_NOTE, toolKind: "notice" });
@@ -776,7 +885,8 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
             // requested stop is the user's Stop, not an engine failure:
             // same cancelled state as the close path (STOP1).
             const stoppedResult = stopRequested && payload.status !== "SUCCESS";
-            if (payload.status !== "SUCCESS" && !stoppedResult) {
+            // After the Ask stop halted the child, its result (whatever its status) ends the turn as that stop.
+            if (payload.status !== "SUCCESS" && !stoppedResult && !askStopHalted) {
               const errorMessage = typeof payload.message === "string" && payload.message 
                 ? payload.message 
                 : typeof payload.error === "string" && payload.error 
@@ -791,8 +901,8 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
             // result.usage is the turn total (the per-step agent_response
             // figures above are its parts, not additions to it)
             settle(
-              stoppedResult || payload.status === "SUCCESS",
-              stoppedResult ? "cancelled" : payload.status ?? null,
+              stoppedResult || askStopHalted || payload.status === "SUCCESS",
+              stoppedResult ? "cancelled" : askStopHalted ? ANTIGRAVITY_ASK_STOP_REASON : payload.status ?? null,
               null,
               payload.usage
                 ? {
@@ -846,6 +956,9 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
           // cancelled like the ACP, Pi, Claude and Codex drivers, with no
           // runtime error card and no Retry (STOP1).
           settle(true, "cancelled");
+          } else if (!settled && askStopHalted) {
+          // The process ended because the Ask stop halted it: the turn ends, with the note, and no error card.
+          settle(true, ANTIGRAVITY_ASK_STOP_REASON);
           } else if (!settled) {
           emit({
             ...base(threadId, turnId),
@@ -862,27 +975,63 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         });
       });
 
-      active.set(threadId, { stop: requestStop, turnId });
+      active.set(threadId, { stop: requestStop, turnId, asks: relayAsks });
       pending.delete(threadId);
 
       emit({ ...base(threadId, turnId), type: "turn.started" });
+      if (workspaceHooks.length) {
+        const itemId = `workspace-hooks-${turnId}`;
+        emit({ ...base(threadId, turnId), type: "item.started", itemId, itemType: "tool", origin: "murage", title: antigravityWorkspaceHooksNote(workspaceHooks[0]!), toolKind: "notice" });
+        emit({ ...base(threadId, turnId), type: "item.completed", itemId, itemType: "tool", ok: true });
+      }
 
       // The official stream-json input envelope. Closing stdin after this
       // single turn is intentional: agy finishes the active turn, emits its
       // terminal result, then exits cleanly. Conversation continuity still
       // uses --conversation on the next per-turn process.
       const inputMessage = { event: "user", message: { content: prompt } };
-      appendNative(threadId, { dir: "out", source: "agy.stream", msg: inputMessage });
-      try {
-        child.stdin.end(`${JSON.stringify(inputMessage)}\n`);
-      } catch (error) {
-        emit({
-          ...base(threadId, turnId),
-          type: "runtime.error",
-          message: `Murage could not send this message to ${ENGINE}: ${error instanceof Error ? error.message : String(error)}`,
+      const writePrompt = () => {
+        appendNative(threadId, { dir: "out", source: "agy.stream", msg: inputMessage });
+        try {
+          child.stdin.end(`${JSON.stringify(inputMessage)}\n`);
+        } catch (error) {
+          emit({
+            ...base(threadId, turnId),
+            type: "runtime.error",
+            message: `Murage could not send this message to ${ENGINE}: ${error instanceof Error ? error.message : String(error)}`,
+          });
+          stop();
+          settle(false, "stdin_write_failed");
+        }
+      };
+      if (!relay) writePrompt();
+      else {
+        // With agy's own permissions skipped, the relay hook is the only check: the prompt is written only once agy's
+        // log shows it loaded the hook. Anything else refuses the turn with nothing written.
+        // agy's count cannot tell a project's hook from Murage's: the check is exact (relayHookLoadState).
+        const expectHooks = { hooksPath: join(scoped!.home, ".gemini", "config", "hooks.json"), workspaceDirs: [cwd] };
+        void awaitRelayHookLoaded(relay.logPath, expectHooks, () => settled || stopRequested || childClosed).then((loaded) => {
+          if (settled || stopRequested) return;
+          if (loaded.state !== "loaded") {
+            console.warn(`${ENGINE} relay: agy did not load Murage's hook (${loaded.state}); the turn is refused before its prompt`);
+            const itemId = `relay-unloaded-${turnId}`;
+            emit({ ...base(threadId, turnId), type: "item.started", itemId, itemType: "tool", origin: "murage", title: loaded.state === "foreign" ? antigravityForeignHooksNote(loaded.file) : ANTIGRAVITY_HOOK_NOT_LOADED, toolKind: "notice" });
+            emit({ ...base(threadId, turnId), type: "item.completed", itemId, itemType: "tool", ok: true });
+            stop();
+            turn.notWritten?.();
+            settle(false, "hook_not_loaded");
+            return;
+          }
+          // The submission fence again, with no await between it and this write (SendTurnInput.beforeSubmit).
+          try {
+            turn.beforeSubmit?.();
+          } catch {
+            stop();
+            settle(false, "submission_refused");
+            return;
+          }
+          writePrompt();
         });
-        stop();
-        settle(false, "stdin_write_failed");
       }
 
       return { turnId };
@@ -1053,7 +1202,15 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
           if (run) return run.stop();
           if (pending.has(threadId)) earlyStops.add(threadId);
         },
-        respondToRequest: async () => "unavailable" as const, // this engine has no asks to answer
+        // Only a relayed turn (Auto, Full access) has asks: each is one tool call agy is waiting to run.
+        respondToRequest: async (threadId, requestId, decision) => {
+          const finish = active.get(threadId)?.asks.get(requestId);
+          if (!finish || decision.behavior === "answer") return "unavailable";
+          // the hook cannot run a narrowed call in place of the one asked, so a narrowing is a deny with its reason
+          if (decision.behavior === "allow" && decision.updatedInput) return finish("deny", "user", "Murage allowed only a narrower form of this call; ask again in that form") ? "rejected" : "unavailable";
+          if (!finish(decision.behavior, "user", decision.message)) return "unavailable";
+          return decision.behavior === "allow" ? "allowed-once" : "rejected";
+        },
         hasSession: (threadId) => active.has(threadId),
         stopAll: async () => {
           for (const threadId of pending) earlyStops.add(threadId);

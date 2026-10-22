@@ -33,7 +33,7 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { deleteEnvNames, PROVIDER_CREDENTIAL_ENV, stripRoutingEnv, stripWorkspaceCredentialEnv } from "../config.ts";
 import { computerProxyEnv } from "../container-computer.ts";
 import { augmentedPath } from "../env-path.ts";
-import { describeSpawnFailure, killCliTree, spawnCli } from "../procs.ts";
+import { describeSpawnFailure, engineJob, killCliTree, spawnCli } from "../procs.ts";
 import { ProviderStopUnconfirmedError, providerCloseDeadlineMs, TurnTeardowns, type TeardownWait } from "./child-teardown.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
 import { customMountEntries } from "../custom-mcp-mounts.ts";
@@ -939,7 +939,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
             stdio: ["pipe", "pipe", "pipe"],
             cwd: turn.cwd,
             env: handed.env,
-          });
+          }, engineJob());
         } catch (err) {
           if (mcpTempDir) {
             try {
@@ -1469,6 +1469,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           return result;
         },
         awaitTurnTeardown: (threadId, turnId) => teardowns.wait(threadId, turnId, piStopBudget()),
+        awaitTurnClose: (threadId, turnId) => teardowns.closed(threadId, turnId),
         respondToRequest: async (threadId, requestId, decision) => {
           const entry = active.get(threadId);
           const answer = entry?.pending.get(requestId);
