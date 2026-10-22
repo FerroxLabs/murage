@@ -26,6 +26,8 @@ import {
   ANTIGRAVITY_CUSTOM_MCP_PREFIX,
   supportsAntigravityStreamInput,
   readAntigravityModelCatalog,
+  parseAntigravityModelsOutput,
+  catalogFromAgyList,
   STATIC_ANTIGRAVITY_MODELS,
 } from "./antigravity.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
@@ -41,10 +43,26 @@ describe("Antigravity stream input compatibility", () => {
   });
 });
 
+describe("agy 1.4.3 model list", () => {
+  const live = "gemini-4-argon-medium\tGemini 4 Argon (Medium)\ngemini-4-argon-high\tGemini 4 Argon (High)\nFetching available models...\ngpt-oss-120b-medium\tGPT-OSS 120B (Medium)\n";
+  it("parses the CLI list and ignores progress lines", () => {
+    expect(parseAntigravityModelsOutput(live).map(({ id }) => id)).toEqual(["gemini-4-argon-medium", "gemini-4-argon-high", "gpt-oss-120b-medium"]);
+  });
+  it("defaults to a model the CLI listed", () => {
+    const catalog = catalogFromAgyList(parseAntigravityModelsOutput(live));
+    expect(catalog.options.map(({ id }) => id)).toContain(catalog.default);
+    expect(catalogFromAgyList(parseAntigravityModelsOutput("only-one\tOnly")).default).toBe("only-one");
+  });
+  it("static default is in the 1.4.3 list", () => {
+    expect(STATIC_ANTIGRAVITY_MODELS.default).toBe("gemini-4-argon-high");
+  });
+});
+
 describe("readAntigravityModelCatalog", () => {
   it("includes the confirmed Gemini 3.8 Flash variants without changing the default", () => {
     const catalog = readAntigravityModelCatalog({ HOME: join(tmpdir(), "murage-agy-missing-home") });
-    expect(catalog.default).toBe("gemini-3.1-pro-high");
+    expect(catalog.default).toBe("gemini-4-argon-high");
+    expect(catalog.options.map(({ id }) => id)).not.toContain("gemini-3.1-pro-high");
     expect(catalog.options.filter(({ id }) => id.startsWith("gemini-3.8-flash-"))).toEqual([
       { id: "gemini-3.8-flash-high", label: "Gemini 3.8 Flash (High)" },
       { id: "gemini-3.8-flash-medium", label: "Gemini 3.8 Flash (Medium)" },

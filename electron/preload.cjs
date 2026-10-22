@@ -50,7 +50,7 @@ function exposeBridge() {
 // Sandboxed preloads receive Electron's restricted `require`, which cannot
 // load sibling CommonJS files. Keep this tiny predicate inline here; main's
 // privileged process uses the shared browser-platform helper.
-const browserSurfaceSupported = process.platform === "darwin" || process.platform === "linux";
+const browserSurfaceSupported = process.platform === "darwin" || process.platform === "linux" || process.platform === "win32";
 let pendingStartupInbox=false;
 const startupInboxListeners=new Set();
 ipcRenderer.on("startup-background:open-inbox",()=>{

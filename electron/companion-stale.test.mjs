@@ -72,6 +72,18 @@ function stranger() {
 
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 
+const NETSTAT = [
+  "",
+  "Active Connections",
+  "",
+  "  Proto  Local Address          Foreign Address        State           PID",
+  "  TCP    0.0.0.0:135            0.0.0.0:0              LISTENING       1104",
+  "  TCP    127.0.0.1:8811         0.0.0.0:0              LISTENING       7340",
+  "  TCP    127.0.0.1:8811         127.0.0.1:50321        ESTABLISHED     7340",
+  "  TCP    127.0.0.1:50321        127.0.0.1:8811         ESTABLISHED     9001",
+  "  TCP    [::]:445               [::]:0                 LISTENING       4",
+  "",
+].join("\r\n");
 describe("a sidecar a crashed desktop left behind", () => {
   it("asks our left-behind sidecar to stop itself, and kills nothing", async () => {
     const dir = tempDir();
@@ -250,19 +262,19 @@ describe("the port owner lookup", () => {
     })).toBe("not-ours");
   });
 
-  it("on Windows asks Get-NetTCPConnection and takes the single owning pid", async () => {
+  it("on Windows asks netstat.exe (no PowerShell) and takes the single owning pid of the listening row", async () => {
     const calls = [];
-    const pid = await listeningPid(8811, "win32", async (command, args) => { calls.push([command, args.join(" ")]); return "7340\r\n"; });
+    const pid = await listeningPid(8811, "win32", async (command, args) => { calls.push([command, args.join(" ")]); return NETSTAT; });
     expect(pid).toBe(7340);
-    expect(calls[0][0]).toBe("powershell.exe");
-    expect(calls[0][1]).toMatch(/Get-NetTCPConnection -LocalPort 8811 -State Listen/);
+    expect(calls[0][0]).toMatch(/System32.netstat\.exe$/);
+    expect(calls[0][1]).toBe("-ano -p tcp");
   });
 
   it("on Windows a Windows listener is replaced only through that lookup", async () => {
     const dir = tempDir();
     await record(dir, 4242);
     const kills = [];
-    const portOwner = (port) => listeningPid(port, "win32", async () => "7340\r\n");
+    const portOwner = (port) => listeningPid(port, "win32", async () => NETSTAT);
     expect(await stopStaleSidecar({ dir, controlPort: 8811, seal: SEAL, probe: async () => ({ status: 200, pid: 7340 }), requestStop: async () => false, portOwner, isAlive: () => false, kill: (p, s) => kills.push([p, s]) })).toBe("stopped");
     expect(kills).toEqual([[7340, "SIGTERM"]]);
     await record(dir, 4242);
@@ -274,7 +286,7 @@ describe("the port owner lookup", () => {
 
   it("gives no answer when the OS names no listener or more than one", async () => {
     expect(await listeningPid(8811, "win32", async () => "")).toBeNull();
-    expect(await listeningPid(8811, "win32", async () => "10\r\n11\r\n")).toBeNull();
+    expect(await listeningPid(8811, "win32", async () => NETSTAT + "  TCP    0.0.0.0:8811           0.0.0.0:0              LISTENING       11\r\n")).toBeNull();
     expect(await listeningPid(8811, "darwin", async () => "")).toBeNull();
     expect(await listeningPid(8811, "darwin", async () => "321\n")).toBe(321);
     expect(await listeningPid(8811, "linux", async (command) => command === "ss" ? "LISTEN 0 511 127.0.0.1:8811 0.0.0.0:* users:((\"node\",pid=999,fd=21))" : "")).toBe(999);

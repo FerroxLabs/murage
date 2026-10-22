@@ -76,6 +76,8 @@ const ROUTE_TERMS = {
   "backup-waiting": "backups",
   bots: "bots",
   cloud: "your own server",
+  // /api/browser/linux-sandbox/enable: the Linux "Enable browser" button (1505df2ae)
+  browser: "browser",
   "browser-extension": "browser extension",
   "calendar-calls": "calls",
   "cli-candidates": "engines",

@@ -180,8 +180,8 @@ describe("1. only an engine's own reply proves a hand-off ran", () => {
   });
   it("every emit of an engine reply or tool start in a driver chooses its origin, and the choice is the table's", () => {
     const expected: Record<string, { engine: number; murage: number }> = {
-      "drivers/claude.ts": { engine: 3, murage: 4 }, "drivers/codex.ts": { engine: 3, murage: 4 }, "drivers/acp/core.ts": { engine: 2, murage: 5 },
-      "drivers/pi.ts": { engine: 2, murage: 0 }, "drivers/antigravity.ts": { engine: 2, murage: 0 }, "drivers/boxagent.ts": { engine: 2, murage: 1 }, "drivers/openai-chat.ts": { engine: 2, murage: 0 },
+      "drivers/claude.ts": { engine: 3, murage: 4 }, "drivers/codex.ts": { engine: 3, murage: 4 }, "drivers/acp/core.ts": { engine: 2, murage: 6 } /* + the Ask stop notice (d612d17e0), Murage's own */,
+      "drivers/pi.ts": { engine: 2, murage: 0 }, "drivers/antigravity.ts": { engine: 2, murage: 1 } /* the Ask stop notice (d612d17e0) */, "drivers/boxagent.ts": { engine: 2, murage: 1 }, "drivers/openai-chat.ts": { engine: 2, murage: 0 },
     };
     for (const [file, want] of Object.entries(expected)) {
       const text = readFileSync(join(serverDir, file), "utf8");

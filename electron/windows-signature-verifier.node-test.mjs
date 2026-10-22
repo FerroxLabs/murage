@@ -1,5 +1,10 @@
 // Exercise the shipped verifier through the real NSIS download task. All
 // subprocess/network operations are fixtures; this is not native Windows proof.
+//
+// Astra nops #6: electron-updater's own Windows check starts PowerShell. The
+// shipped default starts nothing and refuses; the app's native check
+// (electron/windows-update-signature.mjs, WinVerifyTrust through the addon)
+// is what accepts a correctly signed update.
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
@@ -8,8 +13,9 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
-import { assertWindowsVerifierSource, patchWindowsSignatureVerifier, WINDOWS_SIGNATURE_TIMEOUT_MS } from "../scripts/patch-windows-signature-verifier.mjs";
-import { updateErrorMessage, WINDOWS_SIGNATURE_MISMATCH_MESSAGE, WINDOWS_SIGNATURE_TIMEOUT_MESSAGE, WINDOWS_SIGNATURE_UNAVAILABLE_MESSAGE } from "./update-errors.mjs";
+import { assertWindowsVerifierSource, patchWindowsSignatureVerifier } from "../scripts/patch-windows-signature-verifier.mjs";
+import { updateErrorMessage, WINDOWS_SIGNATURE_MISMATCH_MESSAGE, WINDOWS_SIGNATURE_UNAVAILABLE_MESSAGE } from "./update-errors.mjs";
+import { createWindowsUpdateVerifier, installWindowsUpdateVerifier, parseDistinguishedName, publisherMatches } from "./windows-update-signature.mjs";
 
 const require = createRequire(import.meta.url);
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -17,26 +23,14 @@ const bundlePath = join(root, "electron/vendor/electron-updater.cjs");
 const bundle = readFileSync(bundlePath, "utf8");
 const destination = "C:\\updates\\fixture.exe";
 const subject = "CN=Fixture Publisher, O=Fixture Company";
-const valid = () => ({ Status: 0, Path: destination, SignerCertificate: { Subject: subject } });
+const validAnswer = () => ({ status: "Valid", publisher: "Fixture Publisher", subject, code: 0 });
 
-function fixture(response, publishers = [subject]) {
-  const calls = { signature: 0, fallback: 0, downloaded: 0, complete: 0, cleanup: 0 };
+function fixture({ native, publishers = [subject] } = {}) {
+  const calls = { processes: 0, signature: 0, downloaded: 0, complete: 0, cleanup: 0 };
   const childProcess = {
-    execFile(command, args, options, callback) {
-      assert.match(command, /powershell\.exe/);
-      assert.match(args.at(-1), /Get-AuthenticodeSignature/);
-      assert.equal(options.timeout, 90000);
-      assert.equal(options.windowsHide, true);
-      assert.deepEqual(args.slice(0, 4), ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden"]);
-      const answer = response.sequence ? response.sequence[calls.signature] : response;
-      calls.signature++;
-      callback(answer.error ?? null, answer.stdout ?? JSON.stringify(valid()), answer.stderr ?? "");
-    },
-    execFileSync() {
-      calls.fallback++;
-      throw new Error("Fixture PowerShell fallback unavailable");
-    },
-    spawn() { assert.fail("must not start a process"); },
+    execFile() { calls.processes++; assert.fail("the signature check must not start a process"); },
+    execFileSync() { calls.processes++; assert.fail("the signature check must not start a process"); },
+    spawn() { calls.processes++; assert.fail("must not start a process"); },
   };
   const isolated = new Module(bundlePath);
   isolated.filename = bundlePath;
@@ -44,16 +38,19 @@ function fixture(response, publishers = [subject]) {
   isolated.require = (name) => {
     if (name === "electron") return { app: {}, autoUpdater: new EventEmitter() };
     if (name === "child_process") return childProcess;
-    if (name === "os") return { ...require("node:os"), release: () => response.osRelease ?? "10.0.22631" };
     return require(name);
   };
   isolated._compile(bundle, bundlePath);
   const updater = new isolated.exports.NsisUpdater(null, { version: "1.0.0" });
   updater.logger = { info() {}, warn() {}, error() {}, debug() {} };
+  if (native) {
+    const authenticode = async (file) => { calls.signature++; assert.equal(file, destination); return native(file); };
+    assert.equal(installWindowsUpdateVerifier(updater, { platform: "win32", native: { authenticode } }), true);
+  }
   updater.configOnDisk = { value: Promise.resolve({ publisherName: publishers }) };
   updater.httpExecutor = { async download() { calls.downloaded++; } };
   // Only the outer file/cache harness is fake. task is the real NSIS code,
-  // including default verifier, config read, result/error consumption and gate.
+  // including the verifier, config read, result/error consumption and gate.
   updater.executeDownload = async ({ task }) => {
     await task(destination, {}, null, async () => { calls.cleanup++; });
     calls.complete++;
@@ -69,41 +66,91 @@ function fixture(response, publishers = [subject]) {
   return { updater, calls, run };
 }
 
+test("the shipped default verifier starts no process (no PowerShell) and refuses the update", async () => {
+  const { updater, calls, run } = fixture();
+  const error = await run().then(() => assert.fail("must refuse"), value => value);
+  assert.equal(error.code, "ERR_UPDATER_INVALID_SIGNATURE");
+  assert.equal(error.signatureCheck, "unavailable");
+  assert.equal(updateErrorMessage(error), WINDOWS_SIGNATURE_UNAVAILABLE_MESSAGE);
+  assert.equal(calls.processes, 0);
+  assert.equal(calls.downloaded, 1, "the task reached its post-download verification gate");
+  assert.equal(updater.installerPath, null);
+});
+
+test("the shipped verifier module holds no child process and no PowerShell", () => {
+  const module = /var require_windowsExecutableCodeSignatureVerifier = __commonJS\(\{[\s\S]*?\n\}\);/.exec(bundle)?.[0] ?? "";
+  assert.ok(module.length > 0);
+  assert.doesNotMatch(module, /child_process|powershell|pwsh|Get-AuthenticodeSignature/i);
+  assert.doesNotMatch(bundle, /powershell|pwsh/i);
+});
+
 const negatives = [
-  ["signature subprocess and fallback unavailable", { error: new Error("PowerShell unavailable") }],
-  ["old Windows cannot bypass a subprocess failure", { error: new Error("PowerShell unavailable"), osRelease: "6.1.7601" }],
-  ["stderr cannot become success", { stderr: "verification blocked" }],
-  ["malformed JSON", { stdout: "not-json" }],
-  ["missing path", { stdout: JSON.stringify({ ...valid(), Path: undefined }) }],
-  ["non-string path", { stdout: JSON.stringify({ ...valid(), Path: 42 }) }],
-  ["mismatched path", { stdout: JSON.stringify({ ...valid(), Path: "C:\\other.exe" }) }],
-  ["unsigned status", { stdout: JSON.stringify({ ...valid(), Status: 2 }) }],
-  ["missing certificate", { stdout: JSON.stringify({ ...valid(), SignerCertificate: null }) }],
-  ["wrong publisher", { stdout: JSON.stringify({ ...valid(), SignerCertificate: { Subject: "CN=Other, O=Other" } }) }],
+  ["an unsigned file", () => ({ status: "NotSigned", publisher: "", subject: "", code: 0x800b0100 })],
+  ["a changed file", () => ({ status: "HashMismatch", publisher: "", subject: "", code: 0x80096010 })],
+  ["an untrusted signer", () => ({ ...validAnswer(), status: "NotTrusted" })],
+  ["another publisher", () => ({ ...validAnswer(), publisher: "Other", subject: "CN=Other, O=Other" })],
+  ["the right common name in another company", () => ({ ...validAnswer(), subject: "CN=Fixture Publisher, O=Other Company" })],
 ];
-for (const [name, response] of negatives) {
-  test(`real NSIS task rejects ${name}`, async () => {
-    const { updater, calls, run } = fixture(response);
-    await assert.rejects(run(), { code: "ERR_UPDATER_INVALID_SIGNATURE" });
-    assert.equal(calls.signature, 1, "the actual default verifier must run");
-    assert.equal(calls.downloaded, 1, "the task must reach its post-download verification gate");
-    assert.equal(calls.fallback, 0, "a compatibility probe cannot establish signature validity");
+for (const [name, native] of negatives) {
+  test(`the native check refuses ${name} through the real NSIS task`, async () => {
+    const { updater, calls, run } = fixture({ native });
+    const error = await run().then(() => assert.fail("must refuse"), value => value);
+    assert.equal(error.code, "ERR_UPDATER_INVALID_SIGNATURE");
+    assert.equal(updateErrorMessage(error), WINDOWS_SIGNATURE_MISMATCH_MESSAGE);
+    assert.equal(calls.signature, 1, "the native check ran");
+    assert.equal(calls.processes, 0);
     assert.equal(calls.complete, 0);
     assert.equal(updater.installerPath, null);
     assert.equal(updater.install(false, false), false, "failed task must not make the update installable");
   });
 }
+test("a native check that cannot run refuses the update and says so", async () => {
+  const { calls, run } = fixture({ native: () => { throw new Error("authenticode check did not finish"); } });
+  const error = await run().then(() => assert.fail("must refuse"), value => value);
+  assert.equal(error.signatureCheck, "unavailable");
+  assert.equal(updateErrorMessage(error), WINDOWS_SIGNATURE_UNAVAILABLE_MESSAGE);
+  assert.equal(calls.processes, 0);
+});
 for (const [name, publishers] of [["full DN", [subject]], ["existing CN policy", ["Fixture Publisher"]]]) {
-  test(`real NSIS task accepts valid matching ${name}`, async () => {
-    const { updater, calls, run } = fixture({}, publishers);
+  test(`the native check accepts a valid matching ${name} through the real NSIS task`, async () => {
+    const { updater, calls, run } = fixture({ native: validAnswer, publishers });
     assert.deepEqual(await run(), [destination]);
     assert.equal(calls.signature, 1);
-    assert.equal(calls.fallback, 0);
+    assert.equal(calls.processes, 0);
     assert.equal(calls.complete, 1);
     assert.equal(calls.cleanup, 0);
     assert.equal(updater.installerPath, destination);
   });
 }
+
+test("publisher rules: Murage's own publisher name, a comma inside a common name, quoted and escaped values", () => {
+  // electron-builder.yml's publisherName is a plain name holding a comma: it is a common name, not a DN
+  assert.equal(parseDistinguishedName("Ferrox Labs, LLC").size, 0);
+  const signer = { publisher: "Ferrox Labs, LLC", subject: 'CN="Ferrox Labs, LLC", O="Ferrox Labs, LLC", L=Miami, S=Florida, C=US' };
+  assert.equal(publisherMatches(["Ferrox Labs, LLC"], signer), true);
+  assert.equal(publisherMatches(['CN="Ferrox Labs, LLC", C=US'], signer), true);
+  assert.equal(publisherMatches(["CN=Ferrox Labs\\, LLC, L=Miami"], signer), true);
+  assert.equal(publisherMatches(["CN=Ferrox Labs\\, LLC, L=Austin"], signer), false);
+  assert.equal(publisherMatches(["Ferrox Labs"], signer), false);
+  assert.equal(publisherMatches([""], { publisher: "", subject: "" }), false);
+});
+
+test("the native check is set only on Windows with the addon", () => {
+  const updater = {};
+  assert.equal(installWindowsUpdateVerifier(updater, { platform: "darwin", native: { authenticode() {} } }), false);
+  assert.equal(installWindowsUpdateVerifier(updater, { platform: "win32", native: null }), false);
+  assert.equal(updater.verifyUpdateCodeSignature, undefined);
+  assert.equal(installWindowsUpdateVerifier(updater, { platform: "win32", native: { authenticode() {} } }), true);
+  assert.equal(typeof updater.verifyUpdateCodeSignature, "function");
+});
+
+test("a relative or missing path is never handed to the native check", async () => {
+  let asked = 0;
+  const verify = createWindowsUpdateVerifier({ authenticode: async () => { asked++; return validAnswer(); }, logger: null });
+  await assert.rejects(verify([subject], "relative.exe"), { signatureCheck: "unavailable" });
+  await assert.rejects(createWindowsUpdateVerifier({})([subject], destination), { signatureCheck: "unavailable" });
+  assert.equal(asked, 0);
+});
 
 test("reviewed upstream source identity is pinned", () => {
   const packagePath = require.resolve("electron-updater/package.json");
@@ -125,42 +172,6 @@ test("generated upstream verifier patch rejects missing, duplicate and moved sha
   assert.throws(() => patchWindowsSignatureVerifier(patchWindowsSignatureVerifier(source)), /sites, found 0/);
 });
 
-// murage-releases #2: a slow check gets a realistic bound and one more try,
-// and every refusal names the check that failed. Verification stays strict.
-const timedOut = () => Object.assign(new Error("Command failed: powershell.exe"), { killed: true, signal: "SIGTERM", code: null });
-test("the patched verifier allows a realistic time per check", () => {
-  assert.equal(WINDOWS_SIGNATURE_TIMEOUT_MS, 90000);
-});
-test("a check that times out once is tried again and a valid signature is accepted", async () => {
-  const { updater, calls, run } = fixture({ sequence: [{ error: timedOut(), stdout: "" }, {}] });
-  assert.deepEqual(await run(), [destination]);
-  assert.equal(calls.signature, 2);
-  assert.equal(updater.installerPath, destination);
-});
-test("a check that times out twice refuses the update and says it timed out", async () => {
-  const { updater, calls, run } = fixture({ sequence: [{ error: timedOut(), stdout: "" }, { error: timedOut(), stdout: "" }] });
-  const error = await run().then(() => assert.fail("must refuse"), value => value);
-  assert.equal(error.code, "ERR_UPDATER_INVALID_SIGNATURE");
-  assert.equal(error.signatureCheck, "timeout");
-  assert.equal(calls.signature, 2);
-  assert.equal(updater.installerPath, null);
-  assert.equal(updateErrorMessage(error), WINDOWS_SIGNATURE_TIMEOUT_MESSAGE);
-  assert.doesNotMatch(updateErrorMessage(error), /download a fresh installer/i);
-});
-test("a check that cannot run is not retried and says so", async () => {
-  const { calls, run } = fixture({ error: new Error("PowerShell unavailable") });
-  const error = await run().then(() => assert.fail("must refuse"), value => value);
-  assert.equal(calls.signature, 1);
-  assert.equal(error.signatureCheck, "unavailable");
-  assert.equal(updateErrorMessage(error), WINDOWS_SIGNATURE_UNAVAILABLE_MESSAGE);
-});
-test("a wrong publisher is never retried and reads as a signature mismatch", async () => {
-  const { calls, run } = fixture({ stdout: JSON.stringify({ ...valid(), SignerCertificate: { Subject: "CN=Other, O=Other" } }) });
-  const error = await run().then(() => assert.fail("must refuse"), value => value);
-  assert.equal(calls.signature, 1);
-  assert.equal(error.code, "ERR_UPDATER_INVALID_SIGNATURE");
-  assert.equal(updateErrorMessage(error), WINDOWS_SIGNATURE_MISMATCH_MESSAGE);
-});
 test("the shipped verifier is exactly the reviewed patch of upstream", async () => {
   const result = await build({ entryPoints: [require.resolve("electron-updater")], bundle: true, platform: "node", target: "node20", format: "cjs", external: ["electron"], write: false, logLevel: "silent" });
   const module = (text) => /var require_windowsExecutableCodeSignatureVerifier = __commonJS\(\{[\s\S]*?\n\}\);/.exec(text)?.[0];

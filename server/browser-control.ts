@@ -5,11 +5,25 @@ import { existsSync, readFileSync } from "node:fs";
 import { writeFileAtomic } from "./atomic.ts";
 import type { AgentBrowserSpec } from "./browser-engine.ts";
 import { createNativeBrowser, type NativeBrowser, type BrowserFrame } from "./browser-native-relay.ts";
+import { browserEngineDown } from "./browser-engine-error.ts";
 import { listHeadlessBrowserTools, validateHeadlessBrowserCall } from "./browser-engine-policy.ts";
-import { browserRefusal, protectionRefusal, type BrowserProtection } from "./browser-lock.ts";
+import { browserRefusal, isBrowserRefusal, protectionRefusal, type BrowserProtection } from "./browser-lock.ts";
 
-export type BrowserStatus = { generation: number; held: boolean; owner: string | null; connected: boolean; protectedDocument: boolean; protectedReason: BrowserProtection | null; url: string };
-type Entry = BrowserStatus & { native?: NativeBrowser; spec?: AgentBrowserSpec; pending?: Promise<unknown>; frame?: BrowserFrame & { generation: number }; lastSeq: number; streamId?: string; connecting?: Promise<void> };
+export type BrowserStatus = { generation: number; held: boolean; owner: string | null; connected: boolean; protectedDocument: boolean; protectedReason: BrowserProtection | null; url: string;
+  /** The bot's browser engine is not running or not answering. Its own state:
+   * never a page lock. Restart browser (restart()) starts it again. */
+  notRunning: boolean;
+  /** Why the live view is not connected, in the owner's words; absent when it is. */ problem?: string };
+/** Reopen blank page could not start a fresh browser. The page lock stays. */
+export const BROWSER_REOPEN_FAILED = "Murage could not restart this browser, so the page stays locked. Wait a moment, then choose Reopen blank page again. If it keeps failing, quit and reopen Murage.";
+/** The owner's line while the engine is not running. */
+export const BROWSER_NOT_RUNNING = "Murage's browser is not running right now. Choose Restart browser to start it again.";
+/** A bot step failed inside the engine, and nothing more is known yet. */
+const BROWSER_NOT_ANSWERING = "Murage's browser is not answering.";
+// After a failed connect the panel's status reads do not start another one
+// for this long, so a browser that cannot start is not relaunched every poll.
+const RECONNECT_AFTER_MS = 3000;
+type Entry = BrowserStatus & { problem?: string; native?: NativeBrowser; spec?: AgentBrowserSpec; pending?: Promise<unknown>; frame?: BrowserFrame & { generation: number }; lastSeq: number; streamId?: string; connecting?: Promise<void>; retryAt?: number };
 const refusal = () => browserRefusal("browser_control_changed");
 // Conservative document barrier: never deliver any DOM/text/pixels from a page
 // containing a protected input. Human input taints the session until explicit
@@ -38,7 +52,7 @@ export class UnifiedBrowserController {
         // A lock saved before its cause was recorded is treated as the
         // owner's: only the owner's reopen clears it.
         const protectedReason: BrowserProtection | null = state.protectedDocument === true ? (state.protectedReason === "sensitive-page" ? "sensitive-page" : "owner-input") : null;
-        this.entries.set(key, { ...state, protectedDocument: protectedReason !== null, protectedReason, generation: state.generation + 1, connected: false, url: "", lastSeq: -1 });
+        this.entries.set(key, { ...state, protectedDocument: protectedReason !== null, protectedReason, generation: state.generation + 1, connected: false, notRunning: false, url: "", lastSeq: -1 });
       }
     }
   }
@@ -49,25 +63,54 @@ export class UnifiedBrowserController {
     const old = this.entries.get(key);
     if (old?.spec && JSON.stringify(old.spec) !== JSON.stringify(spec)) throw new Error("Browser profile binding changed; close it before rebinding");
     if (!old && this.entries.size >= 256) throw new Error("Browser profile capacity reached");
-    const e = old ?? { generation: 1, held: false, owner: null, connected: false, protectedDocument: false, protectedReason: null, url: "", lastSeq: -1 };
+    const e = old ?? { generation: 1, held: false, owner: null, connected: false, notRunning: false, protectedDocument: false, protectedReason: null, url: "", lastSeq: -1 };
     e.spec = spec; this.entries.set(key, e); this.save();
   }
   private entry(key: string): Entry { const e = this.entries.get(key); if (!e?.spec) throw new Error("Browser profile is unavailable"); return e; }
-  status(key: string): BrowserStatus { const e = this.entry(key); return { generation: e.generation, held: e.held, owner: e.owner, connected: e.connected, protectedDocument: e.protectedDocument, protectedReason: e.protectedReason, url: e.url }; }
+  status(key: string): BrowserStatus { const e = this.entry(key); return { generation: e.generation, held: e.held, owner: e.owner, connected: e.connected, protectedDocument: e.protectedDocument, protectedReason: e.protectedReason, url: e.url, notRunning: e.notRunning, ...(e.problem && !e.connected ? { problem: e.problem } : {}) }; }
+  /** The engine is down: its own state and copy, never a page lock. */
+  private notRunning(e: Entry) { e.notRunning = true; e.problem = BROWSER_NOT_RUNNING; e.connected = false; e.frame = undefined; }
+  /** The owner's view, answered at once from what is known. A live view that is
+   * not connected reconnects in the background, and its outcome shows on a
+   * later read. `wait`: only after a restart, when the engine just answered. */
+  async refresh(key: string, wait = false): Promise<BrowserStatus> {
+    const e = this.entry(key);
+    if (!e.connected && (wait || !e.connecting) && (wait || !e.retryAt || Date.now() >= e.retryAt)) {
+      // An attempt a restart or a control change has overtaken reports nothing.
+      const generation = e.generation;
+      const attempt = this.connect(key).then(() => {
+        if (e.connected) { e.problem = undefined; e.notRunning = false; e.retryAt = undefined; }
+      }, (error: unknown) => {
+        if (e.generation !== generation) return;
+        e.retryAt = Date.now() + RECONNECT_AFTER_MS;
+        if (browserEngineDown(error)) this.notRunning(e);
+        else e.problem = error instanceof Error && error.message ? error.message : BROWSER_NOT_ANSWERING;
+      });
+      if (wait) await attempt;
+    }
+    return this.status(key);
+  }
   private native(e: Entry) { return e.native ??= this.factory(e.spec!); }
   async connect(key: string) {
     const e = this.entry(key);
     if (e.connected || e.pending) return;
     if (e.connecting) return e.connecting;
     const generation = e.generation;
-    e.connecting = this.native(e).connect((frame) => {
+    const attempt = this.native(e).connect((frame) => {
       if (e.generation !== generation || frame.seq <= e.lastSeq) return;
       e.lastSeq = frame.seq; e.frame = { ...frame, generation };
-    }, (url) => { if (e.generation === generation) e.url = url; }, () => {
+    }, (url) => {
+      if (e.generation === generation) e.url = url;
+      // Where the owner went while holding control is theirs: saved storage never goes over it.
+      if (e.held) e.native?.ownerReached?.(url);
+    }, () => {
       if (e.generation !== generation) return;
       e.connected = false; e.frame = undefined; e.generation++; this.save();
-    }).then((streamId) => { if (e.generation === generation) { if (e.streamId !== streamId) e.lastSeq = -1; e.streamId = streamId; e.connected = true; } }).finally(() => { e.connecting = undefined; });
-    await e.connecting;
+    }).then((streamId) => { if (e.generation === generation) { if (e.streamId !== streamId) e.lastSeq = -1; e.streamId = streamId; e.connected = true; } });
+    // A restart drops this attempt; its end must not clear the next one.
+    const tracked: Promise<void> = attempt.finally(() => { if (e.connecting === tracked) e.connecting = undefined; });
+    e.connecting = tracked;
+    await tracked;
   }
   private fence(e: Entry) { e.generation++; e.frame = undefined; e.connected = false; e.native?.resetStream(); this.save(); }
   async take(key: string, owner: string) {
@@ -78,19 +121,18 @@ export class UnifiedBrowserController {
     // In-flight work drains before the human receives control. Its observation
     // is discarded by the generation check; queued work is never admitted.
     await e.pending?.catch(() => {});
-    await this.connect(key);
-    return this.status(key);
+    return this.refresh(key);
   }
   async reclaim(key: string, owner: string) {
     const e = this.entry(key); e.held = true; e.owner = owner; this.fence(e);
-    await e.pending?.catch(() => {}); await this.connect(key); return this.status(key);
+    await e.pending?.catch(() => {}); return this.refresh(key);
   }
   private human(e: Entry, owner: string, generation: number) {
     if (!e.held || e.owner !== owner || e.generation !== generation || e.pending) throw refusal();
   }
   async release(key: string, owner: string, generation: number) {
     const e = this.entry(key); this.human(e, owner, generation);
-    e.held = false; e.owner = null; this.fence(e); await this.connect(key); return this.status(key);
+    e.held = false; e.owner = null; this.fence(e); return this.refresh(key);
   }
   frame(key: string, generation: number) {
     const e = this.entry(key);
@@ -104,7 +146,7 @@ export class UnifiedBrowserController {
     this.fence(e); const nextGeneration = e.generation;
     await this.native(e).command(["open", url.toString()]);
     this.human(e, owner, nextGeneration); e.url = url.toString();
-    await this.connect(key); return this.status(key);
+    return this.refresh(key);
   }
   input(key: string, owner: string, generation: number, event: Record<string, unknown>) {
     const e = this.entry(key); this.human(e, owner, generation);
@@ -117,9 +159,29 @@ export class UnifiedBrowserController {
   async reopen(key: string, owner: string, generation: number) {
     const e = this.entry(key); this.human(e, owner, generation);
     this.fence(e);
-    await e.native?.close(); e.native = undefined; e.lastSeq = -1;
-    await this.native(e).command(["open", "about:blank"]);
-    e.protectedDocument = false; e.protectedReason = null; e.url = ""; this.save(); await this.connect(key); return this.status(key);
+    // A stuck engine may refuse to close; it is dropped either way, so Reopen
+    // blank page is always a real restart and never retries the stuck one.
+    const old = e.native; e.native = undefined; e.lastSeq = -1; e.connecting = undefined;
+    try { await old?.close(); } catch {}
+    try { await this.native(e).command(["open", "about:blank"]); }
+    catch { this.human(e, owner, e.generation); e.problem = BROWSER_REOPEN_FAILED; throw Object.assign(new Error(BROWSER_REOPEN_FAILED), { status: 503 }); }
+    this.human(e, owner, e.generation);
+    e.protectedDocument = false; e.protectedReason = null; e.url = ""; e.notRunning = false; e.problem = undefined; this.save(); return this.refresh(key, true);
+  }
+  /** Restart browser: the recovery for an engine that is not running. It stops
+   * this profile's engine if any of it is left, starts a fresh one and
+   * reconnects the live view. A page lock is untouched: the bot's next step
+   * checks the page again, so a sensitive page still locks. */
+  async restart(key: string, owner: string) {
+    const e = this.entry(key);
+    if (!owner) throw refusal();
+    if (e.held && e.owner !== owner) throw new Error("Another owner session holds this browser profile");
+    if (e.pending) throw new Error("This browser profile already has an action in progress");
+    this.fence(e);
+    const old = e.native; e.native = undefined; e.lastSeq = -1; e.connecting = undefined;
+    try { await old?.close(); } catch {}
+    e.notRunning = false; e.problem = undefined; e.retryAt = undefined;
+    return this.refresh(key, true);
   }
   async dispatch(key: string, method: string, params: Record<string, unknown> = {}, authorize: () => boolean = () => false): Promise<unknown> {
     const e = this.entry(key); const generation = e.generation;
@@ -143,6 +205,9 @@ export class UnifiedBrowserController {
       if (e.protectedDocument && !(leaving && e.protectedReason === "sensitive-page")) throw protectionRefusal(e.protectedReason ?? "owner-input");
     };
     allowed(); if (e.pending) throw new Error("This browser profile already has an action in progress");
+    // The engine went down during this step: nothing was read from the page,
+    // so the profile is reported as not running, never as a sensitive page.
+    let down = false;
     const run = async () => {
       const native = this.native(e);
       // Native Windows navigation can wait on an attached screencast. Keep
@@ -158,10 +223,25 @@ export class UnifiedBrowserController {
       if (after) { protect(e, "sensitive-page"); this.save(); throw protectionRefusal(e.protectedReason!); }
       allowed();
       if (e.protectedDocument) { e.protectedDocument = false; e.protectedReason = null; this.save(); }
+      e.notRunning = false; e.problem = undefined;
       await this.connect(key); allowed(); return result;
     };
-    const pending = run().finally(async () => { try { await e.native?.protected(false); } catch { protect(e, "sensitive-page"); this.save(); } }); e.pending = pending;
-    try { const result = await pending; allowed(); return result; } finally { if (e.pending === pending) e.pending = undefined; }
+    const pending = run().catch((error: unknown) => {
+      if (browserEngineDown(error)) down = true;
+      else if (!isBrowserRefusal(error)) e.problem ??= BROWSER_NOT_ANSWERING;
+      throw error;
+    }).finally(async () => {
+      if (down) { this.notRunning(e); return; }
+      // Disarming can fail two ways. The engine is down: nothing to disarm and
+      // nothing read, so it is not running. Anything else: the page may still
+      // hold what the guard armed against, so it stays locked.
+      try { await e.native?.protected(false); }
+      catch (error) { if (browserEngineDown(error)) this.notRunning(e); else { protect(e, "sensitive-page"); this.save(); } }
+    }); e.pending = pending;
+    try { const result = await pending; allowed(); return result; }
+    // The owner's own Chrome keeps its own words (remote debugging off, or Allow), set by the route.
+    catch (error) { if (down && !e.spec?.env.AGENT_BROWSER_CDP) throw browserRefusal("browser_not_running"); throw error; }
+    finally { if (e.pending === pending) e.pending = undefined; }
   }
   async forget(key: string) { const e = this.entry(key); this.fence(e); await e.pending?.catch(() => {}); await e.native?.close(); this.entries.delete(key); this.save(); }
   async close() { await Promise.all([...this.entries.values()].map(async e => { this.fence(e); await e.native?.close(); e.native = undefined; })); }

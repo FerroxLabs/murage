@@ -70,7 +70,9 @@ const ALLOWED: Readonly<Record<string, readonly string[]>> = {
   // audited leaves: single-purpose modules, each with a closed list of its own
   "blake3.ts": [],
   "sqlite-checkpoint.ts": ["./observe.ts"],
-  "proxy-paths.ts": ["node:fs", "node:path", "node:url"],
+  // shared/spawned-proxies.mjs is the proxy name list the desktop main process reads too (4adf5e642); it is data with no
+  // imports of its own, which engine-plan-structure.test.ts checks, so the leaf stays closed.
+  "proxy-paths.ts": ["node:fs", "node:path", "node:url", "../shared/spawned-proxies.mjs"],
   "observe.ts": ["node:perf_hooks"],
 };
 

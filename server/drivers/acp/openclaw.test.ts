@@ -11,7 +11,7 @@ import type { ProviderInstance } from "../../contracts.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
 import { removeTempDir } from "../../testing/cleanup.ts";
 import { BUILT_IN_DRIVERS } from "../builtIn.ts";
-import { OpenclawAgentDriver, openclawBridgeArgs } from "./openclaw.ts";
+import { OPENCLAW_ASK_DIRECTIVE, OpenclawAgentDriver, openclawBridgeArgs } from "./openclaw.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testing", "fake-acp-cli.ts");
 
@@ -140,6 +140,21 @@ describe("OpenclawAgentDriver turns (fake CLI)", () => {
     expect(recorder.events.at(-1)).toMatchObject({ type: "turn.completed", ok: true });
     const state = JSON.parse(readFileSync(dump, "utf8")) as { mcpServers?: unknown[] };
     expect(state.mcpServers ?? []).toEqual([]);
+  });
+
+  it("starts every prompt with the inline exec directive, so each shell command asks (real OpenClaw 2026.10.5: it ran unasked at Ask)", async () => {
+    const promptDump = join(scratch, "prompt.json");
+    process.env.FAKE_ACP_PROMPT_DUMP = promptDump;
+    process.env.FAKE_ACP_MODE = "no-auth";
+    await create({ agent: "fred" });
+    await instance.adapter.sendTurn({ threadId: "t-oc-ask", text: "run it", system: "You are Fred." });
+    await recorder.until((e) => e.type === "turn.completed");
+    const blocks = JSON.parse(readFileSync(promptDump, "utf8")) as Array<{ type: string; text?: string }>;
+    const text = blocks.map((b) => b.text ?? "").join("");
+    expect(OPENCLAW_ASK_DIRECTIVE).toBe("/exec ask=always security=full");
+    expect(text.startsWith(`${OPENCLAW_ASK_DIRECTIVE}\n`)).toBe(true);
+    expect(text).toContain("You are Fred.\n\nrun it");
+    delete process.env.FAKE_ACP_PROMPT_DUMP;
   });
 
   it("injects no credentials: no Flux or foreign provider key reaches the child", async () => {

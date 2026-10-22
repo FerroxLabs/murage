@@ -233,8 +233,12 @@ describe("ACP engines: the headers land in the spawn env after the route settles
       // the home is the one shared Flux home, whatever the audience
       expect(seen.env.HERMES_HOME).toBe(join(scratch, "state", "flux-hermes-home"));
       expect(readFileSync(join(seen.env.HERMES_HOME!, "config.yaml"), "utf8")).not.toContain("extra_headers");
-      const overlay = parseYaml(readFileSync(join(seen.env.HERMES_MANAGED_DIR!, "config.yaml"), "utf8")) as { model: { extra_headers: Record<string, string> } };
-      expect(overlay).toEqual({ model: { extra_headers: headers } });
+      const overlay = parseYaml(readFileSync(join(seen.env.HERMES_MANAGED_DIR!, "config.yaml"), "utf8")) as { model: { extra_headers: Record<string, string> }; hooks: { pre_tool_call: Array<{ fail_closed: boolean }> } };
+      // the overlay also carries the Ask hook gate (applyHermesAskHook): the headers stay strict, the hooks block is the gate
+      expect(Object.keys(overlay).sort()).toEqual(["hooks", "model"]);
+      expect(overlay.model).toEqual({ extra_headers: headers });
+      expect(overlay.hooks.pre_tool_call).toHaveLength(1);
+      expect(overlay.hooks.pre_tool_call[0]!.fail_closed).toBe(true);
     });
   });
 

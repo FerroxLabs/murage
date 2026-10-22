@@ -54,3 +54,10 @@ export function botUsesHostComputer(
  *  be switched on at profile level for a fresh Mac bot with no warning at
  *  all, while the very same bot's thread route asked for one. */
 export const autoMountsLocalComputer = botUsesHostComputer;
+
+/** Whether local control counts as off for a turn. This reads the same
+ *  descriptor the turn mounts from (readCuaConnection), never the desktop
+ *  status API, so a Mac where computer use works is never told it is off. */
+export function localControlIsOff(cua: unknown | null | undefined): cua is null | undefined {
+  return !cua;
+}

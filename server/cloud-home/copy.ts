@@ -13,6 +13,7 @@ export const cloudHomeCopy = {
   grokRouteOnHome: "Grok model connections are not available on your Cloud yet.",
   hermesOnHome: "Hermes is not available on your Cloud yet.",
   piOnHome: "Pi is not available on your Cloud yet.",
+  engineNotOnCloud: "More engines are coming to Cloud soon. They work in the desktop app today.",
   processGroupTooLarge: "Your Cloud could not read this turn's running work because it has too many parts.",
   processGroupMalformed: "Your Cloud could not read this turn's running work.",
   invalidProxySocket: "Your Cloud proxy address could not be opened.",

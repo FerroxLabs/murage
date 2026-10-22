@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { expect, it } from "vitest";
 
 it.each([
-  { args: ["--version"], expected: "fake-acp 1.0.60\n" },
+  { args: ["--version"], expected: "fake-acp 1.0.62\n" },
   { args: ["status", "--format", "json"], expected: '{"isAuthenticated":false}\n' },
   { args: ["models"], expected: "cursor-live - Cursor Live\n" },
 ])("flushes delayed stdout before the $args probe exits", ({ args, expected }) => {

@@ -14,6 +14,9 @@ export type { ResticS3Credentials,ResticS3Target,ResticSftpCredentials,ResticSft
 
 export {RESTIC_ORIGINAL_SHA256} from "../shared/backup-restic-pin.mjs";
 const digest=(bytes:Uint8Array|string)=>createHash("sha256").update(bytes).digest("hex");
+/** Windows lists an account on the password file Murage cannot identify: this refusal keeps its own name to the window, which shows the fix-it sentence. */
+const PASSWORD_ACCOUNT_UNKNOWN="BACKUP_REMOTE_PASSWORD_ACCOUNT_UNKNOWN_WINDOWS";
+const isAccountUnknown=(error:unknown)=>error instanceof Error&&error.message===PASSWORD_ACCOUNT_UNKNOWN;
 /** Hash only the admitted restored bytes, keeping one bounded buffer and fd. */
 function restoredArchiveDigest(path:string,expectedBytes:number):string {
   const before=lstatSync(path,{bigint:true});
@@ -175,7 +178,7 @@ export class BackupRestic {
     }catch(error){if(error instanceof Error&&["RESTIC_SFTP_HOST_KEY_CHANGED","RESTIC_SFTP_KEY_REFUSED","RESTIC_TOOL_UNVERIFIED","RESTIC_PASSWORD_INVALID"].includes(error.message))throw error;throw Error("RESTIC_REMOTE_OPERATION_FAILED");
     }finally{password.fill(0);material?.cleanup();}
   }
-  private async readPassword(){try{return Buffer.from(await this.options.password());}catch(error){if(this.target)throw Error("RESTIC_PASSWORD_UNAVAILABLE");throw error;}}
+  private async readPassword(){try{return Buffer.from(await this.options.password());}catch(error){if(isAccountUnknown(error))throw Error(PASSWORD_ACCOUNT_UNKNOWN);if(this.target)throw Error("RESTIC_PASSWORD_UNAVAILABLE");throw error;}}
   private async execute(args:string[],cwd:string,preparedCredentials?:Readonly<RemoteCredentials>){
     if(this.target?.kind==="sftp")return this.executeSftp(args,cwd,preparedCredentials);
     const s3=this.target?{repository:resticS3Repository(this.target),region:this.target.region,bucketLookup:this.target.bucketLookup,credentials:(preparedCredentials??await this.resolveCredentials()) as Readonly<ResticS3Credentials>}:undefined;
@@ -186,7 +189,7 @@ export class BackupRestic {
       if(result.lockReleaseUnconfirmed)this.lockReleaseWarnings++;
       if(result.removalUnconfirmed)this.removalWarnings++;
       if(s3&&(typeof result.stdout!=="string"||Buffer.byteLength(result.stdout)>2*1024*1024))throw Error("RESTIC_RESULT_INVALID");return result;
-    }catch(error){if(s3&&!(error instanceof Error&&["RESTIC_TOOL_UNVERIFIED","RESTIC_PASSWORD_INVALID"].includes(error.message)))throw Error("RESTIC_REMOTE_OPERATION_FAILED");throw error;
+    }catch(error){if(s3&&!(error instanceof Error&&["RESTIC_TOOL_UNVERIFIED","RESTIC_PASSWORD_INVALID",PASSWORD_ACCOUNT_UNKNOWN].includes(error.message)))throw Error("RESTIC_REMOTE_OPERATION_FAILED");throw error;
     }finally{password.fill(0);}
   }
   private lock(){mkdirSync(this.options.workDirectory,{recursive:true,mode:0o700});const lease=acquireDataDirLeaseForProcess(this.options.workDirectory);if(this.target?.kind==="sftp")sweepSshMaterial(this.sshScratch());return lease;}
@@ -440,7 +443,7 @@ export class BackupRestic {
         }else if(folder!=="empty")throw Error("RESTIC_SFTP_FOLDER_NOT_EMPTY");
         const state:z.infer<typeof targetStateSchema>={version:1,...this.targetIdentity(),state:"initializing"};this.saveTarget(state);
         try{const result=await this.execute(["init","--repository-version","2"],this.options.workDirectory,credentials);if(result.code!==0||result.uncertain)throw Error();repositoryId=await this.repositoryId(credentials);}
-        catch(failure){this.saveTarget({...state,state:"needs-review"});if(failure instanceof Error&&failure.message.startsWith("RESTIC_SFTP_"))throw failure;throw Error("RESTIC_INIT_UNCONFIRMED");}
+        catch(failure){this.saveTarget({...state,state:"needs-review"});if(failure instanceof Error&&(failure.message.startsWith("RESTIC_SFTP_")||failure.message===PASSWORD_ACCOUNT_UNKNOWN))throw failure;throw Error("RESTIC_INIT_UNCONFIRMED");}
         created=true;
       }
       if(prior?.repositoryId&&prior.repositoryId!==repositoryId)throw Error("RESTIC_REPOSITORY_CHANGED");
@@ -458,7 +461,7 @@ export class BackupRestic {
     try{await this.options.authorizeInitialization({target:this.target,credentials:credentials as Readonly<ResticS3Credentials>});}catch{throw Error("RESTIC_INITIALIZATION_REFUSED");}
     try{await this.repositoryId(credentials);throw Error("RESTIC_REPOSITORY_EXISTS");}catch(error){if(!(error instanceof Error)||error.message!=="RESTIC_REPOSITORY_MISSING")throw error;}
     const state:z.infer<typeof targetStateSchema>={version:1,...this.targetIdentity(),state:"initializing"};this.saveTarget(state);
-    try{const result=await this.execute(["init","--repository-version","2"],this.options.workDirectory,credentials);if(result.code!==0||result.uncertain)throw Error();const repositoryId=await this.repositoryId(credentials);this.saveTarget({...state,state:"connected",repositoryId});return{initialized:true,remoteRef:this.target.remoteRef,revision:this.target.revision,repositoryId};}catch{this.saveTarget({...state,state:"needs-review"});throw Error("RESTIC_INIT_UNCONFIRMED");}
+    try{const result=await this.execute(["init","--repository-version","2"],this.options.workDirectory,credentials);if(result.code!==0||result.uncertain)throw Error();const repositoryId=await this.repositoryId(credentials);this.saveTarget({...state,state:"connected",repositoryId});return{initialized:true,remoteRef:this.target.remoteRef,revision:this.target.revision,repositoryId};}catch(failure){this.saveTarget({...state,state:"needs-review"});if(isAccountUnknown(failure))throw Error(PASSWORD_ACCOUNT_UNKNOWN);throw Error("RESTIC_INIT_UNCONFIRMED");}
   }finally{lease.release();}}
   async store(archivePath:string,rawReceipt:BackupReceipt){
     const receipt=backupReceiptSchema.parse(rawReceipt),lease=this.lock();
