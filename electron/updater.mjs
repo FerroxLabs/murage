@@ -19,6 +19,7 @@ import {
 import { openBlankTerminal } from "./terminal-launch.mjs";
 import { createUpdaterCoordinator } from "./updater-coordinator.mjs";
 import { createLinuxUpdateVerifier } from "./update-signature.mjs";
+import { installWindowsUpdateVerifier } from "./windows-update-signature.mjs";
 
 const require = createRequire(import.meta.url);
 
@@ -149,6 +150,9 @@ export function startUpdater({ beforeInstall = null, scheduleChecks = true } = {
   // This is prevention, not cancellation of an already-staged native update.
   autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.logger = updaterLogger();
+  // Windows: the update's signature is checked natively (WinVerifyTrust through the engine-exclusion addon), never by
+  // electron-updater's PowerShell check (murage-releases #1). Without the addon the vendored default refuses every update.
+  installWindowsUpdateVerifier(autoUpdater);
 
   // Broadcast the install flavour before the first check so the banner never
   // offers a restart it cannot deliver.

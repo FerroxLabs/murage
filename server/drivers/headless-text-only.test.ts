@@ -21,6 +21,7 @@ import {
 } from "../memory/pip-reaper.ts";
 import type { ProviderTurnRoute } from "../provider-routing.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
+import { fixtureCredentialFingerprint } from "../testing/fixture-dump.ts";
 
 const posix = describe.skipIf(process.platform === "win32");
 const STUB = fileURLToPath(new URL("../testing/pip-stub-cli.mjs", import.meta.url));
@@ -86,7 +87,7 @@ posix("headless text-only: stub binary (group 1)", () => {
   it("native Fuigo uses the Flux key as the whole credential; without one the route is unsupported and nothing spawns", async () => {
     const ok = await headlessTextOnlyTurn(input(), cfg("ok"));
     expect(ok.verdict.state).toBe("validated");
-    expect(records()[0].env.FUIGO_API_KEY).toBe("flux-test-key");
+    expect(records()[0].env.FUIGO_API_KEY).toBe(fixtureCredentialFingerprint("flux-test-key"));
     rmSync(out);
     const none = await headlessTextOnlyTurn(input(), cfg("ok", { fluxKey: undefined }));
     expect(none.verdict).toEqual({ state: "unsupported", reason: "login-route" });

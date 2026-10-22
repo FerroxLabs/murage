@@ -27,7 +27,7 @@ import type { DatabaseSync, StatementSync } from "node:sqlite";
 import { currentLsn } from "./lineage-write.ts";
 import { threadIdOf, threadNo } from "./thread-no.ts";
 import { FLIP_DRAIN_MAX, receiptStart } from "./receipt-outputs.ts";
-import { AUDIENCE_COALESCED, CONSUMED_REF_KINDS, decodeCarryChild, decodeNode, DENY_RANGE_COALESCE, encodeNode, MARKER_SLICE_ROWS, objectCarryThread, PENDING_ALL_SCOPES, PENDING_ALL_THREADS, UNKNOWN_LSN, type FrontierNode, type MemoryRefKind } from "./lineage-types.ts";
+import { AUDIENCE_COALESCED, CONSUMED_REF_KINDS, COVER_REVOKE, decodeCarryChild, decodeNode, DENY_RANGE_COALESCE, encodeNode, MARKER_SLICE_ROWS, objectCarryThread, PENDING_ALL_SCOPES, PENDING_ALL_THREADS, UNKNOWN_LSN, WALKER_REVOKE, type FrontierNode, type MemoryRefKind } from "./lineage-types.ts";
 
 export { PENDING_ALL_SCOPES };
 /** Whether every writer records its memory_thread_flow edges: S1's line, session and record writers (thread -> thread, scope -> thread,
@@ -77,6 +77,9 @@ export function resolveRevoke(db: DatabaseSync, revokeId: number): number {
  * destination, whatever its job row now is, or a root with cause "fold"), or it is listed in a seeding fold bulk's cohort and not yet
  * enrolled. Read before the job row, so a pruned or recreated fold bulk is refused too. */
 export function foldRefusesUndo(db: DatabaseSync, revokeId: number): boolean {
+  // an audience-only revoke is never undone (DRAIN-104 2.5, Sean): another audience job may have skipped what it walked (its cover rows), so
+  // its marks stand for every job that relied on them. Owner undo (unhide, restore) runs on content revokes only.
+  if (st(db, "SELECT 1 AS x FROM memory_revoke_audience WHERE revoke_id=?").get(revokeId)) return true;
   if (hasFoldMap(db) && st(db, "SELECT 1 AS x FROM memory_revoke_fold WHERE old_id=?1 OR bulk_id=?1 LIMIT 1").get(revokeId)) return true;
   const job = st(db, "SELECT root FROM memory_revoke_jobs WHERE revoke_id=?").get(revokeId);
   if (job && isFoldBulk(db, revokeId, String(job.root))) return true;
@@ -88,6 +91,11 @@ export function foldRefusesUndo(db: DatabaseSync, revokeId: number): boolean {
 export function isFoldBulk(db: DatabaseSync, revokeId: number, root?: string): boolean {
   if (root !== undefined) { try { if (JSON.parse(root)?.cause === "fold") return true; } catch { /* unreadable root: the map decides */ } }
   return hasFoldMap(db) && Boolean(st(db, "SELECT 1 AS x FROM memory_revoke_fold WHERE bulk_id=? LIMIT 1").get(revokeId));
+}
+
+/** A fold bulk whose closure the fold certified (revoke-fold.ts: root.narrow) and that is not back from 1.0.2 (root.reupgraded). */
+function certifiedFold(root: string): boolean {
+  try { const r = JSON.parse(root); return r?.cause === "fold" && r.narrow === 1 && !r.reupgraded; } catch { return false; }
 }
 
 /** 'folded' (1.0.3 revoke fold, revoke-fold.ts): the job's work was copied into a fold bulk; no slice serves it, and the bulk's tidy
@@ -190,8 +198,12 @@ export function writeSession(db: DatabaseSync, revokeId: number, threadId: strin
 }
 /** A record node's version: a soft node (a root that withdraws what was shown but leaves the record readable) is stored as -(v+1). */
 export const softVersion = (version: number) => -(Math.max(0, version) + 1);
-const visit = (db: DatabaseSync, revokeId: number, key: string): boolean =>
-  Number(st(db, "INSERT OR IGNORE INTO memory_revoke_reached(revoke_id,thread_id,from_lsn) VALUES(?,?,0)").run(revokeId, key).changes) > 0;
+/** A visit key's reached row; an audience job writes its cover row with it (DRAIN-104 2.1: the same statement pair). */
+const visit = (db: DatabaseSync, revokeId: number, key: string): boolean => {
+  const fresh = Number(st(db, "INSERT OR IGNORE INTO memory_revoke_reached(revoke_id,thread_id,from_lsn) VALUES(?,?,0)").run(revokeId, key).changes) > 0;
+  if (fresh && cover && cover.job === revokeId) writeCover(db, cover, key, 0, cover.cap);
+  return fresh;
+};
 /** Holds keep the revoke's pending rows while a bookkeeping job (memory-revocation.ts) still has work readers depend on. */
 export const HOLD_PREFIX = "hold:";
 export function holdRevoke(db: DatabaseSync, revokeId: number, bookkeepingJobId: string): void {
@@ -256,6 +268,152 @@ function walkCap(job: JobRow): number {
   return root.cause === "fold" && !root.reupgraded && Number.isSafeInteger(hi) ? Math.min(started, hi) : started;
 }
 
+// ---- audience cover (DRAIN-104 r6, sections 1 and 2)
+// An audience-only job (a memory_revoke_audience row: fold, drain and audience inherit bulks) records as it walks what it walked and under
+// which cap: one cover row per visit key and per range entry, under the reserved id COVER_REVOKE in memory_revoke_reached (no schema
+// change; 1.0.3 and 1.0.2 read that table only by a job's own id). A row counts once its job's frontier is empty (phase hold, tidy or done,
+// or its row gone and not a folded member). Another audience job whose walk cap is at or below a counting row's cap skips the node at its
+// pop instead of walking it: every mark it would write there is one the coverer wrote (cap-free facts under the coverer's id, cap-bound
+// facts monotone in the cap), and audience readers withhold on any audience row. Exceptions handled exactly: a covered source still hands
+// the job its own line (2.4), and a covered range runs a point pass over the carries the coverer's walk did not have to follow (section 1).
+/** Tests only (the per-job baseline of the differential tests, as REVOKE_FOLD): false walks every job as 1.0.3 did, in revoke id order. */
+/** `enqueueSkip` (tests only): false enqueues covered visit children too, so their pops skip them (T12: enqueue-skipped iff pop-skipped). */
+export const REVOKE_COVER = { enabled: true, enqueueSkip: true };
+/** What the cover did, for tests (DRAIN-104 section 6: every D test asserts the mechanism fired). Only ever added to. handlerRuns: pops whose
+ * handler walked (uncovered, or partly covered); cheapRuns: pops whose handler ran without walking (a line, a session, the own-walk skip, an
+ * own visit); skips: covered pops. */
+export const COVER_PROBE = { skips: 0, enqueueSkips: 0, pointPasses: 0, partial: 0, sourceLines: 0, handlerRuns: 0, cheapRuns: 0, waits: 0, coverRows: 0, cleanups: 0 };
+/** Tests only: with `on`, the job ids whose cover rows granted each skip, the kinds of the enqueues skipped, and every job a walker slice served. */
+export const COVER_TRACE = { on: false, coverers: [] as number[], enqueueKinds: [] as string[], served: [] as Array<{ job: number; cls: "undo" | "content" | "walker" | "others" }> };
+export function resetCoverProbe(): void {
+  for (const key of Object.keys(COVER_PROBE) as Array<keyof typeof COVER_PROBE>) COVER_PROBE[key] = 0;
+  COVER_TRACE.coverers.length = 0; COVER_TRACE.enqueueKinds.length = 0; COVER_TRACE.served.length = 0;
+}
+type CoverCtx = { job: number; cap: number; coverOnly: boolean; valid: Map<number, boolean> };
+/** The cover context of the job whose handler is running (set by markStep around the handler; the walk is synchronous). */
+let cover: CoverCtx | null = null;
+const COVER_KEY_MAX = 9999, LSN_BIAS = 2n ** 53n, JOB_DIGITS = 10;
+/** The order-preserving fixed-width code of a signed lsn (FIRST_LSN .. UNKNOWN_LSN): 17 digits. */
+export const coverLsn = (lsn: number): string => (BigInt(lsn) + LSN_BIAS).toString().padStart(17, "0");
+/** A reached key's length-prefixed form (null: longer than COVER_KEY_MAX, no cover row; such a key is walked). No separator: a thread id may
+ * begin with \u0001 (objectCarryThread), so only lengths and fixed widths keep two keys apart. */
+const coverPrefix = (key: string): string | null => key.length > COVER_KEY_MAX ? null : `${String(key.length).padStart(4, "0")}${key}`;
+/** A cover row's thread_id: <len><key><from><job> (DRAIN-104 2.1). null when the key or the job id does not fit. */
+export function coverKey(key: string, from: number, job: number): string | null {
+  const prefix = coverPrefix(key);
+  if (prefix === null || !Number.isSafeInteger(from) || !(job > 0) || String(job).length > JOB_DIGITS) return null;
+  return `${prefix}${coverLsn(from)}${String(job).padStart(JOB_DIGITS, "0")}`;
+}
+/** The from lsn and job id a cover row's thread_id holds after the prefix of its key. */
+function coverParts(thread: string, prefixLength: number): { from: number; job: number } {
+  return { from: Number(BigInt(thread.slice(prefixLength, prefixLength + 17)) - LSN_BIAS), job: Number(thread.slice(prefixLength + 17)) };
+}
+function writeCover(db: DatabaseSync, ctx: CoverCtx, key: string, from: number, cap: number): void {
+  const thread = coverKey(key, from, ctx.job);
+  if (thread === null) return;
+  if (Number(st(db, `INSERT OR IGNORE INTO memory_revoke_reached(revoke_id,thread_id,from_lsn) VALUES(${COVER_REVOKE},?,?)`).run(thread, cap).changes) > 0) COVER_PROBE.coverRows++;
+}
+/** Whether a cover row of job `job` counts (2.1): its job row is absent and it is not a folded member, or its job is active or done in
+ * phase hold, tidy or done (its frontier is empty: every visit its rows describe has its whole fan-out written). A folded member's rows
+ * never count on their own (the map seek). One or two seeks, kept for the slice. */
+function coverValid(db: DatabaseSync, ctx: CoverCtx, job: number): boolean {
+  const known = ctx.valid.get(job);
+  if (known !== undefined) return known;
+  let ok: boolean;
+  if (job === ctx.job || (hasFoldMap(db) && st(db, "SELECT 1 AS x FROM memory_revoke_fold WHERE old_id=?").get(job))) ok = false;
+  else {
+    const row = st(db, "SELECT state,phase FROM memory_revoke_jobs WHERE revoke_id=?").get(job);
+    ok = !row || ((row.state === "active" || row.state === "done") && (row.phase === "hold" || row.phase === "tidy" || row.phase === "done"));
+  }
+  ctx.valid.set(job, ok);
+  return ok;
+}
+/** Every cover row of a reached key, in `from` order (a primary-key range: a few rows, one per job that entered the key). `visitOnly`:
+ * only the visit rows (from 0). Valid or not. */
+export function coverRows(db: DatabaseSync, key: string, visitOnly = false): Array<{ from: number; job: number; cap: number }> {
+  const prefix = coverPrefix(key);
+  if (prefix === null) return [];
+  const zero = coverLsn(0);
+  const [lo, hi] = visitOnly ? [`${prefix}${zero}${"0".repeat(JOB_DIGITS)}`, `${prefix}${zero}${"9".repeat(JOB_DIGITS)}`]
+    : [`${prefix}${"0".repeat(17 + JOB_DIGITS)}`, `${prefix}${"9".repeat(17 + JOB_DIGITS)}`];
+  return st(db, `SELECT thread_id AS k,from_lsn AS cap FROM memory_revoke_reached WHERE revoke_id=${COVER_REVOKE} AND thread_id BETWEEN ? AND ? ORDER BY thread_id`)
+    .all(lo, hi).map(row => ({ ...coverParts(String(row.k), prefix.length), cap: Number(row.cap) }));
+}
+/** The job whose valid cover row of the visit key has a cap at or above the job's own (undefined: not covered). */
+function visitCovered(db: DatabaseSync, ctx: CoverCtx, key: string): number | undefined {
+  for (const row of coverRows(db, key, true)) if (row.cap >= ctx.cap && coverValid(db, ctx, row.job)) return row.job;
+  return undefined;
+}
+/** The smallest `from` of a valid cover row of thread T with a cap at or above the job's own, with its job (undefined: none). */
+function rangeCover(db: DatabaseSync, ctx: CoverCtx, threadId: string): { from: number; job: number } | undefined {
+  for (const row of coverRows(db, threadId)) if (row.cap >= ctx.cap && coverValid(db, ctx, row.job)) return row;
+  return undefined;
+}
+/** A visit node's reached key (the key its handler's visit writes). */
+function visitKey(node: FrontierNode): string | null {
+  switch (node.kind) {
+    case "source": return `s:${node.id}`;
+    case "record": { const soft = node.version < 0; return `r:${soft ? "~" : ""}${node.id}:${soft ? -node.version - 1 : node.version}`; }
+    case "receipt": return `b:${node.bundleId}`;
+    case "scope": return `S:${node.scopeId}`;
+    case "object": return `o:${node.objectKind}:${node.id}`;
+    default: return null;
+  }
+}
+/** The walk's enqueue (2.4, Enqueue): a record, object, receipt or scope child of a walking audience job is not enqueued when a counting
+ * cover row holds it (its pop would skip it). Sources are always enqueued (their pop decides: a covered source still hands the job its
+ * line); range and line children always (the pop decides, so a covered range's point pass is never lost). Only the walk's own enqueues come
+ * here: inheritance and commits enqueue as before. */
+function enq(db: DatabaseSync, revokeId: number, node: FrontierNode): void {
+  if (cover && cover.job === revokeId && (node.kind === "record" || node.kind === "object" || node.kind === "receipt" || node.kind === "scope")) {
+    const key = visitKey(node);
+    const by = key !== null && REVOKE_COVER.enqueueSkip ? visitCovered(db, cover, key) : undefined;
+    if (by !== undefined) { COVER_PROBE.enqueueSkips++; if (COVER_TRACE.on) { COVER_TRACE.coverers.push(by); COVER_TRACE.enqueueKinds.push(node.kind); } return; }
+  }
+  enqueueNode(db, revokeId, node);
+}
+const isAudience = (db: DatabaseSync, revokeId: number) => Boolean(st(db, "SELECT 1 AS x FROM memory_revoke_audience WHERE revoke_id=?").get(revokeId));
+/** The pop's decision for an audience job (2.4): "skip" (covered: the frontier row goes, nothing else is written but a covered source's
+ * line), "run" (the handler runs; a covered range runs its point pass, a partly covered one its bounded walk), "wait" (a coverOnly slice
+ * meets an uncovered head: the slice ends before the handler runs, 2.6). Taken once per node; a node already started resumes as it began. */
+function coverPop(db: DatabaseSync, job: JobRow, node: FrontierNode, c: Cursor, ctx: CoverCtx): "skip" | "run" | "wait" {
+  if (c.stage !== undefined || c.cv !== undefined) return ctx.coverOnly && c.cv !== "point" && c.cv !== "own" ? "wait" : "run";
+  const R = job.revoke_id;
+  if (node.kind === "line" || node.kind === "session") { c.cv = "own"; return "run"; } // never skipped: one INSERT OR IGNORE and an enqueue
+  if (node.kind === "range") {
+    const T = node.threadId, a = node.fromLsn;
+    const bound = st(db, "SELECT reason AS why FROM memory_deny_range WHERE thread_id=? AND from_lsn=? AND revoke_id=?").get(T, a, R);
+    if (bound && String(bound.why).endsWith(BOUNDED_RANGE)) return ctx.coverOnly ? "wait" : "run"; // a root's bounded range: walked by every job
+    const held = st(db, "SELECT from_lsn FROM memory_revoke_reached WHERE revoke_id=? AND thread_id=?").get(R, T)?.from_lsn;
+    if (held !== undefined && held !== null && Number(held) <= a) { c.cv = "own"; return "run"; } // the own-walk skip, as today
+    const by = rangeCover(db, ctx, T);
+    if (by === undefined) return ctx.coverOnly ? "wait" : "run";
+    if (by.from > a && ctx.coverOnly) return "wait";
+    if (COVER_TRACE.on) COVER_TRACE.coverers.push(by.job);
+    if (by.from <= a) { c.cv = "point"; c.f = by.from; return "run"; }
+    c.cv = "part"; c.f = by.from; COVER_PROBE.partial++;
+    return "run";
+  }
+  const key = visitKey(node)!;
+  if (st(db, "SELECT 1 AS x FROM memory_revoke_reached WHERE revoke_id=? AND thread_id=?").get(R, key)) { c.cv = "own"; return "run"; } // visited: a no-op
+  const by = visitCovered(db, ctx, key);
+  if (by === undefined) return ctx.coverOnly ? "wait" : "run";
+  if (COVER_TRACE.on) COVER_TRACE.coverers.push(by);
+  if (node.kind === "source") {
+    // a covered source still hands the job its own line (section 1, the double-check High): the line's range runs the job's own own-walk
+    // rule, so the job stays exact at its own record-low entries into the thread; enqueued only when the job holds nothing at or below it
+    const at = st(db, "SELECT thread_id,message_id FROM memory_sources WHERE id=?").get(node.id);
+    if (typeof at?.thread_id === "string" && typeof at.message_id === "string") {
+      const line = lineOf(db, at.thread_id, at.message_id);
+      if (line) {
+        const held = st(db, "SELECT from_lsn FROM memory_revoke_reached WHERE revoke_id=? AND thread_id=?").get(R, at.thread_id)?.from_lsn;
+        if (held === undefined || held === null || Number(held) > Number(line.lsn)) { enqueueNode(db, R, { kind: "line", threadId: at.thread_id, lsn: Number(line.lsn) }); COVER_PROBE.sourceLines++; }
+      }
+    }
+  }
+  return "skip";
+}
+
 function lineNode(db: DatabaseSync, job: JobRow, node: { threadId: string; lsn: number; from?: number }): boolean {
   writeLine(db, job.revoke_id, node.threadId, node.lsn, reasonOf(job));
   enqueueNode(db, job.revoke_id, { kind: "range", threadId: node.threadId, fromLsn: node.from ?? node.lsn });
@@ -269,16 +427,16 @@ function carryChild(db: DatabaseSync, job: JobRow, row: { child_kind: number; ch
   const child = decodeCarryChild(Number(row.child_kind), String(row.child_ref), childThread);
   if (!child) throw new Error("MEMORY_REVOKE_NODE_UNREADABLE");
   switch (child.kind) {
-    case "line": enqueueNode(db, job.revoke_id, { kind: "line", threadId: child.threadId, lsn: child.lsn }); return;
-    case "turn": enqueueNode(db, job.revoke_id, { kind: "range", threadId: child.threadId, fromLsn: child.turnLsn }); return;
+    case "line": enq(db, job.revoke_id, { kind: "line", threadId: child.threadId, lsn: child.lsn }); return;
+    case "turn": enq(db, job.revoke_id, { kind: "range", threadId: child.threadId, fromLsn: child.turnLsn }); return;
     case "session": writeSession(db, job.revoke_id, child.session.threadId, child.session.driverInstance, child.session.nativeSession); return;
     case "memory": {
       const ref = child.ref;
-      if (ref.kind === "record") enqueueNode(db, job.revoke_id, { kind: "record", id: ref.id, version: ref.version ?? 0 });
-      else if (ref.kind === "source") enqueueNode(db, job.revoke_id, { kind: "source", id: ref.id });
+      if (ref.kind === "record") enq(db, job.revoke_id, { kind: "record", id: ref.id, version: ref.version ?? 0 });
+      else if (ref.kind === "source") enq(db, job.revoke_id, { kind: "source", id: ref.id });
       else {
         writeMemory(db, job.revoke_id, ref.kind, ref.id, ref.version ?? 0); // a lesson, a claim, a Murage object: its mark is the whole of it
-        if (CONSUMED_REF_KINDS.has(ref.kind)) enqueueNode(db, job.revoke_id, { kind: "object", objectKind: ref.kind, id: ref.id }); // and whatever read it
+        if (CONSUMED_REF_KINDS.has(ref.kind)) enq(db, job.revoke_id, { kind: "object", objectKind: ref.kind, id: ref.id }); // and whatever read it
       }
       return;
     }
@@ -307,6 +465,11 @@ function rangeNode(db: DatabaseSync, job: JobRow, node: { threadId: string; from
     }
     const held = st(db, "SELECT from_lsn FROM memory_revoke_reached WHERE revoke_id=? AND thread_id=?").get(R, T)?.from_lsn;
     if (held !== undefined && held !== null && Number(held) <= a) return true; // this thread is walked from an earlier line already
+    // covered from f <= a by an audience job with a cap at or above this one's (DRAIN-104 2.4): only the point pass runs (the carries holding
+    // a that the coverer's walk from f did not have to follow, and the captures at a); no range row, no session stage
+    // The pass runs in the carry and capture stages' own shapes (the stage names and fields 1.0.3 knows, plus `pp`): a 1.0.3 that resumes it
+    // ignores `pp` and walks the thread from a fully (more marks, never fewer).
+    if (c.cv === "point") { c.stage = "carry"; c.pp = Number(c.f); c.hi = null; c.at = null; c.until = Math.min(currentLsn(db), walkCap(job)); spend(budget, 1); return false; }
     st(db, "INSERT OR REPLACE INTO memory_revoke_reached(revoke_id,thread_id,from_lsn) VALUES(?,?,?)").run(R, T, a);
     // a line root's `until` (revoke-commit.ts RevokeOptions) bounds the range in the root's own thread; every other thread reached is
     // denied up to now
@@ -320,7 +483,11 @@ function rangeNode(db: DatabaseSync, job: JobRow, node: { threadId: string; from
     const rootCap = bound ? Number(bound.u) : cap;
     const until = bounded ? Math.min(Number(root.until), currentLsn(db)) : Math.min(currentLsn(db), Math.max(cap, rootCap));
     writeRange(db, R, T, a, until, reasonOf(job));
+    if (cover && cover.job === R) writeCover(db, cover, T, a, Math.min(cap, until));
     c.stage = "carry"; c.hi = held === undefined || held === null ? null : Number(held); c.at = null;
+    // partly covered (2.4: a counting cover row from f > a): this job walks [a, min(held, f)) itself, the bound it already uses below an
+    // earlier walk of its own, and relies on the coverer from f on
+    if (c.cv === "part" && Number.isSafeInteger(c.f)) c.hi = c.hi === null ? Number(c.f) : Math.min(Number(c.hi), Number(c.f));
     // what rests on a line of a later turn is not reached through this range (rangeReached): an ordinary revoke's range ends at its commit
     // just as a bounded root's ends at its bound, and a clean answer whose turn began at or after the cap is outside it (Astra audit P1 7)
     c.until = until;
@@ -331,8 +498,16 @@ function rangeNode(db: DatabaseSync, job: JobRow, node: { threadId: string; from
   // unbounded, which takes in the carries and captures written at UNKNOWN_LSN (a parent whose position was not known at write: every revoke
   // of its thread reaches it, fail closed). Two statement shapes, so each stays one index range with a stop. A thread with no number has
   // nothing carried or captured from it.
-  const n = page(budget), bounded = c.hi !== null && c.hi !== undefined, hi = bounded ? Number(c.hi) : 0;
+  // a covered range's point pass (DRAIN-104 2.4, section 1 "the starting line"): the coverer walked T from f = pp <= a under a cap at or above
+  // this job's, so it followed every carry holding f and every carry holding a generated line of a turn before its cap; what it did not have
+  // to follow is a carry with f < from <= a <= to (none holds f, and it may hold no such generated line), and the captures at a. The carry
+  // stage's raw page (to_lsn >= a, key order, cursor c.at; the key orders to_lsn before from_lsn, so the from filter is applied in the page,
+  // progress over examined rows), then the captures at a; then the reached and cover rows (T, a), so every later entry of this job into T at
+  // or above a is the own-walk skip and nothing is point-passed twice. No range row, no session stage.
+  const pp = c.pp !== undefined && c.pp !== null && REVOKE_COVER.enabled ? Number(c.pp) : undefined;
+  const n = page(budget), bounded = pp !== undefined && c.stage === "cap" ? true : c.hi !== null && c.hi !== undefined, hi = pp !== undefined && c.stage === "cap" ? a + 1 : bounded ? Number(c.hi) : 0;
   const no = threadNo(db, T);
+  if (no === null && pp !== undefined) { st(db, "INSERT OR REPLACE INTO memory_revoke_reached(revoke_id,thread_id,from_lsn) VALUES(?,?,?)").run(R, T, a); COVER_PROBE.pointPasses++; return true; }
   if (no === null) { c.stage = "sess"; c.at = null; }
   if (c.stage === "carry") {
     // (the carry key ends with the child's thread: rows that differ only by it are paged apart)
@@ -344,7 +519,9 @@ function rangeNode(db: DatabaseSync, job: JobRow, node: { threadId: string; from
         : st(db, `${cols} AND (to_lsn,from_lsn,child_kind,child_ref,child_thread_no)>(?2,?3,?4,?5,?6) ${order}7`).all(no, ...after, n))
       : (bounded ? st(db, `${cols} AND to_lsn>=?2 AND to_lsn<?3 ${order}4`).all(no, a, hi, n)
         : st(db, `${cols} AND to_lsn>=?2 ${order}3`).all(no, a, n))) as Array<{ to_lsn: number; from_lsn: number; child_kind: number; child_ref: string; child_thread_no: number | null }>;
-    for (const row of rows) if (rangeReached(db, no!, a, Number(row.from_lsn), Number(row.to_lsn), c.until)) carryChild(db, job, row);
+    for (const row of rows) {
+      if (pp !== undefined ? Number(row.from_lsn) > pp && Number(row.from_lsn) <= a : rangeReached(db, no!, a, Number(row.from_lsn), Number(row.to_lsn), c.until)) carryChild(db, job, row);
+    }
     spend(budget, rows.length * 2);
     if (rows.length === n) { const last = rows[rows.length - 1]!; c.at = [Number(last.to_lsn), Number(last.from_lsn), Number(last.child_kind), String(last.child_ref), Number(last.child_thread_no ?? 0)]; return false; }
     c.stage = "cap"; c.at = null;
@@ -357,9 +534,16 @@ function rangeNode(db: DatabaseSync, job: JobRow, node: { threadId: string; from
         : st(db, `${cols} AND (lsn,source_id)>(?2,?3) ${order}4`).all(no, c.at[0], c.at[1], n))
       : (bounded ? st(db, `${cols} AND lsn>=?2 AND lsn<?3 ${order}4`).all(no, a, hi, n)
         : st(db, `${cols} AND lsn>=?2 ${order}3`).all(no, a, n))) as Array<{ lsn: number; source_id: string }>;
-    for (const row of rows) { const at = Number(row.lsn); if (rangeReached(db, no!, a, at, at, c.until)) enqueueNode(db, R, { kind: "source", id: String(row.source_id) }); }
+    for (const row of rows) { const at = Number(row.lsn); if (rangeReached(db, no!, a, at, at, c.until)) enq(db, R, { kind: "source", id: String(row.source_id) }); }
     spend(budget, rows.length);
     if (rows.length === n) { const last = rows[rows.length - 1]!; c.at = [Number(last.lsn), String(last.source_id)]; return false; }
+    if (pp !== undefined) {
+      st(db, "INSERT OR REPLACE INTO memory_revoke_reached(revoke_id,thread_id,from_lsn) VALUES(?,?,?)").run(R, T, a);
+      if (cover && cover.job === R) writeCover(db, cover, T, a, walkCap(job));
+      COVER_PROBE.pointPasses++;
+      spend(budget, 2);
+      return true;
+    }
     c.stage = "sess"; c.at = null;
     return false;
   }
@@ -384,7 +568,7 @@ function rangeNode(db: DatabaseSync, job: JobRow, node: { threadId: string; from
 function citing(db: DatabaseSync, job: JobRow, kind: "record" | "source", id: string, version: number, c: Cursor, budget: Budget): boolean {
   const n = page(budget);
   const rows = st(db, `SELECT x.rowid AS rid,x.bundle_id AS b,x.ref_version AS v FROM memory_disclosure_refs x WHERE x.kind=? AND CAST(x.ref_id AS TEXT)=? AND x.rowid>? ORDER BY x.rowid LIMIT ?`).all(kind, id, Number(c.rid ?? 0), n) as Array<{ rid: number; b: string; v: unknown }>;
-  for (const row of rows) if (!(version > 0) || Number(row.v) === version) enqueueNode(db, job.revoke_id, { kind: "receipt", bundleId: String(row.b) });
+  for (const row of rows) if (!(version > 0) || Number(row.v) === version) enq(db, job.revoke_id, { kind: "receipt", bundleId: String(row.b) });
   spend(budget, rows.length);
   if (rows.length === n) { c.rid = Number(rows[rows.length - 1]!.rid); return false; }
   return true;
@@ -395,7 +579,7 @@ function sourceNode(db: DatabaseSync, job: JobRow, node: { id: string }, c: Curs
     if (!visit(db, R, `s:${id}`)) return true;
     writeMemory(db, R, "source", id, 0);
     // the revoked receipts that cite it (their refs left the index when they were revoked: revoke-commit.ts holdRevokedReceipt)
-    enqueueNodes(db, R, [{ kind: "object", objectKind: "source", id }, { kind: "object", objectKind: "source", id: "*" }]);
+    for (const child of [{ kind: "object", objectKind: "source", id }, { kind: "object", objectKind: "source", id: "*" }] as const) enq(db, R, child);
     // a forgotten source forgets its line: the line and every generated line after it in its thread (revbound's positional rule)
     const at = st(db, "SELECT thread_id,message_id FROM memory_sources WHERE id=?").get(id);
     if (typeof at?.thread_id === "string" && typeof at.message_id === "string") {
@@ -412,7 +596,7 @@ function sourceNode(db: DatabaseSync, job: JobRow, node: { id: string }, c: Curs
       ? st(db, "SELECT source_revision AS r,record_id AS i,record_version AS v,start_byte AS b FROM memory_evidence_by_source WHERE source_id=? AND (source_revision,record_id,record_version,start_byte)>(?,?,?,?) ORDER BY source_revision,record_id,record_version,start_byte LIMIT ?").all(id, ...(c.at as [number, string, number, number]), n)
       : st(db, "SELECT source_revision AS r,record_id AS i,record_version AS v,start_byte AS b FROM memory_evidence_by_source WHERE source_id=? ORDER BY source_revision,record_id,record_version,start_byte LIMIT ?").all(id, n)) as Array<{ r: number; i: string; v: number; b: number }>;
     let last = "";
-    for (const row of rows) { const key = `${row.i}\u0000${row.v}`; if (key !== last) enqueueNode(db, R, { kind: "record", id: String(row.i), version: Number(row.v) }); last = key; }
+    for (const row of rows) { const key = `${row.i}\u0000${row.v}`; if (key !== last) enq(db, R, { kind: "record", id: String(row.i), version: Number(row.v) }); last = key; }
     spend(budget, rows.length);
     if (rows.length === n) { const l = rows[rows.length - 1]!; c.at = [Number(l.r), String(l.i), Number(l.v), Number(l.b)]; return false; }
     c.stage = "copies"; c.at = null;
@@ -421,7 +605,7 @@ function sourceNode(db: DatabaseSync, job: JobRow, node: { id: string }, c: Curs
   if (c.stage === "copies") {
     if (!lateReady(db, "origins")) return "late";
     const rows = st(db, "SELECT bring_in_id AS id FROM memory_source_origins WHERE origin_id=? AND bring_in_id>? ORDER BY bring_in_id LIMIT ?").all(id, String(c.at ?? ""), n);
-    for (const row of rows) enqueueNode(db, R, { kind: "source", id: String(row.id) });
+    for (const row of rows) enq(db, R, { kind: "source", id: String(row.id) });
     spend(budget, rows.length);
     if (rows.length === n) { c.at = String(rows[rows.length - 1]!.id); return false; }
     c.stage = "rcpt"; c.at = null;
@@ -434,7 +618,7 @@ function recordNode(db: DatabaseSync, job: JobRow, node: { id: string; version: 
   if (!c.stage) {
     if (!visit(db, R, `r:${soft ? "~" : ""}${id}:${version}`)) return true;
     if (!soft) writeMemory(db, R, "record", id, version);
-    enqueueNodes(db, R, [{ kind: "object", objectKind: "record", id }, { kind: "object", objectKind: "record", id: "*" }]);
+    for (const child of [{ kind: "object", objectKind: "record", id }, { kind: "object", objectKind: "record", id: "*" }] as const) enq(db, R, child);
     // the forgotten record's own supporting sources go with it (forget.ts tombstones the newest; the rest are reached here, so a record
     // citing one of them is withheld by mark, not when the bookkeeping job gets to it); a room's notes keep what they quoted
     const root = rootOf(job);
@@ -450,7 +634,7 @@ function recordNode(db: DatabaseSync, job: JobRow, node: { id: string; version: 
     const rows = (c.at
       ? st(db, `SELECT record_version AS v,source_id AS s,source_revision AS r,start_byte AS b FROM memory_evidence WHERE ${where} AND (record_version,source_id,source_revision,start_byte)>(?,?,?,?) ORDER BY record_version,source_id,source_revision,start_byte LIMIT ?`).all(...args as never[], ...(c.at as never[]), n)
       : st(db, `SELECT record_version AS v,source_id AS s,source_revision AS r,start_byte AS b FROM memory_evidence WHERE ${where} ORDER BY record_version,source_id,source_revision,start_byte LIMIT ?`).all(...args as never[], n)) as Array<{ v: number; s: string; r: number; b: number }>;
-    for (const row of rows) enqueueNode(db, R, { kind: "source", id: String(row.s) });
+    for (const row of rows) enq(db, R, { kind: "source", id: String(row.s) });
     spend(budget, rows.length);
     if (rows.length === n) { const l = rows[rows.length - 1]!; c.at = [Number(l.v), String(l.s), Number(l.r), Number(l.b)]; return false; }
     c.stage = "kids"; c.at = null;
@@ -461,7 +645,7 @@ function recordNode(db: DatabaseSync, job: JobRow, node: { id: string; version: 
     const rows = (c.at
       ? st(db, `SELECT parent_version AS p,child_id AS i,child_version AS v FROM memory_derivations WHERE ${where} AND (parent_version,child_id,child_version)>(?,?,?) ORDER BY parent_version,child_id,child_version LIMIT ?`).all(...args as never[], ...(c.at as never[]), n)
       : st(db, `SELECT parent_version AS p,child_id AS i,child_version AS v FROM memory_derivations WHERE ${where} ORDER BY parent_version,child_id,child_version LIMIT ?`).all(...args as never[], n)) as Array<{ p: number; i: string; v: number }>;
-    for (const row of rows) enqueueNode(db, R, { kind: "record", id: String(row.i), version: soft ? softVersion(Number(row.v)) : Number(row.v) });
+    for (const row of rows) enq(db, R, { kind: "record", id: String(row.i), version: soft ? softVersion(Number(row.v)) : Number(row.v) });
     spend(budget, rows.length);
     if (rows.length === n) { const l = rows[rows.length - 1]!; c.at = [Number(l.p), String(l.i), Number(l.v)]; return false; }
     c.stage = "rcpt"; c.at = null; c.rid = 0;
@@ -488,7 +672,7 @@ function scopeNode(db: DatabaseSync, job: JobRow, node: { scopeId: string }, c: 
   const rows = (c.at
     ? st(db, "SELECT rowid AS rid,state,id,version FROM memory_records WHERE scope_id=?1 AND (state>?2 OR (state=?2 AND rowid>?3)) ORDER BY state,rowid LIMIT ?4").all(node.scopeId, c.at[0], c.at[1], n)
     : st(db, "SELECT rowid AS rid,state,id,version FROM memory_records WHERE scope_id=? ORDER BY state,rowid LIMIT ?").all(node.scopeId, n)) as Array<{ rid: number; state: string; id: string; version: number }>;
-  for (const row of rows) enqueueNode(db, R, { kind: "record", id: String(row.id), version: Number(row.version) });
+  for (const row of rows) enq(db, R, { kind: "record", id: String(row.id), version: Number(row.version) });
   spend(budget, rows.length);
   if (rows.length === n) { const l = rows[rows.length - 1]!; c.at = [String(l.state), Number(l.rid)]; return false; }
   return true;
@@ -528,15 +712,30 @@ export function upgradeMarkerWalked(db: DatabaseSync): number {
   return Number(st(db, "SELECT CASE WHEN json_valid(cursor) THEN coalesce(json_extract(cursor,'$.markerWork'),0) ELSE 0 END AS n FROM memory_lineage_cert WHERE id=1").get()?.n ?? 0);
 }
 
-function markStep(db: DatabaseSync, job: JobRow, c: Cursor, budget: Budget): boolean | "late" {
+function markStep(db: DatabaseSync, job: JobRow, c: Cursor, budget: Budget, ctx: CoverCtx | null = null): boolean | "late" | "wait" {
   const head = st(db, "SELECT seq,node FROM memory_revoke_frontier WHERE revoke_id=? AND seq>0 ORDER BY seq LIMIT 1").get(job.revoke_id);
   if (!head) { spend(budget, 1); return true; }
   const seq = Number(head.seq);
   const node = decodeNode(String(head.node));
   if (!node) throw new Error("MEMORY_REVOKE_NODE_UNREADABLE"); // never skipped: the job (and its pending rows) stays
   if (c.seq !== seq) { c.seq = seq; c.n = {}; c.w = 0; }
+  if (ctx) {
+    // an audience job reads cover at its pops (DRAIN-104 2.4), in every slice kind
+    const fresh = c.n.stage === undefined && c.n.cv === undefined;
+    const decision = coverPop(db, job, node, c.n, ctx);
+    if (decision === "wait") { COVER_PROBE.waits++; return "wait"; }
+    if (decision === "skip") {
+      st(db, "DELETE FROM memory_revoke_frontier WHERE revoke_id=? AND seq=?").run(job.revoke_id, seq);
+      delete c.seq; delete c.n; delete c.w;
+      spend(budget, 1); COVER_PROBE.skips++; noteUpgradeWork(db, job, 1);
+      return false;
+    }
+    if (fresh) { if (c.n.cv === undefined || c.n.cv === "part") COVER_PROBE.handlerRuns++; else COVER_PROBE.cheapRuns++; }
+  }
   const before = budget.rows;
-  const done = HANDLERS[node.kind](db, job, node, c.n, budget);
+  let done: boolean | "late";
+  cover = ctx;
+  try { done = HANDLERS[node.kind](db, job, node, c.n, budget); } finally { cover = null; }
   // the rows this node's fan-out has spent so far, kept in the cursor so the upgrade strip moves inside one large node (lineage-backfill.ts upgradeMarkerFanout)
   c.w = Number(c.w ?? 0) + Math.max(0, before - budget.rows);
   if (done === "late") return "late";
@@ -579,7 +778,11 @@ function pruneFinished(db: DatabaseSync): void {
 
 /** `flowOnly` (1.0.3 revoke drain, F3): the slice is running every pending job's flow phase before any job marks; the job stops at the end
  * of its flow phase (its '*' rows already gone, its phase 'mark') so the next job's flow runs next. */
-function advance(db: DatabaseSync, job: JobRow, budget: Budget, late: LateBuild | null, flowOnly = false): Step {
+/** `coverOnly` (DRAIN-104 2.6, the others' slice): only covered pops, point passes, hold waits and tidy pages run; a pop whose head is
+ * uncovered ends the slice before its handler runs ("wait"), so no audience job walks the store a second time while the walker does. */
+function advance(db: DatabaseSync, job: JobRow, budget: Budget, late: LateBuild | null, flowOnly = false, coverOnly = false): Step {
+  const audience = job.state === "active" && isAudience(db, job.revoke_id);
+  const ctx: CoverCtx | null = audience && REVOKE_COVER.enabled ? { job: job.revoke_id, cap: walkCap(job), coverOnly, valid: new Map() } : null;
   let c: Cursor = {};
   try { c = job.cursor ? JSON.parse(job.cursor) : {}; } catch { c = {}; }
   let progressed = false;
@@ -590,8 +793,9 @@ function advance(db: DatabaseSync, job: JobRow, budget: Budget, late: LateBuild 
     try {
     if (job.phase === "flow") {
       if (flowStep(db, job, c, budget)) {
-        // a fold bulk keeps its '*' rows to its tidy (REVOKE-FOLD-DESIGN F1.4): nothing rests on its members' earlier flow passes
-        if (scopeFlowEdgesRecorded && Number(st(db, "SELECT ready FROM memory_lineage_cert WHERE id=1").get()?.ready ?? 0) === 1 && !isFoldBulk(db, job.revoke_id, job.root)) {
+        // a fold bulk keeps its '*' rows to its tidy (REVOKE-FOLD-DESIGN F1.4) unless its closure is certified (DRAIN-104 section 4: every
+        // member's pending rows were copied into its flow, root.narrow) and it is not back from 1.0.2 (root.reupgraded: members walked there)
+        if (scopeFlowEdgesRecorded && Number(st(db, "SELECT ready FROM memory_lineage_cert WHERE id=1").get()?.ready ?? 0) === 1 && (!isFoldBulk(db, job.revoke_id, job.root) || certifiedFold(job.root))) {
           st(db, "DELETE FROM memory_deny_pending WHERE thread_id=? AND revoke_id=?").run(PENDING_ALL_THREADS, job.revoke_id);
           st(db, "DELETE FROM memory_deny_pending_scope WHERE scope_id=? AND revoke_id=?").run(PENDING_ALL_SCOPES, job.revoke_id);
           bumpDenyGeneration(db);
@@ -600,7 +804,8 @@ function advance(db: DatabaseSync, job: JobRow, budget: Budget, late: LateBuild 
         if (flowOnly) { save(); return "progress"; }
       }
     } else if (job.phase === "mark") {
-      const done = markStep(db, job, c, budget);
+      const done = markStep(db, job, c, budget, ctx);
+      if (done === "wait") { save(); return progressed ? "progress" : "wait"; }
       if (done === "late") {
         // a lookup table the walk needs is still being built: build a window of it now (the walk resumes on the next slice)
         save();
@@ -629,6 +834,15 @@ function advance(db: DatabaseSync, job: JobRow, budget: Budget, late: LateBuild 
           if (gone) spend(budget, gone);
           if (gone >= n) { progressed = true; continue; }
         }
+        // the last resumable tidy stage of an audience job that finds no other audience job active or seeding and no flip queued: every
+        // cover row and the walker row go, a page per step (DRAIN-104 2.7). Rows a later drain finds are valid; the next quiet tidy takes them.
+        if (audience && REVOKE_COVER.enabled && coverQuiet(db, job.revoke_id)) {
+          const n = page(budget);
+          const gone = Number(st(db, `DELETE FROM memory_revoke_reached WHERE revoke_id=${COVER_REVOKE} AND thread_id IN (SELECT thread_id FROM memory_revoke_reached WHERE revoke_id=${COVER_REVOKE} LIMIT ?)`).run(n).changes);
+          if (gone) { spend(budget, gone); COVER_PROBE.cleanups += gone; }
+          if (gone >= n) { progressed = true; continue; }
+          st(db, `DELETE FROM memory_revoke_reached WHERE revoke_id=${WALKER_REVOKE}`).run();
+        }
         job.phase = "done"; job.state = "done"; c = {}; bumpDenyGeneration(db); save(); pruneFinished(db); return "progress";
       }
     } else if (job.phase === "undo") {
@@ -641,6 +855,11 @@ function advance(db: DatabaseSync, job: JobRow, budget: Budget, late: LateBuild 
   return "progress";
 }
 
+/** Whether no audience job but `self` is active, undoing or seeding and no flip is queued (markerWorkPending's terms, 2.7). */
+function coverQuiet(db: DatabaseSync, self: number): boolean {
+  if (flipQueued(db)) return false;
+  return !st(db, `SELECT 1 AS x FROM memory_revoke_jobs WHERE state IN ('active','undoing','seeding') AND revoke_id<>? AND revoke_id IN (SELECT revoke_id FROM memory_revoke_audience) LIMIT 1`).get(self);
+}
 const ACTIVE_JOBS = "SELECT revoke_id,kind,root,root_lsn,started_lsn,phase,cursor,state FROM memory_revoke_jobs WHERE state IN ('active','undoing') ORDER BY revoke_id LIMIT 16";
 /** The oldest job still narrowing (1.0.3 revoke drain, F3). */
 const FLOW_JOB = "SELECT revoke_id,kind,root,root_lsn,started_lsn,phase,cursor,state FROM memory_revoke_jobs WHERE state='active' AND phase='flow' ORDER BY revoke_id LIMIT 1";
@@ -735,10 +954,71 @@ function runMarkerSlice(db: DatabaseSync, rows: number, ms: number, late: LateBu
       if (exhausted(budget)) return true;
     }
   }
+  if (opts.only === undefined && REVOKE_COVER.enabled) return walkerSlice(db, budget, late);
   for (const row of st(db, opts.only === undefined ? ACTIVE_JOBS : ACTIVE_JOB_ONE).all(...(opts.only === undefined ? [] : [opts.only])) as JobRow[]) {
     const job = { ...row, revoke_id: Number(row.revoke_id) } as JobRow;
     if (advance(db, job, budget, late) === "progress") return true;
   }
+  return false;
+}
+
+// ---- the walker (DRAIN-104 2.6): after the flips, the fold and every flow phase. Undoing jobs first, oldest first; then content jobs in
+// round robin, alternating with audience slices; audience slices alternate (the parity bit) between the walker (the active audience job in
+// phase mark with the greatest walk cap, persisted, sticky while active) and the others in round robin, which only skip under cover. One job
+// per slice; a class with nothing to progress gives the slice to the next. The rotation advances BEFORE a candidate is served, so one that
+// throws (the slice rolls back) is not the next slice's candidate.
+type Rotation = { lastContent: number; lastOther: number; audienceTurn: boolean; parity: boolean };
+const rotations = new WeakMap<DatabaseSync, Rotation>();
+const JOB_COLS = "revoke_id,kind,root,root_lsn,started_lsn,phase,cursor,state";
+const AUDIENCE_IN = "revoke_id IN (SELECT revoke_id FROM memory_revoke_audience)";
+const asJob = (row: Record<string, unknown>) => ({ ...row, revoke_id: Number(row.revoke_id) } as unknown as JobRow);
+/** The walker: the persisted id when it names an active audience job in phase mark, hold or tidy and no audience job in mark has a greater
+ * walk cap; else the active audience job in phase mark with the greatest walk cap (ties: lowest id), persisted as the reserved reached row (WALKER_REVOKE, 'walker'). */
+function walkerJob(db: DatabaseSync): JobRow | undefined {
+  const held = st(db, `SELECT from_lsn AS j FROM memory_revoke_reached WHERE revoke_id=${WALKER_REVOKE} AND thread_id='walker'`).get()?.j;
+  const heldRow = held !== undefined && held !== null ? st(db, `SELECT ${JOB_COLS} FROM memory_revoke_jobs WHERE revoke_id=? AND state='active' AND phase IN ('mark','hold','tidy') AND ${AUDIENCE_IN}`).get(Number(held)) : undefined;
+  let best: JobRow | undefined, bestCap = Number.NEGATIVE_INFINITY;
+  for (const row of st(db, `SELECT ${JOB_COLS} FROM memory_revoke_jobs WHERE state='active' AND phase='mark' AND ${AUDIENCE_IN} ORDER BY revoke_id`).all()) {
+    const job = asJob(row), cap = walkCap(job);
+    if (cap > bestCap) { best = job; bestCap = cap; }
+  }
+  // sticky only while no audience job in mark has a greater cap: a higher cap covers the held walker's work, so it walks instead (1.0.3 drain reopen)
+  if (heldRow) { const job = asJob(heldRow); if (!best || walkCap(job) >= bestCap) return job; }
+  if (best) st(db, `INSERT OR REPLACE INTO memory_revoke_reached(revoke_id,thread_id,from_lsn) VALUES(${WALKER_REVOKE},'walker',?)`).run(best.revoke_id);
+  else if (held !== undefined && held !== null) st(db, `DELETE FROM memory_revoke_reached WHERE revoke_id=${WALKER_REVOKE}`).run();
+  return best;
+}
+/** Round robin over `sql`'s jobs (revoke_id order): the first with revoke_id > last, wrapping, that progresses. */
+function roundRobin(db: DatabaseSync, sql: string, args: unknown[], last: () => number, set: (id: number) => void, serve: (job: JobRow) => Step): boolean {
+  const after = st(db, `${sql} AND revoke_id>? ORDER BY revoke_id LIMIT 16`).all(...args as never[], last());
+  const wrap = after.length < 16 ? st(db, `${sql} AND revoke_id<=? ORDER BY revoke_id LIMIT ?`).all(...args as never[], last(), 16 - after.length) : [];
+  for (const row of [...after, ...wrap]) {
+    const job = asJob(row);
+    set(job.revoke_id); // advanced before it is served
+    if (serve(job) === "progress") return true;
+  }
+  return false;
+}
+function walkerSlice(db: DatabaseSync, budget: Budget, late: LateBuild | null): boolean {
+  const note = (job: JobRow, cls: "undo" | "content" | "walker" | "others") => { if (COVER_TRACE.on) COVER_TRACE.served.push({ job: job.revoke_id, cls }); };
+  for (const row of st(db, `SELECT ${JOB_COLS} FROM memory_revoke_jobs WHERE state='undoing' ORDER BY revoke_id LIMIT 16`).all()) {
+    note(asJob(row), "undo");
+    if (advance(db, asJob(row), budget, late) === "progress") return true;
+  }
+  let rot = rotations.get(db);
+  if (!rot) rotations.set(db, rot = { lastContent: 0, lastOther: 0, audienceTurn: false, parity: false });
+  const audienceFirst = rot.audienceTurn, walkerFirst = !rot.parity;
+  rot.audienceTurn = !rot.audienceTurn;
+  if (audienceFirst) rot.parity = !rot.parity;
+  const walker = walkerJob(db);
+  const content = () => roundRobin(db, `SELECT ${JOB_COLS} FROM memory_revoke_jobs WHERE state='active' AND NOT ${AUDIENCE_IN}`, [],
+    () => rot!.lastContent, id => { rot!.lastContent = id; }, job => { note(job, "content"); return advance(db, job, budget, late); });
+  // a walker in hold returning "wait" is passed over for this slice and stays the walker
+  const walk = () => { if (!walker) return false; note(walker, "walker"); return advance(db, walker, budget, late) === "progress"; };
+  const others = () => roundRobin(db, `SELECT ${JOB_COLS} FROM memory_revoke_jobs WHERE state='active' AND ${AUDIENCE_IN} AND revoke_id<>?`, [walker?.revoke_id ?? 0],
+    () => rot!.lastOther, id => { rot!.lastOther = id; }, job => { note(job, "others"); return advance(db, job, budget, late, false, true); });
+  const audience = walkerFirst ? [walk, others] : [others, walk];
+  for (const take of audienceFirst ? [...audience, content] : [content, ...audience]) if (take()) return true;
   return false;
 }
 /** Whether any revoke still has work (a start-up VACUUM and the idle wait both wait for it). */

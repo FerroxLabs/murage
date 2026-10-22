@@ -28,6 +28,7 @@ import { capturedMessageWithheld, LineageAllowance, messageCopy, messageSourceFo
 import { scopeRow } from "./scope-id.ts";
 import { addTurnParents, writeRecordLineage } from "./lineage-write.ts";
 import type { LineageRef, TurnLineage } from "./lineage-types.ts";
+import { inheritEdge } from "./revoke-commit.ts";
 
 export const BRING_IN_MAX_CHARS = 1000;
 
@@ -172,13 +173,16 @@ export function bringInToProject(db: DatabaseSync, input: {
   const meta = db.prepare("SELECT policy_revision, deletion_epoch FROM memory_meta WHERE id=1").get()!;
   db.prepare("INSERT INTO memory_sources VALUES(?,?,?,?,?,?,?,?,?,?,?,?)").run(newSource, room, origin?.threadId ?? input.roomThreadId, origin?.messageId ?? null, null, 1, hash, "bring-in", origin?.speaker ?? input.botId, "recorded", null, "active");
   db.prepare("INSERT INTO memory_source_versions VALUES(?,?,?,?,?)").run(newSource, 1, hash, payload, input.now);
+  // the copy inherits from every source it names (the memory_source_origins rows the v10 trigger just wrote), turn or not (DRAIN-104 2.11)
+  for (const row of db.prepare("SELECT origin_id FROM memory_source_origins WHERE bring_in_id=?").all(newSource)) inheritEdge(db, { kind: "source", id: newSource }, { kind: "source", id: String(row.origin_id) });
   // no chunking: the brought-in note is the record below
   db.prepare("INSERT INTO memory_jobs(id,source_id,source_revision,stage,stage_version,status,cursor,policy_revision,deletion_epoch) VALUES(?,?,1,'capture','1','complete',?,?,?)")
     .run(randomUUID(), newSource, Buffer.byteLength(text), meta.policy_revision, meta.deletion_epoch);
   const recordId = randomUUID();
   db.prepare("INSERT INTO memory_records VALUES(?,1,?,?,?,'assistant-inference','active',0,?,NULL,NULL,?)").run(recordId, room, kind, text, input.now, input.now);
   db.prepare("INSERT INTO memory_evidence VALUES(?,1,?,1,0,?)").run(recordId, newSource, Buffer.byteLength(text));
-  if (from.record) db.prepare("INSERT INTO memory_derivations VALUES(?,?,?,1)").run(from.record.id, from.record.version, recordId);
+  inheritEdge(db, { kind: "record", id: recordId, version: 1 }, { kind: "source", id: newSource });
+  if (from.record) { db.prepare("INSERT INTO memory_derivations VALUES(?,?,?,1)").run(from.record.id, from.record.version, recordId); inheritEdge(db, { kind: "record", id: recordId, version: 1 }, { kind: "record", id: from.record.id, version: from.record.version }); }
   db.prepare("INSERT INTO memory_projection_receipts VALUES(?,1,0,'pending','pending',NULL)").run(recordId);
   // the copy is a record a bot wrote in its turn: a prefix carry from the turn (2.5); its evidence and derivation are written above
   if (input.turn) writeRecordLineage(db, { kind: "record", id: recordId, version: 1, scopeId: room }, input.turn);

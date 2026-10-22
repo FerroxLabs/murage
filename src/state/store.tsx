@@ -973,6 +973,8 @@ export interface AppState {
   bots: Bot[];
   groups: Group[];
   instances: InstanceInfo[];
+  /** One plain line the engine list shows on a Cloud home (GET /api/instances engineNote); empty on the desktop. */
+  engineNote: string;
   /** Rule 74a, from GET /api/instances; null until the server has said */
   shellEnvironment?: ShellEnvironment | null;
   config: ConfigStatus | null;
@@ -1413,7 +1415,7 @@ export type Action =
   | { type: "deleteGroupTask"; groupId: string; threadId: string }
   /** queueIds: an inject for these queued sends; a no-op once they started. */
   | { type: "interruptGroup"; groupId: string; queueIds?: string[] }
-  | { type: "instances"; instances: InstanceInfo[]; shellEnvironment?: ShellEnvironment | null }
+  | { type: "instances"; instances: InstanceInfo[]; shellEnvironment?: ShellEnvironment | null; engineNote?: string }
   | { type: "configStatus"; config: ConfigStatus }
   | { type: "select"; id: string; threadId?: string }
   | {
@@ -3240,7 +3242,7 @@ function reduceState(state: AppState, action: Action): AppState {
     case "groupDeleted":
       return admitRoomRemoval(state, action, action.origin);
     case "instances":
-      return { ...state, instances: action.instances, ...(action.shellEnvironment !== undefined ? { shellEnvironment: action.shellEnvironment } : {}) };
+      return { ...state, instances: action.instances, engineNote: action.engineNote ?? "", ...(action.shellEnvironment !== undefined ? { shellEnvironment: action.shellEnvironment } : {}) };
     case "configStatus":
       return {
         ...state,
@@ -4059,6 +4061,7 @@ export const initialState: AppState = {
   bots: [],
   groups: [],
   instances: [],
+  engineNote: "",
   config: null,
   selectedId: "",
   activeView: "chat",
@@ -5587,8 +5590,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       {
         key: "instances",
         request: async () => {
-          const { instances, shellEnvironment } = await api("/api/instances");
-          return () => rawDispatch({ type: "instances", instances, shellEnvironment: shellEnvironment ?? null });
+          const { instances, shellEnvironment, engineNote } = await api("/api/instances");
+          return () => rawDispatch({ type: "instances", instances, shellEnvironment: shellEnvironment ?? null, engineNote });
         },
       },
       {
@@ -6107,8 +6110,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // (FOLLOW4). Callers with nothing to tell the user catch it themselves.
   const refreshInstances = useCallback(async () => {
     // An explicit refresh (Enable, Check again, a saved change) rechecks every CLI version.
-    const { instances, shellEnvironment } = await api("/api/instances?fresh=1");
-    rawDispatch({ type: "instances", instances, shellEnvironment: shellEnvironment ?? null });
+    const { instances, shellEnvironment, engineNote } = await api("/api/instances?fresh=1");
+    rawDispatch({ type: "instances", instances, shellEnvironment: shellEnvironment ?? null, engineNote });
   }, []);
   const refreshAfterKey = useCallback(
     () => refreshAfterFluxKey({ request: api, applyConfig: (config) => rawDispatch({ type: "configStatus", config }), refreshInstances }),

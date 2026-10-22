@@ -248,6 +248,8 @@ interface ScopeManifest {
   records: MirrorRecord[];
   /** Murage wrote the scoped mcp_config.json (it is Murage's, and goes with the tree). */
   mounted: boolean;
+  /** Murage wrote the scoped hooks.json of an Ask turn (it is Murage's, and goes with the tree). */
+  askHook?: boolean;
   /** The server process that built the scope. */
   owner?: ProcessRecord;
   /** The agy child that runs in it, once spawned. */
@@ -277,6 +279,9 @@ export function buildAntigravityScopedHome(options: {
   scopeRoot: string;
   name: string;
   servers: Record<string, AntigravityMcpEntry | undefined>;
+  /** An Ask turn's hooks.json (the Ask hard stop, ../ask-stop.ts): written as .gemini/config/hooks.json, Murage's
+   *  own file that goes with the tree like the mount file. The owner's own hooks.json is never mirrored. */
+  askStopHooks?: string;
   ops?: MirrorOps;
   platform?: NodeJS.Platform;
 }): AntigravityScopedHome {
@@ -289,6 +294,7 @@ export function buildAntigravityScopedHome(options: {
   chmodSync(scopeRoot, 0o700);
   const records: MirrorRecord[] = [];
   let mounted = false;
+  let askHook = false;
   try {
     for (const level of scopedLevels()) {
       records.push(...mirrorDirectory(join(realHome, level.rel), join(home, level.rel), level.omit, {
@@ -310,8 +316,14 @@ export function buildAntigravityScopedHome(options: {
       chmodSync(path, 0o600);
     }
     mounted = Object.keys(servers).length > 0;
+    if (options.askStopHooks !== undefined) {
+      const path = join(home, ".gemini", "config", "hooks.json");
+      writeFileSync(path, options.askStopHooks, { mode: 0o600 });
+      chmodSync(path, 0o600);
+      askHook = true;
+    }
     // Written before the turn runs, so a crash mid-turn can still be reconciled at the next start.
-    writeManifest({ realHome, home, records, mounted, owner: ownProcessRecord() });
+    writeManifest({ realHome, home, records, mounted, askHook, owner: ownProcessRecord() });
     liveScopes.add(home);
   } catch (error) {
     // Nothing has run in it yet: only our own links and copies are there.
@@ -328,7 +340,7 @@ export function buildAntigravityScopedHome(options: {
       child = recordOf(pid);
       if (!child) return;
       try {
-        writeManifest({ realHome, home, records, mounted, owner: ownProcessRecord(), child });
+        writeManifest({ realHome, home, records, mounted, askHook, owner: ownProcessRecord(), child });
       } catch (error) {
         console.warn(`antigravity scope ${name}: child not recorded: ${(error as Error).message}`);
       }
@@ -343,7 +355,7 @@ export function buildAntigravityScopedHome(options: {
           console.warn(`antigravity scope ${name}: reconcile deferred: the agy process is still running`);
           return;
         }
-        reconcileScopedHome({ realHome, home, records, mounted }, keptRoot(scopeRoot), name);
+        reconcileScopedHome({ realHome, home, records, mounted, askHook }, keptRoot(scopeRoot), name);
       } catch (error) {
         // The tree and its manifest stay; the next start reconciles them.
         console.warn(`antigravity scope ${name}: reconcile deferred: ${(error as Error).message}`);
@@ -365,7 +377,7 @@ export function recoverScopedHome(scopeRoot: string, name: string): "recovered" 
   let manifest: ScopeManifest | null = null;
   try {
     const parsed = JSON.parse(readFileSync(manifestPath(home), "utf8")) as ScopeManifest;
-    if (parsed && typeof parsed.realHome === "string" && Array.isArray(parsed.records)) manifest = { ...parsed, home, mounted: parsed.mounted === true };
+    if (parsed && typeof parsed.realHome === "string" && Array.isArray(parsed.records)) manifest = { ...parsed, home, mounted: parsed.mounted === true, askHook: parsed.askHook === true };
   } catch { /* no manifest: keep the tree below */ }
   if (manifest) {
     const owner = manifest.owner;
@@ -560,7 +572,7 @@ class Reconciler {
 
 /** Reconcile one scoped home into the real home (see the header), then remove what is left of it: only our own links and mounts. */
 function reconcileScopedHome(manifest: ScopeManifest, keptRootDir: string, name: string): void {
-  const { realHome, home, records, mounted } = manifest;
+  const { realHome, home, records, mounted, askHook } = manifest;
   const r = new Reconciler(keptRootDir, name);
   const mirrored = new Map(records.map((record) => [record.rel, record]));
   let unreconciled = false;
@@ -602,6 +614,7 @@ function reconcileScopedHome(manifest: ScopeManifest, keptRootDir: string, name:
       if (mirrored.has(rel)) continue;
       if (scopedLevels().some((l) => l.rel === rel)) continue; // a level of our own
       if (mounted && rel === join(".gemini", "config", "mcp_config.json")) continue; // our mount file
+      if (askHook && rel === join(".gemini", "config", "hooks.json")) continue; // our Ask hook file
       if (level.omit.has(entry)) {
         // agy wrote a personal-named item (GEMINI.md, a skill) during a bot turn: kept
         // for the owner to look at, never put into or over their personal setup.

@@ -200,20 +200,25 @@ it("retries a failed check on the next turn, then verifies the binary once for e
   expect(versionSpawns()).toBe(3);
 }, 120_000);
 
-// The same card fault, one layer over: a turn that fails because THIS
-// device's computer was not ready is recorded with that source, so its card
-// does not send the person to Provider settings either.
-it.skipIf(process.platform === "win32")("tags a computer that was not ready as a local setup failure, not a provider one", async () => {
+// A bot set to "this computer" before local control is enabled still gets its
+// turn: no error card, the engine receives the message, and the bot is told
+// how to enable local control if the person asks for a computer action.
+it.skipIf(process.platform === "win32")("runs the turn when 'this computer' is chosen but local control is not enabled", async () => {
   const created = await api("POST", "/api/bots", { name: "Computer not ready fixture", modelSelection: { instanceId: "verification", model } });
   const bot = created.body.bot;
   // No CUA Driver descriptor exists in the fixture's data dir, so an explicit
   // "this computer" destination cannot be mounted.
   expect((await api("PATCH", `/api/bots/${bot.id}`, { computer: "local", browser: false, composio: false })).status).toBe(200);
-  expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "use my computer", threadId: bot.threadId })).status).toBe(202);
-  await expect.poll(async () => (await activities(bot.threadId, "error:")).length, { timeout: 20_000 }).toBe(1);
-  const [failure] = await activities(bot.threadId, "error:");
-  expect(failure.tool.name).toBe("error: CUA Driver is not ready for this computer: check permissions and restart Murage");
-  expect(failure.tool.localFailure).toBe("computer");
+  const reached = await runTurn(bot, "use my computer");
+  expect(await activities(bot.threadId, "error:")).toEqual([]);
+  expect(String(reached?.systemPrompt ?? "")).toContain("local control is not enabled yet");
+  expect(reached?.mcpConfig?.mcpServers?.computer).toBeUndefined();
+  // One status note on the first such turn, not on every turn.
+  const note = "Local control is off, so this bot can't use the computer yet. Turn it on in Settings > Computer.";
+  const notes = async () => (await messages(bot.threadId)).filter((m: any) => m.text === note && m.murage?.kind === "status");
+  expect(await notes()).toHaveLength(1);
+  await runTurn(bot, "use my computer again");
+  expect(await notes()).toHaveLength(1);
 }, 60_000);
 
 // A room member's turn binds its browser through the same path, and it used

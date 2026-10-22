@@ -122,7 +122,7 @@ describe.skipIf(!have102 || !rawAgeHost || process.platform === "win32")("the re
     // the installation folder as 1.0.2 itself classifies it (the fixture's fake-engine files are not an installation's)
     const installation = join(a.info.dataDir, "..", `installation-102-${process.pid}`);
     mkdirSync(installation);
-    closers.push(async () => rmSync(installation, { recursive: true, force: true }));
+    closers.push(async () => removeTempDirSync(installation));
     for (const name of readdirSync(a.info.dataDir)) {
       const kind = inventory102.classifyDataDirEntry(name)?.backup;
       if (!kind || kind === "excluded" || kind === "refused" || kind === "sidecar") continue;
@@ -134,7 +134,7 @@ describe.skipIf(!have102 || !rawAgeHost || process.platform === "win32")("the re
 
     // ── 1.0.3: restore the 1.0.2 archive ──
     const target = join(a.info.dataDir, "..", `restored-102-${process.pid}`);
-    closers.push(async () => rmSync(target, { recursive: true, force: true }));
+    closers.push(async () => removeTempDirSync(target));
     const restored = await restoreEncryptedInstallationNew(target, archive, written.sha256, { ageExecutable: keys.ageExecutable, identity: keys.identity });
     expect(restored.status).toBe("restored-review-required");
     const restoredDb = new DatabaseSync(join(target, "messages.db"), { readOnly: true });

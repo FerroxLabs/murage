@@ -10,6 +10,32 @@
 # from a NUL-separated name=value file Murage writes for the turn (its path
 # is MURAGE_EXEC_ENV_FILE). Its content is read as data: never sourced,
 # never evaluated. Two reserved entries carry the directory and the shell.
+#
+# Claude also starts every stdio MCP server through this prefix, handing it that
+# server's own mcp.json `env` in this process's environment. Murage names those
+# variables in MURAGE_EXEC_KEEP (a comma list, set only on MCP servers, never in
+# Claude's own environment), and only they are carried over, on top of the turn's
+# map. A Bash command never has MURAGE_EXEC_KEEP, so it gains nothing. Read first,
+# before this script sets any variable of its own. The whole value is the list
+# (a name with a newline in it is not a name), and a name counts only when it came
+# in the environment (exported), never a variable Bash made itself (UID,
+# BASH_VERSION, ...). SHLVL, PWD, OLDPWD and _ are the shell's own bookkeeping and
+# are never carried. Values are kept in this shell only: they never become a
+# command-line argument of any process (see the exec at the end).
+murage_exec_kept=()
+if [ -n "${MURAGE_EXEC_KEEP-}" ]; then
+  murage_exec_rest="$MURAGE_EXEC_KEEP,"
+  murage_exec_exported='^declare -[A-Za-z]*x'
+  while [ -n "$murage_exec_rest" ]; do
+    murage_exec_name="${murage_exec_rest%%,*}"
+    murage_exec_rest="${murage_exec_rest#*,}"
+    case "$murage_exec_name" in MURAGE_EXEC_*|murage_exec_*|SHLVL|PWD|OLDPWD|_|"") continue ;; esac
+    [[ "$murage_exec_name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    [ -n "${!murage_exec_name+set}" ] || continue
+    [[ "$(declare -p "$murage_exec_name" 2>/dev/null)" =~ $murage_exec_exported ]] || continue
+    murage_exec_kept+=("$murage_exec_name=${!murage_exec_name}")
+  done
+fi
 f="$MURAGE_EXEC_ENV_FILE"
 if [ -z "$f" ] || [ ! -r "$f" ]; then
   echo "murage-exec: the turn environment is not available" >&2
@@ -47,5 +73,28 @@ case "$(uname -s 2>/dev/null)" in
     done
     ;;
 esac
+# `env` below is found through this process's PATH. A turn whose handed PATH is empty or lacks /usr/bin (a login shell that
+# set none, as on a stock Ubuntu) would otherwise fail every command and every MCP server with "env: not found". Only
+# this script's own PATH is widened, and only when `env` is not on it; both execs run `env -i`, so no command sees it.
+if ! command -v env >/dev/null 2>&1; then PATH="/usr/bin:/bin${PATH:+:$PATH}"; fi
 cd -- "$cwd" || exit 126
-exec env -i "${args[@]}" "$shell" -c "$1"
+if [ "${#murage_exec_kept[@]}" -eq 0 ]; then
+  exec env -i "${args[@]}" "$shell" -c "$1"
+fi
+# An MCP server: its values must not appear in any process's arguments. The turn's map and then the server's own
+# values (last, so they win over the turn's) go NUL-separated through descriptor 3 (written by this shell's builtin
+# printf, never an argument) to a Bash started with only the map's names that are not shell names (Windows'
+# ProgramFiles(x86), ...) in its environment, which exports each one as data and then runs the shell exactly as
+# above. Its own bookkeeping (SHLVL, PWD, OLDPWD) is unset first, so the shell sees only what the map and the server
+# list (a read-only name of the shell's own, such as SHELLOPTS, is skipped).
+murage_exec_names=()
+murage_exec_others=()
+for pair in "${args[@]}"; do
+  if [[ "${pair%%=*}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then murage_exec_names+=("$pair"); else murage_exec_others+=("$pair"); fi
+done
+exec 3< <(printf '%s\0' "${murage_exec_names[@]}" "${murage_exec_kept[@]}")
+exec env -i "${murage_exec_others[@]}" "$BASH" -c 'unset SHLVL PWD OLDPWD
+while IFS= read -r -d "" murage_exec_pair <&3; do export "$murage_exec_pair" 2>/dev/null || :; done
+exec 3<&-
+unset murage_exec_pair
+exec "$0" -c "$1"' "$shell" "$1"

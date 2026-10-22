@@ -3,6 +3,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {ownerOnlyIcaclsArguments,restrictToOwner,sddlIsOwnerOnly} from "./backup-windows-acl.mjs";
+import {windowsNative} from "./windows-native.mjs";
+
+// The real-Windows owner-only tests need the engine-exclusion addon. Without it Murage resolves no domain-relative SDDL alias (LA, the
+// built-in Administrator a hosted runner signs in as) and reads no file owner, and refuses: that is the documented behaviour of a
+// source checkout without a build (windows-native.mjs); the packaged app always carries the addon (after-pack refuses one without it).
+// The quality-gates job builds no addon, so there they are skipped by name; the Native addon MSVC job builds it and sets
+// MURAGE_REQUIRE_WINDOWS_NATIVE=1, which turns a missing addon into a failure, never a skip.
+const NEEDS_ADDON="needs the engine-exclusion addon (run by the Native addon MSVC job; always in the packaged app)";
+const realWindows=reason=>process.platform!=="win32"?reason:process.env.MURAGE_REQUIRE_WINDOWS_NATIVE==="1"||windowsNative()?false:NEEDS_ADDON;
+const requireAddon=()=>{if(process.env.MURAGE_REQUIRE_WINDOWS_NATIVE==="1")assert.ok(typeof windowsNative()?.domainSids==="function","the engine-exclusion addon did not load");};
 
 const sid="S-1-5-21-1111111111-2222222222-3333333333-1001";
 test("icacls leaves one explicit ACE for the owner, inherited by everything in a folder",()=>{
@@ -63,20 +73,45 @@ test("whoami output with a comma or quote-like text in the name, or an unusable 
  resetCurrentUserSid();
  assert.equal(withSystemRoot(()=>currentUserSid({runTool:()=>({status:0,stdout:`\r\n"AzureAD\\Lee, Sam","${SIDS.entra}"\r\n`})})),SIDS.entra);
  resetCurrentUserSid();
- // whoami missing or printing something else: the same token, read by .NET.
+ // whoami missing or failing: a refusal, and no second program (there is no PowerShell fallback any more).
  const calls=[];
- assert.equal(withSystemRoot(()=>currentUserSid({runTool:(file,args)=>{calls.push([file,args.at(-1)]);return /whoami/.test(file)?{status:1,stdout:""}:{status:0,stdout:`${SIDS.domain}\r\n`};}})),SIDS.domain);
- assert.equal(calls[1][0],"D:\\WINNT\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");assert.match(calls[1][1],/WindowsIdentity\]::GetCurrent\(\)\.User\.Value/);
+ assert.throws(()=>withSystemRoot(()=>currentUserSid({runTool:(file)=>{calls.push(file);return{status:1,stdout:""};}})),/UNAVAILABLE/);
+ assert.deepEqual(calls,["D:\\WINNT\\System32\\whoami.exe"]);
  resetCurrentUserSid();
  assert.throws(()=>withSystemRoot(()=>currentUserSid({runTool:()=>({status:0,stdout:"S-1-5-18\r\n"})})),/UNAVAILABLE/);
  resetCurrentUserSid();
 });
-test("the ACL is read as SIDs and parsed strictly (W-A1, W-A5)",async()=>{
- const {parseAclListing}=await import("./backup-windows-acl.mjs");
- const acl=parseAclListing(`O:${SIDS.entra}\r\nP:1\r\n0;${SIDS.entra};1f01ff;0\r\n`);
- assert.deepEqual(acl,{owner:SIDS.entra,protected:true,rules:[{allow:true,sid:SIDS.entra,mask:0x1f01ff,inherited:false}]});
- assert.equal(parseAclListing(`O:${SIDS.local}\nP:0\n0;S-1-5-32-545;80000000;1`).rules[0].mask,0x80000000);
- for(const bad of ["","O:LA\nP:1",`O:${SIDS.local}\nP:1\n0;BU;1;0`,`O:${SIDS.local}\nP:1\n2;${SIDS.local};1;0`,`O:${SIDS.local}\nP:yes`])assert.throws(()=>parseAclListing(bad),/ACL_FAILED/);
+import {readFileSync} from "node:fs";
+const fixture=name=>readFileSync(new URL(`../server/testdata/win-nops/${name}`,import.meta.url));
+const utf16=text=>Buffer.from(text,"utf16le");
+const USER="S-1-5-21-1111111111-2222222222-3333333333-1001";
+test("real icacls /save output (UTF-16, name line then SDDL) is parsed into SIDs, rights and flags",async()=>{
+ const {parseSddlAcl,sddlFromSavedAcl}=await import("./backup-windows-acl.mjs");
+ const sddl=name=>sddlFromSavedAcl(utf16(fixture(name).toString("utf8")));
+ const restricted=parseSddlAcl(sddl("icacls-restricted-file.txt"));
+ assert.deepEqual(restricted,{owner:null,protected:true,rules:[{allow:true,sid:USER,mask:0x1f01ff,inherited:false,inheritOnly:false}]});
+ assert.deepEqual(parseSddlAcl(sddl("icacls-restricted-dir.txt")).rules,[{allow:true,sid:USER,mask:0x1f01ff,inherited:false,inheritOnly:false}]);
+ const shared=parseSddlAcl(sddl("icacls-default.txt"));
+ assert.equal(shared.protected,false);
+ assert.deepEqual(shared.rules.map(rule=>[rule.sid,rule.mask,rule.inherited]),[
+  ["S-1-5-21-4444444444-5555555555-6666666666-1013",0x1301bf,true],["S-1-5-32-544",0x1f01ff,true],["S-1-5-18",0x1f01ff,true],["S-1-5-11",0x1301bf,true],["S-1-5-32-545",0x1200a9,true]]);
+ // with and without a byte order mark
+ assert.equal(sddlFromSavedAcl(Buffer.concat([Buffer.from([0xff,0xfe]),utf16("n\r\nD:P(A;;FA;;;SY)\r\n")])),"D:P(A;;FA;;;SY)");
+});
+test("SDDL parsing is strict and fails closed (W-A1, W-A5)",async()=>{
+ const {parseSddlAcl}=await import("./backup-windows-acl.mjs");
+ assert.equal(parseSddlAcl("D:P(D;;FR;;;WD)(A;OICIIO;GA;;;CO)").rules[0].allow,false);
+ assert.equal(parseSddlAcl("D:P(A;;GRGW;;;WD)").rules[0].mask,0xc0000000);
+ // a real C:\ProgramData entry (Windows 11): the object-specific bits by their directory-service names
+ assert.equal(parseSddlAcl("D:PAI(A;OICI;FA;;;WD)(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICIIO;GA;;;CO)(A;OICI;FA;;;BU)(A;CI;DCLCRPCR;;;BU)").rules[5].mask,0x116);
+ assert.equal(parseSddlAcl("D:P(A;;FA;;;LA)",{domains:{account:"S-1-5-21-1111111111-2222222222-3333333333",primary:null,forestRoot:null}}).rules[0].sid,"S-1-5-21-1111111111-2222222222-3333333333-500");
+ for(const bad of ["","D:","D:NO_ACCESS_CONTROL","O:BAD:P(A;;FA;;;SY)","D:P(A;;FA;;;ZZ)","D:P(A;;XXFA;;;SY)","D:P(OA;;FA;;;SY)","D:P(A;;FA;00000000-0000-0000-0000-000000000000;;SY)","D:P(A;BAD;FA;;;SY)","D:P(A;;0xZZ;;;SY)","D:P(XA;;FX;;;S-1-1-0;(@User.x==1))"])assert.throws(()=>parseSddlAcl(bad,{domains:null}),/ACL_FAILED/,bad);
+});
+test("SYSTEM, Administrators and TrustedInstaller count as root by SID, whatever their names",async()=>{
+ const {aclIsPrivateToOwner}=await import("./backup-windows-acl.mjs");
+ const TI="S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
+ for(const owner of ["S-1-5-18","S-1-5-32-544",TI,USER])assert.equal(aclIsPrivateToOwner({owner,protected:true,rules:[{allow:true,sid:USER,mask:0x1f01ff,inherited:false}]},USER),true,owner);
+ assert.equal(aclIsPrivateToOwner({owner:"S-1-5-21-9-9-9-1002",protected:true,rules:[{allow:true,sid:USER,mask:0x1f01ff,inherited:false}]},USER),false);
 });
 test("owner-only (what Murage creates) and private to the owner (what a person may choose) (W-A5)",async()=>{
  const {aclIsOwnerOnly,aclIsPrivateToOwner}=await import("./backup-windows-acl.mjs");
@@ -104,15 +139,35 @@ test("restrictToOwner verifies with the SID listing, not SDDL aliases (W-A1)",as
  assert.throws(()=>withSystemRoot(()=>restrictToOwner("C:\\Users\\SamLee\\Documents\\y.txt",{runTool,readAcl:()=>({owner:SIDS.entra,protected:false,rules:[{allow:true,sid:SIDS.entra,mask:0x1f01ff,inherited:true}]})})),/ACL_FAILED/);
  resetCurrentUserSid();
 });
-test("the ACL read uses .NET and PowerShell's own modules only, so no installed module is ever searched",async()=>{
+test("the ACL read runs icacls /save from System32 into a private temp folder and starts no PowerShell",async()=>{
  const {readAcl}=await import("./backup-windows-acl.mjs");
- const calls=[];const runTool=(file,args,options)=>{calls.push({file,args,options});return{status:0,stdout:`O:${sid}\r\nP:1\r\n0;${sid};1f01ff;0\r\n`};};
- withSystemRoot(()=>assert.deepEqual(readAcl("C:\\Users\\Sam\\x.txt",{runTool}),{owner:sid,protected:true,rules:[{allow:true,sid,mask:0x1f01ff,inherited:false}]}));
- const script=calls[0].args.at(-1);
- assert.match(script,/^\$env:PSModulePath=\$PSHOME\+'\\Modules';/);
- assert.match(script,/\[IO\.Directory\]::GetAccessControl\(\$p\)/);assert.match(script,/\[IO\.File\]::GetAccessControl\(\$p\)/);
- assert.doesNotMatch(script,/Get-Acl/);
- assert.deepEqual(Object.keys(calls[0].options.env).sort(),["MURAGE_ACL_TARGET","SystemRoot"]);
+ const calls=[];const runTool=(file,args)=>{calls.push({file,args});return{status:0,stdout:/whoami/.test(file)?`"desk\\sam","${USER}"`:"Successfully processed 0 files; Failed processing 0 files"};};
+ const readSaved=()=>fixture("icacls-restricted-file.txt").toString("utf8")&&utf16(fixture("icacls-restricted-file.txt").toString("utf8"));
+ withSystemRoot(()=>assert.deepEqual(readAcl("C:\\Users\\Sam\\x.txt",{runTool,readSaved}),{owner:null,protected:true,rules:[{allow:true,sid:USER,mask:0x1f01ff,inherited:false,inheritOnly:false}]}));
+ const save=calls.find(call=>/icacls/.test(call.file));
+ assert.equal(save.file,"D:\\WINNT\\System32\\icacls.exe");
+ assert.deepEqual([save.args[0],save.args[1],save.args[3]],["C:\\Users\\Sam\\x.txt","/save","/q"]);
+ assert.match(save.args[2],/murage-acl-[^\\\/]+[\\\/]acl\.txt$/);
+ assert.ok(!calls.some(call=>/powershell|pwsh/i.test(call.file)));
+ // icacls failing, or writing something unexpected, is a refusal
+ withSystemRoot(()=>{
+  assert.throws(()=>readAcl("C:\\x",{runTool:(file)=>/icacls/.test(file)?{status:5,stdout:""}:{status:0,stdout:`"a","${USER}"`},readSaved}),/ACL_FAILED/);
+  assert.throws(()=>readAcl("C:\\x",{runTool,readSaved:()=>utf16("only one line\r\n")}),/ACL_FAILED/);
+ });
+});
+test("assertPrivateToOwner reads the owner too (the addon's SID), and an unknown owner is refused",async()=>{
+ const awaitedAcl=await import("./backup-windows-acl.mjs");const {assertPrivateToOwner,resetCurrentUserSid,readAcl}=awaitedAcl;
+ const run=(file)=>/whoami/.test(file)?{status:0,stdout:`"testpc\\tester","${USER}"`}:{status:0,stdout:""};
+ const readSaved=()=>utf16("plain.txt\r\nD:P(A;;FA;;;S-1-5-21-1111111111-2222222222-3333333333-1001)\r\n");
+ const target="F:\\Temp\\Codex\\test\\acl\\plain.txt";
+ const check=native=>assertPrivateToOwner(target,{runTool:run,readAcl:file=>readAcl(file,{runTool:run,readSaved,withOwner:true,native})});
+ resetCurrentUserSid();
+ withSystemRoot(()=>{
+  for(const owner of [USER,"S-1-5-32-544"])assert.doesNotThrow(()=>check({fileOwnerSid:()=>owner}));
+  assert.throws(()=>check({fileOwnerSid:()=>"S-1-5-21-9-9-9-1002"}),/ACL_SHARED/);
+  assert.throws(()=>check(null),/ACL_SHARED/);
+ });
+ resetCurrentUserSid();
 });
 test("entries written on the file itself (an administrator's default ACL) are removed by SID, then verified again",async()=>{
  const {restrictToOwner,restrictToOwnerAsync,removeIcaclsArguments,resetCurrentUserSid}=await import("./backup-windows-acl.mjs");
@@ -133,7 +188,8 @@ test("entries written on the file itself (an administrator's default ACL) are re
  }
  assert.throws(()=>removeIcaclsArguments("C:\\x","S-1-5-18;x"),/ACL_FAILED/);assert.throws(()=>removeIcaclsArguments("\\\\server\\x","S-1-5-18"),/PATH_INVALID/);
 });
-test("real Windows: this account's SID comes from the token and a new file is made owner-only (W-A1)",{skip:process.platform!=="win32"&&"real icacls and ACL read only"},async t=>{
+test("real Windows: this account's SID comes from the token and a new file is made owner-only (W-A1)",{skip:realWindows("real icacls and ACL read only")},async t=>{
+ requireAddon();
  const {currentUserSid,readAcl,restrictToOwner,aclIsOwnerOnly,resetCurrentUserSid}=await import("./backup-windows-acl.mjs");
  const {mkdtempSync,writeFileSync}=await import("node:fs");const {tmpdir}=await import("node:os");const path=(await import("node:path")).default;
  const {safeWipeSync}=await import("../server/testing/safe-wipe.mjs");
@@ -147,14 +203,9 @@ test("real Windows: this account's SID comes from the token and a new file is ma
 });
 test("a FAT32 or exFAT drive is known to hold no ACLs; anything unclear counts as NTFS (K-10 copies)",async()=>{
  const {volumeKeepsAcls}=await import("./backup-windows-acl.mjs");
- const answer=stdout=>()=>({status:0,stdout});
- withSystemRoot(()=>{
-  assert.equal(volumeKeepsAcls("E:\\copy",{runTool:answer("FAT32\r\n")}),false);
-  assert.equal(volumeKeepsAcls("E:\\copy",{runTool:answer("exFAT\r\n")}),false);
-  assert.equal(volumeKeepsAcls("C:\\Users\\x",{runTool:answer("NTFS\r\n")}),true);
-  assert.equal(volumeKeepsAcls("C:\\Users\\x",{runTool:()=>({status:1,stdout:""})}),true);
-  assert.equal(volumeKeepsAcls("\\\\server\\share",{runTool:answer("FAT32")}),true);
- });
+ const drive=format=>({driveInfo:()=>format===null?null:{type:"Fixed",format}});
+ for(const [format,keeps] of [["FAT32",false],["exFAT",false],["FAT",false],["NTFS",true],["ReFS",true],[null,true]])assert.equal(volumeKeepsAcls("E:\\copy",{native:drive(format)}),keeps,String(format));
+ assert.equal(volumeKeepsAcls("\\\\server\\share",{native:drive("FAT32")}),true);
 });
 test("the asynchronous forms (for Electron's main process) follow the same rules",async()=>{
  const {currentUserSidAsync,restrictToOwnerAsync,assertPrivateToOwnerAsync,volumeKeepsAclsAsync,resetCurrentUserSid}=await import("./backup-windows-acl.mjs");
@@ -168,10 +219,10 @@ test("the asynchronous forms (for Electron's main process) follow the same rules
   await assert.rejects(restrictToOwnerAsync("C:\\Users\\SamLee\\y",{runTool:async file=>/icacls/.test(file)?{status:5}:{status:0,stdout:""},readAcl:async()=>null}),/ACL_FAILED/);
   await assert.rejects(assertPrivateToOwnerAsync("C:\\Users\\Public\\p.txt",{runTool,readAcl:async()=>({owner:SIDS.entra,protected:false,rules:[{allow:true,sid:SIDS.entra,mask:0x1f01ff,inherited:true},{allow:true,sid:"S-1-5-32-545",mask:0x1200a9,inherited:true}]})}),/BACKUP_WINDOWS_ACL_SHARED/);
   await assertPrivateToOwnerAsync("C:\\Users\\SamLee\\Documents\\p.txt",{runTool,readAcl:async()=>({owner:SIDS.entra,protected:false,rules:[{allow:true,sid:"S-1-5-18",mask:0x1f01ff,inherited:true},{allow:true,sid:SIDS.entra,mask:0x1f01ff,inherited:true}]})});
-  assert.equal(await volumeKeepsAclsAsync("E:\\x",{runTool:async()=>({status:0,stdout:"exFAT\r\n"})}),false);
-  assert.equal(await volumeKeepsAclsAsync("C:\\x",{runTool:async()=>({status:0,stdout:"NTFS\r\n"})}),true);
-  // A whoami that fails falls back to .NET's reading of the same token.
+  assert.equal(await volumeKeepsAclsAsync("E:\\x",{native:{driveInfo:()=>({type:"Removable",format:"exFAT"})}}),false);
+  assert.equal(await volumeKeepsAclsAsync("C:\\x",{native:{driveInfo:()=>({type:"Fixed",format:"NTFS"})}}),true);
+  // A whoami that fails is a refusal: there is no PowerShell fallback.
   resetCurrentUserSid();
-  assert.equal(await currentUserSidAsync({runTool:async file=>/whoami/.test(file)?{status:1,stdout:""}:{status:0,stdout:`${SIDS.local}\r\n`}}),SIDS.local);
+  await assert.rejects(currentUserSidAsync({runTool:async file=>/whoami/.test(file)?{status:1,stdout:""}:{status:0,stdout:`${SIDS.local}\r\n`}}),/UNAVAILABLE/);
  }finally{resetCurrentUserSid();if(saved===undefined)delete process.env.SystemRoot;else process.env.SystemRoot=saved;}
 });

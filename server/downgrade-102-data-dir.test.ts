@@ -56,6 +56,11 @@ describe("1.0.3 data-folder names after memory-downgrade --to 10", () => {
     writeFileSync(join(DATA_DIR, "frozen-replies-recovery.json"), JSON.stringify({ rowid: 42, done: true })); // written on every 1.0.3 start
     mkdirSync(join(DATA_DIR, "env"), { recursive: true });
     writeFileSync(join(DATA_DIR, "env", "owner-env.0123456789abcdef"), "PATH=/bin\0HOME=/h\0");
+    // a Claude turn's settings overlay left by a crash (claude-private.ts removes it at turn end and at 1.0.3 startup; 1.0.2 never does)
+    mkdirSync(join(DATA_DIR, "claude-private"), { recursive: true, mode: 0o700 });
+    writeFileSync(join(DATA_DIR, "claude-private", "settings.0123456789abcdef.json"), "{}", { mode: 0o600 });
+    // the Claude sign-in card's remembered answers (1.0.3 writes it when the owner answers the card; 1.0.2 has no such card)
+    writeFileSync(join(DATA_DIR, "claude-signin-answers.json"), "{}", { mode: 0o600 });
     expect(readdirSync(DATA_DIR).filter(name => !classifiedBy102(name)).sort()).toEqual([...DATA_DIR_NAMES_AFTER_102].sort());
 
     expect(downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ status: "downgraded", to: 10 });

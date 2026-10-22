@@ -4,7 +4,7 @@ import { createInterface } from "node:readline";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-if (process.argv.includes("--version")) { console.log("grok 1.0.60 fixture"); process.exit(0); }
+if (process.argv.includes("--version")) { console.log("grok 1.0.62 fixture"); process.exit(0); }
 const home = process.env.GROK_HOME || join(process.env.HOME!, ".grok");
 const calls: Array<{ method: string; params: any }> = [];
 const dump = () => { if (process.env.FAKE_GROK_DUMP) writeFileSync(process.env.FAKE_GROK_DUMP, JSON.stringify({ argv: process.argv.slice(2), grokHome: home,
