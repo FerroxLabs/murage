@@ -1378,3 +1378,4 @@ tools/flux-stream-conformance/pack.test.ts	extended
 tools/flux-stream-conformance/wer.test.ts	delete (pending review; runs here until then)
 tools/flux-stream-sim/providers/assemblyai.test.ts	extended
 tools/flux-stream-sim/sim.test.ts	extended
+server/memory/zz-probe-r6mac.test.ts	extended
