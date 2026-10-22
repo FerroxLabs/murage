@@ -20,7 +20,7 @@ const rowSchema=z.object({
   terminalKind:z.enum(DIAGNOSTIC_FAILURE_KINDS).optional(),observedKind:z.enum(DIAGNOSTIC_FAILURE_KINDS).optional(),
   pendingMethods:z.array(method).max(8).optional(),pendingCount:natural.optional(),
   reason:z.enum(["user_cancel","driver_dispose","turn_complete","turn_failure","cancel_timeout","unspecified"]).optional(),
-  route:z.enum(["windows_taskkill","windows_child_kill","posix_group_sigterm","posix_child_sigterm","already_exited"]).optional(),
+  route:z.enum(["windows_job","windows_taskkill","windows_child_kill","posix_group_sigterm","posix_child_sigterm","already_exited"]).optional(),
   result:z.enum(["requested","succeeded","failed","fallback"]).optional(),
   errno:z.enum(["ENOENT","EACCES","EPERM","ESRCH","EINVAL","ENAMETOOLONG","E2BIG","EAGAIN","ENOMEM","EMFILE","ETIMEDOUT","EPIPE","ECHILD","other"]).optional(),
   code:integer.nullable().optional(),signal:z.string().refine(value=>Object.hasOwn(osConstants.signals,value)).nullable().optional(),

@@ -25,6 +25,7 @@ import { captureWork } from "./memory/chunks.ts";
 import { refreshMemoryCheckpoint } from "./memory/consolidate.ts";
 import { correctMemory, ownerMemoryTicket, saveMemoryCandidate } from "./memory/authority.ts";
 import { forgetMemory } from "./memory/forget.ts";
+import { drainRevokeMarker } from "./memory/memory-revocation.ts";
 import { buildMemoryBundle, hydrateMemoryRecord } from "./memory/bundle.ts";
 import { MEMORY_HANDLE_LIMIT } from "../shared/memory.ts";
 import { searchMemory, type MemorySearchBridge } from "./memory/search.ts";
@@ -93,7 +94,9 @@ function daxRoomReply() {
   return { record, job };
 }
 const chunkOf = (sourceId: string) => database().prepare("SELECT r.id,r.version FROM memory_evidence e JOIN memory_records r ON r.id=e.record_id AND r.version=e.record_version WHERE e.source_id=? AND r.kind='source' AND r.state='active'").get(sourceId) as { id: string; version: number };
-const forget = (record: string) => forgetMemory(ownerMemoryTicket(), { kind: "record", id: record });
+// forget marks inside a wall-clock slice; on a loaded runner the marker is not done on return, and a source still "checking" reads the limit
+// error before the withheld-reply check. Finish the marker so the tests judge the settled state, as on a fast machine.
+const forget = (record: string) => { const out = forgetMemory(ownerMemoryTicket(), { kind: "record", id: record }); drainRevokeMarker(database()); return out; };
 
 it("gap 1: the chunk captured from a withheld room reply is not recalled or found again", async () => {
   const { record } = daxRoomReply();

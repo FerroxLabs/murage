@@ -15,6 +15,7 @@ icon: Clock
 - **Each app gets only the grants you give it.** A connected app asks before it reaches a new tool, and what you allow stays with that app and that bot.
 - **A routine's remembered approvals stay with the bot that runs it.** Another bot cannot borrow them.
 - **The settings that decide what an engine may do are protected.** A bot cannot change them from inside a turn; you change them in Settings.
+- **Murage's own approval hooks stay Murage's.** Bots cannot change them, at any access level, including Full access and No limits.
 
 ## Approvals on your phone and in calls in 1.0.3
 
@@ -57,6 +58,8 @@ icon: Clock
 ## Engines in 1.0.3
 
 - **Fuigo 1.0.31.** Murage 1.0.3 comes with Fuigo 1.0.31 bundled.
+- **Antigravity at Auto asks first in projects with their own hooks.** When a project carries its own Antigravity hooks file, the turn runs as at Ask, so every change waits for you.
+- **OpenClaw 2026.8.1 or newer.** Murage works with OpenClaw from version 2026.8.1. At Ask, OpenClaw asks before it runs anything. At Auto and Full access it follows your own OpenClaw command settings, as in 1.0.2.
 
 ## Murage Cloud in 1.0.3
 
@@ -81,6 +84,7 @@ icon: Clock
 - **On Windows, Codex sessions start cleanly.** Murage hands Codex its session hook in a form the Windows command line reads exactly, so every Codex session starts with its approval check connected.
 - **On Windows, in-project files are recognized even under short folder names.** Murage reads every part of a path by its full folder name, so a path written in the short form (such as RUNNER~1) is still known to be inside your project.
 - **Engines on Windows always get the live environment.** Every engine start reads Murage's current environment, so a value Murage sets or removes later reaches the next engine.
+- **On Windows with Git installed, every Ask shows its approval card.** Asks made through Git Bash reach Murage's approval check, so each one waits for your answer.
 - **Skill links are replaced in place.** When a routine moves to a new skill bundle, Murage removes the old link and creates the new one itself, so scheduled routines keep running.
 - **Windows folders and links follow the system's own rules.** Removing a skill link removes the link and never the files behind it, and recursive removal walks the tree itself and never follows a link out of it.
 
@@ -96,6 +100,7 @@ icon: Clock
 - **First paint is back under budget,** with the engine sign-in work moved out of the way.
 - **Routines due at boot run.** A routine that came due while Murage was closed runs when it starts and frees its thread.
 - **Threads recover from a failed turn.** A turn whose own failure handling fails keeps the thread it was using.
+- **A bot picks up the conversation right after a restart.** The first turn after Murage restarts rebuilds the conversation in full, so the bot carries on where you left off.
 - **The packaged app boots the same way a development build does.** The packaged server ships the exec helper and the websocket bundle next to the app.
 - **Phone store apps stay on your own content.** In the store builds, no page that sells, signs you up or opens checkout is shown.
 - **First run waits to know where it is.** Setup steps are drawn once the surface is known.
@@ -113,6 +118,7 @@ Always ask reads a command as it is written. It is a strong first line, and a fe
 - **Options placed after the command a helper runs** are not read.
 - **A very long run of short options before an inline command** is not read.
 - **Some ordinary commands ask when they need not.** Listing your home folder by its full program path, listing it into a file, or copying from it with rsync can each show one extra card.
+- **OpenClaw at Auto and Full access follows your own OpenClaw command settings, as in 1.0.2,** and Always ask does not read its commands first. At Ask, OpenClaw still asks before it runs anything.
 
 ### Delegate follow-through
 
@@ -123,6 +129,8 @@ Always ask reads a command as it is written. It is a strong first line, and a fe
 
 - **After upgrading a large install, earlier memory finishes its background check over a few hours.** On a large real install it took about 3 hours, at about 17 MiB a minute. Rooms can answer a little slower until it finishes.
 - **Delegated replies from turns that began before a change wait for that check.** New turns are not held.
+- **Memory added while a forget or an edit is still being cleaned up appears once that cleanup finishes.** Until then a bot answers without it. Small installs finish in seconds; on a large install it can take a few hours.
+- **Right after a large delete or forget, a bot's first reply can take about 5 seconds longer** while the cleanup keeps its steady pace.
 - **The per-minute budget is a steady, bounded pace, not an exact write limit.** It counts the work Murage charges, not exact bytes written or all disk activity.
 - **An in-line change by you is charged at an estimate.** Its real bytes commit with that change and are not measured, so they can land after the charge has expired if it stays open longer than a minute.
 - **The estimate follows a change in cost after a few slices,** so for a short stretch the charge can run below the real cost, and very costly rows are charged at a ceiling.

@@ -1206,7 +1206,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
 
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     expect(seen.argv[seen.argv.indexOf("--tools") + 1]).toBe("Read,WebFetch");
-    expect(seen.argv[seen.argv.indexOf("--disallowedTools") + 1]).toBe("Bash(git *),Edit");
+    expect(seen.argv[seen.argv.indexOf("--disallowedTools") + 1]).toBe(process.platform === "win32" ? "Bash(git *),Edit,PowerShell" : "Bash(git *),Edit"); // Windows: the wrapped Bash turn denies the CLI's PowerShell tool (claudeShellSetup)
   });
 
   it("passes an explicit empty available set to disable every Claude built-in", async () => {
@@ -1219,7 +1219,9 @@ describe("ClaudeDriver turns (fake CLI)", () => {
 
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     expect(seen.argv[seen.argv.indexOf("--tools") + 1]).toBe("");
-    expect(seen.argv).not.toContain("--disallowedTools");
+    // Windows: the murage-exec turn always denies the CLI's PowerShell tool (claudeShellSetup), so the owner's empty list gains just that
+    if (process.platform === "win32") expect(seen.argv[seen.argv.indexOf("--disallowedTools") + 1]).toBe("PowerShell");
+    else expect(seen.argv).not.toContain("--disallowedTools");
   });
 
   it("mounts the dweb proxy from the drivers directory and pre-allows its tools", async () => {

@@ -703,7 +703,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "url": "https://murage.app/docs/changelog/v1-0-3#apps-and-engine-settings-in-1-0-3",
-    "text": "- Each app gets only the grants you give it. A connected app asks before it reaches a new tool, and what you allow stays with that app and that bot.\n- A routine's remembered approvals stay with the bot that runs it. Another bot cannot borrow them.\n- The settings that decide what an engine may do are protected. A bot cannot change them from inside a turn; you change them in Settings."
+    "text": "- Each app gets only the grants you give it. A connected app asks before it reaches a new tool, and what you allow stays with that app and that bot.\n- A routine's remembered approvals stay with the bot that runs it. Another bot cannot borrow them.\n- The settings that decide what an engine may do are protected. A bot cannot change them from inside a turn; you change them in Settings.\n- Murage's own approval hooks stay Murage's. Bots cannot change them, at any access level, including Full access and No limits."
   },
   {
     "id": "changelog/v1-0-3#approvals-on-your-phone-and-in-calls-in-1-0-3",
@@ -783,7 +783,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "url": "https://murage.app/docs/changelog/v1-0-3#engines-in-1-0-3",
-    "text": "- Fuigo 1.0.31. Murage 1.0.3 comes with Fuigo 1.0.31 bundled."
+    "text": "- Fuigo 1.0.31. Murage 1.0.3 comes with Fuigo 1.0.31 bundled.\n- Antigravity at Auto asks first in projects with their own hooks. When a project carries its own Antigravity hooks file, the turn runs as at Ask, so every change waits for you.\n- OpenClaw 2026.8.1 or newer. Murage works with OpenClaw from version 2026.8.1. At Ask, OpenClaw asks before it runs anything. At Auto and Full access it follows your own OpenClaw command settings, as in 1.0.2."
   },
   {
     "id": "changelog/v1-0-3#murage-cloud-in-1-0-3",
@@ -813,7 +813,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "url": "https://murage.app/docs/changelog/v1-0-3#windows-in-1-0-3",
-    "text": "- On Windows, Codex sessions start cleanly. Murage hands Codex its session hook in a form the Windows command line reads exactly, so every Codex session starts with its approval check connected.\n- On Windows, in-project files are recognized even under short folder names. Murage reads every part of a path by its full folder name, so a path written in the short form (such as RUNNER~1) is still known to be inside your project.\n- Engines on Windows always get the live environment. Every engine start reads Murage's current environment, so a value Murage sets or removes later reaches the next engine.\n- Skill links are replaced in place.…"
+    "text": "- On Windows, Codex sessions start cleanly. Murage hands Codex its session hook in a form the Windows command line reads exactly, so every Codex session starts with its approval check connected.\n- On Windows, in-project files are recognized even under short folder names. Murage reads every part of a path by its full folder name, so a path written in the short form (such as RUNNER~1) is still known to be inside your project.\n- Engines on Windows always get the live environment. Every engine start reads Murage's current environment, so a value Murage sets or removes later reaches the next engine.\n- On Windows with Git installed, every Ask shows its approval card.…"
   },
   {
     "id": "changelog/v1-0-3#moving-to-1-0-2-and-back-in-1-0-3",
@@ -863,7 +863,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "url": "https://murage.app/docs/changelog/v1-0-3#memory-change-settling",
-    "text": "- After upgrading a large install, earlier memory finishes its background check over a few hours. On a large real install it took about 3 hours, at about 17 MiB a minute. Rooms can answer a little slower until it finishes.\n- Delegated replies from turns that began before a change wait for that check. New turns are not held.\n- The per-minute budget is a steady, bounded pace, not an exact write limit. It counts the work Murage charges, not exact bytes written or all disk activity.\n- An in-line change by you is charged at an estimate. Its real bytes commit with that change and are not measured, so they can land after the charge has expired if it stays open longer than a minute.…"
+    "text": "- After upgrading a large install, earlier memory finishes its background check over a few hours. On a large real install it took about 3 hours, at about 17 MiB a minute. Rooms can answer a little slower until it finishes.\n- Delegated replies from turns that began before a change wait for that check. New turns are not held.\n- Memory added while a forget or an edit is still being cleaned up appears once that cleanup finishes. Until then a bot answers without it. Small installs finish in seconds; on a large install it can take a few hours.\n- Right after a large delete or forget, a bot's first reply can take about 5 seconds longer while the cleanup keeps its steady pace.…"
   },
   {
     "id": "computers/cloud-and-vps#box-cloud-computer",

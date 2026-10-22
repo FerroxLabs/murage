@@ -35,6 +35,7 @@ import { messagedRow, type CommsBus } from "./comms-visibility.ts";
 import { DATA_DIR } from "./config.ts";
 import { newId } from "./contracts.ts";
 import type { ApprovalBus } from "./peer-approval.ts";
+import { turnSucceeded } from "./turn-outcome.ts";
 import { ROUTINE_PERMISSION_MODES, type RoutinePeerSource } from "./routine-permissions.ts";
 
 import type { BotRecord, Store } from "./store.ts";
@@ -1132,6 +1133,15 @@ export function queueDelegation(
     ...(bus.store.groupByThread(sourceThreadId) ? { from: { botId: from.id, name: from.name, color: from.color } } : {}),
   });
   return { result: "ok", id };
+}
+
+/** A source thread's turn ended: what it queued runs only when the turn ran to its end (turnSucceeded). A failed turn, a
+ * Stop (the owner's or a host's) and Murage's own Ask stop all drop the turn's queue instead (STOP1), so a hand-off a
+ * halted Ask turn queued never runs later. Returns which it did. */
+export function settleQueuedDelegations(bus: CommsBus, approvalBus: ApprovalBus, threadId: string, event: { ok: boolean; stopReason?: string | null }, fromBotId?: string): "discarded" | "drained" {
+  if (!turnSucceeded(event)) { discardDelegations(bus, threadId, fromBotId); return "discarded"; }
+  drainDelegations(bus, approvalBus, threadId);
+  return "drained";
 }
 
 /** Drain queued delegations for a source thread (called on its turn.completed): the queue walk and nothing else. Every item goes to dispatchHandoff

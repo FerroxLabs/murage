@@ -1137,6 +1137,7 @@ const fs = require("node:fs");
 const out = (frame) => process.stdout.write(JSON.stringify(frame) + "\\n");
 if (process.argv[2] === "--version") { process.stdout.write("2.1.295 (Claude Code)\\n"); process.exit(0); }
 if (process.env.MINI_PIDS) fs.appendFileSync(process.env.MINI_PIDS, process.pid + "\\n");
+const mcpConfig = (() => { const at = process.argv.indexOf("--mcp-config"); try { return at < 0 ? {} : JSON.parse(fs.readFileSync(process.argv[at + 1], "utf8")); } catch { return {}; } })();
 if (process.env.MINI_STUBBORN === "1") {
   process.on("SIGTERM", () => {});
   process.on("SIGHUP", () => {});
@@ -1154,6 +1155,12 @@ process.stdin.on("data", (chunk) => {
     buffer = buffer.slice(at + 1);
     let msg;
     try { msg = JSON.parse(line); } catch { continue; }
+    // As the real CLI does: mcp_status answers every server of its --mcp-config, connected. Unanswered, a fresh process costs the
+    // whole first-answer wait (on Windows the required-server wait, 15 s: mcpFirstAnswerMs), which no test here is about.
+    if (msg.type === "control_request" && msg.request && msg.request.subtype === "mcp_status") {
+      out({ type: "control_response", response: { subtype: "success", request_id: msg.request_id, response: { mcpServers: Object.keys(mcpConfig.mcpServers || {}).map((name) => ({ name, status: "connected" })) } } });
+      continue;
+    }
     if (msg.type !== "user") continue;
     const text = typeof msg.message.content === "string" ? msg.message.content : "";
     const log = (line) => { if (process.env.MINI_LOG) fs.appendFileSync(process.env.MINI_LOG, line + "\\n"); };
@@ -1525,6 +1532,47 @@ describe("ClaudeDriver intent prewarm (fake CLI)", () => {
     await warmPool.tick();
     expect(warmPool.idleCount()).toBe(0);
     await eventually(() => lines.filter((l) => l.includes("claude close thread=t-pw-release reason=activity window")).length === 2);
+  });
+
+  // 1.0.3 Windows gate (thread ba2a7f9a): after the engine went away and a fresh one started, an Ask tool call was
+  // denied as "permission broker unavailable" with no card. The respawned engine must reach a live broker.
+  it("after the engine goes away and a fresh one starts, an Ask tool call raises a card", async () => {
+    await create();
+    await goCold("t-brokerrsp-respawn");
+    process.env.FAKE_CLAUDE_PERM_TOOL = "Bash";
+    process.env.FAKE_CLAUDE_PERM_INPUT = JSON.stringify({ command: "rm -rf ~/Documents" });
+    try {
+      const sent = await instance.adapter.sendTurn({ threadId: "t-brokerrsp-respawn", text: "__fixture_permission_tool__", ...base, resumeCursor: sessions.get("t-brokerrsp-respawn") });
+      expect(dispatches().at(-1)).toMatch(/process=spawned reason=(no-process|process-exited)/);
+      const opened = await recorder.until((e) => e.type === "request.opened" && e.threadId === "t-brokerrsp-respawn");
+      await instance.adapter.respondToRequest(opened.threadId, opened.requestId!, { behavior: "deny" });
+      await recorder.until((e) => e.type === "item.completed" && e.threadId === "t-brokerrsp-respawn" && e.itemType === "assistant_text" && /permission: denied/.test(e.text));
+      await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
+    } finally {
+      delete process.env.FAKE_CLAUDE_PERM_TOOL;
+      delete process.env.FAKE_CLAUDE_PERM_INPUT;
+    }
+  });
+
+  it("a proxy that cannot reach the broker still denies, opens no card, and the app log says why", async () => {
+    const errors: string[] = [];
+    const error = vi.spyOn(console, "error").mockImplementation((line: unknown) => { if (typeof line === "string") errors.push(line); });
+    await create();
+    process.env.FAKE_CLAUDE_PERM_TOOL = "Bash";
+    process.env.FAKE_CLAUDE_PERM_INPUT = JSON.stringify({ command: "rm -rf ~/Documents" });
+    process.env.FAKE_CLAUDE_PERM_SOCKET = join(scratch, "brokerrsp-nothing-listens.sock");
+    try {
+      const sent = await instance.adapter.sendTurn({ threadId: "t-brokerrsp-down", text: "__fixture_permission_tool__", ...base });
+      await recorder.until((e) => e.type === "item.completed" && e.threadId === "t-brokerrsp-down" && e.itemType === "assistant_text" && /permission: denied/.test(e.text));
+      await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
+      expect(recorder.events.some((e) => e.type === "request.opened" && e.threadId === "t-brokerrsp-down")).toBe(false);
+      expect(errors.some((line) => line.startsWith("claude permission broker unreachable thread=t-brokerrsp-down"))).toBe(true);
+    } finally {
+      delete process.env.FAKE_CLAUDE_PERM_TOOL;
+      delete process.env.FAKE_CLAUDE_PERM_INPUT;
+      delete process.env.FAKE_CLAUDE_PERM_SOCKET;
+      error.mockRestore();
+    }
   });
 
   it("holdIdle (a deleted conversation is being removed from the engine's files) closes the idle engine, warms nothing while held, and allows it again after", async () => {

@@ -46,6 +46,16 @@ export const MCP_WAIT_CHIP_AFTER_MS = 1_500;
 const MIN_RECONNECT_WINDOW_MS = 1_000;
 const POLL_MS = 250;
 export const MCP_STATUS_ANSWER_MS = 3_000;
+/** How long a fresh engine's FIRST status answer is waited for. A Claude CLI on
+ * Windows takes longer to start reading its control requests: on the 1.0.3 gate
+ * (CLI 2.1.307, Vultr and a second Windows box) no first answer came within 3 s on any new
+ * process, so the turn went ahead unchecked with the CLI's own start-up hold
+ * off, and two such turns marked the build unsupported. There the first answer
+ * gets the whole required-server wait. The same CLI answers within 3 s on Linux
+ * and macOS, where a build that never answers keeps costing only 3 s. */
+export function mcpFirstAnswerMs(platform: NodeJS.Platform = process.platform): number {
+  return platform === "win32" ? Math.max(MCP_STATUS_ANSWER_MS, mcpRequiredWaitMs()) : MCP_STATUS_ANSWER_MS;
+}
 
 const envMs = (name: string, fallback: number): number => {
   const value = Number(process.env[name]);
@@ -210,7 +220,7 @@ export interface McpGateResult {
 export async function awaitRequiredMcp(
   servers: { required: string[]; optional: string[] },
   io: McpGateIo,
-  budgets: { requiredMs?: number; optionalMs?: number; recoveryMs?: number } = {},
+  budgets: { requiredMs?: number; optionalMs?: number; recoveryMs?: number; firstAnswerMs?: number } = {},
 ): Promise<McpGateResult> {
   const now = io.now ?? Date.now;
   const sleep = io.sleep ?? ((ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms).unref?.(); }));
@@ -231,13 +241,23 @@ export async function awaitRequiredMcp(
     };
   };
   if (!servers.required.length && !servers.optional.length) return result({ missing: [] });
-  const statusNow = () => io.status(Math.max(1, Math.min(MCP_STATUS_ANSWER_MS, deadline - now())));
-  let slowShown = false;
   let states: Map<string, McpServerState> | null = null;
+  // Until the engine first answers, it may still be starting (mcpFirstAnswerMs).
+  const firstAnswerMs = Math.max(MCP_STATUS_ANSWER_MS, Math.min(budgets.firstAnswerMs ?? MCP_STATUS_ANSWER_MS, requiredMs));
+  const statusNow = () => io.status(Math.max(1, Math.min(states ? MCP_STATUS_ANSWER_MS : firstAnswerMs, deadline - now())));
+  let slowShown = false;
   const reconnecting = new Map<string, Promise<void>>();
   for (;;) {
     if (io.stopped()) return result({ missing: [], stopped: true });
-    const answer = await statusNow();
+    const asking = statusNow();
+    // A long wait for the first answer shows the same chip as a wait for a server.
+    if (!states && !slowShown && io.onSlow && firstAnswerMs > MCP_STATUS_ANSWER_MS) {
+      let answered = false;
+      void asking.finally(() => { answered = true; }).catch(() => {});
+      await Promise.race([asking, sleep(MCP_WAIT_CHIP_AFTER_MS)]).catch(() => {});
+      if (!answered && !io.stopped()) { slowShown = true; io.onSlow([...live, ...servers.optional]); }
+    }
+    const answer = await asking;
     if (io.stopped()) return result({ missing: [], stopped: true });
     if (answer === null || answer === "unsupported") {
       if (!states) return result({ missing: [], unchecked: true, uncheckedReason: answer === null ? "no-answer" : "unsupported" });

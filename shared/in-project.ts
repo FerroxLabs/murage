@@ -240,11 +240,11 @@ function spellings(text: string): string[] {
 }
 
 /** Rule 63 step 3 over every spelling of every path: the first sensitive
- * row hit, by id. */
-function keyGuard(paths: readonly string[], inProject: boolean): string | null {
+ * row hit, by id. `onTheWay`: the paths are folders passed through. */
+function keyGuard(paths: readonly string[], inProject: boolean, onTheWay = false): string | null {
   for (const path of paths) {
     for (const spelling of spellings(path)) {
-      const row = sensitivePathRow(spelling, inProject);
+      const row = sensitivePathRow(spelling, inProject, onTheWay);
       if (row) return row;
     }
   }
@@ -267,7 +267,7 @@ export type InProjectResult =
 export function inProjectCheck(path: string, root: string, content?: unknown, opts: PlaceOptions = {}): InProjectResult {
   const placed = placePath(path, root, opts);
   const inside = placed.kind === "inside";
-  const rule = keyGuard([path, ...(placed.kind === "cannot-place" ? [] : [...placed.intermediates, placed.real])], inside);
+  const rule = keyGuard([path], inside) ?? (placed.kind === "cannot-place" ? null : keyGuard(placed.intermediates, inside, true) ?? keyGuard([placed.real], inside));
   if (rule) return { ok: false, reason: "sensitive", rule };
   if (placed.kind === "cannot-place") return { ok: false, reason: "cannot-place", why: placed.why };
   if (placed.kind === "outside") return { ok: false, reason: "outside", real: placed.real };
@@ -372,7 +372,7 @@ export function walkRoot(root: string, project: string, opts: WalkOptions = {}):
       const inside = within(realProject, real, platform);
       // A repository's `.git` holds its config and hooks rows and the rest of
       // its history: the walk treats it as one sensitive directory (Rule 73a).
-      const rule = isDir && name === ".git" ? "project-git" : keyGuard([rel, abs, real], inside);
+      const rule = isDir && name === ".git" ? "project-git" : keyGuard([rel, abs, real], inside, isDir);
       if (rule) {
         hits.push({ path: rel, dir: isDir, rule });
         continue;

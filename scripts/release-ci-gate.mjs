@@ -79,6 +79,31 @@ export function nightlyRetryable(verdict) {
   return !verdict.ok && (!verdict.run || verdict.run.conclusion === "success");
 }
 
+/** Files whose change makes an older native-addon-msvc run stale (they match the workflow's own path filter). */
+export const NATIVE_ADDON_PATHS = [
+  "native", "scripts/build-engine-exclusion.mjs", "scripts/build-fuigo-probe.mjs", "scripts/windows-native-imports.mjs",
+  "electron/windows-native.mjs", "electron/backup-windows-acl*.mjs", "electron/backup-remote-*.mjs", "shared/windows-sddl.mjs",
+  ".github/workflows/native-addon-msvc.yml",
+];
+
+/**
+ * The real-Windows owner-only ACL tests (native-addon-msvc.yml, MURAGE_REQUIRE_WINDOWS_NATIVE=1) run only when
+ * their files change, so CI never sees them. A release needs the newest completed run on this history green, built
+ * from a workflow that really runs those tests, with none of the watched files changed since it ran.
+ * `ancestor(runSha)`: that commit is `sha` or an ancestor. `stale(runSha)`: a watched file differs between it and `sha`.
+ * `runsAcl(runSha)`: the workflow at that commit sets MURAGE_REQUIRE_WINDOWS_NATIVE.
+ */
+export function nativeAddonVerdict(runs, sha, { ancestor, stale, runsAcl } = {}) {
+  const mine = (Array.isArray(runs) ? runs : []).filter(run => run?.status === "completed" && run.head_sha && (run.head_sha === sha || (ancestor && ancestor(run.head_sha))));
+  const newest = [...mine].sort((a, b) => Date.parse(b.created_at ?? 0) - Date.parse(a.created_at ?? 0))[0];
+  if (!newest) return { ok: false, reason: `no completed native-addon-msvc run on ${sha} or its ancestors (dispatch native-addon-msvc.yml on the release commit)` };
+  const where = `native-addon-msvc run ${newest.id ?? "?"} on ${newest.head_sha}`;
+  if (newest.conclusion !== "success") return { ok: false, run: newest, reason: `the latest ${where} concluded ${newest.conclusion ?? "without a result"}` };
+  if (!(runsAcl && runsAcl(newest.head_sha))) return { ok: false, run: newest, reason: `the workflow in ${where} does not run the ACL tests with MURAGE_REQUIRE_WINDOWS_NATIVE=1` };
+  if (newest.head_sha !== sha && (!stale || stale(newest.head_sha))) return { ok: false, run: newest, reason: `files the ACL tests cover changed between ${where} and ${sha}` };
+  return { ok: true, run: newest, reason: `the latest ${where} concluded success with the ACL tests required` };
+}
+
 // Who may sign a waiver. Sean approves every release exception.
 const APPROVER = /^Sean(\s+Donahoe)?$/i;
 const SAFE_PATH = /^(?!\/)(?!.*(^|\/)\.\.(\/|$))[A-Za-z0-9._/-]+$/;
@@ -168,6 +193,12 @@ function isAncestor(sha, ref) {
   return spawnSync("git", ["merge-base", "--is-ancestor", sha, ref]).status === 0;
 }
 
+/** True when a watched native-addon file differs between `from` and `to`. Fails closed (true) if git cannot tell. */
+function nativeFilesChanged(from, to) {
+  const result = spawnSync("git", ["diff", "--quiet", from, to, "--", ...NATIVE_ADDON_PATHS]);
+  return result.status !== 0;
+}
+
 function record(lines, outputs) {
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join("\n") + "\n");
   if (process.env.GITHUB_OUTPUT && Object.keys(outputs).length) appendFileSync(process.env.GITHUB_OUTPUT, Object.entries(outputs).map(([key, value]) => `${key}=${value}`).join("\n") + "\n");
@@ -229,6 +260,25 @@ async function main() {
       process.exit(1);
     }
     console.log(`${pending ? `a ${nightlyWorkflow} run for ${sha} is still running` : nightly.reason}; checking again in 60s`);
+    await new Promise(resolve => setTimeout(resolve, 60_000));
+  }
+  // The Windows ACL tests live in native-addon-msvc.yml, outside ci.yml: required here, no waiver, bounded wait for a running one.
+  const nativeWorkflow = process.env.NATIVE_ADDON_WORKFLOW || "native-addon-msvc.yml";
+  for (;;) {
+    const nativeRuns = listNightlyRuns({ repository, workflow: nativeWorkflow });
+    const native = nativeAddonVerdict(nativeRuns, sha, {
+      ancestor: runSha => /^[0-9a-f]{40}$/.test(String(runSha)) && isAncestor(runSha, sha),
+      stale: runSha => nativeFilesChanged(runSha, sha),
+      runsAcl: runSha => (readCommitted(runSha, `.github/workflows/${nativeWorkflow}`) ?? "").includes("MURAGE_REQUIRE_WINDOWS_NATIVE"),
+    });
+    const pending = nativeRuns.some(run => run?.status !== "completed" && /^[0-9a-f]{40}$/.test(String(run?.head_sha)) && (run.head_sha === sha || isAncestor(run.head_sha, sha)));
+    if (native.ok && !pending) { console.log(`ok: ${native.reason}`); record([`Windows ACL gate: ${native.reason}`], {}); break; }
+    const elapsed = Date.now() - started;
+    if ((!pending && native.run && native.run.conclusion !== "success") || elapsed >= waitMs) {
+      console.error(`::error::${pending ? `a ${nativeWorkflow} run on this history has not completed` : native.reason}${elapsed >= waitMs ? ` after ${Math.round(elapsed / 60000)} minutes` : ""}; a release needs ${nativeWorkflow} green on this commit (run it with workflow_dispatch)`);
+      process.exit(1);
+    }
+    console.log(`${pending ? `a ${nativeWorkflow} run is still running` : native.reason}; checking again in 60s`);
     await new Promise(resolve => setTimeout(resolve, 60_000));
   }
   for (;;) {

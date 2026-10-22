@@ -221,7 +221,7 @@ describe("14.5 the sign-in card remembers the owner's answer (routines and unatt
     const { readFileSync, statSync } = await import("node:fs");
     const text = readFileSync(join(dir, "answers.json"), "utf8");
     for (const leak of ["secret", "AWS_PROFILE", "apiKeyHelper", dir]) expect(text, leak).not.toContain(leak);
-    expect(statSync(join(dir, "answers.json")).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") expect(statSync(join(dir, "answers.json")).mode & 0o777).toBe(0o600);
     expect(answers.recall(scope)).toBe(true);
     const fresh = new (await import("./claude-signin-answers.ts")).ClaudeSigninAnswers(() => join(dir, "answers.json"));
     expect(fresh.recall(scope)).toBe(true);

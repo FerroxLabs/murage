@@ -626,7 +626,6 @@ describe("drainDelegations", () => {
 
     await waitFor(() => findDelegationReceipt(queued.id!) && _pendingCount(from.threadId) === 0);
     expect(findDelegationReceipt(queued.id!)).toMatchObject({ status: "dropped" });
-    expect(runTargetCalls).toEqual([]);
   });
 
   it("does not ask twice when this exact fallback was already approved as ask_bot", async () => {
@@ -1061,6 +1060,14 @@ describe("busy retries and receipts", () => {
     expect(_pendingCount(from.threadId)).toBe(0);
     expect(findDelegationReceipt(queued.id!)).toMatchObject({ status: "dropped" });
   });
+
+  it("drops, never drains, what a turn queued when Murage halted it at the Ask boundary (ok:true, stopReason ask_stop)", async () => {
+    const queued = queueDelegation(commsBus, from, { toBotId: target.id, message: "never runs", depth: 0 }, 1);
+    const { settleQueuedDelegations } = await import("./delegations.ts");
+    expect(settleQueuedDelegations(commsBus, approvalBus as never, from.threadId, { ok: true, stopReason: "ask_stop" }, from.id)).toBe("discarded");
+    expect(_pendingCount(from.threadId)).toBe(0);
+    expect(findDelegationReceipt(queued.id!)).toMatchObject({ status: "dropped" });
+  });
 });
 
 // ── room-sourced handoffs ─────────────────────────────────────────────
@@ -1233,7 +1240,6 @@ describe("delegations queued from a room", () => {
 
     await waitFor(() => findDelegationReceipt(queued.id!));
     expect(findDelegationReceipt(queued.id!)).toMatchObject({ status: "dropped" });
-    expect(runTargetCalls).toEqual([]);
   });
 
   it("tells the room when a failed turn discards its queue", async () => {

@@ -200,9 +200,12 @@ function refuseLaunchFlags(): void {
   }
 }
 
-// FAKE_CLAUDE_PROBE_LOG: one JSON line per probe (--version, auth status) with the environment it was handed.
+// FAKE_CLAUDE_PROBE_LOG: one JSON line per probe (--version, auth status) with the pinned names it was handed, and only those: never
+// the whole inherited environment, which holds the owner's credentials (fixture-dump.test.ts). A name the probe was not handed is absent.
+const PROBE_LOG_NAMES = ["BASH_ENV", "CLAUDE_ENV_FILE", "GIT_EDITOR", "GIT_SSH", "PAGER"] as const;
 if (process.env.FAKE_CLAUDE_PROBE_LOG && (argv[0] === "--version" || (argv.includes("auth") && argv[argv.indexOf("auth") + 1] === "status"))) {
-  appendFileSync(process.env.FAKE_CLAUDE_PROBE_LOG, JSON.stringify({ probe: argv[0] === "--version" ? "version" : "auth", env: process.env }) + "\n");
+  const pinned = Object.fromEntries(PROBE_LOG_NAMES.filter((name) => process.env[name] !== undefined).map((name) => [name, process.env[name]]));
+  appendFileSync(process.env.FAKE_CLAUDE_PROBE_LOG, JSON.stringify({ probe: argv[0] === "--version" ? "version" : "auth", env: pinned }) + "\n");
 }
 
 // Snapshot probes: both answer on argv alone and exit without reading stdin.
@@ -421,8 +424,12 @@ const callPermissionPromptTool = (args: Record<string, unknown>): Promise<string
   const match = promptTool ? /^mcp__(.+?)__(.+)$/.exec(promptTool) : null;
   if (!match || !configPath) return Promise.resolve(null);
   const config = (startupMcpConfig ?? JSON.parse(readFileSync(configPath, "utf8"))) as { mcpServers?: Record<string, { command: string; args?: string[]; env?: Record<string, string> }> };
-  const server = config.mcpServers?.[match[1]!];
-  if (!server) return Promise.resolve(null);
+  const mounted = config.mcpServers?.[match[1]!];
+  if (!mounted) return Promise.resolve(null);
+  // FAKE_CLAUDE_PERM_SOCKET: the proxy is handed a broker path nothing listens on (a broker outage, or a path the
+  // launcher's shell mangled on the way, as Git Bash did to the Windows pipe in 1.0.3).
+  const lostBroker = process.env.FAKE_CLAUDE_PERM_SOCKET;
+  const server = lostBroker && mounted.args?.length ? { ...mounted, args: [...mounted.args.slice(0, -1), lostBroker] } : mounted;
   return new Promise((resolve, reject) => {
     // started as the real CLI starts it: through CLAUDE_CODE_SHELL_PREFIX when one is set (claudeMcpLaunch)
     const launch = claudeMcpLaunch({ command: server.command, args: server.args ?? [], env: server.env ?? {} });
@@ -432,6 +439,15 @@ const callPermissionPromptTool = (args: Record<string, unknown>): Promise<string
     let answered = false;
     const send = (message: unknown) => child.stdin.write(JSON.stringify(message) + "\n");
     child.on("error", reject);
+    // The server must answer `initialize` promptly; a tool call after that may wait on a person for as long as it likes.
+    // One that never answers fails the call with the reason, instead of holding the turn until the suite's own timeout.
+    const startDeadline = setTimeout(() => {
+      if (answered) return;
+      answered = true;
+      child.kill();
+      reject(new Error(`the ${match[1]} server did not answer initialize within ${Number(process.env.FAKE_CLAUDE_MCP_START_MS) || 30_000} ms${stderr.trim() ? `: ${stderr.trim()}` : ""}`));
+    }, Number(process.env.FAKE_CLAUDE_MCP_START_MS) || 30_000);
+    startDeadline.unref();
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk: string) => { stderr = (stderr + chunk).slice(-2000); });
     // A server that exits before answering fails the call, as the real CLI reports a server that did not come up:
@@ -453,6 +469,7 @@ const callPermissionPromptTool = (args: Record<string, unknown>): Promise<string
           continue;
         }
         if (message.id === 1) {
+          clearTimeout(startDeadline);
           // what the real CLI reports when the server's own env was lost on the way (1.0.3: no MCP server came up)
           const lost = lostServerEnv(child.pid, server.env ?? {});
           if (lost.length) {
@@ -515,13 +532,20 @@ const playPermissionTool = async (): Promise<void> => {
   const toolUseId = `toolu_fake_perm_${process.pid}_${Date.now()}`;
   out({ type: "assistant", message: { content: [{ type: "tool_use", id: toolUseId, name: tool, input }] } });
   let verdict = "ran without asking";
+  // the real CLI puts a deny's message in the tool result, as the model reads it
+  let resultText = verdict;
   try {
     const reply = await callPermissionPromptTool({ tool_name: tool, input, tool_use_id: toolUseId });
-    if (reply !== null) verdict = (JSON.parse(reply) as { behavior?: string }).behavior === "allow" ? "allowed" : "denied";
+    if (reply !== null) {
+      const decision = JSON.parse(reply) as { behavior?: string; message?: string };
+      verdict = decision.behavior === "allow" ? "allowed" : "denied";
+      resultText = verdict === "denied" && decision.message ? decision.message : verdict;
+    }
   } catch (error) {
     verdict = `failed: ${error instanceof Error ? error.message : String(error)}`;
+    resultText = verdict;
   }
-  out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: toolUseId, is_error: verdict !== "allowed" && verdict !== "ran without asking", content: verdict }] } });
+  out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: toolUseId, is_error: verdict !== "allowed" && verdict !== "ran without asking", content: resultText }] } });
   out({ type: "assistant", message: { content: [{ type: "text", text: `permission: ${verdict}` }] } });
   out({ type: "result", is_error: false, stop_reason: "end_turn", total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 } });
   turnRunning = false;

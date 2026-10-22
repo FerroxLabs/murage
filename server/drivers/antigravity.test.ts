@@ -119,6 +119,18 @@ describe("Antigravity decodeConfig", () => {
   });
 });
 
+// 1.0.3: the turn spawn asks for the Windows engine job (procs.ts engineJob). engineJob answers only on Windows, so here it is
+// a fixed stand-in and every spawnCli job argument is recorded; the real spawnCli still runs (off Windows a job changes nothing).
+const jobProbe = vi.hoisted(() => ({ job: { name: "Local\\murage-pip-eng-probe", fallback: "no-job" as const }, jobs: [] as unknown[] }));
+vi.mock("../procs.ts", async (original) => {
+  const actual = await original<typeof import("../procs.ts")>();
+  return {
+    ...actual,
+    engineJob: () => jobProbe.job,
+    spawnCli: (...args: Parameters<typeof actual.spawnCli>) => { jobProbe.jobs.push(args[3]); return actual.spawnCli(...args); },
+  };
+});
+
 describe("Antigravity turns (fake CLI)", () => {
   let instance: ProviderInstance;
   let recorder: EventRecorder;
@@ -157,6 +169,7 @@ describe("Antigravity turns (fake CLI)", () => {
     await create();
     const { turnId } = await instance.adapter.sendTurn({ threadId: "t-happy", text: "hi", model: "gemini-3.1-pro-high" });
     await recorder.until((e) => e.type === "turn.completed");
+    expect(jobProbe.jobs).toContainEqual(jobProbe.job); // the turn CLI was started in the engine job
 
     const types = recorder.events.map((e) => e.type);
     expect(types).toEqual([
@@ -237,12 +250,12 @@ describe("Antigravity turns (fake CLI)", () => {
     }
   }, 10_000);
 
-  // Print mode cannot ask, so under Murage's Full access stop line
-  // (server/stop-line.ts) this engine never skips permissions: deleting
-  // outside its folder, paying and messaging someone new cannot happen
-  // unasked. Without the stop line the instance's own setting stands.
-  // Gap 4: routeAsks removes Antigravity's skip flag for this turn only.
-  it("routeAsks overrides only Antigravity skip-all argv", async () => {
+  // Print mode cannot ask, so at Auto and under Murage's Full access stop line
+  // (server/stop-line.ts) this engine skips agy's own permissions only with
+  // Murage's relay hook in front of every tool (antigravity-relay.ts, its
+  // `--log-file` read before the prompt). Without routeAsks or the stop line the
+  // instance's own setting stands.
+  it("routeAsks runs a skip-all instance through the relay, and leaves an asking one in accept-edits", async () => {
     const scratch = mkdtempSync(join(tmpdir(), "murage-agy-enforce-"));
     const dump = join(scratch, "dump.json");
     process.env.FAKE_AGY_DUMP = dump;
@@ -257,14 +270,15 @@ describe("Antigravity turns (fake CLI)", () => {
           });
           await recorder.until((event) => event.type === "turn.completed" && event.turnId === sent.turnId);
           const { argv } = JSON.parse(readFileSync(dump, "utf8")) as { argv: string[] };
-          expect(argv.includes("--dangerously-skip-permissions")).toBe(fullAuto && !enforced);
-          if (!fullAuto || enforced) expect(argv).toContain("accept-edits");
+          expect(argv.includes("--dangerously-skip-permissions")).toBe(fullAuto);
+          expect(argv.includes("accept-edits")).toBe(!fullAuto);
+          expect(argv.includes("--log-file")).toBe(fullAuto && enforced);
         }
       }
     } finally { await removeTempDir(scratch); }
   });
 
-  it.each([[true, "accept-edits"], [false, "--dangerously-skip-permissions"]] as const)("never skips permissions under the stop line (stopLine %s)", async (stopLine, expected) => {
+  it.each([true, false] as const)("under the stop line skips agy's permissions only with the relay hook (stopLine %s)", async (stopLine) => {
     const scratch = mkdtempSync(join(tmpdir(), "murage-agy-stop-line-"));
     const dump = join(scratch, "dump.json");
     process.env.FAKE_AGY_DUMP = dump;
@@ -273,24 +287,29 @@ describe("Antigravity turns (fake CLI)", () => {
       await instance.adapter.sendTurn({ threadId: `t-stop-line-${stopLine}`, text: "go", ...(stopLine ? { stopLine: true as const } : {}) });
       await recorder.until((event) => event.type === "turn.completed");
       const seen = JSON.parse(readFileSync(dump, "utf8"));
-      expect(seen.argv).toContain(expected);
-      if (stopLine) expect(seen.argv).not.toContain("--dangerously-skip-permissions");
+      expect(seen.argv).toContain("--dangerously-skip-permissions");
+      expect(seen.argv.includes("--log-file")).toBe(stopLine);
     } finally {
       await removeTempDir(scratch);
     }
   });
 
-  it("never skips permissions for an Ask or Auto bot (routeAsks)", async () => {
+  it("never skips permissions for an Ask bot; an Auto bot goes through the relay", async () => {
     const scratch = mkdtempSync(join(tmpdir(), "murage-agy-route-asks-"));
     const dump = join(scratch, "dump.json");
     process.env.FAKE_AGY_DUMP = dump;
     await create();
     try {
-      await instance.adapter.sendTurn({ threadId: "t-route-asks", text: "go", routeAsks: true });
-      await recorder.until((event) => event.type === "turn.completed");
-      const seen = JSON.parse(readFileSync(dump, "utf8"));
-      expect(seen.argv).toContain("accept-edits");
-      expect(seen.argv).not.toContain("--dangerously-skip-permissions");
+      await instance.adapter.sendTurn({ threadId: "t-route-asks", text: "go", routeAsks: true, askLevel: true });
+      await recorder.until((event) => event.type === "turn.completed" && event.threadId === "t-route-asks");
+      const ask = JSON.parse(readFileSync(dump, "utf8"));
+      expect(ask.argv).toContain("accept-edits");
+      expect(ask.argv).not.toContain("--dangerously-skip-permissions");
+      await instance.adapter.sendTurn({ threadId: "t-route-auto", text: "go", routeAsks: true });
+      await recorder.until((event) => event.type === "turn.completed" && event.threadId === "t-route-auto");
+      const auto = JSON.parse(readFileSync(dump, "utf8"));
+      expect(auto.argv).toContain("--dangerously-skip-permissions");
+      expect(auto.argv).toContain("--log-file");
     } finally {
       await removeTempDir(scratch);
     }

@@ -12,8 +12,16 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ABSENT_PINS, ENV_PINS, valuePins } from "../../shared/arg-vocabulary.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 import * as claude from "./claude.ts";
+import { ClaudeGateRecord } from "./claude-private.ts";
 
 const mod = claude as unknown as Record<string, any>;
+/** Windows: the owner-only ACL comes from the native murage-browser-host.exe, which vitest does not build; a stand-in fs keeps the
+ * real record logic under test (the native helper itself is covered in electron/browser-extension-windows tests). */
+function gateRecordFor(): ClaudeGateRecord | undefined {
+  if (process.platform !== "win32") return undefined;
+  return new ClaudeGateRecord({ platform: "win32", makeWindowsDir: () => undefined, writeWindowsFile: (path, data) => writeFileSync(path, data), uid: () => undefined });
+}
+
 const INHERIT = { kind: "powershell-inherit", reason: "no-git-bash" };
 const WIN_BASH = "C:\\Program Files\\Git\\bin\\bash.exe";
 
@@ -141,7 +149,7 @@ describe("Astra #3/#4 and MurageMain's ruling: the gate record", () => {
   it("never reads or copies prior bytes: a planted file at the path is replaced, not carried", () => {
     const file = join(dir, "record.jsonl");
     writeFileSync(file, "PRIOR-PLAINTEXT-SECRET\n");
-    expect(mod.writeClaudeGateRecord(file, handed, "murage-exec")).toBe(true);
+    expect(mod.writeClaudeGateRecord(file, handed, "murage-exec", gateRecordFor())).toBe(true);
     const bytes = readFileSync(file, "utf8");
     expect(bytes).not.toContain("PRIOR-PLAINTEXT-SECRET");
     expect(bytes.trim().split("\n")).toHaveLength(1);
