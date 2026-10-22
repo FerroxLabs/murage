@@ -11,6 +11,7 @@ import { writeStamp } from "../io-budget.ts";
 import { branchChangesMayBePending } from "./branch-change-flag.ts";
 import { CLAIMABLE_SOURCE, settleRows, TOMBSTONED } from "./claim-settle.ts";
 import { DENIED_PLACE } from "./deny.ts";
+import { inheritEdge } from "./revoke-commit.ts";
 
 let lastScope = "";
 const workListeners=new Set<()=>void>();
@@ -407,6 +408,7 @@ export function publishMemoryWork(work: MemoryWork, worker: string, input: Memor
       const assertion=work.speaker==="owner"?"owner-statement":work.speaker==="tool"?"tool-observation":"assistant-inference";
       db.prepare("INSERT OR IGNORE INTO memory_records VALUES(?,1,?,'source',?,?,'active',0,?,NULL,NULL,?)").run(id,work.scopeId,chunk.text,assertion,now,now);
       db.prepare("INSERT OR IGNORE INTO memory_evidence VALUES(?,1,?,?,?,?)").run(id,work.sourceId,work.revision,chunk.startByte,chunk.endByte);
+      inheritEdge(db,{kind:"record",id,version:1},{kind:"source",id:work.sourceId});
       db.prepare("INSERT OR IGNORE INTO memory_projection_receipts VALUES(?,1,1,'pending','pending',NULL)").run(id);
     }
     if (work.kind!=="turn" && cursor!==expectedEnd) throw new Error("INCOMPLETE_MEMORY_COVERAGE");

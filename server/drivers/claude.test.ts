@@ -1107,7 +1107,9 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     const expected = (name: string) => ({
       command: process.execPath,
       args: ["/fake/remote-mcp-proxy.js", "--server", name],
-      env: { ELECTRON_RUN_AS_NODE: "1", MURAGE_HARNESS_URL: "http://127.0.0.1:1", MURAGE_CRED_FILE: seen.credFile.path, MURAGE_CRED_SERVER: name },
+      env: { ELECTRON_RUN_AS_NODE: "1", MURAGE_HARNESS_URL: "http://127.0.0.1:1", MURAGE_CRED_FILE: seen.credFile.path, MURAGE_CRED_SERVER: name,
+        // murage-exec (Claude's shell prefix, which starts the server) keeps exactly the server's own names
+        MURAGE_EXEC_KEEP: "ELECTRON_RUN_AS_NODE,MURAGE_HARNESS_URL,MURAGE_CRED_FILE,MURAGE_CRED_SERVER" },
     });
     expect(seen.credFile.content.svc.MURAGE_MCP_TOKEN).toBe(token);
     expect(seen.credFile.content.svc2.MURAGE_MCP_TOKEN).toBe(token);
@@ -1115,7 +1117,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(seen.mcpConfig.mcpServers.svc2).toEqual(expected("svc2"));
     expect(seen.mcpConfig.mcpServers.svc).not.toHaveProperty("harnessEnv");
     expect(seen.mcpConfig.mcpServers).not.toHaveProperty("forged");
-    expect(seen.mcpConfig.mcpServers.notes.env).toEqual({ NOTES_TOKEN: "tok-notes" });
+    expect(seen.mcpConfig.mcpServers.notes.env).toEqual({ NOTES_TOKEN: "tok-notes", MURAGE_EXEC_KEEP: "NOTES_TOKEN" });
     // never pre-allowed, and nothing of the turn's token rides argv
     const allowed = seen.argv[seen.argv.indexOf("--allowedTools") + 1];
     expect(allowed).not.toContain("mcp__svc");
@@ -1281,7 +1283,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(seen.mcpConfig.mcpServers.computer).toEqual({
       command: "/opt/cua driver/cua-driver",
       args: ["mcp", "--embedded", "--socket", "/run/user/1000/driver.sock"],
-      env: { CUA_DRIVER_EMBEDDED: "1" },
+      env: { CUA_DRIVER_EMBEDDED: "1", MURAGE_EXEC_KEEP: "CUA_DRIVER_EMBEDDED" },
     });
     const allowed = seen.argv[seen.argv.indexOf("--allowedTools") + 1];
     expect(allowed).not.toContain("mcp__computer");
@@ -1688,7 +1690,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await recorder.until(event => event.type === "turn.completed" && event.turnId === turn.turnId);
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     expect(instance.adapter.capabilities.memoryMcp).toBe(true);
-    expect(seen.mcpConfig.mcpServers["murage-memory"]).toEqual({ ...memory, env: { MURAGE_HARNESS_URL: "http://127.0.0.1:1", MURAGE_CRED_FILE: seen.credFile.path, MURAGE_CRED_SERVER: "murage-memory" } });
+    expect(seen.mcpConfig.mcpServers["murage-memory"]).toEqual({ ...memory, env: { MURAGE_HARNESS_URL: "http://127.0.0.1:1", MURAGE_CRED_FILE: seen.credFile.path, MURAGE_CRED_SERVER: "murage-memory", MURAGE_EXEC_KEEP: "MURAGE_HARNESS_URL,MURAGE_CRED_FILE,MURAGE_CRED_SERVER" } });
     expect(seen.credFile.content["murage-memory"].MURAGE_MEMORY_TOKEN).toBe("fixture-memory-token");
     expect(seen.mcpConfig.mcpServers.user).toEqual(custom);
     expect(seen.mcpConfig.mcpServers.malicious).toBeUndefined();
@@ -3237,13 +3239,18 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     const dump = join(scratch, "dump-env.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
     process.env.CLAUDE_ENV_FILE = "/tmp/murage-must-not-reach-the-cli";
+    // Murage started from a terminal that runs Claude Code: that session's names, and a stray MURAGE_EXEC_KEEP, stay out
+    const inherited = { MURAGE_EXEC_KEEP: "ELECTRON_RUN_AS_NODE", CLAUDECODE: "1", AI_AGENT: "claude-code", CLAUDE_CODE_SESSION_ID: "s-outer", CLAUDE_CODE_MESSAGING_TOKEN: "outer-token", CLAUDE_PID: "1" };
+    Object.assign(process.env, inherited);
     try {
       await instance.adapter.sendTurn({ threadId: "t-handed-env", text: "hi", cwd: scratch });
       await recorder.until((e) => e.type === "turn.completed");
     } finally {
       delete process.env.CLAUDE_ENV_FILE;
+      for (const name of Object.keys(inherited)) delete process.env[name];
     }
-    const { env } = JSON.parse(readFileSync(dump, "utf8")) as { env: Record<string, string | undefined> };
+    const { env, mcpConfig } = JSON.parse(readFileSync(dump, "utf8")) as { env: Record<string, string | undefined>; mcpConfig: { mcpServers: Record<string, { env?: Record<string, string> }> } };
+    for (const name of Object.keys(inherited)) expect(env[name], name).toBeUndefined();
     expect(env.CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR).toBe("1");
     expect(env.CLAUDE_ENV_FILE).toBeUndefined();
     expect(env.PAGER).toBe("cat");
@@ -3252,6 +3259,8 @@ describe("ClaudeDriver turns (fake CLI)", () => {
       expect(env.CLAUDE_CODE_SHELL).toMatch(/(bash|zsh)$/);
       expect(statSync(env.CLAUDE_CODE_SHELL_PREFIX!).mode & 0o777).toBe(0o755);
       expect(statSync(env.MURAGE_EXEC_ENV_FILE!).mode & 0o777).toBe(0o600);
+      // every stdio server Claude starts through the prefix names its own env for murage-exec to keep
+      expect(mcpConfig.mcpServers.muragebox!.env).toEqual({ ELECTRON_RUN_AS_NODE: "1", MURAGE_EXEC_KEEP: "ELECTRON_RUN_AS_NODE" });
     }
   });
 

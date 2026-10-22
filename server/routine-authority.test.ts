@@ -62,13 +62,13 @@ describe("routine authority", () => {
   it("server turns carry routeAsks below Full and stopLine at Full", () => {
     // SEAM: turnPermissionEnforcement(bot) in routine-permissions.ts, extracted from both index.ts sendTurn builders after applying the effective routine level.
     const enforcement = (routinePermissions as typeof routinePermissions & {
-      turnPermissionEnforcement?: (bot: AutoApprover) => Pick<SendTurnInput, "routeAsks" | "stopLine">;
+      turnPermissionEnforcement?: (bot: AutoApprover) => Pick<SendTurnInput, "routeAsks" | "stopLine" | "askLevel">;
     }).turnPermissionEnforcement;
     expect(enforcement, "both server dispatch paths must opt into permission enforcement").toBeTypeOf("function");
     const profile = { autoApprove: true, fullAccess: true, noLimits: true };
     for (const mode of ["ask", "auto", "full", "unlimited"] as const) {
       const bot = routinePermissions.applyRoutinePermissionMode(profile, mode);
-      expect(enforcement!(bot), mode).toEqual(mode === "ask" || mode === "auto" ? { routeAsks: true } : { stopLine: true });
+      expect(enforcement!(bot), mode).toEqual(mode === "ask" ? { routeAsks: true, askLevel: true } : mode === "auto" ? { routeAsks: true } : { stopLine: true });
       const capped = routinePermissions.applyRoutinePermissionMode(profile, effectiveRoutinePermissionMode({ permissionMode: mode }, profile));
       expect(enforcement!(capped), `routine ${mode}`).toEqual(enforcement!(bot));
     }

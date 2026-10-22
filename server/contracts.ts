@@ -275,6 +275,14 @@ export type RuntimeEvent = RuntimeEventBase &
         /** Additive (1.0.3), F5: a field the driver's contract needs was
          * absent on the wire; the driver never substitutes one. */
         toolInputMissing?: string;
+        /** Additive (1.0.4, 09-1): the driver's own gate held this call as a
+         * key file (Pi's gate resolves links itself); the rule it named. It
+         * only ever adds a hold. Server-side only. */
+        localHold?: string;
+        /** Additive (1.0.4, F1): the driver runs this command's text under
+         * PowerShell (`powershell.exe -Command`, Codex and ACP on Windows),
+         * so the gates read it as PowerShell whatever it starts with. */
+        commandShell?: "pwsh";
         /** Additive (1.0.3), F12 (Rule 74): the exact environment the driver
          * handed the engine process, the names it removed, the command's
          * starting directory, the pinned shell form, and where the map came
@@ -501,6 +509,11 @@ export interface SendTurnInput {
    * every other instance mode. Full access and No limits use stopLine above.
    * Engines without a permission setting have nothing to override. */
   routeAsks?: true;
+  /** The bot is at Ask for this turn (a routine run's effective level included); sent with routeAsks. An engine
+   * that cannot ask before every change (Cursor, OpenClaw, Antigravity) runs read-only on this turn: it may read
+   * and plan, and every file change or command is refused before it runs (server/drivers/ask-stop.ts). Engines
+   * that ask for every change ignore it. */
+  askLevel?: true;
   /** A scheduled or manual routine run. Its permission cards wait until the
    * owner answers them or the turn stops, instead of the drivers' 15-minute
    * deny: the routine manager ends the run as "waiting on you" at its run
@@ -659,6 +672,13 @@ export interface ProviderAdapter {
    * `confirmed` is true only when every idle process (and every prewarm that was starting) is known to have exited; a close that
    * could not be confirmed says false and the caller leaves that engine's files alone. */
   holdIdle?(): Promise<IdleHold>;
+  /** An engine configured to run Murage's host-computer mount without asking
+   * (it cannot name those calls by more than a title): Murage's computer
+   * service asks through here before each call reaches the computer, with the
+   * exact tool and arguments. Resolves "allow" or "deny" once the card (or
+   * Murage's level) answers; null when this thread's running turn does not
+   * ask this way, and the service then asks nothing (the engine asked). */
+  askHostAction?(threadId: ThreadId, call: { name: string; arguments?: unknown }, signal?: AbortSignal): Promise<"allow" | "deny" | null>;
   /** Answer a pending ask. Resolves with what actually happened — never
    * throws for an ask that is no longer there: `unavailable` means nobody
    * could take the answer (the turn ended, the broker died, the driver
@@ -740,6 +760,10 @@ export interface EngineInstall {
 // a rejection to an unavailable shadow snapshot.
 export interface ModelCatalog {
   default: string;
+  /** "live" only when this catalog came from a successful list by the engine's
+   * own CLI in this process; a fallback or built-in list is "static" (or absent).
+   * Nothing may rewrite a saved model off a catalog that is not "live". */
+  source?: "live" | "static";
   options: Array<{
     id: string;
     label: string;

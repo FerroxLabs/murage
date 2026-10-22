@@ -73,6 +73,117 @@ function murageRoutedHome(env: Record<string, string | undefined> | undefined): 
   return !!home && !!marked && resolve(home) === marked;
 }
 
+/**
+ * Hermes asks on its own only for a command it judges dangerous and for edits;
+ * every other tool (an ordinary shell command, execute_code, a browser or MCP
+ * tool) runs with no request_permission, so at Ask a bot ran `echo > file`
+ * unasked (real hermes 0.22.2 on the gate box). Hermes lets a `pre_tool_call`
+ * shell hook answer {"action":"approve"}, which sends THAT call through the
+ * same human gate as a dangerous command, and the gate reaches Murage as
+ * session/request_permission. So every spawn carries one Murage-owned hook for
+ * every tool that is not on the read-only list below.
+ *
+ * Left alone: Hermes's reads and lookups; write_file and patch, which already
+ * ask through Hermes's own edit approval (a second card would double-ask);
+ * and, on a host-computer turn only, Murage's own `computer` MCP tools, which
+ * Murage's computer service asks for per action (hostComputerAskedByMurage).
+ */
+export const HERMES_ASK_FREE_TOOLS = [
+  "read_file", "search_files", "tool_describe", "skills_list", "skill_view", "session_search", "todo_list", "clarify",
+  "web_search", "web_extract", "vision_analyze", "video_analyze", "show_tip", "read_terminal", "read_window_below",
+  "x_search", "memory", "write_file", "patch",
+] as const;
+
+/** The hook's `matcher`: Hermes full-matches it against the tool name. */
+export function hermesAskMatcher(hostComputer: boolean): string {
+  const free = hostComputer ? [...HERMES_ASK_FREE_TOOLS, "mcp__computer__.*"] : [...HERMES_ASK_FREE_TOOLS];
+  return `(?!(?:${free.join("|")})$).+`;
+}
+
+/** Hermes events that run an owner's own shell hooks while a bot turn works. The turn accepts shell hooks
+ *  unattended (HERMES_ACCEPT_HOOKS) so its own hook can register, which would also accept an owner hook
+ *  never approved at a terminal, so the owner's hooks on these events are replaced by none for the turn. */
+const HERMES_OWNER_HOOK_EVENTS = [
+  "post_tool_call", "transform_terminal_output", "transform_tool_result", "transform_llm_output", "pre_llm_call",
+  "post_llm_call", "pre_verify", "pre_api_request", "post_api_request", "api_request_error", "pre_auxiliary_call",
+  "post_auxiliary_call", "on_session_start", "on_session_end", "on_session_finalize", "on_session_reset",
+  "subagent_start", "subagent_stop", "on_stream_start", "on_stream_delta", "on_stream_end", "on_interim_message",
+] as const;
+
+/** The hook program: whatever tool it is told about, it answers "ask". Hermes only runs it for the tools the
+ *  matcher selects, so it needs no list of its own. */
+export const HERMES_ASK_HOOK_SOURCE = `"use strict";
+let raw = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { raw += chunk; });
+process.stdin.on("end", () => {
+  let call = {};
+  try { call = JSON.parse(raw) || {}; } catch { call = {}; }
+  const tool = typeof call.tool_name === "string" && call.tool_name ? call.tool_name : "tool";
+  const input = call.tool_input && typeof call.tool_input === "object" ? call.tool_input : {};
+  const detail = typeof input.command === "string" ? input.command : typeof input.code === "string" ? input.code : JSON.stringify(input);
+  process.stdout.write(JSON.stringify({ action: "approve", message: tool + ": " + String(detail).slice(0, 400) }));
+});
+`;
+
+function hermesAskDir(env: Record<string, string | undefined>): string {
+  return join(env.MURAGE_DATA_DIR || DATA_DIR, "native", "hermes-ask");
+}
+
+/**
+ * Put the ask hook on this Hermes child, per process: a Murage-owned script, a managed-scope overlay
+ * (HERMES_MANAGED_DIR, the layer Hermes merges over every config and the Flux Memory overlay already uses) that
+ * carries the hook, and HERMES_ACCEPT_HOOKS so the unattended ACP child registers it. The owner's own config.yaml
+ * is never written. The overlay starts from whatever managed config the child was already given (the Flux
+ * Memory overlay, or an administrator's), so both still apply.
+ */
+/** Hermes env switches that approve without asking (tools/approval.py HERMES_YOLO_MODE, the ACP adapter's
+ *  HERMES_ACP_AUTO_APPROVE). An owner's shell export of one would skip the hook gate, so the child never sees them. */
+export const HERMES_AUTO_APPROVE_ENV = ["HERMES_YOLO_MODE", "HERMES_ACP_AUTO_APPROVE"] as const;
+
+export function applyHermesAskHook(env: Record<string, string | undefined>, opts: { hostComputer: boolean }): void {
+  for (const name of HERMES_AUTO_APPROVE_ENV) delete env[name];
+  const dir = hermesAskDir(env);
+  const hash = (text: string) => createHash("sha256").update(text).digest("hex").slice(0, 16);
+  const script = join(dir, `ask-hook-${hash(HERMES_ASK_HOOK_SOURCE)}.cjs`);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  let existing: string | null = null;
+  try { existing = readFileSync(script, "utf8"); } catch { existing = null; }
+  if (existing !== HERMES_ASK_HOOK_SOURCE) writeFileAtomic(script, HERMES_ASK_HOOK_SOURCE, { mode: 0o600 });
+  const named = (env.HERMES_MANAGED_DIR ?? "").trim();
+  const baseDir = named || (process.platform === "win32" ? "" : HERMES_DEFAULT_MANAGED_DIR);
+  let base: Record<string, unknown> = {};
+  if (baseDir) {
+    try {
+      const parsed: unknown = parseYaml(readFileSync(join(baseDir, "config.yaml"), "utf8"));
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) base = parsed as Record<string, unknown>;
+    } catch { base = {}; }
+  }
+  const held = base.hooks && typeof base.hooks === "object" && !Array.isArray(base.hooks) ? base.hooks as Record<string, unknown> : {};
+  const forward = (p: string) => (process.platform === "win32" ? p.replace(/\\/g, "/") : p);
+  const command = `"${forward(process.execPath)}" "${forward(script)}"`;
+  const hooks = {
+    ...held,
+    ...Object.fromEntries(HERMES_OWNER_HOOK_EVENTS.map((event) => [event, []])),
+    // an administrator's own pre_tool_call hooks stay, after this one
+    pre_tool_call: [{ matcher: hermesAskMatcher(opts.hostComputer), command, timeout: 10, fail_closed: true }, ...(Array.isArray(held.pre_tool_call) ? held.pre_tool_call as unknown[] : [])],
+  };
+  const overlay = stringifyYaml({ ...base, hooks });
+  const overlayDir = join(dir, `overlay-${hash(overlay)}`);
+  const file = join(overlayDir, "config.yaml");
+  let current: string | null = null;
+  try { current = readFileSync(file, "utf8"); } catch { current = null; }
+  if (current !== overlay) {
+    mkdirSync(overlayDir, { recursive: true, mode: 0o700 });
+    try { chmodSync(overlayDir, 0o700); } catch { /* Windows ignores POSIX modes */ }
+    writeFileAtomic(file, overlay, { mode: 0o600 });
+  }
+  env.HERMES_MANAGED_DIR = overlayDir;
+  env.HERMES_ACCEPT_HOOKS = "1";
+  // the hook runs as `<this program> <script>`; a packaged app is its own node only with this set
+  env.ELECTRON_RUN_AS_NODE = "1";
+}
+
 /** argv for a Hermes child: every spawn names its profile, so a sticky
  * `hermes profile use` in a terminal can never change which agent answers. */
 export function hermesSpawnArgs(config: HermesProfileConfig, env?: Record<string, string | undefined>): string[] {
@@ -717,7 +828,13 @@ const support: AcpSupport = {
     docsUrl: "https://hermes-agent.nousresearch.com/docs/getting-started/quickstart",
     signInCommand: "hermes setup",
   },
-  spawnArgs: (config, _turn, ctx) => hermesSpawnArgs(config, ctx?.env),
+  // The ask hook (applyHermesAskHook) runs Murage's `computer` mount without Hermes asking, on a host-computer
+  // turn only; Murage's computer service asks per action instead.
+  hostComputerAskedByMurage: true,
+  spawnArgs: (config, turn, ctx) => {
+    if (ctx?.env) applyHermesAskHook(ctx.env, { hostComputer: Boolean(turn?.integrations?.localComputer) });
+    return hermesSpawnArgs(config, ctx?.env);
+  },
   /**
    * Flux Memory headers. Hermes (0.21.3 source, agent/auxiliary_client.py
    * `_apply_user_default_headers`) merges `model.extra_headers` from the
@@ -755,4 +872,5 @@ const support: AcpSupport = {
   buildPromptText: (turn) => (turn.system ? `${turn.system}\n\n${turn.text}` : turn.text),
 };
 
+export const hermesAcpSupport: AcpSupport = support;
 export const HermesAgentDriver = createAcpDriver(support);

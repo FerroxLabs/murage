@@ -9,6 +9,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 
 import { decodeInjectId, hostApiKey, localHost, mergeLocalInject, type LocalHost } from "../local-inject.ts";
 import { readNativeJsonConfig } from "../native-config-file.ts";
+import { SENSITIVE_PATHS } from "../../../shared/sensitive-paths.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 import type { ModelCatalog, ProviderErrorCode } from "../../contracts.ts";
 import { writeFileAtomic } from "../../atomic.ts";
@@ -31,12 +32,11 @@ import {
 } from "../../opencode-config.ts";
 
 const STATIC_MODELS: ModelCatalog = {
-  default: "opencode/x-preview-f-free",
+  default: "opencode/beam-free",
   options: [
     {
-      id: "opencode/x-preview-f-free",
-      label: "Zen · Ox Alpha Free",
-      contextWindow: 1_000_000,
+      id: "opencode/beam-free",
+      label: "Zen · Beam Free",
     },
   ],
 };
@@ -181,9 +181,10 @@ export async function discoverOpenCodeModels(
     const catalog = parseOpenCodeModelsOutput(await runOpenCodeModels(cli, environment, true));
     if (!catalog) throw new Error("OpenCode returned no usable models");
     lastSuccessfulCatalog = catalog;
-    return catalog;
+    return { ...catalog, source: "live" };
   } catch {
-    return lastSuccessfulCatalog ?? STATIC_MODELS;
+    // A failed probe is never live, even when an earlier list is reused.
+    return { ...(lastSuccessfulCatalog ?? STATIC_MODELS), source: "static" };
   }
 }
 
@@ -366,7 +367,7 @@ export function normalizeLegacyOpenCodeModel(
   if (model !== "opencode-go/ox-alpha-free") return model;
   return env.OPENCODE_API_KEY
     ? "opencode-go/x-preview-f-free"
-    : "opencode/x-preview-f-free";
+    : "opencode/beam-free"; // x-preview-f-free is gone from opencode 1.19.3
 }
 
 /** Whether a turn works inside a folder Murage owns: a bot's own workspace or
@@ -490,6 +491,64 @@ export function isolateOpenCodeFromPersonalSetup(env: Record<string, string | un
   const off = Object.fromEntries(names.map((name) => [name, { ...(mcp[name] && typeof mcp[name] === "object" ? mcp[name] as object : {}), enabled: false }]));
   env.OPENCODE_CONFIG_CONTENT = JSON.stringify({ ...base, mcp: { ...mcp, ...off } });
 }
+
+/** OpenCode's own tools that act (each named, so an owner or project config
+ *  that allows one by name is overridden too; `*` covers MCP tools). */
+const OPENCODE_ASKED_TOOLS = ["bash", "edit", "write", "task", "skill", "lsp", "webfetch", "websearch", "codesearch", "external_directory", "doom_loop"] as const;
+
+/** A key-file read rule (shared/sensitive-paths.ts) as an OpenCode read
+ *  pattern. OpenCode's `*` spans folders, so a leading `*` matches the rule
+ *  anywhere: in the project, or under a home that is the working folder. */
+function openCodeReadPattern(rule: string): string {
+  const tail = rule.replace(/^~\//, "").replace(/^\*\*\//, "").replace(/\*\*/g, "*");
+  return tail.startsWith("*") ? tail : `*${tail}`;
+}
+
+/** The permission set every OpenCode bot turn runs under. OpenCode's defaults
+ *  allow bash, edits and every MCP tool, so it never asked and Murage's access
+ *  level never applied (real-engine gate, OpenCode 1.19.3: shell and computer
+ *  clicks ran at Ask with no card). Here everything that acts asks, so each
+ *  call reaches Murage as session/request_permission and the bot's level
+ *  answers it (Full access and Auto answer it unasked). Reads, searches and
+ *  the to-do list run, as they do on Claude, except a key file. */
+export function openCodeTurnPermission(): Record<string, unknown> {
+  const read: Record<string, string> = { "*": "allow" };
+  for (const row of SENSITIVE_PATHS) for (const rule of row.read) read[openCodeReadPattern(rule)] = "ask";
+  return {
+    "*": "ask",
+    ...Object.fromEntries(OPENCODE_ASKED_TOOLS.map((tool) => [tool, "ask"])),
+    read,
+    glob: "allow",
+    grep: "allow",
+    list: "allow",
+    todoread: "allow",
+    todowrite: "allow",
+  };
+}
+
+/** Write the turn's permission set into the inline config, which OpenCode
+ *  merges over every config file; the owner's own `permission` there is
+ *  replaced, never merged. */
+export function applyOpenCodeTurnPermission(env: Record<string, string | undefined>): void {
+  let base: Record<string, unknown> = {};
+  const raw = env.OPENCODE_CONFIG_CONTENT?.trim();
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) base = parsed as Record<string, unknown>;
+    } catch { /* an unparseable overlay is replaced, as opencodeConfigOverlay does */ }
+  }
+  const permission = openCodeTurnPermission();
+  // An agent's own `permission` outranks the top-level one (an owner's
+  // `agent.build.permission.bash: "allow"` ran bash unasked on the real CLI),
+  // so OpenCode's own agents carry the same set, and a bot turn always starts
+  // on `build`, never on an agent of the owner's own config.
+  const agent = Object.fromEntries(OPENCODE_AGENTS.map((name) => [name, { permission }]));
+  env.OPENCODE_CONFIG_CONTENT = JSON.stringify({ ...base, permission, agent, default_agent: "build" });
+}
+
+/** OpenCode's own agents: `build` (the default), `plan`, and the subagents it starts. */
+const OPENCODE_AGENTS = ["build", "plan", "general", "explore"] as const;
 
 /**
  * The owner's global ~/.config/opencode/AGENTS.md is read from
@@ -659,6 +718,8 @@ const support = (loadCatalog: OpenCodeCatalogLoader): AcpSupport => ({
   transformEnv: (env) => {
     stripForeignProviderKeys(env);
     isolateOpenCodeFromPersonalSetup(env);
+    // every spawn, provider-route turns included (they skip applyTurnEnv)
+    applyOpenCodeTurnPermission(env);
   },
   // The owner's global AGENTS.md: after every Murage read and write of their real
   // config folder this turn (resolveTurnModel), so those still reach it.
@@ -702,11 +763,16 @@ const support = (loadCatalog: OpenCodeCatalogLoader): AcpSupport => ({
   // dev-mode key), overlaid with `environment` so an instance-specific HOME /
   // XDG_CONFIG_HOME / OPENCODE_CONFIG_DIR still decides WHICH opencode.json
   // the connector gate inspects.
-  resolveModels: async (environment, config) => mergeFluxCatalog(
-    await mergeLocalInject(await loadCatalog(environment, config.cli), environment),
-    "opencodeGo",
-    { ...process.env, ...environment } as NodeJS.ProcessEnv,
-  ),
+  resolveModels: async (environment, config) => {
+    const listed = await loadCatalog(environment, config.cli);
+    const merged = await mergeFluxCatalog(
+      await mergeLocalInject(listed, environment),
+      "opencodeGo",
+      { ...process.env, ...environment } as NodeJS.ProcessEnv,
+    );
+    // The merges build new catalogs; the source of the CLI list is carried over.
+    return listed.source ? { ...merged, source: listed.source } : merged;
+  },
   buildPromptText: (turn) => turn.system ? `${turn.system}\n\n${turn.text}` : turn.text,
 });
 

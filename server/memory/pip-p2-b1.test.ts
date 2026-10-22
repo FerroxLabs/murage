@@ -143,7 +143,8 @@ describe("PIP kind list", () => {
       "memory/bundle.ts": 4, "memory/readable.ts": 4, "memory/checkpoints.ts": 2,
       // +1 evolution-forgetting.ts: the per-binding forgotten test is its own function (a record's state by id and version, no text)
       "memory/consolidate.ts": 3, "memory/eligibility.ts": 3, "memory/evolution-forgetting.ts": 2, "memory/forget.ts": 2, "memory/identity.ts": 8, "memory/import.ts": 1, "memory/index-reader.ts": 1,
-      "memory/learning-history.ts": 4, "memory/lessons.ts": 1, "memory/memory-moments.ts": 1, "memory/metrics.ts": 1, "memory/owner-list.ts": 11, "memory/owner-tail-index.ts": 3, "memory/record-keys.ts": 4, "memory/procedure-review.ts": 3,
+      "memory/learning-history.ts": 4, "memory/lessons.ts": 1, "memory/memory-moments.ts": 1, "memory/metrics.ts": 1, "memory/owner-list.ts": 11, "memory/owner-tail-index.ts": 3, "memory/record-keys.ts": 5, "memory/procedure-review.ts": 3,
+      // record-keys +1 (io-hotpath): the rebuild start log reads max(rowid) only, an administrative count with no row, kind or text
       // owner-list +2 and owner-tail-index +3 (msearch2): owner search reads the never-indexed kinds through the owner-tail table in bounded slices;
       // the backfill reads record keys, kinds and times only, never text
       // +1: pendingProjectionRefsIn names the reader's own pending records (ids only) behind the PENDING predicate, which excludes PIP kinds (msearch review round 4)
@@ -176,7 +177,7 @@ describe("PIP kind list", () => {
       // notebook fix: memory-revocation.ts supersede phase reads one record's state, pin and assertion by id and version (point lookup, no text)
       // write-time S3: the revoke commit reads a record's scope by id; the marker reads one record's kind (a room's notes keep what
       // they quoted), and a denied scope's record ids and versions in key windows (ids, never text)
-      "memory/revoke-commit.ts": 1, "memory/revoke-marker.ts": 3,
+      "memory/revoke-commit.ts": 3, "memory/revoke-marker.ts": 3,
       // write-time S4: the read predicate's point lookups (a record's scope, created lsn, deny mark and tombstone; never text)
       "memory/deny-read.ts": 3,
       // write-time S5 and integration: the backfill folds a receipt's record scopes and walks evidence and derivations for scope -> scope
