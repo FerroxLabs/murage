@@ -198,3 +198,73 @@ describe("writeFileAtomic when the replacement is refused", () => {
     },
   );
 });
+
+// syncDir (MurageMain #6 ruling): an opt-in parent-directory fsync after the rename. The default
+// path must stay exactly as it was: one open (the temp file), one fsync (that file), no directory.
+describe("writeFileAtomic directory sync", () => {
+  let dir: string;
+  const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+  const real = { openSync: fs.openSync, fsyncSync: fs.fsyncSync, closeSync: fs.closeSync };
+  let calls: string[] = [];
+  let fsyncError: string | undefined;
+  const install = () => {
+    const opened = new Map<number, string>();
+    fs.openSync = ((path: import("node:fs").PathLike, ...rest: unknown[]) => {
+      const fd = (real.openSync as (...args: unknown[]) => number)(path, ...rest);
+      opened.set(fd, String(path));
+      calls.push(`open ${String(path) === dir ? "<dir>" : String(path).startsWith(join(dir, "x.json.")) ? "<tmp>" : String(path)}`);
+      return fd;
+    }) as typeof fs.openSync;
+    fs.fsyncSync = ((fd: number) => {
+      const path = opened.get(fd);
+      calls.push(`fsync ${path === dir ? "<dir>" : "<tmp>"}`);
+      if (path === dir && fsyncError) throw Object.assign(new Error(`${fsyncError}: simulated`), { code: fsyncError });
+      real.fsyncSync(fd);
+    }) as typeof fs.fsyncSync;
+    syncBuiltinESMExports();
+  };
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "murage-atomic-dirsync-"));
+    calls = []; fsyncError = undefined;
+    install();
+  });
+  afterEach(() => {
+    Object.assign(fs, real);
+    syncBuiltinESMExports();
+    Object.defineProperty(process, "platform", platform);
+    removeTempDirSync(dir);
+  });
+
+  it("leaves the default path unchanged: no directory is opened or synced", () => {
+    const p = join(dir, "x.json");
+    writeFileAtomic(p, "a");
+    writeFileAtomic(p, "b", { mode: 0o600 });
+    writeFileAtomic(p, "c", { syncDir: false });
+    expect(calls).toEqual(["open <tmp>", "fsync <tmp>", "open <tmp>", "fsync <tmp>", "open <tmp>", "fsync <tmp>"]);
+    expect(readFileSync(p, "utf8")).toBe("c");
+  });
+
+  it.skipIf(process.platform === "win32")("with syncDir, fsyncs the parent directory after the rename", () => {
+    const p = join(dir, "x.json");
+    writeFileAtomic(p, "a", { syncDir: true });
+    expect(calls).toEqual(["open <tmp>", "fsync <tmp>", `open <dir>`, "fsync <dir>"]);
+    expect(readFileSync(p, "utf8")).toBe("a");
+  });
+
+  it("skips the directory sync on Windows and where the filesystem refuses it, and throws an I/O failure", () => {
+    const p = join(dir, "x.json");
+    Object.defineProperty(process, "platform", { ...platform, value: "win32" });
+    writeFileAtomic(p, "a", { syncDir: true });
+    Object.defineProperty(process, "platform", platform);
+    expect(calls).toEqual(["open <tmp>", "fsync <tmp>"]);
+    if (process.platform === "win32") return;
+    calls = []; fsyncError = "EINVAL";
+    writeFileAtomic(p, "b", { syncDir: true });
+    expect(calls).toEqual(["open <tmp>", "fsync <tmp>", "open <dir>", "fsync <dir>"]);
+    fsyncError = "EIO";
+    expect(() => writeFileAtomic(p, "c", { syncDir: true })).toThrow(/EIO/);
+    // The file itself is already in place: a failed directory sync never removes it.
+    expect(readFileSync(p, "utf8")).toBe("c");
+    expect(readdirSync(dir)).toEqual(["x.json"]);
+  });
+});

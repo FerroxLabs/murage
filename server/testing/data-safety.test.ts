@@ -30,6 +30,8 @@ const NOT_A_DELETE = /\b(?:mkdirSync|mkdir|readdirSync|readdir|cpSync|cp|copySyn
 const ALLOWLIST: Record<string, string> = {
   "server/testing/safe-wipe.mjs": "the helper itself: rmSync/rm run only after assertSafeToWipe admits the path",
   "server/testing/cleanup.ts": "removeTempDir calls assertSafeToWipe before its rmSync retry loop",
+  "server/browser-sandbox-linux-engine.ts": "LINUX_ENGINE_ENABLE_SCRIPT, run as root by the Linux Enable browser step (27fd46da6), removes only its own staging copy, its .copy-* leftovers and superseded Chrome version folders under the fixed root-owned LINUX_ENGINE_ROOT; never a data directory, and safe-wipe would refuse a path outside temp",
+  "scripts/check-addon-msvc-headers.sh": "a POSIX sh dev check (dc5f1f10c): rm -rf only of the mktemp -d object folder it made at the top; scripts/safe-wipe.sh is Bash and cannot be sourced from sh",
   "server/testing/link-removal.fixture.cjs": "run only by link-removal.electron.test.ts on paths inside the mkdtemp folder it is given (argv[3]): it records what the runtime's own rmSync does to a junction there",
   "server/testing/link-removal-native.fixture.cjs": "run only by link-removal.native.test.ts on paths inside the mkdtemp folder it is given (argv[4]): its rmSync calls go through the installed handle-based remove, on a tree it made there",
   "scripts/scale/hz-vitest.sh": "cleanup() runs `rm -rf -- \"${dir:?}\"` on the build host rig over ssh (never on this machine): dir is $H/vitest-<label> under the rig's own scratch root, set non-empty by ${dir:?}, and holds only the git-archive copy the same script just made",
@@ -74,6 +76,7 @@ const ALLOWLIST: Record<string, string> = {
   // scratch, staging, per-skill or per-bot subdirectories under DATA_DIR)
   // and are covered by their own unit tests; routing the app through a test
   // helper would be the wrong layer. None deletes DATA_DIR or a parent of it.
+  "electron/backup-windows-acl.mjs": "removes its own mkdtemp temp folder holding the icacls /save listing of the backup folder's ACL",
   "electron/cua-linux-bundle.cjs": "removes the mkdtemp stage and the previous bundle directory under the app's own resources root",
   "electron/skill-recorder.mjs": "removes the mkdtemp session directory under app.getPath('temp')",
   "electron/skill-recording-store.mjs": "removes its own temporary skill directory when the publish rename fails",
@@ -82,6 +85,7 @@ const ALLOWLIST: Record<string, string> = {
   "server/bot-package-import.ts": "removes the import staging directory it created",
   "server/skill-collection.ts": "removes its own .incoming-<uuid> import staging and .replaced-<uuid> copy under DATA_DIR/skill-collection, and a deleted skill's DATA_DIR/skill-collection/<name> after isSkillName (no dots or slashes)",
   "server/drivers/claude.ts": "removes the per-session mkdtemp MCP config directory",
+  "server/browser-sandbox.ts": "removes its own mkdtemp murage-browser-acl-* folder holding the icacls /save listing (Windows), and the mkdtemp murage-sandbox-probe-* Chrome profile only after checking it sits directly in tmpdir() with that prefix (Linux)",
   "server/drivers/pi.ts": "removes the per-session mkdtemp MCP config directory",
   "server/engine-management.ts": "removes the mkdtemp scratch of an engine install probe",
   "server/fuigo-native-update.ts": "removes the mkdtemp probe home and download directory",
@@ -90,7 +94,7 @@ const ALLOWLIST: Record<string, string> = {
   "server/installation-archive.ts": "removes the mkdtemp write scratch and inspection stage of a backup archive",
   "server/installation-damaged-export.ts": "removes the mkdtemp scratch of a damaged-installation export",
   "server/installation-database-snapshot.ts": "removes the mkdtemp scratch beside the snapshot target",
-  "server/installation-memory-downgrade.ts": "removeDataDirNamesAfter102 removes only the env/ folder named in DATA_DIR_NAMES_AFTER_102 (the kept login-shell environment) directly inside the data folder Prepare to reinstall was given, after lstatSync shows it is a real directory (a link is unlinked, never followed); never the data folder itself; production code does not import the wipe helper of the test tree",
+  "server/installation-memory-downgrade.ts": "removeDataDirNamesAfter102 removes only the folders named in DATA_DIR_NAMES_AFTER_102 (env/, the kept login-shell environment, and claude-private/, a Claude turn's settings overlays) directly inside the data folder Prepare to reinstall was given, after lstatSync shows each is a real directory (a link is unlinked, never followed); never the data folder itself; production code does not import the wipe helper of the test tree",
   "server/backup-local-work.ts": "removes only run-<pid>-XXXXXX folders it made under its own .murage-backup-work/<hash> root (sweep matches the run-name pattern; removeBackupWork refuses any other path); never the data folder",
   "server/installation-encrypted-backup.ts": "removes its own mkdtemp .murage-encrypted-write-*/.murage-encrypted-inspection-* scratch, stage and .recovery-* directories (retained when a tool close is unconfirmed); never the installation root",
   "server/installation-recovery-command.ts": "removes the mkdtemp scratch of backup inspect / restore plan commands",
@@ -116,6 +120,7 @@ const ALLOWLIST: Record<string, string> = {
   "server/drivers/acp/core.ts": "the process-exit handler removes the murage-mcp-listed- mkdtemp folder (one private marker directory per Murage process) opened a few lines above; `root` is a const copy of it, production code does not import the test-only safe-wipe",
   "server/drivers/murage-exec.ts": "privateDir's process-exit handler removes the murage-exec- mkdtemp folder (0700, one per Murage process) made on the line above; `dir` is a const copy of it, never a data directory; production code does not import the test-only safe-wipe, and on Windows the process-wide rmSync from link-removal.ts takes the remove",
   "server/always-ask.ts": "the Always ask command classifier: line 518 is the regex /^rimraf(@\\S*)?$/ that spots a rimraf runner, and the `rm -rf` hits are /** doc comments describing commands it classifies; nothing here deletes",
+  "server/auto-approve.ts": "the auto-approve classifier: the `rm -r`/`rm -f` hit is the opening /** line of the doc comment on the Remove-Item reading (1.0.4 F1); it deletes nothing",
   "server/shell/walk.ts": "the shell command walker the Always ask classifier reads: the `rm -rf` hits are /** doc comments describing commands it parses; nothing here deletes",
   "server/drivers/acp/grok.ts": "the process-exit handler removes the murage-grok-isolation- mkdtemp folder opened a few lines above; `dir` is a const copy of it",
   "server/drivers/antigravity-scope.ts": "every delete is inside a scoped Antigravity home Murage built itself (its own links and reconciled copies, never followed), a lock folder it made, or a moveInto source it just copied; none can be DATA_DIR or the owner's real engine home",

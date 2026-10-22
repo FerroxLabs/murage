@@ -311,6 +311,7 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["GET"], path: re(`/api/threads/${ID}/events`), class: "desktop", why: "one conversation's event history" },
   { methods: "*", path: /^\/api\/bots\/[^/]+\/browser-extension\/check$/, class: "desktop", cloudWrite: "step-up", why: "choosing which engine runs the browser action check: owner and desktop app only; the handler answers PATCH only" },
   { methods: "*", path: "/api/browser-extension/clients", class: "desktop", cloudWrite: "step-up", why: "pair and revoke external browser clients" },
+  { methods: "*", path: "/api/browser/linux-sandbox/enable", class: "desktop", cloudWrite: "step-up", why: "Linux AppImage Enable browser: the owner approves the system administrator prompt that installs the bot browser's AppArmor profile; the desktop app only" },
   { methods: "*", path: /^\/api\/bots\/[^/]+\/browser-extension\/start-task$/, class: "desktop", cloudWrite: "step-up", why: "the owner starts a new browser task after Stop (a new binding, no grants): the desktop app only; a bot never reaches it" },
 ];
 

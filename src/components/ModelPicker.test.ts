@@ -14,7 +14,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import type { PublicProviderConnection } from "../../shared/provider-connections";
-import { EngineOptionRows, PickerPriceNote, PickerRowMeta, pickerRowTitle, ModelPickerBusyNotice, ModelPickerNotices, isThreadModelMutationLocked, modelPickerMaxHeight, modelPickerViewportOffset, refreshModelPickerCatalog } from "./ModelPicker";
+import { EngineListNote, EngineOptionRows, PickerPriceNote, PickerRowMeta, pickerRowTitle, ModelPickerBusyNotice, ModelPickerNotices, isThreadModelMutationLocked, modelPickerMaxHeight, modelPickerViewportOffset, refreshModelPickerCatalog } from "./ModelPicker";
 import { ENGINE_DISABLED_SUFFIX, PRICE_UNKNOWN, engineMenuFamilies, priceBandNote, type PickerEngine, type PickerModel } from "@/lib/provider-model-picker";
 
 const connection = (id: string, catalog: Partial<PublicProviderConnection["catalog"]> = {}): PublicProviderConnection => ({
@@ -387,5 +387,18 @@ describe("vision icon follows the engine", () => {
   });
   it("hides the eye when the engine does not pass pictures", () => {
     expect(renderToStaticMarkup(createElement(PickerRowMeta, { row: seeing(), engineImages: false }))).not.toContain('data-capability="vision"');
+  });
+});
+
+describe("the Cloud engine line", () => {
+  const line = "More engines are coming to Cloud soon. They work in the desktop app today.";
+  it("shows under the engine list on Cloud only", () => {
+    expect(renderToStaticMarkup(createElement(EngineListNote, { note: line }))).toContain(line);
+    expect(renderToStaticMarkup(createElement(EngineListNote, { note: "" }))).toBe("");
+  });
+  it("reads the line the home sends, and the desktop sends none", () => {
+    expect(pickerSource).toContain("<EngineListNote note={state.engineNote}/>");
+    const store = readFileSync(fileURLToPath(new URL("../state/store.tsx", import.meta.url)), "utf8");
+    expect(store).toContain('engineNote: action.engineNote ?? ""');
   });
 });

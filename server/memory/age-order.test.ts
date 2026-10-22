@@ -14,7 +14,7 @@ import { MemoryIndex } from "./index.ts";
 import { closeMemoryIndexReader, lexicalPageSliced, RECALL_SEARCH_SQL } from "./index-reader.ts";
 import { ownerMemoryList, ownerSearchTrace, ownerSearchWork, OWNER_REORDER_NOTICE, type OwnerListInput } from "./owner-list.ts";
 import { ensureScope, reconcileMemoryRoster } from "./policy.ts";
-import { fillRecordKeysNow, fillRecordKeysSlice } from "./record-keys.ts";
+import { fillRecordKeysNow, fillRecordKeysSlice, keyRecordSql } from "./record-keys.ts";
 import { AGE_KEY_MAX, AGE_KEY_SPAN, AGE_KEY_WINDOW, CREATED_AT_MAX, downgradeMemorySchema, dropRecordKeys, migrateMemorySchema, ensureRecordKeys, RECORD_KEYS_BUILD, RECORD_KEYS_TABLE, recordKeysReady, validateMemorySchema } from "./schema.ts";
 
 import { removeTempDirSync } from "../testing/cleanup.ts";
@@ -176,6 +176,100 @@ describe("the backfill: every record already there gets its key, in slices, resu
     expect(all.at(-1)!.k).toBe(1_700_000_000_000 * AGE_KEY_WINDOW + 199_999);
     expect(all.map(row => row.id)).toEqual([...all.map(row => row.id)].sort());
     expect(ms).toBeLessThan(300_000);
+  });
+
+  // 1.0.3 io: the keys a backfill in slices gives, stopped anywhere, are the ones a single row-by-row pass gives (f696bb5f9's slice
+  // logic, kept here as the reference), for histories that take every allocation rule.
+  /** The backfill as f696bb5f9 ran it: each record keyed by keyRecordSql in rowid order, the next key up for a same-millisecond run. */
+  function referenceFill(db: DatabaseSync): void {
+    const next = db.prepare("SELECT rowid AS rr,created_at AS at FROM memory_records ORDER BY rowid");
+    const key = db.prepare(keyRecordSql());
+    const nextUp = db.prepare(`INSERT INTO ${RECORD_KEYS_TABLE} SELECT r.id,r.version,r.scope_id,r.state,r.owner_pinned,r.kind,?2 FROM memory_records r
+ WHERE r.rowid=?1 AND NOT EXISTS(SELECT 1 FROM ${RECORD_KEYS_TABLE} k WHERE k.record_id=r.id AND k.record_version=r.version) AND NOT EXISTS(SELECT 1 FROM ${RECORD_KEYS_TABLE} WHERE age_key=?2)`);
+    const keyOfRow = db.prepare(`SELECT k.age_key AS k FROM memory_records r JOIN ${RECORD_KEYS_TABLE} k ON k.record_id=r.id AND k.record_version=r.version WHERE r.rowid=?`);
+    let runAt: number | null = null, runKey: number | null = null;
+    transaction(() => {
+      for (const row of next.all() as Array<{ rr: number; at: number }>) {
+        const at = Number(row.at);
+        let done = 0;
+        if (runAt === at && runKey !== null && runKey + 1 <= Number.MAX_SAFE_INTEGER) done = Number(nextUp.run(Number(row.rr), runKey + 1).changes);
+        if (done) runKey! += 1; else { done = Number(key.run(Number(row.rr)).changes); if (done) { runAt = at; runKey = Number(keyOfRow.get(Number(row.rr))?.k); } }
+      }
+      db.prepare(`UPDATE ${RECORD_KEYS_BUILD} SET ready=1,cursor_rowid=0 WHERE id=1`).run();
+    });
+  }
+  const table = (db: DatabaseSync) => db.prepare(`SELECT record_id,record_version,scope_id,state,owner_pinned,kind,age_key FROM ${RECORD_KEYS_TABLE} ORDER BY record_id,record_version`).all();
+  /** A seeded history in no id order: floods past one window (rule 3, and into the windows of the next 64 ms), runs of a few records a
+   * millisecond, times out of rowid order, a few non-integer times (the row-by-row path), and records the trigger keyed before the
+   * backfill started. */
+  function seededHistory(db: DatabaseSync, seed: number, scopes: string[]): void {
+    let s = seed >>> 0;
+    const rand = () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 2 ** 32; };
+    const hex = () => Array.from({ length: 4 }, () => Math.floor(rand() * 2 ** 32).toString(16).padStart(8, "0")).join("");
+    const id = () => { const h = hex(); return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`; };
+    const t0 = 1_700_000_000_000, states = ["active", "active", "candidate", "archived", "superseded"];
+    const add = (tx: DatabaseSync, at: number) => insert(tx, id(), scopes[Math.floor(rand() * scopes.length)]!, at, "x", states[Math.floor(rand() * states.length)]!, rand() < 0.1 ? "preference" : "fact", rand() < 0.05 ? 1 : 0);
+    dropRecordKeys(db);
+    transaction(tx => {
+      for (let n = 0; n < 2100; n++) add(tx, t0);
+      for (let n = 0; n < 2100; n++) add(tx, t0 + 3);
+      for (let n = 0; n < 2500; n++) { const at = t0 + 100 + Math.floor(rand() * 400); for (let r = Math.floor(rand() * 4); r >= 0; r--) add(tx, at); }
+      for (let n = 0; n < 30; n++) add(tx, t0 + 200 + Math.floor(rand() * 10) + 0.5);
+      for (let n = 0; n < 300; n++) add(tx, t0 + 1);
+    });
+    ensureRecordKeys(db);
+    // keyed by the trigger after the table was made, before the backfill reached them
+    transaction(tx => { for (let n = 0; n < 200; n++) add(tx, t0 + Math.floor(rand() * 600)); for (let n = 0; n < 50; n++) add(tx, t0); });
+  }
+
+  it("the keys are the row-by-row backfill's, record for record, for any slices and any stops (a failed slice, a reopen)", { timeout: 300_000 }, () => {
+    for (const seed of [1, 7, 42]) {
+      closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); reconcileMemoryRoster(roster);
+      let db = database();
+      seededHistory(db, seed, [ensureScope("bot", "a"), ensureScope("bot", "b")]);
+      const triggerKeyed = (db.prepare(`SELECT record_id AS id FROM ${RECORD_KEYS_TABLE}`).all() as Array<{ id: string }>).map(row => row.id);
+      expect(triggerKeyed).toHaveLength(250);
+      referenceFill(db);
+      const expected = table(db);
+      expect(expected.length).toBe(Number(db.prepare("SELECT count(*) AS n FROM memory_records").get()?.n));
+      // back to where the backfill starts: only the trigger's keys
+      transaction(tx => {
+        tx.exec("CREATE TEMP TABLE keep(id TEXT PRIMARY KEY)");
+        const put = tx.prepare("INSERT INTO keep VALUES(?)");
+        for (const id of triggerKeyed) put.run(id);
+        tx.exec(`DELETE FROM ${RECORD_KEYS_TABLE} WHERE record_id NOT IN (SELECT id FROM keep); DROP TABLE keep`);
+        tx.prepare(`UPDATE ${RECORD_KEYS_BUILD} SET ready=0,cursor_rowid=0 WHERE id=1`).run();
+      });
+      expect(recordKeysReady(db)).toBe(false);
+      let s = seed * 7919 >>> 0;
+      const rand = () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 2 ** 32; };
+      let slices = 0, failed = 0, reopened = 0;
+      for (;;) {
+        // a failed slice and a reopen early in every run, then at random
+        const roll = slices === 1 ? 0 : slices === 3 ? 0.1 : rand();
+        if (roll < 0.06) {
+          // a slice that fails part way: nothing of it stays, and the next starts where it did
+          const cursor = Number(db.prepare(`SELECT cursor_rowid AS c FROM ${RECORD_KEYS_BUILD}`).get()?.c);
+          const victim = db.prepare("SELECT r.id AS id FROM memory_records r WHERE r.rowid>? AND NOT EXISTS(SELECT 1 FROM memory_record_keys k WHERE k.record_id=r.id) ORDER BY r.rowid LIMIT 1 OFFSET ?").get(cursor, Math.floor(rand() * 50)) as { id: string } | undefined;
+          if (victim) {
+            const before = table(db);
+            db.prepare(`CREATE TEMP TRIGGER stop_here BEFORE INSERT ON ${RECORD_KEYS_TABLE} WHEN NEW.record_id='${victim.id}' BEGIN SELECT RAISE(ABORT,'stop here'); END`).run();
+            expect(() => fillRecordKeysSlice(db, 200, { budgetMs: Number.POSITIVE_INFINITY })).toThrow(/stop here/);
+            db.exec("DROP TRIGGER stop_here");
+            expect(table(db)).toEqual(before);
+            expect(Number(db.prepare(`SELECT cursor_rowid AS c FROM ${RECORD_KEYS_BUILD}`).get()?.c)).toBe(cursor);
+            failed++;
+          }
+        } else if (roll < 0.12) { closeDatabase(); db = database(); reopened++; }
+        const step = fillRecordKeysSlice(db, 1 + Math.floor(rand() * 2500), { budgetMs: rand() < 0.3 ? 0 : Number.POSITIVE_INFINITY });
+        slices++;
+        if (step.ready) break;
+      }
+      expect(failed).toBeGreaterThan(0); expect(reopened).toBeGreaterThan(0);
+      expect(table(db)).toEqual(expected);
+      expect(recordKeysReady(db)).toBe(true);
+      console.log(`[age-key] seed ${seed}: ${expected.length} records, ${slices} slices, ${failed} failed, ${reopened} reopened: identical keys`);
+    }
   });
 });
 

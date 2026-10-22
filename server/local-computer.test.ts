@@ -13,6 +13,7 @@ import {
   validateLegacyDescriptorRuntime,
   validateLinuxDescriptorRuntime,
 } from "./local-computer.ts";
+import { localControlIsOff } from "./local-routing.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const require = createRequire(import.meta.url);
@@ -300,6 +301,13 @@ describe("legacy descriptor runtime custody", () => {
     const userData = privateUserData("darwin-user-data");
     writeFileSync(join(userData, "cua-connection.json"), JSON.stringify(legacy), { mode: 0o600 });
     expect(readCuaConnection({ platform: "darwin", userData })).toEqual(expected);
+  });
+
+  it.skipIf(process.platform === "win32")("a working Mac descriptor never counts as local control off", () => {
+    const userData = privateUserData("darwin-not-off");
+    writeFileSync(join(userData, "cua-connection.json"), JSON.stringify(legacy), { mode: 0o600 });
+    expect(localControlIsOff(readCuaConnection({ platform: "darwin", userData }))).toBe(false);
+    expect(localControlIsOff(readCuaConnection({ platform: "darwin", userData: privateUserData("darwin-empty") }))).toBe(true);
   });
 
   it.skipIf(process.platform === "win32")("refuses a descriptor anyone on the machine could rewrite", () => {

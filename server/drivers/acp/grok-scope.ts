@@ -12,11 +12,12 @@
 // per bot (scoped-cli-home.ts), holding:
 //   auth.json, auth.json.lock   links to the owner's real login (linked even
 //                 before a first sign-in)
-//   config.toml   a copy without the mcp_servers, hooks and skills tables and
-//                 keys (decided on the parsed key, so quoted keys do not slip
-//                 through), plus `[skills] disabled` naming every ~/.agents
-//                 skill (grok reads that shared folder from HOME; rig: its
-//                 marker reached the prompt until disabled here)
+//   config.toml   a copy without the mcp_servers, hooks, skills and permission
+//                 tables and keys (decided on the parsed key, so quoted keys do
+//                 not slip through), plus `[skills] disabled` naming every
+//                 ~/.agents skill (grok reads that shared folder from HOME; rig:
+//                 its marker reached the prompt until disabled here) and the
+//                 bot's own `[permission] ask` rules (GROK_ASK_RULES)
 // Sessions, history, caches, rules, skills, hooks, plugins and AGENTS.md are the
 // bot's own: the owner's are absent, and one bot never sees another's.
 //
@@ -62,8 +63,17 @@ function atLeast(version: string | undefined, min: readonly number[]): boolean {
   return v[0]! !== min[0]! ? v[0]! > min[0]! : v[1]! !== min[1]! ? v[1]! > min[1]! : v[2]! >= min[2]!;
 }
 
-/** Top-level keys whose tables start or run the owner's own servers and commands. */
-const PERSONAL_ROOTS = new Set(["mcp_servers", "hooks", "skills"]);
+/** Top-level keys whose tables start or run the owner's own servers and commands, plus `permission`: Murage writes
+ *  the bot's own permission rules (GROK_ASK_RULES), and a second `[permission]` table would make the file unreadable. */
+const PERSONAL_ROOTS = new Set(["mcp_servers", "hooks", "skills", "permission"]);
+
+/** The bot's permission rules (grok's compact `[permission] ask` form). In `--permission-mode default` grok runs
+ *  its own "read-only" shell commands without asking anyone: echo, printf, ls, cat, mkdir, touch and more (grok
+ *  1.0.62 xai-grok-permission-rules; docs "Operations That Never Prompt by Default"), and a rule the owner allows
+ *  in ~/.grok or ~/.claude settings approves a call the same way. An `ask` rule outranks both (grok evaluates deny >
+ *  ask > allow, before its built-in approvals), so every shell command, edit and write sends
+ *  session/request_permission and Murage decides it by the bot's level: a card at Ask. */
+export const GROK_ASK_RULES = ["Bash", "Edit", "Write"] as const;
 
 interface TomlStatement {
   start: number;
@@ -202,7 +212,7 @@ function scanToml(text: string): TomlStatement[] {
   return out;
 }
 
-/** grok's config.toml without the `mcp_servers`, `hooks` and `skills` tables and keys, whatever way they are written: `[mcp_servers.x]`, `[[hooks.y]]`, a quoted `"mcp_servers" = { ... }` (also across lines), or a dotted `hooks.a.b = ...`. Decided on the parsed key, not the line text. Everything else (models, keys, features, comments) is kept byte for byte. A file this scanner cannot read is not copied at all: grok would not read it either, and none of its text may reach a bot turn. */
+/** grok's config.toml without the `mcp_servers`, `hooks`, `skills` and `permission` tables and keys, whatever way they are written: `[mcp_servers.x]`, `[[hooks.y]]`, a quoted `"mcp_servers" = { ... }` (also across lines), or a dotted `hooks.a.b = ...`. Decided on the parsed key, not the line text. Everything else (models, keys, features, comments) is kept byte for byte. A file this scanner cannot read is not copied at all: grok would not read it either, and none of its text may reach a bot turn. */
 export function filterGrokConfigToml(text: string): string {
   let statements: TomlStatement[];
   try { statements = scanToml(text); } catch { return ""; }
@@ -245,12 +255,13 @@ export function agentsSkillNames(home: string): string[] {
   return [...names].sort().slice(0, 512);
 }
 
-/** The scoped config.toml: the owner's, filtered, plus `[skills] disabled` for ~/.agents skills. */
+/** The scoped config.toml: the owner's, filtered, plus `[skills] disabled` for ~/.agents skills and the bot's
+ *  `[permission] ask` rules (GROK_ASK_RULES). */
 export function scopedGrokConfigToml(ownerConfig: string, agentsSkills: readonly string[]): string {
-  const filtered = filterGrokConfigToml(ownerConfig);
-  if (!agentsSkills.length) return filtered;
-  const sep = !filtered || filtered.endsWith("\n\n") ? "" : filtered.endsWith("\n") ? "\n" : "\n\n";
-  return `${filtered}${sep}[skills]\ndisabled = [${agentsSkills.map((name) => JSON.stringify(name)).join(", ")}]\n`;
+  let out = filterGrokConfigToml(ownerConfig);
+  const sep = () => (!out || out.endsWith("\n\n") ? "" : out.endsWith("\n") ? "\n" : "\n\n");
+  if (agentsSkills.length) out += `${sep()}[skills]\ndisabled = [${agentsSkills.map((name) => JSON.stringify(name)).join(", ")}]\n`;
+  return `${out}${sep()}[permission]\nask = [${GROK_ASK_RULES.map((rule) => JSON.stringify(rule)).join(", ")}]\n`;
 }
 
 /** The real grok home this env names (an explicit GROK_HOME the owner set, else ~/.grok). */

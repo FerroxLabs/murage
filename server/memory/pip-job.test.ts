@@ -1,13 +1,12 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { execFile, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import { expect, it, vi } from "vitest";
-import { PIP_JOB_SUPERVISOR, powershellArgs, stopWindowsJob } from "./pip-job.ts";
+import { assignPipJob, closePipJob, createPipJob, PIP_JOB_REFUSAL, PipJobRefusedError, stopWindowsJob } from "./pip-job.ts";
 import { killAndVerify, reapAttemptProcess } from "./pip-reaper.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 
@@ -21,7 +20,7 @@ it.each([
 ] as const)("Windows job confirmation: %s", async (_label, result, expected) => {
   const runner = vi.fn(async () => result);
   expect(await killAndVerify(0, { platform: "win32", jobName: name, jobRunner: runner, termGraceMs: 300, forceWaitMs: 100 })).toBe(expected);
-  expect(runner).toHaveBeenCalledWith("powershell.exe", [...powershellArgs, "-JobName", name, "-Stop", "-WaitMs", "400"], 10400);
+  expect(runner).toHaveBeenCalledWith(name, 400);
 });
 it("a thrown helper error retains uncertainty", async () => {
   expect(await stopWindowsJob(name, 0, async () => { throw new Error("denied"); })).toBe(false);
@@ -44,33 +43,34 @@ it("restart revokes pending launch data before opening a not-yet-created job", a
     expect(jobRunner).toHaveBeenCalledOnce();
   } finally { removeTempDirSync(root); }
 });
-it("the supervisor refuses assignment before reading launch data or starting a CLI", () => {
-  const source = readFileSync(PIP_JOB_SUPERVISOR, "utf8");
-  const assign = source.indexOf('if (-not [PipJob]::AssignProcessToJobObject');
-  expect(assign).toBeGreaterThan(0);
-  expect(source.slice(assign, source.indexOf("$launch =", assign))).toContain("exit 220");
-  expect(source.indexOf("[PipJob]::Launch(")).toBeGreaterThan(assign);
-  expect(source).toContain("KILL_ON_JOB_CLOSE = 0x2000");
-  expect(source).toContain("$info.ActiveProcesses -eq 0");
-  expect(source).toContain("$clock.ElapsedMilliseconds -ge $WaitMs");
-  expect(source).toContain("GetLastWin32Error() -eq 2");
-  expect(source).not.toContain("BREAKAWAY_OK");
+it("the job lives in the addon: no PowerShell script ships, and a bad name never reaches it", async () => {
+  expect(existsSync(new URL("./pip-job-supervisor.ps1", import.meta.url))).toBe(false);
+  expect(readFileSync(new URL("../../scripts/bundle-server.mjs", import.meta.url), "utf8")).not.toContain("pip-job-supervisor");
+  expect(readFileSync(new URL("./pip-job.ts", import.meta.url), "utf8").split("\n").filter((line) => !/^\s*(\/\/|\/\*|\*)/.test(line)).join("\n")).not.toMatch(/powershell/i);
+  expect(() => createPipJob("Global\\murage-pip-x")).toThrow(PipJobRefusedError);
+  expect(() => createPipJob("Local\\murage-pip-a;b")).toThrow(PipJobRefusedError);
+  const runner = vi.fn(async () => ({ ok: true, out: '{"state":"absent"}' }));
+  expect(await stopWindowsJob("Local\\other-job", 0, runner)).toBe(false);
+  expect(runner).not.toHaveBeenCalled();
+  expect(PIP_JOB_REFUSAL).toBe(220);
 });
-it("the server bundle copies the supervisor into the desktop server resource", () => {
-  expect(readFileSync(new URL("../../scripts/bundle-server.mjs", import.meta.url), "utf8")).toContain('copyFileSync(join(server, "memory", "pip-job-supervisor.ps1"), join(root, "dist-server", "memory", "pip-job-supervisor.ps1"))');
-  expect(readFileSync(new URL("../../electron-builder.yml", import.meta.url), "utf8")).toContain("from: dist-server\n    to: server");
+it.runIf(process.platform !== "win32")("without the Windows addon a PIP job is refused, never run unconfined", () => {
+  expect(() => createPipJob("Local\\murage-pip-fixture")).toThrow(PipJobRefusedError);
+  expect(assignPipJob({}, 1234)).toBe(false);
+  expect(() => closePipJob({})).not.toThrow();
 });
 
-it.runIf(process.platform === "win32").each([true, false])("real supervisor owns a detached grandchild (CLI exits=%s)", async exits => {
+it.runIf(process.platform === "win32").each([true, false])("real job owns a detached grandchild (CLI exits=%s)", async exits => {
   const root = mkdtempSync(join(tmpdir(), "pip-job-native-"));
   const jobName = `Local\\murage-pip-${randomUUID()}`;
-  const argsFile = join(root, "args.json"), pidFile = join(root, "grandchild.pid");
+  const pidFile = join(root, "grandchild.pid");
   const script = join(root, "cli.cjs");
   writeFileSync(script, `const { spawn } = require('node:child_process'); const fs = require('node:fs'); const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' }); fs.writeFileSync(process.argv[2], String(child.pid)); child.unref(); ${exits ? '' : 'setInterval(() => {}, 1000);'}`);
-  writeFileSync(argsFile, JSON.stringify({ command: process.execPath, args: [script, pidFile] }));
-  const supervisor = spawn("powershell.exe", [...powershellArgs, "-JobName", jobName, "-Cwd", root, "-ArgsFile", argsFile], { stdio: "pipe", windowsHide: true });
-  const closed = new Promise<number | null>((resolve, reject) => { supervisor.once("close", resolve); supervisor.once("error", reject); });
-  supervisor.stdin.end();
+  const job = createPipJob(jobName);
+  const cli = spawn(process.execPath, [script, pidFile], { stdio: "pipe", windowsHide: true });
+  expect(assignPipJob(job, cli.pid!)).toBe(true);
+  const closed = new Promise<number | null>((resolve, reject) => { cli.once("close", resolve); cli.once("error", reject); });
+  cli.stdin.end();
   try {
     const deadline = Date.now() + 20_000;
     while (!existsSync(pidFile) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 25));
@@ -80,12 +80,12 @@ it.runIf(process.platform === "win32").each([true, false])("real supervisor owns
     expect(await stopWindowsJob(jobName)).toBe(true);
     await closed;
     expect(() => process.kill(pid, 0)).toThrow();
-    const { stdout } = await promisify(execFile)("powershell.exe", [...powershellArgs, "-JobName", jobName, "-Stop", "-WaitMs", "0"]);
-    expect(JSON.parse(stdout)).toEqual({ state: "absent" });
+    closePipJob(job);
+    expect(await stopWindowsJob(jobName, 0)).toBe(true); // absent
   } finally {
-    supervisor.kill();
+    cli.kill();
     await closed.catch(() => {});
-    await stopWindowsJob(jobName);
+    closePipJob(job);
     removeTempDirSync(root);
   }
 }, 45_000);

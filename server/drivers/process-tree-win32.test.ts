@@ -1,11 +1,13 @@
-// The process-tree probes under a mocked win32: the process table comes from
-// one powershell.exe Win32_Process listing (stubbed here), so warm Claude and
+// The process-tree probes under a mocked win32: the process table comes from the
+// app's native process list (stubbed here; no PowerShell starts), so warm Claude and
 // Codex engines get a baseline on Windows, and a listing that fails or is cut
-// off still means "never reuse".
+// off still means "never reuse". Working sets come from tasklist.exe /FO CSV /NH.
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
+interface Native { pid: number; ppid: number; start: number; exe: string | null; argv: string[] | null; mine: boolean | null }
 const exec = vi.hoisted(() => ({
-  answer: null as null | { error: unknown; stdout: string },
+  native: null as null | Native[],           // null: the native list fails
+  tasklist: null as null | { error: unknown; stdout: string },
   calls: [] as Array<{ file: string; args: string[]; timeout?: number }>,
 }));
 
@@ -15,27 +17,39 @@ vi.mock("node:child_process", async (importOriginal) => {
     ...real,
     execFile: (file: string, args: string[], opts: { timeout?: number }, cb: (error: unknown, stdout: string, stderr: string) => void) => {
       exec.calls.push({ file, args, timeout: opts?.timeout });
-      const answer = exec.answer ?? { error: new Error("no stub"), stdout: "" };
+      const answer = exec.tasklist ?? { error: new Error("no stub"), stdout: "" };
       queueMicrotask(() => cb(answer.error, answer.stdout, ""));
       return {} as never;
     },
   };
 });
 
+vi.mock("../engine-exclusion.ts", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../engine-exclusion.ts")>();
+  return { ...real, loadExclusionAddon: () => ({ processes: () => { if (!exec.native) throw new Error("the process list could not be read"); return exec.native; } }) };
+});
+
 const { windowsMeasure } = await import("./warm-pool.ts");
-const { descendantBaseline, descendantIdentities, descendantPids, parseWindowsListing, untrackedDescendants, untrackedIdentified, windowsListingArgs } = await import("./process-tree.ts");
+const { descendantBaseline, descendantIdentities, descendantPids, untrackedDescendants, untrackedIdentified } = await import("./process-tree.ts");
+const { rowsFromNative, parseTasklistMemory } = await import("./win-process-table.ts");
 
 const realPlatform = Object.getOwnPropertyDescriptor(process, "platform")!;
 beforeAll(() => { Object.defineProperty(process, "platform", { ...realPlatform, value: "win32" }); });
 afterAll(() => { Object.defineProperty(process, "platform", realPlatform); });
-afterEach(() => { exec.answer = null; exec.calls = []; });
+afterEach(() => { exec.native = null; exec.tasklist = null; exec.calls = []; });
 
 const FILETIME_EPOCH_OFFSET_MS = 11_644_473_600_000;
 const ft = (ms: number) => String((ms + FILETIME_EPOCH_OFFSET_MS) * 10_000);
 const MB = 1024 * 1024;
-const listing = (rows: Array<[number, number, number | null]>, end = true) =>
-  rows.map(([pid, ppid, ms]) => `${pid} ${ppid} ${ms === null ? "-" : ft(ms)} ${ms === null ? "-" : 100 * MB}`).join("\r\n") + (end ? "\r\nEND\r\n" : "");
-const answer = (stdout: string, error: unknown = null) => { exec.answer = { error, stdout }; };
+type Row = [number, number, number | null];
+const native = (rows: Row[]): Native[] => rows.map(([pid, ppid, ms]) => ({ pid, ppid, start: ms === null ? 0 : (ms + FILETIME_EPOCH_OFFSET_MS) / 1000, exe: "C:\\x\\p.exe", argv: [], mine: true }));
+const tasklistOf = (rows: Row[]) => rows.map(([pid, , ms]) => `"p${pid}.exe","${pid}","Console","1","${ms === null ? "N/A" : `${(100 * 1024).toLocaleString("en-US")} K`}"`).join("\r\n") + "\r\n";
+/** What the two sources answer for a set of rows. */
+const listing = (rows: Row[], complete = true) => ({ rows, complete });
+const answer = (l: { rows: Row[]; complete: boolean }, error: unknown = null) => {
+  exec.native = l.complete && !error ? native(l.rows) : null;
+  exec.tasklist = { error, stdout: tasklistOf(l.rows) };
+};
 
 const INIT = 1_800_000_000_000;
 const ROOT = 100;
@@ -50,15 +64,18 @@ const BEFORE: Array<[number, number, number | null]> = [
 ];
 
 describe("Windows process listing (mocked win32)", () => {
-  it("runs powershell.exe by absolute path with an encoded script, no shell", async () => {
+  it("starts no process at all for the tree probes (the native list is read in-process)", async () => {
     answer(listing(BEFORE));
     await descendantPids(ROOT);
+    expect(exec.calls).toHaveLength(0);
+  });
+
+  it("the working-set read is tasklist.exe by absolute path with CSV and no header, never PowerShell", async () => {
+    answer(listing(BEFORE));
+    await windowsMeasure([ROOT]);
     expect(exec.calls).toHaveLength(1);
-    expect(exec.calls[0]!.file).toMatch(/System32.WindowsPowerShell.v1\.0.powershell\.exe$/);
-    expect(exec.calls[0]!.args).toEqual(windowsListingArgs());
-    const script = Buffer.from(exec.calls[0]!.args.at(-1)!, "base64").toString("utf16le");
-    expect(script).toContain("Win32_Process");
-    expect(script).toContain("ToFileTimeUtc");
+    expect(exec.calls[0]!.file).toMatch(/System32.tasklist\.exe$/);
+    expect(exec.calls[0]!.args).toEqual(["/FO", "CSV", "/NH"]);
   });
 
   it("a listing yields a baseline for the warm engine (Claude: descendantBaseline)", async () => {
@@ -88,7 +105,7 @@ describe("Windows process listing (mocked win32)", () => {
   });
 
   it("listing failure, timeout or a cut-off answer means no baseline and no probe (never reuse)", async () => {
-    answer("", Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" }));
+    answer(listing(BEFORE), Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" }));
     expect(await descendantBaseline(ROOT, INIT)).toBeNull();
     answer(listing(BEFORE), Object.assign(new Error("timed out"), { killed: true, signal: "SIGKILL" }));
     expect(await descendantPids(ROOT)).toBeNull();
@@ -112,7 +129,7 @@ describe("Windows process listing (mocked win32)", () => {
   it("a stale parent link (the parent pid now belongs to a younger process) is not parentage", () => {
     // 500 was started by a long-gone process whose pid 200 now names the MCP
     // server, which started after 500 did
-    const rows = parseWindowsListing(listing([[200, ROOT, INIT - 9_000], [500, 200, INIT - 30_000]]))!;
+    const rows = rowsFromNative(native([[200, ROOT, INIT - 9_000], [500, 200, INIT - 30_000]]), null);
     expect(rows.find((row) => row.pid === 500)!.ppid).toBe(0);
     expect(rows.find((row) => row.pid === 200)!.ppid).toBe(ROOT);
   });
@@ -134,7 +151,7 @@ describe("warm reuse decision on mocked win32, per driver", () => {
     expect(await settle(baseline, () => untrackedDescendants(ROOT, baseline!))).toBe("kept warm");
     answer(listing([...BEFORE, [400, ROOT, INIT + 5_000]]));
     expect(await settle(baseline, () => untrackedDescendants(ROOT, baseline!))).toBe("child processes alive at settle (1)");
-    answer("", new Error("powershell missing"));
+    answer(listing(BEFORE), new Error("the list is unavailable"));
     expect(await settle(await descendantBaseline(ROOT, INIT), async () => new Set())).toBe("process probe has no baseline");
   });
 
@@ -159,22 +176,21 @@ describe("warm reuse decision on mocked win32, per driver", () => {
 });
 
 describe("Windows listing hardening (review round)", () => {
-  it("P1-1: a malformed row rejects the whole listing, even before END", async () => {
-    const bad = listing(BEFORE, false) + "garbage row here\r\nEND\r\n";
-    expect(parseWindowsListing(bad)).toBeNull();
-    expect(parseWindowsListing(listing(BEFORE).replace("200 100", "200 x"))).toBeNull();
-    answer(bad);
-    expect(await descendantPids(ROOT)).toBeNull();
-    answer(bad);
-    expect(await descendantBaseline(ROOT, INIT)).toBeNull();
-    answer(bad);
-    expect(await untrackedDescendants(ROOT, new Set([200, 201]))).toBeNull();
+  it("P1-1: a damaged tasklist answer rejects the whole table, a damaged row included", async () => {
+    const good = tasklistOf(BEFORE);
+    expect(parseTasklistMemory(good)).not.toBeNull();
+    expect(parseTasklistMemory(good + "garbage row here\r\n")).toBeNull();
+    expect(parseTasklistMemory(good.replace('"200"', '"x"'))).toBeNull();
+    expect(parseTasklistMemory("")).toBeNull();
+    answer(listing(BEFORE));
+    exec.tasklist = { error: null, stdout: good + "garbage row here\r\n" };
+    expect(await windowsMeasure([ROOT])).toBeNull();
   });
 
-  it("P1-1: anything after END rejects the whole listing", () => {
-    expect(parseWindowsListing(listing(BEFORE) + "400 100 - -\r\n")).toBeNull();
-    expect(parseWindowsListing(listing(BEFORE) + "END\r\n")).toBeNull();
-    expect(parseWindowsListing(listing(BEFORE) + "\r\n\r\n")).not.toBeNull();
+  it("a process that has ended but is still held open by a handle is not in the table", () => {
+    const list = native(BEFORE);
+    list[2]!.exe = "";
+    expect(rowsFromNative(list, null).map((row) => row.pid)).not.toContain(200);
   });
 
   it("P1-2: a baseline pid reused by a new background child is not exempt", async () => {
@@ -201,9 +217,9 @@ describe("Windows listing hardening (review round)", () => {
     expect([...tree.alive.keys()]).toEqual([]);
   });
 
-  it("P2-4: the listing is bounded below the Claude baseline wait (5 s)", async () => {
+  it("P2-4: the working-set read is bounded below the Claude baseline wait (5 s)", async () => {
     answer(listing(BEFORE));
-    await descendantPids(ROOT);
+    await windowsMeasure([ROOT]);
     expect(exec.calls[0]!.timeout).toBeLessThan(5_000);
   });
 
@@ -223,11 +239,13 @@ describe("warm pool resident size on mocked win32", () => {
   it("sums the working set of the engine's own tree from the same listing", async () => {
     answer(listing(BEFORE));
     expect(await windowsMeasure([ROOT])).toEqual(new Map([[ROOT, 300 * MB]]));
-    expect(exec.calls).toHaveLength(1);
   });
 
-  it("a failed listing leaves the size unknown", async () => {
-    answer("", new Error("boom"));
+  it("a failed listing, or a failed tasklist, leaves the size unknown", async () => {
+    answer(listing(BEFORE), new Error("boom"));
+    expect(await windowsMeasure([ROOT])).toBeNull();
+    answer(listing(BEFORE));
+    exec.tasklist = { error: new Error("tasklist failed"), stdout: "" };
     expect(await windowsMeasure([ROOT])).toBeNull();
   });
 });

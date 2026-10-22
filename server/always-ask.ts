@@ -554,7 +554,9 @@ function diskHit(name: string, texts: Array<string | undefined>): boolean {
     return ["erasedisk", "erasevolume", "zerodisk", "randomdisk", "secureerase", "partitiondisk", "reformat"].includes(verb);
   }
   if (name === "format" || name === "format.com") return texts.some((a) => /^[a-z]:$/i.test(a ?? ""));
-  return name === "format-volume" || name === "clear-disk" || name === "initialize-disk";
+  // `Remove-Partition` drops a partition and its data; `diskpart` runs a
+  // script (`/s`) or input of disk verbs (`clean`) the reader does not read
+  return name === "format-volume" || name === "clear-disk" || name === "initialize-disk" || name === "remove-partition" || name === "diskpart";
 }
 
 /** Devices ask wherever they are spelled: a device path in any candidate of
@@ -1143,11 +1145,15 @@ const FIND_RUNS = new Set(["-exec", "-execdir", "-ok", "-okdir"]);
  *
  * `mode: "command"` is strict: text the reader cannot parse asks
  * (`unreadable`). `mode: "text"` is for the summary of a tool that runs no
- * command, where a stray apostrophe in a file name must not ask. */
-export function alwaysAskCommand(text: string | undefined, cwd?: string, mode: "command" | "text" = "command"): AlwaysAskHit | null {
+ * command, where a stray apostrophe in a file name must not ask.
+ *
+ * `shell: "pwsh"` is for an engine's PowerShell tool: its text is
+ * PowerShell's whatever it starts with, so it is read by the PowerShell
+ * reader only. */
+export function alwaysAskCommand(text: string | undefined, cwd?: string, mode: "command" | "text" = "command", shell?: "pwsh"): AlwaysAskHit | null {
   if (!text) return null;
   try {
-    return read(text, cwd);
+    return read(text, cwd, shell);
   } catch (error) {
     if (!(error instanceof Unreadable)) throw error;
     if (mode !== "command") return null;
@@ -1160,10 +1166,10 @@ export function alwaysAskCommand(text: string | undefined, cwd?: string, mode: "
  * a pipe, `%x%`, `!x!`). */
 const CMD_RUNS_TEXT = /\s\/[ckr](?=[\s"]|$)|[&%!]|(?<!>)\|/i;
 
-function read(text: string, cwd: string | undefined): AlwaysAskHit | null {
+function read(text: string, cwd: string | undefined, shell?: "pwsh"): AlwaysAskHit | null {
   deferred = null;
   try {
-    return readRules(text, cwd) ?? deferred;
+    return (shell === "pwsh" ? walkPwsh(text, newContext(cwd || undefined), visitor) : readRules(text, cwd)) ?? deferred;
   } finally {
     deferred = null;
   }
@@ -1176,12 +1182,12 @@ function read(text: string, cwd: string | undefined): AlwaysAskHit | null {
  * the read goes on, and when nothing else asks, `valueTarget` names each
  * tool and target expression passed over so the run can record them. Every other rule, a literal
  * catastrophe, a protected path, and every other unreadable text still ask. */
-export function alwaysAskRoutineCommand(text: string | undefined, cwd?: string): { hit: AlwaysAskHit | null; valueTarget?: CarvedTarget[] } {
+export function alwaysAskRoutineCommand(text: string | undefined, cwd?: string, shell?: "pwsh"): { hit: AlwaysAskHit | null; valueTarget?: CarvedTarget[] } {
   if (!text) return { hit: null };
   carved = [];
   carveScope = null;
   try {
-    const found = read(text, cwd);
+    const found = read(text, cwd, shell);
     if (found) return { hit: found };
     return carved.length > 0 ? { hit: null, valueTarget: carved } : { hit: null };
   } catch (error) {

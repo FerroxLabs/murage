@@ -18,6 +18,7 @@ import { revokeRecordDisclosures } from "./revocation.ts";
 import { heldStep } from "../observe.ts";
 import { denyLookup, lineageLive, memoryLookup } from "./deny-read.ts";
 import { memoryRefKey, type LineageVerdict } from "./lineage-types.ts";
+import { inheritEdge } from "./revoke-commit.ts";
 
 type Handle={sourceId:string;revision:number;startByte:number;endByte:number};
 /** Write-time (S4): what the consolidator may read of a source now. The source by its marks (deny_memory, tombstones, denied place, the
@@ -114,7 +115,7 @@ function refreshMemoryCheckpointUnheld(completedJobId:string){
     const version=previous?Number(previous.version)+1:1;
     if(previous){db.prepare("UPDATE memory_records SET state='archived',valid_to=? WHERE id=? AND version=? AND owner_pinned=0").run(Date.now(),id,previous.version);db.prepare("UPDATE memory_projection_receipts SET lexical_status='pending-archive' WHERE record_id=? AND record_version=?").run(id,previous.version);}
     db.prepare("INSERT INTO memory_records VALUES(?,?,?,'checkpoint',?,'assistant-inference','active',0,?,NULL,NULL,?)").run(id,version,source.scope_id,text,Date.now(),Date.now());
-    for(const item of items)db.prepare("INSERT INTO memory_evidence VALUES(?,?,?,?,?,?)").run(id,version,item.handle.sourceId,item.handle.revision,item.handle.startByte,item.handle.endByte);
+    for(const item of items){db.prepare("INSERT INTO memory_evidence VALUES(?,?,?,?,?,?)").run(id,version,item.handle.sourceId,item.handle.revision,item.handle.startByte,item.handle.endByte);inheritEdge(db,{kind:"record",id,version},{kind:"source",id:item.handle.sourceId});}
     db.prepare("INSERT INTO memory_projection_receipts VALUES(?,?,0,'pending','pending',NULL)").run(id,version);
     db.exec("UPDATE memory_meta SET data_revision=data_revision+1");
     return {status:"updated" as const,checkpointId:id,version};
@@ -370,12 +371,14 @@ export async function consolidateMemorySource(completedJobId:string,extractor:Te
       const inserted=db.prepare("INSERT OR IGNORE INTO memory_records VALUES(?,1,?,'fact',?,'assistant-inference','candidate',0,?,NULL,NULL,?)").run(candidateId,source!.scope_id,redactSecretsInText(candidate.text),Date.now(),Date.now());
       added+=Number(inserted.changes);
       db.prepare("INSERT OR IGNORE INTO memory_evidence VALUES(?,1,?,?,?,?)").run(candidateId,source!.id,source!.revision,absolute.startByte,absolute.endByte);
+      inheritEdge(db,{kind:"record",id:candidateId,version:1},{kind:"source",id:String(source!.id)});
       if(inserted.changes){
         const prior=corrections.get(candidate);
         const decision=prior?learningWriteDecision(db,{writer:"correction-supersede",sourceId:String(source!.id),sourceRevision:Number(source!.revision),targetScopeId:String(source!.scope_id),evidenceScopeIds:[...learningEvidenceScopes(db,candidateId,1),...learningEvidenceScopes(db,prior.id,prior.version)],botId:learningSourceBot(String(source!.thread_id))?.id,target:"memory"}):undefined;
         if(prior){
           db.prepare("UPDATE memory_records SET supersedes_id=? WHERE id=? AND version=1").run(prior.id,candidateId);
           db.prepare("INSERT INTO memory_derivations VALUES(?,?,?,1)").run(prior.id,prior.version,candidateId);
+          inheritEdge(db,{kind:"record",id:candidateId,version:1},{kind:"record",id:String(prior.id),version:Number(prior.version)});
         }
         const active=activateGroundedMemory(db,candidateId,candidate.claimType,support.get(candidate),{connection:options.connection,decision,superseding:Boolean(prior),reviewOnly:options.reviewOnly});
         if(candidate.subject&&candidate.predicate)db.prepare("UPDATE memory_record_details SET entities=? WHERE record_id=? AND record_version=1").run(JSON.stringify([candidate.subject,candidate.predicate]),candidateId);

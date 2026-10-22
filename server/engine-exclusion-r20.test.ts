@@ -17,7 +17,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vites
 import { ConversationDeletions, ownerNoticeText, runConversationDeletion } from "./conversation-deletion.ts";
 import { engineState, processState, processVerdict } from "./engine-closed.ts";
 import { executeEnginePlans, HOLD_MAX_MS } from "./engine-exec.ts";
-import { ADDON_VERSION } from "./engine-exclusion.ts";
+import { ADDON_VERSION, WINDOWS_NATIVE_FUNCTIONS } from "./engine-exclusion.ts";
 import { exclOps, mutOps } from "./engine-fs.ts";
 import { engineHistoryTestHooks, type EngineHistoryJob } from "./engine-history-offthread.ts";
 import { planEngineHistory, removeEngineHistoryFiles, runEngineHistoryJob } from "./engine-history-run.ts";
@@ -26,7 +26,7 @@ import { redoDirectory } from "./engine-redo.ts";
 import { violations } from "./engine-structure-check.ts";
 import { builtAddonPath, proc, useFakeExclusion, type FakeExclusion } from "./testing/engine-exclusion-fake.ts";
 import { asExclusive, buildFixture, canaryHits, walDatabase, type Fixture } from "./testing/engine-history-fixtures.ts";
-import { loadEngineExclusionResource, validateEngineExclusionResource } from "../scripts/engine-exclusion-resource.mjs";
+import { loadEngineExclusionResource, validateEngineExclusionResource, WINDOWS_ADDON_FUNCTIONS } from "../scripts/engine-exclusion-resource.mjs";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-r20-")));
@@ -261,11 +261,11 @@ describe("T10: the packaging gate loads the real addon for the target and refuse
     const calls: Array<{ command: string; args: string[]; env: Record<string, string> }> = [];
     const answer = (list: unknown[]) => (command: string, args: string[], env: Record<string, string>) => { calls.push({ command, args, env }); return JSON.stringify(list); };
     const host = { platform: "darwin", arch: "arm64" };
-    expect(loadEngineExclusionResource("/p/engine-exclusion.node", "darwin", "arm64", 4, answer([4, "function", "function", "function", true]), "/App/Murage", host)).toBe("loaded");
+    expect(loadEngineExclusionResource("/p/engine-exclusion.node", "darwin", "arm64", 4, answer([4, "function", "function", "function", true, []]), "/App/Murage", host)).toBe("loaded");
     expect(calls[0]!.command).toBe("/App/Murage");
     expect(calls[0]!.env.ELECTRON_RUN_AS_NODE).toBe("1");
     // the other macOS architecture is run through arch(1)
-    loadEngineExclusionResource("/p/engine-exclusion.node", "darwin", "x64", 4, answer([4, "function", "function", "function", true]), "/App/Murage", host);
+    loadEngineExclusionResource("/p/engine-exclusion.node", "darwin", "x64", 4, answer([4, "function", "function", "function", true, []]), "/App/Murage", host);
     expect(calls[1]!.command).toBe("/usr/bin/arch");
     expect(calls[1]!.args.slice(0, 2)).toEqual(["-x86_64", "/App/Murage"]);
     // a stub that cannot answer, one of another version, one that does not list this process
@@ -276,6 +276,13 @@ describe("T10: the packaging gate loads the real addon for the target and refuse
     expect(() => loadEngineExclusionResource("/p/x.node", "win32", "x64", 4, answer([4, "function", "function", "function", true]), "/App/Murage.exe", host)).toThrow(/UNTESTED/);
     expect(() => loadEngineExclusionResource("/p/x.node", "linux", "arm64", 4, answer([4, "function", "function", "function", true]), "/App/murage", { platform: "linux", arch: "x64" })).toThrow(/UNTESTED/);
     expect(() => loadEngineExclusionResource("/p/x.node", "darwin", "arm64", 4, answer([4, "function", "function", "function", true]), undefined as unknown as string, host)).toThrow(/UNTESTED/);
+    // a Windows package whose addon lacks a call that replaced a PowerShell start is refused, never degraded (murage-releases #1)
+    const win = { platform: "win32", arch: "x64" };
+    expect(loadEngineExclusionResource("/p/x.node", "win32", "x64", 4, answer([4, "function", "function", "function", true, []]), "/App/Murage.exe", win)).toBe("loaded");
+    expect(() => loadEngineExclusionResource("/p/x.node", "win32", "x64", 4, answer([4, "function", "function", "function", true, ["speechToWave"]]), "/App/Murage.exe", win)).toThrow(/FUNCTIONS/);
+    expect(() => loadEngineExclusionResource("/p/x.node", "win32", "x64", 4, answer([4, "function", "function", "function", true]), "/App/Murage.exe", win)).toThrow(/FUNCTIONS/);
+    expect(calls.at(-1)!.args[1]).toContain(JSON.stringify(WINDOWS_ADDON_FUNCTIONS));
+    expect([...WINDOWS_ADDON_FUNCTIONS].sort()).toEqual([...new Set(["openFile", "handleRead", "handleWrite", "handleSync", "handleLock", "handleMarkDelete", "handleId", "handleSize", "handleClose", "removeTree", ...WINDOWS_NATIVE_FUNCTIONS])].sort());
     // for real: this machine's Node loads the built addon
     if (built && process.platform !== "win32") {
       const text = loadEngineExclusionResource(built, process.platform, process.arch, ADDON_VERSION, (command, args, env) => spawnSync(command, args, { env: { ...process.env, ...env }, encoding: "utf8" }).stdout, process.execPath);
