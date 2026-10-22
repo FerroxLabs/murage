@@ -97,7 +97,7 @@ async function speakHosted(text: string, voice: string, run: systemVoices.Runner
   }
   if (platformCanSpeak() || run) {
     return windowsVoices.windowsVoicesAvailable()
-      ? windowsVoices.synthesizeWindows(text, undefined, run)
+      ? windowsVoices.synthesizeWindows(text, undefined)
       : systemVoices.synthesizeSystem(text, undefined, run);
   }
   throw refused ?? new NoVoiceConfigured("key");
@@ -214,7 +214,7 @@ export async function listVoices(cfg: AppConfig, run?: systemVoices.Runner, own?
   if (provider === "xai") return xaiSpeech.XAI_VOICES;
   if (provider === "system") {
     return windowsVoices.windowsVoicesAvailable()
-      ? windowsVoices.listWindowsVoices(run)
+      ? windowsVoices.listWindowsVoices()
       : systemVoices.listSystemVoices(run);
   }
   const key = cfg.tts?.key;
@@ -260,7 +260,7 @@ function speakClip(cfg: AppConfig, written: string, voiceId: string | undefined,
     if (!platformCanSpeak() && !run) throw new NoVoiceConfigured("key");
     if (!voice) throw new NoVoiceConfigured("voice");
     return windowsVoices.windowsVoicesAvailable()
-      ? windowsVoices.synthesizeWindows(text, voice, run)
+      ? windowsVoices.synthesizeWindows(text, voice)
       : systemVoices.synthesizeSystem(text, voice, run);
   }
   const key = cfg.tts?.key;

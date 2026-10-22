@@ -102,7 +102,7 @@ describe("every engine turn spawn is handed the pinned environment (Rule 74)", (
   const TURN_DRIVERS = ["drivers/claude.ts", "drivers/codex.ts", "drivers/pi.ts", "drivers/acp/core.ts"];
   // The scope is the nearest enclosing function that calls handedEngineEnv and holds no other turn spawn: a function that
   // holds several (the driver's create) is a container, and one handed env there would cover a spawn that never saw it.
-  const SPAWN = /\bspawnCli\(\s*config\.cli,(?!\s*\["--version"\])/g;
+  const SPAWN = /\bspawnCli\(\s*(?:config\.cli|launchCli),(?!\s*\["--version"\])/g;
   const handedScope = (node: ts.Node, sf: ts.SourceFile): boolean => {
     for (let at = enclosingFunction(node); at; at = enclosingFunction(at)) {
       const text = at.getText(sf);
@@ -117,7 +117,8 @@ describe("every engine turn spawn is handed the pinned environment (Rule 74)", (
       let spawns = 0;
       const visit = (node: ts.Node) => {
         if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "spawnCli"
-          && node.arguments[0]?.getText(sf) === "config.cli" && !/^\[\s*"--version"\s*\]$/.test(node.arguments[1]?.getText(sf) ?? "")) {
+          // launchCli: config.cli resolved to the file the driver's version probe ran (isolation-cache.ts engineLaunchFile)
+          && ["config.cli", "launchCli"].includes(node.arguments[0]?.getText(sf) ?? "") && !/^\[\s*"--version"\s*\]$/.test(node.arguments[1]?.getText(sf) ?? "")) {
           spawns++;
           if (!handedScope(node, sf)) bad.push(`${file}:${lineOf(sf, node)} spawns the engine without handedEngineEnv`);
         }
@@ -126,6 +127,15 @@ describe("every engine turn spawn is handed the pinned environment (Rule 74)", (
       visit(sf);
       expect(bad, file).toEqual([]);
       expect(spawns, `${file} has a turn spawn`).toBeGreaterThan(0);
+    }
+  });
+  it("launches the engine file the version probe ran, never a fresh lookup on the handed PATH", () => {
+    for (const file of TURN_DRIVERS) {
+      const text = read(file);
+      const bound = [...text.matchAll(/\bconst launchCli = ([^;]+);/g)].map((m) => m[1]);
+      expect(bound.length, `${file} binds launchCli`).toBeGreaterThan(0);
+      for (const rhs of bound) expect(rhs, file).toMatch(/^engineLaunchFile\(config\.cli, /);
+      expect(text, `${file} spawns a bare config.cli turn`).not.toMatch(/\bspawnCli\(\s*config\.cli,(?!\s*\["--version"\])/);
     }
   });
 });

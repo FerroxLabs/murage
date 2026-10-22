@@ -405,7 +405,7 @@ describe("r17-7: on Windows every operation on a held file is made by the addon 
     process.env.MURAGE_ENGINE_EXCLUSION_PATH = file;
     forgetExclusionAddon();
     try {
-      expect(loadExclusionAddon()?.version()).toBe(7); // here (not Windows) it is complete enough
+      expect(loadExclusionAddon()?.version()).toBe(8); // here (not Windows) it is complete enough
       forgetExclusionAddon();
       Object.defineProperty(process, "platform", { value: "win32" });
       expect(loadExclusionAddon()).toBeNull(); // on Windows an addon without the handle functions is refused
@@ -623,7 +623,7 @@ describe("r17-9: MURAGE_ENGINE_EXCLUSION_PATH is honoured only by an unpackaged 
       // and the same file IS used by an unpackaged test process (the stand-ins the suite relies on)
       delete process.env.MURAGE_PACKAGED;
       forgetExclusionAddon();
-      expect(loadExclusionAddon()?.version()).toBe(7);
+      expect(loadExclusionAddon()?.version()).toBe(8);
       expect(existsSync(marker)).toBe(true);
     } finally {
       if (saved.path === undefined) delete process.env.MURAGE_ENGINE_EXCLUSION_PATH; else process.env.MURAGE_ENGINE_EXCLUSION_PATH = saved.path;

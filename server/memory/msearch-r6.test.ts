@@ -23,6 +23,7 @@ import { setMemoryMode } from "./repository.ts";
 import { clearMemorySearchCache, searchMemory, type MemorySearchBridge } from "./search.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
+import { settleWal } from "../wal-maintenance.ts";
 
 const ROSTER: MemoryRoster = { bots: [{ id: "a", threadId: "thread-a", section: "crew" }, { id: "b", threadId: "thread-b", section: "crew" }], groups: [] };
 const INDEX_PATH = () => join(DATA_DIR, "memory-index.db");
@@ -80,6 +81,15 @@ const emptyBridge: MemorySearchBridge = { search: async () => ({ hits: [], vecto
 function collectGarbage() { v8.setFlagsFromString("--expose-gc"); (vm.runInNewContext("gc") as () => void)(); }
 const bulk = (work: () => void) => { database().exec("BEGIN"); try { work(); } finally { database().exec("COMMIT"); } };
 /** The event loop while `work` runs: every gap between two 1 ms ticks. */
+/** The fixture's 100,000-record commit leaves an ~87 MB log, which the log checkpointer (wal-maintenance.ts) copies in the background
+ * in the first seconds after it. On the hosted macOS runner that copy overlapped the search and doubled to tripled it: one cold
+ * search measured 2526 ms wall on 1174 ms of CPU with 4252 voluntary context switches and came back partial at the tool budget
+ * (nightly 39529669758; probe CI 39699260907), while the same search after the copy took 726 ms with 2 switches. The search is the
+ * subject here, not that one-off copy, so the log is settled (copied and restarted) before it is measured, as the server's own
+ * maintenance leaves it. */
+async function settledLog(): Promise<void> {
+  expect(await settleWal({ nudge: true, deadlineAt: Date.now() + 120_000 })).toBe(true);
+}
 async function measured<T>(work: () => Promise<T>) {
   const gaps: number[] = [];
   let last = performance.now();
@@ -128,7 +138,7 @@ describe("P1: a population no reader can read decides nothing the reader sees", 
 
   it("99,990 records denied by state, forgetting, scope and a forgotten parent leave all ten readable hits, identical to the corpus without them, with the loop free", { tags: ["nightly"], timeout: 300_000 }, async () => {
     (() => fixture(true))();
-    await new Promise(resolve => setTimeout(resolve, 500)); collectGarbage();
+    await new Promise(resolve => setTimeout(resolve, 500)); await settledLog(); collectGarbage();
     const crowded = await measured(() => searchMemory(QUERY, accessOf(), emptyBridge, { allowance: LineageAllowance.tool(1_000_000_000), caller: "tool", limit: 20 }));
     console.log(`R6-100K-STATE max event-loop stall ${Math.round(crowded.longest * 10) / 10} ms (p99 ${Math.round(crowded.p99 * 10) / 10}), ${Math.round(crowded.ms)} ms, hits ${crowded.value.hits.length}, partial ${String(crowded.value.partial ?? false)}`);
     expectLoopFree(crowded);
@@ -153,7 +163,7 @@ describe("P1: a population no reader can read decides nothing the reader sees", 
       bulk(() => { for (let n = 0; n < 99_990; n++) { const id = `a-denied-${String(n).padStart(6, "0")}`; deniedByWalk(id, scope); records.push(entry(id, scope, TEXT)); } });
       world(records).close();
     })();
-    await new Promise(resolve => setTimeout(resolve, 500)); collectGarbage();
+    await new Promise(resolve => setTimeout(resolve, 500)); await settledLog(); collectGarbage();
     const run = await measured(() => searchMemory(QUERY, accessOf(), emptyBridge, { allowance: LineageAllowance.tool(1_000_000_000), caller: "tool", limit: 20 }));
     const answer = run.value;
     console.log(`R6-100K-ANCESTRY max event-loop stall ${Math.round(run.longest * 10) / 10} ms (p99 ${Math.round(run.p99 * 10) / 10}), ${Math.round(run.ms)} ms, hits ${answer.hits.length}, partial ${String(answer.partial ?? false)}`);

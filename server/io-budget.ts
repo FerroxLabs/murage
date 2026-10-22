@@ -463,10 +463,17 @@ const sharedRowCounts = new WeakMap<object, number>();
 export const sharedRowsStamp = (db: object): number | undefined => sharedRowCounts.get(db);
 const SHARED_ROW_TABLES = /\b(?:room_requests|team_identities)\b/i;
 const wroteSharedRows = (db: object) => sharedRowCounts.set(db, (sharedRowCounts.get(db) ?? 0) + 1);
+// A third counter for the memory_scope_bindings table alone (a thread's human binding is read by about every route and moves rarely): it
+// moves when a write names the table, and on every undo. No foreign key cascades into the table; another connection's commit is not seen
+// here (a memo built on it must also end with the synchronous run that made it).
+const bindingRowCounts = new WeakMap<object, number>();
+export const bindingRowsStamp = (db: object): number | undefined => bindingRowCounts.get(db);
+const BINDING_TABLE = /\bmemory_scope_bindings\b/i;
+const wroteBindingRows = (db: object) => bindingRowCounts.set(db, (bindingRowCounts.get(db) ?? 0) + 1);
 // Undoing writes (ROLLBACK, ROLLBACK TO, an aborted transaction) reports no changes but changes what a reader would see: it moves the
 // general stamp and the shared-rows stamp, so a memo built from rows read inside the rolled-back transaction is never reused.
 const UNDO_EXEC = /\bROLLBACK\b/i;
-const undid = (db: object) => { wrote(db); wroteSharedRows(db); };
+const undid = (db: object) => { wrote(db); wroteSharedRows(db); wroteBindingRows(db); };
 // Statements that really write (INSERT, UPDATE, DELETE, REPLACE, a write transaction's BEGIN), per handle: the start-up witness counts them
 // between listen and the first health answer (index.ts), where there should be none.
 const writeStatements = new WeakMap<object, number>();
@@ -524,6 +531,7 @@ export function instrumentDatabase(db: DatabaseSync, budget: IoBudget = ioBudget
   const exec = db.exec.bind(db);
   writeCounts.set(db, 0);
   sharedRowCounts.set(db, 0);
+  bindingRowCounts.set(db, 0);
   const instrumentedExec = (sql: string) => {
     const inTransaction = db.isTransaction;
     if (!inTransaction) sample(source);
@@ -532,6 +540,7 @@ export function instrumentDatabase(db: DatabaseSync, budget: IoBudget = ioBudget
     if (writing || /\b(?:CREATE|DROP|ALTER)\b/i.test(sql)) {
       wrote(db);
       if (SHARED_ROW_TABLES.test(sql)) wroteSharedRows(db);
+      if (BINDING_TABLE.test(sql)) wroteBindingRows(db);
     }
     if (writing) countWrite(db);
     const lowered = writing && lowerForHold(db, exec);
@@ -565,6 +574,10 @@ export function instrumentDatabase(db: DatabaseSync, budget: IoBudget = ioBudget
     const tokens = sql.replace(/'(?:''|[^'])*'|--[^\n]*|\/\*[\s\S]*?\*\//g, " ");
     const writes = /\b(?:INSERT|UPDATE|REPLACE|DELETE)\b/i.test(tokens);
     const sharedTable = writes && SHARED_ROW_TABLES.test(tokens);
+    // (matched on the statement as written, quotes and comments included: `UPDATE 'memory_scope_bindings'` names the table too)
+    const bindingTable = writes && BINDING_TABLE.test(sql);
+    // a prepared ROLLBACK or ROLLBACK TO undoes rows a memo may have read, as the exec form does
+    const undoes = UNDO_EXEC.test(tokens);
     const memoryWork = /\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE\s+(?:OR\s+\w+\s+)?|REPLACE\s+INTO)\s*["`\[]?(?:main["`\]]?\s*\.\s*["`\[]?)?memory_(?:jobs|projection_receipts|scope_bindings)["`\]]?(?=\s|\(|$)/i.test(tokens);
     for (const method of ["get", "all", "run"] as const) {
       const original = statement[method].bind(statement) as (...args: unknown[]) => unknown;
@@ -582,7 +595,7 @@ export function instrumentDatabase(db: DatabaseSync, budget: IoBudget = ioBudget
           // the stamps move only when rows really changed: a DELETE that matched nothing (the idle push-notification prune) leaves them
           if (writes) {
             const changed = method === "run" ? Number((result as { changes: number | bigint }).changes) > 0 : true;
-            if (changed) { wrote(db); if (sharedTable) wroteSharedRows(db); }
+            if (changed) { wrote(db); if (sharedTable) wroteSharedRows(db); if (bindingTable) wroteBindingRows(db); }
           }
           if (memoryWork && method === "run" && Number((result as {changes:number|bigint}).changes) > 0) budget.notifyMemoryWork();
           return result;
@@ -590,6 +603,9 @@ export function instrumentDatabase(db: DatabaseSync, budget: IoBudget = ioBudget
         finally {
           // a failed statement that made SQLite abort the whole transaction undid every write in it
           if (failed !== undefined && inTransactionBefore && !db.isTransaction) undid(db);
+          // a failed binding write may keep what it changed before it failed (UPDATE OR FAIL): it moves the binding stamp all the same
+          if (failed !== undefined && bindingTable) { wrote(db); wroteBindingRows(db); }
+          if (undoes && inTransactionBefore) undid(db);
           if (writes && method === "run") countWrite(db);
           const ms = performance.now() - started;
           budget.note(key, ms, true);
@@ -598,6 +614,27 @@ export function instrumentDatabase(db: DatabaseSync, budget: IoBudget = ioBudget
         }
       };
       (statement as unknown as Record<string, unknown>)[method] = instrumentedStatement;
+    }
+    // iterate() runs the statement as its rows are pulled (an UPDATE ... RETURNING writes there): every pull and the end of the iteration
+    // move the stamps the statement could move, whether it changed rows or failed
+    if (writes || undoes) {
+      const iterate = statement.iterate.bind(statement) as (...args: unknown[]) => IterableIterator<unknown>;
+      const touched = () => { if (writes) { wrote(db); if (sharedTable) wroteSharedRows(db); if (bindingTable) wroteBindingRows(db); } if (undoes) undid(db); };
+      // a pull that made SQLite abort the whole transaction (a schema-level ON CONFLICT ROLLBACK on a row it inserted into another table)
+      // undid every write in it, binding rows included: the same abort test as get/all/run, around every pull and the end
+      const pulled = <R>(pull: () => R): R => {
+        const inTransactionBefore = db.isTransaction;
+        try { return pull(); } finally { touched(); try { if (inTransactionBefore && !db.isTransaction) undid(db); } catch { undid(db); } }
+      };
+      (statement as unknown as Record<string, unknown>).iterate = (...args: unknown[]) => {
+        const inner = iterate(...args);
+        const wrapped: IterableIterator<unknown> = {
+          next: (...more: [] | [unknown]) => pulled(() => inner.next(...more)),
+          return: (value?: unknown) => pulled(() => inner.return ? inner.return(value) : { done: true, value }),
+          [Symbol.iterator]() { return wrapped; },
+        };
+        return wrapped;
+      };
     }
     if (reuseDepth > 0 && reuse.size < REUSE_LIMIT) reuse.set(sql, statement);
     return statement;

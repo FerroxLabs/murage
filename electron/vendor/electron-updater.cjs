@@ -15558,99 +15558,11 @@ var require_windowsExecutableCodeSignatureVerifier = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.verifySignature = verifySignature;
     var builder_util_runtime_1 = require_out();
-    var child_process_1 = require("child_process");
-    var path2 = require("path");
-    function preparePowerShellExec(command, timeout) {
-      const executable = `set "PSModulePath=" & chcp 65001 >NUL & powershell.exe`;
-      const args = ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-InputFormat", "None", "-Command", command];
-      const options = {
-        shell: true,
-        windowsHide: true,
-        timeout
-      };
-      return [executable, args, options];
-    }
     function verifySignature(publisherNames, unescapedTempUpdateFile, logger) {
-      return new Promise((resolve, reject) => {
-        const tempUpdateFile = unescapedTempUpdateFile.replace(/'/g, "''");
-        logger.info(`Verifying signature ${tempUpdateFile}`);
-        const attempt = (left) => (0, child_process_1.execFile)(...preparePowerShellExec(`"Get-AuthenticodeSignature -LiteralPath '${tempUpdateFile}' | ConvertTo-Json -Compress"`, 90000), (error, stdout, stderr) => {
-          if (error != null && (error.killed === true || error.signal != null) && left > 1) {
-            logger.warn("Windows signature check timed out; checking once more");
-            attempt(left - 1);
-            return;
-          }
-          try {
-            if (error != null || stderr) {
-              handleError(logger, error, stderr, reject);
-              return;
-            }
-            const data = parseOut(stdout);
-            if (data.Status === 0) {
-              try {
-                const normlaizedUpdateFilePath = path2.normalize(data.Path);
-                const normalizedTempUpdateFile = path2.normalize(unescapedTempUpdateFile);
-                logger.info(`LiteralPath: ${normlaizedUpdateFilePath}. Update Path: ${normalizedTempUpdateFile}`);
-                if (normlaizedUpdateFilePath !== normalizedTempUpdateFile) {
-                  handleError(logger, new Error(`LiteralPath of ${normlaizedUpdateFilePath} is different than ${normalizedTempUpdateFile}`), stderr, reject);
-                  return;
-                }
-              } catch (error2) {
-                handleError(logger, error2, null, reject);
-                return;
-              }
-              const subject = (0, builder_util_runtime_1.parseDn)(data.SignerCertificate.Subject);
-              let match = false;
-              for (const name of publisherNames) {
-                const dn = (0, builder_util_runtime_1.parseDn)(name);
-                if (dn.size) {
-                  const allKeys = Array.from(dn.keys());
-                  match = allKeys.every((key) => {
-                    return dn.get(key) === subject.get(key);
-                  });
-                } else if (name === subject.get("CN")) {
-                  logger.warn(`Signature validated using only CN ${name}. Please add your full Distinguished Name (DN) to publisherNames configuration`);
-                  match = true;
-                }
-                if (match) {
-                  resolve(null);
-                  return;
-                }
-              }
-            }
-            const result = `publisherNames: ${publisherNames.join(" | ")}, raw info: ` + JSON.stringify(data, (name, value) => name === "RawData" ? void 0 : value, 2);
-            logger.warn(`Sign verification failed, installer signed with incorrect certificate: ${result}`);
-            resolve(result);
-          } catch (e) {
-            handleError(logger, e, null, reject);
-            return;
-          }
-        });
-        attempt(2);
-      });
-    }
-    function parseOut(out) {
-      const data = JSON.parse(out);
-      delete data.PrivateKey;
-      delete data.IsOSBinary;
-      delete data.SignatureType;
-      const signerCertificate = data.SignerCertificate;
-      if (signerCertificate != null) {
-        delete signerCertificate.Archived;
-        delete signerCertificate.Extensions;
-        delete signerCertificate.Handle;
-        delete signerCertificate.HasPrivateKey;
-        delete signerCertificate.SubjectName;
-      }
-      return data;
-    }
-    function handleError(logger, error, stderr, reject) {
-      const timedOut = error != null && typeof error === "object" && (error.killed === true || error.signal != null);
-      const detail = error instanceof Error ? error.message : error || stderr || "Missing signature evidence";
-      const failure = (0, builder_util_runtime_1.newError)(timedOut ? `Windows signature check timed out: ${detail}` : `Windows signature verification unavailable: ${detail}`, "ERR_UPDATER_INVALID_SIGNATURE");
-      failure.signatureCheck = timedOut ? "timeout" : "unavailable";
+      const failure = (0, builder_util_runtime_1.newError)("Windows signature verification unavailable: the native signature check was not set on the updater", "ERR_UPDATER_INVALID_SIGNATURE");
+      failure.signatureCheck = "unavailable";
       logger.warn(failure.message);
-      reject(failure);
+      return Promise.reject(failure);
     }
   }
 });

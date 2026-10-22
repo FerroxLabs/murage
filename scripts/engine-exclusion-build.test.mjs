@@ -1,8 +1,8 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The build and the packaging gate of the engine-exclusion addon (native/engine-exclusion): the Windows build links the dynamic C
-// runtime (/MD) and runs inside the Visual Studio developer environment; a package without the addon, or with one for another
+// The build and the packaging gate of the engine-exclusion addon (native/engine-exclusion): the Windows build links the static C
+// runtime (/MT) and runs inside the Visual Studio developer environment; a package without the addon, or with one for another
 // platform, is refused.
 import fs from "node:fs";
 import os from "node:os";
@@ -24,7 +24,7 @@ function headers() {
 }
 
 describe("the Windows build", () => {
-  it("links the dynamic C runtime (/MD) and never the static one", () => {
+  it("links the static C runtime (/MT) so no VCRUNTIME140.dll is needed, and never the dynamic one", () => {
     for (const env of [{ VSCMD_ARG_TGT_ARCH: "x64" }, {}]) {
       const outputRoot = scratch();
       fs.mkdirSync(path.join(outputRoot, `win32-${process.arch}`), { recursive: true });
@@ -32,9 +32,9 @@ describe("the Windows build", () => {
       const calls = [];
       buildEngineExclusion({ platform: "win32", env, environmentFile: "C:\\VS\\Common7\\Tools\\VsDevCmd.bat", headerDirectory: headers(), outputRoot, exec: (command, args) => { calls.push({ command, args }); } });
       const text = calls.map((call) => `${call.command} ${call.args.join(" ")}`).join("\n");
-      expect(text).toContain("/MD");
+      expect(text).toContain("/MT");
       expect(text).toContain("/LD");
-      expect(text).not.toMatch(/\/MT\b/);
+      expect(text).not.toMatch(/\/MD\b/);
       expect(calls).toHaveLength(2); // lib.exe, cl.exe
       if (env.VSCMD_ARG_TGT_ARCH) expect(calls[1].command).toBe("cl.exe");
       else expect(calls[1].args.join(" ")).toContain('call "C:\\VS\\Common7\\Tools\\VsDevCmd.bat" -arch=x64 -host_arch=x64 && cl.exe');
