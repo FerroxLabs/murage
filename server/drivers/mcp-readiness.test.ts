@@ -49,10 +49,32 @@ const budgets = { requiredMs: 15_000, optionalMs: 3_000, recoveryMs: 20_000 };
 describe("required MCP servers", () => {
   it("splits Murage's required servers from optional ones", () => {
     expect(splitMcpServers(["composio", "murage-memory", "agents", "computer", "browser", "muragebox", "memory"])).toEqual({
-      required: ["composio", "murage-memory", "agents"],
-      optional: ["computer", "browser", "muragebox", "memory"],
+      required: ["composio", "murage-memory", "agents", "muragebox"],
+      optional: ["computer", "browser", "memory"],
     });
     expect(unavailableLabels(["composio", "murage-memory"])).toEqual(["connected apps", "memory"]);
+  });
+
+  // 1.0.3.1: Claude Code ends the turn (exit 1, "mcp__muragebox__approve ... not found") at the first approval when the
+  // permission broker has not connected, so it is waited for and reconnected like the other required servers.
+  it("waits for the permission broker past the optional budget and reconnects it when it failed", async () => {
+    expect(unavailableLabels(["muragebox"])).toEqual(["approvals"]);
+    const slow = fakeIo((t) => ({ muragebox: t < 6_000 ? "pending" : "connected", computer: "pending" }));
+    const waited = await awaitRequiredMcp(splitMcpServers(["muragebox", "computer"]), slow.io, budgets);
+    expect(waited.missing).toEqual([]);
+    expect(waited.waitedMs).toBeGreaterThanOrEqual(6_000);
+    expect(waited.notConnected).toEqual([{ name: "computer", state: "pending" }]);
+    const failed = fakeIo(() => ({ muragebox: "failed" }), { muragebox: "connected" });
+    const healed = await awaitRequiredMcp(splitMcpServers(["muragebox"]), failed.io, budgets);
+    expect(failed.reconnected.map((r) => r.name)).toEqual(["muragebox"]);
+    expect(healed).toMatchObject({ missing: [], readiness: "ready", reconnected: ["muragebox"], notConnected: [] });
+  });
+
+  it("reports every server that did not connect with its last state, an unlisted one as absent", async () => {
+    const { io } = fakeIo(() => ({ muragebox: "failed", "murage-memory": "connected", computer: "failed" }));
+    const result = await awaitRequiredMcp({ required: ["muragebox", "murage-memory", "agents"], optional: ["computer"] }, io, budgets);
+    expect(result.missing).toEqual(["muragebox", "agents"]);
+    expect(result.notConnected).toEqual([{ name: "muragebox", state: "failed" }, { name: "agents", state: "absent" }, { name: "computer", state: "failed" }]);
   });
 
   it("returns at once, with one status read, when everything is connected", async () => {
@@ -209,6 +231,10 @@ describe("required MCP servers", () => {
     expect(toolsUnavailableRunError(["connected apps"])).toBe("Connected apps were not ready when this run started, and the run needed them.");
     expect(toolsUnavailableRunError(["memory"])).toBe("Memory was not ready when this run started, and the run needed it.");
     expect(toolsUnavailableNotice(["connected apps", "memory"])).toContain("connected apps and memory were not ready");
+    // Every label reads as a sentence: no "was may", and approvals is plural.
+    expect(toolsMayBeLoadingNotice(["approvals"])).toBe(`[Murage: the tools for approvals may still have been loading when this turn started. If they are there, use them as usual. If this task does not need approvals, do it as usual and report it as you normally would. If it does, do not guess or search for those tools again: start your reply with "Not done:", tell the user plainly that approvals were not ready, and do the parts of the task you can without them.]`);
+    expect(toolsMayBeLoadingNotice(["memory"])).toContain("tell the user plainly that memory was not ready");
+    for (const labels of [["memory"], ["connected apps"], ["approvals"], ["messaging other bots"], ["memory", "approvals"]]) expect(toolsMayBeLoadingNotice(labels)).not.toMatch(/\b(was|were) may\b/);
   });
 });
 

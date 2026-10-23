@@ -206,7 +206,8 @@ describe("Claude turns wait for their required MCP servers", () => {
     const done = await completed(first.turnId);
     expect(done).toMatchObject({ ok: true, mcpReadiness: "unknown" });
     expect(done.toolsUnavailable).toBeUndefined();
-    expect(seen().prompt.message.content.startsWith(toolsMayBeLoadingNotice(["connected apps"]))).toBe(true);
+    // 1.0.3.1: the permission broker (muragebox) is a required server, so an unchecked turn names it too
+    expect(seen().prompt.message.content.startsWith(toolsMayBeLoadingNotice(["connected apps", "approvals"]))).toBe(true);
     const asked = controls().filter((c) => c.request.subtype === "mcp_status").length;
     expect(asked).toBe(1);
     const second = await instance.adapter.sendTurn({ threadId: "t-old-cli", text: "two", integrations: { composio } });

@@ -279,7 +279,9 @@ posixOnly("a Claude steer that waits for init is checked against its quote at th
       });
       // queued before init: the fence has not run and nothing is written
       for (let i = 0; i < 1000 && lines().length < 1; i++) await new Promise((r) => setTimeout(r, 10));
-      expect(lines()).toEqual(["recv:one SLOW_INIT"]);
+      // The fake CLI never answers the MCP status request, so the turn can carry Murage's "may still have been loading" line for its
+      // required servers (the approvals broker is one since 1.0.4) ahead of the text; the text itself arrives unchanged.
+      expect(lines().join("\n")).toMatch(/^recv:(\[Murage: [^\n]*\]\n)?one SLOW_INIT$/);
       expect(fenced).toBe(0);
       // reply-1's source leaves its branch while the steer waits
       revokeSource();

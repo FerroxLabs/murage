@@ -32,6 +32,8 @@ export const WHATS_NEW_BY_VERSION: Readonly<Record<string, WhatsNewEntry>> = {
   "1.0.2": { kind: "page", releaseNotesUrl: "https://github.com/FerroxLabs/murage-releases/releases/tag/v1.0.2" },
   // 1.0.3: the notes and known limits are on the docs changelog and the release page; the in-app page returns with art made for it.
   "1.0.3": { kind: "none" },
+  // 1.0.4: the 1.0.3 hotfix; its notes are on the docs changelog and the release page.
+  "1.0.4": { kind: "none" },
 };
 
 /** The page for `version`, or null when it has none. */

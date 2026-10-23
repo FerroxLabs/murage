@@ -85,7 +85,7 @@ const child = spawn(
     "--permission-mode", "acceptEdits",
     "--permission-prompt-tool", "mcp__muragebox__approve",
     "--mcp-config", mcpConfigPath,
-    "--allowedTools", "mcp__muragebox",
+    "--allowedTools", "mcp__muragebox__approve,mcp__muragebox__ask_user", // the driver names the broker's two tools exactly (CLAUDE_BROKER_TOOLS)
   ],
   { cwd: scratch, stdio: ["pipe", "pipe", "pipe"] },
 );

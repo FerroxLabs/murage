@@ -23,6 +23,7 @@ import { brokerSocketCandidates, ClaudeDriver, CLAUDE_BUILT_IN_AGENTS, CLAUDE_IS
 import { resolveCall } from "../../shared/app-action-grant.ts";
 import { autoVerdict } from "../auto-approve.ts";
 import { bashTargetsOf, claudeExecShell, claudeInProjectAllow, claudeMountRecords, claudeShellRefusal } from "./claude.ts";
+import { OWN_ALWAYS_ASK, OWN_BUILTINS, OWN_UNASKED, type OwnBuiltin } from "../../shared/own-servers.ts";
 import { installMurageExec, murageExecPrefix, WRAPPER_SOURCE, writeExecEnvFile } from "./murage-exec.ts";
 import { inProjectCheck } from "../../shared/in-project.ts";
 import { claudeSensitiveAskRules } from "../../shared/sensitive-paths.ts";
@@ -87,6 +88,11 @@ function answerQueue(conn: ReturnType<typeof connect>) {
   });
   return () => new Promise<any>((resolve) => waiters.push(resolve));
 }
+
+
+/** On Windows every stdio stanza Murage starts through murage-exec also carries PATH, with the turn's bash directory first
+ *  (the 1.0.4 Git Bash fix): cross-spawn finds `bash` on that PATH. Other platforms are unchanged. */
+const withWinStanzaPath = <T extends Record<string, string>>(env: T): T => (process.platform === "win32" ? { ...env, PATH: expect.stringMatching(/^[^;]*\\bin;/i) } as T : env);
 
 describe("ClaudeDriver.decodeConfig", () => {
   it("defaults to the claude binary with acceptEdits", () => {
@@ -1222,9 +1228,9 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     const expected = (name: string) => ({
       command: process.execPath,
       args: ["/fake/remote-mcp-proxy.js", "--server", name],
-      env: { ELECTRON_RUN_AS_NODE: "1", MURAGE_HARNESS_URL: "http://127.0.0.1:1", MURAGE_CRED_FILE: seen.credFile.path, MURAGE_CRED_SERVER: name,
+      env: withWinStanzaPath({ ELECTRON_RUN_AS_NODE: "1", MURAGE_HARNESS_URL: "http://127.0.0.1:1", MURAGE_CRED_FILE: seen.credFile.path, MURAGE_CRED_SERVER: name,
         // murage-exec (Claude's shell prefix, which starts the server) keeps exactly the server's own names
-        MURAGE_EXEC_KEEP: "ELECTRON_RUN_AS_NODE,MURAGE_HARNESS_URL,MURAGE_CRED_FILE,MURAGE_CRED_SERVER" },
+        MURAGE_EXEC_KEEP: "ELECTRON_RUN_AS_NODE,MURAGE_HARNESS_URL,MURAGE_CRED_FILE,MURAGE_CRED_SERVER" }),
     });
     expect(seen.credFile.content.svc.MURAGE_MCP_TOKEN).toBe(token);
     expect(seen.credFile.content.svc2.MURAGE_MCP_TOKEN).toBe(token);
@@ -1400,7 +1406,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(seen.mcpConfig.mcpServers.computer).toEqual({
       command: "/opt/cua driver/cua-driver",
       args: ["mcp", "--embedded", "--socket", "/run/user/1000/driver.sock"],
-      env: { CUA_DRIVER_EMBEDDED: "1", MURAGE_EXEC_KEEP: "CUA_DRIVER_EMBEDDED" },
+      env: withWinStanzaPath({ CUA_DRIVER_EMBEDDED: "1", MURAGE_EXEC_KEEP: "CUA_DRIVER_EMBEDDED" }),
     });
     const allowed = seen.argv[seen.argv.indexOf("--allowedTools") + 1];
     expect(allowed).not.toContain("mcp__computer");
@@ -1807,11 +1813,14 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await recorder.until(event => event.type === "turn.completed" && event.turnId === turn.turnId);
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     expect(instance.adapter.capabilities.memoryMcp).toBe(true);
-    expect(seen.mcpConfig.mcpServers["murage-memory"]).toEqual({ ...memory, env: { MURAGE_HARNESS_URL: "http://127.0.0.1:1", MURAGE_CRED_FILE: seen.credFile.path, MURAGE_CRED_SERVER: "murage-memory", MURAGE_EXEC_KEEP: "MURAGE_HARNESS_URL,MURAGE_CRED_FILE,MURAGE_CRED_SERVER" } });
+    expect(seen.mcpConfig.mcpServers["murage-memory"]).toEqual({ ...memory, env: withWinStanzaPath({ MURAGE_HARNESS_URL: "http://127.0.0.1:1", MURAGE_CRED_FILE: seen.credFile.path, MURAGE_CRED_SERVER: "murage-memory", MURAGE_EXEC_KEEP: "MURAGE_HARNESS_URL,MURAGE_CRED_FILE,MURAGE_CRED_SERVER" }) });
     expect(seen.credFile.content["murage-memory"].MURAGE_MEMORY_TOKEN).toBe("fixture-memory-token");
     expect(seen.mcpConfig.mcpServers.user).toEqual(custom);
     expect(seen.mcpConfig.mcpServers.malicious).toBeUndefined();
-    expect(seen.argv[seen.argv.indexOf("--allowedTools") + 1].split(",")).toContain("mcp__murage-memory");
+    // the four OWN_UNASKED memory tools by exact name, never the whole server (Rule 51)
+    expect(seen.argv[seen.argv.indexOf("--allowedTools") + 1].split(",")).toEqual(expect.arrayContaining(
+      ["mcp__murage-memory__memory_search", "mcp__murage-memory__memory_get", "mcp__murage-memory__memory_save", "mcp__murage-memory__memory_propose_correction"]));
+    expect(seen.argv[seen.argv.indexOf("--allowedTools") + 1].split(",")).not.toContain("mcp__murage-memory");
     expect(JSON.stringify(seen.argv)).not.toContain("fixture-memory-token");
     await expect(instance.adapter.sendTurn({ threadId: "t-memory-collision", text: "recall", integrations: { memory, custom: { "murage-memory": custom } } })).rejects.toThrow("MEMORY_MCP_NAME_COLLISION");
   });
@@ -3288,6 +3297,72 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await recorder.until((e) => e.type === "turn.completed");
     delete process.env.FAKE_CLAUDE_PERM_INPUT;
   });
+
+  // 1.0.3.1 B1/B2: `--allowedTools` names only OWN_UNASKED tools, never a whole own server. The CLI runs every
+  // tool of a listed server unasked, so a whole `mcp__phone` let tap, type_text, swipe and open_app skip the
+  // broker and the stop line, and `mcp__agents` / `mcp__dweb` did the same for web_search, register_artifact
+  // and dweb_opencode_run.
+  const ownMounts = {
+    agents: { command: process.execPath, args: ["fixture-agents"], env: { MURAGE_HARNESS_URL: "http://127.0.0.1:1", MURAGE_BOT_ID: "b1", MURAGE_COMMS_TOKEN: "tok", MURAGE_TURN_DEPTH: "0" } },
+    memory: { command: process.execPath, args: ["fixture-memory"], env: { MURAGE_HARNESS_URL: "http://127.0.0.1:1" } },
+    phone: { command: process.execPath, args: ["fixture-phone"], env: {} },
+    browser: { command: process.execPath, args: ["fixture-browser"], env: {} },
+    dweb: { url: "http://127.0.0.1:49737" },
+    computer: { kind: "box" as const, boxId: "box-1", token: "box-token" },
+  };
+  /** The CLI's own rule: a tool runs unasked when `--allowedTools` names it exactly or names its whole server. */
+  const preAllowedByCli = (allowed: readonly string[], tool: string) => allowed.includes(tool) || allowed.includes(tool.split("__").slice(0, 2).join("__"));
+  const ALWAYS_ASK_PHONE_AND_OWN = [
+    "mcp__phone__tap", "mcp__phone__type_text", "mcp__phone__swipe", "mcp__phone__open_app",
+    "mcp__agents__web_search", "mcp__dweb__dweb_opencode_run", "mcp__agents__register_artifact",
+  ];
+
+  for (const [level, flags] of [["Ask/Auto (routeAsks)", { routeAsks: true as const }], ["Full (stopLine)", { stopLine: true as const }], ["plain", {}]] as const) {
+    it(`pre-allows only OWN_UNASKED tools, never a whole own server, on a ${level} turn (B1/B2)`, async () => {
+      await create(undefined, {}, { permissionMode: "default" });
+      const dump = join(scratch, `dump-own-allow-${Object.keys(flags).join("") || "plain"}.json`);
+      process.env.FAKE_CLAUDE_DUMP = dump;
+      const sent = await instance.adapter.sendTurn({ threadId: `t-own-allow-${Object.keys(flags).join("") || "plain"}`, text: "my phone", ...flags, integrations: ownMounts } as never);
+      await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
+      const seen = JSON.parse(readFileSync(dump, "utf8"));
+      for (const server of ["agents", "murage-memory", "phone", "browser", "dweb", "computer"]) expect(seen.mcpConfig.mcpServers[server]).toBeDefined();
+      const allowed: string[] = seen.argv[seen.argv.indexOf("--allowedTools") + 1].split(",");
+      for (const server of Object.values(OWN_BUILTINS)) expect(allowed).not.toContain(`mcp__${server}`);
+      for (const tool of ALWAYS_ASK_PHONE_AND_OWN) expect(preAllowedByCli(allowed, tool), tool).toBe(false);
+      for (const row of OWN_ALWAYS_ASK) {
+        const tool = `mcp__${OWN_BUILTINS[row.mount.slice("own:".length) as OwnBuiltin]}__${row.tool}`;
+        expect(preAllowedByCli(allowed, tool), tool).toBe(false);
+      }
+      // every OWN_UNASKED tool of a mounted own server stays pre-allowed, by its exact name
+      const expected = OWN_UNASKED.filter((row) => row.mount !== "own:connector").flatMap((row) => row.tools.map((tool) => `mcp__${OWN_BUILTINS[row.mount.slice("own:".length) as OwnBuiltin]}__${tool}`));
+      expect(expected.length).toBeGreaterThan(40);
+      expect(allowed).toEqual(expect.arrayContaining(expected));
+      // the broker's own two tools, and nothing else that is not an OWN_UNASKED name
+      expect(allowed.filter((tool) => tool.startsWith("mcp__") && !expected.includes(tool)).sort()).toEqual(["mcp__muragebox__approve", "mcp__muragebox__ask_user"]);
+    });
+  }
+
+  for (const tool of ALWAYS_ASK_PHONE_AND_OWN) {
+    it(`routes ${tool} to the broker on an Ask turn: it opens a request (B1/B2)`, async () => {
+      await create(undefined, {}, { permissionMode: "default" });
+      const id = tool.replace(/\W/g, "-");
+      const dump = join(scratch, `dump-route-${id}.json`);
+      process.env.FAKE_CLAUDE_DUMP = dump;
+      process.env.FAKE_CLAUDE_PERM_TOOL = tool;
+      process.env.FAKE_CLAUDE_PERM_INPUT = JSON.stringify({ x: 1 });
+      try {
+        await instance.adapter.sendTurn({ threadId: `t-route-${id}`, text: "__fixture_permission_tool__", routeAsks: true, integrations: ownMounts } as never);
+        const opened = await recorder.until((e) => e.type === "request.opened" && e.tool === tool);
+        const seen = JSON.parse(readFileSync(dump, "utf8"));
+        expect(preAllowedByCli(seen.argv[seen.argv.indexOf("--allowedTools") + 1].split(","), tool)).toBe(false);
+        await expect(instance.adapter.respondToRequest(`t-route-${id}`, opened.requestId!, { behavior: "deny" })).resolves.toBe("rejected");
+        await recorder.until((e) => e.type === "turn.completed");
+      } finally {
+        delete process.env.FAKE_CLAUDE_PERM_TOOL;
+        delete process.env.FAKE_CLAUDE_PERM_INPUT;
+      }
+    });
+  }
 
   it("never passes bypassPermissions: the broker is on without the stop line too (T104)", async () => {
     await create(undefined, {}, { permissionMode: "bypassPermissions" });
