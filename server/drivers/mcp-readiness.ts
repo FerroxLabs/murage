@@ -22,6 +22,10 @@ export const REQUIRED_MCP_SERVERS: Readonly<Record<string, string>> = {
   composio: "connected apps",
   "murage-memory": "memory",
   agents: "messaging other bots",
+  // The permission broker (--permission-prompt-tool mcp__muragebox__approve). Claude Code ends the whole turn with exit 1
+  // ("... passed via --permission-prompt-tool) not found") at the first approval when this server has not connected, so
+  // a turn waits for it like any required server and reconnects it when it failed (1.0.3.1, Windows with Git Bash).
+  muragebox: "approvals",
 };
 
 /** How long a turn waits for a required server that is still connecting,
@@ -88,9 +92,11 @@ function joinLabels(labels: string[]): string {
   return `${labels.slice(0, -1).join(", ")} and ${labels.at(-1)}`;
 }
 
-/** "connected apps were", "memory was". */
+/** Labels that read as plural nouns: "connected apps were", "approvals were"; "memory was", "messaging other bots was". */
+const PLURAL_LABELS: ReadonlySet<string> = new Set(["connected apps", "approvals"]);
+/** "connected apps were", "approvals were", "memory was". */
 function wasOrWere(labels: string[]): string {
-  return labels.length > 1 || labels[0] === "connected apps" ? "were" : "was";
+  return labels.length > 1 || PLURAL_LABELS.has(labels[0] ?? "") ? "were" : "was";
 }
 
 /** The words a bot starts its reply with when its task needed tools that were
@@ -120,7 +126,7 @@ export function toolsUnavailableNotice(labels: string[]): string {
  * status request): the same instruction, for tools that may still load. */
 export function toolsMayBeLoadingNotice(labels: string[]): string {
   const list = joinLabels(labels);
-  return `[Murage: ${list} ${wasOrWere(labels)} may still be loading when this turn started. If the tools for ${list} are there, use them as usual. ${ifNeeded(list, wasOrWere(labels))}]`;
+  return `[Murage: the tools for ${list} may still have been loading when this turn started. If they are there, use them as usual. ${ifNeeded(list, wasOrWere(labels))}]`;
 }
 
 /** The routine outcome for a run whose task needed tools that were not there. */
@@ -203,6 +209,8 @@ export interface McpGateResult {
   reconnected: string[];
   /** Required servers skipped (not waited for, not reconnected) under backoff. */
   backedOff: string[];
+  /** Every mounted server (required and optional) not connected when the turn starts, with its last reported state. */
+  notConnected: Array<{ name: string; state: McpServerState | "absent" }>;
   /** The engine never answered a status request: nothing was checked. */
   unchecked: boolean;
   /** Why it was unchecked: the request is unknown to it, or no answer came. */
@@ -235,7 +243,7 @@ export async function awaitRequiredMcp(
   const result = (fields: Partial<McpGateResult> & { missing: string[] }): McpGateResult => {
     const unchecked = fields.unchecked ?? false;
     return {
-      reconnected: [], backedOff, unchecked, stopped: false,
+      reconnected: [], backedOff, unchecked, stopped: false, notConnected: [],
       readiness: unchecked ? "unknown" : fields.missing.length ? "degraded" : "ready",
       ...fields, waitedMs: now() - started,
     };
@@ -323,7 +331,10 @@ export async function awaitRequiredMcp(
       else if (!backedOff.includes(name)) io.backoff.store.failed(backoffKey(name));
     }
   }
-  return result({ missing, reconnected: [...reconnecting.keys()] });
+  const notConnectedStates = [...servers.required, ...servers.optional]
+    .filter((name) => states!.get(name) !== "connected")
+    .map((name) => ({ name, state: states!.get(name) ?? ("absent" as const) }));
+  return result({ missing, reconnected: [...reconnecting.keys()], notConnected: notConnectedStates });
 }
 
 /** Whether an engine build answers the per-server status request, per
