@@ -50,7 +50,8 @@ describe("a turn is handed the proxy, and the proxy's token reaches the relay", 
       // Under the Claude shell prefix (murage-exec, 4adf5e642) the written stanza names the env murage-exec carries over
       // (MURAGE_EXEC_KEEP): the token has moved into the turn's credential file by then, so its name is never on the list.
       const { MURAGE_EXEC_KEEP: keep, ...ownEnv } = mounted.env;
-      expect(Object.keys(ownEnv).sort()).toEqual(["ELECTRON_RUN_AS_NODE", "MURAGE_HARNESS_URL", "MURAGE_MCP_TOKEN"]);
+      // On Windows the stanza also carries PATH, with the turn's bash directory first, so a stdio server finds bash (1.0.4).
+      expect(Object.keys(ownEnv).sort()).toEqual(["ELECTRON_RUN_AS_NODE", "MURAGE_HARNESS_URL", "MURAGE_MCP_TOKEN", ...(process.platform === "win32" ? ["PATH"] : [])]);
       expect(keep?.split(",").sort()).toEqual(["ELECTRON_RUN_AS_NODE", "MURAGE_CRED_FILE", "MURAGE_CRED_SERVER", "MURAGE_HARNESS_URL"]);
       expect(mounted.env.MURAGE_MCP_TOKEN).toMatch(/^[a-f0-9]{48}$/);
       expect(mounted.env.MURAGE_HARNESS_URL).toBe(BASE);

@@ -866,6 +866,25 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "- After upgrading a large install, earlier memory finishes its background check over a few hours. On a large real install it took about 3 hours, at about 17 MiB a minute. Rooms can answer a little slower until it finishes.\n- Delegated replies from turns that began before a change wait for that check. New turns are not held.\n- Memory added while a forget or an edit is still being cleaned up appears once that cleanup finishes. Until then a bot answers without it. Small installs finish in seconds; on a large install it can take a few hours.\n- Right after a large delete or forget, a bot's first reply can take about 5 seconds longer while the cleanup keeps its steady pace.…"
   },
   {
+    "id": "changelog/v1-0-4#overview",
+    "title": "What changed in Murage 1.0.4",
+    "description": "The 1.0.3 hotfix. Claude asks before phone, web search and site tools, and Claude on Windows with Git Bash starts its approval tools reliably.",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.4",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.4",
+    "url": "https://murage.app/docs/changelog/v1-0-4",
+    "text": "Murage 1.0.4 is the hotfix for 1.0.3. Everything in 1.0.3 is included."
+  },
+  {
+    "id": "changelog/v1-0-4#claude-in-1-0-4",
+    "title": "What changed in Murage 1.0.4",
+    "description": "The 1.0.3 hotfix. Claude asks before phone, web search and site tools, and Claude on Windows with Git Bash starts its approval tools reliably.",
+    "heading": "Claude in 1.0.4",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.4",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.4",
+    "url": "https://murage.app/docs/changelog/v1-0-4#claude-in-1-0-4",
+    "text": "- Claude now asks before phone, web search and site tools. Tapping, typing or swiping on your phone, web search, and publishing a site each show an approval card first, as your access level sets.\n- Claude on Windows with Git Bash now starts its approval tools reliably. When Git for Windows is installed, Claude's turns reach Murage's approval tools, so Always ask shows its card as it should."
+  },
+  {
     "id": "computers/cloud-and-vps#box-cloud-computer",
     "title": "Cloud computer and your own VPS",
     "description": "Choose a managed Box desktop or a hardened container on a Linux server you own.",

@@ -28,7 +28,7 @@ import { parseDocument as parseYamlDocument } from "yaml";
 import { createServer as createNetServer } from "node:net";
 import { CLAUDE_UPDATE_MESSAGE, claudeExecutableIdentity, claudeLaunchRefusal, claudeLaunchRefusalError, ClaudeUpdateRequired, claudeVersionVerdict, knownClaudeCliVersion, requireClaudeCliVersion, type ClaudeLaunchRefusal } from "./claude-guards.ts";
 import { homedir, tmpdir } from "node:os";
-import { isAbsolute, join, dirname } from "node:path";
+import { isAbsolute, join, dirname, win32 } from "node:path";
 import { backgroundCapNote, backgroundWaitCapMs, SubtaskTracker } from "../subtasks.ts";
 
 import { DATA_DIR, stripCapturedProviderEnv, stripRoutingEnv, stripWorkspaceCredentialEnv } from "../config.ts";
@@ -108,7 +108,7 @@ import { engineClosedLine } from "./stop-copy.ts";
 import { acpEngineExitStderrText } from "./acp/core.ts";
 import { connectedAppsServerName } from "../../shared/connected-app-names.ts";
 import type { McpMountRecord } from "../../shared/mount-identity.ts";
-import { OWN_BUILTINS, type OwnBuiltin } from "../../shared/own-servers.ts";
+import { OWN_BUILTINS, OWN_UNASKED, type OwnBuiltin } from "../../shared/own-servers.ts";
 import { inProjectCheck, realDir, realPathInOrder, walkRoot } from "../../shared/in-project.ts";
 import { SENSITIVE_TEXT, claudeSensitiveAskRules } from "../../shared/sensitive-paths.ts";
 import { execEnvHanded, execEnvNow, handedEngineEnv, ownedTurnNames, type HandedEnv } from "../engine-env.ts";
@@ -578,6 +578,20 @@ export function claudeMountRecords(keys: readonly string[], connectorKey: string
   }
   return records;
 }
+
+/** Rule 51 for Claude: the exact `mcp__<server>__<tool>` names of a built-in own mount's OWN_UNASKED tools,
+ * the only own tools the turn pre-allows on `--allowedTools`. A whole server (`mcp__phone`) is never named
+ * there: the CLI runs every tool of a listed server unasked, so phone taps, web_search, register_artifact and
+ * dweb_opencode_run would never reach the muragebox broker or the stop line. A mount with no OWN_UNASKED row
+ * (phone, browser, computer) gets none, and every one of its calls asks through the broker. */
+export function claudeOwnUnaskedTools(builtin: OwnBuiltin): string[] {
+  const server = OWN_BUILTINS[builtin];
+  return OWN_UNASKED.filter((row) => row.mount === `own:${builtin}`).flatMap((row) => row.tools.map((tool) => `mcp__${server}__${tool}`));
+}
+
+/** The broker's own two tools: `approve` is the `--permission-prompt-tool` and `ask_user` is the agent's
+ * question card (server/permission-proxy.ts). Both are the broker itself, so they are named exactly. */
+export const CLAUDE_BROKER_TOOLS = ["mcp__muragebox__approve", "mcp__muragebox__ask_user"] as const;
 
 /** One human-readable line for an ask — what the card subtitle shows. */
 function askSummary(ask: Ask): string {
@@ -1539,9 +1553,39 @@ export function claudeShellSetup(platform: NodeJS.Platform, mode: ClaudeShellMod
 }
 
 /** The stdio server stanzas a mode writes: the wrapper keeps their env by MURAGE_EXEC_KEEP; on the inherit path the CLI spawns
- * them itself, with no keep list. */
-export function claudeShellServers(mode: ClaudeShellMode | null, servers: Record<string, unknown>): Record<string, unknown> {
-  return mode?.kind === "murage-exec" ? withExecKeep(servers) : servers;
+ * them itself, with no keep list.
+ *
+ * Windows (1.0.3.1): the CLI starts each stdio server as `<prefix> "<command>"` through cross-spawn, which reads the
+ * wrapper's `#!/bin/bash` line and looks `bash` up on the PATH of that server's environment. A stock Git for Windows
+ * install puts only `Git\cmd` on PATH, so the lookup failed ("'bash' is not recognized"), every stdio server failed,
+ * and the first approval ended the CLI with "mcp__muragebox__approve ... not found". So each stdio stanza gets a PATH
+ * with the found bash's own folder first (that exact bash, never another one such as WSL's System32\bash.exe). The
+ * CLI reads the upper-case name. It is added after the keep list is made, so the wrapper does not carry it: the server
+ * still runs on the turn's own PATH. A stanza that brings its own PATH keeps it, with the folder in front. */
+export function claudeShellServers(mode: ClaudeShellMode | null, servers: Record<string, unknown>, platform: NodeJS.Platform = process.platform, handed: Readonly<Record<string, string>> = {}): Record<string, unknown> {
+  if (mode?.kind !== "murage-exec") return servers;
+  const kept = withExecKeep(servers);
+  if (platform !== "win32") return kept;
+  const bashDir = win32.dirname(mode.shell);
+  const handPath = Object.entries(handed).find(([name]) => name.toUpperCase() === "PATH")?.[1] ?? "";
+  const front = (rest: string) => [bashDir, ...rest.split(";").filter((entry) => entry && entry.toLowerCase() !== bashDir.toLowerCase())].join(";");
+  const out: Record<string, unknown> = {};
+  for (const [name, server] of Object.entries(kept)) {
+    const stanza = server as { command?: unknown; env?: unknown } | null;
+    if (!stanza || typeof stanza !== "object" || typeof stanza.command !== "string") {
+      out[name] = server;
+      continue;
+    }
+    const env: Record<string, string> = { ...((stanza.env && typeof stanza.env === "object" ? stanza.env : {}) as Record<string, string>) };
+    const own = Object.keys(env).find((key) => key.toUpperCase() === "PATH");
+    const ownValue = own !== undefined ? env[own]! : undefined;
+    if (own !== undefined) delete env[own];
+    env.PATH = front(ownValue ?? handPath);
+    // an own PATH stays in the keep list, under the name the wrapper now sees
+    if (own !== undefined && own !== "PATH" && typeof env[EXEC_KEEP] === "string") env[EXEC_KEEP] = env[EXEC_KEEP]!.split(",").map((key) => (key === own ? "PATH" : key)).join(",");
+    out[name] = { ...stanza, env };
+  }
+  return out;
 }
 
 // ---- WIN-NOBASH-DESIGN-r2 3.4 and section 11 D1: the overlay's `env` restates the hand over every settings `env` ------------
@@ -2965,8 +3009,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         claudeMcpStatusSupport.observe(identity, !outcome.unchecked ? "answered" : outcome.uncheckedReason === "unsupported" ? "unsupported" : "no-answer");
       }
       if (chipId && chipTurnId) emit({ ...base(threadId, chipTurnId), type: "item.completed", itemType: "tool", itemId: chipId, ok: outcome.missing.length === 0 });
-      if (outcome.waitedMs >= 1_000 || outcome.missing.length || outcome.reconnected.length || outcome.unchecked || outcome.backedOff.length) {
-        const line = `claude mcp gate thread=${threadId} waitedMs=${outcome.waitedMs} readiness=${outcome.readiness} reconnected=${outcome.reconnected.join(",") || "none"} backedOff=${outcome.backedOff.join(",") || "none"} missing=${outcome.missing.join(",") || "none"}${outcome.unchecked ? ` unchecked=${outcome.uncheckedReason}` : ""}`;
+      if (outcome.waitedMs >= 1_000 || outcome.missing.length || outcome.reconnected.length || outcome.unchecked || outcome.backedOff.length || outcome.notConnected.length) {
+        // every server not connected, with its state, so a failed one is named in the log (1.0.3.1)
+        const line = `claude mcp gate thread=${threadId} waitedMs=${outcome.waitedMs} readiness=${outcome.readiness} reconnected=${outcome.reconnected.join(",") || "none"} backedOff=${outcome.backedOff.join(",") || "none"} missing=${outcome.missing.join(",") || "none"} notConnected=${outcome.notConnected.map(({ name, state }) => `${name}:${state}`).join(",") || "none"}${outcome.unchecked ? ` unchecked=${outcome.uncheckedReason}` : ""}`;
         console.info(line);
         appendNative(threadId, { dir: "out", source: "claude.session", msg: { mcpGate: line } });
       }
@@ -3293,7 +3338,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           args: [PROXY_PATH],
           env: { ...NODE_ENV_FLAG, ...computerProxyEnv(turn.integrations.computer) },
         };
-        allowed.push("mcp__computer");
+        // own:computer has no OWN_UNASKED row: every computer call asks through the broker (Rule 51)
+        allowed.push(...claudeOwnUnaskedTools("computer"));
       } else if (turn.integrations?.localComputer) {
         const local = turn.integrations.localComputer;
         mcpServers.computer = {
@@ -3301,22 +3347,24 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           args: local.args,
           env: local.env,
         };
-        // The isolated Local VM preserves the established pre-allow behavior.
-        // Host tools always route through Murage's permission broker.
-        if (!controlsHost) allowed.push("mcp__computer");
+        // Host or isolated VM, the computer is never pre-allowed as a whole server: only its
+        // OWN_UNASKED tools (none today), so every call reaches Murage's permission broker.
+        allowed.push(...claudeOwnUnaskedTools("computer"));
       }
       // peer-agent comms (list_bots/ask_bot) — the harness builds the whole
       // spawn contract (command/args/env incl. the boot token) in
       // agentsIntegration(); pre-allowing matters doubly here, or the CLI's
-      // own ListAgents look-alike shadows it and "@Bot" asks go nowhere
+      // own ListAgents look-alike shadows it and "@Bot" asks go nowhere.
+      // Only the OWN_UNASKED tools are named: web_search, register_artifact,
+      // publish_site and the other always-ask tools reach the broker.
       if (turn.integrations?.agents) {
         mcpServers.agents = { ...turn.integrations.agents };
-        allowed.push("mcp__agents");
+        allowed.push(...claudeOwnUnaskedTools("agents"));
       }
       if (turn.integrations?.memory) {
         if (Object.hasOwn(turn.integrations.custom ?? {}, "murage-memory")) throw new Error("MEMORY_MCP_NAME_COLLISION");
         mcpServers["murage-memory"] = { ...turn.integrations.memory };
-        allowed.push("mcp__murage-memory");
+        allowed.push(...claudeOwnUnaskedTools("memory"));
       }
       // The phone and the browser are mounted just below, under these names.
       turn = renderMurageTurn(turn, CLAUDE_TOOL_SURFACE, { agents: mcpServers.agents ? "agents" : undefined, memory: mcpServers["murage-memory"] ? "murage-memory" : undefined,
@@ -3324,11 +3372,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       const turnPrompt = turn.engineCommand ? engineCommandText(turn.engineCommand) : turn.text;
       if (turn.integrations?.phone) {
         mcpServers.phone = { ...turn.integrations.phone };
-        allowed.push("mcp__phone");
+        allowed.push(...claudeOwnUnaskedTools("phone"));
       }
       if (turn.integrations?.browser) {
         mcpServers.browser = { ...turn.integrations.browser };
-        allowed.push("mcp__browser");
+        allowed.push(...claudeOwnUnaskedTools("browser"));
       }
       // dweb network daemon (status / repo / opencode model access) via
       // server/drivers/dweb-proxy.ts — points at the configured dweb instance
@@ -3341,7 +3389,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             DWEB_URL: turn.integrations.dweb.url,
           },
         };
-        allowed.push("mcp__dweb");
+        allowed.push(...claudeOwnUnaskedTools("dweb"));
       }
       // user-configured servers mount like any integration but are NOT
       // pre-allowed: acceptEdits silently denies unlisted tools, which
@@ -3365,7 +3413,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         // Windows: the pipe in its forward-slash spelling, which survives Git Bash's
         // reading of the murage-exec command line (permission-pipe.ts).
         mcpServers.muragebox = { command: process.execPath, args: [PERM_PROXY_PATH, brokerPathForArgv(socketPath)], env: { ...NODE_ENV_FLAG } };
-        allowed.push("mcp__muragebox");
+        allowed.push(...CLAUDE_BROKER_TOOLS);
       }
       // The MCP config carries credentials — a Composio consumer key in a
       // header, the box token in the computer proxy's env, the comms token in
@@ -3379,8 +3427,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         for (const name of Object.keys(mcpServers)) {
           if (cloudMcpStanza(mcpServers[name])) continue;
           delete mcpServers[name];
-          const index = allowed.indexOf(`mcp__${name}`);
-          if (index >= 0) allowed.splice(index, 1);
+          for (let index = allowed.length - 1; index >= 0; index--) {
+            if (allowed[index] === `mcp__${name}` || allowed[index]!.startsWith(`mcp__${name}__`)) allowed.splice(index, 1);
+          }
         }
       }
       let mcpConfigPath: string | null = null;
@@ -3934,7 +3983,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           // Claude starts each stdio server through the shell prefix (murage-exec), whose `env -i` keeps only the names
           // MURAGE_EXEC_KEEP lists: without it ELECTRON_RUN_AS_NODE and the credential-file names are lost (1.0.3).
           const bound = cred ? bindCredentialPath(stableServers, cred.path) : stableServers;
-          const mcpJson = JSON.stringify({ mcpServers: claudeShellServers(shellMode, bound) });
+          const mcpJson = JSON.stringify({ mcpServers: claudeShellServers(shellMode, bound, process.platform, handed.env) });
           if (process.env.MURAGE_CLOUD_ROLE === "home") cloudTurnRender(env, "mcp", cloudRenderMcp(stableServers));
           else writeFileSync(mcpConfigPath, mcpJson, { mode: 0o600 });
         }

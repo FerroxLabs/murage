@@ -73,7 +73,33 @@ describe("section 1: two modes, each enforcing its tools", () => {
     expect(setup.logs.join("\n")).toContain("powershell-tool=off reason=bash-wrapped");
     expect(setup.dispatch).toBe(`shell=murage-exec:${WIN_BASH} powershell-tool=off`);
     const servers = { s: { command: "node", args: [], env: { A: "1" } } };
-    expect(mod.claudeShellServers({ kind: "murage-exec", shell: WIN_BASH }, servers)).toEqual({ s: { command: "node", args: [], env: { A: "1", MURAGE_EXEC_KEEP: "A" } } });
+    expect(mod.claudeShellServers({ kind: "murage-exec", shell: WIN_BASH }, servers, "win32", hand)).toEqual({ s: { command: "node", args: [], env: { A: "1", MURAGE_EXEC_KEEP: "A", PATH: `C:\\Program Files\\Git\\bin;${hand.Path ?? hand.PATH}` } } });
+  });
+
+  // 1.0.3.1 Critical: the CLI starts every stdio server as `<murage-exec> "<command>"` through cross-spawn, which reads the
+  // wrapper's `#!/bin/bash` and looks `bash` up on the server's PATH. A stock Git for Windows install puts only Git\cmd on
+  // PATH, so muragebox (and every other server) failed and the first approval ended the CLI with exit 1.
+  it("bash on Windows: every stdio server's PATH starts with the found bash's folder, which the wrapper does not carry", () => {
+    const hand = { Path: "C:\\Windows\\system32;C:\\Program Files\\Git\\cmd", SystemRoot: "C:\\Windows" };
+    const mode = { kind: "murage-exec", shell: WIN_BASH };
+    const servers = {
+      muragebox: { command: "C:\\Murage\\Murage.exe", args: ["proxy.js", "//./pipe/x"], env: { ELECTRON_RUN_AS_NODE: "1" } },
+      bare: { command: "node", args: [] },
+      owner: { command: "tool.exe", args: [], env: { Path: "D:\\tools", K: "v" } },
+      remote: { type: "http", url: "https://example.test/mcp" },
+    };
+    const out = mod.claudeShellServers(mode, servers, "win32", hand);
+    // the upper-case name is the one the CLI's lookup reads; the found bash comes first, so no other bash (WSL's) wins
+    expect(out.muragebox.env).toEqual({ ELECTRON_RUN_AS_NODE: "1", MURAGE_EXEC_KEEP: "ELECTRON_RUN_AS_NODE", PATH: "C:\\Program Files\\Git\\bin;C:\\Windows\\system32;C:\\Program Files\\Git\\cmd" });
+    expect(out.bare.env).toEqual({ PATH: "C:\\Program Files\\Git\\bin;C:\\Windows\\system32;C:\\Program Files\\Git\\cmd" });
+    // an owner's own PATH is kept (and still carried by the wrapper), with the folder in front
+    expect(out.owner.env).toEqual({ K: "v", MURAGE_EXEC_KEEP: "PATH,K", PATH: "C:\\Program Files\\Git\\bin;D:\\tools" });
+    expect(out.remote).toEqual(servers.remote);
+    // a bash found under usr\\bin puts that folder first, once
+    const usr = mod.claudeShellServers({ kind: "murage-exec", shell: "C:\\Git\\usr\\bin\\bash.exe" }, { s: { command: "node", args: [] } }, "win32", { PATH: "C:\\Git\\usr\\bin;C:\\x" });
+    expect(usr.s.env.PATH).toBe("C:\\Git\\usr\\bin;C:\\x");
+    // POSIX is untouched: no PATH is added
+    expect(mod.claudeShellServers({ kind: "murage-exec", shell: "/bin/bash" }, { s: { command: "node", args: [], env: { A: "1" } } }, "linux", { PATH: "/usr/bin" })).toEqual({ s: { command: "node", args: [], env: { A: "1", MURAGE_EXEC_KEEP: "A" } } });
   });
 
   it("bash on POSIX: byte-identical to today (three names, argv untouched)", () => {

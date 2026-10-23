@@ -79,7 +79,7 @@ describe("Grok Build without MCP-ready notifications", () => {
     // only the explicit method-not-found is remembered: the list is not asked again
     expect((readFileSync(join(dir, "acp.log"), "utf8").match(/mcp\/list/g) ?? []).length).toBe(listsAfterFirst);
     // The bot hears its tools may still be loading.
-    expect(readFileSync(join(dir, "prompt.json"), "utf8")).toContain("may still be loading when this turn started");
+    expect(readFileSync(join(dir, "prompt.json"), "utf8")).toContain("may still have been loading when this turn started");
   }, 60_000);
 
   it("reads each server's status first, and does not wait at all when the list shows them ready", async () => {
@@ -104,7 +104,7 @@ describe("Grok Build without MCP-ready notifications", () => {
     const first = await turn("g-absent");
     expect(first.done).toMatchObject({ ok: true, mcpReadiness: "unknown" });
     expect(first.done.toolsUnavailable).toBeUndefined();
-    expect(readFileSync(join(dir, "prompt.json"), "utf8")).toContain("may still be loading when this turn started");
+    expect(readFileSync(join(dir, "prompt.json"), "utf8")).toContain("may still have been loading when this turn started");
   }, 60_000);
 
   it("a failed server and an unnamed one: both warnings and the unknown-readiness flag survive", async () => {

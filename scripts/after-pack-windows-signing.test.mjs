@@ -234,12 +234,13 @@ it("release signature gate exempts only exact verified upstream paths and still 
   expect(gate).toContain("@('Murage.exe', 'Murage-*-setup.exe', 'fuigo.exe', 'murage-browser-host.exe')");
   const snippet = /\$verifyBackup = @'\n([\s\S]*?)\n'@/.exec(gate)?.[1]; expect(snippet).toBeTruthy();
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-  const executeNodePartWith = new AsyncFunction("verifyWindowsBackupTools", "verifyWindowsBrowserSignatures", "process", "nativeAuthenticodeIn", snippet.replace(/^import .*;\n/gm, ""));
-  // the gate hands the packaged resources folder's own addon to the check
-  const executeNodePart = (raw, signed, proc) => executeNodePartWith(raw, signed, proc, resources => { expect(resources).toBe("release/win-unpacked/resources"); return { resources }; });
+  const executeNodePartWith = new AsyncFunction("verifyWindowsBackupTools", "verifyWindowsBrowserSignatures", "process", "nativeAuthenticodeIn", "resolve", "join", "existsSync", snippet.replace(/^import .*;\n/gm, ""));
+  // the gate hands the packaged resources folder's own addon to the check, as an absolute path (require() reads a bare relative one as a package name)
+  const resourcesDir = path.resolve("release/win-unpacked/resources");
+  const executeNodePart = (raw, signed, proc) => executeNodePartWith(raw, signed, proc, resources => { expect(resources).toBe(resourcesDir); return { resources }; }, path.resolve, path.join, fs.existsSync);
   const f = fixture();
   const verifyRaw = directory => { expect(directory).toBe(fixed); verifyWindowsBackupTools(f.backupDirectory); };
-  const verifySigned = vi.fn(async (files, systemRoot, native) => { expect(files).toEqual([`${fixed}/murage-backup-age.exe`]); expect(native).toEqual({ resources: "release/win-unpacked/resources" }); await verifyWindowsBrowserSignatures([f.backupHelper], systemRoot, native); });
+  const verifySigned = vi.fn(async (files, systemRoot, native) => { expect(files).toEqual([`${fixed}/murage-backup-age.exe`]); expect(native).toEqual({ resources: resourcesDir }); await verifyWindowsBrowserSignatures([f.backupHelper], systemRoot, native); });
   await executeNodePart(verifyRaw, verifySigned, { env: { SystemRoot: "C:\\Windows" } }); expect(verifySigned).toHaveBeenCalledOnce();
   verifySigned.mockClear(); fs.rmSync(path.join(f.backupDirectory, "LICENSE"));
   await expect(executeNodePart(verifyRaw, verifySigned, { env: {} })).rejects.toThrow(); expect(verifySigned).not.toHaveBeenCalled();
