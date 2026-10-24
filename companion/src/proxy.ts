@@ -317,6 +317,7 @@ export function createProxyHandler(options: ProxyOptions) {
     const device = options.authenticate(token);
     const denial = denyReason({
       path,
+      search: (req.url ?? "").split("?")[1],
       method,
       // `bearerToken` is the registry's own parser, imported rather than
       // reimplemented: this file used to have a second one, and two parsers

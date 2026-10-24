@@ -43,7 +43,8 @@ import {
   candidatesOf, deviceInWord, deviceReadPosition, fork, HOME, HOME_PARENT, homeSpelled, interpreterKey, isAnchored, isDeviceWrite, newContext, normalizePath, REMOTE_ELEVATED, resolveFrom,
   UNKNOWN_MARK, unmarked, walkScript, type Candidate, type SimpleCommand, type Visitor, type WalkContext,
 } from "./shell/walk.ts";
-import type { Redirect } from "./shell/parse.ts";
+import { posix as posixPath } from "node:path";
+import { parse, type Redirect } from "./shell/parse.ts";
 
 export type AlwaysAskRule = "delete-root" | "delete-home" | "delete-system-folder" | "disk-erase" | "fork-bomb" | "unreadable" | "unknown-target" | "protected-path";
 
@@ -57,6 +58,12 @@ export interface AlwaysAskHit {
   /** `protected-path` only: the class of the path, and the program pointed at it */
   protectedClass?: ProtectedClass;
   program?: string;
+  /** `unreadable` only (1.0.5): the one thing the reader could not see is a
+   * script file on disk, named by a literal path this text did not write
+   * (`source venv/bin/activate`, `bash build.sh`, `python manage.py`), and
+   * the rest of the text was read whole. It asks at Ask and Auto; Full access
+   * and No limits, on a turn they cover, run it (server/auto-approve.ts). */
+  unseenScript?: true;
 }
 
 const WHAT: Record<AlwaysAskRule, string> = {
@@ -898,6 +905,9 @@ function protectedWrapperArgs(words: Word[], ctx: WalkContext): ProtectedClass |
 
 /** The first protected-path hit of the read in progress (`read`). */
 let deferred: AlwaysAskHit | null = null;
+/** The read in progress (`read`): its text, and every script file on disk it
+ * runs unseen (1.0.5). Read after every other rule: any of them wins. */
+let unseen: { text: string; paths: string[] } | null = null;
 
 /** One write or delete the routine carve-out passed over, as the run's
  * history records it: the tool (`rm`, a redirect, `find -delete`, a
@@ -1080,6 +1090,13 @@ const visitor: Visitor<AlwaysAskHit> = {
   forkBomb(): AlwaysAskHit {
     return hit("fork-bomb");
   },
+  /** 1.0.5: a marker only. Whether the run may go ahead unseen is the
+   * shape of the whole text (`unseenShapeAdmits`), read after the walk. */
+  unseenScript(path: string): boolean {
+    if (unseen === null) return false;
+    unseen.paths.push(path);
+    return true;
+  },
   findValues(words: Word[]): boolean {
     if (carved === null) return false;
     const at = findValuesPassable(words);
@@ -1153,7 +1170,7 @@ const FIND_RUNS = new Set(["-exec", "-execdir", "-ok", "-okdir"]);
 export function alwaysAskCommand(text: string | undefined, cwd?: string, mode: "command" | "text" = "command", shell?: "pwsh"): AlwaysAskHit | null {
   if (!text) return null;
   try {
-    return read(text, cwd, shell);
+    return readWhole(text, cwd, shell);
   } catch (error) {
     if (!(error instanceof Unreadable)) throw error;
     if (mode !== "command") return null;
@@ -1168,6 +1185,7 @@ const CMD_RUNS_TEXT = /\s\/[ckr](?=[\s"]|$)|[&%!]|(?<!>)\|/i;
 
 function read(text: string, cwd: string | undefined, shell?: "pwsh"): AlwaysAskHit | null {
   deferred = null;
+  unseen = { text, paths: [] };
   try {
     return (shell === "pwsh" ? walkPwsh(text, newContext(cwd || undefined), visitor) : readRules(text, cwd)) ?? deferred;
   } finally {
@@ -1187,7 +1205,7 @@ export function alwaysAskRoutineCommand(text: string | undefined, cwd?: string, 
   carved = [];
   carveScope = null;
   try {
-    const found = read(text, cwd, shell);
+    const found = readWhole(text, cwd, shell);
     if (found) return { hit: found };
     return carved.length > 0 ? { hit: null, valueTarget: carved } : { hit: null };
   } catch (error) {
@@ -1197,6 +1215,189 @@ export function alwaysAskRoutineCommand(text: string | undefined, cwd?: string, 
     carved = null;
     carveScope = null;
   }
+}
+
+/** `read`, then the unseen script files when nothing else asked: they may go
+ * ahead at Full access and No limits only in a text of the allowed shape
+ * (`unseenShapeAdmits`); any other text with one asks at every level. */
+function readWhole(text: string, cwd: string | undefined, shell?: "pwsh"): AlwaysAskHit | null {
+  try {
+    const found = read(text, cwd, shell);
+    if (found || !unseen || unseen.paths.length === 0) return found;
+    return unseenShapeAdmits(text, unseen.paths, cwd, shell) ? { ...hit("unreadable"), unseenScript: true } : hit("unreadable");
+  } finally {
+    unseen = null;
+  }
+}
+
+/** 1.0.5: the commands a text that runs an unseen script file may hold, so
+ * that nothing in it can have made or changed that file and nothing runs
+ * besides it: a script run by a shell or an interpreter with no option
+ * before it, a sourced file, `cd`, and a few commands that only print. */
+const SHAPE_SHELLS = new Set(["bash", "sh"]);
+const SHAPE_INTERPRETERS = new Set(["python", "python3", "node", "ruby", "php", "perl"]);
+const SHAPE_SOURCES = new Set(["source", "."]);
+const SHAPE_PRINTS = new Set(["pwd", "ls", "true", "deactivate", "which", "echo"]);
+/** A literal path with no option shape. */
+const SHAPE_PATH = /^(?!-)[A-Za-z0-9_./@+-]+$/;
+const baseName = (path: string): string => path.split("/").pop() ?? path;
+/** The device or process folder, or a file in it, however it is spelled
+ * (`/dev`, `/dev/`, `//dev/stdin`, `/./proc/self/fd/0`, `/tmp/../dev`). */
+const deviceOrProcess = (path: string): boolean => /^\/(?:dev|proc)(?:\/|$)/.test(posixPath.normalize(path.replace(/\/+/g, "/")));
+/** A literal path of the allowed shape that is not the device or process folder. */
+const shapePath = (path: string | undefined): path is string => path !== undefined && SHAPE_PATH.test(path) && !deviceOrProcess(path);
+/** An absolute path, POSIX or with a drive. */
+const anchored = (path: string): boolean => /^(?:\/|[A-Za-z]:\/)/.test(path);
+
+/** 1.0.5 r8: every folder each command of the shape may run from, given the
+ * command's own folder and that any `cd` may fail (`cd /no/such; bash
+ * proc/self/fd/0` runs from where it started), and every script path from
+ * each of them: absolute, and never the device or process folder. With no
+ * folder for the command, a relative script path is not placed and asks. */
+function everyFolderPlaces(commands: string[][], cwd: string | undefined): boolean {
+  const start = cwd?.replace(/\\/g, "/");
+  // with no folder for the command, the folder it started in stays one the
+  // text may still be in: a `cd` that fails does not leave it
+  const unknown = start === undefined || !anchored(start);
+  let folders: string[] = unknown || start === undefined ? [] : [start];
+  const from = (folder: string, path: string): string => (anchored(path) ? path : posixPath.join(folder, path));
+  for (const words of commands) {
+    const [name, path] = words as [string, string | undefined];
+    if (name === "cd" && path !== undefined) {
+      folders = [...new Set([...folders, ...(anchored(path) ? [path] : folders.map((folder) => from(folder, path)))])];
+      continue;
+    }
+    const script = shapeScript(words);
+    if (!script) continue;
+    if (anchored(script)) { if (deviceOrProcess(script)) return false; continue; }
+    if (unknown || folders.map((folder) => from(folder, script)).some(deviceOrProcess)) return false;
+  }
+  return true;
+}
+
+/** The text as a flat list of simple commands' literal words, or null when
+ * it holds anything else: a background job, a pipe, a negation, a compound
+ * command, an assignment, a redirect other than to /dev/null or `2>&1`, a
+ * word that is not one fixed string, or an unquoted glob or brace. */
+function shapeCommands(text: string): string[][] | null {
+  let script;
+  try { script = parse(text); } catch (error) { if (error instanceof Unreadable) return null; throw error; }
+  const out: string[][] = [];
+  for (const item of script.items) {
+    if (item.background) return null;
+    for (const pipeline of item.andOr.pipelines) {
+      if (pipeline.negated || pipeline.commands.length !== 1) return null;
+      const command = pipeline.commands[0]!;
+      if (command.kind !== "simple" || command.assigns.length > 0 || command.words.length === 0) return null;
+      if (!command.redirects.every(quietRedirect)) return null;
+      const words: string[] = [];
+      for (const word of command.words) {
+        const literal = literalText(word);
+        if (literal === undefined) return null;
+        if (word.parts.some((part) => part.kind === "lit" && part.quote === "none" && /[*?[\]{}]/.test(part.text))) return null;
+        words.push(literal);
+      }
+      out.push(words);
+    }
+  }
+  return out;
+}
+
+/** `>/dev/null`, `1>/dev/null`, `2>/dev/null`, `2>&1`. */
+function quietRedirect(redirect: Redirect): boolean {
+  if (redirect.heredoc || !redirect.target) return false;
+  const target = literalText(redirect.target);
+  if (redirect.op === ">") return (redirect.fd === undefined || redirect.fd === 1 || redirect.fd === 2) && target === "/dev/null";
+  return redirect.op === ">&" && redirect.fd === 2 && target === "1";
+}
+
+/** The script path a command of the allowed shape runs, "" for a command
+ * that runs none, or null for a command outside the shape. */
+function shapeScript(words: string[]): string | null {
+  const [name, path] = words as [string, string | undefined];
+  if (name === "cd") return words.length === 2 && shapePath(path) ? "" : null;
+  if (SHAPE_PRINTS.has(name)) return "";
+  if (!SHAPE_SOURCES.has(name) && !SHAPE_SHELLS.has(name) && !SHAPE_INTERPRETERS.has(name)) return null;
+  if (!shapePath(path)) return null;
+  // php reads its own options after the script too (`php app.php -r code`,
+  // `-d auto_prepend_file=x`): any option-shaped word there is outside the shape
+  if (name === "php" && words.slice(2).some((word) => word.startsWith("-"))) return null;
+  return path;
+}
+
+/** Each script path is spelled once (no other word shares its file name),
+ * and every unseen file the walk found is one of them. */
+function spelledOnce(commands: string[][], scripts: string[], paths: string[]): boolean {
+  const names = commands.flat().map(baseName);
+  if (scripts.some((script) => names.filter((name) => name === baseName(script)).length !== 1)) return false;
+  return paths.every((path) => scripts.some((script) => baseName(script) === baseName(path)));
+}
+
+/** 1.0.5: may the unseen script file in this text run at Full access and
+ * No limits? Only when the whole text is of the allowed shape, so the file
+ * was on disk before it ran and nothing else runs unread. A POSIX text
+ * only: PowerShell and cmd keep asking. */
+function unseenShapeAdmits(text: string, paths: string[], cwd: string | undefined, shell?: "pwsh"): boolean {
+  if (shell === "pwsh" || looksLikePowerShell(text) !== null || /^\s*robocopy(\.exe)?(?=\s|$)/i.test(text)) return false;
+  // never a device or process file as the walk resolved it (`//dev/stdin`)
+  if (paths.some(deviceOrProcess)) return false;
+  const commands = shapeCommands(text);
+  if (!commands || commands.length === 0) return false;
+  // every script placed from every folder the text may be in (`cd / && bash
+  // proc/self/fd/0`, a `cd` that failed); a relative one with no folder asks
+  if (!everyFolderPlaces(commands, cwd)) return false;
+  // a `cd` with a `||` in the text: which folder a script runs from turns on
+  // what failed (`cd /no/such || cd /work && bash build.sh`), so it asks
+  if (commands.some((words) => words[0] === "cd") && parse(text).items.some((item) => item.andOr.ops.includes("||"))) return false;
+  return coreShape(commands, paths) || venvShape(commands, paths);
+}
+
+/** One script file run by a shell, an interpreter or `source`, beside `cd`
+ * and the commands that only print. */
+function coreShape(commands: string[][], paths: string[]): boolean {
+  const scripts = commands.map(shapeScript);
+  if (!scripts.every((script) => script !== null)) return false;
+  // one script file only: one unseen script may write another
+  // (`bash stage.sh && bash run.sh`), which the reader never sees
+  const runs = scripts.filter((script): script is string => script !== "");
+  return runs.length === 1 && spelledOnce(commands, runs, paths);
+}
+
+/** 1.0.5 r6: a virtual environment switched on, then the Python tools that
+ * work in it (`source venv/bin/activate && pip install -r requirements.txt`,
+ * `cd app && . .venv/bin/activate && python -m pytest`). Zero or more `cd`,
+ * then the one activate script with nothing run before it (so the text
+ * cannot have written it), then only `cd`, the printing commands, `pip`,
+ * `pytest` and `python -m pip|pytest|unittest`: none of them runs a script file of its
+ * own, takes code inline or loads code first. The activate is the only
+ * unseen file. Every word was read by the reader, which found nothing. */
+function venvShape(commands: string[][], paths: string[]): boolean {
+  let at = 0;
+  while (at < commands.length && commands[at]![0] === "cd") {
+    if (shapeScript(commands[at]!) !== "") return false;
+    at++;
+  }
+  const source = commands[at];
+  if (!source || source.length !== 2 || !SHAPE_SOURCES.has(source[0]!)) return false;
+  const activate = source[1]!;
+  if (!shapePath(activate) || !(activate === "bin/activate" || activate.endsWith("/bin/activate"))) return false;
+  if (!commands.slice(at + 1).every(venvTool)) return false;
+  return paths.length === 1 && spelledOnce(commands, [activate], paths);
+}
+
+const VENV_TOOLS = new Set(["pip", "pip3", "pytest"]);
+const VENV_PYTHONS = new Set(["python", "python3"]);
+/** The modules `python -m` may name there: none takes code in its
+ * arguments (`timeit`, `cProfile -c`, `pdb -c`, `trace` and `runpy` would). */
+const VENV_MODULES = new Set(["pip", "pytest", "unittest"]);
+/** A command allowed after the activate. */
+function venvTool(words: string[]): boolean {
+  const [name, option, module] = words as [string, string | undefined, string | undefined];
+  if (name === "cd" || SHAPE_PRINTS.has(name)) return shapeScript(words) === "";
+  if (VENV_TOOLS.has(name)) return true;
+  // `-m` first, so no option before it (`-c`, `-X`, `-W`, `-I`) changes what runs
+  if (VENV_PYTHONS.has(name)) return option === "-m" && module !== undefined && VENV_MODULES.has(module);
+  return false;
 }
 
 function readRules(text: string, cwd: string | undefined): AlwaysAskHit | null {
@@ -1239,8 +1440,7 @@ function readRules(text: string, cwd: string | undefined): AlwaysAskHit | null {
 /** For the history report only: why a command is unreadable (`reason: detail`), or null. */
 export function alwaysAskUnreadableReason(text: string, cwd?: string): string | null {
   try {
-    read(text, cwd);
-    return null;
+    return readWhole(text, cwd)?.rule === "unreadable" ? "opaque: a script file the reader does not see" : null;
   } catch (error) {
     if (error instanceof Unreadable) return error.message;
     throw error;

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
@@ -20,6 +21,11 @@ function person(userId="UOTHER"){
   const id=observeVerifiedHuman({platform:"slack",authorityId:"TEAM",connectionId:"connection-"+userId,userId});
   linkHumanBinding(ownerMemoryTicket(),{bindingId:id,expectedRevision:1,as:"person"});
   return resolveHumanBinding(id);
+}
+/** A person grant written as shareHumanScope wrote it before it refused kinds the share screen never offers (the same row id). */
+function legacyGrant(personId:string,scopeId:string){
+  const id="human-share:"+createHash("sha256").update(JSON.stringify([personId,scopeId])).digest("hex");
+  database().prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'person',?,1,'granted','{}')").run(id,scopeId,personId);
 }
 function access(store:Store,botId:string,threadId:string){
   const roster=()=>({bots:store.bots,groups:store.groups});reconcileMemoryRoster(roster());
@@ -57,15 +63,34 @@ it("allows explicit room sharing but rejects private canon on get and search eve
   const ticket=ownerMemoryTicket(),roster={bots:store.bots,groups:store.groups};
   const canon=writeBotIdentity(ticket,{action:"identity-write",botId:bot.id,kind:"character-canon",key:"private",expectedVersion:0,text:"OWNER_CANON_CANARY",basis:"fiction",audience:"owner-private"},roster);
   shareHumanScope(ticket,{personId:principal.personId,scopeId:ensureScope("room",room.id),granted:true});
-  shareHumanScope(ticket,{personId:principal.personId,scopeId:ensureScope("bot",bot.id),granted:true});
+  // the share screen never offers a bot scope and the server refuses one (SL-E r3.2); a grant made before that still exists on some files
+  expect(()=>shareHumanScope(ticket,{personId:principal.personId,scopeId:ensureScope("bot",bot.id),granted:true})).toThrow("MEMORY_SCOPE_NOT_SHAREABLE");
+  legacyGrant(principal.personId,ensureScope("bot",bot.id));
   const context=access(store,bot.id,task.threadId);
   expect(()=>assertMemoryAccess(context.access,ensureScope("room",room.id))).not.toThrow();
   expect(()=>assertMemoryAccess(context.access,ensureScope("conversation",bot.threadId))).toThrow("MEMORY_SCOPE_DENIED");
   expect(()=>hydrateMemoryRecord(canon.id,canon.version,context.access, {allowance: LineageAllowance.tool(1_000_000_000)})).toThrow("MEMORY_SCOPE_DENIED");
-  const result=await searchMemory("OWNER_CANON_CANARY",context.access,{search:async()=>({hits:[{id:canon.id,version:canon.version,score:1,text:canon.text}],vectorRows:0})}, {allowance: LineageAllowance.tool(1_000_000_000)});
-  expect(JSON.stringify(result)).not.toContain("OWNER_CANON_CANARY");
+  // The stored bot grant opens nothing now (104 gap D), so a hit on the private canon is out of reach and the read refuses it, closed: the
+  // old expectation (an answer without the canary) held only while the grant put the bot scope in reach and the identity check dropped the hit.
+  const searched=await searchMemory("OWNER_CANON_CANARY",context.access,{search:async()=>({hits:[{id:canon.id,version:canon.version,score:1,text:canon.text}],vectorRows:0})}, {allowance: LineageAllowance.tool(1_000_000_000)}).then(result=>JSON.stringify(result),(error:unknown)=>error instanceof Error?error.message:String(error));
+  expect(searched).not.toContain("OWNER_CANON_CANARY");
+  expect(searched).toContain("MEMORY_SCOPE_DENIED");
   shareHumanScope(ticket,{personId:principal.personId,scopeId:ensureScope("room",room.id),granted:false});
   expect(()=>assertMemoryAccess(context.access)).toThrow("MEMORY_CONTEXT_REVOKED");
+});
+it("shares only the kinds the share screen offers (channel, shared folder, team, workspace); withdrawing any grant stays open",()=>{
+  const store=fresh(),bot=store.createBot(),principal=person(),ticket=ownerMemoryTicket();
+  for(const [kind,owner] of [["room","room-1"],["project","/shared/plans"],["team","sales"],["workspace","workspace"]] as const)
+    expect(shareHumanScope(ticket,{personId:principal.personId,scopeId:ensureScope(kind,owner),granted:true})).toMatchObject({granted:true});
+  for(const [kind,owner] of [["bot",bot.id],["conversation",bot.threadId],["preferences","person:owner"]] as const){
+    const scopeId=ensureScope(kind,owner);
+    expect(()=>shareHumanScope(ticket,{personId:principal.personId,scopeId,granted:true})).toThrow("MEMORY_SCOPE_NOT_SHAREABLE");
+    expect(database().prepare("SELECT 1 FROM memory_scope_bindings WHERE subject_type='person' AND subject_id=? AND scope_id=?").get(principal.personId,scopeId)).toBeUndefined();
+  }
+  // a grant of another kind made before the refusal can still be withdrawn
+  const legacy=ensureScope("bot",bot.id);legacyGrant(principal.personId,legacy);
+  expect(shareHumanScope(ticket,{personId:principal.personId,scopeId:legacy,granted:false})).toMatchObject({granted:false});
+  expect(database().prepare("SELECT state FROM memory_scope_bindings WHERE subject_type='person' AND subject_id=? AND scope_id=?").get(principal.personId,legacy)).toMatchObject({state:"revoked"});
 });
 it("reads back owner person shares so people controls never assume a grant",()=>{
   const store=fresh(),bot=store.createBot(),peer=store.createBot(),principal=person(),room=store.createGroup("Shared project",[bot.id,peer.id]);
@@ -126,4 +151,22 @@ it("fix round 4: the sender's display name and username are kept on the binding 
   expect(knownHumanNames()).toContain("Jane S");
   expect(humanBindingStatus(ownerMemoryTicket()).bindings[0].revision).toBe(1);
   expect(knownHumanNames()).not.toContain("Smith");
+});
+it("shares only the audiences the people screen offers",()=>{
+  const store=fresh(),bot=store.createBot(),peer=store.createBot(),principal=person(),room=store.createGroup("Shared project",[bot.id,peer.id]);
+  const ticket=ownerMemoryTicket();
+  reconcileMemoryRoster({bots:store.bots,groups:store.groups});
+  expect(()=>shareHumanScope(ticket,{personId:principal.personId,scopeId:ensureScope("preferences","owner"),granted:true})).toThrow("MEMORY_SCOPE_NOT_SHAREABLE");
+  expect(()=>shareHumanScope(ticket,{personId:principal.personId,scopeId:ensureScope("bot",bot.id),granted:true})).toThrow("MEMORY_SCOPE_NOT_SHAREABLE");
+  expect(()=>shareHumanScope(ticket,{personId:principal.personId,scopeId:ensureScope("room",room.id),granted:true})).not.toThrow();
+});
+it("ignores a person grant written before the rule to a scope the people screen never offers",()=>{
+  const store=fresh(),bot=store.createBot(),peer=store.createBot(),principal=person(),task=humanTask(store,bot.id,principal)!,room=store.createGroup("Shared project",[bot.id,peer.id]);
+  const ticket=ownerMemoryTicket();
+  const prefs=ensureScope("preferences","owner"),roomScope=ensureScope("room",room.id);
+  database().prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'person',?,1,'granted','{}')").run("old-prefs-grant",prefs,principal.personId);
+  shareHumanScope(ticket,{personId:principal.personId,scopeId:roomScope,granted:true});
+  const context=access(store,bot.id,task.threadId);
+  expect(()=>assertMemoryAccess(context.access,roomScope)).not.toThrow();
+  expect(()=>assertMemoryAccess(context.access,prefs)).toThrow("MEMORY_SCOPE_DENIED");
 });

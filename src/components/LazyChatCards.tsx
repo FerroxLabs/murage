@@ -10,9 +10,11 @@ import { LazyBoundary, retryableLazy } from "./LazyBoundary";
 import type { PublishCard as PublishCardView } from "./PublishCard";
 import type { BrowserSetupCard as BrowserSetupCardView } from "./BrowserSetupCard";
 import type { McpSignInCard as McpSignInCardView } from "./McpSignInCard";
+import type { McpEnableCard as McpEnableCardView } from "./McpEnableCard";
 
 const Publish = retryableLazy(() => import("./PublishCard").then((module) => ({ default: module.PublishCard })));
 const McpSignIn = retryableLazy(() => import("./McpSignInCard").then((module) => ({ default: module.McpSignInCard })));
+const McpEnable = retryableLazy(() => import("./McpEnableCard").then((module) => ({ default: module.McpEnableCard })));
 const BrowserSetup = retryableLazy(() => import("./BrowserSetupCard").then((module) => ({ default: module.BrowserSetupCard })));
 
 export function PublishCard(props: ComponentProps<typeof PublishCardView>) {
@@ -21,6 +23,10 @@ export function PublishCard(props: ComponentProps<typeof PublishCardView>) {
 
 export function BrowserSetupCard(props: ComponentProps<typeof BrowserSetupCardView>) {
   return <LazyBoundary inline onRetry={BrowserSetup.retry}><Suspense fallback={null}><BrowserSetup.Component {...props} /></Suspense></LazyBoundary>;
+}
+
+export function McpEnableCard(props: ComponentProps<typeof McpEnableCardView>) {
+  return <LazyBoundary inline onRetry={McpEnable.retry}><Suspense fallback={null}><McpEnable.Component {...props} /></Suspense></LazyBoundary>;
 }
 
 export function McpSignInCard(props: ComponentProps<typeof McpSignInCardView>) {

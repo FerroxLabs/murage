@@ -1,6 +1,7 @@
 import { track } from "@/lib/analytics";
 import { cn } from "@/lib/cn";
 import { plainText } from "@/lib/plain-text";
+import { LibraryArt } from "./LibraryArt";
 import { teamImportPreview, type PendingTeamImport } from "@/lib/team-import";
 import { assignSkillsToBot } from "@/lib/onboarding-intake";
 import { invalidateSkillCount } from "@/lib/bot-skill-count";
@@ -16,12 +17,14 @@ import {
   Crown,
   ExternalLink,
   FolderOpen,
+  Copy,
   Github,
   Loader2,
   MessageSquare,
   Plug,
   Plus,
   Search,
+  Sparkles,
   UploadCloud,
   Users,
   X,
@@ -34,6 +37,7 @@ import { returnFocus } from "@/lib/return-focus";
 import { t } from "@/lib/i18n";
 import { ImportGuardFindings, guardBlockedNote, guardScanFromError, type GuardScan } from "./ImportGuardFindings";
 import { ImportScanProgress } from "./ImportScanProgress";
+import { GROK_EXPORT_PROMPT, GROK_PASTE_MAX_BYTES } from "../../shared/grok-import";
 import { isCheckStopped, useImportScan, withScanId } from "@/lib/importScan";
 import type { ArchivedTeamBot, TeamImportResult, TeamImportSkillError } from "@/lib/team-import-result";
 export { archivedRestorePatch, teamImportSkillSummary, type ArchivedTeamBot, type TeamImportResult, type TeamImportSkillError } from "@/lib/team-import-result";
@@ -112,7 +116,7 @@ function firstSentence(raw: string, max = 150): string {
   return candidate.length > max ? `${candidate.slice(0, max - 1).trimEnd()}…` : candidate;
 }
 
-type ImportSource = "library" | "file" | "github";
+type ImportSource = "library" | "file" | "github" | "grok";
 type TeamTab = "explore" | "import" | "scout";
 
 /** the scout endpoint's answer, as far as this panel renders it — the
@@ -188,7 +192,7 @@ function TeamRow({
   ].filter(Boolean);
   return (
     <article className="flex min-h-[104px] items-center gap-3 border-b border-hairline/35 px-1 py-4">
-      <TeamGlyph index={index} />
+      <LibraryArt slug={entry.slug} name={entry.name} team={entry.members > 1} size={256} className="size-16" fallback={<TeamGlyph index={index} />} />
       <div className="min-w-0 flex-1">
         <h3 className="truncate text-[14px] font-medium text-ink">{entry.name}</h3>
         <p className="mt-0.5 line-clamp-3 text-[12.5px] leading-relaxed text-ink-secondary">{plainText(entry.summary)}</p>
@@ -414,6 +418,8 @@ export function TeamLibraryPanel({
   const [catalogError, setCatalogError] = useState("");
   const [busySlug, setBusySlug] = useState<string | null>(null);
   const [pending, setPending] = useState<PendingTeamImport | null>(null);
+  /** catalog slug of the template being previewed, for its artwork; null for a file or GitHub import */
+  const [pendingArt, setPendingArt] = useState<string | null>(null);
   // The import guard's answer to this file: findings to read, and the
   // owner's choice to go ahead when they are warnings rather than blocks.
   const [guard, setGuard] = useState<{ scan: GuardScan; status: number } | null>(null);
@@ -422,6 +428,9 @@ export function TeamLibraryPanel({
   const [source, setSource] = useState<ImportSource>("file");
   const [githubUrl, setGithubUrl] = useState("");
   const [githubLoading, setGithubLoading] = useState(false);
+  const [grokInput, setGrokInput] = useState("");
+  const [grokLoading, setGrokLoading] = useState(false);
+  const [grokPromptCopied, setGrokPromptCopied] = useState(false);
   const [importing, setImporting] = useState(false);
   const check = useImportScan(importing);
   // Closing the panel ends a check that is still reading the package.
@@ -606,9 +615,10 @@ export function TeamLibraryPanel({
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [importing, onClose, pending, bundleFile, check]);
 
-  const previewManifest = (preview: PendingTeamImport, nextSource: ImportSource) => {
+  const previewManifest = (preview: PendingTeamImport, nextSource: ImportSource, art: string | null = null) => {
     setGuard(null); setGuardAcknowledged(false);
     setPending(preview);
+    setPendingArt(art);
     setSource(nextSource);
     setError("");
   };
@@ -649,7 +659,7 @@ export function TeamLibraryPanel({
     setBusySlug(entry.slug);
     setError("");
     try {
-      previewManifest(teamImportPreview(await api(`/api/team-library/teams/${entry.slug}`)), "library");
+      previewManifest(teamImportPreview(await api(`/api/team-library/teams/${entry.slug}`)), "library", entry.slug);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -676,6 +686,37 @@ export function TeamLibraryPanel({
     } finally {
       setGithubLoading(false);
     }
+  };
+
+  // One box for a shared Grok Bot: its x.ai link or the export it wrote.
+  // The server answers with an ordinary package, previewed like any other.
+  const loadGrokBot = async () => {
+    const input = grokInput.trim();
+    if (!input) return;
+    if (new TextEncoder().encode(input).length > GROK_PASTE_MAX_BYTES) {
+      setError("That paste is larger than a Grok Bot export can be, so paste only the code block your Grok Bot wrote.");
+      return;
+    }
+    setGrokLoading(true);
+    setError("");
+    try {
+      const result = (await api("/api/team-library/grok", {
+        method: "POST",
+        body: JSON.stringify({ input }),
+      })) as { document: unknown; notes?: string[] };
+      previewManifest({ ...teamImportPreview(result.document), notes: result.notes ?? [] }, "grok");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setGrokLoading(false);
+    }
+  };
+
+  const copyGrokPrompt = () => {
+    void navigator.clipboard?.writeText(GROK_EXPORT_PROMPT).then(() => {
+      setGrokPromptCopied(true);
+      setTimeout(() => setGrokPromptCopied(false), 1500);
+    }).catch(() => setError("Murage could not copy the prompt, so select it from the box and copy it yourself."));
   };
 
   useEffect(() => {
@@ -904,7 +945,9 @@ export function TeamLibraryPanel({
             </div>
             <p className={cn("mt-1 text-[13px] text-ink-secondary", pending && "ml-9")}>
                 {pending
-                  ? pending.kind === "package"
+                  ? source === "grok"
+                    ? "From Grok Bot"
+                    : pending.kind === "package"
                     ? `${pending.members.length} bots · portable Markdown package`
                     : `${pending.members.length} ready-to-load bots`
                   : entrySubtitle}
@@ -924,6 +967,16 @@ export function TeamLibraryPanel({
         {pending ? (
           <>
             <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6 pt-6 sm:px-8">
+              {pendingArt && (
+                <LibraryArt slug={pendingArt} name={pending.name} team={pending.members.length > 1} size={512} className="mb-5 size-40 rounded-2xl sm:size-48" fallback={null} />
+              )}
+              {!!pending.notes?.length && (
+                <section aria-label="What to know before you add it" className="mb-5 rounded-lg bg-inset px-3 py-2 text-[12.5px] leading-relaxed text-ink-secondary">
+                  <ul className="list-disc space-y-1 pl-4">
+                    {pending.notes.map((note, index) => <li key={index}>{note}</li>)}
+                  </ul>
+                </section>
+              )}
               {pending.description && (
                 <section>
                   <h3 className="mb-2 text-[14px] font-semibold text-ink">Purpose</h3>
@@ -1383,6 +1436,39 @@ export function TeamLibraryPanel({
                         >
                           {githubLoading && <Loader2 size={13} className="animate-spin" />}
                           Load
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col rounded-2xl bg-raised/25 px-6 py-6 md:col-span-2">
+                      <Sparkles size={25} className="text-ink-secondary" />
+                      <h3 className="mt-3 text-[14px] font-medium text-ink">Bring in a Grok Bot</h3>
+                      <p className="mt-1 text-[12.5px] leading-relaxed text-ink-secondary">
+                        Paste its x.ai share link to start from its name and description. For the whole bot, copy the export prompt, send it to your Grok Bot, and paste its reply here. Either way you get a Murage bot that works on any engine.
+                      </p>
+                      <textarea
+                        value={grokInput}
+                        onChange={(event) => setGrokInput(event.target.value)}
+                        placeholder="https://x.ai/bot/… or your Grok Bot's export"
+                        aria-label="Grok Bot link or export"
+                        rows={4}
+                        className="mt-4 min-h-24 w-full resize-y rounded-xl bg-raised/80 px-3 py-2.5 font-mono text-[12.5px] text-ink placeholder:font-sans placeholder:text-ink-secondary focus:outline-none"
+                      />
+                      <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+                        <button
+                          onClick={copyGrokPrompt}
+                          className="flex items-center gap-1.5 rounded-full bg-raised px-4 py-2.5 text-[13px] font-medium text-ink hover:bg-raised/70"
+                        >
+                          {grokPromptCopied ? <Check size={13} /> : <Copy size={13} />}
+                          {grokPromptCopied ? "Copied" : "Copy the export prompt"}
+                        </button>
+                        <button
+                          onClick={() => void loadGrokBot()}
+                          disabled={!grokInput.trim() || grokLoading}
+                          className="flex items-center gap-1.5 rounded-full bg-accent px-4 py-2.5 text-[13px] font-medium text-white hover:bg-accent/90 disabled:opacity-40"
+                        >
+                          {grokLoading && <Loader2 size={13} className="animate-spin" />}
+                          Bring it in
                         </button>
                       </div>
                     </div>

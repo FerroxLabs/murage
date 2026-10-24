@@ -5,12 +5,14 @@
 //
 // Read only, and it reads no file bytes: the walk opens the folder and lstats
 // each entry, nothing else (R1.2, R1.9). Nothing here decides anything; no
-// upload, read or delete path calls it. It imports nothing from attachments.ts
+// upload, read or delete path calls it (Remove, 1.0.4, only drops the
+// snapshot afterwards). It imports nothing from attachments.ts
 // (R0): the folder is handed in.
 import { randomBytes } from "node:crypto";
 import { promises as fsp, type BigIntStats } from "node:fs";
 import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
+import { REMOVED_FOLDER } from "./attachment-read.ts";
 
 /** A stored attachment's name: what uploads write (R1.2). */
 export const MANAGED_NAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]{1,5}$/;
@@ -98,6 +100,8 @@ export async function walkAttachments(dir: string, fs: WalkFs = realWalkFs): Pro
         stat => ({ name, stat }),
         (error: NodeJS.ErrnoException) => ({ name, error: error?.code ?? "EIO" }))));
       for (const entry of stats) {
+        // Remove's markers (1.0.4 SL-H) are not a file Murage keeps
+        if (entry.name === REMOVED_FOLDER) continue;
         if ("error" in entry) {
           if (entry.error === "ENOENT") totals.vanished++;
           else { totals.other.unreadable++; totals.other.firstError ??= entry.error; }
@@ -231,6 +235,10 @@ export class AttachmentList {
   constructor(options: UseDeps & { dir: string; fs?: WalkFs; now?: () => number }) { this.options = options; }
 
   private now() { return (this.options.now ?? Date.now)(); }
+
+  /** Drop the snapshot after a Remove: its later pages would still list the
+   * removed files, so a page asked of it answers "The list changed". */
+  forget(): void { this.snapshot = null; }
 
   private walk(): Promise<Snapshot | null> {
     // a request during a walk awaits it

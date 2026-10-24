@@ -13,6 +13,7 @@ import {
   bindSecretsToEntry,
   commandEditNeedsEnvChoice,
   secretsNoLongerApply,
+  grantsNoLongerApply,
   withDeadline,
   inspectMcpInput,
   isRemoteBody,
@@ -254,6 +255,16 @@ describe("H2 helpers on the routes", () => {
     expect(bindSecretsToEntry({ origin: "https://b.example", headers: { K: "v" } }, "https://a.example/mcp")).toEqual({ ok: false, error: "These secrets were issued for another address." });
     expect(bindSecretsToEntry({ headers: { K: "v" } }, "nonsense")).toMatchObject({ ok: false });
   });
+  it("grantsNoLongerApply (09-A4): a changed command, argument or env value drops a command server's grants; a toggle or an unchanged save keeps them", () => {
+    const cmd = { name: "tools", command: "npx", args: ["-y", "@x/one"], env: { A: "1" }, enabled: true } as unknown as Parameters<typeof grantsNoLongerApply>[0];
+    expect(grantsNoLongerApply(cmd, { ...cmd } as typeof cmd)).toBe(false);
+    expect(grantsNoLongerApply(cmd, { ...cmd, enabled: false } as typeof cmd)).toBe(false);
+    expect(grantsNoLongerApply(cmd, { ...cmd, command: "evil" } as typeof cmd)).toBe(true);
+    expect(grantsNoLongerApply(cmd, { ...cmd, args: ["-y", "@x/two"] } as typeof cmd)).toBe(true);
+    expect(grantsNoLongerApply(cmd, { ...cmd, env: { A: "2" } } as typeof cmd)).toBe(true);
+    expect(grantsNoLongerApply(cmd, { ...cmd, env: {} } as typeof cmd)).toBe(true);
+  });
+
   it("secretsNoLongerApply: a changed link or sign-in kind drops them; a toggle, a rename of the transport or an unchanged save keeps them", () => {
     const before = remote({ url: "https://a.example/mcp", auth: "header", headers: { K: true } });
     expect(secretsNoLongerApply(before, { ...before })).toBe(false);

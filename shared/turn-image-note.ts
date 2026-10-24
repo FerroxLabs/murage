@@ -22,33 +22,49 @@ export interface ImagesNotSent {
   overCount: number;
   /** Left out because they did not fit the per-image or per-turn bytes. */
   tooLarge: number;
+  /** Left out because the owner removed them from storage (1.0.4 SL-H). */
+  removed: number;
   /** The per-turn count in force when the note was written. */
   limit: number;
 }
 
-/** The activity tool name for a turn that left images out. */
-export function imagesNotSentActivityName(counts: Omit<ImagesNotSent, "limit"> & { limit?: number }): string {
+/** The activity tool name for a turn that left images out. The removed
+ * count rides at the end and only when there is one, so every other note
+ * keeps the exact name 1.0.3 reads. */
+export function imagesNotSentActivityName(counts: Omit<ImagesNotSent, "limit" | "removed"> & { limit?: number; removed?: number }): string {
   const limit = counts.limit ?? TURN_IMAGE_LIMITS.maxCount;
-  return `${IMAGES_NOT_SENT_PREFIX} sent=${counts.sent} over=${counts.overCount} large=${counts.tooLarge} limit=${limit}`;
+  const removed = counts.removed ? ` removed=${counts.removed}` : "";
+  return `${IMAGES_NOT_SENT_PREFIX} sent=${counts.sent} over=${counts.overCount} large=${counts.tooLarge} limit=${limit}${removed}`;
 }
 
 /** The counts an images-left-out note carries, or undefined for any other
  * activity name. */
 export function imagesNotSent(name: string | undefined | null): ImagesNotSent | undefined {
   if (typeof name !== "string" || !name.startsWith(IMAGES_NOT_SENT_PREFIX)) return undefined;
-  const match = /^ sent=(\d{1,4}) over=(\d{1,4}) large=(\d{1,4}) limit=(\d{1,4})$/.exec(name.slice(IMAGES_NOT_SENT_PREFIX.length));
+  const match = /^ sent=(\d{1,4}) over=(\d{1,4}) large=(\d{1,4}) limit=(\d{1,4})(?: removed=([1-9]\d{0,3}))?$/.exec(name.slice(IMAGES_NOT_SENT_PREFIX.length));
   if (!match) return undefined;
-  const [sent, overCount, tooLarge, limit] = match.slice(1).map(Number) as [number, number, number, number];
-  if (overCount + tooLarge === 0) return undefined;
-  return { sent, overCount, tooLarge, limit };
+  const [sent, overCount, tooLarge, limit] = match.slice(1, 5).map(Number) as [number, number, number, number];
+  const removed = match[5] ? Number(match[5]) : 0;
+  if (overCount + tooLarge + removed === 0) return undefined;
+  return { sent, overCount, tooLarge, limit, removed };
 }
 
 /** Which sentence a note gets, and the renderer catalog key that says it. */
-export type ImagesNotSentKind = "overCount" | "overCountOne" | "tooLarge" | "tooLargeOne" | "both";
+export type ImagesNotSentKind = "overCount" | "overCountOne" | "tooLarge" | "tooLargeOne" | "both" | "removed" | "removedOne";
 export function imagesNotSentKind(counts: ImagesNotSent): ImagesNotSentKind {
   if (counts.overCount && counts.tooLarge) return "both";
   if (counts.overCount) return counts.overCount === 1 ? "overCountOne" : "overCount";
+  if (!counts.tooLarge) return removedKind(counts);
   return counts.tooLarge === 1 ? "tooLargeOne" : "tooLarge";
+}
+const removedKind = (counts: ImagesNotSent): ImagesNotSentKind => counts.removed === 1 ? "removedOne" : "removed";
+
+/** Every sentence a note says, in order: the count or size sentence when
+ * there is one, then the removed one (SL-H). */
+export function imagesNotSentKinds(counts: ImagesNotSent): ImagesNotSentKind[] {
+  const first = imagesNotSentKind(counts);
+  if (first === "removed" || first === "removedOne") return [first];
+  return counts.removed ? [first, removedKind(counts)] : [first];
 }
 
 /** The English sentences, mirrored by the renderer's locale catalog
@@ -59,11 +75,13 @@ export const IMAGES_NOT_SENT_TEMPLATES: Record<ImagesNotSentKind, string> = {
   tooLarge: "{sent} of {total} images were sent. The other {large} were too large and were left out.",
   tooLargeOne: "{sent} of {total} images were sent. One was too large and was left out.",
   both: "{sent} of {total} images were sent. The rest were left out: {over} over the limit of {limit} and {large} too large.",
+  removed: "{removed} images were removed from storage and were not sent.",
+  removedOne: "1 image was removed from storage and was not sent.",
 };
 
 /** The values every template reads. */
-export function imagesNotSentParams(counts: ImagesNotSent): Record<"sent" | "total" | "over" | "large" | "limit", number> {
-  return { sent: counts.sent, total: counts.sent + counts.overCount + counts.tooLarge, over: counts.overCount, large: counts.tooLarge, limit: counts.limit };
+export function imagesNotSentParams(counts: ImagesNotSent): Record<"sent" | "total" | "over" | "large" | "limit" | "removed", number> {
+  return { sent: counts.sent, total: counts.sent + counts.overCount + counts.tooLarge + counts.removed, over: counts.overCount, large: counts.tooLarge, limit: counts.limit, removed: counts.removed };
 }
 
 /** The plain-words line for surfaces without a renderer locale (the Markdown
@@ -72,7 +90,7 @@ export function imagesNotSentDisplayName(name: string | undefined | null): strin
   const counts = imagesNotSent(name);
   if (!counts) return undefined;
   const params = imagesNotSentParams(counts);
-  return IMAGES_NOT_SENT_TEMPLATES[imagesNotSentKind(counts)].replace(/\{(\w+)\}/g, (match, key: string) => key in params ? String(params[key as keyof typeof params]) : match);
+  return imagesNotSentKinds(counts).map(kind => IMAGES_NOT_SENT_TEMPLATES[kind].replace(/\{(\w+)\}/g, (match, key: string) => key in params ? String(params[key as keyof typeof params]) : match)).join(" ");
 }
 
 /** The composer's line before sending, when more images are attached than a

@@ -88,7 +88,7 @@ export const ALLOWED: Allowed[] = [
   { file: "BrowserWorkspace.tsx", swallowed: 1, reason: BACKGROUND },
   { file: "CallView.tsx", swallowed: 2, reason: "Audit Low (Resume call): releasing the microphone while a call ends; nothing the person can act on." },
   { file: "CommandPalette.tsx", swallowed: 1, reason: "Lazy import of the settings search index; the palette still works without it. Audit Low (CommandPalette.tsx:139) covers the pending cue." },
-  { file: "ComputerPanel.tsx", swallowed: 4, voidOnClick: 1, reason: "Audit Low (ComputerPanel.tsx:1396, Hand back closes the viewer whatever release returned) and Medium (:1526): control release and viewer close while leaving the screen; the visible Stopping/Stopped cue is the open Medium row." },
+  { file: "ComputerPanel.tsx", swallowed: 5, voidOnClick: 1, reason: "The live-desktop keepalive heartbeat (not a user action; the next beat retries, and a lost one only lets the idle timer run). Audit Low (ComputerPanel.tsx:1396, Hand back closes the viewer whatever release returned) and Medium (:1526): control release and viewer close while leaving the screen; the visible Stopping/Stopped cue is the open Medium row." },
   { file: "ConfirmDelete.tsx", swallowed: 1, reason: BACKGROUND },
   { file: "EngineManagement.tsx", swallowed: 1, voidOnClick: 5, reason: "Audit Low (EngineManagement.tsx:61): buttons only disable, no Installing label or progress. The refresh catch follows a result that is already shown." },
   { file: "EnginesSettings.tsx", swallowed: 2, reason: "Refresh after a save that already reported its result; a failed refresh keeps the last list." },

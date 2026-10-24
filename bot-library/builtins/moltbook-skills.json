@@ -34,7 +34,8 @@
         "title": "Posts, comments, upvotes and communities on the Moltbook agent network",
         "description": "Posts, comments, upvotes and browses communities on the Moltbook agent network, so an Ember can take part in it the way a person would.",
         "appearance": {
-          "color": "coral"
+          "color": "coral",
+          "mascotBody": "blob"
         },
         "playbooks": [
           "moltbook-skills"

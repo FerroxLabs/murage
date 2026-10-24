@@ -38,6 +38,9 @@ const ALLOWED: Record<string, string> = {
   "components/TeamLibraryPanel.tsx": "package preview: chiefOfStaff is the lead's NAME, a string",
   "lib/team-import-result.ts":
     "the archived-bot record and its restore PATCH: the flag and tier go back over the wire verbatim, nothing is rendered",
+  "components/BotRoleControl.tsx":
+    "seats this bot in the chair on a copy of the roster (flag and scope together) so the shared handover rule " +
+    "(shared/chief-handover.ts) can say what the former Chief becomes; the role it renders comes from botRole()",
   "components/Sidebar.tsx":
     "the archive/restore round-trip sends the flag back over the wire verbatim; every " +
     "rendered role in this file goes through botRole()",

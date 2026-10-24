@@ -11,6 +11,7 @@ import { usePageVisible } from "@/lib/page-visible";
 import { backupWaitingSentence } from "../../shared/backup-waiting";
 import { t } from "@/lib/i18n";
 import { LazyBoundary, retryableLazy } from "./LazyBoundary";
+import { copyTextOrThrow } from "@/lib/copy-text";
 
 const ProjectRows=lazy(()=>import("./ProjectInboxRows"));
 // Learning suggestions and their screen copy load the first time the inbox has one (spec §6).
@@ -335,7 +336,7 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
   }, "That engine could not be turned off.");
   const [copied, setCopied] = useState<string | null>(null);
   const copy = async (engineId: string, command: string) => {
-    try { await navigator.clipboard.writeText(command); setCopied(engineId); window.setTimeout(() => setCopied(current => (current === engineId ? null : current)), 2000); }
+    try { await copyTextOrThrow(command); setCopied(engineId); window.setTimeout(() => setCopied(current => (current === engineId ? null : current)), 2000); }
     catch { setActionError("Copying did not work. Select the command and copy it yourself."); }
   };
   const projectRows=result?.projects??[];

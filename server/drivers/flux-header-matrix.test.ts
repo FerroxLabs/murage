@@ -232,11 +232,14 @@ describe("ACP engines: the headers land in the spawn env after the route settles
       const seen = await acpDump(create, turn, "flux-auto", { FAKE_ACP_VERSION: "Hermes Agent v0.21.3 (2026.9.14)" });
       // the home is the one shared Flux home, whatever the audience
       expect(seen.env.HERMES_HOME).toBe(join(scratch, "state", "flux-hermes-home"));
-      expect(readFileSync(join(seen.env.HERMES_HOME!, "config.yaml"), "utf8")).not.toContain("extra_headers");
-      const overlay = parseYaml(readFileSync(join(seen.env.HERMES_MANAGED_DIR!, "config.yaml"), "utf8")) as { model: { extra_headers: Record<string, string> }; hooks: { pre_tool_call: Array<{ fail_closed: boolean }> } };
+      const shared = readFileSync(join(seen.env.HERMES_HOME!, "config.yaml"), "utf8");
+      expect(shared).not.toContain("extra_headers");
+      // 03-4: the tier (model.default) rides the per-turn overlay too, so overlapping turns on different tiers never share it
+      expect((parseYaml(shared) as { model?: { default?: string } }).model?.default).toBeUndefined();
+      const overlay = parseYaml(readFileSync(join(seen.env.HERMES_MANAGED_DIR!, "config.yaml"), "utf8")) as { model: { default: string; extra_headers: Record<string, string> }; hooks: { pre_tool_call: Array<{ fail_closed: boolean }> } };
       // the overlay also carries the Ask hook gate (applyHermesAskHook): the headers stay strict, the hooks block is the gate
       expect(Object.keys(overlay).sort()).toEqual(["hooks", "model"]);
-      expect(overlay.model).toEqual({ extra_headers: headers });
+      expect(overlay.model).toEqual({ default: "flux-auto", extra_headers: headers });
       expect(overlay.hooks.pre_tool_call).toHaveLength(1);
       expect(overlay.hooks.pre_tool_call[0]!.fail_closed).toBe(true);
     });
@@ -261,6 +264,12 @@ describe("ACP engines: the headers land in the spawn env after the route settles
       // the switch as the decision reads it (a config load in the driver re-reads the saved value, so the override layer carries it here)
       setFluxMemorySettings(external === undefined ? {} : { external });
       const seen = await acpDump(create, turn, "flux-auto");
+      expect(JSON.parse(seen.env.OPENCODE_CONFIG_CONTENT!).provider.flux.options.headers).toEqual(headers);
+    });
+    // The catalog keeps OpenCode's own slug (`flux/flux-auto`) as the id, so that id must reach the same decision.
+    it.each(CASES)("native slug flux/flux-auto: $name", async ({ turn, headers, external }) => {
+      setFluxMemorySettings(external === undefined ? {} : { external });
+      const seen = await acpDump(create, turn, "flux/flux-auto");
       expect(JSON.parse(seen.env.OPENCODE_CONFIG_CONTENT!).provider.flux.options.headers).toEqual(headers);
     });
   });

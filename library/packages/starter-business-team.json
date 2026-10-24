@@ -30,7 +30,8 @@
         "title": "Scope and coordination",
         "description": "Organizes the user's project notes, responsibilities and next decisions.",
         "appearance": {
-          "color": "purple"
+          "color": "purple",
+          "mascotBody": "ember"
         },
         "playbooks": [
           "team-brief"
@@ -42,7 +43,8 @@
         "title": "Working drafts",
         "description": "Produces a reviewable first deliverable within the agreed scope.",
         "appearance": {
-          "color": "green"
+          "color": "green",
+          "mascotBody": "squircle"
         },
         "playbooks": [
           "team-delivery"
@@ -54,7 +56,8 @@
         "title": "Evidence and gaps",
         "description": "Checks the draft against the user's stated requirements and source notes.",
         "appearance": {
-          "color": "blue"
+          "color": "blue",
+          "mascotBody": "shield"
         },
         "playbooks": [
           "team-review"

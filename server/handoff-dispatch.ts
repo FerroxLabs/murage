@@ -16,7 +16,7 @@
 //            start on the STORED destination with the ticket.
 //   failure  decided by the row's state, never by an error's text (delegations.ts settleAfterFailure): a start that never began waits, it is not ended.
 import { database, transaction } from "./database.ts";
-import { failureCodeFrom } from "./failure-code.ts";
+import { startFailureCodeFrom, type StartFailureCode } from "./failure-code.ts";
 import { MurageStatus, cancelledEnding, status, type Outbound } from "./murage-status.ts";
 const isDeletedEnding = (result: Outbound): boolean => MurageStatus.is(result) && result.key === "receipt_deleted";
 import { recordRefusedStart } from "./refused-start.ts";
@@ -112,7 +112,8 @@ export interface HandoffHost {
   };
 }
 
-export interface CouldNotStart { id: string; sourceThreadId: string; fromBotId: string | undefined; toBotId: string; why: string; shared: boolean; executionAudience?: ExecutionAudience }
+/** `why` is the start's own error text (it stays with the owner); `code` is the reason the could-not-start line names. */
+export interface CouldNotStart { id: string; sourceThreadId: string; fromBotId: string | undefined; toBotId: string; why: string; code: StartFailureCode; shared: boolean; executionAudience?: ExecutionAudience }
 
 export interface HandoffEnv { bus: CommsBus; approvalBus: ApprovalBus }
 let host: HandoffHost | undefined;
@@ -630,13 +631,19 @@ async function launch(ctx: StartContext, env: HandoffEnv, running?: SharedRun, s
     release();
     if (watching) h.watch.end(destination);
     const message = error instanceof Error ? error.message : String(error);
-    handled = afterStartFailure(ctx, env, message, running);
+    handled = afterStartFailure(ctx, env, message, startFailureCodeFrom(error), running);
     return handled;
   };
   try {
     if (ctx.shared) {
       text = sharedOps!.text(request!);
       options = sharedOps!.turnOptions(request!);
+      // F3 (02-3): a shared hand-off's worker carries its trace like the non-shared one: derived from the request tree (turnOptions), else the
+      // trace its asker advanced and the row carries (a parentless hand-off from a direct conversation)
+      if (options.coordination === undefined && item.coordination !== undefined) {
+        const carried = item.coordination as CoordinationTrace;
+        options = { ...options, coordination: carried, commsDepth: carried.path.length - 1 };
+      }
       sharedOps!.mirror(request!, { sourceMessageId: item.sourceMessageId });
     } else {
       release = h.reserveSlot(destination);
@@ -675,7 +682,7 @@ async function launch(ctx: StartContext, env: HandoffEnv, running?: SharedRun, s
     await h.startTurn(target.id, text, {
       ...options,
       threadId: destination,
-      commsDepth: ctx.shared ? 1 : item.depth + 1,
+      commsDepth: ctx.shared ? (typeof options.commsDepth === "number" ? options.commsDepth : 1) : item.depth + 1,
       delegationRun: ticket,
       ...(running ? { sharedWorkRun: running.sharedWorkRun } : {}),
       onDispatchError: (message: string, error?: unknown) => { failure(error ?? new Error(message)); },
@@ -697,7 +704,7 @@ const channelIdOf = (channel: { id?: string } | undefined): string | undefined =
  *  - never started: the hand-off waits (asked again from the row; a still-startable one spends a busy retry, past the limit it is held for the owner);
  *  - started, not submitted: reset to run once more with its stored prompt (a third cut-short start is held for the owner as "didn't start", never deleted);
  *  - submitted, no evidence: held, the owner decides; accepted, or the engine's reply to the prompt was stored (recorded as it was written): interrupted. */
-function afterStartFailure(ctx: StartContext, env: HandoffEnv, message: string, running?: SharedRun): DispatchResult {
+function afterStartFailure(ctx: StartContext, env: HandoffEnv, message: string, code: StartFailureCode, running?: SharedRun): DispatchResult {
   const { id } = ctx;
   const botName = (botId: string) => env.bus.store.bot(botId)?.name;
   // decided from the row BEFORE settling: the engine was never handed the turn (not accepted, not submitted, nothing shows it ran)
@@ -706,7 +713,7 @@ function afterStartFailure(ctx: StartContext, env: HandoffEnv, message: string, 
   const settled = settleAfterFailure(id, botName);
   if (neverHanded && (settled === "waiting" || settled === "fresh" || settled === "redispatched" || settled === "held" || settled === "alreadyHeld")) {
     try {
-      hostOrThrow().couldNotStart?.({ id, sourceThreadId: ctx.row.source_thread_id, fromBotId: ctx.item.fromBotId ?? ctx.row.from_bot_id ?? undefined, toBotId: ctx.target.id, why: message, shared: ctx.shared,
+      hostOrThrow().couldNotStart?.({ id, sourceThreadId: ctx.row.source_thread_id, fromBotId: ctx.item.fromBotId ?? ctx.row.from_bot_id ?? undefined, toBotId: ctx.target.id, why: message, code, shared: ctx.shared,
         ...(ctx.item.executionAudience ? { executionAudience: ctx.item.executionAudience } : {}) });
     } catch (error) { console.error("delegations: could not write the could-not-start chip", error); }
   }
@@ -724,13 +731,13 @@ function afterStartFailure(ctx: StartContext, env: HandoffEnv, message: string, 
       return "waiting";
     case "held":
     case "alreadyHeld":
-      running?.finish(undefined, { ending: status("delegated_turn_could_not_start", { why: failureCodeFrom(message) }), diagnostic: message.slice(0, 200) });
+      running?.finish(undefined, { ending: status("delegated_turn_could_not_start", { why: code }), diagnostic: message.slice(0, 200) });
       announceHeld(id, settleOptions(env));
       return "settled";
     case "gone":
     case "receipted":
     case "interrupted":
-      running?.finish(undefined, { ending: status("delegated_turn_could_not_start", { why: failureCodeFrom(message) }), diagnostic: message.slice(0, 200) });
+      running?.finish(undefined, { ending: status("delegated_turn_could_not_start", { why: code }), diagnostic: message.slice(0, 200) });
       return "settled";
     case "unsettled":
       // the receipt is recorded but its settling did not commit: the row and the request stay as they are and the next pass settles both through the receipt

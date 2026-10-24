@@ -12,24 +12,30 @@
 // ChatMath.tsx, and a ```mermaid fence is drawn in a sandboxed, opaque-origin
 // frame by MermaidDiagram.tsx. Neither puts diagram or model HTML in this
 // window unsanitized.
+import { MessageExternalLink } from "./ThreadLinkMenu";
 import { memo, useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import Markdown, { defaultUrlTransform, type UrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Check, Copy, Download, WrapText } from "lucide-react";
-import { codeFileName, codeLanguageLabel, codeLineLabel, saveCodeSnippet } from "@/lib/code-block";
+import { codeFileName, codeLanguageLabel, codeLineLabel, parseFenceInfo, saveCodeSnippet } from "@/lib/code-block";
 import { t } from "@/lib/i18n";
 import { isRasterDataUrl, MarkdownImage } from "./ImageMedia";
 import { LocalMedia } from "./MediaPlayer";
 import { remarkWindowsPathDestinations } from "@/lib/markdown-windows-paths";
 import { remarkLoneListNumbers } from "@/lib/markdown-lone-number";
 import { relativeFileLink } from "@/lib/workspace-links";
+import { githubPillFor } from "@/lib/github-refs";
+import { GithubRefPill } from "./GithubRefPill";
 import { conversationLinkPath } from "@/lib/media-resolve";
 import { api } from "@/state/store";
 import { extractMath, rehypeChatMath } from "@/lib/chat-math";
+import { highlightCode } from "@/lib/code-highlight";
+import { questionFenceDisplay } from "@/lib/question-fence-display";
 import { ChatMath } from "./ChatMath";
 import { MermaidDiagram } from "./MermaidDiagram";
 import { trustedHtml, useSanitizerReady } from "@/lib/trusted-html";
 import type { WorkspaceScopeRef } from "../../shared/workspace-files";
+import { copyTextOrThrow } from "@/lib/copy-text";
 
 // react-markdown drops every data: URL. Raster image bytes already inside the
 // message are the one exception worth keeping (they cost no request); links,
@@ -101,12 +107,12 @@ const localFilePath = (href?: string): string | null => {
   return absolutePath(href);
 };
 
-export function CodeBlock({ code, lang, streaming }: { code: string; lang: string; streaming: boolean }) {
+export function CodeBlock({ code, lang, streaming, wrap = false }: { code: string; lang: string; streaming: boolean; wrap?: boolean }) {
   useSanitizerReady(); // markup made before the sanitizer loaded is empty: draw again when it arrives
   const [html, setHtml] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState(false);
-  const [wrapped, setWrapped] = useState(false);
+  const [wrapped, setWrapped] = useState(wrap);
   const [saveError, setSaveError] = useState(false);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const copyRevision = useRef(0);
@@ -124,14 +130,7 @@ export function CodeBlock({ code, lang, streaming }: { code: string; lang: strin
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const highlight = () => {
-      import("shiki")
-        .then((shiki) =>
-          shiki.codeToHtml(code, {
-            lang: lang || "text",
-            themes: { light: "github-light-default", dark: "github-dark-default" },
-            defaultColor: "light-dark()",
-          }),
-        )
+      highlightCode(code, lang)
         .then((out) => {
           if (!alive) return;
           if (highlightCache.size >= CACHE_MAX) {
@@ -164,8 +163,7 @@ export function CodeBlock({ code, lang, streaming }: { code: string; lang: strin
     const revision = ++copyRevision.current;
     setCopied(false); setCopyError(false); clearTimeout(copyTimer.current);
     try {
-      if (!navigator.clipboard?.writeText) throw new Error("Clipboard unavailable");
-      await navigator.clipboard.writeText(code);
+      await copyTextOrThrow(code);
       if (revision !== copyRevision.current || currentCode.current !== code) return;
       setCopied(true); copyTimer.current = setTimeout(() => setCopied(false), 1500);
     } catch { if (revision === copyRevision.current) setCopyError(true); }
@@ -359,9 +357,11 @@ function Spoiler({ children }: { children?: ReactNode }) {
   );
 }
 
-function ChatMarkdownComponent({ text, streaming = false, scope }: {
+function ChatMarkdownComponent({ text: written, streaming = false, scope, questionCards }: {
   text: string;
   streaming?: boolean;
+  /** QW Q2: this message's ```murage-question fences that became question cards ("0,2"): only those are hidden. */
+  questionCards?: string;
   /** The conversation this message belongs to. Only a bubble that knows its
    * own bot and thread can offer a file link to the media resolver; without
    * it, file links keep exactly today's Save a copy behaviour. */
@@ -370,6 +370,7 @@ function ChatMarkdownComponent({ text, streaming = false, scope }: {
   // $$…$$, \[…\] and \(…\) come out before Markdown parses the text; a
   // single $ never does (lib/chat-math.ts). Each span comes back as a
   // <span data-chat-math="n"> that the span renderer below hands to KaTeX.
+  const { text, preparing } = useMemo(() => questionFenceDisplay(written, streaming, questionCards), [written, streaming, questionCards]);
   const { text: source, spans } = useMemo(() => extractMath(text), [text]);
   const rehypePlugins = useMemo(() => [rehypeChatMath(spans)], [spans]);
   return (
@@ -389,7 +390,9 @@ function ChatMarkdownComponent({ text, streaming = false, scope }: {
             // fenced code arrives as <pre><code class="language-x">…</code></pre>
             const child: any = Array.isArray(children) ? children[0] : children;
             const className: string = child?.props?.className ?? "";
-            const lang = /language-([^\s]+)/.exec(className)?.[1] ?? "";
+            // the info string after the language ("```js wrap") rides on the code node
+            const fence = parseFenceInfo(/language-([^\s]+)/.exec(className)?.[1] ?? "", child?.props?.node?.data?.meta);
+            const lang = fence.lang;
             // children can be a string OR an array of strings/nodes — flatten
             // strings only, so String() never comma-joins an array
             const flat = (n: any): string =>
@@ -398,7 +401,7 @@ function ChatMarkdownComponent({ text, streaming = false, scope }: {
             // a mermaid fence is a picture: drawn in a sandboxed frame, never
             // in this window (MermaidDiagram.tsx)
             if (lang.toLowerCase() === "mermaid") return <MermaidDiagram code={code} streaming={streaming} />;
-            return <CodeBlock code={code} lang={lang} streaming={streaming} />;
+            return <CodeBlock code={code} lang={lang} streaming={streaming} wrap={fence.wrap} />;
           },
           img({ src, alt }: { src?: string; alt?: string }) {
             // F5-T2: the shared image surface decides what may load; a path
@@ -427,16 +430,12 @@ function ChatMarkdownComponent({ text, streaming = false, scope }: {
             if (relative !== null) return <WorkspaceRelativeLink relativePath={relative} scope={scope}>{children}</WorkspaceRelativeLink>;
             // A footnote or other in-reply jump stays in this window.
             if (href?.startsWith("#")) return <a href={href} className="[overflow-wrap:anywhere] text-accent underline decoration-accent/40 hover:decoration-accent">{children}</a>;
-            return (
-              <a
-                href={href}
-                target="_blank"
-                rel="noreferrer"
-                className="[overflow-wrap:anywhere] text-accent underline decoration-accent/40 hover:decoration-accent"
-              >
-                {children}
-              </a>
-            );
+            // A bare GitHub pull request, issue or commit link becomes a compact pill; a link with the author's own words stays a link.
+            const github = typeof children === "string" || (Array.isArray(children) && children.every((child) => typeof child === "string"))
+              ? githubPillFor(href, Array.isArray(children) ? children.join("") : (children as string))
+              : null;
+            if (github) return <GithubRefPill link={github} />;
+            return <MessageExternalLink href={href}>{children}</MessageExternalLink>;
           },
           table({ children }: { children?: ReactNode }) {
             return (
@@ -453,34 +452,38 @@ function ChatMarkdownComponent({ text, streaming = false, scope }: {
           td({ children }: { children?: ReactNode }) {
             return <td className="border-b border-hairline/20 px-2 py-1.5 align-top">{children}</td>;
           },
+          // Prose reads in its own direction (Arabic, Hebrew, Persian); code, tables of data and the chrome stay left to right.
+          p({ children }: { children?: ReactNode }) {
+            return <p dir="auto">{children}</p>;
+          },
           ul({ children }: { children?: ReactNode }) {
-            return <ul className="list-disc space-y-1 pl-5">{children}</ul>;
+            return <ul dir="auto" className="list-disc space-y-1 ps-5">{children}</ul>;
           },
           ol({ children, start }: { children?: ReactNode; start?: number }) {
             // a list that begins at 3 must count from 3, not 1
-            return <ol start={start} className="list-decimal space-y-1 pl-5">{children}</ol>;
+            return <ol dir="auto" start={start} className="list-decimal space-y-1 ps-5">{children}</ol>;
           },
           h1({ children }: { children?: ReactNode }) {
-            return <div className="mt-2 text-[16px] font-semibold">{children}</div>;
+            return <div dir="auto" className="mt-2 text-[16px] font-semibold">{children}</div>;
           },
           h2({ children }: { children?: ReactNode }) {
-            return <div className="mt-2 text-[15.5px] font-semibold">{children}</div>;
+            return <div dir="auto" className="mt-2 text-[15.5px] font-semibold">{children}</div>;
           },
           h3({ children }: { children?: ReactNode }) {
-            return <div className="mt-1.5 font-semibold">{children}</div>;
+            return <div dir="auto" className="mt-1.5 font-semibold">{children}</div>;
           },
           h4({ children }: { children?: ReactNode }) {
-            return <div className="mt-1.5 font-semibold">{children}</div>;
+            return <div dir="auto" className="mt-1.5 font-semibold">{children}</div>;
           },
           h5({ children }: { children?: ReactNode }) {
-            return <div className="mt-1.5 text-[14px] font-semibold">{children}</div>;
+            return <div dir="auto" className="mt-1.5 text-[14px] font-semibold">{children}</div>;
           },
           h6({ children }: { children?: ReactNode }) {
-            return <div className="mt-1.5 text-[13.5px] font-semibold text-ink-secondary">{children}</div>;
+            return <div dir="auto" className="mt-1.5 text-[13.5px] font-semibold text-ink-secondary">{children}</div>;
           },
           blockquote({ children }: { children?: ReactNode }) {
             return (
-              <blockquote className="border-l-2 border-hairline pl-3 text-ink-secondary">{children}</blockquote>
+              <blockquote dir="auto" style={{ borderInlineStartWidth: 2 }} className="border-hairline ps-3 text-ink-secondary">{children}</blockquote>
             );
           },
           del({ children }: { children?: ReactNode }) {
@@ -493,6 +496,7 @@ function ChatMarkdownComponent({ text, streaming = false, scope }: {
       >
         {source}
       </Markdown>
+      {preparing && <p className="text-[13px] text-ink-secondary" role="status">{t("chat.preparingQuestion")}</p>}
     </div>
   );
 }
