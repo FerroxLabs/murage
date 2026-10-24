@@ -39,6 +39,20 @@ describe("images not sent", () => {
     expect(say(8, 2, 2)).toContain("8 of 12 images were sent. The rest were left out: 2 over the limit of 10 and 2 too large.");
   });
 
+  // 1.0.4 SL-H H2(c), GATE: the owner's line counts images removed from storage.
+  it("counts images removed from storage, alone and beside another reason, and keeps 1.0.3's names for every other note", () => {
+    const say = (counts: { sent: number; overCount: number; tooLarge: number; removed: number }) =>
+      renderToStaticMarkup(createElement(ImagesNotSentRow, { counts: imagesNotSent(imagesNotSentActivityName(counts))! }));
+    expect(say({ sent: 2, overCount: 0, tooLarge: 0, removed: 1 })).toContain("1 image was removed from storage and was not sent.");
+    expect(say({ sent: 0, overCount: 0, tooLarge: 0, removed: 3 })).toContain("3 images were removed from storage and were not sent.");
+    expect(say({ sent: 3, overCount: 0, tooLarge: 1, removed: 1 })).toContain("3 of 5 images were sent. One was too large and was left out. 1 image was removed from storage and was not sent.");
+    expect(imagesNotSentActivityName({ sent: 10, overCount: 2, tooLarge: 0 })).toBe("images not sent: sent=10 over=2 large=0 limit=10");
+    expect(imagesNotSentActivityName({ sent: 1, overCount: 0, tooLarge: 0, removed: 1 })).toBe("images not sent: sent=1 over=0 large=0 limit=10 removed=1");
+    expect(imagesNotSent("images not sent: sent=1 over=0 large=0 limit=10 removed=0")).toBeUndefined();
+    const [event] = timelineEvents([{ id: "m1", at: 1, kind: "activity", role: "bot", tool: { name: imagesNotSentActivityName({ sent: 1, overCount: 0, tooLarge: 0, removed: 2 }), ok: true } }]);
+    expect(event).toMatchObject({ label: "2 images were removed from storage and were not sent.", state: "observed" });
+  });
+
   it("reads as an observed note in the task timeline, not a failed tool", () => {
     const name = imagesNotSentActivityName({ sent: 10, overCount: 2, tooLarge: 0 });
     const [event] = timelineEvents([{ id: "m1", at: 1, kind: "activity", role: "bot", tool: { name, ok: true } }]);

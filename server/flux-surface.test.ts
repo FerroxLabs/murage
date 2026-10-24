@@ -306,6 +306,15 @@ describe("filterFluxRows — the registry backstop", () => {
   });
 });
 
+describe("OpenCode native flux/<tier> ids", () => {
+  it("are Flux ids and routable on opencodeGo only", () => {
+    expect(fluxModelId("flux/flux-auto")).toBe("flux-auto");
+    expect(fluxIdIsRoutable("flux/flux-auto", "opencodeGo")).toBe(true);
+    expect(fluxIdIsRoutable("flux/flux-auto", "codex")).toBe(false);
+    expect(fluxModelId("other/flux-auto")).toBeNull();
+  });
+});
+
 describe("fluxSelectionRefusal — the spawn backstop", () => {
   it("says nothing about an ordinary model", () => {
     expect(fluxSelectionRefusal("claude-sonnet-5", "claudeAgent", KEYED)).toBeNull();

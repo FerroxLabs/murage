@@ -96,6 +96,16 @@ jobs:
             should_release=$(node scripts/release-guard.mjs should-release "$current" "$previous")
           fi
           echo "should_release=$should_release" >> "$GITHUB_OUTPUT"
+      - name: Require the curated release notes for this version
+        # package:prepare stages release-notes/<version>.md for the update card
+        # and stops a Release run without it. Check here, before any platform
+        # build starts, so a missing or rule-breaking note fails in seconds.
+        if: steps.pin.outputs.should_release == 'true'
+        run: |
+          node scripts/release-notes.mjs check "$(node scripts/release-guard.mjs version)" || {
+            echo "::error::release notes for this version are missing or break the copy rules (see the message above)"
+            exit 1
+          }
       - name: Refuse to overwrite a published release
         if: steps.pin.outputs.should_release == 'true'
         env:
@@ -748,18 +758,8 @@ jobs:
           # Only the exact upstream age and restic paths may remain unsigned, after
           # the complete raw inventory (including LICENSE) passes shared pins.
           # Our backup helper still requires a valid Ferrox signature.
-          $verifyBackup = @'
-          import { verifyWindowsBackupTools } from './scripts/prepare-windows-backup-tools.mjs';
-          import { nativeAuthenticodeIn, verifyWindowsBrowserSignatures } from './server/browser-windows-identity.ts';
-          import { resolve, join } from 'node:path';
-          import { existsSync } from 'node:fs';
-          console.log('native helper:', join(resolve('release/win-unpacked/resources'), 'engine-exclusion.node'), existsSync(join(resolve('release/win-unpacked/resources'), 'engine-exclusion.node')));
-          const backup = 'release/win-unpacked/resources/backup-tools/x64';
-          verifyWindowsBackupTools(backup);
-          // The helper is loaded with require(), which reads a bare relative path as a package name; resolve it.
-          await verifyWindowsBrowserSignatures([backup + '/murage-backup-age.exe'], process.env.SystemRoot, nativeAuthenticodeIn(resolve('release/win-unpacked/resources')));
-          '@
-          & node --input-type=module -e $verifyBackup
+          # The Node half (pins, then our helper's signature through the packaged addon) is shared with package-win.yml.
+          & node scripts/windows-release-gates.mjs backup
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $rawBackupFiles = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
           [void]$rawBackupFiles.Add([System.IO.Path]::GetFullPath('release/win-unpacked/resources/backup-tools/x64/age.exe'))
@@ -800,22 +800,8 @@ jobs:
 
       - name: Verify signed browser runtime admission
         shell: bash
-        run: |
-          node --input-type=module <<'NODE'
-          import { resolve } from 'node:path';
-          import { browserBundlePaths } from './server/browser-bundle-release.ts';
-          import { ensureBrowserSandboxAccess } from './server/browser-sandbox.ts';
-          const root = resolve('release/win-unpacked/resources/browser-engine');
-          // The packaged app sets this; the admission check loads the native signature helper from it.
-          process.env.MURAGE_RESOURCES_PATH = resolve('release/win-unpacked/resources');
-          const paths = browserBundlePaths(root, 'win32-x64');
-          await ensureBrowserSandboxAccess({ command: paths.engine, env: {
-            MURAGE_BROWSER_BUNDLE_DIR: root,
-            AGENT_BROWSER_EXECUTABLE_PATH: paths.chrome,
-            SystemRoot: process.env.SystemRoot,
-          }});
-          console.log('Signed browser original pins, publisher and sandbox access verified.');
-          NODE
+        # Shared with package-win.yml, so the gate runs on every Windows package build too.
+        run: node scripts/windows-release-gates.mjs admission
 
       - name: Verify the packaged tree and start the packaged server
         shell: bash

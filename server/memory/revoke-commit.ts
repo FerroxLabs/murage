@@ -93,6 +93,30 @@ function compactRoot(root: RevokeRoot, until?: number): string {
 
 /** One owner action, in the caller's transaction (see the file header). O(targets): the named lines, the bot's threads and scopes, one
  * memory object, one receipt or session. Returns the revoke id (0 on a file without the v10 tables). */
+/** The most evidence rows of a forgotten record its commit reads for the flow seeds of its supporting sources (READER-PRIVACY-104 R2); the
+ * record's own rows through the primary key (one row per handle of a version, authority.ts), never the store's history. Over it the job
+ * stays uncertified. */
+const FORGET_SEED_ROWS = 65_536;
+/** The most capture lines seeded at their own position; past it every capture thread is seeded from its first line, with no seek. */
+const FORGET_SEED_SEEKS = 4096;
+/** The flow seeds of a forgotten record's supporting sources (R1): every source's scope, and its capture thread from the capture line, under
+ * the walker's own predicate (revoke-marker.ts sourceNode: a thread and a message, and a lineage row for the line; a source with no message
+ * or no row is never entered by the walk and gets no thread seed). True when the read completed under FORGET_SEED_ROWS. */
+function seedForgetSupport(tx: DatabaseSync, id: string, version: number | undefined, seeds: Array<[string, number | null]>): boolean {
+  const where = version && version > 0 ? "record_id=? AND record_version=?" : "record_id=?", args: unknown[] = version && version > 0 ? [id, version] : [id];
+  // one bounded read: at most FORGET_SEED_ROWS+1 evidence rows (one row each, the source joined by its primary key), so the row count is
+  // the certification and the sources' scopes and capture lines are deduped from the same rows (a copy repeats its parent's rows)
+  const rows = st(tx, `SELECT s.scope_id AS scope,s.thread_id AS thread,s.message_id AS message FROM (SELECT source_id FROM memory_evidence WHERE ${where} LIMIT ?) e LEFT JOIN memory_sources s ON s.id=e.source_id`).all(...args as never[], FORGET_SEED_ROWS + 1) as Array<{ scope: unknown; thread: unknown; message: unknown }>;
+  const scopes = new Set<string>(), lines = new Map<string, [string, string]>();
+  for (const row of rows) {
+    if (typeof row.scope === "string") scopes.add(row.scope);
+    if (typeof row.thread === "string" && typeof row.message === "string") lines.set(`${row.thread}\u0000${row.message}`, [row.thread, row.message]);
+  }
+  for (const scope of scopes) seeds.push([scopeFlowNode(scope), FIRST_LSN]);
+  if (lines.size > FORGET_SEED_SEEKS) for (const thread of new Set([...lines.values()].map(pair => pair[0]))) seeds.push([thread, FIRST_LSN]);
+  else for (const [thread, message] of lines.values()) { const line = lineOf(tx, thread, message); if (line) seeds.push([thread, line.lsn]); }
+  return rows.length <= FORGET_SEED_ROWS;
+}
 export function commitRevoke(tx: DatabaseSync, root: RevokeRoot, options: RevokeOptions = {}): number {
   if (!hasWritetime(tx)) return 0;
   // the commit's own lsn: the cap of its ranges and of the walk's session stage is this slot, so a prompt built after the commit (head =
@@ -123,6 +147,7 @@ export function commitRevoke(tx: DatabaseSync, root: RevokeRoot, options: Revoke
   const reason = root.cause;
   let rootLsn = now, scopeSince = now;
   const seeds: Array<[string, number | null]> = []; // flow seeds; null since = the root lsn
+  let certified = true; // READER-PRIVACY-104 R2: false once a forget's supporting-source read hit its cap
   switch (root.kind) {
     case "line": {
       for (const messageId of root.messageIds) {
@@ -177,6 +202,12 @@ export function commitRevoke(tx: DatabaseSync, root: RevokeRoot, options: Revoke
         enqueueNode(tx, R, { kind: "record", id: ref.id, version: removing ? ref.version ?? 0 : softVersion(ref.version ?? 0) });
         const scope = st(tx, "SELECT scope_id FROM memory_records WHERE id=? LIMIT 1").get(ref.id)?.scope_id;
         if (typeof scope === "string") seeds.push([scopeFlowNode(scope), FIRST_LSN]);
+        // a forgotten record's supporting sources go with it (revoke-marker.ts recordNode stage "ev", then sourceNode: the source, its
+        // capture line and the lines after it, the records citing it, its copies). Flow edges run forward only, so those sources' scopes
+        // and capture threads can sit outside the closure the record's own scope reaches; they are seeded here, with the walker's own
+        // predicate, so the closure the flow gate proves is whole (READER-PRIVACY-104 R1, R2). Over FORGET_SEED_ROWS the job stays
+        // uncertified and its late children are held to its tidy (R3).
+        if (removing && root.cause === "forget" && !st(tx, "SELECT 1 FROM memory_records WHERE id=? AND kind='checkpoint' LIMIT 1").get(ref.id)) certified = seedForgetSupport(tx, ref.id, ref.version, seeds);
         // a forgotten record's supporting material is older than the record: everything resting on it may be (A2)
         rootLsn = removing ? FIRST_LSN : recordCreated(tx, ref.id, ref.version);
         scopeSince = removing ? FIRST_LSN : rootLsn;
@@ -241,6 +272,9 @@ export function commitRevoke(tx: DatabaseSync, root: RevokeRoot, options: Revoke
   markPending(tx, R, PENDING_ALL_THREADS, rootLsn);
   st(tx, "INSERT OR IGNORE INTO memory_deny_pending_scope(scope_id,since_lsn,revoke_id) VALUES(?,?,?)").run(PENDING_ALL_SCOPES, scopeSince, R);
   for (const [node, since] of seeds) seedFlow(tx, R, node, since ?? rootLsn);
+  // a single job whose closure is whole is certified (READER-PRIVACY-104 R3): a late memory child inherits its `*` window no more, only its
+  // parent's own scope window. A bulk, a job 1.0.3 committed, and an over-cap forget carry no flag and keep today's inheritance.
+  if (!bulk && certified) st(tx, "UPDATE memory_revoke_jobs SET root=json_set(root,'$.seeded',1) WHERE revoke_id=?").run(R);
   bumpDenyGeneration(tx);
   if (bulk) return R; // held 'seeding' until activateBulkRevoke
   if (options.inline !== false) markInline(tx, R);
@@ -364,13 +398,24 @@ function rangeRevokes(tx: DatabaseSync, range: CarryRange, out: Found): void {
       OR NOT EXISTS (SELECT 1 FROM memory_line_lineage l WHERE l.thread_no=?4 AND l.lsn>=max(p.since_lsn,?5) AND l.lsn<=?3))`).all(T, PENDING_ALL_THREADS, to, no, range.from)) as Array<Record<string, unknown>>, false);
 }
 /** The revokes that deny or hold one memory or receipt ref. */
-function refRevokes(tx: DatabaseSync, ref: LineageRef, out: Found): void {
+function refRevokes(tx: DatabaseSync, ref: LineageRef, out: Found, edge = false): void {
   switch (ref.kind) {
     case "memory": {
       const m = ref.ref;
       addRows(out, st(tx, "SELECT revoke_id FROM memory_deny_memory WHERE kind=? AND id=? AND version IN (0,?)").all(m.kind, m.id, m.version ?? 0) as Array<Record<string, unknown>>, true);
       const created = m.kind === "record" ? recordCreated(tx, m.id, m.version) : 0;
-      addRows(out, st(tx, "SELECT revoke_id FROM memory_deny_pending_scope WHERE scope_id IN (?,?) AND since_lsn<=?").all(m.scopeId ?? PENDING_ALL_SCOPES, PENDING_ALL_SCOPES, created > FIRST_LSN ? created : Number.MAX_SAFE_INTEGER) as Array<Record<string, unknown>>, false);
+      const bound = created > FIRST_LSN ? created : Number.MAX_SAFE_INTEGER;
+      if (edge && m.scopeId !== undefined) {
+        // a late child of a parent with a known scope (READER-PRIVACY-104 R3 a, b): any pending row on the parent's own scope, whatever its
+        // since (a flow edge into that scope can be stamped after the parent's own creation, authority.ts evidence added at activation or
+        // after an inherit slot, and the walk still reaches the parent: the child is held until that job's tidy, as the base's `*` held it),
+        // and the `*` window only of a job this build did not certify. NULL-safe: a `*` row with no job, a root with no key, a NULL value
+        // and a bulk all keep today's inheritance (`IS 1` is never NULL); only a certified single job stops handing its `*` on.
+        addRows(out, st(tx, "SELECT revoke_id FROM memory_deny_pending_scope WHERE scope_id=?").all(m.scopeId) as Array<Record<string, unknown>>, false);
+        addRows(out, st(tx, "SELECT p.revoke_id FROM memory_deny_pending_scope p LEFT JOIN memory_revoke_jobs j ON j.revoke_id=p.revoke_id WHERE p.scope_id=? AND p.since_lsn<=? AND NOT (j.kind IS NOT NULL AND j.kind<>'bulk' AND json_extract(j.root,'$.seeded') IS 1)").all(PENDING_ALL_SCOPES, bound) as Array<Record<string, unknown>>, false);
+        return;
+      }
+      addRows(out, st(tx, "SELECT revoke_id FROM memory_deny_pending_scope WHERE scope_id IN (?,?) AND since_lsn<=?").all(m.scopeId ?? PENDING_ALL_SCOPES, PENDING_ALL_SCOPES, bound) as Array<Record<string, unknown>>, false);
       return;
     }
     case "receipt": {
@@ -405,7 +450,12 @@ export function inheritMarks(tx: DatabaseSync, child: InheritChild, refs: readon
   if ((!refs.length && !ranges.length) || !hasWritetime(tx)) return;
   const found: Found = new Map();
   for (const range of ranges) rangeRevokes(tx, range, found);
-  for (const ref of refs) refRevokes(tx, ref, found);
+  for (const ref of refs) refRevokes(tx, ref, found, edge);
+  // a late child of any parent (a memory object through refs, a stored line through ranges) under an active single forget this build did
+  // not certify and whose gate has passed (READER-PRIVACY-104 R3 c): its `*` windows are gone and its closure may miss the backward stage
+  // (a 1.0.3 commit in flight across the upgrade, one already past its gate, one made after a downgrade, an over-cap forget), so the
+  // child is held under it as a pending job until that job's tidy, the hold its `*` gave it before the gate. Active jobs only.
+  if (edge) addRows(found, st(tx, "SELECT revoke_id FROM memory_revoke_jobs WHERE state='active' AND kind='memory' AND phase IN ('mark','hold') AND json_extract(root,'$.cause')='forget' AND json_extract(root,'$.ref.kind')='record' AND json_extract(root,'$.seeded') IS NOT 1").all() as Array<Record<string, unknown>>, false);
   if (!found.size) return;
   // a revoke folded into a fold bulk is that bulk now (1.0.3 REVOKE-FOLD-DESIGN F1.6): every found id is resolved, one seek each, and the
   // map merged by destination (denied = OR), so a child under marks of several folded ids is enqueued and held once

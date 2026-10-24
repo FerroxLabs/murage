@@ -3,7 +3,7 @@
 //
 // What a task id stands for, answered in one place. The status route (check_delegation / wait_delegation), the replay of a hand-off that ran
 // past its wait, and the pass at start that ends tickets nothing can answer all ask `resolveTask`, so "can this task still be answered?" has one
-// definition: a finished receipt, a hand-off waiting in line, a delegated turn running, or a shared request still open (or finished and not yet
+// definition: a finished receipt, a hand-off waiting in line, a delegated turn running (watched here, or started by its row), or a shared request still open (or finished and not yet
 // delivered). A task that belongs to another conversation is `foreign`: it exists, but this caller may not read it.
 import type { DelegationReceipt } from "./delegations.ts";
 import type { RoomRequest } from "./room-requests.ts";
@@ -27,6 +27,9 @@ export interface TaskResolutionDeps {
   watches: () => Iterable<[string, RunningDelegation]>;
   request: (taskId: string) => RoomRequest | null;
   requestSourceThread: (requestId: string) => string | null | undefined;
+  /** A started hand-off by its stored row (F3 02-4): a timed-out ask's ticket is answered from any process that opened the store, before or after the boot
+   * settling, not only by this process's watch. The server always supplies it. */
+  started?: (taskId: string) => { threadId: string; watch: RunningDelegation } | null;
   /** The value a shared request's row carries once its result reached the asker. */
   delivered: string;
 }
@@ -42,6 +45,8 @@ export function resolveTask(taskId: string, caller: TaskCaller | undefined, deps
   for (const [threadId, watch] of deps.watches()) {
     if (watch.taskId === taskId) return mine(watch.sourceThreadId) ? { kind: "running", threadId, watch } : { kind: "foreign" };
   }
+  const started = deps.started?.(taskId);
+  if (started) return mine(started.watch.sourceThreadId) ? { kind: "running", threadId: started.threadId, watch: started.watch } : { kind: "foreign" };
   const request = deps.request(taskId);
   if (!request) return null;
   const finishing = isTerminalRoomRequestState(request.state);

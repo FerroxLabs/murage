@@ -757,6 +757,13 @@ export function autoVerdict(
         ? unreadableHit()
         : alwaysAskCommand(summary, cwd, commandTool ? "command" : "text", shell);
   }
+  if (!catastrophe) {
+    // A command a wrapper or an MCP tool carries (Fuigo's `use_tool` around the cloud computer's exec) is judged like
+    // the engine's own shell tool asking: the card title is the model's, the command inside is what runs.
+    const resolvedCall = resolveCall(context?.call);
+    const innerCommand = commandArgument(resolvedCall.kind === "engine" || resolvedCall.kind === "mcp" ? resolvedCall.input : context?.call?.toolCall?.input);
+    if (innerCommand !== undefined && innerCommand !== text) catastrophe = alwaysAskCommand(innerCommand, cwd, "command", shell);
+  }
   if (catastrophe) return { approve: null, source: "always-ask", rule: catastrophe.rule, note: alwaysAskNote(catastrophe) };
   // a carved command is guarded on its whole text too, so a key or a
   // destructive step past the card's cut summary still holds
@@ -1046,7 +1053,11 @@ export function realKeyPaths(input: unknown, filePaths: readonly string[] | unde
   const home = opts.home ?? homedir();
   const platform = opts.platform ?? process.platform;
   const paths: string[] = [];
-  const add = (spelling: string) => { if (spelling !== "" && !paths.includes(spelling)) paths.push(spelling); };
+  const add = (spelling: string) => {
+    if (spelling === "") return;
+    // a Windows spelling is read with its backslashes as `/` too, the way the in-project check reads it
+    for (const form of [spelling, spelling.replace(/\\/g, "/")]) if (!paths.includes(form)) paths.push(form);
+  };
   let cannot: string | null = given.length > 64 ? "the call names more paths than the key guard follows" : null;
   for (const path of given.slice(0, 64)) {
     // the Win32 spelling of the path as given (`\\?\`, `\\host\C$\`, `::$DATA`, a trailing dot: SG-WIN-PATHTRICKS.md)

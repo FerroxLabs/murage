@@ -1,19 +1,28 @@
 import { randomUUID } from "node:crypto";
 import { overlaps, sameOwner, TurnResources, type TurnOwner } from "./turn-resources.ts";
+import type { TaskResourceWait } from "./store.ts";
 
 export const MAX_CONCURRENT_BOT_THREADS = 3;
 
-/** How long a turn will wait for a thread ahead of it before giving up.
- * Deliberately longer than the 20-minute inactivity watchdog that interrupts
- * a stalled holder and releases its claims: anything still holding after this
- * is a turn that is genuinely working, and a waiter that has been queued for
- * an hour is better told so than left in a wait that can never end on its own. */
+/** The deadline a caller may still pass to `acquire`. Since 1.0.4 (SL-L L3)
+ * the server's turn waits pass none: a waiter waits until it is granted,
+ * stopped, replaced or the process ends, with its place in line shown. */
 export const RESOURCE_WAIT_TIMEOUT_MS = 60 * 60_000;
+/** SL-L L3: after this long in line a turn writes one "still waiting" line
+ * (never repeated; the live chip carries the position). Longer than the
+ * 20-minute inactivity watchdog that interrupts a stalled holder. */
+export const RESOURCE_STILL_WAITING_MS = 60 * 60_000;
+/** What is left of the "still waiting" hour for a wait that began at `firstWaitAt` (at least 1 ms, so the notice still fires). */
+export function stillWaitingRemainingMs(firstWaitAt: number | undefined, now: number): number {
+  return firstWaitAt === undefined ? RESOURCE_STILL_WAITING_MS : Math.max(1, RESOURCE_STILL_WAITING_MS - (now - firstWaitAt));
+}
+/** SL-L L2: claim-to-release history per resource kind, kept in memory only. */
+const ESTIMATE_ALPHA = 0.3;
+const ESTIMATE_MIN_SAMPLES = 3;
 
-/** A wait that hit its deadline. Distinct from a wait that resolved false:
- * nobody stopped this turn and it was never refused — the thread ahead of it
- * simply never let go, and an unattended run (a queued routine at 8am) had no
- * one to press Stop for it. */
+/** A wait that hit a caller's deadline. Distinct from a wait that resolved
+ * false: nobody stopped this turn and it was never refused. No server turn
+ * passes a deadline since 1.0.4 (SL-L L3); the class stays for callers that do. */
 export class ResourceWaitTimeout extends Error {
   // Plain fields, assigned in the body: the server runs under Node's
   // type-stripping loader, which rejects TypeScript parameter properties.
@@ -36,11 +45,17 @@ export type DirectThreadRun<T> = Readonly<TurnOwner & {
 /** Who a waiting turn is waiting for: a holder of an overlapping claim, or an
  * earlier waiter whose overlapping set is served first. */
 export type ResourceBlocker = Readonly<{ resource: string; owner: TurnOwner; queued: boolean }>;
+/** Told whenever the blockers or the waiter's place in line change. `position`
+ * is 1 + the distinct earlier waiters whose set overlaps this one's; the
+ * estimate is present only once every blocking kind has 3 measured holds. */
+export type ResourceWaitListener = (blockers: readonly ResourceBlocker[], position: number, estimateMs?: number) => void;
+/** One notice after `afterMs` in line, never repeated. */
+export type ResourceLongWait = Readonly<{ afterMs: number; notify: () => void }>;
 type ResourceWaiter = {
   owner: TurnOwner;
   resources: readonly string[];
   resolve: (granted: boolean | "yielded") => void;
-  onWait?: (blockers: readonly ResourceBlocker[]) => void;
+  onWait?: ResourceWaitListener;
   yields?: (blockers: readonly ResourceBlocker[]) => boolean;
   shown?: string;
 };
@@ -73,6 +88,10 @@ export class IndependentThreadRuns<T> {
    * thread slot, and the FIFO of those waiting for one. */
   private readonly slotless = new Set<string>();
   private readonly slotWaiters: { owner: TurnOwner; botId: string; resolve: (granted: boolean) => void }[] = [];
+  /** SL-L L2: when each held resource was claimed, by generation. */
+  private readonly claimedAt = new Map<string, Map<string, number>>();
+  /** SL-L L2: EWMA of claim-to-release durations per resource kind (the key's prefix). */
+  private readonly holdHistory = new Map<string, { samples: number; ewma: number }>();
   /** The one run per bot holding the owner's reserved slot above the limit. */
   private readonly ownerReserved = new Set<string>();
   /** Owner sends waiting for a slot: served ahead of automation. */
@@ -104,6 +123,7 @@ export class IndependentThreadRuns<T> {
     if (!this.resources.claimAll(resources, owner)) throw conflict("resource_busy", "Another thread is using this browser, computer or working folder.");
     const run: DirectThreadRun<T> = Object.freeze({ ...owner, botId, snapshot: copied, phase: "setup" });
     this.runs.set(threadId, run);
+    this.stamp(owner);
     if (needsSlot) this.slotless.add(owner.generation);
     if (reserved) this.ownerReserved.add(owner.generation);
     if (needsSlot && options.ownerFirst) this.ownerWaiting.add(owner.generation);
@@ -141,7 +161,9 @@ export class IndependentThreadRuns<T> {
     // them with free resources: queued waiters never displace a holder. A run
     // holding nothing stays behind earlier waiters for overlapping resources.
     const holding = this.resources.heldBy(owner).length > 0;
-    return this.claimable(owner) && (holding || !this.queuedAhead(resources, owner).length) && this.resources.claimAll(resources, owner);
+    const claimed = this.claimable(owner) && (holding || !this.queuedAhead(resources, owner).length) && this.resources.claimAll(resources, owner);
+    if (claimed) this.stamp(owner);
+    return claimed;
   }
 
   /** Claim `resources` together with everything this generation already
@@ -152,9 +174,10 @@ export class IndependentThreadRuns<T> {
   acquire(
     owner: TurnOwner,
     resources: readonly string[],
-    onWait?: (blockers: readonly ResourceBlocker[]) => void,
+    onWait?: ResourceWaitListener,
     timeoutMs?: number,
     yieldPolicy?: ResourceYield,
+    longWait?: ResourceLongWait,
   ): Promise<boolean | "yielded"> {
     if (!this.claimable(owner)) return Promise.resolve(false);
     const wanted = [...new Set([...this.resources.heldBy(owner), ...resources])];
@@ -163,9 +186,19 @@ export class IndependentThreadRuns<T> {
     // release, so a turn that does not wait keeps everything it held.
     if (yieldPolicy && yieldsTo(yieldPolicy, this.blockersFor(wanted, owner, this.waiters.length))) return Promise.resolve("yielded");
     this.resources.release(owner);
+    // Handed back to wait, not released: no hold is measured for the estimate.
+    this.claimedAt.delete(owner.generation);
     return new Promise<boolean | "yielded">((resolve, reject) => {
       const waiter: ResourceWaiter = { owner, resources: wanted, resolve, onWait,
         ...(yieldPolicy ? { yields: (blockers: readonly ResourceBlocker[]) => yieldsTo(yieldPolicy, blockers) } : {}) };
+      if (longWait && longWait.afterMs > 0) {
+        const timer = setTimeout(() => {
+          if (this.waiters.includes(waiter)) longWait.notify();
+        }, longWait.afterMs);
+        timer.unref?.();
+        const settle = waiter.resolve;
+        waiter.resolve = (granted) => { clearTimeout(timer); settle(granted); };
+      }
       if (timeoutMs !== undefined && timeoutMs > 0) {
         const timer = setTimeout(() => {
           const index = this.waiters.indexOf(waiter);
@@ -182,7 +215,8 @@ export class IndependentThreadRuns<T> {
         }, timeoutMs);
         // A pending wait must never keep the process alive on its own.
         timer.unref?.();
-        waiter.resolve = (granted) => { clearTimeout(timer); resolve(granted); };
+        const settle = waiter.resolve;
+        waiter.resolve = (granted) => { clearTimeout(timer); settle(granted); };
       }
       this.waiters.push(waiter);
       // Our own release may already admit an earlier waiter, and with it this one.
@@ -196,6 +230,8 @@ export class IndependentThreadRuns<T> {
   releaseResources(owner: TurnOwner, resources: readonly string[]): string[] {
     if (!this.current(owner)) return [];
     const released = this.resources.releaseSome(owner, resources);
+    const stamps = this.claimedAt.get(owner.generation);
+    for (const resource of released) stamps?.delete(resource);
     if (released.length) this.pump();
     return released;
   }
@@ -253,6 +289,7 @@ export class IndependentThreadRuns<T> {
   release(owner: TurnOwner): boolean {
     if (!this.current(owner)) return false;
     this.resources.release(owner);
+    this.measureHolds(owner);
     const botId = this.runs.get(owner.threadId)?.botId;
     this.runs.delete(owner.threadId);
     try { this.onReleased?.(owner.threadId, botId); } catch { /* a listener never keeps a run from being released */ }
@@ -271,6 +308,60 @@ export class IndependentThreadRuns<T> {
       if (this.ownerSends.has(run.generation) && run.phase !== "stopping" && run.phase !== "settling") count++;
     }
     return count;
+  }
+
+  /** Record when each resource this generation now holds was first claimed. */
+  private stamp(owner: TurnOwner): void {
+    const held = this.resources.heldBy(owner);
+    if (!held.length) return;
+    let stamps = this.claimedAt.get(owner.generation);
+    if (!stamps) { stamps = new Map(); this.claimedAt.set(owner.generation, stamps); }
+    const now = Date.now();
+    for (const resource of held) if (!stamps.has(resource)) stamps.set(resource, now);
+  }
+
+  /** On release: one claim-to-release sample per held resource, by kind. */
+  private measureHolds(owner: TurnOwner): void {
+    const stamps = this.claimedAt.get(owner.generation);
+    this.claimedAt.delete(owner.generation);
+    if (!stamps) return;
+    const now = Date.now();
+    for (const [resource, at] of stamps) {
+      const kind = resourceKindKey(resource);
+      const held = Math.max(0, now - at);
+      const history = this.holdHistory.get(kind);
+      this.holdHistory.set(kind, history
+        ? { samples: history.samples + 1, ewma: ESTIMATE_ALPHA * held + (1 - ESTIMATE_ALPHA) * history.ewma }
+        : { samples: 1, ewma: held });
+    }
+  }
+
+  /** `position x ewma` for the slowest blocking kind; absent until each
+   * blocking kind has enough measured holds (an honest blank, never a guess). */
+  private estimate(blockers: readonly ResourceBlocker[], position: number): number | undefined {
+    const kinds = [...new Set(blockers.map(blocker => resourceKindKey(blocker.resource)))];
+    if (!kinds.length) return undefined;
+    let slowest = 0;
+    for (const kind of kinds) {
+      const history = this.holdHistory.get(kind);
+      if (!history || history.samples < ESTIMATE_MIN_SAMPLES) return undefined;
+      slowest = Math.max(slowest, history.ewma);
+    }
+    return Math.round(position * slowest);
+  }
+
+  /** 1 + the DISTINCT earlier waiters (by owner) whose set overlaps this one's. */
+  private placeInLine(index: number): number {
+    const waiter = this.waiters[index];
+    const ahead = new Set<string>();
+    for (let earlier = 0; earlier < index; earlier++) {
+      const candidate = this.waiters[earlier];
+      if (sameOwner(candidate.owner, waiter.owner)) continue;
+      if (candidate.resources.some(key => waiter.resources.some(resource => overlaps(key, resource)))) {
+        ahead.add(`${candidate.owner.threadId}\0${candidate.owner.generation}`);
+      }
+    }
+    return 1 + ahead.size;
   }
 
   private claimable(owner: TurnOwner): boolean {
@@ -329,17 +420,41 @@ export class IndependentThreadRuns<T> {
       }
       const ahead = this.queuedAhead(waiter.resources, waiter.owner, index);
       if (!ahead.length && this.resources.claimAll(waiter.resources, waiter.owner)) {
+        this.stamp(waiter.owner);
         this.waiters.splice(index, 1);waiter.resolve(true);continue;
       }
       const blockers = this.blockersFor(waiter.resources, waiter.owner, index);
       if (waiter.yields?.(blockers)) {
         this.waiters.splice(index, 1);waiter.resolve("yielded");continue;
       }
-      const shown = blockers.map(blocker => `${blocker.resource}\0${blocker.owner.threadId}\0${blocker.owner.generation}`).join("\n");
-      if (waiter.shown !== shown) { waiter.shown = shown; waiter.onWait?.(blockers); }
+      const position = this.placeInLine(index);
+      // Also when only the place in line moved (an earlier waiter left).
+      const shown = `${blockers.map(blocker => `${blocker.resource}\0${blocker.owner.threadId}\0${blocker.owner.generation}`).join("\n")}\n#${position}`;
+      if (waiter.shown !== shown) { waiter.shown = shown; waiter.onWait?.(blockers, position, this.estimate(blockers, position)); }
       index++;
     }
   }
+}
+
+/** The kind a hold is measured under: the resource key's prefix ("workspace", "computer", "browser", "screen"). */
+function resourceKindKey(resource: string): string {
+  const colon = resource.indexOf(":");
+  return colon > 0 ? resource.slice(0, colon) : resource;
+}
+
+const STILL_WAITING_USE: Record<TaskResourceWait["resource"], string> = {
+  "working-folder": "the working folder",
+  computer: "the computer",
+  browser: "the browser profile",
+  shared: "the computer, browser or working folder",
+  "thread-slot": "a free thread",
+};
+
+/** SL-L L3: the one activity line a turn writes after an hour in line. */
+export function stillWaitingLine(wait: TaskResourceWait): string {
+  const use = STILL_WAITING_USE[wait.resource] ?? STILL_WAITING_USE.shared;
+  const title = typeof wait.holderTitle === "string" ? wait.holderTitle.trim() : "";
+  return title ? `Still waiting for '${title}' to finish using ${use}` : `Still waiting for another thread to finish using ${use}`;
 }
 
 function conflict(code: string, message: string) { return Object.assign(new Error(message), { status: 409, code }); }

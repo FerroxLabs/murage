@@ -32,7 +32,7 @@ const INLINE_FIXTURE = `
   window.copyCalls=[];Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{window.copyCalls.push(text)}}});const h=React.createElement;
   createRoot(document.getElementById('root')).render(h('div',{'data-testid':'transcript',className:'h-full overflow-x-hidden overflow-y-auto overscroll-y-contain px-5 max-md:px-3 [overflow-anchor:none] py-4'},
     h('div',{className:'group flex w-full flex-col items-start'},h('div',{className:'flex w-full items-center gap-1.5 justify-start'},
-      h('div',{'data-testid':'msg-bubble',className:'w-fit max-w-[min(42rem,78%)] max-md:max-w-full rounded-2xl text-[15px] leading-relaxed bg-card px-4 py-2.5 text-ink'},h(ChatMarkdown,{text:${JSON.stringify(INLINE_MESSAGE)}}))))));`;
+      h('div',{'data-testid':'msg-bubble',className:'w-fit max-w-[min(var(--chat-bubble-max),var(--chat-bubble-pct))] max-md:max-w-full rounded-2xl text-[15px] leading-relaxed bg-card px-4 py-2.5 text-ink'},h(ChatMarkdown,{text:${JSON.stringify(INLINE_MESSAGE)}}))))));`;
 let server: ViteDevServer, origin: string, cache: string;
 test.beforeAll(async () => {
   const root = fileURLToPath(new URL("../../", import.meta.url)); cache = mkdtempSync(join(tmpdir(), "murage-chat-polish-"));

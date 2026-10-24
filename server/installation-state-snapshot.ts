@@ -9,7 +9,7 @@ import { dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
 import { InstallationSnapshotError, withOfflineInstallation, type OfflineInstallation } from "./installation-database-snapshot.ts";
 import { assertInstallationRecords } from "./installation-record-validation.ts";
 import { notificationPreferencesSchema } from "../shared/notification-preferences.ts";
-import { classifyDataDirEntry, DATA_DIR_RECORDS } from "./data-dir-inventory.ts";
+import { classifyDataDirEntryForBackup, DATA_DIR_RECORDS, classifyDataDirEntry } from "./data-dir-inventory.ts";
 
 // What is copied is decided by data-dir-inventory.ts, the one list of every
 // top-level name Murage writes: required records are validated and
@@ -414,8 +414,8 @@ export async function stageInstallationStateWhileOwned(installation: OfflineInst
       // One list decides every top-level name (data-dir-inventory.ts).
       const kinds = new Map<string, NonNullable<ReturnType<typeof classifyDataDirEntry>>>();
       for (const name of rootNames) {
-        const entry = classifyDataDirEntry(name);
-        if (!entry) fail("BACKUP_UNCLASSIFIED_COMPONENT", name);
+        const stat = lstatSync(join(root, name));
+        const entry = classifyDataDirEntryForBackup(name, stat.isDirectory() ? "folder" : stat.isFile() ? "file" : "other");
         if (entry.backup === "refused") fail(entry.code ?? "BACKUP_UNCLASSIFIED_COMPONENT", name);
         kinds.set(name, entry);
       }
@@ -426,12 +426,18 @@ export async function stageInstallationStateWhileOwned(installation: OfflineInst
         if (kind === "record" || kind === "owner-file") {
           if (!safePart(name)) fail("NONPORTABLE_SNAPSHOT_PATH", name);
           copy(name, name); items++;
+          // Kept, but not a name Murage knows: said so after the backup (the coverage says the same).
+          if (kinds.get(name)!.unrecognised) skip(name, "unrecognised");
         }
       }
       for (const name of rootNames) {
         const kind = kinds.get(name)!.backup;
         if (kind === "owner-folder") walk(name, name, 0);
-        else if (kind !== "record" && kind !== "owner-file" && kind !== "database" && kind !== "sidecar") omission(name, kinds.get(name)!.why);
+        else if (kind !== "record" && kind !== "owner-file" && kind !== "database" && kind !== "sidecar") {
+          omission(name, kinds.get(name)!.why);
+          const skipReason = kinds.get(name)!.skip;
+          if (skipReason) skip(name, skipReason);
+        }
       }
       for (const name of JSON_COMPONENTS) if (!rootNames.includes(name)) manifest.missing.push(name);
       if (links.length) manifest.links = links;

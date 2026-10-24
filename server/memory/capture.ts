@@ -22,6 +22,7 @@ import { commitRevoke, inheritEdge } from "./revoke-commit.ts";
 import { writeCaptureLineage } from "./lineage-write.ts";
 import { startBranchChange } from "./branch-change.ts";
 import { noteTurnCaptureJob } from "./turn-capture-jobs.ts";
+import { looksLikeExport } from "../../shared/learn-about-me/detect.ts";
 
 function enabled(db: DatabaseSync) { const mode = db.prepare("SELECT mode FROM memory_meta WHERE id=1").get()?.mode as string | undefined; return memoryCaptures(mode, memoryGate(db, "capture") === "ok" ? null : "held"); }
 function excludedThread(db:DatabaseSync,threadId:string){return Boolean(db.prepare("SELECT 1 FROM memory_scope_bindings b,json_each(b.intent,'$.excludedThreadIds') e WHERE b.id='memory-owner-settings' AND e.value=? LIMIT 1").get(threadId));}
@@ -146,11 +147,34 @@ function boundedBranchPath(db: DatabaseSync, threadId: string, message: Message)
   return path;
 }
 
+/** An owner's or a person's message that reads like notes exported from another assistant (shared/learn-about-me/detect.ts). Unsure is
+ * no, and so is a detector that throws (PASTE-CAPTURE-FIX B9): the message is then captured like any other, with its numbers masked. */
+export function isExportPaste(message: Message): boolean {
+  if (message.kind !== "text" || message.role !== "user" || message.queued || isMurageVoice(message)) return false;
+  try { return looksLikeExport(message.text ?? ""); } catch { return false; }
+}
+/** Whether the chat marks this message as left out of memory: memory captures in the thread and the paste is an export (3.3). Memory
+ * off or held writes no mark (B6). */
+export function exportPasteNoted(db: DatabaseSync, threadId: string, message: Message): boolean {
+  return isExportPaste(message) && enabled(db) && !excludedThread(db, threadId);
+}
+/** The bot's answer to a paste left out of memory is left out too (3.2): its prompt is the parent of its turn's first row, read on the
+ * turn's own parent links (turnPath). A turn that is not provable (null) is captured as usual. One primary-key read of the prompt's source. */
+function answersExportPaste(db: DatabaseSync, threadId: string, message: Message): boolean {
+  const path = message.turnId && message.turnTerminal ? turnPath(db, threadId, message) : null;
+  const promptId = !message.turnId ? message.parentId : path?.find(row => row.turnId === message.turnId)?.parentId;
+  if (!promptId) return false;
+  const row = db.prepare("SELECT json_extract(v.payload,'$.excluded') AS excluded FROM memory_sources s JOIN memory_source_versions v ON v.source_id=s.id AND v.revision=s.revision WHERE s.id=?").get(`message:${threadId}:${promptId}`);
+  return row?.excluded === "export-paste";
+}
+
 /** Only folded message fields are accepted; raw provider envelopes never enter here. */
 export function captureMessage(db: DatabaseSync, threadId: string, message: Message) {
   if (!enabled(db)) return;
   // A Murage-voice row (murage-voice.ts) is never a source: no Murage line reaches memory from 1.0.3 on (LINEAGE-DESIGN-S6 rule 22).
   if (isMurageVoice(message)) return;
+  // A widget the bot showed (QW Q4) is a form, not something said; the owner's answer to it is their own message.
+  if (message.widget) return;
   const userText = message.kind === "text" && message.role === "user" && !message.queued;
   const finalText = message.kind === "text" && message.role === "bot" && (message.turnTerminal || !message.turnId);
   // Engine notices and Murage's own status rows (the held queue) are not tool outcomes.
@@ -158,16 +182,19 @@ export function captureMessage(db: DatabaseSync, threadId: string, message: Mess
   if (message.kind === "activity" && (message.tool?.notice || message.murage || message.actorKind === "murage")) return;
   // Streaming text waits for the terminal patch; never snapshot each delta.
   if (message.kind === "text" && !userText && !finalText) return;
+  // An export pasted into chat is left out of memory, and so is the bot's answer to it (PASTE-CAPTURE-FIX 3.2): the row keeps its metadata
+  // and an empty payload, retired, its job born complete. Learn about me is where such notes are kept, a line at a time.
+  const leftOut = userText && isExportPaste(message) ? "export-paste" : finalText && answersExportPaste(db, threadId, message) ? "export-paste-reply" : undefined;
   captureSource(db,{id:`message:${threadId}:${message.id}`,threadId,messageId:message.id,turnId:message.turnId,parentId:message.parentId,
     kind:tool?"tool-outcome":message.kind,speaker:message.role === "user"?(isWorkspaceOwner(threadHumanPrincipal(threadId,db))?"owner":"person:"+threadHumanPrincipal(threadId,db).personId):tool?"tool":message.from?.botId??"assistant",
     outcome:tool?(message.tool!.ok?"completed":"failed"):"recorded",
     // images a turn left out never come back through recall (turn-images.ts)
-    text:userText?withoutImageTags(message.text??"",message.imagesNotSent??[]):finalText?(message.turnTerminal?wholeTurnText(db,threadId,message):message.text??""):tool?[message.tool!.name,message.text,message.tool!.errorDetails].filter(Boolean).join("\n"):"",
+    text:leftOut?"":userText?withoutImageTags(message.text??"",message.imagesNotSent??[]):finalText?(message.turnTerminal?wholeTurnText(db,threadId,message):message.text??""):tool?[message.tool!.name,message.text,message.tool!.errorDetails].filter(Boolean).join("\n"):"",
     ...(userText?{origin:message.automation??{kind:message.origin==="desktop"||message.origin==="companion"?"attended":message.origin==="unproven"?"unproven":"unknown"}}:{}),
     ...(message.role==="bot"&&message.engine?{engine:{instanceId:message.engine.instanceId,model:message.engine.model,capabilityHash:message.engine.capabilityHash}}:{}),
     actionCheck:message.actionCheck,occurredAt:message.at,actorId:message.role==="user"?threadHumanPrincipal(threadId,db).personId:message.from?.botId,artifactIds:message.artifactIds,
     ...(tool?{action:{label:message.tool!.name,reportedOutcome:message.tool!.ok?"completed" as const:"failed" as const,detail:message.tool!.errorDetails??message.text,verification:"tool-reported" as const}}:{}),
-    ...(!userText&&!finalText&&!tool?{excluded:`unsupported-${message.kind}`}:{})});
+    ...(leftOut?{excluded:leftOut}:!userText&&!finalText&&!tool?{excluded:`unsupported-${message.kind}`}:{})});
 }
 
 /** Runs only on an actual branch change, not every ordinary append. `fromLeafId`

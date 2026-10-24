@@ -48,7 +48,8 @@
         "title": "Board Pack",
         "description": "Quorum prepares an agenda and concise board narrative for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For an investor pitch narrative, use Pitch. For founder decisions reviewed from several perspectives, use Daily Briefing.",
         "appearance": {
-          "color": "pink"
+          "color": "pink",
+          "mascotBody": "shield"
         },
         "skills": [
           "board-governance",

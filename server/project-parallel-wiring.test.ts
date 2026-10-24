@@ -42,11 +42,15 @@ it.each([true, false])("direct Stop fences the project request before revoking d
   const end = source.indexOf("\n/**", begin);
   const code = ts.transpileModule(source.slice(begin, end), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
   const requestStop = vi.fn(); const bindings = new Map(bound ? [["generation", "request"]] : []);
-  const stop = new Function("directRuns", "internalTurnOwners", "turnRequestByGeneration", "projectCardExecutor", "revokeInternalThread", "directTurnDispatchClaims", "recordMemorySettlement", "markCancelledProviderHandshake", "workAdmission", code + "return cancelDirectTurnDispatch;")(
+  // 1.0.4 SETUP-LAST-RESORT (4f168ca49): a refused turn waiting on its rebuild (rebuildRefusedDirectTurn) is stopped by the same Stop; another bot's is not
+  const pendingDirectRebuilds = new Map([["desk", { botId: "a", cancelled: false }], ["other", { botId: "b", cancelled: false }]]);
+  const stop = new Function("directRuns", "internalTurnOwners", "turnRequestByGeneration", "projectCardExecutor", "revokeInternalThread", "directTurnDispatchClaims", "recordMemorySettlement", "markCancelledProviderHandshake", "workAdmission", "pendingDirectRebuilds", code + "return cancelDirectTurnDispatch;")(
     { get: () => ({ botId: "a", generation: "generation" }), cancel: vi.fn() }, new Map([["desk", { botId: "a", generation: "generation" }]]), bindings, { requestStop },
-    () => { expect(requestStop).toHaveBeenCalledWith("request", undefined); bindings.clear(); }, new Map(), vi.fn(), vi.fn(), { liveTurns: () => [{ botId: "a", threadId: "desk", requestId: "request" }] });
+    () => { expect(requestStop).toHaveBeenCalledWith("request", undefined); bindings.clear(); }, new Map(), vi.fn(), vi.fn(), { liveTurns: () => [{ botId: "a", threadId: "desk", requestId: "request" }] }, pendingDirectRebuilds);
   // the owner's own Stop carries no server note: the card says "Stopped by you"
   stop("a", "desk"); expect(requestStop).toHaveBeenCalledExactlyOnceWith("request", undefined);
+  expect(pendingDirectRebuilds.get("desk")?.cancelled).toBe(true);
+  expect(pendingDirectRebuilds.get("other")?.cancelled).toBe(false);
 });
 
 it("a reserved backoff slot contributes no live work to the budget", () => {

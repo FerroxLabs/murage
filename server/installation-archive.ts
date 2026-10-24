@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { closeSync, constants, createReadStream, createWriteStream, fsyncSync, lstatSync, mkdirSync, mkdtempSync, openSync, rmSync, writeSync } from "node:fs";
+import { closeSync, constants, createReadStream, createWriteStream, fsyncSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, rmSync, writeSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
@@ -13,7 +13,7 @@ import { InstallationSnapshotError, withOfflineInstallation } from "./installati
 import { BACKUP_SKIP_REASONS, MAX_BACKUP_BYTES, MAX_BACKUP_FILES, MAX_BACKUP_MANIFEST_BYTES, MAX_LISTED_SKIPS } from "../shared/backup-limits.ts";
 import { publishNoReplace } from "./publish-file.ts";
 import { botNames } from "./backup-skipped-summary.ts";
-import { classifyDataDirEntry } from "./data-dir-inventory.ts";
+import { classifyDataDirEntry, classifyDataDirEntryForBackup } from "./data-dir-inventory.ts";
 
 const MAX_MANIFEST_BYTES = MAX_BACKUP_MANIFEST_BYTES;
 const archivedPath = z.string().min(1).max(4096);
@@ -258,6 +258,13 @@ export async function writeInstallationArchive(dataDir: string, destination: str
   // Staged, archived and checked in one offline epoch: owner files are read
   // in place, so the installation must stay closed until the archive is done.
   return withOfflineInstallation(dataDir, async installation => {
+    // The encrypted backup keeps a top-level file Murage does not recognise (data-dir-inventory.ts, rule 3: "keeping it
+    // costs nothing, because the backup is encrypted"). This .zip is NOT encrypted, so such a file could carry a key out
+    // in the clear: it still stops the .zip and is named, as every unknown name did before 1.0.4.
+    for (const name of readdirSync(dataDir)) {
+      const stat = lstatSync(join(dataDir, name));
+      if (classifyDataDirEntryForBackup(name, stat.isDirectory() ? "folder" : stat.isFile() ? "file" : "other").unrecognised) fail("BACKUP_UNCLASSIFIED_COMPONENT", name);
+    }
     const stage = await stageInstallationStateWhileOwned(installation, dirname(destination), options);
     // Whose folders the left-out items were in, read from the staged roster.
     const bots = stage.manifest.skippedCount ? botNames(join(stage.directory, "state", "bots.json")) : {};

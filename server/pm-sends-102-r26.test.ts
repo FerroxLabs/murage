@@ -270,7 +270,9 @@ describe("2. a hand-off's request is found by its id, and the pair is never spli
     // a wake (its own id, no hand-off row) is not refused
     expect(() => assertHandoffStartable({ sharedWorkRun: { request: { id: "wake-of-plain-10" } } })).not.toThrow();
     const source = readFileSync(join(serverDir, "index.ts"), "utf8");
-    expect(source).toMatch(/start: \(request, claim\) => \{\n    \/\/[^\n]*\n    try \{ assertHandoffStartable\(\{ sharedWorkRun: \{ request \} \}\)/);
+    // 1.0.4 02-A1 (d3b99508b): the drain's starter is the named startRequestOnOwnThread (a nested room wake starts through it too), and its first statement is the guard
+    expect(source).toMatch(/\nfunction startRequestOnOwnThread\(request: RoomRequest, claim: AdmissionClaim\): void \{\n  \/\/[^\n]*\n  try \{ assertHandoffStartable\(\{ sharedWorkRun: \{ request \} \}\)/);
+    expect(source).toMatch(/\nconfigureSharedDrain\(\{(?:(?!\n\}\);)[\s\S])*\n  start: startRequestOnOwnThread,\n/);
     expect(source).toMatch(/backupRestartAdmission\.assertOpen\(\);\n  assertHandoffStartable\(opts\);/);
   });
   it("the owner's deletion of the source conversation ends a live request in whatever state it is in, in the same commit that removes the row", () => {

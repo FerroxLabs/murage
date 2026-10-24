@@ -22,10 +22,10 @@ it("keeps fidelity metadata under the same lease and detects later component cha
     expect(inventory.assertUnchanged).toThrow();
   });}finally{f.db.close();removeTempDirSync(f.parent);}
 });
-it("refuses incomplete selected coverage: an unknown top-level name, and names it",async()=>{
+it("refuses incomplete selected coverage: an unknown top-level FOLDER, and names it",async()=>{
   const f=backupFixture();try{
-    writeFileSync(join(f.data,"new-state.json"),"private unknown component");
-    await expect(withOfflineInstallation(f.data,async installation=>{const stage=await stageInstallationStateWhileOwned(installation,f.parent);return inventoryFidelity(installation,stage,selection);})).rejects.toMatchObject({code:"BACKUP_UNCLASSIFIED_COMPONENT",path:"new-state.json"});
+    mkdirSync(join(f.data,"new-state"));writeFileSync(join(f.data,"new-state","a.json"),"private unknown component");
+    await expect(withOfflineInstallation(f.data,async installation=>{const stage=await stageInstallationStateWhileOwned(installation,f.parent);return inventoryFidelity(installation,stage,selection);})).rejects.toMatchObject({code:"BACKUP_UNCLASSIFIED_COMPONENT",path:"new-state"});
   }finally{f.db.close();removeTempDirSync(f.parent);}
 });
 // 0.1.60 audit A-01: a shortcut in a bot's folder is stored as a shortcut,

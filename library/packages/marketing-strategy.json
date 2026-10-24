@@ -28,7 +28,8 @@
         "title": "Research",
         "description": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method.",
         "appearance": {
-          "color": "green"
+          "color": "blue",
+          "mascotBody": "capsule"
         },
         "skills": [
           "research-jtbd-interviews",
@@ -51,7 +52,8 @@
         "title": "Brand",
         "description": "Brand specialist - onlyness-first positioning and visual systems via Marty Neumeier's difference-beats-betterness method.",
         "appearance": {
-          "color": "blue"
+          "color": "pink",
+          "mascotBody": "blob"
         },
         "skills": [
           "mira-brand-foundation",
@@ -68,7 +70,8 @@
         "title": "Offer",
         "description": "Offer specialist - value-based pricing, willingness-to-pay research, and offer-construction grounded in Madhavan Ramanujam.",
         "appearance": {
-          "color": "red"
+          "color": "coral",
+          "mascotBody": "circle"
         },
         "skills": [
           "forge-value-pricing",
@@ -89,7 +92,8 @@
         "title": "Channels",
         "description": "Channels specialist - channel-mix and discovery via Avinash Kaushik's See/Think/Do/Care intent-based framework.",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "star"
         },
         "skills": [
           "beacon-channel-strategy",
@@ -113,7 +117,8 @@
         "title": "Numbers",
         "description": "Numbers specialist - runway, unit economics, pricing math via Greg Crabtree's Simple Numbers founder-friendly frame.",
         "appearance": {
-          "color": "purple"
+          "color": "cyan",
+          "mascotBody": "diamond"
         },
         "skills": [
           "coin-runway-and-burn",
@@ -130,7 +135,8 @@
         "title": "Copy",
         "description": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage.",
         "appearance": {
-          "color": "pink"
+          "color": "purple",
+          "mascotBody": "drop"
         },
         "skills": [
           "copy-customer-voice",
@@ -147,7 +153,8 @@
         "title": "Analyst",
         "description": "Analyst - funnel diagnosis, cohort retention, experiment discipline via Kaushik measurement + Kohavi rigor.",
         "appearance": {
-          "color": "yellow"
+          "color": "green",
+          "mascotBody": "hexagon"
         },
         "skills": [
           "lens-funnel-diagnosis",
@@ -171,7 +178,8 @@
         "title": "Quality Gate",
         "description": "Quality gate - scores content on 8 dimensions, flags issues, names the one specific edit. Scores, doesn't rewrite.",
         "appearance": {
-          "color": "teal"
+          "color": "red",
+          "mascotBody": "shield"
         },
         "skills": [
           "verdict-score-and-rank",
