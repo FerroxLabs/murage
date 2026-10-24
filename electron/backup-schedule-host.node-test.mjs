@@ -49,6 +49,12 @@ test("disabled selection never enables, exposes only labels/refs, and needs expl
     await assert.rejects(f.controller.configure(0,{...choices,...s.refs}),/CONSENT/);assert.equal(f.coordinator().status().enabled,false);
   }finally{f.cleanup();}
 });
+test("a backup run logs one outcome line per step: started, local written, verified with bytes and how, and no paths",async()=>{
+  const f=fixture();try{await f.arm();const lines=[];await f.create({reportOutcome:line=>lines.push(line)}).resumeOffline();
+    assert.equal(lines.length,3);assert.match(lines[0],/^backup started \{"job":"[^"]{1,8}","closed":false\}$/);assert.match(lines[1],/^backup local written \{"job":"[^"]{1,8}","bytes":\d+\}$/);assert.match(lines[2],/^backup local verified \{"job":"[^"]{1,8}","bytes":\d+,"how":"file re-read and its sha256 matched/);
+    for(const line of lines){assert.doesNotMatch(line,/[\\/]/);assert.doesNotMatch(line,/\/Users\/|\.age|recipient|identity/i);}
+  }finally{f.cleanup();}
+});
 test("two owners complete armed restart, verified receipt then normal return without replay",async()=>{
   const f=fixture();try{await f.arm();assert.equal(f.coordinator().status().phase,"handoff-armed");assert.deepEqual(f.calls,["prepare","cleanup","backup"]);const next=f.create();await next.resumeOffline();assert.equal(f.coordinator().status().phase,"return-pending");assert.deepEqual(f.calls,["prepare","cleanup","backup","capture","normal"]);const last=f.create();last.completeReturn();await last.tick();assert.equal(f.coordinator().status().phase,"returned");assert.equal(f.calls.filter(x=>x==="capture").length,1);assert.equal(f.coordinator().status().lastVerified.destinationRef,(await last.status()).refs.destinationRef);
   }finally{f.cleanup();}

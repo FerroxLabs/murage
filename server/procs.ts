@@ -30,16 +30,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { resolveCliSpawn, type ResolvedSpawn } from "./env-path.ts";
 import { platformConfirmStopped, recordProcessHandle } from "./platform-process-hooks.ts";
 
-export function resolveCli(cli: string, args: string[] = [], searchPath?: string): ResolvedSpawn {
-  return resolveCliSpawn(cli, args, searchPath);
-}
-
-/** The PATH of an environment handed to a probe (Windows keys are case-insensitive, so `Path` counts), or undefined. */
-export function envSearchPath(env: NodeJS.ProcessEnv | Record<string, string | undefined> | undefined): string | undefined {
-  if (!env) return undefined;
-  if (typeof env.PATH === "string") return env.PATH;
-  const key = Object.keys(env).find((name) => name.toUpperCase() === "PATH");
-  return key && typeof env[key] === "string" ? env[key] : undefined;
+export function resolveCli(cli: string, args: string[] = []): ResolvedSpawn {
+  return resolveCliSpawn(cli, args);
 }
 
 /** Leave headroom below CreateProcess' 32,767 UTF-16 code-unit limit for
@@ -319,9 +311,7 @@ export function execCli(
     child.stdin.end();
     return;
   }
-  // A probe runs the file found on the PATH it is handed first (a driver may put its own engine's folder there, the bundled
-  // Fuigo's), so the version it reads belongs to the engine a turn on that PATH launches (isolation-cache.ts engineLaunchFile).
-  const resolved = resolveCli(cli, args, envSearchPath(opts.env));
+  const resolved = resolveCli(cli, args);
   try {
     assertSafeCliArgv(resolved);
   } catch (error) {

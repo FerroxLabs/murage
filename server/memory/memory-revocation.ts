@@ -504,8 +504,9 @@ function affect(db: DatabaseSync, job: RevocationJob, id: string, version: numbe
   const prior = st(db, "SELECT state FROM memory_records WHERE id=? AND version=?").get(id, version);
   if (!prior) return;
   st(db, "UPDATE memory_records SET state='deleted',owner_pinned=0 WHERE id=? AND version=?").run(id, version);
-  if (job.thread) st(db, `UPDATE memory_records SET text='' WHERE id=?1 AND version=?2 AND text!='' AND EXISTS (SELECT 1 FROM memory_evidence e JOIN memory_sources s ON s.id=e.source_id
-    WHERE e.record_id=?1 AND e.record_version=?2 AND s.thread_id=?3)`).run(id, version, job.thread);
+  // Forget means the words are gone (Learn about me r3 C3): every record a forget ends loses its text in this same step, not only
+  // those resting on a deleted conversation. Readers are already refused from the forget's commit; the indexes drop it by id.
+  st(db, "UPDATE memory_records SET text='' WHERE id=? AND version=? AND text!=''").run(id, version);
   // Completed deletion work stays completed (scale finding A6): a receipt already 'deleted' is not queued again.
   st(db, "UPDATE memory_projection_receipts SET lexical_status='delete-pending',embedding_status='delete-pending' WHERE record_id=? AND record_version=? AND lexical_status!='deleted'").run(id, version);
   // (indexed by record; the events naming it as their prior go in the learning phase's rowid windows: evolution-forgetting.ts)

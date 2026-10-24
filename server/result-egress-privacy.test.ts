@@ -193,6 +193,7 @@ it("the direct-turn initializer flags a linked person's nested turn and preserve
       kind: "agents", skillAuthoring: false, ...(notOwner ? { notOwnerAudience: true as const } : {}) });
     expect(registry.resolve(`Bearer ${token}`)?.notOwnerAudience === true).toBe(expected);
   }
-  expect(source).toContain("beginInternalTurn(bot.id, threadId, dispatchClaimId, commsDepth, skillAuthoring, eventId, opts?.coordination, memoryNotOwner, directOwnerAudience)");
+  // F3 (6ef059ff6): the coordination argument is now the request tree's (requestCoordination falls back to opts?.coordination); the two audience arguments are unchanged
+  expect(source).toContain("beginInternalTurn(bot.id, threadId, dispatchClaimId, commsDepth, skillAuthoring, eventId, requestCoordination, memoryNotOwner, directOwnerAudience)");
   expect(source).toContain("beginInternalTurn(bot.id, threadId, internalGeneration, hop, skillAuthoring, undefined, undefined, !roomOwnerAudience, roomOwnerAudience)");
 });

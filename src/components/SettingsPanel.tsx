@@ -5,6 +5,7 @@ import { api, useStore, type Bot } from "@/state/store";
 import { stateForBot } from "@/lib/mascot";
 import { CloudBackendPicker } from "./CloudBackendPicker";
 import { ModelPicker } from "./ModelPicker";
+import { BotFollowModelRow, LimitBackupRow } from "./ThreadFollowControls";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
@@ -12,7 +13,8 @@ import { effortLabel } from "@/lib/effort-label";
 import { builtInBrowserEnabled } from "@/lib/feature-flags";
 import { requestNotificationPermission } from "@/lib/notify";
 import { useDesktopSurface } from "@/lib/use-surface";
-import { botUsage, costCaption, formatTokens, formatUsd, freshTokens, hasFiniteCost, usageDetail } from "@/lib/usage";
+import { usageCaption } from "@/lib/usage-card";
+import { botUsage, formatTokens, formatUsd, freshTokens, hasFiniteCost, usageDetail } from "@/lib/usage";
 import { shortPath } from "@/lib/short-path";
 import { autoNeedsLocalComputerWarning, instanceSupportsLocalComputer, localAutoHostPlatform, localComputerDisabledReason, localComputerSelectable } from "@/lib/local-computer";
 import { BotProfileAvatarCard } from "./BotProfileAvatarCard";
@@ -85,32 +87,32 @@ function BotUsageCard({ bot }: { bot: Bot }) {
   return (
     <div className="rounded-xl bg-card p-4">
       <div className="flex items-baseline justify-between">
-        <div className="text-[15px] font-medium text-ink">Usage</div>
+        <div className="text-[15px] font-medium text-ink">{t("usageCard.title")}</div>
         <button
           onClick={() => navigate(() => dispatch({ type: "toggleAppSettings", open: true, section: "usage" }))}
           className="text-[12px] text-ink-secondary hover:text-ink"
         >
-          All bots →
+          {t("usageCard.allBots")}
         </button>
       </div>
       <div className="mt-3 grid grid-cols-3 gap-3 text-[13px]">
         <div>
-          <div className="text-[11.5px] uppercase tracking-wide text-ink-secondary">Turns</div>
+          <div className="text-[11.5px] uppercase tracking-wide text-ink-secondary">{t("usageCard.colTurns")}</div>
           <div className="mt-0.5 tabular-nums text-ink">{usage.turns}</div>
         </div>
         <div>
-          <div className="text-[11.5px] uppercase tracking-wide text-ink-secondary">Tokens</div>
+          <div className="text-[11.5px] uppercase tracking-wide text-ink-secondary">{t("usageCard.colTokens")}</div>
           <div className="mt-0.5 tabular-nums text-ink" title={usageDetail(usage)}>
             {formatTokens(freshTokens(usage))}
           </div>
         </div>
         <div>
-          <div className="text-[11.5px] uppercase tracking-wide text-ink-secondary">Cost</div>
-          <div className="mt-0.5 tabular-nums text-ink">{hasFiniteCost(usage.costUsd) ? formatUsd(usage.costUsd) : "Unknown"}</div>
+          <div className="text-[11.5px] uppercase tracking-wide text-ink-secondary">{t("usageCard.colCost")}</div>
+          <div className="mt-0.5 tabular-nums text-ink">{hasFiniteCost(usage.costUsd) ? formatUsd(usage.costUsd) : t("usageCard.unknown")}</div>
         </div>
       </div>
       <div className="mt-2 text-[12px] text-ink-secondary">
-        {hasFiniteCost(usage.costUsd) ? `Cost ${costCaption(instance?.snapshot.billing)}.` : "This engine doesn't report its cost. Tokens are still counted."}
+        {hasFiniteCost(usage.costUsd) ? t("usageCard.costLine", { caption: usageCaption(instance?.snapshot.billing) }) : t("usageCard.unpriced")}
       </div>
     </div>
   );
@@ -198,7 +200,7 @@ function WorkingFolder({ bot }: { bot: Bot }) {
           New tasks start here. This task is pinned to {pinned ? <span className="font-mono">{shortPath(pinned, home)}</span> : "the home folder"}; start a new task to use the new folder.
         </div>
       )}
-      <FolderTrustNote folder={bot.cwd} botId={bot.id} />
+      <FolderTrustNote folder={bot.cwd} botId={bot.id} threadId={bot.threadId} />
     </div>
   );
 }
@@ -700,12 +702,14 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
                 <div>
                   <div className="text-[15px] font-medium text-ink">Model</div>
                   <div className="mt-0.5 text-[13px] text-ink-secondary">
-                    Default for new threads. Existing threads keep their selected model.
+                    {t("slik.botModelDetail")}
                   </div>
                 </div>
               }
             />
+            <BotFollowModelRow bot={bot} />
           </div>
+          {desktop && <LimitBackupRow bot={bot} />}
 
           {!!engine?.capabilities?.effortLevels?.length && (
             <div className="rounded-xl bg-card p-4">
@@ -812,7 +816,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
           </SettingsSection>
           <SettingsSection id="usage" active={section}>
           <BotUsageCard bot={bot} />
-          {botUsage(bot).turns === 0 && <p className="text-[13px] text-ink-secondary">No usage recorded for this bot yet.</p>}
+          {botUsage(bot).turns === 0 && <p className="text-[13px] text-ink-secondary">{t("usageCard.empty")}</p>}
           </SettingsSection>
           <SettingsSection id="access" active={section}>
           <WorkingFolder bot={bot} />

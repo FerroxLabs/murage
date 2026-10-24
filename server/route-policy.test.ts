@@ -95,6 +95,20 @@ describe("route policy (strict)", () => {
     expect(routeRefusal(nobody, "desktop")).toEqual({ status: 404, body: { error: "no such route" } });
   });
 
+  // 1.0.4 SL-H: Remove is desktop class, and refused on every Cloud scope, stepped up or not (local desktop only).
+  it("Storage Remove is desktop class; phone, door, bot and nobody are refused, and every Cloud scope is denied", () => {
+    const route = "/api/storage/attachments/remove";
+    expect(routePolicy("POST", route)).toMatchObject({ class: "desktop", path: route });
+    const nobody = { desktop: false, companion: false, door: false, bot: false };
+    for (const who of ["companion", "door", "bot"] as const) expect(routeAdmits(routeClass("POST", route), { ...nobody, [who]: true }), who).toBe(false);
+    expect(routeAdmits(routeClass("POST", route), nobody)).toBe(false);
+    for (const scope of ["owner-desktop", "owner-phone", "browser", "service", "owner-browser", "anonymous"] as const) {
+      for (const steppedUp of [false, true]) expect(cloudRouteDecision("POST", route, scope, { names: [] }, steppedUp), `${scope} ${steppedUp}`).toBe("deny");
+    }
+    // the list keeps its own answer
+    expect(cloudRouteDecision("GET", "/api/storage/attachments", "owner-browser", null)).toBe("allow");
+  });
+
   it("an unclassified route is desktop-only; the named holes are closed", () => {
     expect(routeClass("POST", "/api/a-route-added-tomorrow")).toBe("desktop");
     expect(routeClass("GET", "/api/decisions")).toBe("desktop");

@@ -1,7 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vitest";
-import { plainEngineError } from "./plain-engine-error.ts";
+import { plainEngineError, withoutProviderSentence } from "./plain-engine-error.ts";
 
 describe("raw API errors read as plain sentences naming the bot (G11)", () => {
   it("names the bot and the picture when a provider refuses an image", () => {
@@ -40,5 +40,12 @@ describe("audit round (0.1.61 polish)", () => {
 
   it("does not promise details where there are none", () => {
     expect(plainEngineError("API error (status 400): tools[3] schema invalid", "Dax", { details: false })).toBe("Dax's model provider turned this request down.");
+  });
+});
+
+describe("M3: the provider's added sentence", () => {
+  it("is dropped for the store apps and leaves other messages alone", () => {
+    expect(withoutProviderSentence("The model provider needs payment or account access before it will answer. The provider says: Add credits at the billing page.")).toBe("The model provider needs payment or account access before it will answer.");
+    expect(withoutProviderSentence("The model server did not accept this engine's key.")).toBe("The model server did not accept this engine's key.");
   });
 });

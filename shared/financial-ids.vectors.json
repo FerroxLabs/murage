@@ -1,0 +1,453 @@
+{
+  "ruleVersion": 1,
+  "about": "Shared test vectors for shared/financial-ids.ts and its Flux Memory port. Each row: maskFinancialIdentifiers(input) === expect. Rows where expect equals input must NOT be masked. Every implementation also checks, for every row: the output has the same UTF-8 byte length as the input (T13, M18), a second pass changes nothing (T12, M17), and (F1) every row whose expect differs from its input passes the fast path. hasFinancialIdentifier lists F2: inputs for which it must be true.",
+  "mask": [
+    {
+      "id": "M1",
+      "input": "4111 1111 1111 1111",
+      "expect": "**** **** **** ****"
+    },
+    {
+      "id": "M2",
+      "input": "4111-1111-1111-1111",
+      "expect": "****-****-****-****"
+    },
+    {
+      "id": "M3",
+      "input": "5555555555554444",
+      "expect": "****************"
+    },
+    {
+      "id": "M4",
+      "input": "378282246310005",
+      "expect": "***************"
+    },
+    {
+      "id": "M5",
+      "input": "3782 822463 10005",
+      "expect": "**** ****** *****"
+    },
+    {
+      "id": "M6",
+      "input": "6011111111111117",
+      "expect": "****************"
+    },
+    {
+      "id": "M7",
+      "input": "IBAN DE89 3704 0044 0532 0130 00",
+      "expect": "IBAN DE** **** **** **** **** **"
+    },
+    {
+      "id": "M7b",
+      "input": "iban de89 3704 0044 0532 0130 00",
+      "expect": "iban de** **** **** **** **** **"
+    },
+    {
+      "id": "M7c",
+      "input": "DE89370400440532013000",
+      "expect": "DE********************"
+    },
+    {
+      "id": "M7d",
+      "input": "de89-3704-0044-0532-0130-00",
+      "expect": "de**-****-****-****-****-**"
+    },
+    {
+      "id": "M7e",
+      "input": "GB29-NWBK-6016-1331-9268-19",
+      "expect": "GB**-****-****-****-****-**"
+    },
+    {
+      "id": "M7f",
+      "input": "gb29nwbk60161331926819",
+      "expect": "gb********************"
+    },
+    {
+      "id": "M8",
+      "input": "GB29NWBK60161331926819",
+      "expect": "GB********************"
+    },
+    {
+      "id": "M9",
+      "input": "routing 021000021",
+      "expect": "routing *********"
+    },
+    {
+      "id": "M10",
+      "input": "ABA: 011000015",
+      "expect": "ABA: *********"
+    },
+    {
+      "id": "M11",
+      "input": "deposits go to the account ending 4471",
+      "expect": "deposits go to the account ending ****"
+    },
+    {
+      "id": "M12a",
+      "input": "my Visa ending in 1234",
+      "expect": "my Visa ending in ****"
+    },
+    {
+      "id": "M12b",
+      "input": "card ends with 9876",
+      "expect": "card ends with ****"
+    },
+    {
+      "id": "M12c",
+      "input": "last four digits of my card are 2222",
+      "expect": "last four digits of my card are ****"
+    },
+    {
+      "id": "M12d",
+      "input": "acct ending 0001",
+      "expect": "acct ending ****"
+    },
+    {
+      "id": "M13",
+      "input": "Account number: 123456789012",
+      "expect": "Account number: ************"
+    },
+    {
+      "id": "M14",
+      "input": "account no. 00123456",
+      "expect": "account no. ********"
+    },
+    {
+      "id": "M15",
+      "input": "sort code 40-47-84",
+      "expect": "sort code **-**-**"
+    },
+    {
+      "id": "M16",
+      "input": "Noted: your deposits go to Frost Bank, account ending 4471.",
+      "expect": "Noted: your deposits go to Frost Bank, account ending ****."
+    },
+    {
+      "id": "M19",
+      "input": "acct 123456",
+      "expect": "acct ******"
+    },
+    {
+      "id": "M20",
+      "input": "Card: 4111 1111 1111 1111 12/27",
+      "expect": "Card: **** **** **** **** 12/27"
+    },
+    {
+      "id": "N1a",
+      "input": "+1 415 555 0123",
+      "expect": "+1 415 555 0123"
+    },
+    {
+      "id": "N1b",
+      "input": "(415) 555-0123",
+      "expect": "(415) 555-0123"
+    },
+    {
+      "id": "N1c",
+      "input": "+44 7911 123456",
+      "expect": "+44 7911 123456"
+    },
+    {
+      "id": "N1d",
+      "input": "+49 30 901820 12345",
+      "expect": "+49 30 901820 12345"
+    },
+    {
+      "id": "N2a",
+      "input": "2026-10-23",
+      "expect": "2026-10-23"
+    },
+    {
+      "id": "N2b",
+      "input": "23/10/2026",
+      "expect": "23/10/2026"
+    },
+    {
+      "id": "N2c",
+      "input": "20261023T101500Z",
+      "expect": "20261023T101500Z"
+    },
+    {
+      "id": "N2d",
+      "input": "10:15:00.123",
+      "expect": "10:15:00.123"
+    },
+    {
+      "id": "N3a",
+      "input": "1729700000000",
+      "expect": "1729700000000"
+    },
+    {
+      "id": "N3b",
+      "input": "1729700000000000000",
+      "expect": "1729700000000000000"
+    },
+    {
+      "id": "N3c",
+      "input": "1234 5678 9012 3456",
+      "expect": "1234 5678 9012 3456"
+    },
+    {
+      "id": "N4a",
+      "input": "sha256:4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce",
+      "expect": "sha256:4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce"
+    },
+    {
+      "id": "N4b",
+      "input": "0x4532015112830366",
+      "expect": "0x4532015112830366"
+    },
+    {
+      "id": "N4c",
+      "input": "192.168.0.1",
+      "expect": "192.168.0.1"
+    },
+    {
+      "id": "N4d",
+      "input": "v1.0.3",
+      "expect": "v1.0.3"
+    },
+    {
+      "id": "N5a",
+      "input": "Order 1Z999AA10123456784",
+      "expect": "Order 1Z999AA10123456784"
+    },
+    {
+      "id": "N5b",
+      "input": "ticket 20261023-00042",
+      "expect": "ticket 20261023-00042"
+    },
+    {
+      "id": "N6a",
+      "input": "the meeting ending 1430",
+      "expect": "the meeting ending 1430"
+    },
+    {
+      "id": "N6b",
+      "input": "account ending soon",
+      "expect": "account ending soon"
+    },
+    {
+      "id": "N6c",
+      "input": "Account 2",
+      "expect": "Account 2"
+    },
+    {
+      "id": "N6d",
+      "input": "account number 12",
+      "expect": "account number 12"
+    },
+    {
+      "id": "N7a",
+      "input": "routing 123456789",
+      "expect": "routing 123456789"
+    },
+    {
+      "id": "N7b",
+      "input": "DE00 3704 0044 0532 0130 00",
+      "expect": "DE00 3704 0044 0532 0130 00"
+    },
+    {
+      "id": "N8a",
+      "input": "«redacted 42 chars»",
+      "expect": "«redacted 42 chars»"
+    },
+    {
+      "id": "N8b",
+      "input": "-----BEGIN CERTIFICATE-----\nMIIBszCCAVmgAwIBAgIUJ3dQ0aQ1bU9v8xY2vT4k0qN5n6EwCgYIKoZIzj0EAwIw\n-----END CERTIFICATE-----",
+      "expect": "-----BEGIN CERTIFICATE-----\nMIIBszCCAVmgAwIBAgIUJ3dQ0aQ1bU9v8xY2vT4k0qN5n6EwCgYIKoZIzj0EAwIw\n-----END CERTIFICATE-----"
+    },
+    {
+      "id": "N9",
+      "input": "the 2026 budget",
+      "expect": "the 2026 budget"
+    },
+    {
+      "id": "T1a",
+      "input": "SSN 123-45-6789",
+      "expect": "SSN ***-**-****"
+    },
+    {
+      "id": "T1b",
+      "input": "social security: 123 45 6789",
+      "expect": "social security: *** ** ****"
+    },
+    {
+      "id": "T1c",
+      "input": "my SSN is 123456789",
+      "expect": "my SSN is *********"
+    },
+    {
+      "id": "T2",
+      "input": "ITIN 912-70-1234",
+      "expect": "ITIN ***-**-****"
+    },
+    {
+      "id": "T3a",
+      "input": "EIN 12-3456789",
+      "expect": "EIN **-*******"
+    },
+    {
+      "id": "T3b",
+      "input": "tax id 98-7654321",
+      "expect": "tax id **-*******"
+    },
+    {
+      "id": "T4a",
+      "input": "VAT DE123456789",
+      "expect": "VAT DE*********"
+    },
+    {
+      "id": "T4b",
+      "input": "VAT GB 123 4567 89",
+      "expect": "VAT GB *** **** **"
+    },
+    {
+      "id": "T4c",
+      "input": "USt-IdNr. DE 812 345 678",
+      "expect": "USt-IdNr. DE *** *** ***"
+    },
+    {
+      "id": "T5a",
+      "input": "codice fiscale RSSMRA85T10A562S",
+      "expect": "codice fiscale RS**************"
+    },
+    {
+      "id": "T5b",
+      "input": "CPF 123.456.789-09",
+      "expect": "CPF ***.***.***-**"
+    },
+    {
+      "id": "T5c",
+      "input": "CNPJ 12.345.678/0001-95",
+      "expect": "CNPJ **.***.***/****-**"
+    },
+    {
+      "id": "T6a",
+      "input": "NI number AB 12 34 56 C",
+      "expect": "NI number AB ** ** ** *"
+    },
+    {
+      "id": "T6b",
+      "input": "NINO: AB123456C",
+      "expect": "NINO: AB*******"
+    },
+    {
+      "id": "T7a",
+      "input": "SIN 046-454-286",
+      "expect": "SIN ***-***-***"
+    },
+    {
+      "id": "T7b",
+      "input": "TFN 123 456 782",
+      "expect": "TFN *** *** ***"
+    },
+    {
+      "id": "T7c",
+      "input": "Aadhaar 1234 5678 9012",
+      "expect": "Aadhaar **** **** ****"
+    },
+    {
+      "id": "T7d",
+      "input": "PAN ABCDE1234F",
+      "expect": "PAN AB********"
+    },
+    {
+      "id": "T7e",
+      "input": "personnummer 850709-1234",
+      "expect": "personnummer ******-****"
+    },
+    {
+      "id": "T7f",
+      "input": "BSN 123456782",
+      "expect": "BSN *********"
+    },
+    {
+      "id": "T7g",
+      "input": "CURP GOMC900101HDFRRL09",
+      "expect": "CURP GO****************"
+    },
+    {
+      "id": "T8a",
+      "input": "passport no. X1234567",
+      "expect": "passport no. X*******"
+    },
+    {
+      "id": "T8b",
+      "input": "passport number 123456789",
+      "expect": "passport number *********"
+    },
+    {
+      "id": "T8c",
+      "input": "driver licence D1234567",
+      "expect": "driver licence D*******"
+    },
+    {
+      "id": "T9a",
+      "input": "SSN 000-12-3456",
+      "expect": "SSN 000-12-3456"
+    },
+    {
+      "id": "T9b",
+      "input": "SSN 666-12-3456",
+      "expect": "SSN 666-12-3456"
+    },
+    {
+      "id": "T9c",
+      "input": "SSN 123-00-3456",
+      "expect": "SSN 123-00-3456"
+    },
+    {
+      "id": "T9d",
+      "input": "SSN 123-45-0000",
+      "expect": "SSN 123-45-0000"
+    },
+    {
+      "id": "T10a",
+      "input": "123-45-6789",
+      "expect": "123-45-6789"
+    },
+    {
+      "id": "T10b",
+      "input": "call 555-12-3456",
+      "expect": "call 555-12-3456"
+    },
+    {
+      "id": "T10c",
+      "input": "order 12-3456789",
+      "expect": "order 12-3456789"
+    },
+    {
+      "id": "T11a",
+      "input": "ID number 42",
+      "expect": "ID number 42"
+    },
+    {
+      "id": "T11b1",
+      "input": "passport expires 2027",
+      "expect": "passport expires 2027"
+    },
+    {
+      "id": "T11c",
+      "input": "tax id: pending",
+      "expect": "tax id: pending"
+    },
+    {
+      "id": "T11d",
+      "input": "PAN card arrived",
+      "expect": "PAN card arrived"
+    },
+    {
+      "id": "T11b",
+      "input": "my ID number is on the 2026-10-23 letter",
+      "expect": "my ID number is on the ****-**-** letter"
+    }
+  ],
+  "hasFinancialIdentifier": [
+    "account ending 4471",
+    "sort code 40-47-84",
+    "acct 123456",
+    "SSN 123-45-6789",
+    "the 2026 budget"
+  ]
+}

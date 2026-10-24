@@ -334,7 +334,9 @@ it("R2-1/9/10: a turn that is not the owner's gets no standing material, no owed
   // next: the owner's standing material follows the full owner-audience predicate
   expect(source).toContain("const standing = standingContextParts(bot, { partition: bot.partitionedAt === undefined ? undefined : threadPartition(bot, threadId), ownerAudience: surfacesForOwner,");
   expect(source).toContain("const memoryNotOwner = !humanIsOwner || !surfacesForOwner || opts?.notOwnerAudience === true;");
-  expect(source).toContain("const verdict = memoryNotOwner ? { withheld: true, unproven: false } : capturedMessageVerdict(allowance, threadId, id);");
+  // (SL-E r3.2 (A2): a linked person's own turn judges the copy by that person's reader; every other not-owner turn still gets the withheld line)
+  expect(source).toContain("const personTurnReader = !isWorkspaceOwner(humanPrincipal) && !isGroupPrincipal(humanPrincipal);");
+  expect(source).toContain("const verdict = memoryNotOwner ? (personTurnReader ? personCopyHandOver(personCopyReaders, bot.id, threadId, message, personTurnScopes()) : { withheld: true, unproven: false }) : capturedMessageVerdict(allowance, threadId, id);");
   expect(source).toContain("if (verdict.withheld) { pendingWithheld.add(id); return { id, text: withheldRoomLine(message, false, verdict.unproven), source }; }");
   expect(source).toContain("replyForPrompt(threadId, opts?.replyTo && promptRows(botMessages(database(), botViewer(bot.id), threadId, [opts.replyTo]), turnRouteHasTools, task.externalUpdates)[0], memoryNotOwner),");
   // recall leaves the notebook and brief out by the thread's audience, never

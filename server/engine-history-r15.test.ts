@@ -383,7 +383,7 @@ describe("when an engine keeps its files busy", () => {
     const history = join(fx.homes[0]!.home, "history.jsonl");
     const tid = "019a0000-aaaa-7bbb-8ccc-000000000001";
     const owed: string[][] = [];
-    const { deletions, data, db } = serviceFor(fx, { retryDelaysMs: [15], slowRetryMs: 40, staleQuietMs: 1, onOwed: (notices) => owed.push(notices.map((item) => item.text)) });
+    const { deletions, data, db } = serviceFor(fx, { retryDelaysMs: [15], slowRetryMs: 40, staleQuietMs: 1, owedGraceMs: 0, onOwed: (notices) => owed.push(notices.map((item) => item.text)) });
     let appended = 0, plans = 0;
     useScript((message, worker) => {
       if (message.kind === "plan") plans++;
@@ -400,11 +400,11 @@ describe("when an engine keeps its files busy", () => {
       expect(report.failed).toContain(fx.homes[0]!.home);
       await delay(600);
     } finally { Object.assign(mutOps, real); }
-    const sentence = "Codex's copy of this conversation could not be removed yet because Codex was using its history. Murage will try again when it starts.";
+    const sentence = "Codex was using its history. Murage tries again by itself and finishes removing this conversation.";
     expect(deletions.notices().map((item) => item.text)).toEqual([sentence]);
     expect(owed.filter((texts) => texts.length)).toEqual([[sentence]]); // broadcast once, when it appeared
-    expect(deletions.pending()[0]!.owed?.homes).toEqual([{ engine: "codex", code: "using" }]);
-    expect(new ConversationDeletions({ dataDir: data, database: () => db, retryDelaysMs: [] }).notices().map((item) => item.text)).toEqual([sentence]); // it is in the record, so it survives a restart
+    expect(deletions.pending()[0]!.owed?.items.map((item) => [item.engine, item.code, item.named])).toEqual([["codex", "using", true]]);
+    expect(new ConversationDeletions({ dataDir: data, database: () => db, retryDelaysMs: [], owedGraceMs: 0 }).notices().map((item) => item.text)).toEqual([sentence]); // it is in the record, so it survives a restart
     expect(plans).toBeGreaterThanOrEqual(4); // the first attempt, the one retry, then the slow repeats
     const text = readFileSync(history, "utf8");
     expect(text).toContain(B("codex"));
@@ -418,11 +418,12 @@ describe("when an engine keeps its files busy", () => {
       for (const code of codes) {
         const text = ownerNoticeText(label, code);
         expect(text, `${label} ${code}`).not.toMatch(/—|–|[\\/]|\bsafe(ly|ty)?\b|\bunsafe\b|\bEIO\b|\bEACCES\b|\berror\b/i);
-        expect(text.startsWith(`${label}'s copy of this conversation could not be removed yet`)).toBe(true);
-        expect(text.endsWith("Murage will try again when it starts.")).toBe(true);
+        // F16: short, and says Murage finishes this by itself
+        expect(text).toMatch(/by itself|once it can/);
+        expect(text).toContain(label);
       }
     }
-    expect(ownerNoticeText("Claude Code", "using")).toBe("Claude Code's copy of this conversation could not be removed yet because Claude Code was using its history. Murage will try again when it starts.");
+    expect(ownerNoticeText("Claude Code", "using")).toBe("Claude Code was using its history. Murage tries again by itself and finishes removing this conversation.");
     expect(owedCodeOf("busy")).toBe("using");
     expect(owedCodeOf("changed")).toBe("using");
     expect(owedCodeOf("engine-running")).toBe("using");
@@ -435,7 +436,7 @@ describe("when an engine keeps its files busy", () => {
     // the line for an engine that has its files open: exact words, with the engine named, same rules as the others
     for (const label of [...new Set(Object.values(ENGINE_LABEL))]) {
       const line = ownerNoticeText(label, "engine-open");
-      expect(line).toBe(`${label} is open. Close ${label} and Murage will finish removing this conversation from it.`);
+      expect(line).toBe(`${label} is open. Murage finishes removing this conversation from it by itself once ${label} is closed. Nothing is needed from you.`);
       expect(line).not.toMatch(/—|–|[\\/]|\bsafe(ly|ty)?\b|\bunsafe\b|\bEIO\b|\bEACCES\b|\berror\b|engine-open/i);
     }
     expect(owedCodeOf("something else: /home/someone/.codex/x")).toBe("other");

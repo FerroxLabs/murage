@@ -10,6 +10,7 @@ import { readMemoryLearning } from "./learning-policy.ts";
 import type { MemoryRoster } from "./policy.ts";
 import { revokeRecordDisclosures } from "./revocation.ts";
 import { inheritEdge } from "./revoke-commit.ts";
+import { insertMemoryRecord } from "./record-write.ts";
 
 type Receipt={cursor:string;status:"pending"|"complete";retryAt:number;reason?:string;attempts?:number};
 /** A minute, doubling while the SAME reason keeps coming back, up to an hour.
@@ -300,7 +301,7 @@ export async function captureBotReveals(jobId:string,roster:()=>MemoryRoster,ext
         const version=Number(previous?.version??0)+1,state=learning.reviewMode?"candidate":"active";
         if(previous)db.prepare("UPDATE memory_records SET state='superseded',valid_to=? WHERE id=? AND version=?").run(now,id,previous.version);
         const text=JSON.stringify({canonId:canon.id,canonVersion:canon.version,audience:"owner-private",revealed:true,note:`Observed disclosure of fictional canon: ${String(canon.text)}`});
-        db.prepare("INSERT INTO memory_records VALUES(?,?,?,'reveal-state',?,'assistant-inference',?,0,?,NULL,?,?)").run(id,version,current.scopeId,text,state,now,previous?id:null,now);
+        insertMemoryRecord(db,{id,version,scopeId:current.scopeId,kind:"reveal-state",text,assertion:"assistant-inference",state,validFrom:now,supersedesId:previous?id:null,createdAt:now});
         db.prepare("UPDATE memory_record_details SET partition='identity',attention='current',confidence_basis=?,entities=? WHERE record_id=? AND record_version=?")
           .run(`Observed terminal disclosure (${support.reason}); fictional continuity only, not world truth`,JSON.stringify(["owner-private",canon.id]),id,version);
         db.prepare("INSERT INTO memory_derivations VALUES(?,?,?,?)").run(canon.id,canon.version,id,version);

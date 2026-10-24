@@ -1,4 +1,5 @@
 import type { ExecEnv } from "../../shared/mount-identity.ts";
+import { claudeModelExtras } from "./claude-model-extras.ts";
 import { oneShots } from "../engine-one-shots.ts";
 import { engineFailure, withCliMemoryLearning, type MemorySessionRunner } from "./cli-memory-learning.ts";
 import { CLOUD_BROKER_DIR, CLOUD_RENDER_MCP, CLOUD_RENDER_SYSTEM_PROMPT, CLOUD_WORKSPACE_ROOT, cloudEngineHome, cloudTurnBot, cloudTurnEnvironment, cloudTurnRender, isCloudRenderPlaceholder } from "../cloud-home/turn-process.ts";
@@ -21,9 +22,10 @@ import { boundedEnvMs } from "./env-ms.ts";
 import { awaitRequiredMcp, isUnsupportedAnswer, McpBackoff, mcpFirstAnswerMs, mcpReconnectWaitMs, McpStatusSupport, mcpWaitChipTitle, parseMcpStatus, splitMcpServers, toolsMayBeLoadingNotice, toolsUnavailableNotice, unavailableLabels, type McpReadiness, type McpStatusAnswer } from "./mcp-readiness.ts";
 import { applyProviderRoute, type ProviderTurnRoute } from "../provider-routing.ts";
 import { claudeTextOnlyTurn } from "./headless-text-only.ts";
+import { claudeBrowserMount } from "./claude-browser-mount.ts";
 import { execFileSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, closeSync, existsSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, lstatSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { parseDocument as parseYamlDocument } from "yaml";
 import { createServer as createNetServer } from "node:net";
 import { CLAUDE_UPDATE_MESSAGE, claudeExecutableIdentity, claudeLaunchRefusal, claudeLaunchRefusalError, ClaudeUpdateRequired, claudeVersionVerdict, knownClaudeCliVersion, requireClaudeCliVersion, type ClaudeLaunchRefusal } from "./claude-guards.ts";
@@ -464,7 +466,15 @@ export function readClaudeModelCatalog(env: Record<string, string | undefined> =
   const nestedEnv = settings.env && typeof settings.env === "object" ? (settings.env as Record<string, unknown>) : {};
   const envModel = nestedEnv.ANTHROPIC_MODEL ?? env.ANTHROPIC_MODEL;
   if (typeof envModel === "string") extras.push(...extrasFromUnknown([envModel]));
+  // The owner's Claude Code setup (custom option, tier models). Only the settings.json
+  // env counts: a value left in the shell by a provider switcher is stripped before the
+  // spawn, so a row for it would be a phantom (see "ambient ANTHROPIC_MODEL" test).
+  extras.push(...claudeModelExtras(nestedEnv, CLAUDE_MODEL_ID));
 
+  return withClaudeExtras(extras);
+}
+
+function withClaudeExtras(extras: Array<{ id: string; label: string }>) {
   const options = STATIC_CLAUDE_MODELS.options.map((option) => ({ ...option }));
   const seen = new Set(options.map((option) => option.id));
   for (const extra of extras) {
@@ -643,6 +653,16 @@ export function brokerSocketCandidates(threadId: string): string[] {
   ];
 }
 
+/** True when `path` exists and is owned by a uid other than this process (POSIX only). */
+function socketNameHeldByAnotherUid(path: string): boolean {
+  if (process.platform === "win32" || typeof process.getuid !== "function") return false;
+  try {
+    return lstatSync(path).uid !== process.getuid();
+  } catch {
+    return false;
+  }
+}
+
 export async function createPermissionBroker(opts: {
   /** Candidate bind paths, tried in order; the first that listens wins. */
   socketPaths: string[];
@@ -789,6 +809,12 @@ export async function createPermissionBroker(opts: {
   let server: ReturnType<typeof createNetServer> | null = null;
   for (const [index, candidate] of opts.socketPaths.entries()) {
     const attempt = createNetServer(connectionHandler);
+    // A name already held by another uid is never replaced or bound over: take the next candidate.
+    if (socketNameHeldByAnotherUid(candidate)) {
+      console.error(`permission broker: ${candidate} is held by another user, skipped`);
+      if (index === opts.socketPaths.length - 1) console.error(`permission broker unavailable on ${candidate}`);
+      continue;
+    }
     try {
       unlinkSync(candidate);
     } catch {}
@@ -2365,6 +2391,45 @@ export function claudeInProjectAllow(tool: unknown, input: unknown, cwd: string,
   }
 }
 
+/** 09-B1: drop the credential-named variables of the owner's captured login-shell map. Claude's own sign-in names stay. */
+export function stripCapturedCredentialNames(map: Record<string, string | undefined>): void {
+  for (const name of Object.keys(map)) if (/KEY|SECRET|TOKEN/i.test(name) && !/^(ANTHROPIC_|CLAUDE_)/i.test(name)) delete map[name];
+}
+
+/** 09-A2, 09-A3: the key-file rule this driver's own in-project check found for a file or search call, or undefined.
+ * `claudeInProjectAllow` answers only yes or no; a "no" that came from a key file must reach the verdict as a hold,
+ * or Auto approves a search that the walk already saw reaching a credentials file. */
+export function claudeInProjectHold(tool: unknown, input: unknown, cwd: string, home: string = homedir(), platform: NodeJS.Platform = process.platform): string | undefined {
+  if (typeof tool !== "string" || !input || typeof input !== "object" || Array.isArray(input)) return undefined;
+  const call = input as Record<string, unknown>;
+  const opts = { home, platform };
+  const ruleOf = (path: unknown): string | undefined => {
+    if (typeof path !== "string" || path === "") return undefined;
+    const checked = inProjectCheck(path, cwd, undefined, opts);
+    return !checked.ok && checked.reason === "sensitive" ? checked.rule : undefined;
+  };
+  switch (tool) {
+    case "Read":
+    case "Write":
+    case "Edit":
+    case "MultiEdit":
+      return ruleOf(call.file_path);
+    case "NotebookEdit":
+      return ruleOf(call.notebook_path);
+    case "Grep":
+    case "Glob": {
+      const root = call.path === undefined ? cwd : typeof call.path === "string" ? call.path : undefined;
+      if (!root) return undefined;
+      const rootRule = ruleOf(root);
+      if (rootRule) return rootRule;
+      const walked = walkRoot(root, cwd, opts);
+      return walked.ok && walked.hits.length > 0 ? walked.hits[0]!.rule : undefined;
+    }
+    default:
+      return undefined;
+  }
+}
+
 /** SEAM (build step 4): the shell walker's targets of a Bash command. Today it is "not
  * available" and a Bash ask goes to the verdict as it always has. */
 export function bashTargetsOf(_command: string): { available: false } {
@@ -2465,7 +2530,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         await requireClaudeCliVersion(config.cli, env, turn.signal, execCli, () => claudeProbeEnv(env, config.configDir));
         return claudeTextOnlyTurn({ ...turn, model, providerRoute }, {
           cli: config.cli, tmpBase: join(DATA_DIR, "pip-tmp"), env,
-          credentialsDir: providerRoute ? undefined : resolveClaudeConfigDir(config.configDir, account),
         });
       } };
     };
@@ -3375,7 +3439,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         allowed.push(...claudeOwnUnaskedTools("phone"));
       }
       if (turn.integrations?.browser) {
-        mcpServers.browser = { ...turn.integrations.browser };
+        mcpServers.browser = claudeBrowserMount(turn);
         allowed.push(...claudeOwnUnaskedTools("browser"));
       }
       // dweb network daemon (status / repo / opencode model access) via
@@ -3480,6 +3544,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           for (const name of Object.keys(baseline)) if (!(name in env)) delete map[name];
           stripOwned(map);
           delete map.CLAUDE_ENV_FILE;
+          // 09-B1: the owner's login-shell capture carries every credential they export. A Bash command in the turn
+          // (`env`, `printenv`) would print them to the model, so none rides in: Claude's own sign-in names stay, and
+          // every value this turn's driver set on purpose returns through `extra` below.
+          stripCapturedCredentialNames(map);
           return map;
         },
         extra: { ...ownedTurnNames(env, stripOwned), ...claudeNames, CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR: "1" },
@@ -3883,10 +3951,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
               // this driver started the CLI with and the session it reported.
               const resultSession = sessions.get(threadId)?.sessionId ?? sessionId ?? newSessionId;
               const toolResultDirs = ask.kind === "permission" ? claudeToolResultDirs(claudeConfigDir(env), sessionFolders(cwd), resultSession) : [];
+              const localHold = ask.kind === "permission" ? claudeInProjectHold(ask.tool, ask.input, cwd) : undefined;
               const open = (execEnv: ExecEnv | undefined) => emit({
                 ...base(threadId, eventTurnId),
                 type: "request.opened",
                 requestId: ask.id,
+                ...(localHold ? { localHold: localHold.slice(0, 80) } : {}),
                 requestType: ask.kind,
                 tool: ask.tool ?? "",
                 summary: askSummary(ask),

@@ -37,6 +37,21 @@ interface CreatedWebhook {
   secret: string;
 }
 
+/** A chat-created webhook (SL-J J1): its id comes from the confirmation card,
+ * and `mint: false` gives it a random secret hash nobody holds, so nothing can
+ * call it until the owner makes the first link in the panel. */
+export interface UnmintedWebhookOptions {
+  id: string;
+  mint: false;
+}
+
+/** The record's `updatedAt` a change was prepared against (409 `webhook_changed`). */
+export interface WebhookWriteGuard {
+  expectedUpdatedAt?: number;
+}
+
+export const WEBHOOK_CHANGED_MESSAGE = "That webhook changed after this confirmation card was prepared. Ask the bot to review it and propose the action again.";
+
 export interface WebhookEvent {
   payload: JsonValue;
   contentType?: string;
@@ -159,8 +174,21 @@ const webhookFileSchema = z.object({
 const taskPayloadSchema = z.object({ task: z.string().optional(), message: z.string().optional() });
 const statusErrorSchema = z.object({ status: z.number().int().optional() });
 
+/** F2 (1.0.4, G04-1 option A): the Cloud VM cannot ask for approval yet, so a webhook there could not keep its bot's
+ * permissions. A saved Cloud VM webhook keeps its record (rename, pause, delete, or move it to this computer). */
+export const CLOUD_WEBHOOK_NOT_YET = "Cloud VM webhooks start when Cloud approvals arrive. Choose This computer for now.";
+
 function fail(status: number, message: string): never {
   throw Object.assign(new Error(message), { status });
+}
+
+function failChanged(): never {
+  throw Object.assign(new Error(WEBHOOK_CHANGED_MESSAGE), { status: 409, code: "webhook_changed" });
+}
+
+/** Two writes in one millisecond still move `updatedAt`, so the guard sees the second (the routines rule). */
+function nextUpdatedAt(now: number, trigger: StoredWebhookTrigger): number {
+  return Math.max(now, trigger.updatedAt + 1);
 }
 
 function invalidInput(error: z.ZodError): never {
@@ -321,13 +349,17 @@ export class WebhookManager {
     return this.attempts.map((attempt) => ({ ...attempt }));
   }
 
-  create(input: JsonValue): CreatedWebhook {
+  create(input: JsonValue): CreatedWebhook;
+  create(input: JsonValue, options: UnmintedWebhookOptions): { webhook: WebhookTrigger };
+  create(input: JsonValue, options?: UnmintedWebhookOptions): CreatedWebhook | { webhook: WebhookTrigger } {
     const clean = cleanInput(parseTriggerInput(input));
+    if (clean.runOn === "cloud") fail(409, CLOUD_WEBHOOK_NOT_YET);
     if (this.options.botState(clean.botId) === "missing") fail(400, "That bot no longer exists");
+    if (options && this.webhooks.some((candidate) => candidate.id === options.id)) fail(409, "A webhook with this id already exists");
     const now = this.now();
     const secret = newSecret();
     const trigger: StoredWebhookTrigger = {
-      id: randomUUID(),
+      id: options?.id ?? randomUUID(),
       endpointId: newEndpointId(),
       ...clean,
       secretHash: hashSecret(secret),
@@ -338,13 +370,21 @@ export class WebhookManager {
     this.webhooks.unshift(trigger);
     this.save();
     this.emit(trigger);
-    return { webhook: publicTrigger(trigger), secret };
+    // Unminted: the secret above is dropped here and never held by anyone.
+    return options ? { webhook: publicTrigger(trigger) } : { webhook: publicTrigger(trigger), secret };
   }
 
-  update(id: string, value: JsonValue): WebhookTrigger | null {
+  get(id: string): WebhookTrigger | null {
+    const trigger = this.webhooks.find((candidate) => candidate.id === id);
+    return trigger ? publicTrigger(trigger) : null;
+  }
+
+  update(id: string, value: JsonValue, guard: WebhookWriteGuard = {}): WebhookTrigger | null {
     const trigger = this.webhooks.find((candidate) => candidate.id === id);
     if (!trigger) return null;
+    if (guard.expectedUpdatedAt !== undefined && trigger.updatedAt !== guard.expectedUpdatedAt) failChanged();
     const patch = parseTriggerPatch(value);
+    if (patch.runOn === "cloud" && trigger.runOn !== "cloud") fail(409, CLOUD_WEBHOOK_NOT_YET);
     const clean = cleanInput({
       name: patch.name ?? trigger.name,
       prompt: patch.prompt ?? trigger.prompt,
@@ -356,7 +396,7 @@ export class WebhookManager {
       maxPendingRuns: patch.maxPendingRuns === undefined ? trigger.maxPendingRuns : patch.maxPendingRuns,
     });
     if (this.options.botState(clean.botId) === "missing") fail(400, "That bot no longer exists");
-    Object.assign(trigger, clean, { updatedAt: this.now() });
+    Object.assign(trigger, clean, { updatedAt: nextUpdatedAt(this.now(), trigger) });
     if (!clean.eventTypes?.length) delete trigger.eventTypes;
     if (clean.maxPendingRuns === undefined) delete trigger.maxPendingRuns;
     if (patch.enabled === false) {
@@ -367,9 +407,10 @@ export class WebhookManager {
     return publicTrigger(trigger);
   }
 
-  remove(id: string): boolean {
+  remove(id: string, guard: WebhookWriteGuard = {}): boolean {
     const at = this.webhooks.findIndex((candidate) => candidate.id === id);
     if (at === -1) return false;
+    if (guard.expectedUpdatedAt !== undefined && this.webhooks[at]!.updatedAt !== guard.expectedUpdatedAt) failChanged();
     const [trigger] = this.webhooks.splice(at, 1);
     this.deliveries = this.deliveries.filter((delivery) => !delivery.key.startsWith(`${trigger.endpointId}:`));
     this.attempts = this.attempts.filter((attempt) => attempt.webhookId !== trigger.id);
@@ -386,7 +427,7 @@ export class WebhookManager {
     if (!trigger) return null;
     const secret = newSecret();
     trigger.secretHash = hashSecret(secret);
-    trigger.updatedAt = this.now();
+    trigger.updatedAt = nextUpdatedAt(this.now(), trigger);
     this.save();
     this.emit(trigger);
     return { webhook: publicTrigger(trigger), secret };
@@ -397,7 +438,7 @@ export class WebhookManager {
     for (const trigger of this.webhooks) {
       if (trigger.botId !== botId || !trigger.enabled) continue;
       trigger.enabled = false;
-      trigger.updatedAt = this.now();
+      trigger.updatedAt = nextUpdatedAt(this.now(), trigger);
       this.options.cancelQueued?.(trigger.id, "The bot this webhook sends to was deleted");
       this.emit(trigger);
       changed = true;
@@ -545,7 +586,7 @@ export class WebhookManager {
     trigger.lastReceivedAt = now;
     trigger.lastRunId = run.id;
     trigger.deliveryCount += 1;
-    trigger.updatedAt = now;
+    trigger.updatedAt = nextUpdatedAt(now, trigger);
     this.appendAttempt(trigger, event, {
       outcome: "accepted",
       statusCode: 202,
@@ -563,7 +604,7 @@ export class WebhookManager {
     trigger.verificationPending = false;
     trigger.verifiedAt = receivedAt;
     trigger.lastReceivedAt = receivedAt;
-    trigger.updatedAt = receivedAt;
+    trigger.updatedAt = nextUpdatedAt(receivedAt, trigger);
     const sample: WebhookVerificationSample = {
       receivedAt,
       preview: previewPayload(event.payload),

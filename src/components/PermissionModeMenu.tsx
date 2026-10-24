@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Check, Hand, ShieldCheck, ShieldOff, Zap } from "lucide-react";
 import { t } from "@/lib/i18n";
 import { FULL_ACCESS_DESKTOP_ONLY, NO_LIMITS_DESKTOP_ONLY, isDesktopOnlyMode, type PermissionMode } from "@/lib/permission-mode";
@@ -44,8 +45,11 @@ export function PermissionModeMenu({
   engineCannotAsk: cannotAskEngine,
   engineOwnApprovals,
   scope,
+  footer,
 }: {
   botName: string;
+  /** Below the levels: this chat's Refresh permissions (1.0.4 SL-K K3), desktop only. */
+  footer?: ReactNode;
   /** The composer's menu: in a routine's own conversation it sets that
    * routine's level; anywhere else, only this conversation's. Absent says
    * nothing about it. */
@@ -104,6 +108,7 @@ export function PermissionModeMenu({
           );
         })}
       </div>
+      {footer}
     </div>
   );
 }

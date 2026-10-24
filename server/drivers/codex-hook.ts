@@ -12,7 +12,7 @@
 // owner-hook strip of the config copy, the trust handshake, the socket, the delivery mapping, the apply_patch reader and the
 // Rule 67 tripwire table. codex.ts wires them to a turn.
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -115,6 +115,9 @@ export function codexGatePlan(version: string | undefined, floors: CodexFloors =
 export const HOOKS_JSON_FILE = "hooks.json";
 export const HOOK_SCRIPT_FILE = "murage-hook.mjs";
 export const HOOK_ENV_FILE = "murage-hook.env";
+/** 03-1: each gated app-server gets its own env file, `<scope>/hook-env/<murage pid>-<gate id>.env`, named in its environment. */
+export const HOOK_ENV_DIR = "hook-env";
+export const HOOK_ENV_VAR = "MURAGE_CODEX_HOOK_ENV";
 
 /** The ask bound a hook waits for the owner (the driver's permission deny, codex.ts). */
 export const HOOK_ASK_BOUND_MS = 15 * 60_000;
@@ -131,7 +134,7 @@ export const HOOK_SCRIPT_DEADLINE_MS = HOOK_ASK_BOUND_MS + 10_000;
 export const CODEX_HOOK_SCRIPT = `// Murage pre-execution hook. Generated; do not edit.
 import { readFileSync, writeSync } from "node:fs";
 import net from "node:net";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const DEADLINE_MS = ${HOOK_SCRIPT_DEADLINE_MS};
@@ -152,8 +155,11 @@ try {
   const input = JSON.parse(Buffer.concat(chunks).toString("utf8"));
   hookEvent = input && input.hook_event_name;
   const here = dirname(fileURLToPath(import.meta.url));
+  // The env file of the app-server that runs this hook, named in that process's environment (one file per process, never shared).
+  const named = process.env.${HOOK_ENV_VAR};
+  if (!named || dirname(resolve(named)) !== join(here, ${JSON.stringify(HOOK_ENV_DIR)}) || !named.endsWith(".env")) block("no socket");
   const env = {};
-  for (const line of readFileSync(join(here, ${JSON.stringify(HOOK_ENV_FILE)}), "utf8").split("\\n")) {
+  for (const line of readFileSync(resolve(named), "utf8").split("\\n")) {
     const at = line.indexOf("=");
     if (at > 0) env[line.slice(0, at)] = line.slice(at + 1);
   }
@@ -269,12 +275,15 @@ export function hookConfigOf(scopedHome: string, execPath = process.execPath): s
   return createHash("sha256").update(codexHooksJson(execPath, script)).update("\0").update(hookWindowsLauncher()).update("\0").update(CODEX_HOOK_SCRIPT).digest("hex");
 }
 
-/** Writes hooks.json and the script (unchanged content is not rewritten) and the turn's env file (0600). */
-export function writeHookFiles(scopedHome: string, socketPath: string, token: string, execPath = process.execPath): HookFiles {
-  mkdirSync(scopedHome, { recursive: true });
+/** The env file of one gated app-server process (03-1): `<scope>/hook-env/<murage pid>-<gate id>.env`. */
+export const hookEnvPathOf = (scopedHome: string, gateId: string, pid = process.pid): string => join(scopedHome, HOOK_ENV_DIR, `${pid}-${gateId}.env`);
+
+/** Writes hooks.json and the script (unchanged content is not rewritten) and this process's env file (0600) at `envFile`, which only
+ *  this process's hooks read (its environment names it). */
+export function writeHookFiles(scopedHome: string, socketPath: string, token: string, envFile: string, execPath = process.execPath): HookFiles {
+  mkdirSync(join(scopedHome, HOOK_ENV_DIR), { recursive: true });
   const script = join(scopedHome, HOOK_SCRIPT_FILE);
   const hooksJson = join(scopedHome, HOOKS_JSON_FILE);
-  const envFile = join(scopedHome, HOOK_ENV_FILE);
   const launcher = join(scopedHome, HOOK_LAUNCHER_FILE);
   writeIfChanged(script, CODEX_HOOK_SCRIPT, 0o600);
   writeIfChanged(launcher, hookWindowsLauncher(), 0o600);
@@ -439,13 +448,74 @@ export interface HookTurn {
 export const hookSocketPath = (id = randomBytes(6).toString("hex")): string =>
   process.platform === "win32" ? `\\\\.\\pipe\\murage-hook-${id}` : join(tmpdir(), `murage-hk-${id}.sock`);
 
-/** One socket per app-server process, armed with one turn's token and handlers at a time. A message with another token is refused. */
+/** 03-1: the gates whose app-server may still be alive, shared by every Codex driver instance in this Murage process. A sweep keeps
+ *  their env files and removes only the files no live owner holds. */
+const liveHookGates = new Set<string>();
+export const hookGateIsLive = (id: string): boolean => liveHookGates.has(id);
+
+/** Removes the env files no live owner holds: another Murage process's that is no longer alive, or this process's whose gate is gone.
+ *  A pid alone is not ownership (a pid is reused by unrelated processes), so a file of another LIVE pid is also checked by its gate: it
+ *  stays only while the socket it names exists. A file of a live gate of this process is kept. Best effort: a file that cannot be read
+ *  or removed stays. */
+export function sweepHookEnv(scopedHome: string, pidAlive: (pid: number) => boolean = processAlive, socketLive: (path: string) => boolean = existsSync): void {
+  const dir = join(scopedHome, HOOK_ENV_DIR);
+  let names: string[];
+  try { names = readdirSync(dir); } catch { return; }
+  for (const name of names) {
+    const m = /^(\d+)-([0-9a-f]+)\.env$/.exec(name);
+    if (!m) continue;
+    const pid = Number(m[1]);
+    let stale: boolean;
+    if (pid === process.pid) stale = !liveHookGates.has(m[2]!);
+    else if (!pidAlive(pid)) stale = true;
+    else {
+      // the pid lives, but does its gate? The file names the gate's socket; a live gate has it (an unreadable file stays)
+      let socket: string | null = null;
+      try { socket = /^SOCKET=(.*)$/m.exec(readFileSync(join(dir, name), "utf8"))?.[1] ?? null; } catch { socket = null; }
+      stale = socket !== null && !socketLive(socket);
+    }
+    if (stale) { try { unlinkSync(join(dir, name)); } catch { /* left for the next sweep */ } }
+  }
+}
+
+/** App start: sweeps every scope under `root` (DATA_DIR/native/codex-scope), the scope folder and its `login-g<N>` generations, so a
+ *  bot that is never launched again does not keep dead files. Bounded to `maxScopes` scope folders; only `<pid>-<gate>.env` files in
+ *  a `hook-env` folder are ever touched. Never throws. */
+export function sweepAllHookEnv(root: string, pidAlive: (pid: number) => boolean = processAlive, socketLive: (path: string) => boolean = existsSync, maxScopes = 512): number {
+  let scopes: string[];
+  try { scopes = readdirSync(root).filter((n) => !n.startsWith(".")).slice(0, maxScopes); } catch { return 0; }
+  let swept = 0;
+  for (const scope of scopes) {
+    const base = join(root, scope);
+    let homes = [base];
+    try { homes = homes.concat(readdirSync(base).filter((n) => /^login-g\d+$/.test(n)).slice(0, 64).map((n) => join(base, n))); } catch { continue; }
+    for (const home of homes) { sweepHookEnv(home, pidAlive, socketLive); swept += 1; }
+  }
+  return swept;
+}
+const processAlive = (pid: number): boolean => {
+  try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException)?.code === "EPERM"; }
+};
+
+/** One socket per app-server process, armed with one turn's token and handlers at a time. A message with another token is refused,
+ *  and a decision reaches the hook only while the turn that received it is still the armed one (Astra r1 #1). */
 export class CodexHookGate {
   private server: net.Server | null = null;
   private turn: HookTurn | null = null;
+  private generation = 0;
   readonly path: string;
+  /** 03-1: names this gate's env file; registered live until `release()`. */
+  readonly id = randomBytes(8).toString("hex");
+  /** The env file of this gate's process, set by the driver at spawn. */
+  envPath: string | null = null;
 
-  constructor(path = hookSocketPath()) { this.path = path; }
+  constructor(path = hookSocketPath()) { this.path = path; liveHookGates.add(this.id); }
+
+  /** The process is confirmed gone: its env file goes and the gate leaves the live registry. A failed kill never calls this. */
+  release(): void {
+    if (this.envPath) { try { unlinkSync(this.envPath); } catch { /* gone already */ } }
+    liveHookGates.delete(this.id);
+  }
 
   async listen(): Promise<void> {
     const server = net.createServer((socket) => this.serve(socket));
@@ -455,10 +525,11 @@ export class CodexHookGate {
     if (process.platform !== "win32") { try { chmodSync(this.path, 0o600); } catch { /* the token still guards it */ } }
   }
 
-  arm(turn: HookTurn): void { this.turn = turn; }
-  disarm(token?: string): void { if (!token || this.turn?.token === token) this.turn = null; }
+  arm(turn: HookTurn): void { this.generation++; this.turn = turn; }
+  disarm(token?: string): void { if (!token || this.turn?.token === token) { this.generation++; this.turn = null; } }
 
   close(): void {
+    this.generation++;
     this.turn = null;
     try { this.server?.close(); } catch { /* closing */ }
     this.server = null;
@@ -486,8 +557,11 @@ export class CodexHookGate {
         return reply({ ok: true });
       }
       if (message.kind !== "pretool") return reply({ error: "kind" });
+      // The decision is delivered only while this turn is still the armed one: a Stop, a settle or a newer turn in between turns it into a deny.
+      const generation = this.generation;
+      const current = () => this.turn === turn && this.generation === generation;
       turn.onPreTool({ tool_name: message.tool_name, tool_input: message.tool_input, tool_use_id: message.tool_use_id, turn_id: message.turn_id, cwd: message.cwd })
-        .then((answer) => reply(answer), () => reply({ decision: "deny", reason: "Murage could not check this call" }));
+        .then((answer) => reply(current() ? answer : { decision: "deny", reason: "Murage: the turn ended" }), () => reply({ decision: "deny", reason: "Murage could not check this call" }));
     });
   }
 }

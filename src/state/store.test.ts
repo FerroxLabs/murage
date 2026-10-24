@@ -620,6 +620,31 @@ describe("where a fresh sign-in lands", () => {
     } as never);
     expect(next.selectedId).toBe("real");
   });
+
+  // 183: a returning person lands on the conversation they left; the Chief stays the landing for everyone else.
+  describe("resuming the last conversation", () => {
+    const chief = { ...member("sable", "Sable"), chiefOfStaff: true, chiefScope: "workspace" } as unknown as Bot;
+    const land = (resumeId: string | undefined, bots: Bot[]) =>
+      reducer({ ...initialState, selectedId: "" }, { type: "hydrate", ...httpNow, bots, groups: [], computerControl: {}, ...(resumeId ? { resumeId } : {}) } as never).selectedId;
+    it("opens the remembered conversation when it is listed", () => {
+      expect(land("bruce", [chief, member("bruce", "Bruce")])).toBe("bruce");
+    });
+    it("opens the Chief when the remembered one was deleted", () => {
+      expect(land("gone", [chief, member("bruce", "Bruce")])).toBe("sable");
+    });
+    it("opens the Chief when the remembered one is hidden", () => {
+      const hidden = { ...member("bruce", "Bruce"), hidden: true } as unknown as Bot;
+      expect(land("bruce", [chief, hidden])).toBe("sable");
+    });
+    it("opens the Chief when the remembered channel is archived", () => {
+      const room = { id: "room", name: "Room", hidden: true, messages: [] } as never;
+      const next = reducer({ ...initialState, selectedId: "" }, { type: "hydrate", ...httpNow, bots: [chief], groups: [room], computerControl: {}, resumeId: "room" } as never);
+      expect(next.selectedId).toBe("sable");
+    });
+    it("opens the Chief when nothing is remembered (first run, or setup not finished)", () => {
+      expect(land(undefined, [chief, member("bruce", "Bruce")])).toBe("sable");
+    });
+  });
 });
 
   const bot = {
@@ -1095,6 +1120,46 @@ describe("section Chiefs", () => {
     // demoted to leader of its own team, not fired — what the harness does
     expect(next.bots.find((candidate) => candidate.id === ember.id)?.chiefScope).toBeUndefined();
     expect(next.bots.find((candidate) => candidate.id === ember.id)?.chiefOfStaff).toBe(true);
+  });
+
+  it("hands over in one change: the former Chief joins its team as a member when its engine cannot lead", () => {
+    const ember = { ...bot("ember", ""), chiefOfStaff: true, chiefScope: "workspace" as const };
+    const rex = { ...bot("rex", "Sales"), chiefOfStaff: false };
+    const state = {
+      ...initialState,
+      instances: [{ instanceId: "codex", capabilities: { agentsMcp: false } }] as unknown as typeof initialState.instances,
+      bots: [ember, rex].map((candidate) => ({ ...candidate, messages: [] })),
+    };
+
+    const next = reducer(state, {
+      type: "updateBot",
+      botId: rex.id,
+      patch: { chiefOfStaff: true, chiefTier: "workspace", individual: false },
+    });
+
+    expect(next.bots.find((candidate) => candidate.id === rex.id)?.chiefScope).toBe("workspace");
+    expect(next.bots.find((candidate) => candidate.id === ember.id)?.chiefScope).toBeUndefined();
+    expect(next.bots.find((candidate) => candidate.id === ember.id)?.chiefOfStaff).toBe(false);
+  });
+
+  it("makes the former Chief a member when its team already has a leader", () => {
+    const ember = { ...bot("ember", "Ops"), chiefOfStaff: true, chiefScope: "workspace" as const };
+    const lead = { ...bot("lead", "Ops"), chiefOfStaff: true };
+    const rex = { ...bot("rex", "Sales"), chiefOfStaff: false };
+    const state = {
+      ...initialState,
+      instances: [{ instanceId: "codex", capabilities: { agentsMcp: true } }] as unknown as typeof initialState.instances,
+      bots: [ember, lead, rex].map((candidate) => ({ ...candidate, messages: [] })),
+    };
+
+    const next = reducer(state, {
+      type: "updateBot",
+      botId: rex.id,
+      patch: { chiefOfStaff: true, chiefTier: "workspace", individual: false },
+    });
+
+    expect(next.bots.find((candidate) => candidate.id === ember.id)?.chiefOfStaff).toBe(false);
+    expect(next.bots.find((candidate) => candidate.id === lead.id)?.chiefOfStaff).toBe(true);
   });
 
   it("never folds the wire-only tier word into a bot", () => {
@@ -2064,4 +2129,13 @@ describe("api() and the desktop proof", () => {
       vi.unstubAllGlobals();
     }
   });
+});
+// 183: launch never waits on /api/setup, and before setup is finished the question is throttled, not asked per selection.
+it("reads the saved conversation without waiting on the setup question, and throttles the write-side question", () => {
+  const source = readFileSync(fileURLToPath(new URL("./store.tsx", import.meta.url)), "utf8");
+  expect(source).not.toContain("setupAsk.then");
+  expect(source).not.toContain("const setupAsk =");
+  expect(source).toContain("readLastConversation(browserStorage(), workspaceKey(homeMeta(document).homeId))");
+  expect(source).toContain("SETUP_ASK_GAP_MS");
+  expect(source.match(/api\("\/api\/setup"\)/g)).toHaveLength(1);
 });

@@ -1,4 +1,4 @@
-import { cloudEngineHome, cloudTurnBot, cloudTurnEnvironment, cloudTurnRender, type CloudCodexPolicy, type CloudMcpStanza } from "../cloud-home/turn-process.ts";
+import { cloudEngineHome, cloudTurnBot, cloudTurnEnvironment, cloudTurnRender, cloudTurnRenderContents, type CloudCodexPolicy, type CloudMcpStanza } from "../cloud-home/turn-process.ts";
 import { queryCloudBotState, type CloudLauncherSpawn } from "../cloud-home/bot-state.ts";
 import { cloudMcpStanza } from "../cloud-home/engine-render.ts";
 import { CODEX_TOOL_SURFACE, renderMurageTurn } from "../murage-tool-surface.ts";
@@ -31,6 +31,7 @@ import { ScopeUnavailableError, engineUpdateRequired, scopeLocalFailureOf, withS
 import {
   CODEX_GATE_MIN, CodexHookGate, HOOK_ASK_BOUND_MS, HookDecisionTable, hookLivenessSetting, codexGatePlan, codexShellFormArgs,
   CODEX_HOOK_EXE_ENV, CODEX_HOOK_LAUNCH_ENV, hookConfigOf, hookWindowsLaunchValue, newHookToken, routeDelivery, tripwireLine, trustHooks, versionAtLeast, writeHookFiles,
+  HOOK_ENV_VAR, hookEnvPathOf, sweepHookEnv,
   type CodexGatePlan, type HookAnswer, type HookDelivery, type HookRoute,
 } from "./codex-hook.ts";
 import { execEnvHanded, execEnvNow, handedEngineEnv, ownedTurnNames, type HandedEnv } from "../engine-env.ts";
@@ -62,6 +63,7 @@ import { decodeCodexSelection, readCodexModelCatalog, STATIC_CODEX_MODELS } from
 import { codexLocalProviderArgs } from "./local-inject.ts";
 import { withCliMemoryLearning } from "./cli-memory-learning.ts";
 import { fluxKey } from "../flux-config.ts";
+import { FLUX_CODEX_TABLE_HEADERS } from "../flux-memory-wire.ts";
 import { applyFluxSurface, FLUX_CODEX_ENV_KEY, FLUX_CODEX_PROVIDER, FLUX_RESPONSES_BASE } from "../flux-routing.ts";
 import { codexFluxProviderFor, codexHttpHeaderArgs, fluxMemoryContextForTurn, fluxMemoryDecision, logFluxMemoryHeaders } from "../flux-memory-headers.ts";
 import { fluxIdIsRoutable } from "../flux-surface.ts";
@@ -74,6 +76,7 @@ import { registerIntake } from "../harness/intake.ts";
 import {
   codexNoAnswers,
   fromCodex,
+  fromCodexAsync,
   fromElicitationForm,
   toCodexAnswers,
   toElicitationContent,
@@ -250,6 +253,19 @@ export const CODEX_CUSTOM_MCP_STARTUP_TIMEOUT_SEC = 60;
  * arrives before Codex drops the server from the turn. */
 export const CODEX_MURAGE_MCP_STARTUP_TIMEOUT_SEC = 20;
 
+const MCP_ENV_LAUNCHER_MARK = "murage-env-launch";
+/** Runs as `node -e`: restores each aliased variable under the server's own name for the real command, then runs it. */
+const MCP_ENV_LAUNCHER = [
+  'const cp=require("node:child_process");const a=process.argv;const i=a.indexOf("murage-env-launch");',
+  'const map=JSON.parse(a[i+1]);const cmd=a[i+2];const args=a.slice(i+3);const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;',
+  'for(const[k,v]of Object.entries(map)){env[k]=env[v];delete env[v];}',
+  'const q=(x)=>\'"\'+String(x).replace(/"/g,\'\\\\"\')+\'"\';',
+  'const run=(sh)=>{const c=sh?cp.spawn([cmd,...args].map(q).join(" "),{stdio:"inherit",env,shell:true}):cp.spawn(cmd,args,{stdio:"inherit",env});',
+  'c.on("error",(e)=>{if(!sh&&process.platform==="win32"&&e.code==="ENOENT")return run(true);console.error(e.message);process.exit(127);});',
+  'c.on("exit",(code,sig)=>process.exit(code??(sig?1:0)));',
+  'for(const s of["SIGTERM","SIGINT"])process.on(s,()=>c.kill(s));};run(false);',
+].join("");
+
 function mountMcpServer(
   appServerArgs: string[],
   env: Record<string, string | undefined>,
@@ -264,17 +280,37 @@ function mountMcpServer(
   // secrets and differ per server, so they ride the server's own `env` table
   // rather than the app-server's shared environment.
   const own = new Set([CRED_FILE_ENV, CRED_SERVER_ENV]);
-  const shared = Object.fromEntries(Object.entries(server.env).filter(([key]) => !own.has(key)));
+  const wanted = Object.entries(server.env).filter(([key]) => !own.has(key));
+  // One app-server process serves every mounted server, so a shared name holds one value. A name another server
+  // (or the turn) already set to a DIFFERENT value rides this server's own `env` table instead, so no server's
+  // child receives a value that belongs to a different server.
+  const shared: Record<string, string> = {};
+  const perServer: Record<string, string> = {};
+  for (const [key, value] of wanted) {
+    if (typeof env[key] === "string" && env[key] !== value) perServer[key] = value;
+    else shared[key] = value;
+  }
   Object.assign(env, shared);
   const prefix = `mcp_servers.${name}`;
+  // 03-A1 / argv: a colliding value must not ride the argv (it would be readable for the life of the process). It goes into the
+  // app-server's environment under a private alias name, forwarded by name like the shared ones, and a tiny launcher (run by this
+  // program as node) puts it back under the server's own name for that one child before running the real command.
+  const aliases: Record<string, string> = {};
+  for (const [key, value] of Object.entries(perServer)) {
+    const alias = `MURAGE_MCPV_${createHash("sha256").update(`${name}\0${key}`).digest("hex").slice(0, 16)}`;
+    env[alias] = value;
+    aliases[key] = alias;
+  }
+  const wrapped = Object.keys(aliases).length > 0;
   appServerArgs.push(
-    "-c", `${prefix}.command=${JSON.stringify(server.command)}`,
-    "-c", `${prefix}.args=${JSON.stringify(server.args)}`,
+    "-c", `${prefix}.command=${JSON.stringify(wrapped ? process.execPath : server.command)}`,
+    "-c", `${prefix}.args=${JSON.stringify(wrapped ? ["-e", MCP_ENV_LAUNCHER, MCP_ENV_LAUNCHER_MARK, JSON.stringify(aliases), server.command, ...server.args] : server.args)}`,
     // Values stay in the child environment; argv contains names only so
     // credentials never appear in process listings or diagnostics.
-    "-c", `${prefix}.env_vars=${JSON.stringify(Object.keys(shared))}`,
+    "-c", `${prefix}.env_vars=${JSON.stringify([...Object.keys(shared), ...Object.values(aliases)])}`,
     "-c", `${prefix}.tool_timeout_sec=${CODEX_MCP_TOOL_TIMEOUT_SEC}`,
   );
+  if (wrapped) appServerArgs.push("-c", `${prefix}.env.ELECTRON_RUN_AS_NODE="1"`);
   for (const key of own) {
     if (typeof server.env[key] === "string") appServerArgs.push("-c", `${prefix}.env.${key}=${JSON.stringify(server.env[key])}`);
   }
@@ -330,6 +366,13 @@ export function codexRpcTimeoutMessage(method: string, timeoutMs: number, engine
     : "";
   return `${engine} timed out${step} (no answer for ${plainDuration(timeoutMs)}).`;
 }
+
+/** G03-2: an RPC Codex never answered. Unlike an error answer it says nothing about whether the engine took the request, so a
+ *  turn/start that timed out is never sent again. */
+export class CodexRpcTimeout extends Error {}
+
+/** The turn/start answer bound; tests shorten it (MURAGE_CODEX_RPC_TIMEOUT_MS). */
+const turnStartTimeoutMs = (): number => Number(process.env.MURAGE_CODEX_RPC_TIMEOUT_MS) > 0 ? Number(process.env.MURAGE_CODEX_RPC_TIMEOUT_MS) : 60_000;
 
 export const CodexDriver: ProviderDriver<CodexConfig> = {
   driverKind: DRIVER_KIND,
@@ -422,6 +465,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
     // One warm app-server per chat thread, kept between turns while every
     // spawn input is unchanged and recycled otherwise.
     const retained = new Map<string, Retained>();
+    // 03-1: each scope's leftover hook env files are swept once per driver start, at its first gated launch (sweepHookEnv keeps every
+    // file a live owner holds: another instance's, or another live Murage's).
+    const sweptScopes = new Set<string>();
     const closingProcs = new Set<Promise<boolean>>();
     const stuck = new Map<Retained, string>();
     const configuredIdleMinimum = Number(process.env.MURAGE_CODEX_SESSION_IDLE_MIN_MS);
@@ -444,7 +490,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       // A process that did not stop stays owned until it does.
       void done.then((stopped) => {
         closingProcs.delete(done);
-        if (!stopped) stuck.set(r, threadId);
+        // 03-1: the env file goes only with a process confirmed gone; one that would not stop keeps it (its hooks still run)
+        if (!stopped) stuck.set(r, threadId); else r.hookGate?.release();
       }, () => { closingProcs.delete(done); stuck.set(r, threadId); });
       return done;
     };
@@ -453,7 +500,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       const results = await Promise.all([...stuck].filter(([, owner]) => only === undefined || owner === only).map(async ([r]) => {
         killCliTree(r.child);
         const stopped = await awaitCliTreeStopped(r.child).catch(() => false);
-        if (stopped) stuck.delete(r);
+        if (stopped) { stuck.delete(r); r.hookGate?.release(); }
         return stopped;
       }));
       return !results.includes(false);
@@ -634,19 +681,24 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         const fluxProvider = codexFluxProviderFor(fluxMemory);
         const providerBinding = turn.providerRoute ? applyProviderRoute(DRIVER_KIND, env, turn.providerRoute) : null;
         // A Flux connection (a named provider route) carries the headers on its own table.
-        if (providerBinding?.modelProvider && turn.providerRoute?.preset === "flux") {
-          providerBinding.args.push(...codexHttpHeaderArgs(providerBinding.modelProvider, fluxMemory.headers));
-          logFluxMemoryHeaders(DRIVER_KIND, fluxMemory);
-        }
         // Cloud home: the launcher renders every provider table into config.toml from a typed
         // route and refuses `-c model_providers.*` (CLOUD-ENGINES-DESIGN.md 4.1). A home has no
-        // local model servers of its own; a Flux model rides the route's key variable.
+        // local model servers of its own; a Flux model rides the route's key variable, and the
+        // memory headers ride the route too (rendered as the table's http_headers).
         const cloudHome = process.env.MURAGE_CLOUD_ROLE === "home";
+        if (providerBinding?.modelProvider && turn.providerRoute?.preset === "flux") {
+          if (cloudHome) {
+            const rendered = cloudTurnRenderContents(env).route;
+            if (rendered) cloudTurnRender(env, "route", { ...rendered, headers: fluxMemory.headers });
+          } else providerBinding.args.push(...codexHttpHeaderArgs(providerBinding.modelProvider, fluxMemory.headers));
+          logFluxMemoryHeaders(DRIVER_KIND, fluxMemory);
+        }
         if (cloudHome && flux?.applied) {
           const key = env[FLUX_CODEX_ENV_KEY];
           delete env[FLUX_CODEX_ENV_KEY];
           env.MURAGE_PROVIDER_API_KEY = key;
-          cloudTurnRender(env, "route", { provider: FLUX_CODEX_PROVIDER, baseUrl: FLUX_RESPONSES_BASE, model: flux.model ?? "", apiKey: key ?? "", label: "Flux Router" });
+          // The decided table (flux, flux-off or flux-noinject) is the one thread/start selects.
+          cloudTurnRender(env, "route", { provider: fluxProvider, baseUrl: FLUX_RESPONSES_BASE, model: flux.model ?? "", apiKey: key ?? "", label: "Flux Router", headers: FLUX_CODEX_TABLE_HEADERS[fluxProvider] });
         }
         const appServerArgs = [
           "app-server",
@@ -1006,11 +1058,15 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         const gated = gatePlan.mode === "gated" && scopedHome !== null; // a gated plan always has its scope (thrown above otherwise)
         const hookToken = newHookToken();
         let hookGate: CodexHookGate | undefined = reuse?.hookGate;
+        if (gated && !sweptScopes.has(scopedHome!)) { sweptScopes.add(scopedHome!); sweepHookEnv(scopedHome!); }
         if (gated && !hookGate) {
           hookGate = new CodexHookGate();
-          await hookGate.listen();
+          hookGate.envPath = hookEnvPathOf(scopedHome!, hookGate.id);
+          try { await hookGate.listen(); } catch (error) { hookGate.close(); hookGate.release(); throw error; }
         }
-        const hookFiles = gated && hookGate ? writeHookFiles(scopedHome!, hookGate.path, hookToken) : null;
+        // 03-1: this process's own env file, named in its environment; a reused process rewrites only its own
+        const hookFiles = gated && hookGate ? writeHookFiles(scopedHome!, hookGate.path, hookToken, hookGate.envPath!) : null;
+        if (hookFiles && !reuse) env[HOOK_ENV_VAR] = hookFiles.envFile;
         // Windows: the hooks.json command is `<system cmd.exe> /d /v:off /c %MURAGE_CODEX_HOOK%` (codex-hook.ts), the same in cmd and
         // PowerShell; it expands to the quoted path of the scope's launcher (murage-hook.cmd, which sets ELECTRON_RUN_AS_NODE and runs
         // the script with MURAGE_CODEX_EXE, this program), and that value rides in this process's environment, which Codex hands each hook it runs.
@@ -1040,7 +1096,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             }, engineJob());
           }
         } catch (error) {
-          if (!reuse) hookGate?.close();
+          if (!reuse) { hookGate?.close(); hookGate?.release(); }
           throw error;
         }
         if (!reuse && hookGate) { const owned = hookGate; child.once("exit", () => owned.close()); }
@@ -1116,7 +1172,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           // a wedged app-server can accept stdin and never reply; without this
           // the handshake await hangs forever and the bot stays busy for good
           const timer = setTimeout(() => {
-            if (rpcPending.delete(id)) reject(new Error(codexRpcTimeoutMessage(method, timeoutMs, ENGINE)));
+            if (rpcPending.delete(id)) reject(new CodexRpcTimeout(codexRpcTimeoutMessage(method, timeoutMs, ENGINE)));
           }, timeoutMs);
           if (typeof timer.unref === "function") timer.unref();
           rpcPending.set(id, {
@@ -1148,6 +1204,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         killCliTree(child);
         return awaitCliTreeStopped(child).then((stopped) => {
           if (!stopped) stopping = undefined;
+          // 03-1: confirmed gone, so its env file goes; a held kill keeps it
+          else hookGate?.release();
           return stopped;
         });
       })();
@@ -1156,6 +1214,11 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       const stop = async () => {
         stopRequested = true;
         stopSignal.abort();
+        // Astra r2 #1: the turn's authority is revoked before the kill is awaited, so a held or failed kill leaves no allow path. The hook
+        // gate is disarmed (a decision still in flight replies deny, a new delivery is refused), every open ask is denied, and approval
+        // requests that arrive from here on are refused (handleServerRequest reads stopRequested).
+        hookGate?.disarm(hookToken);
+        for (const finish of [...asks.values()]) finish("deny", "Murage: the turn ended", "system");
         const stopped = await terminate();
         if (stopped) completeStoppedTurn?.();
         return stopped;
@@ -1166,7 +1229,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         if (ok && refusal.refused) return settle(false, incidentRaised ? "gate_incident" : "scope_unavailable");
         // Rule 68c: a refused turn never ends clean. A clean end on a gated process whose hook is not yet proven waits for the proof;
         // unproven, the refusal settles it.
-        if (ok && hookGate && !refusal.hookLive) {
+        // A user Stop kills the process: it is not a clean end of engine work, so it never waits for the proof (Astra r1 #2).
+        if (ok && hookGate && !refusal.hookLive && !(stopRequested && stopReason === "cancelled")) {
           if (!(await proveLiveness())) return;
           if (state.settled) return;
         }
@@ -1402,7 +1466,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       };
       if (hookGate) hookGate.arm({ token: hookToken, onSession: () => sessionSeen?.(), onPreTool });
       const handleServerRequest = (msg: any) => {
-        if (refusal.refused) return send({ jsonrpc: "2.0", id: msg.id, ...idleRefusal(String(msg.method)) });
+        if (refusal.refused || stopRequested) return send({ jsonrpc: "2.0", id: msg.id, ...idleRefusal(String(msg.method)) });
         const method = msg.method as string;
         const params = msg.params ?? {};
         const legacy = method === "execCommandApproval" || method === "applyPatchApproval";
@@ -1765,6 +1829,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
                 state.sawStreamDelta = false;
                 emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", origin: "engine", text: item.text });
               }
+              // QW Q3 (173): Codex asked and keeps working. The server shows the question card; no ask is open here,
+              // so the answer is the owner's next message (queued: Codex cannot be steered).
+              const asyncQuestions = fromCodexAsync(item);
+              if (asyncQuestions) emit({ ...base(threadId, turnId), type: "question.async", questions: asyncQuestions });
             } else if (item.type === "imageGeneration" && item.status !== "failed") {
               // Current Codex app-server returns the generated raster as
               // base64 `result` and may also expose a local `savedPath`. Use
@@ -2054,17 +2122,24 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         // "no rollout found for thread id …"; a 1.0.1 or earlier cursor lives in another root): ONE new
         // thread starts and the conversation the harness sent is replayed into it.
         let replayHistory = false;
+        // The selected model and provider: what a new thread starts with, what a resumed thread is asked to run on (03-2), and what
+        // every turn/start names. A Flux selection names the table whose headers match its audience: the headers belong to the table,
+        // and the audience may have changed since the thread started.
+        const selection = providerBinding ? { model: providerBinding.model, modelProvider: providerBinding.modelProvider } : decodeCodexSelection(turn.model);
+        const fluxSelected = Boolean(flux?.applied && !providerBinding && selection.modelProvider === FLUX_CODEX_PROVIDER);
+        if (fluxSelected) selection.modelProvider = fluxProvider;
         if (cursor) {
+          let resumed: any;
           try {
-            // A resumed Flux thread names its table again: the headers belong to the
-            // table, and the audience may have changed since the thread started.
-            const resumeSelection = !providerBinding ? decodeCodexSelection(turn.model) : null;
-            const resumeFlux = flux?.applied && resumeSelection?.modelProvider === FLUX_CODEX_PROVIDER;
             // A resumed thread is pinned again: it may have started under another policy or sandbox. Off a home the policy is the
             // one spelled for the installed Codex (gated: on-request behind the gate; legacy: the policy the driver always sent); a
             // Cloud home names the same codexPolicy the launcher renders as the effective one.
             const resumePolicy = process.env.MURAGE_CLOUD_ROLE === "home" ? { sandbox: codexPolicy.sandbox, approvalPolicy: codexPolicy.approval } : policy();
-            const resumed = await request("thread/resume", { threadId: cursor, ...resumePolicy, ...(resumeFlux ? { modelProvider: fluxProvider } : {}) });
+            resumed = await request("thread/resume", {
+              threadId: cursor, ...resumePolicy,
+              ...(selection.model ? { model: selection.model } : {}),
+              ...(selection.modelProvider ? { modelProvider: selection.modelProvider } : {}),
+            });
             if (cancelledBeforeStart()) return;
             codexThreadId = resumed?.thread?.id ?? cursor;
           } catch {
@@ -2073,14 +2148,31 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             baseline = undefined;
             replayHistory = true;
           }
+          // 03-2: the resumed thread is used only when its answer proves it runs on the chosen model (and provider, when one was named). The
+          // default selection names no model, so any answered model is taken. A thread that does not prove it is not used: the
+          // conversation goes to a new thread on the chosen model, replayed from the transcript, exactly as a failed resume.
+          if (codexThreadId) {
+            const verified = (!selection.model || resumed?.model === selection.model)
+              && (!selection.modelProvider || resumed?.modelProvider === selection.modelProvider);
+            if (verified) startedModel = typeof resumed?.model === "string" ? resumed.model : null;
+            else {
+              console.info(`codex resume thread=${threadId} model-mismatch=true`);
+              // A command is never replayed (replay is skipped for every engine command), so it must not open a new thread: it ends
+              // before anything is written and the conversation keeps its thread.
+              if (turn.engineCommand) {
+                emit({ ...base(threadId, turnId), type: "runtime.error", message: `The model for this conversation changed. Send a message first, then run /${turn.engineCommand.name} again.` });
+                void settle(false, "resume_model_changed");
+                return;
+              }
+              settledTotals.delete(threadId);
+              baseline = undefined;
+              replayHistory = true;
+              codexThreadId = null;
+            }
+          }
         }
         if (!codexThreadId) {
-          const selection = providerBinding ? { model: providerBinding.model, modelProvider: providerBinding.modelProvider } : decodeCodexSelection(turn.model);
-          // A Flux thread starts under the table whose headers match its audience.
-          if (flux?.applied && !providerBinding && selection.modelProvider === FLUX_CODEX_PROVIDER) {
-            selection.modelProvider = fluxProvider;
-            logFluxMemoryHeaders(DRIVER_KIND, fluxMemory);
-          }
+          if (fluxSelected) logFluxMemoryHeaders(DRIVER_KIND, fluxMemory);
           const started = await request("thread/start", {
             cwd: turn.cwd ?? (process.env.MURAGE_CLOUD_ROLE === "home" ? cloudEngineHome("codex") : homedir()),
             model: selection.model,
@@ -2110,7 +2202,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             if (!(await stop())) {
               // Not confirmed closed: the child stays owned, in the stuck-process registry,
               // which Stop, dispose and the next dispatch of this thread retry and wait on.
-              stuck.set({ child, warm, cred, conn, codexThreadId, closing: true, detachIdle: () => {} }, threadId);
+              stuck.set({ child, warm, cred, conn, codexThreadId, closing: true, detachIdle: () => {}, ...(hookGate ? { hookGate } : {}) }, threadId);
               console.warn(`codex close thread=${threadId} confirmed=false reason=credential clear failed`);
             }
             if (active.get(threadId)?.stop === stop) active.delete(threadId);
@@ -2219,6 +2311,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           // data URL is the variant that fits — `localImage` would hand codex
           // a path to re-open under its own sandbox, which is the read-tool
           // detour this change exists to remove.
+          // 03-2: the selected model on every turn (equal on a verified thread; covers a reused process should the warm key ever drop the model)
+          ...(selection.model ? { model: selection.model } : {}),
           input: [
             { type: "text", text: turnText },
             ...(skillInput ? [skillInput] : []),
@@ -2239,7 +2333,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           // (a Cloud home names codexPolicy's approval, as its thread/start and the launcher's render do)
           ...(process.env.MURAGE_CLOUD_ROLE === "home" ? (enforceApproval ? { approvalPolicy: codexPolicy.approval } : {})
             : gatePlan.mode === "gated" || enforceApproval ? { approvalPolicy: policy().approvalPolicy } : {}),
-        }, 60_000, (result) => {
+        }, turnStartTimeoutMs(), (result) => {
           // compaction answers `{}`; its first notification names the turn
           if (adoptFirstTurn) return;
           awaitingTurnStart = false;
@@ -2266,6 +2360,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         // A retired attempt's late rejection (an RPC timer after a close-path
         // relaunch) must neither report an error nor relaunch again.
         if (abandoned) return;
+        // G03-2: once turn/start is written, the turn is relaunched only when Codex ANSWERED that it did not take it (an error answer with
+        // nothing buffered and no ask open). A timeout says nothing, an ACK or a buffered notification says it ran: never sent again.
+        // Read before anything below clears them.
+        const submitted = turnStartSent && (e instanceof CodexRpcTimeout || codexTurnId !== null || earlyNotifications.length > 0 || asks.size > 0);
         // The gate could not be established (Rule 68): a structured owner-facing failure and no retry; the process goes with the turn.
         if (e instanceof ScopeUnavailableError) {
           if (!state.settled) {
@@ -2285,7 +2383,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           if (!state.settled) void settle(true, "cancelled");
           return;
         }
-        if (!state.settled && ownsProcess && !turn.prewarm && !needsAuth && verdict.transient && attempt < RETRY_MAX_ATTEMPTS - 1 && state.sawStreamDelta === false) {
+        if (!state.settled && ownsProcess && !turn.prewarm && !needsAuth && !submitted && verdict.transient && attempt < RETRY_MAX_ATTEMPTS - 1 && state.sawStreamDelta === false) {
           const delayMs = computeBackoff(attempt);
           attempt++;
           emit({

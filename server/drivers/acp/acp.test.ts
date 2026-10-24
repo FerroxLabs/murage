@@ -2126,7 +2126,11 @@ createInterface({ input: process.stdin }).on("line", line => {
     });
     expect(rows.find((row) => row.event === "turn_settled")).toMatchObject({ reason: "turn_failure" });
     // later cleanup appends; it does not rewrite the close. A Windows job still ends (and confirms empty) whatever the root left in it.
-    expect(rows.filter((row) => row.event === "stop_route_result").at(-1)).toMatchObject(
+    // The job route records its result only once stopWindowsJob has confirmed the job empty (procs.ts killCliTree), which can land
+    // after turn.completed, so wait for that row before reading the outcome instead of reading the file at turn.completed.
+    await expect.poll(() => lifecycleRows(threadId).some((row) => row.event === "stop_route_result"), { timeout: 10_000 }).toBe(true);
+    expect(rows).toEqual(lifecycleRows(threadId).slice(0, rows.length));
+    expect(lifecycleRows(threadId).filter((row) => row.event === "stop_route_result").at(-1)).toMatchObject(
       process.platform === "win32" && engineJob() ? { route: "windows_job", result: "succeeded" } : { route: "already_exited" },
     );
   });

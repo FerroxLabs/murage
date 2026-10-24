@@ -1,6 +1,8 @@
 import { readMemoryEvolutionPolicy, type MemoryEvolutionPolicy } from "./evolution-policy.ts";
 import { database } from "../database.ts";
-import { assertMemoryAccess, inMemoryAccessPass, type MemoryAccess } from "./policy.ts";
+import { assertMemoryAccess, inMemoryAccessPass, memoryAccessIsOwnerAudience, type MemoryAccess } from "./policy.ts";
+import { authorityStamp } from "./authority-epoch.ts";
+import { denyGeneration } from "./deny-read.ts";
 import { plausiblyReadable, readableMemoryRecord } from "./readable.ts";
 import { isLineageLimit } from "./replay-lineage.ts";
 import type { LineageAllowance } from "./lineage-allowance.ts";
@@ -22,6 +24,7 @@ const queryCache=new MemoryQueryCache<MemorySearchResult>();
 
 import { SEARCH_LIST_DEPTH, type MemorySearchInput, type MemorySearchResult, type RankedRef } from "./worker-protocol.ts";
 import { openMemoryCursor, sealMemoryCursor } from "./cursor.ts";
+import { maskFinancialIdentifiers } from "../../shared/financial-ids.ts";
 export { CURRENT_MEMORY } from "./eligibility.ts";
 /** Who is waiting: the recall a turn makes before it starts ("turn"), or a bot's own memory_search call ("tool"). */
 export type RecallCaller="turn"|"tool";
@@ -168,12 +171,18 @@ export async function searchMemory(query:string,access:MemoryAccess,bridge:Memor
     catch(error){if(isLineageLimit(error)){partial=true;return null;}throw error;}
     if(typeof read==="string")return null;
     const record=read.row;
-    return {text:String(record.text),scopeId:String(record.scope_id),assertion:String(record.assertion),state:String(record.state),pinned:record.owner_pinned===1,...read.sourceOutcome?{sourceOutcome:read.sourceOutcome}:{},
+    // masked at read like the bundle (bundle.ts hydrateInPass): an unscrubbed 1.0.3 row never hands a recall its digits
+    return {text:maskFinancialIdentifiers(String(record.text)),scopeId:String(record.scope_id),assertion:String(record.assertion),state:String(record.state),pinned:record.owner_pinned===1,...read.sourceOutcome?{sourceOutcome:read.sourceOutcome}:{},
       validFrom:Number(record.valid_from),validTo:record.valid_to===null?null:Number(record.valid_to),recordedAt:Number(record.created_at),
       evidence:read.evidence.map((handle,n)=>({...handle,occurredAt:read.occurredAt[n]}))};
   };
   const overTime=()=>performance.now()-serviceStarted>hydrationLimitMs;
-  const revisionStamp=()=>{const meta=database().prepare("SELECT data_revision,policy_revision,deletion_epoch FROM memory_meta WHERE id=1").get()!;return `${meta.data_revision}:${meta.policy_revision}:${meta.deletion_epoch}`;};
+  // A reader whose audience is not the owner is also judged on the lines its records rest on (disclosures.ts readerWithheldMessage), and
+  // a receipt revoke or a marker commit can withhold one without moving data, policy or epoch: its stamp carries the authority stamp
+  // (undefined counts as moved) and the deny generation too (XTHREAD-JUDGE R5). An owner audience keeps the three-part stamp.
+  const audienceReader=!memoryAccessIsOwnerAudience(access);
+  let unstamped=0;
+  const revisionStamp=()=>{const meta=database().prepare("SELECT data_revision,policy_revision,deletion_epoch FROM memory_meta WHERE id=1").get()!;const base=`${meta.data_revision}:${meta.policy_revision}:${meta.deletion_epoch}`;if(!audienceReader)return base;const authority=authorityStamp();const generation=denyGeneration(database());return `${base}|${authority===undefined||generation<0?`moved-${++unstamped}`:`${authority}|${generation}`}`;};
   let stampAtAccept:string|null=null;
   let revalidationCut=false;
   /** Read `refs` (the ones not yet read), a slice at a time. Stops, flagged partial, at the hydration limit. */

@@ -142,12 +142,16 @@
     "too-deep": "too many folders deep",
     "linked-folder": "a shortcut to a folder outside Murage's data folder, so its contents aren't in the backup",
     "path-too-long": "its path is too long for another computer to hold",
+    unrecognised: "kept in the backup as it is",
+    "old-copy": "an older copy of a settings file, which can hold keys; the current file is backed up",
   };
   const skippedLines = skipped => {
     if (!skipped || typeof skipped !== "object" || !Number.isSafeInteger(skipped.count) || skipped.count < 1 || !Array.isArray(skipped.items)) return [];
     const bots = skipped.bots && typeof skipped.bots === "object" ? skipped.bots : {};
     const groups = new Map();
+    const kept = [];
     for (const entry of skipped.items) {
+      if (entry && entry.reason === "unrecognised" && typeof entry.path === "string") { kept.push(entry.path); continue; }
       if (!entry || typeof entry.path !== "string" || !Object.hasOwn(SKIP_REASONS, entry.reason)) continue;
       const bot = /^workspaces\/([^/]+)\/(.+)$/.exec(entry.path);
       const where = bot ? (typeof bots[bot[1]] === "string" ? `${bots[bot[1]]}'s folder` : "a bot's folder") : "Murage's data folder";
@@ -156,7 +160,8 @@
       groups.get(where).push(`${shown} (${SKIP_REASONS[entry.reason]})`);
     }
     const lines = [...groups].map(([where, entries]) => `Skipped ${entries.length} ${entries.length === 1 ? "item" : "items"} in ${where}: ${entries.join(", ")}.`);
-    const listed = [...groups.values()].reduce((total, entries) => total + entries.length, 0);
+    if (kept.length) lines.push(`Kept in the backup, though Murage doesn't recognise ${kept.length === 1 ? "this item" : "these items"} in Murage's data folder: ${kept.join(", ")}.`);
+    const listed = [...groups.values()].reduce((total, entries) => total + entries.length, 0) + kept.length;
     if (skipped.count > listed) lines.push(`${lines.length ? "And" : "Skipped"} ${skipped.count - listed} more ${skipped.count - listed === 1 ? "item" : "items"} for the same reasons.`);
     if (lines.length) lines.push("Everything else was backed up.");
     return lines;

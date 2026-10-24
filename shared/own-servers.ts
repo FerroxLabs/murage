@@ -63,8 +63,8 @@ export const OWN_UNASKED: readonly OwnUnaskedRow[] = [
   {
     mount: "own:agents",
     tools: [
-      "project_propose", "propose_outcome", "propose_routine", "propose_routine_action", "request_bot_access", "request_credential",
-      "request_browser_connection", "project_done",
+      "project_propose", "propose_outcome", "propose_routine", "propose_routine_action", "request_bot_access", "request_credential", "ask_user", "show_widget", "update_widget",
+      "request_browser_connection", "project_done", "add_mcp_server",
     ],
     boundary: "each files a proposal the owner accepts in the app; nothing is granted, created, connected or signed off until then",
   },

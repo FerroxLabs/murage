@@ -1168,8 +1168,10 @@ def pasta_argv(turn_dir):
     return [PASTA, "--config-net", "--quiet", "--no-map-gw",
             "-t", "none", "-u", "none", "-U", "none", "-T", str(PASTA_HOST_PORT),
             # Verified on a real home: --dns-forward alone relays to the host
-            # stub (127.0.0.53, allowed for murage-turn by nft); adding -D
-            # 127.0.0.53 made every lookup fail.
+            # stub (127.0.0.53); adding -D 127.0.0.53 made every lookup
+            # fail. Since A2 nft does not let the turn reach the stub: the
+            # query is redirected by engine gid to that engine's synthetic
+            # DNS forwarder (murage-egress-proxy dns, 127.0.0.1:53NN).
             "--dns-forward", PASTA_DNS,
             "--", "/usr/bin/python3", "-I", "/usr/local/libexec/murage-turn-launch", "--pasta-child", turn_dir]
 
@@ -2402,11 +2404,109 @@ ENGINE_ENV_ALLOW = {
     "codex": frozenset({"OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL", "MURAGE_PROVIDER_API_KEY"}),
     # Grok Build runs on its own grok.com login in $GROK_HOME/auth.json; provider routing
     # on a Cloud home is refused server-side (grokRouteOnHome), so no route key is needed.
-    "grokAgent": frozenset(),
+    "grokAgent": frozenset({"GROK_CONFIG"}),
     "kimiAgent": frozenset({"KIMI_MODEL_NAME", "KIMI_MODEL_API_KEY", "KIMI_MODEL_BASE_URL", "KIMI_MODEL_PROVIDER_TYPE", "KIMI_MODEL_DISPLAY_NAME"}),
-    "opencodeGo": frozenset({"OPENCODE_API_KEY"}),
-    "fuigoAgent": frozenset({"FUIGO_API_KEY", "MURAGE_PROVIDER_API_KEY", "FUIGO_API_BASE_URL", "FUIGO_MODELS_BASE_URL", "FUIGO_ALLOW_UPSTREAM_HOSTS"}),
+    "opencodeGo": frozenset({"OPENCODE_API_KEY", "OPENCODE_CONFIG_CONTENT"}),
+    "fuigoAgent": frozenset({"FUIGO_API_KEY", "MURAGE_PROVIDER_API_KEY", "FUIGO_API_BASE_URL", "FUIGO_MODELS_BASE_URL", "FUIGO_ALLOW_UPSTREAM_HOSTS", "FUIGO_CONFIG"}),
 }
+
+# 1.0.4 audit 11-2: the two inline config overlays the drivers use to put the Flux memory
+# headers (opt-out, non-owner isolation) on the engine's Flux requests. Unlike every other
+# allowed name they carry a document, not a path or a credential, so each is accepted only
+# when its value parses to exactly the shape the driver builds (flux-memory-headers.ts
+# fuigoConfigOverlay / opencodeConfigOverlay; opencode-go.ts isolateOpenCodeFromPersonalSetup):
+# a JSON object whose only content is the x-flux-memory-* request headers (and, for OpenCode,
+# MCP servers switched off). It cannot carry a key, token, URL, command or path: those reach
+# the engine as FUIGO_API_KEY / OPENCODE_API_KEY (already allowed above) or are rendered by
+# the launcher. Anything else is dropped like any unlisted name, never passed on.
+FLUX_MEMORY_HEADERS = {"x-flux-memory-app": re.compile(r"murage"), "x-flux-memory-capture": re.compile(r"off"), "x-flux-memory-inject": re.compile(r"off"),
+                       # flux-memory-headers.ts SPACE_CHARSET / FLUX_READ_LIMIT: one space string, and at most 8 joined by ","
+                       "x-flux-memory-space": re.compile(r"[A-Za-z0-9._:#-]{1,128}"),
+                       "x-flux-memory-read": re.compile(r"[A-Za-z0-9._:#-]{1,128}(,[A-Za-z0-9._:#-]{1,128}){0,7}")}
+INLINE_CONFIG_MAX = 8192
+# The OpenCode turn permission set is carried once top level and once per OpenCode agent (opencode-go.ts).
+OPENCODE_CONFIG_MAX = 65536
+
+def _no_duplicate_keys(pairs):
+    out = {}
+    for key, value in pairs:
+        if key in out:
+            raise ValueError("duplicate key")
+        out[key] = value
+    return out
+
+def _only(value, *keys):
+    """value is a dict whose keys are exactly `keys`."""
+    return isinstance(value, dict) and set(value) == set(keys)
+
+def _memory_headers(value):
+    return isinstance(value, dict) and "x-flux-memory-app" in value and all(
+        name in FLUX_MEMORY_HEADERS and isinstance(text, str) and FLUX_MEMORY_HEADERS[name].fullmatch(text) for name, text in value.items())
+
+def _inline_config(value, limit=INLINE_CONFIG_MAX):
+    if len(value.encode("utf-8", "surrogatepass")) > limit:
+        return None
+    try:
+        return json.loads(value, object_pairs_hook=_no_duplicate_keys)
+    except (ValueError, RecursionError):
+        return None
+
+def fuigo_config_value(value):
+    """{"models": {"extra_headers": {x-flux-memory-*: ...}}}"""
+    doc = _inline_config(value)
+    return _only(doc, "models") and _only(doc["models"], "extra_headers") and _memory_headers(doc["models"]["extra_headers"])
+
+# applyOpenCodeTurnPermission (opencode-go.ts) writes the turn's permission set on every OpenCode spawn: everything that
+# acts asks, and only these read-only tools run unasked. The validator accepts that shape and nothing wider.
+OPENCODE_UNASKED_TOOLS = frozenset({"glob", "grep", "list", "todoread", "todowrite"})
+OPENCODE_AGENT_NAMES = frozenset({"build", "plan", "general", "explore"})
+OPENCODE_TOOL_NAME = re.compile(r"[A-Za-z0-9_.*-]{1,64}")
+
+def _opencode_permission(perm):
+    if not isinstance(perm, dict) or perm.get("*") != "ask" or len(perm) > 256:
+        return False
+    for tool, rule in perm.items():
+        if not isinstance(tool, str) or not OPENCODE_TOOL_NAME.fullmatch(tool):
+            return False
+        if tool == "read":
+            if not isinstance(rule, dict) or rule.get("*") != "allow" or len(rule) > 256 or not all(
+                    isinstance(k, str) and 0 < len(k) <= 256 and v in ("ask", "allow") for k, v in rule.items()):
+                return False
+        elif rule != ("allow" if tool in OPENCODE_UNASKED_TOOLS else "ask"):
+            return False
+    return True
+
+def _opencode_agents(agent, perm):
+    return isinstance(agent, dict) and bool(agent) and set(agent) <= OPENCODE_AGENT_NAMES and all(
+        _only(entry, "permission") and entry["permission"] == perm for entry in agent.values())
+
+def opencode_config_value(value):
+    """{"provider": {"flux": {"options": {"headers": {x-flux-memory-*: ...}}}}} plus, optionally,
+    "mcp": {name: {"enabled": false}}: the owner's MCP servers switched off, which only narrows.
+    The turn's permission set (permission, agent, default_agent) rides along as one unit."""
+    doc = _inline_config(value, OPENCODE_CONFIG_MAX)
+    # The provider block is optional: isolateOpenCodeFromPersonalSetup (opencode-go.ts) writes {"mcp": ...} alone when no
+    # memory overlay was built. A document with neither a provider nor a server to switch off carries nothing and is refused.
+    if isinstance(doc, dict) and "permission" in doc:
+        perm = doc["permission"]
+        if not (_opencode_permission(perm) and _opencode_agents(doc.get("agent"), perm) and doc.get("default_agent") == "build"):
+            return False
+        doc = {key: item for key, item in doc.items() if key not in ("permission", "agent", "default_agent")}
+        if not doc:
+            return True
+    if not isinstance(doc, dict) or not set(doc) <= {"provider", "mcp"} or not (doc.get("provider") or doc.get("mcp")):
+        return False
+    if "provider" in doc:
+        provider = doc["provider"]
+        if not (_only(provider, "flux") and _only(provider["flux"], "options") and _only(provider["flux"]["options"], "headers")
+                and _memory_headers(provider["flux"]["options"]["headers"])):
+            return False
+    mcp = doc.get("mcp", {})
+    return isinstance(mcp, dict) and all(re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", name) and _only(entry, "enabled") and entry["enabled"] is False for name, entry in mcp.items())
+
+# Grok Build shares Fuigo's shell: grok.ts applyFluxMemory builds GROK_CONFIG with the same
+# fuigoConfigOverlay, so it gets the same validator, for this engine only (1.0.4 audit 11-2 follow-up).
+ENGINE_ENV_VALUE = {("fuigoAgent", "FUIGO_CONFIG"): fuigo_config_value, ("grokAgent", "GROK_CONFIG"): fuigo_config_value, ("opencodeGo", "OPENCODE_CONFIG_CONTENT"): opencode_config_value}
 # Pinned per engine, relative to the engine home when the value starts with "/". Each
 # name was found in the shipped binary or its documentation (design note).
 ENGINE_ENV_PIN = {
@@ -2443,7 +2543,7 @@ PATH_NAME_SHAPE = re.compile(r"(HOME|DIR|DIRS|PATH|FILE|FILES|ROOT)($|_)|CONFIG|
 
 def check_env_allowlist(table):
     for engine, names in table.items():
-        bad = sorted(name for name in names if PATH_NAME_SHAPE.search(name))
+        bad = sorted(name for name in names if PATH_NAME_SHAPE.search(name) and (engine, name) not in ENGINE_ENV_VALUE)
         if bad:
             raise ValueError("Cloud engine allowlist for " + engine + " names a path variable: " + " ".join(bad))
 
@@ -2481,7 +2581,12 @@ def engine_environment(engine, home, proposal, scratch=()):
     for key, value in proposal.items():
         if key in pinned:
             continue
-        if key in allowed and not path_shaped_value(key, value):
+        check = ENGINE_ENV_VALUE.get((engine, key))
+        if check and key in allowed and not check(value):
+            # Present but malformed: the driver meant a memory overlay, so running without it would
+            # drop the opt-out. Refuse the turn; name only, never the value (Fable follow-up 2).
+            raise Refusal("Cloud engine environment %s is malformed" % key)
+        if key in allowed and (check(value) if check else not path_shaped_value(key, value)):
             env[key] = value
         else:
             dropped.append(key)
@@ -2569,7 +2674,7 @@ RENDER_PARTS = {
     "opencodeGo": frozenset({"route"}),
     "fuigoAgent": frozenset({"route", "memoryTools"}),
 }
-ROUTE_KEYS = frozenset({"provider", "baseUrl", "model", "apiKey", "protocol", "contextSize", "label", "models"})
+ROUTE_KEYS = frozenset({"provider", "baseUrl", "model", "apiKey", "protocol", "contextSize", "label", "models", "headers"})
 STANZA_KEYS = frozenset({"proxy", "socket", "server", "url", "env", "ask"})
 # Template env_key names: each must be one the request can deliver (design 5.2).
 TEMPLATE_ENV_KEYS = {"codex": ("MURAGE_PROVIDER_API_KEY",), "fuigoAgent": ("MURAGE_PROVIDER_API_KEY",)}
@@ -2633,6 +2738,11 @@ def validate_route(engine, route):
         if not shaped(LABEL_SHAPE, route["label"]):
             raise Refusal("Cloud turn render route label is not allowed")
         out["label"] = route["label"]
+    if "headers" in route:
+        # The Flux Memory headers of the decided Codex provider table, rendered as its http_headers (Codex only).
+        if engine != "codex" or not _memory_headers(route["headers"]):
+            raise Refusal("Cloud turn render route headers are not allowed")
+        out["headers"] = dict(route["headers"])
     if "models" in route:
         models = route["models"]
         if engine != "opencodeGo" or not isinstance(models, list) or not 1 <= len(models) <= 64 or not all(model_id(m) for m in models) or len(set(models)) != len(models):
@@ -2928,6 +3038,8 @@ def codex_config_text(render):
     if route:
         text += "[model_providers." + route["provider"] + "]\nname = " + toml_string(route.get("label", "Selected provider")) + "\nbase_url = " + toml_string(route["baseUrl"]) + \
             "\nwire_api = \"responses\"\nenv_key = \"MURAGE_PROVIDER_API_KEY\"\n"
+        if route.get("headers"):
+            text += "http_headers = { " + ", ".join(toml_string(k) + " = " + toml_string(v) for k, v in sorted(route["headers"].items())) + " }\n"
     for name, stanza in render["mcp"].items():
         row = MCP_PROXIES[stanza["proxy"]]
         text += "[mcp_servers." + name + "]\n"
@@ -3323,7 +3435,7 @@ WORKSPACE_DIR = Shape("WORKSPACE_DIR", workspace_dir, path=True)
 CODEX_OVERRIDES = {
     "features.browser_use": "false", "features.browser_use_external": "false", "features.computer_use": "false",
     "features.shell_tool": "false", "features.apps": "false", "web_search": '"disabled"',
-    # codex.ts: Murage fences what a bot remembers, so Codex's own memories stay off on every turn.
+    # codex.ts 658: Murage fences what a bot remembers, so Codex's own memories stay off (this value only).
     "features.memories": "false",
     "plugins": '{ "browser@openai-bundled" = { enabled = false }, "computer-use@openai-bundled" = { enabled = false }, "unified-computer-use@openai-bundled" = { enabled = false } }',
 }
@@ -3343,6 +3455,15 @@ class ArgvRule:
         self.flags, self.required, self.repeat, self.literals, self.tail, self.first = dict(flags), tuple(required), frozenset(repeat), tuple(literals), tuple(tail), first
 
 PERMISSION_MODES = one_of("default", "bypassPermissions")
+
+# grok.ts grokPluginStub: <tmpdir>/murage-grok-isolation-<6 mkdtemp chars>/<plugin name>, the name being
+# PLUGIN_NAME there. Anchored, no "..", one level under the stub directory. Only Grok 1.0.50+ with a personal
+# plugin emits it (the image installs 1.0.52); the stub lives in the server's tmpdir, so a turn sandbox may not
+# even see it, but the exact shape is accepted for parity with the driver and nothing broader.
+GROK_PLUGIN_STUB = re.compile(r"/tmp/murage-grok-isolation-[A-Za-z0-9]{6}/(?!\.\.)[A-Za-z0-9][A-Za-z0-9._-]{0,127}", re.ASCII)
+def grok_plugin_stub(value, render):
+    return GROK_PLUGIN_STUB.fullmatch(value) is not None and ".." not in value
+GROK_PLUGIN_DIR = Shape("grok plugin stub", grok_plugin_stub, path=True)
 ARGV_RULES = {
     # claude.ts 1427-1871
     "claudeAgent": ArgvRule({
@@ -3355,9 +3476,11 @@ ARGV_RULES = {
     }, required=("-p", "--output-format", "--input-format", "--verbose", "--include-partial-messages", "--strict-mcp-config"), repeat=("--add-dir",)),
     # codex.ts 232-250, 516-531; routes and MCP servers are rendered, never -c
     "codex": ArgvRule({"-c": CODEX_C}, repeat=("-c",), literals=("app-server",), first="app-server"),
-    # grok.ts 248-257; spawnArgs always sends --no-memory (Murage owns persistent memory) and, on a CLI 1.x, --no-leader
-    "grokAgent": ArgvRule({"--permission-mode": PERMISSION_MODES, "--no-memory": None, "--no-leader": None, "-m": MODEL_ID, "--reasoning-effort": EFFORT},
-                          required=("--permission-mode",), literals=("agent", "stdio"), tail=("stdio",)),
+    # grok.ts 248-257, 438 (--no-memory: Murage owns persistent memory), 373-385 (--no-leader; --plugin-dir stub per personal plugin)
+    "grokAgent": ArgvRule({"--permission-mode": PERMISSION_MODES, "--no-memory": None, "--no-leader": None, "--plugin-dir": GROK_PLUGIN_DIR,
+                           "-m": MODEL_ID, "--reasoning-effort": EFFORT},
+                          # both flags required: scopeGrokHome (applyMountEnv) rejects an unknown or <1.0.50 CLI before spawn, so spawnArgs always emits both on a home
+                          required=("--permission-mode", "--no-memory", "--no-leader"), repeat=("--plugin-dir",), literals=("agent", "stdio"), tail=("stdio",)),
     # kimi.ts 573-576
     "kimiAgent": ArgvRule({"-m": MODEL_ID}, literals=("acp",), tail=("acp",)),
     # opencode-go.ts: exactly ["acp"]
@@ -4524,7 +4647,9 @@ def turn_mount_args(engine, mounts, home, cwd, command, args, render=None, scrat
     for path in shadows:
         argv += ["--remount-ro", path]
     # The host stub resolver (127.0.0.53) does not exist inside the turn's own
-    # netns; pasta forwards PASTA_DNS to it.
+    # netns; pasta forwards PASTA_DNS to it, and murage-egress.nft redirects that
+    # query (by engine gid) to the per-engine synthetic DNS forwarder, never the stub.
+    # Exactly one nameserver line, no search line (no suffix expansion).
     blobs["resolv"] = "nameserver " + PASTA_DNS + "\n"
     argv += ["--ro-bind-data", FD_TOKEN + "resolv", "/etc/resolv.conf"]
     argv += ["--chdir", cwd, "--", "/usr/bin/python3", "-I", "/usr/local/libexec/murage-turn-launch", "--child", command] + args

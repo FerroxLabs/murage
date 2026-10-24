@@ -19,6 +19,7 @@ import { PIP_ALL_KINDS_SQL, isPipOwnerKind, pipRenderId, pipTierOf, type PipTier
 import { observedReservation, pipAttribution, pipKindLabel, reinforcedAtOf, selfSlotOrder, sentenceEnds } from "./pip-render.ts";
 import { turnTrace } from "../turn-trace.ts";
 import { scopeRow } from "./scope-id.ts";
+import { maskFinancialIdentifiers } from "../../shared/financial-ids.ts";
 
 // Moved to checkpoints.ts (replay-lineage.ts reads it without importing this module).
 export { supersededThreadCheckpoint };
@@ -37,6 +38,9 @@ export interface BoundedMemoryBundle extends MemoryBundle {
   /** Owner pins left out because they rest on a reply bots no longer see
    * (pinRestsOnWithheldReply); the caller tells the owner. */
   withheldPins?: ReadonlyArray<{id: string; version: number}>;
+  /** Owner pins left out because together they do not fit this model's share (more than the handles, or more bytes than the budget),
+   * trailing ones first (1.0.4). The turn runs without them; the caller tells the owner once per thread. */
+  droppedPins?: ReadonlyArray<{id: string; version: number}>;
   /** Owner-only: how many owner-authored continuity rows this bundle carried of
    * those the bot has (PIP A7). Never part of `text`. Present only when the
    * bot's Continuity switch was on for this build. */
@@ -75,8 +79,14 @@ function hydrateInPass(id: string, version: number, access: MemoryAccess, allowS
   const read = readableMemoryRecord(id, version, access, { ...options, mode: allowSuperseded ? "disclosed" : "current" });
   if (typeof read === "string") throw new Error(read);
   const {row, details, evidence, sourceOutcome} = read;
+  return bundleRecordOf(id, version, row, details, evidence, sourceOutcome);
+}
+/** The BundleRecord a stored row becomes: the one constructor hydration and the Pin-time measure (assertOwnerPinsFit) share, so both
+ * render the same line (attribution, kind label, pin mark). */
+function bundleRecordOf(id: string, version: number, row: Record<string, unknown>, details: {partition?: unknown; confidence_basis?: unknown} | undefined, evidence: MemoryEvidenceHandle[], sourceOutcome: "failed" | undefined): BundleRecord {
   const pipTier=details?.partition==="identity"?pipTierOf(details.confidence_basis):undefined;
-  return {id,version,scopeId:String(row.scope_id),text:String(row.text),assertion:String(row.assertion),pinned:row.owner_pinned===1,kind:String(row.kind),...(details?.partition==="identity"?{identityBasis:String(details.confidence_basis??"Unverified identity context")}:{ }),...(pipTier?{pipTier}:{}),...(pipTier&&String(details!.confidence_basis).includes("imported from ")?{pipImported:true as const}:{}),...(sourceOutcome?{sourceOutcome}:{}),evidence};
+  // Masked at read too, so a row the scrub has not reached yet never hands an engine its digits (scrub-pass.ts).
+  return {id,version,scopeId:String(row.scope_id),text:maskFinancialIdentifiers(String(row.text)),assertion:String(row.assertion),pinned:row.owner_pinned===1,kind:String(row.kind),...(details?.partition==="identity"?{identityBasis:String(details.confidence_basis??"Unverified identity context")}:{ }),...(pipTier?{pipTier}:{}),...(pipTier&&String(details!.confidence_basis).includes("imported from ")?{pipImported:true as const}:{}),...(sourceOutcome?{sourceOutcome}:{}),evidence};
 }
 
 /** Engine-facing rendering: attributed remembered words only. Record ids, scopes
@@ -131,6 +141,35 @@ function tokens(text: string) { return Buffer.byteLength(memoryRequestPrefix(tex
  * pays once. It is not memory: the share records may use sits above it. */
 export const MEMORY_FRAME_TOKENS = tokens([MEMORY_REFERENCE_PREAMBLE, MEMORY_REFERENCE_OPEN, MEMORY_REFERENCE_CLOSE].join("\n"));
 
+/** The share of the context remembered words may use above the frame on every default engine (a context of 20,480 or more). */
+export const PIN_SHARE_DEFAULT = 2048;
+/** The bundle's budget for a context: the frame plus a tenth of the context, at most PIN_SHARE_DEFAULT. */
+export function pinBudget(available = 20480): number { return MEMORY_FRAME_TOKENS + Math.min(PIN_SHARE_DEFAULT, Math.floor(available / 10)); }
+
+/** A pinned row as the bundle would render it, read straight from the store (the owner's view: no reader rules, evidence is not rendered). */
+function measuredPinRecord(db: ReturnType<typeof database>, id: string, version: number): BundleRecord {
+  const row = db.prepare("SELECT * FROM memory_records WHERE id=? AND version=?").get(id, version) as Record<string, unknown>;
+  const details = db.prepare("SELECT partition,confidence_basis FROM memory_record_details WHERE record_id=? AND record_version=?").get(id, version) as {partition?: unknown; confidence_basis?: unknown} | undefined;
+  let sourceOutcome: "failed" | undefined;
+  if (row.kind === "source" && db.prepare("SELECT 1 FROM memory_evidence e JOIN memory_sources s ON s.id=e.source_id WHERE e.record_id=? AND e.record_version=? AND s.speaker='tool' AND s.outcome='failed' LIMIT 1").get(id, version)) sourceOutcome = "failed";
+  return bundleRecordOf(id, version, row, details, [], sourceOutcome);
+}
+/** How many bytes the active owner pins of a scope take above the frame, rendered exactly as the bundle renders them, and the share
+ * every default engine gives them. */
+export function ownerPinUse(db: ReturnType<typeof database>, scopeId: string): {used: number; allowed: number} {
+  const rows = db.prepare(`SELECT id,version FROM memory_records WHERE state='active' AND owner_pinned=1 AND scope_id=? AND kind NOT IN ${PIP_ALL_KINDS_SQL} ORDER BY id,version`).all(scopeId);
+  const records = rows.map(row => measuredPinRecord(db, String(row.id), Number(row.version)));
+  return {used: records.length ? tokens(render(records)) - MEMORY_FRAME_TOKENS : 0, allowed: PIN_SHARE_DEFAULT};
+}
+/** Pin time (1.0.4): run INSIDE the writer's transaction after the write, so a refusal rolls it back. The owner pins of the scope must
+ * fit the default-engine share; a smaller local model leaves the trailing ones out at dispatch instead (droppedPins). `before` is the
+ * scope's use measured before an edit of words that keep their pin: an edit that does not grow them is never refused, so an install
+ * already over the share can still shorten a pin. */
+export function assertOwnerPinsFit(db: ReturnType<typeof database>, scopeId: string, before?: number): void {
+  const {used, allowed} = ownerPinUse(db, scopeId);
+  if (used > allowed && (before === undefined || used > before)) throw Object.assign(new Error(`MEMORY_PIN_BUDGET: ${used}/${allowed}`), {status: 409, used, allowed});
+}
+
 /** No tokenizer dependency: UTF-8 bytes conservatively bound tokens, including metadata. Recall rests on replies' verdicts: its lineage work is
  * paid from `options.allowance` (replay-lineage.ts LineageAllowance), a REQUIRED option. */
 export async function buildMemoryBundle(query: string, access: MemoryAccess, bridge: MemorySearchBridge, options: {allowance: LineageAllowance; availableContextTokens?: number; signal?: AbortSignal; excludeMessageIds?: readonly string[]; excludeSourceIds?: readonly string[]; evolutionPolicy?:MemoryEvolutionPolicy;
@@ -156,7 +195,7 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
   // fixed frame. The frame grew past 1.3 KB (MEMJSON2, 90891899); counted in
   // the share it left ~600 bytes at best and none below a ~14k context, where
   // any owner pin refused every turn with MEMORY_PIN_OVERFLOW.
-  const budget = MEMORY_FRAME_TOKENS + Math.min(2048,Math.floor(available/10));
+  const budget = pinBudget(available);
   const db = database();
   // Do not prefilter stale pins: losing their evidence is a mandatory dispatch failure.
   // A room member reaches its own bot scope, but never its owner-private
@@ -181,8 +220,10 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
     if (!pinRestsOnWithheldReply(allowance,id,version,options.withheldMessage)) return true;
     withheldPins.push({id,version}); return false;
   });
-  // More pins than handles cannot fit any budget either; name the real limit.
-  if (deliverable.length > MEMORY_HANDLE_LIMIT) throw new Error("MEMORY_PIN_OVERFLOW: curate owner pins or increase available context before dispatch");
+  // 1.0.4: pins past the handle limit or the budget are left out, trailing ones first, and the owner is told (droppedPins); the turn
+  // still runs. An install already over the share after the upgrade, or a small local model, keeps answering.
+  const droppedPins: Array<{id: string; version: number}> = [];
+  for (const row of deliverable.splice(MEMORY_HANDLE_LIMIT)) droppedPins.push({id:String(row.id),version:Number(row.version)});
   const pinned: BundleRecord[] = [];
   inMemoryAccessPass(() => {
     for (const row of deliverable) {
@@ -197,7 +238,9 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
       }
     }
   });
-  if (tokens(render(pinned)) > budget) throw new Error("MEMORY_PIN_OVERFLOW: curate owner pins or increase available context before dispatch");
+  const overBudget: Array<{id: string; version: number}> = [];
+  while (pinned.length && tokens(render(pinned)) > budget) { const record = pinned.pop()!; overBudget.unshift({id:record.id,version:record.version}); }
+  droppedPins.unshift(...overBudget);
   const selected = [...pinned], identity: BundleRecord[] = [], checkpoint: BundleRecord[] = [], evidence: BundleRecord[] = [];
   let degradedReason: string | undefined;
   const add = (record: BundleRecord, target: BundleRecord[], ceiling = budget) => {
@@ -509,7 +552,7 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
   // Not part of the model text: the owner is told how much of it was brought.
   const continuity = options.continuity && !room ? {brought: identity.filter(record => isPipOwnerKind(record.kind)).length, total: continuityTotal} : undefined;
   const sourceVersions = [...new Map(selected.flatMap(r=>r.evidence).map(e=>[JSON.stringify([e.sourceId,e.revision]),{id:e.sourceId,revision:e.revision}])).values()];
-  const bundle: BoundedMemoryBundle = {evolutionPolicyRevision:evolutionPolicy.revision,bundleId:randomUUID(),text,policyRevision:access.policyRevision,deletionEpoch:access.deletionEpoch,tokenCount:tokens(text),recordVersions:selected.map(r=>({id:r.id,version:r.version})),sourceVersions,pinned,identity,checkpoint,evidence,...continuity?{continuity}:{},...degradedReason?{degradedReason}:{},...withheldPins.length?{withheldPins:Object.freeze(withheldPins.map(pin=>Object.freeze({...pin})))}:{},...recallPartial?{recallPartial:true as const}:{}};
+  const bundle: BoundedMemoryBundle = {evolutionPolicyRevision:evolutionPolicy.revision,bundleId:randomUUID(),text,policyRevision:access.policyRevision,deletionEpoch:access.deletionEpoch,tokenCount:tokens(text),recordVersions:selected.map(r=>({id:r.id,version:r.version})),sourceVersions,pinned,identity,checkpoint,evidence,...continuity?{continuity}:{},...degradedReason?{degradedReason}:{},...withheldPins.length?{withheldPins:Object.freeze(withheldPins.map(pin=>Object.freeze({...pin})))}:{},...droppedPins.length?{droppedPins:Object.freeze(droppedPins.map(pin=>Object.freeze({...pin})))}:{},...recallPartial?{recallPartial:true as const}:{}};
   // Keep an immutable original across async transport and prevent caller-forged bundles.
   for (const record of selected) { for (const handle of record.evidence) Object.freeze(handle); Object.freeze(record.evidence); Object.freeze(record); }
   for (const row of bundle.recordVersions) Object.freeze(row);

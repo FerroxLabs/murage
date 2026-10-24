@@ -869,7 +869,7 @@ export function GroupCall({
     for (const message of fresh) spokenIds.current.add(message.id);
 
     const replies = fresh.filter(
-      (message) => message.role === "bot" && message.kind === "text" && message.text?.trim(),
+      (message) => message.role === "bot" && message.kind === "text" && !message.widget && message.text?.trim(),
     );
     for (const reply of replies) {
       const member = members.find((candidate) => candidate.id === reply.from?.botId);

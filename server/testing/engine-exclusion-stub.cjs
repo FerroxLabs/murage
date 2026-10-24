@@ -8,12 +8,19 @@
 "use strict";
 const fs = require("node:fs");
 
+// $MURAGE_TEST_EXTRA_PROCESSES (JSON, a list of processes): more processes the machine runs, for a test whose deletion runs in a worker
+// thread (a worker takes the environment it was started with). Unset or unreadable: none.
+const extraProcesses = () => {
+  try { const list = JSON.parse(process.env.MURAGE_TEST_EXTRA_PROCESSES || "[]"); return Array.isArray(list) ? list : []; } catch { return []; }
+};
+
 module.exports = {
   lock: () => true,
   // a world with no engine running: only this process and its parent, which any complete list holds (engine-closed.ts refuses a list without them)
   processes: () => [
     { pid: process.pid, ppid: process.ppid, mine: true, uid: typeof process.getuid === "function" ? process.getuid() : null, start: 1, comm: "node", exe: process.execPath, argv: [process.execPath, "test"] },
     { pid: process.ppid, ppid: 1, mine: true, uid: typeof process.getuid === "function" ? process.getuid() : null, start: 1, comm: "test-parent", exe: "/usr/bin/test-parent", argv: ["test-parent"] },
+    ...extraProcesses(),
   ],
   // never over an existing name: a file is linked then unlinked (atomic and refusing to replace), a folder checked then renamed
   renameNoReplace: (from, to) => {

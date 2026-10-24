@@ -35,6 +35,7 @@ import {
   type QuestionSpec,
 } from "../../question-normalize.ts";
 import { QUESTION_TIMEOUT_MS } from "../../../shared/questions.ts";
+import { CURSOR_ASK_QUESTION, GROK_ASK_USER_QUESTION, reservedQuestionText, type AcpQuestionMethod } from "./question-methods.ts";
 import {
   folderTrustDecision,
   folderTrustQuestion,
@@ -721,6 +722,21 @@ export function acpEngineErrorKind(data: unknown): string | undefined {
   return typeof kind === "string" && /^[a-z][a-z0-9_]{0,63}$/.test(kind) ? kind : undefined;
 }
 
+/** The engine's own upper-case error code (`QUOTA_EXCEEDED`), read from the RPC error's `code`. */
+export function acpEngineErrorCode(error: unknown): string | undefined {
+  const code = error && typeof error === "object" ? (error as { code?: unknown }).code : undefined;
+  return typeof code === "string" && /^[A-Z][A-Z0-9_]{2,63}$/.test(code) ? code : undefined;
+}
+
+/** A reset time the engine reported as data (`error.data.resets_at` / `resets_in_seconds`), as epoch ms. */
+export function acpEngineLimitResetsAt(data: unknown, now = Date.now()): number | undefined {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return undefined;
+  const { resets_at: at, resets_in_seconds: inSeconds } = data as { resets_at?: unknown; resets_in_seconds?: unknown };
+  if (typeof at === "number" && Number.isFinite(at) && at > 0) return at < 1e12 ? at * 1000 : at;
+  if (typeof inSeconds === "number" && Number.isFinite(inSeconds) && inSeconds >= 0) return now + inSeconds * 1000;
+  return undefined;
+}
+
 const ACP_DIAGNOSTIC_METHODS:ReadonlySet<string> = new Set(DIAGNOSTIC_RPC_METHODS);
 
 /** Preserve diagnostic facts without copying response bodies, requests or URLs. */
@@ -829,7 +845,7 @@ export interface AcpConfig {
    *  default resolved to on upgrade (owner decision O12). */
   profileOrigin?: "sticky";
   /** OpenClaw only: the isolated agent this instance runs
-   *  (`openclaw acp --session agent:<agent>:main`). Decoded by the support's
+   *  (`openclaw acp --session agent:<agent>:murage-...`). Decoded by the support's
    *  `decodeExtra`; see server/openclaw-profiles.ts. */
   agent?: string;
 }
@@ -919,6 +935,9 @@ export interface AcpSupport {
    *  the CLI-native id `resolveTurnModel` settled on; `ctx.requestedModel` is
    *  the id the picker asked for (a `host::model` local pick keeps its host
    *  only there), for a driver whose argv has to differ for a local turn. */
+  /** A turn that resets the session (edit, rewind, memory revocation) runs this before the spawn, for an engine whose
+   *  conversation lives outside the process and is keyed by something the engine reuses (OpenClaw's gateway key). */
+  onSessionReset?(turn: SendTurnInput): void;
   spawnArgs(config: AcpConfig, turn: SendTurnInput, ctx?: { requestedModel?: string; folderTrusted?: boolean; env?: Record<string, string | undefined>; cliVersion?: string; mcpServerNames?: string[] }): string[];
   /** spawnArgs needs `ctx.cliVersion` (a flag that only some versions accept):
    *  the core probes `--version` once before the first spawn when no snapshot
@@ -975,13 +994,39 @@ export interface AcpSupport {
     env: Record<string, string | undefined>,
     ctx: { decision: import("../../flux-memory-headers.ts").FluxMemoryDecision; providerRoute?: import("../../provider-routing.ts").ProviderTurnRoute; model?: string },
   ): void;
+  /** The engine sends this turn to Flux even though the pick is not a `flux-*` id (Fuigo hands its
+   *  Flux key to every cloud model). Such a turn carries the Flux Memory headers too. */
+  reachesFlux?(model: string | undefined, env: Record<string, string | undefined>): boolean;
   /** An engine whose header carrier is silently ignored by older builds names
    *  the lowest version that honours it. A turn whose headers say "off" is
    *  refused when the installed version is lower or unknown. */
-  fluxHeaderGate?(cliVersion: string, decision: import("../../flux-memory-headers.ts").FluxMemoryDecision): string | null;
+  fluxHeaderGate?(cliVersion: string, decision: import("../../flux-memory-headers.ts").FluxMemoryDecision, ctx?: { providerRoute?: boolean }): string | null;
+  /** Ask `fluxHeaderGate` on every Flux turn, not only one whose headers say off
+   *  (Hermes: the tier rides the same versioned channel as the headers). */
+  fluxGateEveryTurn?: boolean;
   /** Pick the ACP authenticate methodId from initialize's advertised
-   * authMethods; return null to skip the authenticate step. */
-  pickAuthMethod(authMethods: Array<{ id?: string }>): string | null;
+   * authMethods; return null to skip the authenticate step. `env` and `config`
+   * are the turn's (Cline picks by its saved provider); other drivers ignore
+   * them. With authFailure "fail", null is a skip only while isAuthenticated
+   * says yes; otherwise the turn fails with the sign-in note. */
+  pickAuthMethod(authMethods: Array<{ id?: string }>, env?: Record<string, string | undefined>, config?: AcpConfig): string | null;
+  /** Credentials handed to the CHILD only (MCP-118-175 175-3). Merged into the
+   * environment at exactly one site, the spawnCli call, into an object that is
+   * never stored: the retained hand (handedEngineEnv), the hands list and every
+   * exec-env digest are built from the environment without it. Never called for
+   * a snapshot or a version probe. */
+  secretEnv?(env: Record<string, string | undefined>, config: AcpConfig): Record<string, string>;
+  /** What decides the engine's process beyond argv and env, without secret
+   * bytes (Cline: its selected provider's non-secret fields and the settings
+   * file's mtime and size). A change starts a new process at the next turn. */
+  spawnFingerprint?(env: Record<string, string | undefined>, config: AcpConfig): string;
+  /** The engine reads its MCP servers only when it starts: a pooled process is
+   * not reused once the servers handed to the turn change. */
+  restartOnMcpChange?: boolean;
+  /** With authFailure "fail" and no auth method to call: skip the authenticate
+   * step while isAuthenticated says yes (Cline's saved key). Left unset, no
+   * method fails the turn with the sign-in note, as before (Grok). */
+  skipAuthWhenSignedIn?: boolean;
   /** "fail": abort the turn if auth is missing/errors (subscription CLIs).
    *  "continue": proceed anyway (CLIs that work off an ambient login). */
   authFailure: "fail" | "continue";
@@ -1190,6 +1235,30 @@ type AcpAskFinish = (behavior: string, source?: "user" | "timeout" | "system", a
  * prefixes extension methods with `_`; the leader gateway may nest the real
  * params as `{method, params}`, which fromFuigo tolerates. */
 const FUIGO_ASK_METHOD = "_fuigo/ask_user_question";
+/** Fuigo's ask (unchanged by the table): its own normaliser and accepted reply. */
+const FUIGO_ASK_USER_QUESTION: AcpQuestionMethod = {
+  tool: "ask_user_question",
+  cancelled: { outcome: "cancelled" },
+  parse(params) {
+    const normalized = fromFuigo(params);
+    if (!normalized.ok) return normalized;
+    const { questions } = normalized;
+    // answers are keyed by question text: a reserved key would be lost on the way back
+    if (reservedQuestionText(questions)) return { ok: false, error: "a question's text is a reserved word" };
+    return { ok: true, questions, reply: (answers) => toFuigoAnswers(questions, answers) };
+  },
+};
+/** Every vendor "ask the owner" request (QW Q3), by the engine's own method name. Own keys only, on a null-prototype
+ * table: `__proto__` or `constructor` names no method. */
+const QUESTION_METHODS: Readonly<Record<string, AcpQuestionMethod>> = Object.assign(Object.create(null) as Record<string, AcpQuestionMethod>, {
+  [FUIGO_ASK_METHOD]: FUIGO_ASK_USER_QUESTION,
+  "_x.ai/ask_user_question": GROK_ASK_USER_QUESTION,
+  "x.ai/ask_user_question": GROK_ASK_USER_QUESTION,
+  "cursor/ask_question": CURSOR_ASK_QUESTION,
+});
+export function questionMethodFor(method: unknown): AcpQuestionMethod | undefined {
+  return typeof method === "string" && Object.hasOwn(QUESTION_METHODS, method) ? QUESTION_METHODS[method] : undefined;
+}
 /** Fuigo forwards an MCP server's elicitation as its own extension request
  * (`fuigo-tools/src/mcp_elicitation/types.rs`): the ACP form/url fields plus
  * `serverName`, answered `{outcome: "accept", content}` / `decline` /
@@ -2219,15 +2288,17 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         if (!providerBinding) support.applyTurnEnv?.(env, { model: resolvedModel, requestedModel: turn.model, cwd });
         // Flux Memory headers: decided per thread audience, applied only when the
         // turn actually reaches Flux (a Flux connection, or a flux-* pick with a key).
-        const fluxRoutedTurn = turn.providerRoute ? turn.providerRoute.preset === "flux" : isFluxModel(turn.model) && fluxSurfaceFor(support.driverKind) !== null;
+        const fluxRoutedTurn = turn.providerRoute
+          ? turn.providerRoute.preset === "flux"
+          : (isFluxModel(turn.model) && fluxSurfaceFor(support.driverKind) !== null) || Boolean(support.reachesFlux?.(turn.model, env));
         if (fluxRoutedTurn) {
           const fluxMemory = fluxMemoryDecision(fluxMemoryContextForTurn(turn));
           const headerRefusal = fluxHeaderRefusal(support.driverKind, fluxMemory);
           if (headerRefusal) throw new Error(headerRefusal);
-          if (support.fluxHeaderGate && (fluxMemory.capture === "off" || fluxMemory.inject === "off")) {
+          if (support.fluxHeaderGate && (support.fluxGateEveryTurn || fluxMemory.capture === "off" || fluxMemory.inject === "off")) {
             forgetStaleCliVersion(env);
             if (!lastCliVersion) await probeCliVersionForTurn(env);
-            const gated = support.fluxHeaderGate(lastCliVersion, fluxMemory);
+            const gated = support.fluxHeaderGate(lastCliVersion, fluxMemory, { providerRoute: Boolean(turn.providerRoute) });
             if (gated) throw new Error(gated);
           }
           support.applyFluxMemory?.(env, { decision: fluxMemory, providerRoute: turn.providerRoute, model: turn.model });
@@ -2661,28 +2732,30 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           forgetPrewarm();
         };
 
-        // A question for the owner (Fuigo's `_fuigo/ask_user_question`, an ACP
-        // `elicitation/create` form or URL) → canonical request.opened with
-        // `questions`. Never auto-answered in any mode; a skip, the 30-minute
-        // timeout or the turn ending sends the engine its own honest
-        // no-answer (Fuigo `cancelled`, elicitation `decline`/`cancel`).
-        const handleQuestionRequest = (msg: any, kind: "fuigo" | "elicitation" | "fuigo-elicit") => {
+        // A question for the owner (a vendor ask in QUESTION_METHODS: Fuigo's
+        // `_fuigo/ask_user_question`, Grok Build's `x.ai/ask_user_question`,
+        // Cursor's `cursor/ask_question`; an ACP `elicitation/create` form or
+        // URL) → canonical request.opened with `questions`. Never auto-answered
+        // in any mode; a skip, the 30-minute timeout or the turn ending sends
+        // the engine its own honest no-answer (the vendor's `cancelled`,
+        // elicitation `decline`/`cancel`). A request whose shape the entry
+        // cannot read fails closed: one line, and the vendor is told nobody answered.
+        const handleQuestionRequest = (msg: any, kind: AcpQuestionMethod | "elicitation" | "fuigo-elicit") => {
           const params = msg.params ?? {};
-          const urlMode = kind !== "fuigo" && params.mode === "url";
+          const vendor = typeof kind === "object" ? kind : null;
+          const urlMode = !vendor && params.mode === "url";
           const normalized =
-            kind === "fuigo"
-              ? fromFuigo(params)
+            vendor
+              ? vendor.parse(params)
               : urlMode
                 ? fromElicitationUrl(params.message, params.url)
                 : fromElicitationForm(params.message, params.requestedSchema);
-          // the three reply vocabularies: Fuigo's ask tool, ACP elicitation, Fuigo's MCP bridge
+          // the elicitation reply vocabularies: ACP elicitation, Fuigo's MCP bridge
           const reply = (action: "accept" | "decline" | "cancel", content?: unknown) =>
-            kind === "fuigo"
-              ? action === "accept" ? content : { outcome: "cancelled" }
-              : kind === "fuigo-elicit"
-                ? { outcome: action, ...(content !== undefined ? { content } : {}) }
-                : { action, ...(content !== undefined ? { content } : {}) };
-          const cancelled = reply("cancel");
+            kind === "fuigo-elicit"
+              ? { outcome: action, ...(content !== undefined ? { content } : {}) }
+              : { action, ...(content !== undefined ? { content } : {}) };
+          const cancelled = vendor ? vendor.cancelled : reply("cancel");
           if (!normalized.ok) {
             emit({
               ...base(threadId, turnId),
@@ -2693,21 +2766,25 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           }
           flushAssistantText();
           const questions: QuestionSpec[] = normalized.questions;
+          const vendorAnswer = "reply" in normalized ? (normalized.reply as (answers: readonly QuestionAnswer[]) => unknown) : undefined;
           const requestId = newId();
           const finish: AcpAskFinish = (behavior, source = "user", answers) => {
             if (!asks.delete(requestId)) return;
             traceClose("permission.wait", requestId, behavior);
             clearTimeout(timer);
-            const answered = behavior === "answer" && answers?.length ? answers : null;
+            const picks = behavior === "answer" && answers?.length ? answers : null;
+            // a vendor reply that maps to no answer is its cancelled reply, never a guessed one
+            const vendorReply = vendor && picks ? vendorAnswer?.(picks) : null;
+            const answered = vendor ? (vendorReply === null || vendorReply === undefined ? null : picks) : picks;
             let result: unknown;
             if (answered) {
               result =
-                kind === "fuigo"
-                  ? reply("accept", toFuigoAnswers(questions, answered))
+                vendor
+                  ? vendorReply
                   : urlMode
                     ? reply("accept")
                     : reply("accept", toElicitationContent(params.requestedSchema, questions, answered));
-            } else if (kind !== "fuigo" && source === "user") {
+            } else if (!vendor && source === "user") {
               result = reply("decline");
             } else {
               result = cancelled;
@@ -2730,7 +2807,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             type: "request.opened",
             requestId,
             requestType: "question",
-            tool: kind === "fuigo" ? "ask_user_question" : "elicitation",
+            tool: vendor ? vendor.tool : "elicitation",
             summary: questions[0]!.question.slice(0, 300),
             // the first question's labels keep voice and older clients working
             choices: questions[0]!.options.map((option) => option.label),
@@ -2851,7 +2928,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // server→client permission request → canonical request.opened
         const handleServerRequest = (msg: any) => {
           if (FUIGO_FOLDER_TRUST_METHODS.has(msg.method)) return handleFolderTrustRequest(msg);
-          if (msg.method === FUIGO_ASK_METHOD) return handleQuestionRequest(msg, "fuigo");
+          const vendorAsk = questionMethodFor(msg.method);
+          if (vendorAsk) return handleQuestionRequest(msg, vendorAsk);
           if (msg.method === FUIGO_ELICIT_METHOD) return handleQuestionRequest(msg, "fuigo-elicit");
           if (ELICITATION_METHODS.has(msg.method)) return handleQuestionRequest(msg, "elicitation");
           if (msg.method !== "session/request_permission") {
@@ -3856,6 +3934,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
          * handshake. A synchronous spawn failure throws to the caller, as it
          * always did for a turn that needs no card. */
         const launch = (trusted: boolean) => {
+        if (turn.sessionReset === true) support.onSessionReset?.(turn);
         const argv = support.spawnArgs(turnConfig, cliTurn, { requestedModel: turn.model, folderTrusted: trusted, env, cliVersion: lastCliVersion, mcpServerNames: mcpServers.map(server => server.name) });
         // The spawn contract (see the pool notes): everything that decides
         // which process a turn gets. The model, effort, permission mode and
@@ -3879,7 +3958,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // decision, the sources the scan found, a grant added to or revoked
         // from the user's own trusted_folders.toml) must reach a new process.
         contractKey = poolable
-          ? digest([config.cli, argv, cwd, env, support.folderTrust ? turn.folderTrust ?? null : null])
+          ? digest([config.cli, argv, cwd, env, support.folderTrust ? turn.folderTrust ?? null : null,
+            ...(support.spawnFingerprint ? [support.spawnFingerprint(env, config)] : []),
+            ...(support.restartOnMcpChange ? [mcpServers.map((server) => server.name)] : [])])
           : null;
         // `sessionReset` outranks the cursor (contracts.ts, #1562): the
         // rebuilt history is already in the prompt, and resuming the old
@@ -3894,7 +3975,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               const launchCli = engineLaunchFile(config.cli, launchPath);
               return spawnCli(launchCli, argv, {
                 cwd,
-                env,
+                // 175-3: the one merge site of a driver's spawn-only secrets. The
+                // object is built here and handed to the child; nothing keeps it.
+                env: support.secretEnv ? { ...env, ...support.secretEnv(env, config) } : env,
                 stdio: ["pipe", "pipe", "pipe"],
               }, engineJob());
             } catch (error) {
@@ -4180,7 +4263,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             recordProbedImages(imagesKey(), init);
             retryDiscard = acpRetryDiscard(init);
             const methods: Array<{ id?: string }> = Array.isArray(init?.authMethods) ? init.authMethods : [];
-            const methodId = support.pickAuthMethod(methods);
+            const methodId = support.pickAuthMethod(methods, env, config);
             if (!(support.driverKind === "grokAgent" && providerBinding) && !skipSubscriptionAuthForLocalInject(turn.model)) {
               if (methodId) {
                 try {
@@ -4189,7 +4272,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                   if (support.authFailure === "fail") throw new Error(support.loginNote);
                   // else: proceed on an ambient login
                 }
-              } else if (support.authFailure === "fail") {
+              } else if (support.authFailure === "fail" && !(support.skipAuthWhenSignedIn && await support.isAuthenticated(env, config))) {
+                // 175-4: no method to call is a skip while the engine is signed in
+                // (a saved key), and the sign-in note when nothing is usable.
                 throw new Error(support.loginNote);
               }
             }
@@ -4701,6 +4786,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 type: "runtime.error",
                 message: engineText ?? acpEngineErrorText(message) ?? `${ENGINE} could not finish this turn.`,
                 ...(errorKind ? { errorKind } : {}),
+                ...(acpEngineErrorCode(e) ? { engineCode: acpEngineErrorCode(e) } : {}),
+                ...(acpEngineLimitResetsAt(rpc?.data) !== undefined ? { limitResetsAt: acpEngineLimitResetsAt(rpc?.data) } : {}),
                 diagnostic:acpErrorDiagnostic(eventBase,lifecycle.generation,e),
                 details: [acpRpcErrorDetails(e), e instanceof Error
                   ? (e as Error & { fuigoFailureObservation?: string }).fuigoFailureObservation : undefined]

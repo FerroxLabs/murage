@@ -885,23 +885,34 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "- Claude now asks before phone, web search and site tools. Tapping, typing or swiping on your phone, web search, and publishing a site each show an approval card first, as your access level sets.\n- Claude on Windows with Git Bash now starts its approval tools reliably. When Git for Windows is installed, Claude's turns reach Murage's approval tools, so Always ask shows its card as it should."
   },
   {
-    "id": "changelog/v1-0-5#overview",
+    "id": "changelog/v1-0-5#conversations-in-1-0-5",
     "title": "What changed in Murage 1.0.5",
-    "description": "The 1.0.4 hotfix. Bots can now clean up files across folders in one command, and Fuigo starts on Windows from every install.",
+    "description": "Deleting a conversation finishes and tells you where it stands, connected apps say when they need you, and hand-offs name why they could not start.",
+    "heading": "Conversations in 1.0.5",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.5",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.5",
-    "url": "https://murage.app/docs/changelog/v1-0-5",
-    "text": "Murage 1.0.5 is the hotfix for 1.0.4. Everything in 1.0.4 is included."
+    "url": "https://murage.app/docs/changelog/v1-0-5#conversations-in-1-0-5",
+    "text": "- Deleting a conversation finishes on its own. Murage keeps working through a deletion until every engine's copy is gone, and the notice tells you what is still on the way."
   },
   {
-    "id": "changelog/v1-0-5#bots-in-1-0-5",
+    "id": "changelog/v1-0-5#connected-apps-in-1-0-5",
     "title": "What changed in Murage 1.0.5",
-    "description": "The 1.0.4 hotfix. Bots can now clean up files across folders in one command, and Fuigo starts on Windows from every install.",
-    "heading": "Bots in 1.0.5",
+    "description": "Deleting a conversation finishes and tells you where it stands, connected apps say when they need you, and hand-offs name why they could not start.",
+    "heading": "Connected apps in 1.0.5",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.5",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.5",
-    "url": "https://murage.app/docs/changelog/v1-0-5#bots-in-1-0-5",
-    "text": "- Bots can now clean up files across folders in one command. A delete that names folders in different places, such as /tmp/a and ~/b, or C:\\a and D:\\b on Windows, gets its answer straight away, so Murage keeps responding while the bot works. It still asks or stops exactly as your access level sets.\n- Fuigo now starts on Windows from every install, including npm. Install Fuigo with npm, from its own installer, or use the one that ships with Murage, and your bots on Fuigo answer from the first turn."
+    "url": "https://murage.app/docs/changelog/v1-0-5#connected-apps-in-1-0-5",
+    "text": "- Connected apps tell you when they need you. When an app needs to be connected again, Murage shows it in the chat, with the step to bring it back."
+  },
+  {
+    "id": "changelog/v1-0-5#teams-in-1-0-5",
+    "title": "What changed in Murage 1.0.5",
+    "description": "Deleting a conversation finishes and tells you where it stands, connected apps say when they need you, and hand-offs name why they could not start.",
+    "heading": "Teams in 1.0.5",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.5",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.5",
+    "url": "https://murage.app/docs/changelog/v1-0-5#teams-in-1-0-5",
+    "text": "- Hand-offs name what held them up. When a teammate cannot pick up a hand-off, the project's Activity says why, so you know what to change."
   },
   {
     "id": "computers/cloud-and-vps#box-cloud-computer",
@@ -1564,7 +1575,17 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → What bots can do for themselves",
     "where": "Murage docs → Features → What bots can do for themselves",
     "url": "https://murage.app/docs/features/bot-tools#allowing-and-asking",
-    "text": "allow_for_task records something you just told a bot it may do for the rest of the task, such as delete in a folder you named, message a person you named, or pay a payee you named. request_browser_connection asks if the bot may use your signed-in browser. request_credential asks you for a login or key it needs."
+    "text": "allow_for_task records something you just told a bot it may do for the rest of the task, such as delete in a folder you named, message a person you named, or pay a payee you named. request_browser_connection asks if the bot may use your signed-in browser. request_credential asks you for a login or key it needs. add_mcp_server saves a connected tool server you asked for, switched off: you turn it on with one click and enter any key on a card of its own, which the bot never sees."
+  },
+  {
+    "id": "features/bot-tools#asking-you",
+    "title": "What bots can do for themselves",
+    "description": "The tools every bot has inside Murage, in plain words, such as murage_help, list_bots, ask_bot, delegate_bot, routines, skills, images, voice notes and project tools.",
+    "heading": "Asking you",
+    "breadcrumb": "Murage docs → Features → What bots can do for themselves",
+    "where": "Murage docs → Features → What bots can do for themselves",
+    "url": "https://murage.app/docs/features/bot-tools#asking-you",
+    "text": "ask_user puts one to four questions on a card in the conversation, with options to pick and room for your own words, and your answer arrives as your next message. show_widget shows a form, a pick-one list, a confirmation or a short status in the conversation, such as a date and time picker. update_widget changes a widget the bot showed earlier, for example a progress bar moving, until you have answered it."
   },
   {
     "id": "features/bot-tools#routines",

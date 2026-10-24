@@ -9,7 +9,6 @@ import type { DatabaseSync } from "node:sqlite";
 import { database, transaction } from "../database.ts";
 import { requireMemoryOwner } from "./authority.ts";
 import { ensureScope, type MemoryRoster } from "./policy.ts";
-import { redactSecretsInText } from "../redact.ts";
 import { botIdentityRecordId, deletePipRecord, invalidatePipRender, PIP_ACTIVE_CAP } from "./identity.ts";
 import { pipCounterId, pipProposalId } from "./pip-kinds.ts";
 import { admissibleSentenceRanges, claimEntity, claimsCompatible, claimsContradict, parseAuthoredStatement, parseOwnerText, type ParsedClaim } from "./pip-claims.ts";
@@ -17,6 +16,8 @@ import { boundQuote, ownerSourceStillAdmissible, type AdmittedSource } from "./p
 import { reconcilePipStances, type StanceBinding } from "./pip-stance.ts";
 import { learningWriteDecision } from "./learning-guard.ts";
 import { inheritEdge } from "./revoke-commit.ts";
+import { insertMemoryRecord } from "./record-write.ts";
+import { assertOwnerPinsFit, ownerPinUse } from "./bundle.ts";
 
 export interface Handle { sourceId: string; revision: number; start: number; end: number }
 export type TargetKind = "commitment" | "self-trait";
@@ -56,10 +57,14 @@ interface Version { id: string; scopeId: string; kind: string; text: string; ass
 function insertVersion(db: DatabaseSync, v: Version): number {
   const previous = db.prepare("SELECT version,owner_pinned,state FROM memory_records WHERE id=? ORDER BY version DESC LIMIT 1").get(v.id);
   const version = Number(previous?.version ?? 0) + 1, now = Date.now();
+  // The pin is inherited: the same Pin-time measure as every writer (1.0.4). PIP kinds are outside the pin set today, so this holds the
+  // line should a kind ever move into it.
+  const pinUse = previous?.owner_pinned === 1 ? ownerPinUse(db, v.scopeId).used : undefined;
   if (previous && previous.state === "active") db.prepare("UPDATE memory_records SET state='superseded',valid_to=? WHERE id=? AND version=?").run(now, v.id, Number(previous.version));
-  db.prepare("INSERT INTO memory_records VALUES(?,?,?,?,?,?,'active',?,?,NULL,?,?)").run(v.id, version, v.scopeId, v.kind, redactSecretsInText(v.text), v.assertion, previous?.owner_pinned ?? 0, now, previous ? v.id : null, now);
+  insertMemoryRecord(db, { id: v.id, version, scopeId: v.scopeId, kind: v.kind, text: v.text, assertion: v.assertion, state: "active", ownerPinned: Number(previous?.owner_pinned ?? 0), validFrom: now, supersedesId: previous ? v.id : null, createdAt: now });
   db.prepare("UPDATE memory_record_details SET partition='identity',attention='current',confidence_basis=?,entities=?,claim_status=? WHERE record_id=? AND record_version=?")
     .run(v.basis, JSON.stringify(v.entities), v.claimStatus ?? "provisional", v.id, version);
+  if (pinUse !== undefined) assertOwnerPinsFit(db, v.scopeId, pinUse);
   for (const h of v.handles ?? []) { db.prepare("INSERT OR IGNORE INTO memory_evidence VALUES(?,?,?,?,?,?)").run(v.id, version, h.sourceId, h.revision, h.start, h.end); inheritEdge(db, { kind: "record", id: v.id, version }, { kind: "source", id: h.sourceId }); }
   invalidatePipRender(db, v.botId);
   return version;

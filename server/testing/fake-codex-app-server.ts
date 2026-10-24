@@ -8,6 +8,9 @@
 //                     the mounted agents server; see fake-mcp-propose.ts) | text-propose (the proposal
 //                     as a block in the reply, after a declined command approval) | approval | resume | stream | windows-command |
 //                     mcp-elicitation | form-elicitation | user-input | image |
+//                     async-question (the turn posts request_user_input_async's agentMessage, then keeps running
+//                     until FAKE_CODEX_ASYNC_QUESTION_GATE exists; FAKE_CODEX_ASYNC_QUESTIONS replaces its questions;
+//                     with FAKE_CODEX_ASYNC_QUESTION_ONCE, a marker path, only the first turn asks) |
 //                     logged-in-stdout | logged-out | unauthorized
 //   FAKE_CODEX_DUMP   path to write {argv, env, calls, decision} as JSON
 //   FAKE_CUSTOM_TOOL_SERVER / FAKE_CUSTOM_TOOL_LOG  every turn calls the first tool
@@ -38,6 +41,12 @@
 //   (mode late-approval: turn/completed and an approval request arrive in one write)
 //   (mode split-approval: turn/completed, then an approval request split across two writes)
 //   FAKE_CODEX_RESUME_GATE  gate path: hold the thread/resume answer until that file exists (a slow start)
+//   FAKE_CODEX_RESUME_MODEL  thread/resume answers like Codex 0.163: `{thread, model, modelProvider}`, echoing the requested model
+//                     (default) | stale: names another model ("stale-model") | none: names no model
+//   FAKE_CODEX_TURNSTART_SILENT  plain | buffered | notify-error: turn/start is never answered (buffered: one turn notification is
+//                     sent first); notify-error: one turn notification, then a transient 503 error answer
+//   FAKE_CODEX_TURNSTART_LATE  "1": turn/start is not answered; the SIGTERM is ignored, and the ACK plus one turn notification are
+//                     written only then (a late answer while the process holds its shutdown; the kill escalates)
 //   FAKE_CODEX_SPAWN_LOG  file: one line (the pid) per app-server process started
 //   FAKE_CODEX_WARM    "1": each turn gets its own turn id and the reported thread
 //                     total accumulates (7/4/3 more per turn), as a retained
@@ -102,6 +111,15 @@ const refreshMode = () => {
 // the test, watching the driver consume the earlier stream, creates the gate
 // file. It gives up after a long bound so a broken gate fails the test rather
 // than hanging it.
+/** async-question: whether this turn asks (always, or once per FAKE_CODEX_ASYNC_QUESTION_ONCE marker). */
+const askAsyncOnce = (): boolean => {
+  const marker = process.env.FAKE_CODEX_ASYNC_QUESTION_ONCE;
+  if (!marker) return true;
+  if (existsSync(marker)) return false;
+  writeFileSync(marker, "asked\n");
+  return true;
+};
+
 const waitForGate = (path: string | undefined, timeoutMs = 15_000): Promise<void> =>
   new Promise((resolve) => {
     const startedAt = Date.now();
@@ -538,20 +556,27 @@ process.stdin.on("data", (chunk) => {
           });
         }
         break;
-      case "thread/resume":
+      case "thread/resume": {
         noteExecutionPolicy(msg.params);
+        // the effective model and provider, as ThreadResumeResponse requires them (codex 0.163 schema)
+        const resumeAnswer = (threadId: unknown) => ({
+          thread: { id: threadId },
+          ...(process.env.FAKE_CODEX_RESUME_MODEL === "none" ? {} : { model: process.env.FAKE_CODEX_RESUME_MODEL === "stale" ? "stale-model" : msg.params?.model ?? "fake-codex-model" }),
+          modelProvider: msg.params?.modelProvider ?? "openai",
+        });
         if (process.env.FAKE_CODEX_RESUME_GATE && !existsSync(process.env.FAKE_CODEX_RESUME_GATE)) {
           // a slow start: answer only once the gate file exists
           const resumeId = msg.id, resumeThread = msg.params?.threadId;
-          void waitForGate(process.env.FAKE_CODEX_RESUME_GATE).then(() => out({ jsonrpc: "2.0", id: resumeId, result: { thread: { id: resumeThread } } }));
+          void waitForGate(process.env.FAKE_CODEX_RESUME_GATE).then(() => out({ jsonrpc: "2.0", id: resumeId, result: resumeAnswer(resumeThread) }));
           break;
         }
         if (mode === "resume") {
-          out({ jsonrpc: "2.0", id: msg.id, result: { thread: { id: msg.params?.threadId } } });
+          out({ jsonrpc: "2.0", id: msg.id, result: resumeAnswer(msg.params?.threadId) });
         } else {
           out({ jsonrpc: "2.0", id: msg.id, error: { code: -1, message: "no such thread" } });
         }
         break;
+      }
       case "thread/start":
         noteExecutionPolicy(msg.params);
         if (process.env.FAKE_CODEX_LAUNCH_CRASHES || process.env.FAKE_CODEX_LAUNCH_KILLS || process.env.FAKE_CODEX_LAUNCH_SILENT) {
@@ -583,6 +608,27 @@ process.stdin.on("data", (chunk) => {
             );
           });
           appendFileSync(process.env.FAKE_CODEX_STOP_RACE, "turn/start\n");
+          break;
+        }
+        if (process.env.FAKE_CODEX_TURNSTART_SILENT) {
+          countLaunch();
+          const knob = process.env.FAKE_CODEX_TURNSTART_SILENT;
+          if (knob === "buffered" || knob === "notify-error") notify("item/reasoning/textDelta", { itemId: "early", delta: "thinking" });
+          if (knob === "notify-error") out({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: "provider returned 503: upstream capacity exceeded" } });
+          dump();
+          break;
+        }
+        if (process.env.FAKE_CODEX_TURNSTART_LATE) {
+          countLaunch();
+          const lateId = msg.id;
+          let answered = false;
+          process.on("SIGTERM", () => {
+            if (answered) return;
+            answered = true;
+            out({ jsonrpc: "2.0", id: lateId, result: turnResult() });
+            notify("item/reasoning/textDelta", { itemId: "late", delta: "late" });
+          });
+          dump();
           break;
         }
         if (process.env.FAKE_CODEX_PREACK_CRASH) {
@@ -901,6 +947,24 @@ process.stdin.on("data", (chunk) => {
               ],
             },
           });
+        } else if (mode === "async-question" && askAsyncOnce()) {
+          // request_user_input_async as codex-cli 0.163.0 sends it: an agentMessage with `delivery: "async"` and
+          // `questions: [{title, options}]`; no server request follows and the turn keeps running.
+          const item = {
+            type: "agentMessage",
+            id: "call_async_question",
+            text: "Which source should I use?",
+            phase: "final_answer",
+            memoryCitation: null,
+            delivery: "async",
+            questions: process.env.FAKE_CODEX_ASYNC_QUESTIONS
+              ? JSON.parse(process.env.FAKE_CODEX_ASYNC_QUESTIONS)
+              : [{ title: "Which source should I use?", options: ["The docs", "The code"] }],
+          };
+          notify("item/started", { item, startedAtMs: Date.now() });
+          notify("item/completed", { item, completedAtMs: Date.now() });
+          const gate = process.env.FAKE_CODEX_ASYNC_QUESTION_GATE;
+          void waitForGate(gate, gate ? 30_000 : 300).then(() => finishTurn());
         } else if ((mode === "approval" || mode === "windows-command") && (!onRequestPolicy() || escalationAsks())) {
           const approvalCommand = mode === "windows-command" ? command : "rm -rf scratch";
           // FAKE_CODEX_APPROVAL = {method, params} replaces the default legacy shell ask

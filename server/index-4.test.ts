@@ -2557,35 +2557,46 @@ describe("the Chief of Staff is not replaced by accident", () => {
     }
   };
 
-  it("refuses a second Chief and names the one already holding it", async () => {
+  const botsNow = async (): Promise<Array<{ id: string; chiefOfStaff?: boolean; chiefScope?: string; section?: string }>> =>
+    (await api("GET", "/api/bots")).body.bots;
+
+  it("hands the Chief role over in one step and keeps the former Chief as its team's leader", async () => {
     await standDownChief();
     const first = await makeBot("Single Holder Sable");
     const second = await makeBot("Single Holder Rex");
     expect((await desktopApi("PATCH", `/api/bots/${first.id}`, { chiefOfStaff: true, chiefScope: "workspace" })).status).toBe(200);
 
-    const refused = await desktopApi("PATCH", `/api/bots/${second.id}`, { chiefOfStaff: true, chiefScope: "workspace" });
-    expect(refused.status).toBe(409);
-    expect(refused.body.error).toContain("Single Holder Sable");
-    // The message has to say how to leave the state, not just that you are in it.
-    expect(refused.body.error).toMatch(/Remove that role/);
+    const handed = await desktopApi("PATCH", `/api/bots/${second.id}`, { chiefOfStaff: true, chiefScope: "workspace" });
+    expect(handed.status, JSON.stringify(handed.body)).toBe(200);
+    const bots = await botsNow();
+    const incoming = bots.find((bot) => bot.id === second.id)!;
+    const former = bots.find((bot) => bot.id === first.id)!;
+    expect(incoming.chiefOfStaff).toBe(true);
+    expect(incoming.chiefScope).toBe("workspace");
+    // the former Chief is not fired: it leads its own team now
+    expect(former.chiefOfStaff).toBe(true);
+    expect(former.chiefScope).toBeUndefined();
+    expect(bots.filter((bot) => bot.chiefScope === "workspace").map((bot) => bot.id)).toEqual([second.id]);
   });
 
-  it("changes NOTHING when it refuses", async () => {
+  it("makes the former Chief a team member when its team already has a leader", async () => {
     await standDownChief();
-    // The guard runs before patchBot, so a rejected request must leave both
-    // bots exactly as they were. A refusal that half-applied would be worse
-    // than the silent handover it replaced.
-    const first = await makeBot("Untouched Chief");
-    const second = await makeBot("Rejected Claimant");
-    await desktopApi("PATCH", `/api/bots/${first.id}`, { chiefOfStaff: true, chiefScope: "workspace" });
-    await desktopApi("PATCH", `/api/bots/${second.id}`, { chiefOfStaff: true, chiefScope: "workspace" });
+    // one leader per team: the former Chief cannot take a second seat
+    const section = "Handover Team";
+    const first = await makeBot("Seated Chief");
+    const leader = await makeBot("Seated Leader");
+    const second = await makeBot("Seated Successor");
+    await desktopApi("PATCH", `/api/bots/${first.id}`, { section, chiefOfStaff: true, chiefScope: "workspace" });
+    await desktopApi("PATCH", `/api/bots/${leader.id}`, { section, chiefOfStaff: true, chiefScope: "section" });
 
-    const bots = (await api("GET", "/api/bots")).body.bots;
-    const incumbent = bots.find((bot: { id: string }) => bot.id === first.id);
-    const claimant = bots.find((bot: { id: string }) => bot.id === second.id);
-    expect(incumbent.chiefOfStaff).toBe(true);
-    expect(incumbent.chiefScope).toBe("workspace");
-    expect(claimant.chiefScope).toBeUndefined();
+    const handed = await desktopApi("PATCH", `/api/bots/${second.id}`, { chiefOfStaff: true, chiefScope: "workspace" });
+    expect(handed.status, JSON.stringify(handed.body)).toBe(200);
+    const bots = await botsNow();
+    expect(bots.find((bot) => bot.id === second.id)!.chiefScope).toBe("workspace");
+    const former = bots.find((bot) => bot.id === first.id)!;
+    expect(former.chiefOfStaff).toBeFalsy();
+    expect(former.chiefScope).toBeUndefined();
+    expect(bots.find((bot) => bot.id === leader.id)!.chiefOfStaff).toBe(true);
   });
 
   it("still lets the SAME bot re-assert the role", async () => {
@@ -2599,11 +2610,9 @@ describe("the Chief of Staff is not replaced by accident", () => {
 
   it("lets the role move once the incumbent stands down", async () => {
     await standDownChief();
-    // The whole point: one extra step, not a locked door.
     const outgoing = await makeBot("Outgoing Chief");
     const incoming = await makeBot("Incoming Chief");
     await desktopApi("PATCH", `/api/bots/${outgoing.id}`, { chiefOfStaff: true, chiefScope: "workspace" });
-    expect((await desktopApi("PATCH", `/api/bots/${incoming.id}`, { chiefOfStaff: true, chiefScope: "workspace" })).status).toBe(409);
 
     await desktopApi("PATCH", `/api/bots/${outgoing.id}`, { chiefOfStaff: false, chiefScope: null, individual: false });
     expect((await desktopApi("PATCH", `/api/bots/${incoming.id}`, { chiefOfStaff: true, chiefScope: "workspace" })).status).toBe(200);

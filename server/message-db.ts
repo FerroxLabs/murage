@@ -41,7 +41,8 @@ import {
   trigramQuery,
   syncMessageSearchRow,
 } from "./message-search-index.ts";
-import { captureMessage, captureBranchChange, captureThreadDeletion } from "./memory/capture.ts";
+import { captureMessage, captureBranchChange, captureThreadDeletion, exportPasteNoted } from "./memory/capture.ts";
+import { noteFluxCaptureHold } from "./flux-capture-hold.ts";
 import { threadKey as keyOfThread, LINE_TEXT } from "./branch-index.ts";
 import { lineClassesOf } from "./line-classes.ts";
 import { boundedBranchWalk, isPrepared as isThreadPrepared, branchRows, branchTester, childRowids, requirePrepared, afterInsert, afterSpliceAfter, afterSpliceBefore, afterUpdate, forgetThread } from "./branch-store.ts";
@@ -994,12 +995,20 @@ function recordLineage(threadId: string, message: Message, extra: readonly Linea
 function writeMessage(threadId: string, message: Message, lineage: LineageToken, reply?: ProviderReply, structure: "append" | "none" = "append"): void {
   if (lineage.threadId !== threadId || lineage.messageId !== message.id) throw new Error("LINEAGE_TOKEN_MISMATCH: the lineage token names another line");
   setupFactsCache(db()).touch(threadId);
+  // the chat's "left out of memory" line under an export paste: the server's mark, written with the row (capture.ts exportPasteNoted).
+  // The caller's object carries it, so the message the store sends out has it too; a mark that came in with the row is never kept.
+  if (message.role === "user" && structure === "append") {
+    if (exportPasteNoted(db(), threadId, message)) message.memoryNote = "export-paste";
+    else delete message.memoryNote;
+  }
   replaceRow(
     db().prepare("INSERT OR REPLACE INTO messages (thread_id, id, at, role, kind, text, json, seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"),
     threadId,
     message,
     structure,
   );
+  // the Flux Memory number hold, before capture and whatever the memory mode (flux-capture-hold.ts)
+  noteFluxCaptureHold(db(), threadId, message);
   captureMessage(db(), threadId, message);
   // the engine's reply to a hand-off's prompt is the evidence that the hand-off ran, recorded in this same transaction (server/handoff-evidence.ts)
   noteHandoffEvidence(db(), threadId, message, reply);
@@ -1119,6 +1128,7 @@ export function updateMessage(threadId: string, message: Message, within?: () =>
     if (prior) afterUpdate(database, threadId, message, prior.position, (prior.parent_type === null ? undefined : prior.parent) !== message.parentId, splicing);
     trackImages(database, threadId, message);
     trackAttachmentNames(database, threadId, message);
+    noteFluxCaptureHold(database,threadId,message);
     captureMessage(database,threadId,message);
     setupFactsCache(database).touch(threadId);
     bumpForMessage(message);
@@ -1429,9 +1439,9 @@ export function setActiveLeaf(threadId: string, leafId: string | null): void {
 
 export function deleteThread(threadId: string): void {
   transaction(database => {
+    // deleting the conversation is one revoke of the whole thread (its lineage rows stay: the marker walks out of them). The capture
+    // commits it (capture.ts captureThreadDeletion), whatever memory captured; a second commit here doubled every deletion's mark walk.
     captureThreadDeletion(database,threadId);
-    // deleting the conversation is one revoke of the whole thread (its lineage rows stay: the marker walks out of them)
-    commitRevoke(database, { kind: "thread", threadId, cause: "delete-conversation" });
     // the durable proof that the OWNER deleted this conversation, committed with its rows (owner-deletions.ts)
     recordOwnerDeletion(database, threadId);
     const indexed = dropThreadSearchRows(database, threadId); // before the rows it is keyed by go

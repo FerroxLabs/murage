@@ -74,6 +74,7 @@ export const FIXTURE_ENGINE_OVERRIDES = {
   qwen: { driver: "fixture-unavailable" },
   hermes: { driver: "fixture-unavailable" },
   pi: { driver: "fixture-unavailable" },
+  cline: { driver: "fixture-unavailable" },
 };
 
 /** Packaged-shape fixtures receive the renderer proof through their private

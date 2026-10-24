@@ -271,6 +271,7 @@ describe("surfaces do not converge", () => {
         : entry.path.source.includes("chat|rooms") ? "/chat/bot_123"
         : entry.path.source.includes("icons") ? "/icons/murage-192.png"
         : entry.path.source.includes("murage-logo") ? "/murage-logo.png"
+        : entry.path.source.includes("library-art") ? "/library-art/advisor-256.webp"
         : entry.path.source.replace(/[\\^$]/g, "").replace(/\(\?:.*/, "");
       expect(ask("GET", path), path).not.toBeNull();
       expect(askBrowser("GET", path), path).toBeNull();

@@ -17,6 +17,7 @@ import { InstallationSnapshotError, inspectInstallationDatabase } from "./instal
 import { InstallationTranscriptGraph } from "./installation-transcript-graph.ts";
 import { assertInstallationRecords } from "./installation-record-validation.ts";
 import { DEFAULT_INSTANCES } from "./default-instances.ts";
+import { classifyDataDirEntry, DATA_DIR_ENTRIES } from "./data-dir-inventory.ts";
 import { RESTORED_CONNECTIONS_FILE } from "../electron/restored-connections.mjs";
 import { RESTORE_REVIEW_FILE } from "../electron/restore-review.mjs";
 import { notificationPreferencesSchema } from "../shared/notification-preferences.ts";
@@ -36,6 +37,15 @@ const MAX_JSON_BYTES = 64 * 1024 ** 2;
 // browser-extension: Murage for Chrome pairings and helper registration are
 // credentials of the computer that made them (data-dir-inventory.ts).
 const RESERVED_RESTORE_FILES = new Set<string>([RESTORE_REVIEW_FILE, RESTORED_CONNECTIONS_FILE, "recovery-quarantine", "connection-profiles", "companion", "browser-extension", "bx-run"]);
+/** A top-level name a backup never captures (credentials, trust, runtime state, script-access grants), so an archive that carries one was not made by a backup. */
+// Archive identity is case-folded (installation-archive.ts), and extraction keeps the zip's spelling, which a case-insensitive volume opens as the lowercase name; so fold here the same way.
+const FOLDED_NEVER_RESTORED = new Set(Object.entries(DATA_DIR_ENTRIES).filter(([, entry]) => entry.backup === "excluded" || entry.backup === "refused").map(([name]) => name.toLowerCase()));
+const neverRestored = (path: string): boolean => {
+  const top = path.split("/")[0]!;
+  if (FOLDED_NEVER_RESTORED.has(top.toLowerCase())) return true;
+  const kind = (classifyDataDirEntry(top) ?? classifyDataDirEntry(top.toLowerCase()))?.backup;
+  return kind === "excluded" || kind === "refused";
+};
 const terminal = new Set(["completed", "failed", "cancelled", "missed", "blocked", "limit"]);
 
 /** A name this system can hold as it is. */
@@ -93,6 +103,13 @@ function materializeOwnerEntries(state: string, manifest: InstallationArchiveMan
   }
 }
 
+/** Whether a path is the app-made working folder `workspaces/<bot>/threads/<thread>` of some data directory. */
+function isManagedDesk(path: string, botId: string, threadId: string): boolean {
+  const normal = path.replace(/\\/g, "/").replace(/\/+$/, "");
+  const tail = `workspaces/${botId}/threads/${threadId}`;
+  return normal === tail || normal.endsWith(`/${tail}`);
+}
+
 /** Prepare a private review-only candidate. It never replaces an installation
  * and does not clear the startup barrier. The original archive is unchanged;
  * pending queue/cleanup/skill writes are retained separately as evidence. */
@@ -128,7 +145,7 @@ export async function prepareInstallationRestore(archive: string, outputParent: 
   try {
     // No future archive may place its own marker/quarantine over ours.
     const stored = [...files, ...(inspected.manifest.links ?? []).map(link => link.path), ...(inspected.manifest.copies ?? []).map(copy => copy.path)];
-    if (stored.some(path => RESERVED_RESTORE_FILES.has(path.toLowerCase()) || ["recovery-quarantine/", "connection-profiles/", "companion/", "browser-extension/", "bx-run/"].some(prefix => path.toLowerCase().startsWith(prefix)))) fail("RESERVED_RESTORE_COMPONENT");
+    if (stored.some(path => neverRestored(path) || RESERVED_RESTORE_FILES.has(path.toLowerCase()) || ["recovery-quarantine/", "connection-profiles/", "companion/", "browser-extension/", "bx-run/"].some(prefix => path.toLowerCase().startsWith(prefix)))) fail("RESERVED_RESTORE_COMPONENT");
     for (const path of ["routines.json", "calendar-calls.json", "webhooks.json", "delegation-receipts.json", "section-contexts.json"]) {
       if (files.has(path)) assertInstallationRecords(path, read(path));
     }
@@ -192,6 +209,9 @@ export async function prepareInstallationRestore(archive: string, outputParent: 
             seen.add(task.threadId); claim(task.threadId);
             const copy = { ...task, autoApprove: false, alwaysAllow: [], resumeCursors: {} };
             delete (copy as RecordValue).lastInstanceId;
+            // The bot's own working folder for this conversation names the old installation's data directory: the next turn pins this one's.
+            const deskPath = (task as RecordValue).cwd;
+            if (path === "bots.json" && typeof deskPath === "string" && isManagedDesk(deskPath, String(value.id), String(task.threadId))) delete (copy as RecordValue).cwd;
             return copy;
           });
         }

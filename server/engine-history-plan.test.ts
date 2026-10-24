@@ -406,7 +406,7 @@ describe("the saved plan", () => {
     const data = join(fx.root, "data");
     const db = new DatabaseSync(join(data, "messages.db"));
     openDatabases.push(db);
-    const deletions = new ConversationDeletions({ dataDir: data, database: () => db, retryDelaysMs: [20], slowRetryMs: 60_000, onOwed: (notices) => owed.push(notices.map((item) => item.text)) });
+    const deletions = new ConversationDeletions({ dataDir: data, database: () => db, retryDelaysMs: [20], slowRetryMs: 60_000, owedGraceMs: 0, onOwed: (notices) => owed.push(notices.map((item) => item.text)) });
     const zst = join(fx.homes[0]!.home, "archived_sessions", "rollout-2026-10-10T09-00-00-019a0000-aaaa-7bbb-8ccc-000000000002.jsonl.zst");
     writeFileSync(zst, "not a zstd frame");
     const first = await runConversationDeletion(deletions, { threadIds: [THREAD], engineHomes: fx.homes }, () => true);
@@ -414,18 +414,18 @@ describe("the saved plan", () => {
     expect(deletions.notices()).toEqual([]); // the schedule is not used up yet
     await new Promise((resolve) => setTimeout(resolve, 300)); // the one retry runs and fails the same way
     const [notice] = deletions.notices();
-    expect(notice?.text).toBe("Codex's copy of this conversation could not be removed yet. Murage will try again when it starts.");
+    expect(notice?.text).toBe("Murage is still removing this conversation from Codex. It finishes this by itself. Nothing is needed from you.");
     expect(notice?.tryAgain).toBe(true);
     expect(owed.at(-1)).toEqual([notice!.text]); // broadcast once, when it appeared
-    expect(deletions.pending()[0]!.owed?.homes).toEqual([{ engine: "codex", code: "other" }]); // saved with the record, as a code
+    expect(deletions.pending()[0]!.owed?.items.map((item) => [item.engine, item.code, item.named])).toEqual([["codex", "other", true]]); // saved with the record, as a code
     expect(JSON.stringify(deletions.pending()[0])).not.toContain(zst.replace(fx.homes[0]!.home, "")); // no path in what is saved for the owner
     expect(deletions.pending()).toHaveLength(1);
     // Try again now replays at once; when the cause is gone it finishes and the notice goes away
     rmSync(zst, { force: true });
-    expect(await deletions.retryNow()).toBe(1);
-    expect(deletions.notices().map((item) => [item.text, item.tryAgain])).toEqual([["Removed from Codex.", false]]); // the copy is gone and the owner is told
+    expect((await deletions.retryNow()).line).toBe("Removed from Codex."); // the copy is gone and the owner is told, in the retry's answer
+    expect(deletions.notices()).toEqual([]); // F16: no "Removed from" line stays behind
     expect(deletions.pending()).toEqual([]);
-    expect(owed.at(-1)).toEqual(["Removed from Codex."]);
+    expect(owed.at(-1)).toEqual([]);
     deletions.dispose();
   });
 });

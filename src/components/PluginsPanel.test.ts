@@ -86,8 +86,25 @@ describe("pending OAuth recovery", () => {
 
   it("authorizes a service only from the confirmed label form", () => {
     // Before #758 the first account called connect(card.slug) straight from
-    // the button. The only remaining call site carries the confirmed alias.
-    expect([...panel.matchAll(/\bconnect\(card\.slug[^)]*\)/g)].map((match) => match[0])).toEqual(["connect(card.slug, alias)"]);
+    // the button. The only remaining call site carries the confirmed alias
+    // (and, for a Reconnect, the account it replaces).
+    expect([...panel.matchAll(/\bconnect\(card\.slug[^)]*\)/g)].map((match) => match[0])).toEqual(["connect(card.slug, alias, reconnecting)"]);
+    // Nothing else calls connect with an alias that did not come from the form.
+    expect([...panel.matchAll(/\bconnect\([^)]*\)/g)].map((match) => match[0]).filter((call) => !call.startsWith("connect(slug"))).toEqual(["connect(card.slug, alias, reconnecting)"]);
+  });
+
+  it("reconnects an account only through the confirmed label form", () => {
+    // The Reconnect button opens the label form for that account; it never
+    // starts a sign-in itself.
+    const button = panel.slice(panel.indexOf("data-connector-reconnect={card.slug}"));
+    const onClick = button.slice(button.indexOf("onClick={"), button.indexOf("aria-label="));
+    expect(onClick).toContain("setReconnectTarget({ slug: card.slug, accountId: account.id })");
+    expect(onClick).toContain("setAliasSlug(card.slug)");
+    expect(onClick).not.toMatch(/\bconnect\(/);
+    // The form sends the replaced account only for the card it was opened on.
+    expect(panel).toContain("const reconnecting = reconnectTarget?.slug === card.slug ? reconnectTarget.accountId : undefined;");
+    // Cancelling, a fresh label form and a finished sign-in all drop it.
+    expect(panel.match(/setReconnectTarget\(null\)/g)?.length ?? 0).toBeGreaterThanOrEqual(4);
   });
 
   it("words the first and an additional account label differently", () => {

@@ -36,6 +36,10 @@ export interface DataDirEntry {
   why: string;
   /** Only for "refused": the backup's stop code. */
   code?: string;
+  /** Listed to the person after the backup under this reason (shared/backup-limits.ts). */
+  skip?: "old-copy" | "special";
+  /** A name Murage does not know: kept as it is, and said so in the backup coverage. */
+  unrecognised?: true;
 }
 
 const APPLICATION = "Application data preserved in encrypted fidelity payload";
@@ -81,6 +85,10 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   "install-id.json": { backup: "owner-file", why: "Random per-install id for the connected-apps token label; kept by a backup and restore so the installation stays one identity" },
   // The sidebar's section order, the same on every device (sidebar-order.ts).
   "sidebar-order.json": ownerFile(),
+  // 1.0.4 SL-K (thread-follow-model.ts): proof that the one-time drop of chat model copies already ran on THIS bots.json. It travels
+  // with bots.json: a 1.0.4 backup restored without it would run the drop again and erase a model the owner picked in a chat since,
+  // when that pick equals the bot's model. A backup from before 1.0.4 has none, so its restore still runs the drop once.
+  ".threads-follow-model-v1": { backup: "owner-file", why: "Marks that the one-time chat model cleanup already ran on these bots; kept with bots.json so a restore never runs it again over the owner's later picks" },
   // Which Terms/Privacy version the owner accepted and when (terms.ts). A
   // per-install legal record meant to survive a reinstall and a second device,
   // so a backup keeps it and a restore brings it back.
@@ -321,3 +329,54 @@ const namesOf = (...kinds: DataDirBackup[]) => Object.freeze(Object.entries(DATA
 export const DATA_DIR_RECORDS = namesOf("record");
 /** Everything the restorable stage copies when present. */
 export const DATA_DIR_RESTORABLE = namesOf("record", "owner-file", "owner-folder", "database");
+
+// ---------------------------------------------------------------------------
+// THE RULE for a top-level name `classifyDataDirEntry` does not know (1.0.4).
+//
+// Leftover files are normal on customer machines (a hand-made copy of
+// config.json, an editor's temp file, Finder's .DS_Store), and one of them
+// must never stop every backup. The old rule refused them all, so Sean's
+// first backup died on `config.json.bak-20260918-openaicompat`. The new rule
+// fails closed only where leaving a name out could lose the owner's work:
+//
+//   1. An older copy of a settings file (`<anything>.bak`, `.bak-<tag>`,
+//      `.backup`, `.old`, `.orig`, `.save`, `.prev`): LEFT OUT and LISTED to
+//      the person ("an older copy of a settings file, which can hold keys").
+//      A hand-made config copy may hold keys; config.json's own backup rule
+//      removes keys from what is restorable, and a stray copy cannot be
+//      projected that way, so it is never copied, and a restore never brings
+//      an old key back. The current file is the one that is backed up, so no
+//      work is lost.
+//   2. Clear junk (OS metadata, editor temp and swap files, `._*` sidecars):
+//      LEFT OUT, shown in the backup coverage as excluded. Nothing of the
+//      owner's lives there.
+//   3. Any other plain FILE: KEPT, as an owner file, inside the encrypted
+//      backup, and named in the coverage as "not recognised". It might be the
+//      owner's own work, so skipping it could lose it; keeping it costs
+//      nothing, because the backup is encrypted. An unknown FOLDER still stops
+//      the backup (BACKUP_UNCLASSIFIED_COMPONENT): it could hold work and
+//      shortcuts the archive cannot place, and is the one fail-closed case.
+//   4. A shortcut or special file nobody can read as a file: left out and
+//      listed ("not a regular file"), as for the folders of owner work.
+//
+// Names Murage KNOWS to be refused (`refused` above) still stop the backup:
+// that state really is unsafe to capture until Murage clears it.
+// ---------------------------------------------------------------------------
+const OLD_COPY = /^.+\.(?:bak|backup|old|orig|save|prev)(?:[-._][\w.-]*)?$/i;
+const JUNK = /^(?:\._.*|\.#.*|#.*#|.*~|\..+\.sw[a-p]|~\$.*|\.goutputstream-.*|.+\.(?:tmp|temp|crdownload|part))$/i;
+const OLD_COPY_WHY = "Older copy of a settings file, which can hold keys; not backed up (the current file is)";
+const JUNK_WHY = "Editor or operating-system leftover; nothing of yours; not backed up";
+const UNRECOGNISED_WHY = "Not recognised by Murage; kept as it is in your encrypted backup";
+
+/** What a backup does with this top-level name, ALWAYS answering (see the rule above). */
+export function classifyDataDirEntryForBackup(name: string, kind: "file" | "folder" | "other"): DataDirEntry {
+  const known = classifyDataDirEntry(name);
+  if (known) return known;
+  if (kind === "other") return { backup: "excluded", why: "Shortcut or special file; not a regular file, so not backed up", skip: "special" };
+  if (OLD_COPY.test(name)) return { backup: "excluded", why: OLD_COPY_WHY, skip: "old-copy" };
+  if (JUNK.test(name)) return excluded(JUNK_WHY);
+  // A folder Murage does not know could hold the owner's work and shortcuts
+  // the archive cannot place: this is the one case that still stops the backup.
+  if (kind === "folder") return { backup: "refused", why: "Folder Murage does not recognise", code: "BACKUP_UNCLASSIFIED_COMPONENT" };
+  return { backup: "owner-file", why: UNRECOGNISED_WHY, unrecognised: true };
+}

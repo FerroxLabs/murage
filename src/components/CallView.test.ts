@@ -838,3 +838,11 @@ describe("lane 5: plain-words gate and no-mic prompts (source pins)", () => {
     expect(block).toMatch(/move\("listening"\)/);
   });
 });
+
+describe("widget rows are not read aloud", () => {
+  it("CallView and GroupCallView skip widget rows when choosing a reply to speak", () => {
+    expect(source).toMatch(/const isReply = .*&& !m\.widget &&/);
+    const group = readFileSync(fileURLToPath(new URL("./GroupCallView.tsx", import.meta.url)), "utf8");
+    expect(group).toMatch(/message\.kind === "text" && !message\.widget && message\.text\?\.trim\(\)/);
+  });
+});

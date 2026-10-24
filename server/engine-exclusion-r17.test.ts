@@ -631,20 +631,21 @@ describe("the owner is told on the first attempt that an engine has its files op
     const db = new DatabaseSync(join(data, "messages.db"));
     openDatabases.push(db);
     const seen: Array<{ texts: string[]; rev: number }> = [];
-    const deletions = new ConversationDeletions({ dataDir: data, database: () => db, retryDelaysMs: [], onOwed: (notices, rev) => seen.push({ texts: notices.map((item) => item.text), rev }) });
+    const deletions = new ConversationDeletions({ dataDir: data, database: () => db, retryDelaysMs: [], owedGraceMs: 0, onOwed: (notices, rev) => seen.push({ texts: notices.map((item) => item.text), rev }) });
     engineHistoryTestHooks.createWorker = () => new ScriptedWorker((message, worker) => worker.emit("message", { type: "result", result: runEngineHistoryJob(message) })) as unknown as Worker;
     const release = fake.keepLock(log);
     const first = await runConversationDeletion(deletions, { threadIds: ["2e9018ee-1f45-46be-8ed1-7a02fc022807"], engineHomes: fx.homes }, () => true);
     expect(first.report.failed).toContain(fx.homes[0]!.home); // the engine holds the log's lock: the home is open
-    const line = "Fuigo is open. Close Fuigo and Murage will finish removing this conversation from it.";
+    const line = "Fuigo is open. Murage finishes removing this conversation from it by itself once Fuigo is closed. Nothing is needed from you.";
     expect(deletions.notices().map((item) => [item.text, item.tryAgain])).toEqual([[line, true]]);
     expect(seen.at(-1)!.texts).toEqual([line]);
-    expect(deletions.pending()[0]!.owed?.homes).toEqual([{ engine: "fuigo", code: "engine-open" }]);
+    expect(deletions.pending()[0]!.owed?.items.map((item) => [item.engine, item.code, item.named])).toEqual(fx.homes.map(() => ["fuigo", "engine-open", true]));
     release();
-    expect(await deletions.retryNow()).toBe(1);
+    expect((await deletions.retryNow()).started).toBe(1);
     expect(deletions.pending()).toEqual([]);
-    expect(deletions.notices().map((item) => [item.text, item.tryAgain])).toEqual([["Removed from Fuigo.", false]]);
-    expect(seen.at(-1)!.texts).toEqual(["Removed from Fuigo."]);
+    // F16: no "Removed from" line; nothing owed, nothing shown
+    expect(deletions.notices()).toEqual([]);
+    expect(seen.at(-1)!.texts).toEqual([]);
     const revs = seen.map((item) => item.rev);
     expect([...revs].sort((x, y) => x - y)).toEqual(revs);
     expect(new Set(revs).size).toBe(revs.length);

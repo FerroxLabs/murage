@@ -1,6 +1,7 @@
 import { connectionStatusFailureSentence, normalizeAccountAlias } from "./composio.ts";
 import { NEEDS_OWN_SIGN_IN, type CatalogApp } from "./app-catalog.ts";
 import { turnAudienceIsOwner, type TurnAudience } from "./owner-audience.ts";
+import type { ConnectorCardData } from "./store.ts";
 
 export interface ConnectorRequest {
   slug: string;
@@ -175,6 +176,17 @@ export function connectorCardText(toolkit: Pick<CatalogApp, "label" | "blurb" | 
     return { label, description: blurb ? `${blurb}. ${NEEDS_OWN_SIGN_IN}` : NEEDS_OWN_SIGN_IN };
   }
   return { label, description: toolkit.blurb || `Connect ${toolkit.label} so the bot can continue` };
+}
+
+/** The one plain line a connection card also carries as its text, so a client that cannot draw the card (an older phone build, an
+ *  export, a backup) still shows something true. Fixed copy built from the card's own label: never model text, never a link. */
+export function connectorPlainLine(connector: Pick<ConnectorCardData, "label" | "status">): string {
+  return connector.status === "connected" ? `${connector.label} is connected.` : `Connect ${connector.label} to continue.`;
+}
+
+/** A patch that changes a card and keeps its plain line in step. */
+export function connectorCardPatch(connector: ConnectorCardData): { connector: ConnectorCardData; text: string } {
+  return { connector, text: connectorPlainLine(connector) };
 }
 
 /** The model reads this as the tool's answer in a turn that is not the owner's. */

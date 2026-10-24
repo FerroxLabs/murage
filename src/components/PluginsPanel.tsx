@@ -532,6 +532,8 @@ export function PluginsPanel() {
   const [pendingUrls, setPendingUrls] = useState<Record<string, string>>({});
   const [aliasSlug, setAliasSlug] = useState<string | null>(null);
   const [aliasDraft, setAliasDraft] = useState("");
+  /** the account a Reconnect replaces, set only while its label form is open */
+  const [reconnectTarget, setReconnectTarget] = useState<{ slug: string; accountId: string } | null>(null);
   const [busySlug, setBusySlug] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [inventoryPhase, setInventoryPhase] = useState<ConnectorInventoryPhase>(
@@ -1031,14 +1033,14 @@ export function PluginsPanel() {
     pollTimers.current.set(slug, timer);
   };
 
-  const connect = async (slug: string, alias?: string) => {
+  const connect = async (slug: string, alias?: string, reconnect?: string) => {
     if (desktop !== true) return;
     statusGenerations.current.set(slug, (statusGenerations.current.get(slug) ?? 0) + 1);
     setBusySlug(slug);
     setError(null);
     try {
       const request: RequestInit = { method: "POST" };
-      if (alias) request.body = JSON.stringify({ alias });
+      if (alias) request.body = JSON.stringify(reconnect ? { alias, reconnect } : { alias });
       const { url } = await api(`/api/connectors/${slug}/authorize`, request);
       setPendingUrls((current) => ({ ...current, [slug]: url }));
       setStatus((current) => ({
@@ -1052,6 +1054,7 @@ export function PluginsPanel() {
       }));
       setAliasSlug(null);
       setAliasDraft("");
+      setReconnectTarget(null);
       startPolling(slug);
       await openConnectUrl(url);
     } catch (e) {
@@ -1061,6 +1064,7 @@ export function PluginsPanel() {
         // button rendered. Show the label field and refresh only this app.
         setAliasSlug(slug);
         setAliasDraft("");
+        setReconnectTarget(null);
         setError("This app already has an account. Add a label such as work or personal to connect another.");
         void refreshStatus([slug]);
       } else {
@@ -1076,6 +1080,7 @@ export function PluginsPanel() {
     dialogRef.current?.querySelector<HTMLButtonElement>(`[data-connector-action="${CSS.escape(slug)}"]`)?.focus();
     setAliasSlug((current) => (current === slug ? null : current));
     setAliasDraft("");
+    setReconnectTarget((current) => (current?.slug === slug ? null : current));
   };
 
   const disconnectAccount = (slug: string, accountId: string) => {
@@ -1161,9 +1166,11 @@ export function PluginsPanel() {
                           // authorized until the label is confirmed.
                           setAliasSlug((current) => current === card.slug ? null : card.slug);
                           setAliasDraft("");
+                          setReconnectTarget(null);
                           return;
                         }
                         setAliasSlug(null);
+                        setReconnectTarget(null);
                         setError(null);
                         if (action === "continue") {
                           void openConnectUrl(pendingUrls[card.slug]).catch((e) => setError(e.message));
@@ -1192,17 +1199,39 @@ export function PluginsPanel() {
                     <div className="ml-14 mt-3 space-y-2">
                       {accounts.map((account) => {
                         const active = /^active$/i.test(account.status);
+                        const needsReconnect = active && serviceStatus?.needsReconnect === true;
                         return (
                           <div key={account.id} className="flex items-center gap-2 rounded-lg bg-raised/45 px-3 py-2">
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center gap-1.5 text-[12.5px] font-medium text-ink">
-                                {active && <Check size={13} className="shrink-0 text-success" />}
+                                {active && !needsReconnect && <Check size={13} className="shrink-0 text-success" />}
                                 <span className="truncate">{account.alias || account.id}</span>
                               </div>
                               <div className="mt-0.5 truncate text-[10.5px] text-ink-secondary">
-                                {account.alias ? `${account.id} · ` : ""}{account.status.toLowerCase()}
+                                {account.alias ? `${account.id} · ` : ""}{needsReconnect ? "needs reconnecting" : account.status.toLowerCase()}
                               </div>
                             </div>
+                            {needsReconnect && (
+                              <button
+                                type="button"
+                                data-connector-reconnect={card.slug}
+                                disabled={desktop !== true || busy}
+                                onClick={() => {
+                                  // Same rule as a new account: nothing is
+                                  // authorized until the label form is
+                                  // confirmed. The form opens with this
+                                  // account's label filled in.
+                                  setError(null);
+                                  setAliasSlug(card.slug);
+                                  setAliasDraft(account.alias ?? "");
+                                  setReconnectTarget({ slug: card.slug, accountId: account.id });
+                                }}
+                                className="rounded-md bg-accent/15 px-2 py-1 text-[11px] font-medium text-ink transition-colors hover:bg-accent/25 disabled:opacity-40"
+                                aria-label={`Reconnect ${account.alias || account.id} for ${card.label}`}
+                              >
+                                Reconnect
+                              </button>
+                            )}
                             <button
                               type="button"
                               disabled={desktop !== true || busy}
@@ -1230,11 +1259,14 @@ export function PluginsPanel() {
                           setError("Enter a label for the account, such as work or personal.");
                           return;
                         }
-                        void connect(card.slug, alias);
+                        const reconnecting = reconnectTarget?.slug === card.slug ? reconnectTarget.accountId : undefined;
+                        void connect(card.slug, alias, reconnecting);
                       }}
                     >
                       <p id={`connector-alias-hint-${card.slug}`} className="mb-2 text-[11.5px] leading-snug text-ink-secondary">
-                        {accounts.length > 0 ? t("connectedApps.alias.anotherHint") : t("connectedApps.alias.firstHint")}
+                        {reconnectTarget?.slug === card.slug
+                          ? "Confirm the label for the account you are reconnecting, then sign in again."
+                          : accounts.length > 0 ? t("connectedApps.alias.anotherHint") : t("connectedApps.alias.firstHint")}
                       </p>
                       <div className="flex flex-wrap items-center gap-2">
                         <input

@@ -298,22 +298,27 @@ export function createBackupScheduleHost(host) {
     const s=coordinator.status(),intent=s.job?.handoff;let claimed=false,captureStage="precondition";
     try{
       if(!intent||s.phase!=="handoff-armed")throw Error("BACKUP_HANDOFF_REJECTED");
-      captureStage="references";const b=await checked();if(!host.supported())throw Error("BACKUP_UNAVAILABLE");
+      const note=line=>{try{host.reportOutcome?.(line);}catch{/* Logging never changes the backup. */}};
+      const stage=name=>{try{host.reportProgress?.(name);}catch{/* A progress screen never changes the backup. */}};
+      note(`backup started ${JSON.stringify({job:String(s.job?.id??"").slice(0,8),closed})}`);
+      stage("references");captureStage="references";const b=await checked();if(!host.supported())throw Error("BACKUP_UNAVAILABLE");
       captureStage="claim";coordinator.claimHandoff(intent.id,hash(b),installationIdentity(host.installation()));
       claimed=true;
       const output=path.join(b.destination,s.job.id+".age");
       const readIdentity=async()=>{await checked();await verifyIdentityAccess();const key=readBackupIdentity(b.keyFile,host.installation());if(key.recipient!==b.recipient)throw Error("BACKUP_REFERENCE_CHANGED");return key.identity;};
       coordinator.beginHandoffCapture(intent.id);
-      captureStage="capture";const result=await host.capture({output,recipient:b.recipient,readIdentity,maxBytes:s.schedule.maxBytes,maxDurationMs:s.schedule.maxDurationMs});
-      captureStage="artifact-readback";
+      stage("capture");captureStage="capture";const result=await host.capture({output,recipient:b.recipient,readIdentity,maxBytes:s.schedule.maxBytes,maxDurationMs:s.schedule.maxDurationMs});
+      stage("artifact-readback");captureStage="artifact-readback";
       // The worker reports the archive in its canonical spelling, which on
       // Windows is lower case; the file checked below is always our own path.
       if(result?.ok!==true||result.operation!=="backup-encrypted"||!samePath(result.path,output)||result.coverage?.fullInstallation!==false||result.coverage?.scope!=="application-data")throw Error("BACKUP_RECEIPT_MISMATCH");
       const {sha256,bytes}=verifiedArtifact(output,s.schedule.maxBytes);
+      note(`backup local written ${JSON.stringify({job:s.job.id.slice(0,8),bytes})}`);
       if(sha256!==result.sha256)throw Error("BACKUP_RECEIPT_MISMATCH");
+      note(`backup local verified ${JSON.stringify({job:s.job.id.slice(0,8),bytes,how:"file re-read and its sha256 matched the encrypting worker's"})}`);
       captureStage="receipt-commit";coordinator.clearCaptureFailure?.();coordinator.recordSkipped?.(s.job.id,result.skipped);coordinator.completeHandoff(intent.id,{jobId:s.job.id,installationRef:b.installationRef,destinationRef:b.destinationRef,selectionHash:hash(s.schedule.selection),snapshotId:result.snapshotId,artifactRef:s.job.id,sha256,bytes,verifiedAt:now(),...(intent.upgrade?{candidateId:intent.upgrade.candidateId}:{})});
       // Durable receipt precedes relaunch. A failed return never recaptures.
-      captureStage="return";if(closed)coordinator.completeReturn(intent.id);
+      stage("return");captureStage="return";if(closed)coordinator.completeReturn(intent.id);
       else await host.relaunch("normal");
       return {verified:true};
     }catch(error){
@@ -321,6 +326,7 @@ export function createBackupScheduleHost(host) {
       // The log alone also gets the redacted cause behind the code; the
       // durable record below (and so the window) keeps only stage and code.
       let cause=null;try{cause=normalizeCaptureCause(error?.captureCause);}catch{/* Diagnostic properties are not trusted. */}
+      try{host.reportOutcome?.(`backup local failed ${JSON.stringify({stage:diagnostic.stage,code:diagnostic.code})}`);}catch{/* Logging never changes the result. */}
       try{host.reportCaptureFailure?.(cause?{...diagnostic,cause}:diagnostic);}catch{/* Diagnostic failure never changes the handoff result. */}
       // Durable, so the reason survives the return to the workspace and the
       // Backups page can say what happened instead of only that it failed.

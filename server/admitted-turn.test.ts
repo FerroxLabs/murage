@@ -115,7 +115,10 @@ describe("server wiring", () => {
     expect(source).toMatch(/\}, \(error, phase\) => \{ allowance\.close\(\); giveBackAdmittedTurn\(run, bot\.id, threadId, admitted, phase, error, opts\?\.onDispatchError\); \}\);/);
     // the unconfirmed-stop branch marks the thread kept before anything in it can throw, and each report is remembered
     expect(source).toMatch(/if\(acceptedTurnCleanupFailed\) \{\s*admitted\.keepThread = true;/);
-    expect(source.match(/opts\?\.onDispatchError\?\.\([^;]*\);\s*admitted\.reported = true;/g)?.length).toBe(2);
+    // (1.0.4 SETUP-LAST-RESORT 4f168ca49 added the third: a rebuild stopped while its revoke settled). Every report after the admission is one of them.
+    const guarded = source.slice(admit, source.indexOf("giveBackAdmittedTurn(run, bot.id, threadId, admitted, phase, error, opts?.onDispatchError)", admit));
+    expect(guarded.match(/opts\?\.onDispatchError\?\.\(/g)?.length).toBe(3);
+    expect(guarded.match(/opts\?\.onDispatchError\?\.\([^;]*\);\s*admitted\.reported = true;/g)?.length).toBe(3);
   });
 
   it("creates the routine-run map before the scheduler exists, and starts the scheduler after the last module state", () => {

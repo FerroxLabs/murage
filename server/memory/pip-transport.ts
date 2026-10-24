@@ -276,7 +276,7 @@ export function preflightRoute(engine: PipEngine, o: PreflightOptions = {}): Pre
 // ------------------------------------------------------- temp root + env ----
 
 export interface TempRoot { root: string; work: string; home: string; promptFile: string; debugFile: string }
-const ROOT_NAME = /^[a-z0-9][a-z0-9-]{0,120}$/;
+export const ROOT_NAME = /^[a-z0-9][a-z0-9-]{0,120}$/;
 
 /** `<base>/<runId>-<attempt>-<rand>`: private, with work/ and home/, and the prompt file unique per attempt. */
 export function createTempRoot(base: string, runId: string, attempt: number, prompt: string): TempRoot {

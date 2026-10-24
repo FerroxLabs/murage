@@ -13,6 +13,7 @@ const {
   diagnosticsFileName,
   formatDesktopCrashRecord,
   installDesktopCrashListeners,
+  createRendererMemorySampler,
   readSafeLogTail,
   redactSecretsInLine,
   CREDENTIAL_ENV_NAMES,
@@ -271,7 +272,7 @@ describe("formatDesktopCrashRecord", () => {
         exitCode: 9,
         url: "https://example.test/private?token=secret",
       }),
-    ).toBe("event=render-process-gone surface=main-window reason=crashed exitCode=9");
+    ).toBe("event=render-process-gone surface=main-window reason=crashed exitCode=9 mem=none");
     expect(
       formatDesktopCrashRecord({
         kind: "child",
@@ -281,6 +282,42 @@ describe("formatDesktopCrashRecord", () => {
         commandLine: "--password=secret",
       }),
     ).toBe("event=child-process-gone type=GPU reason=oom exitCode=34");
+  });
+
+  it("adds the renderer's last memory sample to the crash line, integers only", () => {
+    expect(
+      formatDesktopCrashRecord({
+        kind: "renderer",
+        surface: "main-window",
+        reason: "crashed",
+        exitCode: 5,
+        memory: { sampleAgeSec: 12, workingSetKb: 1500000, peakWorkingSetKb: 1800000, privateKb: 1400000, sysFreeMb: 900, note: "C:\\Users\\Ada" },
+      }),
+    ).toBe(
+      "event=render-process-gone surface=main-window reason=crashed exitCode=5 mem=sampled sampleAgeSec=12 workingSetKb=1500000 peakWorkingSetKb=1800000 privateKb=1400000 sysFreeMb=900",
+    );
+    expect(formatDesktopCrashRecord({ kind: "renderer", reason: "oom", exitCode: 9, memory: { workingSetKb: "1; rm" } })).toContain("workingSetKb=unknown");
+    expect(formatDesktopCrashRecord({ kind: "renderer", reason: "crashed", exitCode: 5 })).toMatch(/ mem=none$/);
+  });
+
+  it("samples a live renderer and reports the reading after its process is gone", () => {
+    let now = 1_000_000;
+    const contents = { getOSProcessId: () => 4242 };
+    const sampler = createRendererMemorySampler({
+      listContents: () => [contents],
+      getMetrics: () => [{ pid: 4242, memory: { workingSetSize: 2048, peakWorkingSetSize: 4096, privateBytes: 1024 } }],
+      freeMemoryMb: () => 512,
+      now: () => now,
+    });
+    expect(sampler.last(contents)).toBeNull();
+    sampler.sample();
+    now += 7_000;
+    expect(sampler.last(contents)).toEqual({ workingSetKb: 2048, peakWorkingSetKb: 4096, privateKb: 1024, sysFreeMb: 512, sampleAgeSec: 7 });
+    const appTarget = new EventEmitter();
+    const records = [];
+    installDesktopCrashListeners({ appTarget, processTarget: new EventEmitter(), record: (event) => records.push(event), mainWebContents: () => contents, memoryFor: sampler.last });
+    appTarget.emit("render-process-gone", {}, contents, { reason: "crashed", exitCode: 5 });
+    expect(formatDesktopCrashRecord(records[0])).toContain("mem=sampled sampleAgeSec=7 workingSetKb=2048");
   });
 
   it("omits normal clean exits", () => {
@@ -310,7 +347,7 @@ describe("formatDesktopCrashRecord", () => {
         reason: "token=super-secret",
         exitCode: "5; password=secret",
       }),
-    ).toBe("event=render-process-gone surface=auxiliary reason=unknown exitCode=unknown");
+    ).toBe("event=render-process-gone surface=auxiliary reason=unknown exitCode=unknown mem=none");
     expect(formatDesktopCrashRecord({ kind: "anything", payload: "secret" })).toBeNull();
   });
 });

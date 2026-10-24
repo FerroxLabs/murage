@@ -14,7 +14,7 @@
 //
 // The service (conversation-deletion.ts) runs the same stages as separate jobs so it can save the plan before the first step
 // runs and the step marks as they finish.
-import { engineState } from "./engine-closed.ts";
+import { configureScopes, engineState, inScopeFolder, privateScopeHome } from "./engine-closed.ts";
 import { executeEnginePlans, recoverAll } from "./engine-exec.ts";
 import { configureRedo } from "./engine-redo.ts";
 import { realEngineFs } from "./engine-fs.ts";
@@ -48,7 +48,15 @@ export function planEngineHistory(job: EngineHistoryJob, fs: EngineFs = realEngi
   // whose journal cannot be finished now (its engine is open, or cannot be told, or the file is held) is not planned.
   const configured = new Map<string, string[]>();
   for (const home of job.homes) if (home.identities?.length) configured.set(homeKey(home.engine, home.home), [...new Set([...(configured.get(homeKey(home.engine, home.home)) ?? []), ...home.identities])]);
-  const recovery = recoverAll(Object.fromEntries(configured));
+  // Only the homes this plan is for: with `only` (an attempt names the homes it has held), a journal of another home is not touched here.
+  // A home inside an engine's scope folder that is not PRIVATE (it has login generations, or its marker does not hold) is never
+  // recovered or planned: nothing in it is touched, and the next attempt names it as a leftover (conversation-deletion.ts).
+  const only = job.only ? new Set(job.only) : undefined;
+  const excluded = (engine: string, home: string): boolean => inScopeFolder(engine, home) && !privateScopeHome(engine, home);
+  const recovery = recoverAll(Object.fromEntries(configured), [], (key) => {
+    const [engine = "", home = ""] = key.split("\0");
+    return (!only || only.has(key)) && !excluded(engine, home);
+  });
   const plans: Record<string, HomePlanData> = {};
   const failed: string[] = [];
   const failedHomes: string[] = [];
@@ -65,6 +73,12 @@ export function planEngineHistory(job: EngineHistoryJob, fs: EngineFs = realEngi
     if (seen.has(key) || (job.only && !job.only.includes(key))) continue;
     seen.add(key);
     const facts = new Known(job.known?.[key]);
+    if (excluded(home.engine, home.home)) {
+      failedHomes.push(key);
+      if (!failed.includes(home.home)) failed.push(home.home);
+      reasons[home.home] = homeReasons[key] = "held";
+      continue;
+    }
     const pl = new Planner(fs, facts);
     pl.synced = fs.syncedHome?.(home.home) === true;
     if (recovery.unreadable) {
@@ -195,11 +209,15 @@ export function removeEngineHistoryFiles(homes: DeletionEngineHome[], folders: s
 /** One engine-history job, as the worker runs it. `onStep` hears each plan step as it finishes. */
 export function runEngineHistoryJob(job: EngineHistoryJob, onStep?: (key: string, index: number) => void): EngineHistoryResult {
   configureRedo(job.redoDir);
+  configureScopes(job.nativeDir);
   if (job.kind === "recover") {
     const configured: Record<string, string[]> = {};
     for (const home of job.homes) if (home.identities?.length) configured[homeKey(home.engine, home.home)] = home.identities;
+    // Before any hold (the start-up pass): a journal of a home inside an engine's scope folder is finished only by an attempt, after
+    // Murage's own engine processes on it are held and while the scope is in that attempt's `only`.
+    const allow = job.skipScopes ? (key: string) => { const [engine = "", home = ""] = key.split("\0"); return !inScopeFolder(engine, home); } : undefined;
     // and the empty private lock folders a killed Murage left next to Claude Code's history (never Claude's own lock)
-    const done = recoverAll(configured, job.homes.filter((item) => item.engine === "claude").map((item) => pathApiFor(item.home).join(item.home, "history.jsonl")));
+    const done = recoverAll(configured, job.homes.filter((item) => item.engine === "claude").map((item) => pathApiFor(item.home).join(item.home, "history.jsonl")), allow);
     return { removed: [], failed: done.pending.map((item) => item.home), leftovers: [], failedHomes: done.pending.map((item) => homeKey(item.engine as DeletionEngineHome["engine"], item.home)) };
   }
   if (job.kind === "plan") return planEngineHistory(job);

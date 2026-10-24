@@ -39,6 +39,11 @@ export interface EngineHistoryJob {
   plans?: Record<string, HomePlanData>;
   /** where the crash journals are kept (<data folder>/engine-redo); "recover" finishes every journal there */
   redoDir?: string;
+  /** <data folder>/native, where Murage's private engine scopes are (engine-closed.ts configureScopes): unset, no home is private */
+  nativeDir?: string;
+  /** "recover" before any hold (the start-up pass): journals of homes inside an engine's scope folder are left for the attempt that
+   * holds them */
+  skipScopes?: boolean;
 }
 export interface EngineHistoryResult {
   removed: string[]; failed: string[]; leftovers: DeletionLeftover[];

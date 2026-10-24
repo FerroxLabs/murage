@@ -85,7 +85,7 @@ describe("a process of the owner's whose open files cannot be read: the file sta
 
   it("the owner is never told a restart finishes it: the restart line is gone and the engine-unchecked line is as approved", () => {
     expect(owedCodeOf("engine-unseen")).not.toBe("engine-unseen");
-    expect(ownerNoticeText("Kimi", "engine-unchecked")).toBe("Murage will check again within 10 minutes whether Kimi is open.");
+    expect(ownerNoticeText("Kimi", "engine-unchecked")).toBe("Murage could not check whether Kimi is open. It checks again within 10 minutes and finishes removing this conversation by itself.");
     for (const code of ["engine-open", "engine-unchecked", "held", "aside", "other"] as const) expect(ownerNoticeText("Kimi", code)).not.toMatch(/restart/i);
   });
 });

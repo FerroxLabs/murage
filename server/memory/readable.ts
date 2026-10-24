@@ -80,7 +80,9 @@ function readRecord(id: string, version: number, access: MemoryAccess, options: 
   if (!derivationAncestryCurrent(options.allowance, db, id, version, row.supersedes_id, mode === "historical")) return "MEMORY_RECORD_UNAVAILABLE";
   assertMemoryAccess(access, String(row.scope_id));
   if (!humanMayReadRecord(db, id, version, access.humanPrincipal)) return "MEMORY_SCOPE_DENIED";
-  const details = db.prepare("SELECT partition,confidence_basis FROM memory_record_details WHERE record_id=? AND record_version=?").get(id, version);
+  const details = db.prepare("SELECT partition,confidence_basis,claim_status FROM memory_record_details WHERE record_id=? AND record_version=?").get(id, version);
+  // A version that was only ever a candidate (waiting, or edited away before it was kept) is not history: nothing ever vouched for it.
+  if (mode === "historical" && details?.claim_status === "provisional") return "MEMORY_RECORD_UNAVAILABLE";
   if (details?.partition === "identity" && !identityRecordReadable(String(row.scope_id), access)) return "MEMORY_SCOPE_DENIED";
   // Every read of the evidence is paid for BEFORE it is made (1.0.2 lineage-cold r3): a page of EVIDENCE_PAGE handles at a time, in
   // the primary key's order, then each source lookup. A read the allowance cannot pay for is not made: the limit error stops the
@@ -173,6 +175,7 @@ export function plausiblyReadable(refs: ReadonlyArray<{ id: string; version: num
   const sourceBad = mode === "historical" ? "s.state='deleted'" : "(s.state!='active' OR s.revision!=e.source_revision)";
   const rows = database().prepare(`SELECT r.id,r.version FROM json_each(?1) j JOIN memory_records r ON r.id=json_extract(j.value,'$[0]') AND r.version=json_extract(j.value,'$[1]')
     WHERE r.state IN ${states}
+      ${mode === "historical" ? "AND NOT EXISTS (SELECT 1 FROM memory_record_details d WHERE d.record_id=r.id AND d.record_version=r.version AND d.claim_status='provisional')" : ""}
       AND (r.scope_id NOT IN (SELECT value FROM json_each(?2)) OR (
         NOT EXISTS (SELECT 1 FROM memory_tombstones t WHERE t.target_type='record' AND t.target_id=r.id AND (t.revision IS NULL OR t.revision=r.version))
         AND NOT EXISTS (SELECT 1 FROM memory_deny_memory dm WHERE dm.kind='record' AND dm.id=r.id AND dm.version IN (0,r.version))

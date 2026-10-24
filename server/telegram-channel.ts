@@ -10,7 +10,7 @@ import { TelegramApprovals, type TelegramApprovalActions } from "./telegram-appr
 
 const identity = z.string().regex(/^[1-9]\d{0,15}$/).refine(value => Number.isSafeInteger(Number(value)));
 const deliveryError = z.enum(["auth", "forbidden", "conflict", "rate-limit", "unavailable", "offline", "timeout", "invalid-request"]);
-const recordSchema = z.object({ updateId: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER - 1), deliveryId: z.string(), prompt: z.string().max(5000), runId: z.string().max(200).optional(), state: z.enum(["accepted", "queued", "sending", "sent", "uncertain", "rejected", "cancelled"]), response: z.string().max(4096).optional(), sendAttempts: z.number().int().nonnegative().max(3).optional(), retryAt: z.number().finite().optional(), deliveryError: deliveryError.optional() }).strict();
+const recordSchema = z.object({ updateId: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER - 1), deliveryId: z.string(), prompt: z.string().max(5000), runId: z.string().max(200).optional(), state: z.enum(["accepted", "queued", "sending", "sent", "uncertain", "rejected", "cancelled"]), response: z.string().max(4096).optional(), sendAttempts: z.number().int().nonnegative().max(3).optional(), retryAt: z.number().finite().optional(), deliveryError: deliveryError.optional(), noticeSent: z.boolean().optional() }).strict();
 const schema = z.object({ version: z.literal(1), botIdentityId: identity, targetBotId: z.string().min(1).max(180).optional(), enabled: z.boolean(), offset: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), binding: z.object({ senderId: identity, chatId: identity }).strict().nullable(), pairing: z.object({ hash: z.string().regex(/^[a-f0-9]{64}$/), expiresAt: z.number().finite() }).strict().nullable(), records: z.array(recordSchema).max(200) }).strict();
 type State = z.infer<typeof schema>;
 interface Options {
@@ -19,7 +19,7 @@ interface Options {
   isCurrentTarget?: () => boolean;
   onVerifiedSender?: (senderId:string,display?:{name?:string;username?:string})=>void;
   enqueue: (input: { deliveryId: string; prompt: string; senderId: string }) => { id: string };
-  runResult: (id: string) => { status: string; output?: string; error?: string } | null;
+  runResult: (id: string) => { status: string; output?: string; error?: string; notice?: string } | null;
   /** Voice notes the run made (server/voice/voice-notes.ts), each handed out
    *  once; sent after the text reply. */
   voiceNotes?: (runId: string) => ChannelVoiceNote[];
@@ -218,6 +218,12 @@ export class TelegramChannel {
       if (record.state === "queued" && !record.response) {
         const result = this.options.runResult(record.runId!);
         if (!active()) return;
+        if (result && !["completed", "failed", "cancelled", "blocked", "stopped"].includes(result.status) && result.notice && !record.noticeSent) {
+          try {
+            await this.options.transport.sendMessage({ chatId: this.state.binding.chatId, text: formatTelegramHtml(result.notice), parseMode: "HTML", signal });
+            if (active()) this.mutate(state => { state.records.find(item => item.updateId === record.updateId)!.noticeSent = true; });
+          } catch { /* best effort: the run is untouched and the next pass tries again */ }
+        }
         if (!result || !["completed", "failed", "cancelled", "blocked", "stopped"].includes(result.status)) continue;
         const response = (result.output || (result.error ? "The task failed. Review details in Murage." : `Task ${result.status}.`)).slice(0, 4096);
         this.mutate(state => { state.records.find(item => item.updateId === record.updateId)!.response = response; });

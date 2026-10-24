@@ -2104,7 +2104,7 @@ export function Call({
     // not queue thirty seconds of narration behind the actual answer
     // Text saved in front of a reply that was already said (a hosted tool's
     // lead-in, inserted at response completion) stays in the chat only.
-    const isReply = (m: (typeof messages)[number]) => m.role === "bot" && m.kind === "text" && Boolean(m.text?.trim());
+    const isReply = (m: (typeof messages)[number]) => m.role === "bot" && m.kind === "text" && !m.widget && Boolean(m.text?.trim());
     const reply = [...fresh].reverse().find((m) => isReply(m) && !heardReplyAfter(messages, spokenIds.current, m, isReply));
     // a turn that failed ends in an error step, not a reply: say so, or the
     // call goes on as if the work were running

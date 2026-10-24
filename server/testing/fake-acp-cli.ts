@@ -40,6 +40,10 @@
 //                     FAKE_ACP_DUMP as `decision`)
 //                   | question-tool (AskUserQuestion routed through request_permission)
 //                   | fuigo-question (Fuigo's `_fuigo/ask_user_question` ext request)
+//                   | vendor-question (the ext request FAKE_ACP_ASK_METHOD with
+//                     the JSON params FAKE_ACP_ASK_PARAMS, a sessionId there set
+//                     to this session's, held until answered;
+//                     the reply is written to FAKE_ACP_DUMP as `decision`)
 //                   | fuigo-elicit (Fuigo's `_fuigo/mcp/elicit` bridge of an MCP form elicitation)
 //                   | folder-trust (Fuigo 1.0.13's folder-trust gate: with
 //                     `--trust` in argv the folder is trusted and the reply
@@ -86,7 +90,8 @@
 //                   | delegate-peer (same as ask-peer but uses delegate_bot —
 //                     returns immediately, the peer runs after our turn)
 //                     (FAKE_ACP_DELEGATE_MESSAGE overrides the task text, default
-//                     "delegated task")
+//                     "delegated task"; FAKE_ACP_DELEGATE_TO names the peer by its
+//                     exact display name instead of the first listed bot)
 //                   | chief-delegate (delegates only for an ASSIGN_TO_PEER
 //                     prompt; ordinary follow-ups stay responsive)
 //                   | create-peer (a Chief creates a specialist, then delegates
@@ -309,6 +314,7 @@ const dumpCredentials = new Set([
   "MURAGE_PROVIDER_API_KEY",
   "MY_AGENT_TOKEN",
   "ANTHROPIC_AUTH_TOKEN",
+  "CLINE_API_KEY",
 ]);
 const dumpEnv = Object.fromEntries(
   [
@@ -1007,7 +1013,9 @@ function handle(msg: any) {
         process.stderr.write("fake-acp: simulated crash before result\n");
         process.exit(3);
       }
-      const authMethods = mode === "no-auth" ? [] : [{ id: "cached_token" }];
+      // FAKE_ACP_AUTH_METHODS: a comma list of method ids to advertise (Cline's
+      // provider ids, item 175); unset keeps the one cached_token method.
+      const authMethods = mode === "no-auth" ? [] : process.env.FAKE_ACP_AUTH_METHODS ? process.env.FAKE_ACP_AUTH_METHODS.split(",").map((id) => ({ id })) : [{ id: "cached_token" }];
       folderTrustInteractive = msg.params?.clientCapabilities?._meta?.["fuigo/folderTrust"]?.interactive === true;
       if (process.env.FAKE_ACP_DUMP) {
         dumpState.initialize = msg.params ?? null;
@@ -1019,6 +1027,8 @@ function handle(msg: any) {
       break;
     }
     case "authenticate":
+      // Recorded next to FAKE_ACP_DUMP so a test can see which method was picked.
+      if (process.env.FAKE_ACP_DUMP) writeFileSync(`${process.env.FAKE_ACP_DUMP}.auth.json`, JSON.stringify({ methodId: msg.params?.methodId ?? null }));
       result(msg.id, {});
       break;
     case "session/new": {
@@ -2002,7 +2012,8 @@ function handle(msg: any) {
           {
             name: "delegate_bot",
             args: (list) => ({
-              bot_id: /id: ([\w-]+)/.exec(list)?.[1] ?? "",
+              // FAKE_ACP_DELEGATE_TO: a peer's exact display name (a chain test picks its next hop); default the first listed bot
+              bot_id: process.env.FAKE_ACP_DELEGATE_TO ?? /id: ([\w-]+)/.exec(list)?.[1] ?? "",
               message: process.env.FAKE_ACP_DELEGATE_MESSAGE ?? "delegated task",
               reason: "followup",
             }),
@@ -2063,6 +2074,17 @@ function handle(msg: any) {
             ],
           },
         });
+        return;
+      }
+      if (mode === "vendor-question") {
+        // A vendor's own ask (Grok Build's `x.ai/ask_user_question`, Cursor's
+        // `cursor/ask_question`), exactly as the test hands it over.
+        pendingPermissionId = 9007;
+        onPermissionAnswered = complete;
+        const askParams = JSON.parse(process.env.FAKE_ACP_ASK_PARAMS ?? "{}");
+        // a sessionId in the given params names this session, as the real engine's does
+        if ("sessionId" in askParams) askParams.sessionId = msg.params?.sessionId ?? "fake-acp-session";
+        out({ jsonrpc: "2.0", id: pendingPermissionId, method: process.env.FAKE_ACP_ASK_METHOD, params: askParams });
         return;
       }
       if (mode === "fuigo-elicit") {

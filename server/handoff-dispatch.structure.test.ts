@@ -380,7 +380,9 @@ describe("the dispatch is the only place a hand-off starts (symbols resolved wit
 
   it("every way execution state can be written is in a function that owns it: SQL that starts a hand-off, stamps its start or sets its phase from a parameter", () => {
     // allowed: (file, function) pairs. The dispatch's startDelegation is the only start; the others only HOLD (started_at=NULL), migrate a stand-in record, or are test fixtures.
-    const startsOk = new Set([`${DISPATCH}:startDelegation`, "delegations.ts:holdUnexecuted", "delegations.ts:holdBusyGaveUp", "pending-delegations-schema.ts:migrateOwnerHandoffPage", "testing/handoff-turn.ts:forceStarted"]);
+    // recordAskTicket starts nothing either (F3 02-4): it records, as a started row, the turn a synchronous ask already started and whose wait ran out, so a restart
+    // settles it ("interrupted", or held) and never runs it again.
+    const startsOk = new Set([`${DISPATCH}:startDelegation`, "delegations.ts:holdUnexecuted", "delegations.ts:holdBusyGaveUp", "delegations.ts:recordAskTicket", "pending-delegations-schema.ts:migrateOwnerHandoffPage", "testing/handoff-turn.ts:forceStarted"]);
     const phaseFromParameterOk = new Set(["delegations.ts:stmts"]);
     const found: string[] = [];
     for (const file of base.getSourceFiles().filter(isSource)) {
