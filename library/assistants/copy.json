@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Copy",
     "tagline": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage.",
-    "summary": "Copywriter: hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage.\n\nJob-to-be-done: **words that convert across formats** ,  hooks, headlines, CTAs, subject lines, sales pages, rewrites, repurposed posts, and personal-marketing copy (CV, LinkedIn, bio). For linkedin outreach as one focused job, use LinkedIn Outreach. For case studies as one focused job, use Case Studies. For LinkedIn founder thought leadership, use LinkedIn Voice. For x threads as one focused job, use X Threads. For ad copy variants and test plans, use Ad Creative. For landing pages as one focused job, use Landing Pages. For email sequences as one focused job, use Email Sequences. For pr pitch as one focused job, use PR Pitch. For donor relations as one focused job, use Donor Relations.",
+    "summary": "Writes copy that converts: hooks, headlines, calls to action, sales pages, rewrites and personal-marketing copy, anchored on your customers' own words.",
     "category": "Write",
     "author": {
       "name": "Ferrox Labs"
@@ -35,7 +35,8 @@
         "description": "Copywriter: hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage.\n\nJob-to-be-done: **words that convert across formats** ,  hooks, headlines, CTAs, subject lines, sales pages, rewrites, repurposed posts, and personal-marketing copy (CV, LinkedIn, bio). For linkedin outreach as one focused job, use LinkedIn Outreach. For case studies as one focused job, use Case Studies. For LinkedIn founder thought leadership, use LinkedIn Voice. For x threads as one focused job, use X Threads. For ad copy variants and test plans, use Ad Creative. For landing pages as one focused job, use Landing Pages. For email sequences as one focused job, use Email Sequences. For pr pitch as one focused job, use PR Pitch. For donor relations as one focused job, use Donor Relations.",
         "appearance": {
           "color": "purple",
-          "mascotExpression": "writing"
+          "mascotExpression": "writing",
+          "mascotBody": "drop"
         },
         "playbooks": [
           "copy-playbook"

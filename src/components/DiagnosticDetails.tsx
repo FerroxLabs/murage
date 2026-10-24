@@ -1,5 +1,6 @@
 import { useRef,useState } from "react";
 import { parseRuntimeErrorDiagnostic } from "../../shared/error-diagnostic";
+import { copyTextOrThrow } from "@/lib/copy-text";
 
 /** Only validated tracking facts, bound to the saved message's actual turn. */
 export interface IncidentMessageSelection { threadId:string; messageId:string }
@@ -36,7 +37,7 @@ export function DiagnosticDetails({ diagnostic, turnId, incident }: { diagnostic
     const current=parseRuntimeErrorDiagnostic(diagnostic);
     if(!current||current.turnId!==turnId)return;
     setCopied(null);setFailed(null);
-    try{await navigator.clipboard.writeText(current.diagnosticId);setCopied(current.diagnosticId);}
+    try{await copyTextOrThrow(current.diagnosticId);setCopied(current.diagnosticId);}
     catch{setFailed(current.diagnosticId);}
   };
   return <div className="mt-3 min-w-0 rounded-lg bg-inset p-3" aria-label="Diagnostic tracking facts">

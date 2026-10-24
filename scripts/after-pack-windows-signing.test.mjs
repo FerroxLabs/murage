@@ -17,6 +17,7 @@ vi.mock("../shared/backup-restic-pin.mjs", async original => {
 });
 import { WINDOWS_BACKUP_ARCHIVE } from "../shared/windows-backup-tools.mjs";
 import { stageWindowsBackupTools, verifyWindowsBackupTools } from "./prepare-windows-backup-tools.mjs";
+import { verifyPackagedBackupTools, verifyPackagedBrowserAdmission } from "./windows-release-gates.mjs";
 
 vi.mock("./prepare-cloudflared.mjs", () => ({
   executableTarget: () => "win32-x64",
@@ -229,28 +230,60 @@ it("release signature gate exempts only exact verified upstream paths and still 
   expect(exemptions).toEqual([`${fixed}/age.exe`, `${fixed}/age-keygen.exe`, `${fixed}/restic.exe`]);
   expect(gate).toContain("$rawBackupFiles.Contains([System.IO.Path]::GetFullPath($_.FullName))");
   expect(gate).not.toMatch(/\$rawBackupFiles\.Contains\([^\n]*\$_\.Name/);
+  // The Node half runs first and its failure stops the step, before any exemption exists.
+  expect(gate.indexOf("& node scripts/windows-release-gates.mjs backup")).toBeGreaterThan(-1);
+  expect(gate.indexOf("& node scripts/windows-release-gates.mjs backup")).toBeLessThan(gate.indexOf("if ($LASTEXITCODE -ne 0)"));
   expect(gate.indexOf("if ($LASTEXITCODE -ne 0)")).toBeLessThan(gate.indexOf("$rawBackupFiles ="));
   expect(gate).toContain("$allowed = @('Ferrox Labs, LLC', 'Cloudflare, Inc.')");
   expect(gate).toContain("@('Murage.exe', 'Murage-*-setup.exe', 'fuigo.exe', 'murage-browser-host.exe')");
-  const snippet = /\$verifyBackup = @'\n([\s\S]*?)\n'@/.exec(gate)?.[1]; expect(snippet).toBeTruthy();
-  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-  const executeNodePartWith = new AsyncFunction("verifyWindowsBackupTools", "verifyWindowsBrowserSignatures", "process", "nativeAuthenticodeIn", "resolve", "join", "existsSync", snippet.replace(/^import .*;\n/gm, ""));
-  // the gate hands the packaged resources folder's own addon to the check, as an absolute path (require() reads a bare relative one as a package name)
+  // The gate hands the packaged resources folder's own addon to the check, as an absolute path (require() reads a bare
+  // relative path as a package name). This runs the real gate function with the checks injected.
   const resourcesDir = path.resolve("release/win-unpacked/resources");
-  const executeNodePart = (raw, signed, proc) => executeNodePartWith(raw, signed, proc, resources => { expect(resources).toBe(resourcesDir); return { resources }; }, path.resolve, path.join, fs.existsSync);
   const f = fixture();
   const verifyRaw = directory => { expect(directory).toBe(fixed); verifyWindowsBackupTools(f.backupDirectory); };
   const verifySigned = vi.fn(async (files, systemRoot, native) => { expect(files).toEqual([`${fixed}/murage-backup-age.exe`]); expect(native).toEqual({ resources: resourcesDir }); await verifyWindowsBrowserSignatures([f.backupHelper], systemRoot, native); });
-  await executeNodePart(verifyRaw, verifySigned, { env: { SystemRoot: "C:\\Windows" } }); expect(verifySigned).toHaveBeenCalledOnce();
+  const run = (systemRoot) => verifyPackagedBackupTools({ systemRoot, deps: {
+    verifyWindowsBackupTools: verifyRaw, verifyWindowsBrowserSignatures: verifySigned, log() {},
+    nativeAuthenticodeIn: resources => { expect(resources).toBe(resourcesDir); return { resources }; },
+  } });
+  await run("C:\\Windows"); expect(verifySigned).toHaveBeenCalledOnce();
   verifySigned.mockClear(); fs.rmSync(path.join(f.backupDirectory, "LICENSE"));
-  await expect(executeNodePart(verifyRaw, verifySigned, { env: {} })).rejects.toThrow(); expect(verifySigned).not.toHaveBeenCalled();
+  await expect(run(undefined)).rejects.toThrow(); expect(verifySigned).not.toHaveBeenCalled();
   fs.writeFileSync(path.join(f.backupDirectory, "LICENSE"), "raw license fixture"); fs.appendFileSync(path.join(f.backupDirectory, "age.exe"), "changed");
-  await expect(executeNodePart(verifyRaw, verifySigned, { env: {} })).rejects.toThrow("WINDOWS_BACKUP_RAW_MISMATCH"); expect(verifySigned).not.toHaveBeenCalled();
+  await expect(run(undefined)).rejects.toThrow("WINDOWS_BACKUP_RAW_MISMATCH"); expect(verifySigned).not.toHaveBeenCalled();
   fs.writeFileSync(path.join(f.backupDirectory, "age.exe"), "raw age fixture");
   verifyWindowsBrowserSignatures.mockRejectedValueOnce(new Error("Windows browser requires a valid Ferrox Labs signature"));
-  await expect(executeNodePart(verifyRaw, verifySigned, { env: {} })).rejects.toThrow("valid Ferrox Labs signature");
-  // This exercises the embedded Node gate and checks the CI step's source shape;
-  // it does not claim a real Authenticode verification.
+  await expect(run(undefined)).rejects.toThrow("valid Ferrox Labs signature");
+  // This exercises the shared gate function and the CI step's source shape; it does not claim a real Authenticode verification.
+});
+
+it("package-win runs the same release gates as the release workflow", () => {
+  const release = parse(fs.readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8"));
+  const pack = parse(fs.readFileSync(new URL("../.github/workflows/package-win.yml", import.meta.url), "utf8"));
+  const releaseSteps = release.jobs.windows.steps.map(step => step.run ?? "").join("\n");
+  const packSteps = pack.jobs.package.steps;
+  for (const gate of ["backup", "admission"]) {
+    expect(releaseSteps).toContain(`node scripts/windows-release-gates.mjs ${gate}`);
+    expect(packSteps.map(step => step.run ?? "").join("\n")).toContain(`node scripts/windows-release-gates.mjs ${gate}`);
+  }
+  // After the signed package exists, before its tree is relied on.
+  const names = packSteps.map(step => step.name);
+  const gateStep = names.indexOf("Gate: release backup-tool signature and browser admission checks");
+  expect(gateStep).toBeGreaterThan(names.indexOf("Package (Azure Trusted Signing)"));
+  expect(gateStep).toBeLessThan(names.indexOf("verify the packaged tree"));
+});
+
+it("the admission gate gives the check the packaged resources path and the bundle's own engine and browser", async () => {
+  const env = { SystemRoot: "C:\\Windows" };
+  const seen = [];
+  await verifyPackagedBrowserAdmission({ env, deps: {
+    log() {},
+    browserBundlePaths: (root, target) => { seen.push([root, target]); return { engine: `${root}/engine.exe`, chrome: `${root}/chrome.exe` }; },
+    ensureBrowserSandboxAccess: async spec => { seen.push(spec); },
+  } });
+  const root = path.join(path.resolve("release/win-unpacked/resources"), "browser-engine");
+  expect(env.MURAGE_RESOURCES_PATH).toBe(path.resolve("release/win-unpacked/resources"));
+  expect(seen).toEqual([[root, "win32-x64"], { command: `${root}/engine.exe`, env: { MURAGE_BROWSER_BUNDLE_DIR: root, AGENT_BROWSER_EXECUTABLE_PATH: `${root}/chrome.exe`, SystemRoot: "C:\\Windows" } }]);
 });
 
 

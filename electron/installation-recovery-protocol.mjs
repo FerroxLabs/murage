@@ -1,5 +1,5 @@
 import { skippedDisplayPath } from "../shared/backup-capture-failure.mjs";
-const skipReasons = new Set(["rebuildable", "file-limit", "unreadable", "special", "too-deep", "linked-folder", "path-too-long"]);
+const skipReasons = new Set(["rebuildable", "file-limit", "unreadable", "special", "too-deep", "linked-folder", "path-too-long", "old-copy", "unrecognised"]);
 /** A backup's list of left-out items, cleaned for display: odd names are
  * shown safely, unknown entries dropped, and only a broken count makes it
  * null. It never makes a good result invalid (Kimi audit #1). */
@@ -20,7 +20,7 @@ export function backupSkippedSummary(value) {
   return { count: value.count, items, bots };
 }
 const operations = new Set(["backup", "inspect", "plan-restore", "restore", "rollback", "memory-downgrade", "review", "activate", "backup-encrypted", "inspect-encrypted", "restore-encrypted-new"]);
-const fields = ["path", "sha256", "snapshotId", "status", "previousDataDir", "receipt", "retainedCandidate", "activationAvailable", "reviewHash", "activationId", "connectionProfileId", "engines", "schedules", "pendingWork"];
+const fields = ["path", "sha256", "snapshotId", "status", "previousDataDir", "receipt", "retainedCandidate", "activationAvailable", "reviewHash", "activationId", "connectionProfileId", "engines", "schedules", "pendingWork", "notice"];
 
 /** The desktop never receives archive content or an unbounded omissions list.
  * Full receipts remain on disk; the recovery screen gets a bounded summary. */

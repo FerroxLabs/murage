@@ -27,6 +27,7 @@ import { MurageStatus, status } from "./murage-status.ts";
 import { ReleasedText, WorkerText, type EgressOrigin, type TextLineage } from "./released-text.ts";
 import type { WorkerMessage } from "./worker-message.ts";
 import type { DatabaseSync } from "node:sqlite";
+import type { HumanPrincipal } from "./human-principals.ts";
 import { denyLookup, lineageLive } from "./memory/deny-read.ts";
 import { addTurnParents, currentTurnLineage } from "./memory/lineage-write.ts";
 
@@ -35,6 +36,11 @@ export type { EgressOrigin };
 export type LineVerdictState = "shown" | "withheld" | "checking";
 /** A check's answer with why: withheld, and whether only because it could not finish. */
 export type CheckVerdict = { withheld: boolean; unproven: boolean };
+/** Who the gate's `ownUnsharedWork` proved the reader to be (SL-E r3, lanes/release104/designs/SL-E.md section 10): the owner, on the owner's
+ * own unshared conversations; or one linked person, on that person's own unshared conversations, with the principal it was proven for. The
+ * person's principal is the only source of the scopes the memory rules then compare with (S(P)). `false`: nothing proven. A plain `true` is the
+ * owner proof (the shape every owner-only caller already answers); no boolean is ever a person proof. */
+export type OwnUnsharedProof = { reader: "owner" } | { reader: "person"; principal: HumanPrincipal } | false;
 export interface EgressMessage { id: string; text?: string; copyOf?: { threadId: string; messageIds: string[] }; withheldFromBots?: boolean | "forgotten" | "checking"; murageLine?: boolean }
 
 /** What the egress needs to ask about, supplied once by the server (and by tests). */
@@ -46,11 +52,15 @@ export interface ResultEgressDeps {
   /** The same shape (replay-lineage.ts capturedMessageVerdict). */
   capturedMessageWithheld: (threadId: string, messageId: string) => boolean | CheckVerdict;
   messageSourceForgotten: (threadId: string, messageId: string) => boolean;
-  messageMadeWithMemory: (threadId: string, messageId: string) => boolean;
+  /** With `scopeIds` (a person proof's S(P), SL-E r3 E3b): "shown", "withheld" or "checking" by whose memory the line rests on. Without:
+   * today's rule, true for any memory. */
+  messageMadeWithMemory: (threadId: string, messageId: string, scopeIds?: readonly string[]) => boolean | LineVerdictState;
   /** false is withheld; "checking" is a check past its budget. */
   partitionAllowed: (workerBotId: string, threadId: string, messageIds: string[]) => boolean | LineVerdictState;
   /** Both sides are positively the owner's own unshared conversations (the origin of the result is given when there is one). */
-  ownUnsharedWork: (who: { fromBotId: string; toBotId: string; fromThreadId: string }, origin: EgressOrigin | undefined) => boolean;
+  ownUnsharedWork: (who: { fromBotId: string; toBotId: string; fromThreadId: string }, origin: EgressOrigin | undefined) => OwnUnsharedProof | boolean;
+  /** S(P) for a person proof's principal, read live (memory/policy.ts personReadableScopes); "unknown" when it cannot be read. Absent: unknown. */
+  personScopes?: (principal: HumanPrincipal) => ReadonlySet<string> | "unknown";
   /** The words a withheld result is replaced by; the status table's own `withheld` line when absent. */
   withheldLine?: string;
   /** The words a result still being checked is replaced by for a bot; the status table's own `checking` line when absent. */
@@ -58,11 +68,11 @@ export interface ResultEgressDeps {
   /** Write-time (DESIGN-WRITETIME 6 k, S4): whether every one of these lines of one thread reads shown to the result's reader. The lines'
    * carries already hold the copy chain, so this replaces the walk's per-message rules once the read-time judge goes (S6); until then both
    * apply. index.ts supplies `writetimeLinesShown(database)`. Absent: the read-time rules alone. */
-  linesShown?: (threadId: string, messageIds: readonly string[], notOwnerAudience: boolean) => boolean | LineVerdictState;
+  linesShown?: (threadId: string, messageIds: readonly string[], notOwnerAudience: boolean, scopeIds?: readonly string[]) => boolean | LineVerdictState;
   /** The reader door (server/bot-read.ts doorEgress, LINEAGE-DESIGN-S6 rule 16): whether these stored lines of one thread read as stored to the
    * bot the result is released to, judged as every bot-facing read is (classified rows, copy and hand-off chains, the row check, lineage
    * verdicts). index.ts supplies `doorEgress(database)`. Absent: the gate's own rules alone (the tests of those rules). */
-  doorShown?: (readerBotId: string, threadId: string, messageIds: readonly string[], notOwnerAudience: boolean) => boolean | LineVerdictState;
+  doorShown?: (readerBotId: string, threadId: string, messageIds: readonly string[], notOwnerAudience: boolean, scopeIds?: readonly string[]) => boolean | LineVerdictState;
 }
 
 /** The write-time lookup on a result's lines, for ResultEgressDeps.linesShown: one page lookup per thread. A not-owner audience is judged
@@ -73,14 +83,37 @@ export interface ResultEgressDeps {
  * and unknown still binds, while the audience-only marks a permission, roster or settings change leaves (receipt flips and what they inherit)
  * do not, since such a change takes nothing away from the owner (Lee_J / Phantom, lanes/release103/LEE-PHANTOM.md). Lines in a person's or a
  * room's conversation keep the owner audience, so every receipt revocation still binds them (result-egress-privacy.test.ts). */
-export function writetimeLinesShown(db: () => DatabaseSync, ownerConversation?: (threadId: string) => boolean): (threadId: string, messageIds: readonly string[], notOwnerAudience: boolean) => LineVerdictState {
-  return (threadId, messageIds, notOwnerAudience) => {
+/** SL-E r3.2 (A2) (lanes/release104/designs/SL-E.md section 11): a teammate's copied reply handed over to a linked person's turn on a resumed
+ * session (index.ts external delivery), judged for that person's reader `{ owner: false, scopeIds: S(P) }` through the same write-time lookup
+ * and reader door as W9: the copy row in the person's conversation and the lines it was copied from. The words only when every one reads
+ * "shown"; S(P) unknown, or anything else, is the withheld line (`unproven` when the answer is not known, "still being checked"). */
+export function personCopyHandOver(
+  readers: { linesShown: NonNullable<ResultEgressDeps["linesShown"]>; doorShown: NonNullable<ResultEgressDeps["doorShown"]> },
+  readerBotId: string, threadId: string, message: { id: string; copyOf?: { threadId: string; messageIds: readonly string[] } },
+  scopes: ReadonlySet<string> | "unknown",
+): { withheld: boolean; unproven: boolean } {
+  if (scopes === "unknown") return { withheld: true, unproven: true };
+  const scopeIds = [...scopes];
+  const flags = { withheld: false, checking: false };
+  try {
+    fold(readers.doorShown(readerBotId, threadId, [message.id], true, scopeIds), flags, "withheld-when-false");
+    fold(readers.linesShown(threadId, [message.id], true, scopeIds), flags, "withheld-when-false");
+    if (message.copyOf?.messageIds.length) fold(readers.linesShown(message.copyOf.threadId, message.copyOf.messageIds, true, scopeIds), flags, "withheld-when-false");
+  } catch { flags.checking = true; }
+  return flags.withheld ? { withheld: true, unproven: false } : flags.checking ? { withheld: true, unproven: true } : { withheld: false, unproven: false };
+}
+
+/** `scopeIds` (SL-E r3 W9): a proven person reader's S(P). The same lookup judges the lines for the audience `{ owner: false, scopeIds }`, so
+ * every mark, window and the watermark apply as today and the footprint rule compares with the person's own scopes. Absent: today's rule. */
+export function writetimeLinesShown(db: () => DatabaseSync, ownerConversation?: (threadId: string) => boolean): (threadId: string, messageIds: readonly string[], notOwnerAudience: boolean, scopeIds?: readonly string[]) => LineVerdictState {
+  return (threadId, messageIds, notOwnerAudience, scopeIds) => {
     const file = db();
     if (!messageIds.length || !lineageLive(file)) return "shown";
     const page = { threadId, lines: messageIds.map(messageId => ({ messageId, author: "generated" as const })) };
     // Only policy/epoch age is exempt for the owner's own chat: a roster change alone must not hide a Chief's delegated reply.
     // Keep the owner audience explicit so receipt revocations, content marks and pending checks still bind the result.
-    const verdicts = !notOwnerAudience && ownerConversation?.(threadId) === true ? denyLookup(file, page, { audience: null })
+    const verdicts = notOwnerAudience && scopeIds !== undefined ? denyLookup(file, page, { audience: { owner: false, scopeIds: [...scopeIds] } })
+      : !notOwnerAudience && ownerConversation?.(threadId) === true ? denyLookup(file, page, { audience: null })
       : denyLookup(file, page, { audience: { owner: !notOwnerAudience, scopeIds: [] } }, { ownerOwnChat: !notOwnerAudience });
     // the worst state over the lines: a mark anywhere withholds; otherwise an unknown anywhere is checking
     let worst: LineVerdictState = "shown";
@@ -207,6 +240,8 @@ export function releaseStoredResult(
   if (!deps) throw new Error("The result gate is not configured");
   const recorded = text === undefined ? undefined : unseal(text);
   const origin = ref.origin;
+  // S(P) for a proven person reader (SL-E r3); undefined for every other audience, whose rules stay byte-for-byte as before
+  let personScopes: ReadonlySet<string> | "unknown" | undefined;
   const ids = origin?.messageIds ?? [];
   // Every message the result stands on, and every one those were copied from, is read now: a receipt's cached words carry no authority of
   // their own, and one original that is gone or flagged takes the whole result with it.
@@ -216,9 +251,14 @@ export function releaseStoredResult(
   if (ref.requestId && ref.binding !== "mismatch") {
     const verdict = deps.authorize(ref.requestId, worker, destinationThreadId);
     if (!verdict.ok) return { kind: "refused", line: hostLine(verdict.line), code: verdict.code };
-  } else if (ref.binding === "mismatch" || (notOwnerAudience && ref.peerTurnNotOwner !== true) || ref.recordedNotOwner === true
-    || !deps.ownUnsharedWork({ fromBotId: authority.fromBotId, toBotId: worker, fromThreadId: destinationThreadId }, stored?.copyOf ?? origin)) {
-    return { kind: "refused", line: status("origin_unconfirmed"), code: "origin_unconfirmed" };
+  } else {
+    const proof = ref.binding === "mismatch" || (notOwnerAudience && ref.peerTurnNotOwner !== true) || ref.recordedNotOwner === true ? false
+      : deps.ownUnsharedWork({ fromBotId: authority.fromBotId, toBotId: worker, fromThreadId: destinationThreadId }, stored?.copyOf ?? origin);
+    if (!proof) return { kind: "refused", line: status("origin_unconfirmed"), code: "origin_unconfirmed" };
+    // SL-E r3 E3b: a person proof names the reader, and only its principal yields the scopes the memory rules compare with (S(P)), read live
+    if (proof !== true && proof.reader === "person" && notOwnerAudience) {
+      try { personScopes = deps.personScopes?.(proof.principal) ?? "unknown"; } catch { personScopes = "unknown"; }
+    }
   }
   // A status-only record is Murage's own account of how a request ended: it references no worker message and carries no worker text.
   if (ref.statusOnly === true) return { kind: "status" };
@@ -249,16 +289,24 @@ export function releaseStoredResult(
         if (message.withheldFromBots !== undefined && message.withheldFromBots !== false && message.withheldFromBots !== "checking") flags.withheld = true;
         if (message.copyOf) fold(deps.copyOriginWithheld(message.copyOf), flags, "withheld-when-true");
         fold(deps.capturedMessageWithheld(threadId, message.id), flags, "withheld-when-true");
-        if (deps.messageSourceForgotten(threadId, message.id) || (notOwnerAudience && deps.messageMadeWithMemory(threadId, message.id))) flags.withheld = true;
+        if (deps.messageSourceForgotten(threadId, message.id) || (notOwnerAudience && personScopes === undefined && deps.messageMadeWithMemory(threadId, message.id))) flags.withheld = true;
+        // SL-E r3 E3b: a proven person reads what rests only on that person's memory (W1-W8); S(P) unknown is an unknown (W7)
+        if (notOwnerAudience && personScopes !== undefined) {
+          if (personScopes === "unknown") flags.checking = true;
+          else fold(deps.messageMadeWithMemory(threadId, message.id, [...personScopes]), flags, "withheld-when-true");
+        }
         fold(deps.partitionAllowed(worker, message.copyOf?.threadId ?? threadId, message.copyOf?.messageIds ?? [message.id]), flags, "withheld-when-false");
       }
       if (ids.length) fold(deps.copyOriginWithheld(origin), flags, "withheld-when-true");
       // write-time and the reader door: every line on the walk, by thread (a page lookup each)
       const byThread = new Map<string, string[]>();
       for (const { threadId, message } of walk.nodes) byThread.set(threadId, [...(byThread.get(threadId) ?? []), message.id]);
-      for (const [threadId, lineIds] of byThread) {
-        if (deps.linesShown) fold(deps.linesShown(threadId, lineIds, notOwnerAudience), flags, "withheld-when-false");
-        if (deps.doorShown) fold(deps.doorShown(authority.fromBotId, threadId, lineIds, notOwnerAudience), flags, "withheld-when-false");
+      // (W9: a proven person's lines are judged for the audience of S(P). S(P) unknown is already checking (W7): no footprint can be judged
+      // without it, so these two are not asked, and nothing they could add would release words)
+      const scoped = notOwnerAudience && personScopes !== undefined && personScopes !== "unknown" ? [...personScopes] : undefined;
+      if (personScopes !== "unknown") for (const [threadId, lineIds] of byThread) {
+        if (deps.linesShown) fold(scoped ? deps.linesShown(threadId, lineIds, notOwnerAudience, scoped) : deps.linesShown(threadId, lineIds, notOwnerAudience), flags, "withheld-when-false");
+        if (deps.doorShown) fold(scoped ? deps.doorShown(authority.fromBotId, threadId, lineIds, notOwnerAudience, scoped) : deps.doorShown(authority.fromBotId, threadId, lineIds, notOwnerAudience), flags, "withheld-when-false");
       }
     }
   } catch { flags.checking = true; }

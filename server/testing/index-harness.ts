@@ -74,6 +74,7 @@ export const FIXTURE_ENGINE_OVERRIDES = {
   qwen: { driver: "fixture-unavailable" },
   hermes: { driver: "fixture-unavailable" },
   pi: { driver: "fixture-unavailable" },
+  cline: { driver: "fixture-unavailable" },
 };
 
 /** Packaged-shape fixtures receive the renderer proof through their private
@@ -108,7 +109,7 @@ export const holdBoxSlowValidation = () => {
   return { entered: enteredPromise, release };
 };
 export let boxStubPort = 0;
-export let connectorAliasFixture: { accounts: { id: string; alias: string; status: string; toolkit: { slug: string } }[]; links: { toolkit: string; alias?: string }[]; calls: number } | undefined;
+export let connectorAliasFixture: { accounts: { id: string; alias: string; status: string; toolkit: { slug: string } }[]; links: { toolkit: string; alias?: string }[]; calls: number; refuseTakenLabels?: boolean; refuseAfterMs?: number; statusAfterMs?: number } | undefined;
 export let home: string;
 export let staticDir: string;
 export let fakeClaudeDump: string;

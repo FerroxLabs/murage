@@ -1,7 +1,10 @@
+import { raiseTransientError, useChatErrorClear } from "./chat-error";
 import { requestMemoryWake } from "@/lib/memory-integrity-wake";
+import { probeInstances } from "@/lib/instances-probe";
 import { projectEvents, type ProjectFrame } from "@/lib/project-events";
 import { emitInboxChanged } from "@/lib/inbox-changed";
 import { decideWithFreshAuth } from "@/lib/fresh-auth";
+import { formerChiefOutcome } from "../../shared/chief-handover";
 import { REMEMBERED_EVENT } from "../../shared/learned-chip";
 import { MEMORY_WAITING_EVENT } from "@/lib/memory-waiting-event";
 // Server-backed store. The React app holds no transports of its own:
@@ -35,6 +38,9 @@ import { EMPTY_HELPERS, helpersAfterEvent, type HelperState } from "@/lib/subtas
 import { normalizeAgentPlan, type AgentPlanEntry } from "../../shared/agent-plan";
 import type { EmberColor, EmberMotion } from "@/lib/mascot";
 import { botRole } from "@/lib/bot-role";
+import { SETUP_VIEW_EVENT } from "@/lib/app-events";
+import { idToSaveOnSetupView, landingId, readLastConversation, shouldRemember, workspaceKey, writeLastConversation } from "@/lib/last-conversation";
+import { homeMeta } from "@/lib/cloud-home-meta";
 import { extraTasksPatch, findTask, mayHoldTask, viewedThreadGone, windowCovers, withExtraTasks } from "@/lib/task-window";
 import { forgetProjectTab } from "@/lib/project-tab";
 import { createIndexedDbDraftBackend, forgetMarkdownDrafts } from "@/lib/markdown-drafts";
@@ -43,7 +49,7 @@ import { normalizeSettingsSection, type AppSettingsSection } from "@/lib/setting
 import { resolveSettingsSection } from "@/lib/settings-pages";
 import type { BotAvatarCrop } from "../../shared/bot-avatar";
 import type { MascotBodyId } from "../../shared/mascot-bodies";
-import type { RoutineRequestCardData } from "../../shared/routine-request";
+import type { AutomationRequestCardData } from "../../shared/routine-request";
 import type { RoutineRunCardData } from "../../shared/routine-run";
 import type { GroupGoalRunCardData } from "../../shared/group-goal-run";
 import type { ChannelProject, ChannelProjectInput } from "../../shared/project";
@@ -78,7 +84,7 @@ import { skillRecorderEnabled } from "@/lib/feature-flags";
 import { desktopSurfaceHeaders, ensureDesktopSurfaceSecret, openLiveEvents } from "@/lib/live-events";
 import { newSendId } from "@/lib/send-id";
 import { busyRetriesFor, busyRetryDelayMs, createOutbox, createSendDelivery, deliverEdit, isDatabaseBusyAnswer, retryWhileBusy, type OutboxDraft } from "./send-delivery";
-import { draftRevision, forgetDeletedDrafts, getDraft, markDraftEdited, noteRefusedChips, recoverFailedComposerSend, releaseRecoveredSend, restoreComposerDraft, thawDraft } from "@/lib/drafts";
+import { draftRevision, forgetDeletedDrafts, clearReloadedSendDraft, getDraft, noteRefusedChips, recoverFailedComposerSend, releaseRecoveredSend, thawDraft } from "@/lib/drafts";
 import { checkSession, onSignedOut, sessionSignedOut } from "@/lib/session-check";
 import { onSaveFailed } from "@/lib/save-file";
 import { callNative, nativeAvailable } from "@/lib/native-shell";
@@ -118,8 +124,10 @@ import { isQuestionCard, type QuestionAnswer, type QuestionSpec } from "../../sh
 
 export interface OptionCardData {
   /** A publish approval card (server/publish): never auto-approved, never "always allow". */
-  kind?: "publish";
+  kind?: "publish" | "mcpEnable";
   publish?: import("../../shared/publish-card").PublishCardData;
+  /** A "Turn on <name>?" card for a server a bot filed switched off (item 118). */
+  mcpEnable?: { name: string; rev: string; botId: string; bot: string; kind: "stdio" | "remote"; command?: string; args?: string[]; url?: string; transport?: "http" | "sse"; pendingKeys: string[]; enabled?: boolean; error?: string };
   /** Optional owner-approved browser connection with one explicit continuation. */
   browserSetup?: import("../../shared/browser-setup-card").BrowserSetupCardData;
   title: string;
@@ -129,6 +137,8 @@ export interface OptionCardData {
   dismissed?: boolean;
   /** Present when this card is a live provider ask (approval/question). */
   requestId?: string;
+  /** 1.0.4 SL-I I5: the engine hit its limit; the engines that can answer now (server/limit-continuation.ts) */
+  limitOffer?: { sourceMessageId: string; from: ModelSelection; resetsAt: number | null; choices: Array<{ label: string; selection: ModelSelection; billing: string }>; nextTimeLabel: string; routinesLabel: string };
   /** permission asks: the tool being requested (drives the approval box) */
   tool?: string;
   /** what the tool will do, in one line; the approval digest reads it */
@@ -167,12 +177,23 @@ export interface OptionCardData {
   /** The bot stopped waiting with no answer; "Send as a message" still works. */
   expired?: boolean;
   sentAsMessage?: boolean;
+  /** QW Q1: a question from the agents `ask_user` tool, a murage-question fence or Codex's async ask. Its answer is an
+   * ordinary owner send (the person's next message), never an engine reply. Server-written only. */
+  answerAsSend?: boolean;
+  /** QW Q1: the provider turn the question was asked in, the only turn its answer may be steered into. */
+  turnId?: string;
+  /** QW Q1, Q1b: the owner send an answer became ("ask-" + the card's id). */
+  sendId?: string;
+  /** QW Q2: the fence of a bot message this card was made from: that message and the fence's place among its fences. */
+  fenceOf?: { messageId: string; index: number };
   unattended?: boolean;
   /** A folder-trust question (shared/folder-trust.ts): the answer is a
    * decision about the folder, remembered by the server. */
   folderTrust?: { key: string; folder: string; sources: string[]; late?: "finished" | "stopped" | "failed" | "timeout" };
   /** Persisted proposal used by the server when the user confirms it. */
-  routineRequest?: RoutineRequestCardData;
+  routineRequest?: AutomationRequestCardData;
+  /** SL-J J2: Undo put back what this applied routine or webhook change replaced. */
+  undone?: boolean;
   routineProposalDigest?: string;
   /** Staged learned-skill change; applied only after the user confirms this card. */
   skillRequest?: SkillRequestCardData;
@@ -217,7 +238,7 @@ export interface ConnectorCardData {
 }
 
 export interface SecretRequestCardData {
-  target: import("../../shared/credential-request").CredentialTargetId;
+  target: import("../../shared/credential-request").AnyCredentialTargetId;
   label: string;
   description: string;
   placeholder: string;
@@ -230,6 +251,8 @@ export interface SecretRequestCardData {
 }
 
 export interface Message {
+  /** User rows: the server left this message out of memory as notes exported from another assistant (memory/capture.ts); the chat shows a line under it. */
+  memoryNote?: "export-paste";
   /** The row the server saved this message in front of (Store
    * insertMessageBefore). It arrives after that row, live and in pages. */
   insertedBefore?: string;
@@ -249,6 +272,8 @@ export interface Message {
   role: "bot" | "user";
   kind: "text" | "options" | "activity" | "screen" | "connector" | "mcpSignIn" | "secret" | "routine.run" | "goal.run";
   text?: string;
+  /** QW Q4: a bot-authored widget, canonical (shared/widget.ts), on a bot `kind: "text"` row; drawn wherever it is present. */
+  widget?: import("../../shared/widget").WidgetPayload;
   /** Verified registry identities, never inferred from message prose. */
   artifactIds?: string[];
   /** Provider-generated files attached to this assistant response. */
@@ -470,6 +495,8 @@ export interface Task {
   /** when the thread last had a message (server-derived); absent = none yet */
   lastActivityAt?: number;
   modelSelection?: ModelSelection;
+  /** 1.0.4 SL-K K1: the chat has no model of its own and uses its bot's */
+  followsBotModel?: boolean;
   autoApprove?: boolean;
   /** Full access for this task (only while autoApprove is on) */
   fullAccess?: boolean;
@@ -484,9 +511,13 @@ export interface Task {
   /** runtime only: when this thread's current turn became busy (server epoch
    * ms); the elapsed readout counts from here so it survives thread switches */
   turnStartedAt?: number;
+  /** runtime only: this thread's running turn has the browser mounted */
+  browserMounted?: boolean;
   pinnedMessageId?: string;
   /** Listed first in the task switcher; absent means not pinned. */
   pinned?: boolean;
+  /** An address attached to this conversation, shown as a chip in the task list. */
+  link?: string;
   /** what this task has spent, banked once per settled turn */
   usage?: TaskUsage;
   /** folder this task's turns run in, pinned on its first turn; null =
@@ -560,9 +591,13 @@ export interface Bot {
   activity?: "working" | "waiting-on-you" | "idle" | "no-signal" | "dead";
   /** the viewed thread's turn start (server epoch ms) while busy, else null */
   turnStartedAt?: number | null;
+  /** the viewed thread's running turn has the browser mounted */
+  browserMounted?: boolean;
   /** the viewed thread's helpers while its turn runs (server snapshot, owner only) */
   subtasks?: Subtask[];
   modelSelection: ModelSelection;
+  /** 1.0.4 SL-I I4: the engine that takes over when this bot's engine hits its limit (desktop sets it) */
+  limitBackup?: { selection: ModelSelection; routines: boolean; at: number };
   /** Where this bot's computer runs; unset = auto (cloud box if one exists, else local). */
   computer?: "cloud" | "vm" | "local" | "browser" | "off";
   /** Which cloud computer backs `computer: "cloud"`; absent means Box. */
@@ -867,7 +902,7 @@ export type FluxKeyState = "ok" | "missing" | "not-flux" | "refused";
 
 export type ConfigStatusFrame = Pick<
   ConfigStatus,
-  "xai" | "composio" | "box" | "vps" | "rooms" | "localVm" | "opencodeGo" | "tts" | "imageGen" | "flux" | "webSearch" | "notifications" | "profile" | "language" | "features" | "browserProfiles" | "harness"
+  "xai" | "composio" | "box" | "vps" | "rooms" | "newBots" | "localVm" | "opencodeGo" | "tts" | "imageGen" | "flux" | "decider" | "webSearch" | "notifications" | "profile" | "language" | "features" | "browserProfiles" | "harness"
 >;
 
 export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
@@ -877,11 +912,16 @@ export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
     box: frame.box,
     vps: frame.vps,
     rooms: frame.rooms,
+    // The server sends both on every config frame (configStatus, server/index.ts).
+    // Dropping them here made the auto-routing switch read off after any live
+    // config change, and its next click saved it back on (U35).
+    newBots: frame.newBots,
     localVm: frame.localVm,
     opencodeGo: frame.opencodeGo,
     tts: frame.tts,
     imageGen: frame.imageGen,
     flux: frame.flux,
+    decider: frame.decider,
     webSearch: frame.webSearch,
     notifications: frame.notifications,
     profile: frame.profile,
@@ -897,6 +937,8 @@ export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
  * local binary. `command` omits platforms that have no one-liner. */
 export interface EngineInstall {
   command?: Partial<Record<"darwin" | "win32" | "linux", string>>;
+  /** The OS of the computer running the server; the setup card shows that OS's command. */
+  platform?: "darwin" | "win32" | "linux";
   docsUrl?: string;
   signInCommand?: string;
   needsNode?: boolean;
@@ -987,7 +1029,9 @@ export interface AppState {
    * move on their own (hydration, another surface); the phone drawer closes
    * on this instead (drawer-close.ts). */
   conversationPicks?: number;
-  activeView: "chat" | "team-map" | "routines" | "skill-recorder";
+  activeView: "chat" | "team-map" | "routines" | "skill-recorder" | "all-chats";
+  /** All chats opened from a bot's or a channel's chat list: the Bot or Project/channel filter it starts with. */
+  allChatsScope?: { botId?: string; groupId?: string };
   teamMapMemoryOpen?: boolean;
   routines: Routine[];
   routineRuns: RoutineRun[];
@@ -1046,7 +1090,7 @@ export interface AppState {
   hydrated?: boolean;
   error: string | null;
   /** After a Delete: what could not be removed, in plain words (deletion-notes.ts). */
-  deletionNote: { title: string; items: string[]; retry?: boolean; owed?: boolean; retryBotId?: string } | null;
+  deletionNote: { title: string; items: string[]; retry?: boolean; owed?: boolean; retryBotId?: string; ids?: string[]; covers?: string[] } | null;
   /** the newest revision of the owed-deletion list seen (server/conversation-deletion.ts); older answers are dropped */
   owedRev: number;
   mascotMotion: {
@@ -1324,6 +1368,8 @@ export type Action =
       sentTick?: number;
       /** The live-events generation the roster was requested under (§9.4); the provider ignores an older one. */
       liveGen?: number;
+      /** The conversation this device left open last time, passed only when setup is finished; a landing preference ahead of the Chief. */
+      resumeId?: string;
     } & HttpOrigin)
   | { type: "serverSends"; threadId: string; pending: ServerPendingSend[] }
   | { type: "showRoutines" }
@@ -1331,6 +1377,10 @@ export type Action =
   | { type: "showTeamLibrary"; botId?: string; view?: TeamLibraryView; tab?: "import" }
   | { type: "hideTeamLibrary" }
   | { type: "showSkillRecorder" }
+  /** All chats (CHATS-FINDABILITY-DESIGN 3): every chat across bots and channels; a scope pre-sets its filter. */
+  | { type: "showAllChats"; botId?: string; groupId?: string }
+  /** Back from All chats to the chat that was open. */
+  | { type: "closeAllChats" }
   | { type: "routinesHydrated"; routines: Routine[]; runs: RoutineRun[] }
   | { type: "routinePatched"; routine: Routine }
   | { type: "routineDeleted"; routineId: string }
@@ -1511,6 +1561,21 @@ export type Action =
       /** Local UI hook: the phone's device prompt opened (true) or closed (false). Never sent. */
       onDevicePrompt?: (up: boolean) => void;
     }
+  /** QW Q4: a press on a widget. The server writes the owner's message, settles the widget and queues the words. */
+  | {
+      type: "respondWidget";
+      threadId: string;
+      widgetId: string;
+      ref: string;
+      rev?: number;
+      values?: Record<string, string | boolean>;
+      other?: Record<string, string>;
+      /** Local hooks for the widget. Never sent to the server. */
+      onSuccess?: () => void;
+      onError?: (message: string, code?: string) => void;
+    }
+  /** QW 208: a settled widget's answers reopened in a new widget. */
+  | { type: "reopenWidget"; threadId: string; widgetId: string; onError?: (message: string) => void }
   /** A question card's answer or explicit skip, by THREAD (works in rooms). */
   | {
       type: "answerQuestion";
@@ -1521,8 +1586,8 @@ export type Action =
       /** Local recovery hook for the card. Never sent to the server. */
       onError?: (message: string) => void;
     }
-  /** An expired question's answer, posted as an ordinary message and then
-   * recorded on the card. `groupId` for rooms, `botId` for 1:1 chats. */
+  /** An expired question's answer as an ordinary message. A 1:1 chat (`botId`) sends one request that records the card
+   * and the message together (QW Q1b); a room (`groupId`) posts the message, then records it on the card. */
   | {
       type: "sendQuestionAsMessage";
       botId?: string;
@@ -1531,9 +1596,11 @@ export type Action =
       requestId: string;
       text: string;
       answers: QuestionAnswer[];
+      /** QW: a bot's ask_user card (also in a room): its late answer is ONE claim on the server, like a 1:1 chat's. */
+      answerAsSend?: boolean;
       onError?: (message: string) => void;
     }
-  | { type: "newTask"; botId: string }
+  | { type: "newTask"; botId: string; cwd?: string }
   | { type: "switchTask"; botId: string; threadId: string }
   /** http: a page this client asked for, applied only under its latest `intent` (§2.6). stream: the 2323 composite. */
   | ({ type: "taskSwitched"; bot: Bot } & ((HttpOrigin & { intent: number }) | StreamOrigin | LocalOrigin))
@@ -1557,6 +1624,8 @@ export type Action =
   | { type: "pageRequested"; botId: string; intent: number }
   /** The provider's one-minute timer: retire tombstones, `lastSeen` and past runs older than ANSWER_TTL_MS (§2.7). */
   | { type: "tombstonesSweep"; now: number }
+  /** The server's answer to a "Can talk to" save: the stored value, My team being absent. */
+  | { type: "messageAllowSet"; botId: string; messageAllow: Bot["messageAllow"] }
   /** The provider drained the frames buffered behind a hydrate: that roster's tombstones are now stream-acked (§9 builder row). */
   | { type: "streamDrained" }
   /** A verification fetch (verifyBots) ended without a record: `gone` (404) removes a held bot and settles it. Otherwise (no answer)
@@ -1583,16 +1652,19 @@ export type Action =
   | { type: "computerControl"; botId: string; held: boolean; helpReason: string | null }
   | { type: "sidebarSectionOrder"; order: string[] }
   | { type: "setModel"; botId: string; threadId?: string; selection: ModelSelection }
-  | { type: "updateTask"; botId: string; threadId: string; patch: Partial<Pick<Task,"modelSelection"|"autoApprove"|"fullAccess"|"noLimits"|"cwd"|"unread"|"title">> & {acknowledgeLocalAuto?:boolean;acknowledgeFullAccess?:boolean;acknowledgeNoLimits?:boolean} }
+  | { type: "updateTask"; botId: string; threadId: string; patch: Partial<Pick<Task,"modelSelection"|"autoApprove"|"fullAccess"|"noLimits"|"cwd"|"unread"|"title">> & {link?:string|null;acknowledgeLocalAuto?:boolean;acknowledgeFullAccess?:boolean;acknowledgeNoLimits?:boolean} }
   | { type: "interrupt"; botId: string; threadId?: string }
   | { type: "connected"; value: boolean }
   | { type: "signedOut" }
   | { type: "error"; message: string | null }
   /** `retryBotId`: a bot Delete that got no answer; "Try again" sends it again. */
-  | { type: "deletionNote"; note: { title: string; items: string[]; retry?: boolean; owed?: boolean; retryBotId?: string } | null }
+  | { type: "deletionNote"; note: { title: string; items: string[]; retry?: boolean; owed?: boolean; retryBotId?: string; ids?: string[]; covers?: string[] } | null }
   /** What the server says is still owed for deleted conversations (the whole list, possibly empty). A list shows the notice; an
    * empty one clears a notice of this kind and leaves any other note alone. Anything that is not a list is ignored. */
-  | { type: "deletionOwed"; notices: unknown; /** the server's revision of the list: an answer older than the newest one seen is dropped */ rev?: unknown }
+  | { type: "deletionOwed"; notices: unknown; /** the server's revision of the list: an answer older than the newest one seen is dropped */ rev?: unknown;
+      /** the answer to the owner's own dismiss: the list as the server has it after the dismiss, applied even under the revision its own
+       * broadcast already carried (that broadcast may have been seen first), so only the lines it covered go and any other owed line stays */
+      answer?: boolean }
   | { type: "toggleSettings"; open?: boolean; intent?: BotSettingsIntent }
   | { type: "clearBotSettingsIntent" }
   | { type: "togglePlugins"; open?: boolean; surface?: "apps" | "mcp" }
@@ -1675,7 +1747,7 @@ export function cachedPage(bot: Bot): CachedConversation {
 export function viewedTaskBot(bot: Bot): Bot {
   const task=findTask(bot,bot.threadId);
   if(!task)return bot;
-  return {...bot,modelSelection:task.modelSelection??bot.modelSelection,autoApprove:task.autoApprove??bot.autoApprove,fullAccess:(task.autoApprove??bot.autoApprove)===true&&task.fullAccess===true,noLimits:(task.autoApprove??bot.autoApprove)===true&&task.fullAccess===true&&task.noLimits===true,alwaysAllow:task.alwaysAllow??bot.alwaysAllow,busy:task.busy??bot.busy,activity:task.activity??bot.activity,unread:task.unread??bot.unread,pinnedMessageId:task.pinnedMessageId,turnStartedAt:task.turnStartedAt??null,subtasks:task.subtasks};
+  return {...bot,modelSelection:task.modelSelection??bot.modelSelection,autoApprove:task.autoApprove??bot.autoApprove,fullAccess:(task.autoApprove??bot.autoApprove)===true&&task.fullAccess===true,noLimits:(task.autoApprove??bot.autoApprove)===true&&task.fullAccess===true&&task.noLimits===true,alwaysAllow:task.alwaysAllow??bot.alwaysAllow,busy:task.busy??bot.busy,activity:task.activity??bot.activity,unread:task.unread??bot.unread,pinnedMessageId:task.pinnedMessageId,turnStartedAt:task.turnStartedAt??null,browserMounted:task.browserMounted===true,subtasks:task.subtasks};
 }
 export function withThreadUnread(bot:Bot,threadId:string,unread:boolean):Bot {
   if(!bot.tasks?.length)return {...bot,unread};
@@ -1962,6 +2034,8 @@ export function pendingThreadActionBlocked(state: AppState, action: Action): boo
     case "decideRequest":
     case "answerQuestion":
     case "sendQuestionAsMessage":
+    case "respondWidget":
+    case "reopenWidget":
       return state.bots.some(bot => bot.awaitingThreadSnapshot && (bot.threadId === action.threadId || bot.deletedThreadId === action.threadId));
     default:
       return false;
@@ -2710,6 +2784,8 @@ function applyBotFrame(state: AppState, incoming: BotAnnouncement): AppState {
     deletedThreadId: deletedSelection ? b.threadId : b.deletedThreadId,
     pendingThreadEvents: deletedSelection ? [] : b.pendingThreadEvents,
     ...extraTasksPatch(b, bot, { keepViewed: !deletedSelection }),
+    // The store omits an unset messageAllow (My team is the default), so a frame without it means it was cleared: spreading `bot` alone would keep "Everyone" for ever.
+    ...(typeof bot.name === "string" && !("messageAllow" in bot) ? { messageAllow: undefined } : {}),
     // Like the transcript they ride beside: another window's switch frame
     // carries its own thread's cards, not this one's.
     openCards: deletedSelection ? undefined : b.openCards,
@@ -2761,10 +2837,15 @@ function reduceState(state: AppState, action: Action): AppState {
       // The fallback skips hidden bots too. `bots[0]` did not, so a workspace
       // whose first record happens to be archived opened on a bot the sidebar
       // does not even list.
-      const selectedId =
-        state.selectedId && known(state.selectedId)
-          ? state.selectedId
-          : (chief?.id ?? visible[0]?.id ?? action.bots[0]?.id ?? "");
+      // A returning person lands on the conversation they left (`resumeId`, only ever passed once setup is finished, see
+      // lib/last-conversation.ts); a hidden or deleted one falls through to the Chief exactly as before.
+      const selectedId = landingId({
+        selectedId: state.selectedId,
+        known,
+        resumeId: action.resumeId,
+        resumable: (id) => visible.some((candidate) => candidate.id === id) || action.groups.some((g) => g.id === id && !g.hidden),
+        fallback: chief?.id ?? visible[0]?.id ?? action.bots[0]?.id ?? "",
+      });
       // Every transcript in the snapshot replaces the one held before it.
       const fenced = bumpTranscriptGeneration(state, ...action.bots.map((b) => b.threadId), ...action.groups.map((g) => g.threadId));
       // The boot roster (`view=sidebar`) carries no rows: every conversation arrives unloaded, with its sidebar line. A room of the same thread
@@ -3137,6 +3218,19 @@ function reduceState(state: AppState, action: Action): AppState {
         appSettingsOpen: false,
         pluginsOpen: false,
       };
+    case "showAllChats":
+      return {
+        ...state,
+        activeView: "all-chats",
+        allChatsScope: action.botId ? { botId: action.botId } : action.groupId ? { groupId: action.groupId } : undefined,
+        settingsOpen: false,
+        computerOpen: false,
+        inspectorOpen: false,
+        appSettingsOpen: false,
+        pluginsOpen: false,
+      };
+    case "closeAllChats":
+      return state.activeView === "all-chats" ? { ...state, activeView: "chat", allChatsScope: undefined } : state;
     case "showSkillRecorder":
       if (!skillRecorderEnabled(state.config)) return state;
       return {
@@ -3308,6 +3402,8 @@ function reduceState(state: AppState, action: Action): AppState {
     case "decideRequest":
     case "answerQuestion":
     case "sendQuestionAsMessage":
+    case "respondWidget":
+    case "reopenWidget":
       return state; // the server's message patch settles the card
     case "botAdded": {
       // Package and starter imports answer with the bot record alone, and
@@ -3431,6 +3527,8 @@ function reduceState(state: AppState, action: Action): AppState {
       return (state.pageIntent?.[action.botId] ?? 0) >= action.intent ? state : { ...state, pageIntent: { ...state.pageIntent, [action.botId]: action.intent } };
     case "tombstonesSweep":
       return retireAdmission(state, action.now);
+    case "messageAllowSet":
+      return updateBot(state, action.botId, (bot) => ({ ...bot, messageAllow: action.messageAllow }));
     case "streamDrained": {
       // Every frame buffered behind the snapshot has been applied (each older than a tombstone was dropped by it), and the new
       // connection carries only later frames: the stream has passed every removal held now, including one written by an answer
@@ -3628,7 +3726,7 @@ function reduceState(state: AppState, action: Action): AppState {
       if (!Array.isArray(action.notices)) return state;
       // A slow answer to an old question must not undo a newer event: anything not newer than what is already shown is dropped.
       const rev = typeof action.rev === "number" && Number.isFinite(action.rev) ? action.rev : undefined;
-      if (rev !== undefined && rev <= state.owedRev) return state;
+      if (rev !== undefined && (action.answer ? rev < state.owedRev : rev <= state.owedRev)) return state;
       const owedRev = rev ?? state.owedRev;
       const note = owedNote(action.notices);
       if (note) return { ...state, owedRev, deletionNote: note };
@@ -3763,7 +3861,25 @@ function reduceState(state: AppState, action: Action): AppState {
               ),
             };
       const { acknowledgeLocalAuto: _ack, acknowledgeFullAccess: _fullAck, chiefTier: _tier, settingsScope:_scope, ...botPatch } = action.patch;
-      return updateBot(scoped, action.botId, (b) => ({
+      // A handover is one change: the former Chief keeps its own team when it
+      // can lead there, and otherwise joins it as a member (the harness rule).
+      const formerChief = tier === "workspace"
+        ? state.bots.find((b) => b.id !== action.botId && b.chiefOfStaff === true && b.chiefScope === "workspace")
+        : undefined;
+      const handedOver = formerChief
+        ? {
+            ...scoped,
+            bots: scoped.bots.map((b) => {
+              if (b.id !== formerChief.id || b.chiefOfStaff !== true) return b;
+              const engine = scoped.instances.find((instance) => instance.instanceId === b.modelSelection.instanceId);
+              // An engine the renderer has not loaded yet is given the benefit of the
+              // doubt; the server's frame settles it either way.
+              const canLead = engine ? engine.capabilities?.agentsMcp === true : true;
+              return formerChiefOutcome(b, scoped.bots, canLead) === "member" ? { ...b, chiefOfStaff: false } : b;
+            }),
+          }
+        : scoped;
+      return updateBot(handedOver, action.botId, (b) => ({
         ...b,
         ...botPatch,
         computer: Object.hasOwn(botPatch, "computer") ? botPatch.computer ?? undefined : b.computer,
@@ -4372,10 +4488,52 @@ const VERIFY_FAILURES_MAX = 12;
 /** Ambiguous DELETE failures (no answer) tried before the Delete is given up and shown (§2.7 r6). */
 export const DELETE_RETRY_MAX = 20;
 
+function browserStorage(): Storage | undefined {
+  try { return window.localStorage; } catch { return undefined; }
+}
+
+/** Has setup finished on this machine (the server's `view.firstRun` is false)? Once true it stays true for this page.
+ *  A non-owner device, a refusal or a failed read answers false: the Chief stays the landing, as before. */
+let setupFinishedAnswer = false;
+let setupAskedAt = 0;
+const SETUP_ASK_GAP_MS = 60_000;
+async function setupFinished(): Promise<boolean> {
+  if (setupFinishedAnswer) return true;
+  // Before setup is finished the question is asked at most once a minute, not on every selection change.
+  if (Date.now() - setupAskedAt < SETUP_ASK_GAP_MS) return false;
+  setupAskedAt = Date.now();
+  try {
+    const view = await api("/api/setup");
+    setupFinishedAnswer = shouldRemember(typeof view?.firstRun === "boolean" ? view.firstRun : null);
+  } catch { /* unknown: remember nothing */ }
+  return setupFinishedAnswer;
+}
+
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [state, rawDispatch] = useReducer(reducer, initialState);
   const stateRef = useRef(state);
   stateRef.current = state;
+  // One six-second clock for the error banner (state/chat-error.ts).
+  useChatErrorClear(state.error, () => rawDispatch({ type: "error", message: null }));
+  // Remember the open conversation, per workspace, once setup is finished (read back by the hydrate above).
+  useEffect(() => {
+    if (!state.hydrated || !state.selectedId) return;
+    const id = state.selectedId;
+    void setupFinished().then((finished) => {
+      if (finished) writeLastConversation(browserStorage(), workspaceKey(homeMeta(document).homeId), id);
+    });
+  }, [state.hydrated, state.selectedId]);
+  // The moment setup finishes, save the open conversation, so someone who never changes selection still resumes next launch.
+  useEffect(() => {
+    const onSetupView = (event: Event) => {
+      const id = idToSaveOnSetupView((event as CustomEvent<{ firstRun?: unknown } | undefined>).detail, stateRef.current.hydrated === true, stateRef.current.selectedId);
+      if (id === null) return;
+      setupFinishedAnswer = true;
+      writeLastConversation(browserStorage(), workspaceKey(homeMeta(document).homeId), id);
+    };
+    window.addEventListener(SETUP_VIEW_EVENT, onSetupView);
+    return () => window.removeEventListener(SETUP_VIEW_EVENT, onSetupView);
+  }, []);
   // The Delete runs live inside the dispatch closure; the stream handler reaches them through this.
   const deleteControl = useRef<{ kick: () => void; stop: (botId: string) => void }>({ kick: () => {}, stop: () => {} });
   // The live effect's hydrate, for a reducer that asks for the roster again (reconcileRequested).
@@ -4401,9 +4559,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           const draft = entry.draft;
           if (!draft) return;
           try {
-            if (getDraft(window.localStorage, draft.draftId) !== draft.text) return;
-            markDraftEdited(draft.draftId);
-            restoreComposerDraft(draft.draftId, { text: "", attachments: [], channelMode: "chat" });
+            clearReloadedSendDraft(draft);
           } catch { /* storage refused: the words stay in the box, and the same send id answers the same receipt */ }
         },
         post: (entry, signal) =>
@@ -4462,8 +4618,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               channelMode: draft.channelMode,
             });
           }
-          rawDispatch({ type: "error", message: error instanceof Error ? error.message : requestFailedSentence(0) });
-          setTimeout(() => rawDispatch({ type: "error", message: null }), 6000);
+          raiseTransientError(rawDispatch, error instanceof Error ? error.message : requestFailedSentence(0));
         },
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -4485,8 +4640,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // A save the person asked for and did not get (lib/save-file.ts): the same
   // six-second error toast every other failed action shows.
   useEffect(() => onSaveFailed((message) => {
-    rawDispatch({ type: "error", message });
-    setTimeout(() => rawDispatch({ type: "error", message: null }), 6000);
+    raiseTransientError(rawDispatch, message);
   }), []);
   // per-frame stream-delta batching (see the "runtime" SSE case); stream
   // state is intentionally OUTSIDE the reducer so token frames re-render
@@ -4584,8 +4738,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           rawDispatch({ type: "botPatched", ...fromAnswer(bot), ...(settled ? { settled } : {}), bot, overlay: optimisticOverlay as Partial<BotAnnouncement> });
         },
         onError: (error, rejected) => {
-          rawDispatch({ type: "error", message: fullAccessRefusalMessage(rejected, error) ?? error.message });
-          setTimeout(() => rawDispatch({ type: "error", message: null }), 6000);
+          raiseTransientError(rawDispatch, fullAccessRefusalMessage(rejected, error) ?? error.message);
         },
       }),
     [],
@@ -4604,8 +4757,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       rawDispatch({ type: "deletionNote", note: deletionNote(response as Parameters<typeof deletionNote>[0]) });
     };
     const showError = (e: unknown) => {
-      rawDispatch({ type: "error", message: e instanceof Error ? e.message : String(e) });
-      setTimeout(() => rawDispatch({ type: "error", message: null }), 6000);
+      raiseTransientError(rawDispatch, e instanceof Error ? e.message : String(e));
     };
     // The save is still not awaited (the card updates at once), but a refusal
     // or a dropped connection is shown instead of swallowed.
@@ -4856,6 +5008,35 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             body: JSON.stringify({ messageId: action.messageId,threadId:action.threadId??stateRef.current.bots.find(bot=>bot.id===action.botId)?.threadId }),
           }).catch(showError);
           break;
+        case "respondWidget": {
+          api(`/api/threads/${action.threadId}/widgets/${action.widgetId}/respond`, {
+            method: "POST",
+            body: JSON.stringify({ ref: action.ref, rev: action.rev ?? 0, values: action.values ?? {}, ...(action.other ? { other: action.other } : {}) }),
+          }).then((body) => {
+            // the owner's message the press became: its line or its place in line, as a send's receipt
+            if (body?.message && typeof body.threadId === "string") {
+              rawDispatch({ type: "messageAdded", threadId: body.threadId, message: body.message, ...seqEnvelope(body), origin: answerOrigin(body) });
+            }
+            if (body?.queued && typeof body.threadId === "string" && typeof body.queueId === "string" && typeof body.text === "string") {
+              rawDispatch({ type: "pendingQueued", threadId: body.threadId, queueId: body.queueId, text: body.text });
+            }
+            action.onSuccess?.();
+          }).catch((error) => {
+            const reply = error && typeof error === "object" ? (error as { body?: { code?: unknown } }).body : undefined;
+            const code = typeof reply?.code === "string" ? reply.code : undefined;
+            action.onError?.(error instanceof Error ? error.message : String(error), code);
+          });
+          break;
+        }
+        case "reopenWidget": {
+          api(`/api/threads/${action.threadId}/widgets/${action.widgetId}/reopen`, { method: "POST", body: "{}" }).then((body) => {
+            if (body?.message) rawDispatch({ type: "messageAdded", threadId: action.threadId, message: body.message });
+          }).catch((error) => {
+            showError(error);
+            action.onError?.(error instanceof Error ? error.message : String(error));
+          });
+          break;
+        }
         case "decideRequest": {
           const answer = {
             requestId: action.requestId,
@@ -4938,6 +5119,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               behavior: action.behavior,
               ...(action.answers ? { answers: action.answers } : {}),
             }),
+          }).then((body) => {
+            // a question answered by the owner's next message (QW Q1): its line or its place in line, as a send's receipt
+            if (body?.message && typeof body.threadId === "string") {
+              rawDispatch({ type: "messageAdded", threadId: body.threadId, message: body.message, ...seqEnvelope(body), origin: answerOrigin(body) });
+            }
+            if (body?.queued && typeof body.threadId === "string" && typeof body.queueId === "string" && typeof body.text === "string") {
+              rawDispatch({ type: "pendingQueued", threadId: body.threadId, queueId: body.queueId, text: body.text });
+            }
           }).catch((error) => {
             showError(error);
             action.onError?.(error instanceof Error ? error.message : String(error));
@@ -4945,14 +5134,32 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           break;
         }
         case "sendQuestionAsMessage": {
-          // Send first, record second: a card is marked "sent" only once the
-          // message really went out through the ordinary composer route.
+          // A room: send first, record second. A card is marked "sent" only once the
+          // message really went out through the room's composer route.
           const fail = (error: unknown) => {
             showError(error);
             action.onError?.(error instanceof Error ? error.message : String(error));
           };
           if (!action.groupId && !action.botId) {
             fail(new Error("This conversation can no longer take a message."));
+            break;
+          }
+          if (!action.groupId || action.answerAsSend) {
+            // A direct conversation (QW Q1b), or a room's ask_user card: ONE request. The server records the card and the owner's message in one
+            // transaction and queues the words; a second press or another device gets "already settled".
+            void api(`/api/threads/${action.threadId}/respond`, {
+              method: "POST",
+              body: JSON.stringify({ requestId: action.requestId, behavior: "answer", answers: action.answers, sentAsMessage: true }),
+            })
+              .then((body) => {
+                if (body?.message && typeof body.threadId === "string") {
+                  rawDispatch({ type: "messageAdded", threadId: body.threadId, message: body.message, ...seqEnvelope(body), origin: answerOrigin(body) });
+                }
+                if (body?.queued && typeof body.threadId === "string" && typeof body.queueId === "string") {
+                  rawDispatch({ type: "pendingQueued", threadId: body.threadId, queueId: body.queueId, text: typeof body.text === "string" ? body.text : action.text });
+                }
+              })
+              .catch(fail);
             break;
           }
           const sendId = newSendId();
@@ -5242,7 +5449,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           // never an unloaded thread, nor rows that predate a rehydrate: the cache holds only pages this client fetched and kept current
           if (leaving && !leaving.awaitingThreadSnapshot && !leaving.messagesUnloaded && !leaving.pageStale && !leaving.firstPageEvents) conversationCache()?.put(cachedPage(leaving));
           const intent = requestPage(rawDispatch, stateRef.current, action.botId);
-          api(`/api/bots/${action.botId}/tasks`, { method: "POST", body: "{}" })
+          api(`/api/bots/${action.botId}/tasks`, { method: "POST", body: action.cwd ? JSON.stringify({ cwd: action.cwd }) : "{}" })
             .then((r: any) => r?.bot && dispatch({ type: "taskSwitched", ...fromAnswer(r.bot), bot: r.bot, intent }))
             .catch(showError);
           break;
@@ -5689,6 +5896,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           const { bots, groups, computerControl, sidebarSectionOrder, pendingSends, tasksEpoch, removed, removedGroups, roomClock } = answer;
           if (!alive) return;
           if (askedUnder !== liveGen) { rehydrateRequested = true; return; }
+          // A saved id means setup was finished when it was saved (it is only ever written then), so the read does not wait on the
+          // server: launch is no slower. A person who quit mid first run has no saved id and lands on the Chief.
+          const resumeId = readLastConversation(browserStorage(), workspaceKey(homeMeta(document).homeId));
           // A fresh snapshot: frames may have been missed, so nothing cached is trusted.
           conversationCache()?.clear();
           rawDispatch({ type: "clientScope", scoped: phone || !Object.keys(desktopSurfaceHeaders()).length });
@@ -5698,6 +5908,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             ...(typeof tasksEpoch === "string" ? { tasksEpoch, removed: Array.isArray(removed) ? removed : [], removedGroups: Array.isArray(removedGroups) ? removedGroups : [], ...(typeof roomClock === "number" ? { roomClock } : {}) } : {}),
             sentTick,
             liveGen: askedUnder,
+            ...(resumeId ? { resumeId } : {}),
             bots,
             groups: groups ?? [],
             computerControl: computerControl ?? {},
@@ -6112,7 +6323,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // (FOLLOW4). Callers with nothing to tell the user catch it themselves.
   const refreshInstances = useCallback(async () => {
     // An explicit refresh (Enable, Check again, a saved change) rechecks every CLI version.
-    const { instances, shellEnvironment, engineNote } = await api("/api/instances?fresh=1");
+    const { instances, shellEnvironment, engineNote } = await probeInstances("/api/instances?fresh=1", api);
     rawDispatch({ type: "instances", instances, shellEnvironment: shellEnvironment ?? null, engineNote });
   }, []);
   const refreshAfterKey = useCallback(
@@ -6133,8 +6344,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // Offline or server down: the existing list stays, nothing to say.
       void refreshInstances().catch(() => {});
     };
+    // A phone or a browser tab coming back to the front fires visibilitychange, not focus.
+    const onVisible = () => { if (document.visibilityState === "visible") onFocus(); };
     window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [refreshInstances]);
 
   const flushBotPatches = useCallback(

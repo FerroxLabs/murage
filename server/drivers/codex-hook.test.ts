@@ -4,15 +4,15 @@
 // The Codex PreToolUse gate, Rules 67 and 68 (lanes/release103/APP-GRANT-DESIGN-FINAL.AGREED-r10.md): T91 (the per-version policy),
 // T100 a..g on the pieces, T86 and T103 for Codex deliveries. The driver-level half runs in codex.test.ts against the fake app-server.
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   CODEX_FLOORS, CODEX_GATE_MIN, CODEX_HOOK_SCRIPT, CODEX_LOCAL_ORDINARY, CODEX_SHELL_FORM_FEATURES, CODEX_UNTRUSTED_RETIRED_MIN,
   CODEX_HOOK_LAUNCH_ENV, CodexHookGate, HOOK_ASK_BOUND_MS, HOOK_SCRIPT_DEADLINE_MS, HOOK_TIMEOUT_SEC, HookDecisionTable, codexGatePlan, codexHooksJson, codexShellFormArgs,
-  codexHookWindowsCommand, hookConfigOf, hookLaunchLine, hookLivenessBound, hookLivenessSetting, hookSocketPath, hookWindowsLauncher, hookWindowsLaunchValue, HOOK_LAUNCHER_FILE, CODEX_HOOK_EXE_ENV, HOOK_LIVENESS_MS, HOOK_LIVENESS_WIN32_MS, windowsCmdPath, parseApplyPatch, routeDelivery, stripOwnerHooks, tripwireLine, trustHooks, writeHookFiles,
+  codexHookWindowsCommand, hookConfigOf, hookEnvPathOf, hookLaunchLine, hookLivenessBound, hookLivenessSetting, hookSocketPath, hookWindowsLauncher, hookWindowsLaunchValue, HOOK_LAUNCHER_FILE, CODEX_HOOK_EXE_ENV, HOOK_LIVENESS_MS, HOOK_LIVENESS_WIN32_MS, windowsCmdPath, parseApplyPatch, sweepHookEnv, sweepAllHookEnv, HOOK_ENV_VAR, routeDelivery, stripOwnerHooks, tripwireLine, trustHooks, writeHookFiles,
   type HookAnswer, type HookDelivery, type RouteContext,
 } from "./codex-hook.ts";
 import { codexTurnPolicy } from "./codex-isolation.ts";
@@ -74,7 +74,9 @@ describe("T91: the approval policy per Codex version", () => {
 describe("T100a: what Murage writes into the scoped home", () => {
   it("writes hooks.json with one matcher-free PreToolUse and one SessionStart handler and nothing secret", () => {
     const home = join(dir, "scope");
-    const files = writeHookFiles(home, hookSocketPath("abc"), "tok-123", "/usr/bin/node");
+    const files = writeHookFiles(home, hookSocketPath("abc"), "tok-123", hookEnvPathOf(home, "abc"), "/usr/bin/node");
+    // 03-1: the env file is this process's own, under the scope's hook-env/
+    expect(files.envFile).toBe(join(home, "hook-env", `${process.pid}-abc.env`));
     const json = JSON.parse(readFileSync(files.hooksJson, "utf8"));
     expect(Object.keys(json.hooks).sort()).toEqual(["PreToolUse", "SessionStart"]);
     for (const event of ["PreToolUse", "SessionStart"]) {
@@ -98,7 +100,7 @@ describe("T100a: what Murage writes into the scoped home", () => {
     if (process.platform !== "win32") expect(statMode(files.envFile)).toBe(0o600);
     // hooks.json is identical on the next turn, so the hash and the trust hold
     const before = readFileSync(files.hooksJson, "utf8");
-    writeHookFiles(home, hookSocketPath("abc"), "tok-456", "/usr/bin/node");
+    writeHookFiles(home, hookSocketPath("abc"), "tok-456", hookEnvPathOf(home, "abc"), "/usr/bin/node");
     expect(readFileSync(files.hooksJson, "utf8")).toBe(before);
     expect(readFileSync(files.envFile, "utf8")).toContain("tok-456");
     expect(codexHooksJson("/usr/bin/node", files.script)).toBe(before);
@@ -147,11 +149,11 @@ describe("T100a: what Murage writes into the scoped home", () => {
     const gate = new CodexHookGate(hookSocketPath());
     await gate.listen();
     try {
-      const files = writeHookFiles(home, gate.path, "win-token");
+      const files = writeHookFiles(home, gate.path, "win-token", hookEnvPathOf(home, gate.id));
       const sessions: string[] = [];
       gate.arm({ token: "win-token", onSession: (id) => { sessions.push(id); }, onPreTool: async () => ({ decision: "allow" }) });
       const command = JSON.parse(readFileSync(files.hooksJson, "utf8")).hooks.SessionStart[0].hooks[0].command_windows as string;
-      const env: NodeJS.ProcessEnv = { ...process.env, [CODEX_HOOK_LAUNCH_ENV]: hookWindowsLaunchValue(files.launcher), [CODEX_HOOK_EXE_ENV]: process.execPath };
+      const env: NodeJS.ProcessEnv = { ...process.env, [CODEX_HOOK_LAUNCH_ENV]: hookWindowsLaunchValue(files.launcher), [CODEX_HOOK_EXE_ENV]: process.execPath, [HOOK_ENV_VAR]: files.envFile };
       delete env.ELECTRON_RUN_AS_NODE;
       const comspec = process.env.COMSPEC ?? "cmd.exe";
       const runCmd = (args: string[], verbatim: boolean, id: string, program = comspec) => new Promise<number | null>((resolve) => {
@@ -181,7 +183,7 @@ describe("T100a: what Murage writes into the scoped home", () => {
     expect(CODEX_HOOK_EXE_ENV).toBe("MURAGE_CODEX_EXE");
     // cmd reads a batch file in the OEM code page: the file is pure ASCII and names no path, whatever the user's name
     const home = join(dir, "scope Jos\u00e9 M\u00fcller \u6771\u4eac");
-    const files = writeHookFiles(home, hookSocketPath("abc"), "tok", join(dir, "Murage Jos\u00e9", "Murage.exe"));
+    const files = writeHookFiles(home, hookSocketPath("abc"), "tok", hookEnvPathOf(home, "abc"), join(dir, "Murage Jos\u00e9", "Murage.exe"));
     const bytes = readFileSync(files.launcher);
     expect(bytes.length).toBeGreaterThan(0);
     expect([...bytes].every((b) => b < 0x80)).toBe(true);
@@ -223,11 +225,11 @@ describe("T100a: what Murage writes into the scoped home", () => {
     const gate = new CodexHookGate(hookSocketPath());
     await gate.listen();
     try {
-      const files = writeHookFiles(home, gate.path, "pkg-token", app);
+      const files = writeHookFiles(home, gate.path, "pkg-token", hookEnvPathOf(home, gate.id), app);
       const sessions: string[] = [];
       gate.arm({ token: "pkg-token", onSession: (id) => { sessions.push(id); }, onPreTool: async () => ({ decision: "allow" }) });
       const command = JSON.parse(readFileSync(files.hooksJson, "utf8")).hooks.SessionStart[0].hooks[0].command as string;
-      const env: NodeJS.ProcessEnv = { ...process.env };
+      const env: NodeJS.ProcessEnv = { ...process.env, [HOOK_ENV_VAR]: files.envFile };
       delete env.ELECTRON_RUN_AS_NODE;
       const run = (program: string, args: string[], id: string) => new Promise<number | null>((resolve) => {
         const child = spawn(program, args, { env, stdio: ["pipe", "ignore", "ignore"] });
@@ -275,7 +277,7 @@ describe("T100a: what Murage writes into the scoped home", () => {
     expect(HOOK_SCRIPT_DEADLINE_MS / 1000).toBeLessThan(HOOK_TIMEOUT_SEC);
     expect(CODEX_HOOK_SCRIPT).not.toMatch(/"ask"|'ask'|permissionDecision: "ask"/);
     expect(CODEX_HOOK_SCRIPT).not.toContain("process.argv");
-    expect(CODEX_HOOK_SCRIPT.match(/process\.exit\(2\)/g)?.length).toBe(1);
+    expect(CODEX_HOOK_SCRIPT.match(/process\.exit\(2\)/g)?.length).toBe(1); // hardBlock(), the one exit 2
   });
 
   it("drops the owner's hooks table and its trust records from the config copy and keeps the rest", () => {
@@ -378,7 +380,8 @@ describe("T100b: trust through hooks/list and config/batchWrite", () => {
 });
 
 describe("T100d: the script can only allow, deny or exit 2", () => {
-  const run = (home: string, input: unknown, env: NodeJS.ProcessEnv = process.env) => new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve) => {
+  let envPath: string;
+  const run = (home: string, input: unknown, env: NodeJS.ProcessEnv = { ...process.env, [HOOK_ENV_VAR]: envPath }) => new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve) => {
     const child = spawn(process.execPath, [join(home, "murage-hook.mjs")], { env, stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "", stderr = "";
     child.stdout.on("data", (d) => { stdout += d; });
@@ -393,7 +396,8 @@ describe("T100d: the script can only allow, deny or exit 2", () => {
     home = join(dir, "scope");
     gate = new CodexHookGate(hookSocketPath());
     await gate.listen();
-    writeHookFiles(home, gate.path, "good-token");
+    envPath = hookEnvPathOf(home, gate.id);
+    writeHookFiles(home, gate.path, "good-token", envPath);
   });
   afterEach(() => { gate.close(); });
   const arm = (answer: HookAnswer, seen: HookDelivery[] = [], sessions: string[] = []) =>
@@ -436,11 +440,11 @@ describe("T100d: the script can only allow, deny or exit 2", () => {
     gate.disarm();
     blocked(await run(home, pre()));
     // a wrong token in the env file
-    writeFileSync(join(home, "murage-hook.env"), `SOCKET=${gate.path}\nTOKEN=other\n`);
+    writeFileSync(envPath, `SOCKET=${gate.path}\nTOKEN=other\n`);
     arm({ decision: "allow" });
     blocked(await run(home, pre()));
     // socket refused
-    writeFileSync(join(home, "murage-hook.env"), `SOCKET=${hookSocketPath("nobody-listens")}\nTOKEN=good-token\n`);
+    writeFileSync(envPath, `SOCKET=${hookSocketPath("nobody-listens")}\nTOKEN=good-token\n`);
     blocked(await run(home, pre()));
     // a SessionStart that cannot post: exit 2, nothing printed (no proof reaches Murage, so the turn is refused at the bound)
     const session = await run(home, { hook_event_name: "SessionStart", session_id: "s1", source: "startup" });
@@ -448,7 +452,7 @@ describe("T100d: the script can only allow, deny or exit 2", () => {
     expect(session.stdout).toBe("");
     expect(session.stderr).toContain("Murage blocked this call");
     // no env file, malformed stdin, an unknown event
-    writeHookFiles(home, gate.path, "good-token");
+    writeHookFiles(home, gate.path, "good-token", envPath);
     blocked(await run(home, "not json"));
     blocked(await run(home, { hook_event_name: "Stop" }));
     // a malformed answer from the gate
@@ -460,7 +464,101 @@ describe("T100d: the script can only allow, deny or exit 2", () => {
     expect(thrown.code).toBe(0);
     expect(JSON.parse(thrown.stdout).hookSpecificOutput.permissionDecision).toBe("deny");
     // a link in place of the env file does not matter to the script: it only reads its own folder
-    symlinkSync(join(home, "murage-hook.env"), join(home, "link.env"));
+    symlinkSync(envPath, join(home, "link.env"));
+  });
+
+  // F4 design 2c (03-1)
+  it("F12: a hook run without its process's env file name, or with a name outside the scope's hook-env/, is blocked", async () => {
+    arm({ decision: "allow" });
+    // the shared file of 1.0.3 and earlier, valid in every field, is never read
+    writeFileSync(join(home, "murage-hook.env"), `SOCKET=${gate.path}\nTOKEN=good-token\n`);
+    const { [HOOK_ENV_VAR]: _drop, ...without } = { ...process.env, [HOOK_ENV_VAR]: "" };
+    for (const env of [without, { ...process.env, [HOOK_ENV_VAR]: "" }, { ...process.env, [HOOK_ENV_VAR]: join(home, "murage-hook.env") },
+      { ...process.env, [HOOK_ENV_VAR]: join(dir, "elsewhere", "hook-env", "x.env") }]) {
+      // U18: a call is blocked by the printed deny with a clean exit (exit 2 reaches Codex as 1 under Windows PowerShell)
+      const out = await run(home, pre(), env);
+      blocked(out);
+      expect(out.stderr).toContain("Murage blocked this call: no socket");
+    }
+    const allowed = await run(home, pre());
+    expect(allowed).toMatchObject({ code: 0, stdout: "" });
+  });
+
+  it("U18: a deny that cannot be written (stdout gone) exits 2, so POSIX still blocks; a written deny always exits 0", async () => {
+    gate.disarm();
+    const child = spawn(process.execPath, [join(home, "murage-hook.mjs")], { env: { ...process.env, [HOOK_ENV_VAR]: envPath }, stdio: ["pipe", "pipe", "pipe"] });
+    child.stdout.destroy(); // the reader is gone before the hook writes anything
+    let stderr = "";
+    child.stderr.on("data", (d) => { stderr += d; });
+    const code = await new Promise<number | null>((resolve) => { child.on("close", resolve); child.stdin.end(JSON.stringify(pre())); });
+    expect(code).toBe(2);
+    expect(stderr).toContain("Murage blocked this call");
+  });
+
+  it("F18: a decision that resolves allow after its turn was disarmed, or after a newer turn armed, reaches the hook as deny", async () => {
+    for (const after of ["disarm", "rearm"] as const) {
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => { release = resolve; });
+      let delivered!: () => void;
+      const arrived = new Promise<void>((resolve) => { delivered = resolve; });
+      gate.arm({ token: "good-token", onSession: () => {}, onPreTool: async () => { delivered(); await held; return { decision: "allow" }; } });
+      const pending = run(home, pre());
+      await arrived;
+      if (after === "disarm") gate.disarm("good-token");
+      else gate.arm({ token: "good-token", onSession: () => {}, onPreTool: async () => ({ decision: "allow" }) });
+      release();
+      const out = await pending;
+      expect(out.code).toBe(0);
+      expect(JSON.parse(out.stdout).hookSpecificOutput).toMatchObject({ permissionDecision: "deny", permissionDecisionReason: "Murage: the turn ended" });
+    }
+  });
+});
+
+describe("F4 03-1: hook env files are swept by ownership", () => {
+  it("F14/F19/F21: removes only files no live owner holds; a released gate's file goes, a live gate's and a live other process's stay", async () => {
+    const home = join(dir, "sweep-scope");
+    const live = new CodexHookGate(hookSocketPath());
+    live.envPath = hookEnvPathOf(home, live.id);
+    writeHookFiles(home, live.path, "t", live.envPath);
+    const deadOther = join(home, "hook-env", "999999-0abc.env");
+    const liveOther = join(home, "hook-env", "424242-0abd.env");
+    const mineGone = hookEnvPathOf(home, "0abe");
+    for (const f of [deadOther, mineGone]) writeFileSync(f, "SOCKET=x\nTOKEN=y\n");
+    writeFileSync(liveOther, "SOCKET=/live/other.sock\nTOKEN=y\n");
+    sweepHookEnv(home, (pid) => pid === 424242, (p) => p === "/live/other.sock");
+    expect(existsSync(live.envPath)).toBe(true);
+    expect(existsSync(liveOther)).toBe(true);
+    expect(existsSync(deadOther)).toBe(false);
+    expect(existsSync(mineGone)).toBe(false);
+    live.release();
+    expect(existsSync(live.envPath)).toBe(false);
+  });
+});
+
+describe("F4 03-1: the app-start sweep covers every bot scope and checks the gate, not just the pid", () => {
+  it("removes dead files of scopes never launched again, a reused pid with no gate, and touches nothing else", () => {
+    const root = join(dir, "all-scopes");
+    const mk = (scope: string, file: string, body = "SOCKET=x\nTOKEN=y\n") => {
+      const f = join(root, scope, "hook-env", file);
+      mkdirSync(dirname(f), { recursive: true });
+      writeFileSync(f, body);
+      return f;
+    };
+    const deadA = mk("bot-a", "999999-0aaa.env");
+    const deadGen = mk(join("bot-b", "login-g2"), "999999-0bbb.env");
+    const reused = mk("bot-c", "424242-0ccc.env", "SOCKET=/gone/murage-hk-0ccc.sock\nTOKEN=y\n");
+    const liveGate = mk("bot-d", "424242-0ddd.env", "SOCKET=/live/murage-hk-0ddd.sock\nTOKEN=y\n");
+    const odd = mk("bot-e", "notes.txt");
+    const outside = join(root, "bot-a", "999999-0aaa.env");
+    writeFileSync(outside, "keep");
+    expect(sweepAllHookEnv(root, (pid) => pid === 424242, (p) => p === "/live/murage-hk-0ddd.sock")).toBeGreaterThan(0);
+    expect(existsSync(deadA)).toBe(false);
+    expect(existsSync(deadGen)).toBe(false);
+    expect(existsSync(reused)).toBe(false);
+    expect(existsSync(liveGate)).toBe(true);
+    expect(existsSync(odd)).toBe(true);
+    expect(existsSync(outside)).toBe(true);
+    expect(sweepAllHookEnv(join(dir, "no-such-root"))).toBe(0);
   });
 });
 

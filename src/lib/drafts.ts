@@ -310,6 +310,20 @@ export function clearAcknowledgedDraft(draftId: string, revision: number): boole
   return true;
 }
 
+/** A reload left a send in the outbox and the server already holds it, with no composer
+ * waiting on it. Its words leave the box only if the box still holds exactly those words,
+ * and only the attachments that went with that send leave with them: anything the person
+ * added to the still-open composer since stays in the draft (U36). Returns whether it cleared. */
+export function clearReloadedSendDraft(draft: { draftId: string; text: string; attachments: readonly Attachment[] }): boolean {
+  const store = getStore();
+  if (getDraft(store, draft.draftId) !== draft.text) return false;
+  const sent = new Set(draft.attachments.map((attachment) => attachment.id));
+  const kept = getDraftAttachments(store, draft.draftId).filter((attachment) => !sent.has(attachment.id));
+  markDraftEdited(draft.draftId);
+  restoreComposerDraft(draft.draftId, { text: "", attachments: kept, channelMode: kept.length ? getDraftChannelMode(store, draft.draftId) : "chat" });
+  return true;
+}
+
 export function restoredSendId(draftId: string): string | undefined {
   const memory = restoredSendIds.get(draftId);
   if (memory) return memory;

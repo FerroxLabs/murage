@@ -48,7 +48,8 @@
         "title": "Automation Planner",
         "description": "Flow prepares a ranked list of repeat tasks with time estimates. Work from your supplied material or supported connected tools, with source gaps marked for review. For implementing code or automations, use Builder. For broad operations coordination, use Ops.",
         "appearance": {
-          "color": "teal"
+          "color": "teal",
+          "mascotBody": "hexagon"
         },
         "skills": [
           "workflow-automation-design",

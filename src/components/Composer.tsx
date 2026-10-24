@@ -1,15 +1,19 @@
+import { useSlashSkills } from "@/lib/use-slash-skills";
 import { track } from "@/lib/analytics";
 import { closedComposerLine } from "@/lib/shared-teams";
 import { dictationDisabledNote, isDictationDisabled } from "@/lib/dictation-notes";
 import { FOCUS_COMPOSER_EVENT } from "./useTrayIntents";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type SetStateAction } from "react";
-import { ArrowUp, BookOpen, Clock, ListChecks, Mic, Paperclip, Square, Target, Terminal, Users, X } from "lucide-react";
+import { ArrowUp, BookOpen, Clock, ListChecks, Mic, Paperclip, Sparkles, Square, Target, Terminal, Users, X } from "lucide-react";
 import { useWarmIntent } from "@/hooks/use-warm-intent";
 import { api, olderOpenCards, useStore, visibleMessages, type Bot, type Group, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
+import { ComposerMenuRow } from "./ComposerMenuRow";
+import { mentionRowDescription } from "@/lib/mentions";
 import { compactPlaceholder } from "@/lib/composer-placeholder";
-import { enterSends } from "@/lib/composer-enter";
+import { enterSends, imeComposing } from "@/lib/composer-enter";
+import { currentSendKey, isMacPlatform, sendKeyName, subscribeSendKey } from "@/lib/send-key";
 import { COARSE_POINTER_QUERY, useCoarsePointer, useNarrowViewport } from "@/lib/media-query";
 import { newSendId } from "@/lib/send-id";
 import { openIntakeCard, replyToIntake } from "@/lib/onboarding-intake";
@@ -47,6 +51,9 @@ import {
   goalTextFromComposer,
   replaceComposerSlashTrigger,
   type ComposerSlashCommand,
+  type SlashSkill,
+  skillSlashRows,
+  slashSkillMatches,
 } from "@/lib/composer-commands";
 import { openFirstRun } from "@/lib/first-run";
 import { engineCommandPick, engineCommandsNote, matchEngineCommands } from "@/lib/engine-commands-menu";
@@ -54,6 +61,7 @@ import type { EngineCommand, EngineCommandsView } from "../../shared/engine-comm
 import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 import { FullAccessWarning } from "./FullAccessWarning";
 import { PERMISSION_MODES, PermissionModeIcon, PermissionModeMenu, engineCannotAsk } from "./PermissionModeMenu";
+import { RefreshPermissionsButton } from "./ThreadFollowControls";
 import { fullAccessRefusalMessage, permissionModeOf, routineEffectiveMode, routineOfConversation, type PermissionMode } from "@/lib/permission-mode";
 import {
   engineAcceptsImages,
@@ -81,7 +89,9 @@ import { pendingApprovals, type Pending } from "./PendingApproval";
 import { PendingApprovalQueue } from "./PendingApprovalQueue";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { autoNeedsLocalComputerWarning, localAutoHostPlatform } from "@/lib/local-computer";
-import { ReplyQuote } from "./ReplyQuote";
+import { ComposerReplyStrip } from "./ReplyQuote";
+import { escapeCancelsReply } from "@/lib/replies";
+import { t } from "@/lib/i18n";
 import { ComposerInjectNow, composerCanInjectNow } from "./ComposerInjectNow";
 import { PushToTalk, browserPushToTalkFacts } from "./PushToTalk";
 import {
@@ -119,6 +129,7 @@ type MentionChoice = { id: string; name: string; bot?: Bot };
  * bot's engine commands (shared/engine-commands.ts). */
 type SlashEntry =
   | { kind: "murage"; command: ComposerSlashCommand }
+  | { kind: "skill"; skill: SlashSkill }
   | { kind: "engine"; command: EngineCommand };
 
 const GOAL_COMMAND: ComposerSlashCommand = {
@@ -208,6 +219,7 @@ function PermissionModeSelector({ bot, onSetMode, routine }: {
           engineCannotAsk={engineCannotAsk(engine?.driverKind) ? engine!.displayName : undefined}
           engineOwnApprovals={engine?.capabilities?.runsOnOwnTools === true ? engine.displayName : undefined}
           scope={routine ? { routine: routine.name } : {}}
+          footer={!routine && desktop ? <RefreshPermissionsButton botId={bot.id} threadId={bot.threadId} onDone={() => setOpen(false)} /> : undefined}
           onPick={(mode) => {
             onSetMode(mode);
             setOpen(false);
@@ -290,6 +302,8 @@ export function Composer({
     : (bot?.name ?? "The bot");
   const narrowPlaceholder = useNarrowViewport();
   const coarsePointer = useCoarsePointer();
+  const sendKey = useSyncExternalStore(subscribeSendKey, currentSendKey, currentSendKey);
+  const sendKeyLabel = sendKeyName(sendKey, isMacPlatform());
   // Per-thread draft: switching bots unmounts this component, so both the
   // text and its attachment chips have to outlive it (see lib/drafts).
   const draftId = draftId0;
@@ -456,11 +470,14 @@ export function Composer({
   // caret follows the new target the same way it does when a thread opens
   // (same touch and dialog guards). A reply restored with the thread is the
   // open effect's; the ref starts on it so the two never both run.
+  // Announced to screen readers when Escape drops the reply; cleared with the next reply.
+  const [replyCancelled, setReplyCancelled] = useState(false);
   const replyToId = replyTo?.id ?? null;
   const focusedReplyRef = useRef(replyToId);
   useEffect(() => {
     const previous = focusedReplyRef.current;
     focusedReplyRef.current = replyToId;
+    if (replyToId) setReplyCancelled(false);
     if (!replyTargetTakesFocus(previous, replyToId)) return;
     if (globalThis.matchMedia?.(COARSE_POINTER_QUERY).matches) return;
     const frame = requestAnimationFrame(() => {
@@ -556,8 +573,15 @@ export function Composer({
     [slashActive, slash, engineView],
   );
   const engineNote = slashActive ? engineCommandsNote(engineView) : null;
+  // A one-to-one chat also lists the bot's enabled skills; a room's members each have their own, so a room keeps to the commands above.
+  const botSkills = useSlashSkills(group ? undefined : bot?.id, slashActive);
+  const skillCandidates = useMemo(
+    () => (slash ? skillSlashRows(botSkills, new Set((engineView?.status === "ready" ? engineView.commands : []).map((command) => command.name))).filter((skill) => slashSkillMatches(skill, slash.query)) : []),
+    [slash, botSkills, engineView],
+  );
   const slashEntries: SlashEntry[] = [
     ...commandCandidates.map((command) => ({ kind: "murage" as const, command })),
+    ...skillCandidates.map((skill) => ({ kind: "skill" as const, skill })),
     ...engineCandidates.map((command) => ({ kind: "engine" as const, command })),
   ];
   const commandPickerOpen = slashEntries.length > 0 || engineNote !== null;
@@ -680,8 +704,20 @@ export function Composer({
       inputRef.current?.setSelectionRange(next.caret, next.caret);
     });
   };
+  // A skill stays literal in the draft ("/name "), like /learn: the harness reads it and runs the skill for that turn.
+  const pickSkill = (skill: SlashSkill) => {
+    if (!slash) return;
+    const next = replaceComposerSlashTrigger(text, slash, `/${skill.name} `);
+    editText(next.text);
+    setCaret(next.caret);
+    setDismissedSlashAt(slash.start);
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.setSelectionRange(next.caret, next.caret);
+    });
+  };
   const pickSlashEntry = (entry: SlashEntry) =>
-    entry.kind === "murage" ? pickCommand(entry.command) : pickEngineCommand(entry.command);
+    entry.kind === "murage" ? pickCommand(entry.command) : entry.kind === "skill" ? pickSkill(entry.skill) : pickEngineCommand(entry.command);
 
   // Busy sends are owned by the harness immediately for both channels and
   // 1:1 chats. Keeping a channel follow-up in this component used to lose its
@@ -1146,6 +1182,7 @@ export function Composer({
           >
             {[
               { name: "Murage", entries: slashEntries.filter((entry) => entry.kind === "murage"), note: null },
+              { name: "Skills", entries: slashEntries.filter((entry) => entry.kind === "skill"), note: null },
               { name: engineView?.engine ?? "", entries: slashEntries.filter((entry) => entry.kind === "engine"), note: engineNote },
             ]
               .filter((section) => section.entries.length > 0 || section.note)
@@ -1157,11 +1194,12 @@ export function Composer({
                   {section.note && <div className="px-3 py-2.5 text-xs text-ink-secondary">{section.note}</div>}
                   {section.entries.map((entry) => {
                     const index = slashEntries.indexOf(entry);
-                    const label = entry.kind === "murage" ? entry.command.label : `/${entry.command.name}`;
-                    const description = entry.kind === "murage" ? entry.command.description : entry.command.description ?? entry.command.hint;
+                    const label = entry.kind === "murage" ? entry.command.label : entry.kind === "skill" ? `/${entry.skill.name}` : `/${entry.command.name}`;
+                    const description = entry.kind === "murage" ? entry.command.description : entry.kind === "skill" ? entry.skill.description : entry.command.description ?? entry.command.hint;
+                    const rowId = entry.kind === "murage" ? entry.command.id : entry.kind === "skill" ? entry.skill.name : entry.command.name;
                     return (
                       <button
-                        key={`${entry.kind}:${entry.kind === "murage" ? entry.command.id : entry.command.name}`}
+                        key={`${entry.kind}:${rowId}`}
                         type="button"
                         role="option"
                         aria-selected={index === highlight}
@@ -1177,6 +1215,8 @@ export function Composer({
                         <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent">
                           {entry.kind === "engine" ? (
                             <Terminal size={15} aria-hidden="true" />
+                          ) : entry.kind === "skill" ? (
+                            <Sparkles size={15} aria-hidden="true" />
                           ) : entry.command.id === "goal" ? (
                             <Target size={15} aria-hidden="true" />
                           ) : entry.command.id === "setup" ? (
@@ -1206,19 +1246,13 @@ export function Composer({
             className="absolute bottom-full left-2 z-20 mb-2 max-h-72 w-72 overflow-x-hidden overflow-y-auto overscroll-contain rounded-xl border border-hairline/40 bg-raised shadow-lg"
           >
             {candidates.map((peer, i) => (
-              <button
+              <ComposerMenuRow
                 key={peer.id}
-                data-mention-index={i}
-                role="option"
-                aria-selected={i === highlight}
-                onClick={() => pickMention(peer)}
-                onMouseEnter={() => setHighlight(i)}
-                className={cn(
-                  "flex w-full items-center gap-2.5 px-3 py-2 text-left",
-                  i === highlight ? "bg-raised-hover" : "",
-                )}
-              >
-                {peer.bot ? (
+                index={i}
+                highlighted={i === highlight}
+                onPick={() => pickMention(peer)}
+                onHover={() => setHighlight(i)}
+                leading={peer.bot ? (
                   <BotAvatar
                     bot={peer.bot}
                     state={normalizeState(peer.bot.mascotExpression) ?? "happy"}
@@ -1229,9 +1263,10 @@ export function Composer({
                     <Users size={14} aria-hidden="true" />
                   </span>
                 )}
-                <span className="min-w-0 flex-1 truncate text-[14px] font-medium text-ink">{peer.name}</span>
-                <span className="shrink-0 text-xs text-ink-secondary">{peer.bot ? "Bot" : "Channel"}</span>
-              </button>
+                name={peer.name}
+                tag={peer.bot ? "Bot" : "Channel"}
+                description={mentionRowDescription(peer, members?.length ?? 0)}
+              />
             ))}
           </div>
         )}
@@ -1253,13 +1288,14 @@ export function Composer({
         )}
         {replyTo && (
           <div className="mb-2 px-1">
-            <ReplyQuote
+            <ComposerReplyStrip
               message={replyTo}
               fallbackName={bot?.name}
-              onClear={onClearReply}
+              onClear={() => onClearReply?.()}
             />
           </div>
         )}
+        <span role="status" aria-live="polite" className="sr-only">{replyCancelled ? t("composer.replyCancelled") : ""}</span>
         <ComposerAttachments
           items={attachments}
           onAdd={addUploadedAttachments}
@@ -1328,7 +1364,7 @@ export function Composer({
               e.target.value = "";
             }}
           />
-          <textarea
+          <textarea dir="auto"
           ref={inputRef}
           rows={1}
           enterKeyHint={coarsePointer ? "enter" : "send"}
@@ -1382,6 +1418,8 @@ export function Composer({
           onKeyUp={(e) => setCaret((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
           onClick={(e) => setCaret((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
           onKeyDown={(e) => {
+            // An input method confirming a candidate is not a menu pick or a send.
+            if (imeComposing({ isComposing: e.nativeEvent.isComposing, keyCode: e.keyCode })) return;
             if (commandPickerOpen) {
               if (slashEntries.length && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
                 e.preventDefault();
@@ -1420,15 +1458,22 @@ export function Composer({
                 return;
               }
             }
+            // Escape drops a pending reply and keeps the draft; an open menu closed first, above
+            if (escapeCancelsReply({ key: e.key, isComposing: e.nativeEvent.isComposing }, { replying: Boolean(replyTo), recording })) {
+              e.preventDefault();
+              onClearReply?.();
+              setReplyCancelled(true);
+              return;
+            }
             // an empty composer + ArrowUp = edit your last message (like a chat app)
             if (e.key === "ArrowUp" && !hasContent && onEditLast) {
               e.preventDefault();
               onEditLast();
               return;
             }
-            // Mouse and keyboard: Enter sends, Shift+Enter is a newline.
+            // Mouse and keyboard: the chosen send key sends (Enter by default).
             // Touch: Return is a newline and the arrow button sends.
-            if (enterSends({ key: e.key, shiftKey: e.shiftKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey, isComposing: e.nativeEvent.isComposing }, coarsePointer)) {
+            if (enterSends({ key: e.key, shiftKey: e.shiftKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey, isComposing: e.nativeEvent.isComposing, keyCode: e.keyCode }, coarsePointer, sendKey)) {
               e.preventDefault();
               send();
             }
@@ -1451,10 +1496,10 @@ export function Composer({
               : canInject
                 ? { lead: `${busyName} is working`, hint: "inject now to interrupt with the queued message" }
               : busy && canSteer
-                ? { lead: `${busyName} is working`, hint: "Enter sends this into the running turn" }
+                ? { lead: `${busyName} is working`, hint: `${sendKeyLabel} sends this into the running turn` }
               : busy
                 ? group
-                  ? { lead: `${busyName} is working`, hint: "Enter queues your message" }
+                  ? { lead: `${busyName} is working`, hint: `${sendKeyLabel} queues your message` }
                   : { lead: `${busyName} is working`, hint: "sends when this turn finishes" }
                 : group
                   ? channelMode === "goal"

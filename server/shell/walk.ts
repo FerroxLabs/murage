@@ -52,6 +52,7 @@ import { homedir } from "node:os";
 
 import { isPlain, lex, lexQuotedBody, literalText, renderWord, Unreadable, type Part, type Word } from "./lex.ts";
 import { parse, type AndOr, type Command, type Pipeline, type Redirect, type Script } from "./parse.ts";
+import { checkUnplacedWrite, isLoaderName, loadsCodeFirst, namesStartupFile, writtenStartupFile, markLoaderRunner, markLoaderVariable, mentionsLoaderVariable, pythonModuleLoads, rReadsProfile, type LoaderMarks } from "./loaders.ts";
 
 
 /** Nested scripts (`sh -c`, `eval`, a substitution) deeper than this ask. */
@@ -161,6 +162,9 @@ export interface WalkContext {
    * find's roots, so a delete of a root reaches all of it, as a recursive
    * one does */
   findAction?: boolean;
+  /** 1.0.5 r8: a loader variable set and an interpreter or shell run,
+   * shared by every fork of one read (server/shell/loaders.ts) */
+  loaders: LoaderMarks;
   depth: number;
 }
 
@@ -208,10 +212,33 @@ export interface Visitor<H> {
    * carve-out)? True only when the visitor takes that on itself; otherwise
    * a value anywhere in them is unreadable. */
   findValues?(words: Word[]): boolean;
+  /** A script file on disk that a shell runs, an interpreter runs or
+   * `source` reads, named by a literal path this text did not write: its
+   * contents are not in the text. True when the visitor takes that on
+   * itself (always-ask's, which still asks below Full access) and the walk
+   * goes on to the rest of the text; otherwise it is unreadable, as before.
+   * Never offered elevated, nor for a file this text wrote or a value names. */
+  unseenScript?(path: string, ctx: WalkContext): boolean;
+}
+
+/** 1.0.5: a literal script file on disk this text did not write. The visitor
+ * may take it on and read on; otherwise it is unreadable, as 1.0.4 U17 made it. */
+function unseenScript<H>(visitor: Visitor<H>, path: string, ctx: WalkContext, elevated: boolean, detail: string): void {
+  if (!elevated && visitor.unseenScript?.(path, ctx)) return;
+  throw new Unreadable("opaque", detail);
+}
+
+/** 1.0.5 r8: an interpreter or a shell runs: a loader variable this read set
+ * reaches it, and a startup file this read wrote or linked is read first. */
+function runnerStarts(ctx: WalkContext, name: string): void {
+  markLoaderRunner(ctx.loaders, name);
+  checkUnplacedWrite(ctx.loaders, name);
+  const startup = writtenStartupFile([...ctx.written.keys(), ...ctx.links.keys()]);
+  if (startup) throw new Unreadable("opaque", `${name} reads a startup file this text wrote (${startup})`);
 }
 
 export function newContext(cwd?: string): WalkContext {
-  return { cwd, cwdConflict: false, bound: new Map(), arrays: new Set(), readonly: new Set(), functions: new Map(), opaque: false, written: new Map(), links: new Map(), inodes: new Map(), depth: 0 };
+  return { cwd, cwdConflict: false, bound: new Map(), arrays: new Set(), readonly: new Set(), functions: new Map(), opaque: false, written: new Map(), links: new Map(), inodes: new Map(), loaders: {}, depth: 0 };
 }
 
 /** A copy for a subshell, a branch or a nested script: what it binds or
@@ -228,6 +255,7 @@ export function fork(ctx: WalkContext, deeper = false): WalkContext {
     written: new Map(ctx.written),
     links: new Map(ctx.links),
     inodes: new Map(ctx.inodes),
+    loaders: ctx.loaders,
     depth: ctx.depth + (deeper ? 1 : 0),
   };
   if (ctx.stdin) next.stdin = ctx.stdin;
@@ -1190,6 +1218,10 @@ function unwrap(words: Word[], ctx: WalkContext): Unwrapped {
     };
     while (i < rest.length && !script) {
       const word = rest[i]!;
+      // 1.0.5 r8: `env "$n=x" node …`: a name a value gives may be a loader variable
+      if (wrapper.assignments && literalText(word) === undefined && !assignmentOf(word)) markLoaderVariable(ctx.loaders, `${name} with a value in its arguments`);
+      const setName = wrapper.assignments ? literalText(word)?.match(/^([^=]+)=/)?.[1] : undefined;
+      if (setName !== undefined && isLoaderName(setName)) markLoaderVariable(ctx.loaders, setName);
       if (wrapper.assignments && assignmentOf(word)) {
         // `env HOME=$x cmd`: what the command sees is not in the text
         if (!isPlain(word)) throw new Unreadable("expansion", `a value in ${name}'s assignments`);
@@ -1614,18 +1646,44 @@ export function runsRemote(elevated: boolean): void {
  * an interactive shell with nothing the text shows. */
 type ShellProgram =
   | { kind: "text"; texts: string[]; zero?: Word; positionals: Word[]; fromStdin?: true }
-  | { kind: "file"; path: string; positionals: Word[] };
+  | { kind: "file"; path: string; positionals: Word[]; fromStdin?: true };
 
-function shellScript(args: Word[], stdin: Provenance | undefined, ctx: WalkContext, elevated: boolean): ShellProgram | undefined {
+/** The startup file `--rcfile`/`--init-file` names: a file this text wrote,
+ * or nothing for the null device; anything else asks (1.0.4 U17 r2). */
+function startupFile(word: Word | undefined, ctx: WalkContext, option: string): Provenance | undefined {
+  if (!word) throw new Unreadable("syntax", `${option} without a file`);
+  const candidates = candidatesOf(word, ctx);
+  const only = candidates.length === 1 ? candidates[0]! : undefined;
+  if (only?.kind !== "literal") throw new Unreadable("expansion", `a shell reads a startup file a value names (${option})`);
+  if (isNullInput(only.text)) return undefined;
+  const written = ctx.written.get(resolveWritten(ctx, only.text));
+  if (!written) throw new Unreadable("opaque", `a shell reads a startup file the reader does not see (${option})`);
+  return written;
+}
+
+/** Long options of the shells that take no value and run nothing (1.0.5 r3). */
+const SHELL_LONG_OPTIONS = new Set(["--norc", "--noprofile", "--posix", "--noediting", "--restricted", "--verbose", "--login", "--interactive", "--version", "--help", "--no-rcs", "--no-globalrcs", "--no-config", "--no-execute", "--private"]);
+
+function shellScript(args: Word[], stdin: Provenance | undefined, ctx: WalkContext, elevated: boolean, startup: Array<Provenance | undefined> = []): ShellProgram | undefined {
   let i = 0;
   let hasC = false;
+  // `bash -s`: the script is stdin, and every operand is a positional (1.0.5 r2)
+  let hasS = false;
   for (; i < args.length; i++) {
     const text = literalText(args[i]!);
     if (text === undefined) break;
     if (text === "--") { i++; break; }
-    if (text === "-o" || text === "+o" || text === "-O" || text === "+O" || text === "--rcfile" || text === "--init-file") { i++; continue; }
-    if (/^[-+][A-Za-z]+$/.test(text)) { if (text.startsWith("-") && text.includes("c")) hasC = true; continue; }
-    if (text.startsWith("--")) continue;
+    if (text === "-o" || text === "+o" || text === "-O" || text === "+O") { i++; continue; }
+    // `bash --rcfile x -i`: an interactive shell runs its startup file first
+    // (1.0.4 U17 r2). One this text wrote is read as it was written; one on
+    // disk the reader does not see, or a value, asks
+    if (text === "--rcfile" || text === "--init-file") { startup.push(startupFile(args[i + 1], ctx, text)); i++; continue; }
+    // fish's `-C`/`--init-command` runs its value as code before anything
+    // else (1.0.5 r3): code the reader is not shown in the shell's own words
+    if (/^--init-command(=|$)/.test(text) || /^-[A-Za-z]*C/.test(text)) throw new Unreadable("opaque", `a shell runs an init command (${text.split("=")[0]})`);
+    if (/^[-+][A-Za-z]+$/.test(text)) { if (text.startsWith("-") && text.includes("c")) hasC = true; if (text.startsWith("-") && text.includes("s")) hasS = true; continue; }
+    // a long option the reader does not know may take a value or run code
+    if (text.startsWith("--")) { if (SHELL_LONG_OPTIONS.has(text)) continue; throw new Unreadable("opaque", `a shell option the reader does not know (${text.split("=")[0]})`); }
     break;
   }
   if (hasC) {
@@ -1638,15 +1696,15 @@ function shellScript(args: Word[], stdin: Provenance | undefined, ctx: WalkConte
   }
   const operand = args[i];
   const operandText = operand ? literalText(operand) : undefined;
-  if (operand && operandText !== "-s" && operandText !== "-") {
+  if (operand && !hasS && operandText !== "-s" && operandText !== "-") {
     // `bash script.sh`: a file; one this text wrote is read as it was written
     const candidates = candidatesOf(operand, ctx);
     const only = candidates.length === 1 ? candidates[0]! : undefined;
     if (only?.kind === "literal") return { kind: "file", path: resolvePath(ctx, only.text), positionals: args.slice(i + 1) };
-    if (ctx.written.size) throw new Unreadable("expansion", "a shell runs a file a value names, after this text wrote files");
-    return undefined;
+    // 1.0.4 U17: a script a value names is one the reader cannot see
+    throw new Unreadable("expansion", ctx.written.size ? "a shell runs a file a value names, after this text wrote files" : "a shell runs a file a value names");
   }
-  const positionals = operand ? args.slice(i + 1) : [];
+  const positionals = operand ? args.slice(hasS ? i : i + 1) : [];
   if (!stdin) return undefined;
   switch (stdin.kind) {
     case "literal": {
@@ -1655,7 +1713,7 @@ function shellScript(args: Word[], stdin: Provenance | undefined, ctx: WalkConte
       const texts = [stdin.text, ...stdin.words.map(renderWord)];
       return { kind: "text", texts, positionals, fromStdin: true };
     }
-    case "file": return { kind: "file", path: stdin.path, positionals };
+    case "file": return { kind: "file", path: stdin.path, positionals, fromStdin: true };
     case "roots": throw new Unreadable("expansion", "a shell reads the paths a lister prints");
     case "value": throw new Unreadable("expansion", `a shell reads ${stdin.why}`);
     case "remote": runsRemote(elevated); return undefined;
@@ -1755,10 +1813,25 @@ type InterpreterProgram = { kind: "code"; words: Word[]; rest: Word[] } | { kind
 
 function interpreterProgram(key: string, args: Word[], ctx: WalkContext): InterpreterProgram {
   const inline = INLINE_CODE[key]!;
+  // R reads `.Rprofile` from the folder first (1.0.5 r8, server/shell/loaders.ts)
+  if (key === "rscript" && rReadsProfile(args.map(literalText))) throw new Unreadable("opaque", "R reads a profile first");
   const code: Word[] = [];
   // the index of the last code word: the words after it are the code's own arguments
   let last = -1;
-  const inlineCode = (): InterpreterProgram => ({ kind: "code", words: code, rest: args.slice(last + 1) });
+  // 1.0.5 r8: node and php read their own options after inline code too
+  // (`node -e 1 -r ./x.js`): one there that loads code first asks
+  const inlineCode = (): InterpreterProgram => {
+    const rest = args.slice(last + 1);
+    if (key === "node" || key === "php" || key === "bun" || key === "deno") {
+      for (const [at, word] of rest.entries()) {
+        const text = literalText(word);
+        if (text === undefined) continue;
+        const next = rest[at + 1] ? literalText(rest[at + 1]!) : undefined;
+        if (loadsCodeFirst(key, text, next) || ((key === "bun" || key === "deno") && runnerOption(key, text) === "preload")) throw new Unreadable("opaque", `${key} loads code first (${text.split("=")[0]})`);
+      }
+    }
+    return { kind: "code", words: code, rest };
+  };
   for (let i = 0; i < args.length; i++) {
     const text = literalText(args[i]!);
     // the option on its own (`-e`, `-pe`) takes the next word, below
@@ -1770,6 +1843,11 @@ function interpreterProgram(key: string, args: Word[], ctx: WalkContext): Interp
       continue;
     }
     if (text === undefined) return code.length ? inlineCode() : interpreterFile(args[i]!, ctx);
+    // `node -r ./x.js`, `ruby -I dir`, `perl -MX`, `php -d auto_prepend_file=x`:
+    // code that runs before the program, an empty or an inline one too, and
+    // after inline code for the interpreters that read options there
+    // (1.0.5 r6, r8: server/shell/loaders.ts, shared with the PowerShell reader)
+    if (loadsCodeFirst(key, text, literalText(args[i + 1] ?? { parts: [] }))) throw new Unreadable("opaque", `${key} loads code first (${text.split("=")[0]})`);
     if (text !== "" && inline.test(text)) {
       const word = args[i + 1];
       if (!word) throw new Unreadable("opaque", `${text} without code`);
@@ -1781,38 +1859,127 @@ function interpreterProgram(key: string, args: Word[], ctx: WalkContext): Interp
       continue;
     }
     if (code.length) { if (key === "perl" || key === "ruby" || key === "osascript" || key === "lua") continue; break; }
+    // deno and bun take a subcommand (`bun install`, `deno test`); `run`
+    // names a package script, or a file when it has a folder or an extension
+    // (1.0.4 U17: read as the PowerShell reader reads them)
+    if ((key === "deno" || key === "bun") && !text.startsWith("-")) {
+      if (text !== "run") return runnerTarget(args[i]!, ctx);
+      // `deno run -A x.ts`, `bun run --watch x.ts`: the options a run takes come
+      // before its script; one the reader does not know may take the next word
+      // (1.0.4 U17 r2), so where the script starts is unknown and it asks
+      let at = i + 1;
+      for (; at < args.length; at++) {
+        const option = literalText(args[at]!);
+        if (option === undefined || !option.startsWith("-")) break;
+        if (option === "--") { at++; break; }
+        const flags = RUNNER_FLAGS[key]!;
+        const name = option.includes("=") ? option.slice(0, option.indexOf("=")) : option;
+        // `--preload x.ts`, `-r x.ts`: code that runs before the script, a file
+        // the run does not show the reader (1.0.4 U17 r3)
+        if (runnerOption(key, option) === "preload") throw new Unreadable("opaque", `${key} run loads code first (${name})`);
+        if (flags.valued.has(name)) { if (!option.includes("=")) at++; continue; }
+        if (flags.bare.has(name) || flags.prefixes.some((prefix) => name.startsWith(prefix))) continue;
+        throw new Unreadable("opaque", `${key} run with an option the reader does not know (${name})`);
+      }
+      const target = args[at];
+      return target ? runnerTarget(target, ctx) : { kind: "none" };
+    }
     if (text === "--" || text === "run") return args[i + 1] ? interpreterFile(args[i + 1]!, ctx) : { kind: "none" };
     if (text === "-") return { kind: "stdin" };
-    if (key === "python" && text === "-m") return { kind: "none" };
+    // `python -m runpy x.py`, `-m pdb`, a module of the project's own: a file
+    // the reader does not see (1.0.5 r8); pip, pytest, venv and their kin stay ordinary
+    if (key === "python" && pythonModuleLoads(text, args[i + 1] ? literalText(args[i + 1]!) : undefined)) throw new Unreadable("opaque", "python -m runs a module the reader does not see");
+    if (key === "python" && /^-[bBdEhiIOqsSuvV]*m/.test(text)) return { kind: "none" };
+    // `bun -r ./x.ts ok.ts`, `bun --require ./x.ts run ok.ts`: code that runs
+    // first, before or without a `run` (1.0.5 r4, reader-gaps r3)
+    if ((key === "deno" || key === "bun") && runnerOption(key, text) === "preload") throw new Unreadable("opaque", `${key} loads code first (${text.split("=")[0]})`);
     if (text.startsWith("-")) { if (takesValue(key, text)) i++; continue; }
+    // php reads its own options after the script too (`php x.php -r code`,
+    // `php /dev/null -d auto_prepend_file=x`): any option there asks
+    if (key === "php") {
+      for (const later of args.slice(i + 1)) {
+        const word = literalText(later);
+        if (word === "--") break;
+        if (word === undefined || word.startsWith("-")) throw new Unreadable("opaque", "php with an option after its script");
+      }
+    }
     return interpreterFile(args[i]!, ctx);
   }
   return code.length ? inlineCode() : { kind: "stdin" };
 }
 
+/** The options of `deno run` and `bun run` before the script (1.0.4 U17 r2):
+ * flags, options that take the next word unless given with `=`, and option
+ * families by prefix. Any other option asks. */
+const RUNNER_FLAGS: Record<string, { bare: Set<string>; valued: Set<string>; prefixes: string[] }> = {
+  deno: {
+    bare: new Set(["-A", "--allow-all", "-q", "--quiet", "-r", "--reload", "--no-check", "--check", "--watch", "--watch-hmr", "--hmr", "--no-clear-screen",
+      "--inspect", "--inspect-brk", "--inspect-wait", "--no-prompt", "--no-remote", "--no-npm", "--no-config", "--no-lock", "--lock", "--cached-only", "--frozen",
+      "--node-modules-dir", "--no-code-cache", "--env", "--env-file", "--v8-flags", "-R", "-W", "-N", "-E", "-S", "-P", "--permission-set"]),
+    valued: new Set(["--log-level", "-c", "--config", "--import-map", "--cert", "--location", "--seed", "--ext", "--preload", "--require", "--watch-exclude"]),
+    prefixes: ["--allow-", "--deny-", "--unstable"],
+  },
+  bun: {
+    bare: new Set(["--watch", "--hot", "--no-clear-screen", "--smol", "--bun", "-b", "--silent", "--if-present", "--no-install", "-i", "--prefer-offline", "--prefer-latest",
+      "--inspect", "--inspect-wait", "--inspect-brk", "--no-deprecation", "--throw-deprecation", "--expose-gc", "--no-addons", "--zero-fill-buffers", "--no-env-file",
+      "--no-macros", "--unhandled-rejections", "--revision", "--verbose", "--install"]),
+    valued: new Set(["--cwd", "--env-file", "-r", "--preload", "--require", "--import", "-d", "--define", "--tsconfig-override", "--main-fields", "--extension-order",
+      "--conditions", "--loader", "-l", "--shell", "--elide-lines", "-F", "--filter", "--config", "-c", "--port", "--jsx-factory", "--jsx-fragment", "--jsx-import-source", "--jsx-runtime"]),
+    prefixes: [],
+  },
+};
+
+/** `deno run` and `bun run` options whose value is code that runs before
+ * the script or package task: any of them asks (1.0.4 U17 r3). Deno's `-r`
+ * is `--reload`, a flag. */
+const RUNNER_PRELOADS = new Set(["-r", "--preload", "--require", "--import"]);
+
+/** What a `deno`/`bun` option is: code loaded first (`--preload x`,
+ * `--require=x`, bun's `-r x` or `-rx`; deno's `-r` is `--reload`), a flag the
+ * run knows, one that takes the next word, or one the reader does not know. */
+export function runnerOption(key: string, option: string): "preload" | "bare" | "valued" | "unknown" {
+  const name = option.includes("=") ? option.slice(0, option.indexOf("=")) : option;
+  if (RUNNER_PRELOADS.has(name) && !(key === "deno" && name === "-r")) return "preload";
+  if (key === "bun" && /^-r./.test(name)) return "preload";
+  const flags = RUNNER_FLAGS[key];
+  if (!flags) return "unknown";
+  if (flags.valued.has(name)) return option.includes("=") ? "bare" : "valued";
+  if (flags.bare.has(name) || flags.prefixes.some((prefix) => name.startsWith(prefix))) return "bare";
+  return "unknown";
+}
+
+/** The word after `deno`/`bun` or after their `run` options: a path or a
+ * name with an extension is a script file; a bare name is a package script or
+ * a task, unless this text wrote a file by that name, which is read as the
+ * script it may be (1.0.4 U17 r2: as before this lane). */
+function runnerTarget(word: Word, ctx: WalkContext): InterpreterProgram {
+  const named = literalText(word);
+  if (named === undefined || /[\\/.]/.test(named)) return interpreterFile(word, ctx);
+  return ctx.written.has(resolveWritten(ctx, named)) ? interpreterFile(word, ctx) : { kind: "none" };
+}
+
 /** The script file an interpreter runs, read through `candidatesOf` as a
  * shell's script operand is: one literal candidate is that file (through
- * `resolveWritten`); a file a value names is out of reach, unless this text
- * wrote files, when it may be one of them. */
+ * `resolveWritten`); a file a value names asks (1.0.4 U17: the reader cannot
+ * see it, as the PowerShell reader asks for an interpreter given a value). */
 function interpreterFile(word: Word, ctx: WalkContext): InterpreterProgram {
   const candidates = candidatesOf(word, ctx);
   const only = candidates.length === 1 ? candidates[0]! : undefined;
   if (only?.kind === "literal") return { kind: "file", path: resolvePath(ctx, only.text) };
-  if (ctx.written.size) throw new Unreadable("expansion", "an interpreter runs a file a value names, after this text wrote files");
-  return { kind: "none" };
+  throw new Unreadable("expansion", ctx.written.size ? "an interpreter runs a file a value names, after this text wrote files" : "an interpreter runs a file a value names");
 }
 
 /** The scan of a file this text wrote and then runs (`strict`): any home
  * lookup, any call that deletes or runs, any quoted catastrophe asks. */
 const STRICT_HOME = /\b(HOME|USERPROFILE|expanduser|homedir|GetFolderPath|SpecialFolder|UserProfile)\b/;
-const STRICT_EXIT = /\b(system|popen|subprocess|child_process|execSync|execFileSync|execFile|exec|spawnSync|spawn|Start-Process|Invoke-Expression|iex|os\.remove|os\.unlink|unlink|rmtree|rmSync|rimraf|unlinkSync|rmdirSync|Remove-Item)\b|`|%x/;
+const STRICT_EXIT = /\b(os\.execute|execute|system|popen|subprocess|child_process|execSync|execFileSync|execFile|exec|spawnSync|spawn|Start-Process|Invoke-Expression|iex|os\.remove|os\.unlink|unlink|rmtree|rmSync|rimraf|unlinkSync|rmdirSync|Remove-Item)\b|`|%x/;
 
 /** Literal inline code (`python -c`, `node -e`, a heredoc into `python3 -`)
  * is read by what it can do. Code that only prints, reads or computes is
  * ordinary whatever its strings say: text that is printed or searched is
  * data. Code that runs another program (`OPAQUE_RUNS`), deletes
  * (`OPAQUE_DELETES`) or writes (`OPAQUE_WRITES`) is read further. */
-const OPAQUE_RUNS = /\b(system|popen|Popen|subprocess|child_process|check_output|check_call|getoutput|getstatusoutput|execSync|execFileSync|execFile|exec|execl|execlp|execle|execv|execvp|execve|execvpe|spawnSync|spawn|Start-Process|Invoke-Expression|iex|shell_exec|passthru|proc_open)\b|do shell script|%x[({[|!]/;
+const OPAQUE_RUNS = /\b(os\.execute|system|popen|Popen|subprocess|child_process|check_output|check_call|getoutput|getstatusoutput|execSync|execFileSync|execFile|exec|execl|execlp|execle|execv|execvp|execve|execvpe|spawnSync|spawn|Start-Process|Invoke-Expression|iex|shell_exec|passthru|proc_open)\b|do shell script|%x[({[|!]/;
 /** Backticks run shell text in these languages; in JavaScript they are a template string. */
 const BACKTICK_RUNS = new Set(["perl", "ruby", "php"]);
 const OPAQUE_DELETES = /\b(rm_rf|rm_r|rm_f|rmdir|rmtree|remove_tree|remove_dir|remove_entry|remove_entry_secure|unlink|unlinkSync|rmSync|rmdirSync|rimraf|removedirs|removeSync|emptyDir|emptyDirSync|shred|Remove-Item)\b|\bos\.remove\b/;
@@ -1872,6 +2039,75 @@ function opaqueParts(text: string, key: string | undefined, nested = true): { co
   return { code, bare, strings, ranges, tops };
 }
 
+/** The members of Lua's `os` table code may name without asking: all but
+ * `execute` read or compute, and `execute` is a run call the scan reads. */
+const LUA_OS_MEMBERS = /^\s*\.\s*(?:execute|time|date|clock|getenv|difftime|remove|rename|exit|tmpname|setlocale)\b/;
+/** Lua names that reach code or tables the scan does not follow: loaded
+ * text, modules, the global and environment tables, raw and debug access. */
+const LUA_UNSEEN = /\b(?:load|loadstring|loadfile|dofile|require|_G|_ENV|getfenv|setfenv|rawget|rawset|debug|package)\b/;
+
+/** Lua code in the forms `scanOpaque` reads (1.0.4 U21 r2): a long string
+ * (`[[…]]`, `[==[…]==]`) becomes a quoted string, a long comment and a line
+ * comment go, `os . execute` and `os["execute"]` become `os.execute`, and a
+ * string call (`os.execute"…"`) gets its parentheses. What it cannot read
+ * asks: an unclosed long bracket, `os` reached any other way (`local o = os`,
+ * `os[k]`), `execute` named outside `os.execute`, a table call, a name
+ * that loads code or reaches the global tables, or a long string in code
+ * that runs a program. */
+function readLua(text: string): string {
+  let out = "";
+  let longString = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!;
+    if (c === "-" && text[i + 1] === "-") {
+      const long = /^--\[(=*)\[/.exec(text.slice(i));
+      if (long) {
+        const close = text.indexOf(`]${long[1]}]`, i + long[0].length);
+        if (close < 0) throw new Unreadable("opaque", "lua code with an unclosed long comment");
+        out += " ";
+        i = close + long[1]!.length + 1;
+        continue;
+      }
+      while (i + 1 < text.length && text[i + 1] !== "\n") i++;
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      let j = i + 1;
+      for (; j < text.length && text[j] !== c; j++) if (text[j] === "\\") j++;
+      out += text.slice(i, j + 1);
+      i = j;
+      continue;
+    }
+    const long = c === "[" ? /^\[(=*)\[/.exec(text.slice(i)) : null;
+    if (long) {
+      const close = text.indexOf(`]${long[1]}]`, i + long[0].length);
+      if (close < 0) throw new Unreadable("opaque", "lua code with an unclosed long string");
+      const body = text.slice(i + long[0].length, close).replace(/^\r?\n/, "");
+      out += `"${body.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+      longString = true;
+      i = close + long[1]!.length + 1;
+      continue;
+    }
+    out += c;
+  }
+  out = out
+    .replace(/\bos\s*\.\s*execute\b/g, "os.execute")
+    .replace(/\bos\s*\[\s*(?:"execute"|'execute')\s*\]/g, "os.execute")
+    .replace(/\bos\.execute\s*("(?:[^"\\]|\\[\s\S])*"|'(?:[^'\\]|\\[\s\S])*')/g, "os.execute($1)");
+  // the code with its strings blanked: names, not data
+  const bare = out.replace(/"(?:[^"\\]|\\[\s\S])*"?|'(?:[^'\\]|\\[\s\S])*'?/g, '""');
+  for (const match of bare.matchAll(/\bos\b/g)) {
+    if (!LUA_OS_MEMBERS.test(bare.slice(match.index! + 2))) throw new Unreadable("opaque", "lua code reaches os in a way the reader does not follow");
+  }
+  if (LUA_UNSEEN.test(bare)) throw new Unreadable("opaque", "lua code loads code or reaches tables the reader does not follow");
+  if (/\bos\.execute\s*\{/.test(bare)) throw new Unreadable("opaque", "lua runs a table call of os.execute");
+  if (/\bexecute\b/.test(out.replace(/\bos\.execute\b/g, ""))) throw new Unreadable("opaque", "lua names execute outside os.execute");
+  // a long string in code that runs a program asks, as it did before this
+  // round: the reader does not judge what such a run is given
+  if (longString && /\bos\.execute\b|\bpopen\b/.test(out)) throw new Unreadable("opaque", "lua runs a program in code with a long string");
+  return out;
+}
+
 /** What a scan of opaque code is given besides the code: its interpreter,
  * the words after the code, what is piped in, and whether this text wrote
  * the file the code came from (`strict`). */
@@ -1888,6 +2124,9 @@ type OpaqueInput = { key?: string; rest?: Word[]; stdin?: Provenance; strict?: b
 function scanOpaque<H>(text: string, elevated: boolean, visitor: Visitor<H>, ctx: WalkContext, input: OpaqueInput = {}): void {
   // (1) elevated
   if (elevated) throw new Unreadable("opaque", "code the reader does not model, run elevated");
+  // Lua's long strings, long comments and the other ways to reach
+  // `os.execute` are read into the forms the scan knows (1.0.4 U21 r2)
+  if (input.key === "lua") text = readLua(text);
   if (input.strict) return scanWritten(text, visitor);
   // (2) the code, its strings, its strings blanked
   const key = input.key;
@@ -1971,6 +2210,7 @@ function scanOpaque<H>(text: string, elevated: boolean, visitor: Visitor<H>, ctx
   // (6) code that deletes or writes may have written any file it names: a
   // later run of that file asks
   if (deletes || writes) {
+    ctx.loaders.unplacedWrite ??= "a file inline code may have written";
     for (const s of strings) {
       const path = s.trim();
       if (path && !/\s/.test(path) && pathShaped(path)) ctx.written.set(resolveWritten(ctx, path), { kind: "value", why: "a file inline code may have written" });
@@ -2253,6 +2493,10 @@ function bindPositionals(inner: WalkContext, values: Word[][], zero?: Word[]): v
 
 export function walkScript<H>(text: string, ctx: WalkContext, visitor: Visitor<H>): H | null {
   if (ctx.depth > MAX_DEPTH) throw new Unreadable("depth");
+  // 1.0.5 r8: a loader variable named anywhere in the text, with an
+  // interpreter or a shell run anywhere in the read, asks
+  const loader = mentionsLoaderVariable(text, "posix");
+  if (loader) markLoaderVariable(ctx.loaders, loader);
   return walkList(parse(text), ctx, visitor);
 }
 
@@ -2782,13 +3026,15 @@ function recordWrites(command: Command, before: Command[], name: string | undefi
     if (!OUTPUT_OPS.has(redirect.op) && (redirect.op !== ">&" || dup)) continue;
     const stdout = redirect.fd === undefined || redirect.fd === 1;
     const content: Provenance = command.kind === "simple" && stdout && redirect.op !== ">>" && redirect.op !== "&>>" && redirect.op !== "<>" ? outputOf(command, before, ctx) : { kind: "value", why: "output the reader does not compute" };
-    for (const path of literalTargets(redirect.target) ?? []) setWritten(ctx, path, content);
+    const targets = literalTargets(redirect.target);
+    if (!targets) ctx.loaders.unplacedWrite ??= "a redirect to a value";
+    for (const path of targets ?? []) setWritten(ctx, path, content);
   }
   if (command.kind !== "simple" || name === undefined) return;
   const texts = args.map(literalText);
   if (name === "tee") {
     const content: Provenance = texts.some((text) => text === "-a" || text === "--append") ? { kind: "value", why: "appended" } : stdinProvenance(command, before, ctx) ?? { kind: "value", why: "tee of unknown input" };
-    for (const [index, arg] of args.entries()) if (!(texts[index] ?? "-").startsWith("-")) for (const path of literalTargets(arg) ?? []) setWritten(ctx, path, content);
+    for (const [index, arg] of args.entries()) if (!(texts[index] ?? "-").startsWith("-")) { const targets = literalTargets(arg); if (!targets) ctx.loaders.unplacedWrite ??= "tee to a value"; for (const path of targets ?? []) setWritten(ctx, path, content); }
     return;
   }
   if (name === "cp" || name === "mv" || name === "install" || name === "ln") {
@@ -2800,6 +3046,7 @@ function recordWrites(command: Command, before: Command[], name: string | undefi
     const hard = name === "ln" || (name === "cp" && texts.some((text) => text !== undefined && (/^-[A-Za-z]*l/.test(text) || text === "--link")));
     const resolvedSources = placed.sources.map((word) => literalTargets(word));
     const destinations = literalTargets(placed.destination) ?? [];
+    if (!literalTargets(placed.destination)) ctx.loaders.unplacedWrite ??= `${name} to a value`;
     const several = placed.sources.length > 1;
     for (const sources of resolvedSources) {
       const source = sources?.length === 1 ? sources[0]! : undefined;
@@ -2883,7 +3130,15 @@ function recordWrites(command: Command, before: Command[], name: string | undefi
 }
 
 function walkSimple<H>(command: Extract<Command, { kind: "simple" }>, ctx: WalkContext, visitor: Visitor<H>, before: Command[]): H | null {
+  // 1.0.5 r8 lanereview: a startup file named by any word, its quoting taken
+  // out (`~/.zshe"nv"`, `$HOME/.bash_pro\file`), with a shell or an interpreter run
+  for (const word of [...command.words, ...command.redirects.flatMap((redirect) => redirect.target ? [redirect.target] : []), ...command.assigns.map((assign) => assign.value)]) {
+    const named = namesStartupFile(word.parts.map((part) => (part.kind === "lit" ? part.text : "\u0000")).join(""));
+    if (named) markLoaderVariable(ctx.loaders, named);
+  }
   for (const assign of command.assigns) {
+    // 1.0.5 r8: `HOME=./x zsh -c …`, `NODE_OPTIONS=… node …`
+    if (isLoaderName(assign.name)) markLoaderVariable(ctx.loaders, assign.name);
     const hit = walkParts(assign.value, ctx, visitor);
     if (hit) return hit;
   }
@@ -2936,17 +3191,26 @@ function walkWithPositionals<H>(text: string, zero: Word | undefined, positional
   return walkScript(text, inner, visitor);
 }
 
+/** Input that holds nothing to run: the null device. */
+function isNullInput(path: string): boolean {
+  return path === "/dev/null" || /^nul$/i.test(path);
+}
+
 /** A file this text wrote, run by a shell or directly: literal content is
  * walked (or scanned, under a non-shell shebang); content from a value asks. */
 function runWritten<H>(written: Provenance, positionals: Word[], ctx: WalkContext, visitor: Visitor<H>, elevated: boolean, direct: boolean, hops = 0, stdin?: Provenance): H | null {
   if (hops > MAX_DEPTH) throw new Unreadable("depth");
   switch (written.kind) {
     case "literal":
-      if (direct && shebangInterpreter(written.text)) { scanOpaque(written.text, elevated, visitor, ctx, { strict: true }); return null; }
+      if (direct && shebangInterpreter(written.text)) { const key = interpreterKey(shebangInterpreter(written.text)!); scanOpaque(written.text, elevated, visitor, ctx, { strict: true, ...(key ? { key } : {}) }); return null; }
       return walkWithPositionals(written.text, undefined, positionals, ctx, visitor, elevated, stdin);
     case "file": {
       const again = ctx.written.get(resolveWritten(ctx, written.path));
-      return again ? runWritten(again, positionals, ctx, visitor, elevated, direct, hops + 1, stdin) : null;
+      if (again) return runWritten(again, positionals, ctx, visitor, elevated, direct, hops + 1, stdin);
+      // 1.0.4 U17: a shell given a copy of a script on disk runs what the
+      // reader does not see; a program run directly is read as any program on disk is
+      if (direct || isNullInput(written.path)) return null;
+      throw new Unreadable("opaque", "a shell runs a copy of a script file the reader does not see");
     }
     case "roots": case "value": throw new Unreadable("expansion", "a script this text wrote from a value");
     case "remote": runsRemote(elevated); return null;
@@ -2962,7 +3226,13 @@ function scanProvenance<H>(program: Provenance, ctx: WalkContext, visitor: Visit
   switch (program.kind) {
     // piped or heredoc text is read as inline code; a file this text wrote, strictly
     case "literal": scanOpaque(program.text, elevated, visitor, ctx, { key, strict: hops > 0 }); return;
-    case "file": { const written = ctx.written.get(resolveWritten(ctx, program.path)); if (written) scanProvenance(written, ctx, visitor, elevated, key, hops + 1); return; }
+    case "file": {
+      const written = ctx.written.get(resolveWritten(ctx, program.path));
+      if (written) { scanProvenance(written, ctx, visitor, elevated, key, hops + 1); return; }
+      // 1.0.4 U17: code from a file on disk this text did not write asks
+      if (isNullInput(program.path)) return;
+      throw new Unreadable("opaque", "an interpreter reads code from a file the reader does not see");
+    }
     case "roots": case "value": throw new Unreadable("opaque", "code from a value");
     case "remote": runsRemote(elevated); return;
     default: unreachable(program);
@@ -3109,15 +3379,35 @@ function visitUnwrapped<H>(unwrapped: Unwrapped, command: Extract<Command, { kin
   const direct = literalText(words[0]!);
   if (direct !== undefined && /[\\/]/.test(direct)) {
     const written = ctx.written.get(resolveWritten(ctx, direct));
-    if (written) return runWritten(written, args, ctx, visitor, elevated, true, 0, stdin);
+    if (written) { runnerStarts(ctx, direct); return runWritten(written, args, ctx, visitor, elevated, true, 0, stdin); }
   }
   if (name === "wsl" || name === "wsl.exe") return walkWsl(args, ctx, visitor, stdin);
   if (SHELLS.has(name)) {
-    const program = shellScript(args, stdin, ctx, elevated);
+    runnerStarts(ctx, name);
+    const startup: Array<Provenance | undefined> = [];
+    const program = shellScript(args, stdin, ctx, elevated, startup);
+    // a startup file this text wrote runs before the shell's own program
+    for (const written of startup) {
+      if (!written) continue;
+      if (name === "fish") throw new Unreadable("dialect", "a fish script");
+      hit = runWritten(written, [], ctx, visitor, elevated, false, 0);
+      if (hit) return hit;
+    }
     if (!program) return null;
     if (program.kind === "file") {
       const written = ctx.written.get(resolveWritten(ctx, program.path));
-      if (!written) return null;
+      // 1.0.4 U17 (fail closed, as the PowerShell reader does): a script on
+      // disk this text did not write is one the reader does not see. An
+      // empty input (`/dev/null`) runs nothing
+      if (!written) {
+        if (isNullInput(program.path)) return null;
+        // 1.0.5 r2: bytes piped or redirected into a shell (`bash < x.sh`,
+        // `cat x.sh | sh`, through a line filter) are piped code: they ask
+        // at every level. Only a script operand a shell names is unseen
+        if (program.fromStdin) throw new Unreadable("opaque", `${name} reads a script the reader does not see from its input`);
+        unseenScript(visitor, program.path, ctx, elevated, `${name} runs a script file the reader does not see`);
+        return null;
+      }
       if (name === "fish") throw new Unreadable("dialect", "a fish script");
       // a script read from stdin leaves its commands nothing on stdin; a file or `-c` passes it on
       return runWritten(written, program.positionals, ctx, visitor, elevated, false, 0, stdin?.kind === "file" && stdin.path === program.path ? undefined : stdin);
@@ -3131,13 +3421,16 @@ function visitUnwrapped<H>(unwrapped: Unwrapped, command: Extract<Command, { kin
   }
   const interpreter = interpreterKey(name);
   if (interpreter) {
+    runnerStarts(ctx, name);
     const program = interpreterProgram(interpreter, args, ctx);
     if (program.kind === "code") {
       if (!program.words.every(isPlain)) throw new Unreadable("opaque", "inline code from a value");
       scanOpaque(program.words.map(renderWord).join("\n"), elevated, visitor, ctx, { key: interpreter, rest: program.rest, ...(stdin ? { stdin } : {}) });
     } else if (program.kind === "file") {
       const written = ctx.written.get(resolveWritten(ctx, program.path));
-      if (written) scanProvenance(written, ctx, visitor, elevated, interpreter, 1);
+      // 1.0.4 U17: a script on disk this text did not write asks
+      if (!written) { if (!isNullInput(program.path)) unseenScript(visitor, program.path, ctx, elevated, `${name} runs a script file the reader does not see`); }
+      else scanProvenance(written, ctx, visitor, elevated, interpreter, 1);
     } else if (program.kind === "stdin" && stdin) {
       scanProvenance(stdin, ctx, visitor, elevated, interpreter);
     }
@@ -3183,11 +3476,20 @@ function visitUnwrapped<H>(unwrapped: Unwrapped, command: Extract<Command, { kin
         if (written) {
           hit = runWritten(written, args.slice(at + 1), ctx, visitor, elevated, false, 0, stdin);
           if (hit) return hit;
+        } else if (!isNullInput(only.text)) {
+          // 1.0.4 U17 r2 (fail closed, as `bash x.sh` is): a file on disk this
+          // text did not write runs here unseen
+          unseenScript(visitor, resolvePath(ctx, only.text), ctx, elevated, `${name} runs a script file the reader does not see`);
         }
-      } else if (ctx.written.size) {
-        throw new Unreadable("expansion", `${name} reads a file a value names, after this text wrote files`);
+      } else {
+        // 1.0.4 U17 r2: a file a value names is one the reader cannot see
+        throw new Unreadable("expansion", ctx.written.size ? `${name} reads a file a value names, after this text wrote files` : `${name} reads a file a value names`);
       }
     }
+  }
+  if ((name === "printf" && args.some((word) => literalText(word) === "-v")) || name === "getopts") {
+    // 1.0.5 r8: `printf -v "$n" …`: a name a value gives may be a loader variable
+    if (args.some((word) => { const text = literalText(word); return text === undefined || isLoaderName(text); })) markLoaderVariable(ctx.loaders, `${name} of a loader variable or a name a value gives`);
   }
   if (OPAQUE.has(name) || (name === "printf" && args.some((word) => literalText(word) === "-v"))) {
     // `source x`, `let`, `printf -v`: names the text does not spell out are
@@ -3243,6 +3545,11 @@ function visitUnwrapped<H>(unwrapped: Unwrapped, command: Extract<Command, { kin
     for (const word of args) {
       const assignment = assignmentOf(word);
       const text = literalText(word);
+      // 1.0.5 r8: `export "$n=x"`: a name a value gives may be a loader
+      // variable; `export $'NODE_OPT\x49ONS'=x` is one, decoded
+      if (!assignment && text === undefined) markLoaderVariable(ctx.loaders, `${name} of a name a value gives`);
+      const setName = assignment?.name ?? text?.split("=")[0];
+      if (setName !== undefined && isLoaderName(setName)) markLoaderVariable(ctx.loaders, setName);
       const readonly = name === "readonly" || (name !== "export" && options && args.some((w) => /^-[A-Za-z]*r/.test(literalText(w) ?? "")));
       if (!assignment) {
         if (readonly && text !== undefined && !text.startsWith("-")) { ctx.readonly.add(text); unknownName(text, ctx); }
@@ -3253,6 +3560,7 @@ function visitUnwrapped<H>(unwrapped: Unwrapped, command: Extract<Command, { kin
       else bind(assignment.name, assignment.value, ctx);
     }
   } else if (name === "read") {
+    if (args.some((word) => { const text = literalText(word); return text === undefined || isLoaderName(text); })) markLoaderVariable(ctx.loaders, "read of a loader variable or a name a value gives");
     bindRead(args, stdin, ctx);
   } else if (name === "unset") {
     // an `unset` name is unknown from here on

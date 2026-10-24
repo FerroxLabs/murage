@@ -86,8 +86,9 @@ export const FLUX_ANTHROPIC_BASE = "https://api.fluxrouter.ai/anthropic";
  *    (SESSION-HANDOFF-2026-06-05-FLUX-PHASE1-REMEDIATION.md:14: "it is
  *    unproven that any given CLI honors OPENAI_BASE_URL/OPENAI_MODEL").
  *  - `kimiAgent`, `piAgent`, `minimax`, `openai-compat`, `customAcp`,
- *    `boxAgent`, `antigravityAgent`, `openclawAgent` — unclassified (OpenClaw
- *    carries its own gateway and model; Murage sends it no key). No evidence either way,
+ *    `boxAgent`, `antigravityAgent`, `openclawAgent`, `clineAgent` — unclassified (OpenClaw
+ *    carries its own gateway and model; Murage sends it no key; Cline runs the
+ *    provider chosen in `cline auth`). No evidence either way,
  *    and an unclassified engine is not routable, so this fails closed.
  *
  * TWO CORRECTIONS to what this comment used to say, both wrong on the facts:
@@ -249,7 +250,9 @@ const PICKER_IDS = new Set<string>(FLUX_MODEL_IDS);
  */
 export function fluxModelId(id: string | null | undefined): string | null {
   if (!id) return null;
-  const bare = id.startsWith(`${FLUX_CODEX_PROVIDER}${CODEX_SEP}`) ? id.slice(FLUX_CODEX_PROVIDER.length + CODEX_SEP.length) : id;
+  // OpenCode keeps its CLI slug `flux/<tier>` as the catalog id, so that form is Flux too.
+  const qualified = [`${FLUX_CODEX_PROVIDER}${CODEX_SEP}`, `${FLUX_CODEX_PROVIDER}/`].find((prefix) => id.startsWith(prefix));
+  const bare = qualified ? id.slice(qualified.length) : id;
   return bare.startsWith(FLUX_MODEL_PREFIX) && bare.length > FLUX_MODEL_PREFIX.length ? bare : null;
 }
 

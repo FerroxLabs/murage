@@ -57,16 +57,19 @@ describe("M3: the marker stays inside its write budget and yields to foreground 
     } finally { fx.close(); }
   });
 
-  it("the runner walks nothing while a foreground turn is live, then finishes once it ends", async () => {
+  it("the runner trickles while a foreground turn is live (a half slice per busy pause, never a stop), then finishes once it ends", async () => {
+    // 1.0.3 walked nothing under a live turn and ran one slice every 10 s: a bot whose turns never stop kept every window open for days
+    // (SELF-OVERLOAD-105 item 1c). Now each busy tick is a shorter slice, counted as a yield, spaced by the busy pause.
     const fx = storm(8);
     let busy = true;
     try {
       flipAll(fx);
-      wakeMemoryRevocation(() => fx.db, { busy: () => busy, busyPauseMs: 5, pauseMs: 1 });
-      await new Promise(resolve => setTimeout(resolve, 250));
-      expect(num(fx, "SELECT count(*) AS n FROM memory_receipt_flips")).toBe(8);
-      expect(num(fx, "SELECT count(*) AS n FROM memory_revoke_jobs")).toBe(0);
+      wakeMemoryRevocation(() => fx.db, { busy: () => busy, busyPauseMs: 40, pauseMs: 1 });
+      await new Promise(resolve => setTimeout(resolve, 100));
+      // under the turn the marker moved (a flip drained or a job walked), at the busy cadence: at most a handful of slices in 100 ms
       expect(memoryRevocationStats.markerYields).toBeGreaterThan(0);
+      expect(memoryRevocationStats.markerYields).toBeLessThanOrEqual(4);
+      expect(num(fx, "SELECT count(*) AS n FROM memory_receipt_flips") + num(fx, "SELECT count(*) AS n FROM memory_revoke_jobs")).toBeGreaterThan(0);
       busy = false;
       await memoryRevocationIdle();
       expect(num(fx, "SELECT count(*) AS n FROM memory_receipt_flips")).toBe(0);

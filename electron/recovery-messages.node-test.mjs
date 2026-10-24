@@ -71,9 +71,11 @@ test("skipped items read the same on the Backup mode page and the Backups page",
     { count: 3, items: [{ path: "workspaces/mira/site/node_modules", reason: "rebuildable" }, { path: "workspaces/mira/notes 10:30.md", reason: "unreadable" }, { path: "attachments/x", reason: "special" }], bots: { mira: "Mira" } },
     { count: 1200, items: [{ path: "workspaces/b1/photos/a.jpg", reason: "file-limit" }], bots: {} },
     { count: 1, items: [{ path: "workspaces/b1/linked", reason: "linked-folder" }] },
+    { count: 2, items: [{ path: "config.json.bak-20260918-openaicompat", reason: "old-copy" }, { path: "my-own-notes.txt", reason: "unrecognised" }] },
     null, { count: 0, items: [] },
   ];
   for (const sample of samples) assert.deepEqual([...context.murageRecoveryMessages.skippedLines(sample)], backupSkippedLines(sample));
+  assert.ok(backupSkippedLines(samples[3]).some(line => line.startsWith("Kept in the backup, though Murage doesn't recognise this item in Murage's data folder: my-own-notes.txt.")));
   assert.deepEqual(backupSkippedLines(samples[0]), [
     "Skipped 2 items in Mira's folder: site/node_modules (installed packages or a cache, reinstall them after a restore), notes 10:30.md (couldn't be read).",
     "Skipped 1 item in Murage's data folder: attachments/x (not a regular file).",
