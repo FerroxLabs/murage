@@ -1457,22 +1457,22 @@
  },
  {
   "file": "server/env-path.ts",
-  "function": "parseCmdShim",
-  "callee": "readFileSync",
-  "root": "config",
-  "count": 1
- },
- {
-  "file": "server/env-path.ts",
-  "function": "parseNodeShebang",
+  "function": "hasNodeShebang",
   "callee": "openSync",
   "root": "config",
   "count": 1
  },
  {
   "file": "server/env-path.ts",
-  "function": "parseNodeShebang",
+  "function": "hasNodeShebang",
   "callee": "readSync",
+  "root": "config",
+  "count": 1
+ },
+ {
+  "file": "server/env-path.ts",
+  "function": "parseCmdShim",
+  "callee": "readFileSync",
   "root": "config",
   "count": 1
  },
