@@ -944,6 +944,7 @@ server/publish/site-files.test.ts	all	site files exclude secrets, symlinks refus
 server/question-normalize.test.ts	all	secret questions dropped; question vs permission told apart
 server/rc3f-downgrade.test.ts	all	pending branch change finished before downgrade
 server/rc4a2-session-cursors.test.ts	all	downgrade leaves no stale provider sessions
+server/reader-hang-105.test.ts	all	a command text that freezes Murage: the stop line or another command reader never returning on the server thread (approval boundary)
 server/reader-attached-forms-103.test.ts	all	an interpreter's attached inline code or a PowerShell compound assignment slipping past Always ask or the stop line (approval boundary)
 server/recovery-engine-discovery.test.ts	all	restore never resurrects default engine fleet
 server/redact.test.ts	all	secrets masked in logs and sessions

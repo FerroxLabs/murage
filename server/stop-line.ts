@@ -1349,7 +1349,16 @@ function deleteHit(found: Collected, place: StopLinePlace, line?: string): StopH
       return tooBroad(parent) && !t.glob ? path : parent;
     });
     let common = parents[0]!;
-    for (const p of parents.slice(1)) while (!(p === common || p.startsWith(`${common}/`))) common = posix.dirname(common);
+    // climbs until it holds p; at the top (`/`, where `${common}/` is `//`
+    // and holds nothing) it stops, so two targets on separate top folders
+    // (`rd /s /q C:\x` read as POSIX: `/s` and `/q`) cannot spin forever
+    for (const p of parents.slice(1)) {
+      while (!(p === common || p.startsWith(`${common}/`))) {
+        const up = posix.dirname(common);
+        if (up === common) break;
+        common = up;
+      }
+    }
     // at least two folders deep, not counting a Windows drive
     const depth = common.split("/").filter(Boolean).length - (WIN_CANON.test(common) ? 1 : 0);
     if (!tooBroad(common) && common !== "/" && depth >= 2) scope = common;
