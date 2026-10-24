@@ -24,6 +24,15 @@ describe("computer unavailable layer", () => {
     expect(COMPUTER_LOCAL_CONTROL_OFF).not.toMatch(/—|\bsafe|safety|unsafe/i);
     expect(text({ localControlOff: true, computerKind: "local" })).not.toContain("local control is not enabled yet");
   });
+  it("keeps shell commands, files and other tools out of 'computer actions' when local control is off", () => {
+    // Mac gate 2026-10-22: with this layer, Codex and Fuigo answered a plain shell command with "turn on local control"
+    // and never raised the approval card. The layer must say what a computer action is and what it is not.
+    const said = text({ localControlOff: true });
+    expect(said).toMatch(/Computer actions are screen actions only/);
+    expect(said).toMatch(/Shell commands, file reads and writes and your other tools are not computer actions/);
+    expect(said).toMatch(/run them as usual, through the normal approval flow/);
+    for (const engine of ["codex", "fuigo", "claudeAgent"] as const) expect(text({ localControlOff: true, driverKind: engine })).toContain("are not computer actions");
+  });
   it("adds nothing when the engine can mount it or the flag is off", () => {
     expect(text({})).not.toContain("cannot control the computer this turn");
     expect(text({ computerUnavailable: true, computerKind: "local" })).not.toContain("cannot control the computer this turn");

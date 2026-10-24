@@ -15,5 +15,6 @@ export const DEFAULT_INSTANCES: InstanceConfigMap = {
   openaiCompat: { driver: "openai-compat" },
   qwen: { driver: "qwenAgent" },
   hermes: { driver: "hermesAgent" },
+  cline: { driver: "clineAgent" },
   pi: { driver: "piAgent" },
 };

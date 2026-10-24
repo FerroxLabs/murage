@@ -20,6 +20,25 @@ const confirmFake = (child: ChildProcess): Promise<boolean> => closedFakes.has(c
 const budget = { closeMs: 40, maxMs: 400 };
 
 describe("ChildTeardown", () => {
+  // U24 design R5: the Windows job route answers every caller at JOB_STOP_CAP_MS while its attempt continues; a late empty-job
+  // answer must release the teardown without another Stop.
+  it("a confirmation that read false at a caller cap is released by the tree's stopped signal, without another wait", async () => {
+    const child = fakeChild();
+    let release!: () => void;
+    const signal = new Promise<true>((resolve) => { release = () => resolve(true); });
+    const teardown = new ChildTeardown(child, async () => false, undefined, () => signal);
+    const closed: string[] = [];
+    teardown.onClosed(() => closed.push("closed"));
+    teardown.markStopRequested();
+    await expect(teardown.wait(budget)).resolves.toEqual({ closeConfirmed: false, reason: "timeout" });
+    expect(teardown.closed).toBe(false);
+    release();
+    await Promise.resolve(); await Promise.resolve();
+    expect(closed).toEqual(["closed"]);
+    expect(teardown.closed).toBe(true);
+    await expect(teardown.wait(budget)).resolves.toEqual({ closeConfirmed: true });
+  });
+
   it("retains root-close ownership after uncertain group proof and retries on a later wait", async () => {
     const child = fakeChild();
     let confirmed = false;

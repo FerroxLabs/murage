@@ -48,7 +48,8 @@
         "title": "Cart Recovery",
         "description": "Cart prepares a three-message cart recovery flow draft for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For broader storefront work, use Storefront. For a customer email journey team, use Email & Lifecycle Crew.",
         "appearance": {
-          "color": "cyan"
+          "color": "cyan",
+          "mascotBody": "circle"
         },
         "skills": [
           "beacon-email-sequences",

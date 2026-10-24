@@ -48,7 +48,8 @@
         "title": "Manager Coach",
         "description": "Mentor prepares a one-to-one preparation sheet for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For founder decision coaching, use Coach. For a general decision discussion, use Advisor.",
         "appearance": {
-          "color": "green"
+          "color": "yellow",
+          "mascotBody": "capsule"
         },
         "skills": [
           "transition-to-management",

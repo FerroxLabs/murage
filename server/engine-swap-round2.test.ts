@@ -56,6 +56,8 @@ it("N1 queued questions dispatch as questions and tool work resumes the original
     threadHumanPrincipal: () => "owner", botPermissionMode: () => "ask", database: noop, noteHeldQueue: noop, runnableContinuation, isRestoreHeld, releaseHeldContinuation, currentRestoreGeneration: () => null,
     // the pinned-root lookup the mobile lane added to startRoomRequestTurn (no pinned root here)
     roomRequest: () => null,
+    // F3 (540bec1c0): a queued ask or wake under a cancelled ancestor closes before it starts; nothing is cancelled here
+    closeFencedQueuedRequest: () => false,
     // the turn-source recorder (steer-lineage.ts) wraps the wake prompt; with no lineage here it just builds it
     promptForTurn: (_thread: string, _bot: string, build: () => string) => build(),
     // a queued dispatch now inherits routine/background provenance (the real helper is run below)

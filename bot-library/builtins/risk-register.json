@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Risk Register",
     "tagline": "A ranked risk register with three practical actions for this month",
-    "summary": "Bulwark prepares a risk register with evidence and ownership for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For a broader legal exposure review, use Counsel. For a launch review team, use Pre-Mortem Room. For a team reviewing a major business decision, use War Room. I give guidance and drafts, not licensed legal advice, and I promise no outcome.",
+    "summary": "Bulwark prepares a risk register with evidence and ownership for your review.",
     "category": "Operations",
     "author": {
       "name": "Ferrox Labs",
@@ -48,7 +48,8 @@
         "title": "Risk Register",
         "description": "Bulwark prepares a risk register with evidence and ownership for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For a broader legal exposure review, use Counsel. For a launch review team, use Pre-Mortem Room. For a team reviewing a major business decision, use War Room.",
         "appearance": {
-          "color": "cyan"
+          "color": "cyan",
+          "mascotBody": "shield"
         },
         "skills": [
           "risk-assessment",

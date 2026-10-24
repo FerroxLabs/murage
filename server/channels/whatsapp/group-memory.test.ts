@@ -56,7 +56,7 @@ it("a group thread recalls its own conversation only: no owner bot, team or pref
   const bobBinding = observeVerifiedHuman(whatsappOrigin(binding, BOB));
   linkHumanBinding(ownerMemoryTicket(), { bindingId: bobBinding, expectedRevision: 1, as: "person" });
   const bob = resolveHumanBinding(bobBinding);
-  shareHumanScope(ownerMemoryTicket(), { personId: bob.personId, scopeId: ensureScope("bot", bot.id), granted: true });
+  shareHumanScope(ownerMemoryTicket(), { personId: bob.personId, scopeId: ensureScope("team", "sales"), granted: true });
 
   const guest = groupPrincipal(), task = humanTask(store, bot.id, guest)!;
   expect(threadHumanPrincipal(task.threadId)).toEqual(guest);

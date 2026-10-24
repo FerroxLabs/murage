@@ -30,7 +30,8 @@
         "title": "Priorities and scope",
         "description": "Turns your goal, workload and constraints into one bounded next deliverable.",
         "appearance": {
-          "color": "blue"
+          "color": "blue",
+          "mascotBody": "squircle"
         },
         "playbooks": [
           "business-next-step"
@@ -42,7 +43,8 @@
         "title": "Drafts and review",
         "description": "Creates a first draft using the facts and examples you provide.",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "drop"
         },
         "playbooks": [
           "business-draft"
