@@ -170,3 +170,11 @@ it("refuses cancellation without leaving partial extraction directories", async 
 it.each(["../outside", "/root", "C:/data", "a\\b", "a//b", "a/./b", "a/../b", "NUL.txt", "a:stream", "a. "])("refuses unsafe portable path %s", path => {
   expect(portableArchivePath(path)).toBe(false);
 });
+
+it.each(["mcp-grants.json", "credentials.bin", "providers/key.json", "mcp-access.token"])("refuses an archive that carries %s, which a backup never captures (A3)", async path => {
+  const f = fixture();
+  await crafted(f, [{ path: "bots.json", text: "[]" }, { path, text: "{}" }]);
+  const original = readFileSync(f.archive);
+  await expect(prepareInstallationRestore(f.archive, f.parent)).rejects.toMatchObject({ code: "RESERVED_RESTORE_COMPONENT" });
+  expect(readFileSync(f.archive)).toEqual(original);
+});

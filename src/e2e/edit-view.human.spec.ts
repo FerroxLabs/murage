@@ -39,7 +39,7 @@ test("Edit then Enter shows the edited message and new answer without switching 
   await (await openSidebar(page)).getByText(BOT, { exact: true }).click();
   const invitation = page.getByRole("complementary", { name: "Let your bots pick the right model", exact: true });
   if (await invitation.count()) await invitation.getByRole("button", { name: "Not now", exact: true }).last().click();
-  const picker = page.getByRole("button", { name: "All threads", exact: true });
+  const picker = page.getByRole("button", { name: "Chat list", exact: true });
   await picker.click();
   await page.getByRole("button", { name: new RegExp(`^${TASK}`) }).click();
   await expect(picker).toContainText(TASK);

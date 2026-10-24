@@ -35,6 +35,8 @@ it("the real main-process launch blocks share one fresh private token without mu
     const desktopDataOwner={utilityServerLeaseEnvironment:()=>({MURAGE_INTERNAL_DATA_DIR_LEASE:"private-lease-fixture"})};
     const assertDesktopStartupActive=()=>{}, desktopMark=()=>{}, compileCacheEnvironment=()=>({});
     const composioBrokerUrl=()=>null;
+    // The app's own locale, passed to the server for channel replies (U25); none in this fixture.
+    const systemLanguage=()=>undefined;
     // The FluxRouter-hosted broker and the Worker cut-off are release
     // constants read through app.isPackaged; off here, like the Worker URL.
     const fluxComposioBrokerUrlValue=()=>"", composioLegacyUntilValue=()=>0;

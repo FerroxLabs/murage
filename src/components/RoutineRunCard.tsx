@@ -10,7 +10,7 @@ import {
 
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/cn";
-import { CLOUD_ROUTINE_NOT_YET, type RoutineRunCardData } from "../../shared/routine-run";
+import { CLOUD_ROUTINE_NOT_YET, PROJECT_CLOSED_COPY, type RoutineRunCardData } from "../../shared/routine-run";
 import type { Message } from "@/state/store";
 
 const DETAIL_LIMIT = 280;
@@ -106,7 +106,7 @@ export function RoutineRunCard({
   if (!run) {
     const fallback = compactDetail(message.text);
     return fallback ? (
-      <div className="w-fit max-w-[min(42rem,88%)] rounded-2xl bg-card px-4 py-2.5 text-[14px] leading-relaxed text-ink">
+      <div className="w-fit max-w-[min(var(--chat-bubble-max),var(--chat-card-pct))] rounded-2xl bg-card px-4 py-2.5 text-[14px] leading-relaxed text-ink">
         {fallback}
       </div>
     ) : null;
@@ -141,7 +141,7 @@ export function RoutineRunCard({
               {copy.label}
             </span>
           </div>
-          {detail && <p className="mt-1 line-clamp-2 text-[12.5px] leading-relaxed text-ink-secondary">{detail === CLOUD_ROUTINE_NOT_YET ? t("routines.cloudAskOnly") : detail}</p>}
+          {detail && <p className="mt-1 line-clamp-2 text-[12.5px] leading-relaxed text-ink-secondary">{detail === CLOUD_ROUTINE_NOT_YET ? t("routines.cloudAskOnly") : detail === PROJECT_CLOSED_COPY ? t("routines.projectClosed") : detail}</p>}
         </div>
         {onOpen && run.executionThreadId && (
           <button

@@ -312,6 +312,47 @@ posixOnly("folder trust through the harness (Fuigo on the fake ACP CLI)", () => 
     expect((await messages(bot.threadId)).find((m) => m.card?.requestId === again.card.requestId)!.card.answered).toBe("skipped");
   });
 
+  it("(1.0.4) a Don't trust is undone from the conversation: its own folder is readable, Trust is desktop only and recorded like the card, Forget reaches it", async () => {
+    const bot = await makeBot("Undo bot");
+    const workspace = join(home, ".murage", "workspaces", bot.id, "threads", bot.threadId);
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(join(workspace, "AGENTS.md"), "# planted\ncanary-undo-heron\n");
+    await send(bot);
+    await expect.poll(async () => Boolean(await openTrustCard(bot.threadId)), { timeout: 20_000 }).toBe(true);
+    const card = (await openTrustCard(bot.threadId))!;
+    expect((await answerTrust(bot, card.card.requestId, "Don't trust")).status).toBe(200);
+    await settled(bot);
+    expect(await botText(bot.threadId)).not.toContain("canary-undo-heron");
+
+    // the conversation's actual folder and its trust state, without a path
+    const query = `bot=${encodeURIComponent(bot.id)}&thread=${encodeURIComponent(bot.threadId)}`;
+    const read = await request("GET", `/api/folder-trust?${query}`);
+    expect(read.status).toBe(200);
+    expect(read.body).toMatchObject({ folder: workspace, sources: ["AGENTS.md"], record: { decision: "reject", source: "card" } });
+    expect((await request("GET", `/api/folder-trust?bot=${bot.id}&thread=no-such-thread`)).status).toBe(404);
+
+    // Trust: a companion cannot, the desktop can, and it needs a conversation
+    // (a surface without desktop proof is turned away: 403 from the route, or 404 when the door never lists it)
+    expect((await request("POST", "/api/folder-trust", { bot: bot.id, thread: bot.threadId }, {})).status).toBeGreaterThanOrEqual(403);
+    expect((await request("POST", "/api/folder-trust", { bot: bot.id, thread: bot.threadId }, { "x-murage-companion": "1" })).status).toBeGreaterThanOrEqual(400);
+    expect((await trustRecord(workspace)).record).toMatchObject({ decision: "reject" });
+    expect((await request("POST", "/api/folder-trust", { bot: bot.id })).status).toBe(400);
+    const trusted = await request("POST", "/api/folder-trust", { bot: bot.id, thread: bot.threadId });
+    expect(trusted).toMatchObject({ status: 200, body: { folder: workspace, record: { decision: "trust", source: "card" } } });
+    await expect.poll(() => decisions().some((row) => row.threadId === bot.threadId && row.decision === "folder-trusted" && row.source === "user"), { timeout: 5_000 }).toBe(true);
+
+    // the next turn applies the folder's files, with no new card
+    await send(bot, "again");
+    await settled(bot);
+    expect(readDump().argv).toContain("--trust");
+    expect(await botText(bot.threadId)).toContain("canary-undo-heron");
+    expect((await messages(bot.threadId)).filter((m) => m.card?.folderTrust)).toHaveLength(1);
+
+    // Forget through the conversation clears the record, so the card returns
+    expect((await request("DELETE", `/api/folder-trust?${query}`)).status).toBe(200);
+    expect((await request("GET", `/api/folder-trust?${query}`)).body.record).toBeNull();
+  });
+
   // ── FUIGOTRUST2 follow-ups ──────────────────────────────────────────────
 
   it("(2) a folder the user's own Fuigo install trusts never sees a card or a withheld chip — even over a Murage 'Don't trust' — and the picker says so", async () => {

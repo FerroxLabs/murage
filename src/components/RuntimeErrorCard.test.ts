@@ -4,7 +4,7 @@
 // src/e2e/provider-error.human.spec.ts; this pins the markup contract in node.
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { RuntimeErrorCard } from "./RuntimeErrorCard";
 import { setLocale } from "@/lib/i18n";
 import { ENGINE_ERROR_CATEGORIES, LOCAL_RESOURCE_BUSY_MESSAGES, engineErrorCategory } from "../../shared/provider-error";
@@ -13,7 +13,7 @@ import { allLocalePacks } from "@/locales/testing";
 
 const locales = await allLocalePacks();
 
-afterEach(() => setLocale("en"));
+afterEach(() => { setLocale("en"); vi.unstubAllGlobals(); });
 
 const render = (props: { message: string; details?: string; errorKind?: string; localFailure?: string; setup?: string; onRetry?: () => void }) =>
   renderToStaticMarkup(createElement(RuntimeErrorCard, { ...props, onOpenProviderSettings: () => {} }));
@@ -338,5 +338,18 @@ describe("local setup failures", () => {
     const markup = render({ message: "agent-browser command timed out", localFailure: "browser", setup: "install" });
     expect(markup).toContain("This engine needs setup");
     expect(markup).not.toContain("local-setup");
+  });
+});
+
+describe("M3: provider payment wording in the store apps", () => {
+  const message = "The model provider needs payment or account access before it will answer. The provider says: Top up at the billing page.";
+  it("shows the provider's sentence on the desktop", () => {
+    expect(render({ message })).toContain("Top up at the billing page.");
+  });
+  it("drops it inside the store apps", () => {
+    vi.stubGlobal("navigator", { userAgent: "Mozilla/5.0 (iPhone) MurageApp/1.0.4 (ios)" });
+    const markup = render({ message });
+    expect(markup).toContain("needs payment or account access");
+    expect(markup).not.toContain("Top up at the billing page.");
   });
 });

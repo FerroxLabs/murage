@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Staff Training",
     "tagline": "A short practical lesson, knowledge check and job-ready checklist",
-    "summary": "Tutor prepares a training module tied to a workplace task for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For course and curriculum architecture, use Build. For a lesson scripting team, use Lesson Scripting Crew. For a teaching business support team, use Student Support Desk.",
+    "summary": "Tutor prepares a training module tied to a workplace task for your review.",
     "category": "People",
     "author": {
       "name": "Ferrox Labs",
@@ -54,7 +54,8 @@
         "title": "Staff Training",
         "description": "Tutor prepares a training module tied to a workplace task for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For course and curriculum architecture, use Build. For a lesson scripting team, use Lesson Scripting Crew. For a teaching business support team, use Student Support Desk.",
         "appearance": {
-          "color": "teal"
+          "color": "teal",
+          "mascotBody": "blob"
         },
         "skills": [
           "corporate-trainer",

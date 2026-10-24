@@ -140,7 +140,8 @@
         "role": "leader",
         "team": "Trades Office",
         "appearance": {
-          "color": "green"
+          "color": "teal",
+          "mascotBody": "hexagon"
         },
         "skills": [
           "trades-quote-checklist",
@@ -160,7 +161,8 @@
         "role": "member",
         "team": "Trades Office",
         "appearance": {
-          "color": "green"
+          "color": "green",
+          "mascotBody": "squircle"
         },
         "skills": [
           "email-template-system",
@@ -180,7 +182,8 @@
         "role": "member",
         "team": "Trades Office",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "circle"
         },
         "skills": [
           "finance-receivables",
@@ -201,7 +204,8 @@
         "role": "member",
         "team": "Trades Office",
         "appearance": {
-          "color": "green"
+          "color": "yellow",
+          "mascotBody": "star"
         },
         "skills": [
           "copy-customer-voice",

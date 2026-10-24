@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Sales Deck",
     "tagline": "A ten-slide sales story with evidence and speaker notes",
-    "summary": "Easel prepares a ten-slide sales deck outline from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For a pitch presentation file, use Pitch Deck Creator. For a PowerPoint file, use PPT Creator. For an investor pitch narrative, use Pitch.",
+    "summary": "Easel prepares a ten-slide sales deck outline from the material you supply.",
     "category": "Sales",
     "author": {
       "name": "Ferrox Labs",
@@ -54,7 +54,8 @@
         "title": "Sales Deck",
         "description": "Easel prepares a ten-slide sales deck outline from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For a pitch presentation file, use Pitch Deck Creator. For a PowerPoint file, use PPT Creator. For an investor pitch narrative, use Pitch.",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "squircle"
         },
         "skills": [
           "sales-pitch-deck",

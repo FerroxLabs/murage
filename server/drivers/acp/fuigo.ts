@@ -97,6 +97,77 @@ export function scrubFuigoCredentialEnv(
   }
 }
 
+/**
+ * Provider key names Fuigo reads for itself, other than its own three
+ * (fuigo-secrets child_env.rs `provider_key_env_vars`, 1.0.32). From 1.0.32
+ * the engine asks every provider whose key it finds in its env for that
+ * provider's model list, once a day at startup, with no switch to turn it off
+ * (fuigo-shell auth/key_models.rs `refresh_stale`), and lists what each key
+ * reaches as extra model rows. A Murage turn runs on Murage's Flux key
+ * (FUIGO_API_KEY), a model connection's MURAGE_PROVIDER_API_KEY or a local
+ * server's MURAGE_LOCAL_*_API_KEY, never on one of these, so none of them
+ * reaches the engine: the only provider the engine talks to is the one the
+ * owner picked, and the picker shows exactly that provider's models.
+ * 1.0.31 never read most of these; withholding them changes nothing there.
+ */
+export const FUIGO_WITHHELD_PROVIDER_ENV = [
+  "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "XAI_API_KEY", "GROK_API_KEY",
+  "GROQ_API_KEY", "OPENROUTER_API_KEY", "DEEPSEEK_API_KEY", "MISTRAL_API_KEY",
+  "ANTHROPIC_AUTH_TOKEN", "LC_ANTHROPIC_AUTH_TOKEN",
+] as const;
+
+/** 1.0.32's daily ChatGPT and Grok subscription model refresh (fuigo-shell
+ *  auth/subscription/catalog.rs `spawn_startup_refresh`): any non-empty value
+ *  other than "0" turns it off. Murage owns the catalog it shows, so a bot
+ *  turn never starts one. Unknown to 1.0.31, which ignores it. */
+export const FUIGO_MODEL_REFRESH_OFF = { FUIGO_DISABLE_MODEL_REFRESH: "1" } as const;
+
+/**
+ * Fuigo's own subagents off for every bot turn, whatever the owner's env says.
+ * A subagent definition (`.fuigo/agents/*.md` or `.claude/agents/*.md` in the
+ * workspace, or `~/.fuigo/agents`) may name its own `permissionMode`, and on
+ * the `agent stdio` path the parent's `--permission-mode default` is not
+ * handed down (fuigo-pager acp/mod.rs; agent/config.rs
+ * `resolve_subagent_permission_mode` keeps the child's mode under `default`).
+ * From 1.0.32 a child in `acceptEdits` approves workspace edits itself, and
+ * one in `bypassPermissions` approves everything, so its calls never reach
+ * Murage as a permission request. Murage delegates through its own teammates,
+ * so the bot keeps every approval Murage shows. Read by 1.0.31 too.
+ */
+export const FUIGO_SUBAGENTS_OFF = { FUIGO_SUBAGENTS: "0" } as const;
+
+/** Every name Murage pins on a Fuigo bot turn's env, last, over any inherited value. */
+export const FUIGO_TURN_PINS = { ...FUIGO_MODEL_REFRESH_OFF, ...FUIGO_SUBAGENTS_OFF } as const;
+
+/** Withhold every other provider's key, switch the startup model refresh and
+ *  Fuigo's own subagents off (in place). */
+export function withholdFuigoProviderEnv(env: Record<string, string | undefined>, platform: NodeJS.Platform = process.platform): void {
+  deleteEnvNames(env, FUIGO_WITHHELD_PROVIDER_ENV, platform);
+  deleteEnvNames(env, Object.keys(FUIGO_TURN_PINS), platform);
+  Object.assign(env, FUIGO_TURN_PINS);
+}
+
+/**
+ * The same rule for the owner's captured shell map the engine is handed
+ * (core.ts handedEngineEnv). That map can hold names this process never had
+ * (a Finder launch), so the child-env strip above never saw them. Every other
+ * provider's key goes, the refresh stays off, and a Fuigo key name survives
+ * only with the exact value the credential scrub left in the child env: the
+ * decision `scrubFuigoCredentialEnv` made is the one the engine sees.
+ */
+export function scrubFuigoHandedEnv(
+  map: Record<string, string | undefined>,
+  child: Record<string, string | undefined>,
+  platform: NodeJS.Platform = process.platform,
+): void {
+  withholdFuigoProviderEnv(map, platform);
+  for (const name of Object.keys(map)) {
+    if (!isFuigoKeyName(name, platform)) continue;
+    const kept = Object.entries(child).find(([childName]) => (platform === "win32" ? childName.toUpperCase() === name.toUpperCase() : childName === name));
+    if (!kept || kept[1] !== map[name]) delete map[name];
+  }
+}
+
 /** The Flux key the child will present, after the scrub, or null. */
 function presentedFuigoKey(env: Record<string, string | undefined>): string | null {
   for (const wanted of FUIGO_KEY_ENV) {
@@ -162,13 +233,32 @@ export function reachBundledFuigo(env: Record<string, string | undefined>): void
   } catch {
     return; // snapshot retains the declared bundle's resolution diagnostic
   }
-  // Windows: the PATH copy resolveFuigoCli chose (and version-checked) is a fuigo.exe, but an npm install also puts a
-  // `fuigo.cmd` shim in a folder that comes earlier on Murage's PATH (%APPDATA%\npm, or the user's own npm prefix), and a
-  // bare `fuigo` would find that shim first. Its folder goes first too, so the exe that was chosen is the one that runs.
-  if (resolved.source !== "bundled" && process.platform !== "win32") return;
+  // Windows: a PATH copy is launched by its absolute path (fuigoLaunchFile), so npm's `fuigo.cmd` shim earlier on PATH
+  // never wins, and its folder is not put in front of the child's PATH: whatever else sits beside that fuigo.exe (a
+  // user's npm prefix, ~/.fuigo/bin) never shadows the commands the engine itself runs.
+  if (resolved.source !== "bundled") return;
   const folder = dirname(resolved.command);
   if ((env.PATH ?? "").split(delimiter)[0] === folder) return;
   env.PATH = [folder, env.PATH].filter(Boolean).join(delimiter);
+}
+
+/**
+ * The file a Fuigo turn, its `--version` probe and its `fuigo models` call run.
+ *
+ * Windows: exactly the fuigo.exe resolveFuigoCli chose and version-checked. The bare name would be looked up again with
+ * PATHEXT, which tries `.COM` before `.EXE` (and a custom PATHEXT may put `.CMD` first), so a fuigo.com or fuigo.cmd beside
+ * that exe would start instead of it. A custom `cli` is the user's own and runs as configured. When resolveFuigoCli finds
+ * nothing (no fuigo.exe on PATH and no bundle), the bare name is kept, so an npm-only install still reaches its shim and a
+ * missing engine is the spawn's own ENOENT. macOS and Linux keep the bare name: reachBundledFuigo's PATH already finds the
+ * chosen file there, and there is no PATHEXT.
+ */
+export function fuigoLaunchFile(env: Record<string, string | undefined>, config: Pick<AcpConfig, "cli">): string {
+  if (process.platform !== "win32" || config.cli !== "fuigo") return config.cli;
+  try {
+    return resolveFuigoCli(env as NodeJS.ProcessEnv).command;
+  } catch {
+    return config.cli;
+  }
 }
 
 /**
@@ -256,7 +346,7 @@ function fetchFuigoModels(
   config: AcpConfig,
 ): Promise<{ catalog: ModelCatalog; text: string }> {
   return new Promise((resolve) => {
-    execCli(config.cli, ["models"], { timeout: 10_000, env }, (err, stdout, stderr) => {
+    execCli(fuigoLaunchFile(env, config), ["models"], { timeout: 10_000, env }, (err, stdout, stderr) => {
       const text = `${err?.message ?? ""}\n${stderr ?? ""}\n${stdout ?? ""}`;
       resolve({ catalog: err ? { default: "", options: [] } : parseFuigoModels(stdout), text });
     });
@@ -509,6 +599,7 @@ const support: AcpSupport = {
   effortLevels: ["none", "low", "medium", "high", "xhigh", "max"],
 
   defaultCli: "fuigo",
+  launchExecutable: fuigoLaunchFile,
   versionFailure: (env, config, detail) => {
     // A custom CLI owns its own installation; bundle repair cannot fix it.
     if (config.cli !== "fuigo" || !env.MURAGE_FUIGO_DIR?.trim()) return;
@@ -686,6 +777,9 @@ const support: AcpSupport = {
    * contract digest. A Flux-shaped FUIGO_API_KEY is the only credential, so
    * the headers go to Flux and nowhere else.
    */
+  // A bare cloud-model id still goes out on the Flux key Fuigo was handed, so it takes the memory opt-outs
+  // like a flux-* pick. A local `host::model` pick talks to the user's own server and never reaches Flux.
+  reachesFlux: (model, env) => !decodeInjectId(model) && presentedFuigoKey(env) !== null,
   applyFluxMemory: (env, { decision }) => {
     env.FUIGO_CONFIG = fuigoConfigOverlay(decision.headers, env.FUIGO_CONFIG);
   },
@@ -699,7 +793,10 @@ const support: AcpSupport = {
     // and keeps this correct if a caller ever lands before the strip.
     // `fluxKey()` is null for anything not shaped like a Flux key.
     scrubFuigoCredentialEnv(env, fluxKey());
+    // 1.0.32: no other provider's key, no startup model refresh, no Fuigo subagents.
+    withholdFuigoProviderEnv(env);
   },
+  scrubHandedEnv: (map, child) => scrubFuigoHandedEnv(map, child),
 
   /**
    * Bind the API-key method when the agent advertises it.

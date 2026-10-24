@@ -237,14 +237,14 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
-import { beforeEach } from "vitest";
+import { beforeEach, vi } from "vitest";
 import { parse as parseYaml } from "yaml";
 
 import { ensureDirs } from "../../config.ts";
 import { ConversationDeletions, runConversationDeletion } from "../../conversation-deletion.ts";
 import type { ProviderInstance } from "../../contracts.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
-import { HermesAgentDriver, applyHermesFluxHome, applyHermesFluxMemory, fluxHermesHome, hermesFluxHeaderGate, parseHermesVersion } from "./hermes.ts";
+import { HERMES_FLUX_UPDATE_COPY, HermesAgentDriver, applyHermesFluxHome, applyHermesFluxMemory, fluxHermesHome, hermesFluxHeaderGate, parseHermesVersion, resetHermesUnknownVersionLog } from "./hermes.ts";
 import { FLUX_HEADER_REFUSAL } from "../../flux-memory-headers.ts";
 import { resetVersionProbeBackoff } from "../isolation-cache.ts";
 
@@ -266,6 +266,7 @@ describe("hermes Flux routing — the scoped HERMES_HOME", () => {
   async function spawnFor(
     model: string | undefined,
     extra: Record<string, string> = {},
+    turnExtra: Record<string, unknown> = {},
   ): Promise<{ argv: string[]; env: Record<string, string> }> {
     const dump = join(home, `dump-${Math.random().toString(36).slice(2)}.json`);
     instance = await HermesAgentDriver.create({
@@ -276,7 +277,7 @@ describe("hermes Flux routing — the scoped HERMES_HOME", () => {
       config: { cli: FAKE_ACP, fullAuto: true },
     });
     recorder = recordEvents(instance.adapter);
-    await instance.adapter.sendTurn({ threadId: "t-flux", text: "hi", model });
+    await instance.adapter.sendTurn({ threadId: "t-flux", text: "hi", model, ...turnExtra });
     await recorder.until((e) => e.type === "turn.completed");
     return JSON.parse(readFileSync(dump, "utf8")) as { argv: string[]; env: Record<string, string> };
   }
@@ -328,7 +329,8 @@ describe("hermes Flux routing — the scoped HERMES_HOME", () => {
   it("writes a config.yaml hermes will accept, with the key INLINE", async () => {
     await spawnFor("flux-auto");
     const yaml = readFileSync(scopedYaml(), "utf8");
-    expect(yaml).toContain("  default: flux-auto");
+    // No tier in the shared file: it rides each turn's own overlay (03-4).
+    expect(yaml).not.toContain("default:");
     // `custom` is the literal hermes requires — an invented `provider: flux`
     // dies with `AuthError: Unknown provider 'flux'` (Wayland HERMES-PROOF.md:32-35).
     expect(yaml).toContain("  provider: custom");
@@ -361,8 +363,10 @@ describe("hermes Flux routing — the scoped HERMES_HOME", () => {
     expect(env.HERMES_HOME).toBe(fluxHermesHome(scopedEnv()));
     // The bearer lives in the 0600 config.yaml and in no variable at all.
     expect(Object.keys(env).filter((key) => env[key] === FLUX_KEY)).toEqual([]);
-    expect(Object.keys(env).sort()).toEqual(["HERMES_HOME", "HOME", "MURAGE_DATA_DIR", "MURAGE_HERMES_ROUTED_HOME", "PATH"]);
+    expect(Object.keys(env).sort()).toEqual(["HERMES_HOME", "HERMES_MANAGED_DIR", "HOME", "MURAGE_DATA_DIR", "MURAGE_HERMES_ROUTED_HOME", "PATH"]);
     expect(env.MURAGE_HERMES_ROUTED_HOME).toBe(env.HERMES_HOME);
+    // the tier's overlay holds the tier and never the key
+    expect(readFileSync(join(env.HERMES_MANAGED_DIR!, "config.yaml"), "utf8")).not.toContain(FLUX_KEY);
   });
 
   const decision = (capture: "on" | "off", inject: "on" | "off") => {
@@ -371,13 +375,54 @@ describe("hermes Flux routing — the scoped HERMES_HOME", () => {
     if (inject === "off") headers["x-flux-memory-inject"] = "off";
     return { capture, inject, reason: "owner" as const, audience: "owner" as never, signature: `${capture}${inject}`, headers };
   };
-  const fluxTurn = (d: ReturnType<typeof decision>, extra: Record<string, string> = {}) => {
+  const fluxTurn = (d: ReturnType<typeof decision>, extra: Record<string, string> = {}, tier = "flux-auto") => {
     const env: Record<string, string | undefined> = { HOME: home, MURAGE_DATA_DIR: state, PATH: "/bin", HERMES_MANAGED_DIR: join(home, "no-admin"), ...extra };
-    expect(applyHermesFluxHome(env, "flux-auto", FLUX_KEY)).toBe("flux-auto");
+    expect(applyHermesFluxHome(env, tier, FLUX_KEY)).toBe(tier);
     applyHermesFluxMemory(env, d);
     return env;
   };
-  const overlayOf = (env: Record<string, string | undefined>) => parseYaml(readFileSync(join(env.HERMES_MANAGED_DIR!, "config.yaml"), "utf8")) as { model: { extra_headers: Record<string, string> } };
+  const overlayOf = (env: Record<string, string | undefined>) => parseYaml(readFileSync(join(env.HERMES_MANAGED_DIR!, "config.yaml"), "utf8")) as { model: { default?: string; extra_headers: Record<string, string> } };
+
+  // Audit 03-4 / G03-1: every Flux Hermes bot shares one config.yaml, and its
+  // `model.default` was rewritten per spawn, so the last writer picked the tier
+  // that ran and was billed for both turns.
+  it("two overlapping Flux Hermes turns on different tiers each read their own tier; the shared file never changes between them", () => {
+    const fast = fluxTurn(decision("on", "on"), {}, "flux-fast");
+    const shared = readFileSync(scopedYaml(), "utf8");
+    const reasoning = fluxTurn(decision("on", "on"), {}, "flux-reasoning"); // spawns while the fast child still runs
+    expect(readFileSync(scopedYaml(), "utf8")).toBe(shared);
+    expect(shared).not.toMatch(/flux-(fast|reasoning)/);
+    expect(fast.HERMES_HOME).toBe(reasoning.HERMES_HOME);
+    expect(fast.HERMES_MANAGED_DIR).not.toBe(reasoning.HERMES_MANAGED_DIR);
+    expect(overlayOf(fast).model.default).toBe("flux-fast");
+    expect(overlayOf(reasoning).model.default).toBe("flux-reasoning");
+    // the same holds for a turn whose headers say off: tier and headers share the overlay
+    const off = fluxTurn(decision("off", "off"), {}, "flux-fast");
+    expect(overlayOf(off).model).toEqual({ default: "flux-fast", extra_headers: { "x-flux-memory-app": "murage", "x-flux-memory-capture": "off", "x-flux-memory-inject": "off" } });
+    expect(overlayOf(fast).model.default).toBe("flux-fast");
+  });
+
+  it("carries the tier to the child through its own overlay on a real spawn, the shared file unchanged across tiers", async () => {
+    const first = await spawnFor("flux-fast");
+    const shared = readFileSync(scopedYaml(), "utf8");
+    await instance?.dispose();
+    instance = undefined;
+    const second = await spawnFor("flux-reasoning");
+    expect(readFileSync(scopedYaml(), "utf8")).toBe(shared);
+    expect(first.env.HERMES_HOME).toBe(second.env.HERMES_HOME);
+    expect(overlayOf(first.env).model.default).toBe("flux-fast");
+    expect(overlayOf(second.env).model.default).toBe("flux-reasoning");
+  });
+
+  it("refuses an owner's all-on Flux turn on a Hermes known to predate the overlay, and runs it on a current one", async () => {
+    const ownerTurn = { warmIdentity: { botId: "b1", audience: "owner", decidedOwner: true } };
+    await expect(spawnFor("flux-auto", { FAKE_ACP_VERSION: "Hermes Agent v0.16.0 (2026.6.5)" }, ownerTurn)).rejects.toThrow(HERMES_FLUX_UPDATE_COPY);
+    await instance?.dispose();
+    instance = undefined;
+    resetVersionProbeBackoff();
+    const ran = await spawnFor("flux-auto", {}, ownerTurn);
+    expect(overlayOf(ran.env).model.default).toBe("flux-auto");
+  });
 
   it("keeps ONE home for every audience; each child reads only its own turn's headers from its own overlay", () => {
     const owner = fluxTurn(decision("on", "on"));
@@ -393,9 +438,9 @@ describe("hermes Flux routing — the scoped HERMES_HOME", () => {
     expect(new Set([owner, off, noRecall].map((env) => env.HERMES_MANAGED_DIR)).size).toBe(3);
     expect(owner2.HERMES_MANAGED_DIR).toBe(owner.HERMES_MANAGED_DIR);
     // a later turn never changed what an earlier child reads
-    expect(overlayOf(owner)).toEqual({ model: { extra_headers: { "x-flux-memory-app": "murage" } } });
-    expect(overlayOf(off)).toEqual({ model: { extra_headers: { "x-flux-memory-app": "murage", "x-flux-memory-capture": "off", "x-flux-memory-inject": "off" } } });
-    expect(overlayOf(noRecall)).toEqual({ model: { extra_headers: { "x-flux-memory-app": "murage", "x-flux-memory-inject": "off" } } });
+    expect(overlayOf(owner)).toEqual({ model: { default: "flux-auto", extra_headers: { "x-flux-memory-app": "murage" } } });
+    expect(overlayOf(off)).toEqual({ model: { default: "flux-auto", extra_headers: { "x-flux-memory-app": "murage", "x-flux-memory-capture": "off", "x-flux-memory-inject": "off" } } });
+    expect(overlayOf(noRecall)).toEqual({ model: { default: "flux-auto", extra_headers: { "x-flux-memory-app": "murage", "x-flux-memory-inject": "off" } } });
     // the shared home's file is never edited for a turn, and no overlay holds the key
     expect(readFileSync(scopedYaml(), "utf8")).not.toContain("extra_headers");
     for (const env of [owner, off, noRecall]) expect(readFileSync(join(env.HERMES_MANAGED_DIR!, "config.yaml"), "utf8")).not.toContain(FLUX_KEY);
@@ -407,7 +452,7 @@ describe("hermes Flux routing — the scoped HERMES_HOME", () => {
     writeFileSync(join(admin, "config.yaml"), 'approvals:\n  mode: manual\nmodel:\n  extra_headers:\n    x-team: a\n    x-flux-memory-capture: "on"\n');
     const env = fluxTurn(decision("off", "off"), { HERMES_MANAGED_DIR: admin });
     expect(env.HERMES_MANAGED_DIR).not.toBe(admin);
-    expect(overlayOf(env)).toEqual({ approvals: { mode: "manual" }, model: { extra_headers: { "x-team": "a", "x-flux-memory-app": "murage", "x-flux-memory-capture": "off", "x-flux-memory-inject": "off" } } });
+    expect(overlayOf(env)).toEqual({ approvals: { mode: "manual" }, model: { default: "flux-auto", extra_headers: { "x-team": "a", "x-flux-memory-app": "murage", "x-flux-memory-capture": "off", "x-flux-memory-inject": "off" } } });
   });
 
   it("deleting a conversation removes its native history from the one home every Flux turn used", async () => {
@@ -468,14 +513,13 @@ describe("hermes Flux routing — the scoped HERMES_HOME", () => {
   });
 
   it("regenerates the scoped home per spawn, so a tier change lands", async () => {
-    await spawnFor("flux-auto");
-    expect(readFileSync(scopedYaml(), "utf8")).toContain("default: flux-auto");
+    const first = await spawnFor("flux-auto");
+    expect(overlayOf(first.env).model.default).toBe("flux-auto");
     await instance?.dispose();
     instance = undefined;
-    await spawnFor("flux-reasoning");
-    const yaml = readFileSync(scopedYaml(), "utf8");
-    expect(yaml).toContain("default: flux-reasoning");
-    expect(yaml).not.toContain("flux-auto");
+    const second = await spawnFor("flux-reasoning");
+    expect(overlayOf(second.env).model.default).toBe("flux-reasoning");
+    expect(readFileSync(scopedYaml(), "utf8")).not.toContain("flux-auto");
   });
 
   it("refuses a Flux turn whose headers say off when Hermes predates managed scope, or its version is unknown", async () => {
@@ -620,8 +664,34 @@ describe("hermesFluxHeaderGate (managed-scope minimum 0.17.0)", () => {
     for (const v of ["0.17.0", "0.17.1", "0.20.6", "0.21.3", "1.0.0"]) expect(hermesFluxHeaderGate(banner(v), dec("off", "off"))).toBeNull();
   });
 
-  it("never gates an all-on owner turn, whatever the version", () => {
-    for (const v of ["", "0.2.0", "0.16.9", "0.21.3"]) expect(hermesFluxHeaderGate(v && banner(v), dec("on", "on"))).toBeNull();
+  it("runs an all-on turn on 0.17.0 and later, or when the version is unknown", () => {
+    for (const v of ["", "0.17.0", "0.21.3"]) expect(hermesFluxHeaderGate(v && banner(v), dec("on", "on"))).toBeNull();
+    expect(hermesFluxHeaderGate("something else", dec("on", "on"))).toBeNull();
+  });
+
+  // The tier rides the overlay (03-4), so a Hermes known to ignore it would run the wrong tier.
+  it("refuses an all-on turn on Murage's Flux home when Hermes is known to predate the overlay", () => {
+    for (const v of ["0.2.0", "0.16.9"]) {
+      expect(hermesFluxHeaderGate(banner(v), dec("on", "on"))).toBe(HERMES_FLUX_UPDATE_COPY);
+      expect(hermesFluxHeaderGate(banner(v), dec("on", "on"), { providerRoute: false })).toBe(HERMES_FLUX_UPDATE_COPY);
+    }
+  });
+
+  it("logs once per process when the version is unknown, with the version text only", () => {
+    resetHermesUnknownVersionLog();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      for (let i = 0; i < 3; i++) expect(hermesFluxHeaderGate("something else", dec("on", "on"))).toBeNull();
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]![0])).toContain("something else");
+      hermesFluxHeaderGate(banner("0.21.3"), dec("on", "on"));
+      hermesFluxHeaderGate("x", dec("on", "on"), { providerRoute: true });
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally { warn.mockRestore(); resetHermesUnknownVersionLog(); }
+  });
+
+  it("leaves an all-on provider-connection turn alone: its own home names its model", () => {
+    for (const v of ["0.2.0", "0.16.9"]) expect(hermesFluxHeaderGate(banner(v), dec("on", "on"), { providerRoute: true })).toBeNull();
   });
 });
 

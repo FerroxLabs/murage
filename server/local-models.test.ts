@@ -142,8 +142,8 @@ function request(method: string, path: string, body?: unknown, desktop = true): 
 
 const route = () => createLocalModelsRoute({ fetchImpl: guardedFetch, env, probeTimeoutMs: 5_000 });
 
-async function addSeanBeast(localRoot: string): Promise<LocalServerView> {
-  const result = await route()(request("POST", "/api/local-models/servers", { address: localRoot, name: "SeanBeast", apiKey: KEY }));
+async function addLanBox(localRoot: string): Promise<LocalServerView> {
+  const result = await route()(request("POST", "/api/local-models/servers", { address: localRoot, name: "LanBox", apiKey: KEY }));
   expect(result.status).toBe(201);
   return (result.body as { server: LocalServerView }).server;
 }
@@ -179,12 +179,12 @@ describe("Local models list and add (spec V1, A1)", () => {
 
   it("adds a server, auto-detects llama.cpp, reads its context and never echoes the key", async () => {
     const llama = await llamaServer();
-    const result = await route()(request("POST", "/api/local-models/servers", { address: llama.root, name: "SeanBeast", apiKey: KEY }));
+    const result = await route()(request("POST", "/api/local-models/servers", { address: llama.root, name: "LanBox", apiKey: KEY }));
     expect(result.status).toBe(201);
     const { server } = result.body as { server: LocalServerView };
     expect(server).toMatchObject({
       kind: "llamacpp",
-      label: "llama.cpp on SeanBeast",
+      label: "llama.cpp on LanBox",
       address: `${llama.root}/v1`,
       source: "added",
       editable: true,
@@ -213,7 +213,7 @@ describe("Local models list and add (spec V1, A1)", () => {
     expect(await add({ address: "http://me:pw@127.0.0.1:9" })).toMatchObject({ status: 400, body: { code: "credentials-in-address" } });
     expect(await add({ address: "127.0.0.1:11434" })).toMatchObject({ status: 409, body: { code: "duplicate-server" } });
     expect(await add({ address: llama.root, apiKey: "has space" })).toMatchObject({ status: 400, body: { code: "invalid-key" } });
-    await addSeanBeast(llama.root);
+    await addLanBox(llama.root);
     expect(await add({ address: `${llama.root}/v1/` })).toMatchObject({ status: 409, body: { code: "duplicate-server" } });
   });
 
@@ -275,7 +275,7 @@ describe("Local models by network name (Tailscale MagicDNS, mDNS, LAN names)", (
 
   it("refuses an edit to a name that resolves publicly", async () => {
     const llama = await llamaServer();
-    const server = await addSeanBeast(llama.root);
+    const server = await addLanBox(llama.root);
     table["router.lan"] = ["198.51.100.7"];
     const result = await route()(request("PATCH", `/api/local-models/servers/${server.id}`, { address: "http://router.lan:8080" }));
     expect(result).toMatchObject({ status: 400, body: { code: "https-required" } });
@@ -305,9 +305,9 @@ describe("Local models by network name (Tailscale MagicDNS, mDNS, LAN names)", (
 describe("user-added servers are the inject allowlist (spec A2 trust boundary)", () => {
   it("decodes a pick for an added server and drops a tampered entry on read", async () => {
     const llama = await llamaServer();
-    const server = await addSeanBeast(llama.root);
+    const server = await addLanBox(llama.root);
     expect(decodeInjectId(`${server.id}::${MODEL}`)).toEqual({ host: server.id, model: MODEL });
-    expect(localHost(server.id)).toMatchObject({ baseUrl: `${llama.root}/v1`, apiKey: KEY, label: "llama.cpp on SeanBeast", source: "added" });
+    expect(localHost(server.id)).toMatchObject({ baseUrl: `${llama.root}/v1`, apiKey: KEY, label: "llama.cpp on LanBox", source: "added" });
 
     const file = join(root, "data", "local-models", "local-servers.json");
     const saved = JSON.parse(readFileSync(file, "utf8")) as { servers: unknown[] };
@@ -329,7 +329,7 @@ describe("user-added servers are the inject allowlist (spec A2 trust boundary)",
 describe("Test before trust (spec T1, E3)", () => {
   it("runs the probe, caches it, and only then offers the model to Codex and Claude Code", async () => {
     const llama = await llamaServer();
-    const server = await addSeanBeast(llama.root);
+    const server = await addLanBox(llama.root);
     const id = `${server.id}::${MODEL}`;
     const base = { default: "keep", options: [{ id: "keep", label: "Keep" }] };
     expect((await mergeLocalInject(base, env(), guardedFetch, { driver: "piAgent" })).options.some((o) => o.id === id)).toBe(true);
@@ -351,7 +351,7 @@ describe("Test before trust (spec T1, E3)", () => {
 
   it("refuses a malformed model id and an unknown server", async () => {
     const llama = await llamaServer();
-    const server = await addSeanBeast(llama.root);
+    const server = await addLanBox(llama.root);
     expect(await route()(request("POST", `/api/local-models/servers/${server.id}/test`, { model: "bad id" }))).toMatchObject({ status: 400, body: { code: "invalid-model" } });
     expect(await route()(request("POST", "/api/local-models/servers/srv_ffffffffffff/test", { model: MODEL }))).toMatchObject({ status: 404 });
   });
@@ -368,7 +368,7 @@ describe("Test before trust (spec T1, E3)", () => {
 describe("context preflight route (spec T2)", () => {
   it("uses the probed window and the engine's prompt estimate", async () => {
     const llama = await llamaServer();
-    const server = await addSeanBeast(llama.root);
+    const server = await addLanBox(llama.root);
     const result = await route()(request("GET", `/api/local-models/preflight?model=${encodeURIComponent(`${server.id}::${MODEL}`)}&engine=claudeAgent`));
     expect(result).toMatchObject({ status: 200, body: { status: "ok", contextWindow: 65_536, promptTokens: 30_000 } });
     const tight = await route()(request("GET", `/api/local-models/preflight?model=${encodeURIComponent(`${server.id}::${MODEL}`)}&promptTokens=50000`));
@@ -377,9 +377,25 @@ describe("context preflight route (spec T2)", () => {
 });
 
 describe("engine writers accept an added server and remove what they wrote (spec E2, A3)", () => {
+  it.skipIf(process.platform === "win32")("keeps the Hermes folder and config owner-only because the file holds the bearer key (104 hi-0309 A5)", async () => {
+    const llama = await llamaServer();
+    const server = await addLanBox(llama.root);
+    const writerEnv = { HOME: home, USERPROFILE: home };
+    // A wide, pre-existing folder and file, as on a machine with umask 022.
+    const hermes = join(home, ".hermes");
+    mkdirSync(hermes, { recursive: true });
+    chmodSync(hermes, 0o755);
+    writeFileSync(join(hermes, "config.yaml"), "model: {}\n", { mode: 0o644 });
+    chmodSync(join(hermes, "config.yaml"), 0o644);
+    ensureHermesInjectProvider(`${server.id}::${MODEL}`, writerEnv);
+    expect(readFileSync(join(hermes, "config.yaml"), "utf8")).toContain(KEY);
+    expect(statSync(hermes).mode & 0o777).toBe(0o700);
+    expect(statSync(join(hermes, "config.yaml")).mode & 0o777).toBe(0o600);
+  });
+
   it("writes every engine entry with the probed window, then removes only those on delete", async () => {
     const llama = await llamaServer();
-    const server = await addSeanBeast(llama.root);
+    const server = await addLanBox(llama.root);
     const pick = `${server.id}::${MODEL}`;
     const apiBase = `${llama.root}/v1`;
     const writerEnv = { HOME: home, USERPROFILE: home };
@@ -446,7 +462,7 @@ describe("engine writers accept an added server and remove what they wrote (spec
   it("refuses to rewrite an unreadable engine config during cleanup and still removes the server", async () => {
     if (process.platform === "win32") return; // POSIX modes make the file unreadable
     const llama = await llamaServer();
-    const server = await addSeanBeast(llama.root);
+    const server = await addLanBox(llama.root);
     ensureKimiInjectAlias(`${server.id}::${MODEL}`, { HOME: home });
     const kimi = join(home, ".kimi-code", "config.toml");
     const before = readFileSync(kimi);
@@ -465,7 +481,7 @@ describe("engine writers accept an added server and remove what they wrote (spec
 
   it("a new key or address clears the stale engine entries; a rename does not", async () => {
     const llama = await llamaServer();
-    const server = await addSeanBeast(llama.root);
+    const server = await addLanBox(llama.root);
     ensureKimiInjectAlias(`${server.id}::${MODEL}`, { HOME: home });
     const renamed = await route()(request("PATCH", `/api/local-models/servers/${server.id}`, { name: "Beast" }));
     expect(renamed).toMatchObject({ status: 200, body: { server: { label: "llama.cpp on Beast" }, cleanup: [] } });
@@ -495,7 +511,7 @@ describe("detection labels and loaded context (spec A2, T2)", () => {
   });
 
   it("addresses a Windows llama-server that names its model by path", async () => {
-    // SeanBeast, llama.cpp b1-192067b: every id the server reports is the
+    // LanBox, llama.cpp b1-192067b: every id the server reports is the
     // model file it was handed. The old code dropped all of them, so the card
     // said "running" and the picker had nothing to offer.
     const rows = await probeLocalInjects(env(), stub({
@@ -643,7 +659,7 @@ describe("Ollama: create a 64k copy (spec T3)", () => {
 
   it("is only offered for Ollama servers", async () => {
     const llama = await llamaServer();
-    const server = await addSeanBeast(llama.root);
+    const server = await addLanBox(llama.root);
     expect(await route()(request("POST", `/api/local-models/servers/${server.id}/ollama-context-copy`, { model: MODEL }))).toMatchObject({
       status: 409,
       body: { code: "not-ollama" },

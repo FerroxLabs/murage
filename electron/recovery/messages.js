@@ -71,6 +71,7 @@
     [PLACE, ["DESTINATION_EXISTS", "DESTINATION_INSIDE_INSTALLATION", "INVALID_DESTINATION", "RESTORE_PATH_ALREADY_EXISTS", "BROAD_RESTORE_TARGET_REFUSED", "RESTORE_SOURCE_TARGET_REFUSED",
       "UNSAFE_RESTORE_DIRECTORY", "UNSAFE_RESTORE_TARGET", "INVALID_PRIVATE_RESTORE_PARENT", "RESTORE_NEW_TARGET_REQUIRED", "INSTALLATION_SELECTION_INVALID"]],
     [PAUSED, ["RESTORE_REVIEW_REQUIRED", "RESTORE_ALREADY_REQUIRES_REVIEW"]],
+    ["This restored copy has a note to read before it opens. Choose Review restored installation, read the note, then Approve and open.", ["RESTORE_NOTICE_UNACKNOWLEDGED"]],
     [NOT_PAUSED, ["RESTORE_WORK_NOT_PAUSED", "RESTORE_MEMORY_NOT_PAUSED", "INVALID_RESTORE_REVIEW", "REVIEW_HASH_REQUIRED"]],
     [NOTHING_TO_UNDO, ["NO_RESTORE_TO_ROLL_BACK"]],
     [UNDO_FIRST, ["INTERRUPTED_RESTORE_REQUIRES_ROLLBACK", "INVALID_RESTORE_JOURNAL"]],
@@ -142,12 +143,16 @@
     "too-deep": "too many folders deep",
     "linked-folder": "a shortcut to a folder outside Murage's data folder, so its contents aren't in the backup",
     "path-too-long": "its path is too long for another computer to hold",
+    unrecognised: "kept in the backup as it is",
+    "old-copy": "an older copy of a settings file, which can hold keys; the current file is backed up",
   };
   const skippedLines = skipped => {
     if (!skipped || typeof skipped !== "object" || !Number.isSafeInteger(skipped.count) || skipped.count < 1 || !Array.isArray(skipped.items)) return [];
     const bots = skipped.bots && typeof skipped.bots === "object" ? skipped.bots : {};
     const groups = new Map();
+    const kept = [];
     for (const entry of skipped.items) {
+      if (entry && entry.reason === "unrecognised" && typeof entry.path === "string") { kept.push(entry.path); continue; }
       if (!entry || typeof entry.path !== "string" || !Object.hasOwn(SKIP_REASONS, entry.reason)) continue;
       const bot = /^workspaces\/([^/]+)\/(.+)$/.exec(entry.path);
       const where = bot ? (typeof bots[bot[1]] === "string" ? `${bots[bot[1]]}'s folder` : "a bot's folder") : "Murage's data folder";
@@ -156,7 +161,8 @@
       groups.get(where).push(`${shown} (${SKIP_REASONS[entry.reason]})`);
     }
     const lines = [...groups].map(([where, entries]) => `Skipped ${entries.length} ${entries.length === 1 ? "item" : "items"} in ${where}: ${entries.join(", ")}.`);
-    const listed = [...groups.values()].reduce((total, entries) => total + entries.length, 0);
+    if (kept.length) lines.push(`Kept in the backup, though Murage doesn't recognise ${kept.length === 1 ? "this item" : "these items"} in Murage's data folder: ${kept.join(", ")}.`);
+    const listed = [...groups.values()].reduce((total, entries) => total + entries.length, 0) + kept.length;
     if (skipped.count > listed) lines.push(`${lines.length ? "And" : "Skipped"} ${skipped.count - listed} more ${skipped.count - listed === 1 ? "item" : "items"} for the same reasons.`);
     if (lines.length) lines.push("Everything else was backed up.");
     return lines;

@@ -3,6 +3,7 @@ import { lstatSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
 import { z } from "zod";
 import { writeFileAtomic } from "../atomic.ts";
+import { channelReply } from "./reply-text.ts";
 
 const id = z.string().min(1).max(400).regex(/^[^\x00-\x1f\x7f]+$/);
 /** The message a reply quotes (WhatsApp keeps the triggering key; other adapters leave it unset). */
@@ -16,7 +17,7 @@ const buildSchema = (maxResponse: number, bounded = true) => {
     runId: id.optional(), state: z.enum(["accepted", "queued", "sending", "sent", "uncertain", "rejected", "cancelled", "needs-review"]),
     response: z.string().max(maxResponse).optional(), attempts: z.number().int().min(0).max(3).default(0),
     retryAt: z.number().finite().optional(), messageId: id.optional(), error: z.string().max(60).optional(),
-    quote: quoteSchema.optional(), media: z.array(mediaSchema).max(8).optional(),
+    quote: quoteSchema.optional(), media: z.array(mediaSchema).max(8).optional(), noticeSent: z.boolean().optional(),
   }).strict();
   return z.object({ version: z.literal(1), bindingKey: id, recipient: id,
     records: z.array(recordSchema).max(bounded ? 200 : Infinity), tombstones: z.array(z.object({ deliveryId: id, dedupeId: id.optional(), occurredAt: z.number().finite() }).strict()).max(bounded ? 10000 : Infinity),
@@ -85,7 +86,8 @@ export class ChannelSendError extends Error {
 export interface ChannelRuns {
   /** `media` is the record's stored attachments (WhatsApp images); adapters that keep none never see the field. */
   enqueue(input: { deliveryId: string; prompt: string; media?: DeliveryMedia[] }): { id: string };
-  result(id: string): { status: string; output?: string; error?: string } | null;
+  /** `notice`: one plain line for the sender while the run waits (an engine limit); sent once per record, never as the answer. */
+  result(id: string): { status: string; output?: string; error?: string; notice?: string } | null;
   /** Voice notes the run made, each handed out once (server/voice/voice-notes.ts). */
   voiceNotes?(id: string): Array<{ name: string; mime: string; bytes: Uint8Array; text: string; from: string }>;
 }
@@ -230,7 +232,7 @@ export class DurableDelivery {
         try{run=this.options.runs.enqueue({ deliveryId: r.deliveryId, prompt: r.prompt, ...(r.media?.length ? { media: r.media.map(m => ({ ...m })) } : {}) });}
         catch(error){
           if(!(error instanceof Error)||!/^HUMAN_(?:LINK_REQUIRED|BINDING_REVOKED)/.test(error.message))throw error;
-          change(x=>{x.response="Link this channel account to yourself or another person in Murage Memory settings, then send your message again.";});
+          change(x=>{x.response=channelReply("channelReply.linkAccount");});
           r=lookup();
           continue;
         }
@@ -241,8 +243,19 @@ export class DurableDelivery {
         const result = this.options.runs.result(r.runId!);
         if (!this.active()) return;
         if (!result) { change(x => { x.state = "needs-review"; x.error = "run-receipt-missing"; }); continue; }
-        if (!["completed", "failed", "cancelled", "blocked", "stopped"].includes(result.status)) continue;
-        change(x => { x.response = (result.output || "Task ended. Review its result in Murage.").slice(0, this.maxResponse); }); r = lookup();
+        if (!["completed", "failed", "cancelled", "blocked", "stopped"].includes(result.status)) {
+          if (result.notice && !r.noticeSent && (r.retryAt ?? 0) <= this.now()) {
+            try {
+              const reserved = this.options.reserve ? await this.options.reserve({ recipient: this.options.recipient, text: result.notice }) : undefined;
+              if (!this.active()) return;
+              const sent = await this.options.send({ recipient: this.options.recipient, text: result.notice, signal: this.controller.signal, ...(reserved ? { reserved } : {}), ...(r.quote ? { quote: r.quote } : {}) });
+              if (!this.active()) return;
+              if (sent.recipient === this.options.recipient && id.safeParse(sent.messageId).success) change(x => { x.noticeSent = true; });
+            } catch { /* the line is best effort: the run itself is untouched, and the next pass tries again */ }
+          }
+          continue;
+        }
+        change(x => { x.response = (result.output || channelReply("channelReply.taskEnded")).slice(0, this.maxResponse); }); r = lookup();
       }
       if (r.response === undefined || !["accepted", "queued"].includes(r.state) || (r.retryAt ?? 0) > this.now()) continue;
       if (!this.active()) return;
@@ -258,7 +271,7 @@ export class DurableDelivery {
         if (r.runId && this.options.sendAudio && this.options.runs.voiceNotes) {
           for (const note of this.options.runs.voiceNotes(r.runId)) {
             try {
-              await this.options.sendAudio({ recipient: this.options.recipient, name: note.name, mime: note.mime, bytes: note.bytes, title: `Voice note from ${note.from}`, signal: this.controller.signal });
+              await this.options.sendAudio({ recipient: this.options.recipient, name: note.name, mime: note.mime, bytes: note.bytes, title: channelReply("channelReply.voiceNoteFrom", { name: note.from }), signal: this.controller.signal });
             } catch (error) {
               console.warn(`[channels] a voice note could not be sent: ${error instanceof ChannelSendError ? error.code : "failed"}`);
             }

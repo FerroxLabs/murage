@@ -1,0 +1,509 @@
+template_id,member,team_size,mascotBody,color,prop
+academic-paper,academic-paper,1,drop,blue,graduation cap
+account-research,compass,1,capsule,orange,compass
+ad-creative,flare,1,star,pink,spotlight lamp
+advisor,advisor,1,ember,yellow,speech bubble
+agency-ops,retainer,1,hexagon,teal,key ring with keys
+agency-reporting,ari,4,squircle,blue,report folder
+agency-reporting,tracer,4,capsule,orange,magnifying glass
+agency-reporting,retainer,4,hexagon,teal,key ring with keys
+agency-reporting,humanizer,4,blob,pink,feather quill
+automation-planner,flow,1,hexagon,teal,connected nodes
+beautiful-mermaid,beautiful-mermaid,1,hexagon,teal,set square ruler
+bills-review,match,1,diamond,green,balance scale
+blog-writer,ink,1,drop,blue,ink bottle
+board-pack,quorum,1,shield,pink,gavel
+book-copy-editor,book-copy-editor,1,capsule,purple,red pencil
+book-developmental-editor,book-developmental-editor,1,squircle,orange,rolled scroll
+book-nonfiction-architect,book-nonfiction-architect,1,hexagon,green,stacked books
+book-production,book-production,1,diamond,coral,hardcover book
+book-publisher,book-publisher,1,circle,yellow,open book
+book-publishing-house,book-publisher,6,circle,yellow,open book
+book-publishing-house,book-nonfiction-architect,6,hexagon,green,stacked books
+book-publishing-house,book-story-architect,6,drop,pink,fountain pen
+book-publishing-house,book-developmental-editor,6,squircle,orange,rolled scroll
+book-publishing-house,book-copy-editor,6,capsule,purple,red pencil
+book-publishing-house,book-production,6,diamond,coral,hardcover book
+book-story-architect,book-story-architect,1,drop,pink,fountain pen
+booking-desk,bell,1,squircle,green,service bell
+bookkeeper,ledger,1,squircle,blue,ledger book
+books-and-tax,ledger,5,squircle,blue,ledger book
+books-and-tax,levy,5,diamond,green,calculator
+books-and-tax,receipt,5,capsule,purple,paper receipt roll
+books-and-tax,trim,5,drop,orange,scissors
+books-and-tax,docket,5,circle,teal,file folder
+brand-kit,glint,1,blob,pink,paint palette
+brand-voice-guide,tone,1,drop,blue,tuning fork
+budget,gauge,1,circle,teal,dial gauge
+builder,builder,1,hexagon,green,wrench
+business-plan,blueprint,1,hexagon,purple,hard hat
+call-coach,spar,1,blob,red,boxing glove
+cart-recovery,cart,1,circle,cyan,shopping basket
+case-studies,trophy,1,star,yellow,trophy cup
+cash-watch,tally,1,capsule,green,abacus
+chat-and-saved-replies,porter,1,blob,orange,chat bubble
+cleaning-business,sparkle,1,drop,green,spray bottle
+cli-setup,cli-setup,1,hexagon,cyan,plug and cable
+client-onboarding,hana,1,circle,purple,door key
+client-reporter,ari,1,squircle,blue,report folder
+collections,penny,1,circle,orange,piggy bank
+community-lead-finder,nina,5,capsule,blue,binoculars
+community-lead-finder,otis,5,shield,teal,referee whistle
+community-lead-finder,tess,5,hexagon,orange,telescope
+community-lead-finder,leon,5,drop,cyan,pencil
+community-lead-finder,mae,5,squircle,green,index card box
+community-manager,hearth,1,blob,coral,warm mug
+company-wiki,shelf,1,blob,purple,globe
+compliance-calendar,ward,1,squircle,cyan,calendar
+concierge,concierge,1,ember,blue,serving cloche
+consulting-practice,sage,1,diamond,orange,hourglass
+content-calendar,almanac,1,squircle,blue,desk calendar page
+contract-drafts,clause,1,shield,green,contract with wax seal
+contractors,gig,1,hexagon,teal,toolbox
+cowork,cowork,1,ember,cyan,puzzle piece
+creator,creator,1,ember,pink,clapperboard
+customer-experience-audit,journey,1,circle,teal,signpost
+customer-feedback,hark,1,drop,blue,ear trumpet
+dashboard-creator,dashboard-creator,1,circle,green,pie chart
+dashboards,query,1,capsule,green,bar chart blocks
+disputes,settle,1,drop,cyan,olive branch
+donor-relations,patron,1,blob,teal,heart
+dropshipping,drop,1,squircle,coral,cardboard box
+editor-in-chief,editor,1,ember,blue,blue pencil
+email-engine,drip,4,drop,green,eyedropper
+email-engine,letty,4,squircle,yellow,envelope
+email-engine,cart,4,circle,cyan,shopping basket
+email-engine,tracer,4,capsule,orange,magnifying glass
+email-sequences,drip,1,drop,green,eyedropper
+equity-and-partners,stake,1,circle,cyan,handshake
+estimator,mason,1,hexagon,teal,trowel
+excel-creator,excel-creator,1,squircle,green,grid board
+exit-prep,harbor,1,drop,blue,sailboat
+expense-claims,receipt,1,capsule,purple,paper receipt roll
+explainer,explainer,1,capsule,teal,pointer stick
+facebook-and-groups,porch,1,blob,orange,lantern
+financial-model-creator,financial-model-creator,1,hexagon,teal,slide rule
+follow-up-desk,ada,4,circle,blue,phone handset
+follow-up-desk,finn,4,squircle,teal,alarm clock
+follow-up-desk,cora,4,drop,orange,paper airplane
+follow-up-desk,joel,4,capsule,purple,stopwatch
+front-desk,dawn,5,star,green,rising sun
+front-desk,sift,5,circle,blue,sieve
+front-desk,tempo,5,diamond,teal,metronome
+front-desk,minute,5,capsule,purple,notepad
+front-desk,briefcase,5,squircle,orange,briefcase
+game-3d,game-3d,1,blob,pink,game controller
+get-paid,penny,4,circle,orange,piggy bank
+get-paid,mint,4,diamond,cyan,gold coin
+get-paid,tally,4,capsule,green,abacus
+get-paid,ledger,4,squircle,blue,ledger book
+goals-and-okrs,northstar,1,star,yellow,guiding star
+grant-writer,gwen,1,drop,blue,rosette ribbon
+gym-and-studio,rep,1,hexagon,green,dumbbell
+handmade-shop,craft,1,blob,pink,yarn ball
+hard-conversations,calm,1,circle,cyan,stacked stones
+head-of-customer-success,tend,1,drop,teal,watering can
+head-of-engineering,ship,1,hexagon,purple,gear wheel
+head-of-marketing,director,1,ember,cyan,megaphone
+head-of-sales,pace,1,star,orange,running shoe
+help-center-writer,nell,1,shield,purple,lifebuoy
+help-center,nell,4,shield,purple,lifebuoy
+help-center,porter,4,blob,orange,chat bubble
+help-center,calm,4,circle,cyan,stacked stones
+help-center,hark,4,drop,blue,ear trumpet
+hiring-desk,juno,4,circle,blue,clipboard with checklist
+hiring-desk,slate,4,hexagon,green,horseshoe magnet
+hiring-desk,scale,4,diamond,pink,tape measure
+hiring-desk,bridge,4,squircle,teal,small bridge
+hr-admin,haven,1,shield,coral,little house
+human-3-coach,human-3-coach,1,blob,coral,lotus flower
+idea-check,seed,1,drop,yellow,seedling
+ignition,ignition,1,star,red,lit match
+image-maker,canvas,1,blob,pink,paintbrush
+inbox-triage,sift,1,circle,blue,sieve
+instagram-and-tiktok,gram,1,circle,teal,ring light
+investor-update,dispatch,1,squircle,orange,mailbag
+invoicing,mint,1,diamond,cyan,gold coin
+it-help-desk,remy,1,circle,cyan,headset
+job-search,arden,1,capsule,blue,ladder
+landing-pages,fold,1,star,blue,paper crane
+launch-day,launchpad,1,star,blue,rocket
+lead-responder,swift,1,diamond,yellow,lightning bolt
+linkedin-outreach,thread,1,circle,pink,spool of thread
+linkedin-voice,byline,1,drop,purple,fountain pen
+local-reputation,kudos,4,star,yellow,star medal
+local-reputation,pin,4,circle,red,map pin
+local-reputation,bell,4,squircle,green,service bell
+local-reputation,porch,4,blob,orange,lantern
+local-search,pin,1,circle,red,map pin
+loyalty-and-referrals,loyal,1,squircle,green,gift box
+manager-coach,mentor,1,capsule,yellow,lighthouse
+marketing-analytics,tracer,1,capsule,orange,magnifying glass
+marketplace-seller,bazaar,1,squircle,blue,shopping bag
+meal-planner,supper,1,blob,orange,cooking pot
+meeting-notes,minute,1,capsule,purple,notepad
+meeting-prep,briefcase,1,squircle,orange,briefcase
+moltbook-skills,moltbook-skills,1,blob,coral,upvote arrow
+moltbook,moltbook,1,blob,coral,seashell
+monthly-retro,mirror,1,circle,cyan,hand mirror
+morning-brief,dawn,1,star,green,rising sun
+morph-ppt-3d,morph-ppt-3d,1,hexagon,purple,3d cube
+morph-ppt,morph-ppt,1,star,pink,magic wand
+negotiation-prep,parley,1,shield,orange,chess pawn
+new-hire-onboarding,bridge,1,squircle,teal,small bridge
+newsletter-growth,grow,1,star,green,staircase blocks
+newsletter,letty,1,squircle,yellow,envelope
+nonprofit-desk,gwen,4,drop,blue,rosette ribbon
+nonprofit-desk,patron,4,blob,teal,heart
+nonprofit-desk,rally,4,star,orange,cheer pom-pom
+nonprofit-desk,ward,4,squircle,cyan,calendar
+office-security,lock,1,shield,red,padlock
+paperwork,docket,1,circle,teal,file folder
+partnerships,link,1,circle,orange,chain link
+pay-and-offers,scale,1,diamond,pink,tape measure
+payroll-prep,roll,1,circle,green,wallet
+people-ops,haven,5,shield,coral,little house
+people-ops,roll,5,circle,green,wallet
+people-ops,rubric,5,capsule,orange,ruler
+people-ops,bulletin,5,squircle,cyan,pinboard with pins
+people-ops,gig,5,hexagon,teal,toolbox
+performance-reviews,rubric,1,capsule,orange,ruler
+photo-studio,shutter,1,star,green,camera
+pitch-deck-creator,pitch-deck-creator,1,squircle,yellow,slide cards
+planning-with-files,planning-with-files,1,squircle,teal,ring binder
+podcast-and-video,reel,1,circle,blue,film reel
+portfolio,folio,1,squircle,orange,art portfolio case
+ppt-creator,ppt-creator,1,squircle,orange,slide projector
+pr-pitch,pippa,1,capsule,blue,rolled newspaper
+print-on-demand,merch,1,squircle,teal,t-shirt
+priority-planner,focus,1,circle,cyan,bullseye target
+privacy,veil,1,drop,purple,sunglasses
+product-manager,waypoint,1,squircle,cyan,folded map
+product-photos,studio,1,squircle,pink,softbox light
+project-coordinator,stride,1,squircle,cyan,relay baton
+project-kickoff,kickoff,1,circle,purple,soccer ball
+proposal-writer,bid,1,star,teal,auction paddle
+recruiting-coordinator,juno,1,circle,blue,clipboard with checklist
+release-notes,notch,1,diamond,orange,tag label
+renewals-and-expansion,anchor,1,shield,orange,ship anchor
+researcher,researcher,1,capsule,cyan,microscope
+restaurant,plate,1,circle,green,chef hat
+retail-shop,till,1,squircle,pink,cash register
+reviews,kudos,1,star,yellow,star medal
+rfp-response,tender,1,capsule,orange,blueprint tube
+risk-register,bulwark,1,shield,cyan,castle tower
+rival-watch,owen,5,hexagon,blue,periscope
+rival-watch,iris,5,circle,teal,monocle
+rival-watch,hugo,5,capsule,orange,radar dish
+rival-watch,vera,5,drop,pink,highlighter pen
+rival-watch,ellis,5,shield,green,approval stamp
+sales-deck,easel,1,squircle,orange,easel
+salon-and-spa,chair,1,blob,green,hair dryer
+scheduler,tempo,1,diamond,teal,metronome
+shift-planner,roster,1,circle,teal,wall clock
+shop-back-office,stock,5,hexagon,purple,stacked crates
+shop-back-office,cart,5,circle,cyan,shopping basket
+shop-back-office,bea,5,drop,coral,boomerang
+shop-back-office,bazaar,5,squircle,blue,shopping bag
+shop-back-office,porter,5,blob,orange,chat bubble
+shop-ops,stock,1,hexagon,purple,stacked crates
+short-term-rentals,host,1,squircle,green,suitcase
+site-builder,site-builder,1,hexagon,teal,hammer
+smart-trader,smart-trader,1,diamond,green,candlestick
+social-scheduler,buzz,1,star,blue,megaphone
+social-week,buzz,5,star,blue,megaphone
+social-week,gram,5,circle,teal,ring light
+social-week,byline,5,drop,purple,fountain pen
+social-week,canvas,5,blob,pink,paintbrush
+social-week,verdict,5,shield,red,check mark badge
+sop-writer,recipe,1,blob,red,whisk
+speaker,podium,1,circle,purple,microphone
+spend-audit,trim,1,drop,orange,scissors
+spreadsheet-helper,sheet,1,squircle,blue,grid paper
+staff-training,tutor,1,blob,teal,apple
+star-office-helper,star-office-helper,1,circle,cyan,desk lamp
+story-roleplay,story-roleplay,1,blob,pink,drama mask
+strategy-one-pager,chart,1,hexagon,purple,trend arrow
+summarizer,gist,1,capsule,cyan,funnel
+tax-prep,levy,1,diamond,green,calculator
+team-comms,bulletin,1,squircle,cyan,pinboard with pins
+trademarks-and-ip,crest,1,shield,orange,wax stamp
+trades-office,mason,4,hexagon,teal,trowel
+trades-office,bell,4,squircle,green,service bell
+trades-office,penny,4,circle,orange,piggy bank
+trades-office,kudos,4,star,yellow,star medal
+travel-desk,jet,1,drop,purple,airplane
+tutoring-business,chalk,1,capsule,green,piece of chalk
+ui-ux-pro-max,ui-ux-pro-max,1,hexagon,purple,pen nib
+user-guides,manual,1,squircle,coral,booklet
+vendor-sourcing,barter,1,hexagon,orange,delivery truck
+volunteers,rally,1,star,orange,cheer pom-pom
+webinars-and-events,booth,1,squircle,orange,event ticket
+website-updates,wren,1,drop,cyan,songbird
+weekly-business-review,pulse,4,circle,teal,stethoscope
+weekly-business-review,tally,4,capsule,green,abacus
+weekly-business-review,stride,4,squircle,cyan,relay baton
+weekly-business-review,northstar,4,star,yellow,guiding star
+weekly-report,pulse,1,circle,teal,stethoscope
+win-back,bea,1,drop,coral,boomerang
+win-the-client,swift,5,diamond,yellow,lightning bolt
+win-the-client,briefcase,5,squircle,orange,briefcase
+win-the-client,bid,5,star,teal,auction paddle
+win-the-client,hana,5,circle,purple,door key
+win-the-client,clause,5,shield,green,contract with wax seal
+word-creator,word-creator,1,squircle,blue,typewriter
+word-form-creator,word-form-creator,1,squircle,teal,checkbox
+writer,writer,1,drop,purple,fountain pen
+x-threads,chirp,1,blob,cyan,songbird
+youtube,lumen,1,blob,red,play button
+ad-account-mechanic,lens,4,hexagon,green,magnifying glass
+ad-account-mechanic,copy,4,drop,purple,pencil
+ad-account-mechanic,forge,4,circle,coral,anvil
+ad-account-mechanic,beacon,4,star,orange,lighthouse
+affiliate-site-engine,research,4,capsule,blue,binoculars
+affiliate-site-engine,copy,4,drop,purple,pencil
+affiliate-site-engine,beacon,4,star,orange,lighthouse
+affiliate-site-engine,lens,4,hexagon,green,magnifying glass
+back-office-crew,mend,4,circle,coral,adhesive bandage
+back-office-crew,patch,4,squircle,teal,screwdriver
+back-office-crew,lens,4,hexagon,green,magnifying glass
+back-office-crew,coin,4,diamond,cyan,coin stack
+bootstrap-profit,coin,4,diamond,cyan,coin stack
+bootstrap-profit,forge,4,circle,coral,anvil
+bootstrap-profit,beacon,4,star,orange,lighthouse
+bootstrap-profit,sales,4,ember,red,handshake
+caption-carousel-studio,copy,4,drop,purple,pencil
+caption-carousel-studio,mira,4,blob,pink,paintbrush
+caption-carousel-studio,sales,4,ember,red,handshake
+caption-carousel-studio,research,4,capsule,blue,binoculars
+cohort-ops-control-tower,patch,4,squircle,teal,screwdriver
+cohort-ops-control-tower,beacon,4,star,orange,lighthouse
+cohort-ops-control-tower,copy,4,drop,purple,pencil
+cohort-ops-control-tower,lens,4,hexagon,green,magnifying glass
+cold-outbound,research,3,capsule,blue,binoculars
+cold-outbound,copy,3,drop,purple,pencil
+cold-outbound,sales,3,ember,red,handshake
+cold-pitch-bench,sales,4,ember,red,handshake
+cold-pitch-bench,research,4,capsule,blue,binoculars
+cold-pitch-bench,sentry,4,circle,yellow,plain shield crest with no markings
+cold-pitch-bench,copy,4,drop,purple,pencil
+comparison-roundup-builder,research,4,capsule,blue,binoculars
+comparison-roundup-builder,copy,4,drop,purple,pencil
+comparison-roundup-builder,verdict,4,shield,red,check mark badge
+comparison-roundup-builder,smith,4,ember,orange,hammer
+content-refresh-crew,lens,4,hexagon,green,magnifying glass
+content-refresh-crew,research,4,capsule,blue,binoculars
+content-refresh-crew,copy,4,drop,purple,pencil
+content-refresh-crew,verdict,4,shield,red,check mark badge
+content-studio,beacon,4,star,orange,lighthouse
+content-studio,copy,4,drop,purple,pencil
+content-studio,mira,4,blob,pink,paintbrush
+content-studio,verdict,4,shield,red,check mark badge
+creator-studio,copy,4,drop,purple,pencil
+creator-studio,mira,4,blob,pink,paintbrush
+creator-studio,beacon,4,star,orange,lighthouse
+creator-studio,spark,4,squircle,yellow,toy blocks
+customer-success-org,mend,4,circle,coral,adhesive bandage
+customer-success-org,sales,4,ember,red,handshake
+customer-success-org,lens,4,hexagon,green,magnifying glass
+customer-success-org,patch,4,squircle,teal,screwdriver
+daily-briefing,helm,4,hexagon,green,ship wheel
+daily-briefing,coin,4,diamond,cyan,coin stack
+daily-briefing,sentry,4,circle,yellow,plain shield crest with no markings
+daily-briefing,sales,4,ember,red,handshake
+damage-control,research,4,capsule,blue,binoculars
+damage-control,sentry,4,circle,yellow,plain shield crest with no markings
+damage-control,copy,4,drop,purple,pencil
+damage-control,mira,4,blob,pink,paintbrush
+dev-shop,ship,6,hexagon,purple,gear wheel
+dev-shop,smith,6,ember,orange,hammer
+dev-shop,cole,6,diamond,cyan,nut and bolt
+dev-shop,patch,6,squircle,teal,screwdriver
+dev-shop,verdict,6,shield,red,check mark badge
+dev-shop,sentry,6,circle,yellow,plain shield crest with no markings
+ecommerce-engine,vault,5,squircle,green,treasure chest
+ecommerce-engine,copy,5,drop,purple,pencil
+ecommerce-engine,beacon,5,star,orange,lighthouse
+ecommerce-engine,mira,5,blob,pink,paintbrush
+ecommerce-engine,mend,5,circle,coral,adhesive bandage
+editorial-newsroom,copy,5,drop,purple,pencil
+editorial-newsroom,research,5,capsule,blue,binoculars
+editorial-newsroom,mira,5,blob,pink,paintbrush
+editorial-newsroom,beacon,5,star,orange,lighthouse
+editorial-newsroom,lens,5,hexagon,green,magnifying glass
+email-lifecycle-crew,beacon,4,star,orange,lighthouse
+email-lifecycle-crew,copy,4,drop,purple,pencil
+email-lifecycle-crew,lens,4,hexagon,green,magnifying glass
+email-lifecycle-crew,research,4,capsule,blue,binoculars
+fine-print-guard,sentry,4,circle,yellow,plain shield crest with no markings
+fine-print-guard,coin,4,diamond,cyan,coin stack
+fine-print-guard,sales,4,ember,red,handshake
+fine-print-guard,copy,4,drop,purple,pencil
+first-customers,research,4,capsule,blue,binoculars
+first-customers,sales,4,ember,red,handshake
+first-customers,copy,4,drop,purple,pencil
+first-customers,beacon,4,star,orange,lighthouse
+founder-setup,sentry,4,circle,yellow,plain shield crest with no markings
+founder-setup,coin,4,diamond,cyan,coin stack
+founder-setup,mira,4,blob,pink,paintbrush
+founder-setup,patch,4,squircle,teal,screwdriver
+fundraise,stage,4,star,green,theatre curtain
+fundraise,coin,4,diamond,cyan,coin stack
+fundraise,mira,4,blob,pink,paintbrush
+fundraise,copy,4,drop,purple,pencil
+growth-loop,lens,3,hexagon,green,magnifying glass
+growth-loop,research,3,capsule,blue,binoculars
+growth-loop,beacon,3,star,orange,lighthouse
+hook-lab,copy,4,drop,purple,pencil
+hook-lab,research,4,capsule,blue,binoculars
+hook-lab,verdict,4,shield,red,check mark badge
+hook-lab,mira,4,blob,pink,paintbrush
+info-product-launch,spark,4,squircle,yellow,toy blocks
+info-product-launch,copy,4,drop,purple,pencil
+info-product-launch,mira,4,blob,pink,paintbrush
+info-product-launch,beacon,4,star,orange,lighthouse
+lead-gen-outbound,sales,4,ember,red,handshake
+lead-gen-outbound,research,4,capsule,blue,binoculars
+lead-gen-outbound,copy,4,drop,purple,pencil
+lead-gen-outbound,mend,4,circle,coral,adhesive bandage
+lead-magnet-forge,research,4,capsule,blue,binoculars
+lead-magnet-forge,mira,4,blob,pink,paintbrush
+lead-magnet-forge,copy,4,drop,purple,pencil
+lead-magnet-forge,beacon,4,star,orange,lighthouse
+lesson-scripting-crew,spark,4,squircle,yellow,toy blocks
+lesson-scripting-crew,copy,4,drop,purple,pencil
+lesson-scripting-crew,helm,4,hexagon,green,ship wheel
+lesson-scripting-crew,humanizer,4,blob,pink,feather quill
+link-disclosure-custodian,lens,4,hexagon,green,magnifying glass
+link-disclosure-custodian,sentry,4,circle,yellow,plain shield crest with no markings
+link-disclosure-custodian,verdict,4,shield,red,check mark badge
+link-disclosure-custodian,smith,4,ember,orange,hammer
+listing-forge,vault,4,squircle,green,treasure chest
+listing-forge,research,4,capsule,blue,binoculars
+listing-forge,copy,4,drop,purple,pencil
+listing-forge,verdict,4,shield,red,check mark badge
+local-seo-reviews,research,4,capsule,blue,binoculars
+local-seo-reviews,copy,4,drop,purple,pencil
+local-seo-reviews,lens,4,hexagon,green,magnifying glass
+local-seo-reviews,mend,4,circle,coral,adhesive bandage
+marketing-agency,director,6,ember,cyan,megaphone
+marketing-agency,research,6,capsule,blue,binoculars
+marketing-agency,mira,6,blob,pink,paintbrush
+marketing-agency,beacon,6,star,orange,lighthouse
+marketing-agency,copy,6,drop,purple,pencil
+marketing-agency,lens,6,hexagon,green,magnifying glass
+marketing-strategy,research,8,capsule,blue,binoculars
+marketing-strategy,mira,8,blob,pink,paintbrush
+marketing-strategy,forge,8,circle,coral,anvil
+marketing-strategy,beacon,8,star,orange,lighthouse
+marketing-strategy,coin,8,diamond,cyan,coin stack
+marketing-strategy,copy,8,drop,purple,pencil
+marketing-strategy,lens,8,hexagon,green,magnifying glass
+marketing-strategy,verdict,8,shield,red,check mark badge
+offer-vetting-desk,research,4,capsule,blue,binoculars
+offer-vetting-desk,coin,4,diamond,cyan,coin stack
+offer-vetting-desk,forge,4,circle,coral,anvil
+offer-vetting-desk,verdict,4,shield,red,check mark badge
+paid-ads-war-room,forge,4,circle,coral,anvil
+paid-ads-war-room,copy,4,drop,purple,pencil
+paid-ads-war-room,lens,4,hexagon,green,magnifying glass
+paid-ads-war-room,beacon,4,star,orange,lighthouse
+pre-mortem-room,sentry,5,circle,yellow,plain shield crest with no markings
+pre-mortem-room,sales,5,ember,red,handshake
+pre-mortem-room,beacon,5,star,orange,lighthouse
+pre-mortem-room,research,5,capsule,blue,binoculars
+pre-mortem-room,copy,5,drop,purple,pencil
+pricing-tribunal,forge,4,circle,coral,anvil
+pricing-tribunal,coin,4,diamond,cyan,coin stack
+pricing-tribunal,sales,4,ember,red,handshake
+pricing-tribunal,mira,4,blob,pink,paintbrush
+product-launch,research,5,capsule,blue,binoculars
+product-launch,mira,5,blob,pink,paintbrush
+product-launch,copy,5,drop,purple,pencil
+product-launch,beacon,5,star,orange,lighthouse
+product-launch,sales,5,ember,red,handshake
+promo-calendar-war-room,beacon,4,star,orange,lighthouse
+promo-calendar-war-room,research,4,capsule,blue,binoculars
+promo-calendar-war-room,copy,4,drop,purple,pencil
+promo-calendar-war-room,patch,4,squircle,teal,screwdriver
+quiet-money-council,quiet-money-position-auditor,6,shield,green,spirit level
+quiet-money-council,quiet-money-career-strategist,6,star,blue,mountain peak
+quiet-money-council,quiet-money-spending-auditor,6,circle,red,coin purse
+quiet-money-council,quiet-money-windfall-navigator,6,diamond,orange,compass
+quiet-money-council,quiet-money-generational-planner,6,squircle,purple,tree
+quiet-money-council,quiet-money-time-coach,6,ember,pink,hourglass
+quiet-money-standing,quiet-money,1,blob,green,acorn
+reply-desk,mend,4,circle,coral,adhesive bandage
+reply-desk,copy,4,drop,purple,pencil
+reply-desk,sales,4,ember,red,handshake
+reply-desk,research,4,capsule,blue,binoculars
+repurpose-engine,copy,4,drop,purple,pencil
+repurpose-engine,research,4,capsule,blue,binoculars
+repurpose-engine,beacon,4,star,orange,lighthouse
+repurpose-engine,humanizer,4,blob,pink,feather quill
+review-article-factory,research,4,capsule,blue,binoculars
+review-article-factory,copy,4,drop,purple,pencil
+review-article-factory,verdict,4,shield,red,check mark badge
+review-article-factory,sentry,4,circle,yellow,plain shield crest with no markings
+review-engine,mend,4,circle,coral,adhesive bandage
+review-engine,copy,4,drop,purple,pencil
+review-engine,lens,4,hexagon,green,magnifying glass
+review-engine,verdict,4,shield,red,check mark badge
+saas-mvp-sprint,smith,4,ember,orange,hammer
+saas-mvp-sprint,probe,4,diamond,cyan,test tube
+saas-mvp-sprint,copy,4,drop,purple,pencil
+saas-mvp-sprint,mira,4,blob,pink,paintbrush
+sales-org,sales,4,ember,red,handshake
+sales-org,research,4,capsule,blue,binoculars
+sales-org,forge,4,circle,coral,anvil
+sales-org,lens,4,hexagon,green,magnifying glass
+sales-pipeline,research,3,capsule,blue,binoculars
+sales-pipeline,sales,3,ember,red,handshake
+sales-pipeline,forge,3,circle,coral,anvil
+seo-content-engine,fern,6,drop,teal,fern frond
+seo-content-engine,research,6,capsule,blue,binoculars
+seo-content-engine,spark,6,squircle,yellow,toy blocks
+seo-content-engine,lens,6,hexagon,green,magnifying glass
+seo-content-engine,verdict,6,shield,red,check mark badge
+seo-content-engine,reed,6,diamond,cyan,eraser
+service-studio,research,4,capsule,blue,binoculars
+service-studio,sales,4,ember,red,handshake
+service-studio,forge,4,circle,coral,anvil
+service-studio,patch,4,squircle,teal,screwdriver
+starter-business-team,team-coordinator,3,ember,purple,walkie-talkie
+starter-business-team,delivery-partner,3,squircle,green,gift box
+starter-business-team,review-partner,3,shield,blue,clipboard with checklist
+starter-personal-home,home-planner,1,squircle,yellow,sticky notes
+starter-solo-business,business-planner,2,squircle,blue,planner notebook
+starter-solo-business,draft-partner,2,drop,orange,pencil
+student-support-desk,mend,4,circle,coral,adhesive bandage
+student-support-desk,research,4,capsule,blue,binoculars
+student-support-desk,patch,4,squircle,teal,screwdriver
+student-support-desk,helm,4,hexagon,green,ship wheel
+support-stack,mend,3,circle,coral,adhesive bandage
+support-stack,patch,3,squircle,teal,screwdriver
+support-stack,copy,3,drop,purple,pencil
+template-factory,spark,4,squircle,yellow,toy blocks
+template-factory,copy,4,drop,purple,pencil
+template-factory,mira,4,blob,pink,paintbrush
+template-factory,sales,4,ember,red,handshake
+trend-desk,research,4,capsule,blue,binoculars
+trend-desk,mira,4,blob,pink,paintbrush
+trend-desk,copy,4,drop,purple,pencil
+trend-desk,verdict,4,shield,red,check mark badge
+validate-before-build,probe,3,diamond,cyan,test tube
+validate-before-build,research,3,capsule,blue,binoculars
+validate-before-build,forge,3,circle,coral,anvil
+validation-cell,probe,4,diamond,cyan,test tube
+validation-cell,research,4,capsule,blue,binoculars
+validation-cell,copy,4,drop,purple,pencil
+validation-cell,lens,4,hexagon,green,magnifying glass
+war-room,helm,5,hexagon,green,ship wheel
+war-room,coin,5,diamond,cyan,coin stack
+war-room,beacon,5,star,orange,lighthouse
+war-room,sentry,5,circle,yellow,plain shield crest with no markings
+war-room,sales,5,ember,red,handshake
+winning-product-war-room,research,4,capsule,blue,binoculars
+winning-product-war-room,lens,4,hexagon,green,magnifying glass
+winning-product-war-room,coin,4,diamond,cyan,coin stack
+winning-product-war-room,verdict,4,shield,red,check mark badge
