@@ -155,15 +155,20 @@ function fuigoHome(env: Record<string, string | undefined>): string {
  * snapshot classifies the failed probe (including a declared bundle repair)
  * without a rejected `create()` downgrading the whole instance to a shadow.
  */
-function reachBundledFuigo(env: Record<string, string | undefined>): void {
+export function reachBundledFuigo(env: Record<string, string | undefined>): void {
   let resolved;
   try {
     resolved = resolveFuigoCli(env as NodeJS.ProcessEnv);
   } catch {
     return; // snapshot retains the declared bundle's resolution diagnostic
   }
-  if (resolved.source !== "bundled") return;
-  env.PATH = [dirname(resolved.command), env.PATH].filter(Boolean).join(delimiter);
+  // Windows: the PATH copy resolveFuigoCli chose (and version-checked) is a fuigo.exe, but an npm install also puts a
+  // `fuigo.cmd` shim in a folder that comes earlier on Murage's PATH (%APPDATA%\npm, or the user's own npm prefix), and a
+  // bare `fuigo` would find that shim first. Its folder goes first too, so the exe that was chosen is the one that runs.
+  if (resolved.source !== "bundled" && process.platform !== "win32") return;
+  const folder = dirname(resolved.command);
+  if ((env.PATH ?? "").split(delimiter)[0] === folder) return;
+  env.PATH = [folder, env.PATH].filter(Boolean).join(delimiter);
 }
 
 /**

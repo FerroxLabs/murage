@@ -34,6 +34,8 @@ export const WHATS_NEW_BY_VERSION: Readonly<Record<string, WhatsNewEntry>> = {
   "1.0.3": { kind: "none" },
   // 1.0.4: the 1.0.3 hotfix; its notes are on the docs changelog and the release page.
   "1.0.4": { kind: "none" },
+  // 1.0.5: the 1.0.4 hotfix; its notes are on the docs changelog and the release page.
+  "1.0.5": { kind: "none" },
 };
 
 /** The page for `version`, or null when it has none. */

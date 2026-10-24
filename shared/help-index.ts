@@ -885,6 +885,25 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "- Claude now asks before phone, web search and site tools. Tapping, typing or swiping on your phone, web search, and publishing a site each show an approval card first, as your access level sets.\n- Claude on Windows with Git Bash now starts its approval tools reliably. When Git for Windows is installed, Claude's turns reach Murage's approval tools, so Always ask shows its card as it should."
   },
   {
+    "id": "changelog/v1-0-5#overview",
+    "title": "What changed in Murage 1.0.5",
+    "description": "The 1.0.4 hotfix. Bots can now clean up files across folders in one command, and Fuigo starts on Windows from every install.",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.5",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.5",
+    "url": "https://murage.app/docs/changelog/v1-0-5",
+    "text": "Murage 1.0.5 is the hotfix for 1.0.4. Everything in 1.0.4 is included."
+  },
+  {
+    "id": "changelog/v1-0-5#bots-in-1-0-5",
+    "title": "What changed in Murage 1.0.5",
+    "description": "The 1.0.4 hotfix. Bots can now clean up files across folders in one command, and Fuigo starts on Windows from every install.",
+    "heading": "Bots in 1.0.5",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.5",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.5",
+    "url": "https://murage.app/docs/changelog/v1-0-5#bots-in-1-0-5",
+    "text": "- Bots can now clean up files across folders in one command. A delete that names folders in different places, such as /tmp/a and ~/b, or C:\\a and D:\\b on Windows, gets its answer straight away, so Murage keeps responding while the bot works. It still asks or stops exactly as your access level sets.\n- Fuigo now starts on Windows from every install, including npm. Install Fuigo with npm, from its own installer, or use the one that ships with Murage, and your bots on Fuigo answer from the first turn."
+  },
+  {
     "id": "computers/cloud-and-vps#box-cloud-computer",
     "title": "Cloud computer and your own VPS",
     "description": "Choose a managed Box desktop or a hardened container on a Linux server you own.",
