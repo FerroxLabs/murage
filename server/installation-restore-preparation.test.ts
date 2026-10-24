@@ -157,6 +157,24 @@ it("refuses hash-valid external section records before preparing a restore and p
   expect(readdirSync(root)).toEqual(["external.zip"]);
 });
 
+it.each(["mcp-grants.json", "MCP-grants.json", "Mcp-Grants.JSON"])("refuses a script-access grants file spelled %s, as a case-insensitive volume would open it (A3)", async name => {
+  const root = mkdtempSync(join(tmpdir(), "murage-case-fold-")); roots.push(root);
+  const archive = join(root, "external.zip");
+  const bytes = Buffer.from("{}");
+  const manifest = {
+    format: "murage.installation", version: 1, snapshotId: randomUUID(), createdAt: new Date().toISOString(), restorePolicy: "paused-review-required",
+    files: [{ path: name, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") }],
+    omitted: [], missing: [], database: { status: "absent" },
+  };
+  const zip = new ZipFile();
+  const output = pipeline(zip.outputStream as Readable, createWriteStream(archive));
+  zip.addBuffer(Buffer.from(JSON.stringify(manifest)), "manifest.json", { compress: false });
+  zip.addBuffer(bytes, `state/${name}`, { compress: false, mode: 0o100600 });
+  zip.end();
+  await output;
+  await expect(prepareInstallationRestore(archive, root)).rejects.toMatchObject({ code: "RESERVED_RESTORE_COMPONENT" });
+});
+
 it("refuses invalid notification quiet hours in a hash-valid external archive", async () => {
   const root = mkdtempSync(join(tmpdir(), "murage-notification-external-")); roots.push(root);
   const archive = join(root, "external.zip");
@@ -413,4 +431,16 @@ it("T18 createBot's ids and package import's ids can never be reserved", () => {
   const uuid = z.string().uuid();                                              // package-import-transaction.ts
   expect(uuid.safeParse(CANARY_BROWSER_ID).success).toBe(false);
   expect(uuid.safeParse("__murage-00000000-0000-4000-8000-000000000000").success).toBe(false);
+});
+
+it("a restored conversation drops the old installation's app-made working folder and keeps a folder the owner chose (A1)", async () => {
+  const f = await fixture({ bot: { tasks: [
+    { threadId: "thread", title: "Local", cwd: "/old/Murage/workspaces/bot/threads/thread", resumeCursors: {} },
+    { threadId: "thread-two", title: "Windows", cwd: "C:\\Users\\old\\AppData\\Murage\\workspaces\\bot\\threads\\thread-two\\", resumeCursors: {} },
+    { threadId: "thread-three", title: "Chosen", cwd: "/home/owner/project", resumeCursors: {} },
+    { threadId: "thread-four", title: "Other bot", cwd: "/old/Murage/workspaces/other/threads/thread-four", resumeCursors: {} },
+  ] } });
+  const result = await prepareInstallationRestore(f.archive, f.root);
+  const tasks = JSON.parse(readFileSync(join(result.stateDirectory, "bots.json"), "utf8"))[0].tasks;
+  expect(tasks.map((task: any) => task.cwd)).toEqual([undefined, undefined, "/home/owner/project", "/old/Murage/workspaces/other/threads/thread-four"]);
 });

@@ -110,7 +110,8 @@
         "role": "leader",
         "team": "Hiring Desk",
         "appearance": {
-          "color": "blue"
+          "color": "blue",
+          "mascotBody": "circle"
         },
         "skills": [
           "job-description",
@@ -132,6 +133,7 @@
         "team": "Hiring Desk",
         "appearance": {
           "color": "green",
+          "mascotBody": "hexagon",
           "mascotExpression": "working"
         },
         "skills": [
@@ -154,7 +156,8 @@
         "role": "member",
         "team": "Hiring Desk",
         "appearance": {
-          "color": "pink"
+          "color": "pink",
+          "mascotBody": "diamond"
         },
         "skills": [
           "compensation-benchmarking",
@@ -174,7 +177,8 @@
         "role": "member",
         "team": "Hiring Desk",
         "appearance": {
-          "color": "purple"
+          "color": "teal",
+          "mascotBody": "squircle"
         },
         "skills": [
           "onboarding-plan",

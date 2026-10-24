@@ -107,7 +107,9 @@ export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAcc
     if(path==="/api/internal/memory/propose-correction"){
       const input=correction.parse(body);
       const target="handle" in input?resolve(input.handle):{id:input.id,version:input.version};
-      hydrateMemoryRecord(target.id,target.version,access,{allowance:LineageAllowance.tool()});
+      // the reader's own rule, as memory_get applies it: a record resting on a line this reader may not see is not a target
+      const withheld=readerWithheldMessage(access);
+      hydrateMemoryRecord(target.id,target.version,access,{allowance:LineageAllowance.tool(),...withheld?{withheldMessage:withheld}:{}});
       const db=database();
       assertGenericMemoryTarget(db,target.id,target.version);
       const targetBefore=db.prepare("SELECT text,state,owner_pinned,scope_id FROM memory_records WHERE id=? AND version=?").get(target.id,target.version)!;

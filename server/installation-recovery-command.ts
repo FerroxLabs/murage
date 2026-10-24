@@ -93,8 +93,8 @@ export async function installationRecoveryCommand(args: string[], input: { readI
   if (command === "review" && options.size === 1 && options.has("--data-dir")) {
     return { ok: true, operation: "review", ...reviewInstallation(options.get("--data-dir")!) };
   }
-  if (command === "activate" && options.size === 2 && options.has("--data-dir") && options.has("--review-hash")) {
-    return { ok: true, operation: "activate", ...activateInstallation(options.get("--data-dir")!, options.get("--review-hash")!) };
+  if (command === "activate" && (options.size === 2 || options.size === 3 && options.get("--acknowledge-notice") === "yes") && options.has("--data-dir") && options.has("--review-hash")) {
+    return { ok: true, operation: "activate", ...activateInstallation(options.get("--data-dir")!, options.get("--review-hash")!, { acknowledgedNotice: options.get("--acknowledge-notice") === "yes" }) };
   }
   throw new Error(usage);
 }

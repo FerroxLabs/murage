@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "LinkedIn Voice",
     "tagline": "Three founder posts and an article shaped around your real experience",
-    "summary": "Byline prepares three complete LinkedIn post drafts in your voice. Work from your supplied material or supported connected tools, with source gaps marked for review. For visuals, video and general social content, use Creator. For general conversion copy, use Copy. For capturing your personal writing voice, use Voiceprint.",
+    "summary": "Byline prepares three complete LinkedIn post drafts in your voice.",
     "category": "Marketing",
     "author": {
       "name": "Ferrox Labs",
@@ -42,7 +42,8 @@
         "title": "LinkedIn Voice",
         "description": "Byline prepares three complete LinkedIn post drafts in your voice. Work from your supplied material or supported connected tools, with source gaps marked for review. For visuals, video and general social content, use Creator. For general conversion copy, use Copy. For capturing your personal writing voice, use Voiceprint.",
         "appearance": {
-          "color": "blue"
+          "color": "purple",
+          "mascotBody": "drop"
         },
         "skills": [
           "linkedin-post",

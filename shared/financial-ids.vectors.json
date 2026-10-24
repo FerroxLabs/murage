@@ -1,0 +1,928 @@
+{
+  "ruleVersion": 3,
+  "about": "Shared test vectors for shared/financial-ids.ts and its Flux Memory port (rule version 3, one pass in two fixed stages: cards and IBANs from the original text, then every other rule from the original text with those numbers as `*` separators). Each row: maskFinancialIdentifiers(input) === expect. Rows where expect equals input must NOT be masked. Every implementation also checks, for every row: the output has the same UTF-8 byte length as the input (T13, M18), a second pass changes nothing (T12, M17; the first pass alone must already mask everything, so this is a check, not a rerun), and (F1) every row whose expect differs from its input passes the fast path. hasFinancialIdentifier lists F2: inputs for which it must be true. G rows: a card of 13 to 19 digits joined by a space or dash to a grouped card (FluxMain fuzz), and numbers a second pass used to reach after the first was masked; each is masked whole on the first pass. V rows (v3): a number that passes the card test is masked after any word, `+`, `#` or `*`, in any grouping of whole digit groups joined by one or two spaces, tabs, dots, slashes or dashes (an IBAN too); a typed `*` is a separator; an account run has no upper digit limit and every sort code or BSB shape in the run is masked; a context word ending in a 1 or 2 letter run opens its window before a digit or `*` too; a routing number is any ABA-valid number starting within 24 characters after the word; a kept prefix (1 or 2 letters starting a token, then `*`) counts as glued.",
+  "mask": [
+    {
+      "id": "M1",
+      "input": "4111 1111 1111 1111",
+      "expect": "**** **** **** ****"
+    },
+    {
+      "id": "M2",
+      "input": "4111-1111-1111-1111",
+      "expect": "****-****-****-****"
+    },
+    {
+      "id": "M3",
+      "input": "5555555555554444",
+      "expect": "****************"
+    },
+    {
+      "id": "M4",
+      "input": "378282246310005",
+      "expect": "***************"
+    },
+    {
+      "id": "M5",
+      "input": "3782 822463 10005",
+      "expect": "**** ****** *****"
+    },
+    {
+      "id": "M6",
+      "input": "6011111111111117",
+      "expect": "****************"
+    },
+    {
+      "id": "M7",
+      "input": "IBAN DE89 3704 0044 0532 0130 00",
+      "expect": "IBAN DE** **** **** **** **** **"
+    },
+    {
+      "id": "M7b",
+      "input": "iban de89 3704 0044 0532 0130 00",
+      "expect": "iban de** **** **** **** **** **"
+    },
+    {
+      "id": "M7c",
+      "input": "DE89370400440532013000",
+      "expect": "DE********************"
+    },
+    {
+      "id": "M7d",
+      "input": "de89-3704-0044-0532-0130-00",
+      "expect": "de**-****-****-****-****-**"
+    },
+    {
+      "id": "M7e",
+      "input": "GB29-NWBK-6016-1331-9268-19",
+      "expect": "GB**-****-****-****-****-**"
+    },
+    {
+      "id": "M7f",
+      "input": "gb29nwbk60161331926819",
+      "expect": "gb********************"
+    },
+    {
+      "id": "M8",
+      "input": "GB29NWBK60161331926819",
+      "expect": "GB********************"
+    },
+    {
+      "id": "M9",
+      "input": "routing 021000021",
+      "expect": "routing *********"
+    },
+    {
+      "id": "M10",
+      "input": "ABA: 011000015",
+      "expect": "ABA: *********"
+    },
+    {
+      "id": "M11",
+      "input": "deposits go to the account ending 4471",
+      "expect": "deposits go to the account ending ****"
+    },
+    {
+      "id": "M12a",
+      "input": "my Visa ending in 1234",
+      "expect": "my Visa ending in ****"
+    },
+    {
+      "id": "M12b",
+      "input": "card ends with 9876",
+      "expect": "card ends with ****"
+    },
+    {
+      "id": "M12c",
+      "input": "last four digits of my card are 2222",
+      "expect": "last four digits of my card are ****"
+    },
+    {
+      "id": "M12d",
+      "input": "acct ending 0001",
+      "expect": "acct ending ****"
+    },
+    {
+      "id": "M13",
+      "input": "Account number: 123456789012",
+      "expect": "Account number: ************"
+    },
+    {
+      "id": "M14",
+      "input": "account no. 00123456",
+      "expect": "account no. ********"
+    },
+    {
+      "id": "M15",
+      "input": "sort code 40-47-84",
+      "expect": "sort code **-**-**"
+    },
+    {
+      "id": "M16",
+      "input": "Noted: your deposits go to Frost Bank, account ending 4471.",
+      "expect": "Noted: your deposits go to Frost Bank, account ending ****."
+    },
+    {
+      "id": "M19",
+      "input": "acct 123456",
+      "expect": "acct ******"
+    },
+    {
+      "id": "M20",
+      "input": "Card: 4111 1111 1111 1111 12/27",
+      "expect": "Card: **** **** **** **** 12/27"
+    },
+    {
+      "id": "N1a",
+      "input": "+1 415 555 0123",
+      "expect": "+1 415 555 0123"
+    },
+    {
+      "id": "N1b",
+      "input": "(415) 555-0123",
+      "expect": "(415) 555-0123"
+    },
+    {
+      "id": "N1c",
+      "input": "+44 7911 123456",
+      "expect": "+44 7911 123456"
+    },
+    {
+      "id": "N1d",
+      "input": "+49 30 901820 12345",
+      "expect": "+49 30 901820 12345"
+    },
+    {
+      "id": "N2a",
+      "input": "2026-10-23",
+      "expect": "2026-10-23"
+    },
+    {
+      "id": "N2b",
+      "input": "23/10/2026",
+      "expect": "23/10/2026"
+    },
+    {
+      "id": "N2c",
+      "input": "20261023T101500Z",
+      "expect": "20261023T101500Z"
+    },
+    {
+      "id": "N2d",
+      "input": "10:15:00.123",
+      "expect": "10:15:00.123"
+    },
+    {
+      "id": "N3a",
+      "input": "1729700000000",
+      "expect": "1729700000000"
+    },
+    {
+      "id": "N3b",
+      "input": "1729700000000000000",
+      "expect": "1729700000000000000"
+    },
+    {
+      "id": "N3c",
+      "input": "1234 5678 9012 3456",
+      "expect": "1234 5678 9012 3456"
+    },
+    {
+      "id": "N4a",
+      "input": "sha256:4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce",
+      "expect": "sha256:4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce"
+    },
+    {
+      "id": "N4b",
+      "input": "0x4532015112830366",
+      "expect": "0x4532015112830366"
+    },
+    {
+      "id": "N4c",
+      "input": "192.168.0.1",
+      "expect": "192.168.0.1"
+    },
+    {
+      "id": "N4d",
+      "input": "v1.0.3",
+      "expect": "v1.0.3"
+    },
+    {
+      "id": "N5a",
+      "input": "Order 1Z999AA10123456784",
+      "expect": "Order 1Z999AA10123456784"
+    },
+    {
+      "id": "N5b",
+      "input": "ticket 20261023-00042",
+      "expect": "ticket 20261023-00042"
+    },
+    {
+      "id": "N6a",
+      "input": "the meeting ending 1430",
+      "expect": "the meeting ending 1430"
+    },
+    {
+      "id": "N6b",
+      "input": "account ending soon",
+      "expect": "account ending soon"
+    },
+    {
+      "id": "N6c",
+      "input": "Account 2",
+      "expect": "Account 2"
+    },
+    {
+      "id": "N6d",
+      "input": "account number 12",
+      "expect": "account number 12"
+    },
+    {
+      "id": "N7a",
+      "input": "routing 123456789",
+      "expect": "routing 123456789"
+    },
+    {
+      "id": "N7b",
+      "input": "DE00 3704 0044 0532 0130 00",
+      "expect": "DE00 3704 0044 0532 0130 00"
+    },
+    {
+      "id": "N8a",
+      "input": "«redacted 42 chars»",
+      "expect": "«redacted 42 chars»"
+    },
+    {
+      "id": "N8b",
+      "input": "-----BEGIN CERTIFICATE-----\nMIIBszCCAVmgAwIBAgIUJ3dQ0aQ1bU9v8xY2vT4k0qN5n6EwCgYIKoZIzj0EAwIw\n-----END CERTIFICATE-----",
+      "expect": "-----BEGIN CERTIFICATE-----\nMIIBszCCAVmgAwIBAgIUJ3dQ0aQ1bU9v8xY2vT4k0qN5n6EwCgYIKoZIzj0EAwIw\n-----END CERTIFICATE-----"
+    },
+    {
+      "id": "N9",
+      "input": "the 2026 budget",
+      "expect": "the 2026 budget"
+    },
+    {
+      "id": "T1a",
+      "input": "SSN 123-45-6789",
+      "expect": "SSN ***-**-****"
+    },
+    {
+      "id": "T1b",
+      "input": "social security: 123 45 6789",
+      "expect": "social security: *** ** ****"
+    },
+    {
+      "id": "T1c",
+      "input": "my SSN is 123456789",
+      "expect": "my SSN is *********"
+    },
+    {
+      "id": "T2",
+      "input": "ITIN 912-70-1234",
+      "expect": "ITIN ***-**-****"
+    },
+    {
+      "id": "T3a",
+      "input": "EIN 12-3456789",
+      "expect": "EIN **-*******"
+    },
+    {
+      "id": "T3b",
+      "input": "tax id 98-7654321",
+      "expect": "tax id **-*******"
+    },
+    {
+      "id": "T4a",
+      "input": "VAT DE123456789",
+      "expect": "VAT DE*********"
+    },
+    {
+      "id": "T4b",
+      "input": "VAT GB 123 4567 89",
+      "expect": "VAT GB *** **** **"
+    },
+    {
+      "id": "T4c",
+      "input": "USt-IdNr. DE 812 345 678",
+      "expect": "USt-IdNr. DE *** *** ***"
+    },
+    {
+      "id": "T5a",
+      "input": "codice fiscale RSSMRA85T10A562S",
+      "expect": "codice fiscale ****************"
+    },
+    {
+      "id": "T5b",
+      "input": "CPF 123.456.789-09",
+      "expect": "CPF ***.***.***-**"
+    },
+    {
+      "id": "T5c",
+      "input": "CNPJ 12.345.678/0001-95",
+      "expect": "CNPJ **.***.***/****-**"
+    },
+    {
+      "id": "T6a",
+      "input": "NI number AB 12 34 56 C",
+      "expect": "NI number AB ** ** ** *"
+    },
+    {
+      "id": "T6b",
+      "input": "NINO: AB123456C",
+      "expect": "NINO: AB*******"
+    },
+    {
+      "id": "T7a",
+      "input": "SIN 046-454-286",
+      "expect": "SIN ***-***-***"
+    },
+    {
+      "id": "T7b",
+      "input": "TFN 123 456 782",
+      "expect": "TFN *** *** ***"
+    },
+    {
+      "id": "T7c",
+      "input": "Aadhaar 1234 5678 9012",
+      "expect": "Aadhaar **** **** ****"
+    },
+    {
+      "id": "T7d",
+      "input": "PAN ABCDE1234F",
+      "expect": "PAN **********"
+    },
+    {
+      "id": "T7e",
+      "input": "personnummer 850709-1234",
+      "expect": "personnummer ******-****"
+    },
+    {
+      "id": "T7f",
+      "input": "BSN 123456782",
+      "expect": "BSN *********"
+    },
+    {
+      "id": "T7g",
+      "input": "CURP GOMC900101HDFRRL09",
+      "expect": "CURP ******************"
+    },
+    {
+      "id": "T8a",
+      "input": "passport no. X1234567",
+      "expect": "passport no. X*******"
+    },
+    {
+      "id": "T8b",
+      "input": "passport number 123456789",
+      "expect": "passport number *********"
+    },
+    {
+      "id": "T8c",
+      "input": "driver licence D1234567",
+      "expect": "driver licence D*******"
+    },
+    {
+      "id": "T9a",
+      "input": "SSN 000-12-3456",
+      "expect": "SSN 000-12-3456"
+    },
+    {
+      "id": "T9b",
+      "input": "SSN 666-12-3456",
+      "expect": "SSN 666-12-3456"
+    },
+    {
+      "id": "T9c",
+      "input": "SSN 123-00-3456",
+      "expect": "SSN 123-00-3456"
+    },
+    {
+      "id": "T9d",
+      "input": "SSN 123-45-0000",
+      "expect": "SSN 123-45-0000"
+    },
+    {
+      "id": "T10a",
+      "input": "123-45-6789",
+      "expect": "123-45-6789"
+    },
+    {
+      "id": "T10b",
+      "input": "call 555-12-3456",
+      "expect": "call 555-12-3456"
+    },
+    {
+      "id": "T10c",
+      "input": "order 12-3456789",
+      "expect": "order 12-3456789"
+    },
+    {
+      "id": "T11a",
+      "input": "ID number 42",
+      "expect": "ID number 42"
+    },
+    {
+      "id": "T11b1",
+      "input": "passport expires 2027",
+      "expect": "passport expires 2027"
+    },
+    {
+      "id": "T11c",
+      "input": "tax id: pending",
+      "expect": "tax id: pending"
+    },
+    {
+      "id": "T11d",
+      "input": "PAN card arrived",
+      "expect": "PAN card arrived"
+    },
+    {
+      "id": "T11b",
+      "input": "my ID number is on the 2026-10-23 letter",
+      "expect": "my ID number is on the ****-**-** letter"
+    },
+    {
+      "id": "G1",
+      "input": "checking\t4222222222222 4111 1111 1111 1111",
+      "expect": "checking\t************* **** **** **** ****"
+    },
+    {
+      "id": "G2",
+      "input": "paid from 4242-4242-4242-4242-4222222222222 today",
+      "expect": "paid from ****-****-****-****-************* today"
+    },
+    {
+      "id": "G3",
+      "input": "4222222222222 4111 1111 1111 1111 12/27",
+      "expect": "************* **** **** **** **** 12/27"
+    },
+    {
+      "id": "G4",
+      "input": "checking\t30569309025904 5555 5555 5555 4444",
+      "expect": "checking\t************** **** **** **** ****"
+    },
+    {
+      "id": "G5",
+      "input": "paid from 3782-822463-10005-30569309025904 today",
+      "expect": "paid from ****-******-*****-************** today"
+    },
+    {
+      "id": "G6",
+      "input": "30569309025904 5555 5555 5555 4444 12/27",
+      "expect": "************** **** **** **** **** 12/27"
+    },
+    {
+      "id": "G7",
+      "input": "checking\t38520000023237 4242 4242 4242 4242",
+      "expect": "checking\t************** **** **** **** ****"
+    },
+    {
+      "id": "G8",
+      "input": "paid from 6011-1111-1111-1117-38520000023237 today",
+      "expect": "paid from ****-****-****-****-************** today"
+    },
+    {
+      "id": "G9",
+      "input": "38520000023237 4242 4242 4242 4242 12/27",
+      "expect": "************** **** **** **** **** 12/27"
+    },
+    {
+      "id": "G10",
+      "input": "checking\t36227206271667 3782 822463 10005",
+      "expect": "checking\t************** **** ****** *****"
+    },
+    {
+      "id": "G11",
+      "input": "paid from 4111-1111-1111-1111-36227206271667 today",
+      "expect": "paid from ****-****-****-****-************** today"
+    },
+    {
+      "id": "G12",
+      "input": "36227206271667 3782 822463 10005 12/27",
+      "expect": "************** **** ****** ***** 12/27"
+    },
+    {
+      "id": "G13",
+      "input": "checking\t378282246310005 6011 1111 1111 1117",
+      "expect": "checking\t*************** **** **** **** ****"
+    },
+    {
+      "id": "G14",
+      "input": "paid from 5555-5555-5555-4444-378282246310005 today",
+      "expect": "paid from ****-****-****-****-*************** today"
+    },
+    {
+      "id": "G15",
+      "input": "378282246310005 6011 1111 1111 1117 12/27",
+      "expect": "*************** **** **** **** **** 12/27"
+    },
+    {
+      "id": "G16",
+      "input": "checking\t371449635398431 4111 1111 1111 1111",
+      "expect": "checking\t*************** **** **** **** ****"
+    },
+    {
+      "id": "G17",
+      "input": "paid from 4242-4242-4242-4242-371449635398431 today",
+      "expect": "paid from ****-****-****-****-*************** today"
+    },
+    {
+      "id": "G18",
+      "input": "371449635398431 4111 1111 1111 1111 12/27",
+      "expect": "*************** **** **** **** **** 12/27"
+    },
+    {
+      "id": "G19",
+      "input": "checking\t378734493671000 5555 5555 5555 4444",
+      "expect": "checking\t*************** **** **** **** ****"
+    },
+    {
+      "id": "G20",
+      "input": "paid from 3782-822463-10005-378734493671000 today",
+      "expect": "paid from ****-******-*****-*************** today"
+    },
+    {
+      "id": "G21",
+      "input": "378734493671000 5555 5555 5555 4444 12/27",
+      "expect": "*************** **** **** **** **** 12/27"
+    },
+    {
+      "id": "G22",
+      "input": "checking\t4012888888881881 4242 4242 4242 4242",
+      "expect": "checking\t**************** **** **** **** ****"
+    },
+    {
+      "id": "G23",
+      "input": "paid from 6011-1111-1111-1117-4012888888881881 today",
+      "expect": "paid from ****-****-****-****-**************** today"
+    },
+    {
+      "id": "G24",
+      "input": "4012888888881881 4242 4242 4242 4242 12/27",
+      "expect": "**************** **** **** **** **** 12/27"
+    },
+    {
+      "id": "G25",
+      "input": "checking\t5105105105105100 3782 822463 10005",
+      "expect": "checking\t**************** **** ****** *****"
+    },
+    {
+      "id": "G26",
+      "input": "paid from 4111-1111-1111-1111-5105105105105100 today",
+      "expect": "paid from ****-****-****-****-**************** today"
+    },
+    {
+      "id": "G27",
+      "input": "5105105105105100 3782 822463 10005 12/27",
+      "expect": "**************** **** ****** ***** 12/27"
+    },
+    {
+      "id": "G28",
+      "input": "checking\t6011000990139424 6011 1111 1111 1117",
+      "expect": "checking\t**************** **** **** **** ****"
+    },
+    {
+      "id": "G29",
+      "input": "paid from 5555-5555-5555-4444-6011000990139424 today",
+      "expect": "paid from ****-****-****-****-**************** today"
+    },
+    {
+      "id": "G30",
+      "input": "6011000990139424 6011 1111 1111 1117 12/27",
+      "expect": "**************** **** **** **** **** 12/27"
+    },
+    {
+      "id": "G31",
+      "input": "checking\t3530111333300000 4111 1111 1111 1111",
+      "expect": "checking\t**************** **** **** **** ****"
+    },
+    {
+      "id": "G32",
+      "input": "paid from 4242-4242-4242-4242-3530111333300000 today",
+      "expect": "paid from ****-****-****-****-**************** today"
+    },
+    {
+      "id": "G33",
+      "input": "3530111333300000 4111 1111 1111 1111 12/27",
+      "expect": "**************** **** **** **** **** 12/27"
+    },
+    {
+      "id": "G34",
+      "input": "checking\t2223003122003222 5555 5555 5555 4444",
+      "expect": "checking\t**************** **** **** **** ****"
+    },
+    {
+      "id": "G35",
+      "input": "paid from 3782-822463-10005-2223003122003222 today",
+      "expect": "paid from ****-******-*****-**************** today"
+    },
+    {
+      "id": "G36",
+      "input": "2223003122003222 5555 5555 5555 4444 12/27",
+      "expect": "**************** **** **** **** **** 12/27"
+    },
+    {
+      "id": "G37",
+      "input": "checking\t40000000000000006 4242 4242 4242 4242",
+      "expect": "checking\t***************** **** **** **** ****"
+    },
+    {
+      "id": "G38",
+      "input": "paid from 6011-1111-1111-1117-40000000000000006 today",
+      "expect": "paid from ****-****-****-****-***************** today"
+    },
+    {
+      "id": "G39",
+      "input": "40000000000000006 4242 4242 4242 4242 12/27",
+      "expect": "***************** **** **** **** **** 12/27"
+    },
+    {
+      "id": "G40",
+      "input": "checking\t500000000000000009 3782 822463 10005",
+      "expect": "checking\t****************** **** ****** *****"
+    },
+    {
+      "id": "G41",
+      "input": "paid from 4111-1111-1111-1111-500000000000000009 today",
+      "expect": "paid from ****-****-****-****-****************** today"
+    },
+    {
+      "id": "G42",
+      "input": "500000000000000009 3782 822463 10005 12/27",
+      "expect": "****************** **** ****** ***** 12/27"
+    },
+    {
+      "id": "G43",
+      "input": "checking\t6000000000000000004 6011 1111 1111 1117",
+      "expect": "checking\t******************* **** **** **** ****"
+    },
+    {
+      "id": "G44",
+      "input": "paid from 5555-5555-5555-4444-6000000000000000004 today",
+      "expect": "paid from ****-****-****-****-******************* today"
+    },
+    {
+      "id": "G45",
+      "input": "6000000000000000004 6011 1111 1111 1117 12/27",
+      "expect": "******************* **** **** **** **** 12/27"
+    },
+    {
+      "id": "G46",
+      "input": "routing 021000021 011000015-4811832",
+      "expect": "routing ********* *********-4811832"
+    },
+    {
+      "id": "G47",
+      "input": "PAN 1111 / card ending 1111-2222-333333333333333",
+      "expect": "PAN 1111 / card ending ****-****-***************"
+    },
+    {
+      "id": "G48",
+      "input": "EIN 4111 1111 1111 1111 12-3456789",
+      "expect": "EIN **** **** **** **** **-*******"
+    },
+    {
+      "id": "G49",
+      "input": "EIN 12-3456789 4111 1111 1111 1111",
+      "expect": "EIN **-******* **** **** **** ****"
+    },
+    {
+      "id": "G50",
+      "input": "EIN 4111111111111111/12-3456789",
+      "expect": "EIN ****************/**-*******"
+    },
+    {
+      "id": "G51",
+      "input": "VAT 4111111111111111 DE123456789",
+      "expect": "VAT **************** DE*********"
+    },
+    {
+      "id": "G52",
+      "input": "tax id 4111 1111 1111 1111 12-3456789 5555 5555 5555 4444",
+      "expect": "tax id **** **** **** **** **-******* **** **** **** ****"
+    },
+    {
+      "id": "G53",
+      "input": "VAT DE89 3704 0044 0532 0130 00 ATU12345678",
+      "expect": "VAT DE** **** **** **** **** ** ***********"
+    },
+    {
+      "id": "G54",
+      "input": "passport no 5555-5555-5555-4444-X1234567",
+      "expect": "passport no ****-****-****-****-********"
+    },
+    {
+      "id": "G55",
+      "input": "ID number 378282246310005 123456789",
+      "expect": "ID number *************** *********"
+    },
+    {
+      "id": "G56",
+      "input": "SSN 4111 1111 1111 1111 123-45-6789",
+      "expect": "SSN **** **** **** **** ***-**-****"
+    },
+    {
+      "id": "G57",
+      "input": "SSN 12345-6789-acct: 4012345678 123456789",
+      "expect": "SSN *****-****-acct: ********** *********"
+    },
+    {
+      "id": "G58",
+      "input": "ITIN-NINO_465718_\t-VAT / 58419*phone, 399413872035997-6941-7369-3521-1023  ",
+      "expect": "ITIN-NINO_465718_\t-VAT / 58419*phone, ***************-****-7369-3521-1023  "
+    },
+    {
+      "id": "G59",
+      "input": "VAT CALL1234567, 4111111111111111",
+      "expect": "VAT ***********, ****************"
+    },
+    {
+      "id": "G60",
+      "input": "call 4111111111111111",
+      "expect": "call ****************"
+    },
+    {
+      "id": "G61",
+      "input": "routing 4111111111111111 021000021",
+      "expect": "routing **************** *********"
+    },
+    {
+      "id": "G62",
+      "input": "EIN 12-3456789 123456789012",
+      "expect": "EIN **-******* ************"
+    },
+    {
+      "id": "G63",
+      "input": "4222222222222 4111111111111111x",
+      "expect": "************* 4111111111111111x"
+    },
+    {
+      "id": "V1",
+      "input": "call 4111 1111 1111 1111",
+      "expect": "call **** **** **** ****"
+    },
+    {
+      "id": "V2",
+      "input": "card #4111 1111 1111 1111",
+      "expect": "card #**** **** **** ****"
+    },
+    {
+      "id": "V3",
+      "input": "+4111111111111111",
+      "expect": "+****************"
+    },
+    {
+      "id": "V4",
+      "input": "tel: +1 4111-1111-1111-1111",
+      "expect": "tel: +1 ****-****-****-****"
+    },
+    {
+      "id": "V5",
+      "input": "VAT 12*4111111111111111",
+      "expect": "VAT 12*****************"
+    },
+    {
+      "id": "V6",
+      "input": "ref*4111111111111111",
+      "expect": "ref*****************"
+    },
+    {
+      "id": "V7",
+      "input": "acct: 4090983240 301831084",
+      "expect": "acct: ********** *********"
+    },
+    {
+      "id": "V8",
+      "input": "VAT 123456 4222222222222 1_",
+      "expect": "VAT ****** ************* 1_"
+    },
+    {
+      "id": "V9",
+      "input": "sort code 40-47-84-12",
+      "expect": "sort code **-**-**-**"
+    },
+    {
+      "id": "V10",
+      "input": "routing: 12 34 021000021",
+      "expect": "routing: 12 34 *********"
+    },
+    {
+      "id": "V11",
+      "input": "GB13 WEST 1234 5698 7654 DE89 3704 0044 0532 0130 00",
+      "expect": "GB13 WEST 1234 5698 7654 DE** **** **** **** **** **"
+    },
+    {
+      "id": "V12",
+      "input": "PAN BN12345678 and then it was done 12-3456789",
+      "expect": "PAN BN******** and then it was done **-*******"
+    },
+    {
+      "id": "V13",
+      "input": "phone: 5555 5555 5555 4444",
+      "expect": "phone: **** **** **** ****"
+    },
+    {
+      "id": "V14",
+      "input": "acct 123456 4111111111111111 1_",
+      "expect": "acct ****** **************** 1_"
+    },
+    {
+      "id": "V15",
+      "input": "SSN* 123-45-6789",
+      "expect": "SSN* ***-**-****"
+    },
+    {
+      "id": "V16",
+      "input": "routing* 021000021",
+      "expect": "routing* *********"
+    },
+    {
+      "id": "V17",
+      "input": "4111 1111-1111 1111",
+      "expect": "**** ****-**** ****"
+    },
+    {
+      "id": "V18",
+      "input": "4222 2222 2222 2",
+      "expect": "**** **** **** *"
+    },
+    {
+      "id": "V19",
+      "input": "41111111 11111111",
+      "expect": "******** ********"
+    },
+    {
+      "id": "V20",
+      "input": "4111  1111  1111  1111",
+      "expect": "****  ****  ****  ****"
+    },
+    {
+      "id": "V21",
+      "input": "sort code 2026-10-24",
+      "expect": "sort code 2026-10-24"
+    },
+    {
+      "id": "V22",
+      "input": "sort code 404784, bsb 062-000",
+      "expect": "sort code ******, bsb ***-***"
+    },
+    {
+      "id": "V23",
+      "input": "4111.1111.1111.1111",
+      "expect": "****.****.****.****"
+    },
+    {
+      "id": "V24",
+      "input": "4111\t1111\t1111\t1111",
+      "expect": "****\t****\t****\t****"
+    },
+    {
+      "id": "V25",
+      "input": "DE89  3704  0044  0532  0130  00",
+      "expect": "DE**  ****  ****  ****  ****  **"
+    },
+    {
+      "id": "V26",
+      "input": "sort code 4111111111111111 40-47-84",
+      "expect": "sort code **************** **-**-**"
+    },
+    {
+      "id": "V27",
+      "input": "bsb 12 062-000",
+      "expect": "bsb 12 ***-***"
+    },
+    {
+      "id": "V28",
+      "input": "BN* 809123456",
+      "expect": "BN* *********"
+    },
+    {
+      "id": "V29",
+      "input": "org.nrDE89370400440532013000",
+      "expect": "org.************************"
+    },
+    {
+      "id": "V30",
+      "input": "acct*4090983240 301831084",
+      "expect": "acct*********** *********"
+    },
+    {
+      "id": "V31",
+      "input": "sort code*40-47-84",
+      "expect": "sort code***-**-**"
+    },
+    {
+      "id": "V32",
+      "input": "account 12*345678901234",
+      "expect": "account 12*************"
+    }
+  ],
+  "hasFinancialIdentifier": [
+    "account ending 4471",
+    "sort code 40-47-84",
+    "acct 123456",
+    "SSN 123-45-6789",
+    "the 2026 budget"
+  ]
+}

@@ -34,7 +34,7 @@ export const WHATS_NEW_BY_VERSION: Readonly<Record<string, WhatsNewEntry>> = {
   "1.0.3": { kind: "none" },
   // 1.0.4: the 1.0.3 hotfix; its notes are on the docs changelog and the release page.
   "1.0.4": { kind: "none" },
-  // 1.0.5: the 1.0.4 hotfix; its notes are on the docs changelog and the release page.
+  // package 1.0.5 is the "1.0.4" feature release (the 1.0.4 package number went to the hotfix); its page is set at the release cut
   "1.0.5": { kind: "none" },
 };
 

@@ -120,19 +120,29 @@ it.each(["private-thread", "bot-task", "room-thread", "room-task", "new-room-tas
   },
 );
 
-it.each(["membership", "removal", "team", "existing-task"])(
+it.each(["membership", "team"])(
   "still revokes a %s change bundled with an independent room addition", change => {
     const f = fixture(), next = structuredClone(f.roster), before = memoryState().policyRevision;
     next.groups.push({id:"new-room",threadId:"new-thread",memberIds:["a","b"]});
     if (change === "membership") next.groups[0].memberIds = ["b"];
-    if (change === "removal") next.groups.shift();
     if (change === "team") next.bots[0].section = "beta";
-    if (change === "existing-task") next.bots[0].tasks = [{threadId:"added-private-task"}];
     persistMemoryRoster(next, () => { Object.assign(f.roster, next); });
     expect(memoryState().policyRevision).toBeGreaterThan(before);
     expect(() => assertMemoryAccess(f.access)).toThrow("MEMORY_CONTEXT_REVOKED");
   },
 );
+// SCOPED-REVOKES (1.0.4): a room removed or a fresh task added beside a room addition withdraws only the room's threads; the member's own
+// access stays, the room scope is denied, the policy revision does not move.
+it.each(["removal", "existing-task"])("scopes a %s bundled with an independent room addition to what it withdraws", change => {
+  const f = fixture(), next = structuredClone(f.roster), before = memoryState().policyRevision;
+  next.groups.push({id:"new-room",threadId:"new-thread",memberIds:["a","b"]});
+  if (change === "removal") next.groups.shift();
+  if (change === "existing-task") next.bots[0].tasks = [{threadId:"added-private-task"}];
+  persistMemoryRoster(next, () => { Object.assign(f.roster, next); });
+  expect(memoryState().policyRevision).toBe(before);
+  expect(() => assertMemoryAccess(f.access)).not.toThrow();
+  if (change === "removal") expect(() => assertMemoryAccess(f.access, ensureScope("room","room"))).toThrow("MEMORY_SCOPE_DENIED");
+});
 
 it("fails closed for a legacy hash-only roster snapshot", () => {
   const f = fixture(), db = database(), before = memoryState().policyRevision;
@@ -182,15 +192,25 @@ it.each(["bot", "room"] as const)("opening another existing %s task preserves ba
   expect(()=>assertMemoryAccess(f.access)).not.toThrow();
 });
 
-it.each(["membership", "task-removal", "team"])("task navigation still revokes a real %s restriction",change=>{
+it.each(["membership", "team"])("task navigation still revokes a real %s restriction",change=>{
   const f=taskNavigationFixture("room"),before=memoryState().policyRevision,next=structuredClone(f.roster);
   next.groups[0].threadId=next.groups[0].tasks![1].threadId;
   if(change==="membership")next.groups[0].memberIds=["b"];
-  if(change==="task-removal")next.groups[0].tasks=next.groups[0].tasks!.filter(task=>task.threadId!==f.background);
   if(change==="team")next.bots[0].section="beta";
   persistMemoryRoster(next,()=>Object.assign(f.roster,next));
   expect(memoryState().policyRevision).toBeGreaterThan(before);
   expect(()=>assertMemoryAccess(f.access)).toThrow("MEMORY_CONTEXT_REVOKED");
+});
+it("task navigation with a task removal ends that task's access and receipts only (SCOPED-REVOKES)",async()=>{
+  const f=taskNavigationFixture("room"),before=memoryState().policyRevision,next=structuredClone(f.roster);
+  const bundle=await buildMemoryBundle("",f.access,{search:async()=>({hits:[],vectorRows:0})}, {allowance: LineageAllowance.tool()});
+  prepareMemoryDisclosure(bundle,f.access,"fixture");deliverMemoryDisclosure(bundle.bundleId,f.access);
+  next.groups[0].threadId=next.groups[0].tasks![1].threadId;
+  next.groups[0].tasks=next.groups[0].tasks!.filter(task=>task.threadId!==f.background);
+  persistMemoryRoster(next,()=>Object.assign(f.roster,next));
+  expect(memoryState().policyRevision).toBe(before);
+  expect(()=>assertMemoryAccess(f.access)).toThrow("MEMORY_SCOPE_DENIED");
+  expect(database().prepare("SELECT state FROM memory_disclosures WHERE bundle_id=?").get(bundle.bundleId)?.state).toBe("revoked");
 });
 
 it("adding a collision-free room task preserves unrelated original access and durable receipts",async()=>{
@@ -208,16 +228,25 @@ it("adding a collision-free room task preserves unrelated original access and du
   expect(()=>assertMemoryAccess(f.access)).not.toThrow();
 });
 
-it.each(["private-alias","other-room-alias","membership","remove-thread"])("room task additions still revoke %s changes",change=>{
+it.each(["private-alias","other-room-alias","membership"])("room task additions still revoke %s changes",change=>{
   const f=fixture(),next=structuredClone(f.roster),before=memoryState().policyRevision;
   next.groups[0].tasks=[{threadId:"new-scheduled-thread"}];
   if(change==="private-alias")next.groups[0].tasks.push({threadId:"private-a"});
   if(change==="other-room-alias")next.groups.push({id:"other",threadId:"new-scheduled-thread",memberIds:["a"]});
   if(change==="membership")next.groups[0].memberIds=["a"];
-  if(change==="remove-thread")next.groups[0].threadId="new-scheduled-thread";
   persistMemoryRoster(next,()=>Object.assign(f.roster,next));
   expect(memoryState().policyRevision).toBeGreaterThan(before);
   expect(()=>assertMemoryAccess(f.access)).toThrow("MEMORY_CONTEXT_REVOKED");
+});
+it("a room task addition beside the room thread's removal ends only the removed thread (SCOPED-REVOKES)",async()=>{
+  const f=fixture("room-thread"),next=structuredClone(f.roster),before=memoryState().policyRevision;
+  const bundle=await buildMemoryBundle("",f.access,{search:async()=>({hits:[],vectorRows:0})}, {allowance: LineageAllowance.tool()});
+  prepareMemoryDisclosure(bundle,f.access,"fixture");deliverMemoryDisclosure(bundle.bundleId,f.access);
+  next.groups[0].tasks=[{threadId:"new-scheduled-thread"}];next.groups[0].threadId="new-scheduled-thread";
+  persistMemoryRoster(next,()=>Object.assign(f.roster,next));
+  expect(memoryState().policyRevision).toBe(before);
+  expect(()=>assertMemoryAccess(f.access)).toThrow("MEMORY_SCOPE_DENIED");
+  expect(database().prepare("SELECT state FROM memory_disclosures WHERE bundle_id=?").get(bundle.bundleId)?.state).toBe("revoked");
 });
 
 it("adding a fresh independent owner task preserves prior access and grant epoch",async()=>{
@@ -232,7 +261,17 @@ it("adding a fresh independent owner task preserves prior access and grant epoch
   closeDatabase();reconcileMemoryRoster(f.roster);expect(memoryState().policyRevision).toBe(before);
 });
 
-it.each(["remove-thread","private-alias","room-alias","membership","section","principal","existing-scope"])("owner task additions still revoke %s changes",change=>{
+it("an owner task addition beside the private thread's removal ends only the removed thread (SCOPED-REVOKES)",async()=>{
+  const f=fixture(),before=memoryState().policyRevision,next=structuredClone(f.roster);
+  const bundle=await buildMemoryBundle("",f.access,{search:async()=>({hits:[],vectorRows:0})}, {allowance: LineageAllowance.tool()});
+  prepareMemoryDisclosure(bundle,f.access,"fixture");deliverMemoryDisclosure(bundle.bundleId,f.access);
+  next.bots[0].threadId="fresh-owner-task";next.bots[0].tasks=[{threadId:"fresh-owner-task"}];
+  persistMemoryRoster(next,()=>Object.assign(f.roster,next));
+  expect(memoryState().policyRevision).toBe(before);
+  expect(()=>assertMemoryAccess(f.access)).toThrow("MEMORY_SCOPE_DENIED");
+  expect(database().prepare("SELECT state FROM memory_disclosures WHERE bundle_id=?").get(bundle.bundleId)?.state).toBe("revoked");
+});
+it.each(["private-alias","room-alias","membership","section","principal","existing-scope"])("owner task additions still revoke %s changes",change=>{
   let binding:string|undefined;
   if(change==="principal"){
     binding=observeVerifiedHuman({platform:"slack",connectionId:"fixture",authorityId:"team",userId:"person"});
@@ -241,7 +280,6 @@ it.each(["remove-thread","private-alias","room-alias","membership","section","pr
   }
   const f=fixture("private-a",change==="principal"?resolveHumanBinding(binding!):undefined),before=memoryState().policyRevision,next=structuredClone(f.roster);
   next.bots[0].tasks=[{threadId:"private-a"},{threadId:"fresh-owner-task"}];
-  if(change==="remove-thread"){next.bots[0].threadId="fresh-owner-task";next.bots[0].tasks=[{threadId:"fresh-owner-task"}];}
   if(change==="private-alias")next.bots[0].tasks[1].threadId="private-b";
   if(change==="room-alias")next.bots[0].tasks[1].threadId="room-thread";
   if(change==="membership")next.groups[0].memberIds=["a"];

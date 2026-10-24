@@ -438,6 +438,8 @@ export const BROWSER_STATIC: ReadonlyArray<{ method: string; path: RegExp }> = [
   { method: "GET", path: /^\/app-icon\.svg$/ },
   { method: "GET", path: /^\/murage-logo(?:-dark)?\.png$/ },
   { method: "GET", path: /^\/favicon\.ico$/ },
+  // Template artwork for the bot and team libraries: one file per catalog slug, in two sizes.
+  { method: "GET", path: /^\/library-art\/[a-z0-9][a-z0-9-]*-(?:256|512)\.webp$/ },
   // The speech detector's model (`public/vad`, fetched by
   // `src/lib/silero-vad.ts:36`). One file, by name: `/vad/*` would be the
   // first wildcard on this list, and there is nothing else in there.

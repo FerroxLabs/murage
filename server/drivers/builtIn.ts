@@ -17,6 +17,7 @@ import { QwenAgentDriver } from "./acp/qwen.ts";
 import { CustomAcpDriver } from "./acp/custom.ts";
 import { HermesAgentDriver } from "./acp/hermes.ts";
 import { OpenclawAgentDriver } from "./acp/openclaw.ts";
+import { ClineAgentDriver } from "./acp/cline.ts";
 import { OpenAICompatDriver } from "./openai-compat.ts";
 import { PiDriver } from "./pi.ts";
 import { MinimaxDriver } from "./minimax.ts";
@@ -35,6 +36,7 @@ export const BUILT_IN_DRIVERS: readonly AnyProviderDriver[] = [
   QwenAgentDriver,
   HermesAgentDriver,
   OpenclawAgentDriver,
+  ClineAgentDriver,
   CustomAcpDriver,
   PiDriver,
   OpenAICompatDriver,

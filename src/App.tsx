@@ -8,6 +8,7 @@ import { ChatView } from "@/components/ChatView";
 import { GroupView } from "@/components/GroupView";
 import { preloadConnectedApps } from "@/lib/connected-apps-preload";
 import { UpdateBanner } from "@/components/UpdateBanner";
+import { UpdateStaleNotice } from "@/components/UpdateStaleNotice";
 import { ServerLifecycleBanner } from "@/components/ServerLifecycleBanner";
 import { MemoryIntegrityStrip } from "@/components/MemoryIntegrityStrip";
 import { CloudUnreachableBanner } from "@/components/cloud/CloudUnreachableBanner";
@@ -24,6 +25,7 @@ import { CommandPaletteHost } from "@/components/CommandPaletteHost";
 import { FirstRunPhases } from "@/components/FirstRunPhases";
 import { useSetupView } from "@/components/FirstRunChrome";
 import { firstRunOwnsMainView } from "@/lib/first-run";
+import { settleSendKeyForUpgrade } from "@/lib/send-key";
 import { BotListDrawerProvider, PhoneBotListBar, useBotListDrawer } from "@/components/OpenBotListButton";
 import { heldComputerControlBotIds } from "@/lib/computer-control";
 import { skillRecorderEnabled } from "@/lib/feature-flags";
@@ -84,6 +86,9 @@ function Shell() {
   // The same cached `GET /api/setup` the phase bar reads, so the band and the
   // view underneath it cannot disagree about whose screen this is.
   const { view: setupView } = useSetupView();
+  // 1.0.4 made Ctrl/Cmd+Enter the Japanese default; an install set up before it keeps Enter.
+  const setupFirstRun = setupView?.firstRun;
+  useEffect(() => settleSendKeyForUpgrade(setupFirstRun), [setupFirstRun]);
   // Same three-state answer the whole app uses, and the same rule: only a
   // CONFIRMED desktop gets a first-run surface. See the comment on App().
   const desktop = useDesktopSurface();
@@ -377,6 +382,7 @@ function Shell() {
       {state.signedOut && <SignedOutCard />}
       {/* fixed-position popup, bottom-left — outside the layout flow */}
       <UpdateBanner />
+      <UpdateStaleNotice />
       {/* The first run's phases, as a band ABOVE whatever is in the main view
           rather than on top of it or beside it. It owns its own visibility
           (src/lib/first-run.ts): the server's `view.firstRun` offers it, and

@@ -53,7 +53,9 @@ async function send(page:Page,text:string,threadId:string){
   await page.getByRole("textbox",{name:"Message Threads UI fixture",exact:true}).press(SEND_KEY);
   const response=await sent;expect(response.status()).toBe(202);expect(response.request().postDataJSON().threadId).toBe(threadId);
 }
-test("New task retains the visible model selection after click and reload",async({page},info)=>{
+// 1.0.4 SL-K K1 (server/store.ts createTask): a new chat is born following its
+// bot's model, even when it is opened from a chat with a pick of its own.
+test("New task follows the bot's model after click and reload, even from a chat with its own pick",async({page},info)=>{
   await page.route("**/*",route=>new URL(route.request().url()).origin===origin?route.continue():route.abort());
   const before=await state();
   const selection={...before.tasks.find((task:any)=>task.threadId===second).modelSelection,effort:"high"};
@@ -66,6 +68,7 @@ test("New task retains the visible model selection after click and reload",async
   await page.keyboard.press("Escape");
   const model=page.getByRole("button",{name:/^Thread model:/});
   const expectedLabel=`Thread model: ${labelTwo} · high effort`;
+  const followLabel=`Thread model: ${labelOne}`;
   await expect(model).toHaveAttribute("aria-label",expectedLabel);
   await expect.poll(async()=>(await state()).threadId).toBe(second);
   const created=page.waitForResponse(response=>response.url().endsWith(`/api/bots/${botId}/tasks`)&&response.request().method()==="POST");
@@ -74,22 +77,24 @@ test("New task retains the visible model selection after click and reload",async
   const response=await created;expect(response.status()).toBe(201);
   const result=await response.json(),threadId=result.task.threadId;
   expect(before.tasks.some((task:any)=>task.threadId===threadId)).toBe(false);
-  expect(result.task.modelSelection).toEqual(selection);
+  expect(result.task.modelSelection).toBeUndefined();
   const readback=await state();
   expect(readback.threadId).toBe(threadId);
   expect(readback.tasks).toHaveLength(before.tasks.length+1);
-  expect(readback.tasks.find((task:any)=>task.threadId===threadId).modelSelection).toEqual(selection);
+  expect(readback.tasks.find((task:any)=>task.threadId===threadId).modelSelection).toBeUndefined();
+  // The chat it was opened from keeps its own pick.
+  expect(readback.tasks.find((task:any)=>task.threadId===second).modelSelection).toEqual(selection);
   expect((await api("GET",`/api/threads/${threadId}/messages?limit=10`)).messages).toEqual([]);
-  await expect(model).toHaveAttribute("aria-label",expectedLabel);
+  await expect(model).toHaveAttribute("aria-label",followLabel);
   const tasks=page.getByRole("button",{name:"All threads",exact:true});
   await expect(tasks).toContainText(result.task.title);
   await expect(tasks).toContainText(String(before.tasks.length+1));
   await page.reload();
   // A reload lands on the Chief (store.tsx hydrate: nothing in the page keeps
   // the selection); coming back to the bot must find the new task still open
-  // with the selection it was created with.
+  // and still following the bot.
   await (await openSidebar(page)).getByText("Threads UI fixture",{exact:true}).click();
-  await expect(model).toHaveAttribute("aria-label",expectedLabel);
+  await expect(model).toHaveAttribute("aria-label",followLabel);
   await expect(tasks).toContainText(result.task.title);
   expect((await state()).threadId).toBe(threadId);
   await info.attach("new-task-readback",{body:JSON.stringify({threadId,selection,taskCount:readback.tasks.length}),contentType:"application/json"});
@@ -99,7 +104,10 @@ test("thread controls, sends, Stop and read state follow the visible conversatio
   // The fixture is shared: the New task test (or a retry of this one) leaves
   // an effort on the threads. This test starts both from their plain model.
   for(const threadId of [first,second]){
-    const {effort:_effort,...plain}=(await state()).tasks.find((task:any)=>task.threadId===threadId).modelSelection;
+    // A chat with no pick of its own follows the bot (1.0.4 SL-K K1): nothing to strip.
+    const own=(await state()).tasks.find((task:any)=>task.threadId===threadId).modelSelection;
+    if(!own)continue;
+    const {effort:_effort,...plain}=own;
     await api("PATCH",`/api/bots/${botId}/tasks/${threadId}`,{modelSelection:plain});
   }
   await page.addInitScript(()=>localStorage.setItem("murage-email-gate","skipped"));await page.goto(origin);

@@ -1,3 +1,5 @@
+import { t } from "@/lib/i18n";
+import { threadLinkLabel } from "../../shared/thread-link";
 import { unreadTaskLabel } from "@/lib/project-presentation";
 // Separate task contexts for an agent or a channel.
 //
@@ -8,7 +10,7 @@ import { unreadTaskLabel } from "@/lib/project-presentation";
 import { allHeldTasks, taskCount } from "@/lib/task-window";
 import { useOlderTasks } from "@/lib/use-ensure-task";
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { BellOff, Check, ChevronDown, ChevronRight, Clock, Download, Loader2, Pencil, Pin, Plus, Search, Trash2 } from "lucide-react";
+import { BellOff, Check, ChevronDown, ChevronRight, Clock, Download, Link2Off, Loader2, Pencil, Pin, Plus, Search, Trash2 } from "lucide-react";
 import { api, useStore, type Bot, type Group, type Task } from "@/state/store";
 import { deletionConsequenceLines } from "@/lib/deletion-notes";
 import { useDeletionCounts } from "./ConfirmDelete";
@@ -172,7 +174,7 @@ export function hoistWaitingTasks<T extends { threadId: string }>(
   return { sections, navigable };
 }
 
-type PickerTask = { unreadCount?: number } & Pick<Task, "threadId" | "title" | "createdAt" | "lastActivityAt" | "busy" | "unread" | "pinned" | "activity"> & {
+type PickerTask = { unreadCount?: number } & Pick<Task, "threadId" | "title" | "createdAt" | "lastActivityAt" | "busy" | "unread" | "pinned" | "activity" | "link"> & {
   usage?: Task["usage"];
 };
 
@@ -181,10 +183,12 @@ export function ConversationTaskPicker({
   tasks,
   busy,
   onNew,
+  onNewInFolder,
   onSwitch,
   onRename,
   onDelete,
   onTogglePin,
+  onRemoveLink,
   routineOf = NO_ROUTINES,
   initialOpen = false,
   now,
@@ -207,11 +211,15 @@ export function ConversationTaskPicker({
   older?: { hasMore: boolean; loading: boolean; failed: boolean; onLoadMore: () => void };
   busy: boolean;
   onNew: () => void;
+  /** Start a task in a folder the person picks. Desktop bots only; absent elsewhere. */
+  onNewInFolder?: () => void;
   onSwitch: (threadId: string) => void;
   onRename: (threadId: string, title: string) => void;
   onDelete: (threadId: string) => void;
   /** Bots only for now; a channel's task switcher has no pin. */
   onTogglePin?: (threadId: string, pinned: boolean) => void;
+  /** Take the link off a conversation; absent where links are not offered. */
+  onRemoveLink?: (threadId: string) => void;
   /** which routine a task thread is a run of, if any */
   routineOf?: (threadId: string) => RoutineRef | undefined;
   /** Render with the menu open (static-markup tests). */
@@ -487,7 +495,7 @@ export function ConversationTaskPicker({
       >
         <Check size={13} className={cn("shrink-0", active ? "text-accent" : "opacity-0")} />
         {renaming === task.threadId ? (
-          <input
+          <input dir="auto"
             autoFocus
             value={draft}
             maxLength={80}
@@ -557,6 +565,30 @@ export function ConversationTaskPicker({
                 {tokens && <span title={tokens.detail}>{` · ${tokens.label}`}</span>}
               </span>
             </div>
+          </button>
+        )}
+        {task.link && renaming !== task.threadId && (
+          <a
+            href={task.link}
+            target="_blank"
+            rel="noreferrer"
+            dir="ltr"
+            title={task.link}
+            aria-label={t("task.openLink", { link: threadLinkLabel(task.link) ?? task.link })}
+            className="shrink-0 rounded px-1 font-mono text-[11px] text-ink-secondary hover:bg-raised hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus [unicode-bidi:isolate]"
+          >
+            {threadLinkLabel(task.link) ?? t("task.link")}
+          </a>
+        )}
+        {task.link && onRemoveLink && renaming !== task.threadId && (
+          <button
+            type="button"
+            onClick={() => { clearDismiss(); onRemoveLink(task.threadId); }}
+            aria-label={t("task.removeLink")}
+            title={t("task.removeLink")}
+            className="rounded p-1 text-ink-secondary opacity-0 hover:bg-raised hover:text-ink focus-visible:opacity-100 group-hover:opacity-100"
+          >
+            <Link2Off size={13} />
           </button>
         )}
         {renaming !== task.threadId && (
@@ -684,7 +716,7 @@ export function ConversationTaskPicker({
           <div className="flex items-center gap-2 px-2 pb-1.5 pt-1.5">
             <div className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-hairline/40 bg-inset px-2.5 py-1.5 focus-within:border-accent/60">
               <Search size={13} className="shrink-0 text-ink-secondary" />
-              <input
+              <input dir="auto"
                 ref={search}
                 autoFocus
                 value={query}
@@ -862,10 +894,36 @@ export function ConversationTaskPicker({
           >
             <Plus size={13} className="text-ink-secondary" /> New task
           </button>
+          {onNewInFolder && (
+            <button
+              type="button"
+              onClick={() => {
+                onNewInFolder();
+                closeMenu();
+              }}
+              disabled={busy}
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] text-ink hover:bg-raised/50 disabled:opacity-40"
+            >
+              <Plus size={13} className="text-ink-secondary" /> {t("task.newInFolder")}
+            </button>
+          )}
         </div>
       )}
     </div>
   );
+}
+
+const LAST_TASK_FOLDER_KEY = "murage.newTaskFolder.";
+
+/** Ask for a folder (starting at the one used last for this bot, else the
+ * bot's own) and open a new task there. Cancelling the picker does nothing. */
+async function newTaskInFolder(bot: Bot, dispatch: (action: { type: "newTask"; botId: string; cwd?: string }) => void): Promise<void> {
+  let last: string | undefined;
+  try { last = window.localStorage.getItem(LAST_TASK_FOLDER_KEY + bot.id) ?? undefined; } catch { /* storage may be blocked */ }
+  const chosen = await window.muragebox?.pickFolder?.(last ?? bot.cwd ?? undefined);
+  if (!chosen) return;
+  try { window.localStorage.setItem(LAST_TASK_FOLDER_KEY + bot.id, chosen); } catch { /* a suggestion only */ }
+  dispatch({ type: "newTask", botId: bot.id, cwd: chosen });
 }
 
 export function TaskPicker({ bot }: { bot: Bot }) {
@@ -893,12 +951,14 @@ export function TaskPicker({ bot }: { bot: Bot }) {
       older={{ hasMore: older.hasMore, loading: older.loading, failed: older.failed, onLoadMore: older.loadMore }}
       busy={false}
       onNew={() => dispatch({ type: "newTask", botId: bot.id })}
+      onNewInFolder={desktop && window.muragebox?.pickFolder ? () => void newTaskInFolder(bot, dispatch) : undefined}
       onSwitch={(threadId) => dispatch({ type: "switchTask", botId: bot.id, threadId })}
       onRename={(threadId, title) => dispatch({ type: "renameTask", botId: bot.id, threadId, title })}
       onDelete={(threadId) => dispatch({ type: "deleteTask", botId: bot.id, threadId })}
       deleteScope={{ botId: bot.id }}
       onPrefetch={(threadId) => startConversationPrefetch(api, { ownerId: bot.id, threadId, pageSize: MESSAGE_PAGE_SIZE })}
       onTogglePin={(threadId, pinned) => dispatch({ type: "pinTask", botId: bot.id, threadId, pinned })}
+      onRemoveLink={(threadId) => dispatch({ type: "updateTask", botId: bot.id, threadId, patch: { link: null } })}
     />
   );
 }
