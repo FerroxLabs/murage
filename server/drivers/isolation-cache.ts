@@ -12,7 +12,7 @@
 // version). `isolationStats` counts builds and hits per cache, for the tests.
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { delimiter, isAbsolute, join } from "node:path";
-import { splitCliString } from "../env-path.ts";
+import { splitCliString, windowsCommandFile } from "../env-path.ts";
 
 type Recorder = (path: string) => void;
 let recorder: Recorder | null = null;
@@ -112,17 +112,22 @@ export function cliFile(cli: string, env: Record<string, string | undefined> = p
  *  cli that carries fixed arguments, `ag claude agp`) becomes the file cliFile finds on `env`, the env the driver's
  *  `--version` probe ran on (Murage's own PATH), so the handed map's PATH (the owner's captured shell PATH, which the
  *  child keeps for its own lookups) never picks a different, older build than the one Murage version-checked. A cli that
- *  already names a path is spawned as it is (spawn reports its own ENOENT). Windows already resolves on Murage's PATH
- *  (env-path.ts whichWin, .cmd shims included) and a Cloud home runs the image's CLI by name: both keep `cli`. A bare name
- *  found nowhere on `env` throws ENOENT; it never falls back to whatever the shell PATH would find. */
+ *  already names a path is spawned as it is (spawn reports its own ENOENT). On Windows the bare name becomes the file
+ *  found PATHEXT-aware on `env`'s PATH first, then on Murage's own PATH (env-path.ts whichWin), the same order execCli's
+ *  `--version` probe uses: so a driver that puts its engine's folder first (the bundled Fuigo, or the Fuigo build it
+ *  version-checked) runs that file, never an npm `.cmd` shim that happens to sit earlier on Murage's PATH. spawnCli then
+ *  parses a `.cmd` it is handed down to the program it wraps. A name found nowhere is kept, so spawn reports its own
+ *  ENOENT. A Cloud home runs the image's CLI by name and keeps `cli`. On macOS and Linux a bare name found nowhere on `env`
+ *  throws ENOENT; it never falls back to whatever the shell PATH would find. */
 export function engineLaunchFile(cli: string, env: Record<string, string | undefined>): string {
-  if (process.platform === "win32" || process.env.MURAGE_CLOUD_ROLE === "home") return cli;
+  if (process.env.MURAGE_CLOUD_ROLE === "home") return cli;
   const trimmed = cli.trim();
   // resolveCliSpawn's own order: an existing file whose path has spaces is one word, never split
   if (trimmed.includes(" ") && existsSync(trimmed)) return cli;
   const [head, ...fixed] = splitCliString(cli);
-  if (!head || /[\\/]/.test(head)) return cli;
-  const file = cliFile(head, env);
+  if (!head || /[\\/]/.test(head) || (process.platform === "win32" && /^[a-zA-Z]:/.test(head))) return cli;
+  const file = process.platform === "win32" ? windowsCommandFile(head, env.PATH) : cliFile(head, env);
+  if (!file && process.platform === "win32") return cli;
   if (!file) {
     const error: NodeJS.ErrnoException = new Error(`spawn ${head} ENOENT`);
     error.code = "ENOENT";
