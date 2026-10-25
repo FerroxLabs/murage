@@ -3,6 +3,7 @@ import { lstatSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { writeFileAtomic } from "../../atomic.ts";
+import { channelReply } from "../reply-text.ts";
 import { ChannelSendError, DurableDelivery, type ChannelRuns } from "../durable-delivery.ts";
 import { normalizeDiscordMessage, discordBindingSchema, discordId, discordPrompt, type DiscordBinding } from "./event.ts";
 import type { DiscordTransport } from "./transport.ts";
@@ -183,7 +184,7 @@ export class DiscordService {
     if (c.binding && (message.sender.name || message.sender.username)) { try { this.options.onSender?.(c.binding, message.sender); } catch { /* optional */ } }
     const pairedNow = !c.binding;
     this.ledger!.accept({ deliveryId: message.deliveryId, occurredAt: message.occurredAt,
-      ...(pairedNow ? { prompt: "", response: "Discord is paired with Murage. Before chatting, link this channel account in Murage Settings → Memory. Then send your message again." } : discordPrompt(message.text)) });
+      ...(pairedNow ? { prompt: "", response: channelReply("channelReply.paired", { channel: "Discord" }) } : discordPrompt(message.text)) });
     // Gateway has no per-message ACK. Durable receipt precedes model work.
     if (generation === this.generation) queueMicrotask(() => { void this.tick().catch(() => { this.error = "delivery-failed"; }); });
   }

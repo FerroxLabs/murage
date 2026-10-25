@@ -44,6 +44,8 @@ export type Surface = "device" | "browser";
 /** One request, reduced to what the allowlist decides on. */
 export interface RouteRequest {
   path: string;
+  /** Query string, used only for the bounded owner chat search. */
+  search?: string;
   method: string;
   /** Whether the credential on the request resolved to a paired device. */
   authenticated: boolean;
@@ -321,6 +323,9 @@ const DEVICE_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   { method: "DELETE", path: /^\/api\/bots\/[\w-]+\/tasks\/[\w-]+$/ },
   // the older tasks the roster window leaves out: a page of them, one by its thread, and whose a thread is
   { method: "GET", path: /^\/api\/(?:bots|groups)\/[\w-]+\/tasks(?:\/[\w-]+)?$/ },
+  // All chats on the paired phone: a page of the owner's chats from the task records, titles and times only (no transcript); the harness lists
+  // what the phone's sidebar shows. The browser door does not get it.
+  { method: "GET", path: /^\/api\/chats$/ },
   { method: "GET", path: /^\/api\/threads\/[\w-]+\/owner$/ },
   // Paired-safe profile subset. The harness route itself rejects fields
   // outside identity, avatar, notifications, and voice preferences.
@@ -350,10 +355,7 @@ const DEVICE_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   { method: "POST", path: /^\/api\/threads\/[\w-]+\/messages\/[\w-]+\/reactions$/ },
   { method: "GET", path: /^\/api\/threads\/[\w-]+\/export$/ },
   { method: "POST", path: /^\/api\/threads\/[\w-]+\/respond$/ },
-  // GET /api/search is deliberately absent. It is a full-transcript grep with
-  // no visibility scoping — one character of `q` returns hits from every
-  // thread on the machine, including hidden bots and bot-to-bot rooms. A
-  // paired device gets transcripts one thread id at a time or not at all.
+  // Chat search is admitted separately below, with its query bounds checked.
 
   // App-owned profile images. Upload is image-only and capped at 10 MB by
   // the harness; GET is a single bare generated filename, never a path.
@@ -438,6 +440,8 @@ export const BROWSER_STATIC: ReadonlyArray<{ method: string; path: RegExp }> = [
   { method: "GET", path: /^\/app-icon\.svg$/ },
   { method: "GET", path: /^\/murage-logo(?:-dark)?\.png$/ },
   { method: "GET", path: /^\/favicon\.ico$/ },
+  // Template artwork for the bot and team libraries: one file per catalog slug, in two sizes.
+  { method: "GET", path: /^\/library-art\/[a-z0-9][a-z0-9-]*-(?:256|512)\.webp$/ },
   // The speech detector's model (`public/vad`, fetched by
   // `src/lib/silero-vad.ts:36`). One file, by name: `/vad/*` would be the
   // first wildcard on this list, and there is nothing else in there.
@@ -508,7 +512,7 @@ export const BROWSER_DENIED: ReadonlyArray<{ method: string; path: RegExp }> = [
  *  - `GET /api/companion/endpoints` — connection candidates for a native
  *    client choosing an address to dial. A browser already arrived.
  *
- * And `GET /api/search` stays absent on both surfaces. The harness now scopes
+ * Plain `GET /api/search` stays absent on both surfaces. The harness scopes
  * it to visible threads for any non-desktop surface
  * (`server/index.ts:6350-6351`), which fixes the leak, but nothing yet bounds
  * the query — `?q=e` against a LIKE scan is still a bulk read of every
@@ -723,7 +727,7 @@ const EXPLAINED: ReadonlyArray<{ path: RegExp; error: string }> = [
  * is what keeps a stolen token from mapping the API. An allowlist rather than
  * a blocklist is the property this whole module exists for, and the one that
  * quietly stopped being true once before. */
-export function denyReason({ path, method, authenticated, surface }: RouteRequest): Denial | null {
+export function denyReason({ path, method, authenticated, surface, search }: RouteRequest): Denial | null {
   // The execution routes, refused before anything can allow them. First, so
   // that no present or future entry in BROWSER_ALLOWED can reach them.
   if (surface === "browser" && BROWSER_DENIED.some((r) => r.method === method && r.path.test(path))) {
@@ -749,6 +753,12 @@ export function denyReason({ path, method, authenticated, surface }: RouteReques
       : { status: 401, error: "pair this device from Phone settings in Murage on your computer" };
   }
 
+  if (surface === "device" && method === "GET" && path === "/api/search") {
+    const params = new URLSearchParams(search);
+    const q = params.get("q")?.trim() ?? "";
+    const limit = Number(params.get("limit") ?? "40");
+    if (params.get("view") === "chats" && q.length >= 3 && q.length <= 500 && Number.isInteger(limit) && limit >= 1 && limit <= 40) return null;
+  }
   const allowed = surface === "browser" ? BROWSER_ALLOWED : DEVICE_ALLOWED;
   if (allowed.some((route) => route.method === method && route.path.test(path))) return null;
 

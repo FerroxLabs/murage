@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { channelReply } from "../reply-text.ts";
 
 export const discordId = z.string().regex(/^[1-9][0-9]{0,19}$/);
 export const discordBindingSchema = z.object({
@@ -22,6 +23,6 @@ export function normalizeDiscordMessage(raw: unknown, identity: DiscordIdentity)
 }
 export function discordPrompt(text: string): { prompt: string; response?: string } {
   if (/^\/(?:approve|deny|allow|reject|pair)(?:\s|$)/i.test(text) || /^(?:approve|deny|allow|reject|yes|no)$/i.test(text.trim()))
-    return { prompt: "", response: "Review approvals in Murage. Discord messages cannot approve actions." };
+    return { prompt: "", response: channelReply("channelReply.approvalsInMurage", { channel: "Discord" }) };
   return { prompt: `[UNTRUSTED DISCORD CHANNEL MESSAGE]\n${text}\n[/UNTRUSTED DISCORD CHANNEL MESSAGE]` };
 }

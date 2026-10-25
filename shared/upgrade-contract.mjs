@@ -20,7 +20,7 @@ function contractKit() {
   const CONTRACT = 2;
   const SOURCES = ["note", "responder", "health"];
   const STAGES = ["starting", "background", "blocked", "idle", "unknown"];
-  const PHASES = ["checking", "copying", "migrating", "search-index", "output-index", "references", "shapes", "learning", "lineage", "writetime", "marker", "storage", "message-index"];
+  const PHASES = ["checking", "copying", "migrating", "search-index", "output-index", "references", "shapes", "learning", "lineage", "writetime", "marker", "storage", "message-index", "masking", "settling"];
   const UNITS = ["messages", "conversations", "bytes", "sets", "open", "none"];
   const STORAGE = ["converting", "reclaim-available", "waiting-for-disk", "idle", "unknown"];
   const MODES = ["off", "capture", "active", "paused", "unknown"];

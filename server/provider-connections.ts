@@ -137,8 +137,8 @@ export class ProviderConnectionsService {
  private readonly attempted=new Map<string,{revision:string;at:number}>();
  private readonly listeners=new Set<(changedIds:string[])=>void|Promise<void>>();
  private readonly fetcher:typeof fetch;
- private readonly options:{readBank:()=>string|undefined;cacheDir:string;fetch?:typeof fetch;now?:()=>number;legacyConnections?:()=>LegacyProviderConnection[];onCatalogOutcome?:(connection:{id:string;preset:ProviderPreset;key:string},outcome:"ok"|"refused")=>void;keyGate?:(connection:{id:string;preset:ProviderPreset;key:string})=>Promise<ProviderCatalogError|null>;resolveAlias?:(id:string)=>ProviderConnectionRecord|null;signIns?:SignInConnectionSource};
- constructor(options:{readBank:()=>string|undefined;cacheDir:string;fetch?:typeof fetch;now?:()=>number;legacyConnections?:()=>LegacyProviderConnection[];onCatalogOutcome?:(connection:{id:string;preset:ProviderPreset;key:string},outcome:"ok"|"refused")=>void;keyGate?:(connection:{id:string;preset:ProviderPreset;key:string})=>Promise<ProviderCatalogError|null>;resolveAlias?:(id:string)=>ProviderConnectionRecord|null;signIns?:SignInConnectionSource}){this.options=options;this.fetcher=options.fetch??fetch;}
+ private readonly options:{readBank:()=>string|undefined;cacheDir:string;fetch?:typeof fetch;now?:()=>number;legacyConnections?:()=>LegacyProviderConnection[];onCatalogOutcome?:(connection:{id:string;preset:ProviderPreset;key:string},outcome:"ok"|"refused",code?:"unauthorized"|"forbidden")=>void;keyGate?:(connection:{id:string;preset:ProviderPreset;key:string})=>Promise<ProviderCatalogError|null>;resolveAlias?:(id:string)=>ProviderConnectionRecord|null;signIns?:SignInConnectionSource};
+ constructor(options:{readBank:()=>string|undefined;cacheDir:string;fetch?:typeof fetch;now?:()=>number;legacyConnections?:()=>LegacyProviderConnection[];onCatalogOutcome?:(connection:{id:string;preset:ProviderPreset;key:string},outcome:"ok"|"refused",code?:"unauthorized"|"forbidden")=>void;keyGate?:(connection:{id:string;preset:ProviderPreset;key:string})=>Promise<ProviderCatalogError|null>;resolveAlias?:(id:string)=>ProviderConnectionRecord|null;signIns?:SignInConnectionSource}){this.options=options;this.fetcher=options.fetch??fetch;}
  /** Plan sign-in connections changed (sign-in, sign-out, account switch or
   * an ended sign-in). Same effect as a bank change for those ids. */
  async invalidate(ids:string[]){for(const id of ids)this.cache.delete(id);await Promise.all([...this.listeners].map(listener=>listener(ids)));}
@@ -189,7 +189,7 @@ export class ProviderConnectionsService {
   this.pending.set(id,entry);return entry.promise;
  }
  /** Tell the owner of the service what the provider said to this key (Flux's 401/403 marks the key refused). Never throws, never carries more than the key's own row. */
- private report(connection:{id:string;preset:ProviderPreset;key:string},outcome:"ok"|"refused"):void{if(this.resolve(connection.id)?.key!==connection.key)return;try{this.options.onCatalogOutcome?.({id:connection.id,preset:connection.preset,key:connection.key},outcome);}catch{/* a listener must not break a refresh */}}
+ private report(connection:{id:string;preset:ProviderPreset;key:string},outcome:"ok"|"refused",code?:"unauthorized"|"forbidden"):void{if(this.resolve(connection.id)?.key!==connection.key)return;try{this.options.onCatalogOutcome?.({id:connection.id,preset:connection.preset,key:connection.key},outcome,code);}catch{/* a listener must not break a refresh */}}
  private async refreshCatalog(id:string,signal?:AbortSignal):Promise<ProviderCatalog>{
   const connection=this.resolve(id);if(!connection)throw Object.assign(new Error("Model connection not found."),{status:404});
   if(!connection.enabled)throw Object.assign(new Error("Enable this connection before refreshing models."),{status:409});
@@ -218,6 +218,6 @@ export class ProviderConnectionsService {
     if(typeof data.last_id!=="string"||!data.last_id||data.last_id.length>200||data.last_id===cursor)throw new CatalogFailure("invalid-catalog");cursor=data.last_id;
    }
    throw new CatalogFailure("invalid-catalog");
-  }catch(error){const code=error instanceof CatalogFailure?error.code:"offline";if(code==="unauthorized"||code==="forbidden")this.report(connection,"refused");const catalog:ProviderCatalog={...previous,stale:Boolean(previous.fetchedAt),error:{code,message:messages[code]},assurance:"catalog-only"};if(this.resolve(id)?.revision===connection.revision)this.cache.set(id,{revision:connection.revision,catalog});return catalog;}
+  }catch(error){const code=error instanceof CatalogFailure?error.code:"offline";if(code==="unauthorized"||code==="forbidden")this.report(connection,"refused",code);const catalog:ProviderCatalog={...previous,stale:Boolean(previous.fetchedAt),error:{code,message:messages[code]},assurance:"catalog-only"};if(this.resolve(id)?.revision===connection.revision)this.cache.set(id,{revision:connection.revision,catalog});return catalog;}
  }
 }

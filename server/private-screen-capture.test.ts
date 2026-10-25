@@ -36,4 +36,11 @@ describe("private screen capture", () => {
       async () => ({ png: "ordinary-screen", format: "jpeg" }),
     )).resolves.toEqual({ png: "ordinary-screen", mime: "image/jpeg" });
   });
+
+  it.each([["webp", "image/webp"], ["png", "image/png"], ["jpg", "image/jpeg"]])("labels a %s frame as %s", async (format, mime) => {
+    await expect(captureOutsideHumanControl(
+      () => ({ held: false, revision: 1 }),
+      async () => ({ png: "frame", format }),
+    )).resolves.toEqual({ png: "frame", mime });
+  });
 });

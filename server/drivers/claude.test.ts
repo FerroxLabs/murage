@@ -9,7 +9,7 @@ import { buildRemoteMount } from "../custom-mcp-mounts.ts";
 // These used to be POSIX-only: the fake CLI is a shebang script Windows
 // cannot exec, and the broker is a unix socket. Both now go through
 // resolveCliSpawn / permissionSocketPath, so they run everywhere.
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmdirSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, chownSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmdirSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { connect, createServer as createNetServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -22,7 +22,7 @@ import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { brokerSocketCandidates, ClaudeDriver, CLAUDE_BUILT_IN_AGENTS, CLAUDE_ISOLATION_CONTRACT, claudeCostSnapshot, claudeIsolation, claudeIsolationSettings, createPermissionBroker, permissionSocketPath, restoredCostBase, turnCostFromRunningTotal, type ClaudeConfig } from "./claude.ts";
 import { resolveCall } from "../../shared/app-action-grant.ts";
 import { autoVerdict } from "../auto-approve.ts";
-import { bashTargetsOf, claudeExecShell, claudeInProjectAllow, claudeMountRecords, claudeShellRefusal } from "./claude.ts";
+import { bashTargetsOf, claudeExecShell, claudeInProjectAllow, claudeInProjectHold, claudeMountRecords, stripCapturedCredentialNames, claudeShellRefusal } from "./claude.ts";
 import { OWN_ALWAYS_ASK, OWN_BUILTINS, OWN_UNASKED, type OwnBuiltin } from "../../shared/own-servers.ts";
 import { installMurageExec, murageExecPrefix, WRAPPER_SOURCE, writeExecEnvFile } from "./murage-exec.ts";
 import { inProjectCheck } from "../../shared/in-project.ts";
@@ -37,6 +37,7 @@ import { approveStartupWrite } from "../testing/startup-write.ts";
 
 vi.mock("node:child_process", async (original) => (await import("../testing/exec-check-spy.ts")).withExecCheckSpy(await original()));
 import { removeTempDirSync } from "../testing/cleanup.ts";
+import { TURN_ASK_RULES } from "../../shared/ask-wording.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-claude-cli.ts");
 
@@ -246,6 +247,26 @@ describe("ClaudeDriver.decodeConfig", () => {
   // Windows can't listen on filesystem socket paths at all (EACCES), so the
   // unbindable-first-candidate unit runs on POSIX; the fake-CLI e2e below
   // covers the real pipe fallback on Windows CI.
+  it.skipIf(process.platform === "win32" || process.getuid?.() !== 0)(
+    "refuses to bind over a socket name owned by another uid, and takes the next candidate",
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), "murage-broker-foreign-"));
+      const planted = join(dir, "planted.sock");
+      writeFileSync(planted, "");
+      chownSync(planted, 54321, 54321);
+      const free = join(dir, "free.sock");
+      const broker = await createPermissionBroker({ socketPaths: [planted, free], onAsk: () => {}, onResolve: () => {} });
+      try {
+        expect(broker.socketPath).toBe(free);
+        expect(lstatSync(planted).uid).toBe(54321);
+        expect(lstatSync(planted).isSocket()).toBe(false);
+      } finally {
+        await broker.close();
+        removeTempDirSync(dir);
+      }
+    },
+  );
+
   it.skipIf(process.platform === "win32")(
     "binds the next candidate when the first is unbindable, and asks round-trip on it",
     async () => {
@@ -663,7 +684,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(JSON.stringify(seen.argv)).not.toContain("You are Testy.");
     expect(seen.prompt).toMatchObject({ type: "user", message: { role: "user", content: "the secret prompt" } });
     expect(seen.argv).toContain("--append-system-prompt-file");
-    expect(seen.systemPrompt).toBe("You are Testy.");
+    expect(seen.systemPrompt).toBe(`You are Testy.\n\n${TURN_ASK_RULES}`);
     expect(existsSync(seen.argv[seen.argv.indexOf("--append-system-prompt-file") + 1])).toBe(false);
     expect(seen.argv).toContain("--session-id");
     expect(seen.env.ANTHROPIC_API_KEY).toBeUndefined();
@@ -1060,7 +1081,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await recorder.until((e) => e.type === "turn.completed");
 
     const seen = JSON.parse(readFileSync(dump, "utf8"));
-    expect(seen.systemPrompt).toBe(system);
+    expect(seen.systemPrompt).toBe(`${system}\n\n${TURN_ASK_RULES}`);
     expect(JSON.stringify(seen.argv)).not.toContain("room instructions");
     expect(JSON.stringify(seen.argv).length).toBeLessThan(8_000);
   });
@@ -1111,6 +1132,20 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     } finally {
       globalThis.fetch = previousFetch;
     }
+  });
+
+  it("U20: the computer proxy's box token rides the owner-only credential file, never the mcp.json stanza env or argv", async () => {
+    await create();
+    const dump = join(scratch, "dump.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+    await instance.adapter.sendTurn({ threadId: "t-boxtok", text: "hi", integrations: { computer: { boxId: "bx_u20", token: "box-secret-u20" } } });
+    await recorder.until((e) => e.type === "turn.completed");
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    expect(seen.mcpConfig.mcpServers.computer.env).toMatchObject({ MURAGEBOX_BOX_ID: "bx_u20", MURAGE_CRED_SERVER: "computer" });
+    expect(seen.mcpConfig.mcpServers.computer.env).not.toHaveProperty("MURAGEBOX_BOX_TOKEN");
+    expect(JSON.stringify(seen.mcpConfig)).not.toContain("box-secret-u20");
+    expect(JSON.stringify(seen.argv)).not.toContain("box-secret-u20");
+    expect(seen.credFile.content.computer.MURAGEBOX_BOX_TOKEN).toBe("box-secret-u20");
   });
 
   it("mounts the agents comms proxy as an MCP server and pre-allows its tools", async () => {
@@ -1380,6 +1415,24 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(configPath).toMatch(/murage-mcp-/);
     expect(existsSync(configPath)).toBe(false);
     expect(existsSync(dirname(configPath))).toBe(false);
+  });
+
+  it.each([undefined, false, true])("mounts browser tools with preload=%s", async preloadBrowserTools => {
+    await create();
+    const dump = join(scratch, "browser-dump.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+    const browser = { command: process.execPath, args: ["/fake/browser-proxy.js"], env: {} };
+    await instance.adapter.sendTurn({
+      threadId: "t-browser-preload", text: "read the page", preloadBrowserTools,
+      integrations: { browser },
+    });
+    await recorder.until(event => event.type === "turn.completed");
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    // Windows: claudeShellServers puts the found bash's folder first on each stdio stanza's PATH (1.0.3.1)
+    expect(seen.mcpConfig.mcpServers.browser).toEqual({
+      ...browser, env: withWinStanzaPath(browser.env), ...(preloadBrowserTools ? { alwaysLoad: true } : {}),
+    });
+    expect(browser).not.toHaveProperty("alwaysLoad");
   });
 
   it("mounts local CUA without pre-allowing its computer namespace", async () => {
@@ -4240,6 +4293,26 @@ describe("Claude gate: overlay, in-project check, wrapper (Rules 63, 69, 74b)", 
       expect(inProjectCheck(path, tmpdir(), undefined, { platform: "win32", home: "C:\\Users\\sean" }).ok).toBe(false);
     }
     expect(claudeInProjectAllow("Read", { file_path: "C:\\Users\\sean\\.ssh\\id_rsa" }, tmpdir(), tmpdir(), "win32")).toBe(false);
+  });
+
+  it("09-A2/A3: a search that reaches a credentials file, and a Windows .env read, reach the verdict as a key-file hold", () => {
+    const proj = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-claude-hold-")));
+    try {
+      writeFileSync(join(proj, "credentials.json"), "{}");
+      writeFileSync(join(proj, "a.ts"), "x");
+      expect(claudeInProjectAllow("Grep", { pattern: ".", path: proj, output_mode: "content" }, proj)).toBe(false);
+      expect(claudeInProjectHold("Grep", { pattern: ".", path: proj, output_mode: "content" }, proj)).toEqual(expect.any(String));
+      expect(claudeInProjectHold("Read", { file_path: join(proj, "a.ts") }, proj)).toBeUndefined();
+      expect(claudeInProjectHold("Read", { file_path: "C:\\work\\project\\.env" }, proj, tmpdir(), "win32")).toEqual(expect.any(String));
+    } finally {
+      removeTempDirSync(proj);
+    }
+  });
+
+  it("09-B1: the captured login-shell map hands Claude no credential-named variable but its own sign-in", () => {
+    const map: Record<string, string | undefined> = { PATH: "/bin", HOME: "/h", OPENAI_API_KEY: "a", GH_TOKEN: "b", AWS_SECRET_ACCESS_KEY: "c", ANTHROPIC_API_KEY: "d", CLAUDE_CODE_OAUTH_TOKEN: "e", EDITOR: "vi" };
+    stripCapturedCredentialNames(map);
+    expect(Object.keys(map).sort()).toEqual(["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "EDITOR", "HOME", "PATH"]);
   });
 
   it("answers no for a missing field, a secret in the body and a Bash call (the walker seam)", () => {

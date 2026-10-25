@@ -4,6 +4,7 @@
 // a per-thread canonical NDJSON log (the debugging trick both upstream and
 // agentcal lean on), and delivered to subscribers (the SSE endpoint and
 // the server-side message folder).
+import { looksLikeAuthFailure, noteInstanceAuthFailure, noteInstanceTurnOk } from "../key-rejections.ts";
 import { appendFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -92,6 +93,7 @@ export class EventBus {
           console.error(`bus: dropped cross-driver event from ${instance.instanceId}`);
           return;
         }
+        if (instance.tracksKeyRejection !== true) observeSignIn(instance.instanceId, event, instance.driverKind === "claude" || instance.driverKind === "codex");
         this.publish({ ...event, providerInstanceId: instance.instanceId });
       });
       this.unsubscribes.push({ instanceId: instance.instanceId, unsubscribe: unsub });
@@ -299,4 +301,15 @@ export class EventBus {
     }
     this.unsubscribes = kept;
   }
+}
+
+/** An authentication-class failure on an engine marks it signed out; a turn that finishes well clears the mark.
+ *  Read from the event's own words (and the structured provider error when there is one), never from tool names. */
+function observeSignIn(instanceId: string, event: RuntimeEvent, subscriptionLogin = false): void {
+  if (event.type === "turn.completed") {
+    if (event.ok === true) noteInstanceTurnOk(instanceId);
+    return;
+  }
+  if (event.type !== "runtime.error" || event.setup === true) return;
+  if (event.authRequired === true || event.providerError?.kind === "authentication" || looksLikeAuthFailure(event.message, { engineLevel: subscriptionLogin })) noteInstanceAuthFailure(instanceId, Date.now(), { signIn: subscriptionLogin });
 }

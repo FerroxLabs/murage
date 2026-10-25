@@ -33,6 +33,8 @@ function isMode(value: unknown): value is RoutinePermissionMode {
 /** A bot's (or task's) level from its flags. Each level counts only on top of
  * the one below it, the same rule hasFullAccess and hasNoLimits apply. */
 export function botPermissionMode(bot: AutoApprover | null | undefined): RoutinePermissionMode {
+  // a draft-only bot (server/draft-only.ts) is at Ask whatever its flags say
+  if ((bot as { draftOnly?: true } | null | undefined)?.draftOnly === true) return "ask";
   if (bot?.autoApprove !== true) return "ask";
   if (bot.fullAccess !== true) return "auto";
   return bot.noLimits === true ? "unlimited" : "full";
@@ -51,6 +53,8 @@ export function effectiveRoutinePermissionMode(
 
 /** The same record judged at `mode`. Grants and every other field are kept. */
 export function applyRoutinePermissionMode<T extends AutoApprover>(bot: T, mode: RoutinePermissionMode): T {
+  // no level lifts a draft-only bot past Ask (server/draft-only.ts)
+  if ((bot as { draftOnly?: true }).draftOnly === true) mode = "ask";
   return {
     ...bot,
     autoApprove: mode !== "ask",

@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Smart Trader",
     "tagline": "Reads your own charts and runs a pre-open watchlist brief, never trades",
-    "summary": "You are **Smart Trader**. You help someone read their own charts and get a clear picture of their",
+    "summary": "Reads your own TradingView charts and gives you a pre-open watchlist brief. It never places a trade.",
     "category": "Markets",
     "author": {
       "name": "Ferrox Labs",
@@ -35,7 +35,8 @@
         "title": "Reads your own charts and runs a pre-open watchlist brief, never trades",
         "description": "Reads your own TradingView charts and runs a pre-open watchlist brief. Sets up the symbols and indicators, captures what matters, and tells you what it sees. It never places a trade.",
         "appearance": {
-          "color": "green"
+          "color": "green",
+          "mascotBody": "diamond"
         },
         "skills": [
           "chart-analysis",

@@ -110,8 +110,21 @@ export async function ensureFluxComposioBrokerToken({
   if (force && rejectedTokenFingerprint && previousToken && brokerTokenFingerprint(previousToken) !== rejectedTokenFingerprint) {
     force = false;
   }
+  // A token minted by a different key belongs to another account. Whatever
+  // happens to the new mint, it must never be handed on as this key's token.
+  const storedFingerprint = next.fluxComposioBrokerTokenKeyFingerprint;
+  const staleToken = Boolean(previousToken) && typeof storedFingerprint === "string" && storedFingerprint !== fingerprint;
+  const withoutStale = async (document) => {
+    if (!staleToken || document.fluxComposioBrokerTokenKeyFingerprint !== storedFingerprint || document.fluxComposioBrokerToken !== previousToken) return document;
+    // Best effort: end the old account's token at Flux too, as a key removal does.
+    await revokeFluxComposioBrokerToken({ fluxBrokerUrl: url, token: previousToken, fetchImpl, timeoutSignal });
+    const kept = { fluxComposioTokenError: document.fluxComposioTokenError, fluxComposioTokenRefusedKeyFingerprint: document.fluxComposioTokenRefusedKeyFingerprint };
+    const cleared = clearFluxComposioBrokerToken(document);
+    for (const [field, value] of Object.entries(kept)) if (value !== undefined) cleared[field] = value;
+    return cleared;
+  };
   // Flux refused this exact key before: do not ask again until it changes.
-  if (!force && next.fluxComposioTokenRefusedKeyFingerprint === fingerprint) return next;
+  if (!force && next.fluxComposioTokenRefusedKeyFingerprint === fingerprint) return await withoutStale(next);
   const expiresAt = Date.parse(next.fluxComposioBrokerTokenExpiresAt ?? "");
   if (
     !force
@@ -133,7 +146,7 @@ export async function ensureFluxComposioBrokerToken({
   } catch (error) {
     log(`FluxRouter connected-apps token request failed: ${error?.name === "TimeoutError" ? "timed out" : "network error"}`);
     onTransientFailure();
-    return next;
+    return await withoutStale(next);
   }
   const body = await response.json().catch(() => null);
   if (response.ok) {
@@ -141,7 +154,7 @@ export async function ensureFluxComposioBrokerToken({
     if (!FLUX_BROKER_TOKEN.test(body?.token ?? "") || !Number.isFinite(Date.parse(body?.expiresAt ?? ""))) {
       log("FluxRouter returned an invalid connected-apps token");
       onTransientFailure();
-      return next;
+      return await withoutStale(next);
     }
     next.fluxComposioBrokerToken = body.token;
     next.fluxComposioBrokerTokenExpiresAt = new Date(Date.parse(body.expiresAt)).toISOString();
@@ -162,14 +175,14 @@ export async function ensureFluxComposioBrokerToken({
   }
   if (response.status === 401 || response.status === 403) next.fluxComposioTokenRefusedKeyFingerprint = fingerprint;
   if ([401, 402, 403].includes(response.status) && typeof body?.code === "string" && ERROR_CODE.test(body.code)) {
-    // Keep whatever token exists: data routes never consult the key's model
+    // Keep a token this key minted: data routes never consult the key's model
     // budget, so a token minted before the budget ran out keeps working.
     next.fluxComposioTokenError = body.code;
     log(`FluxRouter declined a connected-apps token (${body.code})`);
-    return next;
+    return await withoutStale(next);
   }
   if (response.status === 429) onRateLimited();
   else if (response.status >= 500 || response.status === 408 || response.status === 404) onTransientFailure();
   log(`FluxRouter connected-apps token request returned HTTP ${response.status}`);
-  return next;
+  return await withoutStale(next);
 }

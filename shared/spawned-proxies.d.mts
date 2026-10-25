@@ -6,6 +6,7 @@ export declare const SPAWNED_PROXY_FILES: Readonly<{
   engineHistoryWorker: string;
   transcriptReadWorker: string;
   inboxFillWorker: string;
+  jobLauncher: string;
   computer: string;
   permission: string;
   containerMcp: string;

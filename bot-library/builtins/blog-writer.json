@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Blog Writer",
     "tagline": "Complete blog drafts with search basics, links and image briefs",
-    "summary": "Ink prepares a blog brief, outline and complete article draft. Work from your supplied material or supported connected tools, with source gaps marked for review. For general writing and editing, use Writer. For a search-led article team, use SEO Content Engine Room. For an affiliate content team, use Affiliate Site Engine. For a product review team, use Review Article Factory. For a comparison article team, use Comparison & Roundup Builder.",
+    "summary": "Ink prepares a blog brief, outline and complete article draft.",
     "category": "Marketing",
     "author": {
       "name": "Ferrox Labs",
@@ -54,7 +54,8 @@
         "title": "Blog Writer",
         "description": "Ink prepares a blog brief, outline and complete article draft. Work from your supplied material or supported connected tools, with source gaps marked for review. For general writing and editing, use Writer. For a search-led article team, use SEO Content Engine Room. For an affiliate content team, use Affiliate Site Engine. For a product review team, use Review Article Factory. For a comparison article team, use Comparison & Roundup Builder.",
         "appearance": {
-          "color": "blue"
+          "color": "blue",
+          "mascotBody": "drop"
         },
         "skills": [
           "blog-post-writing",

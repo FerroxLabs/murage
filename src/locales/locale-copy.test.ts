@@ -21,7 +21,9 @@ const codes = readdirSync(LOCALES_DIR)
 
 const FORMAL: Record<string, RegExp> = {
   de: /(?<![\p{L}])(Sie|Ihnen|Ihr\p{L}*)(?![\p{L}])/u,
-  fr: /(?<![\p{L}])(vous|votre|vos|veuillez)(?![\p{L}])/iu,
+  // vous, votre, vos, and a vous imperative ("Examinez", "Réessayez", "Dites-lui"): any word ending in -ez but
+  // chez, assez, nez and rez, which are not verbs.
+  fr: /(?<![\p{L}])(vous|votre|vos|veuillez|dites|faites)(?![\p{L}])|(?<![\p{L}])(?!(?:chez|assez|nez|rez)(?![\p{L}]))\p{L}+ez(?![\p{L}])/iu,
 };
 
 // Reviewed exceptions, keyed "locale:key". Keep this list tiny and justify each entry.
@@ -59,6 +61,10 @@ describe("locale copy rules", () => {
     expect(FORMAL.de.test("Öffne deine Datei, Siegel")).toBe(false);
     expect(FORMAL.fr.test("Ouvrez votre fichier, vous")).toBe(true);
     expect(FORMAL.fr.test("Ouvre ton fichier, nous")).toBe(false);
+    expect(FORMAL.fr.test("Examinez les approbations dans Murage.")).toBe(true);
+    expect(FORMAL.fr.test("Touchez une réponse, puis réessayez.")).toBe(true);
+    expect(FORMAL.fr.test("Dites-lui quelque chose")).toBe(true);
+    expect(FORMAL.fr.test("Examine-la chez toi, assez vite.")).toBe(false);
   });
 
   for (const code of codes) {

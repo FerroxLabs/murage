@@ -47,6 +47,9 @@ export interface DispatchOutputContext {
   workspaceRoot: string | undefined;
   /** True only for the Murage-managed dedicated task workspace (U-02). */
   managed: boolean;
+  /** Other managed workspaces of the same project that this turn can write into (a hand-off writes into the lead's
+   * outputs/, not its own). Each is snapshotted with the turn and swept with it under its own bot and conversation. */
+  siblings?: Array<{ botId: string; threadId: string; workspaceRoot: string }>;
 }
 
 export interface OutputPublicationDeps {
@@ -284,7 +287,21 @@ const log = (message: string) => console.warn(`[output-publication] ${message}`)
 const nextTick = () => new Promise<void>(resolve => setImmediate(resolve));
 
 export function createOutputPublisher(deps: OutputPublicationDeps): OutputPublisher {
-  const snapshots = new Map<string, OutputSnapshot>();
+  // Per conversation, one record per dispatching bot: members of a project share a conversation, and one member's
+  // dispatch must not discard another's snapshot. A record holds the bot's own outputs/ and its siblings' (hand-offs).
+  const snapshots = new Map<string, Array<{ botId: string; runId: string; roots: OutputSnapshot[] }>>();
+  const snapshotRoot = (botId: string, threadId: string, runId: string, workspaceRoot: string, create: boolean): OutputSnapshot | undefined => {
+    const root = realpathSync.native(workspaceRoot);
+    if (!lstatSync(root).isDirectory()) return undefined;
+    if (create) {
+      try { mkdirSync(join(root, OUTPUT_NAMESPACE), { mode: 0o700 }); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") return undefined; }
+    }
+    const listing = listOutputs(root);
+    if (!listing || listing.incomplete) return undefined;
+    return { botId, threadId, runId, root, directory: listing.directory,
+      entries: new Map([...listing.entries].map(([path, stat]) => [path, entryKey(stat)])), incomplete: listing.incomplete };
+  };
 
   const sweep = async (snapshot: OutputSnapshot, event: TerminalTurnEvent) => {
     const succeeded = turnSucceeded(event);
@@ -361,32 +378,33 @@ export function createOutputPublisher(deps: OutputPublicationDeps): OutputPublis
   };
   return {
     beforeDispatch(context) {
-      snapshots.delete(context.threadId);
+      const records = (snapshots.get(context.threadId) ?? []).filter(record => record.botId !== context.botId);
+      if (records.length) snapshots.set(context.threadId, records); else snapshots.delete(context.threadId);
       if (!context.managed || !context.workspaceRoot) return false;
-      try {
-        const root = realpathSync.native(context.workspaceRoot);
-        const rootStat = lstatSync(root);
-        if (!rootStat.isDirectory()) return false;
-        try { mkdirSync(join(root, OUTPUT_NAMESPACE), { mode: 0o700 }); }
-        catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") return false; }
-        const listing = listOutputs(root);
-        if (!listing || listing.incomplete) return false;
-        if (snapshots.size >= MAX_SNAPSHOTS) snapshots.delete(snapshots.keys().next().value!);
-        snapshots.set(context.threadId, { botId: context.botId, threadId: context.threadId, runId: context.runId, root, directory: listing.directory,
-          entries: new Map([...listing.entries].map(([path, stat]) => [path, entryKey(stat)])), incomplete: listing.incomplete });
-        return true;
-      } catch {
-        snapshots.delete(context.threadId);
-        return false;
+      let own: OutputSnapshot | undefined;
+      try { own = snapshotRoot(context.botId, context.threadId, context.runId, context.workspaceRoot, true); } catch { own = undefined; }
+      if (!own) return false;
+      const roots = [own];
+      for (const sibling of context.siblings ?? []) {
+        try { const extra = snapshotRoot(sibling.botId, sibling.threadId, context.runId, sibling.workspaceRoot, true); if (extra && extra.root !== own.root) roots.push(extra); } catch { /* a sibling that cannot be watched never blocks this turn */ }
       }
+      if (snapshots.size >= MAX_SNAPSHOTS) snapshots.delete(snapshots.keys().next().value!);
+      snapshots.set(context.threadId, [...records, { botId: context.botId, runId: context.runId, roots }]);
+      return true;
     },
     async publishTerminalOutputs(event) {
       // Taken synchronously so a following dispatch starts a fresh snapshot.
-      const snapshot = snapshots.get(event.threadId);
-      if (!snapshot) return;
-      snapshots.delete(event.threadId);
-      try { await sweep(snapshot, event); }
-      catch (error) { log(`automatic publication stopped (${outputErrorCategory(error, "database")})`); }
+      const records = snapshots.get(event.threadId);
+      if (!records?.length) return;
+      // The record of the run that just ended; when that cannot be told apart, every record of the conversation.
+      const ended = event.turnId ? records.filter(record => deps.turnOfRun?.(event.threadId, record.runId) === event.turnId) : [];
+      const taken = ended.length ? ended : records;
+      const rest = records.filter(record => !taken.includes(record));
+      if (rest.length) snapshots.set(event.threadId, rest); else snapshots.delete(event.threadId);
+      for (const record of taken) for (const snapshot of record.roots) {
+        try { await sweep(snapshot, event); }
+        catch (error) { log(`automatic publication stopped (${outputErrorCategory(error, "database")})`); }
+      }
     },
     resumePending,
     completeReleased: async receiptId => { await completeReleasedReceipt(deps, receiptId); },

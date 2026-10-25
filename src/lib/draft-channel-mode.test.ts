@@ -1,62 +1,78 @@
+// Goal mode belongs to the draft (U36: its record), per conversation, across reloads and tabs.
 import { afterEach, expect, it, vi } from "vitest";
-import { getDraftChannelMode, setDraftChannelMode, markDraftEdited, draftRevision, recoverFailedComposerSend, failedComposerSends, restoredSendId } from "./drafts";
 
 const storage = (initial: Record<string, string> = {}) => {
   const values = new Map(Object.entries(initial));
-  return { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value); } };
+  return {
+    values,
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => { values.set(key, value); },
+    removeItem: (key: string) => { values.delete(key); },
+    key: (index: number) => [...values.keys()][index] ?? null,
+    get length() { return values.size; },
+  };
 };
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.resetModules(); });
+const load = async (store: unknown) => { vi.resetModules(); vi.stubGlobal("localStorage", store); return import("./drafts"); };
+const flush = async () => { for (let i = 0; i < 4; i += 1) await new Promise((resolve) => setTimeout(resolve, 0)); };
+const build = (sendId: string, content: { text: string }) => ({ sendId, kind: "group" as const, groupId: "g", threadId: "t", text: content.text, mode: "goal" as const, at: 1, attempts: 0 });
 
-it("keeps task modes separate and drops the stored mode after a successful send reset", () => {
+it("keeps task modes separate and stores the mode in that task's record", async () => {
   const store = storage();
-  setDraftChannelMode(store, "A", "goal");
-  expect(getDraftChannelMode(store, "B")).toBe("chat");
-  expect(getDraftChannelMode(store, "A")).toBe("goal");
-  expect(JSON.parse(store.getItem("murage-draft-channel-modes")!)).toEqual({ A: "goal" });
-  setDraftChannelMode(store, "A", "chat");
-  expect(JSON.parse(store.getItem("murage-draft-channel-modes")!)).toEqual({});
+  const drafts = await load(store);
+  drafts.setComposerDraftMode("group:g:A", "goal");
+  await flush();
+  expect(drafts.readComposerDraft("group:g:B").mode).toBe("chat");
+  expect(JSON.parse(store.getItem("murage-draft:group:g:A")!).mode).toBe("goal");
+  drafts.setComposerDraftMode("group:g:A", "chat");
+  await flush();
+  expect(JSON.parse(store.getItem("murage-draft:group:g:A")!).mode).toBe("chat");
+  expect((await load(store)).readComposerDraft("group:g:A").mode).toBe("chat");
 });
 
-it.each([null, "{", "[]", '{"A":"invalid"}'])("legacy or invalid storage remains ordinary chat: %s", raw => {
-  const store = storage(raw === null ? {} : { "murage-draft-channel-modes": raw });
-  expect(getDraftChannelMode(store, "A")).toBe("chat");
+it.each([null, "{", "[]", '{"group:g:A":"invalid"}'])("a legacy or invalid 1.0.4 mode remains ordinary chat: %s", async (raw) => {
+  const drafts = await load(storage(raw === null ? {} : { "murage-draft-channel-modes": raw }));
+  expect(drafts.readComposerDraft("group:g:A").mode).toBe("chat");
 });
 
-it("loads a saved goal and isolates separate storage origins", () => {
-  const first = storage({ "murage-draft-channel-modes": '{"A":"goal"}' });
-  expect(getDraftChannelMode(first, "A")).toBe("goal");
-  expect(getDraftChannelMode(storage(), "A")).toBe("chat");
+it("migrates a saved 1.0.4 goal into the record", async () => {
+  const store = storage({ "murage-draft-channel-modes": '{"group:g:A":"goal"}' });
+  const drafts = await load(store);
+  expect(drafts.readComposerDraft("group:g:A").mode).toBe("goal");
+  await drafts.migrateLegacyDrafts();
+  expect(JSON.parse(store.getItem("murage-draft:group:g:A")!).mode).toBe("goal");
+  expect(store.getItem("murage-draft-channel-modes")).toBeNull();
 });
 
-it("retains goal intent in memory if read/write access to storage is denied", () => {
-  const denied = { getItem() { throw new Error("denied"); }, setItem() { throw new Error("quota"); } };
-  expect(getDraftChannelMode(denied, "A")).toBe("chat");
-  setDraftChannelMode(denied, "A", "goal");
-  expect(getDraftChannelMode(denied, "A")).toBe("goal");
-  setDraftChannelMode(denied, "A", "chat");
-  expect(getDraftChannelMode(denied, "A")).toBe("chat");
+it("retains goal intent for this page if storage refuses writes", async () => {
+  const denied = { getItem() { return null; }, setItem() { throw new Error("quota"); } };
+  const drafts = await load(denied);
+  drafts.setComposerDraftMode("group:g:A", "goal");
+  await flush();
+  expect(drafts.readComposerDraft("group:g:A").mode).toBe("goal");
 });
 
-it("failed send restores goal mode and its exact receipt when the task is unmounted", () => {
-  const store = storage();
-  vi.stubGlobal("localStorage", store);
-  const id = "restore-goal";
-  markDraftEdited(id);
-  const sent = { draftId: id, revision: draftRevision(id), sendId: "goal-send-original", text: "Do the goal", requestText: "Do the goal", threadId: "thread-A", channelMode: "goal" as const, attachments: [] };
-  setDraftChannelMode(store, id, "chat");
-  expect(recoverFailedComposerSend(sent)).toBe("restored");
-  expect(getDraftChannelMode(store, id)).toBe("goal");
-  expect(restoredSendId(id)).toBe(sent.sendId);
+it("a failed goal send keeps its goal mode in the box (nothing is restored, nothing was removed)", async () => {
+  const drafts = await load(storage());
+  const id = "group:g:goal";
+  drafts.setComposerDraftMode(id, "goal");
+  drafts.setComposerDraftText(id, "Do the goal");
+  await flush();
+  const begun = await drafts.beginDraftSend(id, { text: "Do the goal", att: [], mode: "goal" }, build);
+  if (!begun.ok) throw new Error(begun.reason);
+  expect(drafts.setComposerDraftMode(id, "chat")).toBe(false); // read-only while held
+  await drafts.settleDraftSend(id, begun.sendId, begun.attemptId, "failed");
+  expect(drafts.readComposerDraft(id)).toMatchObject({ text: "Do the goal", mode: "goal", held: false });
 });
 
-it("late failure cannot overwrite newer chat intent and keeps the goal in the failed-send item", () => {
-  const store = storage();
-  vi.stubGlobal("localStorage", store);
-  const id = "newer-mode";
-  const sent = { draftId: id, revision: draftRevision(id), sendId: "old-goal-id", text: "Old goal", requestText: "Old goal", threadId: "thread-A", channelMode: "goal" as const, attachments: [] };
-  markDraftEdited(id);
-  setDraftChannelMode(store, id, "chat");
-  expect(recoverFailedComposerSend(sent)).toBe("outbox");
-  expect(getDraftChannelMode(store, id)).toBe("chat");
-  expect(failedComposerSends(id).at(-1)).toMatchObject({ sendId: sent.sendId, channelMode: "goal" });
+it("the acknowledgement resets the mode with the words", async () => {
+  const drafts = await load(storage());
+  const id = "group:g:ack";
+  drafts.setComposerDraftMode(id, "goal");
+  drafts.setComposerDraftText(id, "Finish it");
+  await flush();
+  const begun = await drafts.beginDraftSend(id, { text: "Finish it", att: [], mode: "goal" }, build);
+  if (!begun.ok) throw new Error(begun.reason);
+  await drafts.settleDraftSend(id, begun.sendId, undefined, "acked");
+  expect(drafts.readComposerDraft(id)).toMatchObject({ text: "", mode: "chat" });
 });

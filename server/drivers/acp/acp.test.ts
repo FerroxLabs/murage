@@ -1834,6 +1834,28 @@ createInterface({ input: process.stdin }).on("line", line => {
     expect(instance.adapter.hasSession(threadId)).toBe(false);
   });
 
+  // U24 design R4: the cancel grace is armed once. An engine that never answers session/cancel is killed ACP_CANCEL_GRACE_MS
+  // after the FIRST Stop; a second Stop re-sends the cancel and does not restart the grace.
+  it("a repeated Stop does not postpone the kill: the turn settles at the grace from the first Stop", async () => {
+    await create(GrokAgentDriver, "cancel-ignore");
+    const threadId = "t-cancel-repeat";
+    await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+    await recorder.until(event => event.type === "content.delta" && event.delta === "fixture cancellation ready");
+    const started = performance.now();
+    const first = instance.adapter.interruptTurn(threadId).catch(() => undefined);
+    await new Promise<void>((resolve) => setTimeout(resolve, 3_000));
+    const second = instance.adapter.interruptTurn(threadId).catch(() => undefined);
+    const done = await recorder.until(event => event.type === "turn.completed", 9_000);
+    const elapsedMs = Math.round(performance.now() - started);
+    expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
+    expect(elapsedMs).toBeGreaterThan(4_000);
+    expect(elapsedMs).toBeLessThan(7_000); // a restarted grace would end at 8 s
+    const raw = readFileSync(join(NATIVE_DIR, `${threadId}.ndjson`), "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line));
+    expect(raw.filter(row => row.dir === "out" && row.msg?.method === "session/cancel")).toHaveLength(2);
+    await Promise.all([first, second]);
+    expect(instance.adapter.hasSession(threadId)).toBe(false);
+  });
+
   it("a prompt rejected after Stop sent session/cancel settles as a cancellation, not an engine error", async () => {
     await create(GrokAgentDriver, "cancel-reject");
     const threadId = `t-cancel-reject-${Date.now()}`;
@@ -2126,7 +2148,11 @@ createInterface({ input: process.stdin }).on("line", line => {
     });
     expect(rows.find((row) => row.event === "turn_settled")).toMatchObject({ reason: "turn_failure" });
     // later cleanup appends; it does not rewrite the close. A Windows job still ends (and confirms empty) whatever the root left in it.
-    expect(rows.filter((row) => row.event === "stop_route_result").at(-1)).toMatchObject(
+    // The job route records its result only once stopWindowsJob has confirmed the job empty (procs.ts killCliTree), which can land
+    // after turn.completed, so wait for that row before reading the outcome instead of reading the file at turn.completed.
+    await expect.poll(() => lifecycleRows(threadId).some((row) => row.event === "stop_route_result"), { timeout: 10_000 }).toBe(true);
+    expect(rows).toEqual(lifecycleRows(threadId).slice(0, rows.length));
+    expect(lifecycleRows(threadId).filter((row) => row.event === "stop_route_result").at(-1)).toMatchObject(
       process.platform === "win32" && engineJob() ? { route: "windows_job", result: "succeeded" } : { route: "already_exited" },
     );
   });
