@@ -18,7 +18,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { findDelegationReceipt } from "./delegations.ts";
 import { groupGoalAssignmentKey } from "./group-goal-run.ts";
 import { partitionSourcesAllowed } from "./partition-sources.ts";
-import { releaseNote } from "./project-notes.ts";
+import { noteForPrompt } from "./project-notes.ts";
 import { acceptProjectCard, changesRequestedCount, changesRequestedNotes, CHANGES_BEFORE_LEAD_DECIDES, applyCardRunFailed, applyCardRunFinished, applyCardWaiting, assignCardReview, NO_VERDICT, pickCardReviewer } from "./project-cards.ts";
 import { projectCardById, projectGoalById, projectSettingsFor } from "./project-records.ts";
 import { roomCardName, type LeadNextStep } from "./project-prompt.ts";
@@ -304,8 +304,10 @@ export function leadNextStep(db: DatabaseSync, source: RoomRequest, input: { mem
     if (source.outcomeNote === "changes") {
       // lane cards (b): asked twice already, so the lead decides: accept, or reassign with a reason
       // the reviewer's words, read now through the result gate: a verdict the gate allows does not carry its notes on its own
-      const reviewNotes = releaseNote(db, changesRequestedNotes(db, card.id), input.notOwnerAudience !== false);
-      return { step: changesRequestedCount(db, card.id) >= CHANGES_BEFORE_LEAD_DECIDES ? "decide_changes" : "send_back", ...base, ...(reviewNotes ? { reviewNotes } : {}), reviewers: reviewers() };
+      // a note written but not released now is said as held (U02), so the lead asks for it again
+      const reviewNotes = noteForPrompt(db, changesRequestedNotes(db, card.id), input.notOwnerAudience !== false);
+      return { step: changesRequestedCount(db, card.id) >= CHANGES_BEFORE_LEAD_DECIDES ? "decide_changes" : "send_back", ...base,
+        ...(reviewNotes === "held" ? { reviewNotesHeld: true as const } : reviewNotes ? { reviewNotes } : {}), reviewers: reviewers() };
     }
     // lane review: it finished without giving a verdict, and the lead decides
     if (source.state === "done" && source.outcomeNote === NO_VERDICT) return { step: "decide", ...base, ...(source.toBotId ? { reviewer: input.name(source.toBotId) } : {}), reviewers: reviewers() };

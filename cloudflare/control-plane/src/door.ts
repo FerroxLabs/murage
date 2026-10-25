@@ -96,7 +96,10 @@ interface DoorClaimsCommon {
 /** The v1 ticket's claims, exactly these keys in this order (a v1 home refuses any other field). */
 export interface DoorClaimsV1 extends DoorClaimsCommon { type: "murage-door-v1" }
 /** The v2 ticket's claims (4A.1: the v1 fields, bind, kind, optional pairHold; the v2 home parses nothing else). */
-export interface DoorClaimsV2 extends DoorClaimsCommon { type: "murage-door-v2"; bind: string; kind: "browser" | "desktop"; pairHold?: string }
+export interface DoorClaimsV2 extends DoorClaimsCommon { type: "murage-door-v2"; bind: string; kind: "browser" | "desktop"; pairHold?: string;
+  /** Only a browser ticket for a home advertising the owner factor (door_proof===1): the sign-in carried an emailed code
+   *  (`email`, from amr|granted|intent) or a trusted authenticator (`factor`). The home issues the remembered-owner factor on it (§4.1). */
+  proof?: "email" | "factor" }
 export type DoorClaims = DoorClaimsV1 | DoorClaimsV2;
 
 export interface DoorDependencies {
@@ -175,16 +178,16 @@ async function stepUpAt(request: Request, env: Env, identity: Identity, session:
 }
 
 interface DoorHome {
-  owner_id: string; generation: number; desired_state: string; door_version: string | null;
+  owner_id: string; generation: number; desired_state: string; door_version: string | null; door_proof: number | null;
   hostname: string | null; endpoint_status: string | null; tunnel_id: string | null; dns_record_id: string | null;
 }
 
-const HOME_SQL = `SELECT h.owner_id, h.generation, h.desired_state, h.door_version, e.hostname, e.status AS endpoint_status, e.tunnel_id, e.dns_record_id
+const HOME_SQL = `SELECT h.owner_id, h.generation, h.desired_state, h.door_version, h.door_proof, e.hostname, e.status AS endpoint_status, e.tunnel_id, e.dns_record_id
   FROM cloud_homes h LEFT JOIN machine_endpoints e ON e.machine_id=h.id AND e.status NOT IN ('deleting','deleted')
   WHERE h.id=? AND h.desired_state<>'deleted'`;
-/** The home read at the mint, unchanged and still ready (its door included: a home that changes its door between read and recheck is 409). */
+/** The home read at the mint, unchanged and still ready (its door included: a home that changes its door or owner-factor flag between read and recheck is 409). */
 const same = (read: DoorHome, now: DoorHome) => ready(now) && now.generation === read.generation && now.desired_state === read.desired_state
-  && now.hostname === read.hostname && (now.door_version ?? null) === (read.door_version ?? null);
+  && now.hostname === read.hostname && (now.door_version ?? null) === (read.door_version ?? null) && (now.door_proof ?? 0) === (read.door_proof ?? 0);
 const ready = (h: DoorHome) => ACTIVE_STATES.includes(h.desired_state) && Number.isSafeInteger(h.generation) && h.generation >= 1
   && h.endpoint_status === "ready" && Boolean(h.tunnel_id) && Boolean(h.dns_record_id) && Boolean(h.hostname) && HOSTNAME.test(h.hostname ?? "");
 
@@ -414,7 +417,10 @@ export async function doorRoute(request: Request, env: Env, identity: Identity, 
         if (pairHold) reservedWith = nonce;
         else if (history === "had") throw await needsHold(env, homeId, home.generation);
       }
-      claims = { type: "murage-door-v2", ...common, bind, kind: kind!, ...(pairHold ? { pairHold } : {}) };
+      // §4.1: a browser ticket for a home advertising the owner factor carries proof of this sign-in's second step —
+      // amr|granted|intent collapse to "email", a trusted authenticator stays "factor". Desktop tickets never carry it.
+      const proof: "email" | "factor" | undefined = home.door_proof === 1 && kind === "browser" ? (stepped.proof === "factor" ? "factor" : "email") : undefined;
+      claims = { type: "murage-door-v2", ...common, bind, kind: kind!, ...(pairHold ? { pairHold } : {}), ...(proof ? { proof } : {}) };
     }
     try { return { claims, envelope: await signPayload(env, claims) }; }
     catch {

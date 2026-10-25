@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   AlertTriangle,
   Check,
@@ -9,6 +9,7 @@ import {
   ShieldCheck,
   Smartphone,
   Trash2,
+  X,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import {
@@ -34,6 +35,7 @@ import { KeepAwakeOffer } from "./KeepAwakeOffer";
 import { LanPairing } from "./LanPairing";
 import { ReplaceOldDevice } from "./ReplaceOldDevice";
 import { TailnetHttpsHelpCard } from "./TailnetHttpsHelp";
+import { useCopyFeedback } from "@/lib/copy-text";
 
 export {
   companionAccountActionError,
@@ -226,30 +228,15 @@ export function remoteAccessSummary(remote: CompanionRemoteAccess, doorAddress: 
 }
 
 function CopyButton({ value, label }: { value: string; label: string }) {
-  const [copied, setCopied] = useState(false);
-  const timer = useRef<number | null>(null);
-  useEffect(() => () => {
-    if (timer.current !== null) window.clearTimeout(timer.current);
-  }, []);
+  const { mark, copy } = useCopyFeedback();
   return (
     <button
-      onClick={() => {
-        void navigator.clipboard
-          .writeText(value)
-          .then(() => {
-            setCopied(true);
-            if (timer.current !== null) window.clearTimeout(timer.current);
-            timer.current = window.setTimeout(() => setCopied(false), 1_200);
-          })
-          .catch(() => {
-            // Clipboard access is best effort — the value is on screen and
-            // selectable either way.
-          });
-      }}
-      aria-label={label}
-      className="shrink-0 rounded p-1.5 text-ink-secondary hover:bg-control hover:text-ink"
+      onClick={() => void copy(value)}
+      aria-label={mark === "failed" ? t("copy.failed") : label}
+      title={mark === "failed" ? t("copy.failed") : undefined}
+      className={`shrink-0 rounded p-1.5 hover:bg-control hover:text-ink ${mark === "failed" ? "text-danger" : "text-ink-secondary"}`}
     >
-      {copied ? <Check size={13} className="text-success" /> : <Copy size={13} />}
+      {mark === "copied" ? <Check size={13} className="text-success" /> : mark === "failed" ? <X size={13} /> : <Copy size={13} />}
     </button>
   );
 }

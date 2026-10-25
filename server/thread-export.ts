@@ -12,6 +12,7 @@ import { browserUnavailableDisplayName } from "../shared/browser-unavailable.ts"
 import { folderTrustDisplayName } from "../shared/folder-trust.ts";
 import { hostStoppedDisplayName } from "../shared/host-stop.ts";
 import { imagesLeftOutDisplayName } from "../shared/images-left-out.ts";
+import { loopNoticeDisplayName } from "../shared/loop-notice.ts";
 import { sendNoticeDisplayName } from "../shared/send-notice.ts";
 import { imagesNotSentDisplayName } from "../shared/turn-image-note.ts";
 import type { Message } from "./store.ts";
@@ -25,14 +26,15 @@ const CHUNK_BYTES = 64 * 1024;
 export function exportSpeakers(userName: string, botName: string | undefined): { who: (msg: Message) => string; activityLine: (msg: Message, who: string) => string } {
   return {
     who: (msg) => msg.role === "user" ? userName : (msg.from?.name ?? botName ?? "Bot"),
-    activityLine: (msg, who) => `> ${hostStoppedDisplayName(msg.tool!.name) ?? sendNoticeDisplayName(msg.tool!.name) ?? folderTrustDisplayName(msg.tool!.name) ?? browserUnavailableDisplayName(msg.tool!.name) ?? imagesLeftOutDisplayName(msg.tool!.name, who) ?? imagesNotSentDisplayName(msg.tool!.name) ?? msg.tool!.name}`,
+    activityLine: (msg, who) => `> ${hostStoppedDisplayName(msg.tool!.name) ?? sendNoticeDisplayName(msg.tool!.name) ?? loopNoticeDisplayName(msg.tool!.name) ?? folderTrustDisplayName(msg.tool!.name) ?? browserUnavailableDisplayName(msg.tool!.name) ?? imagesLeftOutDisplayName(msg.tool!.name, who) ?? imagesNotSentDisplayName(msg.tool!.name) ?? msg.tool!.name}`,
   };
 }
 
 /** The markdown lines one message adds. */
 export function markdownLinesFor(msg: Message, who: string, activityLine: (msg: Message, who: string) => string): string[] {
   const lines: string[] = [];
-  if (msg.kind === "text" && msg.text) lines.push(`**${who}:**`, "", msg.text, "");
+  // QW Q4: a widget row is a text row; it exports as its readable text, and the answer it took
+  if (msg.kind === "text" && msg.text) lines.push(`**${who}:**`, "", msg.text, ...(msg.widget?.settled ? ["", `> (answered: ${msg.widget.settled.label})`] : []), "");
   else if (msg.kind === "activity" && msg.tool) lines.push(activityLine(msg, who), "");
   else if (msg.kind === "screen") lines.push("> [screen capture]", "");
   else if (msg.kind === "options" && msg.card) lines.push(`> ${msg.card.title}${msg.card.answered ? ` (answered: ${msg.card.answered})` : ""}`, "");

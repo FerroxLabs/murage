@@ -28,7 +28,8 @@
         "title": "Storefront",
         "description": "Storefront specialist - DTC, marketplace, and agentic GEO (generative engine optimization) for modern ecommerce.",
         "appearance": {
-          "color": "green"
+          "color": "green",
+          "mascotBody": "squircle"
         },
         "skills": [
           "vault-storefront-foundation",
@@ -49,7 +50,8 @@
         "title": "Copy",
         "description": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage.",
         "appearance": {
-          "color": "blue"
+          "color": "purple",
+          "mascotBody": "drop"
         },
         "skills": [
           "copy-customer-voice",
@@ -66,7 +68,8 @@
         "title": "Channels",
         "description": "Channels specialist - channel-mix and discovery via Avinash Kaushik's See/Think/Do/Care intent-based framework.",
         "appearance": {
-          "color": "red"
+          "color": "orange",
+          "mascotBody": "star"
         },
         "skills": [
           "beacon-channel-strategy",
@@ -90,7 +93,8 @@
         "title": "Brand",
         "description": "Brand specialist - onlyness-first positioning and visual systems via Marty Neumeier's difference-beats-betterness method.",
         "appearance": {
-          "color": "orange"
+          "color": "pink",
+          "mascotBody": "blob"
         },
         "skills": [
           "mira-brand-foundation",
@@ -107,7 +111,8 @@
         "title": "Support",
         "description": "Support specialist - ticket triage, onboarding flow, churn prevention via Lincoln Murphy's Desired Outcome framework.",
         "appearance": {
-          "color": "purple"
+          "color": "coral",
+          "mascotBody": "circle"
         },
         "skills": [
           "mend-ticket-triage",

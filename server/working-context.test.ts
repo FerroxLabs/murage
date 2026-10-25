@@ -16,6 +16,7 @@ import { titleFromMessage, type Message } from "./store.ts";
 import { WORKING_CONTEXT_MAX_BYTES, workingContext, workingContextForTurn, workingContextPrompt, withWorkingContext, type WorkingContextInput } from "./working-context.ts";
 import { LineageAllowance } from "./memory/lineage-allowance.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { channelToProjectRows } from "./project-settings.ts";
 
 const NOW = Date.UTC(2026, 8, 29, 12, 0, 0);
 const HOUR = 3_600_000;
@@ -36,6 +37,8 @@ beforeEach(() => {
     ],
     routines: [{ name: "Daily sales digest", botId: "reed", enabled: true }, { name: "Paused one", botId: "reed", enabled: false }, { name: "Cole's", botId: "cole", enabled: true }],
   };
+  // a project is its channelProject block AND a live project_settings row (BOT-VENUE-AWARENESS-106 3.4, T7)
+  channelToProjectRows(database(), { groupId: "launch", bulletin: "", leadBotId: "cole", now: NOW });
 });
 
 let n = 0;
@@ -166,4 +169,34 @@ it("PF: project status comes from cards even before the member has spoken", asyn
   expect(text).toContain("Research three segments");
   say("launch-chat", "I'm researching three target customer segments", NOW, "reed");
   expect(workingContext(LineageAllowance.tool(1_000_000_000), input)).toContain("Said in");
+});
+
+// BOT-VENUE-AWARENESS-106 3.4 / T7: one turn never calls a venue a project in one block and a channel in another.
+it.each(["ended", "missing row", "missing table", "missing block"])("T7: %s reads as a channel in its room, room task and desk, with no card lines", async lifecycle => {
+  const { createProjectCard, enqueueCardRun } = await import("./project-cards.ts");
+  const db = database();
+  const made = createProjectCard(db, { groupId: "launch", title: "Research three segments", assigneeBotId: "reed", actor: { kind: "owner" }, memberIds: ["reed", "cole"], now: NOW });
+  if (!made.ok) throw new Error(JSON.stringify(made));
+  const queued = enqueueCardRun(db, { cardId: made.card.id, actor: { kind: "owner", lineage: { origin: "desktop", rootThreadId: "launch-chat", audienceFingerprint: "owner" } }, now: NOW });
+  if (!queued.ok) throw new Error(JSON.stringify(queued));
+  db.prepare("UPDATE room_requests SET refusal='plan_not_approved' WHERE id=?").run(queued.requestId);
+  say("launch-chat", "I drafted the launch page.", NOW - 2 * HOUR, "reed");
+  say("launch-goal", "I finished the launch outline.", NOW - HOUR, "reed");
+  say("reed-desk", "Card 12 is done.", NOW - 30 * 60_000);
+  const live = workingContext(LineageAllowance.tool(1_000_000_000), input);
+  expect(live).toContain(`Project "Tallyroo Launch"`);
+  expect(live).toContain(`My work thread for the project "Tallyroo Launch"`);
+  expect(live).toContain("Research three segments");
+  if (lifecycle === "ended") db.prepare("UPDATE project_settings SET ended_at=? WHERE group_id='launch'").run(NOW);
+  else if (lifecycle === "missing row") db.prepare("DELETE FROM project_settings WHERE group_id='launch'").run();
+  else if (lifecycle === "missing table") db.exec("DROP TABLE project_settings");
+  else input.groups.find(group => group.id === "launch")!.channelProject = undefined;
+  const ended = workingContext(LineageAllowance.tool(1_000_000_000), input);
+  expect(ended).toContain(`Channel "Tallyroo Launch"`);
+  expect(ended).toContain(`My work thread for the channel "Tallyroo Launch"`);
+  expect(ended).not.toContain(`Project "Tallyroo Launch"`);
+  expect(ended).not.toContain("for the project");
+  expect(ended).not.toContain("Research three segments");
+  expect(ended).toContain(`Channel "Tallyroo Launch", thread`);
+  expect(ended).toContain("I finished the launch outline.");
 });

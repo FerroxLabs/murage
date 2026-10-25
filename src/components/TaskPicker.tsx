@@ -1,3 +1,5 @@
+import { t } from "@/lib/i18n";
+import { threadLinkLabel } from "../../shared/thread-link";
 import { unreadTaskLabel } from "@/lib/project-presentation";
 // Separate task contexts for an agent or a channel.
 //
@@ -8,7 +10,7 @@ import { unreadTaskLabel } from "@/lib/project-presentation";
 import { allHeldTasks, taskCount } from "@/lib/task-window";
 import { useOlderTasks } from "@/lib/use-ensure-task";
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { BellOff, Check, ChevronDown, ChevronRight, Clock, Download, Loader2, Pencil, Pin, Plus, Search, Trash2 } from "lucide-react";
+import { BellOff, Check, ChevronDown, ChevronRight, Clock, Download, Link2Off, Loader2, Maximize2, Pencil, Pin, Plus, Search, Trash2 } from "lucide-react";
 import { api, useStore, type Bot, type Group, type Task } from "@/state/store";
 import { deletionConsequenceLines } from "@/lib/deletion-notes";
 import { useDeletionCounts } from "./ConfirmDelete";
@@ -43,6 +45,8 @@ import { useDesktopSurface } from "@/lib/use-surface";
 import { QuestionBadge, SnoozeChoices } from "./ConversationSnooze";
 import { startConversationPrefetch } from "@/lib/conversation-cache-host";
 import { MESSAGE_PAGE_SIZE } from "@/lib/scrollback";
+import { modShortcut } from "@/lib/mod-shortcut";
+import { chatTitle } from "@/lib/all-chats";
 
 /** Click-to-switch used to close this menu immediately, which unmounted the
  * row before a double-click (or right-click) could start a rename. Linger
@@ -50,6 +54,44 @@ import { MESSAGE_PAGE_SIZE } from "@/lib/scrollback";
 export const TASK_PICKER_DISMISS_MS = 500;
 
 export const TASK_RENAME_HINT = "Click to switch · double-click or right-click to rename";
+
+/** The chat list's width (CHATS-FINDABILITY-DESIGN 2.1): a two-line row fits an ordinary title; the anchor maths reads the same number. */
+export const CHAT_LIST_WIDTH = 440;
+
+/** About two rows of the list (~46 px each): the least the list keeps before the whole pop-up scrolls instead. */
+export const CHAT_LIST_MIN_ROWS_PX = 92;
+/** The pop-up's fixed chrome above and below the list (heading, search and sort, filters, Export and its hint, New chat,
+ * New chat in a folder), measured at 248 px; the live pop-up measures its own, this is the fallback before it can. */
+export const CHAT_LIST_CHROME_PX = 248;
+
+/** The space the pop-up has below the chip, in px, so its bottom stays on screen: a phone's two-row header puts the chip
+ * low, and a phone keyboard (which the auto-focused search box raises) leaves even less. `tight` is true when that space
+ * is under the chrome plus two rows (about 340 px): the list then keeps its two rows and the whole pop-up scrolls inside
+ * the space instead, so every row and every footer button stays reachable above the keyboard. */
+export function chatListMaxHeight(
+  triggerBottom: number | undefined,
+  viewportHeight: number,
+  chrome: number = CHAT_LIST_CHROME_PX,
+): { maxHeight: number; tight: boolean } | undefined {
+  if (triggerBottom === undefined || !Number.isFinite(triggerBottom) || !Number.isFinite(viewportHeight)) return undefined;
+  // mt-1 (4 px) above the menu, 8 px clear of the bottom edge; never shorter than two rows' worth.
+  const maxHeight = Math.max(CHAT_LIST_MIN_ROWS_PX, Math.floor(viewportHeight - triggerBottom - 4 - 8));
+  return { maxHeight, tight: maxHeight < chrome + CHAT_LIST_MIN_ROWS_PX };
+}
+
+/** The owner's conversations are "chats" here; a routine run and work from other bots stay "tasks" (design open question 1). */
+export function chatNoun(kind: TaskKind): "chat" | "task" {
+  return kind === "chat" ? "chat" : "task";
+}
+
+/** Mod+J (this list) and Mod+Shift+N (a new chat here), as the chat list reads a key press. */
+export function chatListShortcut(event: Pick<KeyboardEvent, "metaKey" | "ctrlKey" | "shiftKey" | "altKey" | "key" | "code">): "toggle" | "new" | null {
+  if (!(event.metaKey || event.ctrlKey) || event.altKey) return null;
+  const key = event.key.toLowerCase();
+  if (!event.shiftKey && (key === "j" || event.code === "KeyJ")) return "toggle";
+  if (event.shiftKey && (key === "n" || event.code === "KeyN")) return "new";
+  return null;
+}
 
 /** Decide what a pointer event on a task row should do. The click that
  * accompanies a dblclick (detail >= 2) must not switch/close — that is
@@ -172,7 +214,7 @@ export function hoistWaitingTasks<T extends { threadId: string }>(
   return { sections, navigable };
 }
 
-type PickerTask = { unreadCount?: number } & Pick<Task, "threadId" | "title" | "createdAt" | "lastActivityAt" | "busy" | "unread" | "pinned" | "activity"> & {
+type PickerTask = { unreadCount?: number } & Pick<Task, "threadId" | "title" | "createdAt" | "lastActivityAt" | "busy" | "unread" | "pinned" | "activity" | "link"> & {
   usage?: Task["usage"];
 };
 
@@ -181,10 +223,12 @@ export function ConversationTaskPicker({
   tasks,
   busy,
   onNew,
+  onNewInFolder,
   onSwitch,
   onRename,
   onDelete,
   onTogglePin,
+  onRemoveLink,
   routineOf = NO_ROUTINES,
   initialOpen = false,
   now,
@@ -198,20 +242,33 @@ export function ConversationTaskPicker({
   onPrefetch,
   older,
   total,
+  heading,
+  onExpand,
+  shortcuts = false,
 }: {
+  /** The list's title ("Chats with Ember"). */
+  heading?: string;
+  /** Open All chats filtered to this bot or channel. */
+  onExpand?: () => void;
+  /** Answer Mod+J and Mod+Shift+N: the one list of the conversation on screen. */
+  shortcuts?: boolean;
   /** Every task there is, when the list holds only a window of them. */
   total?: number;
   threadId: string;
   tasks: PickerTask[];
-  /** Tasks past the ones held: shows the "Show older tasks" row. */
+  /** Tasks past the ones held: shows the "Show older chats" row. */
   older?: { hasMore: boolean; loading: boolean; failed: boolean; onLoadMore: () => void };
   busy: boolean;
   onNew: () => void;
+  /** Start a task in a folder the person picks. Desktop bots only; absent elsewhere. */
+  onNewInFolder?: () => void;
   onSwitch: (threadId: string) => void;
   onRename: (threadId: string, title: string) => void;
   onDelete: (threadId: string) => void;
   /** Bots only for now; a channel's task switcher has no pin. */
   onTogglePin?: (threadId: string, pinned: boolean) => void;
+  /** Take the link off a conversation; absent where links are not offered. */
+  onRemoveLink?: (threadId: string) => void;
   /** which routine a task thread is a run of, if any */
   routineOf?: (threadId: string) => RoutineRef | undefined;
   /** Render with the menu open (static-markup tests). */
@@ -271,6 +328,9 @@ export function ConversationTaskPicker({
   const [exporting, setExporting] = useState(false);
   const [exportResult, setExportResult] = useState<{ error: boolean; text: string } | null>(null);
   const [menuOffset, setMenuOffset] = useState(0);
+  const [menuMaxHeight, setMenuMaxHeight] = useState<number | undefined>(undefined);
+  const [menuTight, setMenuTight] = useState(false);
+  const menu = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const exportPending = useRef(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -293,6 +353,71 @@ export function ConversationTaskPicker({
     setOpen(false);
     trigger.current?.focus();
   };
+
+  const openMenu = () => {
+    const right = ref.current?.getBoundingClientRect().right ?? CHAT_LIST_WIDTH;
+    const width = Math.min(CHAT_LIST_WIDTH, window.innerWidth - 16);
+    setMenuOffset(Math.max(8, Math.min(right - width, window.innerWidth - width - 8)) - (right - width));
+    const fold = openFoldFor(threadId);
+    if (fold) setExpanded((before) => (before.has(fold) ? before : new Set([...before, fold])));
+    setOpen(true);
+  };
+
+  // The height cap follows the screen while the list is open: a rotation, a resize, a header relayout or a phone's
+  // on-screen keyboard (which shrinks only the visual viewport) re-measures the space below the chip.
+  useEffect(() => {
+    if (!open) return;
+    const measure = () => {
+      const view = window.visualViewport;
+      const bottom = view ? view.offsetTop + view.height : window.innerHeight;
+      // the chrome is everything in the pop-up but the list (plus its 1 px borders), measured live
+      const box = menu.current, rows = list.current;
+      const chrome = box && rows ? box.scrollHeight - rows.offsetHeight + 2 : CHAT_LIST_CHROME_PX;
+      const next = chatListMaxHeight(ref.current?.getBoundingClientRect().bottom, bottom, chrome);
+      setMenuMaxHeight(next?.maxHeight);
+      setMenuTight(next?.tight ?? false);
+    };
+    // one measure per frame: the keyboard animation and pinch-zoom fire scroll and resize many times a frame
+    let frame = 0;
+    const schedule = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => { frame = 0; measure(); });
+    };
+    measure();
+    const view = window.visualViewport;
+    window.addEventListener("resize", schedule);
+    view?.addEventListener("resize", schedule);
+    view?.addEventListener("scroll", schedule);
+    return () => {
+      if (frame) cancelAnimationFrame(frame);
+      window.removeEventListener("resize", schedule);
+      view?.removeEventListener("resize", schedule);
+      view?.removeEventListener("scroll", schedule);
+    };
+  }, [open]);
+
+  // Mod+J opens or closes this list (focus lands in its search box); Mod+Shift+N starts a new chat here. Checked against every
+  // app shortcut (App.tsx, CommandPalette, keyboard-shortcuts.ts): Mod+N stays "new bot", Mod+K the palette.
+  const shortcutState = useRef({ open, busy, onNew, openMenu, closeMenu });
+  shortcutState.current = { open, busy, onNew, openMenu, closeMenu };
+  useEffect(() => {
+    if (!shortcuts) return;
+    const onKey = (event: KeyboardEvent) => {
+      const action = chatListShortcut(event);
+      if (!action || event.defaultPrevented || event.isComposing || document.querySelector('dialog[open], [role="dialog"][aria-modal="true"]')) return;
+      const current = shortcutState.current;
+      event.preventDefault();
+      if (action === "toggle") {
+        if (current.open) current.closeMenu();
+        else current.openMenu();
+      } else if (!current.busy) {
+        current.onNew();
+        if (current.open) current.closeMenu();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [shortcuts]);
 
   const queueDismiss = () => {
     clearDismiss();
@@ -378,8 +503,8 @@ export function ConversationTaskPicker({
 
   // the picker button stays as-is — a token count next to a truncated title
   // and count would crowd it; the open task's tally rides the hover title
-  const currentTokens = formatTaskTokenLabel(current?.usage, locale);
-  const switchTitle = currentTokens ? `Switch task · ${currentTokens.detail}` : "Switch task";
+  const currentTokens = formatTaskTokenLabel(current?.usage ? { ...current.usage, costUsd: null } : undefined, locale);
+  const switchTitle = currentTokens ? `Switch chat · ${currentTokens.detail}` : `Switch chat${shortcuts ? ` (${modShortcut("J")})` : ""}`;
   const looking = query.trim();
   const clock = { timeZone, locale };
   // One shared 30-second clock keeps "5 min ago" honest (lib/relative-now).
@@ -453,7 +578,7 @@ export function ConversationTaskPicker({
   const renderTask = (task: PickerTask, kind: TaskKind, inFold?: string) => {
     const active = task.threadId === threadId;
     const readable = readableTaskTitle(task.title);
-    const name = readable.text;
+    const name = chatTitle(task.title, kind !== "chat");
     const at = taskSortTime(task, sort);
     const moment = [
       task.lastActivityAt !== undefined ? `Last message ${formatTaskMoment(task.lastActivityAt, clock)}` : null,
@@ -468,7 +593,7 @@ export function ConversationTaskPicker({
       task.busy && !waiting ? "Working" : null,
       unreadTaskLabel(task) || null,
     ].filter(Boolean).map((part) => ` · ${part}`).join("");
-    const tokens = formatTaskTokenLabel(task.usage, locale);
+    const tokens = formatTaskTokenLabel(task.usage ? { ...task.usage, costUsd: null } : undefined, locale);
     const questionCount = questions?.[task.threadId] ?? 0;
     const snoozedUntil = quiet(task) ? snoozes?.get(task.threadId) : undefined;
     const waitsForNews = untilActivity?.has(task.threadId) === true;
@@ -487,11 +612,11 @@ export function ConversationTaskPicker({
       >
         <Check size={13} className={cn("shrink-0", active ? "text-accent" : "opacity-0")} />
         {renaming === task.threadId ? (
-          <input
+          <input dir="auto"
             autoFocus
             value={draft}
             maxLength={80}
-            aria-label="Rename task"
+            aria-label={`Rename ${chatNoun(kind)}`}
             onFocus={(e) => e.currentTarget.select()}
             onChange={(e) => setDraft(e.target.value)}
             onClick={(e) => e.stopPropagation()}
@@ -559,12 +684,36 @@ export function ConversationTaskPicker({
             </div>
           </button>
         )}
+        {task.link && renaming !== task.threadId && (
+          <a
+            href={task.link}
+            target="_blank"
+            rel="noreferrer"
+            dir="ltr"
+            title={task.link}
+            aria-label={t("task.openLink", { link: threadLinkLabel(task.link) ?? task.link })}
+            className="shrink-0 rounded px-1 font-mono text-[11px] text-ink-secondary hover:bg-raised hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus [unicode-bidi:isolate]"
+          >
+            {threadLinkLabel(task.link) ?? t("task.link")}
+          </a>
+        )}
+        {task.link && onRemoveLink && renaming !== task.threadId && (
+          <button
+            type="button"
+            onClick={() => { clearDismiss(); onRemoveLink(task.threadId); }}
+            aria-label={t("task.removeLink")}
+            title={t("task.removeLink")}
+            className="rounded p-1 text-ink-secondary opacity-0 hover:bg-raised hover:text-ink focus-visible:opacity-100 group-hover:opacity-100"
+          >
+            <Link2Off size={13} />
+          </button>
+        )}
         {renaming !== task.threadId && (
           <button
             type="button"
             onClick={() => startRename(task)}
             aria-label={`Rename ${name}`}
-            title="Rename this task"
+            title={`Rename this ${chatNoun(kind)}`}
             className="rounded p-1 text-ink-secondary opacity-0 hover:bg-raised hover:text-ink focus-visible:opacity-100 group-hover:opacity-100"
           >
             <Pencil size={13} />
@@ -579,7 +728,7 @@ export function ConversationTaskPicker({
             }}
             aria-label={task.pinned ? `Unpin ${name}` : `Pin ${name}`}
             aria-pressed={Boolean(task.pinned)}
-            title={task.pinned ? "Unpin this task" : "Pin this task to the top"}
+            title={task.pinned ? `Unpin this ${chatNoun(kind)}` : `Pin this ${chatNoun(kind)} to the top`}
             className={cn(
               "rounded p-1 hover:bg-raised hover:text-ink focus-visible:opacity-100 group-hover:opacity-100",
               task.pinned ? "text-accent" : "text-ink-secondary opacity-0",
@@ -617,8 +766,8 @@ export function ConversationTaskPicker({
           onClick={() => { clearDismiss(); setConfirmingDelete((before) => (before === task.threadId ? null : task.threadId)); }}
           disabled={Boolean(task.busy)||(busy && active)}
           aria-expanded={confirmingDelete === task.threadId}
-          aria-label="Delete task"
-          title="Delete this task and its conversation"
+          aria-label={`Delete ${chatNoun(kind)}`}
+          title={`Delete this ${chatNoun(kind)} and its conversation`}
           className="rounded p-1 text-ink-secondary opacity-0 hover:bg-raised hover:text-danger focus-visible:opacity-100 group-hover:opacity-100 disabled:opacity-20"
         >
           <Trash2 size={13} />
@@ -634,7 +783,7 @@ export function ConversationTaskPicker({
       )}
       {unsnoozeFailed === task.threadId && (
         <p role="alert" className="px-2 py-1 text-[12px] text-danger" data-testid="unsnooze-failed">
-          Could not unsnooze this task. <button type="button" className="underline hover:no-underline" onClick={() => unsnooze(task.threadId)}>Try again</button>
+          Could not unsnooze this {chatNoun(kind)}. <button type="button" className="underline hover:no-underline" onClick={() => unsnooze(task.threadId)}>Try again</button>
         </p>
       )}
       {canSnooze && snoozing === task.threadId && (
@@ -652,17 +801,10 @@ export function ConversationTaskPicker({
       <button
         ref={trigger}
         type="button"
-        aria-label="All threads"
+        aria-label="Chat list"
         onClick={() => {
           if (open) closeMenu();
-          else {
-            const right = ref.current?.getBoundingClientRect().right ?? 320;
-            const width = Math.min(320, window.innerWidth - 16);
-            setMenuOffset(Math.max(8, Math.min(right - width, window.innerWidth - width - 8)) - (right - width));
-            const fold = openFoldFor(threadId);
-            if (fold) setExpanded((before) => (before.has(fold) ? before : new Set([...before, fold])));
-            setOpen(true);
-          }
+          else openMenu();
         }}
         title={switchTitle}
         className={cn(
@@ -673,18 +815,37 @@ export function ConversationTaskPicker({
           COMPACT_BUBBLE_LAST,
         )}
       >
-        <span className="truncate chip-fold:hidden">{current ? readableTaskTitle(current.title).text : "Task"}</span>
+        <span className="truncate chip-fold:hidden">{current ? chatTitle(current.title, Boolean(routineOf(current.threadId))) : "Chat"}</span>
         {/* folded: just the count in the bubble — the title rides the tooltip */}
         <span className="shrink-0 tabular-nums opacity-60 chip-fold:opacity-100">{total ?? tasks.length}</span>
         <ChevronDown size={12} className="shrink-0 chip-fold:hidden" />
       </button>
 
       {open && (
-        <div style={{ transform: `translateX(${menuOffset}px)` }} className="absolute right-0 top-full z-40 mt-1 w-[320px] max-w-[calc(100vw-16px)] overflow-hidden rounded-xl border border-hairline/50 bg-card py-1 shadow-2xl shadow-black/50">
-          <div className="flex items-center gap-2 px-2 pb-1.5 pt-1.5">
+        <div ref={menu} data-chat-list-menu style={{ transform: `translateX(${menuOffset}px)`, maxHeight: menuMaxHeight }} className={cn("absolute right-0 top-full z-40 mt-1 flex w-[440px] max-w-[calc(100vw-16px)] flex-col rounded-xl", menuTight ? "overflow-y-auto overflow-x-hidden overscroll-contain" : "overflow-hidden", "border border-hairline/50 bg-card py-1 shadow-2xl shadow-black/50")}>
+          {(heading || onExpand) && (
+            <div className="flex shrink-0 items-center gap-2 px-3 pb-0.5 pt-1.5">
+              <div className="min-w-0 flex-1 truncate text-[13px] font-semibold text-ink">
+                {heading ?? "Chats"}
+                <span className="ml-1.5 font-normal tabular-nums text-ink-secondary">{total ?? tasks.length}</span>
+              </div>
+              {onExpand && (
+                <button
+                  type="button"
+                  onClick={() => { closeMenu(); onExpand(); }}
+                  aria-label="Expand to All chats"
+                  title={`Expand: All chats, filtered here (${modShortcut("K", { shift: true })} for every chat)`}
+                  className="flex shrink-0 items-center gap-1 rounded px-1.5 py-1 text-[12px] text-ink-secondary hover:bg-raised hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus"
+                >
+                  <Maximize2 size={13} aria-hidden="true" /> Expand
+                </button>
+              )}
+            </div>
+          )}
+          <div className="flex shrink-0 items-center gap-2 px-2 pb-1.5 pt-1.5">
             <div className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-hairline/40 bg-inset px-2.5 py-1.5 focus-within:border-accent/60">
               <Search size={13} className="shrink-0 text-ink-secondary" />
-              <input
+              <input dir="auto"
                 ref={search}
                 autoFocus
                 value={query}
@@ -712,15 +873,15 @@ export function ConversationTaskPicker({
                     closeMenu();
                   }
                 }}
-                placeholder="Search tasks"
-                aria-label="Search tasks"
+                placeholder="Search chats"
+                aria-label="Search chats"
                 className="w-full min-w-0 bg-transparent text-[12.5px] text-ink placeholder:text-ink-secondary focus:outline-none"
               />
             </div>
             <label className="flex shrink-0 items-center gap-1 text-[11px] text-ink-secondary">
               <span aria-hidden="true">Sort</span>
               <select
-                aria-label="Sort tasks"
+                aria-label="Sort chats"
                 value={sort}
                 onChange={(e) => chooseSort(e.target.value === "created" ? "created" : "activity")}
                 onMouseDown={(e) => e.stopPropagation()}
@@ -732,14 +893,14 @@ export function ConversationTaskPicker({
               </select>
             </label>
           </div>
-          <div className="px-2 pb-1.5">
-            <div role="group" aria-label="Filter tasks" className="flex flex-wrap gap-1">
+          <div className="shrink-0 px-2 pb-1.5">
+            <div role="group" aria-label="Filter chats" className="flex flex-wrap gap-1">
               {TASK_FILTERS.map((chip) => (
                 <button
                   key={chip.id}
                   type="button"
                   aria-pressed={filter === chip.id && !looking}
-                  title={looking ? "Search looks at the tasks shown here; choosing a filter clears it" : undefined}
+                  title={looking ? "Search looks at the chats shown here; choosing a filter clears it" : undefined}
                   onClick={() => {
                     clearDismiss();
                     setFilter(chip.id);
@@ -760,13 +921,13 @@ export function ConversationTaskPicker({
           <div
             ref={list}
             onKeyDown={navigate}
-            className="max-h-[320px] overflow-y-auto overflow-x-hidden border-t border-hairline/40"
+            className={cn("max-h-[min(60vh,640px)] overflow-y-auto overflow-x-hidden border-t border-hairline/40", menuTight ? "min-h-[92px] shrink-0" : "min-h-0")}
             role="group"
-            aria-label={looking ? `${view.navigable.length} matching ${view.navigable.length === 1 ? "task" : "tasks"}` : "Tasks"}
+            aria-label={looking ? `${view.navigable.length} matching ${view.navigable.length === 1 ? "chat" : "chats"}` : "Chats"}
           >
             {view.sections.length === 0 ? (
               <div className="px-3 py-6 text-center text-[13px] text-ink-secondary">
-                {looking ? `Nothing matches “${looking}”` : filter === "all" ? "No tasks yet" : "No tasks in this view"}
+                {looking ? `Nothing matches “${looking}”` : filter === "all" ? "No chats yet" : "No chats in this view"}
               </div>
             ) : view.sections.map((section) => {
               const headerId = `${baseId}-${section.key}`;
@@ -834,9 +995,9 @@ export function ConversationTaskPicker({
                   onClick={() => { clearDismiss(); older.onLoadMore(); }}
                   className="w-full rounded px-2 py-1.5 text-left text-[13px] text-ink hover:bg-raised/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:opacity-60"
                 >
-                  {older.loading ? "Loading older tasks…" : "Show older tasks"}
+                  {older.loading ? "Loading older chats…" : "Show older chats"}
                 </button>
-                {older.failed && !older.loading && <p role="alert" className="px-2 pt-1 text-[12px] text-danger">Could not load older tasks. Try again.</p>}
+                {older.failed && !older.loading && <p role="alert" className="px-2 pt-1 text-[12px] text-danger">Could not load older chats. Try again.</p>}
               </div>
             )}
           </div>
@@ -844,13 +1005,13 @@ export function ConversationTaskPicker({
             type="button"
             onClick={() => void exportCurrent()}
             disabled={exporting}
-            className="mt-1 flex w-full items-center gap-2 border-t border-hairline/40 px-3 py-2 text-left text-[13px] text-ink hover:bg-raised/50 disabled:opacity-40"
+            className="mt-1 flex w-full shrink-0 items-center gap-2 border-t border-hairline/40 px-3 py-2 text-left text-[13px] text-ink hover:bg-raised/50 disabled:opacity-40"
           >
             <Download size={13} className="shrink-0 text-ink-secondary" />
             {exporting ? "Exporting conversation…" : "Export conversation (Markdown)"}
           </button>
-          <p className="px-3 pb-2 text-[11px] text-ink-secondary">Current conversation only. Not an importable bot package.</p>
-          {exportResult && <p role={exportResult.error ? "alert" : "status"} className={cn("break-words px-3 pb-2 text-[12px]", exportResult.error ? "text-danger" : "text-ink-secondary")}>{exportResult.text}</p>}
+          <p className="shrink-0 px-3 pb-2 text-[11px] text-ink-secondary">Current conversation only. Not an importable bot package.</p>
+          {exportResult && <p role={exportResult.error ? "alert" : "status"} className={cn("shrink-0 break-words px-3 pb-2 text-[12px]", exportResult.error ? "text-danger" : "text-ink-secondary")}>{exportResult.text}</p>}
           <button
             type="button"
             onClick={() => {
@@ -858,14 +1019,41 @@ export function ConversationTaskPicker({
               closeMenu();
             }}
             disabled={busy}
-            className="mt-1 flex w-full items-center gap-2 border-t border-hairline/40 px-3 py-2 text-left text-[13px] text-ink hover:bg-raised/50 disabled:opacity-40"
+            className="mt-1 flex w-full shrink-0 items-center gap-2 border-t border-hairline/40 px-3 py-2 text-left text-[13px] text-ink hover:bg-raised/50 disabled:opacity-40"
           >
-            <Plus size={13} className="text-ink-secondary" /> New task
+            <Plus size={13} className="text-ink-secondary" /> New chat
+            {shortcuts && <span aria-hidden="true" className="ml-auto text-[11px] text-ink-secondary">{modShortcut("N", { shift: true })}</span>}
           </button>
+          {onNewInFolder && (
+            <button
+              type="button"
+              onClick={() => {
+                onNewInFolder();
+                closeMenu();
+              }}
+              disabled={busy}
+              className="flex w-full shrink-0 items-center gap-2 px-3 py-2 text-left text-[13px] text-ink hover:bg-raised/50 disabled:opacity-40"
+            >
+              <Plus size={13} className="text-ink-secondary" /> New chat in a folder...
+            </button>
+          )}
         </div>
       )}
     </div>
   );
+}
+
+const LAST_TASK_FOLDER_KEY = "murage.newTaskFolder.";
+
+/** Ask for a folder (starting at the one used last for this bot, else the
+ * bot's own) and open a new task there. Cancelling the picker does nothing. */
+async function newTaskInFolder(bot: Bot, dispatch: (action: { type: "newTask"; botId: string; cwd?: string }) => void): Promise<void> {
+  let last: string | undefined;
+  try { last = window.localStorage.getItem(LAST_TASK_FOLDER_KEY + bot.id) ?? undefined; } catch { /* storage may be blocked */ }
+  const chosen = await window.muragebox?.pickFolder?.(last ?? bot.cwd ?? undefined);
+  if (!chosen) return;
+  try { window.localStorage.setItem(LAST_TASK_FOLDER_KEY + bot.id, chosen); } catch { /* a suggestion only */ }
+  dispatch({ type: "newTask", botId: bot.id, cwd: chosen });
 }
 
 export function TaskPicker({ bot }: { bot: Bot }) {
@@ -893,12 +1081,17 @@ export function TaskPicker({ bot }: { bot: Bot }) {
       older={{ hasMore: older.hasMore, loading: older.loading, failed: older.failed, onLoadMore: older.loadMore }}
       busy={false}
       onNew={() => dispatch({ type: "newTask", botId: bot.id })}
+      onNewInFolder={desktop && window.muragebox?.pickFolder ? () => void newTaskInFolder(bot, dispatch) : undefined}
       onSwitch={(threadId) => dispatch({ type: "switchTask", botId: bot.id, threadId })}
       onRename={(threadId, title) => dispatch({ type: "renameTask", botId: bot.id, threadId, title })}
       onDelete={(threadId) => dispatch({ type: "deleteTask", botId: bot.id, threadId })}
       deleteScope={{ botId: bot.id }}
       onPrefetch={(threadId) => startConversationPrefetch(api, { ownerId: bot.id, threadId, pageSize: MESSAGE_PAGE_SIZE })}
       onTogglePin={(threadId, pinned) => dispatch({ type: "pinTask", botId: bot.id, threadId, pinned })}
+      onRemoveLink={(threadId) => dispatch({ type: "updateTask", botId: bot.id, threadId, patch: { link: null } })}
+      heading={`Chats with ${bot.name}`}
+      onExpand={() => dispatch({ type: "showAllChats", botId: bot.id })}
+      shortcuts
     />
   );
 }
@@ -936,6 +1129,9 @@ export function GroupTaskPicker({ group }: { group: Group }) {
       onRename={(threadId, title) => dispatch({ type: "renameGroupTask", groupId: group.id, threadId, title })}
       onDelete={(threadId) => dispatch({ type: "deleteGroupTask", groupId: group.id, threadId })}
       deleteScope={{ groupId: group.id }}
+      heading={`Chats in ${group.name}`}
+      onExpand={() => dispatch({ type: "showAllChats", groupId: group.id })}
+      shortcuts
     />
   );
 }

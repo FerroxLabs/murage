@@ -45,6 +45,11 @@ export interface ExclusionAddon {
   /** macOS, Linux: the OTHER processes that have one of the files at `paths` open for writing (by device and inode; `index` says which
    * path), and those whose open files could not be read (with the user they run as; null: could not be told). */
   writers?(paths: string[]): FileWriters;
+  /** All platforms: the values of `names` in the environment of process `pid`, only the ones it has (Windows matches a name in any case),
+   * or null when it cannot be read: gone, another user's, protected, or (Windows) a 32-bit process on 64-bit Windows. macOS
+   * KERN_PROCARGS2, Linux /proc/<pid>/environ, Windows the process's PEB. Absent in an older build (engine-closed.ts then counts every
+   * engine process, as before). */
+  environment?(pid: number, names: string[]): Record<string, string> | null;
   /** macOS, Linux: makes the file's (or folder's) contents durable through the drive's cache (macOS F_FULLFSYNC), and says which barrier
    * it was: "full", or "fallback" (macOS: the file system refuses F_FULLFSYNC, as Apple documents for one without it; plain fsync). */
   fullSync?(fd: number): Barrier;
@@ -87,7 +92,7 @@ export interface ExclusionAddon {
 }
 
 /** A running process as the addon reports it. `mine`: this user's (null: could not be told). `exe` "" is a process with no program
- * (a zombie; on Windows, a process that has ended while a handle to it is still open); null is one that could not be read. `argv` null: could not be read (Windows: the whole command line is one element). */
+ * (a zombie; on Windows, a process that has ended while a handle to it is still open); null is one that could not be read. `argv` null: could not be read (Windows: the process's own command line, split as CommandLineToArgvW splits it, exclusion.c). */
 export interface NativeProcess {
   pid: number; ppid: number; mine: boolean | null; start: number; exe: string | null; argv: string[] | null;
   /** the user it runs as (macOS, Linux); null where the system has none or it could not be read */

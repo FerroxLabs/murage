@@ -82,6 +82,11 @@ describe("route policy (strict)", () => {
   });
 
   // 1.0.3 R1.10: Settings > Storage's attachment list has its own desktop entry, and every caller but the desktop is refused.
+  it("F31 (U36): the send lookup GET /api/sends/:threadId/:sendId is a conversation route, so a paired companion can ask too", () => {
+    expect(routeClass("GET", "/api/sends/t1/s1")).toBe("conversation");
+    expect(routePolicy("GET", "/api/sends/t1/s1")?.class).toBe("conversation");
+  });
+
   it("the Storage attachment list is desktop class by an explicit entry; phone, door, bot and nobody are refused", () => {
     const entry = routePolicy("GET", "/api/storage/attachments");
     expect(entry?.class).toBe("desktop");
@@ -93,6 +98,20 @@ describe("route policy (strict)", () => {
     expect(routeAdmits(routeClass("GET", "/api/storage/attachments"), { ...nobody, companion: true, door: true })).toBe(false);
     expect(routeRefusal({ ...nobody, companion: true }, "desktop")).toEqual({ status: 403, body: { error: DESKTOP_ONLY_SENTENCE } });
     expect(routeRefusal(nobody, "desktop")).toEqual({ status: 404, body: { error: "no such route" } });
+  });
+
+  // 1.0.4 SL-H: Remove is desktop class, and refused on every Cloud scope, stepped up or not (local desktop only).
+  it("Storage Remove is desktop class; phone, door, bot and nobody are refused, and every Cloud scope is denied", () => {
+    const route = "/api/storage/attachments/remove";
+    expect(routePolicy("POST", route)).toMatchObject({ class: "desktop", path: route });
+    const nobody = { desktop: false, companion: false, door: false, bot: false };
+    for (const who of ["companion", "door", "bot"] as const) expect(routeAdmits(routeClass("POST", route), { ...nobody, [who]: true }), who).toBe(false);
+    expect(routeAdmits(routeClass("POST", route), nobody)).toBe(false);
+    for (const scope of ["owner-desktop", "owner-phone", "browser", "service", "owner-browser", "anonymous"] as const) {
+      for (const steppedUp of [false, true]) expect(cloudRouteDecision("POST", route, scope, { names: [] }, steppedUp), `${scope} ${steppedUp}`).toBe("deny");
+    }
+    // the list keeps its own answer
+    expect(cloudRouteDecision("GET", "/api/storage/attachments", "owner-browser", null)).toBe("allow");
   });
 
   it("an unclassified route is desktop-only; the named holes are closed", () => {

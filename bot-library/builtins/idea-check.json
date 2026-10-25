@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Idea Check",
     "tagline": "A one-page idea verdict and three tests of your riskiest assumptions",
-    "summary": "Seed prepares a lean canvas separating facts and assumptions for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For deeper idea validation, use Validator. For a demand evidence team, use Validate Before Build. For a demand test review team, use Validation Cell. For a small software product team, use SaaS MVP Sprint.",
+    "summary": "Seed prepares a lean canvas separating facts and assumptions for your review.",
     "category": "Founders",
     "author": {
       "name": "Ferrox Labs",
@@ -42,7 +42,8 @@
         "title": "Idea Check",
         "description": "Seed prepares a lean canvas separating facts and assumptions for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For deeper idea validation, use Validator. For a demand evidence team, use Validate Before Build. For a demand test review team, use Validation Cell. For a small software product team, use SaaS MVP Sprint.",
         "appearance": {
-          "color": "green"
+          "color": "yellow",
+          "mascotBody": "drop"
         },
         "skills": [
           "idea-validation",
