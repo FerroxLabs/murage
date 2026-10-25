@@ -97,7 +97,7 @@ createRoot(document.getElementById('root')).render(h(React.StrictMode,{},h('main
   h('button',{type:'button','data-testid':'outside'},'Outside'),
   h('section',{'data-testid':'gallery'},h(AttachedImageGallery,{paths:['/Users/x/attachments/portrait-1.png','/Users/x/attachments/missing-9.png','/Users/x/attachments/wide-2.png'],className:'justify-start'})),
   h('section',{'data-testid':'markdown'},h(ChatMarkdown,{text:${JSON.stringify(MARKDOWN)}})),
-  h('section',{'data-testid':'screen'},h(ScreenFrameMedia,{png:${JSON.stringify(SCREEN)},mime:'image/png',className:'block w-fit max-w-[min(42rem,78%)] rounded-2xl border border-hairline/40'})),
+  h('section',{'data-testid':'screen'},h(ScreenFrameMedia,{png:${JSON.stringify(SCREEN)},mime:'image/png',className:'block w-fit max-w-[min(var(--chat-bubble-max),var(--chat-bubble-pct))] rounded-2xl border border-hairline/40'})),
   h('section',{'data-testid':'files'},h(FilesModal)))));`;
       },
       configureServer(vite) { vite.middlewares.use((req, res, next) => {

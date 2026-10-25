@@ -86,8 +86,8 @@ describe("the chat column's own controls", () => {
     expect(read("components/Sidebar.tsx")).toContain('"pb-3 pt-2 max-md:pb-[calc(0.75rem+var(--inset-bottom))]"');
   });
 
-  it("keeps the update notice above the home indicator", () => {
-    expect(read("components/UpdateBanner.tsx")).toContain("fixed bottom-[calc(1rem+var(--inset-bottom))] left-4");
+  it("keeps the centred update card inside the safe area", () => {
+    expect(read("components/UpdateBanner.tsx")).toContain("overlay-inset fixed inset-0");
   });
 });
 

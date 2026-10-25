@@ -80,6 +80,8 @@ const ROUTE_TERMS = {
   browser: "browser",
   "browser-extension": "browser extension",
   "calendar-calls": "calls",
+  // /api/chats: the All chats page and the bot chat pop-up list (1.0.6 chats slice 1, 47456b4dd)
+  chats: "chats",
   "cli-candidates": "engines",
   "cli-test": "engines",
   connectors: "connected apps",

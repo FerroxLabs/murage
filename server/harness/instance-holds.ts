@@ -26,6 +26,9 @@ export class InstanceHolds {
   private readonly running = new Map<string, Map<string, number>>();
   private readonly idleWaiters = new Map<string, Array<() => void>>();
   private readonly probes = new Map<string, (threadId: string) => boolean>();
+  /** When each instance last saw a turn end. */
+  private readonly endedAt = new Map<string, number>();
+  private readonly freeWaiters = new Set<{ ids: string[]; since: number; wake: () => void }>();
   /** Called once for each turn that has to wait, with the thread it was for. */
   onWait?: (instanceId: string, threadId: string) => void;
 
@@ -50,7 +53,32 @@ export class InstanceHolds {
   noteEnded(instanceId: string, threadId: string): void {
     const set = this.running.get(instanceId);
     if (!set?.delete(threadId)) return;
-    if (set.size === 0) for (const wake of this.idleWaiters.get(instanceId)?.splice(0) ?? []) wake();
+    this.endedAt.set(instanceId, Date.now());
+    if (set.size === 0) {
+      for (const wake of this.idleWaiters.get(instanceId)?.splice(0) ?? []) wake();
+      for (const waiter of [...this.freeWaiters]) this.checkFree(waiter);
+    }
+  }
+
+  /** Calls `wake` once, the first moment none of these instances has a running turn AND at least one of them saw a turn end at or
+   * after `since`. A deletion skipped because Murage's own turn was running uses it to try again as soon as that turn ends (a Stop
+   * ends it too). An instance that saw no turn end never wakes it: an instance reported busy only because its idle engines could not
+   * be confirmed closed is left to the deletion's own schedule. Returns how to stop waiting. */
+  whenFree(instanceIds: readonly string[], since: number, wake: () => void): () => void {
+    const waiter = { ids: [...new Set(instanceIds)], since, wake };
+    if (!waiter.ids.length) return () => {};
+    this.freeWaiters.add(waiter);
+    // the turn may have ended between the hold and this registration
+    this.checkFree(waiter);
+    return () => { this.freeWaiters.delete(waiter); };
+  }
+
+  private checkFree(waiter: { ids: string[]; since: number; wake: () => void }): void {
+    if (!this.freeWaiters.has(waiter)) return;
+    if (!waiter.ids.some((id) => (this.endedAt.get(id) ?? -Infinity) >= waiter.since)) return;
+    if (waiter.ids.some((id) => (this.running.get(id)?.size ?? 0) > 0)) return;
+    this.freeWaiters.delete(waiter);
+    try { waiter.wake(); } catch { /* a waiter never breaks the turn that ended */ }
   }
 
   /** Resolves at once when the instance is not held, otherwise when its hold is released. */

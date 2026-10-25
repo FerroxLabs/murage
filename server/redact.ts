@@ -11,6 +11,8 @@
 // tells you a token was passed, under which name, and how long it was —
 // enough to debug "the proxy got no token" without the token being there.
 
+import { maskFinancialIdentifiers } from "../shared/financial-ids.ts";
+
 /** Key names whose value is a credential. Matched case-insensitively as a
  * substring, so KEY catches ANTHROPIC_API_KEY and x-api-key. */
 const SECRET_KEY_PARTS = ["token", "secret", "password", "passwd", "apikey", "api_key", "authorization", "auth_token", "cookie"];
@@ -39,7 +41,7 @@ const mask = (value: string) => (REDACTION_MARKER.test(value) ? value : `«redac
 // generic "long hex/base64" heuristic would rewrite real code in the
 // transcript, so only shapes that are unmistakably credentials match.
 
-const KEY_PREFIXES: RegExp[] = [
+export const KEY_PREFIXES: RegExp[] = [
   /\bsk-(?:ant-|proj-|live-|test-)?[A-Za-z0-9_-]{16,}/g, // anthropic / openai / stripe
   /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}/g, // github classic
   /\bgithub_pat_[A-Za-z0-9_]{20,}/g, // github fine-grained
@@ -92,6 +94,9 @@ const KEY_PREFIXES: RegExp[] = [
 const JWT =
   /(?<!:\/\/)(?<!@)(?<![A-Za-z0-9_-])(?=[A-Za-z0-9_-]*\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b)([A-Za-z0-9_-]*?)\b(eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b)/g;
 const BEARER = /(\bBearer\s+)([A-Za-z0-9._~+/=-]{12,})/g;
+/** A bearer-looking token on its own (`Bearer abc…`), for screens that refuse
+ * rather than mask (server/mcp-bot-add.ts). Same shape as BEARER. */
+export const BEARER_TOKEN = /\bBearer\s+[A-Za-z0-9._~+/=-]{12,}/i;
 /** A PEM private-key block: the header, everything up to the FIRST footer,
  * the footer. The original `(-----BEGIN …)([\s\S]*?)(-----END …)` scanned
  * from every header to the end of the text when no footer followed, so n
@@ -100,6 +105,8 @@ const BEARER = /(\bBearer\s+)([A-Za-z0-9._~+/=-]{12,})/g;
  * after it, mask what lies between, continue after the footer — and stop at
  * the first header with no footer, because no later header can have one. */
 const PEM_OPEN = /-----BEGIN [A-Z ]*PRIVATE KEY-----/g;
+/** A PEM private-key header anywhere, for screens that refuse rather than mask. */
+export const PEM_PRIVATE_KEY = /-----BEGIN [A-Z ]*PRIVATE KEY-----/;
 const PEM_CLOSE = /-----END [A-Z ]*PRIVATE KEY-----/g;
 function redactPemBlocks(text: string): string {
   let out = "";
@@ -185,6 +192,10 @@ export const TEXT_RULES: readonly (readonly [string, (text: string) => string])[
       `${leadA ?? leadB}${keyA ?? keyB}${sep}${quote}${mask(value)}${quote}`,
   )],
   ["QUERY_KEY", (text) => text.replace(QUERY_KEY, (match: string, lead: string, value: string) => (NUMERIC_VALUE.test(value) ? match : `${lead}${mask(value)}`))],
+  // Bank, card, account and personal id numbers keep their shape and lose
+  // their digits, byte for byte (shared/financial-ids.ts). Last, so a secret
+  // rule above sees the text as typed.
+  ["FINANCIAL_ID", maskFinancialIdentifiers],
 ];
 
 export function redactSecretsInText(text: string): string {

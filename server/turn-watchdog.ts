@@ -246,6 +246,11 @@ export class TurnWatchdog {
     return this.turns.has(threadId);
   }
 
+  /** A card is open for a person on the watched turn (false when the turn is not watched). */
+  waitingOnHuman(threadId: string): boolean {
+    return this.turns.get(threadId)?.waitingOnHuman === true;
+  }
+
   /** Visible for tests; the interval calls this. */
   sweep(): void {
     const at = this.now();

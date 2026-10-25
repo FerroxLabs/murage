@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Inbox Triage",
     "tagline": "Your important messages and reply drafts in one review queue",
-    "summary": "Sift prepares a ranked inbox queue with the messages that need you. Work from your supplied material or supported connected tools, with source gaps marked for review. For general desk work, use Cowork. For existing sales conversation follow-ups, use Recover Unanswered Sales Emails. For a customer-message review team, use Reply Desk.",
+    "summary": "Sift prepares a ranked inbox queue with the messages that need you.",
     "category": "Front office",
     "author": {
       "name": "Ferrox Labs",
@@ -54,7 +54,8 @@
         "title": "Inbox Triage",
         "description": "Sift prepares a ranked inbox queue with the messages that need you. Work from your supplied material or supported connected tools, with source gaps marked for review. For general desk work, use Cowork. For existing sales conversation follow-ups, use Recover Unanswered Sales Emails. For a customer-message review team, use Reply Desk.",
         "appearance": {
-          "color": "blue"
+          "color": "blue",
+          "mascotBody": "circle"
         },
         "skills": [
           "inbox-zero",

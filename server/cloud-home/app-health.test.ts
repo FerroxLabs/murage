@@ -134,12 +134,12 @@ describe("app health probe", () => {
   });
   it("uiRenders is the app's own render answer on /api/health: \"ok\" true, any other value false, absent omitted (Astra AUTOCANARY-4 P1)", () => {
     const out = JSON.parse(execFileSync("python3", ["-I", "-c", script, control], { encoding: "utf8", timeout: 60_000 }));
-    const bare = { uiAt: "MISSING", instance: null, door: null };
+    const bare = { uiAt: "MISSING", instance: null, door: null, ownerFactor: false };
     expect(out.reports).toEqual({ ok: { ok: true, ui: null, ...bare }, uiOk: { ok: true, ui: true, ...bare }, uiFailed: { ok: true, ui: false, ...bare },
       uiPending: { ok: true, ui: false, ...bare }, uiNumber: { ok: true, ui: false, ...bare }, uiForeign: { ok: false, ui: null, ...bare },
       uiError: { ok: false, ui: null, ...bare },
-      uiFull: { ok: true, ui: true, uiAt: 1760000000000, instance: "AbCdEfGhIjKlMnOpQrSt_-", door: null },
-      uiPendingNull: { ok: true, ui: false, uiAt: null, instance: "AbCdEfGhIjKlMnOpQrSt_-", door: null },
+      uiFull: { ok: true, ui: true, uiAt: 1760000000000, instance: "AbCdEfGhIjKlMnOpQrSt_-", door: null, ownerFactor: false },
+      uiPendingNull: { ok: true, ui: false, uiAt: null, instance: "AbCdEfGhIjKlMnOpQrSt_-", door: null, ownerFactor: false },
       uiMalformed: { ok: true, ui: true, ...bare }, uiFloat: { ok: true, ui: true, ...bare }, uiBool: { ok: true, ui: true, ...bare },
       uiNegative: { ok: true, ui: true, ...bare },
       // Door v2: only a 200 murage body saying door "v2" reports it; every failure shape and any other value is None.
@@ -928,6 +928,6 @@ print(json.dumps(out))
     // No ack change: the heartbeat ack is still read exactly as before, and the 400 resend carries the header too.
     const src = readFileSync(control, "utf8");
     expect(src).toContain('strict_fields(heartbeat, ("wire", "accepted", "generation", "evidenceEpoch"))');
-    expect(src.match(/request\(binding, "heartbeat", body, door=True\) if door else request\(binding, "heartbeat", body\)/g)).toHaveLength(2);
+    expect(src.match(/request\(binding, "heartbeat", body, door=True, \*\*owner_extra\) if door else request\(binding, "heartbeat", body, \*\*owner_extra\)/g)).toHaveLength(2);
   });
 });

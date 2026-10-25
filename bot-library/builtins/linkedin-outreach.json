@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "LinkedIn Outreach",
     "tagline": "Personal connection notes grounded in what each prospect actually shared",
-    "summary": "Thread prepares a set of personalized connection-note drafts from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For individual deal strategy, use Sales. For general conversion copy, use Copy. For a direct outreach campaign, use Cold Outbound. For a complete prospecting campaign, use Lead-Gen Outbound Squad. For Reddit buying-conversation research, use Find Qualified Reddit Leads.",
+    "summary": "Thread prepares a set of personalized connection-note drafts from the material you supply.",
     "category": "Sales",
     "author": {
       "name": "Ferrox Labs",
@@ -48,7 +48,8 @@
         "title": "LinkedIn Outreach",
         "description": "Thread prepares a set of personalized connection-note drafts from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For individual deal strategy, use Sales. For general conversion copy, use Copy. For a direct outreach campaign, use Cold Outbound. For a complete prospecting campaign, use Lead-Gen Outbound Squad. For Reddit buying-conversation research, use Find Qualified Reddit Leads.",
         "appearance": {
-          "color": "orange"
+          "color": "pink",
+          "mascotBody": "circle"
         },
         "skills": [
           "networking-message-writer",

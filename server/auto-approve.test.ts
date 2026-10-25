@@ -441,13 +441,15 @@ describe("a wider grant never widens into the guards", () => {
   ];
 
   it.each(sensitive)("still asks with %s granted", (key, summary) => {
+    // 1.0.4 U17 r2: `source` of a file on disk is an Always ask card, which no grant answers, before the sensitive guard reads it
+    const guard = key === "Bash:source" ? "always-ask" : "sensitive-guard";
     const granted = { alwaysAllow: [key] };
     expect(autoVerdict(granted, "Bash", summary).approve).toBeNull();
-    expect(autoVerdict(granted, "Bash", summary).source).toBe("sensitive-guard");
+    expect(autoVerdict(granted, "Bash", summary).source).toBe(guard);
     // and with the most permissive mode there is switched on as well
     const permissive = { autoApprove: true, alwaysAllow: [key] };
     expect(autoVerdict(permissive, "Bash", summary).approve).toBeNull();
-    expect(autoVerdict(permissive, "Bash", summary).source).toBe("sensitive-guard");
+    expect(autoVerdict(permissive, "Bash", summary).source).toBe(guard);
   });
 
   it.each([
@@ -718,6 +720,31 @@ describe("always-ask reads the whole command, and asks on a cut copy", () => {
   it("a Codex argv list is read through commandFromToolInput", () => {
     expect(exactCommandForRequest({ tool: "shell", toolCall: { name: "shell", input: { command: ["rm", "-rf", "/"], cwd: "/tmp" } }, engine: "codex", turnCwd: undefined })).toMatchObject({ command: "rm -rf /" });
     expect(autoVerdict(NO_LIMITS, "shell", "rm -rf /", { commandText: "rm -rf /", commandCwd: "/tmp" })).toMatchObject({ source: "always-ask", rule: "delete-root" });
+  });
+
+  it("a command carried inside Fuigo's use_tool wrapper is read by always-ask, not only by the stop line (09-A1)", () => {
+    const call = {
+      tool: "other",
+      summary: "Clean up",
+      toolKind: "other",
+      toolIdentity: { namespace: "fuigo_build", name: "use_tool", kind: "use_tool" },
+      toolCall: { name: "Clean up", input: { variant: "UseTool", tool_name: "computer__computer_exec", tool_input: { command: "sudo rm -rf /home" } } },
+      mcpMounts: [{ engineName: "computer", mountId: "own:computer", provenance: "own" as const }],
+    };
+    expect(autoVerdict(NO_LIMITS, "other", "Clean up", { call })).toMatchObject({ approve: null, source: "always-ask" });
+    const harmless = { ...call, toolCall: { name: "Clean up", input: { variant: "UseTool", tool_name: "computer__computer_exec", tool_input: { command: "ls -la" } } } };
+    expect(autoVerdict(NO_LIMITS, "other", "Clean up", { call: harmless }).source).not.toBe("always-ask");
+  });
+
+  it("09-B1: a command that prints the environment, or reads the shell profile through $HOME, asks at Auto and Full access", () => {
+    const FULL = { autoApprove: true, fullAccess: true };
+    for (const command of ["env", "printenv", "export -p", "declare -p", "set", "cat $HOME/.zshrc", 'cat "$HOME/.zshrc"', "cat ${HOME}/.zshrc", "ls && env"]) {
+      for (const bot of [{ autoApprove: true }, FULL, NO_LIMITS]) {
+        const verdict = autoVerdict(bot, "Bash", command, { commandText: command, commandCwd: "/tmp" });
+        expect(verdict.approve, `${command} / ${JSON.stringify(bot)}`).toBeNull();
+      }
+    }
+    expect(autoVerdict({ autoApprove: true }, "Bash", "env FOO=1 ls", { commandText: "env FOO=1 ls", commandCwd: "/tmp" }).approve).not.toBeNull();
   });
 
   it("a command tool with only a cut summary asks as unreadable, with no grants", () => {

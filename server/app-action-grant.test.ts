@@ -468,7 +468,7 @@ describe("round 3: a missing, null, cut or unknown value never grants, approves 
       wrapped("run_terminal_command", { command: "cat ~/.ssh/id_rsa" }, 2),
       fuigo({ command: "cat ~/.aws/credentials" }, { namespace: "fuigo_build", name: "run_terminal_command", kind: "execute" }),
       fuigo({ script: "cat .env" }, stamp("custom__run")),
-      fuigo({ code: "open('/Users/ada/.netrc').read()" }, stamp("custom__run")),
+      fuigo({ script: "cat /Users/ada/.netrc" }, stamp("custom__run")),
       fuigo({ args: ["cat", "~/.ssh/id_ed25519"] }, stamp("custom__run")),
       fuigo({ tools: [{ tool_slug: "GITHUB_RUN_WORKFLOW", arguments: { inputs: { note: "see ~/.docker/config.json" } } }] }),
       claude({ command: "security find-generic-password -s x" }, "mcp__custom__run"),
@@ -479,6 +479,13 @@ describe("round 3: a missing, null, cut or unknown value never grants, approves 
       holdsEverywhere(ask);
       expect(verdict(unlimited, ask), JSON.stringify(ask.toolCall)).toMatchObject({ approve: null, source: "sensitive-guard" });
     }
+    // 0309 A1: the always-ask reader reads the command inside the call first, so code it cannot read as a shell line
+    // (a Python key-file read) holds there, at every level, before the key guard is reached
+    const py = fuigo({ code: "open('/Users/ada/.netrc').read()" }, stamp("custom__run"));
+    expect(placeArgumentScan(py.toolCall!.input).cut).toBe(false);
+    holdsEverywhere(py);
+    expect(verdict(unlimited, py)).toMatchObject({ approve: null, source: "always-ask", rule: "unreadable" });
+    expect(verdict({ autoApprove: true }, py)).toMatchObject({ approve: null, source: "always-ask", rule: "unreadable" });
     // the destructive guard reads the same command, and the stop line reads it as a shell line
     const wipe = wrapped("run_terminal_command", { command: "rm -rf /Users/ada/elsewhere" }, 1);
     expect(commandArgument(wipe.toolCall!.input)).toBeUndefined(); // the wrapper is not the call
