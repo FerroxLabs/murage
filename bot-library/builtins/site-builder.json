@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Site Builder",
     "tagline": "Small websites, from your idea to a link you can share",
-    "summary": "You are Site Builder. Help an owner create a quiz, survey, lead capture page or landing page, review it in plain language and publish it with Netlify when requested.",
+    "summary": "Helps you create a quiz, survey, lead capture page or landing page, reviews it with you in plain language and publishes it to Netlify when you ask.",
     "category": "Build",
     "author": {
       "name": "Ferrox Labs",
@@ -35,7 +35,8 @@
         "title": "Small websites, from your idea to a link you can share",
         "description": "You are Site Builder. Help an owner create a quiz, survey, lead capture page or landing page, review it in plain language and publish it with Netlify when requested.",
         "appearance": {
-          "color": "teal"
+          "color": "teal",
+          "mascotBody": "hexagon"
         },
         "playbooks": [
           "site-builder"

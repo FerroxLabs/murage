@@ -194,7 +194,8 @@ function semver(value) {
   if (pre.some(part => /^\d+$/.test(part) && part.length > 1 && part.startsWith("0"))) fail("Invalid prerelease number");
   return { core: match.slice(1, 4).map(BigInt), pre };
 }
-function newer(version, currentVersion) {
+/** True when `version` is a strictly newer semver than `currentVersion` (throws on a malformed version). */
+export function isNewerVersion(version, currentVersion) {
   const a = semver(version), b = semver(currentVersion);
   for (let i = 0; i < 3; i++) if (a.core[i] !== b.core[i]) return a.core[i] > b.core[i];
   if (!a.pre.length || !b.pre.length) return a.pre.length === 0 && b.pre.length > 0;
@@ -289,7 +290,7 @@ async function checkFile(file, expected) {
 export async function verifyLinuxUpdate({ files, version, currentVersion, publicKey, packageType, fetch: fetcher = globalThis.fetch,
   releaseBaseUrl = RELEASES, timeoutMs = 20_000 } = {}) {
   try {
-    if (!newer(version, currentVersion)) fail("Rollback refused");
+    if (!isNewerVersion(version, currentVersion)) fail("Rollback refused");
     if (!Array.isArray(files) || files.length < 1 || files.length > 2 || new Set(files).size !== files.length
       || files.some(file => typeof file !== "string" || !isAbsolute(file))) fail("Invalid downloaded files");
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 20_000) fail("Invalid verification timeout");

@@ -55,7 +55,7 @@ describe("High: Composer, Send while an intake question is open", () => {
   const source = read("./Composer.tsx");
   it("says so when the message could not be recorded as the answer, without calling the send failed", () => {
     noSwallow(source);
-    expect(source).toContain("replyToIntake(bot.id, question.id, t, api, { alongside: true }).then(() => setIntakeNotice(null), () => setIntakeNotice(INTAKE_NOT_RECORDED))");
+    expect(source).toContain("replyToIntake(bot.id, question.id, requestText, api, { alongside: true }).then(() => setIntakeNotice(null), () => setIntakeNotice(INTAKE_NOT_RECORDED))");
     expect(source).toContain('data-testid="intake-reply-notice"');
     expect(source).toMatch(/INTAKE_NOT_RECORDED = "Your message was sent\./);
   });

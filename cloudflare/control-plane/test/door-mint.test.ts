@@ -1785,6 +1785,18 @@ describe("D1 door v2", () => {
       expect((claims.expiresAt as number) - (claims.issuedAt as number)).toBe(60_000);
     }
   });
+  it("D1 mint: a door_proof=1 home adds proof to a browser ticket; door_proof=0 adds none (CLOUD-DOOR-OWNER-FACTOR-DESIGN-r3 4.1)", async () => {
+    const m = await v2Home();
+    const setDoorProof = (v: number) => env.DB.prepare("UPDATE cloud_homes SET door_proof=? WHERE id=?").bind(v, HOME).run();
+    const emailTok = await amrToken(OWNER_SUB, "owner@example.test", [{ method: "otp", ago: 10 }]);
+    // door_proof off (the default): a browser ticket carries exactly the v2 keys, no proof.
+    expect(Object.keys((await ticketOf(await mintWith(emailTok, { bind: BIND_A, kind: "browser" }))).claims)).toEqual(V2_KEYS);
+    // door_proof on: a browser ticket whose sign-in carried an emailed code (amr otp -> "email") carries proof.
+    await setDoorProof(1);
+    const browser = await ticketOf(await mintWith(emailTok, { bind: BIND_A, kind: "browser" }));
+    expect(Object.keys(browser.claims).sort()).toEqual([...V2_KEYS, "proof"].sort());
+    expect(browser.claims.proof).toBe("email");
+  });
   it("D1 mint: v2 home {} is 400 door_body_required, with and without the flag, logged", async () => {
     const m = await v2Home();
     const log = vi.spyOn(console, "log");
@@ -1917,11 +1929,12 @@ describe("D1 door v2", () => {
     const m = await v2Home();
     homeAnswer = () => Response.json({ devices: [
       { id: "dev-1", scope: "owner-desktop", addedAt: 1000, lastSeenAt: 2000, keyHash: "f".repeat(64) },
-      { id: "dev-2", scope: "browser", addedAt: 3000, lastSeenAt: null, keyHash: "e".repeat(64) }] });
+      { id: "dev-2", scope: "browser", addedAt: 3000, lastSeenAt: null, keyHash: "e".repeat(64), factor: "remembered-owner", factorExpiresAt: 5000 }] });
     const r = await req("GET", `/v1/homes/${HOME}/devices`, m.token);
     expect(r.status).toBe(200);
     const body = await r.json();
-    expect(body).toEqual({ devices: [{ id: "dev-1", scope: "owner-desktop", addedAt: 1000, lastSeenAt: 2000 }, { id: "dev-2", scope: "browser", addedAt: 3000, lastSeenAt: null }] });
+    // factor/factorExpiresAt pass through (null when the home omits them); key material never does.
+    expect(body).toEqual({ devices: [{ id: "dev-1", scope: "owner-desktop", addedAt: 1000, lastSeenAt: 2000, factor: null, factorExpiresAt: null }, { id: "dev-2", scope: "browser", addedAt: 3000, lastSeenAt: null, factor: "remembered-owner", factorExpiresAt: 5000 }] });
     expect(JSON.stringify(body)).not.toContain("f".repeat(64));
     await req("GET", `/v1/homes/${HOME}/devices`, m.token);
     expect(homeCalls).toHaveLength(2);

@@ -672,7 +672,7 @@ describe("instant acknowledgement in the 1:1 call (speed plan task 15)", () => {
 
   it("warms the cue clips where the call warms the host, for this bot's voice and language", () => {
     expect(source).toMatch(/if \(hostOn\.current\) warmHost\(bot\.id\);[\s\S]{0,800}cueCache\.prewarm\(/);
-    expect(source).toMatch(/cueCache\.prewarm\(\{[^}]*localeCode\(\)[^}]*keys/);
+    expect(source).toMatch(/cueCache\.prewarm\(\{[^}]*languageCode\(\)[^}]*keys/);
     expect(source).toContain("pickAck(");
   });
 
@@ -836,5 +836,13 @@ describe("lane 5: plain-words gate and no-mic prompts (source pins)", () => {
     const block = source.slice(at, at + 700);
     expect(block).toMatch(/if \(!said\) \{\s*if \(alive\.current && !heldRef\.current && ownerCutInAt\.current < startedAt\) owe\(\);/);
     expect(block).toMatch(/move\("listening"\)/);
+  });
+});
+
+describe("widget rows are not read aloud", () => {
+  it("CallView and GroupCallView skip widget rows when choosing a reply to speak", () => {
+    expect(source).toMatch(/const isReply = .*&& !m\.widget &&/);
+    const group = readFileSync(fileURLToPath(new URL("./GroupCallView.tsx", import.meta.url)), "utf8");
+    expect(group).toMatch(/message\.kind === "text" && !message\.widget && message\.text\?\.trim\(\)/);
   });
 });

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/state/store", () => ({ api: vi.fn(), useStore: vi.fn() }));
 
-import { FLASH_MS, FLASH_TARGET, flashMessage } from "./focus-message";
+import { FLASH_MS, FLASH_TARGET, flashMessage, landOnSearchHit, searchHitSentence } from "./focus-message";
 
 class FakeElement {
   attributes = new Map<string, string>();
@@ -109,5 +109,21 @@ describe("the flash on a landed message", () => {
     expect(never).not.toHaveBeenCalled();
     expect(gone.root.querySelector).toHaveBeenCalledTimes(21);
     expect(gone.row.attributes.has("data-flash")).toBe(false);
+  });
+});
+
+describe("a search hit lands with its matched phrase", () => {
+  const hit = { botId: "b1", name: "B", threadId: "t1", messageId: "m1", role: "assistant", kind: "text", at: 1,
+    snippet: "we agreed the launch date is Friday", matchStart: 10, matchLength: 15, onActivePath: true };
+  it("passes the matched sentence on the focus dispatch", async () => {
+    const dispatch = vi.fn();
+    await landOnSearchHit(hit, { bots: [{ id: "b1", threadId: "t1" }], groups: [], pageIntent: {} } as never, dispatch);
+    expect(dispatch).toHaveBeenLastCalledWith({ type: "focusMessage", threadId: "t1", messageId: "m1", sentence: "the launch date" });
+  });
+  it("leaves the sentence off when there is no match range", async () => {
+    const dispatch = vi.fn();
+    await landOnSearchHit({ ...hit, matchLength: 0 }, { bots: [{ id: "b1", threadId: "t1" }], groups: [], pageIntent: {} } as never, dispatch);
+    expect(dispatch).toHaveBeenLastCalledWith({ type: "focusMessage", threadId: "t1", messageId: "m1" });
+    expect(searchHitSentence({ snippet: "abc", matchStart: -1, matchLength: 2 })).toBe("");
   });
 });

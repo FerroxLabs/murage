@@ -23,7 +23,7 @@ import { NEUTRAL_TOOL_SURFACE, renderMurageTurn } from "../murage-tool-surface.t
 // instances only; the host desktop stays off (no approval channel in print
 // mode, ever).
 import { registerIntake } from "../harness/intake.ts";
-import { awaitCliTreeStopped, describeSpawnFailure, engineJob, execCli, killCliTree, spawnCli } from "../procs.ts";
+import { awaitCliTreeStopped, cliVersionReader, describeSpawnFailure, engineJob, execCli, killCliTree, spawnCli } from "../procs.ts";
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -377,7 +377,8 @@ function decodeConfig(raw: unknown): AntigravityConfig {
 
 export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
   driverKind: DRIVER_KIND,
-  metadata: { displayName: "Antigravity", supportsMultipleInstances: true },
+  // Named for what people look for in the engine list (upstream OpenMausBot #3173, Apache-2.0).
+  metadata: { displayName: "Google Gemini (Antigravity)", supportsMultipleInstances: true },
   install: {
     command: {
       darwin: "curl -fsSL https://antigravity.google/cli/install.sh | bash",
@@ -440,12 +441,16 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
     const earlyStops = new Set<string>();
     let disposed = false;
     let verifiedVersion: string | null | undefined;
-    const readVersion = () =>
-      new Promise<string | null>((resolve) => {
-        execCli(config.cli, ["--version"], { timeout: 8000, env }, (err, stdout) =>
-          resolve(err ? null : stdout.trim()),
-        );
+    const probeVersion = () =>
+      new Promise<{ err: Error | null; stdout: string }>((resolve) => {
+        execCli(config.cli, ["--version"], { timeout: 8000, env }, (err, stdout) => resolve({ err, stdout }));
       });
+    const readVersion = async () => {
+      const { err, stdout } = await probeVersion();
+      return err ? null : stdout.trim();
+    };
+    // Upstream #3433: a slow probe keeps the last version; only a real miss reads as not installed.
+    const snapshotVersionOf = cliVersionReader(config.cli);
     // The CLI file the version came from: replaced by `agy update`, it is re-probed; otherwise never.
     let verifiedCliSig = "";
     const versionForTurn = async () => {
@@ -1048,10 +1053,19 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
     };
 
     const snapshot = async (): Promise<ProviderSnapshot> => {
-      const version = await readVersion();
-      verifiedVersion = version;
-      if (version) verifiedCliSig = cliSig(config.cli, env);
-      if (!version) return { state: "unavailable", reason: `\`${config.cli}\` CLI not found` };
+      const probed = await probeVersion();
+      const answered = probed.err ? null : probed.stdout.trim() || null;
+      const probe = snapshotVersionOf(probed.err, probed.stdout);
+      // Only a fresh answer re-verifies the CLI file; a held version (slow
+      // probe) leaves the turn check to re-probe if `agy update` replaced it.
+      if (answered) {
+        verifiedVersion = answered;
+        verifiedCliSig = cliSig(config.cli, env);
+      } else if (!("version" in probe)) {
+        verifiedVersion = null;
+      }
+      if (!("version" in probe)) return { state: "unavailable", reason: probe.reason };
+      const { version } = probe;
       if (!supportsAntigravityStreamInput(version)) {
         return {
           state: "unavailable",

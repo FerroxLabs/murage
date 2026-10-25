@@ -157,6 +157,7 @@ getent passwd murage-turn >/dev/null || useradd --system --no-create-home --home
 getent passwd murage-browser >/dev/null || useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin murage-browser
 getent passwd murage-proxy >/dev/null || useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin murage-proxy
 getent passwd murage-egress >/dev/null || useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin murage-egress
+getent passwd murage-dns >/dev/null || useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin murage-dns
 getent passwd murage-tunnel >/dev/null || useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin murage-tunnel
 usermod -aG murage-turn murage
 # Only turns may execute /usr/bin/bwrap (not murage, murage-proxy, murage-browser).
@@ -343,6 +344,7 @@ install -m 0644 deploy/cloud-home/murage-turns.slice /etc/systemd/system/murage-
 install -m 0644 deploy/cloud-home/murage-browsers.slice /etc/systemd/system/murage-browsers.slice
 install -m 0644 deploy/cloud-home/murage-proxy.service /etc/systemd/system/murage-proxy.service
 install -m 0644 deploy/cloud-home/murage-egress-proxy.service /etc/systemd/system/murage-egress-proxy.service
+install -m 0644 deploy/cloud-home/murage-egress-dns.service /etc/systemd/system/murage-egress-dns.service
 install -m 0644 deploy/cloud-home/murage-miner-watch.service /etc/systemd/system/murage-miner-watch.service
 install -m 0644 deploy/cloud-home/murage-tunnel.service /etc/systemd/system/murage-tunnel.service
 install -m 0644 deploy/cloud-home/murage-tunnel-token.service /etc/systemd/system/murage-tunnel-token.service
@@ -442,7 +444,7 @@ systemctl enable murage-volume.service
 # the dependency chain: home/proxy Require data.mount, which Requires
 # murage-volume, which unlocks only for an enrolled machine. Before enrollment
 # they fail on that dependency and nothing listens.
-systemctl enable murage-home.service murage-proxy.service murage-egress-proxy.service
+systemctl enable murage-home.service murage-proxy.service murage-egress-proxy.service murage-egress-dns.service
 # A transient volume-unlock failure (CP 5xx, network not up) fails the oneshot and
 # strands home/proxy; the timer restarts them, except after terminal exit 78.
 systemctl enable murage-home-recover.timer

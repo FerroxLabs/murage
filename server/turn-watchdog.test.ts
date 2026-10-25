@@ -19,6 +19,23 @@ function rig() {
 }
 
 describe("TurnWatchdog", () => {
+  it("says whether a watched turn is waiting on a person (SL-N: a loop note never lands on an open card)", () => {
+    const { dog } = rig();
+    expect(dog.waitingOnHuman("t1")).toBe(false);
+    dog.watch("t1", "bot1");
+    expect(dog.waitingOnHuman("t1")).toBe(false);
+    dog.setWaitingOnHuman("t1", true, "r1");
+    dog.setWaitingOnHuman("t1", true, "r2");
+    expect(dog.waitingOnHuman("t1")).toBe(true);
+    dog.setWaitingOnHuman("t1", false, "r1");
+    expect(dog.waitingOnHuman("t1")).toBe(true);
+    dog.setWaitingOnHuman("t1", false, "r2");
+    expect(dog.waitingOnHuman("t1")).toBe(false);
+    dog.setWaitingOnHuman("t1", true, "r3");
+    dog.settle("t1");
+    expect(dog.waitingOnHuman("t1")).toBe(false);
+  });
+
   it("stalls a silent turn once, and only once", () => {
     const { dog, stalls, tick } = rig();
     dog.watch("t1", "bot1");
@@ -371,5 +388,101 @@ describe("TurnWatchdog from admission", () => {
     dog.dispatched("t1", "bot1", "g2");
     dog.settleSetup("t1", "g2");
     expect(dog.watching("t1")).toBe(true);
+  });
+
+  describe("heartbeat-only cap (#3328: a hung tool heartbeats forever)", () => {
+    const CAP = 30_000;
+    function heartbeatRig() {
+      let now = 0;
+      const stalls: WatchedTurn[] = [];
+      const dog = new TurnWatchdog({
+        stallMs: STALL,
+        heartbeatOnlyMs: CAP,
+        checkMs: 60_000,
+        onStall: (turn) => stalls.push({ ...turn }),
+        now: () => now,
+      });
+      // one heartbeat per `every` ms for `ms`, sweeping as the interval would
+      const beat = (threadId: string, ms: number, every = 5_000) => {
+        for (let t = 0; t < ms; t += every) {
+          now += every;
+          dog.touch(threadId, { heartbeat: true });
+          dog.sweep();
+        }
+      };
+      return { dog, stalls, beat, tick: (ms: number) => (now += ms) };
+    }
+
+    it("heartbeats keep a turn past its silence limit, but not past the cap", () => {
+      const { dog, stalls, beat } = heartbeatRig();
+      dog.watch("t1", "bot1");
+      beat("t1", CAP - 5_000);
+      expect(stalls).toHaveLength(0);
+      beat("t1", 5_000);
+      expect(stalls).toHaveLength(1);
+      expect(stalls[0]).toMatchObject({ threadId: "t1", stalledBy: "heartbeat-only" });
+      expect(dog.watching("t1")).toBe(false);
+    });
+
+    it("any real event restarts the heartbeat-only clock", () => {
+      const { dog, stalls, beat } = heartbeatRig();
+      dog.watch("t1", "bot1");
+      beat("t1", CAP - 5_000);
+      dog.touch("t1");
+      beat("t1", CAP - 5_000);
+      expect(stalls).toHaveLength(0);
+      beat("t1", 5_000);
+      expect(stalls).toHaveLength(1);
+    });
+
+    it("plain silence still stalls by the silence limit and says so", () => {
+      const { dog, stalls, tick } = heartbeatRig();
+      dog.watch("t1", "bot1");
+      tick(STALL);
+      dog.sweep();
+      expect(stalls).toHaveLength(1);
+      expect(stalls[0]?.stalledBy).toBe("silence");
+    });
+
+    it("a turn's own longer silence limit raises the cap with it", () => {
+      const { dog, stalls, beat } = heartbeatRig();
+      dog.watch("t1", "bot1", { stallMs: CAP * 2 });
+      beat("t1", CAP * 2 - 5_000);
+      expect(stalls).toHaveLength(0);
+      beat("t1", 5_000);
+      expect(stalls).toHaveLength(1);
+      expect(stalls[0]?.stalledBy).toBe("heartbeat-only");
+    });
+
+    it("an open card or a wait still exempts the turn", () => {
+      const { dog, stalls, beat } = heartbeatRig();
+      dog.watch("t1", "bot1");
+      dog.setWaitingOnHuman("t1", true, "r1");
+      beat("t1", CAP * 3);
+      expect(stalls).toHaveLength(0);
+      dog.watch("t2", "bot1");
+      const release = dog.waitingOn("t2", "computer");
+      beat("t2", CAP * 3);
+      expect(stalls).toHaveLength(0);
+      release();
+      beat("t2", CAP);
+      expect(stalls.map((s) => s.threadId)).toEqual(["t2"]);
+    });
+
+    it("setup is not capped by heartbeats (no engine turn exists yet)", () => {
+      let now = 0;
+      const stalls: WatchedTurn[] = [];
+      const dog = new TurnWatchdog({ stallMs: STALL, setupStallMs: CAP * 4, heartbeatOnlyMs: CAP, checkMs: 60_000, onStall: (t) => stalls.push(t), now: () => now });
+      dog.watch("t1", "bot1", { setup: true, generation: "g1" });
+      for (let t = 0; t < CAP * 2; t += 5_000) { now += 5_000; dog.touch("t1", { heartbeat: true }); dog.sweep(); }
+      expect(stalls).toHaveLength(0);
+    });
+
+    it("without heartbeatOnlyMs, heartbeats count as activity with no cap", () => {
+      const { dog, stalls, tick } = rig();
+      dog.watch("t1", "bot1");
+      for (let t = 0; t < STALL * 10; t += 1_000) { tick(1_000); dog.touch("t1", { heartbeat: true }); dog.sweep(); }
+      expect(stalls).toHaveLength(0);
+    });
   });
 });

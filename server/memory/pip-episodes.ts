@@ -5,11 +5,11 @@
 // attribution, never grounding. A deterministic gate decides what is kept; a day with owner turns and no
 // episode gets a trace episode built from thread titles and turn counts with no model.
 import type { DatabaseSync } from "node:sqlite";
-import { redactSecretsInText } from "../redact.ts";
 import { invalidatePipRender } from "./identity.ts";
 import { pipEpisodeId } from "./pip-kinds.ts";
 import type { AdmittedSource } from "./pip-admission.ts";
 import { inheritEdge } from "./revoke-commit.ts";
+import { insertMemoryRecord } from "./record-write.ts";
 
 export const EPISODE_MAX_BYTES = 700;
 export const TRACE_MAX_BYTES = 300;
@@ -40,7 +40,7 @@ interface Handle { sourceId: string; revision: number; start: number; end: numbe
 function write(db: DatabaseSync, o: { botId: string; scopeId: string; id: string; text: string; entities: string[]; handles: Handle[] }): boolean {
   if (db.prepare("SELECT 1 FROM memory_records WHERE id=?").get(o.id)) return false; // idempotent by thread + closing message
   const now = Date.now();
-  db.prepare("INSERT INTO memory_records VALUES(?,1,?,'episode',?,'assistant-inference','active',0,?,NULL,NULL,?)").run(o.id, o.scopeId, redactSecretsInText(o.text), now, now);
+  insertMemoryRecord(db, { id: o.id, version: 1, scopeId: o.scopeId, kind: "episode", text: o.text, assertion: "assistant-inference", state: "active", validFrom: now, createdAt: now });
   db.prepare("UPDATE memory_record_details SET partition='identity',attention='useful',confidence_basis=?,entities=? WHERE record_id=? AND record_version=1").run(EPISODE_BASIS, JSON.stringify(o.entities), o.id);
   for (const h of o.handles) { db.prepare("INSERT OR IGNORE INTO memory_evidence VALUES(?,1,?,?,?,?)").run(o.id, h.sourceId, h.revision, h.start, h.end); inheritEdge(db, { kind: "record", id: o.id, version: 1 }, { kind: "source", id: h.sourceId }); }
   invalidatePipRender(db, o.botId);

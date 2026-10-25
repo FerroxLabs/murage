@@ -5,6 +5,7 @@ import { api, useStore, type Bot } from "@/state/store";
 import { stateForBot } from "@/lib/mascot";
 import { CloudBackendPicker } from "./CloudBackendPicker";
 import { ModelPicker } from "./ModelPicker";
+import { BotFollowModelRow, LimitBackupRow } from "./ThreadFollowControls";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
@@ -12,7 +13,8 @@ import { effortLabel } from "@/lib/effort-label";
 import { builtInBrowserEnabled } from "@/lib/feature-flags";
 import { requestNotificationPermission } from "@/lib/notify";
 import { useDesktopSurface } from "@/lib/use-surface";
-import { botUsage, costCaption, formatTokens, formatUsd, freshTokens, hasFiniteCost, usageDetail } from "@/lib/usage";
+import { usageCaption } from "@/lib/usage-card";
+import { botUsage, formatTokens, formatUsd, freshTokens, hasFiniteCost, usageDetail } from "@/lib/usage";
 import { shortPath } from "@/lib/short-path";
 import { autoNeedsLocalComputerWarning, instanceSupportsLocalComputer, localAutoHostPlatform, localComputerDisabledReason, localComputerSelectable } from "@/lib/local-computer";
 import { BotProfileAvatarCard } from "./BotProfileAvatarCard";
@@ -43,6 +45,7 @@ import { allHeldTasks, findTask } from "@/lib/task-window";
 import { useOlderTasks } from "@/lib/use-ensure-task";
 import { useBotSettingsDraft, useBotSettingsNavigation } from "./bot-settings-drafts";
 import { LazyBoundary, retryableLazy } from "./LazyBoundary";
+import { notebookCanSave, notebookSaveBody } from "./notebook-save";
 
 // Bot settings > Teams loads on first open (SPEC-X 13.1): the owner's
 // sharing routes are desktop only, and none of it belongs in first paint.
@@ -85,32 +88,32 @@ function BotUsageCard({ bot }: { bot: Bot }) {
   return (
     <div className="rounded-xl bg-card p-4">
       <div className="flex items-baseline justify-between">
-        <div className="text-[15px] font-medium text-ink">Usage</div>
+        <div className="text-[15px] font-medium text-ink">{t("usageCard.title")}</div>
         <button
           onClick={() => navigate(() => dispatch({ type: "toggleAppSettings", open: true, section: "usage" }))}
           className="text-[12px] text-ink-secondary hover:text-ink"
         >
-          All bots →
+          {t("usageCard.allBots")}
         </button>
       </div>
       <div className="mt-3 grid grid-cols-3 gap-3 text-[13px]">
         <div>
-          <div className="text-[11.5px] uppercase tracking-wide text-ink-secondary">Turns</div>
+          <div className="text-[11.5px] uppercase tracking-wide text-ink-secondary">{t("usageCard.colTurns")}</div>
           <div className="mt-0.5 tabular-nums text-ink">{usage.turns}</div>
         </div>
         <div>
-          <div className="text-[11.5px] uppercase tracking-wide text-ink-secondary">Tokens</div>
+          <div className="text-[11.5px] uppercase tracking-wide text-ink-secondary">{t("usageCard.colTokens")}</div>
           <div className="mt-0.5 tabular-nums text-ink" title={usageDetail(usage)}>
             {formatTokens(freshTokens(usage))}
           </div>
         </div>
         <div>
-          <div className="text-[11.5px] uppercase tracking-wide text-ink-secondary">Cost</div>
-          <div className="mt-0.5 tabular-nums text-ink">{hasFiniteCost(usage.costUsd) ? formatUsd(usage.costUsd) : "Unknown"}</div>
+          <div className="text-[11.5px] uppercase tracking-wide text-ink-secondary">{t("usageCard.colCost")}</div>
+          <div className="mt-0.5 tabular-nums text-ink">{hasFiniteCost(usage.costUsd) ? formatUsd(usage.costUsd) : t("usageCard.unknown")}</div>
         </div>
       </div>
       <div className="mt-2 text-[12px] text-ink-secondary">
-        {hasFiniteCost(usage.costUsd) ? `Cost ${costCaption(instance?.snapshot.billing)}.` : "This engine doesn't report its cost. Tokens are still counted."}
+        {hasFiniteCost(usage.costUsd) ? t("usageCard.costLine", { caption: usageCaption(instance?.snapshot.billing) }) : t("usageCard.unpriced")}
       </div>
     </div>
   );
@@ -135,6 +138,8 @@ function WorkingFolder({ bot }: { bot: Bot }) {
   const pinned = task?.cwd; // undefined = not yet, null = legacy home, string = folder
   const pinnedElsewhere = pinned !== undefined && (pinned ?? undefined) !== bot.cwd;
   useBotSettingsDraft("Working folder", draft !== null && draft !== (bot.cwd ?? ""), saving);
+  // The folder is an element, so the sentence is split around its placeholder.
+  const [pinnedBefore = "", pinnedAfter = ""] = t("settings.bot.folder.pinned").split("{folder}");
 
   const save = async (cwd: string | null) => {
     setSaving(true);
@@ -155,19 +160,19 @@ function WorkingFolder({ bot }: { bot: Bot }) {
 
   return (
     <div className="rounded-xl bg-card p-4">
-      <div className="text-[15px] font-medium text-ink">Working folder</div>
-      <div className="mt-0.5 text-[13px] text-ink-secondary">Where this bot runs its shell and file tools.</div>
+      <div className="text-[15px] font-medium text-ink">{t("settings.bot.folder.title")}</div>
+      <div className="mt-0.5 text-[13px] text-ink-secondary">{t("settings.bot.folder.note")}</div>
       {canPick ? (
         <div className="mt-3 flex items-center gap-2">
           <div className="min-w-0 flex-1 truncate rounded-lg border border-hairline/40 bg-inset px-3 py-2 font-mono text-[12.5px] text-ink" title={bot.cwd}>
-            {bot.cwd ? shortPath(bot.cwd, home) : <span className="text-ink-secondary">Private bot workspace</span>}
+            {bot.cwd ? shortPath(bot.cwd, home) : <span className="text-ink-secondary">{t("settings.bot.folder.private")}</span>}
           </div>
           <button onClick={() => void pick()} disabled={saving} className="flex shrink-0 items-center gap-1.5 rounded-lg bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50">
-            <FolderOpen size={14} /> Choose…
+            <FolderOpen size={14} /> {t("settings.bot.folder.choose")}
           </button>
           {bot.cwd && (
             <button onClick={() => void save(null)} disabled={saving} className="shrink-0 rounded-lg px-2 py-2 text-[13px] text-ink-secondary hover:text-ink disabled:opacity-50">
-              Clear
+              {t("settings.bot.folder.clear")}
             </button>
           )}
         </div>
@@ -182,23 +187,23 @@ function WorkingFolder({ bot }: { bot: Bot }) {
         >
           <input
             className={cn(inputCls, "font-mono text-[12.5px]")}
-            aria-label="Working folder path"
-            placeholder="Private bot workspace, or an absolute path"
+            aria-label={t("settings.bot.folder.pathLabel")}
+            placeholder={t("settings.bot.folder.pathPlaceholder")}
             value={draft ?? bot.cwd ?? ""}
             onChange={(e) => setDraft(e.target.value)}
           />
           <button type="submit" disabled={saving || draft === null} className="shrink-0 rounded-lg bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50">
-            Save
+            {t("settings.bot.save")}
           </button>
         </form>
       )}
       {error && <div className="mt-2 text-[12px] text-danger">{error}</div>}
       {pinnedElsewhere && (
         <div className="mt-2 text-[12px] text-ink-secondary">
-          New tasks start here. This task is pinned to {pinned ? <span className="font-mono">{shortPath(pinned, home)}</span> : "the home folder"}; start a new task to use the new folder.
+          {pinnedBefore}{pinned ? <span className="font-mono">{shortPath(pinned, home)}</span> : t("settings.bot.folder.homeFolder")}{pinnedAfter}
         </div>
       )}
-      <FolderTrustNote folder={bot.cwd} botId={bot.id} />
+      <FolderTrustNote folder={bot.cwd} botId={bot.id} threadId={bot.threadId} />
     </div>
   );
 }
@@ -222,6 +227,8 @@ function MemoryCard({ bot }: { bot: Bot }) {
   const [dirty, setDirty] = useState(false);
   const [truncated, setTruncated] = useState(false);
   const [lastWrittenAt, setLastWrittenAt] = useState<number | null>(null);
+  // the notebook revision this editor loaded: a save sends it, so words written since (by the bot, or another window) are kept (U33)
+  const [revision, setRevision] = useState<string | undefined>(undefined);
   const [topics, setTopics] = useState<MemoryTopic[]>([]);
   const [saving, setSaving] = useState(false);
   const [topic, setTopic] = useState<{ name: string; text: string } | null>(null);
@@ -231,11 +238,14 @@ function MemoryCard({ bot }: { bot: Bot }) {
     setLoading(true);
     setError(null);
     setTopic(null);
+    // no revision until this load answers: a failed load leaves Save off, so an edit can never be saved blind over the file (U33)
+    setRevision(undefined);
     try {
-      const result: { text: string; truncated: boolean; lastWrittenAt?: number | null; topics: MemoryTopic[] } = await api(
+      const result: { text: string; truncated: boolean; lastWrittenAt?: number | null; revision?: string; topics: MemoryTopic[] } = await api(
         `/api/bots/${bot.id}/memory`,
       );
       setText(result.text);
+      setRevision(typeof result.revision === "string" ? result.revision : undefined);
       setTruncated(result.truncated);
       setLastWrittenAt(typeof result.lastWrittenAt === "number" ? result.lastWrittenAt : null);
       setTopics(result.topics);
@@ -248,19 +258,23 @@ function MemoryCard({ bot }: { bot: Bot }) {
   };
 
   const save = async () => {
+    if (revision === undefined) return;
     setSaving(true);
     setError(null);
     try {
-      const result: { truncated: boolean; lastWrittenAt?: number | null } = await api(`/api/bots/${bot.id}/memory`, {
+      const result: { truncated: boolean; lastWrittenAt?: number | null; revision?: string } = await api(`/api/bots/${bot.id}/memory`, {
         method: "PUT",
-        body: JSON.stringify({ text }),
+        body: JSON.stringify(notebookSaveBody(text, revision)),
       });
+      setRevision(typeof result.revision === "string" ? result.revision : undefined);
       setTruncated(result.truncated);
       // the save is a write (Astra r1 #12)
       setLastWrittenAt(typeof result.lastWrittenAt === "number" ? result.lastWrittenAt : null);
       setDirty(false);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      // the notebook was written after this editor opened: the newer words are kept and this edit stays here, unsaved
+      if ((e as { status?: number } | null)?.status === 409) setError("This notebook was written after you opened it, so your edit was not saved over it. Your edit is still here: copy what you need, then close and reopen the notebook to see the newer version.");
+      else setError(e instanceof Error ? e.message : String(e));
     } finally {
       setSaving(false);
     }
@@ -287,15 +301,15 @@ function MemoryCard({ bot }: { bot: Bot }) {
         }}
       >
         <div>
-          <div className="text-[15px] font-medium text-ink">Legacy notebook</div>
+          <div className="text-[15px] font-medium text-ink">{t("settings.bot.notebook.title")}</div>
           <div className="mt-0.5 text-[13px] text-ink-secondary">
-            Editable Markdown notes. Import them into managed memory to make them available for recall.
+            {t("settings.bot.notebook.note")}
           </div>
         </div>
         <ChevronDown size={16} className={cn("shrink-0 text-ink-secondary transition-transform", open && "rotate-180")} />
       </button>
 
-      {open && loading && <div className="mt-3 text-[13px] text-ink-secondary">Loading…</div>}
+      {open && loading && <div className="mt-3 text-[13px] text-ink-secondary">{t("settings.bot.notebook.loading")}</div>}
 
       {open && !loading && topic && (
         <div className="mt-3">
@@ -305,7 +319,7 @@ function MemoryCard({ bot }: { bot: Bot }) {
               onClick={() => setTopic(null)}
               className="shrink-0 rounded-md px-2 py-1 text-[13px] text-ink-secondary hover:bg-control hover:text-ink"
             >
-              Back
+              {t("settings.bot.notebook.back")}
             </button>
           </div>
           <pre className="mt-2 max-h-[240px] overflow-auto whitespace-pre-wrap rounded-lg border border-hairline/40 bg-inset p-3 font-mono text-[12.5px] leading-relaxed text-ink">
@@ -319,8 +333,8 @@ function MemoryCard({ bot }: { bot: Bot }) {
           <textarea
             className={cn(inputCls, "min-h-[160px] resize-y font-mono text-[12.5px] leading-relaxed")}
             value={text}
-            placeholder="Optional Markdown notes for this bot."
-            aria-label="Legacy bot notebook"
+            placeholder={t("settings.bot.notebook.placeholder")}
+            aria-label={t("settings.bot.notebook.label")}
             onChange={(e) => {
               setText(e.target.value);
               setDirty(true);
@@ -331,21 +345,21 @@ function MemoryCard({ bot }: { bot: Bot }) {
           <div className="mt-2 flex items-center gap-3">
             <button
               onClick={() => void save()}
-              disabled={saving || !dirty}
+              disabled={!notebookCanSave({ saving, dirty, revision })}
               className="rounded-lg bg-control px-3 py-1.5 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50"
             >
-              {saving ? "Saving…" : "Save"}
+              {saving ? t("settings.bot.saving") : t("settings.bot.save")}
             </button>
             {truncated && (
               <span className="text-[11.5px] text-ink-secondary">
-                This exceeds the old notebook prompt limit. The full file is still saved and can be imported into managed memory.
+                {t("settings.bot.notebook.truncated")}
               </span>
             )}
           </div>
           {topics.length > 0 && (
             <div className="mt-3">
               <div className="mb-1.5 text-[12px] font-medium uppercase tracking-[0.08em] text-ink-secondary">
-                Topic files
+                {t("settings.bot.notebook.topics")}
               </div>
               <div className="overflow-hidden rounded-lg border border-hairline/40">
                 {topics.map((entry) => (
@@ -480,17 +494,17 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
       {!embedded && <div className="flex shrink-0 items-center justify-between px-4 py-3">
         <button
           onClick={() => dispatch({ type: "toggleSettings", open: false })}
-          aria-label="Collapse bot settings"
-          title="Collapse bot settings"
+          aria-label={t("settings.bot.header.collapse")}
+          title={t("settings.bot.header.collapse")}
           className="flex size-10 items-center justify-center rounded-md text-ink-secondary hover:bg-control hover:text-ink"
         >
           <ChevronLeft size={18} />
         </button>
-        <span className="text-[15px] font-semibold text-ink">Bot settings</span>
+        <span className="text-[15px] font-semibold text-ink">{t("settings.bot.header.title")}</span>
         <button
           onClick={() => dispatch({ type: "toggleSettings", open: false })}
-          aria-label="Close bot settings"
-          title="Close bot settings"
+          aria-label={t("settings.bot.header.close")}
+          title={t("settings.bot.header.close")}
           className="flex size-10 items-center justify-center rounded-md text-ink-secondary hover:bg-control hover:text-ink"
         >
           <X size={18} />
@@ -518,14 +532,14 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
               exists. */}
           {hasTeammates && <div className="rounded-xl bg-card p-4 text-[13px]">
             <p className="font-medium">{botRoleTitle(bot)}</p>
-            <p className="mt-1 text-ink-secondary">{bot.title || "No title set"}{bot.section ? ` · ${bot.section}` : ""}</p>
+            <p className="mt-1 text-ink-secondary">{bot.title || t("settings.bot.overview.noTitle")}{bot.section ? ` · ${bot.section}` : ""}</p>
             {bot.installedPackage?.sourceRole && <div className="mt-3 border-t border-hairline/40 pt-3">
-              <p>Imported role: {settingsRoleLabel(bot.installedPackage.sourceRole)}</p>
-              {bot.installedPackage.sourceTeam && <p className="mt-1">Imported team: {bot.installedPackage.sourceTeam}</p>}
+              <p>{t("settings.bot.overview.importedRole", { role: settingsRoleLabel(bot.installedPackage.sourceRole) })}</p>
+              {bot.installedPackage.sourceTeam && <p className="mt-1">{t("settings.bot.overview.importedTeam", { team: bot.installedPackage.sourceTeam })}</p>}
               <p className="mt-2 text-ink-secondary">{bot.installedPackage.sourceRole === activeSettingsRole(bot)
-                ? "The current role matches the imported intent."
-                : "The imported role is not active. Use the role control below to assign a role explicitly."}</p>
-              <p className="mt-1 text-ink-secondary">Importing a profile does not grant permissions.</p>
+                ? t("settings.bot.overview.roleMatches")
+                : t("settings.bot.overview.roleInactive")}</p>
+              <p className="mt-1 text-ink-secondary">{t("settings.bot.overview.noGrant")}</p>
             </div>}
           </div>}
           </SettingsSection>
@@ -541,7 +555,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
               onPatch={patch}
             />
           </div>
-          <Field label="Name">
+          <Field label={t("settings.bot.identity.name")}>
             <input
               className={inputCls}
               maxLength={BOT_PROFILE_LIMITS.name}
@@ -549,11 +563,11 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
               onChange={(e) => patch({ name: e.target.value })}
             />
           </Field>
-          <Field label="Title">
+          <Field label={t("settings.bot.identity.title")}>
             <input
               className={inputCls}
               maxLength={BOT_PROFILE_LIMITS.title}
-              placeholder="Describe what your bot does"
+              placeholder={t("settings.bot.identity.titlePlaceholder")}
               value={bot.title}
               onChange={(e) => patch({ title: e.target.value })}
             />
@@ -565,32 +579,30 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
               neither, so people wrote notes where instructions go — and, once
               they realised, wrote voice ("be snarky") into the one field that
               routing reads. Personality below is the field for that. */}
-          <Field label="Instructions">
+          <Field label={t("settings.bot.identity.instructions")}>
             <textarea
               className={cn(inputCls, "min-h-[96px] resize-none")}
               maxLength={BOT_PROFILE_LIMITS.description}
-              placeholder="What this bot does, what it should know, and how you want it to work"
+              placeholder={t("settings.bot.identity.instructionsPlaceholder")}
               value={bot.description}
               disabled={bot.descriptionCut === true}
               onChange={(e) => patch({ description: e.target.value })}
             />
             <p className="mt-1.5 text-[12px] leading-relaxed text-ink-secondary">
-              Written to this bot at the start of every turn, in its own words. Its teammates
-              also read it when they decide who to hand work to, so keep it about the job.
+              {t("settings.bot.identity.instructionsHint")}
             </p>
           </Field>
-          <Field label="Personality">
+          <Field label={t("settings.bot.identity.personality")}>
             <textarea
               className={cn(inputCls, "min-h-[64px] resize-none")}
               maxLength={BOT_PROFILE_LIMITS.persona}
-              placeholder="Direct, a little snarky, dry wit. Skip the pleasantries."
+              placeholder={t("settings.bot.identity.personalityPlaceholder")}
               value={persona}
               onChange={(e) => patch({ persona: e.target.value })}
             />
             <div className="mt-1.5 flex items-start justify-between gap-3">
               <p className="text-[12px] leading-relaxed text-ink-secondary">
-                How this bot talks, spoken to it, and read by nothing else. A teammate
-                deciding who to delegate to never sees it.
+                {t("settings.bot.identity.personalityHint")}
               </p>
               <span className="shrink-0 pt-px text-[11.5px] tabular-nums text-ink-secondary">
                 {persona.length}/{BOT_PROFILE_LIMITS.persona}
@@ -628,7 +640,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
               aria-label={PEER_CONTACT_LABEL}
               disabled={!bot.approvePeerComms && !canCoordinate}
               onClick={() => patch({ approvePeerComms: !bot.approvePeerComms })}
-              title={!bot.approvePeerComms && !canCoordinate ? "This engine cannot contact other bots" : undefined}
+              title={!bot.approvePeerComms && !canCoordinate ? t("settings.bot.peer.engineCannot") : undefined}
               className="disabled:cursor-not-allowed"
             />
           </div>
@@ -637,29 +649,29 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
           <SettingsSection id="access" active={section}>
           <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
             <div>
-              <div className="text-[15px] font-medium text-ink">Connected apps</div>
+              <div className="text-[15px] font-medium text-ink">{t("settings.bot.apps.title")}</div>
               <div className="mt-0.5 text-[13px] text-ink-secondary">
                 {!connectedAppsConfigured
-                  ? "Connect apps first (Apps, in the sidebar), then give this bot access."
+                  ? t("settings.bot.apps.connectFirst")
                   : !canUseConnectedApps
-                    ? "This bot's current engine cannot use connected apps."
+                    ? t("settings.bot.apps.engineCannot")
                     : connectedAppsEnabled
-                      ? "Let this bot use your connected Gmail, Calendar, Slack, and other apps."
-                      : "Keep your connected apps unavailable to this bot."}
+                      ? t("settings.bot.apps.on")
+                      : t("settings.bot.apps.off")}
               </div>
             </div>
             <Switch
               checked={connectedAppsEnabled}
-              aria-label="Allow this bot to use connected apps"
+              aria-label={t("settings.bot.apps.switchLabel")}
               disabled={
                 !connectedAppsEnabled && (!connectedAppsConfigured || !canUseConnectedApps)
               }
               onClick={() => patch({ composio: !connectedAppsEnabled })}
               title={
                 !connectedAppsEnabled && !connectedAppsConfigured
-                  ? "Connect apps first, under Apps in the sidebar"
+                  ? t("settings.bot.apps.connectFirstTitle")
                   : !connectedAppsEnabled && !canUseConnectedApps
-                    ? "This engine cannot use connected apps"
+                    ? t("settings.bot.apps.engineCannotTitle")
                     : undefined
               }
               className="disabled:cursor-not-allowed"
@@ -670,20 +682,20 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
 
           <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
             <div>
-              <div className="text-[15px] font-medium text-ink">Browser</div>
+              <div className="text-[15px] font-medium text-ink">{t("settings.bot.browser.title")}</div>
               <div className="mt-0.5 text-[13px] text-ink-secondary">
                 {!browserFeature
-                    ? "The built-in browser is switched off under App Settings → Experimental."
+                    ? t("settings.bot.browser.featureOff")
                     : !canUseBrowser
-                      ? "This bot's current engine cannot use the built-in browser."
+                      ? t("settings.bot.browser.engineCannot")
                       : browserEnabled
-                        ? "This bot has its own browser tab in the computer panel, with its own logins, watchable and takeable at any time."
-                        : "Keep the built-in browser unavailable to this bot."}
+                        ? t("settings.bot.browser.on")
+                        : t("settings.bot.browser.off")}
               </div>
             </div>
             <Switch
               checked={browserEnabled}
-              aria-label="Give this bot a built-in browser"
+              aria-label={t("settings.bot.browser.switchLabel")}
               disabled={!browserEnabled && (!browserFeature || !canUseBrowser)}
               onClick={() => patch({ browser: !browserAllowed })}
               className="disabled:cursor-not-allowed"
@@ -698,25 +710,27 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
               contained
               label={
                 <div>
-                  <div className="text-[15px] font-medium text-ink">Model</div>
+                  <div className="text-[15px] font-medium text-ink">{t("settings.bot.model.title")}</div>
                   <div className="mt-0.5 text-[13px] text-ink-secondary">
-                    Default for new threads. Existing threads keep their selected model.
+                    {t("slik.botModelDetail")}
                   </div>
                 </div>
               }
             />
+            <BotFollowModelRow bot={bot} />
           </div>
+          {desktop && <LimitBackupRow bot={bot} />}
 
           {!!engine?.capabilities?.effortLevels?.length && (
             <div className="rounded-xl bg-card p-4">
-              <div className="text-[15px] font-medium text-ink">Effort</div>
+              <div className="text-[15px] font-medium text-ink">{t("settings.bot.effort.title")}</div>
               {/* Says what the app does, not what the engine ends up at:
                   Codex applies a level to the whole thread and has no way to
                   take one back, so "currently: engine default" was a promise
                   we could not keep for a thread that had already been sent
                   one. Sending nothing is true on every engine. */}
               <div className="mt-0.5 text-[13px] text-ink-secondary">
-                Default effort for new threads{bot.modelSelection.effort ? "" : " (the engine decides)"}
+                {bot.modelSelection.effort ? t("settings.bot.effort.note") : t("settings.bot.effort.noteEngineDecides")}
               </div>
               <div className="mt-3 flex overflow-hidden rounded-lg border border-hairline/40">
                 {([undefined, ...engine.capabilities.effortLevels] as const).map((level, i) => (
@@ -749,16 +763,16 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
               an action, or send a message from a phone. */}
           {desktop === true && (
           <div className="rounded-xl bg-card p-4">
-            <div className="text-[15px] font-medium text-ink">Computer</div>
+            <div className="text-[15px] font-medium text-ink">{t("settings.bot.computer.title")}</div>
             <div className="mt-0.5 text-[13px] text-ink-secondary">
-              Where this bot's computer runs{bot.computer ? "" : " (currently: auto)"}
+              {bot.computer ? t("settings.bot.computer.note") : t("settings.bot.computer.noteAuto")}
             </div>
             <div className="mt-3 flex overflow-hidden rounded-lg border border-hairline/40">
               {([
-                ["cloud", "Cloud"],
-                ["vm", "Local VM"],
-                ["local", "This computer"],
-                ["off", "Off"],
+                ["cloud", t("settings.bot.computer.cloud")],
+                ["vm", t("settings.bot.computer.vm")],
+                ["local", t("settings.bot.computer.local")],
+                ["off", t("settings.bot.computer.off")],
               ] as const).map(([mode, label], i) => (
                 <button
                   key={mode}
@@ -792,14 +806,14 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
                 {!bot.computer && bot.cloudBackend === "vps" && (
                   <div className="mt-3 flex items-center justify-between gap-4 rounded-lg bg-inset px-3 py-2.5">
                     <div className="min-w-0">
-                      <div className="text-[13px] text-ink">Start VPS automatically</div>
+                      <div className="text-[13px] text-ink">{t("settings.bot.computer.vpsTitle")}</div>
                       <div className="mt-0.5 text-[11.5px] text-ink-secondary">
-                        Allow Auto to create or wake this bot's managed container when needed.
+                        {t("settings.bot.computer.vpsNote")}
                       </div>
                     </div>
                     <Switch
                       checked={Boolean(bot.autoStartVps)}
-                      aria-label="Start VPS automatically"
+                      aria-label={t("settings.bot.computer.vpsTitle")}
                       onClick={() => patch({ autoStartVps: !bot.autoStartVps })}
                     />
                   </div>
@@ -812,7 +826,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
           </SettingsSection>
           <SettingsSection id="usage" active={section}>
           <BotUsageCard bot={bot} />
-          {botUsage(bot).turns === 0 && <p className="text-[13px] text-ink-secondary">No usage recorded for this bot yet.</p>}
+          {botUsage(bot).turns === 0 && <p className="text-[13px] text-ink-secondary">{t("usageCard.empty")}</p>}
           </SettingsSection>
           <SettingsSection id="access" active={section}>
           <WorkingFolder bot={bot} />
@@ -823,8 +837,8 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
           <SettingsSection id="memory" active={section}>
           {/* keyed so switching bots never shows one bot's notes under another's name */}
           <section className="rounded-xl bg-card p-4">
-            <h3 className="text-[15px] font-medium text-ink">Managed memory</h3>
-            <p className="mt-1 text-[12px] text-ink-secondary">Search saved knowledge, inspect its source and manage what this bot remembers.</p>
+            <h3 className="text-[15px] font-medium text-ink">{t("settings.bot.memory.title")}</h3>
+            <p className="mt-1 text-[12px] text-ink-secondary">{t("settings.bot.memory.note")}</p>
             <MemoryLauncher key={`memory-${bot.id}`} botId={bot.id} botName={bot.name} />
           </section>
           {desktop === true && <ContinuityBlock key={`continuity-${bot.id}`} bot={bot} />}
@@ -870,18 +884,18 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
           <RememberedApprovals bot={bot} desktop={desktop} />
 
           <div className="rounded-xl bg-card p-4">
-            <div className="text-[15px] font-medium text-ink">Review routine approvals</div>
+            <div className="text-[15px] font-medium text-ink">{t("settings.bot.review.title")}</div>
             <div className="mt-0.5 text-[13px] text-ink-secondary">
               {canAutoReview
-                ? "The same engine reviews ordinary approval cards. Guarded actions, unattended turns, local-computer access, and questions still wait for you."
-                : "This engine cannot run a separate review, so approval cards keep waiting for you."}
+                ? t("settings.bot.review.supported")
+                : t("settings.bot.review.unsupported")}
             </div>
             <div className="mt-3 flex gap-1 rounded-lg bg-inset p-0.5">
               {(
                 [
-                  ["off", "Off", "Every undecided approval waits for you."],
-                  ["shadow", "Watch", "Record the review without answering the card."],
-                  ["enforce", "On", "Answer only reviews that return a strict approval."],
+                  ["off", t("settings.bot.review.off"), t("settings.bot.review.offHint")],
+                  ["shadow", t("settings.bot.review.shadow"), t("settings.bot.review.shadowHint")],
+                  ["enforce", t("settings.bot.review.enforce"), t("settings.bot.review.enforceHint")],
                 ] as const
               ).map(([value, label, hint]) => {
                 const current = bot.autoReview === "shadow" || bot.autoReview === "enforce" ? bot.autoReview : "off";
@@ -889,7 +903,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
                 return (
                   <button
                     key={value}
-                    title={disabled ? "Not supported by this engine" : hint}
+                    title={disabled ? t("settings.bot.review.notSupported") : hint}
                     disabled={disabled}
                     onClick={() => patch({ autoReview: value })}
                     className={cn(
@@ -911,15 +925,15 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
           <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
             <div>
               <div className="text-[15px] font-medium text-ink">
-                Notifications
+                {t("settings.bot.notifications.title")}
               </div>
               <div className="mt-0.5 text-[13px] text-ink-secondary">
-                Get notified when this bot finishes or needs input
+                {t("settings.bot.notifications.note")}
               </div>
             </div>
             <Switch
               checked={bot.notifications}
-              aria-label="Bot notifications"
+              aria-label={t("settings.bot.notifications.switchLabel")}
               onClick={() => {
                 const enabled = !bot.notifications;
                 if (enabled) void requestNotificationPermission();
@@ -929,20 +943,20 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
           </div>
           </SettingsSection>
           <SettingsSection id="routines" active={section}>
-          {state.routines.filter(routine => routine.botId === bot.id).map(routine => <div key={routine.id} className="rounded-xl bg-card p-4"><p className="text-[14px] font-medium">{routine.name}</p><p className="mt-1 text-[12px] text-ink-secondary">{routine.enabled ? "Enabled" : "Paused"}</p></div>)}
-          {!state.routines.some(routine => routine.botId === bot.id) && <p className="text-[13px] text-ink-secondary">No routines assigned to this bot.</p>}
-          <button type="button" onClick={() => navigate(() => dispatch({ type: "showRoutines" }))} className="min-h-10 rounded-lg bg-control px-3 py-2 text-[13px]">Open Routines</button>
+          {state.routines.filter(routine => routine.botId === bot.id).map(routine => <div key={routine.id} className="rounded-xl bg-card p-4"><p className="text-[14px] font-medium">{routine.name}</p><p className="mt-1 text-[12px] text-ink-secondary">{routine.enabled ? t("settings.bot.routines.enabled") : t("settings.bot.routines.paused")}</p></div>)}
+          {!state.routines.some(routine => routine.botId === bot.id) && <p className="text-[13px] text-ink-secondary">{t("settings.bot.routines.none")}</p>}
+          <button type="button" onClick={() => navigate(() => dispatch({ type: "showRoutines" }))} className="min-h-10 rounded-lg bg-control px-3 py-2 text-[13px]">{t("settings.bot.routines.open")}</button>
           </SettingsSection>
           <SettingsSection id="teams" active={section}>
-          {desktop === true && section === "teams" && <LazyBoundary inline onRetry={TeamsSection.retry}><Suspense fallback={<p role="status" className="text-[13px] text-ink-secondary">Loading teams…</p>}><TeamsSection.Component key={`teams-${bot.id}`} bot={bot} /></Suspense></LazyBoundary>}
+          {desktop === true && section === "teams" && <LazyBoundary inline onRetry={TeamsSection.retry}><Suspense fallback={<p role="status" className="text-[13px] text-ink-secondary">{t("settings.bot.teams.loading")}</p>}><TeamsSection.Component key={`teams-${bot.id}`} bot={bot} /></Suspense></LazyBoundary>}
           </SettingsSection>
           <SettingsSection id="history" active={section}>
           {allHeldTasks(bot).map(task => <button type="button" key={task.threadId} onClick={() => dispatch({ type: "switchTask", botId: bot.id, threadId: task.threadId })} className="block min-h-10 w-full rounded-xl bg-card p-4 text-left">
-            <p className="text-[14px] font-medium">{task.title}</p><p className="mt-1 text-[12px] text-ink-secondary">{new Date(task.createdAt).toLocaleString()}{task.threadId === bot.threadId ? " · Current task" : ""}</p>
+            <p className="text-[14px] font-medium">{task.title}</p><p className="mt-1 text-[12px] text-ink-secondary">{new Date(task.createdAt).toLocaleString()}{task.threadId === bot.threadId ? ` · ${t("settings.bot.history.current")}` : ""}</p>
           </button>)}
-          {!bot.tasks?.length && <p className="text-[13px] text-ink-secondary">No task history available.</p>}
-          {olderHistory.hasMore && <button type="button" disabled={olderHistory.loading} onClick={olderHistory.loadMore} className="block min-h-10 w-full rounded-xl bg-control px-3 py-2 text-left text-[13px] disabled:opacity-60">{olderHistory.loading ? "Loading older tasks…" : "Show older tasks"}</button>}
-          {olderHistory.failed && !olderHistory.loading && <p role="alert" className="text-[13px] text-danger">Could not load older tasks. Try again.</p>}
+          {!bot.tasks?.length && <p className="text-[13px] text-ink-secondary">{t("settings.bot.history.none")}</p>}
+          {olderHistory.hasMore && <button type="button" disabled={olderHistory.loading} onClick={olderHistory.loadMore} className="block min-h-10 w-full rounded-xl bg-control px-3 py-2 text-left text-[13px] disabled:opacity-60">{olderHistory.loading ? t("settings.bot.history.loadingOlder") : t("settings.bot.history.showOlder")}</button>}
+          {olderHistory.failed && !olderHistory.loading && <p role="alert" className="text-[13px] text-danger">{t("settings.bot.history.loadFailed")}</p>}
           </SettingsSection>
         </div>
       </div>
