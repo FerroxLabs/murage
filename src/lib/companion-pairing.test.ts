@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   companionBrowserLink,
+  companionPairingAddressText,
+  companionPairingRouteIsHosted,
   companionPairingLink,
   companionPairingRoute,
   companionPairingRoutePin,
@@ -432,5 +434,36 @@ describe("the link the QR carries", () => {
     expect(
       companionBrowserLink({ ...DOOR, scheme: "javascript" as CompanionBrowserDoor["scheme"] }, TOKEN),
     ).toBeNull();
+  });
+});
+
+describe("companionPairingAddressText", () => {
+  it("shows a hosted route as its https address with no :443", () => {
+    const route = companionPairingRoute(
+      { port: 8810, endpoints: [{ url: "https://box-1.murage.example", kind: "hosted", priority: 0 }] },
+      "automatic",
+    );
+    expect(companionPairingAddressText(route)).toBe("https://box-1.murage.example");
+    expect(companionPairingRouteIsHosted(route)).toBe(true);
+  });
+
+  it("keeps host:port for a local network route", () => {
+    const route = companionPairingRoute(
+      { port: 8810, lan: "192.168.1.20", endpoints: [{ url: "http://192.168.1.20:8810", kind: "lan", priority: 0 }] },
+      "local",
+    );
+    expect(companionPairingAddressText(route)).toBe("192.168.1.20:8810");
+    expect(companionPairingRouteIsHosted(route)).toBe(false);
+  });
+
+  it("falls back to host:port when the hosted endpoint is not https", () => {
+    expect(
+      companionPairingAddressText({
+        address: "box-1.murage.example",
+        port: 443,
+        endpoints: [{ url: "http://box-1.murage.example", kind: "hosted", priority: 0 }],
+      }),
+    ).toBe("box-1.murage.example:443");
+    expect(companionPairingAddressText(null)).toBeNull();
   });
 });

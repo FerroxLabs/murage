@@ -8,8 +8,9 @@
 import {
   QUESTION_LIMITS,
   answerComplete,
+  answersAsMessage,
+  answersNeedJson,
   answerWords,
-  questionFromChoices,
   type QuestionAnswer,
   type QuestionOption,
   type QuestionSpec,
@@ -75,14 +76,96 @@ export function fromClaude(input: unknown): Normalized {
   return { ok: true, questions: out };
 }
 
-/** The muragebox `ask_user` tool: one question with up to five one-tap
- * choices and free text. */
+/** The flat `ask_user` (muragebox, and Claude's murage-permissions host):
+ * one question with up to five one-tap choices and free text. A one-question
+ * alias of fromAskUser (QW Q1), so both shapes are checked the same way;
+ * blank and repeated choices are dropped first, as they always were. */
 export function fromMuragebox(input: unknown): Normalized {
   const raw = record(input);
-  const question = clean(raw?.question, QUESTION_LIMITS.questionChars);
-  if (!question) return { ok: false, error: "the question has no text" };
-  const choices = Array.isArray(raw?.choices) ? raw.choices.filter((choice): choice is string => typeof choice === "string") : [];
-  return { ok: true, questions: [questionFromChoices(question, choices.slice(0, 5))] };
+  if (!clean(raw?.question, QUESTION_LIMITS.questionChars)) return { ok: false, error: "the question has no text" };
+  const labels = Array.isArray(raw?.choices)
+    ? [...new Set(raw.choices.map((choice) => clean(choice, QUESTION_LIMITS.labelChars)).filter(Boolean))].slice(0, 5)
+    : [];
+  return fromAskUser({ questions: [{ question: raw?.question, options: labels.map((label) => ({ label })) }] });
+}
+
+/** The `ask_user` tool on the agents server and the ```murage-question fence
+ * (QW Q1, Q2): one schema for every engine.
+ * `{questions: [{question, options?: [{label, description?}], multiSelect?, allowOther?}]}`.
+ * A secret is never asked here: it goes through request_credential. Free text
+ * is allowed unless the bot turns it off, and always for a question with no
+ * options (otherwise nothing could answer it). */
+export function fromAskUser(input: unknown): Normalized {
+  const raw = record(input);
+  const questions = raw?.questions;
+  if (!Array.isArray(questions) || questions.length === 0) return { ok: false, error: "the question list is empty" };
+  if (questions.length > QUESTION_LIMITS.questions) {
+    return { ok: false, error: `more than ${QUESTION_LIMITS.questions} questions at once` };
+  }
+  const out: QuestionSpec[] = [];
+  for (const [index, entry] of questions.entries()) {
+    const where = `question ${index + 1}`;
+    const question = record(entry);
+    if (!question) return { ok: false, error: `${where} is not an object` };
+    if (question.secret !== undefined || question.isSecret !== undefined) {
+      return { ok: false, error: "a secret is never asked as a question: use request_credential" };
+    }
+    const text = clean(question.question, QUESTION_LIMITS.questionChars);
+    if (!text) return { ok: false, error: `${where} has no text` };
+    if (question.options !== undefined && !Array.isArray(question.options)) return { ok: false, error: `${where} options must be a list` };
+    const parsed = options(question.options ?? [], where);
+    if (!parsed.ok) return parsed;
+    if (question.multiSelect !== undefined && typeof question.multiSelect !== "boolean") return { ok: false, error: `${where} multiSelect must be true or false` };
+    if (question.allowOther !== undefined && typeof question.allowOther !== "boolean") return { ok: false, error: `${where} allowOther must be true or false` };
+    out.push({
+      id: `q${index + 1}`,
+      question: text,
+      options: parsed.options,
+      multiSelect: question.multiSelect === true,
+      allowOther: parsed.options.length === 0 || question.allowOther !== false,
+    });
+  }
+  return { ok: true, questions: out };
+}
+
+/** A ```murage-question fence's body (QW Q2): the same schema as ask_user, as JSON. Stricter than the tool, whose schema
+ * already bounds every string: a fence over any limit is refused whole (it stays the bot's text), never cut to fit. */
+export function fromQuestionFence(body: string): Normalized {
+  let input: unknown;
+  try { input = JSON.parse(body); } catch { return { ok: false, error: "the fence is not valid JSON" }; }
+  const over = (value: unknown, limit: number) => typeof value === "string" && value.trim().length > limit;
+  const questions = record(input)?.questions;
+  if (Array.isArray(questions)) {
+    for (const entry of questions) {
+      const question = record(entry);
+      if (over(question?.question, QUESTION_LIMITS.questionChars)) return { ok: false, error: "a question is over the length limit" };
+      for (const option of Array.isArray(question?.options) ? question.options : []) {
+        const shaped = record(option);
+        if (over(shaped?.label, QUESTION_LIMITS.labelChars) || over(shaped?.description, QUESTION_LIMITS.descriptionChars)) {
+          return { ok: false, error: "an option is over the length limit" };
+        }
+      }
+    }
+  }
+  return fromAskUser(input);
+}
+
+/** Codex request_user_input_async (QW Q3, 173; adapted from OpenMausBot e9b8f24fd `parseAsyncQuestions`): an agent
+ * message with `delivery: "async"` and `questions: [{title, options: string[] | null}]` (verified against codex-cli
+ * 0.163.0: ThreadItem agentMessage `delivery`, `questions`; AsyncUserInputQuestion `{title, options}`). Codex keeps
+ * working, so nothing answers it in the turn. Null unless one question offers an option: a bare question already
+ * reads in the message text. */
+export function fromCodexAsync(item: unknown): QuestionSpec[] | null {
+  const raw = record(item);
+  if (raw?.delivery !== "async" || !Array.isArray(raw.questions)) return null;
+  const normalized = fromAskUser({
+    questions: raw.questions.map((entry) => {
+      const question = record(entry);
+      const options = Array.isArray(question?.options) ? question.options : [];
+      return { question: question?.title, options: options.map((label) => ({ label })) };
+    }),
+  });
+  return normalized.ok && normalized.questions.some((question) => question.options.length > 0) ? normalized.questions : null;
 }
 
 /** Parse the answers a client posted, without trusting any of it yet. */
@@ -101,10 +184,12 @@ export function parseAnswers(raw: unknown): { ok: true; answers: QuestionAnswer[
     if (typeof answer.other === "string" && answer.other.length > QUESTION_LIMITS.otherChars) {
       return { ok: false, error: `other is longer than ${QUESTION_LIMITS.otherChars} characters` };
     }
+    // the owner's words and the picked labels pass the same cleaning as the questions (QW Q1)
+    const other = typeof answer.other === "string" ? clean(answer.other, QUESTION_LIMITS.otherChars) : undefined;
     answers.push({
       id: answer.id,
-      selected: selected as string[],
-      ...(typeof answer.other === "string" ? { other: answer.other } : {}),
+      selected: (selected as string[]).map((label) => clean(label, QUESTION_LIMITS.labelChars)),
+      ...(other !== undefined ? { other } : {}),
     });
   }
   return { ok: true, answers };
@@ -180,6 +265,13 @@ export function toMessageText(questions: readonly QuestionSpec[], answers: reado
   return questions
     .map((question) => `${question.question}: ${answerWords(question, byId.get(question.id))}`)
     .join("\n");
+}
+
+/** The words an answer to a question card is sent as when it is the owner's
+ * next message (QW Q1): the answer text, or the JSON pairs when a line break
+ * in a question or an answer could forge a "Q:" header. */
+export function answerSendText(questions: readonly QuestionSpec[], answers: readonly QuestionAnswer[]): string {
+  return answersNeedJson(questions, answers) ? answersAsMessage(questions, answers) : toMessageText(questions, answers);
 }
 
 /** What the transcript may keep: a secret question's answer is dropped. */

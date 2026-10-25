@@ -74,7 +74,8 @@ const POSIX_ORDINARY = [
   "node -e'console.log(1)'",
   "perl -le'print 1'",
   "python3 -c'print(1)'",
-  "python3 -Wonce build.py",
+  // a file this text wrote, after a value-taking option (one on disk asks, 1.0.4 U17)
+  "printf 'print(1)' > build.py && python3 -Wonce build.py",
   "python3 -m http.server",
   "ruby -rjson -e 'puts 1'",
   "npm run x -- --eval=1",
@@ -111,8 +112,12 @@ describe("perl -l takes no word: the code after it is read", () => {
     expect(twin, plain).not.toBeNull();
     expect(posixRule(flagged)).toBe(twin);
   });
-  it.each(["perl -l -e 'print 1'", "perl -l -ne 'print'", "ruby -l -e 'puts 1'", "lua -l socket -e 'print(1)'"])("%s stays ordinary", (cmd) => {
+  it.each(["perl -l -e 'print 1'", "perl -l -ne 'print'", "ruby -l -e 'puts 1'"])("%s stays ordinary", (cmd) => {
     expect(posixRule(cmd)).toBeNull();
+  });
+  // 1.0.5 r8: lua's `-l` loads a module first, from `./?.lua` too: it asks
+  it("lua -l socket -e 'print(1)' asks: the module loads first", () => {
+    expect(posixRule("lua -l socket -e 'print(1)'")).toBe("unreadable");
   });
   it("PowerShell reads `perl -l -e <code>` as inline code too", () => {
     expect(pwshRule("perl -l -e 'print 1'")).toBe(pwshRule("perl -e 'print 1'"));

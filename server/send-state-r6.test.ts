@@ -206,7 +206,7 @@ describe("the routes keep a refused chip until its replacement is accepted", () 
     const queued = source.indexOf('verb: "owner_send",\n                fromKind: "owner",');
     expect(source.indexOf("retireReopened();", queued)).toBeGreaterThan(queued);
     // the dispatcher failure path keeps the words as a refused chip instead of an English line without them
-    expect(source).toMatch(/\/\/ The words were accepted[^\n]*\n\s*\/\/[^\n]*\n\s*afterRoomCompletion\(completeRequest\(database\(\), request\.id, \{ state: "failed", now: Date\.now\(\), outcomeNote: "could not start", ending: status\("delegated_turn_could_not_start", \{ why: "other" \}\) \}, roomCompletionHooks\)\);/);
+    expect(source).toMatch(/\/\/ The words were accepted[^\n]*\n\s*\/\/[^\n]*\n\s*afterRoomCompletion\(completeRequest\(database\(\), request\.id, \{ state: "failed", now: Date\.now\(\), outcomeNote: "could not start", ending: status\("delegated_turn_could_not_start", \{ why: "setup" \}\) \}, roomCompletionHooks\)\);/);
     expect(source).not.toContain("Your queued message could not start:");
   });
 });

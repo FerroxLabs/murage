@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { constants, closeSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, readSync, realpathSync, renameSync, rmSync, writeFileSync, writeSync, type BigIntStats } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { z } from "zod";
+import { MAX_BACKUP_BYTES } from "../shared/backup-limits.ts";
 import { backupReceiptSchema, backupReferenceSchema, type BackupReceipt } from "../shared/backup-schedule.ts";
 import { acquireDataDirLeaseForProcess } from "./data-dir-lease.ts";
 import { writeFileAtomic } from "./atomic.ts";
@@ -231,13 +232,17 @@ export class BackupRestic {
     const listed=await this.execute(["snapshots",id],stage);if(listed.code!==0||listed.uncertain)return "snapshot-mismatch";
     const snapshots=JSON.parse(listed.stdout),expectedPaths=[...(options?.expectedPaths??[join(stage,"backup.age"),join(stage,"receipt.json")])].sort();
     if(!Array.isArray(snapshots)||snapshots.length!==1||snapshots[0].id!==id||!snapshots[0].tags?.includes(`murage-job:${receipt.jobId}`)||JSON.stringify([...snapshots[0].paths].sort())!==JSON.stringify(expectedPaths))return "snapshot-mismatch";
-    const restore=mkdtempSync(join(this.options.workDirectory,"restore-"));
-    const restored=await this.execute(["restore",id,"--target",restore,"--verify"],stage);if(restored.code!==0||restored.uncertain)return "restore-mismatch";
-    if(JSON.stringify(readdirSync(restore).sort())!==JSON.stringify(["backup.age","receipt.json"]))return "restore-mismatch";
-    const receiptText=JSON.stringify(receipt);
-    const restoredPath=(name:"backup.age"|"receipt.json",bytes:number)=>{const path=join(restore,name),stat=lstatSync(path);if(!stat.isFile()||stat.isSymbolicLink()||stat.nlink!==1||stat.size!==bytes)throw Error();return path;};
-    if(restoredArchiveDigest(restoredPath("backup.age",receipt.bytes),receipt.bytes)!==receipt.sha256||readFileSync(restoredPath("receipt.json",Buffer.byteLength(receiptText)),"utf8")!==receiptText)return "restore-mismatch";
-    options?.onVerified?.(restore);
+    // The verification copy is a full second copy of the archive: it goes once checked, unless the caller (a download) keeps it.
+    const restore=mkdtempSync(join(this.options.workDirectory,"restore-"));let kept=false;
+    try{
+      const restored=await this.execute(["restore",id,"--target",restore,"--verify"],stage);if(restored.code!==0||restored.uncertain)return "restore-mismatch";
+      if(JSON.stringify(readdirSync(restore).sort())!==JSON.stringify(["backup.age","receipt.json"]))return "restore-mismatch";
+      const receiptText=JSON.stringify(receipt);
+      const restoredPath=(name:"backup.age"|"receipt.json",bytes:number)=>{const path=join(restore,name),stat=lstatSync(path);if(!stat.isFile()||stat.isSymbolicLink()||stat.nlink!==1||stat.size!==bytes)throw Error();return path;};
+      if(restoredArchiveDigest(restoredPath("backup.age",receipt.bytes),receipt.bytes)!==receipt.sha256||readFileSync(restoredPath("receipt.json",Buffer.byteLength(receiptText)),"utf8")!==receiptText)return "restore-mismatch";
+      options?.onVerified?.(restore);
+      kept=Boolean(options?.onVerified);
+    }finally{if(!kept)rmSync(restore,{recursive:true,force:true});}
   }
   async reconcile(rawReceipt:BackupReceipt){
     const receipt=backupReceiptSchema.parse(rawReceipt),lease=this.lock();
@@ -257,7 +262,7 @@ export class BackupRestic {
         const id=rows[0].id as string;
         if(prior.snapshotId&&prior.snapshotId!==id)return failed();
         if(await this.verifySnapshot(id,receipt,prior.stage)||await this.repositoryId()!==repository.repositoryId)return failed();
-        prior.state="verified";prior.snapshotId=id;delete prior.error;save();return{state:"verified",jobId:receipt.jobId,snapshotId:id};
+        prior.state="verified";prior.snapshotId=id;delete prior.error;save();try{rmSync(prior.stage,{recursive:true,force:true});}catch{/* a verified record stands without its copy */}return{state:"verified",jobId:receipt.jobId,snapshotId:id};
       }catch{return failed();}
     }finally{lease.release();}
   }
@@ -304,7 +309,7 @@ export class BackupRestic {
       const dumped=await this.execute(["dump",id,"/receipt.json"],this.options.workDirectory);
       if(dumped.code!==0||dumped.uncertain||Buffer.byteLength(dumped.stdout)>32768)throw Error("RESTIC_DOWNLOAD_UNCONFIRMED");
       const receipt=backupReceiptSchema.parse(JSON.parse(dumped.stdout));
-      if(tags[0]!==`murage-job:${receipt.jobId}`||receipt.bytes>(this.options.maxBytes??1024**3))throw Error("RESTIC_DOWNLOAD_UNCONFIRMED");
+      if(tags[0]!==`murage-job:${receipt.jobId}`||receipt.bytes>(this.options.maxBytes??MAX_BACKUP_BYTES))throw Error("RESTIC_DOWNLOAD_UNCONFIRMED");
       let directory:string|undefined;
       const mismatch=await this.verifySnapshot(id,receipt,this.options.workDirectory,{expectedPaths:summary.paths,onVerified:value=>{directory=value;}});
       if(mismatch||!directory||await this.repositoryId()!==repository.repositoryId)throw Error("RESTIC_DOWNLOAD_UNCONFIRMED");
@@ -476,7 +481,7 @@ export class BackupRestic {
         return {state:prior.state,snapshotId:prior.snapshotId,error:prior.error,...(prior.lockRelease?{lockRelease:prior.lockRelease}:{}),...publicIdentity};
       }catch(error){if((error as NodeJS.ErrnoException).code!=="ENOENT")throw new Error("RESTIC_JOB_REVIEW_REQUIRED");}
       if(!isAbsolute(archivePath)||!basename(archivePath).endsWith(".age"))throw new Error("RESTIC_VERIFIED_ARCHIVE_REQUIRED");
-      const before=lstatSync(archivePath);if(!before.isFile()||before.isSymbolicLink()||before.nlink!==1||before.size!==receipt.bytes||before.size>(this.options.maxBytes??1024**3))throw new Error("RESTIC_VERIFIED_ARCHIVE_REQUIRED");
+      const before=lstatSync(archivePath);if(!before.isFile()||before.isSymbolicLink()||before.nlink!==1||before.size!==receipt.bytes||before.size>(this.options.maxBytes??MAX_BACKUP_BYTES))throw new Error("RESTIC_VERIFIED_ARCHIVE_REQUIRED");
       const fd=openSync(archivePath,constants.O_RDONLY|constants.O_NOFOLLOW);
       // restic/Go resolves cwd physically; compare its snapshot paths to the
       // same identity, including macOS /var -> /private/var aliases.
@@ -500,7 +505,10 @@ export class BackupRestic {
         const id=snapshotId.safeParse(summaries.at(-1)?.snapshot_id);if(!id.success)return fail("upload-uncertain");state.snapshotId=id.data;save();
         const mismatch=await this.verifySnapshot(id.data,receipt,stage);if(mismatch)return fail(mismatch);
         if(repository&&await this.repositoryId()!==repository.repositoryId)return fail("snapshot-mismatch");
-        state.state="verified";const lock=released();save();return {state:state.state,snapshotId:id.data,...lock,...publicIdentity};
+        state.state="verified";const lock=released();save();
+        // The upload stage is a full second copy of the archive: once the snapshot is verified it has no further use.
+        try{rmSync(stage,{recursive:true,force:true});}catch{/* the verified record stands without a copy removal */}
+        return {state:state.state,snapshotId:id.data,...lock,...publicIdentity};
       }catch{return fail("operation-failed");}
     }finally{lease.release();}
   }

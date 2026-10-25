@@ -19,7 +19,7 @@ const withNote = (note: AppState["deletionNote"]): AppState => ({ ...initialStat
 describe("the owed-deletion notice follows the server's list", () => {
   it("a list with a notice shows it, with the retry action", () => {
     const next = reducer(initialState, { type: "deletionOwed", notices: owed });
-    expect(next.deletionNote).toEqual({ title: "Deleted. Murage will finish removing these when it can:", items: [sentence], retry: true, owed: true });
+    expect(next.deletionNote).toEqual({ title: "Deleted. Murage finishes the rest by itself:", items: [sentence], retry: true, owed: true, ids: ["a:codex"], covers: [] });
   });
 
   it("an empty list clears an owed notice (a retry that worked, or one settled while the window was away)", () => {
@@ -55,7 +55,7 @@ describe("the order of answers: an older list never undoes a newer one (r16b fin
     const afterGet = reducer(initialState, { type: "deletionOwed", notices: pending, rev: 11 });
     expect(afterGet.deletionNote?.retry).toBe(true);
     const afterEvent = reducer(afterGet, { type: "deletionOwed", notices: done, rev: 12 });
-    expect(afterEvent.deletionNote).toEqual({ title: "Deleted.", items: ["Removed from Codex."], retry: false, owed: true });
+    expect(afterEvent.deletionNote).toEqual({ title: "Deleted.", items: ["Removed from Codex."], retry: false, owed: true, ids: ["a:codex:done"], covers: [] });
     expect(afterEvent.owedRev).toBe(12);
   });
 

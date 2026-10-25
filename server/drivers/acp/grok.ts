@@ -398,6 +398,11 @@ export function grokIsolationArgs(env: Record<string, string | undefined>, cliVe
   }
 }
 
+/** The GROK_CONFIG half of applyFluxMemory, exported so the Cloud launcher's drift test runs the real code. */
+export function applyGrokFluxMemory(env: Record<string, string | undefined>, headers: Record<string, string>): void {
+  env.GROK_CONFIG = fuigoConfigOverlay(headers, env.GROK_CONFIG);
+}
+
 const support: AcpSupport = {
   driverKind: "grokAgent",
   displayName: "Grok",
@@ -489,9 +494,7 @@ const support: AcpSupport = {
 
   /** Flux Memory headers: Grok Build shares Fuigo's shell, so the inline `GROK_CONFIG` overlay
    *  (xai-grok-shell config GROK_CONFIG_ENV) carries `[models].extra_headers` the same way. */
-  applyFluxMemory: (env, { decision }) => {
-    env.GROK_CONFIG = fuigoConfigOverlay(decision.headers, env.GROK_CONFIG);
-  },
+  applyFluxMemory: (env, { decision }) => applyGrokFluxMemory(env, decision.headers),
   // The CLI owns its own grok.com login; a leaked API key silently flips
   // billing from the subscription to pay-as-you-go.
   // grok's native personal config (~/.grok MCP servers, hooks, skills, rules,

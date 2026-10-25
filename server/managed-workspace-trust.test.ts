@@ -5,7 +5,7 @@
 // grant would reach past the desk itself.
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -19,7 +19,12 @@ import { removeTempDir } from "./testing/cleanup.ts";
 import { ensureTaskWorkspace } from "./workspace.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
-const posixOnly = describe.skipIf(process.platform === "win32");
+// Murage links skills with directory symlinks, and with junctions on Windows
+// (skills.ts), because a Windows directory symlink needs a privilege a
+// standard user lacks. A junction is the same kind of link to every check this
+// module makes (lstat reports a symbolic link, realpath follows it), so the
+// suite makes the link the platform makes and runs on every OS.
+const LINK = process.platform === "win32" ? "junction" : "dir";
 const BOT = "bot_1";
 const THREAD = "thread-1";
 const BUNDLE = "bundle_a";
@@ -43,14 +48,14 @@ function pinSkill(at: string, name: string, bundle = BUNDLE, dirs = [".claude/sk
   writeFileSync(join(bundleRoot, ".complete"), bundle);
   for (const dir of dirs) {
     mkdirSync(join(at, dir), { recursive: true });
-    symlinkSync(join(bundleRoot, "skills", name), join(at, dir, name), "dir");
+    symlinkSync(join(bundleRoot, "skills", name), join(at, dir, name), LINK);
   }
 }
 
 const input = (bundleIds: string[] = [BUNDLE]) => ({ dataDir, botId: BOT, threadId: THREAD, bundleIds });
 const decide = (folder: string, bundleIds?: string[]) => managedWorkspaceAutoTrust(folder, scanFolderTrustSources(folder), input(bundleIds));
 
-posixOnly("managed thread desk auto-trust", () => {
+describe("managed thread desk auto-trust", () => {
   it("a managed thread desk holding only Murage skill links is trusted, and the card's sources are exactly those links", () => {
     pinSkill(desk, "review");
     pinSkill(desk, "deploy");
@@ -98,7 +103,7 @@ posixOnly("managed thread desk auto-trust", () => {
     const threads = join(dataDir, "workspaces", "bot_2", "threads");
     mkdirSync(threads, { recursive: true });
     const linkedDesk = join(threads, THREAD);
-    symlinkSync(outside, linkedDesk, "dir");
+    symlinkSync(outside, linkedDesk, LINK);
     const scan = scanFolderTrustSources(linkedDesk);
     expect(managedWorkspaceAutoTrust(linkedDesk, scan, { ...input(), botId: "bot_2" })).toBe(false);
     // a symlinked `threads` dir fails the same way
@@ -106,7 +111,7 @@ posixOnly("managed thread desk auto-trust", () => {
     mkdirSync(join(threadsTarget, THREAD), { recursive: true });
     pinSkill(join(threadsTarget, THREAD), "review");
     mkdirSync(join(dataDir, "workspaces", "bot_3"), { recursive: true });
-    symlinkSync(threadsTarget, join(dataDir, "workspaces", "bot_3", "threads"), "dir");
+    symlinkSync(threadsTarget, join(dataDir, "workspaces", "bot_3", "threads"), LINK);
     const viaThreads = join(dataDir, "workspaces", "bot_3", "threads", THREAD);
     expect(managedWorkspaceAutoTrust(viaThreads, scanFolderTrustSources(viaThreads), { ...input(), botId: "bot_3" })).toBe(false);
   });
@@ -116,7 +121,7 @@ posixOnly("managed thread desk auto-trust", () => {
     // a link to a skill outside the desk
     const foreign = join(root, "foreign-skill");
     mkdirSync(foreign);
-    symlinkSync(foreign, join(desk, ".claude", "skills", "evil"), "dir");
+    symlinkSync(foreign, join(desk, ".claude", "skills", "evil"), LINK);
     expect(decide(desk)).toBe(false);
   });
 
@@ -125,13 +130,13 @@ posixOnly("managed thread desk auto-trust", () => {
     expect(decide(desk, [BUNDLE])).toBe(false);
     expect(decide(desk, ["bundle_old"])).toBe(true);
     // a link whose name differs from the skill it points at
-    symlinkSync(join(desk, ".murage-procedures", "bundle_old", "skills", "review"), join(desk, ".agents", "skills", "renamed"), "dir");
+    symlinkSync(join(desk, ".murage-procedures", "bundle_old", "skills", "review"), join(desk, ".agents", "skills", "renamed"), LINK);
     expect(decide(desk, ["bundle_old"])).toBe(false);
   });
 
   it("an unpublished bundle (no .complete) is refused", () => {
     pinSkill(desk, "review");
-    execFileSync("rm", [join(desk, ".murage-procedures", BUNDLE, ".complete")]);
+    rmSync(join(desk, ".murage-procedures", BUNDLE, ".complete"));
     expect(decide(desk)).toBe(false);
   });
 
@@ -163,8 +168,8 @@ posixOnly("managed thread desk auto-trust", () => {
     const elsewhere = join(root, "claude-elsewhere");
     mkdirSync(join(elsewhere, "skills"), { recursive: true });
     pinSkill(desk, "review", BUNDLE, [".agents/skills"]);
-    symlinkSync(join(desk, ".murage-procedures", BUNDLE, "skills", "review"), join(elsewhere, "skills", "review"), "dir");
-    symlinkSync(elsewhere, join(desk, ".claude"), "dir");
+    symlinkSync(join(desk, ".murage-procedures", BUNDLE, "skills", "review"), join(elsewhere, "skills", "review"), LINK);
+    symlinkSync(elsewhere, join(desk, ".claude"), LINK);
     expect(decide(desk)).toBe(false);
   });
 
@@ -211,7 +216,7 @@ posixOnly("managed thread desk auto-trust", () => {
 
 // The layout the real procedure publisher writes, not a hand-made copy of it.
 
-posixOnly("managed thread desk auto-trust on a real pinned bundle", () => {
+describe("managed thread desk auto-trust on a real pinned bundle", () => {
   it("preparePinnedProcedures(native) leaves a desk that is trusted only for its own pin", () => {
     const id = `managed-trust-${randomUUID()}`;
     try {

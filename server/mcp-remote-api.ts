@@ -52,6 +52,18 @@ export function secretsNoLongerApply(before: AnyStoredMcpServer, after: AnyStore
   return before.url !== after.url || before.auth !== after.auth;
 }
 
+/** 09-A4: what the owner allowed on a server belongs to what that server is. Any change to its kind, link, sign-in, command,
+ * arguments or env values makes it a different server to the earlier answers, so its tool grants must be dropped. */
+export function grantsNoLongerApply(before: AnyStoredMcpServer, after: AnyStoredMcpServer): boolean {
+  if (secretsNoLongerApply(before, after)) return true;
+  if (isRemoteMcpServer(before) || isRemoteMcpServer(after)) return false;
+  const envKey = (server: typeof before & { env: Record<string, string> }) =>
+    JSON.stringify([Object.entries(server.env).sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0)), [...(server.heldEnv ?? [])].sort()]);
+  return before.command !== after.command
+    || JSON.stringify(before.args) !== JSON.stringify(after.args)
+    || envKey(before) !== envKey(after);
+}
+
 /** Editing what a command server runs (its command or arguments) while it holds
  * saved env values: the owner must say whether those values go to the new
  * command or are cleared. Never decided silently (review L6). */

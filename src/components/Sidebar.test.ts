@@ -55,6 +55,21 @@ describe("plain-text sidebar message previews", () => {
     expect(JSON.stringify(original)).toBe(before);
   });
 
+  it("a connection card reads \"<app> · <state>\" in the reader's language (item 140)", async () => {
+    const card = (status: "required" | "authorizing" | "connected" | "failed", label = "GitHub") =>
+      bot([message("Connect GitHub to continue.", { kind: "connector", connector: { slug: "github", label, description: "x", status, resumeKey: "r" } } as Partial<Message>)]);
+    expect(sidebarBotPreview(card("required"))).toBe("GitHub · waiting to connect");
+    expect(sidebarBotPreview(card("connected"))).toBe("GitHub · connected");
+    expect(sidebarBotPreview(card("required", "GitHub (work)"))).toBe("GitHub (work) · waiting to connect");
+    const { setLocale } = await import("@/lib/i18n");
+    await setLocale("ja");
+    try {
+      expect(sidebarBotPreview(card("required"))).toBe("GitHub · 接続待ち");
+    } finally {
+      await setLocale("en");
+    }
+  });
+
   it("flattens setup-card titles too", () => {
     expect(sidebarBotPreview(bot([message("", { kind: "options", card: { title: "## **Choose** a setup", subtitle: "", options: [] } })])))
       .toBe("Choose a setup");

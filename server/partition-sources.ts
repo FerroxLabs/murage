@@ -26,7 +26,8 @@ const SEEK_ANYWHERE = "SELECT m.thread_id AS thread_id, m.id AS id, m.json AS js
 export function partitionSourcesAllowed(db: DatabaseSync, botId: string, threadId: string, messageIds: readonly string[], within?: { readonly threads: Iterable<string>; readonly only?: boolean }): boolean {
   return partitionSourcesVerdict(db, botId, threadId, messageIds, within) === "shown";
 }
-/** The same check in three states (REPLY-WITHHELD-CONTRACT R1): "withheld" for a source outside the partition or one that is not stored, "checking" for a
+/** The same check in three states (REPLY-WITHHELD-CONTRACT R1): "withheld" for a source outside the partition or one that is not stored (a copy's
+ * originals, a hand-off's "Messaged" row and the conversation it was handed over from count as sources, all the way up), "checking" for a
  * check past its bounds or one that threw (nothing is established either way, and nothing is withdrawn for it). */
 export function partitionSourcesVerdict(db: DatabaseSync, botId: string, threadId: string, messageIds: readonly string[], within?: { readonly threads: Iterable<string>; readonly only?: boolean }): "shown" | "withheld" | "checking" {
   const bot = executionStore()?.bot(botId);
@@ -56,12 +57,31 @@ export function partitionSourcesVerdict(db: DatabaseSync, botId: string, threadI
         if (seen.size >= PARTITION_SOURCES_MAX) return "checking";
         seen.add(key);
         if (!sameThreadPartition(bot, threadId, String(row.thread_id))) return "withheld";
-        const copy = JSON.parse(String(row.json)).copyOf;
-        if (!copy) continue;
-        if (typeof copy.threadId !== "string" || !sameThreadPartition(bot, threadId, copy.threadId) || !Array.isArray(copy.messageIds)) return "withheld";
-        for (const id of copy.messageIds as unknown[]) {
-          if (typeof id !== "string") return "withheld";
-          if (!seen.has(`${copy.threadId}\u0000${id}`)) next.push([copy.threadId, id]);
+        // every link a row carries is judged (copyOf, handoffOf, handoffFrom): each must resolve to a source in this partition, or the row is
+        // withheld. A link that is present but malformed, or names a source that is not stored, does not resolve.
+        const stored = JSON.parse(String(row.json)) as Record<string, unknown>;
+        if (!stored || typeof stored !== "object") return "withheld";
+        const copy = stored.copyOf as { threadId?: unknown; messageIds?: unknown } | null | undefined;
+        if (copy !== undefined && copy !== null) {
+          if (typeof copy !== "object" || typeof copy.threadId !== "string" || !sameThreadPartition(bot, threadId, copy.threadId) || !Array.isArray(copy.messageIds)) return "withheld";
+          for (const id of copy.messageIds as unknown[]) {
+            if (typeof id !== "string") return "withheld";
+            if (!seen.has(`${copy.threadId}\u0000${id}`)) next.push([copy.threadId, id]);
+          }
+        }
+        // a hand-off by its "Messaged" row is a one-source link, judged like a copy: stored, in this partition, and walked further
+        const handoff = stored.handoffOf as { threadId?: unknown; messageId?: unknown } | null | undefined;
+        if (handoff !== undefined && handoff !== null) {
+          if (typeof handoff !== "object" || typeof handoff.threadId !== "string" || typeof handoff.messageId !== "string"
+            || !sameThreadPartition(bot, threadId, handoff.threadId)) return "withheld";
+          if (!seen.has(`${handoff.threadId}\u0000${handoff.messageId}`)) next.push([handoff.threadId, handoff.messageId]);
+        }
+        // a hand-off saved with only the conversation that handed it over (a legacy or sourceMessageId-less hand-off, handoff-dispatch.ts) rests on
+        // that whole conversation: it is shown only when that conversation is in this partition. Any value under the key that is not a
+        // conversation id is withheld, a key with null included.
+        if (Object.hasOwn(stored, "handoffFrom")) {
+          const from = stored.handoffFrom;
+          if (typeof from !== "string" || !from || !sameThreadPartition(bot, threadId, from)) return "withheld";
         }
       }
       if (!next.length) break;
@@ -157,6 +177,14 @@ function readChain(db: DatabaseSync, copy: { threadId: string; messageIds: reado
     level = next;
   }
   return true;
+}
+
+/** A row that carries a link (copyOf, handoffOf or handoffFrom) is shown to a bot reading `threadId` only when the whole chain resolves inside
+ * its partition (partitionSourcesVerdict "shown"); a row with no link is not judged here. Not for the bot's own conversation's replay: the
+ * assignee of a hand-off still reads the prompt it was handed (transcriptRowCheck keeps that rule). */
+export function linkedRowShown(db: DatabaseSync, botId: string, threadId: string, message: Pick<Message, "id" | "copyOf" | "handoffOf" | "handoffFrom">): boolean {
+  if (message.copyOf === undefined && message.handoffOf === undefined && message.handoffFrom === undefined) return true;
+  return partitionSourcesVerdict(db, botId, threadId, [message.id]) === "shown";
 }
 
 /** The rule every transcript row a bot reads passes, for one operation (the copy memo's stamp is read once, here). Its caller is the reader

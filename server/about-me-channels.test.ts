@@ -60,7 +60,7 @@ it.skipIf(process.platform === "win32")("keeps About me out of a Slack turn for 
     const bot = (await api("GET", "/api/bots")).bots[0];
     await api("PATCH", `/api/bots/${bot.id}`, { name: "Synthetic Shop Chief", chiefOfStaff: true, chiefScope: "workspace", computer: "off", browser: false, composio: false, modelSelection: { instanceId: "fixtureClaude", model: "claude-sonnet-5" } });
     await api("PUT", "/api/about-me", { text: ABOUT });
-    await api("PUT", `/api/bots/${bot.id}/memory`, { text: `# Memory\n\n- ${NOTEBOOK}\n` });
+    await api("PUT", `/api/bots/${bot.id}/memory`, { baseRevision: (await api("GET", `/api/bots/${bot.id}/memory`)).revision, text: `# Memory\n\n- ${NOTEBOOK}\n` });
 
     // The owner at the desktop: it rides.
     await api("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "OWNER_DESKTOP_TURN" });

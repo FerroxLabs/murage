@@ -11,6 +11,7 @@ import { useEffect, useMemo, useState } from "react";
 import { RichMarkdownEditor } from "./editor/RichMarkdownEditor";
 import { richEditable } from "./skills/SkillEditor";
 import { api } from "@/state/store";
+import { settingsDrafts } from "@/lib/settings-drafts";
 
 export interface AboutMe {
   text: string;
@@ -39,6 +40,8 @@ export function charCounter(chars: number, max: number): { text: string; over: b
 
 const BUTTON = "min-h-9 rounded-lg px-3 py-1.5 text-[12.5px] font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-50";
 
+const DRAFT_KEY = "about-me";
+
 export function AboutMeSettings() {
   const [loaded, setLoaded] = useState<AboutMe | null>(null);
   const [loadError, setLoadError] = useState("");
@@ -59,7 +62,8 @@ export function AboutMeSettings() {
         setLoaded(about);
         setSaved(about.text);
         // Nothing saved yet: open on the draft, unsaved until they say so.
-        setDraft(about.saved ? about.text : about.suggestion);
+        // Words typed before the page was left or searched away come back, if the saved text has not changed under them.
+        setDraft(settingsDrafts.recall(DRAFT_KEY, about.text) ?? (about.saved ? about.text : about.suggestion));
         setVersion((current) => current + 1);
       })
       .catch((cause: unknown) => { if (live) setLoadError(cause instanceof Error && cause.message ? cause.message : "About me couldn't be loaded."); });
@@ -70,6 +74,9 @@ export function AboutMeSettings() {
   const max = loaded?.maxChars ?? 4000;
   const counter = charCounter(countChars(draft), max);
   const dirty = draft !== saved;
+  // The suggestion offered on a first visit is not the person's work until they change it.
+  const untouchedSuggestion = Boolean(loaded && !loaded.saved && draft === loaded.suggestion);
+  useEffect(() => { if (loaded) settingsDrafts.remember(DRAFT_KEY, untouchedSuggestion ? saved : draft, saved); }, [loaded, draft, saved, untouchedSuggestion]);
 
   const save = async () => {
     setBusy(true);
