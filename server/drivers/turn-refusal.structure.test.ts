@@ -89,6 +89,7 @@ describe("turn-refusal structure", () => {
   it("holds approval requests and a clean end on a gated turn until the SessionStart proof", () => {
     const code = linesOf(read("codex.ts")).map(({ code }) => code).join("\n");
     expect(code).toMatch(/if \(hookGate && !refusal\.hookLive\) void proveLiveness\(\)\.then\(\(\) => \{ if \(!abandoned\) handleServerRequest\(msg\); \}\);\s*else handleServerRequest\(msg\);/);
-    expect(code).toMatch(/if \(ok && hookGate && !refusal\.hookLive\) \{\s*if \(!\(await proveLiveness\(\)\)\) return;/);
+    // every clean end waits for the proof; only the user's Stop (the process is killed: not a clean end of engine work) does not (F4 design 2a)
+    expect(code).toMatch(/if \(ok && hookGate && !refusal\.hookLive && !\(stopRequested && stopReason === "cancelled"\)\) \{\s*if \(!\(await proveLiveness\(\)\)\) return;/);
   });
 });

@@ -134,6 +134,12 @@ export class InternalCapabilities {
     const existing = this.#providers.get(key);
     if (existing && existing.generation !== generation) return false;
     this.#providers.set(key, { threadId, generation });
+    // A later generation that re-binds an already bound turn id is named for that turn too (the dispatcher stays the first).
+    const acceptedKey = JSON.stringify([threadId, generation]);
+    if (!this.#turnOf.has(acceptedKey)) {
+      this.#turnOf.set(acceptedKey, turnId);
+      while (this.#turnOf.size > this.#tombstoneLimit) this.#turnOf.delete(this.#turnOf.keys().next().value!);
+    }
     return true;
   }
 

@@ -62,7 +62,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { engineState, type EngineVerdict } from "./engine-closed.ts";
 import type { Barrier } from "./engine-exclusion.ts";
 import { exclOps, fsOps, mutOps, realEngineFs, type FileWriters } from "./engine-fs.ts";
-import { ASIDE_SUFFIX, UNDO_JOIN_TRIES, associationsOf, clearEdits, EngineOpenError, evalPred, HelperError, isCleared, isStrictlyInside, JSONL_FORMAT, OPEN_REASON, pathApiFor, rowSkeleton, sameFolder, skeletonOf, StaleError, stepPath, type FileRef, type HomePlanData, type JsonlFormat, type RowEdit, type RowRef, type Step } from "./engine-plan-core.ts";
+import { ASIDE_SUFFIX, UNDO_JOIN_TRIES, associationsOf, slugsReferenced, clearEdits, EngineOpenError, evalPred, HelperError, isCleared, isStrictlyInside, JSONL_FORMAT, OPEN_REASON, pathApiFor, rowSkeleton, sameFolder, skeletonOf, StaleError, stepPath, type FileRef, type HomePlanData, type JsonlFormat, type RowEdit, type RowRef, type Step } from "./engine-plan-core.ts";
 import { dropRedo, editsOf, listRedo, markFellBack, rebootedSince, redoDirectory, rowsRecordsOf, writeJoin, writeRedo, type AnyRecord, type JoinRecord, type RedoRecord, type RedoRow } from "./engine-redo.ts";
 import { checkpointTruncate } from "./sqlite-checkpoint.ts";
 
@@ -754,7 +754,12 @@ function removeUnlessReferenced(step: Extract<Step, { k: "removeUnlessReferenced
   if (!lstatOrNull(away)) return;
   const back = (): void => { if (created || !lstatOrNull(step.target)) putBack(away, step.target, false); };
   const identity = treeGuard({ files: [away], links: [] });
+  // the aside as it was judged right after the move: on Windows the share-none deletion handle must still find this very file
+  const judged = judgedOf(away);
   try {
+    // macOS, Linux: a process that opened the paste before it was moved aside and still has it open for writing keeps it (put back,
+    // the home stays pending "held"). Windows: the share-none deletion handle below is that proof.
+    noWriters([away]);
     chunk(() => withDirLock(step.refFile, (guard, lockAge) => {
       const fd = lstatOrNull(step.refFile) ? mutOps.openRead(step.refFile) : null;
       try {
@@ -765,7 +770,13 @@ function removeUnlessReferenced(step: Extract<Step, { k: "removeUnlessReferenced
         } else if (before) throw new StaleError("the history is gone");
         guard();
         if (lockAge() >= LOCK_FRESH_MS) throw new HoldExpired();
-        gUnlink((path) => { identity(path); guard(path); }, away);
+        if (exclOps.mode === "win32") {
+          // a handle nobody can share, opened only now and still the file judged after the move: a process that has the paste open
+          // (even one that allows delete sharing) refuses it, and it goes back under its name
+          if (!judged) throw new EngineOpenError("held", "the paste moved aside could not be judged");
+          identity(away); guard(away);
+          markDeleteEach([away], new Map([[away, judged]]));
+        } else gUnlink((path) => { identity(path); guard(path); }, away);
       } finally { if (fd !== null) mutOps.close(fd); }
     }));
   } catch (error) {
@@ -1345,7 +1356,7 @@ function locateJournalled(rec: RedoRecord): string | null {
  * middle of a value is not one JSON object, and no plan could read it. Each journal is finished under the gate and the hold of its
  * file's class; a join is finished the way joinInto does it. A journal whose engine is open, or cannot be told, or whose file is held
  * stays, and its home stays pending. `identities`: the configured programs of each engine home, by `engine\0home`. Never throws. */
-export function recoverAll(identities: Readonly<Record<string, readonly string[]>> = {}, lockedFiles: readonly string[] = []): RecoveryResult {
+export function recoverAll(identities: Readonly<Record<string, readonly string[]>> = {}, lockedFiles: readonly string[] = [], allow?: (key: string) => boolean): RecoveryResult {
   const result: RecoveryResult = { pending: [], repaired: 0 };
   // `lockedFiles`: files locked by a directory lock (Claude Code's history.jsonl); the empty private folders a killed Murage left next to
   // them go first (never the engine's own lock)
@@ -1360,6 +1371,10 @@ export function recoverAll(identities: Readonly<Record<string, readonly string[]
     // restart of the system can tell whether the bytes reached the drive
     if (rec.fellBack !== undefined && !markedBeforeReboot(rec)) continue;
     const key = `${rec.engine}\0${rec.home}`;
+    // `allow`: only the homes this run may touch. A planning attempt passes the homes it holds (`job.only`, computed after Murage's own
+    // sessions on them were held); a journal of any other home is left for the attempt that holds that home, so recovery never writes
+    // a home whose engine processes were not held first.
+    if (allow && !allow(key)) continue;
     const known = [...(identities[key] ?? [])];
     const verdict = engineState(rec.engine, rec.home, { identities: known });
     if (verdict.state !== "closed") { result.pending.push({ engine: rec.engine, home: rec.home, state: verdict.state }); continue; }
@@ -1509,6 +1524,8 @@ function runStep(step: Step, out: { removed: string[] }, clear: (name: string, v
   const fs = realEngineFs();
   switch (step.k) {
     case "remove": {
+      // a plan file whose slug a transcript that stays now names (one that appeared or was resumed since the plan) is kept
+      if (step.slugRefs && slugsReferenced(fs, step.slugRefs.projects, step.slugRefs.slugs).size) return;
       if (step.expect) { removeListed(step, out); return; }
       // A session file removed on its own is removed only while it names, read in full while held, what the plan saw.
       removeGuarded(step.root, step.target, step.fp, out, step.owner);

@@ -132,7 +132,49 @@ export function parseWaiver(text) {
     classes.push(item[1]);
   }
   const signed = /^([A-Za-z][A-Za-z .'-]*?) on (\d{4}-\d{2}-\d{2})$/.exec(approval);
-  return { commit, runId, critical, classes, approver: signed?.[1] ?? null, date: signed?.[2] ?? null, approval };
+  // Each class names the test files it covers in backticks; those names are what the gate checks CI's reds against.
+  const classTests = classes.map(item => [...item.matchAll(TEST_FILE_IN_CLASS)].map(match => match[1]));
+  return { commit, runId, critical, classes, classTests, tests: [...new Set(classTests.flat())], approver: signed?.[1] ?? null, date: signed?.[2] ?? null, approval };
+}
+
+const TEST_FILE_IN_CLASS = /`([A-Za-z0-9._/-]+\.test\.[cm]?[jt]sx?)`/g;
+const TEST_FILE = /^[A-Za-z0-9._/-]+\.test\.[cm]?[jt]sx?$/;
+
+/**
+ * The failing test files a CI job log names: vitest's "FAIL  <file> > <test>" lines (and "FAIL  <file>" for a file that
+ * failed as a whole). ANSI colour and the Actions timestamp prefix are stripped first.
+ */
+export function failedTestsInLog(log) {
+  const files = new Set();
+  for (const raw of String(log ?? "").replace(/\r\n/g, "\n").split("\n")) {
+    const line = raw.replace(/\x1b\[[0-9;]*m/g, "").replace(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z ?/, "");
+    const hit = /^\s*FAIL\s+(\S+)(?:\s|$)/.exec(line);
+    if (hit && TEST_FILE.test(hit[1])) files.add(hit[1]);
+  }
+  return [...files];
+}
+
+/**
+ * Whether every red in the waived CI run lies inside the waiver's named classes. `jobs` are the run's jobs (newest attempt)
+ * as [{ name, conclusion, failedTests }] where failedTests is what failedTestsInLog read from that job's log. A job marked
+ * non-blocking in its name, and the aggregate job that only reports the others, are not judged. Any other job that did not
+ * succeed must have failed on tests, every one of them named by a class: a job that failed with no test named (a build,
+ * install or setup failure, a cancel, a timeout) or on a test no class names refuses the waiver.
+ */
+export function failuresVerdict({ waiver, jobs, aggregateJob = "required CI completion" }) {
+  const waived = new Set(waiver.tests ?? []);
+  const outside = [];
+  for (const job of jobs ?? []) {
+    if (["success", "skipped", "neutral"].includes(job.conclusion)) continue;
+    if (/non-blocking/i.test(String(job.name)) || job.name === aggregateJob) continue;
+    const failed = job.failedTests ?? [];
+    if (job.conclusion !== "failure" || failed.length === 0) {
+      return { ok: false, reason: `job "${job.name}" ended ${job.conclusion ?? "without a result"} with no failing test named in its log; only named test failures can be waived` };
+    }
+    for (const file of failed) if (!waived.has(file)) outside.push(`${file} (${job.name})`);
+  }
+  if (outside.length) return { ok: false, reason: `CI failed outside the waiver's classes: ${outside.join(", ")}` };
+  return { ok: true, reason: `every failing test in the run is named by a waiver class` };
 }
 
 function realDate(value) {
@@ -160,6 +202,8 @@ export function waiverVerdict({ eventName, waiverPath, waiverText, sha, runs }) 
   if (String(verdict.run.id) !== waiver.runId) return refuse(`waiver names CI run ${waiver.runId}, but the CI run that decided ${sha} is ${verdict.run.id}`);
   if (waiver.critical !== "0") return refuse(`waiver states Critical: ${waiver.critical || "(blank)"}; only Critical: 0 can be waived`);
   if (waiver.classes.length === 0) return refuse("waiver lists no reviewed failure classes");
+  const unnamed = waiver.classes.filter((_, index) => waiver.classTests[index].length === 0);
+  if (unnamed.length) return refuse(`waiver class ${JSON.stringify(unnamed[0])} names no test file; name each covered test file in backticks`);
   if (!waiver.approver || !waiver.date) return refuse(`approval line ${JSON.stringify(waiver.approval)} must read "Approved-by: <name> on YYYY-MM-DD"`);
   if (!APPROVER.test(waiver.approver)) return refuse(`waiver approved by ${waiver.approver}; only Sean can approve a CI waiver`);
   if (!realDate(waiver.date)) return refuse(`approval date ${waiver.date} is not a real date`);
@@ -174,6 +218,20 @@ function listRuns({ repository, workflow, sha }) {
   const result = spawnSync("gh", ["api", `repos/${repository}/actions/workflows/${workflow}/runs?head_sha=${sha}&per_page=50`, "--jq", ".workflow_runs"], { encoding: "utf8" });
   if (result.status !== 0) throw new Error(`gh api failed: ${(result.stderr || result.stdout).trim()}`);
   return JSON.parse(result.stdout || "[]");
+}
+
+/** The jobs of a run's newest attempt, each with the failing test files its log names (logs only for jobs that did not succeed). */
+function listRunJobs({ repository, run }) {
+  const attempt = Number(run.run_attempt) > 0 ? Number(run.run_attempt) : 1;
+  const result = spawnSync("gh", ["api", "--paginate", `repos/${repository}/actions/runs/${run.id}/attempts/${attempt}/jobs?per_page=100`, "--jq", ".jobs[]"], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+  if (result.status !== 0) throw new Error(`gh api failed: ${(result.stderr || result.stdout).trim()}`);
+  const jobs = String(result.stdout).split("\n").filter(Boolean).map(line => JSON.parse(line));
+  return jobs.map(job => {
+    if (["success", "skipped", "neutral"].includes(job.conclusion)) return { name: job.name, conclusion: job.conclusion, failedTests: [] };
+    const log = spawnSync("gh", ["api", `repos/${repository}/actions/jobs/${job.id}/logs`], { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
+    if (log.status !== 0) throw new Error(`could not read the log of job "${job.name}": ${(log.stderr || log.stdout).trim()}`);
+    return { name: job.name, conclusion: job.conclusion, failedTests: failedTestsInLog(log.stdout) };
+  });
 }
 
 function listNightlyRuns({ repository, workflow }) {
@@ -300,6 +358,12 @@ async function main() {
       const result = waiverVerdict({ eventName, waiverPath, waiverText: readCommitted(waiverFrom, waiverPath), sha, runs });
       if (!result.ok) { console.error(`::error::${verdict.reason}; waiver refused: ${result.reason}`); process.exit(1); }
       recheckNightly();
+      // The waiver covers its named classes only: every red in the run must be one of the test files they name.
+      let covered;
+      try { covered = failuresVerdict({ waiver: result.waiver, jobs: listRunJobs({ repository, run: verdict.run }) }); }
+      catch (error) { covered = { ok: false, reason: error.message }; }
+      if (!covered.ok) { console.error(`::error::${verdict.reason}; waiver refused: ${covered.reason}`); process.exit(1); }
+      console.log(`ok: ${covered.reason}`);
       const { waiver } = result;
       console.log(`::warning::${result.reason}`);
       record([

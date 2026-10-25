@@ -1,7 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vitest";
-import { appCountLabel, appsClaimFor, catalogNotice, connectedCards, type CatalogFallbackReason } from "./app-catalog";
+import { appCountLabel, appsClaimFor, catalogNotice, catalogSections, connectedCards, inCategory, rankCategories, type AppCard, type CatalogFallbackReason } from "./app-catalog";
 
 describe("the live app count", () => {
   it("rounds down so the claim stays true", () => {
@@ -58,5 +58,41 @@ describe("the Connected tab is built from the inventory (Part B)", () => {
 describe("audit round 1: the Browse all count keeps its thousands", () => {
   it("is the whole number", () => {
     expect(appCountLabel(1_634)).toBe("1,600+ apps");
+  });
+});
+
+describe("connected apps grouped by category (item 152)", () => {
+  const app = (slug: string, categories?: string[]): AppCard => ({ slug, label: slug, blurb: "", logo: null, domain: null, ...(categories ? { categories } : {}) });
+  const apps = [
+    app("slack", ["Communication"]), app("gmail", ["Communication", "Email"]), app("discord", ["Communication"]),
+    app("github", ["Developer tools"]), app("linear", ["Developer tools", "Project management"]),
+    app("notion", ["Productivity"]), app("none"),
+  ];
+
+  it("ranks groups by app count, ties alphabetical, with the rest under More", () => {
+    expect(rankCategories(apps, 2)).toEqual({ inline: ["Communication", "Developer tools"], more: ["Email", "Productivity", "Project management"] });
+    expect(rankCategories(apps)).toEqual({ inline: ["Communication", "Developer tools", "Email", "Productivity", "Project management"], more: [] });
+  });
+
+  it("counts an app once per group and matches groups without case", () => {
+    expect(rankCategories([app("a", ["Chat", "chat"])]).inline).toEqual(["Chat"]);
+    expect(inCategory(apps[0]!, "communication")).toBe(true);
+    expect(inCategory(apps[0]!, "")).toBe(false);
+    expect(inCategory(apps[6]!, "Communication")).toBe(false);
+  });
+
+  it("puts connected apps first, then busy-group previews without repeating them, then everything", () => {
+    const sections = catalogSections(apps, new Set(["slack"]), { previews: 2, perPreview: 2 });
+    expect(sections.map((section) => section.id)).toEqual(["connected", "category:Communication", "category:Developer tools", "all"]);
+    expect(sections[0]!.apps.map((a) => a.slug)).toEqual(["slack"]);
+    expect(sections[1]!.apps.map((a) => a.slug)).toEqual(["gmail", "discord"]);
+    expect(sections[3]!.apps).toHaveLength(apps.length);
+  });
+
+  it("leaves empty sections out, and is just connected plus everything when the service sends no categories", () => {
+    expect(catalogSections([], new Set()).length).toBe(0);
+    const plain = [app("a"), app("b")];
+    expect(catalogSections(plain, new Set(["a"])).map((section) => section.id)).toEqual(["connected", "all"]);
+    expect(catalogSections(plain, new Set()).map((section) => section.id)).toEqual(["all"]);
   });
 });

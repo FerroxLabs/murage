@@ -59,6 +59,11 @@ function corroborated(findings: SkillFinding[]): SkillFinding[] {
   return [...findings.filter((f) => f.source !== "skillspector"), ...kept];
 }
 
+/** A run of whitespace longer than this reads the same to every rule as one space or newline, but a pattern that
+ *  meets it more than once (`\s+` then `\s*`) retries every split of the run. Long runs are shortened for matching only. */
+const LONG_WHITESPACE = /\s{33,}/g;
+export const squeezeWhitespace = (text: string): string => text.replace(LONG_WHITESPACE, (run) => (run.includes("\n") ? "\n" : " "));
+
 export function scanSkill(input: SkillScanInput, now: Date = new Date(), onText?: (length: number) => void): SkillScan {
   // Trigger terms are single words: only Skill Guard's rules and the
   // index-poisoning check read them, never SkillSpector's line patterns.
@@ -79,11 +84,13 @@ export function scanSkill(input: SkillScanInput, now: Date = new Date(), onText?
     if (!readBySpector) continue;
     const view = both ? { code: text, prose: text, manifest: false }
       : file.startsWith("(") ? { code: "", prose: text, manifest: false } : views(file, text);
+    // SkillSpector's patterns read the text with long whitespace runs shortened (see squeezeWhitespace); the rules above keep them.
+    const squeezed = { code: squeezeWhitespace(view.code), prose: squeezeWhitespace(view.prose), any: squeezeWhitespace(text) };
     for (const pattern of spector()) {
-      const target = pattern.applies === "manifest" ? (view.manifest ? view.code : "")
-        : pattern.applies === "code" ? view.code
-        : pattern.applies === "prose" ? view.prose
-        : text;
+      const target = pattern.applies === "manifest" ? (view.manifest ? squeezed.code : "")
+        : pattern.applies === "code" ? squeezed.code
+        : pattern.applies === "prose" ? squeezed.prose
+        : squeezed.any;
       if (!target) continue;
       const match = target.match(pattern.regex);
       if (match) findings.push({ rule: `skillspector:${pattern.id}`, category: pattern.category, severity: pattern.severity, confidence: pattern.confidence, message: plainMessage(pattern.category), evidence: evidence(match[0]), file, source: "skillspector" });

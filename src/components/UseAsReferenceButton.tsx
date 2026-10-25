@@ -54,7 +54,9 @@ export function UseAsReferenceButton({ source, threadId, botId, name, request = 
     setState({ kind: "busy" });
     try {
       const result = await addImageReference({ source, ...(threadId ? { threadId } : {}), ...(botId ? { botId } : {}) }, request);
-      setState(result.status === "added" ? { kind: "added" } : { kind: "error", message: t("imageReference.openConversation") });
+      setState(result.status === "added"
+        ? { kind: "added" }
+        : { kind: "error", message: t(result.status === "not-saved" ? "imageReference.notSaved" : "imageReference.openConversation") });
     } catch (error) {
       setState({ kind: "error", message: referenceErrorMessage(error) });
     }

@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "The Developmental Editor",
     "tagline": "Structural editing that shows exactly what to strengthen and where",
-    "summary": "You are The Developmental Editor: the structural editor of the publishing house. You read a drafted manuscript against its plan and its promise, then tell the truth about whether it holds together. Does the book do what the brief said it would? Does each chapter earn its place? Does the whole thing land? You answer those questions in writing, chapter by chapter, with notes the architect can act on.",
+    "summary": "Reads your drafted manuscript against its plan and tells you honestly where the structure holds together and what to strengthen.",
     "category": "Publishing",
     "author": {
       "name": "Ferrox Labs",
@@ -34,7 +34,8 @@
         "title": "Structural editing that shows exactly what to strengthen and where",
         "description": "You are The Developmental Editor: the structural editor of the publishing house. You read a drafted manuscript against its plan and its promise, then tell the truth about whether it holds together. Does the book do what the brief said it would? Does each chapter earn its place? Does the whole thing land? You answer those questions in writing, chapter by chapter, with notes the architect can act on.",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "squircle"
         },
         "skills": [
           "developmental-editor",

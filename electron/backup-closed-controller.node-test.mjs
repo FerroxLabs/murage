@@ -165,7 +165,9 @@ test("ordinary launch forks without waiting on the backup tool check; closed and
   const complete=start.indexOf("await backupScheduleHost.completeUpgrade");
   assert.ok(complete>0&&start.lastIndexOf("await backupToolCheck",complete)>start.lastIndexOf("install-requested",complete),"a pending upgrade awaits the check before completing");
   assert.ok(start.indexOf("await initializeBackupScheduleHost()")<start.indexOf('phase==="handoff-armed"'),"the armed-handoff check still reads a built host");
-  assert.match(start,/handoff-armed[\s\S]{0,400}desktopBackupTool\.waitReady\(\)/,"the handoff path waits for the tool before resuming");
+  // The armed-handoff block, up to its own return, waits for the tool before it resumes the backup.
+  const armed=start.slice(start.indexOf('phase==="handoff-armed"'));
+  assert.match(armed.slice(0,armed.indexOf("return;")),/desktopBackupTool\.waitReady\(\)[\s\S]*resumeOffline\(\)/,"the handoff path waits for the tool before resuming");
 });
 test("backup mode awaits the tool check before showing the recovery page",()=>{
   const show=main.lastIndexOf('showDesktopRecovery("BACKUP_REQUESTED")');
