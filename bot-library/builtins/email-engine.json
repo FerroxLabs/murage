@@ -104,7 +104,8 @@
         "role": "leader",
         "team": "Email Engine",
         "appearance": {
-          "color": "green"
+          "color": "green",
+          "mascotBody": "drop"
         },
         "skills": [
           "beacon-email-sequences",
@@ -124,7 +125,8 @@
         "role": "member",
         "team": "Email Engine",
         "appearance": {
-          "color": "green"
+          "color": "yellow",
+          "mascotBody": "squircle"
         },
         "skills": [
           "beacon-newsletter",
@@ -144,7 +146,8 @@
         "role": "member",
         "team": "Email Engine",
         "appearance": {
-          "color": "cyan"
+          "color": "cyan",
+          "mascotBody": "circle"
         },
         "skills": [
           "beacon-email-sequences",
@@ -164,7 +167,8 @@
         "role": "member",
         "team": "Email Engine",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "capsule"
         },
         "skills": [
           "lens-marketing-attribution",

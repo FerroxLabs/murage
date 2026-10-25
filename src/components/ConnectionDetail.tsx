@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, Copy } from "lucide-react";
+import { copyTextOrThrow } from "@/lib/copy-text";
 
 export const addressPreview = (value: string): string => {
   if (value.length <= 3) return "…";
@@ -24,7 +25,7 @@ export function ConnectionDetail({ label, value }: { label: string; value: strin
 
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(value);
+      await copyTextOrThrow(value);
       setCopied(true);
       if (resetTimer.current !== null) window.clearTimeout(resetTimer.current);
       resetTimer.current = window.setTimeout(() => setCopied(false), 1_200);

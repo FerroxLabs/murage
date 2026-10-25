@@ -249,7 +249,7 @@ describe("4. nothing that installs or executes is offered to a phone", () => {
     // routes at the network level, so on a phone they were buttons that 404.
     expect(settings).toContain("{desktop === true && (");
     const card = settings.slice(settings.indexOf("{desktop === true && ("));
-    expect(card.slice(0, 400)).toContain('<div className="text-[15px] font-medium text-ink">Computer</div>');
+    expect(card.slice(0, 400)).toContain('<div className="text-[15px] font-medium text-ink">{t("settings.bot.computer.title")}</div>');
     expect(card).toContain("<CloudBackendPicker");
   });
 

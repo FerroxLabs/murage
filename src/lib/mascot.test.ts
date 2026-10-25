@@ -28,3 +28,16 @@ describe("stateForBot and a host-stop notice", () => {
     expect(stateForBot({ ...bot({ kind: "activity", tool: { name: "Bash", ok: false } }), mascotExpression: "happy" })).toBe("happy");
   });
 });
+
+import { isMascotAnimated } from "./mascot";
+describe("isMascotAnimated", () => {
+  it("holds still when idle", () => {
+    expect(isMascotAnimated({}, undefined)).toBe(false);
+    expect(isMascotAnimated({ busy: false }, "none")).toBe(false);
+  });
+  it("moves while busy, unread, or in a motion beat", () => {
+    expect(isMascotAnimated({ busy: true }, "none")).toBe(true);
+    expect(isMascotAnimated({ unread: true }, undefined)).toBe(true);
+    expect(isMascotAnimated({}, "hop")).toBe(true);
+  });
+});

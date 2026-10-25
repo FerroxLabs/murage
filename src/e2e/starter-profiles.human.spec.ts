@@ -93,9 +93,11 @@ test("three starters require selection and fresh review, import inert records, t
   await expect(page.getByRole("status")).toContainText("No task has been sent");
   const actions = await page.evaluate(() => (window as any).fixtureActions);
   expect(actions).toEqual([{ type: "botAdded", source: "http", sentAt: expect.any(Number), expired: false, bot: importedBot }]);
-  expect(await page.evaluate(id => JSON.parse(localStorage.getItem("murage-drafts") ?? "{}")[id], draftId)).toBeUndefined();
+  // U36: a draft is one record, `murage-draft:<draftId>`.
+  expect(await page.evaluate(id => JSON.parse(localStorage.getItem("murage-draft:" + id) ?? "null")?.text, draftId)).toBeUndefined();
   await page.getByRole("button", { name: "Open first task" }).click();
-  const opened = await page.evaluate(id => ({ text: JSON.parse(localStorage.getItem("murage-drafts") ?? "{}")[id], actions: (window as any).fixtureActions }), draftId);
+  await expect.poll(() => page.evaluate(id => JSON.parse(localStorage.getItem("murage-draft:" + id) ?? "null")?.text ?? "", draftId)).toContain("My notes:");
+  const opened = await page.evaluate(id => ({ text: JSON.parse(localStorage.getItem("murage-draft:" + id) ?? "null")?.text, actions: (window as any).fixtureActions }), draftId);
   expect(opened.text).toContain("My notes:");
   expect(opened.actions.slice(-2)).toEqual([{ type: "select", id: "new-bot" }, { type: "toggleAppSettings", open: false }]);
   expect(requests.filter(request => request.action === "import").at(-1)).toMatchObject({ profileId: "starter-personal-home", archiveSha256: "archive-sha", reviewHash: "review-hash", selection: { routines: ["review"] } });

@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Storefront",
     "tagline": "Storefront specialist - DTC, marketplace, and agentic GEO (generative engine optimization) for modern ecommerce.",
-    "summary": "Storefront specialist: DTC, marketplace, and agentic GEO (generative engine optimization) for modern ecommerce.\n\nJob-to-be-done: **sell physical and digital goods through a storefront and the marketplaces where buyers already are.** You own product detail pages, listings, catalog hygiene, conversion mechanics on the store, marketplace operations, and the new layer ,  being discoverable to AI shopping agents and generative answer surfaces. For product photos as one focused job, use Product Photos. For customer experience audit as one focused job, use Customer Experience Audit. For loyalty and referrals as one focused job, use Loyalty and Referrals. For shop ops as one focused job, use Shop Ops. For cart recovery as one focused job, use Cart Recovery. For handmade shop as one focused job, use Handmade Shop. For dropshipping as one focused job, use Dropshipping. For print on demand as one focused job, use Print on Demand. For marketplace seller as one focused job, use Marketplace Seller. For retail shop as one focused job, use Retail Shop.",
+    "summary": "Helps you sell physical and digital goods through your storefront and the marketplaces where buyers already are, from product pages and listings to being found by AI shopping agents.",
     "category": "Sell",
     "author": {
       "name": "Ferrox Labs"
@@ -34,8 +34,9 @@
         "title": "Storefront specialist",
         "description": "Storefront specialist: DTC, marketplace, and agentic GEO (generative engine optimization) for modern ecommerce.\n\nJob-to-be-done: **sell physical and digital goods through a storefront and the marketplaces where buyers already are.** You own product detail pages, listings, catalog hygiene, conversion mechanics on the store, marketplace operations, and the new layer ,  being discoverable to AI shopping agents and generative answer surfaces. For product photos as one focused job, use Product Photos. For customer experience audit as one focused job, use Customer Experience Audit. For loyalty and referrals as one focused job, use Loyalty and Referrals. For shop ops as one focused job, use Shop Ops. For cart recovery as one focused job, use Cart Recovery. For handmade shop as one focused job, use Handmade Shop. For dropshipping as one focused job, use Dropshipping. For print on demand as one focused job, use Print on Demand. For marketplace seller as one focused job, use Marketplace Seller. For retail shop as one focused job, use Retail Shop.",
         "appearance": {
-          "color": "orange",
-          "mascotExpression": "sending"
+          "color": "green",
+          "mascotExpression": "sending",
+          "mascotBody": "squircle"
         },
         "playbooks": [
           "vault-playbook"

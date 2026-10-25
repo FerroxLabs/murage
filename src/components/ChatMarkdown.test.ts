@@ -78,7 +78,7 @@ it("renders a generated attachment and embedded raster bytes as enlargeable imag
 });
 it("never requests a remote, local-path, file or SVG image from model text", () => {
   const html = renderToStaticMarkup(createElement(ChatMarkdown, {
-    text: "![pixel](https://tracker.example/p.gif) ![secret](/Users/sean/secret.png) ![f](file:///etc/x.png) ![s](data:image/svg+xml;base64,PHN2Zz4=) ![r](abc-123.png)",
+    text: "![pixel](https://tracker.example/p.gif) ![secret](/Users/alex/secret.png) ![f](file:///etc/x.png) ![s](data:image/svg+xml;base64,PHN2Zz4=) ![r](abc-123.png)",
   }));
   expect(html).not.toContain("<img");
   expect(html).toContain("Image from tracker.example not loaded.");
@@ -167,12 +167,38 @@ it("shows a lone numbered answer as the number the bot wrote", () => {
     const html = renderToStaticMarkup(createElement(ChatMarkdown, { text }));
     expect(html).not.toContain("<ol");
     expect(html).not.toContain("<li></li>");
-    expect(html).toContain(`<p>${shown}</p>`);
+    expect(html).toContain(`<p dir="auto">${shown}</p>`);
   }
 });
 it("keeps an ordered list's start number", () => {
   const html = renderToStaticMarkup(createElement(ChatMarkdown, { text: "3. third\n4. fourth" }));
-  expect(html).toMatch(/<ol start="3"[^>]*>/);
+  expect(html).toMatch(/<ol dir="auto" start="3"[^>]*>/);
   const one = renderToStaticMarkup(createElement(ChatMarkdown, { text: "1. first\n2. second" }));
   expect(one).not.toContain("start=");
+});
+
+// 1.0.4 (199): a fence marked wrap starts wrapped; it names the language it was given, never "wrap".
+it("starts a fence marked wrap wrapped, in either word order", () => {
+  for (const info of ["js wrap", "wrap js"]) {
+    const html = renderToStaticMarkup(createElement(ChatMarkdown, { text: "```" + info + "\nconst a = 1;\n```" }));
+    expect(html).toContain("JavaScript");
+    expect(html).toContain('aria-pressed="true"');
+  }
+  const plain = renderToStaticMarkup(createElement(ChatMarkdown, { text: "```js\nconst a = 1;\n```" }));
+  expect(plain).toContain('aria-pressed="false"');
+  const alone = renderToStaticMarkup(createElement(ChatMarkdown, { text: "```wrap\nlong\n```" }));
+  expect(alone).toContain('aria-pressed="true"');
+  expect(alone).not.toContain("Save code as snippet.wrap");
+});
+// 202: a bare GitHub link is a compact pill with a real href; the author's own words and lookalike hosts stay ordinary links.
+it("draws a pasted GitHub issue link as a pill and leaves custom text and lookalike hosts alone", () => {
+  const bare = renderToStaticMarkup(createElement(ChatMarkdown, { text: "Tracked in https://github.com/acme/widgets/issues/7 today." }));
+  expect(bare).toContain('data-testid="github-ref"'); expect(bare).toContain("acme/widgets#7");
+  expect(bare).toContain('href="https://github.com/acme/widgets/issues/7"');
+  const described = /aria-describedby="([^"]+)"/.exec(bare)?.[1];
+  expect(described).toBeTruthy(); expect(bare).toContain(`id="${described}"`);
+  const custom = renderToStaticMarkup(createElement(ChatMarkdown, { text: "See [the bug report](https://github.com/acme/widgets/issues/7)." }));
+  expect(custom).not.toContain("github-ref"); expect(custom).toContain(">the bug report</a>");
+  const fake = renderToStaticMarkup(createElement(ChatMarkdown, { text: "https://github.com.evil.example/acme/widgets/pull/1" }));
+  expect(fake).not.toContain("github-ref");
 });

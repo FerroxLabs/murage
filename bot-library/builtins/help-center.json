@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Help Center",
     "tagline": "Help articles, saved replies and feedback themes in one support pack",
-    "summary": "Help articles, saved replies, hard-case drafts and a feedback theme report. Nell coordinates the drafts from the notes and documents you supply. Members check their sources, the lead combines the work, and you approve external actions. For a team designing support operations, use Support Stack. For a customer-message review team, use Reply Desk.",
+    "summary": "Help articles, saved replies, hard-case drafts and a feedback theme report.",
     "category": "Support",
     "author": {
       "name": "Ferrox Labs",
@@ -39,7 +39,7 @@
           "optional": true
         },
         {
-          "slug": "helpscout",
+          "slug": "help_scout",
           "label": "Help Scout",
           "reason": "When connected and its tools support this task, use Help Scout for your help center writer work. Drafting also works from material you supply. Ask for your yes before an external change.",
           "optional": true
@@ -98,7 +98,8 @@
         "role": "leader",
         "team": "Help Center",
         "appearance": {
-          "color": "purple"
+          "color": "purple",
+          "mascotBody": "shield"
         },
         "skills": [
           "knowledge-base-article",
@@ -118,7 +119,8 @@
         "role": "member",
         "team": "Help Center",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "blob"
         },
         "skills": [
           "customer-support-specialist",
@@ -138,7 +140,8 @@
         "role": "member",
         "team": "Help Center",
         "appearance": {
-          "color": "cyan"
+          "color": "cyan",
+          "mascotBody": "circle"
         },
         "skills": [
           "conflict-resolution-email",
@@ -158,7 +161,8 @@
         "role": "member",
         "team": "Help Center",
         "appearance": {
-          "color": "blue"
+          "color": "blue",
+          "mascotBody": "drop"
         },
         "skills": [
           "survey-design",

@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Job Search",
     "tagline": "A truthful application pack shaped around the role you want",
-    "summary": "Arden turns your real experience and a job advert into a tailored CV, cover letter and interview practice. It keeps unsupported qualifications visible and tracks drafts and submissions separately. Start with material you supply. For career direction and longer-term choices, use Career Strategist; for a general rewrite, use Writer.",
+    "summary": "Arden turns your real experience and a job advert into a tailored CV, cover letter and interview practice.",
     "category": "Everyday",
     "author": {
       "name": "Ferrox Labs",
@@ -36,7 +36,8 @@
         "title": "Job Search",
         "description": "Arden turns your real experience and a job advert into a tailored CV, cover letter and interview practice. It keeps unsupported qualifications visible and tracks drafts and submissions separately. Start with material you supply. For career direction and longer-term choices, use Career Strategist; for a general rewrite, use Writer.",
         "appearance": {
-          "color": "blue"
+          "color": "blue",
+          "mascotBody": "capsule"
         },
         "skills": [
           "job-search-strategy",

@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { ServerResponse } from "node:http";
 import type { CloudDevice, CloudSessions } from "../cloud-sessions.ts";
+import { isOwnerBrowser } from "../cloud-request-identity.ts";
 
-export type CloudResponseBinding = Pick<CloudDevice, "id" | "scope" | "account"> & { accessHash: string };
+/** `owner` is `isOwnerBrowser(device)` at bind time: an owner read stream dies within 30 s of the factor expiring or being
+ *  revoked (device() then reads a different owner state), and a chat stream that becomes an owner browser is torn down too. */
+export type CloudResponseBinding = Pick<CloudDevice, "id" | "scope" | "account"> & { accessHash: string; owner: boolean };
 /** All continuing responses use the same lifetime door, including media caps. */
 export class CloudResponseSessions {
   private readonly sessions: CloudSessions;
@@ -21,7 +24,8 @@ export class CloudResponseSessions {
       try {
         valid = bindings.every(binding => {
           const current = this.sessions.resolveHash(binding.accessHash);
-          return current?.id === binding.id && current.account === binding.account && current.scope === binding.scope;
+          return current?.id === binding.id && current.account === binding.account && current.scope === binding.scope
+            && isOwnerBrowser(current) === binding.owner;
         });
       } catch { valid = false; }
       if (!valid) res.destroy();
