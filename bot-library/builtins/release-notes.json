@@ -54,7 +54,8 @@
         "title": "Release Notes",
         "description": "Notch prepares a customer release announcement draft for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For general writing and editing, use Writer. For coordinated software delivery, use the engineering team.",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "diamond"
         },
         "skills": [
           "changelog-writer",

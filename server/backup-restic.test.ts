@@ -105,3 +105,18 @@ it.skipIf(process.platform!=="darwin"||process.arch!=="arm64")("real pinned rest
   console.warn("Retained synthetic restic failure tree:",f.root);throw error;
  }
 },60000);
+it("uploads a verified archive over 1 GiB, as large as a backup may be made (A4)",async()=>{
+ const header=Buffer.from("age-encryption.org/v1\nSynthetic opaque storage fixture, not new crypto proof.\n");
+ const run=vi.fn<ResticRunner>(async()=>({code:3,stdout:JSON.stringify({message_type:"summary",snapshot_id:"d".repeat(64)})}));const f=fixture(run,header);
+ const size=1024**3+4096;truncateSync(f.input,size);
+ const hash=createHash("sha256").update(header);const zeros=Buffer.alloc(16*1024*1024);let left=size-header.length;while(left>0){const part=Math.min(left,zeros.length);hash.update(zeros.subarray(0,part));left-=part;}
+ const receipt={...f.receipt,bytes:size,sha256:hash.digest("hex")};
+ expect((await f.adapter.store(f.input,receipt)).state).toBe("needs-review");expect(run).toHaveBeenCalledTimes(1);
+},120_000);
+it("a verified upload leaves no full local copy of the archive behind, and a failed check keeps its stage for review (A5)",async()=>{
+ const f=restoredFixture();expect(await f.adapter.store(f.input,f.receipt)).toMatchObject({state:"verified"});
+ expect(readdirSync(f.options.workDirectory).filter(name=>/^(capture|restore)-/.test(name))).toEqual([]);
+ const bad=restoredFixture(path=>writeFileSync(path,Buffer.alloc(3*65536+17,38)));expect(await bad.adapter.store(bad.input,bad.receipt)).toMatchObject({state:"needs-review",error:"restore-mismatch"});
+ expect(readdirSync(bad.options.workDirectory).filter(name=>/^capture-/.test(name))).toHaveLength(1);
+ expect(readdirSync(bad.options.workDirectory).filter(name=>/^restore-/.test(name))).toEqual([]);
+});

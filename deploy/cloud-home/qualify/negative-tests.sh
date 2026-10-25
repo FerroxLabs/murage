@@ -236,16 +236,20 @@ else
   for c in seccomp nonewprivs capeff unshare-user cross-engine.codex cross-engine.claude connect.metadata connect.proxy bind.8799 bind.leak; do fail "launcher.$c" "through-the-launcher check" "probe not built/pinned"; done
 fi
 # (the probe stays pinned through the placeholder section below, which also runs its turns through the launcher)
-# Positive control: DNS via 127.0.0.53 (murage-egress.nft accepts murage-turn -> 127.0.0.53:53)
+# A2: the host stub is no longer reachable by a turn. A plain murage-turn process (no engine gid) is
+# not redirected and not accepted, so its query to 127.0.0.53 gets no answer. The per-engine
+# redirect to the synthetic forwarder is proven by the home-level DNS checks, not here.
 DNSPY='
 import socket,struct
 q=struct.pack(">HHHHHH",0x1234,0x0100,1,0,0,0)+b"\x07example\x03com\x00"+struct.pack(">HH",1,1)
 s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); s.settimeout(3)
-s.sendto(q,("127.0.0.53",53)); d=s.recv(512)
-print("OK" if len(d)>12 and d[:2]==q[:2] and (d[3]&15)==0 else "RCODE%d"%(d[3]&15))
+try:
+    s.sendto(q,("127.0.0.53",53)); d=s.recv(512); print("ANSWERED")
+except OSError:
+    print("BLOCKED")
 '
 r=$(asu murage-turn python3 -I -c "$DNSPY" 2>&1 | tail -1)
-[ "$r" = OK ] && pass turn.dns.positive "murage-turn resolves via 127.0.0.53" || fail turn.dns.positive "murage-turn resolves via 127.0.0.53" "$r"
+[ "$r" = BLOCKED ] && pass turn.dns.stub-closed "murage-turn cannot reach the host stub 127.0.0.53" || fail turn.dns.stub-closed "murage-turn cannot reach the host stub 127.0.0.53" "$r"
 
 # ---- r5 R5.1 workspace placeholders (real-home gate: root, ext4) ------------
 # The immutable flag needs CAP_LINUX_IMMUTABLE in the initial user namespace, so only the

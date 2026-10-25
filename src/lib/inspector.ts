@@ -74,6 +74,19 @@ function appendPreview(previous: FoldPreview | undefined, delta: string): FoldPr
 
 const previewText = (preview: FoldPreview) => `${preview.text}${preview.overflow ? "…" : ""}`;
 
+/** Plain words for the automatic rules (server/auto-approve.ts AutoVerdictSource, decision-log.ts DecisionSource). */
+const AUTOMATIC_RULE: Readonly<Record<string, string>> = {
+  "own-workspace": "own workspace", "own-tool-results": "its own saved result", "own-unasked": "Murage's own tool", "project-work-roots": "project folder",
+  "auto-mode": "Auto mode", "full-access": "Full access", "no-limits": "No limits", "always-allow": "always allow", "exact-command": "always allow this command",
+  "task-allowance": "allowed for this task", "routine-allow": "routine grant", "stop-line": "stop line", "image-setting": "picture setting",
+  "auto-review": "automatic review", "narrow": "narrowed",
+};
+/** Who answered an ask: a rule the decision log names (`decidedBy`), else what the engine reported. An automatic answer never
+ * reads as the owner's click (1.0.5: "allow · user" on an own-workspace save nobody clicked). */
+export function resolvedBy(e: Extract<RuntimeEvent, { type: "request.resolved" }>): string {
+  if (e.decidedBy) return `automatic (${AUTOMATIC_RULE[e.decidedBy] ?? e.decidedBy.replace(/-/g, " ")})`;
+  return e.source === "auto" ? "automatic" : e.source;
+}
 export function summarizeRuntime(e: RuntimeEvent): { summary: string; tone: InspectorRow["tone"] } {
   switch (e.type) {
     case "session.started":
@@ -106,7 +119,7 @@ export function summarizeRuntime(e: RuntimeEvent): { summary: string; tone: Insp
     case "request.opened":
       return { summary: `${e.requestType}: ${e.tool}: ${clip(oneLine(e.summary))}`, tone: "plain" };
     case "request.resolved":
-      return { summary: `resolved ${e.behavior} · ${e.source}`, tone: "plain" };
+      return { summary: `resolved ${e.behavior} · ${resolvedBy(e)}`, tone: "plain" };
     case "thread.token-usage.updated":
       return { summary: `tokens in ${e.input} · out ${e.output}`, tone: "plain" };
     case "runtime.error":

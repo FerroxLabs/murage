@@ -379,12 +379,18 @@ const validEventId = (value: unknown): value is string =>
   typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value);
 
 let receipts: DelegationReceipt[] = [];
+/** Whether every receipt this process holds is on disk (F3 02-4, receipt persistence). In memory only, never serialized. It STARTS true: no file at boot,
+ * or receipts read back from one, leave nothing unpersisted. False after a failed write of the receipts file, true again after a successful one. A started
+ * row is removed only while it is true (settleReceipted): a receipt known only to this process never replaces the row a restart settles from. */
+let receiptsPersisted = true;
 
 function saveReceipts(): boolean {
   try {
     writeFileAtomic(RECEIPTS_FILE, JSON.stringify(receipts, null, 2), { mode: 0o600 });
+    receiptsPersisted = true;
     return true;
   } catch (error) {
+    receiptsPersisted = false;
     console.error("delegations: could not persist receipts", error);
     return false;
   }
@@ -589,6 +595,12 @@ export function repeatedHandoffReply(repeated: Pick<RoomRequest, "id" | "state">
 /** Settles a started hand-off whose receipt is recorded: the request's terminal state (the receipt listener's writes) and the row's removal commit together. On a failure
  * nothing is removed and nothing is ended: the row stays, the receipt stays, and a later pass (the dispatch, the boot sweep) calls this again. True when it settled. */
 export function settleReceipted(receipt: DelegationReceipt): boolean {
+  // F3 02-4: the row goes only for a receipt on disk. One known only to this process (the file write failed) is written again first; still not written, nothing
+  // is removed or ended, and this process's stranded sweep tries again (a restart settles the row itself: "interrupted", never lost). Every settle passes here.
+  if (!receiptsPersisted && !saveReceipts()) {
+    stranded.add(receipt.id);
+    return false;
+  }
   let after: (() => void) | void = undefined;
   let written = false;
   try {
@@ -1001,6 +1013,8 @@ export function _loadPending(): void {
     console.error("delegations: could not read the queue", error);
   }
   receipts = [];
+  // what is in memory now is exactly what the file holds (or nothing, with no file): nothing unpersisted
+  receiptsPersisted = true;
   try {
     const rawReceipts = JSON.parse(readFileSync(RECEIPTS_FILE, "utf8"));
     if (Array.isArray(rawReceipts)) {
@@ -1322,6 +1336,44 @@ export function startedDelegation(id: string): { targetThreadId: string; turnKey
   const row = database().prepare("SELECT target_thread_id, turn_key, accepted_turn_id, start_attempts, submitted_at FROM pending_delegations WHERE id=? AND phase='started'").get(id) as
     { target_thread_id: string; turn_key: string | null; accepted_turn_id: string | null; start_attempts: number | null; submitted_at: number | null } | undefined;
   return row ? { targetThreadId: row.target_thread_id, turnKey: row.turn_key ?? delegationTurnKey(id), acceptedTurnId: row.accepted_turn_id, startAttempts: row.start_attempts ?? 0, submittedAt: row.submitted_at } : null;
+}
+
+/** A synchronous ask that ran past its wait (F3 02-4): its ticket is an ORDINARY started hand-off row, written in the wait's own timer tick before the timeout is
+ * acknowledged (index.ts askBotAndWait, handoff-boundary.ts askTicketFactory). `id` is the ask's room request id (origin `room`) or a fresh id (origin `owner`);
+ * the turn is already running, so the row is started and submitted now, and accepted when the peer's turn id is known (else markAskTicketAccepted, once seen).
+ * Its live end is the finalizer's (finishHandoff removes it with the receipt); after a restart the boot settling ends it: accepted, an "interrupted" receipt;
+ * never seen accepted, held for the owner. Never run again by itself. Throws when the row could not be written: then there is no ticket. */
+export function recordAskTicket(ticket: {
+  id: string; origin: "owner" | "room"; sourceThreadId: string; fromBotId: string; toBotId: string; targetThreadId: string; acceptedTurnId?: string;
+  message: string; depth: number; notOwnerAudience?: boolean; eventId?: string; now?: number;
+}): void {
+  const now = ticket.now ?? Date.now();
+  const item: PendingDelegationItem = {
+    id: ticket.id, toBotId: ticket.toBotId, fromBotId: ticket.fromBotId, message: ticket.message, depth: Math.max(0, Math.trunc(ticket.depth)), attempts: 0,
+    ...(ticket.notOwnerAudience === true ? { notOwnerAudience: true } : {}),
+    ...(validEventId(ticket.eventId) ? { eventId: ticket.eventId } : {}),
+  };
+  database().prepare(`INSERT INTO pending_delegations(id, source_thread_id, to_bot_id, from_bot_id, phase, retry_at, item, origin, turn_key, target_thread_id,
+    started_at, accepted_turn_id, start_attempts, submitted_at) VALUES(?,?,?,?,'started',NULL,?,?,?,?,?,?,1,?)`)
+    .run(ticket.id, ticket.sourceThreadId, ticket.toBotId, ticket.fromBotId, itemJson(item), ticket.origin, delegationTurnKey(ticket.id), ticket.targetThreadId, now, ticket.acceptedTurnId ?? null, now);
+  persistWrites++;
+}
+/** The peer's turn of an ask ticket was seen after the ticket was written: from here a restart reports it interrupted instead of holding it. */
+export function markAskTicketAccepted(id: string, turnId: string): void {
+  database().prepare("UPDATE pending_delegations SET accepted_turn_id=? WHERE id=? AND phase='started' AND started_at IS NOT NULL AND accepted_turn_id IS NULL").run(turnId, id);
+  persistWrites++;
+}
+/** A started hand-off by its row alone (any process that opened the store): what the status route answers "running" from when no watch of this process
+ * knows it, a timed-out ask's ticket after a restart above all (task-resolution.ts `started`). Null when there is no started row of that id. */
+export function startedTicket(id: string): { threadId: string; watch: { sourceThreadId: string; toBotId: string; taskId: string; startedAtMs?: number; requestId?: string; notOwnerAudience?: boolean } } | null {
+  const row = database().prepare("SELECT source_thread_id, to_bot_id, origin, target_thread_id, started_at, submitted_at, item FROM pending_delegations WHERE id=? AND phase='started'").get(id) as
+    { source_thread_id: string; to_bot_id: string; origin: DelegationOrigin; target_thread_id: string | null; started_at: number | null; submitted_at: number | null; item: string } | undefined;
+  if (!row || !row.target_thread_id) return null;
+  let notOwnerAudience: boolean | undefined;
+  try { const raw = JSON.parse(row.item) as { notOwnerAudience?: unknown }; if (Object.hasOwn(raw, "notOwnerAudience")) notOwnerAudience = raw.notOwnerAudience !== false; } catch { /* unreadable: the mark stays unknown */ }
+  const startedAtMs = row.started_at ?? row.submitted_at ?? undefined;
+  return { threadId: row.target_thread_id, watch: { sourceThreadId: row.source_thread_id, toBotId: row.to_bot_id, taskId: id, ...(startedAtMs !== undefined ? { startedAtMs } : {}),
+    ...(row.origin === "room" ? { requestId: id } : {}), ...(notOwnerAudience !== undefined ? { notOwnerAudience } : {}) } };
 }
 
 export const RESTART_RECEIPT = "interrupted by a restart";
@@ -1821,6 +1873,7 @@ export function _simulateRestart(): void {
   recheckIds.clear();
   _forgetInFlight();
   receipts = [];
+  receiptsPersisted = true;
 }
 
 // ── live status for a running delegated turn ──────────────────────────

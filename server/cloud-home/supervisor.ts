@@ -43,13 +43,13 @@ export function prepareEngineHomes(identity: Pick<HomeIdentity, "engineGids">, r
   }
 }
 
-/** Claude's approval sockets live in a root:murage-turn 2770 directory: the server
+/** Claude's approval sockets live in a root:murage-turn 3770 directory (setgid, plus the sticky bit so a turn cannot unlink a socket it does not own): the server
  * (a murage-turn member) binds them, and the launcher binds only this directory
  * into Claude turns. Nothing is created inside any engine home. */
 export function prepareBrokerDir(identity: Pick<HomeIdentity, "turnGid">, directory = CLOUD_BROKER_DIR, chown: (path: string, uid: number, gid: number) => void = chownSync): void {
-  mkdirSync(directory, { recursive: true, mode: 0o2770 });
+  mkdirSync(directory, { recursive: true, mode: 0o3770 });
   if (lstatSync(directory).isSymbolicLink() || !lstatSync(directory).isDirectory()) throw new Error(cloudHomeCopy.invalidEngineHomeDirectory);
-  chown(directory, 0, identity.turnGid); chmodSync(directory, 0o2770);
+  chown(directory, 0, identity.turnGid); chmodSync(directory, 0o3770);
 }
 
 export function assertImmutableCode(root: string): void {

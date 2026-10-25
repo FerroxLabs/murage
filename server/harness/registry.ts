@@ -4,6 +4,7 @@
 // startup failure (that behavior is what makes settings forward/backward
 // compatible — do not remove it); dispose tears an instance down without
 // touching its siblings.
+import { forgetAllInstanceMarks, forgetInstanceMark, withInstanceMark } from "../key-rejections.ts";
 import { findCliCandidates } from "../env-path.ts";
 import { MODEL_CATALOG_REFRESH_MS } from "../model-catalog-refresh.ts";
 import { filterFluxRows } from "../flux-surface.ts";
@@ -12,6 +13,7 @@ import { decorateMemoryInstance } from "./memory-adapter.ts";
 import { decorateHoldInstance, InstanceHolds, type HoldResult } from "./instance-holds.ts";
 import type {
   AnyProviderDriver,
+  EngineInstall,
   InstanceConfigMap,
   InstanceId,
   ProviderInstance,
@@ -52,6 +54,13 @@ function cliOfRaw(raw: unknown): string | undefined {
   return typeof cli === "string" && cli ? cli : undefined;
 }
 
+const SERVER_PLATFORMS = new Set(["darwin", "win32", "linux"]);
+/** The install descriptor with the server's own OS on it. */
+export function withServerPlatform(install: EngineInstall | undefined, platform: string = process.platform): EngineInstall | undefined {
+  if (!install) return undefined;
+  return SERVER_PLATFORMS.has(platform) ? { ...install, platform: platform as "darwin" | "win32" | "linux" } : install;
+}
+
 export class ProviderRegistry {
   private byId = new Map<InstanceId, RegistryEntry>();
   /** decoded per-instance `cli` overrides, for describe() — drivers spawn
@@ -87,6 +96,8 @@ export class ProviderRegistry {
    * load-bearing for selection. Boot now costs the SLOWEST engine, not the
    * sum. Measured 2026-09-22. */
   async load(configs: InstanceConfigMap) {
+    // A fleet built from the saved settings starts with no engine marked signed out.
+    forgetAllInstanceMarks();
     // Discovered together, recorded in configuration order.
     // Same rule as the background refresh: one shared probe per localhost
     // address across every driver's create(), and user-added hosts are never
@@ -113,7 +124,7 @@ export class ProviderRegistry {
     });
     await Promise.allSettled(retiring.map(instance => this.catalogRefreshes.get(instance)?.pending));
     const disposed = await Promise.allSettled(retiring.map(instance => instance.dispose()));
-    for (const id of instanceIds) this.cliByInstance.delete(id);
+    for (const id of instanceIds) { this.cliByInstance.delete(id); forgetInstanceMark(id); }
     const wanted = Object.entries(configs).filter(([id]) => instanceIds.has(id));
     const resolved = new Map(await runInLocalProbeScope(false, () => Promise.all(wanted.map(entry => this.resolveEntry(entry)))));
     for (const id of instanceIds) {
@@ -199,6 +210,12 @@ export class ProviderRegistry {
     return this.holds.hold(instanceIds, waitMs, async (id) => this.get(id)?.adapter.holdIdle?.());
   }
 
+  /** Calls `wake` once, when none of these instances has a running turn and one of them saw a turn end at or after `since`
+   * (instance-holds.ts `whenFree`). Returns how to stop waiting. */
+  whenInstancesFree(instanceIds: readonly InstanceId[], since: number, wake: () => void): () => void {
+    return this.holds.whenFree(instanceIds, since, wake);
+  }
+
   get(instanceId: InstanceId): ProviderInstance | null {
     return this.byId.get(instanceId)?.live ?? null;
   }
@@ -240,7 +257,7 @@ export class ProviderRegistry {
       if (!entry) return undefined;
       if (entry.shadow) return [instanceId, { state: "unavailable", reason: entry.shadow.reason }];
       try {
-        return [instanceId, await entry.live.snapshot()];
+        return [instanceId, withInstanceMark(instanceId, await entry.live.snapshot())];
       } catch (e) {
         return [instanceId, { state: "unavailable", reason: e instanceof Error ? e.message : String(e) }];
       }
@@ -310,7 +327,7 @@ export class ProviderRegistry {
             capabilities: { computerMcp: false, agentsMcp: false, localComputerMcp: false },
             // an unknown driver has no driver record, hence no install path
             access: driver?.metadata.access ?? "subscription",
-            install: driver?.install,
+            install: withServerPlatform(driver?.install),
             cli: entry.shadow.cli,
             cliDefault: entry.shadow.disabled ? undefined : cliDefaultOf(driver),
             // a shadow is exactly the "your CLI is broken, pick another"
@@ -322,7 +339,7 @@ export class ProviderRegistry {
         let snapshot: ProviderSnapshot;
         try {
           await this.refreshCatalog(inst, dueOnly);
-          snapshot = await inst.snapshot();
+          snapshot = withInstanceMark(inst.instanceId, await inst.snapshot());
         } catch (e) {
           snapshot = { state: "unavailable", reason: e instanceof Error ? e.message : String(e) };
         }
@@ -352,7 +369,7 @@ export class ProviderRegistry {
             memoryMcp: inst.adapter.capabilities.memoryMcp === true,
           },
           access: driver?.metadata.access ?? "subscription",
-          install: driver?.install,
+          install: withServerPlatform(driver?.install),
           cli: this.cliByInstance.get(inst.instanceId),
           cliDefault: cliDefaultOf(driver),
           // every copy of the driver's default binary on the augmented PATH —

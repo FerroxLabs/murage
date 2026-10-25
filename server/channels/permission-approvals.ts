@@ -1,5 +1,7 @@
 import { randomBytes } from "node:crypto";
 import type { TelegramApproval, TelegramApprovalActions } from "../telegram-approvals.ts";
+import { channelReply } from "./reply-text.ts";
+import { approvalResultLabel } from "./approval-labels.ts";
 
 /** Provider adapters admit only authenticated, human, private-message interactions. */
 export interface PermissionAction {
@@ -39,9 +41,10 @@ interface Offer {
   editAttempted?: boolean;
 }
 /** A computer-control card in a chat: approved on the desktop only, while a
- * Deny tap is fine from anywhere (denying never widens what a bot can do). */
-export const DESKTOP_ONLY_LINE = "Approve this on your computer. You can deny it here. Expires in 10 minutes.";
-const HINT = "\n\nApprove once or deny this exact action. Expires in 10 minutes.";
+ * Deny tap is fine from anywhere (denying never widens what a bot can do).
+ * Read when sent, so it follows the owner's app language (reply-text.ts). */
+export const desktopOnlyLine = (): string => channelReply("channelReply.desktopOnly");
+const hint = (): string => `\n\n${channelReply("channelReply.approveOrDeny")}`;
 const TTL = 600_000;
 
 /** Process-local offers: a restart/revoke cannot reuse a previously delivered button. */
@@ -75,14 +78,14 @@ export class PermissionApprovals {
         const same = pending.some(item => item.id === id && item.fingerprint === offer.approval.fingerprint);
         if (!same || this.now() >= offer.expires) {
           offer.consumed = true;
-          offer.outcome ??= this.now() >= offer.expires ? "Expired. Review this action in Murage." : "No longer pending. Review the decision in Murage.";
+          offer.outcome ??= this.now() >= offer.expires ? channelReply("channelReply.expiredAction") : channelReply("channelReply.noLongerPendingDecision");
           await this.settle(offer);
           if (this.now() > offer.expires + TTL || pending.some(item => item.id === id && item.fingerprint !== offer.approval.fingerprint)) this.offers.delete(id);
         }
       }
       for (const approval of pending) {
         if (!this.active()) return;
-        if (this.offers.has(approval.id) || !approval.summary || approval.summary.length + HINT.length > this.options.maxText) continue;
+        if (this.offers.has(approval.id) || !approval.summary || approval.summary.length + hint().length > this.options.maxText) continue;
         if (this.offers.size >= 32) {
           const settled = [...this.offers].find(([, offer]) => offer.consumed && !pending.some(item => item.id === offer.approval.id));
           if (!settled) continue;
@@ -91,7 +94,7 @@ export class PermissionApprovals {
         const offer: Offer = { approval: { ...approval }, nonce: randomBytes(24).toString("hex"), expires: this.now() + TTL, consumed: false };
         this.offers.set(approval.id, offer); // Never repeat a send whose outcome is uncertain.
         const message = await this.options.messages.send({ dmId: this.options.dmId,
-          text: approval.desktopOnly ? `${approval.summary}\n\n${DESKTOP_ONLY_LINE}` : approval.summary + HINT,
+          text: approval.desktopOnly ? `${approval.summary}\n\n${desktopOnlyLine()}` : approval.summary + hint(),
           approveId: `murage:${offer.nonce}:a`, denyId: `murage:${offer.nonce}:d`,
           ...(approval.desktopOnly ? { denyOnly: true } : {}), signal: this.abort.signal });
         if (this.active() && this.offers.get(approval.id) === offer) offer.messageId = message.messageId;
@@ -109,7 +112,7 @@ export class PermissionApprovals {
     // computer control: no Approve button was sent, and a forged one is refused
     if (offer.approval.desktopOnly && match[2] !== "d") return false;
     if (this.now() >= offer.expires || !this.pending(offer)) {
-      offer.consumed = true; offer.outcome = "No longer pending. Review this action in Murage.";
+      offer.consumed = true; offer.outcome = channelReply("channelReply.noLongerPendingAction");
       await this.settle(offer); return false;
     }
     // The adapter has acknowledged the interaction. Consume before any asynchronous resolution.
@@ -117,8 +120,8 @@ export class PermissionApprovals {
     let resolved = false;
     try {
       resolved = this.active() && await o.actions.resolve(offer.approval, match[2] === "a" ? "allow" : "deny");
-      offer.outcome = resolved ? (match[2] === "a" ? "Approved once." : "Denied.") : "No longer pending. Review this action in Murage.";
-    } catch { offer.outcome = "Decision unconfirmed. Check Murage; do not repeat."; }
+      offer.outcome = resolved ? approvalResultLabel(match[2] === "a" ? "approvedOnce" : "deny") : channelReply("channelReply.noLongerPendingAction");
+    } catch { offer.outcome = channelReply("channelReply.decisionUnconfirmed"); }
     await this.settle(offer);
     return resolved;
   }

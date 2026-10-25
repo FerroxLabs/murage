@@ -50,7 +50,7 @@ import {
 /** Same treatment as a bot bubble in ChatView. Not a bordered panel: this is
  *  the bot talking. */
 const BUBBLE =
-  "w-fit max-w-[min(42rem,78%)] max-md:max-w-full rounded-2xl bg-card px-4 py-2.5 text-[15px] leading-relaxed text-ink";
+  "w-fit max-w-[min(var(--chat-bubble-max),var(--chat-bubble-pct))] max-md:max-w-full rounded-2xl bg-card px-4 py-2.5 text-[15px] leading-relaxed text-ink";
 
 /** Quiet inline chips. Not a lettered A/B/C/D list in a bordered box: that
  *  shape is the four-button quiz this conversation replaced, and a person

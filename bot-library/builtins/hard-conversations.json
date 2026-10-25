@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Hard Conversations",
     "tagline": "A calm reply draft with practical resolution choices for review",
-    "summary": "Calm prepares a calm customer reply draft. Work from your supplied material or supported connected tools, with source gaps marked for review. For ticket triage and broader customer support, use Support. For a customer-message review team, use Reply Desk. For a public response team, use Damage Control. I give guidance and drafts, not licensed legal advice, and I promise no outcome.",
+    "summary": "Calm prepares a calm customer reply draft.",
     "category": "Support",
     "author": {
       "name": "Ferrox Labs",
@@ -54,7 +54,8 @@
         "title": "Hard Conversations",
         "description": "Calm prepares a calm customer reply draft. Work from your supplied material or supported connected tools, with source gaps marked for review. For ticket triage and broader customer support, use Support. For a customer-message review team, use Reply Desk. For a public response team, use Damage Control.",
         "appearance": {
-          "color": "cyan"
+          "color": "cyan",
+          "mascotBody": "circle"
         },
         "skills": [
           "conflict-resolution-email",

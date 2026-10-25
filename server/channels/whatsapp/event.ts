@@ -9,6 +9,7 @@ import { deliveryIdFor } from "./core/echo.ts";
 import { jidKind, stripDevice } from "./core/lid.ts";
 import type { InboundCandidate } from "./core/access.ts";
 import { wrapUntrusted } from "./core/wrap.ts";
+import { channelReply } from "../reply-text.ts";
 
 const jid = z.string().min(3).max(200).regex(/^[^\x00-\x1f\x7f\s]+$/);
 export const whatsappBindingSchema = z.object({
@@ -92,7 +93,8 @@ export function normalizeWhatsAppMessage(raw: unknown): WhatsAppMessage | null {
   };
 }
 
-export const APPROVAL_REFUSAL = "Review approvals in Murage. WhatsApp messages cannot approve actions.";
+/** Read when sent, so it follows the owner's app language (reply-text.ts). */
+export const approvalRefusal = (): string => channelReply("channelReply.approvalsInMurage", { channel: "WhatsApp" });
 
 /** Chat text can never approve, deny, allow or pair anything (Slack event.ts and Telegram use the same rule). */
 export function isApprovalText(value: string): boolean {
@@ -102,7 +104,7 @@ export function isApprovalText(value: string): boolean {
 /** The stored prompt, or a fixed refusal. Sender name, group title, quote and file name are labelled fields; the body is never trusted. */
 export function whatsappPrompt(message: Pick<WhatsAppMessage, "text" | "pushName" | "quoted" | "media" | "chatKind">, options: { groupTitle?: string; voiceTranscript?: string } = {}): { prompt: string; response?: string } {
   const body = message.text.trim();
-  if (body && isApprovalText(body)) return { prompt: "", response: APPROVAL_REFUSAL };
+  if (body && isApprovalText(body)) return { prompt: "", response: approvalRefusal() };
   const m = message.media;
   const voice = options.voiceTranscript?.trim() ? options.voiceTranscript.trim().slice(0, VOICE_TRANSCRIPT_CAP) : undefined;
   // With a transcript the body gets a smaller share so the whole prompt stays inside the receipt ledger's 6000 characters.

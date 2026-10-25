@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Social Week",
     "tagline": "A coordinated week of social drafts ready for your review",
-    "summary": "A week of post drafts that stay in the conversation until the owner says yes. Buzz coordinates the drafts from the notes and documents you supply. Members check their sources, the lead combines the work, and you approve external actions. For a team adapting a brief across channels, use Content Pipeline.",
+    "summary": "A week of post drafts that stay in the conversation until the owner says yes.",
     "category": "Marketing",
     "author": {
       "name": "Ferrox Labs",
@@ -92,7 +92,8 @@
         "role": "leader",
         "team": "Social Week",
         "appearance": {
-          "color": "blue"
+          "color": "blue",
+          "mascotBody": "star"
         },
         "skills": [
           "content-calendar",
@@ -113,7 +114,8 @@
         "role": "member",
         "team": "Social Week",
         "appearance": {
-          "color": "blue"
+          "color": "teal",
+          "mascotBody": "circle"
         },
         "skills": [
           "instagram-caption",
@@ -133,7 +135,8 @@
         "role": "member",
         "team": "Social Week",
         "appearance": {
-          "color": "blue"
+          "color": "purple",
+          "mascotBody": "drop"
         },
         "skills": [
           "linkedin-post",
@@ -153,7 +156,8 @@
         "role": "member",
         "team": "Social Week",
         "appearance": {
-          "color": "blue"
+          "color": "pink",
+          "mascotBody": "blob"
         },
         "skills": [
           "batch-image-generation",
@@ -173,7 +177,8 @@
         "role": "member",
         "team": "Social Week",
         "appearance": {
-          "color": "blue",
+          "color": "red",
+          "mascotBody": "shield",
           "mascotExpression": "humming"
         },
         "skills": [

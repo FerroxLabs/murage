@@ -36,6 +36,8 @@ const ALLOWLIST: Record<string, string> = {
   "server/testing/link-removal-native.fixture.cjs": "run only by link-removal.native.test.ts on paths inside the mkdtemp folder it is given (argv[4]): its rmSync calls go through the installed handle-based remove, on a tree it made there",
   "scripts/scale/hz-vitest.sh": "cleanup() runs `rm -rf -- \"${dir:?}\"` on the build host rig over ssh (never on this machine): dir is $H/vitest-<label> under the rig's own scratch root, set non-empty by ${dir:?}, and holds only the git-archive copy the same script just made",
   "scripts/safe-wipe.sh": "the shell helper itself: rm -rf runs only after the same checks pass",
+  "server/backup-restic.ts": "0607 (07-A4/07-A5): each rmSync removes a folder this file made with mkdtempSync under options.workDirectory (restore-*, the upload stage); the stored prior.stage is removed only after the pathWithin(realpath(workDirectory)) check at its read",
+  "electron/backup-remote-export.mjs": "0607 4c835e83b discardDownloadedCopy: removes only a restore-* folder whose realpath is inside the host's own work root (both checked on the line itself)",
   "server/testing/index-harness.ts": "'rm -rf /tmp/…' are card subtitles in fixture messages the index suites seed; nothing executes them, and teardown uses removeTempDir",
   "server/testing/fake-codex-app-server.ts": "'rm -rf scratch' is a string the fake engine sends as an approval request; nothing executes it",
   "installer/test/systemd.test.mjs": "asserts the exact `rm -r <staging dir>` text setup prints for the operator; the file's own fixture teardown uses safeWipeSync",

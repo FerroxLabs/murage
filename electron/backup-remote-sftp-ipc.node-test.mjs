@@ -67,7 +67,7 @@ function fixture(t){
    downloadBackup:async snapshotId=>({state:"downloaded-verified",snapshotId,repositoryId:"d".repeat(64),archivePath:"/private/backup.age",receiptPath:"/private/receipt.json",receipt}),
   };}});
  const operations=new Set();
- const handlers=mainHandlers({backupRemoteHost:host,backupRemoteOperations:operations,desktopShutdownStarted:false,desktopRecoveryMode:false,backupMode:{isPreparing:()=>false},backupScheduleHost:{isPreparing:()=>false}});
+ const handlers=mainHandlers({backupRemoteInitializing:false,backupRemoteHost:host,backupRemoteOperations:operations,desktopShutdownStarted:false,desktopRecoveryMode:false,backupMode:{isPreparing:()=>false},backupScheduleHost:{isPreparing:()=>false}});
  return{bridge:preloadBridge(handlers,crossings),handlers,crossings,forgotten,downloads,passwordsSeen,keys,usb,document:()=>document,setScanned:key=>{scanned=key;}};
 }
 

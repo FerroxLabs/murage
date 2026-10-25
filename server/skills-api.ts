@@ -121,6 +121,29 @@ function builtinSummary(id: string, bots: SkillsApiBot[]): SkillSummary | null {
   return { ref: `${BUILTIN}${id}`, name: words.name, description: words.description, kind: "builtin", verdict: found.scan.verdict, source: "Built-in", usedBy };
 }
 
+/** Every bot with this collection skill gets the new files, through the same gate as a first install: a clean
+ *  skill that was on stays on; one that now needs a look is left off until the owner confirms it; Blocked is off. */
+function pushCollectionToBots(name: string, ref: string, saved: { contents: Array<{ path: string; content: string }>; scan: SkillScan }, users: SkillSummary["usedBy"]): { needsLook: string[]; failed: string[] } {
+  const needsLook: string[] = [];
+  const failed: string[] = [];
+  for (const user of users) {
+    removeSkill(user.botId, name);
+    const installed = installSkill(user.botId, ref, saved.contents);
+    if ("error" in installed) {
+      failed.push(user.botName);
+      continue;
+    }
+    if (!user.enabled || saved.scan.verdict === "blocked") continue;
+    if (saved.scan.verdict === "review") {
+      needsLook.push(user.botName);
+      continue;
+    }
+    const on = setSkillEnabled(user.botId, name, true);
+    if ("error" in on) failed.push(user.botName);
+  }
+  return { needsLook, failed };
+}
+
 /** Which bots have this skill installed, and whether it is on. */
 function usedBy(ref: string, bots: SkillsApiBot[]): SkillSummary["usedBy"] {
   const matches = (listing: SkillListing) =>
@@ -222,7 +245,11 @@ export async function handleSkillsApi(request: SkillsApiRequest): Promise<Skills
     }
     const imported = importCollectionSkill(files, source, { replace: input.replace, skipped });
     if ("error" in imported) return { status: imported.code === "exists" ? 409 : 400, body: imported };
-    return { status: 201, body: { skill: { ...collectionSummary(imported, request.bots()), scan: imported.scan, skipped: imported.skipped } } };
+    // A replace puts the new files on every bot that has the skill, as the editor does: the reader shows the collection copy, the bot follows its own.
+    const users = input.replace ? usedBy(`${COLLECTION}${imported.name}`, request.bots()) : [];
+    const current = users.length ? getCollectionSkill(imported.name) : null;
+    const pushed = current ? pushCollectionToBots(imported.name, `${COLLECTION}${imported.name}`, current, users) : null;
+    return { status: 201, body: { skill: { ...collectionSummary(imported, request.bots()), scan: imported.scan, skipped: imported.skipped }, ...(pushed ?? {}) } };
   }
 
   const dup = /^\/api\/skills\/([^/]+)\/duplicate$/.exec(path);
@@ -266,26 +293,7 @@ export async function handleSkillsApi(request: SkillsApiRequest): Promise<Skills
     const users = usedBy(ref, bots);
     const saved = updateCollectionSkill(name, input.data);
     if ("error" in saved) return { status: saved.code === "missing" ? 404 : 400, body: saved };
-    // Every bot with this skill gets the new version, through the same gate
-    // as a first install: a clean skill that was on stays on; one that now
-    // needs a look is left off until the owner confirms it; Blocked is off.
-    const needsLook: string[] = [];
-    const failed: string[] = [];
-    for (const user of users) {
-      removeSkill(user.botId, name);
-      const installed = installSkill(user.botId, ref, saved.contents);
-      if ("error" in installed) {
-        failed.push(user.botName);
-        continue;
-      }
-      if (!user.enabled || saved.scan.verdict === "blocked") continue;
-      if (saved.scan.verdict === "review") {
-        needsLook.push(user.botName);
-        continue;
-      }
-      const on = setSkillEnabled(user.botId, name, true);
-      if ("error" in on) failed.push(user.botName);
-    }
+    const { needsLook, failed } = pushCollectionToBots(name, ref, saved, users);
     return { status: 200, body: { skill: { ...collectionSummary(saved, request.bots()), scan: saved.scan }, needsLook, failed } };
   }
 
