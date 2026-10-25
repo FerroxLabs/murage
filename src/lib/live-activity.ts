@@ -71,3 +71,37 @@ export function turnStatusLabel(activityLabel: string, state: { answering: boole
   if (state.answering) return "Answering";
   return state.thinkingRow ? "" : THINKING_LABEL;
 }
+
+/** Other ways to say the same working label. The key is the engine-neutral
+ * label (it comes from the tool's class, not from any one engine's event
+ * names), so every engine rotates alike. Text the server narrates itself is
+ * not in this table, so it is never reworded. */
+const ALTERNATES: Record<string, string[]> = {
+  Thinking: ["Working it out", "Weighing it up", "Mulling it over"],
+  Working: ["Getting on with it", "On it", "Making progress"],
+  Answering: ["Writing it up", "Putting it together"],
+  "Running a command": ["Running it", "Waiting on the command", "Checking what it prints"],
+  "Reading a file": ["Looking through the file", "Reading it over", "Taking in the file"],
+  "Writing a file": ["Putting the file together", "Saving the words", "Drafting the file"],
+  "Editing a file": ["Making the change", "Tidying the file", "Working on the edit"],
+  "Searching the web": ["Looking around the web", "Following leads", "Searching the web"],
+  "Reading a page": ["Reading the page", "Taking in the page", "Skimming it"],
+  Searching: ["Looking around", "Hunting it down", "Following the trail"],
+  "Looking at the screen": ["Taking in the screen", "Checking the display", "Seeing what is there"],
+  "Using the computer": ["Working the screen", "Clicking around", "Driving the desktop"],
+  "Opening a page": ["Loading the page", "Heading there", "Opening it up"],
+};
+
+/** The phrases a working label may rotate through; the first is the label itself. */
+export function liveActivityPhrases(label: string): string[] {
+  const alternates = Object.hasOwn(ALTERNATES, label) ? ALTERNATES[label]! : [];
+  return [...new Set([label, ...alternates])];
+}
+
+/** Which phrase shows after `ticks` rotations. */
+export function phraseAt(phrases: string[], ticks: number): string {
+  if (phrases.length === 0) return "";
+  return phrases[((ticks % phrases.length) + phrases.length) % phrases.length]!;
+}
+
+export const PHRASE_ROTATE_MS = 7000;

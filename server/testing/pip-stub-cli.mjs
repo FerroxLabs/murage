@@ -25,7 +25,8 @@ try { if (settingsArg && !settingsArg.startsWith("{")) settingsContent = readFil
 const CREDENTIAL_NAME = /(?:^|_)(?:KEY|TOKEN|SECRET|PASSWORD|PASSPHRASE|CREDENTIALS?)$/i;
 const recordedEnv = () => Object.fromEntries(Object.entries(process.env).map(([name, value]) =>
   [name, typeof value === "string" && CREDENTIAL_NAME.test(name) ? createHash("sha256").update(value).digest("hex") : value]));
-const record = (extra = {}) => appendFileSync(stub["stub-out"], JSON.stringify({ homeFiles: ls(process.env.FUIGO_HOME || process.env.GROK_HOME || process.env.CLAUDE_CONFIG_DIR), argv, env: recordedEnv(), cwd: process.cwd(), prompt, pid: process.pid, scenario, settingsContent, ...extra }) + "\n");
+const fuigoConfigText = () => { try { return readFileSync(`${process.env.FUIGO_HOME}/config.toml`, "utf8"); } catch { return null; } };
+const record = (extra = {}) => appendFileSync(stub["stub-out"], JSON.stringify({ homeFiles: ls(process.env.FUIGO_HOME || process.env.GROK_HOME || process.env.CLAUDE_CONFIG_DIR), fuigoConfig: process.env.FUIGO_HOME ? fuigoConfigText() : null, argv, env: recordedEnv(), cwd: process.cwd(), prompt, pid: process.pid, scenario, settingsContent, ...extra }) + "\n");
 const engineHome = () => process.env.FUIGO_HOME || process.env.GROK_HOME || process.env.CLAUDE_CONFIG_DIR;
 record();
 if (after("--debug-file")) writeFileSync(after("--debug-file"), "text-only fixture started");

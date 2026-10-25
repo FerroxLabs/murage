@@ -66,6 +66,19 @@ beforeAll(async () => {
 afterAll(async () => { await fixture?.close(); });
 
 describe("the first run on a real server whose engine never answers", () => {
+  it("answers a peek at whether setup is finished without giving any bot the Chief role or saying a card", async () => {
+    // The renderer's store asks `?peek=1` in the background to decide whether
+    // to remember the open conversation (N1: on a surface where that was the
+    // first setup read, it made the bot in the settings dialog Chief).
+    const peek = await api("GET", "/api/setup?peek=1", undefined, desktop);
+    expect(peek.status).toBe(200);
+    expect(peek.body.firstRun).toBe(true);
+    const bots = await api("GET", "/api/bots", undefined, desktop);
+    expect(bots.body.bots).toHaveLength(1);
+    expect(bots.body.bots[0].chiefOfStaff).toBeFalsy();
+    expect((bots.body.bots[0].messages ?? []).filter((message: { card?: { setup?: unknown } }) => message.card?.setup)).toEqual([]);
+  });
+
   it("seats the bot of a fresh install as the Chief when the checklist is opened", async () => {
     // Before setup is opened, nothing has been rewired: the seeded bot holds
     // no role, because an installation nobody has run setup on must not be

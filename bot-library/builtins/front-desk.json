@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Front Desk",
     "tagline": "One morning pack for your inbox, meetings and follow-ups",
-    "summary": "The 7am brief, inbox drafts, meeting prep and notes with follow-ups. Dawn coordinates the drafts from the notes and documents you supply. Members check their sources, the lead combines the work, and you approve external actions. For founder decisions reviewed from several perspectives, use Daily Briefing.",
+    "summary": "The 7am brief, inbox drafts, meeting prep and notes with follow-ups.",
     "category": "Front office",
     "author": {
       "name": "Ferrox Labs",
@@ -122,7 +122,8 @@
         "role": "leader",
         "team": "Front Desk",
         "appearance": {
-          "color": "green"
+          "color": "green",
+          "mascotBody": "star"
         },
         "skills": [
           "daily-planning",
@@ -143,7 +144,8 @@
         "role": "member",
         "team": "Front Desk",
         "appearance": {
-          "color": "blue"
+          "color": "blue",
+          "mascotBody": "circle"
         },
         "skills": [
           "inbox-zero",
@@ -164,7 +166,8 @@
         "role": "member",
         "team": "Front Desk",
         "appearance": {
-          "color": "teal"
+          "color": "teal",
+          "mascotBody": "diamond"
         },
         "skills": [
           "calendar-optimizer",
@@ -184,7 +187,8 @@
         "role": "member",
         "team": "Front Desk",
         "appearance": {
-          "color": "purple"
+          "color": "purple",
+          "mascotBody": "capsule"
         },
         "skills": [
           "meeting-notes-summarizer",
@@ -205,7 +209,8 @@
         "role": "member",
         "team": "Front Desk",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "squircle"
         },
         "skills": [
           "company-research-guide",

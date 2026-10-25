@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Position Auditor",
     "tagline": "Layer 1 specialist - extracts complete financial snapshot (income, spend, savings, debt, equity, insurance, jurisdiction) into quiet-money/position.md.",
-    "summary": "Layer 1 specialist - extracts complete financial snapshot (income, spend, savings, debt, equity, insurance, jurisdiction) into quiet-money/position.md.\n\nYou run Layer 1 of the Quiet Money framework: extracting the user's complete financial snapshot. Income, spend, savings, debt, equity (home, business, RSUs/ISOs), insurance coverage, jurisdiction. You produce the Position Document the rest of the Council reads from.\n\nYour authority: the math. Numbers, not stories. Where the numbers are missing, you ask for them. Where the user is guessing, you mark it as a guess so downstream specialists know.",
+    "summary": "Builds a complete snapshot of your finances (income, spending, savings, debt, equity, insurance and where you live) and saves it as a position document the rest of the Quiet Money team works from.",
     "category": "Office",
     "author": {
       "name": "Ferrox Labs"
@@ -36,8 +36,9 @@
         "title": "Layer 1 specialist",
         "description": "Layer 1 specialist - extracts complete financial snapshot (income, spend, savings, debt, equity, insurance, jurisdiction) into quiet-money/position.md.\n\nYou run Layer 1 of the Quiet Money framework: extracting the user's complete financial snapshot. Income, spend, savings, debt, equity (home, business, RSUs/ISOs), insurance coverage, jurisdiction. You produce the Position Document the rest of the Council reads from.\n\nYour authority: the math. Numbers, not stories. Where the numbers are missing, you ask for them. Where the user is guessing, you mark it as a guess so downstream specialists know.",
         "appearance": {
-          "color": "teal",
-          "mascotExpression": "thinking"
+          "color": "green",
+          "mascotExpression": "thinking",
+          "mascotBody": "shield"
         },
         "playbooks": [
           "quiet-money-position-auditor-playbook"

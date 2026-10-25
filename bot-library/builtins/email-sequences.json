@@ -60,7 +60,8 @@
         "title": "Email Sequences",
         "description": "Drip prepares a five-email sequence draft from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For channel strategy, use Channels. For general conversion copy, use Copy. For a customer email journey team, use Email & Lifecycle Crew.",
         "appearance": {
-          "color": "green"
+          "color": "green",
+          "mascotBody": "drop"
         },
         "skills": [
           "beacon-email-sequences",

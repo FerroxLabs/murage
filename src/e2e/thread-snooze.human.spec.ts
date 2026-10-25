@@ -62,7 +62,7 @@ async function openApp(page: Page) {
 }
 const row = (page: Page) => page.locator(`[data-sidebar-select="${botId}"]`);
 /** Back to the conversation. On a phone the drawer covers the chat header and
- * its "All threads" picker; choosing the bot again closes it there. A desktop
+ * its "Chat list" picker; choosing the bot again closes it there. A desktop
  * has no drawer and returns at once. */
 async function showChat(page: Page) {
   const menu = page.getByRole("button", { name: "Open bot list" });
@@ -139,7 +139,7 @@ test("a question wakes a snoozed conversation, badges it, and the badge clears o
   // Snooze from the bot's conversation list this time.
   await row(page).focus(); await page.keyboard.press("Enter");
   await showChat(page);
-  await page.getByRole("button", { name: "All threads" }).click();
+  await page.getByRole("button", { name: "Chat list" }).click();
   await page.getByRole("button", { name: "Snooze Older chat" }).click();
   await page.getByRole("group", { name: "Snooze Older chat" }).getByRole("button", { name: /^Snooze for 1 hour/ }).click();
   await expect(page.getByRole("button", { name: "Unsnooze Older chat" })).toBeVisible();
@@ -158,7 +158,7 @@ test("a question wakes a snoozed conversation, badges it, and the badge clears o
   await expect(sidebar.locator("[data-needs-you-count]")).toHaveText("1");
   await shot(page, "08-question-badge-1440", testInfo);
   await showChat(page);
-  await page.getByRole("button", { name: "All threads" }).click();
+  await page.getByRole("button", { name: "Chat list" }).click();
   await expect(page.getByRole("img", { name: "1 question for you" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Unsnooze Older chat" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Snooze Older chat" })).toHaveCount(0);

@@ -11,7 +11,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { persistentAgentsClient } from "./testing/persistent-agents-client.ts";
@@ -19,6 +19,12 @@ import { freePortBlock } from "./testing/ports.ts";
 import { openSse } from "./testing/sse.ts";
 import { FILE_MAX_BYTES, IMAGE_MAX_BYTES } from "./attachments.ts";
 import { redactSecretsInText } from "./redact.ts";
+// This file fires many revokes within a minute (bots and conversations deleted test after test). The revoke marker's per-minute write
+// budget (server/memory/revoke-budget.ts) has its own tests (revoke-budget.test.ts); here it is lifted in the server child, as index-2
+// lifts it, so a later test is not held behind marker work an earlier test's deletions left the budget pacing. With it bounded, a bot's
+// own new prompt block read "checking" (pending) behind those revokes whenever the earlier tests' marker writes had filled the minute,
+// so "saves prompt blocks" passed or failed with the runner's speed. Set before the harness module starts the child.
+vi.hoisted(() => { process.env.MURAGE_TEST_UNBOUNDED_REVOKE_BUDGET = "1"; });
 import { BASE, phoneApi, DESKTOP_HEADERS, DESKTOP_SECRET, desktopTicketed, FIXTURE_ENGINE_OVERRIDES, PORT, ROOT, SERVER_DIR, STATE_ONLY_SELECTION, api, deferredCheckpointDirectories, desktopApi, expectStoppedTestServerCleanly, fakeClaudeDump, home, readJsonFileWhenReady, RUN_START_WAIT_MS, startInternalFixtureTurn, statusWithHeaders, stderr, stopFixtureTurn, uploadAvatar, waitForIsolatedServer } from "./testing/index-harness.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 

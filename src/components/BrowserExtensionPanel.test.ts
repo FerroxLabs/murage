@@ -33,8 +33,8 @@ describe("store link, repair and removal",()=>{
   const url="https://chromewebstore.google.com/detail/"+"c".repeat(32);
   const listed=renderToStaticMarkup(createElement(BrowserExtensionPanelView,{...props(),...extra(),status:{...offline,storeUrl:url,extensionBuild:"release",helper:{running:true,reason:"Add Murage for Chrome from the Chrome Web Store, then open its side panel and connect."}}}));
   expect(listed).toContain(`href="${url}"`);expect(listed).toContain('target="_blank"');expect(listed).toContain("Open Chrome Web Store");expect(listed).not.toContain("unpacked development extension");
-  const pending=renderToStaticMarkup(createElement(BrowserExtensionPanelView,{...props(),...extra(),status:{...offline,storeUrl:null,extensionBuild:"release",helper:{running:true,reason:"Murage for Chrome is not in the Chrome Web Store yet. You can keep using the bot's own browser."}}}));
-  expect(pending).not.toContain("href=");expect(pending).toContain("not in the Chrome Web Store yet");expect(pending).not.toContain("unpacked development extension");
+  const pending=renderToStaticMarkup(createElement(BrowserExtensionPanelView,{...props(),...extra(),status:{...offline,storeUrl:null,extensionBuild:"release",helper:{running:true,reason:"Open Murage for Chrome's side panel to connect. You can keep using the bot's own browser."}}}));
+  expect(pending).not.toContain("href=");expect(pending).toContain("Open Murage for Chrome&#x27;s side panel to connect.");expect(pending).not.toMatch(/not (in the Chrome Web Store|available)|No store listing/);expect(listed).not.toMatch(/not (in the Chrome Web Store|available)|No store listing/);expect(pending).not.toContain("unpacked development extension");
  });
  it("offers Repair when this build needs the old owned registration replaced",()=>{
   const p={...props(),...extra(),connectBrowser:"brave" as const,status:{...offline,helper:{running:true,problem:"repair" as const,reason:"Remove this owned helper registration, then Connect again to use the new build."}}};

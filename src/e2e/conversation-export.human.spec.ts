@@ -47,10 +47,10 @@ const markdown = async (download: Download) => { expect(await download.failure()
 async function openFirst(page: Page) {
   await page.goto(origin + "/__export");
   const bot = page.getByRole("region", { name: "Bot conversation", exact: true });
-  await bot.getByRole("button", { name: "All threads", exact: true }).click();
+  await bot.getByRole("button", { name: "Chat list", exact: true }).click();
   await bot.getByRole("button", { name: /^Alpha notes/ }).click();
-  await expect(bot.getByRole("textbox", { name: "Search tasks", exact: true })).toHaveCount(0);
-  await bot.getByRole("button", { name: "All threads", exact: true }).click();
+  await expect(bot.getByRole("textbox", { name: "Search chats", exact: true })).toHaveCount(0);
+  await bot.getByRole("button", { name: "Chat list", exact: true }).click();
   return bot;
 }
 
@@ -67,8 +67,8 @@ for (const width of [390, 1440]) for (const skin of ["light", "dark"]) test(`cur
   await expect(bot.getByRole("status")).toContainText("Download started: conversation-alpha-notes.md");
   expect(await action.evaluate(element => { const rect = element.getBoundingClientRect(); return rect.left >= 0 && rect.right <= innerWidth; })).toBe(true);
   await page.screenshot({ path: info.outputPath(`conversation-export-${width}-${skin}.png`) });
-  await bot.getByRole("textbox", { name: "Search tasks", exact: true }).press("Escape"); await expect(bot.getByRole("button", { name: "All threads", exact: true })).toBeFocused();
-  const group = page.getByRole("region", { name: "Group conversation", exact: true }); await group.getByRole("button", { name: "All threads", exact: true }).click();
+  await bot.getByRole("textbox", { name: "Search chats", exact: true }).press("Escape"); await expect(bot.getByRole("button", { name: "Chat list", exact: true })).toBeFocused();
+  const group = page.getByRole("region", { name: "Group conversation", exact: true }); await group.getByRole("button", { name: "Chat list", exact: true }).click();
   const groupReceipt = page.waitForEvent("download"); await group.getByRole("button", { name: "Export conversation (Markdown)", exact: true }).click();
   const groupText = await markdown(await groupReceipt); expect(groupText).toContain("GROUP_VISIBLE_CANARY"); expect(groupText).toContain("**Export fixture:**"); expect(groupText).not.toMatch(/ALPHA_VISIBLE_CANARY|BETA_PRIVATE_CANARY/);
 });
@@ -82,10 +82,10 @@ test("pending export keeps original task identity and failure is visible without
   await bot.getByRole("button", { name: "Export conversation (Markdown)", exact: true }).click(); await requested;
   await expect(bot.getByRole("button", { name: "Exporting conversation…", exact: true })).toBeDisabled();
   await bot.getByRole("button", { name: /^Beta notes/ }).click();
-  await expect(bot.getByRole("textbox", { name: "Search tasks", exact: true })).toHaveCount(0);
+  await expect(bot.getByRole("textbox", { name: "Search chats", exact: true })).toHaveCount(0);
   const receipt = page.waitForEvent("download"); release(); const exported = await receipt;
   expect(exported.suggestedFilename()).toBe("conversation-alpha-notes.md"); expect(await markdown(exported)).toContain("ALPHA_VISIBLE_CANARY");
-  await bot.getByRole("button", { name: "All threads", exact: true }).click();
+  await bot.getByRole("button", { name: "Chat list", exact: true }).click();
   let unexpectedDownload = false; page.on("download", () => { unexpectedDownload = true; });
   await page.route(`**/api/threads/${ids.second}/export?format=markdown`, route => route.fulfill({ status: 404, contentType: "application/json", body: '{"error":"not found"}' }));
   await bot.getByRole("button", { name: "Export conversation (Markdown)", exact: true }).click();

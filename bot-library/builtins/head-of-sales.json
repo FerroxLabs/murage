@@ -60,7 +60,8 @@
         "title": "Head of Sales",
         "description": "Pace prepares a Monday sales plan with proposed owners. Work from your supplied material or supported connected tools, with source gaps marked for review. For individual deal strategy, use Sales. For a complete sales team, use Sales Org.",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "star"
         },
         "skills": [
           "pipeline-review",

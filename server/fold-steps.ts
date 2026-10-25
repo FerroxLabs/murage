@@ -20,6 +20,11 @@ export function retainSession(steps: { recordRoots?: () => unknown; saveCursor: 
   steps.saveCursor();
 }
 
+/** The turn's reply that carries generated images: its last bot text row, never a widget row (whose text is only a fallback). */
+export function replyForStagedImages(rows: Message[], turnId: string): Message | undefined {
+  return [...rows].reverse().find((message) => message.role === "bot" && message.kind === "text" && !message.widget && message.turnId === turnId);
+}
+
 type Attachment = NonNullable<Message["attachments"]>[number];
 /** Attach staged images to the turn's reply (or, with no reply text, as a reply of their own). The staging is released only after
  * that write committed, and adopting is idempotent by path: a redelivery after a lock finds the images still staged, and one
