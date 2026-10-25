@@ -159,6 +159,9 @@ export type RuntimeEvent = RuntimeEventBase &
      * that hide the real call inside a wrapper tool — without it every chip
      * in the transcript is the same wrapper name. */
     | { type: "item.started"; itemType: "tool"; origin: ItemOrigin; title?: string; summary?: string; input?: unknown;
+        /** Murage's own working line for a wait it names itself (origin "murage" only): shown beside the mascot even with Tool
+         *  calls off, where the chip is hidden. */
+        spoken?: string;
         /** Canonical tool kind and identity, separate from display text. */
         toolKind?: string; toolIdentity?: { namespace?: string; name?: string; kind?: string } }
     | { type: "item.started"; itemType: "reasoning"; title?: string; summary?: string; input?: unknown; toolKind?: string; toolIdentity?: { namespace?: string; name?: string; kind?: string } }
@@ -194,6 +197,9 @@ export type RuntimeEvent = RuntimeEventBase &
     /** A steer the driver reported "uncertain" was taken into the turn after
      * all (Fuigo echoed it late). Names the steer by the id the server sent with it. */
     | { type: "steer.confirmed"; interjectionId: string }
+    /** QW Q3 (173): the engine asked the owner and kept working (Codex request_user_input_async). No adapter ask is
+     * open: the server shows the answer-as-send question card, and the answer is the owner's next message. */
+    | { type: "question.async"; questions: QuestionSpec[] }
     | {
         type: "request.opened";
         requestType: "permission" | "question";
@@ -306,6 +312,10 @@ export type RuntimeEvent = RuntimeEventBase &
          * harness (turn ended / settings changed), or nobody — the answerer
          * was already gone and the action never ran */
         source: "user" | "auto" | "timeout" | "system" | "unavailable" | "peer";
+        /** 1.0.5, served by the Inspector read only (thread-events.ts), never logged: the automatic rule that answered this ask, from
+         * the decision log (own-workspace, auto-mode, always-allow, ...). The engine itself cannot tell a server's automatic answer
+         * from a person's (it records both as `user`), so without this the Inspector said "allow · user" for answers nobody clicked. */
+        decidedBy?: string;
         approvalScope?: "local-computer";
         /** 0.1.52 FUIGOTRUST2 (additive): a folder-trust card raised from
          * the engine's own request AFTER the engine had started (the
@@ -320,7 +330,7 @@ export type RuntimeEvent = RuntimeEventBase &
     | { type: "thread.token-usage.updated"; input: number; output: number; cachedInput?: number }
     // `setup: true` marks a failure the user fixes by installing or
     // configuring something, not by retrying — the UI offers setup instead.
-    | { type: "runtime.error"; message: string; details?: string; setup?: boolean; authRequired?: boolean; /** the installed Claude Code is too old for the model */ claudeUpdate?: boolean; errorKind?: string; /** A device-side setup failure the chat words from its code (a bot's engine folder); localFailureEngine names the engine. */ localFailure?: LocalSetupFailure; localFailureEngine?: string; providerError?: ProviderErrorInfo; diagnostic?: RuntimeErrorDiagnostic }
+    | { type: "runtime.error"; message: string; details?: string; setup?: boolean; authRequired?: boolean; /** the installed Claude Code is too old for the model */ claudeUpdate?: boolean; errorKind?: string; /** the engine's own upper-case error code (OpenCode's QUOTA_EXCEEDED), read from the RPC error, never from text */ engineCode?: string; /** a reset time the engine reported as data (epoch ms), for limit detection */ limitResetsAt?: number; /** A device-side setup failure the chat words from its code (a bot's engine folder); localFailureEngine names the engine. */ localFailure?: LocalSetupFailure; localFailureEngine?: string; providerError?: ProviderErrorInfo; diagnostic?: RuntimeErrorDiagnostic }
   );
 
 export type RuntimeEventListener = (event: RuntimeEvent) => void;
@@ -368,11 +378,13 @@ export interface SendTurnInput {
   /** Driver-internal: this is an intent warm (prewarm), not a turn. The engine is
    * started and parked idle; nothing is sent, no turn events are emitted. */
   prewarm?: boolean;
+  /** Load browser tools at turn start when the browser is the place. */
+  preloadBrowserTools?: boolean;
   /** Inspection observes what the model receives. `mounts` is what the SYSTEM
    * text names (the stable memory label when F4b normalizes it); `body` carries
    * the concrete per-turn mounts used for the message text and the per-turn
    * binding line that rides in front of it. */
-  onToolSurface?: (surface: import("./murage-tool-surface.ts").McpToolSurface, mounts: import("./murage-tool-surface.ts").MurageToolMounts, body?: { mounts: import("./murage-tool-surface.ts").MurageToolMounts; binding: string }) => void;
+  onToolSurface?: (surface: import("./murage-tool-surface.ts").McpToolSurface, mounts: import("./murage-tool-surface.ts").MurageToolMounts, body?: { mounts: import("./murage-tool-surface.ts").MurageToolMounts; binding: string; askRules?: string }) => void;
   /** Server-only synchronous submission fence, the one validation contract
    * every adapter honours: called immediately before EVERY engine prompt
    * write of this turn (a relaunch's write too), with no await between the
@@ -401,6 +413,9 @@ export interface SendTurnInput {
    * engine process warm across turns keys reuse on it, so a process is never
    * shared between bots or between the owner and any other audience. */
   warmIdentity?: { botId: string; audience: "owner" | "non-owner"; decidedOwner?: boolean; humanPrincipal?: string };
+  /** The thread holds a bank, card or id number (flux-capture-hold.ts), or this turn's text does: Flux Memory capture off, inject on.
+   * Set by the server where the turn is sent (index.ts sendProjectUsageTurn). */
+  fluxCaptureHold?: boolean;
   text: string;
   model?: string;
   /** Exact server-authorized incoming bytes; never resolve paths in drivers. */
@@ -758,6 +773,8 @@ export interface EngineInstall {
    * the UI falls back to docsUrl rather than offering something that
    * cannot work there (a curl|bash line is not a Windows command). */
   command?: Partial<Record<"darwin" | "win32" | "linux", string>>;
+  /** The OS of the computer running the server (set by the registry when it describes the engine), so the setup card shows the command for the machine that will run it, not for the browser device viewing it. */
+  platform?: "darwin" | "win32" | "linux";
   /** Docs or download page. The only route for GUI-installed engines. */
   docsUrl?: string;
   /** Interactive sign-in run after installing, when install isn't enough. */
@@ -824,6 +841,8 @@ export interface ProviderInstance {
    * with none, is never resumed: the harness starts a fresh session and replays the thread.
    * Absent for an engine with no such contract. */
   readonly sessionContract?: number;
+  /** True when this engine tracks a refused key itself (keyed by the key, so a new key starts clean); the harness then does not also mark it signed out from its failed turns. */
+  readonly tracksKeyRejection?: boolean;
   /** Refresh a live catalog without recreating the provider instance. */
   readonly refreshModels?: (options?: ModelRefreshOptions) => Promise<void>;
   readonly adapter: ProviderAdapter;

@@ -47,6 +47,11 @@ export interface BackupRemoteHostOptions {
  createPassword?:()=>Promise<{passwordRef:string;path:string}>;
  /** Log-only: the raw failure behind a refused step. Never shown in the window. */
  reportFailure?:(error:unknown)=>void;
+ /** Log-only: one path-free, secret-free line per off-site step outcome. */
+ reportOutcome?:(line:string)=>void;
+ /** How long a step waits for the backup tool check to finish before it is
+  * refused (the start-up window). Default 20 s. */
+ readyWaitMs?:number;
  /** Saves a second copy of that file where the person chooses. */
  copyPassword?:(passwordRef:string)=>Promise<{saved:true;path:string}|{cancelled:true}>;
  createAdapter:(binding:Readonly<{target:ResticS3Target;credentials:ResticS3Credentials;passwordRef:string;maintenanceCredentials?:ResticS3Credentials}|{target:ResticSftpTarget;credentials:ResticSftpCredentials;passwordRef:string}>)=>RemoteAdapter;
@@ -107,13 +112,22 @@ const translate=(error:unknown):never=>{const code=error instanceof Error?connec
 /** Main-only orchestration: no arbitrary paths/commands or implicit connection. */
 export function createBackupRemoteHost(options:BackupRemoteHostOptions){
  let pending=false;
+ const outcome=(line:string)=>{try{options.reportOutcome?.(line);}catch{/* Logging never changes the result. */}};
+ const short=(value:unknown)=>typeof value==="string"?value.slice(0,8):"unknown";
+ /** Just after start-up the backup tool is still being checked: "not ready
+  * yet" is waited out (bounded), not refused, so the step runs once the host is ready. */
+ async function untilReady(){
+  const limit=Date.now()+(options.readyWaitMs??20000);
+  while(!options.supported()&&options.checking?.()&&Date.now()<limit)await new Promise(resolve=>{const t=setTimeout(resolve,Math.min(250,Math.max(1,(options.readyWaitMs??20000)/10)));(t as {unref?:()=>void}).unref?.();});
+ }
  const id=()=>reference.parse((options.createId??randomUUID)());
  async function exclusive<T>(work:()=>Promise<T>):Promise<T>{
   if(pending)refuse("BACKUP_REMOTE_BUSY");pending=true;
-  try{if(!options.supported())refuse("BACKUP_REMOTE_UNAVAILABLE");if(options.sharedFolder?.())refuse("BACKUP_REMOTE_DATA_FOLDER_SHARED");return await work();}
+  try{await untilReady();if(!options.supported())refuse("BACKUP_REMOTE_UNAVAILABLE");if(options.sharedFolder?.())refuse("BACKUP_REMOTE_DATA_FOLDER_SHARED");return await work();}
   catch(error){
    // Log-only: what actually stopped the step, before it is named for the window.
    try{options.reportFailure?.(error);}catch{/* Logging never changes the result. */}
+   outcome(`backup off-site step refused ${JSON.stringify({reason:error instanceof Error&&/^BACKUP_[A-Z_]{1,60}$/.test(error.message)?error.message:"BACKUP_REMOTE_UNAVAILABLE"})}`);
    if(error instanceof Error&&safeErrors.has(error.message))throw error;return refuse();
   }
   finally{pending=false;}
@@ -278,6 +292,7 @@ export function createBackupRemoteHost(options:BackupRemoteHostOptions){
   let result:Awaited<ReturnType<RemoteAdapter["store"]>>;try{result=await adapter(binding).store(selected.archivePath,receipt.data);}catch(error){return translate(error);}
   if(!["verified","needs-review"].includes(result.state))refuse();
   if(result.state==="verified"&&!hash.safeParse(result.snapshotId).success)refuse();
+  outcome(`backup off-site ${result.state==="verified"?"uploaded and verified":"uploaded, needs review"} ${JSON.stringify({job:short(receipt.data.jobId),bytes:receipt.data.bytes,how:"restored from the remote copy and compared"})}`);
   return{state:result.state,jobId:receipt.data.jobId,remoteRef:binding.target.remoteRef,revision:binding.target.revision,...(hash.safeParse(result.snapshotId).success?{snapshotId:result.snapshotId}:{}),...(result.lockRelease==="unconfirmed"?{lockRelease:"unconfirmed" as const}:{})};
  });}
  async function setAutomaticUpload(remoteRef:unknown,expectedRevision:unknown,enabled:unknown){return exclusive(async()=>{
@@ -314,6 +329,7 @@ export function createBackupRemoteHost(options:BackupRemoteHostOptions){
   const result=await storage.store(selected.archivePath,checked.data);
   if(!["verified","needs-review"].includes(result.state)||(result.state==="verified"&&!hash.safeParse(result.snapshotId).success))refuse();
   if(result.state==="verified")await options.updateProtected(document=>{const next=readBinding(document);check(next,binding.target.revision,binding.target.remoteRef);if(!next||JSON.stringify(next.automatic)!==JSON.stringify(paused))refuse();return{...document,[BACKUP_REMOTE_BINDING_KEY]:JSON.stringify({...next,automatic:{...policy,after:checked.data.verifiedAt,jobId:checked.data.jobId,paused:false}})};});
+  outcome(`backup off-site ${result.state==="verified"?"uploaded and verified":"uploaded, needs review"} ${JSON.stringify({job:short(checked.data.jobId),bytes:checked.data.bytes,how:"restored from the remote copy and compared",automatic:true})}`);
   return{state:result.state,jobId:checked.data.jobId,...(result.lockRelease==="unconfirmed"?{lockRelease:"unconfirmed" as const}:{})};
  });}
  async function reconcileLatest(remoteRef:unknown,expectedRevision:unknown,jobId:unknown){return exclusive(async()=>{

@@ -295,7 +295,7 @@ it("inheritance at write: a child of a marked line enters the revoke's frontier 
   const late = addLine(db, "Y", "y-1", true);
   const at51 = lsnOf(db, "T", ids[51]!);
   db.exec("BEGIN"); inheritMarks(db, { kind: "line", threadId: "Y", lsn: late }, [], [{ threadId: "T", from: at51, to: at51 }]); db.exec("COMMIT");
-  expect(verdict(db, "Y", "y-1")).toBe("checking");
+  expect(verdict(db, "Y", "y-1")).toBe("withheld"); // its own deny row at its write (DELETION-DRAIN-V2 2.3), not only held until the pop
   drain(db);
   expect(verdict(db, "Y", "y-1")).toBe("withheld");
   expect(count(db, "SELECT count(*) AS n FROM memory_deny_line WHERE thread_id='Y' AND revoke_id=?", R)).toBe(1);

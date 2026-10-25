@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "HR Admin",
     "tagline": "Policy answers and people paperwork with the source beside each decision",
-    "summary": "Haven prepares a policy answer linked to the supplied handbook for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For role design and evaluation strategy, use Talent. For a broader legal exposure review, use Counsel. For staffing a set of shifts from approved availability, use Shift Planner. I give guidance and drafts, not licensed legal or HR advice, and I promise no outcome.",
+    "summary": "Haven prepares a policy answer linked to the supplied handbook for your review.",
     "category": "People",
     "author": {
       "name": "Ferrox Labs",
@@ -60,7 +60,8 @@
         "title": "HR Admin",
         "description": "Haven prepares a policy answer linked to the supplied handbook for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For role design and evaluation strategy, use Talent. For a broader legal exposure review, use Counsel. For staffing a set of shifts from approved availability, use Shift Planner.",
         "appearance": {
-          "color": "teal"
+          "color": "coral",
+          "mascotBody": "shield"
         },
         "skills": [
           "hr-handbook",

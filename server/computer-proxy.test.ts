@@ -596,6 +596,8 @@ describe("computer proxy control gate (fake box + fake control)", () => {
   let held = false;
   let helpOpen = false;
   let failHelpPost = false;
+  let controlDown = false;
+  let holdDuringCommand = false;
   const expiredHelpIds: string[] = [];
   const authHeaders: Array<string | undefined> = [];
 
@@ -618,6 +620,8 @@ describe("computer proxy control gate (fake box + fake control)", () => {
         req.on("data", (c) => (body += c));
         req.on("end", () => {
           commands.push(JSON.parse(body || "{}").command ?? "");
+          // the person clicks Take control while this command is running on the box
+          if (holdDuringCommand) { held = true; holdDuringCommand = false; }
           const size = Buffer.from(JPEG, "base64").length;
           res.writeHead(200, { "content-type": "application/json" });
           res.end(
@@ -637,6 +641,12 @@ describe("computer proxy control gate (fake box + fake control)", () => {
 
     controlServer = createServer((req, res) => {
       authHeaders.push(Array.isArray(req.headers.authorization) ? undefined : req.headers.authorization);
+      if (controlDown) {
+        req.resume();
+        res.writeHead(503, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "down" }));
+        return;
+      }
       if (req.method === "POST") {
         if (failHelpPost) {
           req.resume();
@@ -770,6 +780,29 @@ describe("computer proxy control gate (fake box + fake control)", () => {
     expect(expiredHelpIds).toContain("help-1");
   });
 
+  it("04-05-A2: refuses a new action when the control state cannot be read", async () => {
+    held = false;
+    controlDown = true;
+    const before = commands.length;
+    rpc({ jsonrpc: "2.0", id: 80, method: "tools/call", params: { name: "screenshot", arguments: {} } });
+    const shot = await waitFor(80);
+    controlDown = false;
+    expect(shot.result.isError).toBe(true);
+    expect(shot.result.content[0].text).toMatch(/could not confirm/i);
+    expect(commands.length).toBe(before);
+  });
+
+  it("04-05-A1: a batch still running when the person takes control returns no screen", async () => {
+    held = false;
+    holdDuringCommand = true;
+    rpc({ jsonrpc: "2.0", id: 81, method: "tools/call", params: { name: "computer_batch", arguments: { actions: [{ action: "wait", ms: 500 }] } } });
+    const result = await waitFor(81);
+    held = false;
+    expect(result.result.content.every((block: { type: string }) => block.type === "text")).toBe(true);
+    expect(result.result.content[0].text).toMatch(/took control/i);
+    expect(result.result.isError).toBe(true);
+  });
+
   it("returns immediately when the person cannot be paged", async () => {
     held = false;
     helpOpen = false;
@@ -780,4 +813,47 @@ describe("computer proxy control gate (fake box + fake control)", () => {
     expect(result.result.isError).toBe(true);
     expect(result.result.content[0].text).toMatch(/could not be paged/i);
   });
+});
+
+// U20 (1.0.4): the box token rides the owner-only per-turn credential file when one is wired, read at each call, never the
+// proxy's environment (a stale env value is never used once a file is wired).
+describe("computer proxy box token from the credential file", () => {
+  it("sends the file's token, re-reads it per call, and never the env value", async () => {
+    const { createTurnCredentialStore } = await import("./drivers/turn-credentials.ts");
+    const store = createTurnCredentialStore();
+    const seen: string[] = [];
+    const box = createServer((req, res) => {
+      seen.push(String(req.headers.authorization ?? ""));
+      req.resume();
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ exitCode: 0, stdout: "", stderr: "", id: "job-1", state: "done" }));
+    });
+    await new Promise<void>((r) => box.listen(0, "127.0.0.1", r));
+    const port = (box.address() as { port: number }).port;
+    store.write({ computer: { MURAGEBOX_BOX_TOKEN: "file-tok-1" } });
+    const proxy = spawn(process.execPath, ["--experimental-strip-types", PROXY], {
+      env: { ...process.env, MURAGEBOX_BOX_API: `http://127.0.0.1:${port}`, MURAGEBOX_BOX_ID: "box-1", MURAGEBOX_BOX_TOKEN: "stale-env", MURAGE_CRED_FILE: store.path, MURAGE_CRED_SERVER: "computer" },
+      stdio: ["pipe", "ignore", "ignore"],
+    });
+    const call = (id: number) => proxy.stdin!.write(JSON.stringify({ jsonrpc: "2.0", id, method: "tools/call", params: { name: "computer_exec", arguments: { command: "true" } } }) + "\n");
+    const until = async (check: () => boolean) => { for (let i = 0; i < 200 && !check(); i++) await new Promise((r) => setTimeout(r, 25)); };
+    try {
+      proxy.stdin!.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }) + "\n");
+      call(2);
+      await until(() => seen.length > 0);
+      expect(seen[0]).toBe("Bearer file-tok-1");
+      store.write({ computer: { MURAGEBOX_BOX_TOKEN: "file-tok-2" } });
+      const before = seen.length;
+      await new Promise((r) => setTimeout(r, 300));
+      const mark = seen.length;
+      call(3);
+      await until(() => seen.slice(Math.max(before, mark)).includes("Bearer file-tok-2"));
+      expect(seen).toContain("Bearer file-tok-2");
+      expect(seen.some((auth) => auth.includes("stale-env"))).toBe(false);
+    } finally {
+      proxy.kill();
+      box.close();
+      store.dispose();
+    }
+  }, 20_000);
 });

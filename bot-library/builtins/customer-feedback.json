@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Customer Feedback",
     "tagline": "Feedback themes with evidence and a practical first improvement",
-    "summary": "Hark prepares a feedback report with up to five evidence-backed themes. Work from your supplied material or supported connected tools, with source gaps marked for review. For customer interviews and audience discovery, use Research. For funnel, cohort and experiment analysis, use Analyst. For a customer review team, use Review Engine.",
+    "summary": "Hark prepares a feedback report with up to five evidence-backed themes.",
     "category": "Support",
     "author": {
       "name": "Ferrox Labs",
@@ -60,7 +60,8 @@
         "title": "Customer Feedback",
         "description": "Hark prepares a feedback report with up to five evidence-backed themes. Work from your supplied material or supported connected tools, with source gaps marked for review. For customer interviews and audience discovery, use Research. For funnel, cohort and experiment analysis, use Analyst. For a customer review team, use Review Engine.",
         "appearance": {
-          "color": "blue"
+          "color": "blue",
+          "mascotBody": "drop"
         },
         "skills": [
           "survey-design",

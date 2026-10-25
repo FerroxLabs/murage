@@ -1,13 +1,13 @@
 import { wipeHomeEngineSignIns } from "./b1b-recovery.ts";
 import { cloudHomeCopy } from "./copy.ts";
 import { randomUUID } from "node:crypto";
-import { ensureFluxComposioBrokerToken } from "../../electron/flux-composio-token.mjs";
+import { ensureFluxComposioBrokerToken, fluxKeyFingerprint, revokeFluxComposioBrokerToken } from "../../electron/flux-composio-token.mjs";
 import { fluxComposioBrokerUrl, fluxComposioAccess } from "../../electron/managed-composio.mjs";
 import type { SealedSecretStore } from "./secrets.ts";
 import { cloudCredentialPatch } from "./credentials.ts";
 import { updateServerCredentials } from "./server-secrets.ts";
 import { cleanupCloudBrowser } from "./browser-process.ts";
-import { connectedAppsCredentials, connectedAppsPatch, isGenericCredentialPatch, serverCredentialProjection } from "./credential-projection.ts";
+import { connectedAppsCredentials, connectedAppsPatch, isGenericCredentialPatch, PENDING_REVOKE_MAX, pendingRevokes, pendingRevokesPatch, serverCredentialProjection } from "./credential-projection.ts";
 import { createCloudModelSignInClient, cloudModelCancel, cloudModelRequest } from "./model-signin-wire.ts";
 import type { createHomeModelSignIn } from "./model-signin.ts";
 
@@ -21,6 +21,8 @@ export const CLOUD_PRIVATE_MESSAGE_TYPES = [
 
 type Sender = (message: object) => void;
 type RecordValue = Record<string, unknown>;
+/** Which Flux key, by the same fingerprint the broker token records ("" for none). */
+function fluxKeyPrint(key: string | undefined): string { return key?.trim() ? fluxKeyFingerprint(key.trim()) : ""; }
 function messageRecord(value: unknown): RecordValue | null { return value && typeof value === "object" && !Array.isArray(value) ? value as RecordValue : null; }
 
 export function createSupervisorPort(options: {
@@ -33,6 +35,10 @@ export function createSupervisorPort(options: {
   modelSignIn?: ReturnType<typeof createHomeModelSignIn>;
   generation?: () => number;
   onModelReady?: () => void;
+  /** Test seam: best-effort revoke of the broker token a replaced Flux key minted. */
+  revokeBrokerToken?: (fluxBrokerUrl: string, token: string) => Promise<unknown>;
+  /** Test seam: waits between mint retries after a failed mint; the last entry repeats. */
+  mintRetryDelaysMs?: number[];
 }) {
   let chain = Promise.resolve();
   let disposed = false;
@@ -54,8 +60,53 @@ export function createSupervisorPort(options: {
     if (disposed || options.store.getAll().fluxApiKey !== previous.fluxApiKey) return;
     const credentials = serverCredentialProjection(options.store.patch(connectedAppsPatch(next)));
     options.send({ type: "murage:cloud-credentials", credentials });
-    options.send({ type: "murage:managed-composio", fluxAccess: fluxComposioAccess(url, credentials), fluxBrokerUrl: url, accountKind: credentials.fluxComposioAccountKind, access: null, legacyUntil: "" });
+    sendManagedComposio(url, credentials);
+    if (credentials.fluxComposioBrokerToken) drainPendingRevoke();
   };
+  // A mint that failed leaves no token, and nothing else re-mints on its own, so
+  // retry on a backoff (off the write chain) until a token is stored.
+  let retrying = false;
+  const retryMint = () => {
+    if (retrying || disposed) return;
+    retrying = true;
+    const delays = options.mintRetryDelaysMs?.length ? options.mintRetryDelaysMs : [15_000, 30_000, 60_000, 120_000, 300_000];
+    void (async () => {
+      try {
+        for (let attempt = 0; !disposed; attempt++) {
+          await new Promise<void>(resolve => { const t = setTimeout(resolve, delays[Math.min(attempt, delays.length - 1)]); t.unref?.(); });
+          const now = options.store.getAll();
+          if (disposed || !now.fluxApiKey || now.fluxComposioBrokerToken) return;
+          const run = chain.then(() => remint(false));
+          chain = run.catch(() => {});
+          try { await run; } catch { /* retry on the next tick */ }
+          if (options.store.getAll().fluxComposioBrokerToken) return;
+        }
+      } finally { retrying = false; }
+    })();
+  };
+  // Replaced Flux keys' broker tokens are kept sealed (never sent to the server)
+  // until Flux confirms each revoke, so a crash or outage cannot lose them.
+  let draining = false;
+  const revokeToken = (url: string, token: string) =>
+    (options.revokeBrokerToken ?? ((fluxBrokerUrl: string, t: string) => revokeFluxComposioBrokerToken({ fluxBrokerUrl, token: t })))(url, token);
+  const drainPendingRevoke = () => {
+    if (disposed || draining || !pendingRevokes(options.store.getAll()).length) return;
+    draining = true;
+    void (async () => {
+      try {
+        for (const token of pendingRevokes(options.store.getAll())) {
+          if (disposed) return;
+          let ok = false;
+          try { ok = Boolean(await revokeToken(fluxComposioBrokerUrl(process.env, { packaged: true }), token)); } catch { /* this entry stays for the next drain */ }
+          // Clear only this entry, and only once its own revoke is confirmed.
+          if (ok) options.store.patch(pendingRevokesPatch(pendingRevokes(options.store.getAll()).filter(t => t !== token)));
+        }
+      } catch { /* sealed store unavailable: retried on the next start or successful mint */ }
+      finally { draining = false; }
+    })();
+  };
+  const sendManagedComposio = (url: string, credentials: Record<string, string>) =>
+    options.send({ type: "murage:managed-composio", fluxAccess: fluxComposioAccess(url, credentials), fluxBrokerUrl: url, accountKind: credentials.fluxComposioAccountKind, access: null, legacyUntil: "" });
   const dispatch = async (input: unknown, generation: number) => {
     if (disposed || generation !== (options.generation?.() ?? generation)) return;
     const message = messageRecord(input);
@@ -93,12 +144,36 @@ export function createSupervisorPort(options: {
       case "murage:cloud-credential-write": {
         const patch = messageRecord(message.credentials);
         if (typeof message.requestId !== "string" || !patch || !isGenericCredentialPatch(patch)) return refuse(message, cloudHomeCopy.invalidCloudCredentialWrite);
+        // A new Flux key (1.0.4 audit 11-5): the broker token the old key minted
+        // belongs to the old account. It is cleared in the same sealed write, so
+        // no connected-app call after this one can carry it (a failed re-mint
+        // leaves no token: calls fail closed), then re-minted for the new key.
+        const before = options.store.getAll();
+        const keyChanged = Object.hasOwn(patch, "fluxApiKey") && fluxKeyPrint(patch.fluxApiKey as string) !== fluxKeyPrint(before.fluxApiKey);
+        const replacedToken = keyChanged ? before.fluxComposioBrokerToken : undefined;
+        // Same key re-saved but the last mint failed: mint again (no token => dead apps).
+        const needsMint = !keyChanged && Object.hasOwn(patch, "fluxApiKey") && fluxKeyPrint(patch.fluxApiKey as string) !== "" && !before.fluxComposioBrokerToken;
+        // Persist the replaced token as a pending revoke in the same sealed write.
+        // The list is bounded: a full list drops its oldest entry, which gets one off-chain revoke attempt below.
+        const queued = keyChanged && replacedToken ? [...pendingRevokes(before).filter(t => t !== replacedToken), replacedToken] : null;
+        const dropped = queued ? queued.slice(0, Math.max(0, queued.length - PENDING_REVOKE_MAX)) : [];
+        const marker: Record<string, string> = queued ? pendingRevokesPatch(queued.slice(dropped.length)) : {};
+        let written = false;
         options.send({ type: "murage:provider-bank-fence", held: true });
         try {
-          const credentials = serverCredentialProjection(options.store.patch(patch as Record<string, string>));
+          const credentials = serverCredentialProjection(options.store.patch(keyChanged ? { ...patch as Record<string, string>, ...connectedAppsPatch({}), ...marker } : patch as Record<string, string>));
+          written = true;
+          if (keyChanged) sendManagedComposio(fluxComposioBrokerUrl(process.env, { packaged: true }), credentials);
           options.send({ type: "murage:cloud-credential-result", requestId: message.requestId, credentials });
         } catch { options.send({ type: "murage:cloud-credential-result", requestId: message.requestId, error: cloudHomeCopy.cloudCredentialWriteFailed }); }
         finally { options.send({ type: "murage:provider-bank-fence", held: false }); }
+        if (!written || (!keyChanged && !needsMint)) return;
+        // A token pushed off the full list is revoked off the chain, once, best effort (never blocks the write).
+        for (const token of dropped) void Promise.resolve().then(() => revokeToken(fluxComposioBrokerUrl(process.env, { packaged: true }), token)).catch(() => {});
+        // Only the mint holds the write chain; the revoke runs off it (audit M2).
+        try { await remint(false); } catch { /* no token stays no token: connected apps fail closed until the retry lands */ }
+        if (!disposed && options.store.getAll().fluxApiKey && !options.store.getAll().fluxComposioBrokerToken) retryMint();
+        drainPendingRevoke();
         return;
       }
       case "murage:flux-composio-token-rejected":
@@ -142,7 +217,7 @@ export function createSupervisorPort(options: {
       if (["murage:cloud-model-signin-ready", "murage:cloud-model-signin-request", "murage:model-signin-refresh"].includes(String(type))) return dispatch(input, generation);
       const next = chain.then(() => dispatch(input, generation)); chain = next.catch(() => {}); return next;
     },
-    configure(): Promise<void> { const next = chain.then(() => remint(false)); chain = next.catch(() => {}); return next; },
+    configure(): Promise<void> { drainPendingRevoke(); const next = chain.then(() => remint(false)); chain = next.catch(() => {}); return next; },
     remintConnectedApps: () => remint(true),
     requestClose: () => options.send({ type: "murage:close" }),
     dispose: () => { disposed = true; },
@@ -200,7 +275,7 @@ export async function persistCloudCredentialPatch(config: unknown): Promise<void
   if (!channel) throw new Error(cloudHomeCopy.cloudSupervisorConnectionIsRequired);
   const requestId = randomUUID();
   await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => { pending.delete(requestId); reject(new Error(cloudHomeCopy.cloudCredentialWriteTimedOut)); }, 15_000);
+    const timer = setTimeout(() => { pending.delete(requestId); reject(new Error(cloudHomeCopy.cloudCredentialWriteTimedOut)); }, 25_000); // a write queued behind a Flux key swap waits for the up-to-15 s broker mint
     pending.set(requestId, { resolve, reject, timer });
     try { channel.postMessage({ type: "murage:cloud-credential-write", requestId, credentials }); }
     catch { clearTimeout(timer); pending.delete(requestId); reject(new Error(cloudHomeCopy.cloudCredentialWriteFailed)); }

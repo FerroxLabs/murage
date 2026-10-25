@@ -1,4 +1,5 @@
 import type { ExecEnv } from "../../shared/mount-identity.ts";
+import { claudeModelExtras } from "./claude-model-extras.ts";
 import { oneShots } from "../engine-one-shots.ts";
 import { engineFailure, withCliMemoryLearning, type MemorySessionRunner } from "./cli-memory-learning.ts";
 import { CLOUD_BROKER_DIR, CLOUD_RENDER_MCP, CLOUD_RENDER_SYSTEM_PROMPT, CLOUD_WORKSPACE_ROOT, cloudEngineHome, cloudTurnBot, cloudTurnEnvironment, cloudTurnRender, isCloudRenderPlaceholder } from "../cloud-home/turn-process.ts";
@@ -21,9 +22,10 @@ import { boundedEnvMs } from "./env-ms.ts";
 import { awaitRequiredMcp, isUnsupportedAnswer, McpBackoff, mcpFirstAnswerMs, mcpReconnectWaitMs, McpStatusSupport, mcpWaitChipTitle, parseMcpStatus, splitMcpServers, toolsMayBeLoadingNotice, toolsUnavailableNotice, unavailableLabels, type McpReadiness, type McpStatusAnswer } from "./mcp-readiness.ts";
 import { applyProviderRoute, type ProviderTurnRoute } from "../provider-routing.ts";
 import { claudeTextOnlyTurn } from "./headless-text-only.ts";
-import { execFileSync } from "node:child_process";
+import { claudeBrowserMount } from "./claude-browser-mount.ts";
+import { execFile, execFileSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, closeSync, existsSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, lstatSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { parseDocument as parseYamlDocument } from "yaml";
 import { createServer as createNetServer } from "node:net";
 import { CLAUDE_UPDATE_MESSAGE, claudeExecutableIdentity, claudeLaunchRefusal, claudeLaunchRefusalError, ClaudeUpdateRequired, claudeVersionVerdict, knownClaudeCliVersion, requireClaudeCliVersion, type ClaudeLaunchRefusal } from "./claude-guards.ts";
@@ -464,7 +466,15 @@ export function readClaudeModelCatalog(env: Record<string, string | undefined> =
   const nestedEnv = settings.env && typeof settings.env === "object" ? (settings.env as Record<string, unknown>) : {};
   const envModel = nestedEnv.ANTHROPIC_MODEL ?? env.ANTHROPIC_MODEL;
   if (typeof envModel === "string") extras.push(...extrasFromUnknown([envModel]));
+  // The owner's Claude Code setup (custom option, tier models). Only the settings.json
+  // env counts: a value left in the shell by a provider switcher is stripped before the
+  // spawn, so a row for it would be a phantom (see "ambient ANTHROPIC_MODEL" test).
+  extras.push(...claudeModelExtras(nestedEnv, CLAUDE_MODEL_ID));
 
+  return withClaudeExtras(extras);
+}
+
+function withClaudeExtras(extras: Array<{ id: string; label: string }>) {
   const options = STATIC_CLAUDE_MODELS.options.map((option) => ({ ...option }));
   const seen = new Set(options.map((option) => option.id));
   for (const extra of extras) {
@@ -605,6 +615,11 @@ function askSummary(ask: Ask): string {
   return text === "{}" ? (ask.tool ?? "") : text.slice(0, 200);
 }
 
+/** U22: the turn's stopReason, and the reason its process is recycled, when the permission proxy lost its broker. */
+export const BROKER_LOST = "permission_broker_lost";
+/** What the owner reads when that happens. */
+export const BROKER_LOST_MESSAGE = "Murage lost its connection to this engine's approval cards, so this turn stopped. Send your message again to carry on.";
+
 export function permissionSocketPath(threadId: string) {
   // A readable prefix alone is not unique: ids that agree on their first
   // characters ("t-perm-dup-1", "t-perm-dup-2") would share a socket. POSIX
@@ -641,6 +656,16 @@ export function brokerSocketCandidates(threadId: string): string[] {
     `${base}-${randomBytes(3).toString("hex")}`,
     `${base}-${randomBytes(3).toString("hex")}`,
   ];
+}
+
+/** True when `path` exists and is owned by a uid other than this process (POSIX only). */
+function socketNameHeldByAnotherUid(path: string): boolean {
+  if (process.platform === "win32" || typeof process.getuid !== "function") return false;
+  try {
+    return lstatSync(path).uid !== process.getuid();
+  } catch {
+    return false;
+  }
 }
 
 export async function createPermissionBroker(opts: {
@@ -789,6 +814,12 @@ export async function createPermissionBroker(opts: {
   let server: ReturnType<typeof createNetServer> | null = null;
   for (const [index, candidate] of opts.socketPaths.entries()) {
     const attempt = createNetServer(connectionHandler);
+    // A name already held by another uid is never replaced or bound over: take the next candidate.
+    if (socketNameHeldByAnotherUid(candidate)) {
+      console.error(`permission broker: ${candidate} is held by another user, skipped`);
+      if (index === opts.socketPaths.length - 1) console.error(`permission broker unavailable on ${candidate}`);
+      continue;
+    }
     try {
       unlinkSync(candidate);
     } catch {}
@@ -1398,17 +1429,103 @@ export async function claudeShellDiscovery(
   platform: NodeJS.Platform,
   handed: Readonly<Record<string, string>>,
   generation: number,
-  deps: { exists?: (path: string) => boolean; gitBash?: (handed: Readonly<Record<string, string>>, generation: number) => Promise<string | null | GitBashFound> } = {},
+  deps: { exists?: (path: string) => boolean; gitBash?: (handed: Readonly<Record<string, string>>, generation: number) => Promise<string | null | GitBashFound>; launchCheck?: (shell: string) => Promise<ClaudeExecLaunchResult> } = {},
 ): Promise<GitBashFound> {
   if (platform === "win32") {
-    const found = await (deps.gitBash ?? gitBashDiscovery)(handed, generation);
-    if (found === null || typeof found === "string") return found ? { bash: found } : { bash: null, reason: "no-git-bash" };
-    return found.bash ? { bash: found.bash } : { bash: null, reason: found.reason ?? "no-git-bash" };
+    const raw = await (deps.gitBash ?? gitBashDiscovery)(handed, generation);
+    const found: GitBashFound = raw === null || typeof raw === "string" ? (raw ? { bash: raw } : { bash: null, reason: "no-git-bash" }) : raw.bash ? { bash: raw.bash } : { bash: null, reason: raw.reason ?? "no-git-bash" };
+    // 1.0.5: a found Git Bash is used only when the wrapper actually starts a server on this machine. Every built-in MCP
+    // server is started through it, so a wrapper that cannot run (no cygpath, a WSL bash override, a blocked script, an
+    // unreadable environment file) left every built-in "Connection closed" with no reason shown. The turn then runs on
+    // the CLI's PowerShell tool (powershell-inherit), the mode a Windows machine with no Git Bash already uses.
+    if (found.bash && deps.launchCheck) {
+      // r2: a thrown error's message is never logged (it can carry handed text); the line names a fixed reason only
+      const check = await deps.launchCheck(found.bash).catch((): ClaudeExecLaunchResult => ({ ok: false, detail: "reason=check-error" }));
+      if (!check.ok) return { bash: null, reason: "wrapper-failed", detail: check.detail };
+    }
+    return found;
   }
   const exists = deps.exists ?? existsSync;
   for (const path of ["/bin/bash", "/usr/bin/bash", "/bin/zsh"]) if (exists(path)) return { bash: path };
   return { bash: null };
 }
+
+export type ClaudeExecLaunchResult = { ok: true } | { ok: false; detail: string };
+
+const EXEC_LAUNCH_MARKER = "murage-exec-launch-ok";
+const EXEC_LAUNCH_TIMEOUT_MS = 20_000;
+const EXEC_LAUNCH_CACHE_MAX = 16;
+const execLaunchPassed = new Map<string, number>();
+/** r2 (Astra): a file's identity for the pass cache (size, mtime, inode), so a shell, wrapper or cygpath replaced at the same
+ * path is checked again; a file that cannot be read counts as its own identity ("-"). */
+const fileIdentity = (path: string): string => { try { const st = statSync(path); return `${st.size}:${st.mtimeMs}:${st.ino}`; } catch { return "-"; } };
+/** r2 (Grok High): the exit status as a fixed token; anything else from the child is never logged. */
+const exitToken = (code: number | string | null): string => (code === null ? "null" : /^[A-Za-z0-9_-]{1,40}$/.test(String(code)) ? String(code) : "other");
+/** POSIX single-quoting, as Claude Code quotes a stdio server's command line for the shell prefix. */
+const posixQuote = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`;
+
+/** The pre-flight for a found shell (1.0.5): starts `node -e <print a marker>` (Murage's own runtime, as every built-in MCP
+ * server is started) through the installed murage-exec wrapper exactly as Claude Code starts a stdio server: `<shell>
+ * <wrapper> '<command line>'` with an MCP stanza's env (the turn's environment file, ELECTRON_RUN_AS_NODE kept by
+ * MURAGE_EXEC_KEEP, and on Windows the shell's own folder first on PATH, claudeShellServers). It passes only when the marker
+ * comes back on stdout with exit 0; otherwise `detail` carries the exit status and a fixed reason only (r2: never the child's
+ * stderr). r2 (Grok High): the pre-flight runs with the pinned environment the engine run gets: NODE_OPTIONS "" in every
+ * spelling (claude.ts writes "" into the hand before the turn's environment file) and every absence pin (ABSENT_PINS: BASH_ENV,
+ * ENV, ...) removed in every spelling, so a handed loader value runs nothing inside the pre-flight. A pass is kept per
+ * generation, shell, cwd, PATH and the identity of the shell, the wrapper and (Windows) cygpath; a failure is checked again on
+ * the next turn. The wrapper itself changes to `cwd` (as for every server), so a
+ * directory it cannot enter fails here with the wrapper's own status. */
+export async function claudeExecLaunchCheck(
+  shell: string,
+  handed: Readonly<Record<string, string>>,
+  cwd: string,
+  generation: number,
+  opts: { platform?: NodeJS.Platform; runtime?: string; timeoutMs?: number } = {},
+): Promise<ClaudeExecLaunchResult> {
+  const platform = opts.platform ?? process.platform;
+  const pathName = Object.keys(handed).find((name) => (platform === "win32" ? name.toUpperCase() === "PATH" : name === "PATH"));
+  const handPath = pathName !== undefined ? handed[pathName]! : "";
+  const wrapper = murageExecPrefix(platform);
+  const identity = [fileIdentity(shell), fileIdentity(wrapper), platform === "win32" ? fileIdentity(win32.join(win32.dirname(shell), "cygpath.exe")) : ""];
+  const key = [generation, shell, cwd, handPath, ...identity].join("\u0000");
+  if (execLaunchPassed.get(key) === generation) return { ok: true };
+  const turnEnv: Record<string, string> = {};
+  for (const [name, value] of Object.entries(handed)) {
+    if (typeof value !== "string" || name === "CLAUDE_CODE_SHELL_PREFIX" || name === "CLAUDE_CODE_SHELL" || name === EXEC_ENV_FILE || name === EXEC_KEEP) continue;
+    turnEnv[name] = value;
+  }
+  // r2 (Grok High): the same pins as the engine run, before anything is written or started
+  for (const name of ABSENT_PINS) deleteEnvName(turnEnv, name, platform);
+  for (const name of Object.keys(turnEnv)) if (name.toUpperCase() === "NODE_OPTIONS") delete turnEnv[name];
+  turnEnv.NODE_OPTIONS = "";
+  const envFile = writeExecEnvFile(`launch-check\u0000${key}`, turnEnv, cwd, shell);
+  const env: Record<string, string> = { ...turnEnv, [EXEC_ENV_FILE]: envFile, ELECTRON_RUN_AS_NODE: "1", [EXEC_KEEP]: "ELECTRON_RUN_AS_NODE" };
+  if (platform === "win32") {
+    const bashDir = win32.dirname(shell);
+    for (const name of Object.keys(env)) if (name.toUpperCase() === "PATH") delete env[name];
+    env.PATH = [bashDir, ...handPath.split(";").filter((entry) => entry && entry.toLowerCase() !== bashDir.toLowerCase())].join(";");
+  }
+  const command = `${posixQuote(opts.runtime ?? process.execPath)} -e ${posixQuote(`process.stdout.write(${JSON.stringify(EXEC_LAUNCH_MARKER)})`)}`;
+  try {
+    const result = await new Promise<{ code: number | string | null; stdout: string; stderr: string }>((resolve) => {
+      execFile(shell, [wrapper, command], { env, timeout: opts.timeoutMs ?? EXEC_LAUNCH_TIMEOUT_MS, windowsHide: true, maxBuffer: 64 * 1024 }, (error, stdout, stderr) => {
+        const code = error ? ((error as NodeJS.ErrnoException & { code?: number | string }).code ?? (error.killed ? "timeout" : 1)) : 0;
+        resolve({ code: code ?? null, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") });
+      });
+    });
+    if (result.code === 0 && result.stdout.includes(EXEC_LAUNCH_MARKER)) {
+      if (execLaunchPassed.size >= EXEC_LAUNCH_CACHE_MAX) execLaunchPassed.clear();
+      execLaunchPassed.set(key, generation);
+      return { ok: true };
+    }
+    return { ok: false, detail: `exit=${exitToken(result.code)} reason=${result.code === 0 ? "no-marker" : "wrapper-exit"}` };
+  } finally {
+    try { rmSync(envFile, { force: true }); } catch { /* best effort */ }
+  }
+}
+
+/** Test seam: forget every passed pre-flight. */
+export function resetClaudeExecLaunchCheckForTests(): void { execLaunchPassed.clear(); }
 
 /** claudeShellDiscovery's shell alone. */
 export async function claudeExecShell(
@@ -1863,20 +1980,24 @@ export function isClaudeNeverBlankName(name: string, platform: NodeJS.Platform =
  * overlay) and policy settings `env` into its own process.env WHOLESALE, "" included (Ng filters only project and local), so a
  * "" pin reached apiKeyHelper / gcpAuthRefresh / aws* helpers (GOOGLE_APPLICATION_CREDENTIALS="" breaks google-auth ADC).
  * The enforcement-critical names (flag settings are the only layer above the owner's user settings) take a non-empty neutral
- * value where one cannot break a helper child: BASH_ENV and ENV name /dev/null on every platform (bash and sh source an empty
- * file; MSYS/Git Bash maps /dev/null; nothing else reads them). */
-export const CLAUDE_OVERLAY_NEUTRAL: Readonly<Record<string, string>> = { BASH_ENV: "/dev/null", ENV: "/dev/null" };
+ * value where one cannot break a helper child: BASH_ENV names /dev/null on every platform (bash sources an empty file; MSYS/Git
+ * Bash maps /dev/null; nothing else reads it). 1.0.4 U19: ENV is no longer here. A repository's own scripts read `$ENV` as a
+ * setting (`${ENV:-development}`, `[ -n "$ENV" ]`), so "/dev/null" reached them as a value in every Bash child. ENV is ruled ""
+ * instead (CLAUDE_OVERLAY_EMPTY_ALLOWED): sh, dash, ksh and bash in POSIX mode source a startup file only when ENV expands to
+ * a non-empty name, so "" is unset to every shell that reads it, and a script testing it sees no value. */
+export const CLAUDE_OVERLAY_NEUTRAL: Readonly<Record<string, string>> = { BASH_ENV: "/dev/null" };
 
 /** 14.6, ruled by MurageMain (FROZEN: claude-nopin.test.ts asserts the overlay's "" names equal exactly this list): the
  * enforcement-critical names with no non-empty neutral value, which the overlay pins to "": CLAUDE_CODE_SHELL_PREFIX (inherit
  * path: any value is a program the CLI runs), NODE_OPTIONS (every value is an option), GIT_ASKPASS (any value is a program git
  * runs), CLAUDE_ENV_FILE (a file the CLI sources), PYTHONINSPECT (any non-empty value turns inspect mode on),
- * CLAUDE_CODE_PLUGIN_DIRS (isolation: any value is a directory list the CLI loads). Each reader takes "" as unset, so none
+ * CLAUDE_CODE_PLUGIN_DIRS (isolation: any value is a directory list the CLI loads), and (1.0.4 U19) ENV (any value is a file a
+ * POSIX shell sources; "" is no file, and leaks no value to a script that reads `$ENV`). Each reader takes "" as unset, so none
  * changes what a helper child does: the spawn env already carries NODE_OPTIONS="" and GIT_ASKPASS=""; node and python read an
  * empty NODE_OPTIONS / PYTHONINSPECT as unset; the CLI tests CLAUDE_CODE_SHELL_PREFIX and CLAUDE_ENV_FILE for truthiness
  * (2.1.305, `strings -n 8` offsets 27487109 `a.CLAUDE_CODE_SHELL_PREFIX;if(ft)` and 25098417
  * `h=a.CLAUDE_ENV_FILE;if(h)try{...readFile(h)}`), so "" is never read or stat'ed as a path. */
-export const CLAUDE_OVERLAY_EMPTY_ALLOWED: readonly string[] = ["CLAUDE_CODE_SHELL_PREFIX", "NODE_OPTIONS", "GIT_ASKPASS", "CLAUDE_ENV_FILE", "PYTHONINSPECT", "CLAUDE_CODE_PLUGIN_DIRS"];
+export const CLAUDE_OVERLAY_EMPTY_ALLOWED: readonly string[] = ["CLAUDE_CODE_SHELL_PREFIX", "NODE_OPTIONS", "GIT_ASKPASS", "CLAUDE_ENV_FILE", "PYTHONINSPECT", "CLAUDE_CODE_PLUGIN_DIRS", "ENV"];
 
 export function isClaudeOverlayEmptyAllowed(name: string, platform: NodeJS.Platform = process.platform): boolean {
   return CLAUDE_OVERLAY_EMPTY_ALLOWED.some((known) => (platform === "win32" ? known.toUpperCase() === name.toUpperCase() : known === name));
@@ -1942,10 +2063,10 @@ const managedReported = (name: string): boolean => {
 export type ClaudeOverlayEnv = { env: Record<string, string>; managed: string[]; ownerRouting: string[] } | { refusal: string };
 
 /** The overlay's `env` for a turn (3.4, section 11 D1, the section 14 ruling and 14.6). 14.6: NO name is ever "" here (a value
- * is the owner's non-empty one, Murage's non-empty neutral one, or absent), except the six ruled names (CLAUDE_OVERLAY_EMPTY_ALLOWED).
+ * is the owner's non-empty one, Murage's non-empty neutral one, or absent), except the seven ruled names (CLAUDE_OVERLAY_EMPTY_ALLOWED).
  * In order: every value and resolved pin with a non-empty handed value, the handed PATH, the
- * mode's names, NODE_OPTIONS (""), PSModulePath as handed, BASH_ENV and ENV at /dev/null (CLAUDE_OVERLAY_NEUTRAL),
- * CLAUDE_ENV_FILE and PYTHONINSPECT (""), then each name a loaded settings file's `env` sets:
+ * mode's names, NODE_OPTIONS (""), PSModulePath as handed, BASH_ENV at /dev/null (CLAUDE_OVERLAY_NEUTRAL),
+ * ENV, CLAUDE_ENV_FILE and PYTHONINSPECT (""), then each name a loaded settings file's `env` sets:
  * - every routing name (CLAUDE_OWNER_ROUTING_NAMES), on every turn (14.2 N1): the owner's effective non-empty value (user
  *   settings, then managed, then the hand), else left out; a repository's file that sets one differently raises the sign-in
  *   card (claudeSigninHold), so a repository never overrides owner routing unasked;
@@ -1991,8 +2112,8 @@ export function claudeOverlayEnv(platform: NodeJS.Platform, mode: ClaudeShellMod
   fixedNames.push("NODE_OPTIONS");
   out.NODE_OPTIONS = "";
   restate("PSModulePath");
-  // 14.6: an absence pin takes its non-empty neutral value (BASH_ENV, ENV: /dev/null), or the ruled ""
-  // (CLAUDE_ENV_FILE, PYTHONINSPECT); POSIXLY_CORRECT and GIT_SSH are never restated (CLAUDE_UNENFORCEABLE_ABSENT)
+  // 14.6: an absence pin takes its non-empty neutral value (BASH_ENV: /dev/null), or the ruled ""
+  // (ENV, 1.0.4 U19; CLAUDE_ENV_FILE, PYTHONINSPECT); POSIXLY_CORRECT and GIT_SSH are never restated (CLAUDE_UNENFORCEABLE_ABSENT)
   for (const name of ABSENT_PINS) {
     if (CLAUDE_UNENFORCEABLE_ABSENT.includes(name)) continue;
     fixedNames.push(name);
@@ -2365,6 +2486,45 @@ export function claudeInProjectAllow(tool: unknown, input: unknown, cwd: string,
   }
 }
 
+/** 09-B1: drop the credential-named variables of the owner's captured login-shell map. Claude's own sign-in names stay. */
+export function stripCapturedCredentialNames(map: Record<string, string | undefined>): void {
+  for (const name of Object.keys(map)) if (/KEY|SECRET|TOKEN/i.test(name) && !/^(ANTHROPIC_|CLAUDE_)/i.test(name)) delete map[name];
+}
+
+/** 09-A2, 09-A3: the key-file rule this driver's own in-project check found for a file or search call, or undefined.
+ * `claudeInProjectAllow` answers only yes or no; a "no" that came from a key file must reach the verdict as a hold,
+ * or Auto approves a search that the walk already saw reaching a credentials file. */
+export function claudeInProjectHold(tool: unknown, input: unknown, cwd: string, home: string = homedir(), platform: NodeJS.Platform = process.platform): string | undefined {
+  if (typeof tool !== "string" || !input || typeof input !== "object" || Array.isArray(input)) return undefined;
+  const call = input as Record<string, unknown>;
+  const opts = { home, platform };
+  const ruleOf = (path: unknown): string | undefined => {
+    if (typeof path !== "string" || path === "") return undefined;
+    const checked = inProjectCheck(path, cwd, undefined, opts);
+    return !checked.ok && checked.reason === "sensitive" ? checked.rule : undefined;
+  };
+  switch (tool) {
+    case "Read":
+    case "Write":
+    case "Edit":
+    case "MultiEdit":
+      return ruleOf(call.file_path);
+    case "NotebookEdit":
+      return ruleOf(call.notebook_path);
+    case "Grep":
+    case "Glob": {
+      const root = call.path === undefined ? cwd : typeof call.path === "string" ? call.path : undefined;
+      if (!root) return undefined;
+      const rootRule = ruleOf(root);
+      if (rootRule) return rootRule;
+      const walked = walkRoot(root, cwd, opts);
+      return walked.ok && walked.hits.length > 0 ? walked.hits[0]!.rule : undefined;
+    }
+    default:
+      return undefined;
+  }
+}
+
 /** SEAM (build step 4): the shell walker's targets of a Bash command. Today it is "not
  * available" and a Bash ask goes to the verdict as it always has. */
 export function bashTargetsOf(_command: string): { available: false } {
@@ -2465,7 +2625,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         await requireClaudeCliVersion(config.cli, env, turn.signal, execCli, () => claudeProbeEnv(env, config.configDir));
         return claudeTextOnlyTurn({ ...turn, model, providerRoute }, {
           cli: config.cli, tmpBase: join(DATA_DIR, "pip-tmp"), env,
-          credentialsDir: providerRoute ? undefined : resolveClaudeConfigDir(config.configDir, account),
         });
       } };
     };
@@ -3375,7 +3534,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         allowed.push(...claudeOwnUnaskedTools("phone"));
       }
       if (turn.integrations?.browser) {
-        mcpServers.browser = { ...turn.integrations.browser };
+        mcpServers.browser = claudeBrowserMount(turn);
         allowed.push(...claudeOwnUnaskedTools("browser"));
       }
       // dweb network daemon (status / repo / opencode model access) via
@@ -3480,13 +3639,20 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           for (const name of Object.keys(baseline)) if (!(name in env)) delete map[name];
           stripOwned(map);
           delete map.CLAUDE_ENV_FILE;
+          // 09-B1: the owner's login-shell capture carries every credential they export. A Bash command in the turn
+          // (`env`, `printenv`) would print them to the model, so none rides in: Claude's own sign-in names stay, and
+          // every value this turn's driver set on purpose returns through `extra` below.
+          stripCapturedCredentialNames(map);
           return map;
         },
         extra: { ...ownedTurnNames(env, stripOwned), ...claudeNames, CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR: "1" },
       }, env); // a Cloud home hands the pins on top of this turn's cloudTurnEnvironment map
       // WIN-NOBASH-DESIGN-r2 section 1: the shell is found from the handed map (no pin names it, so writing the mode's names
       // after the pins undoes none); each mode enforces its tools
-      const discovered = await claudeShellDiscovery(process.platform, handed.env, envGeneration());
+      const discoveryGeneration = envGeneration();
+      const discovered = await claudeShellDiscovery(process.platform, handed.env, discoveryGeneration,
+        process.platform === "win32" ? { launchCheck: (shell) => claudeExecLaunchCheck(shell, handed.env, cwd, discoveryGeneration) } : {});
+      if (discovered.reason === "wrapper-failed") console.info(`claude shell=powershell-inherit reason=wrapper-failed thread=${threadId} ${discovered.detail ?? ""}`.trim());
       const shellRefusal = claudeShellRefusal(process.platform, discovered.bash);
       if (shellRefusal) throw new ClaudeTurnRefused(shellRefusal);
       const shellMode = claudeShellMode(process.platform, discovered)!;
@@ -3883,10 +4049,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
               // this driver started the CLI with and the session it reported.
               const resultSession = sessions.get(threadId)?.sessionId ?? sessionId ?? newSessionId;
               const toolResultDirs = ask.kind === "permission" ? claudeToolResultDirs(claudeConfigDir(env), sessionFolders(cwd), resultSession) : [];
+              const localHold = ask.kind === "permission" ? claudeInProjectHold(ask.tool, ask.input, cwd) : undefined;
               const open = (execEnv: ExecEnv | undefined) => emit({
                 ...base(threadId, eventTurnId),
                 type: "request.opened",
                 requestId: ask.id,
+                ...(localHold ? { localHold: localHold.slice(0, 80) } : {}),
                 requestType: ask.kind,
                 tool: ask.tool ?? "",
                 summary: askSummary(ask),
@@ -4464,6 +4632,15 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
                 // stderr only reaches the engine's MCP log: say so in the app log.
                 if (toolResultText(b.content).includes(BROKER_UNAVAILABLE_NOTE)) {
                   console.error(`claude permission broker unreachable thread=${threadId} tool_use=${JSON.stringify(String(b.tool_use_id ?? ""))} broker=${JSON.stringify(session.broker?.socketPath ?? null)}: the engine's permission proxy could not reach the broker, so the call was denied and no card opened`);
+                  // U22: the proxy answers every later ask the same way, so the turn would run on with denials and no card. End it
+                  // here with the reason in chat (the frame-overflow pattern below), and recycle the process: the next turn starts a
+                  // fresh one with its own broker.
+                  if (session.turn && !session.turn.settled) {
+                    emit({ ...base(threadId, currentTurnId()), type: "runtime.error", message: BROKER_LOST_MESSAGE });
+                    settle(false, BROKER_LOST);
+                  }
+                  if (sessions.get(threadId) === session) closeSession(threadId, BROKER_LOST);
+                  if (child.exitCode === null) killCliTree(child);
                 }
                 // The chip above was all this branch ever read. An image the
                 // tool answered with was dropped here, never reaching the

@@ -15,7 +15,7 @@ function fakeStorage() {
 
 const entry = (sendId: string, over: Partial<OutboxEntry> = {}): OutboxEntry => ({
   sendId, kind: "bot", botId: "b1", threadId: "t1", text: `words ${sendId}`, at: 1_000, attempts: 0,
-  draft: { draftId: "bot:b1:t1", text: `words ${sendId}`, requestText: `words ${sendId}`, attachments: [] },
+  draft: { draftId: "bot:b1:t1", attemptId: `a-${sendId}`, text: `words ${sendId}`, requestText: `words ${sendId}`, attachments: [] },
   ...over,
 });
 
@@ -100,10 +100,10 @@ describe("send outbox", () => {
     expect(r.log.settled.sort()).toEqual(["landed", "missing", "queued"]);
   });
 
-  it("restores the text only on a definitive refusal", async () => {
+  it("tells the person only on a definitive refusal (an undrafted send; a drafted one keeps its words in its record)", async () => {
     const storage = fakeStorage();
     const refused = renderer(storage, async () => { throw Object.assign(new Error("too big"), { status: 413 }); });
-    await refused.delivery.submit(entry("s3"));
+    await refused.delivery.submit(entry("s3", { draft: undefined }));
     expect(refused.log.recovered).toEqual(["s3"]);
     expect(createOutbox(storage).list()).toEqual([]);
   });
@@ -135,7 +135,7 @@ describe("send outbox", () => {
     const storage = fakeStorage();
     const clock = { now: 2_000 };
     const r = renderer(storage, async () => { throw new TypeError("offline"); }, clock);
-    await r.delivery.submit(entry("s5", { at: 1_000 }));
+    await r.delivery.submit(entry("s5", { at: 1_000, draft: undefined }));
     expect(r.log.recovered).toEqual([]);
     clock.now = 1_000 + OUTBOX_GIVE_UP_MS + 1;
     r.log.timers.shift()!();
@@ -256,7 +256,7 @@ describe("send outbox", () => {
       showSending: () => {}, settleSending: () => {}, receipt: () => {},
       recover: (e) => failed.push({ sendId: e.sendId, text: e.text }),
     });
-    const first = delivery.submit(entry("h2", { at: 1_000 }));
+    const first = delivery.submit(entry("h2", { at: 1_000, draft: undefined }));
     clock.now = 1_000 + OUTBOX_GIVE_UP_MS + 1;
     fires[0]!();
     await first;
@@ -294,34 +294,66 @@ describe("r5: a reconnect that finds the accepted send runs the acknowledgement"
     expect(acknowledged).toHaveBeenCalledTimes(1);
   });
 
-  it("after a reload (no composer hook), the draft that sent it is cleared through acknowledgeDraft", async () => {
-    const storage = fakeStorage();
-    const first = renderer(storage, async () => { throw Object.assign(new Error("offline"), { status: 503 }); });
-    await first.delivery.submit(entry("reload-ack"));
-    const cleared: string[] = [];
+  /** A8: the real draft records over one Storage, reloaded as a fresh module, so these tests read the record on disk. */
+  const recordsOnDisk = async () => {
+    const values = new Map<string, string>();
+    const storage = {
+      getItem: (k: string) => values.get(k) ?? null, setItem: (k: string, v: string) => void values.set(k, v), removeItem: (k: string) => void values.delete(k),
+      key: (i: number) => [...values.keys()][i] ?? null, get length() { return values.size; },
+    };
+    let chain: Promise<unknown> = Promise.resolve();
+    const locks = { request: <T,>(_name: string, fn: () => T | Promise<T>): Promise<T> => { const run = chain.then(() => fn()); chain = run.catch(() => undefined); return run; } };
+    const open = async () => {
+      vi.resetModules();
+      vi.stubGlobal("window", new EventTarget());
+      vi.stubGlobal("localStorage", storage);
+      vi.stubGlobal("navigator", { locks });
+      return import("../lib/drafts");
+    };
+    const D = "bot:b1:t1";
+    const drafts = await open();
+    drafts.setComposerDraftText(D, "reload words");
+    await new Promise((x) => setTimeout(x, 0));
+    const begun = await drafts.beginDraftSend(D, { text: "reload words", att: [], mode: "chat" }, (sendId, content) => ({ sendId, kind: "bot", botId: "b1", threadId: "t1", text: content.text, at: Date.now(), attempts: 0 }));
+    if (!begun.ok) throw new Error(begun.reason);
+    return { storage, begun, reload: open, record: () => JSON.parse(values.get(`murage-draft:${D}`) ?? "null") };
+  };
+
+  it("after a reload (no composer hook), reconcile settles the draft record that holds the send as acked, on disk (A8)", async () => {
+    const disk = await recordsOnDisk();
+    const fresh = await disk.reload();
+    const post = vi.fn();
     const second = createSendDelivery({
-      outbox: createOutbox(storage), post: vi.fn(), now: () => 2_000, setTimer: () => 0,
+      outbox: createOutbox(disk.storage, fresh.draftJournal), post, now: () => Date.now(), setTimer: () => 0,
       showSending: () => {}, settleSending: () => {}, receipt: () => {}, recover: () => {},
-      acknowledgeDraft: (e) => cleared.push(e.draft!.draftId),
     });
-    second.reconcile({ messageSendIds: new Set(["reload-ack"]), pendingSendIds: new Set() });
-    expect(cleared).toEqual(["bot:b1:t1"]);
-    expect(createOutbox(storage).has("reload-ack")).toBe(false);
+    second.reconcile({ messageSendIds: new Set([disk.begun.sendId]), pendingSendIds: new Set() });
+    await vi.waitFor(() => expect(disk.record()).toMatchObject({ text: "", last: { s: disk.begun.sendId, o: "acked" } }));
+    expect(disk.record().out).toBeUndefined();
+    expect(post).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
   });
 
-  it("a replayed POST that succeeds with no stored hooks clears the sending draft through the same fallback", async () => {
-    const storage = fakeStorage();
-    const first = renderer(storage, async () => { throw Object.assign(new Error("offline"), { status: 503 }); });
-    await first.delivery.submit(entry("reload-post"));
-    const cleared: string[] = [];
+  it("a replayed POST that succeeds with no stored hooks clears the record on disk; a drafted refusal keeps P with its words and recovers nothing (A8)", async () => {
+    const ok = await recordsOnDisk();
+    const recovered: string[] = [];
     const second = createSendDelivery({
-      outbox: createOutbox(storage), post: async () => ({ ok: true }), now: () => 2_000, setTimer: () => 0,
-      showSending: () => {}, settleSending: () => {}, receipt: () => {}, recover: () => {},
-      acknowledgeDraft: (e) => cleared.push(e.draft!.draftId),
+      outbox: createOutbox(ok.storage, (await ok.reload()).draftJournal), post: async () => ({ ok: true }), now: () => Date.now(), setTimer: () => 0,
+      showSending: () => {}, settleSending: () => {}, receipt: () => {}, recover: (e) => recovered.push(e.sendId),
     });
     second.reconcile({ messageSendIds: new Set(), pendingSendIds: new Set() });
-    await vi.waitFor(() => expect(cleared).toEqual(["bot:b1:t1"]));
-    expect(createOutbox(storage).has("reload-post")).toBe(false);
+    await vi.waitFor(() => expect(ok.record()).toMatchObject({ text: "", last: { s: ok.begun.sendId, o: "acked" } }));
+    expect(ok.record().out).toBeUndefined();
+    const refused = await recordsOnDisk();
+    const third = createSendDelivery({
+      outbox: createOutbox(refused.storage, (await refused.reload()).draftJournal), post: async () => { throw Object.assign(new Error("too large"), { status: 413 }); }, now: () => Date.now(), setTimer: () => 0,
+      showSending: () => {}, settleSending: () => {}, receipt: () => {}, recover: (e) => recovered.push(e.sendId),
+    });
+    third.reconcile({ messageSendIds: new Set(), pendingSendIds: new Set() });
+    await vi.waitFor(() => expect(refused.record()).toMatchObject({ text: "reload words", pin: { s: refused.begun.sendId }, last: { s: refused.begun.sendId, o: "failed" } }));
+    expect(refused.record().out).toBeUndefined();
+    expect(recovered).toEqual([]);
+    vi.unstubAllGlobals();
   });
 
   it("its own sentences come from the language packs", async () => {

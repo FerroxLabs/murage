@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Consulting Practice",
     "tagline": "A clear consulting offer, engagement outline and prospect tracker",
-    "summary": "Sage prepares a consulting offer sheet from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For offer design, use Offer. For a service business team, use Service Studio. I give guidance and drafts, not licensed legal advice, and I promise no outcome.",
+    "summary": "Sage prepares a consulting offer sheet from the material you supply.",
     "category": "Agencies",
     "author": {
       "name": "Ferrox Labs",
@@ -54,7 +54,8 @@
         "title": "Consulting Practice",
         "description": "Sage prepares a consulting offer sheet from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For offer design, use Offer. For a service business team, use Service Studio.",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "diamond"
         },
         "skills": [
           "consulting-practice",

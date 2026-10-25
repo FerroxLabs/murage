@@ -13,6 +13,7 @@ import { ProviderMark } from "@/components/ProviderIcons";
 import { splitEngineRail } from "@/lib/engine-rail";
 import { t } from "@/lib/i18n";
 import { PhoneBotListBar } from "./OpenBotListButton";
+import { WindowDragStrip } from "./WindowDragStrip";
 
 export function NoEngines() {
   const { state, refreshInstances } = useStore();
@@ -49,6 +50,7 @@ export function NoEngines() {
     <main className="flex h-full min-w-0 flex-1 flex-col overflow-y-auto bg-app">
       {/* No header row here, so phones get one that carries the drawer
           button and nothing else (OpenBotListButton.tsx). */}
+      <WindowDragStrip />
       <PhoneBotListBar />
       <div className="mx-auto w-full max-w-[560px] px-6 py-12">
         <h1 className="text-[20px] font-semibold text-ink">{t("noEngines.title")}</h1>

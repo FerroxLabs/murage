@@ -300,7 +300,7 @@ describe("cancel, deadlock, counters", () => {
     const a = ask(lead.id, "lead", "dax", "ask:cc");
     finishRequestTurn(db, lead.id, { ok: true, now: 1200 });
     const cancelled = cancelRoomRequest(db, lead.id, { now: 1300 });
-    expect(cancelled?.state).toBe("cancelled");
+    expect(cancelled?.request.state).toBe("cancelled");
     expect(roomRequest(db, a.id)!.state).toBe("cancelled");
     expect(listRoomRequests(db, { groupId: "g1" }).some((q) => q.verb === "wake")).toBe(false);
   });

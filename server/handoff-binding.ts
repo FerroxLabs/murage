@@ -6,6 +6,8 @@
 // reply is proven to be that conversation's own answer when the reply follows that message in the worker's conversation. Nothing else is evidence:
 // a request that once targeted the same conversation says nothing about this reply (review round 5 #3).
 import type { Message } from "./store.ts";
+import type { HumanPrincipal } from "./human-principals.ts";
+import type { OwnUnsharedProof } from "./result-egress.ts";
 
 type Row = Pick<Message, "id" | "role"> & { parentId?: string | null; steered?: boolean; handoffFrom?: string };
 
@@ -28,16 +30,27 @@ export function resultBoundToHandoff(message: (id: string) => Row | undefined, o
   return origin.messageIds.every(id => promptOf(message, id)?.handoffFrom === sourceThreadId);
 }
 
-/** The gate's `ownUnsharedWork` question, answered from the live records: both sides are the owner's own unshared conversations and, when the
- * result has an original, that original answers a hand-off this very conversation started. */
+/** The gate's `ownUnsharedWork` question, answered from the live records, as a proof of who the reader is (SL-E r3 section 10): the owner, when
+ * both sides are the owner's own unshared conversations and, when the result has an original, that original answers a hand-off this very
+ * conversation started. A person (SL-E E2), when the reader, the live principal of the destination conversation, is that of both sides and both
+ * are its own unshared conversations (`isSamePersonUnsharedPair`, read live), with the same proof that the original answers this hand-off; the
+ * proof carries that principal and nothing else, so it is the only source of the scopes the memory rules compare with. Anything else: false. */
 export function ownUnsharedWorkCheck<Bot>(env: {
   bot: (id: string) => Bot | undefined;
   isOwnUnsharedThread: (bot: Bot | undefined, threadId: string) => boolean;
+  isSamePersonUnsharedPair?: (reader: HumanPrincipal, from: Bot | undefined, fromThreadId: string, target: Bot | undefined, originThreadId?: string) => boolean;
+  /** The live principal of a conversation (human-principals.ts threadHumanPrincipal). */
+  principal?: (threadId: string) => HumanPrincipal;
   message: (threadId: string, messageId: string) => Row | undefined;
-}): (who: { fromBotId: string; toBotId: string; fromThreadId: string }, origin: { threadId: string; messageIds: readonly string[] } | undefined) => boolean {
+}): (who: { fromBotId: string; toBotId: string; fromThreadId: string }, origin: { threadId: string; messageIds: readonly string[] } | undefined) => OwnUnsharedProof {
   return (who, origin) => {
     const from = env.bot(who.fromBotId), target = env.bot(who.toBotId);
-    return target !== undefined && env.isOwnUnsharedThread(from, who.fromThreadId)
-      && (origin === undefined || env.isOwnUnsharedThread(target, origin.threadId) && resultBoundToHandoff(id => env.message(origin.threadId, id), origin, who.fromThreadId));
+    if (target !== undefined && env.isOwnUnsharedThread(from, who.fromThreadId)
+      && (origin === undefined || env.isOwnUnsharedThread(target, origin.threadId) && resultBoundToHandoff(id => env.message(origin.threadId, id), origin, who.fromThreadId))) return { reader: "owner" };
+    if (target === undefined || !env.isSamePersonUnsharedPair || !env.principal) return false;
+    let reader: HumanPrincipal;
+    try { reader = env.principal(who.fromThreadId); } catch { return false; }
+    return env.isSamePersonUnsharedPair(reader, from, who.fromThreadId, target, origin?.threadId)
+      && (origin === undefined || resultBoundToHandoff(id => env.message(origin.threadId, id), origin, who.fromThreadId)) ? { reader: "person", principal: reader } : false;
   };
 }

@@ -19,9 +19,11 @@ vi.mock("./package-install-command.mjs", async (original) => ({
   ...await original(), linuxPackageType: () => null,
 }));
 // These tests exercise window/state ownership on every host. The Linux
-// publisher verifier has its own dependency-free cryptographic fixtures.
-vi.mock("./update-signature.mjs", () => ({
-  createLinuxUpdateVerifier: () => async () => ({ recheck: async () => {} }),
+// publisher verifier and the macOS/Windows signed-build version check have
+// their own fixtures (update-signature / update-build-version node tests).
+const { downloadVerifier } = vi.hoisted(() => ({ downloadVerifier: { create: null } }));
+vi.mock("./update-build-version.mjs", () => ({
+  createUpdateDownloadVerifier: (options) => downloadVerifier.create?.(options) ?? (async () => ({ recheck: async () => {} })),
 }));
 
 const emit = (event, payload) => {
@@ -82,6 +84,30 @@ it("every state the renderer sees names the version that is running", async () =
   expect(sent.length).toBeGreaterThan(0);
   for (const state of sent) expect(state.currentVersion).toBe("9.8.7-fixture");
   expect(handlers.get("update:get-state")()).toMatchObject({ status: "downloaded", version: "2.0.0", currentVersion: "9.8.7-fixture" });
+});
+
+it.each(["darwin", "win32"])("%s: every download goes through the signed-build check, so a rollback feed never reaches downloaded", async (platform) => {
+  // The feed file is unsigned: a latest*.yml naming a higher version can point at an older signed build. Before 1.0.4
+  // only Linux checked a download against anything signed; macOS and Windows staged whatever the feed named.
+  const original = Object.getOwnPropertyDescriptor(process, "platform");
+  Object.defineProperty(process, "platform", { ...original, value: platform });
+  const created = [];
+  downloadVerifier.create = (options) => {
+    created.push(options);
+    return async () => { throw Object.assign(new Error("This update could not be verified, so Murage did not install it."), { code: "ERR_MURAGE_UPDATE_VERIFICATION" }); };
+  };
+  try {
+    const api = await import("./updater.mjs");
+    api.registerUpdaterIpc();
+    api.startUpdater();
+    fakeDownload();
+    await handlers.get("update:download")();
+    expect(created).toEqual([expect.objectContaining({ currentVersion: "9.8.7-fixture" })]);
+    expect(handlers.get("update:get-state")().status).toBe("error");
+  } finally {
+    downloadVerifier.create = null;
+    Object.defineProperty(process, "platform", original);
+  }
 });
 
 it("the actual main createWindow and activate wiring retargets the process updater", async () => {

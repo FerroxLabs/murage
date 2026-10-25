@@ -1,7 +1,7 @@
-// A send that failed after the person had already typed something newer
-// goes to the composer's "failed" list (recoverFailedComposerSend →
-// "outbox"). That list lived only in memory (drafts.ts:39), so a reload —
-// or iOS killing a backgrounded WebView — lost the message outright.
+// The composer's "failed" list (retries of undrafted sends) lived only in
+// memory, so a reload (or iOS killing a backgrounded WebView) lost the
+// message outright. U36: a drafted send's words never leave its box, so
+// only the retry list's own items are kept here.
 import { afterEach, expect, it, vi } from "vitest";
 
 const storage = (initial: Record<string, string> = {}) => {
@@ -16,9 +16,8 @@ it("keeps a failed send across a reload, and forgets it for good once dismissed"
   vi.stubGlobal("localStorage", storage());
   const first = await load();
   const id = "persist-outbox";
-  const sent = { draftId: id, revision: first.draftRevision(id), sendId: "send-1", text: "Hello", requestText: "Hello", threadId: "thread-A", attachments: [] };
-  first.markDraftEdited(id); // something newer is in the box, so this one goes to the outbox
-  expect(first.recoverFailedComposerSend(sent)).toBe("outbox");
+  // an undrafted retry (the composer's retry list) that failed again
+  first.rememberFailedComposerSend(id, { sendId: "send-1", text: "Hello", requestText: "Hello", threadId: "thread-A" });
 
   const second = await load();
   const [kept] = second.failedComposerSends(id);

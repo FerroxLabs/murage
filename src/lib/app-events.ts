@@ -11,6 +11,7 @@ export const OPEN_SHORTCUTS_EVENT = "murage:open-shortcuts";
 export const OPEN_PALETTE_EVENT = "murage:open-palette";
 
 function fire(name: string, detail?: unknown): void {
+  if (typeof window === "undefined") return;
   window.dispatchEvent(new CustomEvent(name, { detail }));
 }
 
@@ -19,3 +20,8 @@ export const openKeyboardShortcuts = (): void => fire(OPEN_SHORTCUTS_EVENT);
 /** `query` starts the palette with that text typed, as when the sidebar's
  *  own search hands a word over to look for it in Settings too. */
 export const openCommandPalette = (query?: string): void => fire(OPEN_PALETTE_EVENT, query ? { query } : undefined);
+
+/** The setup view was read: `firstRun` is the server's answer. The store listens so a conversation is remembered the moment
+ *  setup finishes, not only at the next selection change. */
+export const SETUP_VIEW_EVENT = "murage:setup-view";
+export const announceSetupView = (firstRun: boolean | undefined): void => fire(SETUP_VIEW_EVENT, { firstRun });

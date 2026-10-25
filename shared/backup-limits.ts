@@ -18,7 +18,7 @@
 //    owner work are left out and listed, never a failure.
 
 /** Largest size limit Backups accepts, and what restore always accepts. */
-export const MAX_BACKUP_BYTES = 1024 ** 4;
+export { MAX_BACKUP_BYTES } from "./backup-max-bytes.mjs";
 /** Largest number of restorable items one backup holds. */
 export const MAX_BACKUP_FILES = 100_000;
 /** Largest contents list inside one backup file. 100,000 items with long
@@ -30,7 +30,7 @@ export const RESTORE_ADDED_FILES = 1_000;
 
 /** Why an item in a folder of owner work was left out of a backup. Listed to
  * the person after the backup; never a reason for the backup to fail. */
-export const BACKUP_SKIP_REASONS = ["rebuildable", "file-limit", "unreadable", "special", "too-deep", "linked-folder", "path-too-long"] as const;
+export const BACKUP_SKIP_REASONS = ["rebuildable", "file-limit", "unreadable", "special", "too-deep", "linked-folder", "path-too-long", "unrecognised"] as const;
 export type BackupSkipReason = typeof BACKUP_SKIP_REASONS[number];
 /** At most this many skipped items are named one by one; the total is kept. */
 export const MAX_LISTED_SKIPS = 1_000;

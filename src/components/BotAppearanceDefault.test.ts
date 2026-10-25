@@ -19,7 +19,7 @@ describe("bot Appearance placement", () => {
   it("is in Identity & instructions, above the Name field", () => {
     expect(identityStart).toBeGreaterThan(-1);
     expect(identity).toContain("<BotProfileAvatarCard");
-    expect(identity.indexOf("<BotProfileAvatarCard")).toBeLessThan(identity.indexOf('<Field label="Name">'));
+    expect(identity.indexOf("<BotProfileAvatarCard")).toBeLessThan(identity.indexOf('<Field label={t("settings.bot.identity.name")}>'));
     expect(identity).toContain('t("settings.appearance.title")');
   });
 

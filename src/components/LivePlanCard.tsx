@@ -33,7 +33,7 @@ export function LivePlanCard({ entries }: { entries: readonly AgentPlanEntry[] }
       <section
         data-testid="live-plan"
         aria-label="Plan"
-        className="w-full min-w-0 max-w-[min(42rem,78%)] max-md:max-w-full rounded-2xl border border-hairline/40 bg-panel px-3 py-1.5 text-[13px]"
+        className="w-full min-w-0 max-w-[min(var(--chat-bubble-max),var(--chat-bubble-pct))] max-md:max-w-full rounded-2xl border border-hairline/40 bg-panel px-3 py-1.5 text-[13px]"
       >
         <button
           type="button"
