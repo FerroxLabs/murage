@@ -85,6 +85,8 @@ export const PHASE_LABELS: Record<string, string> = {
   copying: "Making a backup copy",
   migrating: "Upgrading memory tables",
   "search-index": "Indexing messages for search",
+  masking: "Masking bank and card numbers in earlier memory",
+  settling: "Settling earlier memory",
   "output-index": "Checking memory receipts",
   references: "Checking memory links",
   shapes: "Checking how memory is stored",

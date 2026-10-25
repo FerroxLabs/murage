@@ -271,9 +271,9 @@ describe("an abandoned Claude Code lock is replaced only while Claude is seen cl
 
 describe("the owner is told what is open, by its own name", () => {
   it("the Claude app open: '<Engine> or the Claude app is open. Close them ...' (DESIGN-r20 section 7); the engine itself: its own name", () => {
-    expect(ownerNoticeText("Claude Code", "engine-open", "Claude")).toBe("Claude Code or the Claude app is open. Close them and Murage will finish removing this conversation from Claude Code.");
-    expect(ownerNoticeText("Cursor Agent", "engine-open", "Cursor")).toBe("Cursor Agent or the Cursor app is open. Close them and Murage will finish removing this conversation from Cursor Agent.");
-    expect(ownerNoticeText("Claude Code", "engine-open")).toBe("Claude Code is open. Close Claude Code and Murage will finish removing this conversation from it.");
+    expect(ownerNoticeText("Claude Code", "engine-open", "Claude")).toBe("Claude Code or the Claude app is open. Murage finishes removing this conversation from Claude Code by itself once they are closed. Nothing is needed from you.");
+    expect(ownerNoticeText("Cursor Agent", "engine-open", "Cursor")).toBe("Cursor Agent or the Cursor app is open. Murage finishes removing this conversation from Cursor Agent by itself once they are closed. Nothing is needed from you.");
+    expect(ownerNoticeText("Claude Code", "engine-open")).toBe("Claude Code is open. Murage finishes removing this conversation from it by itself once Claude Code is closed. Nothing is needed from you.");
     for (const app of ["Claude", undefined]) expect(ownerNoticeText("Claude Code", "engine-open", app)).not.toMatch(/—|–|\bsafe\b|\bunsafe\b/);
   });
 });

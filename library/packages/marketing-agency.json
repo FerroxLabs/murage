@@ -6,7 +6,7 @@
     "release": "1.1.0",
     "name": "Marketing Agency",
     "tagline": "A complete campaign with clear positioning, channel drafts and measured results",
-    "summary": "Plan and run multi-channel campaigns from audience research and positioning to content, launches, ads and measurement. Director coordinates the work for you and Ember, with each post, send and ad-spend action brought to you for approval. For ongoing growth experiments, use Growth Loop (growth-loop). For a standalone marketing plan, use Marketing Plan (marketing-strategy).",
+    "summary": "Plan and run multi-channel campaigns from audience research and positioning to content, launches, ads and measurement.",
     "category": "Sell",
     "author": {
       "name": "Ferrox Labs",
@@ -29,11 +29,12 @@
         "key": "director",
         "name": "Director",
         "title": "Campaign lead",
-        "description": "Runs the campaign project from the owner or Ember handoff to launch approvals and the results review. Suggests Fuigo first during setup.",
+        "description": "Runs the campaign project from the owner or Ember handoff to launch approvals and the results review. Suggests Fuigo first during setup. For ongoing growth experiments, use Growth Loop (growth-loop). For a standalone marketing plan, use Marketing Plan (marketing-strategy).",
         "role": "leader",
         "team": "Marketing Agency",
         "appearance": {
-          "color": "purple"
+          "color": "cyan",
+          "mascotBody": "ember"
         },
         "skills": [
           "campaign-planning",
@@ -53,7 +54,8 @@
         "role": "member",
         "team": "Marketing Agency",
         "appearance": {
-          "color": "green"
+          "color": "blue",
+          "mascotBody": "capsule"
         },
         "skills": [
           "research-audience-discovery",
@@ -73,7 +75,8 @@
         "role": "member",
         "team": "Marketing Agency",
         "appearance": {
-          "color": "pink"
+          "color": "pink",
+          "mascotBody": "blob"
         },
         "skills": [
           "mira-brand-foundation",
@@ -93,7 +96,8 @@
         "role": "member",
         "team": "Marketing Agency",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "star"
         },
         "skills": [
           "beacon-channel-strategy",
@@ -113,7 +117,8 @@
         "role": "member",
         "team": "Marketing Agency",
         "appearance": {
-          "color": "cyan"
+          "color": "purple",
+          "mascotBody": "drop"
         },
         "skills": [
           "copy-customer-voice",
@@ -134,7 +139,8 @@
         "role": "member",
         "team": "Marketing Agency",
         "appearance": {
-          "color": "blue"
+          "color": "green",
+          "mascotBody": "hexagon"
         },
         "skills": [
           "lens-funnel-diagnosis",

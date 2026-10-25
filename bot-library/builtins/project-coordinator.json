@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Project Coordinator",
     "tagline": "Project status, slipping dates and next actions with owners",
-    "summary": "Stride prepares a weekly status page for each supplied project. Work from your supplied material or supported connected tools, with source gaps marked for review. For broad operations coordination, use Ops. For persistent project records, use Planning with Files. For a general delivery team, use Business / Team.",
+    "summary": "Stride prepares a weekly status page for each supplied project.",
     "category": "Operations",
     "author": {
       "name": "Ferrox Labs",
@@ -72,7 +72,8 @@
         "title": "Project Coordinator",
         "description": "Stride prepares a weekly status page for each supplied project. Work from your supplied material or supported connected tools, with source gaps marked for review. For broad operations coordination, use Ops. For persistent project records, use Planning with Files. For a general delivery team, use Business / Team.",
         "appearance": {
-          "color": "teal"
+          "color": "cyan",
+          "mascotBody": "squircle"
         },
         "skills": [
           "project-manager",

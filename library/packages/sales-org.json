@@ -29,7 +29,8 @@
         "title": "Sales",
         "description": "Sales specialist - SPIN-disciplined discovery, real-vs-stated objection sorting, and advancement-not-continuation close mechanics.",
         "appearance": {
-          "color": "green"
+          "color": "red",
+          "mascotBody": "ember"
         },
         "skills": [
           "sales-discovery-call",
@@ -46,7 +47,8 @@
         "title": "Research",
         "description": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method.",
         "appearance": {
-          "color": "blue"
+          "color": "blue",
+          "mascotBody": "capsule"
         },
         "skills": [
           "research-jtbd-interviews",
@@ -69,7 +71,8 @@
         "title": "Offer",
         "description": "Offer specialist - value-based pricing, willingness-to-pay research, and offer-construction grounded in Madhavan Ramanujam.",
         "appearance": {
-          "color": "red"
+          "color": "coral",
+          "mascotBody": "circle"
         },
         "skills": [
           "forge-value-pricing",
@@ -90,7 +93,8 @@
         "title": "Analyst",
         "description": "Analyst - funnel diagnosis, cohort retention, experiment discipline via Kaushik measurement + Kohavi rigor.",
         "appearance": {
-          "color": "orange"
+          "color": "green",
+          "mascotBody": "hexagon"
         },
         "skills": [
           "lens-funnel-diagnosis",

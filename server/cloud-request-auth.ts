@@ -127,6 +127,8 @@ export function createCloudRequestAuth(options: CloudAuthOptions) {
       if (cloudRouteNeedsBody(method,path)) {
         raw=await rawBody(req,path.startsWith("/api/cloud/") ? 1_048_576 : 12*1024*1024); body=raw.length ? JSON.parse(raw.toString("utf8")) : {};
         cloudBodies.set(req,{body,bytes:raw.length});
+        // The device was resolved before the body arrived: it must still be signed in once the body is complete.
+        if (device && sessions.resolve(access)?.id !== device.id) { reply(res,403,{error:cloudHomeCopy.signInRequestRefused}); return true; }
       }
       if(options.executionOpen && !options.executionOpen() && !["GET","HEAD","OPTIONS"].includes(method) && /^\/api\/(?:internal|model-gateway)(?:\/|$)/.test(path)) {reply(res,403,{error:cloudHomeCopy.homePaused});return true;}
       if (homeRememberedGrantWrite(method,path,body)) { reply(res,403,{error:cloudHomeCopy.alwaysAllowUnavailable}); return true; }

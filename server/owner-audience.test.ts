@@ -25,6 +25,7 @@ import { Store } from "./store.ts";
 import { ensureWorkspace } from "./workspace.ts";
 import { appendMessage } from "./message-db.ts";
 import { workingContextPrompt } from "./working-context.ts";
+import { venueTurnBlock } from "./venue-awareness.ts";
 import { joiningBriefLayer, projectBoardLayer, projectBriefLayer, projectSummaryLayer } from "./project-layers.ts";
 import { projectRosterLine } from "./project-roster.ts";
 import { insertProjectBriefVersion } from "./project-records.ts";
@@ -91,6 +92,15 @@ const SURFACE_TEXT: Record<OwnerAudienceSurface, (bot: { id: string; section?: s
     const thread = bot.threadId!;
     appendMessage(thread, { id: `wc-${bot.id}-${Math.random()}`, role: "bot", kind: "text", text: "WORK_CANARY sent the follow-up", at: Date.now(), from: { botId: bot.id, name: "Dax", color: "blue" } });
     return workingContextPrompt(LineageAllowance.tool(1_000_000_000), owner, { botId: bot.id, currentThreadId: "none", bots: [{ id: bot.id, threadId: thread }], groups: [], routines: [], now: Date.now() + 1 });
+  },
+  "where-i-belong": (bot, owner) => {
+    // a project the bot is a member of, with a goal (BOT-VENUE-AWARENESS-106 D1)
+    const db = database();
+    if (!db.prepare("SELECT 1 FROM project_settings WHERE group_id='venue-project'").get()) channelToProjectRows(db, { groupId: "venue-project", bulletin: "", leadBotId: bot.id, now: 1 });
+    const group = { id: "venue-project", name: "Launch week", threadId: "venue-room", memberIds: [bot.id], channelProject: { goal: "GOAL_CANARY ship the newsletter", status: "active" as const, startedAt: 1, updatedAt: 1 } };
+    const text = venueTurnBlock(db, owner, { botId: bot.id, currentThreadId: bot.threadId ?? "none", bots: [{ id: bot.id, name: "Dax", threadId: bot.threadId ?? "none" }], groups: [group], toolMounted: false });
+    if (owner) expect(text).toContain("GOAL_CANARY");
+    return text;
   },
 };
 

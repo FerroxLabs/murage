@@ -12,7 +12,7 @@ describe("abuse controls in the home image", () => {
     const nft = read("murage-egress.nft");
     const drop = nft.indexOf("tcp dport { 25, 465, 587 } counter drop");
     expect(drop).toBeGreaterThan(0);
-    expect(drop).toBeLessThan(nft.indexOf('meta skuid "murage-turn" ip daddr 127.0.0.53 udp dport 53'));
+    expect(drop).toBeLessThan(nft.indexOf('meta skuid "murage-turn" meta skgid "murage-eng-antigravity" ip daddr 127.0.0.1 udp dport 5310'));
     // No accept rule anywhere names an SMTP port.
     for (const line of nft.split("\n")) if (/accept/.test(line)) expect(line).not.toMatch(/dport[^\n]*\b(25|465|587)\b/);
   });
