@@ -9,12 +9,15 @@ import { mutateFluxCredentials } from "./flux-connection-control.mjs";
 import { CRASH_WINDOW_MS, createServerSupervisor } from "./server-supervisor.mjs";
 import { compileCacheEnvironment } from "./compile-cache.mjs";
 import { createDesktopTrace } from "./desktop-trace.mjs";
-import { app, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain as electronIpcMain, Menu, MenuItem, Notification, Tray, nativeImage, nativeTheme, net, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from "electron";
+import { app, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain as electronIpcMain, Menu, MenuItem, Notification, Tray, nativeImage, nativeTheme, net, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, utilityProcess, webContents } from "electron";
 import { protocol as electronProtocol } from "electron";
+import { crashReporter } from "electron";
+import { createCrashDumpLinker, crashDumpNamesInLog, includeCrashDumpOnRequest, pruneCrashDumps, startLocalCrashReporter, unnamedCrashDumps } from "./crash-dumps.mjs";
 import { installCloudHome, cloudHomeEnabled } from "./cloud-home-window.mjs";
 import { resolveCloudControlPlane } from "./cloud-control-plane.mjs";
 import { createCloudLiveGate } from "./cloud-live.mjs";
 import { channelClass } from "./ipc-channel-classes.mjs";
+import { writeClipboardText } from "./clipboard-write.mjs";
 import { COPY as CLOUD_COPY, createCloudHomeClient, createNativeStepUpConfirm } from "./cloud-home-client.mjs";
 import { createCloudHomeStore } from "./cloud-home-store.mjs";
 import { registerCloudHomeIpc } from "./cloud-home-ipc.mjs";
@@ -39,6 +42,7 @@ import { announceBackupFailure } from "./backup-failure-notice.mjs";
 import { windowsElevated } from "./windows-elevation.mjs";
 import { createNativeClosedBackupProvider } from "./backup-closed-native.mjs";
 import { createRemotePasswordStore } from "./backup-remote-password.mjs";
+import { MAX_BACKUP_BYTES } from "../shared/backup-max-bytes.mjs";
 import { downloadFolderShared, exportRemoteBackup } from "./backup-remote-export.mjs";
 import { backupFolderRefusal } from "./backup-folder-check.mjs";
 import { remoteWorkDirectory,remoteSshDirectory,prepareRemoteFolder,remoteControlDirectory,localAppDataDirectory,ensureRemoteControlDirectory,forgetRemoteWorkDirectory,remoteControlSharedFolder } from "./backup-remote-runtime.mjs";
@@ -79,6 +83,7 @@ import {
   diagnosticsFileName,
   formatDesktopCrashRecord,
   installDesktopCrashListeners,
+  createRendererMemorySampler,
   readSafeLogTail,
 } from "./diagnostics.mjs";
 import { migrateMcpServerSecrets, migrateWorkspaceCredentials, workspaceCredentialEnv } from "./workspace-credentials.mjs";
@@ -92,6 +97,7 @@ import { migrateLegacyDataDirectory } from "./data-dir-migration.mjs";
 import { assertRestoreReviewed } from "./restore-review.mjs";
 import { restoredConnectionProfile, restoredHarnessEnvironment, restoredBrowserPartition } from "./restored-connections.mjs";
 import { openInstallationRecoveryWindow } from "./installation-recovery-window.mjs";
+import { openBackupProgressWindow } from "./backup-progress-window.mjs";
 import { runInstallationRecoveryWorker } from "./installation-recovery-runner.mjs";
 import { captureRecoveryCopy } from "./installation-recovery-snapshot.mjs";
 import { resolveInstallationSelection, retireUndoneInstallationSelection, planSeparateInstallation, allocateSeparateInstallation, publishInstallationSelection } from "./installation-selection.mjs";
@@ -116,6 +122,7 @@ import { activeDesktopDataRoot, createSaveFileHandler, createSkillRecordingSaveH
 import { createConfirmDialogHandler } from "./confirm-dialog.mjs";
 import { verifiedArtifactNativePath } from "./artifact-action.mjs";
 import { createWorkspaceFileActionHandler } from "./workspace-file-actions.mjs";
+import { linuxGpuDecision } from "./linux-gpu.mjs";
 import { pasteMenuItem } from "./paste-menu-item.mjs";
 import { createServerConnections, openServerPrompt } from "./server-connection.mjs";
 import {
@@ -191,6 +198,10 @@ if (process.env.MURAGE_USER_DATA !== undefined) {
 }
 
 const { desktopCapabilities, nativeDesktopActions } = capabilitiesModule;
+// Local crash dumps, started before "ready" as Electron requires and after any
+// user-data move so they land in this profile's app.getPath("crashDumps").
+// Uploads are off and there is no server address (crash-dumps.mjs).
+startLocalCrashReporter(crashReporter);
 const nativeActions = nativeDesktopActions(process.platform);
 const companionToken = randomBytes(32).toString("hex");
 const require = createRequire(import.meta.url);
@@ -340,6 +351,8 @@ if (cloudHome?.client) registerEngineLoginIpc({ ipcMain, active: () => cloudHome
 let backgroundLifecycle=null;
 let backupScheduleHost=null;
 let backupRemoteHost=null;
+let backupProgress=null; // the "Setting up your first backup" window while the offline capture runs
+let backupToolSettleUntil=0; // set at each server start: a tool check that fails before this is pending, not failed
 let backupRemoteInitializing=false; // the off-site host is still starting: its status reads checking, not unavailable
 let backupRemoteReady=Promise.resolve();
 const backupRemoteOperations=new Set();
@@ -449,6 +462,10 @@ const desktopBackupTool = createBackupToolCapability({
     if (failures >= BACKUP_TOOL_STUCK_AFTER) void announceBackupUnavailable("tool").catch(() => {});
   },
   onReady: () => { slog("backup tool check passed again"); void backupAvailableAgain().catch(() => {}); },
+  // The server has just started and the backup host is not ready yet: the
+  // check waits instead of logging a failure that heals a second later.
+  settling: () => Date.now() < backupToolSettleUntil,
+  onPending: () => slog("backup tool check pending: the backup host is still starting"),
 });
 async function requireDesktopBackupTool() {
   const owner = desktopDataOwner, installation = desktopDataDir;
@@ -564,12 +581,20 @@ for(const action of ["status","stage","install","disable"]){
 for(const [action,arity] of [["status",0],["save",2],["testConnection",2],["trustServer",3],["remove",2],["createRepositoryPassword",2],["saveRepositoryPasswordCopy",2],["selectRepositoryPassword",2],["saveMaintenanceCredentials",3],["connect",2],["uploadLatest",3],["setAutomaticUpload",3],["reconcileLatest",3],["listBackups",2],["downloadBackup",3],["previewRetention",3],["applyRetention",4],["clearRetentionReview",3]]){
   ipcMain.handle(`backup-remote:${action}`,(_event,...args)=>{
     if(args.length!==arity)throw Error("BACKUP_REMOTE_INPUT_INVALID");
-    if(!backupRemoteHost||desktopShutdownStarted||desktopRecoveryMode||backupMode.isPreparing()||backupScheduleHost?.isPreparing()){
-      if(action==="status")return{supported:false,pending:false,configured:false,state:"unavailable",...(backupRemoteInitializing&&!desktopShutdownStarted&&!desktopRecoveryMode?{checking:true}:{})};
-      throw Error("BACKUP_REMOTE_UNAVAILABLE");
+    const run=()=>{
+      if(!backupRemoteHost||desktopShutdownStarted||desktopRecoveryMode||backupMode.isPreparing()||backupScheduleHost?.isPreparing()){
+        if(action==="status")return{supported:false,pending:false,configured:false,state:"unavailable",...(backupRemoteInitializing&&!desktopShutdownStarted&&!desktopRecoveryMode?{checking:true}:{})};
+        throw Error("BACKUP_REMOTE_UNAVAILABLE");
+      }
+      const operation=Promise.resolve().then(()=>backupRemoteHost[action](...args));backupRemoteOperations.add(operation);
+      void operation.finally(()=>backupRemoteOperations.delete(operation)).catch(()=>{});return operation;
+    };
+    // A step that arrives while the off-site host is still starting waits for
+    // it (bounded) and then runs, instead of being skipped with a refusal.
+    if(action!=="status"&&backupRemoteInitializing&&!desktopShutdownStarted&&!desktopRecoveryMode){
+      let timer;return Promise.race([backupRemoteReady,new Promise(resolve=>{timer=setTimeout(resolve,30000);})]).finally(()=>clearTimeout(timer)).then(run);
     }
-    const operation=Promise.resolve().then(()=>backupRemoteHost[action](...args));backupRemoteOperations.add(operation);
-    void operation.finally(()=>backupRemoteOperations.delete(operation)).catch(()=>{});return operation;
+    return run();
   });
 }
 const notificationAuthorization=createNotificationAuthorization();
@@ -743,12 +768,13 @@ function applyUnreadBadge(win = mainWindow) {
 }
 
 // GNOME groups the window with its installed desktop entry only when both
-// identities match. This must run before Electron becomes ready. Ubuntu also
-// uses Chromium's software renderer: the supported machine reproduced two
-// NVIDIA/libGLES GPU-process crashes that left an invisible focused window
-// intercepting input. This app is not graphics-heavy, so reliability wins.
+// identities match. This must run before Electron becomes ready. Software
+// rendering is kept only where the GPU process is unreliable (NVIDIA and
+// nouveau, or MURAGE_LINUX_GPU=off); see electron/linux-gpu.mjs.
 if (process.platform === "linux") {
-  app.disableHardwareAcceleration();
+  const gpu = linuxGpuDecision();
+  if (gpu.disable) app.disableHardwareAcceleration();
+  console.log(`[desktop] Linux GPU acceleration ${gpu.disable ? "off" : "on"} (${gpu.reason})`);
   app.setDesktopName("com.murage.app.desktop");
 }
 // Windows shows an app's toast notifications only under the identity its
@@ -1393,12 +1419,35 @@ function recordDesktopCrash(event) {
 // uncaughtExceptionMonitor observes Node's fatal path without converting it
 // into a handled exception. In particular, an unhandled rejection still
 // follows Node's normal exit behaviour after its metadata is persisted.
+// The last memory reading of each renderer, so a crash line can say whether the process was near its limits.
+const rendererMemory = createRendererMemorySampler({
+  listContents: () => webContents.getAllWebContents(),
+  getMetrics: () => app.getAppMetrics(),
+  freeMemoryMb: () => Math.round(os.freemem() / (1024 * 1024)),
+});
+setInterval(rendererMemory.sample, 30_000).unref?.();
+// Crash lines for gone processes wait briefly for Crashpad's dump so they can
+// name it. At startup, old dumps are pruned (newest 10, about 200 MB) and any
+// dump from a crash that closed the whole app gets its own line.
+const crashDumpDirectory = () => { try { return app.getPath("crashDumps"); } catch { return ""; } };
+const claimedCrashDumps = new Set();
+const crashDumpLinker = createCrashDumpLinker({ directory: crashDumpDirectory, write: recordDesktopCrash, claimed: claimedCrashDumps });
+try {
+  pruneCrashDumps(crashDumpDirectory());
+  for (const name of crashDumpNamesInLog(readSafeLogTail(DESKTOP_CRASH_LOG)?.tail)) claimedCrashDumps.add(name);
+  for (const name of unnamedCrashDumps(crashDumpDirectory(), claimedCrashDumps)) {
+    claimedCrashDumps.add(name);
+    recordDesktopCrash({ kind: "earlier-dump", dump: name });
+  }
+} catch { /* crash diagnostics must never change app lifecycle */ }
+process.on("exit", () => crashDumpLinker.flush());
 installDesktopCrashListeners({
   appTarget: app,
   processTarget: process,
-  record: recordDesktopCrash,
+  record: (event) => (event.kind === "main" ? recordDesktopCrash(event) : crashDumpLinker.record(event)),
   isShuttingDown: () => desktopShutdownStarted,
   mainWebContents: () => mainWindow?.webContents ?? null,
+  memoryFor: (contents) => rendererMemory.last(contents),
 });
 
 // ── managed companion connection ───────────────────────────────────────
@@ -2040,6 +2089,9 @@ async function startServerOn(port) {
     ...compileCacheEnvironment({ userData: () => app.getPath("userData"), appVersion: () => app.getVersion() }),
     // Shown to WhatsApp as the linked device label ("Murage Desktop <version>"). Not a secret.
     MURAGE_APP_VERSION: app.getVersion().slice(0, 64),
+    // The app language when Settings follows the system: lines the server writes into Telegram, Slack,
+    // Discord and WhatsApp read in it (server/channels/reply-text.ts). Not a secret.
+    ...(systemLanguage() ? { MURAGE_SYSTEM_LANGUAGE: String(systemLanguage()).slice(0, 35) } : {}),
     // Connected apps run through Flux Router only. A key saved here in an
     // earlier version stays in the credential store, unused: the server is
     // only told that one exists, never given it.
@@ -2142,6 +2194,7 @@ async function startServerOn(port) {
   });
   proc.once("spawn", () => {
     slog(`spawned pid=${proc.pid}`);
+    backupToolSettleUntil = Date.now() + 20000;
     syncBrowserConnection(proc);
     // Plan sign-ins (ChatGPT, Grok) reach the server over this private port
     // only. The server keeps them in memory; nothing is written there.
@@ -3071,14 +3124,14 @@ async function runDesktopRecovery(operation, parameters, separate = null) {
     : operation === "restore-encrypted-new" ? ["restore-encrypted-new","--data-dir",dataDirectory,"--archive",parameters.archive,"--sha256",parameters.sha256,"--age-tool",ageTool]
     : operation === "plan-restore" ? ["plan-restore", "--archive", parameters.archive]
     : operation === "review" ? ["review", "--data-dir", dataDirectory]
-    : operation === "activate" ? ["activate", "--data-dir", dataDirectory, "--review-hash", parameters.reviewHash]
+    : operation === "activate" ? ["activate", "--data-dir", dataDirectory, "--review-hash", parameters.reviewHash, ...(parameters.acknowledgedNotice === true ? ["--acknowledge-notice", "yes"] : [])]
     : operation === "backup" ? ["backup", "--data-dir", dataDirectory, "--output", parameters.output]
     : operation === "restore" ? ["restore", "--data-dir", dataDirectory, "--archive", parameters.archive, "--sha256", parameters.sha256]
     : operation === "rollback" ? ["rollback", "--data-dir", dataDirectory]
     : operation === "memory-downgrade" ? ["memory-downgrade", "--data-dir", dataDirectory, "--to", "10"] : null;
   if (!args || args.some(value => typeof value !== "string" || !value)) throw Object.assign(new Error("Invalid recovery request"), { code: "INVALID_RECOVERY_REQUEST" });
   if(operation==="backup-encrypted"&&parameters.maxBytes!==undefined){
-    if(!Number.isSafeInteger(parameters.maxBytes)||parameters.maxBytes<1||parameters.maxBytes>1024**4||!Number.isSafeInteger(parameters.maxDurationMs)||parameters.maxDurationMs<1000||parameters.maxDurationMs>30*60000)throw new Error("INVALID_BACKUP_BUDGET");
+    if(!Number.isSafeInteger(parameters.maxBytes)||parameters.maxBytes<1||parameters.maxBytes>MAX_BACKUP_BYTES||!Number.isSafeInteger(parameters.maxDurationMs)||parameters.maxDurationMs<1000||parameters.maxDurationMs>30*60000)throw new Error("INVALID_BACKUP_BUDGET");
     args.push("--max-bytes",String(parameters.maxBytes),"--max-duration-ms",String(parameters.maxDurationMs));
   }
   await awaitOwnedWork(desktopStartup.catch(() => {}), "Desktop startup has not settled");
@@ -3525,6 +3578,11 @@ ipcMain.handle("screen:frame", async () => {
 // (screen:frame above / getDisplayMedia via the handler below) — macOS
 // prompts then, attributed correctly, at the moment of actual use. The
 // perm:open-settings deep link stays as the repair path for denials.
+// window.muragebox.copyText: write-only, text only, capped at 1 MB (clipboard-write.mjs).
+ipcMain.handle("clipboard:write", (event, text) => writeClipboardText(event, text, {
+  clipboard, window: mainWindow, origin: trustedRendererOrigin(),
+}));
+
 // Copy the engine command, then open a blank terminal. Renderer-controlled
 // text must never become a process argument: the user reviews and pastes it.
 // Returns false when the renderer should show the clipboard fallback.
@@ -3588,7 +3646,7 @@ ipcMain.handle("desktop:export-diagnostics", async (event, selection, ...extra) 
       appInfo:{version:app.getVersion(),platform:process.platform,arch:process.arch,electron:process.versions.electron,node:process.versions.node},
     });
   }else report = await gatherDiagnostics();
-  return saveDiagnosticsReport(report,{chooseFile:()=>dialog.showSaveDialog(owner, {
+  const savedPath = await saveDiagnosticsReport(report,{chooseFile:()=>dialog.showSaveDialog(owner, {
     title: "Export diagnostics",
     defaultPath: diagnosticsFileName(),
     filters: [{ name: "Text", extensions: ["txt"] }],
@@ -3606,6 +3664,19 @@ ipcMain.handle("desktop:export-diagnostics", async (event, selection, ...extra) 
     }
   }
   }});
+  // A crash dump can hold memory contents: it joins only the full report, and
+  // only when the person picks "Add crash file". The report is saved either way.
+  if (savedPath && selection === undefined) {
+    try {
+      await includeCrashDumpOnRequest({
+        reportPath: savedPath,
+        directory: crashDumpDirectory(),
+        ask: (question) => dialog.showMessageBox(owner, { type: "question", title: "Murage", ...question, defaultId: 0, cancelId: 0, noLink: true })
+          .then((answer) => answer.response === 1),
+      });
+    } catch { /* the saved report stands on its own */ }
+  }
+  return savedPath;
 });
 
 // Bots hand users files as markdown links to paths inside the Murage
@@ -4022,6 +4093,7 @@ async function mutateFluxConnectionInMain(input) {
     // Flux also writes the provider bank, so it settles the same fence first.
     updateDocument: fenceProviderDocumentUpdate(updateSecureCredentialDocument, { reconciliation: providerBankReconciliation, post: postModelProviderCommit }),
     post: (route, body) => modelProviderCommitRequest(route, { body, failure: "Could not save Flux connection." }),
+    afterDocument: () => syncManagedComposioCredentials(),
   }).then((status) => {
     // The connected-apps broker token is minted from the STORED Flux key, so a
     // key that just arrived (or just left) changes it. Removing the key clears
@@ -4347,6 +4419,7 @@ async function initializeBackupRemoteHost(){
     checking:()=>Boolean(desktopResticTool?.status().checking),
     readProtected,updateProtected:updateSecureCredentialDocument,selectPassword:()=>passwords.select(),createPassword:()=>passwords.create(),copyPassword:passwordRef=>passwords.saveCopy(passwordRef),
     // Log-only, redacted (no path, key or password): what really refused an off-site step.
+    reportOutcome:line=>slog(line),
     reportFailure:error=>{
       let cause=null;try{cause=describeCaptureError(error);}catch{/* never changes the result */}
       if(cause)try{fs.mkdirSync(LOG_DIR,{recursive:true});fs.appendFileSync(path.join(LOG_DIR,"server.log"),`[${new Date().toISOString()}] backup off-site step refused ${JSON.stringify(cause)}\n`,{mode:0o600});}catch{/* Logging never changes the result. */}
@@ -4506,6 +4579,8 @@ async function initializeBackupScheduleHost(){
     // A key Murage made or was shown before: the first run then asks first.
     recoveryKeyKnown:()=>Boolean(backupRecoveryKeys.lastKeyFile()),
     firstRunChanged:()=>firstRunBackupChanged(),
+    reportOutcome:line=>slog(line),
+    reportProgress:name=>backupProgress?.stage(name),
     reportCaptureFailure:failure=>{
       try{fs.mkdirSync(LOG_DIR,{recursive:true});fs.appendFileSync(path.join(LOG_DIR,"server.log"),`[${new Date().toISOString()}] backup capture failed ${JSON.stringify(failure)}\n`,{mode:0o600});}catch{/* Logging never changes backup authority or result. */}
     },
@@ -4565,7 +4640,9 @@ const desktopStartup = app.whenReady().then(async () => {
     desktopRecoveryMode=true;
     // A slow first check of the backup tool (macOS still assessing the app)
     // must not turn this backup into one that needs review: wait for it.
-    void desktopStartup.then(()=>desktopBackupTool.waitReady().catch(()=>{})).then(()=>backupScheduleHost.resumeOffline()).catch(()=>{if(!desktopShutdownStarted)showDesktopRecovery("BACKUP_REQUESTED");});
+    // The window would otherwise stay blank while the first backup is taken.
+    try{backupProgress=openBackupProgressWindow({BrowserWindow,baseDir:__dirname,skin:readPersistedSkin()??(nativeTheme.shouldUseDarkColors?"dark":"light")});}catch(error){slog(`backup progress window not shown: ${error?.message??error}`);}
+    void desktopStartup.then(()=>desktopBackupTool.waitReady().catch(()=>{})).then(()=>backupScheduleHost.resumeOffline()).catch(()=>{try{if(!desktopShutdownStarted)showDesktopRecovery("BACKUP_REQUESTED");}finally{backupProgress?.close();backupProgress=null;}});
     return;
   }
   // W-D7: say so when the last backup stopped, once the harness is up.

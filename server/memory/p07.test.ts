@@ -48,12 +48,14 @@ it("includes owner pins without search matches and budgets serialized multilingu
   expect(bundle.text).toContain("never tool authorization");
   expect(()=>assertMemoryBundle(bundle,f.access)).not.toThrow();
   expect(()=>assertMemoryBundle({...bundle},f.access)).toThrow("MEMORY_BUNDLE_UNTRUSTED");
-  await expect(buildMemoryBundle("query",f.access,empty,{ allowance: LineageAllowance.tool(),availableContextTokens:(bundle.tokenCount-MEMORY_FRAME_TOKENS-1)*10})).rejects.toThrow("MEMORY_PIN_OVERFLOW");
+  // 1.0.4: a context with no room for the pin leaves it out and the turn runs (droppedPins), never a refused turn.
+  const small=await buildMemoryBundle("query",f.access,empty,{ allowance: LineageAllowance.tool(),availableContextTokens:(bundle.tokenCount-MEMORY_FRAME_TOKENS-1)*10});
+  expect(small.pinned).toEqual([]); expect(small.droppedPins).toEqual([{id:"pin",version:1}]);
 });
 
-it("refuses mandatory pin overflow and invalidated evidence instead of omitting it",async()=>{
+it("leaves an over-budget pin out (1.0.4) and refuses invalidated evidence instead of omitting it",async()=>{
   const f=fixture(),scope=ensureScope("bot","bot"); record("huge",scope,"x".repeat(2049));
-  await expect(buildMemoryBundle("question",f.access,empty, {allowance: LineageAllowance.tool()})).rejects.toThrow("MEMORY_PIN_OVERFLOW");
+  await expect(buildMemoryBundle("question",f.access,empty, {allowance: LineageAllowance.tool()})).resolves.toMatchObject({pinned:[],droppedPins:[{id:"huge",version:1}]});
   database().prepare("DELETE FROM memory_records WHERE id='huge'").run();
   record("stale",scope,"Constraint supported by a source",true,"msg");
   database().prepare("UPDATE memory_sources SET state='retired' WHERE id='source-stale'").run();

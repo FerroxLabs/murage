@@ -16,6 +16,7 @@ import { ensureDirs } from "../config.ts";
 import type { ProviderInstance, RuntimeEvent, SendTurnInput } from "../contracts.ts";
 import { turnPermissionEnforcement } from "../routine-permissions.ts";
 import { removeTempDir } from "../testing/cleanup.ts";
+import { openclawSessionKey } from "../openclaw-profiles.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { createAcpDriver } from "./acp/core.ts";
 import { createCursorAgentDriver } from "./acp/cursor.ts";
@@ -36,6 +37,7 @@ import {
   AntigravityDriver,
   antigravityAskStopHooks,
 } from "./antigravity.ts";
+import { TURN_ASK_RULES } from "../../shared/ask-wording.ts";
 import {
   ASK_STOP_NOTE,
   ASK_STOP_PROMPT,
@@ -128,8 +130,8 @@ describe("Ask hard stop: Cursor (ACP, read-only session mode)", () => {
     const applied = JSON.parse(readFileSync(`${dump}.config.json`, "utf8")) as Array<{ method: string; params: { modeId?: string } }>;
     expect(applied).toContainEqual({ method: "session/set_mode", params: { sessionId: "fake-acp-session", modeId: "ask" } });
     const text = (JSON.parse(readFileSync(promptDump, "utf8")) as Array<{ text?: string }>).map((b) => b.text ?? "").join("");
-    expect(text.startsWith(ASK_STOP_PROMPT)).toBe(true);
-    expect(text).toContain("read notes.txt");
+    // 1.0.4 QW (21e9b0f53): the ask rule line rides in the system text, in front of the Ask preamble and the owner's words.
+    expect(text.startsWith(`${TURN_ASK_RULES}\n\n${ASK_STOP_PROMPT}\n\nread notes.txt`)).toBe(true);
     expect(JSON.parse(readFileSync(dump, "utf8")).argv).toEqual(["acp"]);
   });
 
@@ -251,20 +253,23 @@ describe("Ask hard stop: OpenClaw (Gateway session read-only mode)", () => {
     return { call, calls, mode: () => mode };
   };
   const config = { cli: "openclaw", fullAuto: false, agent: "fred" } as never;
+  // the turn's own Gateway session (1.0.4: one per conversation and audience, openclawSessionKey)
+  const turn = { threadId: "t-ask", warmIdentity: { audience: "owner" } } as never;
+  const KEY = openclawSessionKey("fred", { threadId: "t-ask", audience: "owner" });
   const okVersion = async () => "OpenClaw 2026.10.10-beta.3 (abc1234)";
 
   it("on a release below the floor (2026.7.35: no permissionMode on sessions.patch), an Ask turn is refused before anything runs, with one plain note", async () => {
     const gw = gateway("guarded");
     const old = async () => "OpenClaw 2026.7.35 (1b58cb9)";
-    await expect(applyOpenclawAskStop({ env: {}, config, askLevel: true }, gw.call, dataDir, old))
+    await expect(applyOpenclawAskStop({ env: {}, config, turn, askLevel: true }, gw.call, dataDir, old))
       .rejects.toThrow("At Ask, this OpenClaw version cannot stop before changes. Choose Auto to let me act, or install OpenClaw 2026.8.1 or newer.");
     expect(gw.calls).toEqual([]);
-    expect(existsSync(openclawAskStopRecordPath("openclaw", "agent:fred:main", dataDir))).toBe(false);
+    expect(existsSync(openclawAskStopRecordPath("openclaw", KEY, dataDir))).toBe(false);
     // an unreadable version fails closed too
-    await expect(applyOpenclawAskStop({ env: {}, config, askLevel: true }, gw.call, dataDir, async () => { throw new Error("no cli"); })).rejects.toThrow(/cannot stop before changes/);
+    await expect(applyOpenclawAskStop({ env: {}, config, turn, askLevel: true }, gw.call, dataDir, async () => { throw new Error("no cli"); })).rejects.toThrow(/cannot stop before changes/);
     expect(gw.calls).toEqual([]);
     // Auto on the old release calls nothing, as before
-    await applyOpenclawAskStop({ env: {}, config, askLevel: false }, gw.call, dataDir, old);
+    await applyOpenclawAskStop({ env: {}, config, turn, askLevel: false }, gw.call, dataDir, old);
     expect(gw.calls).toEqual([]);
   });
 
@@ -275,23 +280,23 @@ describe("Ask hard stop: OpenClaw (Gateway session read-only mode)", () => {
 
   it("on the npm latest release (2026.10.5), an Ask turn passes the version gate and runs read-only", async () => {
     const gw = gateway("guarded");
-    await applyOpenclawAskStop({ env: {}, config, askLevel: true }, gw.call, dataDir, async () => "OpenClaw 2026.10.5 (1b58cb9)");
+    await applyOpenclawAskStop({ env: {}, config, turn, askLevel: true }, gw.call, dataDir, async () => "OpenClaw 2026.10.5 (1b58cb9)");
     expect(gw.mode()).toBe("read-only");
     expect(gw.calls.map((c) => c.method)).toEqual(["sessions.list", "sessions.patch"]);
   });
 
   it("fails closed on the Gateway's stored state, not our request: a patch answer without a read-only entry refuses the Ask turn", async () => {
     const answers: Array<Record<string, unknown>> = [
-      { ok: true, key: "agent:fred:main", entry: {} }, // the field was taken but not applied
-      { ok: true, key: "agent:fred:main", entry: { permissionMode: "guarded" } }, // an older mode left in place
-      { ok: true, key: "agent:fred:main" }, // no entry at all
-      { ok: true, key: "agent:fred:main", permissionMode: "read-only" }, // our request echoed, no stored entry
+      { ok: true, key: KEY, entry: {} }, // the field was taken but not applied
+      { ok: true, key: KEY, entry: { permissionMode: "guarded" } }, // an older mode left in place
+      { ok: true, key: KEY }, // no entry at all
+      { ok: true, key: KEY, permissionMode: "read-only" }, // our request echoed, no stored entry
       { ok: false, entry: { permissionMode: "read-only" } },
     ];
     for (const answer of answers) {
       const call: OpenclawGatewayCall = async (_cli, method) =>
-        method === "sessions.list" ? { sessions: [{ key: "agent:fred:main", permissionMode: "guarded" }] } : answer;
-      await expect(applyOpenclawAskStop({ env: {}, config, askLevel: true }, call, dataDir, async () => "OpenClaw 2026.10.5 (1b58cb9)"),
+        method === "sessions.list" ? { sessions: [{ key: KEY, permissionMode: "guarded" }] } : answer;
+      await expect(applyOpenclawAskStop({ env: {}, config, turn, askLevel: true }, call, dataDir, async () => "OpenClaw 2026.10.5 (1b58cb9)"),
         JSON.stringify(answer)).rejects.toThrow(/did not confirm read-only/);
     }
   });
@@ -307,42 +312,42 @@ describe("Ask hard stop: OpenClaw (Gateway session read-only mode)", () => {
 
   it("at Ask, records the session's mode once, then sets read-only and requires the Gateway to confirm it", async () => {
     const gw = gateway("guarded");
-    await applyOpenclawAskStop({ env: {}, config, askLevel: true }, gw.call, dataDir, okVersion);
+    await applyOpenclawAskStop({ env: {}, config, turn, askLevel: true }, gw.call, dataDir, okVersion);
     expect(gw.mode()).toBe("read-only");
     expect(gw.calls.map((c) => c.method)).toEqual(["sessions.list", "sessions.patch"]);
-    expect(gw.calls[1]!.params).toEqual({ key: "agent:fred:main", permissionMode: "read-only" });
-    const record = JSON.parse(readFileSync(openclawAskStopRecordPath("openclaw", "agent:fred:main", dataDir), "utf8"));
-    expect(record).toEqual({ key: "agent:fred:main", previous: "guarded" });
+    expect(gw.calls[1]!.params).toEqual({ key: KEY, permissionMode: "read-only" });
+    const record = JSON.parse(readFileSync(openclawAskStopRecordPath("openclaw", KEY, dataDir), "utf8"));
+    expect(record).toEqual({ key: KEY, previous: "guarded" });
     // a second Ask turn keeps the first record: it never records its own read-only as the owner's mode
-    await applyOpenclawAskStop({ env: {}, config, askLevel: true }, gw.call, dataDir, okVersion);
+    await applyOpenclawAskStop({ env: {}, config, turn, askLevel: true }, gw.call, dataDir, okVersion);
     expect(gw.calls.map((c) => c.method)).toEqual(["sessions.list", "sessions.patch", "sessions.patch"]);
-    expect(JSON.parse(readFileSync(openclawAskStopRecordPath("openclaw", "agent:fred:main", dataDir), "utf8")).previous).toBe("guarded");
+    expect(JSON.parse(readFileSync(openclawAskStopRecordPath("openclaw", KEY, dataDir), "utf8")).previous).toBe("guarded");
   });
 
   it("fails closed: a Gateway that does not confirm read-only, or cannot be reached, refuses the Ask turn", async () => {
-    await expect(applyOpenclawAskStop({ env: {}, config, askLevel: true }, gateway(null, { confirm: false }).call, dataDir, okVersion)).rejects.toThrow(/did not confirm read-only/);
-    await expect(applyOpenclawAskStop({ env: {}, config, askLevel: true }, gateway(null, { fail: "sessions.patch" }).call, dataDir, okVersion)).rejects.toThrow(/gateway closed/);
+    await expect(applyOpenclawAskStop({ env: {}, config, turn, askLevel: true }, gateway(null, { confirm: false }).call, dataDir, okVersion)).rejects.toThrow(/did not confirm read-only/);
+    await expect(applyOpenclawAskStop({ env: {}, config, turn, askLevel: true }, gateway(null, { fail: "sessions.patch" }).call, dataDir, okVersion)).rejects.toThrow(/gateway closed/);
   });
 
   it("at Auto, puts back the mode an Ask turn replaced (none: cleared), then forgets it", async () => {
     const gw = gateway(null);
-    await applyOpenclawAskStop({ env: {}, config, askLevel: true }, gw.call, dataDir, okVersion);
-    await applyOpenclawAskStop({ env: {}, config, askLevel: false }, gw.call, dataDir, okVersion);
-    expect(gw.calls.at(-1)).toEqual({ method: "sessions.patch", params: { key: "agent:fred:main", permissionMode: null } });
+    await applyOpenclawAskStop({ env: {}, config, turn, askLevel: true }, gw.call, dataDir, okVersion);
+    await applyOpenclawAskStop({ env: {}, config, turn, askLevel: false }, gw.call, dataDir, okVersion);
+    expect(gw.calls.at(-1)).toEqual({ method: "sessions.patch", params: { key: KEY, permissionMode: null } });
     expect(gw.mode()).toBeNull();
-    expect(existsSync(openclawAskStopRecordPath("openclaw", "agent:fred:main", dataDir))).toBe(false);
+    expect(existsSync(openclawAskStopRecordPath("openclaw", KEY, dataDir))).toBe(false);
     const before = gw.calls.length;
-    await applyOpenclawAskStop({ env: {}, config, askLevel: false }, gw.call, dataDir, okVersion);
+    await applyOpenclawAskStop({ env: {}, config, turn, askLevel: false }, gw.call, dataDir, okVersion);
     expect(gw.calls.length).toBe(before); // no record: Auto calls nothing, exactly as before
   });
 
   it("at Auto, an owner who changed the mode since keeps their choice", async () => {
     const gw = gateway("guarded");
-    await applyOpenclawAskStop({ env: {}, config, askLevel: true }, gw.call, dataDir, okVersion);
-    await gw.call("openclaw", "sessions.patch", { key: "agent:fred:main", permissionMode: "workspace" }, {});
-    await applyOpenclawAskStop({ env: {}, config, askLevel: false }, gw.call, dataDir, okVersion);
+    await applyOpenclawAskStop({ env: {}, config, turn, askLevel: true }, gw.call, dataDir, okVersion);
+    await gw.call("openclaw", "sessions.patch", { key: KEY, permissionMode: "workspace" }, {});
+    await applyOpenclawAskStop({ env: {}, config, turn, askLevel: false }, gw.call, dataDir, okVersion);
     expect(gw.mode()).toBe("workspace");
-    expect(existsSync(openclawAskStopRecordPath("openclaw", "agent:fred:main", dataDir))).toBe(false);
+    expect(existsSync(openclawAskStopRecordPath("openclaw", KEY, dataDir))).toBe(false);
   });
 
   it("at Ask, the prompt's directive denies every shell command (unchanged)", () => {
