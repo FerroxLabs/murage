@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Reviews",
     "tagline": "Thoughtful review replies and an evidence-based improvement list",
-    "summary": "Kudos prepares a weekly review digest and reply drafts from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For a customer review team, use Review Engine. For a combined local search and reviews team, use Local SEO & Reviews Desk. For a customer-message review team, use Reply Desk.",
+    "summary": "Kudos prepares a weekly review digest and reply drafts from the material you supply.",
     "category": "Marketing",
     "author": {
       "name": "Ferrox Labs",
@@ -60,7 +60,8 @@
         "title": "Reviews",
         "description": "Kudos prepares a weekly review digest and reply drafts from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For a customer review team, use Review Engine. For a combined local search and reviews team, use Local SEO & Reviews Desk. For a customer-message review team, use Reply Desk.",
         "appearance": {
-          "color": "green"
+          "color": "yellow",
+          "mascotBody": "star"
         },
         "skills": [
           "copy-customer-voice",

@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Planning with Files",
     "tagline": "File-based planning: persistent markdown as working memory on disk",
-    "summary": "Work like Manus (the $2B AI agent Meta acquired): Use persistent markdown files as your \"working memory on disk.\" For priority planner as one focused job, use Priority Planner. For project coordinator as one focused job, use Project Coordinator. For documenting repeat operating procedures, use SOP Writer.",
+    "summary": "Plans your work with persistent markdown files on disk, used as working memory across a long task.",
     "category": "Productivity",
     "author": {
       "name": "Ferrox Labs",
@@ -34,7 +34,8 @@
         "title": "File-based planning: persistent markdown as working memory on disk",
         "description": "Work like Manus (the $2B AI agent Meta acquired): Use persistent markdown files as your \"working memory on disk.\" For priority planner as one focused job, use Priority Planner. For project coordinator as one focused job, use Project Coordinator. For documenting repeat operating procedures, use SOP Writer.",
         "appearance": {
-          "color": "blue"
+          "color": "teal",
+          "mascotBody": "squircle"
         },
         "playbooks": [
           "planning-with-files"

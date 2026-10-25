@@ -78,3 +78,9 @@ docs/plans/**
 server/testing/.git-ls-files.fixture
 /.v101-ref/
 /.v102-ref/
+
+# Staged from release-notes/<version>.md by scripts/release-notes.mjs for the update feeds (never committed).
+/build/release-notes.md
+
+# design scratch (handoffs, mockups) never enters the tree
+.design/

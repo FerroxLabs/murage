@@ -1,5 +1,5 @@
 import { threadHumanPrincipal } from "./human-principals.ts";
-import { handoffRequest, isTerminalRoomRequestState, type RoomRequest, completeRequest, requeueRequest } from "./room-requests.ts";
+import { askerCancelled, handoffRequest, isTerminalRoomRequestState, type RoomRequest, completeRequest, requeueRequest } from "./room-requests.ts";
 import { awaitWriterGate, database, isDatabaseBusy, transaction } from "./database.ts";
 import { afterCommit } from "./tx-scope.ts";
 import { registerLegacyDelegationParser, importLegacyDelegations, delegationTurnKey, holdForReconcile, ownerRecordMigrationPending } from "./pending-delegations-schema.ts";
@@ -27,7 +27,8 @@ import { DELEGATION_OUTCOMES } from "../shared/record-values.ts";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { MurageStatus, outboundWords, status, storedStatusShapeOk, type BotName, type FailureCode, type Outbound } from "./murage-status.ts";
+import { MurageStatus, cancelledEnding, outboundWords, status, storedStatusShapeOk, type BotName, type FailureCode, type Outbound } from "./murage-status.ts";
+import { isSharedWorkRow } from "./shared-work.ts";
 import { ReleasedText, type EgressOrigin } from "./released-text.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { coordinationTraceSchema, MAX_HANDOFFS_PER_TURN, type CoordinationTrace } from "./coordination-budget.ts";
@@ -253,7 +254,7 @@ function stmts(): Statements {
       remove: db.prepare("DELETE FROM pending_delegations WHERE id=?"),
       removeStarted: db.prepare("DELETE FROM pending_delegations WHERE id=? AND phase='started' AND started_at IS NOT NULL"),
       removeHeld: db.prepare("DELETE FROM pending_delegations WHERE id=? AND phase='started' AND started_at IS NULL"),
-      heldPage: db.prepare("SELECT id, source_thread_id, to_bot_id, from_bot_id, submitted_at, item FROM pending_delegations INDEXED BY pd_held WHERE phase='started' AND started_at IS NULL AND id>? ORDER BY id LIMIT 100"),
+      heldPage: db.prepare("SELECT id, source_thread_id, to_bot_id, from_bot_id, submitted_at, item, origin FROM pending_delegations INDEXED BY pd_held WHERE phase='started' AND started_at IS NULL AND id>? ORDER BY id LIMIT 100"),
       startedPage: db.prepare(PENDING_SQL.startedPage),
       removeThread: db.prepare(PENDING_SQL.forgetThread),
       due: db.prepare(PENDING_SQL.due),
@@ -379,12 +380,18 @@ const validEventId = (value: unknown): value is string =>
   typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value);
 
 let receipts: DelegationReceipt[] = [];
+/** Whether every receipt this process holds is on disk (F3 02-4, receipt persistence). In memory only, never serialized. It STARTS true: no file at boot,
+ * or receipts read back from one, leave nothing unpersisted. False after a failed write of the receipts file, true again after a successful one. A started
+ * row is removed only while it is true (settleReceipted): a receipt known only to this process never replaces the row a restart settles from. */
+let receiptsPersisted = true;
 
 function saveReceipts(): boolean {
   try {
     writeFileAtomic(RECEIPTS_FILE, JSON.stringify(receipts, null, 2), { mode: 0o600 });
+    receiptsPersisted = true;
     return true;
   } catch (error) {
+    receiptsPersisted = false;
     console.error("delegations: could not persist receipts", error);
     return false;
   }
@@ -589,6 +596,12 @@ export function repeatedHandoffReply(repeated: Pick<RoomRequest, "id" | "state">
 /** Settles a started hand-off whose receipt is recorded: the request's terminal state (the receipt listener's writes) and the row's removal commit together. On a failure
  * nothing is removed and nothing is ended: the row stays, the receipt stays, and a later pass (the dispatch, the boot sweep) calls this again. True when it settled. */
 export function settleReceipted(receipt: DelegationReceipt): boolean {
+  // F3 02-4: the row goes only for a receipt on disk. One known only to this process (the file write failed) is written again first; still not written, nothing
+  // is removed or ended, and this process's stranded sweep tries again (a restart settles the row itself: "interrupted", never lost). Every settle passes here.
+  if (!receiptsPersisted && !saveReceipts()) {
+    stranded.add(receipt.id);
+    return false;
+  }
   let after: (() => void) | void = undefined;
   let written = false;
   try {
@@ -849,11 +862,52 @@ export function dropQueuedDelegation(bus: CommsBus, id: string, reason: Outbound
   const { threadId, item } = found;
   if (drainingThreads.has(threadId)) return false;
   const name = bus.store.bot(item.toBotId)?.name ?? item.toBotId;
+  const request = handoffRequest(database(), id);
+  if (request && isTerminalRoomRequestState(request.state)) {
+    // the hand-off's real outcome (its answer) is already on record: it is kept, no closing line, only the row goes. A cancelled receipt from an
+    // earlier pass that stopped before the removal goes through the steps again (the line is written once, an equal receipt is replaced)
+    const real = keepRealOutcome(id);
+    if (real === "unsaved") return false;
+    if (real === "kept") return acknowledgeDelegation(threadId, id, bus);
+    // CANCEL-TREE-104 R6 site 2: the closing line, the receipt on disk, then the row. Anything that fails leaves the row for the next drain (site 1).
+    if (!appendHandoffClosingLine(bus, { id, sourceThreadId: threadId, fromBotId: item.fromBotId, targetName: name, requestId: request.id })) return false;
+    // the receipt must be on disk (a receipt only in memory never authorizes the removal); recording it again replaces an equal one
+    if (!recordDelegationReceipt({ id, sourceThreadId: threadId, toBotId: item.toBotId, toBotName: name, status: "cancelled", result: reason })) return false;
+    return acknowledgeDelegation(threadId, id, bus);
+  }
   // Not dropped, not reported: the row stays and the next drain settles it against its (cancelled) request.
   if (!acknowledgeDelegation(threadId, id, bus)) return false;
   recordDelegationReceipt({ id, sourceThreadId: threadId, toBotId: item.toBotId, toBotName: name, status: "cancelled", result: reason });
   appendDelegationRow(bus, threadId, item.fromBotId, { role: "bot", kind: "activity", tool: { name: `Delegation to @${name} was cancelled`, ok: false } });
   return true;
+}
+
+/** A receipt other than a cancelled one is on record for this hand-off: its real outcome, which a later cancel never replaces. "kept" once it is on disk
+ * (written again here when the last write failed: a receipt only in memory never authorizes the removal of the row), "unsaved" when that write failed (the row stays for the
+ * next pass), "none" when there is no such receipt (the cancel's own steps run). */
+export function keepRealOutcome(id: string): "none" | "kept" | "unsaved" {
+  const receipt = findDelegationReceipt(id);
+  if (receipt === null || receipt.status === "cancelled") return "none";
+  return receiptsPersisted || saveReceipts() ? "kept" : "unsaved";
+}
+
+/** The stable id of the one closing line a hand-off's source conversation gets when the request that asked ended (CANCEL-TREE-104 R6). */
+export const handoffClosingLineId = (id: string): string => `handoff-cancelled:${id}`;
+/** The closing line, once: Murage's own activity row in the source conversation, linked to the request it closes (`requestId`). Not a reply (no `to`,
+ * nothing delivered), so nothing wakes the asker, whose request has already ended. A line already there is left alone; a write that fails is reported
+ * (the caller keeps the queue row, so the next drain writes it). True when the line is there after the call. */
+export function appendHandoffClosingLine(bus: { store: Pick<Store, "appendMessage" | "bot" | "groupByThread"> }, line: { id: string; sourceThreadId: string; fromBotId?: string; targetName: string; requestId: string }): boolean {
+  const stableId = handoffClosingLineId(line.id);
+  if (storedMessage(line.sourceThreadId, stableId)) return true;
+  try {
+    const row = murageLine({ role: "bot", kind: "activity", requestId: line.requestId, tool: { name: `Hand-off to @${line.targetName} cancelled because the request that asked ended`, ok: false } });
+    const sender = line.fromBotId && bus.store.groupByThread(line.sourceThreadId) ? bus.store.bot(line.fromBotId) : undefined;
+    bus.store.appendMessage(line.sourceThreadId, sender ? { ...row, from: { botId: sender.id, name: sender.name, color: sender.color } } : row, stableId);
+    return true;
+  } catch (error) {
+    console.error("delegations: could not write the closing line of a cancelled hand-off", error);
+    return false;
+  }
 }
 
 /** Take the Stop control off an item's waiting line. Never throws: the line
@@ -1001,6 +1055,8 @@ export function _loadPending(): void {
     console.error("delegations: could not read the queue", error);
   }
   receipts = [];
+  // what is in memory now is exactly what the file holds (or nothing, with no file): nothing unpersisted
+  receiptsPersisted = true;
   try {
     const rawReceipts = JSON.parse(readFileSync(RECEIPTS_FILE, "utf8"));
     if (Array.isArray(rawReceipts)) {
@@ -1261,6 +1317,8 @@ export function acknowledgeDelegation(threadId: string, itemId: string, bus?: Co
 
 /** What a dispatch throws when the handoff is not startable now (already started, gone, its room request ended, or the conversation is not the stored one). Nothing was written. */
 export const DELEGATION_NOT_STARTABLE = "DELEGATION_NOT_STARTABLE";
+/** The hand-off's request ended (cancelled, or gone) before the turn was handed to the provider: the hand-over is refused, quietly (CANCEL-TREE-104 R2). */
+export const DELEGATION_REQUEST_ENDED = "DELEGATION_REQUEST_ENDED";
 /** What a dispatch throws when the owner's recorded deletion covers the source conversation, the sender or the target. Nothing was written. */
 export const DELEGATION_DELETED = "DELEGATION_DELETED";
 export const coded = (code: string, message: string) => Object.assign(new Error(message), { code });
@@ -1324,6 +1382,44 @@ export function startedDelegation(id: string): { targetThreadId: string; turnKey
   return row ? { targetThreadId: row.target_thread_id, turnKey: row.turn_key ?? delegationTurnKey(id), acceptedTurnId: row.accepted_turn_id, startAttempts: row.start_attempts ?? 0, submittedAt: row.submitted_at } : null;
 }
 
+/** A synchronous ask that ran past its wait (F3 02-4): its ticket is an ORDINARY started hand-off row, written in the wait's own timer tick before the timeout is
+ * acknowledged (index.ts askBotAndWait, handoff-boundary.ts askTicketFactory). `id` is the ask's room request id (origin `room`) or a fresh id (origin `owner`);
+ * the turn is already running, so the row is started and submitted now, and accepted when the peer's turn id is known (else markAskTicketAccepted, once seen).
+ * Its live end is the finalizer's (finishHandoff removes it with the receipt); after a restart the boot settling ends it: accepted, an "interrupted" receipt;
+ * never seen accepted, held for the owner. Never run again by itself. Throws when the row could not be written: then there is no ticket. */
+export function recordAskTicket(ticket: {
+  id: string; origin: "owner" | "room"; sourceThreadId: string; fromBotId: string; toBotId: string; targetThreadId: string; acceptedTurnId?: string;
+  message: string; depth: number; notOwnerAudience?: boolean; eventId?: string; now?: number;
+}): void {
+  const now = ticket.now ?? Date.now();
+  const item: PendingDelegationItem = {
+    id: ticket.id, toBotId: ticket.toBotId, fromBotId: ticket.fromBotId, message: ticket.message, depth: Math.max(0, Math.trunc(ticket.depth)), attempts: 0,
+    ...(ticket.notOwnerAudience === true ? { notOwnerAudience: true } : {}),
+    ...(validEventId(ticket.eventId) ? { eventId: ticket.eventId } : {}),
+  };
+  database().prepare(`INSERT INTO pending_delegations(id, source_thread_id, to_bot_id, from_bot_id, phase, retry_at, item, origin, turn_key, target_thread_id,
+    started_at, accepted_turn_id, start_attempts, submitted_at) VALUES(?,?,?,?,'started',NULL,?,?,?,?,?,?,1,?)`)
+    .run(ticket.id, ticket.sourceThreadId, ticket.toBotId, ticket.fromBotId, itemJson(item), ticket.origin, delegationTurnKey(ticket.id), ticket.targetThreadId, now, ticket.acceptedTurnId ?? null, now);
+  persistWrites++;
+}
+/** The peer's turn of an ask ticket was seen after the ticket was written: from here a restart reports it interrupted instead of holding it. */
+export function markAskTicketAccepted(id: string, turnId: string): void {
+  database().prepare("UPDATE pending_delegations SET accepted_turn_id=? WHERE id=? AND phase='started' AND started_at IS NOT NULL AND accepted_turn_id IS NULL").run(turnId, id);
+  persistWrites++;
+}
+/** A started hand-off by its row alone (any process that opened the store): what the status route answers "running" from when no watch of this process
+ * knows it, a timed-out ask's ticket after a restart above all (task-resolution.ts `started`). Null when there is no started row of that id. */
+export function startedTicket(id: string): { threadId: string; watch: { sourceThreadId: string; toBotId: string; taskId: string; startedAtMs?: number; requestId?: string; notOwnerAudience?: boolean } } | null {
+  const row = database().prepare("SELECT source_thread_id, to_bot_id, origin, target_thread_id, started_at, submitted_at, item FROM pending_delegations WHERE id=? AND phase='started'").get(id) as
+    { source_thread_id: string; to_bot_id: string; origin: DelegationOrigin; target_thread_id: string | null; started_at: number | null; submitted_at: number | null; item: string } | undefined;
+  if (!row || !row.target_thread_id) return null;
+  let notOwnerAudience: boolean | undefined;
+  try { const raw = JSON.parse(row.item) as { notOwnerAudience?: unknown }; if (Object.hasOwn(raw, "notOwnerAudience")) notOwnerAudience = raw.notOwnerAudience !== false; } catch { /* unreadable: the mark stays unknown */ }
+  const startedAtMs = row.started_at ?? row.submitted_at ?? undefined;
+  return { threadId: row.target_thread_id, watch: { sourceThreadId: row.source_thread_id, toBotId: row.to_bot_id, taskId: id, ...(startedAtMs !== undefined ? { startedAtMs } : {}),
+    ...(row.origin === "room" ? { requestId: id } : {}), ...(notOwnerAudience !== undefined ? { notOwnerAudience } : {}) } };
+}
+
 export const RESTART_RECEIPT = "interrupted by a restart";
 /** What the owner reads when a restart cut a hand-off off after it was handed to the provider and nothing shows it ran. */
 export const uncertainHandoffText = (name: string): string => `Murage restarted while handing this to @${name}. It may have started. Check @${name}'s conversation, or send it again.`;
@@ -1353,7 +1449,9 @@ export type SettledStart = "gone" | "waiting" | "receipted" | "interrupted" | "r
  *  - it was never handed to the provider: safe to run once more, reusing its prompt when the thread holds it; its room request or shared request goes
  *    back to queued so the dispatch that follows finds both records agreeing. A third cut-short start is not run by itself: it is held for the owner with the
  *    reason "didNotStart" ("held"). Work known not to have executed is never deleted. */
-export function settleAfterFailure(id: string, botName?: (botId: string) => string | undefined): SettledStart {
+export function settleAfterFailure(id: string, settle: SettleOptions | ((botId: string) => string | undefined) = {}): SettledStart {
+  const options: SettleOptions = typeof settle === "function" ? { botName: settle } : settle;
+  const botName = options.botName;
   const db = database();
   const row = handoffRow(id);
   if (!row) return "gone";
@@ -1361,12 +1459,16 @@ export function settleAfterFailure(id: string, botName?: (botId: string) => stri
     if (row.origin === "room" || row.origin === "shared") requeueRequest(db, id, "start_failed");
     return "waiting";
   }
-  if (row.started_at === null) return "alreadyHeld";
+  // CLOUD-COMPUTER-BOOT-105 H1: a held hand-off whose request ended is not left held for the owner
+  if (row.started_at === null) return settleEndedRequest(row, options) ?? "alreadyHeld";
   const name = botName?.(row.to_bot_id) ?? row.to_bot_id;
   const receipt = (result: Outbound, outcome: DelegationReceipt["status"] = "failed", reply?: OwedReply): void => { recordDelegationReceipt({ id: row.id, sourceThreadId: row.source_thread_id, toBotId: row.to_bot_id, toBotName: name, status: outcome, result, ...(reply ? { reply } : {}) }); };
   const turnKey = row.turn_key ?? delegationTurnKey(row.id);
   // a receipt whose settling did not commit leaves the row: "unsettled" (the receipt is kept and the next pass settles it), never counted as progress
   { const receipted = findDelegationReceipt(row.id); if (receipted) return settleReceipted(receipted) ? "receipted" : "unsettled"; }
+  // CLOUD-COMPUTER-BOOT-105 H1: a hand-off that was handed over (accepted or submitted) whose request ended is settled as cancelled, never "interrupted by
+  // a restart" or held: the stamp says the provider may have the turn, and that side is stopped or fenced (cloud-computer-turns.ts, the live interrupt)
+  { const ended = settleEndedRequest(row, options); if (ended) return ended; }
   // the receipt carries the line the source conversation is owed, as a finished hand-off's does (handoff-boundary.ts finalizeDelegationWatch): the settle
   // writes it under the hand-off's stable id (replayOwedReply), so the owner reads "interrupted by a restart" where the reply would have been, and the
   // asker is woken on it; a receipt with only a status wrote nothing and woke nobody (1.0.3 lee-phantom d: a restart mid-delegation left the lead blank)
@@ -1382,7 +1484,10 @@ export function settleAfterFailure(id: string, botName?: (botId: string) => stri
     return Number(db.prepare("UPDATE pending_delegations SET started_at=NULL, retry_at=NULL WHERE id=? AND phase='started' AND started_at IS NOT NULL").run(row.id).changes) === 1 ? (persistWrites++, "held") : "alreadyHeld";
   }
   const prompt = row.target_thread_id ? storedMessage(row.target_thread_id, turnKey) !== undefined : false;
-  if (prompt && (row.start_attempts ?? 0) >= MAX_START_ATTEMPTS) {
+  // CANCEL-TREE-104 R3/R4: a start proven never handed over whose request ended is reset whatever its attempts: there is nothing for the owner to
+  // decide, the next admission settles it as cancelled (decide() sees the terminal request)
+  const askerEnded = (row.origin === "room" || row.origin === "shared") && (() => { const request = handoffRequest(db, row.id); return request !== null && isTerminalRoomRequestState(request.state); })();
+  if (prompt && (row.start_attempts ?? 0) >= MAX_START_ATTEMPTS && !askerEnded) {
     // known not to have executed (it was never handed to the provider): held for the owner, not deleted. The notice pass tells the owner.
     return holdUnexecuted(row.id, row.item, "didNotStart") ? "held" : "alreadyHeld";
   }
@@ -1394,8 +1499,56 @@ export function settleAfterFailure(id: string, botName?: (botId: string) => stri
   return prompt ? "redispatched" : "fresh";
 }
 
+/** CLOUD-COMPUTER-BOOT-105 H1: the request that asked for a hand-off ended by a cancel: its own state is `cancelled` (the owner's cancel walk, a
+ * shared request the owner cancelled), or, for a room ask, an asker above it was cancelled (a held hand-off's own request already reads failed from its
+ * hold receipt). Only a cancel counts (askerCancelled): a request that expired or failed on its own, or one under an asker that FAILED, keeps today's
+ * path, so its hand-off is never receipted cancelled and its subtree is never cancelled for it (Grok r1 Medium). */
+export function requestEndedForHandoff(request: RoomRequest): boolean {
+  if (request.state === "cancelled") return true;
+  return !isSharedWorkRow(request) && askerCancelled(database(), request);
+}
+/** CLOUD-COMPUTER-BOOT-105 H1. A started hand-off that was handed over (accepted_turn_id or submitted_at) or is held (started_at NULL), whose request
+ * ended: a room request in any terminal state, or a shared request the owner's cancel ended (done/failed shared requests keep their own finish, as decide()
+ * does). In the R6 order: the closing line, the cancelled receipt on disk (no owed reply: nobody wakes the asker that ended), then the row (a held row
+ * through releaseHeld, which clears its Send again control). The request's ending is requestEndedForHandoff. Null when H1 does not apply; "unsettled" when a step failed or no line writer exists. */
+function settleEndedRequest(row: HandoffRow, options: SettleOptions): SettledStart | null {
+  if (row.phase !== "started") return null;
+  const held = row.started_at === null;
+  if (!held && !row.accepted_turn_id && row.submitted_at === null) return null;
+  if (row.origin !== "room" && row.origin !== "shared") return null;
+  const request = handoffRequest(database(), row.id);
+  if (!request) return null;
+  if (!requestEndedForHandoff(request)) return null;
+  const writer = options.closingLine ?? storeClosingLine(options.store);
+  if (!writer) return "unsettled";
+  const name = options.botName?.(row.to_bot_id) ?? (options.store as Partial<Store> | undefined)?.bot?.(row.to_bot_id)?.name ?? row.to_bot_id;
+  let fromBotId = row.from_bot_id ?? undefined;
+  try { const parsed = JSON.parse(row.item) as { fromBotId?: unknown }; if (typeof parsed.fromBotId === "string" && parsed.fromBotId) fromBotId = parsed.fromBotId; } catch { /* the row's sender */ }
+  if (!writer({ id: row.id, sourceThreadId: row.source_thread_id, ...(fromBotId ? { fromBotId } : {}), targetName: name, requestId: request.id })) return "unsettled";
+  if (!recordDelegationReceipt({ id: row.id, sourceThreadId: row.source_thread_id, toBotId: row.to_bot_id, toBotName: name, status: "cancelled", result: cancelledEnding(request.outcomeNote) })) return "unsettled";
+  if (held) {
+    const removed = releaseHeld(options.store, { id: row.id, sourceThreadId: row.source_thread_id }, () => removeHeldRow(row.id));
+    return removed ? "receipted" : "unsettled";
+  }
+  return handoffRow(row.id) ? "unsettled" : "receipted";
+}
+/** The closing-line writer a full store gives (tests and tools that settle with the store); undefined for a store that only patches lines. */
+function storeClosingLine(store: SettleOptions["store"]): SettleOptions["closingLine"] {
+  const full = store as Partial<Store> | undefined;
+  if (!full || typeof full.appendMessage !== "function" || typeof full.bot !== "function" || typeof full.groupByThread !== "function") return undefined;
+  return (line) => appendHandoffClosingLine({ store: full as Store }, line);
+}
+/** Live (the cancel's post-commit): the held hand-off of a request that ended is closed as cancelled (H1). True when it was. */
+export function settleHeldOfEndedRequest(id: string, options: SettleOptions): boolean {
+  const row = handoffRow(id);
+  return row !== undefined && row.phase === "started" && row.started_at === null && settleEndedRequest(row, options) === "receipted";
+}
+
 export interface SettleOptions {
   botName?: (botId: string) => string | undefined;
+  /** CLOUD-COMPUTER-BOOT-105 H1: the CANCEL-TREE-104 R6 closing line in the source room (true when it is there). With no writer (and no store that
+   * can append), a handed or held hand-off whose request ended is left "unsettled": never the interrupted or held path. */
+  closingLine?: (line: { id: string; sourceThreadId: string; fromBotId?: string; targetName: string; requestId: string }) => boolean;
   /** settleStartedDelegations: closes the dispatch gate at once, then writes nothing until this resolves (the server's first health answer) */
   ready?: Promise<void>;
   /** the owner is told about a held hand-off: the line in the conversation it was made in (repeatable) */
@@ -1418,7 +1571,7 @@ function settleStartedPage(cursor: StartedCursor, totals: SettleTotals, options:
   if (!page.length) return null;
   for (const row of page) {
     try {
-      const outcome = settleAfterFailure(row.id, options.botName);
+      const outcome = settleAfterFailure(row.id, options);
       if (outcome === "receipted") totals.receipted++;
       else if (outcome === "interrupted") totals.interrupted++;
       else if (outcome === "redispatched") totals.redispatched++;
@@ -1543,10 +1696,12 @@ const removeHeldRow = (id: string): boolean => { deliverOwedBeforeRemoval(id); c
 const HELD_KEPT_MS = 30 * 24 * 60 * 60 * 1000;
 function noticeHeldPage(after: string, options: SettleOptions): string | null {
   const now = Date.now();
-  const page = stmts().heldPage.all(after) as unknown as Array<{ id: string; source_thread_id: string; to_bot_id: string; from_bot_id: string | null; submitted_at: number | null; item: string }>;
+  const page = stmts().heldPage.all(after) as unknown as Array<{ id: string; source_thread_id: string; to_bot_id: string; from_bot_id: string | null; submitted_at: number | null; item: string; origin: DelegationOrigin }>;
   if (!page.length) return null;
   for (const row of page) {
     try {
+      // CLOUD-COMPUTER-BOOT-105 H1: a held hand-off whose request ended is closed as cancelled, not noticed as held
+      if (row.origin === "room" || row.origin === "shared") { const full = handoffRow(row.id); if (full && settleEndedRequest(full, options) !== null) continue; }
       if (row.submitted_at !== null && now - row.submitted_at > HELD_KEPT_MS) { releaseHeld(options.store, { id: row.id, sourceThreadId: row.source_thread_id }, () => removeHeldRow(row.id)); continue; }
       noticeHeldOne(row, options);
     } catch (error) { console.error("delegations: could not tell the owner about a held handoff", error); }
@@ -1821,6 +1976,7 @@ export function _simulateRestart(): void {
   recheckIds.clear();
   _forgetInFlight();
   receipts = [];
+  receiptsPersisted = true;
 }
 
 // ── live status for a running delegated turn ──────────────────────────

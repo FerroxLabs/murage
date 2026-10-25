@@ -54,7 +54,8 @@
         "title": "Project Kickoff",
         "description": "Kickoff prepares a kickoff charter with scope and acceptance criteria. Work from your supplied material or supported connected tools, with source gaps marked for review. For broad operations coordination, use Ops. For a general delivery team, use Business / Team.",
         "appearance": {
-          "color": "purple"
+          "color": "purple",
+          "mascotBody": "circle"
         },
         "skills": [
           "project-kickoff",

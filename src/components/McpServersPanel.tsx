@@ -38,6 +38,8 @@ export interface McpServerListing {
   enabled: boolean;
   /** Why Murage turned it off at load (Rule 57a: `name-collision:<survivor>`). */
   disabledReason?: string;
+  /** Item 118: key names a bot declared that still wait for the owner's value. */
+  pendingKeys?: string[];
   status?: "ready" | "needs-key";
 }
 
@@ -53,6 +55,8 @@ export interface McpRemoteServerListing {
   local?: "this-computer" | "local-network";
   enabled: boolean;
   disabledReason?: string;
+  /** Item 118: header names a bot declared that still wait for the owner's value. */
+  pendingKeys?: string[];
   status: "ready" | "needs-sign-in" | "needs-key" | "unknown";
 }
 
@@ -64,6 +68,9 @@ export function nameClashWith(server: { disabledReason?: string }): string | nul
 
 type AnyListing = McpServerListing | McpRemoteServerListing;
 const isRemote = (server: AnyListing): server is McpRemoteServerListing => server.kind === "remote";
+/** The key names that hold a value: a pending key (item 118) holds none yet. */
+export const savedKeyNames = (server: AnyListing): string[] =>
+  (isRemote(server) ? server.headerNames : server.envKeys).filter((name) => !(server.pendingKeys ?? []).includes(name));
 
 interface McpDraft {
   name: string;
@@ -137,6 +144,8 @@ export function McpServersPanel() {
   const [allServers, setServers] = useState<AnyListing[] | null>(null);
   // The entry that only holds a pasted Netlify token is not a server the owner manages here.
   const servers = allServers === null ? null : allServers.filter((server) => server.name !== NETLIFY_TOKEN_ENTRY);
+  // Item 118: servers bots filed that still wait for the owner (the same count the filing tool stops at).
+  const waitingForReview = (servers ?? []).filter((server) => !server.enabled && (server.disabledReason ?? "").startsWith("Added by ")).length;
   const [editing, setEditing] = useState<string | null>(null);
   /** Saved env names awaiting the owner's keep-or-clear answer after a command edit. */
   const [askKeep, setAskKeep] = useState<string[] | null>(null);
@@ -446,6 +455,7 @@ export function McpServersPanel() {
           </div>
         ) : (
           <div className="mt-5 space-y-3">
+            {waitingForReview >= 3 && <div className="text-[12px] text-warning">{t("mcp.panel.waiting", { count: waitingForReview })}</div>}
             {servers.map((server) => {
               const result = probe[server.name];
               const remote = isRemote(server);
@@ -477,8 +487,9 @@ export function McpServersPanel() {
                         </code>
                       </details>
                       {nameClashWith(server) && <div className="mt-1 text-[11.5px] text-warning">{t("mcp.row.nameClash", { other: nameClashWith(server)! })}</div>}
-                      {!remote && server.envKeys.length > 0 && <div className="mt-1 truncate text-[11px] text-ink-secondary">{t("mcp.row.secretsSaved", { names: server.envKeys.join(", ") })}</div>}
-                      {remote && server.headerNames.length > 0 && <div className="mt-1 truncate text-[11px] text-ink-secondary">{t("mcp.row.secretsSaved", { names: server.headerNames.join(", ") })}</div>}
+                      {!server.enabled && server.disabledReason && !nameClashWith(server) && <div className="mt-1 text-[11.5px] text-ink-secondary">{server.disabledReason}</div>}
+                      {(server.pendingKeys?.length ?? 0) > 0 && <div className="mt-1 truncate text-[11.5px] text-warning">{t("mcp.row.pending", { names: server.pendingKeys!.join(", ") })}</div>}
+                      {savedKeyNames(server).length > 0 && <div className="mt-1 truncate text-[11px] text-ink-secondary">{t("mcp.row.secretsSaved", { names: savedKeyNames(server).join(", ") })}</div>}
                     </div>
                     <div className="flex shrink-0 flex-wrap items-center gap-1">
                       <button type="button" disabled={!idle} onClick={() => void test(server)} title={t("mcp.row.testTip")} className={buttonClass}>

@@ -17,6 +17,22 @@ export function beginEdit(drafts: EditDrafts, messageId: string, text: string, f
   return { ...drafts, [messageId]: { text, sendId, saving: true } };
 }
 
+/** The person typed in an open editor: their words are kept in the store, not only in the textarea, so leaving the conversation (or the view)
+ *  and coming back reopens the editor with what they had typed. Nothing is sent. A draft that is saving is left alone (its words are the
+ *  submission in flight). Changed words take `freshSendId`: the server refuses one sendId for two different texts, and these words have not
+ *  been sent under the old one. */
+export function typeEdit(drafts: EditDrafts, messageId: string, text: string, freshSendId: string): EditDrafts {
+  const draft = drafts[messageId];
+  if (draft?.saving || draft?.text === text) return drafts;
+  return { ...drafts, [messageId]: { text, sendId: freshSendId, saving: false } };
+}
+
+/** An edit whose words are the message's own words changes nothing: it is closed like Cancel instead of forking the conversation and
+ *  rerunning the bot on the same text. */
+export function editChangesNothing(sourceText: string | undefined, text: string): boolean {
+  return sourceText !== undefined && sourceText.trim() === text.trim();
+}
+
 function without(drafts: EditDrafts, messageId: string): EditDrafts {
   const rest: Record<string, EditDraft> = { ...drafts };
   delete rest[messageId];

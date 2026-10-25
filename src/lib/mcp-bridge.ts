@@ -17,6 +17,9 @@ export interface McpSecretsInput {
   headers?: Record<string, string>;
   url?: string;
   env?: Record<string, string>;
+  /** Item 118: the revision a credential card was made for; main refuses the
+   * save, before writing anything, when the entry is no longer that one. */
+  rev?: string;
 }
 
 export type McpBridgeError =

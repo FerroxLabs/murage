@@ -5,7 +5,7 @@
 import { useEffect, useState } from "react";
 import { ChevronRight, Check } from "lucide-react";
 import type { Message } from "@/state/store";
-import { describeRun } from "@/lib/activity-runs";
+import { describeRun, describeRunRaw } from "@/lib/activity-runs";
 
 export function ActivityRun({
   messages,
@@ -32,6 +32,7 @@ export function ActivityRun({
             onClick={() => setOpen(false)}
             aria-expanded
             data-run-toggle
+            title={describeRunRaw(messages)}
             className="flex items-center gap-2 rounded-full border border-hairline/40 bg-panel px-3 py-1.5 text-[13px] text-ink-secondary hover:bg-control"
           >
             <ChevronRight size={13} className="rotate-90" />
@@ -48,7 +49,7 @@ export function ActivityRun({
         type="button"
         onClick={() => setOpen(true)}
         aria-expanded={false}
-        title="Show every step"
+        title={describeRunRaw(messages)}
         className="flex items-center gap-2 rounded-full border border-hairline/40 bg-panel px-3 py-1.5 text-[13px] text-ink-secondary hover:bg-control"
       >
         <Check size={13} className="text-success" />

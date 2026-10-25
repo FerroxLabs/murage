@@ -68,7 +68,7 @@ function hostile(h: string): Record<string, string> {
   const evil = `${h}/tmp/evil`;
   return {
     XDG_CONFIG_HOME: `${evil}/xdg`, XDG_CACHE_HOME: `${evil}/cache`, XDG_DATA_HOME: `${evil}/data`, XDG_STATE_HOME: `${evil}/state`,
-    OPENCODE_TEST_HOME: evil, OPENCODE_CONFIG_DIR: `${evil}/occonf`, OPENCODE_CONFIG: `${evil}/occonf/opencode.json`, OPENCODE_CONFIG_CONTENT: '{"plugin":["fixture-evil"]}', OPENCODE_PURE: "0",
+    OPENCODE_TEST_HOME: evil, OPENCODE_CONFIG_DIR: `${evil}/occonf`, OPENCODE_CONFIG: `${evil}/occonf/opencode.json`, OPENCODE_PURE: "0",
     CODEX_HOME: `${evil}/codex`, CLAUDE_CONFIG_DIR: `${evil}/claude`, CLAUDE_CODE_PLUGIN_DIRS: `${evil}/plugins`, CLAUDE_ENV_FILE: `${evil}/env`, CLAUDE_CODE_TMPDIR: evil,
     GROK_HOME: `${evil}/grok`, GROK_AUTH_PATH: `${evil}/auth.json`, GROK_CONFIG_PATH: `${evil}/config.toml`, GROK_DISABLE_AUTOUPDATER: "0",
     KIMI_CODE_HOME: `${evil}/kimi`, KIMI_SHARE_DIR: `${evil}/share`, KIMI_PLUGIN_ROOT: `${evil}/plugins`, KIMI_CODE_NO_AUTO_UPDATE: "0",
@@ -141,8 +141,10 @@ it("drops a path-shaped value in an allowed non-credential variable", () => {
   expect(env.ANTHROPIC_API_KEY).toBe("/looks/like/a/path");
 });
 
+// OPENCODE_CONFIG_CONTENT and FUIGO_CONFIG are the two deliberate exceptions (1.0.4 audit 11-2): allowed only through a value shape check
+// (ENGINE_ENV_VALUE), tested in "Flux memory header overlays" below.
 it("refuses a path-shaped name in the allowlist at load and the shape covers every known override", () => {
-  const names = ["XDG_CONFIG_HOME", "XDG_STATE_HOME", "OPENCODE_TEST_HOME", "OPENCODE_CONFIG_CONTENT", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "CLAUDE_CODE_PLUGIN_DIRS", "CLAUDE_ENV_FILE", "CLAUDE_CODE_TMPDIR", "GROK_HOME", "GROK_AUTH_PATH", "GROK_CONFIG_PATH", "GROK_TEST_PROMPT_BLACKHOLE", "KIMI_CODE_HOME", "KIMI_SHARE_DIR", "KIMI_PLUGIN_ROOT", "FUIGO_HOME", "EVIL_CONFIG_DIR", "HOME", "PATH", "TMPDIR"];
+  const names = ["XDG_CONFIG_HOME", "XDG_STATE_HOME", "OPENCODE_TEST_HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "CLAUDE_CODE_PLUGIN_DIRS", "CLAUDE_ENV_FILE", "CLAUDE_CODE_TMPDIR", "GROK_HOME", "GROK_AUTH_PATH", "GROK_CONFIG_PATH", "GROK_TEST_PROMPT_BLACKHOLE", "KIMI_CODE_HOME", "KIMI_SHARE_DIR", "KIMI_PLUGIN_ROOT", "FUIGO_HOME", "EVIL_CONFIG_DIR", "HOME", "PATH", "TMPDIR"];
   const result = JSON.parse(execFileSync("python3", ["-I", "-c", shape, launcher, JSON.stringify(names)], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
   expect(result.refused).toBe(true);
   expect(result.matched).toEqual(names);
@@ -171,4 +173,90 @@ it.each(["codex", "claudeAgent", "grokAgent", "kimiAgent"])("keeps a %s sign-in 
   const h = home(engine);
   const { env } = JSON.parse(execFileSync("python3", ["-I", "-c", login, launcher, engine, manifest, engineRoot, join(root, "digest-cache"), command], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
   expect(env).toMatchObject({ [CONFIG_VAR[engine]]: `${h}/${{ codex: ".codex", claudeAgent: ".claude", grokAgent: ".grok", kimiAgent: ".kimi-code" }[engine]}`, XDG_CONFIG_HOME: `${h}/.config`, LANG: "C.UTF-8", TERM: "xterm-256color" });
+});
+
+// 1.0.4 audit 11-2: the Flux memory headers ride FUIGO_CONFIG (Fuigo) and OPENCODE_CONFIG_CONTENT (OpenCode) as
+// an inline JSON overlay (flux-memory-headers.ts fuigoConfigOverlay / opencodeConfigOverlay). Each is passed for
+// its own engine only and only when its value is exactly that shape; anything that could carry more is dropped.
+describe("Flux memory header overlays (11-2)", () => {
+  const headers = { "x-flux-memory-app": "murage", "x-flux-memory-capture": "off", "x-flux-memory-inject": "off" };
+  const fuigo = JSON.stringify({ models: { extra_headers: headers } });
+  const opencode = JSON.stringify({ provider: { flux: { options: { headers } } } });
+  const opencodeMcp = JSON.stringify({ provider: { flux: { options: { headers: { ...headers, "x-flux-memory-read": "a1,b2" } } } }, mcp: { composio: { enabled: false } } });
+  const envOf = (engine: string, env: Record<string, string>) => run(request(engine, env)).env;
+
+  it("passes each overlay for its own engine and drops it for every other", () => {
+    expect(envOf("fuigoAgent", { FUIGO_CONFIG: fuigo }).FUIGO_CONFIG).toBe(fuigo);
+    expect(envOf("opencodeGo", { OPENCODE_CONFIG_CONTENT: opencode }).OPENCODE_CONFIG_CONTENT).toBe(opencode);
+    expect(envOf("opencodeGo", { OPENCODE_CONFIG_CONTENT: opencodeMcp }).OPENCODE_CONFIG_CONTENT).toBe(opencodeMcp);
+    for (const engine of ENGINES) {
+      if (engine !== "opencodeGo") expect(envOf(engine, { OPENCODE_CONFIG_CONTENT: opencode, FUIGO_CONFIG: fuigo }), engine).not.toHaveProperty("OPENCODE_CONFIG_CONTENT");
+      expect(envOf(engine, { FUIGO_CONFIG: fuigo }), engine).not.toHaveProperty("FUIGO_CONFIG");
+    }
+    expect(envOf("fuigoAgent", { OPENCODE_CONFIG_CONTENT: opencode })).not.toHaveProperty("OPENCODE_CONFIG_CONTENT");
+    // A shape for one engine is not the other's.
+    // (refused, not dropped: see "refuses the turn" below)
+    expect(refusal("fuigoAgent", "FUIGO_CONFIG", opencode).status).not.toBe(0);
+    expect(refusal("opencodeGo", "OPENCODE_CONFIG_CONTENT", fuigo).status).not.toBe(0);
+  });
+
+  // Fable follow-up 2: a config var that is present but malformed refuses the turn (the driver meant an overlay;
+  // dropping it would silently lose the memory opt-out). The refusal names the var, never the value.
+  const refusal = (engine: string, name: string, value: string) =>
+    spawnSync("python3", ["-I", "-c", harness, launcher, JSON.stringify(request(engine, { [name]: value })), manifest, engineRoot, join(root, "digest-cache")], { encoding: "utf8" });
+  it.each([["fuigoAgent", "FUIGO_CONFIG"], ["grokAgent", "GROK_CONFIG"], ["opencodeGo", "OPENCODE_CONFIG_CONTENT"]])("%s refuses a malformed %s without echoing it", (engine, name) => {
+    const secret = "sk-fixture-leak-check";
+    for (const value of ["/fixture/evil.json", `{"apiKey":"${secret}"}`, `{not json ${secret}`]) {
+      const child = refusal(engine, name, value);
+      expect(child.status, value).not.toBe(0);
+      expect(child.stderr).toContain(`${name} is malformed`);
+      expect(child.stderr).not.toContain(secret);
+      expect(child.stderr).not.toContain("/fixture/evil.json");
+    }
+  });
+  it.each([["fuigoAgent", { FUIGO_CONFIG: fuigo }], ["opencodeGo", { OPENCODE_CONFIG_CONTENT: opencode }], ["grokAgent", {}]])("%s still runs when its config var is absent or valid", (engine, env) => {
+    expect(() => run(request(engine, env))).not.toThrow();
+  });
+
+  const SECRET = "sk-fixture-never-passed";
+  it.each([
+    ["a file path", "/fixture/evil.json"],
+    ["not JSON", "{not json"],
+    ["an array", "[]"],
+    ["a plugin list", JSON.stringify({ plugin: ["fixture-evil"] })],
+    ["an extra top-level key", JSON.stringify({ models: { extra_headers: headers }, mcp_servers: {} })],
+    ["an extra models key (base_url)", JSON.stringify({ models: { extra_headers: headers, base_url: "https://evil.example" } })],
+    ["a non-memory header", JSON.stringify({ models: { extra_headers: { ...headers, authorization: `Bearer ${SECRET}` } } })],
+    ["a forbidden memory header", JSON.stringify({ models: { extra_headers: { ...headers, "x-flux-memory-scope": "all" } } })],
+    ["an upper-case header name", JSON.stringify({ models: { extra_headers: { "X-Flux-Memory-App": "murage" } } })],
+    ["a wrong app value", JSON.stringify({ models: { extra_headers: { ...headers, "x-flux-memory-app": "other" } } })],
+    ["capture on", JSON.stringify({ models: { extra_headers: { ...headers, "x-flux-memory-capture": "on" } } })],
+    ["a non-string value", JSON.stringify({ models: { extra_headers: { ...headers, "x-flux-memory-read": 1 } } })],
+    ["no app header", JSON.stringify({ models: { extra_headers: { "x-flux-memory-capture": "off" } } })],
+    ["a duplicate key", '{"models":{"extra_headers":{"x-flux-memory-app":"murage"}},"models":{"extra_headers":{"x-flux-memory-app":"murage"}}}'],
+    ["over the size cap", JSON.stringify({ models: { extra_headers: { ...headers, "x-flux-memory-read": "a".repeat(9000) } } })],
+  ])("refuses a FUIGO_CONFIG that is %s", (_, value) => {
+    const child = refusal("fuigoAgent", "FUIGO_CONFIG", value);
+    expect(child.status).not.toBe(0);
+    expect(child.stderr).toContain("FUIGO_CONFIG is malformed");
+    expect(child.stderr).not.toContain(SECRET);
+  });
+
+  it.each([
+    ["a plugin list", JSON.stringify({ plugin: ["fixture-evil"] })],
+    ["a provider apiKey", JSON.stringify({ provider: { flux: { options: { headers, apiKey: SECRET } } } })],
+    ["a baseURL", JSON.stringify({ provider: { flux: { options: { headers, baseURL: "https://evil.example" } } } })],
+    ["another provider", JSON.stringify({ provider: { evil: { options: { headers } } } })],
+    ["a model entry beside the provider", JSON.stringify({ provider: { flux: { options: { headers }, models: {} } } })],
+    ["a non-memory header", JSON.stringify({ provider: { flux: { options: { headers: { ...headers, authorization: `Bearer ${SECRET}` } } } } })],
+    ["an mcp server turned on", JSON.stringify({ provider: { flux: { options: { headers } } }, mcp: { evil: { enabled: true } } })],
+    ["an mcp server with a command", JSON.stringify({ provider: { flux: { options: { headers } } }, mcp: { evil: { enabled: false, command: ["/bin/sh"] } } })],
+    ["an extra top-level key", JSON.stringify({ provider: { flux: { options: { headers } } }, instructions: ["/etc/passwd"] })],
+    ["no provider", JSON.stringify({ mcp: {} })],
+  ])("refuses an OPENCODE_CONFIG_CONTENT that is %s", (_, value) => {
+    const child = refusal("opencodeGo", "OPENCODE_CONFIG_CONTENT", value);
+    expect(child.status).not.toBe(0);
+    expect(child.stderr).toContain("OPENCODE_CONFIG_CONTENT is malformed");
+    expect(child.stderr).not.toContain(SECRET);
+  });
 });

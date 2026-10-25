@@ -41,7 +41,7 @@ import { callStartHeard, heardReplyAfter, unheardMessages } from "@/lib/scrollba
 import { speaker } from "@/lib/tts";
 import { CueCache } from "@/lib/tts/cue-cache";
 import { ACK_KEYS, AckGate, cueMayPlay, phaseAfterCue, pickAck, type AckKey } from "@/lib/call-ack";
-import { localeCode, t } from "@/lib/i18n";
+import { languageCode, t } from "@/lib/i18n";
 import { BRIEF_OVER_CHARS, callRouteHeaders, HOST_OFF_FOR_CALL, hostTurn, openingOf, plainFailure, warmHost, type CallHandDown, type HostTurnInput } from "@/lib/voice-host";
 import { WorkingPulse } from "@/lib/working-pulse";
 import { callMicKind, createFallbackMic, type CallMic, type MicLine } from "@/lib/call-mic";
@@ -1000,7 +1000,7 @@ export function Call({
       const fireAck = (key: AckKey) => {
         const firedAt = Date.now();
         const voiceId = voiceRef.current;
-        const cached = cueCache.get({ botId: bot.id, voiceId, locale: localeCode(), key });
+        const cached = cueCache.get({ botId: bot.id, voiceId, locale: languageCode(), key });
         lastAck.current = key;
         console.warn(`[call-diag] ack ${key} cached=${cached ? "yes" : "no"} at ${firedAt - turn.sentAt} ms`);
         const play = (clip: Blob) => {
@@ -1030,7 +1030,7 @@ export function Call({
         if (cached) play(cached);
         else
           void speaker.fetchClip(t(key), { botId: bot.id, voiceId }).then((clip) => {
-            cueCache.put({ botId: bot.id, voiceId, locale: localeCode(), key }, clip);
+            cueCache.put({ botId: bot.id, voiceId, locale: languageCode(), key }, clip);
             play(clip);
           }, () => undefined);
       };
@@ -1342,7 +1342,7 @@ export function Call({
     const first = pickAck(null, Math.random);
     const keys = [first, pickAck(first, Math.random)];
     ackPool.current = keys;
-    void cueCache.prewarm({ botId: bot.id, voiceId: bot.voice, locale: localeCode(), keys });
+    void cueCache.prewarm({ botId: bot.id, voiceId: bot.voice, locale: languageCode(), keys });
   }, [bot.id, bot.voice]);
 
   // ── the microphone ───────────────────────────────────────────────────
@@ -2104,7 +2104,7 @@ export function Call({
     // not queue thirty seconds of narration behind the actual answer
     // Text saved in front of a reply that was already said (a hosted tool's
     // lead-in, inserted at response completion) stays in the chat only.
-    const isReply = (m: (typeof messages)[number]) => m.role === "bot" && m.kind === "text" && Boolean(m.text?.trim());
+    const isReply = (m: (typeof messages)[number]) => m.role === "bot" && m.kind === "text" && !m.widget && Boolean(m.text?.trim());
     const reply = [...fresh].reverse().find((m) => isReply(m) && !heardReplyAfter(messages, spokenIds.current, m, isReply));
     // a turn that failed ends in an error step, not a reply: say so, or the
     // call goes on as if the work were running

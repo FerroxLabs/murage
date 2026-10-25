@@ -22,6 +22,7 @@ import { botRows, botViewer, doorReader, type BotRow } from "./bot-read.ts";
 import { isMurageVoice } from "./murage-voice.ts";
 import { transcriptRowCheck } from "./partition-sources.ts";
 import { denyLookup, lineageLive } from "./memory/deny-read.ts";
+import { forgottenMessageSources } from "./memory/replay-lineage.ts";
 import { executionStore } from "./execution-audience.ts";
 import { lineAuthor, newestMessageAt, readActiveLeafOrNewest, readMessage, searchMessagesWithMeta, textLinesAlongBranch } from "./message-db.ts";
 import { addTurnParents, isTurnOpen, recordTurnReads } from "./memory/lineage-write.ts";
@@ -119,7 +120,7 @@ function cut(text: string, max: number): { text: string; cut: boolean } {
 // ── The door ────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 interface Seen { readonly threadId: string; readonly row: BotRow }
-interface Judged { shown: Seen[]; checking: number; unavailable: number }
+interface Judged { shown: Seen[]; checking: number; unavailable: number; /** `threadId\u0000id` of rows left out as forgotten, or whose forgotten state could not be told. */ gone: Set<string> }
 const CHECKING_REASONS: ReadonlySet<string> = new Set(["pending", "thread-not-ready", "not-built"]);
 const outcomeOf = (verdict: LineageVerdict | undefined): "shown" | "silent" | "checking" | "unavailable" => {
   if (!verdict) return "unavailable";
@@ -140,6 +141,7 @@ export function judgeRows(access: MemoryAccess, items: ReadonlyArray<{ threadId:
     if (list) list.push(message); else byThread.set(threadId, [message]);
   }
   let checking = 0, unavailable = 0;
+  const gone = new Set<string>();
   const shownKeys = new Map<string, BotRow>();
   const live = lineageLive(db);
   for (const [threadId, messages] of byThread) {
@@ -154,12 +156,19 @@ export function judgeRows(access: MemoryAccess, items: ReadonlyArray<{ threadId:
       } catch { checking += 1; }
     }
     if (!candidates.length) continue;
+    // A line the owner forgot is never handed out, whoever the audience and whether or not line lineage is live (silent, like a withheld
+    // verdict). Forgotten is the one definition project-memory-tools.ts and All chats use: stamped `withheldFromBots: "forgotten"`, or its
+    // message source deleted, denied or tombstoned (messageSourceForgotten). When that cannot be told, the rows are left out (fail closed).
+    const remembered = unforgotten(threadId, candidates);
+    if (remembered === null) { unavailable += candidates.length; for (const message of candidates) gone.add(`${threadId}\u0000${message.id}`); continue; }
+    if (remembered.length < candidates.length) { const kept = new Set(remembered); for (const message of candidates) if (!kept.has(message)) gone.add(`${threadId}\u0000${message.id}`); }
+    if (!remembered.length) continue;
     const audience: LineageAudience | null = threadId === access.threadId ? null : { owner: true, scopeIds: access.scopeIds };
-    let admitted = candidates;
+    let admitted = remembered;
     if (live) {
-      const verdicts = denyLookup(db, { threadId, lines: candidates.map(message => ({ messageId: message.id, author: lineAuthor(message) })) }, doorReader(audience));
+      const verdicts = denyLookup(db, { threadId, lines: remembered.map(message => ({ messageId: message.id, author: lineAuthor(message) })) }, doorReader(audience));
       admitted = [];
-      for (const message of candidates) {
+      for (const message of remembered) {
         const outcome = outcomeOf(verdicts.get(message.id));
         if (outcome === "shown") admitted.push(message);
         else if (outcome === "checking") checking += 1;
@@ -174,7 +183,35 @@ export function judgeRows(access: MemoryAccess, items: ReadonlyArray<{ threadId:
     const row = shownKeys.get(`${threadId}\u0000${message.id}`);
     if (row) { shown.push({ threadId, row }); shownKeys.delete(`${threadId}\u0000${message.id}`); }
   }
-  return { shown, checking, unavailable };
+  return { shown, checking, unavailable, gone };
+}
+
+/** `messages` of one thread without the lines the owner forgot (the stamp, or a deleted, denied or tombstoned source), or null when that
+ * cannot be told. */
+function unforgotten(threadId: string, messages: readonly Message[]): Message[] | null {
+  try {
+    const gone = forgottenMessageSources(threadId, messages.map(message => message.id));
+    return messages.filter(message => message.withheldFromBots !== "forgotten" && !gone.has(message.id));
+  } catch { return null; }
+}
+
+/** thread_list's lastAt: the newest line of the thread the owner has not forgotten, so a forgotten line's time never shows. Null when the
+ * thread has no such line or it cannot be told (the thread is then not listed: fail closed). */
+const NEWEST_PAGE = 64;
+function newestRememberedAt(threadId: string): number | null {
+  try {
+    const db = database();
+    if (db.prepare("SELECT 1 FROM memory_deny WHERE kind='thread' AND id=? LIMIT 1").get(threadId)) return null;
+    let below = Number.MAX_SAFE_INTEGER;
+    for (;;) {
+      const rows = db.prepare("SELECT rowid AS rid, id, at, json_extract(json,'$.withheldFromBots') AS stamp FROM messages WHERE thread_id=? AND rowid<? ORDER BY rowid DESC LIMIT ?")
+        .all(threadId, below, NEWEST_PAGE) as unknown as Array<{ rid: number; id: string; at: number; stamp: unknown }>;
+      if (!rows.length) return null;
+      const gone = forgottenMessageSources(threadId, rows.map(row => String(row.id)));
+      for (const row of rows) if (row.stamp !== "forgotten" && !gone.has(String(row.id))) return Number(row.at);
+      below = Number(rows[rows.length - 1]!.rid);
+    }
+  } catch { return null; }
 }
 
 /** The same verdicts asked again for rows already judged (rule 23a): a row gone from the store, or no longer shown, is not in the answer. */
@@ -231,17 +268,19 @@ function planSearch(access: MemoryAccess, set: readonly string[], args: z.infer<
   const needle = args.query.trim().toLowerCase();
   const collected: Seen[] = [];
   const seenIds = new Set<string>();
-  let checking = 0, unavailable = 0, partial = false, cursor = cutoff, refills = 0, oldestExamined: number | undefined;
+  let checking = 0, unavailable = 0, partial = false, cursor = cutoff, refills = 0;
+  // the oldest examined row that is not forgotten (oldest_at when nothing is shown): a forgotten line's time never leaves
+  let oldestExamined: { threadId: string; id: string; at: number } | undefined;
   let undecided = 0;
   for (;;) {
     const found = searchMessagesWithMeta(args.query, PAGE + 1, set, { judge: "door" }, cursor);
     const items: Array<{ threadId: string; message: Message }> = [];
     for (const hit of found.hits) {
-      oldestExamined = hit.at;
       const message = readMessage(hit.threadId, hit.messageId);
       if (message) items.push({ threadId: hit.threadId, message });
     }
     const judged = judgeRows(access, items);
+    for (const { threadId, message } of items) if (!judged.gone.has(`${threadId}\u0000${message.id}`)) oldestExamined = { threadId, id: message.id, at: message.at };
     checking += judged.checking; unavailable += judged.unavailable; undecided += judged.checking + judged.unavailable;
     for (const seen of judged.shown) {
       // the trigram match only names candidates: the needle must be in the text the bot is shown
@@ -274,7 +313,10 @@ function planSearch(access: MemoryAccess, set: readonly string[], args: z.infer<
       const hits: Hit[] = shown.map(({ threadId, row }) => ({ threadId, threadTitle: titleOf(threadId), messageId: row.id, at: iso(row.at), speaker: speakerName(row), snippet: snippetOf(row.text, needle) }));
       if (notes.truncated && hits.length) hits[hits.length - 1]!.truncated = true;
       const last = shown[shown.length - 1]?.row.at;
-      const oldest = last ?? oldestExamined;
+      // built inside the release block: the examined row is asked again, so a line forgotten since (or not decidable now) gives no time
+      const examined = last === undefined && oldestExamined ? readMessage(oldestExamined.threadId, oldestExamined.id) : undefined;
+      const examinedAt = examined && unforgotten(oldestExamined!.threadId, [examined])?.length ? oldestExamined!.at : undefined;
+      const oldest = last ?? examinedAt;
       const held = baseHeld || rest.length > 0 || notes.trimmed;
       const isPartial = partial || notes.trimmed;
       const sameInstant = last === undefined ? 0 : rest.filter(({ row }) => row.at === last).length;
@@ -296,7 +338,9 @@ interface ListedThread { threadId: string; title: string; kind: "chat" | "task";
 function listThreads(access: MemoryAccess, set: readonly string[], cutoff: number | undefined): { threads: ListedThread[]; held: boolean } {
   const rows: Array<ListedThread & { last: number }> = [];
   for (const threadId of set) {
-    const last = newestMessageAt(threadId);
+    // the newest line's time only when that line is not forgotten; otherwise the newest remembered line's (a forgotten line never shows)
+    const newest = newestMessageAt(threadId);
+    const last = newest === null ? null : newestRememberedAt(threadId);
     if (last === null || (cutoff !== undefined && last >= cutoff)) continue;
     const info = threadInfo(access.botId, threadId);
     rows.push({ threadId, title: info.title, kind: info.kind, createdAt: info.createdAt ? iso(info.createdAt) : iso(last), lastAt: iso(last), current: threadId === access.threadId, last });
@@ -463,7 +507,7 @@ export async function threadRecallRoute(tool: ThreadRecallTool, body: unknown, a
   }
   const releasingList = tool === "thread_list" && freshSet.length > 0 && listed !== undefined && listed.length > 0;
   const outcome = tool === "thread_list"
-    ? { body: listedBody(fresh && freshSet.length ? listed!.filter(thread => freshSet.includes(thread.threadId)) : [], listHeld, !fresh), kept: [] as Seen[] }
+    ? { body: listedBody(fresh && freshSet.length ? relisted(fresh.botId, listed!.filter(thread => freshSet.includes(thread.threadId)), cutoff) : [], listHeld, !fresh), kept: [] as Seen[] }
     : fit(plan, candidates, { checking, unavailable });
   const released = outcome.kept;
   const releases = tool === "thread_list" ? releasingList && (outcome.body.threads as unknown[]).length > 0 : released.length > 0;
@@ -494,6 +538,20 @@ export async function threadRecallRoute(tool: ThreadRecallTool, body: unknown, a
     }
   }
   host.respond(200, outcome.body);
+}
+
+/** Release time (rule 23a for thread_list): every listed thread's lastAt asked again, so a line forgotten since the plan never gives its time;
+ * a thread with no remembered line left (or one that cannot be told) is dropped. */
+function relisted(botId: string, threads: ListedThread[], cutoff: number | undefined): ListedThread[] {
+  const out: Array<ListedThread & { last: number }> = [];
+  for (const thread of threads) {
+    const last = newestRememberedAt(thread.threadId);
+    if (last === null || (cutoff !== undefined && last >= cutoff)) continue;
+    const created = threadInfo(botId, thread.threadId).createdAt;
+    out.push({ ...thread, createdAt: created ? iso(created) : iso(last), lastAt: iso(last), last });
+  }
+  out.sort((a, b) => b.last - a.last || a.threadId.localeCompare(b.threadId));
+  return out.map(({ last: _last, ...thread }) => thread);
 }
 
 function listedBody(threads: ListedThread[], held: boolean, gone: boolean): Record<string, unknown> {

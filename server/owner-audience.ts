@@ -70,6 +70,7 @@ export const OWNER_AUDIENCE_SURFACES = Object.freeze({
   "project-card": { label: "Project card context", builtIn: "server/project-prompt.ts" },
   "continuation-results": { label: "Results returned to the asker", builtIn: "server/project-prompt.ts" },
   "working-context": { label: "What I've been working on", builtIn: "server/working-context.ts" },
+  "where-i-belong": { label: "Where it belongs", builtIn: "server/venue-awareness.ts" },
   "project-brief": { label: "Project brief", builtIn: "server/project-layers.ts" },
   "project-board": { label: "Board digest", builtIn: "server/project-layers.ts" },
   "project-summary": { label: "Rolling project summary", builtIn: "server/project-layers.ts" },

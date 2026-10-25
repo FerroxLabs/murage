@@ -86,7 +86,8 @@
         "role": "leader",
         "team": "Get Paid",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "circle"
         },
         "skills": [
           "finance-receivables",
@@ -107,7 +108,8 @@
         "role": "member",
         "team": "Get Paid",
         "appearance": {
-          "color": "cyan"
+          "color": "cyan",
+          "mascotBody": "diamond"
         },
         "skills": [
           "invoice-creator",
@@ -127,7 +129,8 @@
         "role": "member",
         "team": "Get Paid",
         "appearance": {
-          "color": "green"
+          "color": "green",
+          "mascotBody": "capsule"
         },
         "skills": [
           "finance-cashflow",
@@ -148,7 +151,8 @@
         "role": "member",
         "team": "Get Paid",
         "appearance": {
-          "color": "blue"
+          "color": "blue",
+          "mascotBody": "squircle"
         },
         "skills": [
           "finance-pl",

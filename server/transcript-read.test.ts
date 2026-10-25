@@ -96,7 +96,8 @@ it("ships the read worker, routes the prune's lookup through it with a bounded i
   expect(source).toContain('heldStep("events.prune.forgotten", () => inline!())');
   expect(source).toContain("await transcriptReader.close()");
   // Search stays on its own path: the /api/search route calls message-db's searchMessagesWithMeta directly, never the
-  // transcript read worker. fix/rc12-search2 added the reader's audience ({ owner: desktop }) as a fourth argument.
-  expect(source).toContain("searchMessagesWithMeta(q, limit, scope, { owner: desktop })");
+  // transcript read worker. fix/rc12-search2 added the reader's audience ({ owner: desktop }) as a fourth argument; the 1.0.6 chats
+  // view (47456b4dd, merged 5f538b096) caps its hits at 40, answers the owner's All chats as the owner and leaves forgotten lines out.
+  expect(source).toContain("searchMessagesWithMeta(q, chatsView ? Math.min(limit, 40) : limit, scope, { owner: desktop || chatsView, ...(chatsView ? { excludeForgotten: true } : {}) })");
   expect(source).not.toContain("transcriptReader.search(");
 });

@@ -294,6 +294,10 @@ const countLaunch = (): number => {
   return launched;
 };
 
+// FAKE_CLAUDE_LAUNCH_WRITE (+ FAKE_CLAUDE_LAUNCH_WRITE_TEXT): every launch writes this text to this file first, the way a
+// settings change can land between a launch and its relaunch.
+if (process.env.FAKE_CLAUDE_LAUNCH_WRITE) writeFileSync(process.env.FAKE_CLAUDE_LAUNCH_WRITE, process.env.FAKE_CLAUDE_LAUNCH_WRITE_TEXT ?? "");
+
 // Pre-accept transient failure (U-17): die before ever reading stdin, the way
 // a CLI that fails during startup behaves. The stdin reader below is never
 // attached, so the driver's prompt is never consumed.
@@ -726,7 +730,7 @@ const playTurn = (prompt: JsonValue) => {
     }
     // every --settings file as the CLI read it at start (the driver removes its private overlay when the process ends)
     const settingsFiles = argv.flatMap((arg, i) => (arg === "--settings" && argv[i + 1] ? [argv[i + 1]!] : [])).map((path) => { try { return JSON.parse(readFileSync(path, "utf8")) as unknown; } catch { return null; } });
-    const dump = { pid: process.pid, argv, env: fixtureDumpEnvironment(), prompt, systemPrompt, mcpConfig, settingsFiles, credFile: readCredFile(), promptWallMs: Date.now(), ...(procedureProbe?{procedureProbe}:{}), ...(process.env.FAKE_CLAUDE_MCP_READY_MS ? { mcpAtPrompt: mcpStates(), promptAtMs: Date.now() - mcpStartedAt } : {}) };
+    const dump = { pid: process.pid, argv, env: fixtureDumpEnvironment(), prompt, systemPrompt, mcpConfig, settingsFiles, credFile: readCredFile(), promptWallMs: Date.now(), cwd: process.cwd(), cwdEntries: readdirSync(process.cwd()), ...(procedureProbe?{procedureProbe}:{}), ...(process.env.FAKE_CLAUDE_MCP_READY_MS ? { mcpAtPrompt: mcpStates(), promptAtMs: Date.now() - mcpStartedAt } : {}) };
     writeFileSync(process.env.FAKE_CLAUDE_DUMP, JSON.stringify(dump, null, 2));
     // FAKE_CLAUDE_DUMP_HISTORY: the same dump as one line per dumped turn, so a spec waits for its own turn even when a later
     // turn (another bot's, or a redispatch) has already replaced the single latest-turn file

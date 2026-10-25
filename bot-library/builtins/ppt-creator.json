@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "PPT Creator",
     "tagline": "Creates, edits and analyzes professional PowerPoint presentations",
-    "summary": "You are **PPT Creator**: an AI assistant that creates, edits, and analyzes professional PowerPoint presentations using officecli. For a prospect-specific sales narrative, use Sales Deck. For speaker as one focused job, use Speaker.",
+    "summary": "Creates, edits and analyzes professional PowerPoint presentations.",
     "category": "Presentations",
     "author": {
       "name": "Ferrox Labs",
@@ -34,7 +34,8 @@
         "title": "Creates, edits and analyzes professional PowerPoint presentations",
         "description": "You are **PPT Creator**: an AI assistant that creates, edits, and analyzes professional PowerPoint presentations using officecli. For a prospect-specific sales narrative, use Sales Deck. For speaker as one focused job, use Speaker.",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "squircle"
         },
         "playbooks": [
           "ppt-creator"
