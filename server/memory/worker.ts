@@ -1,6 +1,7 @@
 import { MemoryEligibility } from "./eligibility.ts";
 import { captureWork } from "./chunks.ts";
-import { workSchema,indexBatchSchema,searchInputSchema,type MemorySearchInput } from "./worker-protocol.ts";
+import { workSchema,indexBatchSchema,searchInputSchema,scopePartSchema,type MemorySearchInput } from "./worker-protocol.ts";
+import { ScopeAssembler } from "./scope-set.ts";
 import { MemoryIndex,type IndexedMemory } from "./index.ts";
 import { isSegmentLimitError } from "./segment-limit.ts";
 import { answerQuery } from "./worker-query.ts";
@@ -34,6 +35,7 @@ function reportIo(force=false){
   process.send?.({type:"io",fsWriteBlocks:blocks});
 }
 const cancelled=new Set<string>();
+const scopeParts=new ScopeAssembler();
 /** Index records embedded per model call: a waiting query is served between slices. On ONNX Runtime WebAssembly
  * (Intel macOS, or a native binding that failed to load) each call is several times slower, so a slice is one record:
  * a turn's search then waits behind at most one record's model work, never the batch. */
@@ -277,16 +279,32 @@ process.on("message",input=>{
       return;
     }
     // The reader asks for a checkpoint when the log is over its threshold and no scan snapshot is open (index-reader.ts).
+    // The number scrub's settle (scrub-pass.ts) asks once for the end of its rewrite: one merge of the word index and a truncated log.
+    if(message.type==="checkpoint"&&message.requestId&&(message as {finishRewrite?:boolean}).finishRewrite===true){
+      let ok=false;try{ok=index?.finishRewrite?.()??false;}catch(error){console.error(`rewrite finish failed: ${describe(error)}`);}
+      process.send?.({type:"checkpoint-result",requestId:message.requestId,ok});return;
+    }
     if(message.type==="checkpoint"&&message.requestId){
       let ok=false;try{ok=index?.checkpointNow()??false;}catch(error){console.error(`checkpoint failed: ${describe(error)}`);}
       process.send?.({type:"checkpoint-result",requestId:message.requestId,ok});return;
     }
-    if(message.type==="cancel"&&message.requestId){cancelled.add(message.requestId);if(cancelled.size>128)cancelled.delete(cancelled.values().next().value!);return;}
-    if(message.type==="query"&&message.requestId){if(queries.length>=64)throw new Error("queue full");queries.push({requestId:message.requestId,input:searchInputSchema.parse(message.input),enqueuedAt:performance.now()});void drain();return;}
+    if(message.type==="cancel"&&message.requestId){scopeParts.drop(message.requestId);cancelled.add(message.requestId);if(cancelled.size>128)cancelled.delete(cancelled.values().next().value!);return;}
+    if(message.type==="scopes"&&message.requestId){const parsed=scopePartSchema.parse(message);scopeParts.add(message.requestId,parsed.part,parsed.ids);return;}
+    if(message.type==="query"&&message.requestId){
+      if(queries.length>=64){scopeParts.drop(message.requestId);throw new Error("queue full");}
+      queries.push({requestId:message.requestId,input:scopeParts.resolve(message.requestId,searchInputSchema.parse(message.input)),enqueuedAt:performance.now()});void drain();return;
+    }
     if(message.type==="index"&&message.requestId){if(batches.length>=2)throw new Error("index queue full");batches.push({requestId:message.requestId,records:indexBatchSchema.parse(message.records)});void drain();return;}
     if(captures.length>=2)throw new Error("capture queue full");
     captures.push(workSchema.parse(input));void drain();
-  } catch(error) {console.error(`message rejected: ${describe(error)}`);process.send?.({type:"error",reason:"INVALID_MEMORY_WORK"});}
+  } catch(error) {
+    console.error(`message rejected: ${describe(error)}`);
+    // A refused search names itself, so the parent fails that search and logs it as recall, not as a capture result (1.0.4).
+    const sent=input as {type?:string;requestId?:unknown}|null;
+    const search=(sent?.type==="query"||sent?.type==="scopes")&&typeof sent.requestId==="string"?sent.requestId:undefined;
+    if(search){scopeParts.drop(search);process.send?.({type:"error",reason:"INVALID_MEMORY_SEARCH",requestId:search});}
+    else process.send?.({type:"error",reason:"INVALID_MEMORY_WORK"});
+  }
 });
 process.on("disconnect",()=>{index?.close();eligibility?.close();try{authority?.close();}catch{/* already closed */}process.exit(0);});
 process.send?.({type:"ready"});

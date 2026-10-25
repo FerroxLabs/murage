@@ -12,13 +12,21 @@ const atLeast = (version, floor) => {
   return true;
 };
 
-it("pins dompurify at 3.4.16 or newer in the manifest, the workspace override and the lockfile", () => {
+it("pins dompurify at 3.4.17 or newer in the manifest, the workspace override and the lockfile", () => {
   const pkg = JSON.parse(read("package.json"));
-  expect(atLeast(pkg.dependencies.dompurify, "3.4.16")).toBe(true);
-  expect(read("pnpm-workspace.yaml")).toMatch(/^\s*dompurify:\s*3\.4\.(1[6-9]|[2-9]\d)\s*$/m);
+  expect(atLeast(pkg.dependencies.dompurify, "3.4.17")).toBe(true);
+  expect(read("pnpm-workspace.yaml")).toMatch(/^\s*dompurify:\s*3\.4\.(1[7-9]|[2-9]\d)\s*$/m);
   const versions = [...read("pnpm-lock.yaml").matchAll(/^ {2}dompurify@(\d+\.\d+\.\d+):/gm)].map((m) => m[1]);
   expect(versions.length).toBeGreaterThan(0);
-  for (const v of versions) expect(atLeast(v, "3.4.16")).toBe(true);
+  for (const v of versions) expect(atLeast(v, "3.4.17")).toBe(true);
+});
+
+it("builds the docs site with Next 16.4.1 or newer in the manifest and the lockfile", () => {
+  const docs = JSON.parse(read("apps/docs/package.json"));
+  expect(atLeast(docs.dependencies.next.replace(/^[\^~]/, ""), "16.4.1")).toBe(true);
+  const versions = [...read("pnpm-lock.yaml").matchAll(/^ {2}next@(16\.\d+\.\d+)(?:\(|:)/gm)].map((m) => m[1]);
+  expect(versions.length).toBeGreaterThan(0);
+  for (const v of versions) expect(atLeast(v, "16.4.1")).toBe(true);
 });
 
 it("uses mermaid 12.1 or newer and no longer locks lodash-es 4.17.23", () => {

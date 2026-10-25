@@ -10,7 +10,8 @@ export const CURRENT_MEMORY = `r.kind NOT IN ${PIP_ALL_KINDS_SQL} AND r.state='a
   SELECT 1 FROM memory_evidence e JOIN memory_sources s ON s.id=e.source_id
   WHERE e.record_id=r.id AND e.record_version=r.version AND (s.state!='active' OR s.revision!=e.source_revision OR ${DENIED_SOURCE("s")}))`;
 export const HISTORICAL_MEMORY = `r.kind NOT IN ${PIP_ALL_KINDS_SQL} AND r.state IN ('active','archived','superseded') AND NOT ${DENIED_RECORD_SCOPE("r")} AND NOT EXISTS (
-  SELECT 1 FROM memory_evidence e JOIN memory_sources s ON s.id=e.source_id WHERE e.record_id=r.id AND e.record_version=r.version AND (s.state='deleted' OR ${DENIED_SOURCE("s")}))`;
+  SELECT 1 FROM memory_evidence e JOIN memory_sources s ON s.id=e.source_id WHERE e.record_id=r.id AND e.record_version=r.version AND (s.state='deleted' OR ${DENIED_SOURCE("s")})) AND NOT EXISTS (
+  SELECT 1 FROM memory_record_details d WHERE d.record_id=r.id AND d.record_version=r.version AND d.claim_status='provisional')`;
 /** The part of "may a reader read this record" that does not depend on the reader, as SQL: a record someone forgot (a record
  * tombstone) and a record resting on nothing (no evidence, and not an owner statement) are refused to every reader by
  * readableMemoryRecord. They are never eligible, so no scan, ranking, count, coverage or cursor is ever shaped by how many

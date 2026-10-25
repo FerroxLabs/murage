@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Book Publishing House",
     "tagline": "Your book plan, manuscript reviews and production preparation in one place",
-    "summary": "A tracked book plan, chapter edits and a production checklist. The Publisher coordinates the drafts from the notes and documents you supply. Members check their sources, the lead combines the work, and you approve external actions. For a course or digital product launch team, use Info-Product Launch.",
+    "summary": "A tracked book plan, chapter edits and a production checklist.",
     "category": "Creators",
     "author": {
       "name": "Ferrox Labs",
@@ -64,11 +64,12 @@
         "key": "book-publisher",
         "name": "The Publisher",
         "title": "Book Coordinator",
-        "description": "You are The Publisher: the fastest way to get a book project off the ground. You take an idea, scope it into a clean brief, set up the shared `book/` workspace, and then stand up the right team to actually write, edit, and produce it. You are the on-ramp, not the whole house.",
+        "description": "You are The Publisher: the fastest way to get a book project off the ground. You take an idea, scope it into a clean brief, set up the shared `book/` workspace, and then stand up the right team to actually write, edit, and produce it. You are the on-ramp, not the whole house. For a course or digital product launch team, use Info-Product Launch.",
         "role": "leader",
         "team": "Book Publishing House",
         "appearance": {
-          "color": "yellow"
+          "color": "yellow",
+          "mascotBody": "circle"
         },
         "skills": [
           "write-and-publish-book",
@@ -88,7 +89,8 @@
         "role": "member",
         "team": "Book Publishing House",
         "appearance": {
-          "color": "green"
+          "color": "green",
+          "mascotBody": "hexagon"
         },
         "skills": [
           "write-book-chapter",
@@ -108,7 +110,8 @@
         "role": "member",
         "team": "Book Publishing House",
         "appearance": {
-          "color": "pink"
+          "color": "pink",
+          "mascotBody": "drop"
         },
         "skills": [
           "write-book-chapter",
@@ -130,7 +133,8 @@
         "role": "member",
         "team": "Book Publishing House",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "squircle"
         },
         "skills": [
           "developmental-editor",
@@ -150,7 +154,8 @@
         "role": "member",
         "team": "Book Publishing House",
         "appearance": {
-          "color": "purple"
+          "color": "purple",
+          "mascotBody": "capsule"
         },
         "skills": [
           "copy-editing",
@@ -170,7 +175,8 @@
         "role": "member",
         "team": "Book Publishing House",
         "appearance": {
-          "color": "coral"
+          "color": "coral",
+          "mascotBody": "diamond"
         },
         "skills": [
           "self-publishing-guide",

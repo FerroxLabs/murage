@@ -1,0 +1,14 @@
+{
+  "id": "docs-auditor",
+  "name": "Docs Auditor",
+  "version": "1.0.0",
+  "description": "Audits product documentation against what actually shipped: compares the docs with the changelog, release notes and merged changes, and returns a list of stale, missing and wrong pages with the exact passage, the evidence and a drafted correction. Use when the user asks whether the docs are up to date, to check docs against a release or changelog, to find pages a new feature or rename made wrong, or to prepare docs updates before a launch. Do NOT use for writing a brand new help center from scratch (use help center writing skills) or for writing the changelog itself (use changelog-writer).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "documentation",
+    "changelog",
+    "docs-audit",
+    "release-notes"
+  ],
+  "requiredCapabilities": []
+}

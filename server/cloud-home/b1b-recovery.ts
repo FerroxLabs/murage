@@ -34,3 +34,15 @@ export function createHomeRecoveryCleanup(options: {
     return active;
   };
 }
+/** Server start: thaw and clean any antigravity `.agents` freeze a crashed turn left behind (fixed sudo mode, no arguments). */
+export function sweepAgyFreezes(): Promise<void> {
+  return new Promise((resolve,reject) => {
+    const child=spawn("/usr/bin/sudo",["-n","-C","4","--",TURN_LAUNCHER],{stdio:["ignore","ignore","ignore","pipe"],env:{PATH:"/usr/bin:/bin"}});
+    const timer=setTimeout(()=>{child.kill("SIGKILL");reject(new Error(cloudHomeCopy.agyFreezeSweepFailed));},30_000);
+    child.once("error",()=>{clearTimeout(timer);reject(new Error(cloudHomeCopy.agyFreezeSweepFailed));});
+    child.once("exit",code=>{clearTimeout(timer);if(code === 0)resolve();else reject(new Error(cloudHomeCopy.agyFreezeSweepFailed));});
+    const pipe=child.stdio[3] as Writable;
+    pipe.on("error",()=>{child.kill("SIGKILL");});
+    pipe.end(JSON.stringify({mode:"agy-unfreeze-sweep"}));
+  });
+}

@@ -125,9 +125,9 @@ test("B26 room header keeps controls reachable at responsive widths", async ({ p
     const members = header.getByRole("button", { name: /^Manage members/ });
     for (const name of NAMES) await expect(members.locator(`[title="${name}"]`)).toBeInViewport({ ratio: 1 });
     await page.screenshot({ path: evidencePath(info, `b26-room-header-${width}`), fullPage: true });
-    const tasks = header.getByRole("button", { name: "All threads", exact: true });
+    const tasks = header.getByRole("button", { name: "Chat list", exact: true });
     await tasks.focus(); await tasks.press("Enter");
-    const searchTasks = page.getByRole("textbox", { name: "Search tasks", exact: true });
+    const searchTasks = page.getByRole("textbox", { name: "Search chats", exact: true });
     await expect(searchTasks).toBeVisible();
     await searchTasks.press("Escape");
     await expect(searchTasks).toBeHidden();

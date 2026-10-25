@@ -60,7 +60,8 @@
         "title": "Meeting Prep",
         "description": "Briefcase prepares a half-page brief for the named meeting. Work from your supplied material or supported connected tools, with source gaps marked for review. For finding sources, use Researcher. For customer interviews and audience discovery, use Research. For individual deal strategy, use Sales.",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "squircle"
         },
         "skills": [
           "company-research-guide",

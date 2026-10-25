@@ -16,11 +16,9 @@ const fixture = fileURLToPath(new URL("./home-commands.fixture.py", import.meta.
 const contract = fileURLToPath(new URL("../../shared/self-service-contract.json", import.meta.url));
 const has = (tool: string) => spawnSync("sh", ["-c", `command -v ${tool}`]).status === 0;
 const root = process.getuid?.() === 0;
-// Release signatures are Ed25519 over raw bytes (openssl pkeyutl -rawin): OpenSSL 3 has it, the LibreSSL that macOS ships
-// as /usr/bin/openssl does not. murage-commands verifies with PATH=/usr/bin:/bin (the image's OpenSSL 3) and the fixture
-// signs with the PATH's openssl, so the update scenario needs both to be OpenSSL 3.
-const openssl3 = (bin: string) => /^OpenSSL [3-9]\./.test(spawnSync(bin, ["version"], { encoding: "utf8" }).stdout ?? "");
-const opensslEd25519 = openssl3("openssl") && openssl3("/usr/bin/openssl");
+// Release signatures are Ed25519 over raw bytes (openssl pkeyutl -rawin): OpenSSL 3 has it, the LibreSSL that macOS ships as
+// /usr/bin/openssl does not. The fixture signs and verifies with the real openssl where both the PATH's and /usr/bin's are OpenSSL 3
+// and otherwise models the signature behind the same verify seam (its "immutable" and signer modes are reported in its result).
 
 function scenario(name: string): Record<string, unknown> {
   const result = spawnSync("python3", ["-I", fixture, deploy("murage-commands"), deploy("murage-backup"), deploy("backup-excludes.txt"), name, contract],
@@ -43,8 +41,37 @@ describe("self-service command runner (home side)", () => {
   it("an interrupted command is reported failed and never re-run; a lost ack is re-sent without re-running", () => {
     expect(scenario("interrupted").ok).toBe(true);
   });
-  it.skipIf(!opensslEd25519)("update: verifies the signed release, swaps code only, refuses downgrade/tamper/escape, commits only after bounded app health, recovers an interrupted swap at start (Astra SELFSERVICE2 #5)", () => {
+  const linux = process.platform === "linux"; // the start gate is SO_PEERCRED + pidfd (Linux); the home is a Linux role
+  it.skipIf(!linux)("update (Lane G r3): installs the signed release into the idle slot, flips `current`, commits only after bounded app health with the inhibit held to the commit, keeps the previous slot sealed, never touches the image-pinned launchers; refuses downgrade, tamper, escape, digest mismatch, launcher list and ABI faults; rolls a dead or unhealthy candidate back to signed bytes", () => {
     expect(scenario("update").ok).toBe(true);
+  }, 120_000);
+  it.skipIf(!linux)("update: the command names one sequence (the rollout's target or the fleet's promoted one): that release installs, an installed target is done, any other release the channel serves is refused; the updater reports installed sequence, lastResult and Stuck on update-state", () => {
+    expect(scenario("update-target").ok).toBe(true);
+  });
+
+  it.skipIf(!linux)("update: power lost at every phase leaves the installed slot's bytes untouched, boots run no unverified slot code without a grant, and start-up re-drives to done or failed (T-I5, T-H2b, T-S2)", () => {
+    expect(scenario("update-cuts")).toMatchObject({ ok: true, cuts: ["installing", "installed", "flip", "verify", "granted"] });
+  }, 120_000);
+  it.skipIf(!linux)("update: the journal alone decides; every blocked kind is refused in every phase; a layout the phase does not allow or an unreadable journal is Stuck with the explicit stop and refused by the launcher (T-I1, T-I2a, T-S1, T-I4)", () => {
+    expect(scenario("update-phases").ok).toBe(true);
+  }, 120_000);
+  it.skipIf(!linux)("update: a dead candidate with an unanswering restored release stays pending, is re-driven every loop, and after three counted rollback starts is Stuck: blocking, surfacing its reason, stopping the home, never auto-clearing (T-H2a, Q3)", () => {
+    expect(scenario("update-pending").ok).toBe(true);
+  }, 120_000);
+  it.skipIf(!linux)("update: the start gate grants exactly once per counter write to the home unit's root launcher only; boots and restarts without a grant exit 79 gate_denied; the launcher's decision table holds cell by cell (T-G1, T-G2, T-G4)", () => {
+    expect(scenario("gate").ok).toBe(true);
+  }, 120_000);
+  it.skipIf(!linux)("update: a boot inside flip/verify/rollback reaches the counted verify instead of a false Stuck; six corruption shapes inside the span are Stuck with the stop and no start, rename or grant; the stop precedes every flip back and repeats on resume; an idle home is never touched (T-S2, T-S3, T-W1, T-G5)", () => {
+    expect(scenario("transition").ok).toBe(true);
+  }, 120_000);
+  it.skipIf(!linux)("update: the trust root is read only from its image path and must be intact; the floor is the signed live sequence; a corrupted stored signature makes the rollback Stuck; the idle-slot wipe re-derives its target under the drive lock (T-T1, T-T2, T-T3, T-D1)", () => {
+    expect(scenario("trust").ok).toBe(true);
+  }, 120_000);
+  it.skipIf(!linux)("update: a forged state.json during verify changes nothing the updater decides (T-H4a)", () => {
+    expect(scenario("forged").ok).toBe(true);
+  });
+  it.skipIf(!linux)("murage-home-launch: the seal walk refuses an unsealed file, a writable directory, a foreign owner and an escaping link; its digest is murage-commands'; exec_slot refuses uid 0 and non-slot paths; the supervisor is exec'd through the verified descriptor (T-P6, T-P2)", () => {
+    expect(scenario("launcher").ok).toBe(true);
   });
   it("collect_logs: allowed diagnostic events only (free text, short private lines included, become a count), allow-listed units, chunked, sign-in directories never read (Astra SELFSERVICE2 #6)", () => {
     const result = scenario("logs");
@@ -94,9 +121,6 @@ describe("self-service command runner (home side)", () => {
   it("a restored file where a sign-in's folder belongs refuses the reset before anything is swapped (Astra SELFSERVICE3 #2)", () => {
     expect(scenario("carry-blocked").ok).toBe(true);
   });
-  it("update recovery is keyed to its command: start-up and the command's own recovery report the same outcome (Astra SELFSERVICE3 #3)", () => {
-    expect(scenario("update-once").ok).toBe(true);
-  });
   it("no start of the home (recovery timer, boot or explicit) passes an unresolved reset; a late reboot mid-reset recovers correctly (Astra SELFSERVICE5 #1, #3c)", () => {
     expect(scenario("inhibit").ok).toBe(true);
   });
@@ -142,6 +166,10 @@ describe("safe mode in the app", () => {
     const start = readFileSync(deploy("start-home.sh"), "utf8");
     expect(start.indexOf("rm -f /run/murage-safe-mode")).toBeLessThan(start.indexOf("murage-enroll"));
     expect(start).toContain("export MURAGE_SAFE_MODE=1");
+    // The flag reaches node only through the launcher's environment, built from scratch (LANE-G r3 sec. 7).
+    const launcher = readFileSync(deploy("murage-home-launch.py"), "utf8");
+    expect(launcher).toContain('safe_mode = os.environ.get("MURAGE_SAFE_MODE") == "1"');
+    expect(launcher).toContain('env["MURAGE_SAFE_MODE"] = "1"');
   });
   it("the runner unit outlives the home unit it restarts", () => {
     const unit = readFileSync(deploy("murage-commands.service"), "utf8");

@@ -32,7 +32,7 @@ export interface SensitivePathRow {
 export const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
   {
     id: "env",
-    re: /(^|[\s/"'])\.env(\.|$|["'\s])/i,
+    re: /(^|[\s/\\"'])\.env(\.|$|["'\s])/i,
     read: [".env", ".env.*"],
     bash: ["* .env*", "*/.env*"],
   },
@@ -59,7 +59,8 @@ export const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
     // key by reading the shell profile. Shell rc files are where people keep
     // keys, and (Rule 74b) the files that shape every shell the owner runs.
     id: "shell-rc",
-    re: /(^|[\s"'=])~?[\w./-]*\.(zshrc|zshenv|zprofile|bashrc|bash_profile|profile)\b/i,
+    // `$HOME/.zshrc`, `${HOME}/.zshrc`, `$env:HOME\.zshrc` and `%USERPROFILE%\.zshrc` name the same file as `~/.zshrc`
+    re: /(^|[\s"'=])~?[\w./${}:%\\-]*\.(zshrc|zshenv|zprofile|bashrc|bash_profile|profile)\b/i,
     read: ["~/.zshrc", "~/.zshenv", "~/.zprofile", "~/.bashrc", "~/.bash_profile", "~/.profile"],
     bash: ["*.zshrc*", "*.zshenv*", "*.zprofile*", "*.bashrc*", "*.bash_profile*", "*.profile*"],
   },
@@ -169,6 +170,9 @@ export const SENSITIVE_TEXT: readonly SensitiveTextRow[] = [
   { id: "bearer", re: /\bBearer\s+\$\{?[A-Za-z_]/i },
   { id: "key-literal", re: /\bsk-(proj|ant|or)?[-_]?[A-Za-z0-9]/ },
   { id: "env-grep", re: /\benv\b[^|;&]*\|\s*grep\b/i },
+  // A command that prints the whole environment (or one variable's value): `env`, `printenv`, `export -p`, `declare -p`, `set` alone.
+  // Only at the start of a command, so `env VAR=x cmd`, `export FOO=1` and a word like "environment" are ordinary.
+  { id: "env-dump", re: /(?:^|[;&|(`\n]|\$\()\s*(?:(?:sudo|command|builtin)\s+)?(?:env(?:\s+-[0aiuS]+)*|printenv(?:\s+[A-Za-z_][A-Za-z0-9_]*)*|export\s+-p|declare\s+-[xp]+|set)\s*(?=$|[;&|)>`\n])/i },
   // Rule 74b: cmd's AutoRun runs on every cmd start; a change to it is a
   // sensitive write.
   { id: "cmd-autorun", re: /Command Processor[\s\S]*\bAutoRun\b/i },

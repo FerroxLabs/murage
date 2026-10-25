@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { APPROVAL_REFUSAL, isApprovalText, normalizeWhatsAppMessage, whatsappPrompt } from "./event.ts";
+import { approvalRefusal, isApprovalText, normalizeWhatsAppMessage, whatsappPrompt } from "./event.ts";
 
 const base = { messageId: "ABC1", chatJid: "15551230000@s.whatsapp.net", fromMe: false, timestampMs: 1_700_000_000_000, upsertType: "notify" as const, mentionedJids: [] as string[], text: "hello" };
 
@@ -29,7 +29,7 @@ it("accepts a file with no text and describes it by a placeholder, with the file
 });
 it.each(["/approve", "/pair abc", "approve", "Yes", " no "])("refuses approval-like chat text %s", text => {
   expect(isApprovalText(text)).toBe(true);
-  expect(whatsappPrompt({ text, chatKind: "dm" })).toEqual({ prompt: "", response: APPROVAL_REFUSAL });
+  expect(whatsappPrompt({ text, chatKind: "dm" })).toEqual({ prompt: "", response: approvalRefusal() });
 });
 it("does not treat ordinary sentences as approvals", () => { expect(isApprovalText("yes please send it")).toBe(false); });
 it("wraps untrusted text; a closing sentinel typed by the sender is removed and provenance stays out of the prompt", () => {
