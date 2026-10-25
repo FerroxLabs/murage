@@ -48,7 +48,8 @@
         "title": "Monthly Retro",
         "description": "Mirror prepares a monthly retro with wins and missed expectations for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For founder decision coaching, use Coach. For broad operations coordination, use Ops.",
         "appearance": {
-          "color": "blue"
+          "color": "cyan",
+          "mascotBody": "circle"
         },
         "skills": [
           "retrospective-facilitator",

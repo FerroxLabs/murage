@@ -217,6 +217,8 @@ function serverLauncher({ proc, poll, track, environment = {}, portAvailable = a
     pollServerIdentity:poll,SERVER_BOOT_TIMEOUT_MS:25,portAvailable,compileCacheEnvironment:()=>({}),desktopMark:()=>{},
     desktopDataOwner:owner,desktopDataDir:"/canonical/installation",closedControlDirectory,assertDesktopStartupActive:()=>{},desktopShutdownStarted:false,
     trackOwnedServerChild:(child)=>({exit:new Promise(()=>{}),...track(child)}),
+    // The app locale handed to the server for channel replies (U25); none in this fixture.
+    systemLanguage:()=>undefined,
   };
   return new Function(...Object.keys(scope), `${text};return startServerOn;`)(...Object.values(scope));
 }

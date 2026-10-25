@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import { IndependentThreadRuns, requireDirectThreadTarget } from "./independent-thread-runs.ts";
+import { IndependentThreadRuns, requireDirectThreadTarget, RESOURCE_STILL_WAITING_MS, stillWaitingRemainingMs } from "./independent-thread-runs.ts";
 
 it("runs three detached per-thread snapshots and stopping one does not change its sibling", () => {
   const runs = new IndependentThreadRuns<{ model: string; account: string; effort: string; approval: string }>();
@@ -415,4 +415,158 @@ it("gives the owner's own send one reserved slot above the limit, and a second w
   expect(await routineSlot).toBe(true);
   // and a plain (non-owner) send is still refused at the limit
   expect(() => runs.admit("bot", "chat", {})).toThrow("three threads");
+});
+
+// ── SL-L: place in line, estimate, no hour limit (1.0.4 item 127) ─────────
+// User failure: "I can't tell how long my turn will wait, or whether it will ever start."
+it("SL-L L1: numbers waiters 1..n and renumbers them as the line moves", async () => {
+  const runs = new IndependentThreadRuns<object>();
+  const holder = runs.admit("h", "holder", {}, ["workspace:/p"]);
+  const seen: Record<string, number[]> = { a: [], b: [], c: [] };
+  const ids = ["a", "b", "c"] as const;
+  const owners = ids.map(id => runs.admit(`bot-${id}`, id, {}));
+  const waits = owners.map((owner, index) => runs.acquire(owner, ["workspace:/p"], (_blockers, position) => seen[ids[index]].push(position)));
+  expect(seen).toEqual({ a: [1], b: [2], c: [3] });
+  runs.release(holder);
+  expect(await waits[0]).toBe(true);
+  // onWait fires when only the place in line changed
+  expect(seen.b).toEqual([2, 1]);
+  expect(seen.c).toEqual([3, 2]);
+  runs.release(owners[0]);
+  expect(await waits[1]).toBe(true);
+  expect(seen.c).toEqual([3, 2, 1]);
+  runs.release(owners[1]);
+  expect(await waits[2]).toBe(true);
+});
+
+// User failure: a chip that says "3rd" when only one turn is ahead.
+it("SL-L L1: counts each earlier waiter once, however many of my resources it wants", async () => {
+  const runs = new IndependentThreadRuns<object>();
+  runs.admit("h", "holder", {}, ["workspace:/p", "computer:vm"]);
+  const first = runs.admit("one", "first", {});
+  const second = runs.admit("two", "second", {});
+  let place = 0;
+  void runs.acquire(first, ["workspace:/p", "computer:vm"]);
+  void runs.acquire(second, ["workspace:/p", "computer:vm"], (_blockers, position) => { place = position; });
+  expect(place).toBe(2);
+  // an earlier waiter for something else does not count
+  const other = runs.admit("three", "other", {});
+  runs.admit("h2", "holder2", {}, ["browser:x"]);
+  void runs.acquire(other, ["browser:x"]);
+  const third = runs.admit("four", "third", {});
+  let thirdPlace = 0;
+  void runs.acquire(third, ["workspace:/p"], (_blockers, position) => { thirdPlace = position; });
+  expect(thirdPlace).toBe(3);
+});
+
+// User failure: an 8am routine queued behind a long turn failed after an hour.
+it("SL-L L3: a wait without a deadline never fails for time and says so once after an hour", async () => {
+  vi.useFakeTimers();
+  try {
+    const runs = new IndependentThreadRuns<object>();
+    const holder = runs.admit("bot", "holder", {}, ["workspace:/p"]);
+    const waiter = runs.admit("other", "waiter", {});
+    let notices = 0;
+    const waiting = runs.acquire(waiter, ["workspace:/p"], undefined, undefined, undefined, { afterMs: 60 * 60_000, notify: () => { notices++; } });
+    const outcome = waiting.then(granted => `granted:${granted}`, (error: Error) => error.name);
+    await vi.advanceTimersByTimeAsync(59 * 60_000);
+    expect(notices).toBe(0);
+    await vi.advanceTimersByTimeAsync(2 * 60_000);
+    expect(runs.waiting(waiter)).toBe(true);
+    expect(notices).toBe(1);
+    await vi.advanceTimersByTimeAsync(5 * 60 * 60_000);
+    expect(notices).toBe(1);
+    expect(runs.waiting(waiter)).toBe(true);
+    runs.release(holder);
+    expect(await outcome).toBe("granted:true");
+  } finally { vi.useRealTimers(); }
+});
+
+// User failure: Stop does nothing while the turn waits in line.
+it("SL-L L3: Stop while waiting still cancels, and no hour line follows", async () => {
+  vi.useFakeTimers();
+  try {
+    const runs = new IndependentThreadRuns<object>();
+    runs.admit("bot", "holder", {}, ["computer:vm"]);
+    const waiter = runs.admit("other", "waiter", {});
+    let notices = 0;
+    const waiting = runs.acquire(waiter, ["computer:vm"], undefined, undefined, undefined, { afterMs: 60 * 60_000, notify: () => { notices++; } });
+    expect(runs.cancel(waiter)).toBe(true);
+    expect(await waiting).toBe(false);
+    await vi.advanceTimersByTimeAsync(2 * 60 * 60_000);
+    expect(notices).toBe(0);
+    expect(runs.waiting(waiter)).toBe(false);
+  } finally { vi.useRealTimers(); }
+});
+
+// User failure: a made-up "about 0 min" before anything was ever measured.
+it("SL-L L2: the estimate is absent below three measured holds and position x average after", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(1_000_000);
+    const runs = new IndependentThreadRuns<object>();
+    const hold = async (id: string, minutes: number) => {
+      const run = runs.admit(id, id, {}, ["workspace:/p"]);
+      await vi.advanceTimersByTimeAsync(minutes * 60_000);
+      runs.release(run);
+    };
+    await hold("a", 10);
+    await hold("b", 10);
+    // two holds measured: no estimate yet
+    const third = runs.admit("c", "c", {}, ["workspace:/p"]);
+    const early: Array<number | undefined> = [];
+    const next = runs.admit("d", "d", {});
+    const nextWait = runs.acquire(next, ["workspace:/p"], (_blockers, _position, estimate) => early.push(estimate));
+    expect(early).toEqual([undefined]);
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    runs.release(third);
+    expect(await nextWait).toBe(true);
+    // three holds of 10 minutes: 1st in line is about 10 min, 2nd about 20
+    const seen: Record<string, Array<[number, number | undefined]>> = { e: [], f: [] };
+    for (const id of ["e", "f"]) {
+      void runs.acquire(runs.admit(id, id, {}), ["workspace:/p"], (_blockers, position, estimate) => seen[id].push([position, estimate]));
+    }
+    expect(seen.e).toEqual([[1, 10 * 60_000]]);
+    expect(seen.f).toEqual([[2, 20 * 60_000]]);
+    // another kind has no history of its own: blank, never borrowed
+    runs.admit("g", "g", {}, ["computer:vm"]);
+    const computer: Array<number | undefined> = [];
+    void runs.acquire(runs.admit("h", "h", {}), ["computer:vm"], (_blockers, _position, estimate) => computer.push(estimate));
+    expect(computer).toEqual([undefined]);
+  } finally { vi.useRealTimers(); }
+});
+
+// User failure: a turn that yielded re-armed the hour from its second acquire, so the line landed late.
+it("SL-L L3: the still-waiting hour counts from the first wait, not the second acquire", () => {
+  expect(stillWaitingRemainingMs(undefined, 5_000_000)).toBe(RESOURCE_STILL_WAITING_MS);
+  expect(stillWaitingRemainingMs(1_000_000, 1_000_000 + 20 * 60_000)).toBe(40 * 60_000);
+  expect(stillWaitingRemainingMs(1_000_000, 1_000_000 + 3 * RESOURCE_STILL_WAITING_MS)).toBe(1);
+});
+
+// Real flow (mirrors index.ts): a turn that waited, yielded, then waits again keeps one hour from its FIRST wait.
+it("SL-L L3: after a yield the second wait's notice lands at +60 min from the first wait, not +80", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(1_000_000);
+    const runs = new IndependentThreadRuns<object>();
+    const policy = { resources: new Set(["browser:profile"]), holderYields: () => true };
+    const holder = runs.admit("bot", "holder", {}, ["workspace:/p", "browser:profile"]);
+    const waiter = runs.admit("bot", "waiter", {});
+    let notices = 0;
+    let firstWaitAt: number | undefined;
+    const onWait = () => { firstWaitAt ??= Date.now(); };
+    const longWait = { get afterMs() { return stillWaitingRemainingMs(firstWaitAt, Date.now()); }, notify: () => { notices++; } };
+    const first = runs.acquire(waiter, ["workspace:/p", "browser:profile"], onWait, undefined, policy, longWait);
+    await vi.advanceTimersByTimeAsync(20 * 60_000);
+    runs.releaseResources(holder, ["workspace:/p"]);
+    expect(await first).toBe("yielded");
+    runs.admit("other", "other", {}, ["workspace:/p"]);
+    void runs.acquire(waiter, ["workspace:/p"], onWait, undefined, undefined, longWait);
+    await vi.advanceTimersByTimeAsync(39 * 60_000);
+    expect(notices).toBe(0);
+    await vi.advanceTimersByTimeAsync(60_000 + 100);
+    expect(notices).toBe(1);
+    await vi.advanceTimersByTimeAsync(30 * 60_000);
+    expect(notices).toBe(1);
+  } finally { vi.useRealTimers(); }
 });

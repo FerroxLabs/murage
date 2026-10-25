@@ -323,6 +323,29 @@ describe("lane 5 round 2: receipts keep who dispatched, when the app answered, a
     expect(new SqliteReceiptStore(file).load(0).map((r) => r.turnId)).toEqual(["turn-A"]);
   }));
 
+  it("a send answered, then collected by a status check and joined by a repeat, leaves one receipt in memory and one row in the store (104 P6)", () => withStore(async (file) => {
+    resetConnectedAppOperations();
+    answer = { status: 200, body: (id) => sentFrame(id), delayMs: 100 };
+    const store = new SqliteReceiptStore(file);
+    const live = new ConnectedAppReceipts(Date.now, store);
+    const claim = { threadId: "th", botId: "ember", generation: "gen-A", turnId: "turn-A" };
+    const call = async (name: string, args: unknown, options: { waitMs?: number; statusWaitMs?: number } = {}) => {
+      const payload = { jsonrpc: "2.0", id: ++callId, method: "tools/call", params: { name, arguments: args } };
+      const reply = await relayConnectedAppCall({}, payload as never, undefined, undefined, {
+        botId: "ember", ...options, origin: claim,
+        onAnswered: (c, frame) => live.record(receiptForAnswer(claim, c, frame)),
+      });
+      return JSON.parse(new TextDecoder().decode(reply.bytes));
+    };
+    const args = sendArgs();
+    const first = await call("COMPOSIO_MULTI_EXECUTE_TOOL", args, { waitMs: 10 });
+    const handle = /handle (?:is )?(op-[a-z0-9-]+)/.exec(JSON.stringify(first))![1]!;
+    await vi.waitFor(() => expect(live.forTurn({ threadId: "th", generation: "gen-A" }).has("send")).toBe(true), { timeout: 3_000 });
+    await call("CHECK_CONNECTED_APP_ACTION", { handle }, { statusWaitMs: 2_000 });
+    await call("COMPOSIO_MULTI_EXECUTE_TOOL", args, { waitMs: 2_000 });
+    expect(store.load(0)).toHaveLength(1);
+  }));
+
   it("reading the same operation's answer again keeps one receipt", () => withStore((file) => {
     const store = new SqliteReceiptStore(file);
     const local = new ConnectedAppReceipts(Date.now, store);

@@ -28,7 +28,8 @@
         "title": "Validator",
         "description": "Validator - quantitative validation, fake-door tests, MVP discipline via Eric Ries's build-measure-learn.",
         "appearance": {
-          "color": "green"
+          "color": "cyan",
+          "mascotBody": "diamond"
         },
         "skills": [
           "probe-fake-door-tests",
@@ -49,7 +50,8 @@
         "title": "Research",
         "description": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method.",
         "appearance": {
-          "color": "blue"
+          "color": "blue",
+          "mascotBody": "capsule"
         },
         "skills": [
           "research-jtbd-interviews",
@@ -72,7 +74,8 @@
         "title": "Copy",
         "description": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage.",
         "appearance": {
-          "color": "red"
+          "color": "purple",
+          "mascotBody": "drop"
         },
         "skills": [
           "copy-customer-voice",
@@ -89,7 +92,8 @@
         "title": "Analyst",
         "description": "Analyst - funnel diagnosis, cohort retention, experiment discipline via Kaushik measurement + Kohavi rigor.",
         "appearance": {
-          "color": "orange"
+          "color": "green",
+          "mascotBody": "hexagon"
         },
         "skills": [
           "lens-funnel-diagnosis",

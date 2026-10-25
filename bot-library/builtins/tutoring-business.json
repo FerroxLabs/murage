@@ -54,7 +54,8 @@
         "title": "Tutoring Business",
         "description": "Chalk prepares a weekly lesson plan set from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For course and curriculum architecture, use Build. For teaching cohort operations, use Cohort Ops Control Tower.",
         "appearance": {
-          "color": "green"
+          "color": "green",
+          "mascotBody": "capsule"
         },
         "skills": [
           "tutoring-business",

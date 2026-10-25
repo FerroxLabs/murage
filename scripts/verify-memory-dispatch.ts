@@ -132,7 +132,7 @@ async function main() {
     const a=first.body.bot as Bot,b=second.body.bot as Bot;
     const made=await api("POST","/api/groups",{name:"Memory fixture room",memberIds:[a.id,b.id],setup:{bulletin:"Fixture only",defaultResponder:{kind:"mentions"}}});
     assert.equal(made.status,201);const room=made.body.group as {id:string;threadId:string};
-    assert.equal((await api("PUT",`/api/bots/${a.id}/memory`,{text:"LEGACY_PRIVATE_NOTEBOOK_CANARY"})).status,200);
+    assert.equal((await api("PUT",`/api/bots/${a.id}/memory`,{baseRevision:(await api("GET",`/api/bots/${a.id}/memory`)).body.revision,text:"LEGACY_PRIVATE_NOTEBOOK_CANARY"})).status,200);
     // The memory worker's idle pass migrates detected notebooks on its own
     // 1 s cadence and every import revokes every disclosure, so under load
     // that pass could land between a delivery and its receipt read below.

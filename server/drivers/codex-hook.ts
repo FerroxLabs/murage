@@ -12,7 +12,7 @@
 // owner-hook strip of the config copy, the trust handshake, the socket, the delivery mapping, the apply_patch reader and the
 // Rule 67 tripwire table. codex.ts wires them to a turn.
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -115,6 +115,9 @@ export function codexGatePlan(version: string | undefined, floors: CodexFloors =
 export const HOOKS_JSON_FILE = "hooks.json";
 export const HOOK_SCRIPT_FILE = "murage-hook.mjs";
 export const HOOK_ENV_FILE = "murage-hook.env";
+/** 03-1: each gated app-server gets its own env file, `<scope>/hook-env/<murage pid>-<gate id>.env`, named in its environment. */
+export const HOOK_ENV_DIR = "hook-env";
+export const HOOK_ENV_VAR = "MURAGE_CODEX_HOOK_ENV";
 
 /** The ask bound a hook waits for the owner (the driver's permission deny, codex.ts). */
 export const HOOK_ASK_BOUND_MS = 15 * 60_000;
@@ -125,24 +128,32 @@ export const HOOK_SCRIPT_DEADLINE_MS = HOOK_ASK_BOUND_MS + 10_000;
 
 /** Rule 68d. Whole body in one `try`; the only outcomes are an allow (a clean exit, silent) or a deny (printed, with its reason, and a
  *  clean exit: Codex 0.163.0 reads the printed decision only on exit 0, hooks/src/events/pre_tool_use.rs:213-244, and a Windows shell
- *  turns exit 2 into 1). A SessionStart that cannot post exits 2 with the reason on stderr (no proof: the turn is refused). The socket path and
+ *  turns exit 2 into 1; only a deny that cannot be written at all, stdout gone, exits 2). A SessionStart that cannot post exits 2 with the reason on stderr (no proof: the turn is refused). The socket path and
  *  the per-turn token are read from the env file beside this script (never argv, never hooks.json). The script runs with whatever
  *  environment Codex gives a hook, so it touches nothing but its own folder and the socket. */
 export const CODEX_HOOK_SCRIPT = `// Murage pre-execution hook. Generated; do not edit.
-import { readFileSync, writeSync } from "node:fs";
+import { readFileSync, realpathSync, writeSync } from "node:fs";
 import net from "node:net";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const DEADLINE_MS = ${HOOK_SCRIPT_DEADLINE_MS};
 let hookEvent;
+// The only exit 2: a SessionStart that cannot post (no proof), or a deny that could not be written at all (stdout gone).
+const hardBlock = () => process.exit(2);
+// Every printed decision is one synchronous write of the whole line, so nothing is left in a stream buffer at process.exit.
+const print = (value) => {
+  const bytes = Buffer.from(JSON.stringify(value), "utf8");
+  try { for (let at = 0; at < bytes.length;) at += writeSync(1, bytes, at, bytes.length - at); return true; } catch { return false; }
+};
 const block = (why) => {
   const reason = "Murage blocked this call: " + String(why).slice(0, 300);
   try { writeSync(2, reason + "\\n"); } catch {}
-  if (hookEvent === "SessionStart") process.exit(2);
+  if (hookEvent === "SessionStart") hardBlock();
   // Any other call: the documented deny on stdout with a clean exit, which Codex blocks on whatever the shell does to an exit code
   // (Windows: Codex's PowerShell -Command wrapper turns exit 2 into 1, a non-blocking failure). Written synchronously.
-  try { writeSync(1, JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason } })); } catch {}
+  // A deny that could not be written (stdout gone) exits 2: Codex is not reading then, and on POSIX exit 2 is still a block.
+  if (!print({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason } })) hardBlock();
   process.exit(0);
 };
 try {
@@ -152,8 +163,17 @@ try {
   const input = JSON.parse(Buffer.concat(chunks).toString("utf8"));
   hookEvent = input && input.hook_event_name;
   const here = dirname(fileURLToPath(import.meta.url));
+  // The env file of the app-server that runs this hook, named in that process's environment (one file per process, never shared).
+  const named = process.env.${HOOK_ENV_VAR};
+  // Both folders compared by their real, final path: on Windows the same folder can be named by an 8.3 short name (RUNNER~1), a
+  // junction or another letter case, and a plain string compare would refuse this process's own file (every gated turn refused).
+  // The native real path is the name the file system holds, in its own letter case, so the two are compared exactly: no case
+  // folding, which would let a case-sensitive sibling folder (hook-env beside HOOK-ENV) pass as this one.
+  const realDir = (path) => { try { return realpathSync.native(path); } catch { return null; } };
+  const ownDir = realDir(join(here, ${JSON.stringify(HOOK_ENV_DIR)}));
+  if (!named || !named.endsWith(".env") || !ownDir || realDir(dirname(resolve(named))) !== ownDir) block("no socket");
   const env = {};
-  for (const line of readFileSync(join(here, ${JSON.stringify(HOOK_ENV_FILE)}), "utf8").split("\\n")) {
+  for (const line of readFileSync(resolve(named), "utf8").split("\\n")) {
     const at = line.indexOf("=");
     if (at > 0) env[line.slice(0, at)] = line.slice(at + 1);
   }
@@ -182,11 +202,11 @@ try {
     const out = { hookEventName: "PreToolUse", permissionDecision: "allow" };
     if (answer.updatedInput && typeof answer.updatedInput === "object") out.updatedInput = answer.updatedInput;
     if (typeof answer.additionalContext === "string") out.additionalContext = answer.additionalContext;
-    if (out.updatedInput || out.additionalContext) process.stdout.write(JSON.stringify({ hookSpecificOutput: out }));
+    if ((out.updatedInput || out.additionalContext) && !print({ hookSpecificOutput: out })) block("the answer could not be written");
     process.exit(0);
   }
   if (answer && answer.decision === "deny") {
-    process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: String(answer.reason ?? "Murage did not allow this call").slice(0, 2000) } }));
+    if (!print({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: String(answer.reason ?? "Murage did not allow this call").slice(0, 2000) } })) hardBlock();
     process.exit(0);
   }
   block("no usable answer");
@@ -269,12 +289,15 @@ export function hookConfigOf(scopedHome: string, execPath = process.execPath): s
   return createHash("sha256").update(codexHooksJson(execPath, script)).update("\0").update(hookWindowsLauncher()).update("\0").update(CODEX_HOOK_SCRIPT).digest("hex");
 }
 
-/** Writes hooks.json and the script (unchanged content is not rewritten) and the turn's env file (0600). */
-export function writeHookFiles(scopedHome: string, socketPath: string, token: string, execPath = process.execPath): HookFiles {
-  mkdirSync(scopedHome, { recursive: true });
+/** The env file of one gated app-server process (03-1): `<scope>/hook-env/<murage pid>-<gate id>.env`. */
+export const hookEnvPathOf = (scopedHome: string, gateId: string, pid = process.pid): string => join(scopedHome, HOOK_ENV_DIR, `${pid}-${gateId}.env`);
+
+/** Writes hooks.json and the script (unchanged content is not rewritten) and this process's env file (0600) at `envFile`, which only
+ *  this process's hooks read (its environment names it). */
+export function writeHookFiles(scopedHome: string, socketPath: string, token: string, envFile: string, execPath = process.execPath): HookFiles {
+  mkdirSync(join(scopedHome, HOOK_ENV_DIR), { recursive: true });
   const script = join(scopedHome, HOOK_SCRIPT_FILE);
   const hooksJson = join(scopedHome, HOOKS_JSON_FILE);
-  const envFile = join(scopedHome, HOOK_ENV_FILE);
   const launcher = join(scopedHome, HOOK_LAUNCHER_FILE);
   writeIfChanged(script, CODEX_HOOK_SCRIPT, 0o600);
   writeIfChanged(launcher, hookWindowsLauncher(), 0o600);
@@ -346,11 +369,35 @@ export interface ListedHook {
   mayRun: boolean;
 }
 
+/** Why a handshake did not take:
+ *  - `absent`: Codex answered that hooks/list is not one of its methods (an old build). Only this one is a version fact.
+ *  - `slow`: Codex gave no answer inside the attempt's handshake deadline (a busy or slow-starting machine). Says nothing about the
+ *    version: `cause` is the RPC's own no-answer error, which the driver hands to its transient retry (one relaunch).
+ *  - `refused`: Codex answered, and what it answered does not establish the gate. */
+export type HandshakeFailureKind = "absent" | "slow" | "refused";
 export type HandshakeResult =
   | { ok: true; managed: number }
-  | { ok: false; why: string };
+  | { ok: false; why: string; kind: HandshakeFailureKind; cause?: unknown };
 
 type Rpc = (method: string, params: unknown, timeoutMs?: number) => Promise<any>;
+
+/** The first hooks/list bound, and the one wider retry a no-answer gets (B13: Codex 0.164.0 on a loaded Windows box answered past
+ *  15 s). MURAGE_CODEX_HOOKS_LIST_MS (a positive number) sets the first bound; the retry is three times it. */
+export const HOOKS_LIST_MS = 15_000;
+export const HOOKS_LIST_RETRY_MS = 45_000;
+export function hooksListBounds(env: NodeJS.ProcessEnv = process.env): { first: number; retry: number } {
+  const override = Number(env.MURAGE_CODEX_HOOKS_LIST_MS);
+  return override > 0 ? { first: override, retry: override * 3 } : { first: HOOKS_LIST_MS, retry: HOOKS_LIST_RETRY_MS };
+}
+/** An RPC failure as the driver raises it: `noAnswer` on its timeout, `rpcCode` on an error answer. */
+const noAnswer = (error: unknown): boolean => (error as { noAnswer?: unknown } | null)?.noAnswer === true;
+/** JSON-RPC "method not found", or the app-server's own wording for a method its build does not have. Only the method itself
+ *  counts: a -32602 params error ("unknown variant" for a renamed param on a current build) is an answer, never "no hook list". */
+const methodAbsent = (error: unknown): boolean => {
+  const e = error as { rpcCode?: unknown; message?: unknown } | null;
+  const msg = String(e?.message ?? "");
+  return e?.rpcCode === -32601 || (e?.rpcCode === undefined && /method not found/i.test(msg)) || /unknown variant `?hooks\/list/i.test(msg);
+};
 
 const listedHooks = (result: any, cwd: string): ListedHook[] | null => {
   const entries = Array.isArray(result?.data) ? result.data : null;
@@ -384,34 +431,67 @@ const sameDestinations = (allowed: readonly string[], changed: readonly string[]
   return sa.size === sb.size && [...sa].every((x) => sb.has(x));
 };
 
+export interface TrustHooksOptions {
+  /** Called when a listing's first bound runs out with no answer, before the wider wait: `waitedMs` so far, `nextMs` the wait to come
+   *  (B13: a slow step explains itself to the owner). */
+  onWait?: (waitedMs: number, nextMs: number) => void;
+  /** An outer cap (epoch ms) on the whole startup of the turn: the handshake deadline never runs past it. */
+  notAfter?: number;
+}
+
 /** After `initialize` and before the first `thread/start`: list the hooks for the turn's cwd, find the two handlers by their source
  *  path and event, trust them (`hooks.state` through `config/batchWrite` with `reloadUserConfig`) when untrusted or modified, list
  *  again. The turn proceeds only when BOTH are trusted and enabled and no other non-managed handler is runnable. */
-export async function trustHooks(rpc: Rpc, hooksJsonPath: string, cwd: string): Promise<HandshakeResult> {
-  const read = async () => {
+export async function trustHooks(rpc: Rpc, hooksJsonPath: string, cwd: string, options: TrustHooksOptions = {}): Promise<HandshakeResult> {
+  const bounds = hooksListBounds();
+  // B13: one deadline for the whole handshake of this attempt (both listings and the trust write share it), so one attempt waits at
+  // most first + retry (60 s), never 60 s per listing. Every call keeps at least 1 ms, so running out reads as Codex's own no-answer.
+  const deadline = Math.min(Date.now() + bounds.first + bounds.retry, options.notAfter ?? Infinity);
+  const within = (ms: number) => Math.max(1, Math.min(ms, deadline - Date.now()));
+  type Read = { hooks: ListedHook[] } | { failed: Extract<HandshakeResult, { ok: false }> };
+  const read = async (label: string): Promise<Read> => {
     let result: any;
-    try { result = await rpc("hooks/list", { cwds: [cwd] }, 15_000); } catch { return null; }
-    return listedHooks(result, cwd);
+    let lastNoAnswer: unknown;
+    for (const [i, bound] of [bounds.first, bounds.retry].entries()) {
+      if (i > 0 && deadline - Date.now() <= 0) break;
+      const startedAt = Date.now();
+      try { result = await rpc("hooks/list", { cwds: [cwd] }, within(bound)); lastNoAnswer = undefined; break; } catch (error) {
+        if (methodAbsent(error)) return { failed: { ok: false, kind: "absent", why: `hooks/list is not a method of this Codex (${label})` } };
+        // only a no-answer is waited for again, once and longer; any other failure is final
+        if (!noAnswer(error)) return { failed: { ok: false, kind: "refused", why: `hooks/list failed (${label})` } };
+        lastNoAnswer = error;
+        if (i === 0 && deadline - Date.now() > 0) options.onWait?.(Date.now() - startedAt, within(bounds.retry));
+      }
+    }
+    if (lastNoAnswer !== undefined) return { failed: { ok: false, kind: "slow", why: `hooks/list gave no answer in time (${label})`, cause: lastNoAnswer } };
+    const hooks = listedHooks(result, cwd);
+    return hooks ? { hooks } : { failed: { ok: false, kind: "refused", why: `hooks/list answered in a shape Murage cannot read (${label})` } };
   };
-  let hooks = await read();
-  if (!hooks) return { ok: false, why: "hooks/list is missing or unreadable" };
+  const first = await read("first listing");
+  if ("failed" in first) return first.failed;
+  let hooks = first.hooks;
   const ours = (list: ListedHook[], event: string) => list.filter((h) => samePath(h.sourcePath, hooksJsonPath) && h.eventName === event);
   const needed = (list: ListedHook[]) => [...ours(list, "preToolUse"), ...ours(list, "sessionStart")];
-  if (ours(hooks, "preToolUse").length !== 1 || ours(hooks, "sessionStart").length !== 1) return { ok: false, why: "Murage's two handlers are not listed" };
+  if (ours(hooks, "preToolUse").length !== 1 || ours(hooks, "sessionStart").length !== 1) return { ok: false, kind: "refused", why: "Murage's two handlers are not listed" };
   const stale = needed(hooks).filter((h) => h.trustStatus === "untrusted" || h.trustStatus === "modified");
   if (stale.length) {
     const state: Record<string, { trusted_hash: string }> = {};
     for (const h of stale) state[h.key] = { trusted_hash: h.currentHash };
     try {
-      await rpc("config/batchWrite", { edits: [{ keyPath: "hooks.state", value: state, mergeStrategy: "upsert" }], reloadUserConfig: true }, 15_000);
-    } catch { return { ok: false, why: "the trust write was refused" }; }
-    hooks = await read();
-    if (!hooks) return { ok: false, why: "hooks/list failed after the trust write" };
+      await rpc("config/batchWrite", { edits: [{ keyPath: "hooks.state", value: state, mergeStrategy: "upsert" }], reloadUserConfig: true }, within(15_000));
+    } catch (error) {
+      // the write is an upsert of the hash Codex listed: no answer in time is a slow start like a slow listing, an answer is final
+      if (noAnswer(error)) return { ok: false, kind: "slow", why: "the trust write gave no answer in time", cause: error };
+      return { ok: false, kind: "refused", why: "the trust write was refused" };
+    }
+    const again = await read("after the trust write");
+    if ("failed" in again) return again.failed;
+    hooks = again.hooks;
   }
   const mine = needed(hooks);
-  if (mine.length !== 2 || mine.some((h) => h.trustStatus !== "trusted" || !h.enabled)) return { ok: false, why: "Murage's handlers are not trusted and enabled" };
+  if (mine.length !== 2 || mine.some((h) => h.trustStatus !== "trusted" || !h.enabled)) return { ok: false, kind: "refused", why: "Murage's handlers are not trusted and enabled" };
   const other = hooks.filter((h) => !mine.includes(h) && !h.isManaged && h.mayRun && h.trustStatus === "trusted");
-  if (other.length) return { ok: false, why: "another hook would run in this scope" };
+  if (other.length) return { ok: false, kind: "refused", why: "another hook would run in this scope" };
   return { ok: true, managed: hooks.filter((h) => h.isManaged && h.enabled).length };
 }
 
@@ -439,13 +519,74 @@ export interface HookTurn {
 export const hookSocketPath = (id = randomBytes(6).toString("hex")): string =>
   process.platform === "win32" ? `\\\\.\\pipe\\murage-hook-${id}` : join(tmpdir(), `murage-hk-${id}.sock`);
 
-/** One socket per app-server process, armed with one turn's token and handlers at a time. A message with another token is refused. */
+/** 03-1: the gates whose app-server may still be alive, shared by every Codex driver instance in this Murage process. A sweep keeps
+ *  their env files and removes only the files no live owner holds. */
+const liveHookGates = new Set<string>();
+export const hookGateIsLive = (id: string): boolean => liveHookGates.has(id);
+
+/** Removes the env files no live owner holds: another Murage process's that is no longer alive, or this process's whose gate is gone.
+ *  A pid alone is not ownership (a pid is reused by unrelated processes), so a file of another LIVE pid is also checked by its gate: it
+ *  stays only while the socket it names exists. A file of a live gate of this process is kept. Best effort: a file that cannot be read
+ *  or removed stays. */
+export function sweepHookEnv(scopedHome: string, pidAlive: (pid: number) => boolean = processAlive, socketLive: (path: string) => boolean = existsSync): void {
+  const dir = join(scopedHome, HOOK_ENV_DIR);
+  let names: string[];
+  try { names = readdirSync(dir); } catch { return; }
+  for (const name of names) {
+    const m = /^(\d+)-([0-9a-f]+)\.env$/.exec(name);
+    if (!m) continue;
+    const pid = Number(m[1]);
+    let stale: boolean;
+    if (pid === process.pid) stale = !liveHookGates.has(m[2]!);
+    else if (!pidAlive(pid)) stale = true;
+    else {
+      // the pid lives, but does its gate? The file names the gate's socket; a live gate has it (an unreadable file stays)
+      let socket: string | null = null;
+      try { socket = /^SOCKET=(.*)$/m.exec(readFileSync(join(dir, name), "utf8"))?.[1] ?? null; } catch { socket = null; }
+      stale = socket !== null && !socketLive(socket);
+    }
+    if (stale) { try { unlinkSync(join(dir, name)); } catch { /* left for the next sweep */ } }
+  }
+}
+
+/** App start: sweeps every scope under `root` (DATA_DIR/native/codex-scope), the scope folder and its `login-g<N>` generations, so a
+ *  bot that is never launched again does not keep dead files. Bounded to `maxScopes` scope folders; only `<pid>-<gate>.env` files in
+ *  a `hook-env` folder are ever touched. Never throws. */
+export function sweepAllHookEnv(root: string, pidAlive: (pid: number) => boolean = processAlive, socketLive: (path: string) => boolean = existsSync, maxScopes = 512): number {
+  let scopes: string[];
+  try { scopes = readdirSync(root).filter((n) => !n.startsWith(".")).slice(0, maxScopes); } catch { return 0; }
+  let swept = 0;
+  for (const scope of scopes) {
+    const base = join(root, scope);
+    let homes = [base];
+    try { homes = homes.concat(readdirSync(base).filter((n) => /^login-g\d+$/.test(n)).slice(0, 64).map((n) => join(base, n))); } catch { continue; }
+    for (const home of homes) { sweepHookEnv(home, pidAlive, socketLive); swept += 1; }
+  }
+  return swept;
+}
+const processAlive = (pid: number): boolean => {
+  try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException)?.code === "EPERM"; }
+};
+
+/** One socket per app-server process, armed with one turn's token and handlers at a time. A message with another token is refused,
+ *  and a decision reaches the hook only while the turn that received it is still the armed one (Astra r1 #1). */
 export class CodexHookGate {
   private server: net.Server | null = null;
   private turn: HookTurn | null = null;
+  private generation = 0;
   readonly path: string;
+  /** 03-1: names this gate's env file; registered live until `release()`. */
+  readonly id = randomBytes(8).toString("hex");
+  /** The env file of this gate's process, set by the driver at spawn. */
+  envPath: string | null = null;
 
-  constructor(path = hookSocketPath()) { this.path = path; }
+  constructor(path = hookSocketPath()) { this.path = path; liveHookGates.add(this.id); }
+
+  /** The process is confirmed gone: its env file goes and the gate leaves the live registry. A failed kill never calls this. */
+  release(): void {
+    if (this.envPath) { try { unlinkSync(this.envPath); } catch { /* gone already */ } }
+    liveHookGates.delete(this.id);
+  }
 
   async listen(): Promise<void> {
     const server = net.createServer((socket) => this.serve(socket));
@@ -455,10 +596,11 @@ export class CodexHookGate {
     if (process.platform !== "win32") { try { chmodSync(this.path, 0o600); } catch { /* the token still guards it */ } }
   }
 
-  arm(turn: HookTurn): void { this.turn = turn; }
-  disarm(token?: string): void { if (!token || this.turn?.token === token) this.turn = null; }
+  arm(turn: HookTurn): void { this.generation++; this.turn = turn; }
+  disarm(token?: string): void { if (!token || this.turn?.token === token) { this.generation++; this.turn = null; } }
 
   close(): void {
+    this.generation++;
     this.turn = null;
     try { this.server?.close(); } catch { /* closing */ }
     this.server = null;
@@ -486,8 +628,11 @@ export class CodexHookGate {
         return reply({ ok: true });
       }
       if (message.kind !== "pretool") return reply({ error: "kind" });
+      // The decision is delivered only while this turn is still the armed one: a Stop, a settle or a newer turn in between turns it into a deny.
+      const generation = this.generation;
+      const current = () => this.turn === turn && this.generation === generation;
       turn.onPreTool({ tool_name: message.tool_name, tool_input: message.tool_input, tool_use_id: message.tool_use_id, turn_id: message.turn_id, cwd: message.cwd })
-        .then((answer) => reply(answer), () => reply({ decision: "deny", reason: "Murage could not check this call" }));
+        .then((answer) => reply(current() ? answer : { decision: "deny", reason: "Murage: the turn ended" }), () => reply({ decision: "deny", reason: "Murage could not check this call" }));
     });
   }
 }

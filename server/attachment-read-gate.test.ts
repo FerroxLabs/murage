@@ -9,8 +9,10 @@
 //    moved or extra call fails until it is registered (a reviewed change);
 // 2. sites with root "attachments" live only in server/attachment-read.ts;
 // 3. server/attachments.ts opens files only to write them: exactly
-//    open(partialPath, "wx", 0o600) and writeFileSync(partialPath, bytes,
-//    { mode: 0o600, flag: "wx" }), nothing else;
+//    open(partialPath, "wx", 0o600), writeFileSync(partialPath, bytes,
+//    { mode: 0o600, flag: "wx" }) and the empty Remove marker
+//    writeFileSync(markerPath, "", { mode: 0o600, flag: "wx" }) (1.0.4
+//    SL-H), nothing else;
 // 4. the folder path is reached only by the writer: attachmentsFolderForWriter
 //    is called only from server/attachments.ts, and no AttachmentsHome value
 //    is ever turned into a string (concatenation, template, String()).
@@ -72,6 +74,12 @@ const isHomeType = (checker: ts.TypeChecker, node: ts.Node) => {
 
 function writerOpenAllowed(callee: string, call: ts.CallExpression): boolean {
   const [path, second, third] = call.arguments;
+  // The Remove marker: an empty file, created exclusively (SL-H H1).
+  if (callee === "writeFileSync" && path && ts.isIdentifier(path) && path.text === "markerPath") {
+    if (call.arguments.length !== 3 || !second || !ts.isStringLiteral(second) || second.text !== "" || !third || !ts.isObjectLiteralExpression(third)) return false;
+    const flags = third.properties.filter(p => ts.isPropertyAssignment(p) && p.name.getText() === "flag");
+    return flags.length === 1 && ts.isStringLiteral((flags[0] as ts.PropertyAssignment).initializer) && ((flags[0] as ts.PropertyAssignment).initializer as ts.StringLiteral).text === "wx";
+  }
   if (!path || !ts.isIdentifier(path) || path.text !== "partialPath") return false;
   if (callee === "open") return call.arguments.length === 3 && !!second && ts.isStringLiteral(second) && second.text === "wx";
   if (callee === "writeFileSync") {
@@ -180,11 +188,13 @@ describe("attachment read gate", () => {
       "server/fixture-destructure.ts": `import * as fsp from "node:fs/promises";\nconst { open } = fsp;\nexport async function c(p: string) { const h = await open(p); return h.read(Buffer.alloc(1), 0, 1, 0); }\n`,
       "server/attachments.ts": [
         `import { open } from "node:fs/promises";`, `import { writeFileSync } from "node:fs";`,
-        `declare const partialPath: string; declare const flag: string; declare const b: Buffer;`,
+        `declare const partialPath: string; declare const markerPath: string; declare const flag: string; declare const b: Buffer;`,
         `export async function w() {`,
         `  await open(partialPath, "wx", 0o600);`,
         `  writeFileSync(partialPath, b, { mode: 0o600, flag: "wx" });`,
+        `  writeFileSync(markerPath, "", { mode: 0o600, flag: "wx" });`,
         `  await open(partialPath, "r");`, `  await open(partialPath, "wx+", 0o600);`, `  await open(partialPath, flag, 0o600);`, `  writeFileSync(partialPath, b);`,
+        `  writeFileSync(markerPath, b, { mode: 0o600, flag: "wx" });`, `  writeFileSync(markerPath, "", { mode: 0o600, flag: "w" });`,
         `}`,
       ].join("\n"),
       "server/attachment-read.ts": `declare const homeKey: unique symbol;\nexport type AttachmentsHome = { readonly [homeKey]: true };\nexport declare function attachmentsFolderForWriter(home: AttachmentsHome): string;\n`,
@@ -195,8 +205,8 @@ describe("attachment read gate", () => {
       "server/fixture-alias.ts:a:readFileSync", "server/fixture-namespace.ts:b:readFileSync",
       "server/fixture-destructure.ts:c:open", "server/fixture-destructure.ts:c:FileHandle.read",
     ]));
-    expect(found.writerViolations).toHaveLength(4);
-    expect(found.writerViolations.join("\n")).toMatch(/"r"\)[\s\S]*"wx\+"[\s\S]*flag, 0o600[\s\S]*writeFileSync\(partialPath, b\)/);
+    expect(found.writerViolations).toHaveLength(6);
+    expect(found.writerViolations.join("\n")).toMatch(/"r"\)[\s\S]*"wx\+"[\s\S]*flag, 0o600[\s\S]*writeFileSync\(partialPath, b\)[\s\S]*writeFileSync\(markerPath, b,[\s\S]*flag: "w" \}/);
     expect(found.boundaryViolations).toHaveLength(4);
     expect(found.boundaryViolations).toEqual(expect.arrayContaining([
       "server/fixture-home.ts: String() of an AttachmentsHome",
