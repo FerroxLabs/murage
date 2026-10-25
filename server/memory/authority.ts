@@ -9,11 +9,18 @@ import type { MemoryEvidenceHandle } from "../../shared/memory.ts";
 import { groundMemoryClaim, type TextOnlyExtractor } from "./extract.ts";
 import { readMemoryLearning } from "./learning-policy.ts";
 import { activateGroundedMemory, holdMemoryCandidate, ownerLearningRefusal, invitedCanonRefusal, type MemoryClaimType } from "./automatic-learning.ts";
-import { assertMemoryAccess, type MemoryAccess } from "./policy.ts";
+import { assertMemoryAccess, type MemoryAccess, type MemoryRoster } from "./policy.ts";
 import { enqueueProcedureCorrectionReview } from "./procedure-review.ts";
 import { isPipKind } from "./pip-kinds.ts";
+import { assertOwnerPinsFit, ownerPinUse } from "./bundle.ts";
 import { revokeAllDisclosures, revokeRecordDisclosures } from "./revocation.ts";
 import { inheritEdge, inheritEdges } from "./revoke-commit.ts";
+import { WORKSPACE_OWNER } from "../human-principals.ts";
+import { ensureScope } from "./policy.ts";
+import { memoryState } from "./repository.ts";
+import { ownerNoteId, type LamDatePrecision } from "../../shared/learn-about-me/origin.ts";
+import type { LamProvider } from "../../shared/learn-about-me/parse.ts";
+import { insertMemoryRecord } from "./record-write.ts";
 
 const ownerTickets = new WeakSet<object>();
 /** Mint only after the HTTP desktop-authority check; not exposed as an agent tool. */
@@ -69,7 +76,7 @@ function saveCandidate(text: string, evidence: MemoryEvidenceHandle[], key: stri
     }
     // Cross-scope synthesis must not implicitly expand its audience.
     if (scopes.size !== 1) throw new Error("MEMORY_PROMOTION_REQUIRED");
-    const id = createHash("sha256").update(JSON.stringify([access.threadId,key])).digest("hex"), scope = candidateScope ?? [...scopes][0];
+    const id = memoryCandidateId(access.threadId,key), scope = candidateScope ?? [...scopes][0];
     if (partitionOfScope(scope)?.partition.kind === "general") throw new Error(`Only you can change what ${executionStore()?.bot(access.botId)?.name ?? "this bot"} knows for every team.`);
     const existing = db.prepare("SELECT text,state,scope_id FROM memory_records WHERE id=? AND version=1").get(id);
     const safeText = redactSecretsInText(text);
@@ -80,7 +87,7 @@ function saveCandidate(text: string, evidence: MemoryEvidenceHandle[], key: stri
         canonical(saved.map(h=>[h.source_id,h.source_revision,h.start_byte,h.end_byte]))!==canonical(evidence.map(h=>[h.sourceId,h.revision,h.startByte,h.endByte])))throw new Error("MEMORY_IDEMPOTENCY_CONFLICT");
       return id;
     }
-    db.prepare("INSERT INTO memory_records VALUES(?,1,?,'fact',?,'assistant-inference','candidate',0,?,NULL,NULL,?)").run(id,scope,safeText,Date.now(),Date.now());
+    insertMemoryRecord(db,{id,version:1,scopeId:String(scope),kind:"fact",text:safeText,assertion:"assistant-inference",state:"candidate",validFrom:Date.now(),createdAt:Date.now()});
     for (const h of evidence) { db.prepare("INSERT INTO memory_evidence VALUES(?,1,?,?,?,?)").run(id,h.sourceId,h.revision,h.startByte,h.endByte); inheritEdge(db,{kind:"record",id,version:1},{kind:"source",id:h.sourceId}); }
     if (!candidateScope) activateGroundedMemory(db,id,claimType);
     return id;
@@ -170,7 +177,9 @@ export function readCorrectionTarget(db: DatabaseSync, id: string, version: numb
   const target = {id:targetId,version:Number(row.version),text:String(row.text),state:String(row.state),ownerPinned:row.owner_pinned===1,scopeId:String(row.scope_id)};
   const latest = Number(db.prepare("SELECT max(version) AS version FROM memory_records WHERE id=?").get(targetId)?.version);
   const tombstoned = db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? AND (revision IS NULL OR revision=?)").get(targetId,target.version);
-  if (tombstoned || target.state === "deleted" || target.state === "archived" || target.state === "candidate") return {status:"unavailable",target};
+  // a forgotten target shows no words (Learn about me R5 C2): the same answer as a target that is gone
+  if (tombstoned) return {status:"unavailable",target:null};
+  if (target.state === "deleted" || target.state === "archived" || target.state === "candidate") return {status:"unavailable",target};
   if (latest !== target.version || target.state !== "active") return {status:"changed",target};
   return {status:"current",target};
 }
@@ -207,11 +216,14 @@ export function approveCorrection(db: DatabaseSync, record: Record<string, unkno
   if (target.ownerPinned && options.correctionPin === undefined) throw new Error("MEMORY_CORRECTION_PIN_CHOICE_REQUIRED");
   // The owner chose for a pin that is no longer there: the review is stale.
   if (!target.ownerPinned && options.correctionPin !== undefined) throw new Error("MEMORY_CORRECTION_PIN_CHANGED");
+  const pinUse = target.ownerPinned && options.correctionPin === "transfer" ? ownerPinUse(db,String(record.scope_id)) : undefined;
   const retired = db.prepare("UPDATE memory_records SET state='superseded',valid_to=? WHERE id=? AND version=? AND state='active'").run(Date.now(),target.id,target.version);
   if (retired.changes !== 1) throw new Error("MEMORY_CORRECTION_TARGET_CHANGED");
   const activated = db.prepare("UPDATE memory_records SET state='active',owner_pinned=? WHERE id=? AND version=? AND state='candidate'")
     .run(target.ownerPinned && options.correctionPin === "transfer" ? 1 : 0,String(record.id),Number(record.version));
   if (activated.changes !== 1) throw new Error("MEMORY_VERSION_CONFLICT");
+  // The pin moves to the new words: they must fit with the scope's other pins (1.0.4).
+  if (pinUse !== undefined) assertOwnerPinsFit(db,String(record.scope_id),pinUse);
   db.exec("UPDATE memory_meta SET data_revision=data_revision+1 WHERE id=1");
   revokeRecordDisclosures(db,"approve-correction",{recordIds:[target.id,String(record.id)]});
   enqueueProcedureCorrectionReview(db,String(record.id),Number(record.version),{ownerAuthorized:true});
@@ -235,12 +247,14 @@ export function approveMemory(ticket: object, id: string, version: number, optio
       assertGenericMemoryTarget(db,id,version);
       if (!db.prepare("SELECT 1 FROM memory_scopes WHERE id=?").get(options.scopeId)) throw new Error("MEMORY_SCOPE_UNKNOWN");
       const copy = randomUUID();
-      db.prepare("INSERT INTO memory_records VALUES(?,1,?,?,?,'owner-statement','active',?,?,NULL,NULL,?)").run(copy,options.scopeId,record.kind,record.text,options.pin?1:0,Date.now(),Date.now());
+      insertMemoryRecord(db,{id:copy,version:1,scopeId:String(options.scopeId),kind:String(record.kind),text:String(record.text),assertion:"owner-statement",state:"active",ownerPinned:options.pin?1:0,validFrom:Date.now(),createdAt:Date.now()});
       db.prepare("INSERT INTO memory_derivations VALUES(?,?,?,1)").run(id,version,copy);
       inheritEdge(db,{kind:"record",id:copy,version:1},{kind:"record",id,version});
+      if (options.pin) assertOwnerPinsFit(db,options.scopeId);
       return copy;
     }
     db.prepare("UPDATE memory_records SET state='active',owner_pinned=? WHERE id=? AND version=?").run(options.pin?1:0,id,version);
+    if (options.pin) assertOwnerPinsFit(db,String(record.scope_id));
     return id;
   });
 }
@@ -258,8 +272,7 @@ export function correctMemory(ticket: object, id: string, version: number, text:
     if(correction){
       if(correction.status!=="current")throw new Error("The memory this corrects has changed. Forget this proposal or approve a fresh one.");
       const next=version+1;
-      db.prepare("INSERT INTO memory_records VALUES(?,?,?,?,?,'owner-statement','candidate',0,?,NULL,?,?)")
-        .run(id,next,row.scope_id,row.kind,redactSecretsInText(text),Date.now(),row.supersedes_id,Date.now());
+      insertMemoryRecord(db,{id,version:next,scopeId:String(row.scope_id),kind:String(row.kind),text,assertion:"owner-statement",state:"candidate",validFrom:Date.now(),supersedesId:row.supersedes_id==null?null:String(row.supersedes_id),createdAt:Date.now()});
       db.prepare("INSERT INTO memory_evidence SELECT record_id,?,source_id,source_revision,start_byte,end_byte FROM memory_evidence WHERE record_id=? AND record_version=?").run(next,id,version);
       db.prepare("INSERT INTO memory_derivations SELECT parent_id,parent_version,child_id,? FROM memory_derivations WHERE child_id=? AND child_version=?").run(next,id,version);
       inheritEdges(db,{id,version:next});
@@ -270,11 +283,13 @@ export function correctMemory(ticket: object, id: string, version: number, text:
       inheritEdge(db,{kind:"record",id,version:next},{kind:"record",id,version});
       return next;
     }else if(options.correctionPin!==undefined)throw new Error("MEMORY_CORRECTION_PIN_CHOICE_INVALID");
+    const pinUse=row.owner_pinned===1?ownerPinUse(db,String(row.scope_id)):undefined;
     db.prepare("UPDATE memory_records SET state='superseded',valid_to=? WHERE id=? AND version=?").run(Date.now(),id,version);
-    db.prepare("INSERT INTO memory_records VALUES(?,?,?,?,?,'owner-statement','active',?,?,NULL,?,?)")
-      .run(id,version+1,row.scope_id,row.kind,redactSecretsInText(text),row.owner_pinned,Date.now(),id,Date.now());
+    insertMemoryRecord(db,{id,version:version+1,scopeId:String(row.scope_id),kind:String(row.kind),text,assertion:"owner-statement",state:"active",ownerPinned:Number(row.owner_pinned),validFrom:Date.now(),supersedesId:id,createdAt:Date.now()});
     db.prepare("INSERT INTO memory_derivations VALUES(?,?,?,?)").run(id,version,id,version+1);
     inheritEdge(db,{kind:"record",id,version:version+1},{kind:"record",id,version});
+    // The new version keeps the pin: its words must fit with the scope's other pins (1.0.4).
+    if (pinUse !== undefined) assertOwnerPinsFit(db,String(row.scope_id),pinUse);
     db.exec("UPDATE memory_meta SET data_revision=data_revision+1 WHERE id=1");
     revokeRecordDisclosures(db,"correct",{recordIds:[id]});
     enqueueProcedureCorrectionReview(db,id,version+1,{ownerAuthorized:true});
@@ -282,17 +297,84 @@ export function correctMemory(ticket: object, id: string, version: number, text:
   });
 }
 
-export function pinMemory(ticket: object, id: string, version: number, pinned: boolean) {
+export function pinMemory(ticket: object, id: string, version: number, pinned: boolean, roster?: MemoryRoster) {
   requireMemoryOwner(ticket);
   transaction(db => {
     // Owner-authored continuity is delivered by its own slot, never pinned (PIP A8). Unpinning stays open: a brief
     // pinned before it became a PIP kind keeps a repair path, and the bundle delivers it in the brief slot meanwhile.
-    const target = db.prepare("SELECT kind FROM memory_records WHERE id=? AND version=?").get(id,version);
+    const target = db.prepare("SELECT kind,scope_id FROM memory_records WHERE id=? AND version=?").get(id,version);
     if (pinned && target && isPipKind(target.kind)) throw new Error("MEMORY_IDENTITY_NOT_PINNABLE");
     const result = db.prepare("UPDATE memory_records SET owner_pinned=? WHERE id=? AND version=? AND state='active'").run(pinned?1:0,id,version);
     if (!result.changes) throw new Error("MEMORY_VERSION_CONFLICT");
+    // 1.0.4: a pin is taken only when the scope's pins, this one included, fit the share every default engine gives them. Unpin is never checked.
+    if (pinned) assertOwnerPinsFit(db,String(target!.scope_id),undefined,roster);
     db.exec("UPDATE memory_meta SET data_revision=data_revision+1 WHERE id=1");
-    revokeRecordDisclosures(db,"pin",{recordIds:[id],viaSources:false});
+    // pinning adds a mark and withdraws nothing; unpinning can take the mark away (and an unsettled source's readability), so it ends receipts
+    revokeRecordDisclosures(db,"pin",pinned?{recordIds:[id],withdraws:false}:{recordIds:[id],viaSources:false});
+  });
+}
+
+/** The durable outcome of every `remember` action (memory_scope_bindings system rows): the record it wrote or the record it found
+ * already holding the words, and a hash of what was asked. It is never removed by Forget, so a retried action id answers what the
+ * first call did and never writes the line again (Learn about me, Astra r3 H1 and N2). */
+const REMEMBER_LEDGER = "remember-action";
+const REDACTION = /\u00abredacted \d+ chars\u00bb/g;
+export const REMEMBER_TEXT_MAX = 1000;
+export interface RememberInput { actionId: string; text: string; origin?: { provider: LamProvider; date?: string } }
+export interface RememberOutcome { id: string; version: number; duplicate: boolean; fresh: boolean }
+const rememberConflict = () => Object.assign(new Error("MEMORY_IDEMPOTENCY_CONFLICT"), { status: 409 });
+
+/** The start of the given day, month or year in this machine's time zone (the owner's desktop); undated, malformed, before
+ * 1970 or in the future: now. */
+export function rememberedStart(date: string | undefined, now = Date.now()): { at: number; precision: LamDatePrecision } {
+  const undated = { at: now, precision: "u" as const };
+  const match = date ? /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$/.exec(date) : null;
+  if (!match) return undated;
+  const year = Number(match[1]), month = match[2] ? Number(match[2]) : undefined, day = match[3] ? Number(match[3]) : undefined;
+  if (month !== undefined && (month < 1 || month > 12)) return undated;
+  if (day !== undefined && (day < 1 || day > new Date(year, month!, 0).getDate())) return undated;
+  const at = new Date(year, (month ?? 1) - 1, day ?? 1).getTime();
+  if (year < 1970 || at > now) return undated;
+  return { at, precision: day !== undefined ? "d" : month !== undefined ? "m" : "y" };
+}
+
+/** Learn about me (r3 C1): one kept line becomes one active owner memory in the owner's own preferences scope, the scope only an
+ * owner-audience turn reads (policy.ts). No source, no evidence: an owner statement needs neither (eligibility.ts, readable.ts).
+ * The words are the exact ones the owner kept, secrets redacted. The action id is the key, in its own namespace whichever
+ * provider the line names: the same id with other words or another origin is refused, and its outcome row outlives Forget. */
+export function rememberMemory(ticket: object, input: RememberInput): RememberOutcome {
+  requireMemoryOwner(ticket);
+  const text = input.text.trim();
+  if (!text || text.length > REMEMBER_TEXT_MAX) throw Object.assign(new Error("INVALID_MEMORY_TEXT"), { status: 400 });
+  const safeText = redactSecretsInText(text);
+  if (!safeText.replace(REDACTION, "").replace(/[\s\p{P}\p{S}]/gu, "")) throw Object.assign(new Error("That line looked like a key or password, so it was not kept."), { status: 400, code: "MEMORY_TEXT_REDACTED" });
+  const provider = input.origin?.provider ?? "typed";
+  const start = rememberedStart(input.origin?.date);
+  const key = createHash("sha256").update("murage-remember\u0000" + input.actionId).digest("hex");
+  const ledgerId = `${REMEMBER_LEDGER}:${key.slice(0, 40)}`;
+  const asked = createHash("sha256").update(JSON.stringify([safeText, provider, input.origin?.date ?? null])).digest("hex");
+  return transaction(db => {
+    const prior = db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=? AND subject_type='system' AND subject_id=?").get(ledgerId, REMEMBER_LEDGER);
+    if (prior) {
+      const outcome = JSON.parse(String(prior.intent)) as { recordId: string; version: number; outcome: string; asked: string };
+      if (outcome.asked !== asked) throw rememberConflict();
+      return { id: outcome.recordId, version: outcome.version, duplicate: outcome.outcome === "duplicate", fresh: false };
+    }
+    if (memoryState().mode !== "active") throw Object.assign(new Error("Turn memory on to keep lines."), { status: 409, code: "MEMORY_NOT_ACTIVE" });
+    const scope = ensureScope("preferences", "person:" + WORKSPACE_OWNER);
+    const id = ownerNoteId(provider, start.precision, key.slice(0, 32));
+    if (db.prepare("SELECT 1 FROM memory_records WHERE id=? LIMIT 1").get(id)) throw rememberConflict();
+    // the words are already an active memory of the owner's: say so and write no second copy
+    const same = db.prepare("SELECT id,version FROM memory_records WHERE scope_id=? AND kind='fact' AND state='active' AND text=? LIMIT 1").get(scope, safeText);
+    const outcome = same ? { recordId: String(same.id), version: Number(same.version), outcome: "duplicate" } : { recordId: id, version: 1, outcome: "inserted" };
+    if (!same) {
+      insertMemoryRecord(db, { id, version: 1, scopeId: String(scope), kind: "fact", text: safeText, assertion: "owner-statement", state: "active", validFrom: start.at, createdAt: Date.now() });
+      db.exec("UPDATE memory_meta SET data_revision=data_revision+1 WHERE id=1");
+      // a fresh id (an existing one is refused above): nothing was ever shown from it, so nothing ends
+      revokeRecordDisclosures(db, "remember", { recordIds: [id], withdraws: false });
+    }
+    db.prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'system',?,0,'granted',?)").run(ledgerId, scope, REMEMBER_LEDGER, JSON.stringify({ ...outcome, asked, at: Date.now() }));
+    return { id: outcome.recordId, version: outcome.version, duplicate: Boolean(same), fresh: !same };
   });
 }
 
@@ -317,4 +399,13 @@ export function renameMemoryTeam(ticket: object, oldName: string, newName: strin
     db.exec("UPDATE memory_meta SET policy_revision=policy_revision+1 WHERE id=1");
     revokeAllDisclosures(db,"team-rename");
   });
+}
+
+/** The id a save with idempotency key `key` in `threadId` is stored under (saveMemoryCandidate). */
+export function memoryCandidateId(threadId:string,key:string):string{return createHash("sha256").update(JSON.stringify([threadId,key])).digest("hex");}
+/** The evidence an earlier save with the same key already rests on (none: no earlier save). A retried save re-resolves its quotes to these
+ * first, so the same arguments meet the same evidence and the retry is the same save, not an idempotency conflict. */
+export function savedMemoryEvidence(db:DatabaseSync,threadId:string,key:string):MemoryEvidenceHandle[]{
+  return db.prepare("SELECT source_id,source_revision,start_byte,end_byte FROM memory_evidence WHERE record_id=? AND record_version=1").all(memoryCandidateId(threadId,key))
+    .map(row=>({sourceId:String(row.source_id),revision:Number(row.source_revision),startByte:Number(row.start_byte),endByte:Number(row.end_byte)}));
 }

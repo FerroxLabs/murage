@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Win-Back",
     "tagline": "A lapsed-customer review list and relevant emails ready for approval",
-    "summary": "Bea prepares a lapsed-customer segment list with exclusions for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For ticket triage and broader customer support, use Support. For funnel, cohort and experiment analysis, use Analyst. For a customer email journey team, use Email & Lifecycle Crew.",
+    "summary": "Bea prepares a lapsed-customer segment list with exclusions for your review.",
     "category": "Support",
     "author": {
       "name": "Ferrox Labs",
@@ -66,7 +66,8 @@
         "title": "Win-Back",
         "description": "Bea prepares a lapsed-customer segment list with exclusions for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For ticket triage and broader customer support, use Support. For funnel, cohort and experiment analysis, use Analyst. For a customer email journey team, use Email & Lifecycle Crew.",
         "appearance": {
-          "color": "blue"
+          "color": "coral",
+          "mascotBody": "drop"
         },
         "skills": [
           "segmentation-design",

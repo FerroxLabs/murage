@@ -2,7 +2,7 @@ import { database, transaction } from "../database.ts";
 import { isPipKind } from "./pip-kinds.ts";
 import { requireMemoryOwner, readCorrectionTarget, approveCorrection, assertGenericMemoryTarget } from "./authority.ts";
 import { revokeRecordDisclosures } from "./revocation.ts";
-import { PagedScan, storeAtMost, writeStampOf } from "./status-scan.ts";
+import { contentStampOf, PagedScan, storeAtMost } from "./status-scan.ts";
 import { STATUS_SCAN_INTERVAL_MS } from "./health.ts";
 
 function transition(ticket:object,id:string,version:number,from:"active"|"archived",to:"active"|"archived"){
@@ -89,7 +89,7 @@ const retentionScan=new PagedScan<RetentionAcc,RetentionFigures>({
     return Number(rows[rows.length-1].rid);
   },
   finish:acc=>({records:[...acc.states].map(([state,v])=>({state,count:v.count,bytes:v.bytes})),sourceBytes:acc.sourceBytes}),
-  stamp:writeStampOf,
+  stamp:db=>contentStampOf(db,["memory_records","memory_source_versions"]),
 },STATUS_SCAN_INTERVAL_MS,RETENTION_PAGE);
 function measureRetentionNow(db:ReturnType<typeof database>):RetentionFigures{
   return {records:db.prepare("SELECT state,count(*) AS count,sum(length(CAST(text AS BLOB))) AS bytes FROM memory_records GROUP BY state").all().map(row=>({state:String(row.state),count:Number(row.count),bytes:Number(row.bytes??0)})),

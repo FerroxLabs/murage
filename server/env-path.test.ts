@@ -13,6 +13,7 @@ import {
   bundledFuigoPath,
   cmdShimTargets,
   installScanDirsForTests,
+  windowsInstallDirsForTests,
   resetPathCache,
   resetPathCacheForTests,
   resolveFuigoCli,
@@ -790,5 +791,11 @@ describe("resolveFuigoCli", () => {
     process.env.MURAGE_FUIGO_DIR = bundleDirectory;
     resetPathCacheForTests();
     expect(() => resolveFuigoCli()).toThrow(/is not executable/);
+  });
+});
+
+describe("Windows install locations (item 167)", () => {
+  it("scans the kimi-code installer directory", () => {
+    expect(windowsInstallDirsForTests()).toContain(join(homedir(), ".kimi-code", "bin"));
   });
 });

@@ -3,10 +3,11 @@
 // English, so a partial pack can ship the day it has one string.
 import { en, loadLocalePack, localeCodes, type LocaleKey, type LocalePack } from "@/locales";
 
-/** "de-AT" → "de-at" if registered, else "de", else "en". Pure, for tests. */
+/** "de-AT" → "de-at" if registered, else "de", else "en". A POSIX-style "pt_BR"
+ * reads as "pt-BR". Pure, for tests. */
 export function resolveLocale(tag: string | undefined, available: ReadonlySet<string>): string {
   if (!tag) return "en";
-  const lower = tag.toLowerCase();
+  const lower = tag.trim().toLowerCase().replace(/_/g, "-");
   if (available.has(lower)) return lower;
   const base = lower.split("-")[0] ?? "";
   return available.has(base) ? base : "en";
@@ -54,9 +55,16 @@ export function subscribeLocale(listener: () => void): () => void {
 export function localeVersion(): number {
   return version;
 }
-/** The language in effect now ("en", "de", "pt-br"), for date and number
- * formatting that should follow the app language. */
+/** The Intl locale tag for date and number formatting that follows the app
+ * language ("en", "de", "pt-BR"). Both Portuguese keys show the pt-BR pack, so
+ * both format as pt-BR, never Intl's bare "pt". */
 export function localeCode(): string {
+  return activeCode === "pt" || activeCode === "pt-br" ? "pt-BR" : activeCode;
+}
+/** The registry code in effect ("en", "de", "pt", "pt-br"), unchanged from the
+ * resolved choice: the key for caches and per-language defaults (voice cue
+ * clips, the send key), which must not move when the Intl tag does. */
+export function languageCode(): string {
   return activeCode;
 }
 

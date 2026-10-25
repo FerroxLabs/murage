@@ -7,7 +7,7 @@ import { t } from "./i18n";
 const knownState = (value: unknown): value is ProjectCard["state"] => typeof value === "string" && Object.hasOwn(stateNames, value);
 const knownGoalState = (value: unknown): value is GoalState => typeof value === "string" && Object.hasOwn(goalStateNames, value);
 const otherKinds = ["criteria", "decision_opened", "decision_closed", "budget_warned", "budget_paused", "budget_raised", "member_error", "routine_run", "settings", "work_roots", "restore", "close", "reopen", "deadline"] as const;
-export function activityLine(row: ProjectActivityRow, cards: ProjectCard[], goal: ProjectGoal | null): string {
+export function activityLine(row: ProjectActivityRow, cards: ProjectCard[], goal: ProjectGoal | null, members: Array<{ id: string; name: string }> = []): string {
   const card = cards.find(c => c.id === row.workItemId), name = card?.number != null ? t("projects.common.cardLabel", { number: card.number }) : t("projects.act.aCard");
   const from = knownState(row.detail.from) ? stateName(row.detail.from) : null, to = knownState(row.detail.to) ? stateName(row.detail.to) : null;
   switch (row.kind) {
@@ -19,6 +19,11 @@ export function activityLine(row: ProjectActivityRow, cards: ProjectCard[], goal
     case "card_result": return t("projects.act.result", { name });
     case "brief_version": return typeof row.detail.version === "number" ? t("projects.act.briefVersion", { version: row.detail.version }) : t("projects.act.brief");
     case "goal_state": { const state = typeof row.detail.to === "string" ? knownGoalState(row.detail.to) ? row.detail.to : undefined : goal?.id === row.goalId ? goal.state : undefined; return state ? t("projects.act.goalNow", { state: goalStateLabel(state) }) : t("projects.act.goalChanged"); }
+    case "handoff": {
+      const to = typeof row.detail.toBotId === "string" ? members.find(m => m.id === row.detail.toBotId)?.name : undefined;
+      const ended = row.detail.state === "failed" || row.detail.state === "expired" || row.detail.state === "cancelled" || row.detail.state === "unknown";
+      return to ? t(ended ? "projects.act.handoffEnded" : "projects.act.handoff", { name: to }) : t(ended ? "projects.act.handoffTeammateEnded" : "projects.act.handoffTeammate");
+    }
     default: return (otherKinds as readonly string[]).includes(row.kind) ? t(`projects.act.${row.kind as (typeof otherKinds)[number]}`) : t("projects.act.updated");
   }
 }

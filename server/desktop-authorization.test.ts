@@ -20,7 +20,7 @@ const administration: Array<[string, string]> = [
   ["POST", "/api/bots/{bot}/always-allow"],
   ["POST", "/api/bots/{bot}/always-allow/remove"],
   ["PATCH", "/api/groups/{group}"], ["DELETE", "/api/groups/{group}"], ["PATCH", "/api/groups/{group}/setup"],
-  ["POST", "/api/teams/import"], ["POST", "/api/teams/export"], ["POST", "/api/team-library/github"],
+  ["POST", "/api/teams/import"], ["POST", "/api/teams/export"], ["POST", "/api/team-library/github"], ["POST", "/api/team-library/grok"],
   ["POST", "/api/bots/{bot}/assistant-profile"], ["POST", "/api/bots/{bot}/skills"], ["POST", "/api/bots/{bot}/skills/library"],
   ["PATCH", "/api/bots/{bot}/skills/example"], ["DELETE", "/api/bots/{bot}/skills/example"],
   ["GET", "/api/bots/{bot}/skills/example/history"], ["POST", "/api/bots/{bot}/skills/example/rollback"],
@@ -139,7 +139,9 @@ describe("desktop authority at the actual harness boundary", () => {
       return bots.body.bots.find((bot: { id: string }) => bot.id === botId)?.busy ?? false;
     }, { timeout: 10_000 }).toBe(false);
     rmSync(fixture.fixtureDumpPath, { force: true });
-    expect((await api("POST", `/api/bots/${botId}/messages`, { text: "__fixture_hold_authority__" }, remote)).status).toBe(202);
+    // SL-J J1: an unproven remote send runs unattended and cannot propose a
+    // routine, so the held turn is the owner's own (desktop) message.
+    expect((await api("POST", `/api/bots/${botId}/messages`, { text: "__fixture_hold_authority__" }, desktop)).status).toBe(202);
     let dump: any;
     await expect.poll(() => {
       try { dump = withTurnSecrets(JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8"))); return true; }

@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Lead Responder",
     "tagline": "Every enquiry organized with a useful first reply draft",
-    "summary": "Swift prepares a qualified enquiry queue with reasons for each rating. Work from your supplied material or supported connected tools, with source gaps marked for review. For individual deal strategy, use Sales. For a customer-message review team, use Reply Desk. For a complete prospecting campaign, use Lead-Gen Outbound Squad. For existing sales conversation follow-ups, use Recover Unanswered Sales Emails.",
+    "summary": "Swift prepares a qualified enquiry queue with reasons for each rating.",
     "category": "Sales",
     "author": {
       "name": "Ferrox Labs",
@@ -66,7 +66,8 @@
         "title": "Lead Responder",
         "description": "Swift prepares a qualified enquiry queue with reasons for each rating. Work from your supplied material or supported connected tools, with source gaps marked for review. For individual deal strategy, use Sales. For a customer-message review team, use Reply Desk. For a complete prospecting campaign, use Lead-Gen Outbound Squad. For existing sales conversation follow-ups, use Recover Unanswered Sales Emails.",
         "appearance": {
-          "color": "green"
+          "color": "yellow",
+          "mascotBody": "diamond"
         },
         "skills": [
           "sales-qualify",

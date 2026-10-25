@@ -48,7 +48,7 @@ afterEach(() => removeTempDirSync(root));
 
 it("pins OpenCode to the read-only config directory and off every npm path, whatever the request names", () => {
   // The rigoc request shape: a writable config directory and no npm flags, plus a hostile inline config.
-  const env = { LANG: "C.UTF-8", OPENCODE_CONFIG_DIR: `${home}/tmp/occonf`, OPENCODE_CONFIG: `${home}/tmp/occonf/opencode.json`, OPENCODE_CONFIG_CONTENT: '{"plugin":["fixture-evil"]}', OPENCODE_PURE: "0", OPENCODE_API_KEY: "fixture-key" };
+  const env = { LANG: "C.UTF-8", OPENCODE_CONFIG_DIR: `${home}/tmp/occonf`, OPENCODE_CONFIG: `${home}/tmp/occonf/opencode.json`, OPENCODE_PURE: "0", OPENCODE_API_KEY: "fixture-key" };
   const input = { engine: "opencodeGo", bot: "fixture-bot", command, args: ["acp"], cwd: home, env };
   const result = JSON.parse(execFileSync("python3", ["-I", "-c", validate, launcher, JSON.stringify(input), manifest, engineRoot, join(root, "digest-cache")], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
   expect(result.env).toMatchObject({

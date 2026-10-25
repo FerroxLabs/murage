@@ -54,7 +54,8 @@
         "title": "Team Comms",
         "description": "Bulletin prepares a weekly team update ready for approval for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For broad operations coordination, use Ops. For general writing and editing, use Writer.",
         "appearance": {
-          "color": "cyan"
+          "color": "cyan",
+          "mascotBody": "squircle"
         },
         "skills": [
           "internal-comms-writer",
