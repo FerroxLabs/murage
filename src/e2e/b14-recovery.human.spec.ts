@@ -39,14 +39,14 @@ async function openTask(page: Page) {
   await (await openSidebar(page)).getByText(BOT, { exact: true }).click();
   const invitation = page.getByRole("complementary", { name: "Let your bots pick the right model", exact: true });
   if (await invitation.count()) await invitation.getByRole("button", { name: "Not now", exact: true }).last().click();
-  const picker = page.getByRole("button", { name: "All threads", exact: true });
+  const picker = page.getByRole("button", { name: "Chat list", exact: true });
   await picker.click();
   await page.getByRole("button", { name: new RegExp(`^${TASK}`) }).click();
   await expect(picker).toContainText(TASK);
   // Selecting a task deliberately leaves time for a rename double-click.
   // Close the menu as a user would before testing the unrelated banner.
   await page.keyboard.press("Escape");
-  await expect(page.getByRole("textbox", { name: "Search tasks", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("textbox", { name: "Search chats", exact: true })).toHaveCount(0);
 }
 async function prepareViewport(page: Page, width: number) {
   await page.setViewportSize({ width, height: 900 });

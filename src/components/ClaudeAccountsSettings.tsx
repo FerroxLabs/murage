@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/state/store";
 import { t } from "@/lib/i18n";
+import { copyTextOrThrow } from "@/lib/copy-text";
 
 export interface ClaudeAccount {
   instanceId: string;
@@ -130,7 +131,7 @@ export function ClaudeAccountsSettings({ onChanged }: { onChanged?: () => Promis
   };
   const current = accounts.find(account => account.instanceId === editing);
   const copy = async (account: ClaudeAccount) => {
-    try { await navigator.clipboard.writeText(account.signInCommand); setNotice(t("claudeAccounts.copied", { name: account.displayName })); }
+    try { await copyTextOrThrow(account.signInCommand); setNotice(t("claudeAccounts.copied", { name: account.displayName })); }
     catch { setError(t("claudeAccounts.copyError")); }
   };
   return <section aria-label="Claude accounts" className="space-y-3 rounded-xl bg-card p-4">

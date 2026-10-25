@@ -139,7 +139,7 @@ describe("bot memory API", () => {
     try {
       const fresh = await desktopApi("GET", `/api/bots/${bot.id}/memory`);
       expect(fresh.status).toBe(200);
-      expect(fresh.body).toEqual({ text: "", truncated: false, topics: [], lastWrittenAt: null });
+      expect(fresh.body).toEqual({ text: "", truncated: false, topics: [], lastWrittenAt: null, revision: expect.any(String) });
       expect((await api("GET", "/api/bots/does-not-exist/memory")).status).toBe(404);
     } finally {
       await desktopApi("DELETE", `/api/bots/${bot.id}`);
@@ -149,8 +149,21 @@ describe("bot memory API", () => {
   it("round-trips a MEMORY.md edit and rejects non-string or oversized text", async () => {
     const bot = (await desktopApi("POST", "/api/bots")).body.bot;
     try {
-      const saved = await desktopApi("PUT", `/api/bots/${bot.id}/memory`, { text: "# Memory\n- prefers pnpm\n" });
+      const opened = await desktopApi("GET", `/api/bots/${bot.id}/memory`);
+      // U33 r2: a save that does not name the revision it was edited from is refused, and the file is untouched
+      const blind = await desktopApi("PUT", `/api/bots/${bot.id}/memory`, { text: "# Memory\n- a blind save\n" });
+      expect(blind.status).toBe(400);
+      expect(blind.body.error).toContain("baseRevision");
+      const after = await desktopApi("GET", `/api/bots/${bot.id}/memory`);
+      expect(after.body.text).toBe(opened.body.text);
+      expect(after.body.revision).toBe(opened.body.revision);
+      expect((await desktopApi("PUT", `/api/bots/${bot.id}/memory`, { text: "x", baseRevision: "" })).status).toBe(400);
+      const saved = await desktopApi("PUT", `/api/bots/${bot.id}/memory`, { text: "# Memory\n- prefers pnpm\n", baseRevision: opened.body.revision });
       expect(saved.status).toBe(200);
+      // a second save from the same, now stale, revision is a conflict, not an overwrite
+      const stale = await desktopApi("PUT", `/api/bots/${bot.id}/memory`, { text: "# Memory\n- stale\n", baseRevision: opened.body.revision });
+      expect(stale.status).toBe(409);
+      expect(stale.body.revision).toBe(saved.body.revision);
       expect(saved.body.truncated).toBe(false);
       const read = await desktopApi("GET", `/api/bots/${bot.id}/memory`);
       expect(read.body.text).toBe("# Memory\n- prefers pnpm\n");
@@ -159,12 +172,12 @@ describe("bot memory API", () => {
 
       expect((await desktopApi("PUT", `/api/bots/${bot.id}/memory`, { text: 7 })).status).toBe(400);
       expect((await desktopApi("PUT", `/api/bots/${bot.id}/memory`, {})).status).toBe(400);
-      const big = await desktopApi("PUT", `/api/bots/${bot.id}/memory`, { text: "x".repeat(256 * 1024 + 1) });
+      const big = await desktopApi("PUT", `/api/bots/${bot.id}/memory`, { text: "x".repeat(256 * 1024 + 1), baseRevision: saved.body.revision });
       expect(big.status).toBe(400);
       expect(big.body.error).toContain("256KB");
       // a rejected write must leave the file exactly as it was
       expect((await desktopApi("GET", `/api/bots/${bot.id}/memory`)).body.text).toBe("# Memory\n- prefers pnpm\n");
-      expect((await desktopApi("PUT", "/api/bots/does-not-exist/memory", { text: "x" })).status).toBe(404);
+      expect((await desktopApi("PUT", "/api/bots/does-not-exist/memory", { text: "x", baseRevision: "none" })).status).toBe(404);
     } finally {
       await desktopApi("DELETE", `/api/bots/${bot.id}`);
     }
@@ -1300,8 +1313,8 @@ describe("internal capability authority", () => {
       expect(await repeated.json()).toEqual({ messageIds });
       const route = (id: string, operation: string) => `/api/bots/${bot.id}/connector-cards/${id}/${operation}`;
       const threadId = turn.env.MURAGE_THREAD_ID;
-      const first = await desktopApi("POST", route(messageIds[0], "authorize"), { threadId });
-      const second = await desktopApi("POST", route(messageIds[1], "authorize"), { threadId });
+      const first = await desktopApi("POST", route(messageIds[0], "authorize"), { threadId, alias: "Personal" });
+      const second = await desktopApi("POST", route(messageIds[1], "authorize"), { threadId, alias: "Work" });
       expect(first.status).toBe(200);
       expect(second.status).toBe(200);
       expect(first.body.url).not.toBe(second.body.url);
@@ -1329,6 +1342,128 @@ describe("internal capability authority", () => {
     }
   });
 
+  it("signs a chat card in only under the label the person confirmed, never the bot's suggestion (#758)", async () => {
+    const bot = (await desktopApi("POST", "/api/bots")).body.bot;
+    try {
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { composio: true })).status).toBe(200);
+      const turn = await startInternalFixtureTurn(bot.id);
+      const token = turn.dump.mcpConfig.mcpServers.murage_connectors?.env.MURAGE_CONNECTORS_TOKEN;
+      setConnectorAliasFixture({ accounts: [], links: [], calls: 0, refuseTakenLabels: true });
+      const threadId = turn.env.MURAGE_THREAD_ID;
+      // The bot asks for Gmail and suggests the label "Work".
+      const asked = await fetch(`${BASE}/api/internal/connectors/request`, {
+        method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify({ botId: bot.id, threadId, resumeKey: "confirmed-label-resume", items: [{ slug: "gmail", alias: "Work" }] }),
+      });
+      expect(asked.status).toBe(200);
+      const id = z.object({ messageIds: z.array(z.string()).length(1) }).parse(await asked.json()).messageIds[0];
+      const route = (operation: string) => `/api/bots/${bot.id}/connector-cards/${id}/${operation}`;
+      const card = async () => (await api("GET", "/api/bots?messages=100")).body.bots
+        .find((item: { id: string }) => item.id === bot.id).messages.find((message: { id: string }) => message.id === id).connector;
+      const before = await card();
+      expect(before).toMatchObject({ alias: "Work", status: "required" });
+      const appName = before.label.slice(0, -" (Work)".length);
+
+      // No confirmed label, no sign-in: the bot's suggestion is never used on its own.
+      for (const body of [{ threadId }, { threadId, alias: "" }, { threadId, alias: "   " }, { threadId, alias: 7 }]) {
+        expect((await desktopApi("POST", route("authorize"), body)).status, JSON.stringify(body)).toBe(400);
+      }
+      expect(connectorAliasFixture!.links).toEqual([]);
+      expect(await card()).toMatchObject({ alias: "Work", status: "required" });
+
+      // A label another account holds: a 409 the form can say, and the card stays as it was.
+      connectorAliasFixture!.accounts = [{ id: "ca_home", alias: "Home", status: "ACTIVE", toolkit: { slug: "gmail" } }];
+      const clash = await desktopApi("POST", route("authorize"), { threadId, alias: "home" });
+      expect(clash.status).toBe(409);
+      expect(clash.body.error).toMatch(/^Account alias "home" is already in use/);
+      expect(connectorAliasFixture!.links).toEqual([]);
+      expect(await card()).toMatchObject({ alias: "Work", status: "required", label: before.label });
+      expect((await card()).error).toBeUndefined();
+
+      // While the broker is still deciding, the card never carries the
+      // refused label (a status read would match the account holding it and
+      // resume the task), and a Not now pressed meanwhile stays.
+      connectorAliasFixture!.refuseAfterMs = 1_500;
+      const slow = desktopApi("POST", route("authorize"), { threadId, alias: "home" });
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(await card()).toMatchObject({ alias: "Work", status: "required", label: before.label });
+      const waiting = await desktopApi("GET", `${route("status")}?threadId=${threadId}`);
+      expect(waiting.body.connected).toBe(false);
+      expect((await desktopApi("POST", route("dismiss"), { threadId })).status).toBe(200);
+      expect((await slow).status).toBe(409);
+      // (The status read itself moves a never-authorized card to waiting;
+      // what matters is that it never matched the refused label.)
+      const after = await card();
+      expect(after).toMatchObject({ alias: "Work", label: before.label, dismissed: true });
+      expect(after.status).not.toBe("connected");
+      expect(after.resumed).toBeUndefined();
+      connectorAliasFixture!.refuseAfterMs = 0;
+
+      // The confirmed label is the one signed in, matched and named on the card.
+      const signed = await desktopApi("POST", route("authorize"), { threadId, alias: " Home 2 " });
+      expect(signed.status).toBe(200);
+      expect(connectorAliasFixture!.links).toEqual([{ toolkit: "gmail", alias: "Home 2" }]);
+      expect(await card()).toMatchObject({ alias: "Home 2", label: `${appName} (Home 2)`, status: "authorizing" });
+      connectorAliasFixture!.accounts.push({ id: "ca_home2", alias: "Home 2", status: "ACTIVE", toolkit: { slug: "gmail" } });
+      const status = await desktopApi("GET", `${route("status")}?threadId=${threadId}`);
+      expect(status.body.connected).toBe(true);
+    } finally {
+      setConnectorAliasFixture(undefined);
+      await api("POST", `/api/bots/${bot.id}/interrupt`);
+      await desktopApi("DELETE", `/api/bots/${bot.id}`);
+    }
+  }, 90_000);
+
+  it("keeps the confirmed label when a slow status read, begun on the bot's suggestion, lands after the sign-in", async () => {
+    const bot = (await desktopApi("POST", "/api/bots")).body.bot;
+    try {
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { composio: true })).status).toBe(200);
+      const turn = await startInternalFixtureTurn(bot.id);
+      const token = turn.dump.mcpConfig.mcpServers.murage_connectors?.env.MURAGE_CONNECTORS_TOKEN;
+      // "Work" is already an active account; the bot suggests it anyway.
+      setConnectorAliasFixture({ accounts: [{ id: "ca_work", alias: "Work", status: "ACTIVE", toolkit: { slug: "gmail" } }], links: [], calls: 0, refuseTakenLabels: true });
+      const threadId = turn.env.MURAGE_THREAD_ID;
+      const asked = await fetch(`${BASE}/api/internal/connectors/request`, {
+        method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify({ botId: bot.id, threadId, resumeKey: "slow-status-resume", items: [{ slug: "gmail", alias: "Work" }] }),
+      });
+      expect(asked.status).toBe(200);
+      const id = z.object({ messageIds: z.array(z.string()).length(1) }).parse(await asked.json()).messageIds[0];
+      const route = (operation: string) => `/api/bots/${bot.id}/connector-cards/${id}/${operation}`;
+      const card = async () => (await api("GET", "/api/bots?messages=100")).body.bots
+        .find((item: { id: string }) => item.id === bot.id).messages.find((message: { id: string }) => message.id === id).connector;
+      expect(await card()).toMatchObject({ alias: "Work", status: "required" });
+
+      // A status read starts under "Work" and is slow to answer.
+      connectorAliasFixture!.statusAfterMs = 1_500;
+      const slow = desktopApi("GET", `${route("status")}?threadId=${threadId}`);
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      connectorAliasFixture!.statusAfterMs = 0;
+      // Meanwhile the person confirms "Home" and the sign-in starts.
+      expect((await desktopApi("POST", route("authorize"), { threadId, alias: "Home" })).status).toBe(200);
+      expect(await card()).toMatchObject({ alias: "Home", status: "authorizing" });
+
+      // The read lands with "Work" active: the card keeps "Home" and the
+      // task is not resumed on the account the person did not pick.
+      const late = await slow;
+      expect(late.status).toBe(200);
+      expect(late.body.connected).toBe(false);
+      const after = await card();
+      expect(after).toMatchObject({ alias: "Home", status: "authorizing" });
+      expect(after.resumed).toBeUndefined();
+
+      // The next read asks about "Home", and finishes it once it is active.
+      connectorAliasFixture!.accounts.push({ id: "ca_home", alias: "Home", status: "ACTIVE", toolkit: { slug: "gmail" } });
+      const status = await desktopApi("GET", `${route("status")}?threadId=${threadId}`);
+      expect(status.body.connected).toBe(true);
+      expect(await card()).toMatchObject({ alias: "Home", status: "connected" });
+    } finally {
+      setConnectorAliasFixture(undefined);
+      await api("POST", `/api/bots/${bot.id}/interrupt`);
+      await desktopApi("DELETE", `/api/bots/${bot.id}`);
+    }
+  }, 90_000);
+
   it("ends a connect card in plain words: expired, timed out, and 'Try again' with the same label", async () => {
     const bot = (await desktopApi("POST", "/api/bots")).body.bot;
     try {
@@ -1352,14 +1487,14 @@ describe("internal capability authority", () => {
 
       // The provider ended the link: one plain sentence, never "Connection EXPIRED".
       const expired = await ask("Work", "plain-words-expired");
-      expect((await desktopApi("POST", route(expired, "authorize"), { threadId })).status).toBe(200);
+      expect((await desktopApi("POST", route(expired, "authorize"), { threadId, alias: "Work" })).status).toBe(200);
       connectorAliasFixture!.accounts = [{ id: "ca_dead", alias: "Work", status: "EXPIRED", toolkit: { slug: "gmail" } }];
       const polled = await desktopApi("GET", `${route(expired, "status")}?threadId=${threadId}`);
       expect(polled.body).toMatchObject({ connected: false, failed: true, failure: "timed-out", error: EXPIRED });
       expect(await card(expired)).toMatchObject({ status: "failed", failure: "timed-out", error: EXPIRED });
 
       // "Try again" with the same label: the dead attempt does not block it.
-      const again = await desktopApi("POST", route(expired, "authorize"), { threadId });
+      const again = await desktopApi("POST", route(expired, "authorize"), { threadId, alias: "Work" });
       expect(again.status).toBe(200);
       expect(await card(expired)).toMatchObject({ status: "authorizing" });
       expect((await card(expired)).error).toBeUndefined();
@@ -1367,7 +1502,7 @@ describe("internal capability authority", () => {
       // The card's own polling ran out and the provider never ended the link.
       connectorAliasFixture!.accounts = [];
       const abandoned = await ask("Home", "plain-words-timeout");
-      expect((await desktopApi("POST", route(abandoned, "authorize"), { threadId })).status).toBe(200);
+      expect((await desktopApi("POST", route(abandoned, "authorize"), { threadId, alias: "Home" })).status).toBe(200);
       const ended = await desktopApi("POST", route(abandoned, "timeout"), { threadId });
       expect(ended.status).toBe(200);
       expect(ended.body).toMatchObject({ connected: false, failed: true, failure: "timed-out", error: EXPIRED });
@@ -1376,7 +1511,7 @@ describe("internal capability authority", () => {
       // A link still inside its life, with the provider calling it pending, is
       // not ended early by a status read.
       const away = await ask("Away", "plain-words-away");
-      expect((await desktopApi("POST", route(away, "authorize"), { threadId })).status).toBe(200);
+      expect((await desktopApi("POST", route(away, "authorize"), { threadId, alias: "Away" })).status).toBe(200);
       connectorAliasFixture!.accounts = [{ id: "ca_away", alias: "Away", status: "INITIATED", toolkit: { slug: "gmail" } }];
       const stillWaiting = await desktopApi("GET", `${route(away, "status")}?threadId=${threadId}`);
       expect(stillWaiting.body).toMatchObject({ connected: false, pending: true });
@@ -1388,7 +1523,7 @@ describe("internal capability authority", () => {
 
       // If the sign-in did finish just as polling ended, it is not called timed out.
       const finished = await ask("Late", "plain-words-late");
-      expect((await desktopApi("POST", route(finished, "authorize"), { threadId })).status).toBe(200);
+      expect((await desktopApi("POST", route(finished, "authorize"), { threadId, alias: "Late" })).status).toBe(200);
       connectorAliasFixture!.accounts = [{ id: "ca_late", alias: "Late", status: "ACTIVE", toolkit: { slug: "gmail" } }];
       const late = await desktopApi("POST", route(finished, "timeout"), { threadId });
       expect(late.body).toMatchObject({ connected: true });
@@ -2557,35 +2692,46 @@ describe("the Chief of Staff is not replaced by accident", () => {
     }
   };
 
-  it("refuses a second Chief and names the one already holding it", async () => {
+  const botsNow = async (): Promise<Array<{ id: string; chiefOfStaff?: boolean; chiefScope?: string; section?: string }>> =>
+    (await api("GET", "/api/bots")).body.bots;
+
+  it("hands the Chief role over in one step and keeps the former Chief as its team's leader", async () => {
     await standDownChief();
     const first = await makeBot("Single Holder Sable");
     const second = await makeBot("Single Holder Rex");
     expect((await desktopApi("PATCH", `/api/bots/${first.id}`, { chiefOfStaff: true, chiefScope: "workspace" })).status).toBe(200);
 
-    const refused = await desktopApi("PATCH", `/api/bots/${second.id}`, { chiefOfStaff: true, chiefScope: "workspace" });
-    expect(refused.status).toBe(409);
-    expect(refused.body.error).toContain("Single Holder Sable");
-    // The message has to say how to leave the state, not just that you are in it.
-    expect(refused.body.error).toMatch(/Remove that role/);
+    const handed = await desktopApi("PATCH", `/api/bots/${second.id}`, { chiefOfStaff: true, chiefScope: "workspace" });
+    expect(handed.status, JSON.stringify(handed.body)).toBe(200);
+    const bots = await botsNow();
+    const incoming = bots.find((bot) => bot.id === second.id)!;
+    const former = bots.find((bot) => bot.id === first.id)!;
+    expect(incoming.chiefOfStaff).toBe(true);
+    expect(incoming.chiefScope).toBe("workspace");
+    // the former Chief is not fired: it leads its own team now
+    expect(former.chiefOfStaff).toBe(true);
+    expect(former.chiefScope).toBeUndefined();
+    expect(bots.filter((bot) => bot.chiefScope === "workspace").map((bot) => bot.id)).toEqual([second.id]);
   });
 
-  it("changes NOTHING when it refuses", async () => {
+  it("makes the former Chief a team member when its team already has a leader", async () => {
     await standDownChief();
-    // The guard runs before patchBot, so a rejected request must leave both
-    // bots exactly as they were. A refusal that half-applied would be worse
-    // than the silent handover it replaced.
-    const first = await makeBot("Untouched Chief");
-    const second = await makeBot("Rejected Claimant");
-    await desktopApi("PATCH", `/api/bots/${first.id}`, { chiefOfStaff: true, chiefScope: "workspace" });
-    await desktopApi("PATCH", `/api/bots/${second.id}`, { chiefOfStaff: true, chiefScope: "workspace" });
+    // one leader per team: the former Chief cannot take a second seat
+    const section = "Handover Team";
+    const first = await makeBot("Seated Chief");
+    const leader = await makeBot("Seated Leader");
+    const second = await makeBot("Seated Successor");
+    await desktopApi("PATCH", `/api/bots/${first.id}`, { section, chiefOfStaff: true, chiefScope: "workspace" });
+    await desktopApi("PATCH", `/api/bots/${leader.id}`, { section, chiefOfStaff: true, chiefScope: "section" });
 
-    const bots = (await api("GET", "/api/bots")).body.bots;
-    const incumbent = bots.find((bot: { id: string }) => bot.id === first.id);
-    const claimant = bots.find((bot: { id: string }) => bot.id === second.id);
-    expect(incumbent.chiefOfStaff).toBe(true);
-    expect(incumbent.chiefScope).toBe("workspace");
-    expect(claimant.chiefScope).toBeUndefined();
+    const handed = await desktopApi("PATCH", `/api/bots/${second.id}`, { chiefOfStaff: true, chiefScope: "workspace" });
+    expect(handed.status, JSON.stringify(handed.body)).toBe(200);
+    const bots = await botsNow();
+    expect(bots.find((bot) => bot.id === second.id)!.chiefScope).toBe("workspace");
+    const former = bots.find((bot) => bot.id === first.id)!;
+    expect(former.chiefOfStaff).toBeFalsy();
+    expect(former.chiefScope).toBeUndefined();
+    expect(bots.find((bot) => bot.id === leader.id)!.chiefOfStaff).toBe(true);
   });
 
   it("still lets the SAME bot re-assert the role", async () => {
@@ -2599,11 +2745,9 @@ describe("the Chief of Staff is not replaced by accident", () => {
 
   it("lets the role move once the incumbent stands down", async () => {
     await standDownChief();
-    // The whole point: one extra step, not a locked door.
     const outgoing = await makeBot("Outgoing Chief");
     const incoming = await makeBot("Incoming Chief");
     await desktopApi("PATCH", `/api/bots/${outgoing.id}`, { chiefOfStaff: true, chiefScope: "workspace" });
-    expect((await desktopApi("PATCH", `/api/bots/${incoming.id}`, { chiefOfStaff: true, chiefScope: "workspace" })).status).toBe(409);
 
     await desktopApi("PATCH", `/api/bots/${outgoing.id}`, { chiefOfStaff: false, chiefScope: null, individual: false });
     expect((await desktopApi("PATCH", `/api/bots/${incoming.id}`, { chiefOfStaff: true, chiefScope: "workspace" })).status).toBe(200);

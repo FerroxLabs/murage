@@ -1,3 +1,8 @@
+/** The server's own shutdown allowance (U24 design R7): every provider's immediate stop wait (child-teardown.ts
+ * PROVIDER_DISPOSE_BUDGET_MS) answers inside it, and the desktop's graceful close (electron/server-child-lifecycle.mjs
+ * GRACEFUL_CLOSE_TIMEOUT_MS) waits longer than it. */
+export const SERVER_SHUTDOWN_TIMEOUT_MS = 6_000;
+
 export interface GracefulShutdownOptions {
   cleanup: ReadonlyArray<() => void | Promise<void>>;
   exit: (code: number) => void;
@@ -11,7 +16,7 @@ export interface GracefulShutdownOptions {
 export function createGracefulShutdown({
   cleanup,
   exit,
-  timeoutMs = 6_000,
+  timeoutMs = SERVER_SHUTDOWN_TIMEOUT_MS,
 }: GracefulShutdownOptions): () => void {
   let started = false;
   return () => {

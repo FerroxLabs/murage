@@ -13,6 +13,8 @@ export interface PendingTeamImport {
   playbooks: number;
   routines: number;
   apps: Array<{ label: string; optional: boolean }>;
+  /** Plain sentences on what an import could not carry (Grok Bot). */
+  notes?: string[];
 }
 
 /** Small client-side preview only; the server remains the trust boundary. */

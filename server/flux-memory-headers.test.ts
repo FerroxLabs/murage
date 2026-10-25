@@ -75,6 +75,18 @@ describe("who gets which headers", () => {
     expect(d.reason).toBe(reason);
   });
 
+  it("X1: an owner turn whose thread holds a number sends capture off and keeps inject on", () => {
+    const plain = fluxMemoryDecision(fluxMemoryContextForTurn({ warmIdentity: owner }), { settings: BASE });
+    const held = fluxMemoryDecision(fluxMemoryContextForTurn({ warmIdentity: owner, fluxCaptureHold: true }), { settings: BASE });
+    expect([held.capture, held.inject, held.reason]).toEqual(["off", "on", "number-hold"]);
+    expect(held.headers).toEqual({ [FLUX_MEMORY_APP_HEADER]: "murage", [FLUX_MEMORY_CAPTURE_HEADER]: "off" });
+    expect(held.signature).not.toBe(plain.signature);
+    // inject off by the owner's setting still applies under the hold
+    expect(fluxMemoryDecision(fluxMemoryContextForTurn({ warmIdentity: owner, fluxCaptureHold: true }), { settings: { ...BASE, inject: "off" } }).headers).toEqual(OFF);
+    // a non-owner turn is off/off as before, hold or not
+    expect(fluxMemoryDecision(fluxMemoryContextForTurn({ warmIdentity: { ...owner, audience: "non-owner" }, fluxCaptureHold: true }), { settings: BASE }).reason).toBe("non-owner");
+  });
+
   it("a prewarm classifies as the thread it warms, so the real turn adopts the process", () => {
     const warm = fluxMemoryDecision(fluxMemoryContextForTurn({ prewarm: true, warmIdentity: owner }), { settings: BASE });
     const real = fluxMemoryDecision(fluxMemoryContextForTurn({ warmIdentity: owner }), { settings: BASE });

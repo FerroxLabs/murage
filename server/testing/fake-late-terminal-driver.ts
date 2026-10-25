@@ -50,6 +50,10 @@
 //                            dump line then also says whether the turn carried that mount (`memory`) and the threadRecall flag.
 //   FAKE_LATE_ENGINE_REFUSES "1" (with FAKE_LATE_HANDBACK): the engine itself refuses the late write (nothing written, stopReason
 //                            "submission_refused") without the harness's fence having refused it: a refusal nothing re-dispatches.
+//   FAKE_LATE_PLAIN_SESSION  "1" (without FAKE_LATE_HANDBACK): the engine reports its native session before it replies: the turn's resume
+//                            cursor when it resumes, a new session otherwise (a long chat on an engine that keeps its session).
+//   FAKE_LATE_DUMP_CONTEXT   "1": each dump line also says whether the turn carried a memory frame (`memoryContext`), the memory mount
+//                            (`memory`), a session reset (`sessionReset`) and a resume cursor (`resumed`).
 // An uninterrupted turn replies "Hello from late" and completes on its own.
 import { appendFileSync, existsSync, rmSync, writeFileSync } from "node:fs";
 import type {
@@ -114,7 +118,8 @@ export function makeLateTerminalDriver(): AnyProviderDriver {
             const turnId = `late-turn-${++turnCounter}`;
             const skillAuthoring = turn.integrations?.agents?.env.MURAGE_SKILL_AUTHORING_ENABLED === "1";
             const memoryMount = input.environment.FAKE_LATE_MEMORY_MCP === "1" ? { memory: Boolean(turn.integrations?.memory), threadRecall: turn.threadRecall === true } : {};
-            if (dump) appendFileSync(dump, `${JSON.stringify({ turnId, threadId: turn.threadId, skillAuthoring, ...memoryMount })}\n`);
+            const context = input.environment.FAKE_LATE_DUMP_CONTEXT === "1" ? { memoryContext: turn.memoryContext !== undefined, memory: Boolean(turn.integrations?.memory), sessionReset: turn.sessionReset === true, resumed: typeof turn.resumeCursor === "string" } : {};
+            if (dump) appendFileSync(dump, `${JSON.stringify({ turnId, threadId: turn.threadId, skillAuthoring, ...memoryMount, ...context })}\n`);
             if (agentsEnvPath && turn.integrations?.agents) writeFileSync(agentsEnvPath, JSON.stringify(turn.integrations.agents.env));
             if (input.environment.FAKE_LATE_HANDBACK === "1") {
               const entry = { turnId, interrupted: false };
@@ -167,6 +172,10 @@ export function makeLateTerminalDriver(): AnyProviderDriver {
             // inside the acceptance hook is seen before anything is said.
             setTimeout(() => {
               if (entry.interrupted || active.get(turn.threadId) !== entry) return;
+              if (input.environment.FAKE_LATE_PLAIN_SESSION === "1") {
+                const resumed = !turn.sessionReset && typeof turn.resumeCursor === "string" ? turn.resumeCursor : undefined;
+                emit({ type: "session.started", sessionId: resumed ?? `plain-session-${turnCounter}-${turn.threadId.slice(0, 8)}`, model: "late-1", threadId: turn.threadId, turnId });
+              }
               emit({ type: "item.completed", itemType: "assistant_text", origin: "engine", text: "Hello from late", threadId: turn.threadId, turnId });
               active.delete(turn.threadId);
               emit({ type: "turn.completed", ok: true, threadId: turn.threadId, turnId });

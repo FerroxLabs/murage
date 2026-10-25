@@ -1,4 +1,5 @@
 import { ensureForgetTable } from "./harness/event-log.ts";
+import { ensureScrubPassTable } from "./memory/scrub-state.ts";
 import { initializeTeamIdentityTables } from "./team-identities.ts";
 import { initializeThreadSnooze } from "./thread-snooze.ts";
 import { createHash } from "node:crypto";
@@ -64,8 +65,12 @@ const APP_TABLES = new Map<string, { required: boolean; optional: string[] }>(Ob
   transcript_index_state: { required: false, optional: [] },
   // pending "Checking the browser" notes, kept by the message writers and filled in the background (message-tables.ts), new in 1.0.2
   browser_check_pending: { required: false, optional: [] },
+  // the Flux Memory number hold of a thread (server/flux-capture-hold.ts, message-tables.ts), new in 1.0.4
+  flux_capture_hold: { required: false, optional: [] },
   // where the background integrity pass has got to (memory/integrity-state.ts), new in 1.0.2; outside the memory schema
   upgrade_integrity_pass: { required: false, optional: ["lessons_floor", "feedback_floor", "events_floor"] },
+  // where the 1.0.4 number scrub of earlier memory has got to (memory/scrub-state.ts), new in 1.0.4; outside the memory schema
+  upgrade_scrub_pass: { required: false, optional: [] },
   // the conversion's worklist, the counter the upgrade screen's figures are keyed to, and the direct turns in flight (memory/upgrade-app-tables.ts), new in 1.0.2
   upgrade_root_set_worklist: { required: false, optional: [] },
   app_write_revision: { required: false, optional: [] },
@@ -187,7 +192,7 @@ function referenceSchema(): Map<string, ReferenceObject> {
   if (reference) return reference;
   const db = new DatabaseSync(":memory:");
   try {
-    initializeMessageTables(db); initializeTurnSourceHolds(db); ensureBrowserCheckIndex(db); ensureIntegrityPassTable(db); ensureUpgradeAppTables(db); initializeInbox(db); initializeArtifacts(db);
+    initializeMessageTables(db); initializeTurnSourceHolds(db); ensureBrowserCheckIndex(db); ensureIntegrityPassTable(db); ensureScrubPassTable(db); ensureUpgradeAppTables(db); initializeInbox(db); initializeArtifacts(db);
     for (const { schema } of LEGACY_UPGRADE_TABLES.values()) db.exec(schema);
     initializeImageOperations(db); initializeImageLibrary(db); initializeThreadSnooze(db); initializeProjectTables(db); ensureForgetTable(db); initializeTeamIdentityTables(db); initializeMobilePush(db); initializeSharedRequestProvenance(db); initializeProjectCardDelivery(db); initializeOwnerSends(db); initializePendingDelegations(db);
     const objects = new Map<string, ReferenceObject>();

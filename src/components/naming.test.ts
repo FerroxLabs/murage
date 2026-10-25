@@ -156,8 +156,10 @@ describe("connected apps", () => {
 
   it("points a bot's Access at the panel that actually holds apps", () => {
     const settings = read("./SettingsPanel.tsx");
-    expect(settings).toContain("Connect apps first (Apps, in the sidebar), then give this bot access.");
+    expect(settings).toContain('t("settings.bot.apps.connectFirst")');
+    expect(en["settings.bot.apps.connectFirst"]).toBe("Connect apps first (Apps, in the sidebar), then give this bot access.");
     expect(settings).not.toContain("Connect apps in App Settings");
+    expect(Object.values(en).filter((value) => value.includes("Connect apps in App Settings"))).toEqual([]);
   });
 });
 

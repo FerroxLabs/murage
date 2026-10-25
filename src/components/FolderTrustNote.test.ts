@@ -11,6 +11,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
+import { FolderTrustRow } from "./FolderTrustRow";
 import { FolderTrustNoteView, folderTrustStatusKind, folderTrustStatusLabel, folderTrustVerdicts, type FolderTrustResult, type FolderTrustStatus } from "./FolderTrustNote";
 
 const read = (file: string) => readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8");
@@ -119,11 +120,47 @@ describe("where it is rendered", () => {
   it("a room passes its Fuigo members, chosen by the engine their selection runs on; a bot's settings pass the bot", () => {
     expect(group).toContain("<FolderTrustNote folder={shownCwd} members={fuigoMembers} />");
     expect(group).toContain('i.driverKind === "fuigoAgent"');
-    expect(settings).toContain("<FolderTrustNote folder={bot.cwd} botId={bot.id} />");
+    expect(settings).toContain("<FolderTrustNote folder={bot.cwd} botId={bot.id} threadId={bot.threadId} />");
   });
 
   it("asks the server about each subject and forgets per subject, so a card's record under a bot's engine key is reached", () => {
     expect(note).toContain("Promise.all(subjects.map(query))");
-    expect(note).toContain("&bot=${encodeURIComponent(id)}`, { method: \"DELETE\" }");
+    expect(note).toContain("`/api/folder-trust?${target(id)}`, { method: \"DELETE\" }");
+  });
+});
+
+// 1.0.4: a "Don't trust" answer can be undone from the screen
+describe("undoing a Don't trust (1.0.4)", () => {
+  const rejected = (over: Partial<FolderTrustStatus> = {}): FolderTrustResult[] => [
+    { subject: { id: "b1", name: "" }, status: status({ folder: "/data/workspaces/b1/threads/t1", record: { decision: "reject", decidedAt: 1, source: "card" }, ...over }) },
+  ];
+  const view = (results: FolderTrustResult[], over: Record<string, unknown> = {}) =>
+    renderToStaticMarkup(createElement(FolderTrustNoteView, { folder: undefined, results, error: null, busy: false, onForget: () => {}, onTrust: () => {}, conversation: true, ...over }));
+
+  it("the Access note names the conversation's own folder and offers Trust and Forget on it", () => {
+    const html = view(rejected());
+    expect(html).toContain('data-testid="folder-trust-folder"');
+    expect(html).toContain("/data/workspaces/b1/threads/t1");
+    expect(html).toContain("Not trusted");
+    expect(html).toContain(">Trust this folder<");
+    expect(html).toContain(">Forget<");
+    expect(html).toContain("The bot&#x27;s files and tools still work");
+    expect(html).not.toContain("A folder you choose here is trusted");
+  });
+
+  it("offers no Trust on a trusted folder, one the user's own Fuigo already trusts, or nothing to trust", () => {
+    expect(view(rejected({ record: { decision: "trust", decidedAt: 1, source: "card" } }))).not.toContain("Trust this folder");
+    expect(view(rejected({ upstreamTrusted: true }))).not.toContain("Trust this folder");
+    expect(view(rejected({ sources: [] }))).not.toContain("Trust this folder");
+    expect(view(rejected(), { onTrust: undefined })).not.toContain("Trust this folder");
+  });
+
+  it("the chat notice carries a Trust this folder button for a conversation, and none without one", () => {
+    const withButton = renderToStaticMarkup(createElement(FolderTrustRow, { kind: "withheld", sources: "AGENTS.md", botId: "b1", threadId: "t1" }));
+    expect(withButton).toContain("Folder not trusted: AGENTS.md left out");
+    expect(withButton).toContain('data-testid="folder-trust-row-trust"');
+    expect(withButton).toContain(">Trust this folder<");
+    expect(renderToStaticMarkup(createElement(FolderTrustRow, { kind: "withheld", sources: "AGENTS.md" }))).not.toContain("Trust this folder");
+    expect(renderToStaticMarkup(createElement(FolderTrustRow, { kind: "late", sources: "AGENTS.md", botId: "b1", threadId: "t1" }))).not.toContain("Trust this folder");
   });
 });

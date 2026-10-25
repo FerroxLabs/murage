@@ -10,10 +10,10 @@
 //
 // Source assertions, because the panel is a 900-line component with no render
 // harness and the thing worth pinning is the copy itself.
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createElement } from "react";
+import { createElement, isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -24,7 +24,11 @@ import {
 } from "./ConnectedAppsLock";
 import {
   connectedAppsNotices,
+  CLOSED_LABEL_FORM,
   connectorActionLabel,
+  connectorAuthorizeBody,
+  connectorLabelFormAfter,
+  connectorLabelFormCopy,
   connectorPanelFieldsFrom,
   connectorPrimaryAction,
   connectedTabSummary,
@@ -41,6 +45,23 @@ import {
   preloadConnectedApps,
   type ConnectorPanelFields,
 } from "./PluginsPanel";
+import { ConnectLabelFormView, confirmedConnectLabel } from "./ConnectLabelForm";
+
+/** The first element in a rendered tree that matches, walking function
+ *  components' children as written (the form's view is hook-free). */
+function findElement(node: ReactNode, match: (el: ReactElement<any>) => boolean): ReactElement<any> | null {
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = findElement(child, match);
+      if (found) return found;
+    }
+    return null;
+  }
+  if (!isValidElement(node)) return null;
+  const el = node as ReactElement<any>;
+  if (match(el)) return el;
+  return findElement(el.props?.children, match);
+}
 
 // The panel renders against a stubbed store so each key state can be painted
 // without a harness. `api` is a spy: nothing in these renders may call it.
@@ -86,13 +107,100 @@ describe("pending OAuth recovery", () => {
 
   it("authorizes a service only from the confirmed label form", () => {
     // Before #758 the first account called connect(card.slug) straight from
-    // the button. The only remaining call site carries the confirmed alias.
-    expect([...panel.matchAll(/\bconnect\(card\.slug[^)]*\)/g)].map((match) => match[0])).toEqual(["connect(card.slug, alias)"]);
+    // the button. Now the button only opens the label form, for the first
+    // account as well as another one, and pressing it again closes it.
+    const opened = connectorLabelFormAfter(CLOSED_LABEL_FORM, { type: "label-account", slug: "gmail" });
+    expect(opened).toMatchObject({ slug: "gmail", initial: "", reconnect: null });
+    expect(connectorLabelFormAfter(opened, { type: "label-account", slug: "gmail" })).toMatchObject({ slug: null, reconnect: null });
+    // The authorize request carries the label the form confirmed, and only a
+    // confirmed label fits it: a plain string, a default or a suggestion does not.
+    const work = confirmedConnectLabel("  work  ")!;
+    expect(connectorAuthorizeBody(opened, "gmail", work)).toEqual({ alias: "work" });
+    // @ts-expect-error a label nobody confirmed cannot start a sign-in
+    connectorAuthorizeBody(opened, "gmail", "work");
+    expect(confirmedConnectLabel("   ")).toBeNull();
+    expect(confirmedConnectLabel("x".repeat(65))).toBeNull();
+  });
+
+  it("makes a confirmed label only from the label form", () => {
+    // The one producer of a ConfirmedConnectLabel in the app is the form; a
+    // button that minted one, or a cast, would be a sign-in nobody confirmed.
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const file = join(dir, entry.name);
+        if (entry.isDirectory()) { walk(file); continue; }
+        if (!/\.(ts|tsx)$/.test(entry.name) || /\.test\.tsx?$/.test(entry.name)) continue;
+        const text = source(file);
+        const mints = /\bconfirmedConnectLabel\(/.test(text) || /as ConfirmedConnectLabel\b/.test(text);
+        if (mints && !/[\\/](components[\\/]ConnectLabelForm\.tsx|lib[\\/]connect-app\.ts)$/.test(file)) offenders.push(file);
+      }
+    };
+    walk(join(here, ".."));
+    expect(offenders).toEqual([]);
+  });
+
+  it("the shared label form confirms only a non-empty label, and Escape closes only the form", () => {
+    const confirmed: string[] = [];
+    const invalid: string[] = [];
+    let cancelled = 0;
+    const form = (draft: string) => ConnectLabelFormView({
+      id: "gmail", service: "Gmail", initial: "", busy: false, compact: true,
+      onConfirm: (alias) => confirmed.push(alias), onCancel: () => { cancelled += 1; },
+      onInvalid: (message) => invalid.push(message),
+      draft, setDraft: () => {}, problem: "", setProblem: () => {},
+    });
+    const submit = (draft: string) => findElement(form(draft), (el) => el.type === "form")!.props.onSubmit({ preventDefault() {} });
+    submit("  work  ");
+    submit("   ");
+    expect(confirmed).toEqual(["work"]);
+    expect(invalid).toEqual(["Enter a label for the account, such as work or personal."]);
+    let stopped = false;
+    findElement(form("work"), (el) => el.type === "input")!.props.onKeyDown({ key: "Escape", preventDefault() {}, stopPropagation() { stopped = true; } });
+    expect(cancelled).toBe(1);
+    expect(stopped).toBe(true);
+    // The dialog's type size, field length and wording.
+    const markup = renderToStaticMarkup(form("work"));
+    expect(markup).toContain('maxLength="64"');
+    expect(markup).toContain('class="ml-14 mt-3"');
+    expect(markup).toContain(">Continue</button>");
+  });
+
+  it("reconnects an account only through the confirmed label form", () => {
+    // Reconnect opens the label form with that account's label filled in; it
+    // starts nothing itself.
+    const reconnecting = connectorLabelFormAfter(CLOSED_LABEL_FORM, { type: "reconnect", slug: "gmail", accountId: "ca_1", alias: "work" });
+    expect(reconnecting).toMatchObject({ slug: "gmail", initial: "work", reconnect: { slug: "gmail", accountId: "ca_1" } });
+    const work = confirmedConnectLabel("work")!;
+    // The form sends the replaced account only for the row it was opened on.
+    expect(connectorAuthorizeBody(reconnecting, "gmail", work)).toEqual({ alias: "work", reconnect: "ca_1" });
+    expect(connectorAuthorizeBody(reconnecting, "slack", work)).toEqual({ alias: "work" });
+    // Cancelling, a fresh label form, a server request for a label and a
+    // started sign-in all drop it.
+    for (const event of [
+      { type: "cancel", slug: "gmail" },
+      { type: "label-account", slug: "gmail" },
+      { type: "label-account", slug: "slack" },
+      { type: "needs-label", slug: "gmail" },
+      { type: "close" },
+    ] as const) {
+      const next = connectorLabelFormAfter(reconnecting, event);
+      expect(next.reconnect, event.type).toBeNull();
+      expect(connectorAuthorizeBody(next, "gmail", work), event.type).toEqual({ alias: "work" });
+    }
+    // Cancel on another row leaves this row's form and its account alone.
+    expect(connectorLabelFormAfter(reconnecting, { type: "cancel", slug: "slack" }).reconnect).toEqual({ slug: "gmail", accountId: "ca_1" });
+    // Every opening starts the form again from its label.
+    expect(connectorLabelFormAfter(reconnecting, { type: "needs-label", slug: "gmail" }).opened).toBeGreaterThan(reconnecting.opened);
   });
 
   it("words the first and an additional account label differently", () => {
-    expect(panel).toContain('t("connectedApps.alias.firstLabel", { service: card.label })');
-    expect(panel).toContain('t("connectedApps.alias.anotherLabel", { service: card.label })');
+    expect(connectorLabelFormCopy({ service: "Gmail", hasAccounts: false, reconnecting: false }))
+      .toEqual({ hint: en["connectedApps.alias.firstHint"], label: "Label for the new Gmail account" });
+    expect(connectorLabelFormCopy({ service: "Gmail", hasAccounts: true, reconnecting: false }))
+      .toEqual({ hint: en["connectedApps.alias.anotherHint"], label: "Label for another Gmail account" });
+    expect(connectorLabelFormCopy({ service: "Gmail", hasAccounts: true, reconnecting: true }).hint)
+      .toBe("Confirm the label for the account you are reconnecting, then sign in again.");
     expect(en["connectedApps.alias.firstLabel"]).toBe("Label for the new {service} account");
     expect(en["connectedApps.alias.anotherLabel"]).toBe("Label for another {service} account");
   });
