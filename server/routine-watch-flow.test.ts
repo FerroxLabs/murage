@@ -160,12 +160,12 @@ it("a tick that keeps failing logs once a minute and reports the scheduler as st
       await f.manager.tick(); f.advance();
       expect(f.manager.schedulerStatus().consecutiveFailures).toBe(attempt);
     }
-    expect(f.manager.schedulerStatus()).toEqual({ stalled: true, consecutiveFailures: 5 });
+    expect(f.manager.schedulerStatus()).toEqual({ stalled: true, consecutiveFailures: 5, saveFaults: 0 });
     expect(lines.filter(line => line.startsWith("routine: tick failed"))).toHaveLength(1);
   } finally { setObserveSink(); }
   removeTempDirSync(file); renameSync(preserved, file);
   f.restart(); await f.manager.tick();
-  expect(f.manager.schedulerStatus()).toEqual({ stalled: false, consecutiveFailures: 0 });
+  expect(f.manager.schedulerStatus()).toEqual({ stalled: false, consecutiveFailures: 0, saveFaults: 0 });
 });
 it("never reads before a failed atomic reservation save and never publishes a failed completion save", async () => {
   const f = fixture(), p = await f.propose(); f.confirm(p.requestId);

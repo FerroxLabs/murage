@@ -4,6 +4,7 @@
 // The runtime half of the typed hand-off boundary (the compile-time half is server/bot-egress.types.test.ts): a cast cannot fake the brand, a
 // worker string under a text key is refused, a body that was not built here is never written, and in the running app a violation fails closed.
 import { readFileSync } from "node:fs";
+import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
 import { EgressViolation, ReleasedText, WorkerText } from "./released-text.ts";
 import { MurageStatus, configureStatusRoster, outboundWords, status, statusFromNote, statusFromStored, failureCodeFrom } from "./murage-status.ts";
@@ -130,13 +131,35 @@ describe("the hand-off boundary reaches the store only through its ports", () =>
   const source = readFileSync(new URL("./handoff-boundary.ts", import.meta.url), "utf8");
   const imports = [...source.matchAll(/^import (type )?(.*?) from "([^"]+)";$/gm)].map(match => ({ typeOnly: match[1] !== undefined, names: match[2], from: match[3] }));
   const ALLOWED = new Set([
-    "./boundary-ports.ts", "./card-result-source.ts", "./contracts.ts", "./coordination-budget.ts", "./coordination-target.ts", "./database.ts", "./delegations.ts", "./event-limit.ts",
+    "./boundary-ports.ts", "./card-result-source.ts", "./contracts.ts", "./coordination-budget.ts", "./coordination-target.ts", "./database.ts", "./delegated-reply-check.ts", "./delegations.ts", "./event-limit.ts",
     "./execution-audience.ts", "./fold-steps.ts", "./handoff-outcome.ts", "./handoff-reply.ts", "./handoff-replay.ts", "./human-principals.ts", "./internal-capabilities.ts", "./peer-approval.ts",
     "./project-prompt.ts", "./project-records.ts", "./project-review.ts", "./project-routines.ts", "./result-egress.ts", "./room-requests.ts", "./routine-permissions.ts",
     "./shared-work.ts", "./task-resolution.ts", "./released-text.ts", "./murage-status.ts", "./bot-egress.ts", "./store.ts", "./work-admission.ts", "node:crypto", "node:http",
   ]);
   it("imports only listed modules", () => {
     expect(imports.map(entry => entry.from).filter(from => !ALLOWED.has(from))).toEqual([]);
+  });
+  // Every module a source reaches, read from its syntax tree (comments, whitespace and line breaks cannot hide one): static imports,
+  // re-exports, import("...") and require("...").
+  const moduleReferences = (text: string): string[] => {
+    const found: string[] = [];
+    const visit = (node: ts.Node): void => {
+      if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier) found.push(node.moduleSpecifier.getText());
+      else if (ts.isImportEqualsDeclaration(node)) found.push(node.moduleReference.getText());
+      else if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(node.expression) && node.expression.text === "require"))) found.push(node.arguments[0]?.getText() ?? "<none>");
+      ts.forEachChild(node, visit);
+    };
+    visit(ts.createSourceFile("module.ts", text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS));
+    return found;
+  };
+  it("the guard below sees every way a module is reached", () => {
+    for (const text of ['const x = import ("./store.ts");', 'require ("./store.ts");', 'export { Store } from "./store.ts";', '/* a */ import { x } from "./store.ts";', 'import x = require("./store.ts");', 'import type { T } from "./store.ts";']) {
+      expect(moduleReferences(text), text).not.toEqual([]);
+    }
+    expect(moduleReferences('// import { x } from "./store.ts";\nconst importText = "require(x)";')).toEqual([]);
+  });
+  it("the delegated-reply scheduler it listens to reaches no module at all, so it is no side door to the store", () => {
+    expect(moduleReferences(readFileSync(new URL("./delegated-reply-check.ts", import.meta.url), "utf8"))).toEqual([]);
   });
   it("takes no value from the store module, only types", () => {
     for (const entry of imports.filter(entry => entry.from === "./store.ts")) {

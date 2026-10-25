@@ -23,7 +23,7 @@ import {
   type ProjectCard,
   type ProjectWaitingOn,
 } from "./project-records.ts";
-import { recordNoteLineage, releaseNote, requestAnswerOrigin, requestTurnThread, storedNote, type NoteOrigin, type StoredNote } from "./project-notes.ts";
+import { noteForPrompt, recordNoteLineage, requestAnswerOrigin, requestTurnThread, storedNote, type NoteOrigin, type StoredNote } from "./project-notes.ts";
 import { murageObjectRef, recordTurnObject } from "./memory/prompt-parts.ts";
 import type { RedoNotes } from "./project-prompt.ts";
 
@@ -1039,8 +1039,10 @@ export type OwnerNote = string & { readonly __ownerNote: unique symbol };
 /** What the redo prompt may quote, read now: each teammate's note through the result gate (one withheld or deleted since, or resting on an
  * answer that is, is left out), and the owner's own note as it is. `notOwnerAudience`: the redo run is not the owner's audience. */
 export function releasedRedoNotes(db: DatabaseSync, redo: RedoContext, notOwnerAudience: boolean): RedoNotes {
-  const reviewerNotes = releaseNote(db, redo.reviewerNotes, notOwnerAudience), leadNote = releaseNote(db, redo.leadNote, notOwnerAudience);
-  return { ...(reviewerNotes ? { reviewerNotes } : {}), ...(leadNote ? { leadNote } : {}), ...(redo.ownerNote ? { ownerNote: redo.ownerNote } : {}),
+  const reviewerNotes = noteForPrompt(db, redo.reviewerNotes, notOwnerAudience), leadNote = redo.ownerNote ? undefined : noteForPrompt(db, redo.leadNote, notOwnerAudience);
+  // a note written but not released now is said as held (U02), so the assignee asks for it instead of working as if none was written
+  return { ...(reviewerNotes === "held" ? { reviewerNotesHeld: true } : reviewerNotes ? { reviewerNotes } : {}),
+    ...(leadNote === "held" ? { leadNoteHeld: true } : leadNote ? { leadNote } : {}), ...(redo.ownerNote ? { ownerNote: redo.ownerNote } : {}),
     ...(redo.reassigned ? { reassigned: true } : {}) };
 }
 

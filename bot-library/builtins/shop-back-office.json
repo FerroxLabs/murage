@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Shop Back Office",
     "tagline": "Orders, stock and customer follow-ups organized into one review queue",
-    "summary": "Order and stock report, cart flows, win-back lists and order reply drafts. Stock coordinates the drafts from the notes and documents you supply. Members check their sources, the lead combines the work, and you approve external actions. For a store operations team, use Back-Office Crew. For a complete ecommerce team, use Ecommerce Engine.",
+    "summary": "Order and stock report, cart flows, win-back lists and order reply drafts.",
     "category": "Ecommerce",
     "author": {
       "name": "Ferrox Labs",
@@ -128,7 +128,8 @@
         "role": "leader",
         "team": "Shop Back Office",
         "appearance": {
-          "color": "purple"
+          "color": "purple",
+          "mascotBody": "hexagon"
         },
         "skills": [
           "inventory-manager",
@@ -148,7 +149,8 @@
         "role": "member",
         "team": "Shop Back Office",
         "appearance": {
-          "color": "cyan"
+          "color": "cyan",
+          "mascotBody": "circle"
         },
         "skills": [
           "beacon-email-sequences",
@@ -168,7 +170,8 @@
         "role": "member",
         "team": "Shop Back Office",
         "appearance": {
-          "color": "blue"
+          "color": "coral",
+          "mascotBody": "drop"
         },
         "skills": [
           "segmentation-design",
@@ -188,7 +191,8 @@
         "role": "member",
         "team": "Shop Back Office",
         "appearance": {
-          "color": "blue"
+          "color": "blue",
+          "mascotBody": "squircle"
         },
         "skills": [
           "vault-marketplace-ops",
@@ -208,7 +212,8 @@
         "role": "member",
         "team": "Shop Back Office",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "blob"
         },
         "skills": [
           "customer-support-specialist",

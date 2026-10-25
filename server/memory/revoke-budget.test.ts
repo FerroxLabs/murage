@@ -11,7 +11,7 @@
 import fs, { statSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { memoryRevocationIdle, memoryRevocationStats, resetMemoryRevocationStats, drainRevokeMarkerBounded, stopMemoryRevocation, wakeMemoryRevocation } from "./memory-revocation.ts";
-import { beginRevokeMeasure, budgetedMarkerSlice, bytesPerChange, endRevokeMeasure, frameBytes, noteRevokeBytes, noteRevokeCost, REVOKE_COST_MEMORY_ROWS, REVOKE_WRITE_BUDGET, REVOKE_WRITE_WINDOW_MS, resetRevokeWriteBudget, revokeBytesWritten, revokeChangeCeiling, revokeCostPerChange, revokeMinuteChanges, revokeSliceNeed, revokeWriteMeter, revokeWriteWaitMs, setRevokeBudgetClock } from "./revoke-budget.ts";
+import { beginRevokeMeasure, budgetedMarkerSlice, bytesPerChange, endRevokeMeasure, frameBytes, noteRevokeBytes, noteRevokeCost, REVOKE_COMMIT_REBALANCE_FRAMES, REVOKE_COST_MEMORY_ROWS, REVOKE_WRITE_BUDGET, REVOKE_WRITE_WINDOW_MS, resetRevokeWriteBudget, revokeBytesWritten, revokeChangeCeiling, revokeCostPerChange, revokeMinuteChanges, revokeSliceNeed, revokeWriteMeter, revokeWriteWaitMs, setRevokeBudgetClock } from "./revoke-budget.ts";
 import { instrumentDatabase } from "../io-budget.ts";
 import { headFlipCost, MARKER_STEP_RESERVE } from "./revoke-marker.ts";
 import { changes, flipAll, num, storm } from "./testing/revoke-storm-fixture.ts";
@@ -57,16 +57,19 @@ describe("M3: the marker stays inside its write budget and yields to foreground 
     } finally { fx.close(); }
   });
 
-  it("the runner walks nothing while a foreground turn is live, then finishes once it ends", async () => {
+  it("the runner trickles while a foreground turn is live (a half slice per busy pause, never a stop), then finishes once it ends", async () => {
+    // 1.0.3 walked nothing under a live turn and ran one slice every 10 s: a bot whose turns never stop kept every window open for days
+    // (SELF-OVERLOAD-105 item 1c). Now each busy tick is a shorter slice, counted as a yield, spaced by the busy pause.
     const fx = storm(8);
     let busy = true;
     try {
       flipAll(fx);
-      wakeMemoryRevocation(() => fx.db, { busy: () => busy, busyPauseMs: 5, pauseMs: 1 });
-      await new Promise(resolve => setTimeout(resolve, 250));
-      expect(num(fx, "SELECT count(*) AS n FROM memory_receipt_flips")).toBe(8);
-      expect(num(fx, "SELECT count(*) AS n FROM memory_revoke_jobs")).toBe(0);
+      wakeMemoryRevocation(() => fx.db, { busy: () => busy, busyPauseMs: 40, pauseMs: 1 });
+      await new Promise(resolve => setTimeout(resolve, 100));
+      // under the turn the marker moved (a flip drained or a job walked), at the busy cadence: at most a handful of slices in 100 ms
       expect(memoryRevocationStats.markerYields).toBeGreaterThan(0);
+      expect(memoryRevocationStats.markerYields).toBeLessThanOrEqual(4);
+      expect(num(fx, "SELECT count(*) AS n FROM memory_receipt_flips") + num(fx, "SELECT count(*) AS n FROM memory_revoke_jobs")).toBeGreaterThan(0);
       busy = false;
       await memoryRevocationIdle();
       expect(num(fx, "SELECT count(*) AS n FROM memory_receipt_flips")).toBe(0);
@@ -155,6 +158,53 @@ describe("S2: C is measured only on the runner's own commits, seeded at the ceil
       noteRevokeCost(fx.db, 1.5 * F * 4096, 4096);
       expect(revokeCostPerChange(fx.db)).toBeCloseTo((W / 8 * REVOKE_COST_MEMORY_ROWS + 1.5 * F * 4096) / (REVOKE_COST_MEMORY_ROWS + 4096), 6);
       expect(revokeCostPerChange(fx.db)).toBeGreaterThan(W / 8);
+    } finally { fx.close(); }
+  });
+
+  it("B14: a commit of a few rows that splits its leaves reads past W a row, yet is within the ceiling: a split is the commit's cost, not each row's", () => {
+    const fx = walStorm(4);
+    setRevokeBudgetClock(() => 1_000_000);
+    resetRevokeWriteBudget();
+    try {
+      const F = frameBytes(fx.db), W = revokeChangeCeiling(fx.db);
+      expect(bytesPerChange(fx.db)).toBe(4096); // the probe below is sized for 4 KiB pages
+      // the 1.0.6 rc1 gate's measurement: 5 rows, 11 frames (9,064 bytes a row against W = 8,240) is one split, not a model error
+      noteRevokeCost(fx.db, 11 * F, 5);
+      expect(11 * F / 5).toBeGreaterThan(W);
+      expect(revokeWriteMeter.overCeiling).toBe(0);
+      expect(revokeWriteMeter.maxPerChange).toBe(11 * F / 5);
+      expect(revokeCostPerChange(fx.db)).toBe(W);
+      // past one commit's rebalances it still counts, however few the rows
+      noteRevokeCost(fx.db, (5 * 2 + REVOKE_COMMIT_REBALANCE_FRAMES + 1) * F, 5);
+      expect(revokeWriteMeter.overCeiling).toBe(1);
+      // real one-row commits into a table and its one index (as memory_deny_memory and its revoke index): measured as the runner measures,
+      // each splitting commit writes more than 2 frames for its one row, and none counts over the ceiling
+      fx.db.exec("CREATE TABLE b14_probe(id INTEGER PRIMARY KEY, k TEXT, v TEXT); CREATE INDEX b14_probe_k ON b14_probe(k)");
+      fx.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+      resetRevokeWriteBudget();
+      const insert = fx.db.prepare("INSERT INTO b14_probe(k,v) VALUES(?,?)");
+      let split = 0;
+      for (let i = 0; i < 60; i++) {
+        fx.db.exec("BEGIN IMMEDIATE");
+        const m = beginRevokeMeasure(fx.db);
+        insert.run(`${String(i).padStart(4, "0")}${"k".repeat(300)}`, "v".repeat(300));
+        fx.db.exec("COMMIT");
+        const bytes = endRevokeMeasure(fx.db, m);
+        expect(bytes).not.toBeNull();
+        if (bytes! - (i === 0 ? 32 : 0) > W) split++;
+        expect(bytes!).toBeLessThanOrEqual(32 + W + REVOKE_COMMIT_REBALANCE_FRAMES * F);
+      }
+      expect(split).toBeGreaterThan(0);
+      expect(revokeWriteMeter.measured).toBe(60);
+      expect(revokeWriteMeter.overCeiling).toBe(0);
+      // sustained excess still counts: one-row commits of 3 frames each are within the tolerance one by one, but once a memory's worth of
+      // rows is past W a row on the whole, each further one is over
+      resetRevokeWriteBudget();
+      for (let i = 0; i < REVOKE_COST_MEMORY_ROWS - 1; i++) noteRevokeCost(fx.db, 3 * F, 1);
+      expect(revokeWriteMeter.overCeiling).toBe(0);
+      noteRevokeCost(fx.db, 3 * F, 1);
+      noteRevokeCost(fx.db, 3 * F, 1);
+      expect(revokeWriteMeter.overCeiling).toBe(2);
     } finally { fx.close(); }
   });
 

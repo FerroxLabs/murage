@@ -5,7 +5,7 @@ import { appendFileSync, chmodSync, closeSync, openSync, readdirSync, readSync, 
 import { join } from "node:path";
 
 import { NATIVE_DIR } from "../config.ts";
-import { redactSecrets } from "../redact.ts";
+import { redactSecrets, redactSecretsInText } from "../redact.ts";
 import { redactPageOutputDeep } from "../browser-output-redaction.ts";
 
 const RECORD_BYTES = 64 * 1024;
@@ -101,6 +101,41 @@ function capExisting(file: string): number {
 let omitThread: (threadId: string) => boolean = () => false;
 export function omitNativeLog(predicate: (threadId: string) => boolean): void { omitThread = predicate; }
 
+/** 09-A5: a streamed reply reaches this log a few characters per frame. A credential the model echoes arrives as a
+ * short prefix in one frame and the rest in the next, and each frame alone is too short or too plain to match. So
+ * each text-bearing delta is read together with the unmasked text that came just before it on the same
+ * conversation, and the part of the result that belongs to this frame is what is stored. */
+const STREAM_TAIL_CHARS = 512;
+const STREAM_TAIL_THREADS = 256;
+const streamTails = new Map<string, Record<string, string>>();
+
+function maskStreamDelta(threadId: string, msg: unknown): unknown {
+  if (!msg || typeof msg !== "object") return msg;
+  const holder = msg as { event?: { delta?: unknown }; delta?: unknown };
+  const delta = holder.event && typeof holder.event === "object" && holder.event.delta && typeof holder.event.delta === "object" ? holder.event.delta : holder.delta;
+  if (!delta || typeof delta !== "object") return msg;
+  const fields = ["text", "partial_json", "thinking"].filter((field) => typeof (delta as Record<string, unknown>)[field] === "string");
+  if (!fields.length) return msg;
+  const tails = streamTails.get(threadId) ?? {};
+  const masked: Record<string, string> = {};
+  for (const field of fields) {
+    const raw = (delta as Record<string, string>)[field]!;
+    const tail = tails[field] ?? "";
+    const combined = redactSecretsInText(tail + raw);
+    const before = redactSecretsInText(tail);
+    let common = 0;
+    while (common < before.length && common < combined.length && before[common] === combined[common]) common++;
+    masked[field] = combined.slice(common);
+    tails[field] = (tail + raw).slice(-STREAM_TAIL_CHARS);
+  }
+  if (streamTails.size >= STREAM_TAIL_THREADS && !streamTails.has(threadId)) streamTails.delete(streamTails.keys().next().value!);
+  streamTails.set(threadId, tails);
+  const swapped = { ...(delta as Record<string, unknown>), ...masked };
+  return holder.event && typeof holder.event === "object" && holder.event.delta === delta
+    ? { ...holder, event: { ...holder.event, delta: swapped } }
+    : { ...holder, delta: swapped };
+}
+
 export function appendNative(threadId: string, entry: { dir: "in" | "out" | "lifecycle"; source: string; msg: unknown }) {
   if (omitThread(threadId)) return;
   try {
@@ -114,7 +149,7 @@ export function appendNative(threadId: string, entry: { dir: "in" | "out" | "lif
     // scrub reads a run of digits inside a UUID as a secret number and rewrote
     // the turn id to "ab[hidden]-...", so a trace could no longer be tied to
     // its turn. Secret-name masking still applies.
-    let encoded = JSON.stringify({ at: new Date().toISOString(), ...entry, msg: entry.dir === "lifecycle" ? redactSecrets(entry.msg) : redactPageOutputDeep(redactSecrets(entry.msg)) }) + "\n";
+    let encoded = JSON.stringify({ at: new Date().toISOString(), ...entry, msg: entry.dir === "lifecycle" ? redactSecrets(entry.msg) : redactPageOutputDeep(redactSecrets(maskStreamDelta(threadId, entry.msg))) }) + "\n";
     const encodedBytes = Buffer.byteLength(encoded);
     if (encodedBytes > RECORD_BYTES) encoded = marker("native_trace_record_omitted", { encodedBytes, limitBytes: RECORD_BYTES });
     const current = join(NATIVE_DIR, `${threadId}.ndjson`);

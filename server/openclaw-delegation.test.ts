@@ -109,10 +109,11 @@ describe("delegate_bot to an OpenClaw own-tools teammate (fake ACP CLI)", () => 
     expect(channel.messages.some((x: any) => x.from?.botId === mate.id && x.text?.includes("hello from fake acp"))).toBe(true);
 
     // (1) the teammate ran under the ownTools path: spawned as `openclaw acp
-    // --session agent:main:main`, with NO MCP mounts handed to session/new
+    // --session agent:main:murage-...` (its own OpenClaw conversation), with
+    // NO MCP mounts handed to session/new
     expect(existsSync(dump)).toBe(true);
     const spawned = JSON.parse(readFileSync(dump, "utf8"));
-    expect(spawned.argv.join(" ")).toContain("acp --session agent:main:main");
+    expect(spawned.argv.join(" ")).toMatch(/acp --session agent:main:murage-(owner|guest)-[0-9a-f]{24}/);
     expect(JSON.parse(readFileSync(`${dump}.mcp.json`, "utf8"))).toEqual([]);
   }, 70_000);
 });

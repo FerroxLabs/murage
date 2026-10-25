@@ -45,9 +45,8 @@ const ORDINARY: Row[] = [
   { id: "DEV-O17", cmd: "lsblk /dev/sg0", rule: null },
   { id: "DEV-O18", cmd: "lsblk /dev/ram0", rule: null },
   { id: "DEV-O19", cmd: "lsblk /dev/mmcblk0boot0", rule: null },
-  // RUN: a script file from the project, and literal inline code that runs ordinary things
-  { id: "RUN-O1", cmd: "cd tools && python3 build.py --fast", rule: null },
-  { id: "RUN-O2", cmd: "node scripts/gen.js && ./run.sh && make && npm run build", rule: null },
+  // RUN: literal inline code that runs ordinary things, and a program run directly
+  { id: "RUN-O2", cmd: "./run.sh && make && npm run build", rule: null },
   { id: "RUN-O3", cmd: "python3 -c \"import subprocess; subprocess.run(['git', 'status'])\"", rule: null },
   { id: "RUN-O4", cmd: "cd app && python3 - <<'EOF'\nimport subprocess\nprint(subprocess.check_output(['ls', '-la']).decode())\nEOF", rule: null },
   { id: "RUN-O5", cmd: "node -e \"require('child_process').execSync('npm test', {stdio: 'inherit'})\"", rule: null },
@@ -89,6 +88,9 @@ const HELD: Row[] = [
   { id: "DEV-H21", cmd: "cat x > /dev/sg0", rule: "disk-erase" },
   { id: "DEV-H22", cmd: "cat x > /dev/ram0", rule: "disk-erase" },
   { id: "DEV-H23", cmd: "cat x > /dev/mmcblk0boot0", rule: "disk-erase" },
+  // RUN: a script file on disk this text did not write, run by an interpreter (1.0.4 U17: asks, as under PowerShell)
+  { id: "RUN-H11", cmd: "cd tools && python3 build.py --fast", rule: "unreadable" },
+  { id: "RUN-H12", cmd: "node scripts/gen.js && ./run.sh && make && npm run build", rule: "unreadable" },
   // RUN: the text writes the code it then runs
   { id: "RUN-H1", cmd: "cat > x.py <<'EOF'\nimport subprocess\nsubprocess.run(['ls'])\nEOF\npython3 x.py", rule: "unreadable" },
   { id: "RUN-H2", cmd: "echo 'rm -rf ~' > c.txt; python3 -c \"import os; os.system(open('c.txt').read())\"", rule: "unreadable" },

@@ -223,12 +223,17 @@ export function humanMayReadRecord(db: DatabaseSync,id:string,version:number,pri
   const row=db.prepare("SELECT d.partition,d.entities,s.kind FROM memory_record_details d JOIN memory_records r ON r.id=d.record_id AND r.version=d.record_version JOIN memory_scopes s ON s.id=r.scope_id WHERE r.id=? AND r.version=?").get(id,version);
   return !row || row.partition!=="identity" || row.kind!=="bot" && !JSON.parse(String(row.entities)).includes("owner-private");
 }
+/** The scope kinds the owner may share with a linked person: what the share screen offers (src/components/MemoryPeople.tsx SHAREABLE_KINDS). */
+export const SHAREABLE_SCOPE_KINDS: ReadonlySet<string> = new Set(["room", "project", "team", "workspace"]);
 export function shareHumanScope(ticket:object,input:{personId:string;scopeId:string;granted:boolean}) {
   requireMemoryOwner(ticket);
   return transaction(db=>{
     if(input.personId.startsWith("whatsapp-group:"))throw new Error("HUMAN_GROUP_IMMUTABLE");
     if(!db.prepare("SELECT 1 FROM memory_scopes WHERE kind='preferences' AND owner_key=?").get("person:"+input.personId))throw new Error("HUMAN_PERSON_UNKNOWN");
-    if(!db.prepare("SELECT 1 FROM memory_scopes WHERE id=?").get(input.scopeId))throw new Error("MEMORY_SCOPE_UNKNOWN");
+    const scope=db.prepare("SELECT kind FROM memory_scopes WHERE id=?").get(input.scopeId);
+    if(!scope)throw new Error("MEMORY_SCOPE_UNKNOWN");
+    // only the kinds the share screen offers (a channel, a shared folder, a team, the workspace; SL-E r3.2); withdrawing any grant stays open
+    if(input.granted&&!SHAREABLE_SCOPE_KINDS.has(String(scope.kind)))throw new Error("MEMORY_SCOPE_NOT_SHAREABLE");
     const id="human-share:"+createHash("sha256").update(JSON.stringify([input.personId,input.scopeId])).digest("hex");
     db.prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'person',?,1,?,'{}') ON CONFLICT(id) DO UPDATE SET revision=revision+1,state=excluded.state").run(id,input.scopeId,input.personId,input.granted?"granted":"revoked");
     revoke(db);return {personId:input.personId,scopeId:input.scopeId,granted:input.granted};

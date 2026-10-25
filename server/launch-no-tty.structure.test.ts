@@ -39,11 +39,13 @@ const server = dirname(fileURLToPath(import.meta.url));
 /** Modules that may start a process themselves, and why they are not an engine launch or an engine probe. */
 const ALLOWLIST: Record<string, string> = {
   "procs.ts": "the shared launcher itself (spawnCli, execCli) and its taskkill stop route",
+  "job-launcher.ts": "the Windows job launcher procs.ts starts (U24): it starts the engine CLI itself, inside the engine's job, with the stdio pipes it inherited from spawnCli",
   "env-path.ts": "the owner's own login capture (Rule 74a, Murage's process, stdin closed); its Fuigo --version read is an engine probe and starts a session of its own (asserted below)",
   "drivers/process-tree.ts": "non-engine helper: ps and PowerShell process listing",
   "drivers/process-identity.ts": "non-engine helper: ps start-time read of a known pid",
   "drivers/warm-pool.ts": "non-engine helper: ps and vm_stat memory reads",
   "drivers/claude.ts": "git rev-parse of the session folder with stdin ignored and no network",
+  "drivers/headless-text-only.ts": "macOS `security find-generic-password` attributes-only lookup (no -w, no -g: it prints no secret and opens no prompt, stdout discarded, 2 s timeout), asking whether the owner's default Keychain item exists; not an engine",
   "drivers/pi-mcp-extension.ts": "runs inside the Pi process and inherits its session",
   "drivers/headless-browser-proxy.ts": "the browser automation tool server Murage starts, not an engine",
   "drivers/phone-proxy.ts": "adb for the phone tool, not an engine",

@@ -47,8 +47,10 @@ const launcherRun: PinRun = (file, args, opts) =>
 const DEFAULT_DEPS: DiscoveryDeps = { identify: identifyFile, run: launcherRun };
 
 /** Why no bash.exe was found: none anywhere, or an override the wrapper cannot run. */
-export type GitBashMiss = "no-git-bash" | "override-not-bash";
-export interface GitBashFound { bash: string | null; reason?: GitBashMiss }
+/** Why the wrapper is not used: no bash.exe anywhere, an override the wrapper cannot run, or a found Git Bash whose
+ * wrapper launch failed its pre-flight on this machine (claudeExecLaunchCheck in drivers/claude.ts). */
+export type GitBashMiss = "no-git-bash" | "override-not-bash" | "wrapper-failed";
+export interface GitBashFound { bash: string | null; reason?: GitBashMiss; detail?: string }
 
 type Entry = { bash: string | null; reason?: GitBashMiss; ids: { path: string; id: ToolIdentity | null }[] };
 const ENTRIES_MAX = 32;
