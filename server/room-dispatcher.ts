@@ -43,6 +43,7 @@ import {
   clearRetainedRoomRequest,
   readdressReviewWake,
   recordRoomRequestRefusal,
+  roomRequest,
   type CompletionHooks,
   type RoomRequest,
 } from "./room-requests.ts";
@@ -257,7 +258,8 @@ export function createRoomDispatcher(deps: RoomDispatcherDeps): RoomDispatcher {
       busyRooms.add(roomKey);
       statusSent.delete(request.id);
       try {
-        deps.startMemberTurn({ ...request, state: "running", targetThreadId: threadId }, decision.claim);
+        // the stored row, never this pass's snapshot: an earlier row in the same pass can have absorbed a result into it (CANCEL-TREE-104 H2)
+        deps.startMemberTurn(roomRequest(db, request.id) ?? { ...request, state: "running", targetThreadId: threadId }, decision.claim);
       } catch (error) {
         decision.claim.release();
         throw error;

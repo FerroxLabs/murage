@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Help Center Writer",
     "tagline": "Help articles and saved replies grounded in real customer questions",
-    "summary": "Nell prepares up to five help article drafts or revisions per batch. Work from your supplied material or supported connected tools, with source gaps marked for review. For ticket triage and broader customer support, use Support. For a team designing support operations, use Support Stack. For a teaching business support team, use Student Support Desk.",
+    "summary": "Nell prepares up to five help article drafts or revisions per batch.",
     "category": "Support",
     "author": {
       "name": "Ferrox Labs",
@@ -39,7 +39,7 @@
           "optional": true
         },
         {
-          "slug": "helpscout",
+          "slug": "help_scout",
           "label": "Help Scout",
           "reason": "When connected and its tools support this task, use Help Scout for your help center writer work. Drafting also works from material you supply. Ask for your yes before an external change.",
           "optional": true
@@ -60,7 +60,8 @@
         "title": "Help Center Writer",
         "description": "Nell prepares up to five help article drafts or revisions per batch. Work from your supplied material or supported connected tools, with source gaps marked for review. For ticket triage and broader customer support, use Support. For a team designing support operations, use Support Stack. For a teaching business support team, use Student Support Desk.",
         "appearance": {
-          "color": "purple"
+          "color": "purple",
+          "mascotBody": "shield"
         },
         "skills": [
           "knowledge-base-article",

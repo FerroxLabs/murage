@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "Composer.tsx"), "utf8");
+const row = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "ComposerMenuRow.tsx"), "utf8");
 
 describe("Composer mention picker", () => {
   it("does not truncate its already-authorised candidate pool", () => {
@@ -20,7 +21,10 @@ describe("Composer mention picker", () => {
     expect(source).toContain("ref={mentionListRef}");
     expect(source).toContain("max-h-72");
     expect(source).toContain("overflow-y-auto");
-    expect(source).toContain('data-mention-index={i}');
+    // each row is a ComposerMenuRow, which carries the index the keyboard scrolls to
+    expect(source).toContain("<ComposerMenuRow");
+    expect(source).toContain("index={i}");
+    expect(row).toContain("data-mention-index={index}");
   });
 
   it("keeps the highlighted option in view as the keyboard moves beyond six", () => {

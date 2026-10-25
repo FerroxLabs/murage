@@ -637,6 +637,20 @@
   "count": 2
  },
  {
+  "file": "server/cloud-computer-turns.ts",
+  "function": "load",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/cloud-computer-turns.ts",
+  "function": "startUnknown",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
   "file": "server/cloud-home/b1b-identity.ts",
   "function": "openProtectedRootFile",
   "callee": "openSync",
@@ -910,6 +924,13 @@
   "count": 1
  },
  {
+  "file": "server/drivers/acp/cline.ts",
+  "function": "selectedBlock",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
   "file": "server/drivers/acp/cursor.ts",
   "function": "scopeCursorHostComputerConfig",
   "callee": "readFileSync",
@@ -977,7 +998,7 @@
   "function": "applyHermesFluxMemory",
   "callee": "readFileSync",
   "root": "engine-home",
-  "count": 2
+  "count": 1
  },
  {
   "file": "server/drivers/acp/hermes.ts",
@@ -995,7 +1016,21 @@
  },
  {
   "file": "server/drivers/acp/hermes.ts",
+  "function": "overlayBase",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/acp/hermes.ts",
   "function": "removeHermesLocalHost",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/acp/hermes.ts",
+  "function": "writeHermesTurnOverlay",
   "callee": "readFileSync",
   "root": "engine-home",
   "count": 1
@@ -1019,6 +1054,13 @@
   "function": "readTomlConfigForEdit",
   "callee": "readFileSync",
   "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/acp/openclaw.ts",
+  "function": "readGenerations",
+  "callee": "readFileSync",
+  "root": "data-dir",
   "count": 1
  },
  {
@@ -1163,6 +1205,13 @@
  },
  {
   "file": "server/drivers/claude.ts",
+  "function": "draftSettingsRead",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/claude.ts",
   "function": "readClaudeModelCatalog",
   "callee": "readFileSync",
   "root": "engine-home",
@@ -1205,7 +1254,21 @@
  },
  {
   "file": "server/drivers/codex-hook.ts",
+  "function": "sweepHookEnv",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/codex-hook.ts",
   "function": "writeIfChanged",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/headless-text-only.ts",
+  "function": "ownerCredmanFlag",
   "callee": "readFileSync",
   "root": "engine-home",
   "count": 1
@@ -1579,6 +1642,13 @@
   "function": "observedFile",
   "callee": "readSync",
   "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/git-remote-hosts.ts",
+  "function": "gitRemoteHosts",
+  "callee": "readFileSync",
+  "root": "workspace",
   "count": 1
  },
  {
@@ -2061,6 +2131,27 @@
   "file": "server/io-budget.ts",
   "function": "header",
   "callee": "readSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/job-launcher.ts",
+  "function": "readExact",
+  "callee": "readSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/limit-failovers.ts",
+  "function": "list",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/limit-state.ts",
+  "function": "read",
+  "callee": "readFileSync",
   "root": "data-dir",
   "count": 1
  },
@@ -3060,8 +3151,29 @@
  },
  {
   "file": "server/workspace.ts",
+  "function": "openWitness",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/workspace.ts",
   "function": "readNotebookText",
-  "callee": "readFileSync",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/workspace.ts",
+  "function": "readWhole",
+  "callee": "readSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/workspace.ts",
+  "function": "writeSyncedFile",
+  "callee": "openSync",
   "root": "data-dir",
   "count": 1
  }

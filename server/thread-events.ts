@@ -270,11 +270,27 @@ function isNativeRecord(value: unknown): value is NativeRecord {
   );
 }
 
+/** requestId -> the rule that answered it, for this thread's automatic answers (the newest row wins). A person's answer, a card
+ * shown, or a row without a requestId adds nothing. */
+function automaticAnswers(rows: ReadonlyArray<{ threadId: string; requestId?: string; decision: string; source: string }> | undefined, threadId: string) {
+  const answers = new Map<string, string>();
+  for (const row of rows ?? []) if (row.threadId === threadId && row.requestId && (row.decision === "auto-approved" || row.decision === "auto-denied")) answers.set(row.requestId, row.source);
+  return answers;
+}
+/** The served copy of a resolved line carries `decidedBy` when the decision log says a rule answered it; the log line is unchanged. */
+function withDecidedBy(data: RuntimeEvent, automatic: ReadonlyMap<string, string>): RuntimeEvent {
+  if (data.type !== "request.resolved") return data;
+  const rule = data.requestId ? automatic.get(data.requestId) : undefined;
+  return rule ? { ...data, decidedBy: rule } : data;
+}
+
 export function readThreadEvents(input: {
   eventsDir: string;
   nativeDir: string;
   threadId: string;
   limit?: number;
+  /** Decision-log rows (decision-log.ts readDecisions): an automatic answer's rule is shown on its request.resolved line. */
+  decisions?: ReadonlyArray<{ threadId: string; requestId?: string; decision: string; source: string }>;
 }): InspectorPage {
   const { eventsDir, nativeDir, threadId } = input;
   assertThreadId(threadId);
@@ -291,13 +307,14 @@ export function readThreadEvents(input: {
     if (older.total || older.lines.length) runtime = { lines: [...older.lines, ...runtime.lines], total: runtime.total + older.total, complete: runtime.complete && older.complete };
   }
   const native = readRecentLines(join(nativeDir, `${threadId}.ndjson`), limit, isNativeRecord);
+  const automatic = automaticAnswers(input.decisions, threadId);
 
   // cap each log on its own, then merge: the native tee is several times
   // chattier than the runtime stream, and one shared cap would leave the
   // Events lens with a handful of rows behind hundreds of raw ones
   const merged: InspectorEntry[] = [
     // an ask goes out as a stream gets it: its server-side records (on a line an older build wrote with them) stay here
-    ...runtime.lines.map((data): InspectorEntry => ({ kind: "runtime", at: data.createdAt, data: data.type === "request.opened" ? requestOpenedOut(data) : data })),
+    ...runtime.lines.map((data): InspectorEntry => ({ kind: "runtime", at: data.createdAt, data: data.type === "request.opened" ? requestOpenedOut(data) : withDecidedBy(data, automatic) })),
     ...native.lines.map((data): InspectorEntry => ({ kind: "native", at: data.at, data })),
   ];
   // stable sort: ties keep file order, which is emit order

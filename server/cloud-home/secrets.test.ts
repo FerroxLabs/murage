@@ -62,6 +62,23 @@ describe("cloud sealed credential store", () => {
     expect(process.env.FLUX_API_KEY).toBe(priorEnv);
     expect(loadConfig().flux?.apiKey).toBe("next-fixture-key");
   });
+  it("keeps Flux memory off across a cloud home restart (1.0.4 audit 11-3)", async () => {
+    const dir = directory(), path = join(dir, "boot-pipe");
+    writeFileSync(path, JSON.stringify({ version: 1, bootstrapSecret: "b".repeat(64), credentials: { fluxApiKey: "fixture-sealed-key" } }), { mode: 0o600 });
+    writeFileSync(join(dir, "config.json"), JSON.stringify({ flux: { memory: { external: false, inject: false } } }), { mode: 0o600 });
+    for (const name of ["MURAGE_FLUX_MEMORY", "MURAGE_FLUX_MEMORY_INJECT", "MURAGE_FLUX_MEMORY_OWNER", "MURAGE_FLUX_MEMORY_SPACES"]) vi.stubEnv(name, "");
+    vi.stubEnv("MURAGE_CLOUD_ROLE", "home"); vi.stubEnv("MURAGE_DATA_DIR", dir); vi.stubEnv("MURAGE_CLOUD_SECRETS_FD", String(openSync(path, "r")));
+    const { loadConfig } = await import("../config.ts");
+    const { fluxMemoryDecision, fluxMemorySettings } = await import("../flux-memory-headers.ts");
+    expect(loadConfig().flux?.memory?.external).toBe(false);
+    expect(fluxMemorySettings().external).toBe(false);
+    expect(fluxMemorySettings().inject).toBe("off");
+    // The next owner turn after the restart sends memory off.
+    const decision = fluxMemoryDecision({ audience: "owner" });
+    expect(decision.reason).toBe("external-off");
+    expect(decision.capture).toBe("off");
+    expect(decision.inject).toBe("off");
+  });
   it("leaves the desktop config path unchanged when the home flag is absent", async () => {
     vi.stubEnv("MURAGE_CLOUD_ROLE", ""); vi.stubEnv("MURAGE_DATA_DIR", directory());
     const { saveConfig, loadConfig } = await import("../config.ts");

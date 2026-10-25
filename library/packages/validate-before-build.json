@@ -28,7 +28,8 @@
         "title": "Validator",
         "description": "Validator - quantitative validation, fake-door tests, MVP discipline via Eric Ries's build-measure-learn.",
         "appearance": {
-          "color": "green"
+          "color": "cyan",
+          "mascotBody": "diamond"
         },
         "skills": [
           "probe-fake-door-tests",
@@ -49,7 +50,8 @@
         "title": "Research",
         "description": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method.",
         "appearance": {
-          "color": "blue"
+          "color": "blue",
+          "mascotBody": "capsule"
         },
         "skills": [
           "research-jtbd-interviews",
@@ -72,7 +74,8 @@
         "title": "Offer",
         "description": "Offer specialist - value-based pricing, willingness-to-pay research, and offer-construction grounded in Madhavan Ramanujam.",
         "appearance": {
-          "color": "red"
+          "color": "coral",
+          "mascotBody": "circle"
         },
         "skills": [
           "forge-value-pricing",
