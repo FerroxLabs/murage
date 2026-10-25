@@ -12,6 +12,7 @@ import { ToolResults, TOOL_RESULT_PREVIEW_CHARS } from "../tool-results.ts";
 import type { HandoffOutcome } from "../event-limit.ts";
 import { formatHandoff } from "../handoff-outcome.ts";
 import { OWN_ALWAYS_ASK, OWN_UNASKED } from "../../shared/own-servers.ts";
+import { ASK_USER_TOOL_DESCRIPTION, SHOW_WIDGET_TOOL_DESCRIPTION, UPDATE_WIDGET_TOOL_DESCRIPTION } from "../../shared/ask-wording.ts";
 import { released } from "../testing/released.ts";
 import type { BotName } from "../murage-status.ts";
 
@@ -41,6 +42,7 @@ let delegateResponse: unknown = { queued: true, message: "Delegation queued." };
 let lastCreateBody: any = null;
 let createResponseExtra: Record<string, unknown> = {};
 let lastCredentialBody: any = null;
+let lastMcpAddBody: any = null;
 let lastRoutineQuery = "";
 let routinesResponse: unknown = {
   now: "2026-08-28T10:30:00.000Z",
@@ -173,6 +175,17 @@ beforeAll(async () => {
         lastCreateBody = JSON.parse(data);
         res.writeHead(201, { "content-type": "application/json" });
         res.end(JSON.stringify({ id: "bot-designer", name: "Pixel", section: "Work", ...createResponseExtra }));
+      });
+      return;
+    }
+    if (req.method === "POST" && req.url === "/api/internal/mcp-servers") {
+      let data = "";
+      req.on("data", (c) => (data += c));
+      req.on("end", () => {
+        lastMcpAddBody = JSON.parse(data);
+        const refused = lastMcpAddBody.server?.env !== undefined;
+        res.writeHead(refused ? 400 : 201, { "content-type": "application/json" });
+        res.end(JSON.stringify(refused ? { error: "“env” carries values. Send names and addresses only; the owner enters every value on a card." } : { name: lastMcpAddBody.server.name, pendingKeys: lastMcpAddBody.server.env_keys ?? [] }));
       });
       return;
     }
@@ -353,7 +366,11 @@ describe("agents-proxy MCP surface", () => {
       "set_team_lead",
       "create_bot",
       "request_browser_connection",
+      "ask_user",
+      "show_widget",
+      "update_widget",
       "request_credential",
+      "add_mcp_server",
       "list_routines",
       "propose_routine",
       "propose_routine_action",
@@ -372,6 +389,11 @@ describe("agents-proxy MCP surface", () => {
     expect(delegate.description).toContain("DEFAULT FOR ASSIGNING WORK");
     expect(delegate.description).toContain("delivered automatically");
     expect(wait.description).toContain("Never call it in the same turn as MCP tool \"delegate_bot\" on this server");
+    // QW 207/208: the widget tools carry the one shared wording (shared/ask-wording.ts), pinned here and in the rule line
+    const byName = (name: string) => list.result.tools.find((tool: { name: string }) => tool.name === name);
+    expect(byName("show_widget")).toEqual({ name: "show_widget", description: SHOW_WIDGET_TOOL_DESCRIPTION, inputSchema: { type: "object", additionalProperties: false, required: ["widget"], properties: { widget: { type: "object", additionalProperties: true, description: "The widget tree." } } } });
+    expect(byName("update_widget")).toEqual({ name: "update_widget", description: UPDATE_WIDGET_TOOL_DESCRIPTION, inputSchema: { type: "object", additionalProperties: false, required: ["widgetId", "widget"], properties: { widgetId: { type: "string", maxLength: 80 }, widget: { type: "object", additionalProperties: true } } } });
+    expect(byName("ask_user").description).toBe(ASK_USER_TOOL_DESCRIPTION);
   });
 
   it("T98: every live agents tool is in exactly one Rule 51 row, unasked or asking (shared/own-servers.ts)", async () => {
@@ -706,7 +728,9 @@ describe("agents-proxy MCP surface", () => {
   it("publishes a flat routine schedule schema that survives provider conversion", async () => {
     const list = await rpc("tools/list");
     const create = list.result.tools.find((t: { name: string }) => t.name === "propose_routine");
-    expect(create.inputSchema.required).toEqual(["name", "instructions", "schedule"]);
+    // schedule or trigger, exactly one (SL-J J1): checked in the handler, since a flat schema cannot say it
+    expect(create.inputSchema.required).toEqual(["name", "instructions"]);
+    expect(create.inputSchema.properties.trigger.properties.type.enum).toEqual(["webhook"]);
     const schedule = create.inputSchema.properties.schedule;
     // No composition keywords anywhere in the tool surface: several agent
     // CLIs flatten or drop oneOf/anyOf/const when converting MCP tools for
@@ -899,6 +923,32 @@ describe("agents-proxy MCP surface", () => {
       reason: "The selected model needs it.",
     });
     expect(JSON.stringify(lastCredentialBody)).not.toContain("secret");
+  });
+
+  it("add_mcp_server sends names only and says the server is saved off (item 118)", async () => {
+    const res = await callTool("add_mcp_server", { name: "notes", command: "npx", args: ["-y", "@x/notes-mcp"], env_keys: ["NOTES_TOKEN"] });
+    expect(res.result.isError).toBeFalsy();
+    expect(res.result.content[0].text).toBe("Saved notes switched off");
+    expect(lastMcpAddBody).toEqual({ fromBotId: "bot-asker", fromThreadId: "thread-asker-routine", server: { name: "notes", command: "npx", args: ["-y", "@x/notes-mcp"], env_keys: ["NOTES_TOKEN"] } });
+    const refused = await callTool("add_mcp_server", { name: "notes", command: "npx", env: { NOTES_TOKEN: "fake-value" } });
+    expect(refused.result.isError).toBe(true);
+    expect(refused.result.content[0].text).toContain("Send names and addresses only");
+    const listed = (await rpc("tools/list")).result.tools.find((tool: { name: string }) => tool.name === "add_mcp_server");
+    expect(listed.inputSchema.additionalProperties).toBe(false);
+    expect(Object.keys(listed.inputSchema.properties)).not.toContain("enabled");
+    expect(Object.keys(listed.inputSchema.properties)).not.toContain("env");
+    expect(listed.description).toContain("only after the user explicitly asked for this server in this conversation");
+    expect(listed.description).not.toMatch(/—|–|composio|\b(safe|unsafe|safety)\b/i);
+  });
+
+  it("requests a key of a server a bot filed by its dynamic id (item 118)", async () => {
+    lastCredentialBody = null;
+    const res = await callTool("request_credential", { credential_id: "mcp:notes:NOTES_TOKEN:0123456789ab" });
+    expect(res.result.isError).toBeFalsy();
+    expect(lastCredentialBody).toEqual({ fromBotId: "bot-asker", fromThreadId: "thread-asker-routine", credentialId: "mcp:notes:NOTES_TOKEN:0123456789ab" });
+    lastCredentialBody = null;
+    expect((await callTool("request_credential", { credential_id: "mcp:notes:NOTES_TOKEN" })).result.isError).toBe(true);
+    expect(lastCredentialBody).toBeNull();
   });
 
   it("rejects credential ids outside the fixed allowlist locally", async () => {

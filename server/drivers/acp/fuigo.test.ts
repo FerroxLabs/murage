@@ -26,6 +26,7 @@
 // (core.ts:204-212). The shared `fake-acp-cli.ts` cannot be used for the env
 // half — its dump carries a fixed allowlist of variable names that does not
 // include FUIGO_API_KEY, so every assertion here would pass vacuously.
+import { TURN_ASK_RULES } from "../../../shared/ask-wording.ts";
 import { toolsMayBeLoadingNotice, toolsUnavailableNotice } from "../mcp-readiness.ts";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { cacheEnvFromProcess, markMountIncomplete } from "../../connector-cache.ts";
@@ -100,7 +101,7 @@ import { delimiter, join } from "node:path";
 const argv = process.argv.slice(2);
 const kind = argv.includes("--version") ? "version" : argv[0] === "models" ? "models" : "agent";
 // Explicit fields only; credentials are fixture-dump.ts fingerprints, never values.
-const PLAIN = ["FUIGO_ALLOW_UPSTREAM_HOSTS", "PATH", "HOME", "FUIGO_HOME", "FUIGO_MEMORY", "FUIGO_CLAUDE_SKILLS_ENABLED", "FUIGO_CLAUDE_RULES_ENABLED", "FUIGO_CLAUDE_AGENTS_ENABLED", "FUIGO_CLAUDE_MCPS_ENABLED", "FUIGO_CLAUDE_HOOKS_ENABLED", "FUIGO_CLAUDE_SESSIONS_ENABLED", "FUIGO_CURSOR_SKILLS_ENABLED", "FUIGO_CURSOR_RULES_ENABLED", "FUIGO_CURSOR_AGENTS_ENABLED", "FUIGO_CURSOR_MCPS_ENABLED", "FUIGO_CURSOR_HOOKS_ENABLED", "FUIGO_CURSOR_SESSIONS_ENABLED", "FUIGO_CODEX_SKILLS_ENABLED", "FUIGO_CODEX_RULES_ENABLED", "FUIGO_CODEX_AGENTS_ENABLED", "FUIGO_CODEX_MCPS_ENABLED", "FUIGO_CODEX_HOOKS_ENABLED", "FUIGO_CODEX_SESSIONS_ENABLED", "FUIGO_AGENTS_SKILLS_ENABLED", "OPENAI_BASE_URL", "OPENAI_MODEL"];
+const PLAIN = ["FUIGO_CONFIG", "FUIGO_ALLOW_UPSTREAM_HOSTS", "PATH", "HOME", "FUIGO_HOME", "FUIGO_MEMORY", "FUIGO_CLAUDE_SKILLS_ENABLED", "FUIGO_CLAUDE_RULES_ENABLED", "FUIGO_CLAUDE_AGENTS_ENABLED", "FUIGO_CLAUDE_MCPS_ENABLED", "FUIGO_CLAUDE_HOOKS_ENABLED", "FUIGO_CLAUDE_SESSIONS_ENABLED", "FUIGO_CURSOR_SKILLS_ENABLED", "FUIGO_CURSOR_RULES_ENABLED", "FUIGO_CURSOR_AGENTS_ENABLED", "FUIGO_CURSOR_MCPS_ENABLED", "FUIGO_CURSOR_HOOKS_ENABLED", "FUIGO_CURSOR_SESSIONS_ENABLED", "FUIGO_CODEX_SKILLS_ENABLED", "FUIGO_CODEX_RULES_ENABLED", "FUIGO_CODEX_AGENTS_ENABLED", "FUIGO_CODEX_MCPS_ENABLED", "FUIGO_CODEX_HOOKS_ENABLED", "FUIGO_CODEX_SESSIONS_ENABLED", "FUIGO_AGENTS_SKILLS_ENABLED", "OPENAI_BASE_URL", "OPENAI_MODEL"];
 const CREDENTIALS = ["FUIGO_API_KEY", "FUIGO_CODE_API_KEY", "FLUX_API_KEY", "MURAGE_FLUX_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY",
   ...Object.keys(process.env).filter((key) => /^MURAGE_LOCAL_[A-Z0-9_]+_API_KEY$/.test(key))];
 const fingerprint = (value) => createHash("sha256").update(value).digest("hex");
@@ -447,7 +448,7 @@ describe("engine commands", () => {
   it("still puts the persona in front of an ordinary turn", async () => {
     await runTurn({ text: "/not-a-command", system: "You are Moss." });
     const prompt = JSON.parse(readFileSync(join(dumps, "prompt.json"), "utf8")).prompt as Array<{ type: string; text?: string }>;
-    expect(prompt[0]!.text).toBe("You are Moss.\n\n/not-a-command");
+    expect(prompt[0]!.text).toBe(`You are Moss.\n\n${TURN_ASK_RULES}\n\n/not-a-command`);
   });
 });
 
@@ -482,7 +483,7 @@ describe("the system stack", () => {
       { text: "two", system: "You are Moss. Rules: be brief." },
       { text: "three", system: "You are Moss. Rules: be brief." },
     ]);
-    expect(sent).toEqual(["You are Moss. Rules: be brief.\n\none", "two", "three"]);
+    expect(sent).toEqual([`You are Moss. Rules: be brief.\n\n${TURN_ASK_RULES}\n\none`, "two", "three"]);
   });
 
   it("goes out again when it changes, and then holds still again", async () => {
@@ -491,7 +492,7 @@ describe("the system stack", () => {
       { text: "two", system: "You are Moss. New rule: no lists." },
       { text: "three", system: "You are Moss. New rule: no lists." },
     ]);
-    expect(sent).toEqual(["You are Moss.\n\none", "You are Moss. New rule: no lists.\n\ntwo", "three"]);
+    expect(sent).toEqual([`You are Moss.\n\n${TURN_ASK_RULES}\n\none`, `You are Moss. New rule: no lists.\n\n${TURN_ASK_RULES}\n\ntwo`, "three"]);
   });
 
   it("is alias-free with memory mounted, so it is sent once while each turn's body carries that turn's own alias", async () => {
@@ -543,7 +544,7 @@ describe("incoming image transport", () => {
     const data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aM1sAAAAASUVORK5CYII=";
     await runTurn({ images: [{ mimeType: "image/png", data }] });
     expect(JSON.parse(readFileSync(join(dumps, "prompt.json"), "utf8")).prompt).toEqual([
-      { type: "text", text: "hi" }, { type: "image", mimeType: "image/png", data },
+      { type: "text", text: `${TURN_ASK_RULES}\n\nhi` }, { type: "image", mimeType: "image/png", data },
     ]);
     expect(readFileSync(join(NATIVE_DIR, "t-fuigo.ndjson"), "utf8")).not.toContain(data);
     expect(instance!.adapter.capabilities.images).toBe(true);
@@ -870,6 +871,21 @@ describe("fuigo credential — transformEnv, not applyTurnEnv", () => {
     // turn from spawning at all.
     expect(dump("models").env.FUIGO_API_KEY).toBe(fixtureCredentialFingerprint(USER_OWN_FLUX_KEY));
     expect(dump("agent").env.FUIGO_API_KEY).toBe(fixtureCredentialFingerprint(USER_OWN_FLUX_KEY));
+  });
+});
+
+describe("fuigo bare cloud-model ids take the Flux memory opt-outs (03-A3)", () => {
+  it("a bare Engine-models id sent on the workspace Flux key carries capture and inject off", async () => {
+    await runTurn({ model: "claude-opus-5" });
+    const config = JSON.parse(dump("agent").env.FUIGO_CONFIG ?? "{}");
+    const headers = JSON.stringify(config);
+    expect(headers).toContain("x-flux-memory-capture");
+    expect(headers).toContain("x-flux-memory-inject");
+  });
+
+  it("a flux-* id still carries them", async () => {
+    await runTurn({ model: "flux-auto" });
+    expect(dump("agent").env.FUIGO_CONFIG ?? "").toContain("x-flux-memory-capture");
   });
 });
 

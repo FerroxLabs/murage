@@ -124,3 +124,20 @@ describe("which engine a brand new bot lands on", () => {
       .toEqual({ instanceId: "", model: "" });
   });
 });
+
+// 1.0.4 SL-K K5 (168): an engine that lists models but names no default still gives a new bot a model.
+describe("an engine with models but no default model", () => {
+  it("lands a new bot on the first listed model", () => {
+    const listed = engine({ instanceId: "local", models: { default: "", options: [{ id: "a" }, { id: "b" }] } });
+    expect(pickDefaultEngine([listed])).toEqual({ instanceId: "local", model: "a" });
+  });
+  it("still skips an engine that lists nothing (Fuigo with no key)", () => {
+    const empty = engine({ instanceId: "fuigo", driverKind: "fuigoAgent", models: { default: "", options: [] } });
+    expect(pickDefaultEngine([empty])).toEqual({ instanceId: "", model: "" });
+  });
+  it("keeps the ranking for engines that name a default", () => {
+    const listed = engine({ instanceId: "local", models: { default: "", options: [{ id: "a" }] } });
+    expect(pickDefaultEngine([listed, CLAUDE_SIGNED_IN]).instanceId).toBe("claude");
+    expect(pickDefaultEngine([CLAUDE_SIGNED_IN]).model).toBe("claude-sonnet-5");
+  });
+});

@@ -219,6 +219,8 @@ export interface FluxMemoryContext {
   audience: FluxAudienceClass;
   /** The bot is "Asks me first" (Phase 1): owner turn, but off/off. */
   asksFirst?: boolean;
+  /** The thread holds a bank, card or id number (flux-capture-hold.ts): capture off, inject on. */
+  numberHold?: boolean;
   spaces?: FluxSpacePlan;
 }
 
@@ -232,7 +234,7 @@ export const FLUX_MEMORY_UNKNOWN: FluxMemoryContext = Object.freeze({ audience: 
  * non-owner here. Background is never the owner's.
  */
 export function fluxMemoryContextForTurn(
-  turn: Pick<SendTurnInput, "background" | "prewarm" | "warmIdentity"> | undefined,
+  turn: Pick<SendTurnInput, "background" | "prewarm" | "warmIdentity" | "fluxCaptureHold"> | undefined,
   extra: Pick<FluxMemoryContext, "asksFirst" | "spaces"> = {},
 ): FluxMemoryContext {
   if (!turn) return FLUX_MEMORY_UNKNOWN;
@@ -243,14 +245,15 @@ export function fluxMemoryContextForTurn(
   // every Flux owner turn would respawn the warm process it just adopted. A
   // prewarm with no identity has nothing to adopt it: off/off.
   if (!identity) return turn.prewarm ? { audience: "prewarm" } : FLUX_MEMORY_UNKNOWN;
-  if (identity.audience === "owner" && identity.decidedOwner === true) return { audience: "owner", ...extra };
+  if (identity.audience === "owner" && identity.decidedOwner === true) return { audience: "owner", ...extra, ...(turn.fluxCaptureHold ? { numberHold: true } : {}) };
   return { audience: "non-owner" };
 }
 
 // ---------------------------------------------------------------- decision --
 
 export type FluxMemoryReason =
-  | "owner" | "non-owner" | "background" | "prewarm" | "unknown" | "asks-first" | "kill-switch" | "owner-gated" | "external-off" | "breaker" | "inject-off";
+  | "owner" | "non-owner" | "background" | "prewarm" | "unknown" | "asks-first" | "kill-switch" | "owner-gated" | "external-off" | "breaker" | "inject-off"
+  | "number-hold";
 
 export interface FluxMemoryDecision {
   headers: Record<string, string>;
@@ -283,6 +286,11 @@ export function fluxMemoryDecision(
   else if (settings.ownerMemory === "off") reason = "owner-gated";
   // "Use Flux memory" off: no Flux capture and no Flux inject; Murage's own recall carries memory.
   else if (settings.external === false) reason = "external-off";
+  // A number in the thread: Flux keeps nothing of this request (the history it resends holds the number); recall from Flux stays on.
+  else if (context.numberHold) {
+    reason = "number-hold";
+    inject = settings.inject === "off" || breaker.isOpen() ? "off" : "on";
+  }
   else {
     capture = "on";
     inject = "on";

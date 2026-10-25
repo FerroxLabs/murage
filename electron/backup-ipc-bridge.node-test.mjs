@@ -63,7 +63,7 @@ function fixture() {
     closedBackupController: Object.fromEntries(["status", "stage", "install", "disable"].map(name => [name, record(`closed.${name}`, { supported: true, state: "unconfigured" })])),
     closedBackupRequested: false,
     backupRemoteHost: new Proxy({}, { get: (_target, name) => record(`remote.${String(name)}`, Promise.resolve({ ok: true })) }),
-    backupRemoteOperations: new Set(), desktopShutdownStarted: false, desktopRecoveryMode: false,
+    backupRemoteInitializing: false, backupRemoteOperations: new Set(), desktopShutdownStarted: false, desktopRecoveryMode: false,
     // Defined elsewhere in main.mjs; the clear-review handler calls it.
     announceLastBackupFailure: async () => {},
   };

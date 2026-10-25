@@ -60,7 +60,7 @@ describe("a dispatch failure reaches a transcript a bot reads only as a code", (
   const index = files.find(file => file.name === "index.ts")!.text;
   it("the chip a delegation that could not start leaves in the source conversation is a table line, not the engine's message", () => {
     expect(index).not.toMatch(/delegation to @\$\{bot\?\.name \?\? toBotId\} could not start: \$\{/);
-    expect(index).toMatch(/status\("row_could_not_start", \{ name: botNameOf\(bot, toBotId\), why: failureCodeFrom\(why\) \}\)/);
+    expect(index).toMatch(/status\("row_could_not_start", \{ name: botNameOf\(bot, toBotId\), why: code \}\)/);
   });
   it("the full explanation of a refusal before the turn began is kept in the worker's own conversation", () => {
     // the hand-off's start moved to the dispatch (pm-sends): a startTurn that throws was refused before the turn began
@@ -73,7 +73,7 @@ describe("a dispatch failure reaches a transcript a bot reads only as a code", (
   });
   it("a shared run's dispatch failure is kept as a status and the engine's words only as the owner's diagnostic (R8-02)", () => {
     expect(index).not.toMatch(/onDispatchError: note => finish\(undefined, note\)/);
-    expect(index).toMatch(/onDispatchError: reason => finish\(undefined, \{ ending: status\("delegated_turn_could_not_start", \{ why: failureCodeFrom\(reason\) \}\), diagnostic: reason \}\)/);
+    expect(index).toMatch(/onDispatchError: \(reason, error\) => finish\(undefined, \{ ending: status\("delegated_turn_could_not_start", \{ why: startFailureCodeFrom\(error \?\? reason\) \}\), diagnostic: reason \}\)/);
   });
 });
 

@@ -12,6 +12,7 @@ import { branchChangesMayBePending } from "./branch-change-flag.ts";
 import { CLAIMABLE_SOURCE, settleRows, TOMBSTONED } from "./claim-settle.ts";
 import { DENIED_PLACE } from "./deny.ts";
 import { inheritEdge } from "./revoke-commit.ts";
+import { insertMemoryRecord } from "./record-write.ts";
 
 let lastScope = "";
 const workListeners=new Set<()=>void>();
@@ -406,7 +407,7 @@ export function publishMemoryWork(work: MemoryWork, worker: string, input: Memor
       cursor=chunk.endByte;
       const id=createHash("sha256").update(`${work.sourceId}:${work.revision}:${chunk.startByte}:${chunk.endByte}`).digest("hex");
       const assertion=work.speaker==="owner"?"owner-statement":work.speaker==="tool"?"tool-observation":"assistant-inference";
-      db.prepare("INSERT OR IGNORE INTO memory_records VALUES(?,1,?,'source',?,?,'active',0,?,NULL,NULL,?)").run(id,work.scopeId,chunk.text,assertion,now,now);
+      insertMemoryRecord(db,{id,version:1,scopeId:work.scopeId,kind:"source",text:chunk.text,assertion,state:"active",validFrom:now,createdAt:now},{orIgnore:true});
       db.prepare("INSERT OR IGNORE INTO memory_evidence VALUES(?,1,?,?,?,?)").run(id,work.sourceId,work.revision,chunk.startByte,chunk.endByte);
       inheritEdge(db,{kind:"record",id,version:1},{kind:"source",id:work.sourceId});
       db.prepare("INSERT OR IGNORE INTO memory_projection_receipts VALUES(?,1,1,'pending','pending',NULL)").run(id);

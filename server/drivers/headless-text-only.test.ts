@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { spawn } from "node:child_process";
 import { spawnCli } from "../procs.ts";
-import { CLAUDE_ALLOWED_HOME_NEW, claudeTextOnlyTurn, headlessTextOnlyTurn, type ClaudeTextOnlyConfig, type HeadlessEngineConfig } from "./headless-text-only.ts";
+import { CLAUDE_ALLOWED_HOME_NEW, claudeLoginNamespace, claudeTextOnlyTurn, headlessTextOnlyTurn, type ClaudeTextOnlyConfig, type HeadlessEngineConfig } from "./headless-text-only.ts";
 import {
   FUIGO_OFF_SWITCHES, GROK_OFF_SWITCHES, emptyMissHistory, managedConfigIdentity, preflightRoute, preflightTargets, recordMiss,
   type AttemptTransport, type TextOnlyTurnInput, type TransportChild, type TransportIntent,
@@ -192,12 +192,12 @@ posix("headless text-only: stub binary (group 1)", () => {
     expect(alive(records()[0].pid)).toBe(false);
   });
 
-  it("Claude: reduced env, stdin prompt, credentials copied, the A.1 Claude argv", async () => {
+  it("Claude: reduced env, stdin prompt, the login read in place (never copied), the A.1 Claude argv", async () => {
     const config = join(base, "claude-config"); mkdirSync(config); writeFileSync(join(config, ".credentials.json"), "{}");
-    const full = { PATH: "/usr/bin:/bin", ANTHROPIC_API_KEY: "ak", HOME: "/should/not/leak", XAI_API_KEY: "leak", OPENAI_API_KEY: "leak" };
+    const full = { PATH: "/usr/bin:/bin", ANTHROPIC_API_KEY: "ak", HOME: "/should/not/leak", XAI_API_KEY: "leak", OPENAI_API_KEY: "leak", CLAUDE_CONFIG_DIR: config };
     const result = await claudeTextOnlyTurn(input(), {
       cli: process.execPath, cliPrefixArgs: [STUB, "--stub=ok", `--stub-out=${out}`], tmpBase: join(base, "tmp"),
-      env: full, credentialsDir: config, preflight: preflight(),
+      env: full, preflight: preflight(), platform: "linux",
     });
     expect(result.verdict.state).toBe("validated");
     const [r] = records();
@@ -207,9 +207,16 @@ posix("headless text-only: stub binary (group 1)", () => {
     ]);
     // The settings ride in a per-attempt file whose path names the temp root (finding 4), carrying the same hook switch.
     expect(r.settingsContent).toBe('{"disableAllHooks":true}');
-    expect(envKeys(r.env)).toEqual(["ANTHROPIC_API_KEY", "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "CLAUDE_CONFIG_DIR", "DISABLE_AUTOUPDATER", "DISABLE_TELEMETRY", "HOME", "PATH"]);
+    expect(envKeys(r.env)).toEqual(["ANTHROPIC_API_KEY", "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "CLAUDE_CONFIG_DIR", "CLAUDE_SECURESTORAGE_CONFIG_DIR", "DISABLE_AUTOUPDATER", "DISABLE_TELEMETRY", "HOME", "PATH"]);
     expect(r.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe("2000");
-    expect(r.homeFiles).toEqual([".credentials.json"]);
+    // the account's own folder, verbatim: the CLI reads the login where it lives
+    expect(r.env.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe(claudeLoginNamespace(full, "linux"));
+    expect(r.env.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe(config);
+    expect(r.homeFiles).toEqual([]);
+    // the account's file is the only copy on disk
+    expect(existsSync(join(config, ".credentials.json"))).toBe(true);
+    const walk = (d: string): string[] => existsSync(d) ? readdirSync(d, { recursive: true }).map(String) : [];
+    expect(walk(join(base, "tmp")).filter((f) => f.endsWith(".credentials.json"))).toEqual([]);
     expect(readFileSync(out, "utf8")).toContain('"stdin":"USER"');
   });
 });
@@ -476,9 +483,8 @@ posix("audit finding 2: exceptions after spawn never remove the root under a liv
     expect(alive(r.pid)).toBe(false);
     expect(existsSync(r.env.HOME)).toBe(false);
   });
-  it("the same holds for Claude: the credential directory is removed only after the child is gone", async () => {
-    const config = join(base, "claude-config"); mkdirSync(config); writeFileSync(join(config, ".credentials.json"), "{}");
-    await expect(claudeTextOnlyTurn(input({ transport: { hooks: { onChild: async () => { await sleep(600); throw new Error("persist failed"); } } } }), claudeCfg("sleep", { credentialsDir: config }))).rejects.toThrow("persist failed");
+  it("the same holds for Claude: the temp root is removed only after the child is gone", async () => {
+    await expect(claudeTextOnlyTurn(input({ transport: { hooks: { onChild: async () => { await sleep(600); throw new Error("persist failed"); } } } }), claudeCfg("sleep"))).rejects.toThrow("persist failed");
     const [r] = records();
     expect(alive(r.pid)).toBe(false);
     expect(existsSync(r.env.HOME)).toBe(false);

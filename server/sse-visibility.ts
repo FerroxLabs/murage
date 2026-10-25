@@ -1,4 +1,5 @@
-import { cloudIdentity, isOwnerBrowser } from "./cloud-request-identity.ts";
+import { cloudIdentity, ownerBrowserActs } from "./cloud-request-identity.ts";
+import { isDesktopApp } from "./cloud-owner-surface.ts";
 // Who may see which SSE frame.
 //
 // `broadcast()` writes to every open stream. Until this module existed the
@@ -240,7 +241,7 @@ export function requestSurface(
 ): Surface {
   if (process.env.MURAGE_CLOUD_ROLE === "home") {
     const identity = cloudIdentity(headers);
-    return identity?.scope === "owner-desktop" || identity?.scope === "owner-phone" || isOwnerBrowser(identity) || (identity?.scope === "browser" && identity.settingsRead) ? "desktop" : "remote";
+    return identity?.scope === "owner-desktop" || identity?.scope === "owner-phone" || ownerBrowserActs(identity) || (identity?.scope === "browser" && identity.settingsRead) ? "desktop" : "remote";
   }
   if (companionMarked(headers)) return "remote";
   const marked =
@@ -251,6 +252,18 @@ export function requestSurface(
   // itself with a single-use ticket, which `adoptResourceTicket` has already
   // turned into this header; the proof itself in a query proves nothing.
   return secretProven(headerValue(headers, SURFACE_SECRET_HEADER)) ? DESKTOP_SURFACE : "remote";
+}
+
+/** Whether a request comes from the computer running Murage itself. A Cloud home's `owner-phone` session maps to the
+ * `desktop` surface so ordinary owner access works from the phone, but a phone is not the computer: putting a site online,
+ * the browser's Full mode, approved sites and wider message reach are decisions the computer makes. Those handlers ask
+ * this instead of `requestSurface`, so the phone gets the same refusal a paired companion phone already gets. */
+export function requestFromComputer(
+  headers: Partial<Record<string, string | string[] | undefined>>,
+  query?: URLSearchParams | null,
+): boolean {
+  // One predicate for "the desktop app itself" (int/104-rc1): the Cloud owner surface owns it, this name stays for callers.
+  return isDesktopApp(headers as IncomingHttpHeaders, query);
 }
 
 /** What one frame is about. `workspace` frames belong to no conversation. */
@@ -331,6 +344,11 @@ export const KNOWN_FRAME_KINDS = [
   "memory.waiting",
   "open-cards.ready",
   "deletion-owed",
+  "routine",
+  "routine.run",
+  "webhook",
+  "webhook.attempt",
+  "webhook.deleted",
 ] as const;
 
 /** Read the conversation a frame is about out of its payload.
@@ -422,6 +440,20 @@ export function frameSubject(payload: Record<string, unknown>): FrameSubject {
       return { scope: "desktop" };
     // An engine's copy of a deleted conversation is still owed: fixed sentences naming the engine, no paths. Desktop only.
     case "deletion-owed":
+      return { scope: "desktop" };
+    // A routine and its run carry the prompt, the instruction history and the
+    // run's output, so they follow the bot they belong to: a hidden bot's
+    // routine never reaches a phone or chat browser.
+    case "routine":
+    case "routine.run": {
+      const routineBotId = id(nested(payload, kind === "routine" ? "routine" : "run")?.botId);
+      return routineBotId ? { scope: "bot", botId: routineBotId } : { scope: "desktop" };
+    }
+    // Webhook settings, instruction prompts and up to 2,000 characters of a
+    // delivery body that may never become a task: owner desktop only.
+    case "webhook":
+    case "webhook.attempt":
+    case "webhook.deleted":
       return { scope: "desktop" };
     case "sidebar.order":
       return payload.audience === "remote" ? { scope: "remote" } : { scope: "desktop" };

@@ -53,6 +53,8 @@ posixOnly("a turn refused at acceptance releases the workspace writer lease", ()
     const created = await api("POST", "/api/bots", { name: "Lease fixture", modelSelection: { instanceId: "piGate", model: models[0].id } });
     expect(created.status).toBe(201);
     const bot = created.body.bot as { id: string; threadId: string };
+    const bystander = await api("POST", "/api/bots", { name: "Roster change during dispatch", modelSelection: { instanceId: "piGate", model: models[0].id } });
+    expect(bystander.status).toBe(201);
     const promptCountBefore = dumpRows().filter(row => row.prompt).length;
     expect((await api("PATCH", `/api/bots/${bot.id}`, { computer: "off", browser: false, composio: false })).status).toBe(200);
 
@@ -60,9 +62,10 @@ posixOnly("a turn refused at acceptance releases the workspace writer lease", ()
     expect((await api("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "hold at the session handshake" })).status).toBe(202);
     await expect.poll(() => existsSync(`${gate}.waiting`), { timeout: 15000 }).toBe(true);
     expect((await botState(bot.id)).busy).toBe(true);
-    // Inside that window the roster changes: the memory policy revision moves
-    // and the prepared disclosure is no longer current.
-    expect((await api("POST", "/api/bots", { name: "Roster change during dispatch", modelSelection: { instanceId: "piGate", model: models[0].id } })).status).toBe(201);
+    // Inside that window the roster changes: another bot moves to a new team
+    // (an audience change; adding a bot withdraws nothing), the memory policy
+    // revision moves and the prepared disclosure is no longer current.
+    expect((await api("PATCH", `/api/bots/${bystander.body.bot.id}`, { section: "Moved during dispatch" })).status).toBe(200);
     writeFileSync(gate, "");
 
     // Acceptance refuses the turn and the provider turn is stopped. Since
