@@ -54,7 +54,8 @@
         "title": "Short-Term Rentals",
         "description": "Host prepares a guest messaging pack from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. ",
         "appearance": {
-          "color": "green"
+          "color": "green",
+          "mascotBody": "squircle"
         },
         "skills": [
           "email-template-system",

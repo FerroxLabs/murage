@@ -148,7 +148,8 @@ it("returns complete usage totals for reported, unreported and mixed ledger rows
     insert.run("other", "other", 999, 999, 1);
     expect(call("GET", "project")).toMatchObject({ body: { strip: { usage: { workMs: 60000, input: 4, output: 6, tokensReported: true, charge: null } } } });
     insert.run("two", "g", null, null, 0);
-    expect(call("GET", "project")).toMatchObject({ body: { strip: { usage: { workMs: 120000, input: 4, output: 6, tokensReported: false, charge: null } } } });
+    // usage-perms-ui (350203f93): tokens count as reported when any settled turn of the bot reported them, the same sum the budget checks
+    expect(call("GET", "project")).toMatchObject({ body: { strip: { usage: { workMs: 120000, input: 4, output: 6, tokensReported: true, charge: null } } } });
     db.prepare("DELETE FROM usage_ledger WHERE settle_key='one'").run();
     expect(call("GET", "project")).toMatchObject({ body: { strip: { usage: { workMs: 60000, input: 0, output: 0, tokensReported: false, charge: null } } } });
   } finally { db.close(); }

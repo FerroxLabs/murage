@@ -1233,6 +1233,22 @@ def swap_unresolved(ctx, reset_id, operation):
         return True
     return found is not None and found["phase"] in ("swap", "committed")
 
+BACKUP_STAGE_DIR = ".murage-backup"
+
+def place_database_snapshot(restored):
+    """A nightly snapshot holds the home database as SQLite's online backup in a staging folder (murage-backup), not the live
+    WAL files. Put it where the home reads it and drop any -wal/-shm that came with an older snapshot. Absent: nothing to do."""
+    stage = os.path.join(restored, BACKUP_STAGE_DIR)
+    staged = os.path.join(stage, "messages.db")
+    if os.path.isfile(staged) and not os.path.islink(staged):
+        live = os.path.join(restored, AUTH_DB)
+        for suffix in ("-wal", "-shm"):
+            if os.path.lexists(live + suffix):
+                os.unlink(live + suffix)
+        os.makedirs(os.path.dirname(live), exist_ok=True)
+        os.replace(staged, live)
+    shutil.rmtree(stage, ignore_errors=True)
+
 def restore_into_place(ctx, cfg, snapshot, reset_id, operation, check_deadline=lambda: None):
     work = work_dir(ctx, reset_id, operation)
     shutil.rmtree(work, ignore_errors=True)
@@ -1244,6 +1260,7 @@ def restore_into_place(ctx, cfg, snapshot, reset_id, operation, check_deadline=l
     try:
         if code != 0 or not os.path.isdir(restored):
             raise ValueError("Restore failed")
+        place_database_snapshot(restored)
         # The current sign-in state replaces the restored one in the staged copy, before anything is swapped.
         carry_auth_state(os.path.join(data, AUTH_DB), os.path.join(restored, AUTH_DB), ctx["binding"].get("generation"))
         carry_preflight(data, restored)

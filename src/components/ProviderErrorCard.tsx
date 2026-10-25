@@ -9,11 +9,12 @@ import { opensPurchasePages } from "@/lib/native-shell";
 
 /** Structured provider errors use reviewed copy, never backend HTML/JSON or
  * a URL supplied in an error message. Retry remains an explicit user action. */
-export function ProviderErrorCard({ info, details, diagnostic, turnId, incident, onRetry, onOpenProviderSettings }: {
+export function ProviderErrorCard({ info, details, diagnostic, turnId, incident, onRetry, retryLabel, onOpenProviderSettings }: {
   info: ProviderErrorInfo;
   details?: string;
   diagnostic?: unknown; turnId?: string; incident?:IncidentMessageSelection;
   onRetry?: () => void;
+  retryLabel?: string;
   onOpenProviderSettings: () => void;
 }) {
   const titleId = useId();
@@ -49,7 +50,7 @@ export function ProviderErrorCard({ info, details, diagnostic, turnId, incident,
         </button>
         {onRetry && <button type="button" onClick={onRetry}
           className={"inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-[13px] font-medium text-ink-secondary hover:bg-raised hover:text-ink " + focus}>
-          <RefreshCw size={14} aria-hidden="true" /> {t("providerError.retry")}
+          <RefreshCw size={14} aria-hidden="true" /> {retryLabel ?? t("providerError.retry")}
         </button>}
       </div>
       {(hasHttpStatus || details || hasDiagnostic) && <details className="mt-3 text-[11px] text-ink-secondary">

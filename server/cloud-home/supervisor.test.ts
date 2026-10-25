@@ -127,16 +127,25 @@ describe("home boot and supervision", () => {
       const broker = join(dir, "broker"); mkdirSync(broker, { mode: 0o755 }); chmodSync(broker, 0o755);
       const owners = new Map<string, [number, number]>();
       prepareBrokerDir(identity, broker, (path, uid, gid) => { owners.set(path, [uid, gid]); });
-      expect(owners.get(broker)).toEqual([0, identity.turnGid]); expect(lstatSync(broker).mode & 0o7777).toBe(0o2770);
+      expect(owners.get(broker)).toEqual([0, identity.turnGid]); expect(lstatSync(broker).mode & 0o7777).toBe(0o3770);
       const source = readFileSync(new URL("./supervisor.ts", import.meta.url), "utf8");
       const bind = source.indexOf("bindHomeVolume(\"/data\""), prepare = source.indexOf("prepareBrokerDir(identity);"), drop = source.indexOf("process.setuid!(identity.uid)");
       expect(bind).toBeGreaterThan(-1); expect(prepare).toBeGreaterThan(bind); expect(drop).toBeGreaterThan(prepare);
     });
-    it("creates the approval broker directory as root:murage-turn 2770, outside every engine home", () => {
+    it("creates the approval broker directory with the sticky bit (3770) so a group member cannot unlink a socket it does not own", () => {
+      const dir = mkdtempSync(join(tmpdir(), "broker-")); dirs.push(dir);
+      const broker = join(dir, "broker");
+      prepareBrokerDir(identity, broker, () => {});
+      expect(lstatSync(broker).mode & 0o7777).toBe(0o3770);
+      const repaired = join(dir, "repaired"); mkdirSync(repaired, { mode: 0o2770 }); chmodSync(repaired, 0o2770);
+      prepareBrokerDir(identity, repaired, () => {});
+      expect(lstatSync(repaired).mode & 0o7777).toBe(0o3770);
+    });
+    it("creates the approval broker directory as root:murage-turn 3770, outside every engine home", () => {
       const dir = mkdtempSync(join(tmpdir(), "broker-")); dirs.push(dir);
       const broker = join(dir, "broker"); const owners = new Map<string, [number, number]>();
       prepareBrokerDir(identity, broker, (path, uid, gid) => { owners.set(path, [uid, gid]); });
-      expect(owners.get(broker)).toEqual([0, identity.turnGid]); expect(lstatSync(broker).mode & 0o7777).toBe(0o2770);
+      expect(owners.get(broker)).toEqual([0, identity.turnGid]); expect(lstatSync(broker).mode & 0o7777).toBe(0o3770);
     });
   });
 });

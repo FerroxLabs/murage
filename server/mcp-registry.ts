@@ -3,6 +3,7 @@
 // it to mount the fleet; index.ts reads it to answer the /api/mcp/servers
 // routes. Two parsers for one file format is how the file and the UI drift.
 import { mountNameRefusal } from "../shared/mount-identity.ts";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 
 import { MASK, displayUrl, splitSecretUrl, urlHasSecret } from "../shared/mcp-secret-url.mjs";
@@ -15,6 +16,13 @@ export interface StoredMcpServer {
   /** Names whose value the secret store holds (config.json says `true`, MCP-LINK
    * T16). Present only when non-empty. A mount resolves them at mount time. */
   heldEnv?: string[];
+  /** Env NAMES a bot declared (add_mcp_server, item 118) whose value the owner
+   * has not entered yet. No value exists anywhere; the entry cannot be turned on
+   * while one is listed. Present only when non-empty. */
+  pendingEnv?: string[];
+  /** The revision stamp of what this entry runs (mcpEntryRev), kept on an entry a
+   * bot added; a credential or "Turn on" card is bound to it. */
+  rev?: string;
   enabled: boolean;
   /** Why Murage turned this entry off at load (Rule 57a,
    * `name-collision:<survivor>`); kept only while the entry is off. */
@@ -78,15 +86,52 @@ export const RESERVED_MCP_NAMES: ReadonlySet<string> = new Set([
   "murage-memory",
 ]);
 
+const REV = /^[0-9a-f]{12}$/;
+
 const storedEntrySchema = z.object({
   command: z.string().trim().min(1).max(1_024),
   args: z.array(z.string().max(4_096)).max(MAX_ARGS).optional(),
   env: z.record(z.string(), z.union([z.string().max(16_384), z.literal(true)])).optional(),
+  pendingEnv: z.array(z.string().max(64)).max(MAX_ENV).optional(),
+  rev: z.string().regex(REV).optional(),
   enabled: z.boolean().optional(),
   disabledReason: z.string().max(200).optional(),
 }).strict();
 
-const mutationEntrySchema = storedEntrySchema;
+// A renderer mutation never sets the pending slots or the stamp: those belong to
+// the bot route and the card routes (item 118).
+const mutationEntrySchema = storedEntrySchema.omit({ pendingEnv: true, rev: true });
+
+/** The revision stamp of what an entry runs: its name and command with
+ * arguments, or its name, link, transport and sign-in (MCP-118-175 118-2). Any
+ * edit that changes one of them changes the stamp, so a card made for the old
+ * entry saves nothing for the new one. */
+export function mcpEntryRev(name: string, server: AnyStoredMcpServer): string {
+  const shape = isRemoteMcpServer(server)
+    ? [name, "remote", server.url, server.transport ?? "http", server.auth]
+    : [name, "stdio", server.command, server.args];
+  return createHash("sha256").update(JSON.stringify(shape)).digest("hex").slice(0, 12);
+}
+
+/** The key names an entry still waits on (env names or header names). */
+export function mcpPendingKeys(server: AnyStoredMcpServer): string[] {
+  return [...(isRemoteMcpServer(server) ? server.pendingHeaders ?? [] : server.pendingEnv ?? [])];
+}
+
+/** The key names an entry declares at all: pending, held and literal. */
+export function mcpDeclaredKeys(server: AnyStoredMcpServer): string[] {
+  if (isRemoteMcpServer(server)) return [...Object.keys(server.headers), ...(server.pendingHeaders ?? [])];
+  return [...Object.keys(server.env), ...(server.heldEnv ?? []), ...(server.pendingEnv ?? [])];
+}
+
+function pendingEnvError(names: readonly string[], env: Record<string, unknown>): string | null {
+  for (const key of names) {
+    const invalid = environmentNameError(key);
+    if (invalid) return invalid;
+    if (Object.hasOwn(env, key)) return `${key} is listed twice.`;
+  }
+  return new Set(names).size === names.length ? null : "A key is listed twice.";
+}
 
 /** Why a custom server name is refused, or null (Rules 26, 28). `others`
  * is every OTHER stored server's name: a name that cannot be told apart from
@@ -118,6 +163,9 @@ export function parseStoredMcpServer(
   if (Object.keys(rawEnv).length > MAX_ENV) {
     return { ok: false, error: `Use at most ${MAX_ENV} environment variables.` };
   }
+  const pendingEnv = parsed.data.pendingEnv ?? [];
+  const invalidPending = pendingEnvError(pendingEnv, rawEnv);
+  if (invalidPending) return { ok: false, error: invalidPending };
   const env: Record<string, string> = {};
   const heldEnv: string[] = [];
   for (const [key, value] of Object.entries(rawEnv)) {
@@ -134,6 +182,8 @@ export function parseStoredMcpServer(
       args: parsed.data.args ?? [],
       env,
       ...(heldEnv.length > 0 ? { heldEnv } : {}),
+      ...(pendingEnv.length > 0 ? { pendingEnv: [...pendingEnv] } : {}),
+      ...(parsed.data.rev ? { rev: parsed.data.rev } : {}),
       // A hand-authored entry has always mounted unless it said otherwise.
       enabled: parsed.data.enabled !== false,
       ...(parsed.data.enabled === false && parsed.data.disabledReason ? { disabledReason: parsed.data.disabledReason } : {}),
@@ -178,7 +228,12 @@ export function parseMcpServerMutation(
   const packaged = options.secretsInBody === false;
   const env: Record<string, string> = {};
   const heldEnv: string[] = [];
+  // Item 118: a key a bot declared stays pending through an edit until a value
+  // for it arrives; a `true` placeholder for it is not a held value.
+  const wasPending = new Set(existing?.pendingEnv ?? []);
+  const pendingEnv = [...wasPending].filter((key) => typeof incomingEnv[key] !== "string");
   for (const [key, value] of Object.entries(incomingEnv)) {
+    if (value === true && wasPending.has(key)) continue;
     if (value === true) {
       const saved = existing?.env[key];
       if (saved !== undefined) env[key] = saved;
@@ -197,6 +252,8 @@ export function parseMcpServerMutation(
       args: parsed.data.args ?? [],
       env,
       ...(heldEnv.length > 0 ? { heldEnv } : {}),
+      ...(pendingEnv.length > 0 ? { pendingEnv } : {}),
+      ...(existing?.rev ? { rev: existing.rev } : {}),
       // A newly added command is inert until the person has tested and
       // explicitly enabled it. Existing file-authored entries keep today's
       // enabled-by-default behavior through parseStoredMcpServer.
@@ -239,6 +296,11 @@ export interface StoredRemoteMcpServer {
   headers: Record<string, string | true>;
   local?: McpLocalConfirmation;
   urlSecret?: true;
+  /** Header NAMES a bot declared (item 118) with no value anywhere yet; not in
+   * `headers`. The entry cannot be turned on while one is listed. */
+  pendingHeaders?: string[];
+  /** As for a command server (mcpEntryRev). */
+  rev?: string;
   enabled: boolean;
   /** As for a command server (Rule 57a). */
   disabledReason?: string;
@@ -327,6 +389,8 @@ const remoteEntrySchema = z.object({
   headers: z.record(z.string(), z.union([z.string(), z.literal(true)])).optional(),
   local: z.enum(["this-computer", "local-network"]).optional(),
   urlSecret: z.literal(true).optional(),
+  pendingHeaders: z.array(z.string().max(64)).max(MAX_MCP_HEADERS).optional(),
+  rev: z.string().regex(REV).optional(),
   enabled: z.boolean().optional(),
   disabledReason: z.string().max(200).optional(),
 }).strict();
@@ -382,8 +446,17 @@ function buildRemote(
   }
   const invalidHeader = headerError(headers);
   if (invalidHeader) return { ok: false, error: invalidHeader };
+  // Stored pending header names (item 118); a mutation never carries them.
+  const pendingHeaders = mutation === null ? parsed.data.pendingHeaders ?? [] : [];
+  for (const header of pendingHeaders) {
+    if (!HEADER_NAME.test(header)) return { ok: false, error: `Header name “${header}” is not valid.` };
+    if (isRefusedMcpHeaderName(header)) return { ok: false, error: `Header “${header}” is set by Murage and cannot be changed.` };
+    if (Object.keys(headers).some((name) => name.toLowerCase() === header.toLowerCase())) return { ok: false, error: `Header “${header}” is listed twice.` };
+  }
+  if (new Set(pendingHeaders.map((header) => header.toLowerCase())).size !== pendingHeaders.length) return { ok: false, error: "A header is listed twice." };
+  if (Object.keys(headers).length + pendingHeaders.length > MAX_MCP_HEADERS) return { ok: false, error: `Use at most ${MAX_MCP_HEADERS} headers.` };
   const auth = parsed.data.auth ?? (Object.keys(headers).length > 0 ? "header" : "none");
-  if (auth === "header" && Object.keys(headers).length === 0) {
+  if (auth === "header" && Object.keys(headers).length === 0 && pendingHeaders.length === 0) {
     return { ok: false, error: "Add the header that carries the API key." };
   }
   // Key order is fixed so a normalized entry serialises the same every time.
@@ -394,6 +467,8 @@ function buildRemote(
     headers,
     ...(defaults.local ? { local: defaults.local } : {}),
     ...(parsed.data.urlSecret ? { urlSecret: true as const } : {}),
+    ...(pendingHeaders.length > 0 ? { pendingHeaders: [...pendingHeaders] } : {}),
+    ...(mutation === null && parsed.data.rev ? { rev: parsed.data.rev } : {}),
     enabled: defaults.enabled,
     ...(mutation === null && !defaults.enabled && parsed.data.disabledReason ? { disabledReason: parsed.data.disabledReason } : {}),
   };
@@ -457,11 +532,21 @@ export function parseAnyMcpServerMutation(
     local: undefined,
   }, { secretsInBody: options.secretsInBody === true });
   if (!built.ok) return built;
+  // Item 118: a header a bot declared stays pending through an edit until a
+  // value for it arrives; a `true` placeholder for it is not a held value.
+  let server = built.server;
+  const wasPending = previous?.pendingHeaders ?? [];
+  if (wasPending.length > 0 || previous?.rev) {
+    const headers = { ...server.headers };
+    const pendingHeaders = wasPending.filter((header) => typeof headers[header] !== "string");
+    for (const header of pendingHeaders) delete headers[header];
+    server = { ...server, headers, ...(pendingHeaders.length > 0 ? { pendingHeaders } : {}), ...(previous?.rev ? { rev: previous.rev } : {}) };
+  }
   // A confirmation belongs to one address: it carries over an edit that keeps
   // the link, and is dropped when the link changes.
-  const local = options.confirmLocal ?? (previous && previous.url === built.server.url ? previous.local : undefined);
-  if (!local) return built;
-  return { ok: true, server: { ...built.server, local } };
+  const local = options.confirmLocal ?? (previous && previous.url === server.url ? previous.local : undefined);
+  if (!local) return { ok: true, server };
+  return { ok: true, server: { ...server, local } };
 }
 
 /** The link with userinfo, query, fragment removed and every opaque path
@@ -501,6 +586,10 @@ export interface StdioMcpListing extends McpServerListing {
   status?: "ready" | "needs-key";
   /** Rule 57a: why Murage turned it off at load. */
   disabledReason?: string;
+  /** Item 118: key names a bot declared that still wait for the owner's value. */
+  pendingKeys?: string[];
+  /** The entry's revision stamp (mcpEntryRev) when it carries one: names what it runs, never a value. */
+  rev?: string;
 }
 
 export interface RemoteMcpListing {
@@ -515,10 +604,15 @@ export interface RemoteMcpListing {
   enabled: boolean;
   /** Rule 57a: why Murage turned it off at load. */
   disabledReason?: string;
+  /** Item 118: header names a bot declared that still wait for the owner's value. */
+  pendingKeys?: string[];
+  /** As for a command server. */
+  rev?: string;
   status: McpRemoteStatus;
 }
 
 function remoteStatus(name: string, server: StoredRemoteMcpServer, secrets: McpSecretPresence | undefined): McpRemoteStatus {
+  if ((server.pendingHeaders?.length ?? 0) > 0) return "needs-key";
   if (server.auth === "none") return "ready";
   if (!secrets) return "unknown";
   if (server.auth === "oauth") return secrets.hasOAuth(name, server.url) ? "ready" : "needs-sign-in";
@@ -541,15 +635,18 @@ export function listAllMcpServers(
     const server = parsed.server;
     if (!isRemoteMcpServer(server)) {
       const held = server.heldEnv ?? [];
+      const pending = server.pendingEnv ?? [];
       return [{
         kind: "stdio",
         name,
         command: server.command,
         args: server.args,
-        envKeys: [...Object.keys(server.env), ...held].sort(),
+        envKeys: [...Object.keys(server.env), ...held, ...pending].sort(),
+        ...(server.rev || pending.length > 0 ? { rev: mcpEntryRev(name, server) } : {}),
         enabled: server.enabled,
         ...(server.disabledReason ? { disabledReason: server.disabledReason } : {}),
-        ...(held.length > 0 ? { status: held.every((key) => secrets?.hasEnv?.(name, key) === true) ? "ready" as const : "needs-key" as const } : {}),
+        ...(pending.length > 0 ? { pendingKeys: [...pending].sort() } : {}),
+        ...(pending.length > 0 ? { status: "needs-key" as const } : held.length > 0 ? { status: held.every((key) => secrets?.hasEnv?.(name, key) === true) ? "ready" as const : "needs-key" as const } : {}),
       }];
     }
     return [{
@@ -559,10 +656,12 @@ export function listAllMcpServers(
       host: new URL(server.url).hostname,
       ...(server.transport ? { transport: server.transport } : {}),
       auth: server.auth,
-      headerNames: Object.keys(server.headers).sort(),
+      headerNames: [...Object.keys(server.headers), ...(server.pendingHeaders ?? [])].sort(),
       ...(server.local ? { local: server.local } : {}),
+      ...(server.rev || (server.pendingHeaders?.length ?? 0) > 0 ? { rev: mcpEntryRev(name, server) } : {}),
       enabled: server.enabled,
       ...(server.disabledReason ? { disabledReason: server.disabledReason } : {}),
+      ...((server.pendingHeaders?.length ?? 0) > 0 ? { pendingKeys: [...server.pendingHeaders!].sort() } : {}),
       status: remoteStatus(name, server, secrets),
     }];
   });

@@ -19,14 +19,15 @@
 // in a 1600px window with the sidebar and the computer panel open.
 import { preloadBotSettings } from "@/lib/preload-bot-settings";
 import { useMemo, useRef, useState } from "react";
-import { Bug, Folder, Monitor, Search, Square } from "lucide-react";
+import { Bug, Folder, Monitor, Plus, Search, Square } from "lucide-react";
 
 import { cn } from "@/lib/cn";
+import { browserIsThePlace } from "@/lib/browser-is-the-place";
 import { OpenBotListButton } from "./OpenBotListButton";
 import { COMPACT_BUBBLE, COMPACT_SQUARE } from "@/lib/compact-chip";
 import { t } from "@/lib/i18n";
 import { possessive } from "@/lib/possessive";
-import { stateForBot } from "@/lib/mascot";
+import { isMascotAnimated, stateForBot } from "@/lib/mascot";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { formatTokens, formatUsd, freshTokens, hasFiniteCost, usageChip, usageReport } from "@/lib/usage";
 import { HEADER_RELOCATION_ORDER, useChatHeaderLayout, type HeaderSlot } from "@/lib/chat-header-layout";
@@ -45,6 +46,7 @@ import { TaskPicker } from "./TaskPicker";
 import { UsagePopover } from "./UsagePopover";
 import { findTask, taskCount } from "@/lib/task-window";
 import { WorkingDots } from "@/components/WorkingIndicator";
+import { useWindowDrag } from "@/hooks/use-window-drag";
 
 export interface EffectiveWorkspace {
   path?: string;
@@ -188,6 +190,7 @@ export function ChatHeader({
   onToggleFind: () => void;
 }) {
   const { state, dispatch } = useStore();
+  const windowDrag = useWindowDrag();
   const headerRef = useRef<HTMLDivElement>(null);
   const moreRef = useRef<HTMLButtonElement>(null);
   const [memoryOpen, setMemoryOpen] = useState(false);
@@ -195,6 +198,12 @@ export function ChatHeader({
   const workspace = effectiveWorkspace(bot);
   const usageText = usageMenuText(bot, state.instances);
   const task = findTask(bot, bot.threadId);
+
+  const computerLive = Boolean(bot.busy) && bot.browserMounted === true && browserIsThePlace(bot, state.config,
+    state.instances.find(instance => instance.instanceId === bot.modelSelection.instanceId));
+  const computerLabel = computerLive
+    ? t("chatHeader.computerInUse", { label: t("chatHeader.computer") })
+    : t("chatHeader.computer");
 
   // Anything that changes what the header has to fit restarts the ladder at
   // its richest layout, so a shorter name or a settled turn gives relocated
@@ -243,7 +252,7 @@ export function ChatHeader({
       },
       computer: {
         id: "computer",
-        label: t("chatHeader.computer"),
+        label: computerLabel,
         icon: <Monitor size={16} />,
         checked: state.computerOpen,
         onSelect: () => dispatch({ type: "toggleComputer" }),
@@ -283,6 +292,7 @@ export function ChatHeader({
     usageText,
     state.inspectorOpen,
     state.computerOpen,
+    computerLabel,
     findOpen,
     onToggleFind,
     dispatch,
@@ -303,6 +313,7 @@ export function ChatHeader({
       // a container breakpoint.
       data-chat-header-chips={layout.chips}
       data-chat-header-relocated={slots.size}
+      {...windowDrag}
       className={cn(
         "flex items-center gap-2 px-5 py-3",
         twoRow ? "flex-wrap" : "flex-nowrap",
@@ -341,6 +352,7 @@ export function ChatHeader({
             size={28}
             motion={mascotMotion?.kind ?? "none"}
             motionKey={mascotMotion?.nonce ?? 0}
+            animated={isMascotAnimated({ busy: bot.busy }, mascotMotion?.kind)}
           />
         </button>
         {/* min-w-0 but NOT flex-1: the cluster around it already takes the
@@ -401,8 +413,17 @@ export function ChatHeader({
             pickers' own roots shrink to it so their labels truncate instead
             of holding their full width; the roots stay `relative` and keep
             their menus anchored exactly as before. */}
-        <div data-header-labelled="task" className="flex min-w-0 *:min-w-0">
+        {/* New chat beside the chip, in the chip's track. Like the rename pencil it folds away once the chips trim
+            (chip-trim): there the chat list's own New chat row and Mod+Shift+N remain, and the button's width never
+            pushes a long name onto a second row that a short name would not get (chat-header.human.spec, "a short
+            name keeps the controls that a long one costs"). */}
+        <div data-header-labelled="task" className="flex min-w-0 items-center *:min-w-0">
           <TaskPicker bot={bot} />
+          <button type="button" aria-label="New chat" title={`New chat (${modShortcut("N", { shift: true })})`}
+            onClick={() => dispatch({ type: "newTask", botId: bot.id })}
+            className="shrink-0 !min-w-fit rounded-md p-1 chip-trim:hidden text-ink-secondary hover:bg-raised hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus">
+            <Plus size={16} aria-hidden="true" />
+          </button>
         </div>
         <div data-header-labelled="model" className="flex min-w-0 *:min-w-0">
           <ModelPicker key={`model-${bot.threadId}`} bot={bot} threadId={bot.threadId} />
@@ -431,15 +452,22 @@ export function ChatHeader({
         {inHeader("computer") && (
           <button
             onClick={() => dispatch({ type: "toggleComputer" })}
-            aria-label={t("chatHeader.computer")}
+            aria-label={computerLabel}
             aria-pressed={state.computerOpen}
             className={cn(
-              "shrink-0 rounded-md p-1.5 hover:bg-raised",
+              "relative shrink-0 rounded-md p-1.5 hover:bg-raised",
               state.computerOpen ? "text-accent" : "text-ink-secondary hover:text-ink",
             )}
             title={t("chatHeader.computerTip")}
           >
             <Monitor size={18} />
+            {computerLive && (
+              <span
+                data-testid="computer-button-live"
+                aria-hidden="true"
+                className="pointer-events-none absolute right-0.5 top-0.5 size-1.5 animate-pulse rounded-full bg-accent motion-reduce:animate-none"
+              />
+            )}
           </button>
         )}
         {inHeader("inspector") && (

@@ -118,15 +118,54 @@ export function answerWords(_question: QuestionSpec, answer: QuestionAnswer | un
   return labels || other;
 }
 
-/** A late answer, written as an ordinary chat message so it still reaches the
- * bot after the engine stopped waiting. */
-export function answersAsMessage(questions: readonly QuestionSpec[], answers: readonly QuestionAnswer[]): string {
+/** The lead line of an answer sent as JSON pairs (below). */
+export const ANSWERS_JSON_PREFIX = "Answers (JSON):\n";
+
+/** Whether a question or an answer holds a line break, so that a "Q:"/"A:"
+ * layout could be forged by the words themselves. */
+function pairsHoldBreak(pairs: ReadonlyArray<readonly [string, string]>): boolean {
+  return pairs.some((pair) => pair.some((value) => /[\r\n\u2028\u2029]/.test(value)));
+}
+
+function answerPairs(questions: readonly QuestionSpec[], answers: readonly QuestionAnswer[]): Array<[string, string]> {
   const byId = new Map(answers.map((answer) => [answer.id, answer]));
-  const lines: string[] = [];
+  const pairs: Array<[string, string]> = [];
   for (const question of questions) {
     const words = answerWords(question, byId.get(question.id));
-    if (!words) continue;
-    lines.push(`Q: ${question.question}`, `A: ${words}`);
+    if (words) pairs.push([question.question, words]);
   }
-  return lines.join("\n");
+  return pairs;
+}
+
+/** A late answer, written as an ordinary chat message so it still reaches the
+ * bot after the engine stopped waiting. When a question or an answer holds a
+ * line break the pairs go as JSON, so "\nQ:" inside an answer stays the
+ * owner's words and never reads as another question (adapted from
+ * OpenMausBot 574bb90eb, Apache-2.0). */
+export function answersAsMessage(questions: readonly QuestionSpec[], answers: readonly QuestionAnswer[]): string {
+  const pairs = answerPairs(questions, answers);
+  if (pairsHoldBreak(pairs)) return ANSWERS_JSON_PREFIX + JSON.stringify(pairs);
+  return pairs.flatMap(([question, words]) => [`Q: ${question}`, `A: ${words}`]).join("\n");
+}
+
+/** Whether the answers need the JSON form of answersAsMessage. */
+export function answersNeedJson(questions: readonly QuestionSpec[], answers: readonly QuestionAnswer[]): boolean {
+  return pairsHoldBreak(answerPairs(questions, answers));
+}
+
+/** Whether choosing an option sends the answer at once, with no Submit press:
+ * exactly one question, one pick only, and at least one option to tap. A
+ * secret question (the answer is typed, not tapped) and a folder-trust card
+ * (a grant that keeps its explicit press) never qualify, and neither does an
+ * expired card, whose answer goes out as a message. */
+export function answersInOneTap(
+  questions: readonly QuestionSpec[],
+  context: { state: string; folderTrust?: boolean } = { state: "open" },
+): boolean {
+  if (context.state !== "open" || context.folderTrust) return false;
+  if (questions.length !== 1) return false;
+  const question = questions[0]!;
+  // the trust question id is checked too, so a card that lost its flag still keeps the press
+  if (question.multiSelect || question.secret || question.id === "folderTrust") return false;
+  return question.options.length > 0;
 }

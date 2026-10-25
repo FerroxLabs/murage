@@ -27,6 +27,13 @@ describe("project usage settlement", () => {
     expect(rows).toHaveLength(2);
     expect(rows[1]).toMatchObject({ group_id: "g", goal_id: "goal", work_item_id: "card", request_id: first.id, root_id: first.rootId, attempt: 2, input: 100, work_ms: 5000 });
   });
+  it("shows the tokens the budget counted even when one turn of the same bot reported none", () => {
+    settleProjectUsage(db, request("room", 1000), terminal);
+    settleProjectUsage(db, request("desk", 2000), { ...terminal, threadId: "desk", providerTurnId: "two", usage: undefined });
+    const usage = projectUsage(db, { groupId: "g" });
+    expect(usage.totals).toMatchObject({ input: 100, output: 20, tokensReported: true });
+    expect(usage.notReported).toEqual([]);
+  });
   it("excludes owner waits and settles failed and superseded executions", () => {
     const r = request();
     db.prepare("UPDATE room_requests SET owner_wait_ms=1000, waiting_since=4000, state='waiting_owner' WHERE id=?").run(r.id);
