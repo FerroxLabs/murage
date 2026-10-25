@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { codeFileExtension, codeFileName, codeLanguageLabel, codeLineCount, codeLineLabel, saveCodeSnippet, SNIPPET_URL_LIFETIME_MS } from "./code-block";
+import { codeFileExtension, codeFileName, codeLanguageLabel, codeLineCount, codeLineLabel, parseFenceInfo, saveCodeSnippet, SNIPPET_URL_LIFETIME_MS } from "./code-block";
 it("uses readable language names without confusing shell dialects", () => {
   expect(codeLanguageLabel(" TSX ")).toBe("TypeScript (TSX)"); expect(codeLanguageLabel("c++")).toBe("C++");
   expect(codeLanguageLabel("sh")).toBe("Shell"); expect(codeLanguageLabel("zsh")).toBe("Zsh");
@@ -92,5 +92,22 @@ describe("saveCodeSnippet", () => {
     const create = vi.spyOn(URL, "createObjectURL");
     expect(saveCodeSnippet("snippet.txt", "x")).toBe(false);
     expect(create).not.toHaveBeenCalled();
+  });
+});
+
+describe("parseFenceInfo", () => {
+  it("reads the wrap directive after the language", () => {
+    expect(parseFenceInfo("js", "wrap")).toEqual({ lang: "js", wrap: true });
+  });
+  it("reads the wrap directive before the language", () => {
+    expect(parseFenceInfo("wrap", "js")).toEqual({ lang: "js", wrap: true });
+  });
+  it("treats wrap alone as a plain wrapped block", () => {
+    expect(parseFenceInfo("wrap", undefined)).toEqual({ lang: "", wrap: true });
+  });
+  it("leaves a normal fence alone", () => {
+    expect(parseFenceInfo("js", undefined)).toEqual({ lang: "js", wrap: false });
+    expect(parseFenceInfo("", null)).toEqual({ lang: "", wrap: false });
+    expect(parseFenceInfo("ts", "title=a.ts")).toEqual({ lang: "ts", wrap: false });
   });
 });

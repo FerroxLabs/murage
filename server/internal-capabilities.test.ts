@@ -34,6 +34,17 @@ describe("internal turn capabilities", () => {
     expect(reservation.commit()).toBe(false);
   });
 
+  it("a second generation that re-binds an already bound provider turn is named for that turn (104 P7)", () => {
+    const registry = new InternalCapabilities();
+    registry.begin("bot", "thread", "first");
+    expect(registry.bindProviderTurn("thread", "first", "provider-turn")).toBe(true);
+    registry.begin("bot", "thread", "second");
+    expect(registry.bindProviderTurn("thread", "second", "provider-turn")).toBe(true);
+    expect(registry.providerTurnOf("thread", "first")).toBe("provider-turn");
+    expect(registry.providerTurnOf("thread", "second")).toBe("provider-turn");
+    expect(registry.dispatchingGeneration("thread", "provider-turn")).toBe("first");
+  });
+
   it("refuses terminal-before-bind and distinguishes identical turn ids in different threads", () => {
     const registry = new InternalCapabilities();
     registry.begin("bot", "thread", "generation");

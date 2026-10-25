@@ -51,6 +51,12 @@
           "optional": true
         },
         {
+          "slug": "ashby",
+          "label": "Ashby",
+          "reason": "When connected and its tools support this task, use Ashby for your recruiting coordinator work. Drafting also works from material you supply. Ask for your yes before an external change.",
+          "optional": true
+        },
+        {
           "slug": "gmail",
           "label": "Gmail",
           "reason": "When connected and its tools support this task, use Gmail for your recruiting coordinator work. Drafting also works from material you supply. Ask for your yes before an external change.",
@@ -110,7 +116,8 @@
         "role": "leader",
         "team": "Hiring Desk",
         "appearance": {
-          "color": "blue"
+          "color": "blue",
+          "mascotBody": "circle"
         },
         "skills": [
           "job-description",
@@ -132,6 +139,7 @@
         "team": "Hiring Desk",
         "appearance": {
           "color": "green",
+          "mascotBody": "hexagon",
           "mascotExpression": "working"
         },
         "skills": [
@@ -154,7 +162,8 @@
         "role": "member",
         "team": "Hiring Desk",
         "appearance": {
-          "color": "pink"
+          "color": "pink",
+          "mascotBody": "diamond"
         },
         "skills": [
           "compensation-benchmarking",
@@ -174,7 +183,8 @@
         "role": "member",
         "team": "Hiring Desk",
         "appearance": {
-          "color": "purple"
+          "color": "teal",
+          "mascotBody": "squircle"
         },
         "skills": [
           "onboarding-plan",

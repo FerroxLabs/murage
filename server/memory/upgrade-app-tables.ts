@@ -28,6 +28,11 @@ export const DIRECT_TURN_INFLIGHT_SCHEMA = `CREATE TABLE IF NOT EXISTS ${DIRECT_
 /** Every table above, for the downgrade and the inspector. */
 export const UPGRADE_APP_TABLES = [ROOT_SET_WORKLIST_TABLE, APP_WRITE_REVISION_TABLE, DIRECT_TURN_INFLIGHT_TABLE] as const;
 
+/** The tables 1.0.4 adds to messages.db: the Flux number hold of a thread (message-tables.ts, flux-capture-hold.ts) and the place of the number
+ * scrub (memory/scrub-state.ts SCRUB_PASS_TABLE). No older build reads or keeps them, so every downgrade drops both (schema.ts
+ * UPGRADE_DERIVED_TABLES); the next newer start makes them again, and the scrub, having no pass row, runs again (it is idempotent). */
+export const UPGRADE_104_TABLES = ["flux_capture_hold", "upgrade_scrub_pass"] as const;
+
 /** Tables an earlier preview of 1.0.2 wrote and this build no longer reads: derived data, never trusted, dropped by every start (ensureUpgradeAppTables)
  * and by the downgrade, and accepted by the archive inspector in exactly the shapes those previews wrote, so an archive of a preview file restores. The
  * proofs of large root sets were kept here; they now live in the process only (replay-lineage.ts). */

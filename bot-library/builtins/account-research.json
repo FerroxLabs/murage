@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Account Research",
     "tagline": "An evidence-backed account plan and three relevant opening messages",
-    "summary": "Compass prepares an account plan with source references from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For customer interviews and audience discovery, use Research. For finding sources, use Researcher. For a complete prospecting campaign, use Lead-Gen Outbound Squad. For a team shaping one prospect's outreach, use Cold-Pitch Bench. For dated competitor reviews, use Watch Competitor Moves.",
+    "summary": "Compass prepares an account plan with source references from the material you supply.",
     "category": "Sales",
     "author": {
       "name": "Ferrox Labs",
@@ -54,7 +54,8 @@
         "title": "Account Research",
         "description": "Compass prepares an account plan with source references from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For customer interviews and audience discovery, use Research. For finding sources, use Researcher. For a complete prospecting campaign, use Lead-Gen Outbound Squad. For a team shaping one prospect's outreach, use Cold-Pitch Bench. For dated competitor reviews, use Watch Competitor Moves.",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "capsule"
         },
         "skills": [
           "sales-contacts",

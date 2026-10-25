@@ -145,6 +145,12 @@ jobs:
       - name: Murage for Chrome script tests
         if: matrix.os != 'windows-latest'
         run: pnpm test:browser-extension-scripts
+      # installer/test/*.test.mjs (the installer's bind, pairing, systemd and
+      # sidecar rules) ran in no job before; a failure here fails the run the
+      # release-ci-gate reads. Ubuntu only: several files are about Linux hosts.
+      - name: Installer tests
+        if: matrix.os == 'ubuntu-latest'
+        run: pnpm test:installer
       - run: pnpm test:packaged-server
       - name: Probe upstream Electron Windows sandbox regression
         if: matrix.os == 'windows-latest'

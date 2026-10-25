@@ -135,20 +135,31 @@ describe("PIP kind list", () => {
     // Nothing still imports the P1 names.
     for (const file of files) expect(readFileSync(new URL(file, root), "utf8"), file).not.toMatch(/\bPIP_KINDS(?:_SQL)?\b/);
     expect(counts).toEqual({
-      "memory/authority.ts": 11, "memory/automatic-learning.ts": 2, "memory/bring-in.ts": 2,
+      // +2 1.0.4 learn about me (rememberMemory): in the owner's preferences scope, a point lookup of the ledger-derived record id
+      // (existence only), and the duplicate check, which names kind='fact' (the only kind it writes) and returns an id and version, no text
+      "memory/authority.ts": 13, "memory/automatic-learning.ts": 2, "memory/bring-in.ts": 2,
       // -2: bundle hydration, memory_get and every search path read through readableMemoryRecord (readable.ts: one point
       // lookup per read mode, PIP kinds refused for the bot's own tools)
       // revoke-bounded r3: capture.ts's bot deletion no longer lists the bot's records (its durable job's scope phase reads them in
       // key windows, memory-revocation.ts)
-      "memory/bundle.ts": 4, "memory/readable.ts": 4, "memory/checkpoints.ts": 2,
+      // +2 1.0.4 pin budget (ownerPinUse and measuredPinRecord): the Pin-time measure lists the active owner pins of one scope behind
+      // PIP_ALL_KINDS_SQL, then reads each of those rows by id and version to render its size; only two numbers (used, allowed) leave it,
+      // never a row or text, and the refusal carries those numbers alone
+      "memory/bundle.ts": 6, "memory/readable.ts": 4, "memory/checkpoints.ts": 2,
       // +1 evolution-forgetting.ts: the per-binding forgotten test is its own function (a record's state by id and version, no text)
-      "memory/consolidate.ts": 3, "memory/eligibility.ts": 3, "memory/evolution-forgetting.ts": 2, "memory/forget.ts": 2, "memory/identity.ts": 8, "memory/import.ts": 1, "memory/index-reader.ts": 1,
+      // forget.ts +1 (1.0.6 Learn about me R5 C1, feat/106-lam-forget-r5 6b7255c8d, Grok design AGREE + code APPROVE, Astra APPROVE):
+      // forgetting a record blanks the text of its newest versions in the commit; the subquery selects rowids by record id (a point
+      // lookup, an administrative write); no row, kind or text is read out or handed to a model or the owner
+      "memory/consolidate.ts": 3, "memory/eligibility.ts": 3, "memory/evolution-forgetting.ts": 2, "memory/forget.ts": 3, "memory/identity.ts": 8, "memory/import.ts": 1, "memory/index-reader.ts": 1,
       "memory/learning-history.ts": 4, "memory/lessons.ts": 1, "memory/memory-moments.ts": 1, "memory/metrics.ts": 1, "memory/owner-list.ts": 11, "memory/owner-tail-index.ts": 3, "memory/record-keys.ts": 5, "memory/procedure-review.ts": 3,
       // record-keys +1 (io-hotpath): the rebuild start log reads max(rowid) only, an administrative count with no row, kind or text
       // owner-list +2 and owner-tail-index +3 (msearch2): owner search reads the never-indexed kinds through the owner-tail table in bounded slices;
       // the backfill reads record keys, kinds and times only, never text
       // +1: pendingProjectionRefsIn names the reader's own pending records (ids only) behind the PENDING predicate, which excludes PIP kinds (msearch review round 4)
       "memory/projection.ts": 4,
+      // +1 1.0.4 paste-capture (scrub-pass.ts): the one-time scrub of numbers in earlier memory reads text in rowid windows to mask
+      // it in place; nothing it reads is handed to a model or the owner, so it needs no PIP-kind filter
+      "memory/scrub-pass.ts": 1,
       // +2: keywordMemoryHits, the keyword fallback for memory_search, excludes PIP_ALL_KINDS_SQL and CURRENT_MEMORY in its own statement (fix/1.0.2-memory-search)
       // +1: the keyword fallback reads a row's text by rowid only after its size passed the byte cap (msearch review round 2)
       "memory/recent.ts": 5,
@@ -177,7 +188,9 @@ describe("PIP kind list", () => {
       // notebook fix: memory-revocation.ts supersede phase reads one record's state, pin and assertion by id and version (point lookup, no text)
       // write-time S3: the revoke commit reads a record's scope by id; the marker reads one record's kind (a room's notes keep what
       // they quoted), and a denied scope's record ids and versions in key windows (ids, never text)
-      "memory/revoke-commit.ts": 3, "memory/revoke-marker.ts": 3,
+      // revoke-commit +1 (1.0.6 reader-privacy forget seed, rc1 merge-fix 7ccc84c40, Grok forget-seed-cap-r3b APPROVE): a forget
+      // seeds the record's supporting sources unless the record is a checkpoint, an existence check by id and kind (no row, no text)
+      "memory/revoke-commit.ts": 4, "memory/revoke-marker.ts": 3,
       // write-time S4: the read predicate's point lookups (a record's scope, created lsn, deny mark and tombstone; never text)
       "memory/deny-read.ts": 3,
       // write-time S5 and integration: the backfill folds a receipt's record scopes and walks evidence and derivations for scope -> scope
@@ -191,7 +204,9 @@ describe("PIP kind list", () => {
       // +2 rc11-inbox (a899b4827): waitingScopes lists the scopes that hold waiting candidates, through the optional
       // memory_records_waiting_review index or, before it is built, one join on memory_records_scope; both statements exclude
       // PIP_ALL_KINDS_SQL themselves and return scope ids, kinds and owner keys, never record text.
-      "memory/review.ts": 10, "memory/review-eligibility.ts": 1,
+      // +1 1.0.4 gap A: reviewSources (owner ticket, one record id and version) now keeps its evidence only while that record is still a
+      // candidate: one point lookup of its state by id and version, no text and no listing, which only narrows what the owner is shown.
+      "memory/review.ts": 11, "memory/review-eligibility.ts": 1,
     });
     const review = readFileSync(new URL("memory/review.ts", root), "utf8");
     const scopes = review.slice(review.indexOf("function waitingScopes("), review.indexOf("function collect("));
