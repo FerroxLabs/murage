@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Payroll Prep",
     "tagline": "A pay-run review pack with hours, changes and exceptions reconciled",
-    "summary": "Roll prepares a pre-payroll reconciliation by employee and period for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For broader business financial decisions, use Numbers. For role design and evaluation strategy, use Talent. I give guidance and drafts, not licensed tax, accounting or HR advice, and I promise no outcome.",
+    "summary": "Roll prepares a pre-payroll reconciliation by employee and period for your review.",
     "category": "People",
     "author": {
       "name": "Ferrox Labs",
@@ -60,7 +60,8 @@
         "title": "Payroll Prep",
         "description": "Roll prepares a pre-payroll reconciliation by employee and period for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For broader business financial decisions, use Numbers. For role design and evaluation strategy, use Talent.",
         "appearance": {
-          "color": "green"
+          "color": "green",
+          "mascotBody": "circle"
         },
         "skills": [
           "finance-payroll-prep",

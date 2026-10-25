@@ -7,7 +7,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { StoreProvider, initialState, useStore, type Action, type Group } from "./store";
-import { draftBelongsTo, getDraft, setDraft } from "@/lib/drafts";
+import { draftBelongsTo, readComposerDraft, setComposerDraftText } from "@/lib/drafts";
 
 const DRAFTS = "murage-drafts";
 const DRAFT_KEYS = ["murage-drafts", "murage-draft-attachments", "murage-draft-send-ids", "murage-draft-channel-modes", "murage-draft-failed-sends"];
@@ -19,6 +19,8 @@ function storage() {
     getItem: (key: string) => values.get(key) ?? null,
     setItem: (key: string, value: string) => { values.set(key, value); },
     removeItem: (key: string) => { values.delete(key); },
+    key: (index: number) => [...values.keys()][index] ?? null,
+    get length() { return values.size; },
   };
 }
 
@@ -40,7 +42,11 @@ function seed(store: ReturnType<typeof storage>) {
   store.setItem("murage-draft-send-ids", each((id) => `send-${id}`));
   store.setItem("murage-draft-channel-modes", each(() => "goal"));
   store.setItem("murage-draft-failed-sends", each((id) => [{ id: "f", sendId: "s", text: `failed ${id}`, requestText: "x", threadId: "t" }]));
+  // U36: each draft's record (words, attachments, mode, reply, pin, journal)
+  for (const id of all) store.setItem(`murage-draft:${id}`, JSON.stringify({ v: 3, n: 0, text: `secret record for ${id}`, att: [], mode: "goal", pin: { s: `send-${id}`, fp: "x", at: 1 } }));
 }
+
+const records = (store: ReturnType<typeof storage>) => [...store.values.keys()].filter((key) => key.startsWith("murage-draft:")).map((key) => key.slice("murage-draft:".length));
 
 function remaining(store: ReturnType<typeof storage>): Record<string, string[]> {
   return Object.fromEntries(DRAFT_KEYS.map((key) => [key, Object.keys(JSON.parse(store.getItem(key) ?? "{}"))]));
@@ -66,34 +72,38 @@ async function dispatchWith(action: Action, groups: Group[] = []) {
   }
 }
 
-const allKeysHold = (left: Record<string, string[]>, expected: string[]) => {
+const allKeysHold = (left: Record<string, string[]>, expected: string[], store?: ReturnType<typeof storage>) => {
   for (const key of DRAFT_KEYS) expect(left[key].sort(), key).toEqual([...expected].sort());
+  if (store) expect(records(store).sort(), "records").toEqual([...expected].sort());
 };
 
 describe("deleting removes drafts from browser storage at once", () => {
   it("a deleted conversation's draft, and only that one", async () => {
     const { store, left } = await dispatchWith({ type: "deleteTask", botId: "ember", threadId: "thread-gone" });
-    allKeysHold(left, Object.values(ids).filter((id) => id !== ids.deletedThread));
+    allKeysHold(left, Object.values(ids).filter((id) => id !== ids.deletedThread), store);
     expect(store.getItem(DRAFTS)).not.toContain("secret draft for bot:ember:thread-gone");
-    // A composer still mounted for a moment cannot write it back.
-    setDraft(store, ids.deletedThread, "typed after delete");
-    expect(getDraft(store, ids.deletedThread)).toBe("");
+    expect(store.getItem(`murage-draft:${ids.deletedThread}`)).toBeNull();
+    // A composer still mounted for a moment cannot write it back (F16).
+    expect(setComposerDraftText(ids.deletedThread, "typed after delete")).toBe(false);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(store.getItem(`murage-draft:${ids.deletedThread}`)).toBeNull();
+    expect(readComposerDraft(ids.deletedThread).text).toBe("");
   });
 
   it("a deleted channel conversation", async () => {
-    const { left } = await dispatchWith({ type: "deleteGroupTask", groupId: "studio", threadId: "thread-c2" });
-    allKeysHold(left, Object.values(ids).filter((id) => id !== ids.channelTask));
+    const { left, store } = await dispatchWith({ type: "deleteGroupTask", groupId: "studio", threadId: "thread-c2" });
+    allKeysHold(left, Object.values(ids).filter((id) => id !== ids.channelTask), store);
   });
 
   it("a deleted bot: every conversation, and its older single draft", async () => {
-    const { left } = await dispatchWith({ type: "deleteBot", source: "local", attempt: "test-attempt", botId: "bramble" });
-    allKeysHold(left, Object.values(ids).filter((id) => id !== ids.legacyBot && id !== ids.botThread));
+    const { left, store } = await dispatchWith({ type: "deleteBot", source: "local", attempt: "test-attempt", botId: "bramble" });
+    allKeysHold(left, Object.values(ids).filter((id) => id !== ids.legacyBot && id !== ids.botThread), store);
   });
 
   it("a deleted channel: every conversation in it", async () => {
     const group = { id: "studio", name: "studio", threadId: "thread-c1", memberIds: [], messages: [], tasks: [{ threadId: "thread-c2", title: "t", createdAt: 1 }] } as unknown as Group;
-    const { left } = await dispatchWith({ type: "deleteGroup", groupId: "studio" }, [group]);
-    allKeysHold(left, Object.values(ids).filter((id) => id !== ids.channelThread && id !== ids.channelTask));
+    const { left, store } = await dispatchWith({ type: "deleteGroup", groupId: "studio" }, [group]);
+    allKeysHold(left, Object.values(ids).filter((id) => id !== ids.channelThread && id !== ids.channelTask), store);
   });
 });
 

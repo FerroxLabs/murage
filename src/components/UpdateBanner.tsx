@@ -1,11 +1,14 @@
 import { t } from "@/lib/i18n";
-// Auto-update popup — a small card floating bottom-left, driven by the
-// preload's updater bridge. Renders nothing in the browser/dev (no bridge)
-// and while idle/checking; appears only when actionable: an update to
-// download, a download in progress, a restart to apply, or an error.
-import { useEffect, useState } from "react";
+// Auto-update card — centred, opened from the round button beside the account menu (UpdateIndicator), driven by the
+// preload's updater bridge. Renders nothing in the browser/dev (no bridge), on the phone app, and while idle/checking.
+// It is the same state machine as the button: both read useUpdaterState, and only "is the card open" is shared
+// (lib/update-card.ts). The install path (hand-off, deferred backup) is untouched.
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { ArrowDownToLine, Loader2, PackageOpen, RefreshCw, Sparkles, X } from "lucide-react";
 import { useUpdaterState } from "@/lib/updater";
+import { closeUpdateCard, useUpdateCardOpen } from "@/lib/update-card";
+import { releaseHighlights } from "@/lib/release-highlights";
+import { wrapTabTarget } from "@/lib/focus-wrap";
 import { cn } from "@/lib/cn";
 
 // The one action button in the card. Disabled drops the accent fill for the
@@ -29,19 +32,45 @@ function friendlyError(message?: string): string {
 
 export function UpdateBanner() {
   const s = useUpdaterState();
-  // dismissal is per status+version, so the popup returns for the next
-  // update (and when an available one finishes downloading)
-  const [dismissed, setDismissed] = useState<string | null>(null);
+  const cardOpen = useUpdateCardOpen();
+  const cardRef = useRef<HTMLDivElement>(null);
+  // Closing is just closing the card: the round button stays while there is anything to do.
+  const setDismissed = (_key: string) => closeUpdateCard();
   // A click has to go renderer → main → broadcast before the real status
   // arrives. Latch the pressed button as busy on the same frame so it greys
   // out immediately; the incoming status clears the latch.
   const [pending, setPending] = useState<"download" | "install" | "check" | null>(null);
   const status = s?.status;
   useEffect(() => setPending(null), [status]);
+  const busyNow = status === "downloading" || status === "installing";
+  // Focus goes into the card when it opens and back to the control that opened it (the round button) when it closes.
+  useEffect(() => {
+    if (!cardOpen) return;
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    cardRef.current?.focus();
+    return () => {
+      const back = opener?.isConnected ? opener : document.querySelector<HTMLElement>('[data-testid="update-indicator"]');
+      back?.focus();
+    };
+  }, [cardOpen]);
+  // Escape and Tab belong to the card while it is open (handlers on the card, not the document).
+  const onCardKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Escape" && !busyNow) {
+      event.stopPropagation();
+      closeUpdateCard();
+    } else if (event.key === "Tab") {
+      const items = [...event.currentTarget.querySelectorAll<HTMLElement>("button:not([disabled]), [href], input, [tabindex]:not([tabindex='-1'])")];
+      const target = wrapTabTarget(items.length, items.indexOf(document.activeElement as HTMLElement), event.shiftKey);
+      if (target !== null) {
+        event.preventDefault();
+        items[target]?.focus();
+      }
+    }
+  };
 
-  if (!s || s.status === "idle" || s.status === "checking") return null;
+  if (!cardOpen || !s || s.status === "idle" || s.status === "checking") return null;
   const key = `${s.status}:${s.version ?? ""}`;
-  if (dismissed === key) return null;
+  const highlights = releaseHighlights(s.releaseNotesText);
   const updater = window.muragebox!.updater!;
 
   // while busy the card owns the moment: no dismissing, no second click
@@ -91,7 +120,9 @@ export function UpdateBanner() {
               : friendlyError(s.message);
 
   return (
-    <div className="animate-panel-in fixed bottom-[calc(1rem+var(--inset-bottom))] left-4 z-50 w-[300px] rounded-xl border border-hairline/40 bg-panel p-3.5 shadow-2xl shadow-black/50">
+    <div className="overlay-inset fixed inset-0 z-50 flex items-center justify-center p-4" data-testid="update-card-layer">
+    <div className="absolute inset-0 bg-black/40" onMouseDown={() => { if (!busy) closeUpdateCard(); }} />
+    <div ref={cardRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={title} onKeyDown={onCardKeyDown} data-testid="update-card" className="animate-panel-in relative w-[340px] max-w-full rounded-xl border border-hairline/40 bg-panel p-4 shadow-2xl shadow-black/50 focus:outline-none">
       <div className="flex items-start gap-2.5">
         <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-accent/15 text-accent">
           <Sparkles size={14} />
@@ -112,6 +143,15 @@ export function UpdateBanner() {
           </button>
         )}
       </div>
+
+      {highlights.length > 0 && !verificationRefused && s.status !== "error" && (
+        <div className="mt-3" data-testid="update-highlights">
+          <div className="text-[12px] font-medium text-ink-secondary">{t("updates.whatsNew")}</div>
+          <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[12.5px] text-ink">
+            {highlights.map((line) => <li key={line}>{line}</li>)}
+          </ul>
+        </div>
+      )}
 
       {s.status === "handed-off" && s.command && (
         <code className="mt-2.5 block overflow-x-auto rounded-lg bg-control px-2 py-1.5 font-mono text-[11.5px] whitespace-pre text-ink-secondary">
@@ -222,6 +262,7 @@ export function UpdateBanner() {
           </button>
         </div>
       )}
+    </div>
     </div>
   );
 }

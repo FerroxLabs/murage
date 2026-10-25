@@ -12,6 +12,7 @@ import {
   ensureDesktopSurfaceSecret,
   isLivePing,
   liveEventsUrl,
+  liveStreamIsLocal,
   openLiveEvents,
   resourceNeedsTicket,
   setDesktopSurfaceSecretForTest,
@@ -786,5 +787,64 @@ describe("the live stream against a harness without tickets (a Cloud home on ima
     stop();
     await settle();
     expect(FakeNativeEventSource.opened).toEqual([]);
+  });
+});
+
+describe("a desktop with no internet keeps its own live stream", () => {
+  // The browser's network signal, with nothing else overridden: the stream
+  // decides for itself whether it needs the internet.
+  function offlinePage(href: string) {
+    vi.stubGlobal("navigator", { onLine: false });
+    vi.stubGlobal("location", { href });
+    const sources: FakeEventSource[] = [];
+    const platform: Partial<LiveEventsPlatform> = {
+      createEventSource: (url) => {
+        const source = new FakeEventSource(url);
+        sources.push(source);
+        return source;
+      },
+      windowTarget: new FakeTarget(),
+      documentTarget: new FakeTarget(),
+      isVisible: () => true,
+      now: () => 0,
+    };
+    return { sources, platform };
+  }
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("opens the stream to the local harness while the browser reports offline", () => {
+    const page = offlinePage("http://127.0.0.1:8813/");
+    const stop = openLiveEvents({ onFrame: vi.fn(), onSnapshotRequired: async () => true }, page.platform);
+    expect(page.sources).toHaveLength(1);
+    expect(page.sources[0].url).toBe("/api/events?surface=desktop");
+    stop();
+  });
+
+  it("retries a dropped local stream with backoff while the browser reports offline", () => {
+    const page = offlinePage("http://localhost:5199/");
+    const stop = openLiveEvents(
+      { onFrame: vi.fn(), onSnapshotRequired: async () => true, retryMinMs: 100, retryMaxMs: 100 },
+      page.platform,
+    );
+    page.sources[0].error();
+    vi.advanceTimersByTime(100);
+    expect(page.sources).toHaveLength(2);
+    stop();
+  });
+
+  it("still waits for the network when the server is elsewhere", () => {
+    const page = offlinePage("https://home.example.com/");
+    const stop = openLiveEvents({ onFrame: vi.fn(), onSnapshotRequired: async () => true }, page.platform);
+    expect(page.sources).toHaveLength(0);
+    stop();
+  });
+
+  it("counts only loopback hosts as this machine", () => {
+    for (const href of ["http://127.0.0.1:8813/", "http://127.5.0.9/", "http://localhost:5199/", "http://LOCALHOST./", "http://app.localhost/", "http://[::1]:8813/"]) {
+      expect(liveStreamIsLocal(href), href).toBe(true);
+    }
+    for (const href of [undefined, "", "not a url", "https://home.example.com/", "http://192.168.1.4:8813/", "http://127.0.0.1.example.com/", "http://localhost.example.com/", "capacitor://localhost/", "file:///index.html"]) {
+      expect(liveStreamIsLocal(href), String(href)).toBe(false);
+    }
   });
 });

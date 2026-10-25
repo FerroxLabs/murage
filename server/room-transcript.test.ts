@@ -71,7 +71,11 @@ it("R7 inverted: a teammate's room reply made with its own recall stays in the n
 
 it("R8 inverted: a roster change revokes every receipt, and the reply is still there for every member", () => {
   daxReplyWithOwnRecall();
-  const grown: MemoryRoster = { ...roster, bots: [...roster.bots, { id: "kessler", threadId: "kessler-direct", section: "Ops" }] };
+  // Adding a bot withdraws nothing (SCOPED-REVOKES.md); the bot then moving to another team is an audience change, which ends every receipt.
+  const added: MemoryRoster = { ...roster, bots: [...roster.bots, { id: "kessler", threadId: "kessler-direct", section: "Ops" }] };
+  reconcileMemoryRoster(added);
+  expect(stateOf("b-dax")).toBe("delivered");
+  const grown: MemoryRoster = { ...roster, bots: [...roster.bots, { id: "kessler", threadId: "kessler-direct", section: "Dev Shop" }] };
   reconcileMemoryRoster(grown);
   expect(stateOf("b-dax")).toBe("revoked");
   expect([...roomReplayWithheld(LineageAllowance.tool(), "closing-chat", transcript)]).toEqual([]);

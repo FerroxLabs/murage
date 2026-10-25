@@ -54,7 +54,8 @@
         "title": "Newsletter Growth",
         "description": "Grow prepares a 90-day growth plan with weekly actions for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For channel strategy, use Channels. For a customer email journey team, use Email & Lifecycle Crew.",
         "appearance": {
-          "color": "green"
+          "color": "green",
+          "mascotBody": "star"
         },
         "skills": [
           "newsletter-to-1000-subscribers",

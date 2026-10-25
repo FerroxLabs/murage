@@ -35,12 +35,12 @@ class InlineWorker extends EventEmitter {
 }
 beforeEach(() => { engineHistoryTestHooks.createWorker = () => new InlineWorker() as unknown as Worker; });
 
-/** A one-shot run that shows as the engine's program until it is stopped (or `finish` is called). */
+/** A one-shot run that shows as the engine's program (a child of this process, as Murage's own runs are) until it is stopped (or `finish` is called). */
 function engineRun(gate: OneShotGate, engine: string, log: string[]) {
   let finish: () => void = () => {};
   const done = new Promise<void>((resolve) => { finish = resolve; });
   const result = gate.run(engine, undefined, async (signal) => {
-    const end = fake.openEngine(engine);
+    const end = fake.openEngine(engine, process.pid);
     log.push("start");
     try {
       await Promise.race([done, new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }))]);
@@ -150,7 +150,7 @@ describe("a conversation deletion with the gate wired as the server does", () =>
   it("an owner turn (not a one-shot) still keeps the deletion pending", async () => {
     const fx = buildFixture("claude", scratch);
     const gate = new OneShotGate();
-    const endTurn = fake.openEngine("claude");
+    const endTurn = fake.openEngine("claude", process.pid);
     try {
       const { out, pending } = await deleteWith(fx, gate);
       expect(out.report.failed.length).toBeGreaterThan(0);
@@ -178,7 +178,7 @@ describe("a conversation deletion with the session hold wired as the server does
 
   it("a warm idle session alive at deletion start is closed and awaited before the plan, so the home is not left pending", async () => {
     const fx = buildFixture("claude", scratch);
-    const warm = fake.openEngine("claude"); // the process Murage keeps after a finished turn
+    const warm = fake.openEngine("claude", process.pid); // the process Murage keeps after a finished turn
     let closedBeforeRelease = false;
     const { out, pending, order } = await deleteHeld(fx, async (_homes, calls) => {
       // closes the idle engine and waits until it has really exited (the adapter's holdIdle)
@@ -196,7 +196,7 @@ describe("a conversation deletion with the session hold wired as the server does
 
   it("a turn in progress is not closed: the hold skips the home and it stays pending", async () => {
     const fx = buildFixture("claude", scratch);
-    const turn = fake.openEngine("claude");
+    const turn = fake.openEngine("claude", process.pid);
     try {
       const { out, pending } = await deleteHeld(fx, async (homes) => ({ release: () => {}, skipped: homes as typeof fx.homes }));
       expect(out.report.failed.length).toBeGreaterThan(0);

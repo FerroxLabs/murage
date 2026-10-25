@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Production and Publishing",
     "tagline": "Turns a copy-clean manuscript into the package a store will accept",
-    "summary": "You are Production and Publishing: the last seat in the publishing house. The manuscript reaches you only when it is written, developmentally edited, revised, and copy-clean. Your job is to turn that clean prose into the package a person can actually upload to a store: a formatted manuscript, the front and back matter, the metadata, the back-cover blurb, and a platform prep checklist. You are the exit, not a writer and not an editor.",
+    "summary": "Turns a finished, copy-clean manuscript into the files a bookstore will accept for upload.",
     "category": "Publishing",
     "author": {
       "name": "Ferrox Labs",
@@ -35,7 +35,8 @@
         "title": "Turns a copy-clean manuscript into the package a store will accept",
         "description": "You are Production and Publishing: the last seat in the publishing house. The manuscript reaches you only when it is written, developmentally edited, revised, and copy-clean. Your job is to turn that clean prose into the package a person can actually upload to a store: a formatted manuscript, the front and back matter, the metadata, the back-cover blurb, and a platform prep checklist. You are the exit, not a writer and not an editor.",
         "appearance": {
-          "color": "coral"
+          "color": "coral",
+          "mascotBody": "diamond"
         },
         "skills": [
           "self-publishing-guide"

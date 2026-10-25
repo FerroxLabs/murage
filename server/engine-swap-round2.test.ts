@@ -56,6 +56,10 @@ it("N1 queued questions dispatch as questions and tool work resumes the original
     threadHumanPrincipal: () => "owner", botPermissionMode: () => "ask", database: noop, noteHeldQueue: noop, runnableContinuation, isRestoreHeld, releaseHeldContinuation, currentRestoreGeneration: () => null,
     // the pinned-root lookup the mobile lane added to startRoomRequestTurn (no pinned root here)
     roomRequest: () => null,
+    // F3 (540bec1c0): a queued ask or wake under a cancelled ancestor closes before it starts; nothing is cancelled here
+    closeFencedQueuedRequest: () => false,
+    // CANCEL-TREE-104 R1 latch: the setup reads its own row; this one ends only when the fake turn completes it
+    roomSetupRowEnded: (id: string) => id === request.id && ["done", "failed", "cancelled", "expired", "unknown"].includes(request.state),
     // the turn-source recorder (steer-lineage.ts) wraps the wake prompt; with no lineage here it just builds it
     promptForTurn: (_thread: string, _bot: string, build: () => string) => build(),
     // a queued dispatch now inherits routine/background provenance (the real helper is run below)
@@ -67,8 +71,9 @@ it("N1 queued questions dispatch as questions and tool work resumes the original
     groupProviderHandshakeStarted: noop, groupProviderHandshakeSettled: noop,
     settleRoomTurnRequest: (thread: string, bot: string) => { if (pending.has(`${thread}:${bot}`)) request.state = "failed"; },
     runGroupMemberTurn: async (...args: any[]) => {
-      // Execute the production continuation gate, including the old overloaded argument.
-      const gateStart = source.indexOf('  if (', source.indexOf('    murageFailureLine(message);', source.indexOf('async function runGroupMemberTurn')));
+      // Execute the production continuation gate, including the old overloaded argument. It is anchored on the gate itself:
+      // the draft-only engine check (draftOnlyQualifies) now sits between the dispatch-error branch and this gate.
+      const gateStart = source.indexOf('  if (continuationKind === "card"', source.indexOf('    murageFailureLine(message);', source.indexOf('async function runGroupMemberTurn')));
       const gateEnd = source.indexOf('  // One admission arbiter', gateStart);
       const held = execute(`(function(){${source.slice(gateStart, gateEnd)} return true;})()`, { ...scope,
         bot, botId: bot.id, threadId: group.threadId, instance: { adapter: { capabilities: { tools } } },
