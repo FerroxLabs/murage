@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Renewals and Expansion",
     "tagline": "Renewal dates, account concerns and next conversations in one clear list",
-    "summary": "Anchor prepares a dated 90-day renewal list from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For ticket triage and broader customer support, use Support. For individual deal strategy, use Sales. For a complete customer success team, use Customer Success Org.",
+    "summary": "Anchor prepares a dated 90-day renewal list from the material you supply.",
     "category": "Sales",
     "author": {
       "name": "Ferrox Labs",
@@ -54,7 +54,8 @@
         "title": "Renewals and Expansion",
         "description": "Anchor prepares a dated 90-day renewal list from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For ticket triage and broader customer support, use Support. For individual deal strategy, use Sales. For a complete customer success team, use Customer Success Org.",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "shield"
         },
         "skills": [
           "mend-churn-prevention",

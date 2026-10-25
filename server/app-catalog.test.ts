@@ -452,3 +452,17 @@ describe("audit round 1, second auditor", () => {
     expect(Object.keys(knownApps(null, ["__proto__", "gmail"]))).toEqual(["__proto__", "gmail"]);
   });
 });
+
+describe("an app's groups (item 152)", () => {
+  it("reads group names from strings or objects, tidies them, and keeps three", async () => {
+    const { slimApp } = await import("./app-catalog.ts");
+    expect(slimApp({ slug: "a", name: "A", meta: { categories: [{ name: "Communication" }, { slug: "developer-tools" }, "Email", "communication", "Fourth"] } })?.categories)
+      .toEqual(["Communication", "Developer tools", "Email"]);
+    expect(slimApp({ slug: "b", name: "B", categories: ["Productivity"] })?.categories).toEqual(["Productivity"]);
+  });
+  it("leaves the field off when there are none, and never names the service", async () => {
+    const { slimApp } = await import("./app-catalog.ts");
+    expect(slimApp({ slug: "c", name: "C" })).not.toHaveProperty("categories");
+    expect(slimApp({ slug: "d", name: "D", meta: { categories: [{ name: "Composio tools" }, 7, null] } })).not.toHaveProperty("categories");
+  });
+});

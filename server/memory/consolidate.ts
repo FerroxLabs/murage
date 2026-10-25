@@ -8,7 +8,6 @@ import { database, transaction } from "../database.ts";
 import { extractCandidates, groundMemoryClaim, type ReservationRecord, type TextOnlyExtractor } from "./extract.ts";
 import { SLICE_ATTEMPT_LIMIT, SLICE_CALL_GUARD, SLICE_CALL_LIMIT_REASON, type SkippedSlice } from "../../shared/memory-learning-contract.ts";
 import type { DatabaseSync } from "node:sqlite";
-import { redactSecretsInText } from "../redact.ts";
 import { activateGroundedMemory } from "./automatic-learning.ts";
 import { readMemoryLearning } from "./learning-policy.ts";
 import { threadCheckpointId, unsettledIntention } from "./checkpoints.ts";
@@ -19,6 +18,8 @@ import { heldStep } from "../observe.ts";
 import { denyLookup, lineageLive, memoryLookup } from "./deny-read.ts";
 import { memoryRefKey, type LineageVerdict } from "./lineage-types.ts";
 import { inheritEdge } from "./revoke-commit.ts";
+import { insertMemoryRecord } from "./record-write.ts";
+import { redactSecretsInText } from "../redact.ts";
 
 type Handle={sourceId:string;revision:number;startByte:number;endByte:number};
 /** Write-time (S4): what the consolidator may read of a source now. The source by its marks (deny_memory, tombstones, denied place, the
@@ -108,13 +109,14 @@ function refreshMemoryCheckpointUnheld(completedJobId:string){
       }
       return {status:"deferred" as const,reason:"no-current-completed-evidence"};
     }
-    const text="Working evidence; statements are not fulfilled commitments.\n"+items.map(item=>`${item.speaker==='owner'?'Owner statement':item.speaker==='tool'?'Observed tool outcome':'Assistant hypothesis'} (${item.outcome}): ${JSON.stringify(item.text)}`).join("\n");
+    // Built from raw payload excerpts: redacted here so the unchanged test below compares it with the stored (redacted) text.
+    const text=redactSecretsInText("Working evidence; statements are not fulfilled commitments.\n"+items.map(item=>`${item.speaker==='owner'?'Owner statement':item.speaker==='tool'?'Observed tool outcome':'Assistant hypothesis'} (${item.outcome}): ${JSON.stringify(item.text)}`).join("\n"));
     const previousHandles=previous?db.prepare("SELECT source_id AS sourceId,source_revision AS revision,start_byte AS startByte,end_byte AS endByte FROM memory_evidence WHERE record_id=? AND record_version=? ORDER BY source_id").all(id,previous.version):[];
     const ordered=items.map(item=>item.handle).sort((a,b)=>a.sourceId.localeCompare(b.sourceId));
     if(previous?.state==="active"&&previous.text===text&&JSON.stringify(previousHandles)===JSON.stringify(ordered))return {status:"unchanged" as const,checkpointId:id,version:Number(previous.version)};
     const version=previous?Number(previous.version)+1:1;
     if(previous){db.prepare("UPDATE memory_records SET state='archived',valid_to=? WHERE id=? AND version=? AND owner_pinned=0").run(Date.now(),id,previous.version);db.prepare("UPDATE memory_projection_receipts SET lexical_status='pending-archive' WHERE record_id=? AND record_version=?").run(id,previous.version);}
-    db.prepare("INSERT INTO memory_records VALUES(?,?,?,'checkpoint',?,'assistant-inference','active',0,?,NULL,NULL,?)").run(id,version,source.scope_id,text,Date.now(),Date.now());
+    insertMemoryRecord(db,{id,version,scopeId:String(source.scope_id),kind:"checkpoint",text,assertion:"assistant-inference",state:"active",validFrom:Date.now(),createdAt:Date.now()});
     for(const item of items){db.prepare("INSERT INTO memory_evidence VALUES(?,?,?,?,?,?)").run(id,version,item.handle.sourceId,item.handle.revision,item.handle.startByte,item.handle.endByte);inheritEdge(db,{kind:"record",id,version},{kind:"source",id:item.handle.sourceId});}
     db.prepare("INSERT INTO memory_projection_receipts VALUES(?,?,0,'pending','pending',NULL)").run(id,version);
     db.exec("UPDATE memory_meta SET data_revision=data_revision+1");
@@ -368,7 +370,7 @@ export async function consolidateMemorySource(completedJobId:string,extractor:Te
     for(const candidate of result.candidates){
       const absolute={...candidate,startByte:at!+candidate.startByte,endByte:at!+candidate.endByte};
       const candidateId=`candidate:${hash(JSON.stringify([source!.id,source!.revision,absolute]))}`;candidateIds.push(candidateId);
-      const inserted=db.prepare("INSERT OR IGNORE INTO memory_records VALUES(?,1,?,'fact',?,'assistant-inference','candidate',0,?,NULL,NULL,?)").run(candidateId,source!.scope_id,redactSecretsInText(candidate.text),Date.now(),Date.now());
+      const inserted=insertMemoryRecord(db,{id:candidateId,version:1,scopeId:String(source!.scope_id),kind:"fact",text:candidate.text,assertion:"assistant-inference",state:"candidate",validFrom:Date.now(),createdAt:Date.now()},{orIgnore:true});
       added+=Number(inserted.changes);
       db.prepare("INSERT OR IGNORE INTO memory_evidence VALUES(?,1,?,?,?,?)").run(candidateId,source!.id,source!.revision,absolute.startByte,absolute.endByte);
       inheritEdge(db,{kind:"record",id:candidateId,version:1},{kind:"source",id:String(source!.id)});

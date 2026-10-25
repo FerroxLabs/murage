@@ -180,7 +180,7 @@ describe("1. only an engine's own reply proves a hand-off ran", () => {
   });
   it("every emit of an engine reply or tool start in a driver chooses its origin, and the choice is the table's", () => {
     const expected: Record<string, { engine: number; murage: number }> = {
-      "drivers/claude.ts": { engine: 3, murage: 4 }, "drivers/codex.ts": { engine: 3, murage: 4 }, "drivers/acp/core.ts": { engine: 2, murage: 6 } /* + the Ask stop notice (d612d17e0), Murage's own */,
+      "drivers/claude.ts": { engine: 3, murage: 4 }, "drivers/codex.ts": { engine: 3, murage: 5 } /* + the slow-hooks wait line (B13 41c9ed743), Murage's own status, never engine text */, "drivers/acp/core.ts": { engine: 2, murage: 6 } /* + the Ask stop notice (d612d17e0), Murage's own */,
       "drivers/pi.ts": { engine: 2, murage: 0 }, "drivers/antigravity.ts": { engine: 2, murage: 5 } /* five Murage notices, each a Murage-written line (never engine text), each on its own condition: the Ask stop note (d612d17e0); the line for a command accept-edits denied with no reply (94f51f40e); a tool that ran without the relay's check, turn stopped (ec5c4749a); the relay hook not loaded or a foreign hooks file, turn refused before its prompt (ec5c4749a, reworded 130d2c5f8 and 2b206b8db); the folder's own hooks file, turn runs as at Ask (2b206b8db) */, "drivers/boxagent.ts": { engine: 2, murage: 1 }, "drivers/openai-chat.ts": { engine: 2, murage: 0 },
     };
     for (const [file, want] of Object.entries(expected)) {
@@ -270,7 +270,9 @@ describe("2. a hand-off's request is found by its id, and the pair is never spli
     // a wake (its own id, no hand-off row) is not refused
     expect(() => assertHandoffStartable({ sharedWorkRun: { request: { id: "wake-of-plain-10" } } })).not.toThrow();
     const source = readFileSync(join(serverDir, "index.ts"), "utf8");
-    expect(source).toMatch(/start: \(request, claim\) => \{\n    \/\/[^\n]*\n    try \{ assertHandoffStartable\(\{ sharedWorkRun: \{ request \} \}\)/);
+    // 1.0.4 02-A1 (d3b99508b): the drain's starter is the named startRequestOnOwnThread (a nested room wake starts through it too), and its first statement is the guard
+    expect(source).toMatch(/\nfunction startRequestOnOwnThread\(request: RoomRequest, claim: AdmissionClaim\): void \{\n  \/\/[^\n]*\n  try \{ assertHandoffStartable\(\{ sharedWorkRun: \{ request \} \}\)/);
+    expect(source).toMatch(/\nconfigureSharedDrain\(\{(?:(?!\n\}\);)[\s\S])*\n  start: startRequestOnOwnThread,\n/);
     expect(source).toMatch(/backupRestartAdmission\.assertOpen\(\);\n  assertHandoffStartable\(opts\);/);
   });
   it("the owner's deletion of the source conversation ends a live request in whatever state it is in, in the same commit that removes the row", () => {
@@ -441,6 +443,6 @@ describe("4. the start is a runtime capability, so the static analysis only has 
   });
   it("the memory redispatch literals in index.ts carry the turn's own prompt by value (the lint's reading, checked here against the source)", () => {
     const index = readFileSync(join(serverDir, "index.ts"), "utf8");
-    expect(index.match(/\{ \.\.\.opts, threadId, userMessage, memoryRedispatch: attempt \}/g)).toHaveLength(2);
+    expect(index.match(/\{ \.\.\.opts, threadId, userMessage, memoryRedispatch: attempt, rebuildOf \}/g)).toHaveLength(2);
   });
 });

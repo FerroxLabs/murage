@@ -17,6 +17,7 @@ import { notebookSourceIds } from "./memory/import.ts";
 import { ownerOnly } from "./owner-audience.ts";
 import { sectionContextSystemPrompt } from "./section-context.ts";
 import { loadMemory, memorySystemPrompt } from "./workspace.ts";
+import { maskFinancialIdentifiers } from "../shared/financial-ids.ts";
 
 //
 // A turn nobody is watching (a routine, a webhook, a goal run) reads the
@@ -73,5 +74,5 @@ export function standingContextSourceIds(bot: StandingBot, ownerAudience: boolea
 
 function generalNotes(botId: string): string {
   const general = loadMemory(botId, { kind: "general" });
-  return general ? `\nNotes that apply to every team:\n${Buffer.from(general.text).subarray(0, 16000).toString("utf8").replace(/\uFFFD+$/, "")}` : "";
+  return general ? `\nNotes that apply to every team:\n${maskFinancialIdentifiers(Buffer.from(general.text).subarray(0, 16000).toString("utf8").replace(/\uFFFD+$/, ""))}` : "";
 }

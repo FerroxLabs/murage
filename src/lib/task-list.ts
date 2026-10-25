@@ -37,7 +37,8 @@ export const TASK_SORTS: ReadonlyArray<{ id: TaskSort; label: string }> = [
 
 export const TASK_FILTERS: ReadonlyArray<{ id: TaskFilter; label: string }> = [
   { id: "all", label: "All" },
-  { id: "chats", label: "Chats" },
+  // "Yours": the list itself is titled "Chats with ..." (CHATS-FINDABILITY-DESIGN 2.5)
+  { id: "chats", label: "Yours" },
   { id: "routines", label: "Routines" },
   { id: "bots", label: "From other bots" },
   { id: "unread", label: "Unread" },

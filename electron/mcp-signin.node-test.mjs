@@ -29,8 +29,8 @@ function fakeHarness(fake, entries) {
   const pushes = [];
   const origin = (url) => new URL(url).origin;
   const listing = () => Object.entries(entries).map(([name, entry]) => entry.kind === "stdio"
-    ? { kind: "stdio", name, command: "npx", args: [], envKeys: entry.envKeys ?? [], enabled: true }
-    : { kind: "remote", name, url: entry.url, host: new URL(entry.url).hostname, auth: entry.auth, headerNames: entry.headerNames ?? [], enabled: false, status: "unknown", ...(entry.local ? { local: entry.local } : {}) });
+    ? { kind: "stdio", name, command: "npx", args: [], envKeys: entry.envKeys ?? [], enabled: true, ...(entry.rev ? { rev: entry.rev } : {}) }
+    : { kind: "remote", name, url: entry.url, host: new URL(entry.url).hostname, auth: entry.auth, headerNames: entry.headerNames ?? [], enabled: false, status: "unknown", ...(entry.local ? { local: entry.local } : {}), ...(entry.rev ? { rev: entry.rev } : {}) });
   async function commit(route, { method = "GET", body } = {}) {
     if (method === "GET" && route === "/api/mcp/servers") return { status: 200, body: { servers: listing() } };
     const target = /^\/api\/mcp\/servers\/([a-z][a-z0-9_-]*)\/oauth-target$/.exec(route);
@@ -276,6 +276,28 @@ test("a wrong state from the browser is refused and cannot end the flow", async 
     const result = await pending;
     assert.equal(result.error, "cancelled");
     assert.equal(h.doc("comfy"), undefined);
+  } finally { await fake.close(); }
+});
+
+test("after Cancel, Sign in again at once opens a fresh window and the stale flow cannot remove it", async () => {
+  const fake = await startFakeRemoteMcp({ auth: "bearer" });
+  try {
+    const h = harness({ fake, entries: { comfy: { url: fake.mcpUrl, auth: "oauth", local: "this-computer" } }, browser: (back) => { const url = new URL(back); url.searchParams.set("state", "forged"); return url.toString(); } });
+    const first = h.service.signIn("comfy");
+    for (let i = 0; i < 100 && h.redirects.length === 0; i += 1) await tick(20);
+    assert.equal(h.redirects.length, 1);
+    assert.equal(h.service.cancelSignIn("comfy"), true);
+    // Immediately, before the first flow has settled.
+    const second = h.service.signIn("comfy");
+    const early = await Promise.race([second, tick(5).then(() => "pending")]);
+    assert.notEqual(early?.error, "busy", "a retry right after Cancel is not told it is busy");
+    assert.equal((await first).error, "cancelled");
+    // The stale flow settling must not have freed the new flow's slot.
+    assert.deepEqual(await h.service.signIn("comfy").then((r) => r.error), "busy");
+    for (let i = 0; i < 100 && h.redirects.length < 2; i += 1) await tick(20);
+    assert.equal(h.redirects.length, 2, "a second window opened");
+    assert.equal(h.service.cancelSignIn("comfy"), true);
+    await second;
   } finally { await fake.close(); }
 });
 
@@ -710,6 +732,20 @@ test("saveSecrets before the entry exists is not-found (save only after the 201)
     const early = await h.service.saveSecrets("keyed", { headers: { "x-api-key": "K1" } });
     assert.equal(early.error, "not-found");
     assert.equal(h.doc("keyed"), undefined, "nothing written before the entry exists");
+  } finally { await fake.close(); }
+});
+
+test("a card's save for another revision of the entry writes nothing (item 118)", async () => {
+  const fake = await startFakeRemoteMcp({ auth: "api-key" });
+  try {
+    const h = harness({ fake, entries: {} });
+    h.server.entries.filed = { kind: "stdio", envKeys: ["NOTES_TOKEN"], rev: "0123456789ab" };
+    const stale = await h.service.saveSecrets("filed", { env: { NOTES_TOKEN: "fake-notes-value" }, rev: "ba9876543210" });
+    assert.equal(stale.error, "stale");
+    assert.equal(h.doc("filed"), undefined, "nothing written for a stale revision");
+    assert.equal(h.server.pushes.length, 0, "nothing pushed for a stale revision");
+    assert.deepEqual(await h.service.saveSecrets("filed", { env: { NOTES_TOKEN: "fake-notes-value" }, rev: "0123456789ab" }), { ok: true });
+    assert.equal(h.doc("filed").env.NOTES_TOKEN, "fake-notes-value");
   } finally { await fake.close(); }
 });
 

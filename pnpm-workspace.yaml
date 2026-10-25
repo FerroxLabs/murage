@@ -33,4 +33,20 @@ packageExtensions:
 overrides:
   sharp: ">=0.35.5"
   # mermaid 12.1 still allows dompurify 3.4.13. Force the patched release.
-  dompurify: 3.4.16
+  dompurify: 3.4.17
+  # osv Highs with a fix inside the same major (1.0.4 U12). Range-scoped, so each
+  # copy moves only to its own patched release. js-yaml also ships inside the
+  # vendored electron-updater (it parses the update feed).
+  "@xmldom/xmldom@<0.8.15": 0.8.15
+  "brace-expansion@<1.1.21": 1.1.21
+  "brace-expansion@>=2 <2.1.7": 2.1.7
+  "brace-expansion@>=5 <5.0.11": 5.0.11
+  "fast-uri@>=3 <3.1.7": 3.1.7
+  "js-yaml@>=4 <4.3.2": 4.3.2
+  "source-map-js@<1.2.2": 1.2.2
+  "undici@>=7 <7.29.1": 7.29.1
+  # Left as is, on purpose: adm-zip 0.5.18 (fixed only in 0.6, outside the
+  # range onnxruntime-node asks for) is used only by onnxruntime-node's install
+  # script, which never runs here (not in allowBuilds); http-cache-semantics
+  # 4.2.0 has no fixed release and is reached only by electron-builder
+  # downloading Electron at build time.

@@ -71,12 +71,14 @@ export function settleProjectToolCharge(db: DatabaseSync, request: RoomRequest, 
   ).changes) > 0;
 }
 export interface UsageTotals { workMs: number; input: number; output: number; tokensReported: boolean; charge: number | null }
+// Tokens count as reported when ANY settled turn reported them: the budget check sums input and output over every row, so the panel
+// shows the same sum instead of "not reported" because one interrupted turn had no figures.
 export function projectUsage(db: DatabaseSync, scope: { groupId: string; goalId?: string; since?: number }): { totals: UsageTotals; byBot: Array<UsageTotals & { botId: string }>; notReported: string[]; interrupted: boolean } {
   const clauses = ["group_id=?"]; const values: (string | number)[] = [scope.groupId];
   if (scope.goalId) { clauses.push("goal_id=?"); values.push(scope.goalId); }
   if (scope.since !== undefined) { clauses.push("at>=?"); values.push(scope.since); }
   const rows = db.prepare(`SELECT bot_id AS botId, SUM(work_ms) AS workMs, COALESCE(SUM(input),0) AS input, COALESCE(SUM(output),0) AS output,
-    MIN(tokens_reported) AS tokensReported, SUM(CASE WHEN charge_kind='charge' THEN charge END) AS charge
+    MAX(tokens_reported) AS tokensReported, SUM(CASE WHEN charge_kind='charge' THEN charge END) AS charge
     FROM usage_ledger WHERE ${clauses.join(" AND ")} GROUP BY bot_id ORDER BY bot_id`).all(...values) as unknown as Array<Omit<UsageTotals, "tokensReported"> & { botId: string; tokensReported: number }>;
   const byBot = rows.map(row => ({ ...row, tokensReported: row.tokensReported === 1 }));
   const totals = byBot.reduce<UsageTotals>((sum, row) => ({ workMs: sum.workMs + row.workMs, input: sum.input + row.input, output: sum.output + row.output,
