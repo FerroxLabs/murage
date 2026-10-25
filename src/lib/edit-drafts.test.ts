@@ -2,7 +2,8 @@
 // astra-boot2-r2 High: two edits submitted while the server is busy each exhausted their retries and both failure callbacks wrote ONE editDraft, so
 // one edit's words were lost. Drafts are now one per message, one edit per message in flight, each answer keyed by its own sendId.
 import { describe, expect, it } from "vitest";
-import { beginEdit, createEditDraftStore, discardEdit, editFailed, editSent, stopSaving, type EditDrafts } from "./edit-drafts";
+import { readFileSync } from "node:fs";
+import { beginEdit, createEditDraftStore, discardEdit, editChangesNothing, editFailed, editSent, stopSaving, typeEdit, type EditDrafts } from "./edit-drafts";
 import { deliverEdit } from "../state/send-delivery";
 
 describe("edit drafts", () => {
@@ -110,5 +111,40 @@ describe("edit drafts", () => {
     expect(store.get("botA")).toBe(a);
     expect(a.m1!.text).toBe("a");
     expect(store.get("botB").m1!.text).toBe("b");
+  });
+});
+
+// Release finding 12-B1: words typed in an open editor lived only in the textarea, so a same-bot conversation switch (the view stays
+// mounted, the editor does not) dropped them and the editor came back showing the original message; and Enter on those original words
+// forked the conversation and reran the bot for nothing.
+describe("typed edit words survive the editor", () => {
+  it("keeps what was typed, with a fresh sendId for changed words, and leaves a saving draft alone", () => {
+    let drafts: EditDrafts = {};
+    drafts = typeEdit(drafts, "m1", "hel", "s1");
+    expect(drafts.m1).toEqual({ text: "hel", sendId: "s1", saving: false });
+    expect(typeEdit(drafts, "m1", "hel", "s2")).toBe(drafts);
+    drafts = typeEdit(drafts, "m1", "hello", "s3");
+    expect(drafts.m1).toEqual({ text: "hello", sendId: "s3", saving: false });
+    const saving = beginEdit(drafts, "m1", "hello", "s4")!;
+    expect(typeEdit(saving, "m1", "hello again", "s5")).toBe(saving);
+  });
+  it("a typed draft comes back when the editor remounts, and Cancel drops it", () => {
+    const store = createEditDraftStore();
+    store.update("bot", (drafts) => typeEdit(drafts, "m1", "half a thought", "s1"));
+    expect(store.get("bot").m1?.text).toBe("half a thought");
+    store.update("bot", (drafts) => discardEdit(drafts, "m1"));
+    expect(store.get("bot").m1).toBeUndefined();
+  });
+  it("words equal to the message's own words change nothing", () => {
+    expect(editChangesNothing("same", "same")).toBe(true);
+    expect(editChangesNothing("same ", " same")).toBe(true);
+    expect(editChangesNothing("same", "different")).toBe(false);
+    expect(editChangesNothing(undefined, "different")).toBe(false);
+  });
+  it("the thread view keeps the words and closes an unchanged edit", () => {
+    const source = readFileSync(new URL("../components/ChatView.tsx", import.meta.url), "utf8");
+    expect(source).toContain("onChange={(e) => { setDraft(e.target.value); onDraft?.(e.target.value); }}");
+    expect(source).toContain("typeEdit(drafts, messageId, text, newSendId())");
+    expect(source).toContain("editChangesNothing(");
   });
 });

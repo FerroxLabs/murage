@@ -29,7 +29,8 @@
         "title": "Quiet Money",
         "description": "Personal wealth coach - builds real durable wealth via the boring path. Anti-guru, anti-urgency, pro-math. Educational only; not financial advice.",
         "appearance": {
-          "color": "green"
+          "color": "green",
+          "mascotBody": "blob"
         },
         "skills": [
           "tax-optimization-strategist",

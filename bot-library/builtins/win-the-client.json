@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Win the Client",
     "tagline": "A clear path from a new enquiry to a reviewed client kickoff pack",
-    "summary": "Fast lead replies, meeting briefs, proposals, contract drafts and a kickoff pack. Swift coordinates the drafts from the notes and documents you supply. Members check their sources, the lead combines the work, and you approve external actions. For a service business team, use Service Studio. For broader sales pipeline diagnosis, use Sales Pipeline.",
+    "summary": "Fast lead replies, meeting briefs, proposals, contract drafts and a kickoff pack.",
     "category": "Sales",
     "author": {
       "name": "Ferrox Labs",
@@ -106,11 +106,12 @@
         "key": "swift",
         "name": "Swift",
         "title": "Lead Responder",
-        "description": "Swift prepares a qualified enquiry queue with reasons for each rating. Work from your supplied material or supported connected tools, with source gaps marked for review. For individual deal strategy, use Sales. For a customer-message review team, use Reply Desk. For a complete prospecting campaign, use Lead-Gen Outbound Squad. For existing sales conversation follow-ups, use Recover Unanswered Sales Emails.",
+        "description": "Swift prepares a qualified enquiry queue with reasons for each rating. Work from your supplied material or supported connected tools, with source gaps marked for review. For individual deal strategy, use Sales. For a customer-message review team, use Reply Desk. For a complete prospecting campaign, use Lead-Gen Outbound Squad. For existing sales conversation follow-ups, use Recover Unanswered Sales Emails. For broader sales pipeline diagnosis, use Sales Pipeline.",
         "role": "leader",
         "team": "Win the Client",
         "appearance": {
-          "color": "green"
+          "color": "yellow",
+          "mascotBody": "diamond"
         },
         "skills": [
           "sales-qualify",
@@ -131,7 +132,8 @@
         "role": "member",
         "team": "Win the Client",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "squircle"
         },
         "skills": [
           "company-research-guide",
@@ -151,7 +153,8 @@
         "role": "member",
         "team": "Win the Client",
         "appearance": {
-          "color": "teal"
+          "color": "teal",
+          "mascotBody": "star"
         },
         "skills": [
           "business-proposal",
@@ -172,7 +175,8 @@
         "role": "member",
         "team": "Win the Client",
         "appearance": {
-          "color": "purple"
+          "color": "purple",
+          "mascotBody": "circle"
         },
         "skills": [
           "client-onboarding-checklist",
@@ -192,7 +196,8 @@
         "role": "member",
         "team": "Win the Client",
         "appearance": {
-          "color": "green"
+          "color": "green",
+          "mascotBody": "shield"
         },
         "skills": [
           "freelance-contract-template",

@@ -23,9 +23,11 @@ import { archiveMemoryRecord } from "./retention.ts";
 import { memoryState } from "./repository.ts";
 import { ELIGIBILITY_RULE_VERSION, eligibilityLine, evidenceStillThere, memoryEligibility, type AskReason, type Eligibility, type EligibilityRow } from "./review-eligibility.ts";
 import { waitingEpoch, waitingRevision } from "./waiting-epoch.ts";
+import { DENIED_SOURCE } from "./deny.ts";
 import { WAITING_REVIEW_INDEX } from "./schema.ts";
 import { optionalIndexReady } from "./optional-index.ts";
 import { inheritEdges } from "./revoke-commit.ts";
+import { insertMemoryRecord } from "./record-write.ts";
 
 export const LATER_ROW = "memory-review-later";
 const LATER_CAP = 5000;
@@ -239,7 +241,10 @@ export function reviewSources(ticket: object, roster: MemoryRoster, input: { id:
   requireMemoryOwner(ticket);
   const db = database(), index = indexRoster(roster);
   const rows = db.prepare(`SELECT s.speaker,s.thread_id,v.payload,e.start_byte,e.end_byte FROM memory_evidence e JOIN memory_sources s ON s.id=e.source_id AND s.revision=e.source_revision
-    JOIN memory_source_versions v ON v.source_id=e.source_id AND v.revision=e.source_revision WHERE e.record_id=? AND e.record_version=? LIMIT 5`).all(input.id, input.version);
+    JOIN memory_source_versions v ON v.source_id=e.source_id AND v.revision=e.source_revision
+    WHERE e.record_id=? AND e.record_version=? AND EXISTS (SELECT 1 FROM memory_records r WHERE r.id=e.record_id AND r.version=e.record_version AND r.state='candidate')
+    AND s.state='active' AND NOT ${DENIED_SOURCE("s")}
+    AND NOT EXISTS (SELECT 1 FROM memory_tombstones t WHERE t.target_type='source' AND t.target_id=s.id AND (t.revision IS NULL OR t.revision=v.revision)) LIMIT 5`).all(input.id, input.version);
   return {
     sources: rows.map(row => {
       let payload: { text?: string; occurredAt?: number } = {};
@@ -411,8 +416,7 @@ function saveWaitingVersion(db: DatabaseSync, row: Record<string, any>, text: st
   if (Number(latest?.version) !== row.version) throw fail("MEMORY_VERSION_CONFLICT");
   const next = row.version + 1, now = Date.now();
   db.prepare("UPDATE memory_records SET state='superseded',valid_to=? WHERE id=? AND version=? AND state='candidate'").run(now, row.id, row.version);
-  db.prepare("INSERT INTO memory_records VALUES(?,?,?,?,?,'owner-statement','candidate',0,?,NULL,?,?)")
-    .run(row.id, next, row.scope_id, row.kind, redactSecretsInText(text), now, row.supersedes_id ?? null, row.created_at);
+  insertMemoryRecord(db, { id: String(row.id), version: next, scopeId: String(row.scope_id), kind: String(row.kind), text, assertion: "owner-statement", state: "candidate", validFrom: now, supersedesId: row.supersedes_id == null ? null : String(row.supersedes_id), createdAt: Number(row.created_at) });
   db.prepare("INSERT INTO memory_evidence SELECT record_id,?,source_id,source_revision,start_byte,end_byte FROM memory_evidence WHERE record_id=? AND record_version=?").run(next, row.id, row.version);
   db.prepare("INSERT INTO memory_derivations SELECT parent_id,parent_version,child_id,? FROM memory_derivations WHERE child_id=? AND child_version=?").run(next, row.id, row.version);
   db.prepare("INSERT INTO memory_derivations VALUES(?,?,?,?)").run(row.id, row.version, row.id, next);
@@ -438,6 +442,8 @@ export function reviewEdit(ticket: object, roster: MemoryRoster, input: { action
     if (!input.keep) return { status: "edited" as const, id: input.id, version: next };
     const saved = db.prepare("SELECT * FROM memory_records WHERE id=? AND version=?").get(input.id, next)!;
     if (saved.supersedes_id) {
+      // A transferred pin moves to the NEW words: approveCorrection measures them against the share (assertOwnerPinsFit, 1.0.4) in
+      // this transaction, so an edit that would not fit is refused with nothing kept.
       approveMemory(ticket, input.id, next, input.correctionPin ? { correctionPin: input.correctionPin } : {});
       db.prepare("INSERT INTO memory_projection_receipts VALUES(?,?,0,'pending','pending',NULL) ON CONFLICT(record_id,record_version,index_generation) DO UPDATE SET lexical_status='pending',embedding_status='pending',error=NULL").run(input.id, next);
       db.exec("UPDATE memory_meta SET data_revision=data_revision+1");

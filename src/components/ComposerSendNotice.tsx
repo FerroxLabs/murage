@@ -26,12 +26,21 @@ export type ComposerSendNoticeState =
   | { kind: "refused"; sizeBytes: number }
   | { kind: "upload-pending" }
   | { kind: "flux-key-saved" }
-  | { kind: "flux-key-failed" };
+  | { kind: "flux-key-failed" }
+  /** U36: the send's journal could not be written on this device, so it was not sent (the words stay). */
+  | { kind: "not-saved" }
+  /** U36: an earlier send of these words, before they were edited, already reached the bot. */
+  | { kind: "earlier-arrived" }
+  /** U36: whether an earlier send arrived could not be checked, so this press waits for the next one. */
+  | { kind: "check-failed" };
 
 export function composerSendNoticeText(notice: ComposerSendNoticeState): string {
   if (notice.kind === "flux-key-saved") return FIRST_RUN_COPY.pastedKey.saved;
   if (notice.kind === "flux-key-failed") return FIRST_RUN_COPY.pastedKey.failed;
   if (notice.kind === "upload-pending") return t("composer.uploadPending");
+  if (notice.kind === "not-saved") return t("send.notSaved");
+  if (notice.kind === "earlier-arrived") return t("send.earlierArrived");
+  if (notice.kind === "check-failed") return t("send.checkFailed");
   const { size, limit } = messageSizeLabels(notice.sizeBytes);
   return notice.kind === "too-large"
     ? t("composer.tooLarge", { size, limit })
@@ -42,7 +51,7 @@ export function composerSendNoticeText(notice: ComposerSendNoticeState): string 
  *  not look the same. Waiting on an upload is neither: nothing went wrong and
  *  nothing was lost, so it reads as a status rather than an alarm. */
 function noticeIsFailure(notice: ComposerSendNoticeState): boolean {
-  return notice.kind !== "flux-key-saved" && notice.kind !== "upload-pending";
+  return notice.kind !== "flux-key-saved" && notice.kind !== "upload-pending" && notice.kind !== "earlier-arrived";
 }
 
 /** The inline explanation beside the composer. It is an alert, so a screen

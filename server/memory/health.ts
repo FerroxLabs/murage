@@ -2,7 +2,7 @@ import { BACKGROUND_BUSY_MS, database, isDatabaseBusy, transaction } from "../da
 import { ensureScope } from "./policy.ts";
 import { memoryState } from "./repository.ts";
 import { readMemoryLearning } from "./learning-policy.ts";
-import { PagedScan, storeAtMost, writeStampOf } from "./status-scan.ts";
+import { contentStampOf, PagedScan, storeAtMost } from "./status-scan.ts";
 
 const ID="memory-observability";
 type Metrics={queries:number;hits:number;lastAt:number|null;processedAt:number|null};
@@ -71,7 +71,7 @@ const healthScan=new PagedScan<CapturedCounts,CapturedCounts>({
     return Number(rows[rows.length-1].rid);
   },
   finish:acc=>({...acc}),
-  stamp:writeStampOf,
+  stamp:db=>contentStampOf(db,["memory_sources","memory_source_versions"]),
 },STATUS_SCAN_INTERVAL_MS,HEALTH_SCAN_PAGE);
 interface SuppliedCounts{turns:number;references:number;lastAt:number|null}
 const SUPPLIED_NOW="SELECT count(*) n,coalesce(sum(json_array_length(record_versions)),0) refs,max(created_at) at FROM memory_disclosures WHERE state='delivered' AND json_array_length(record_versions)>0";
@@ -90,8 +90,11 @@ const suppliedScan=new PagedScan<SuppliedCounts,SuppliedCounts>({
     return Number(rows[rows.length-1].rid);
   },
   finish:acc=>({...acc}),
-  stamp:writeStampOf,
+  stamp:db=>contentStampOf(db,["memory_disclosures"])+":"+deliveredCount(db),
 },STATUS_SCAN_INTERVAL_MS,HEALTH_SCAN_PAGE);
+/** Delivered receipts (the state index): a receipt delivered in place changes no rowid and no revision, so the supplied figures stamp on this
+ *  count too (Astra 105 review, finding 5). */
+function deliveredCount(db:ReturnType<typeof database>):string{try{return String(db.prepare("SELECT count(*) AS n FROM memory_disclosures WHERE state='delivered'").get()?.n??"-");}catch{return "-";}}
 /** Receipts are large JSON rows: a count of rows is a poor test of "small", so only a few hundred are measured on the spot. */
 export const SUPPLIED_SMALL_ROWS=500;
 function suppliedCounts(db:ReturnType<typeof database>):{counts:SuppliedCounts;asOf:number|null}{

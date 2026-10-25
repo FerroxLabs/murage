@@ -50,6 +50,8 @@ export type RoutineRequestOperation =
 
 export interface RoutineRequestCardData {
   version: 1;
+  /** Absent on a routine card; "webhook" on a webhook card. */
+  kind?: undefined;
   /** Also used as the scheduler's idempotency key after confirmation. */
   requestId: string;
   /** Authority is fixed when the card is created; an agent cannot redirect it later. */
@@ -60,4 +62,45 @@ export interface RoutineRequestCardData {
   /** Written after a successful confirmation. Useful for support/debugging. */
   appliedAt?: number;
   resultId?: string;
+}
+
+/** A webhook proposed from chat (SL-J J1). The id is assigned once, when the
+ * card is written, from the request id: a Confirm pressed again after a crash
+ * finds the record it already made instead of making a second one. No secret
+ * and no endpoint ever ride on this payload. */
+export interface WebhookRequestDefinition {
+  id: string;
+  name: string;
+  prompt: string;
+  eventTypes?: string[];
+}
+
+export interface WebhookRequestChanges {
+  name?: string;
+  prompt?: string;
+  /** `[]` is the explicit clear. */
+  eventTypes?: string[];
+}
+
+export type WebhookRequestOperation =
+  | { action: "create"; webhook: WebhookRequestDefinition }
+  | { action: "update"; webhookId: string; expectedUpdatedAt: number; changes: WebhookRequestChanges }
+  | { action: "pause"; webhookId: string; expectedUpdatedAt: number }
+  | { action: "resume"; webhookId: string; expectedUpdatedAt: number }
+  | { action: "delete"; webhookId: string; expectedUpdatedAt: number };
+
+export interface WebhookRequestCardData extends Omit<RoutineRequestCardData, "operation" | "kind"> {
+  kind: "webhook";
+  operation: WebhookRequestOperation;
+}
+
+/** Every chat automation card: a routine (no `kind`) or a webhook. */
+export type AutomationRequestCardData = RoutineRequestCardData | WebhookRequestCardData;
+
+/** Undo is offered for this long after a change is applied (SL-J J2). */
+export const AUTOMATION_UNDO_WINDOW_MS = 7 * 24 * 60 * 60_000;
+
+/** Which applied changes offer Undo: delete and run now never do. */
+export function automationActionUndoable(action: string): boolean {
+  return action === "create" || action === "update" || action === "pause" || action === "resume";
 }
