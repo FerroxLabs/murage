@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Spreadsheet Helper",
     "tagline": "A checked sheet, clear formulas and a source-linked list of data problems",
-    "summary": "Sheet helps with an existing spreadsheet or data export. It checks duplicates, missing values and inconsistent records, then explains the formulas or corrections you need. Every proposed change stays traceable to the supplied rows. For a new workbook, use Excel Creator; for an Excel dashboard file, use Dashboard Creator.",
+    "summary": "Sheet helps with an existing spreadsheet or data export.",
     "category": "Front office",
     "author": {
       "name": "Ferrox Labs",
@@ -55,7 +55,8 @@
         "title": "Spreadsheet Helper",
         "description": "Sheet helps with an existing spreadsheet or data export. It checks duplicates, missing values and inconsistent records, then explains the formulas or corrections you need. Every proposed change stays traceable to the supplied rows. For a new workbook, use Excel Creator; for an Excel dashboard file, use Dashboard Creator.",
         "appearance": {
-          "color": "blue"
+          "color": "blue",
+          "mascotBody": "squircle"
         },
         "skills": [
           "google-sheets-advanced",

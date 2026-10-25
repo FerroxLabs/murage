@@ -31,6 +31,7 @@ import {
   STATIC_ANTIGRAVITY_MODELS,
 } from "./antigravity.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
+import { TURN_ASK_RULES } from "../../shared/ask-wording.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-agy-cli.ts");
 
@@ -331,7 +332,7 @@ describe("Antigravity turns (fake CLI)", () => {
       await recorder.until((event) => event.type === "turn.completed");
 
       const seen = JSON.parse(readFileSync(dump, "utf8"));
-      expect(seen.prompt).toBe(`${system}\n\nreview the video`);
+      expect(seen.prompt).toBe(`${system}\n\n${TURN_ASK_RULES}\n\nreview the video`);
       expect(seen.argv).toContain("--input-format");
       expect(seen.argv).not.toContain("--print");
       expect(JSON.stringify(seen.argv)).not.toContain("room instructions");

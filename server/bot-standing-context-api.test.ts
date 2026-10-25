@@ -134,8 +134,8 @@ posixOnly("a bot carries its own notebook, memory, skills and team brief into ev
   }, 90000);
 
   it("delivers each bot's own MEMORY.md to its direct and room turns, never a teammate's", async () => {
-    await api("PUT", `/api/bots/${moss.id}/memory`, { text: `# Memory\n\n- ${MOSS_NOTEBOOK}\n` });
-    await api("PUT", `/api/bots/${sable.id}/memory`, { text: `# Memory\n\n- ${SABLE_NOTEBOOK}\n` });
+    await api("PUT", `/api/bots/${moss.id}/memory`, { baseRevision: (await api("GET", `/api/bots/${moss.id}/memory`)).revision, text: `# Memory\n\n- ${MOSS_NOTEBOOK}\n` });
+    await api("PUT", `/api/bots/${sable.id}/memory`, { baseRevision: (await api("GET", `/api/bots/${sable.id}/memory`)).revision, text: `# Memory\n\n- ${SABLE_NOTEBOOK}\n` });
     const direct = await directTurn(moss);
     expect(direct.system).toContain("Your memory (MEMORY.md)");
     expect(direct.system).toContain(MOSS_NOTEBOOK);
@@ -147,7 +147,7 @@ posixOnly("a bot carries its own notebook, memory, skills and team brief into ev
   }, 90000);
 
   it("invites edits to the notebook only when asked, and tells a routine run nobody is watching", async () => {
-    await api("PUT", `/api/bots/${moss.id}/memory`, { text: `# Memory\n\n- ${MOSS_NOTEBOOK}\n` });
+    await api("PUT", `/api/bots/${moss.id}/memory`, { baseRevision: (await api("GET", `/api/bots/${moss.id}/memory`)).revision, text: `# Memory\n\n- ${MOSS_NOTEBOOK}\n` });
     const direct = await directTurn(moss);
     expect(direct.system).toContain("only when the person asks you to remember");
     expect(direct.system).not.toContain("leave it unchanged on this turn");

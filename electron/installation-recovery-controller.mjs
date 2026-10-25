@@ -20,7 +20,7 @@ export function createInstallationRecoveryController(host) {
   };
   const canSeparate = () => host.canRestoreSeparate?.() === true;
   const canCapture = () => canSeparate() && host.canCaptureSeparate?.() === true;
-  const state = () => ({ busy, available: host.isAvailable(), encryptedAvailable:host.encryptedAvailable?.()===true, separateAvailable: canSeparate(), captureAvailable: canCapture(), retainedDataDirectory: host.retainedDestination?.() ?? null, selection: selection ? { id: selection.id, name: selection.name, encrypted:!!selection.encrypted, coverage:selection.preview.coverage, separate: !!selection.plan, destination: selection.plan?.dataDirectory, snapshotId: selection.preview.snapshotId, sha256: selection.preview.sha256, omittedCount: selection.preview.omittedCount, missingCount: selection.preview.missingCount } : null, review: activationReview ? { id: activationReview.id, snapshotId: activationReview.report.snapshotId, files: activationReview.report.files, bytes: activationReview.report.bytes } : null, result, error, errorAction: error ? errorAction : null, errorPath: error ? errorPath : null, activationAvailable: !!activationReview });
+  const state = () => ({ busy, available: host.isAvailable(), encryptedAvailable:host.encryptedAvailable?.()===true, separateAvailable: canSeparate(), captureAvailable: canCapture(), retainedDataDirectory: host.retainedDestination?.() ?? null, selection: selection ? { id: selection.id, name: selection.name, encrypted:!!selection.encrypted, coverage:selection.preview.coverage, separate: !!selection.plan, destination: selection.plan?.dataDirectory, snapshotId: selection.preview.snapshotId, sha256: selection.preview.sha256, omittedCount: selection.preview.omittedCount, missingCount: selection.preview.missingCount } : null, review: activationReview ? { id: activationReview.id, snapshotId: activationReview.report.snapshotId, files: activationReview.report.files, bytes: activationReview.report.bytes, ...(activationReview.report.notice ? { notice: activationReview.report.notice } : {}) } : null, result, error, errorAction: error ? errorAction : null, errorPath: error ? errorPath : null, activationAvailable: !!activationReview });
 
   return {
     async handle(event, input) {
@@ -83,11 +83,11 @@ export function createInstallationRecoveryController(host) {
         } else if (input.action === "activate") {
           if (!activationReview || input.reviewId !== activationReview.id) throw new Error("RECOVERY_SELECTION_EXPIRED");
           const chosen = activationReview;
-          if (await host.confirm(event, "activate")) {
+          if (await host.confirm(event, "activate", "", undefined, undefined, chosen.report.notice)) {
             authorize(event);
             if (!host.isAvailable()) throw new Error("RECOVERY_OWNERSHIP_REQUIRED");
             activationReview = null;
-            result = await host.run("activate", { reviewHash: chosen.report.reviewHash });
+            result = await host.run("activate", { reviewHash: chosen.report.reviewHash, ...(chosen.report.notice ? { acknowledgedNotice: true } : {}) });
             if (result.status !== "reviewed-engines-disabled") throw new Error("INVALID_RECOVERY_PREVIEW");
             await host.retry();
           }

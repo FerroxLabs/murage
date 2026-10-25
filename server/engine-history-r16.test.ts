@@ -470,7 +470,7 @@ describe("E: a retry that throws while the record is pending arms the next one",
     const entry = deletions.begin({ threadIds: [THREAD], engineHomes: fx.homes });
     await deletions.finish(entry);
     fail(1);
-    expect(await deletions.retryNow()).toBe(1); // clears the timer, then the attempt throws on the busy database
+    expect((await deletions.retryNow()).started).toBe(1); // clears the timer, then the attempt throws on the busy database
     expect(deletions.pending()).toHaveLength(1);
     await delay(400);
     expect(deletions.pending()).toEqual([]);

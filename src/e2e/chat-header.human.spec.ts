@@ -448,7 +448,7 @@ test("every control is reachable at every width — relocated, never removed", a
     "memory",
     "task's files",
     "stop this turn",
-    "all threads",
+    "chat list",
     "thread model",
   ];
   const counts: number[] = [];

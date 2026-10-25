@@ -10,6 +10,10 @@
 
 /** The activity line written when a retained run is released by its engine's later close. */
 export const ENGINE_CLOSED_LATE_NOTE = "Engine closed; you can continue this conversation.";
+/** The activity line written when a run is retained (reportUnconfirmedDirectStop). It agrees with
+ * ENGINE_CLOSED_LATE_NOTE: the conversation carries on by itself once the engine exits, and a restart
+ * is only the way out if it never does. */
+export const PROVIDER_STOP_UNCONFIRMED_LINE = "error: provider stop is unconfirmed; this conversation continues once the engine exits, or restart Murage if it stays stuck";
 
 export interface LateCloseRelease {
   /** The exact turn's close, captured before the bounded wait began. */

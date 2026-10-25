@@ -46,6 +46,7 @@ files:
   - shared/backup-restic-pin.mjs
   - shared/update-candidate.mjs
   - shared/backup-capture-failure.mjs
+  - shared/backup-max-bytes.mjs
   - shared/setup-backup-record.mjs
   - shared/upgrade-wait.mjs
   - shared/upgrade-contract.mjs

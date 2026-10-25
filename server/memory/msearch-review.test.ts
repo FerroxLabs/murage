@@ -246,12 +246,13 @@ describe("search denies exactly what memory_get denies", () => {
         if (rand() < 0.12) { src.tomb = rand() < 0.5 ? "all" : texts.length; tombstone("source", id, src.tomb === "all" ? null : src.tomb); }
         sources.set(id, src);
       }
-      type Rec = { scope: string; kind: string; assertion: string; state: string; identity: boolean; parents: string[]; evidence: Array<{ source: string; revision: number; start: number; end: number }>; forgotten: boolean };
+      type Rec = { scope: string; kind: string; assertion: string; state: string; identity: boolean; fromCandidate: boolean; parents: string[]; evidence: Array<{ source: string; revision: number; start: number; end: number }>; forgotten: boolean };
       const records = new Map<string, Rec>();
       for (let n = 0; n < RECORDS; n++) {
         const id = `r${trial}-${n}`;
-        const rec: Rec = { scope: pick(reachable), kind: pick(["fact", "character-canon", "preference"]), assertion: rand() < 0.35 ? "owner-statement" : "tool-observation", identity: rand() < 0.3,
+        const rec: Rec = { scope: pick(reachable), kind: pick(["fact", "character-canon", "preference"]), assertion: rand() < 0.35 ? "owner-statement" : "tool-observation", identity: rand() < 0.3, fromCandidate: false,
           state: rand() < 0.75 ? "active" : pick(["archived", "superseded", "candidate"]), parents: [], evidence: [], forgotten: false };
+        rec.fromCandidate = rec.state === "candidate";
         record(id, rec.scope, { kind: rec.kind, identity: rec.identity, state: rec.state, assertion: rec.assertion });
         for (let e = Math.floor(rand() * 3); e > 0; e--) {
           const sid = pick([...sources.keys()]), src = sources.get(sid)!, revision = 1 + Math.floor(rand() * src.texts.length), length = Buffer.byteLength(src.texts[revision - 1]);
@@ -272,6 +273,8 @@ describe("search denies exactly what memory_get denies", () => {
         const rec = records.get(id)!;
         if (rec.forgotten) return "forgotten";
         if (!(mode === "current" ? ["active"] : ["active", "archived", "superseded"]).includes(rec.state)) return "state";
+        // 1.0.4 gap A: a version that was only ever a candidate (waiting, then archived without being kept) is not history
+        if (mode === "historical" && rec.fromCandidate) return "candidate-only";
         const seen = new Set<string>(), walk = [...rec.parents];
         while (walk.length) {
           const parentId = walk.pop()!, parent = records.get(parentId)!;

@@ -504,3 +504,27 @@ describe("scoped configuration", () => {
       .toEqual({ profile: { name: "Sam", email: "" }, vps: { configured: true, sshAlias: "" } });
   });
 });
+
+describe("routine and webhook frames (04-A1)", () => {
+  it("scopes routine frames to the bot they belong to", () => {
+    const store = world();
+    const routine = frameSubject({ kind: "routine", routine: { id: "r1", botId: "secret", prompt: "private" } });
+    const run = frameSubject({ kind: "routine.run", run: { id: "u1", botId: "secret", output: "private" } });
+    expect(routine).toEqual({ scope: "bot", botId: "secret" });
+    expect(run).toEqual({ scope: "bot", botId: "secret" });
+    expect(visibleToCompanion(store, routine)).toBe(false);
+    expect(visibleToCompanion(store, run)).toBe(false);
+    expect(visibleToCompanion(store, frameSubject({ kind: "routine", routine: { botId: "open" } }))).toBe(true);
+  });
+
+  it("keeps webhook frames on the owner desktop", () => {
+    const store = world();
+    for (const payload of [
+      { kind: "webhook", webhook: { id: "w1", prompt: "p" } },
+      { kind: "webhook.attempt", attempt: { preview: "body" } },
+      { kind: "webhook.deleted", webhookId: "w1" },
+    ]) {
+      expect(visibleToCompanion(store, frameSubject(payload))).toBe(false);
+    }
+  });
+});
