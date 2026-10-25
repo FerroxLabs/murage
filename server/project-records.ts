@@ -190,11 +190,13 @@ export type ProjectActivityKind =
   | "budget_warned" | "budget_paused" | "budget_raised" | "member_error" | "routine_run"
   | "settings" | "work_roots" | "restore" | "close" | "reopen" | "deadline";
 
+/** A hand-off is read into Activity from its room request (never a stored activity row: that table's kinds are frozen), see listProjectActivity. */
+export type ProjectActivityReadKind = ProjectActivityKind | "handoff";
 export interface ProjectActivity {
   id: string;
   groupId: string;
   at: number;
-  kind: ProjectActivityKind;
+  kind: ProjectActivityReadKind;
   actor: string;
   workItemId: string | null;
   goalId: string | null;
@@ -413,12 +415,25 @@ export function listProjectActivity(db: DatabaseSync, groupId: string, opts: { b
   if (opts.cardId !== undefined) { where.push("work_item_id=?"); values.push(opts.cardId); }
   if (opts.before !== undefined) { where.push("at<?"); values.push(opts.before); }
   const rows = db.prepare(`SELECT * FROM project_activity WHERE ${where.join(" AND ")} ORDER BY at DESC, id DESC LIMIT ?`).all(...values, limit) as Array<Record<string, unknown>>;
-  return rows.map(row => ({
+  const stored: ProjectActivity[] = rows.map(row => ({
     id: String(row.id), groupId: String(row.group_id), at: Number(row.at),
     kind: row.kind as ProjectActivityKind, actor: String(row.actor),
     workItemId: row.work_item_id as string | null, goalId: row.goal_id as string | null, requestId: row.request_id as string | null,
     detail: JSON.parse(String(row.detail)) as Record<string, unknown>,
   }));
+  if (opts.cardId !== undefined) return stored;
+  // A teammate's hand-off in this project: one line per hand-off, read from its request (who handed to whom, and where it stands). The
+  // detail is ids and a state name only, like every activity row.
+  const handoffs = (db.prepare(`SELECT id, created_at, from_bot_id, to_bot_id, state, project_goal_id AS goal_id FROM room_requests
+    WHERE group_id=? AND handoff=1 AND from_kind='bot' AND from_bot_id IS NOT NULL AND to_bot_id IS NOT NULL${opts.before !== undefined ? " AND created_at<?" : ""} ORDER BY created_at DESC, id DESC LIMIT ?`)
+    .all(...(opts.before !== undefined ? [groupId, opts.before, limit] : [groupId, limit])) as Array<Record<string, unknown>>)
+    .map((row): ProjectActivity => ({
+      id: `handoff:${String(row.id)}`, groupId, at: Number(row.created_at), kind: "handoff", actor: String(row.from_bot_id),
+      workItemId: null, goalId: (row.goal_id as string | null) ?? null, requestId: String(row.id),
+      detail: { toBotId: String(row.to_bot_id), state: String(row.state) },
+    }));
+  if (!handoffs.length) return stored;
+  return [...stored, ...handoffs].sort((a, b) => b.at - a.at || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0)).slice(0, limit);
 }
 
 /** At most 200 brief versions per group; older versions beyond 200 are

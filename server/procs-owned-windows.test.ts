@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { ChildTeardown } from "./drivers/child-teardown.ts";
 
 const native = vi.hoisted(() => ({ spawn: vi.fn(), execFile: vi.fn() }));
 vi.mock("node:child_process", () => native);
@@ -14,9 +15,20 @@ vi.mock("./env-path.ts", () => ({ resolveCliSpawn: (command: string, args: strin
 const addon = vi.hoisted(() => ({ jobCreate: vi.fn(), jobAssign: vi.fn(), jobClose: vi.fn(), jobStop: vi.fn(), processes: vi.fn() }));
 // `present: false` is a build without the addon (engineJob then keeps the taskkill route).
 const addonState = vi.hoisted(() => ({ present: true }));
-vi.mock("./engine-exclusion.ts", () => ({ requireWindowsAddon: () => addon, loadExclusionAddon: () => (addonState.present ? addon : null) }));
+vi.mock("./engine-exclusion.ts", () => ({
+  requireWindowsAddon: () => { if (!addonState.present) throw new Error("the engine-exclusion addon is not available"); return addon; },
+  loadExclusionAddon: () => (addonState.present ? addon : null),
+}));
+// The job launcher file (U24): the real one by default; a test can point at a missing file to simulate a build without it.
+const proxyState = vi.hoisted(() => ({ launcher: "" }));
+vi.mock("./proxy-paths.ts", () => ({ SPAWNED_PROXIES: { get jobLauncher() { return proxyState.launcher; } } }));
+const REAL_LAUNCHER = fileURLToPath(new URL("./job-launcher.ts", import.meta.url));
 
-import { awaitCliTreeStopped, cliJobFallback, cliJobRefused, engineJob, forceCliTreeStopped, spawnCli } from "./procs.ts";
+import { fileURLToPath } from "node:url";
+import {
+  awaitCliTreeStopped, cliContainment, cliJobRefused, cliProcessPid, cliStopDelivery, cliTreeConfirmedStopped, engineJob, engineProcessPid,
+  ENGINE_CONTAINMENT_CODE, forceCliTreeStopped, JOB_STOP_CAP_MS, killCliTree, launcherEnvironment, spawnCli, WINDOWS_ROUTE_WATCHDOG_MS, WINDOWS_TASKKILL_CAP_MS,
+} from "./procs.ts";
 
 // Simulated Windows only: no subprocess, taskkill or signal is executed.
 // Use real spawnCli admission bookkeeping with an explicit mocked OS seam.
@@ -44,7 +56,17 @@ beforeEach(() => {
   addon.jobStop.mockReset().mockResolvedValue({ state: "absent" });
   addonState.present = true;
   addon.processes.mockReset().mockReturnValue([]);
+  proxyState.launcher = REAL_LAUNCHER;
 });
+/** The frame spawnCli wrote to the launcher's stdin, parsed; every byte written is collected by `written`. */
+const frameOf = (written: string[]) => {
+  const all = written.join("");
+  const newline = all.indexOf("\n");
+  const length = Number(all.slice(0, newline));
+  const body = all.slice(newline + 1, newline + 1 + length);
+  return { frame: JSON.parse(body) as { env: Record<string, string>; cwd: string }, after: all.slice(newline + 1 + length) };
+};
+const nextTick = () => new Promise<void>((resolve) => process.nextTick(resolve));
 afterEach(() => {
   child.emit("close", child.exitCode, child.signalCode);
   Object.defineProperty(process, "platform", platformDescriptor);
@@ -160,16 +182,28 @@ describe("Windows PIP job ownership", () => {
     await expect(awaitCliTreeStopped(owned)).resolves.toBe(false);
   });
 
-  it("creates the job first, spawns the CLI itself (no PowerShell) and puts it in the job at once", () => {
+  // U24 design R2: the job exists first; the launcher (not the CLI) is spawned with a fixed environment and put in the job
+  // while it is blocked; the CLI's argv rides after "--" and its environment in the frame, written only after assignment.
+  it("creates the job first, spawns the launcher with a fixed environment, puts it in the job, then hands it the CLI's environment", () => {
     const args = ["", 'a "quoted" value', "trailing\\", "line\nnext"];
-    spawnCli("fixture.exe", args, { cwd: base, env: { FIXTURE: "value" }, stdio: ["pipe", "pipe", "pipe"] }, JOB);
+    const written: string[] = [];
+    (child.stdin as PassThrough).on("data", (chunk: Buffer) => written.push(chunk.toString()));
+    spawnCli("fixture.exe", args, { cwd: base, env: { FIXTURE: "value", NODE_OPTIONS: "--require evil" }, stdio: ["pipe", "pipe", "pipe"] }, JOB);
     expect(addon.jobCreate).toHaveBeenCalledWith(JOB.name);
     expect(native.spawn).toHaveBeenCalledOnce();
     const [command, argv, options] = native.spawn.mock.calls[0];
-    expect(command).toBe("fixture.exe");
-    expect(argv).toEqual(args);
-    expect(options.env.FIXTURE).toBe("value");
+    expect(command).toBe(process.execPath);
+    expect(argv).toEqual([REAL_LAUNCHER, "--", "fixture.exe", ...args]);
+    expect(options.env).toEqual(launcherEnvironment());
+    expect(options.env.FIXTURE).toBeUndefined();
+    expect(options.env.NODE_OPTIONS).toBeUndefined();
+    expect(options.cwd).toBe(base);
+    expect(options.stdio).toEqual(["pipe", "pipe", "pipe", "pipe"]);
+    expect(options.windowsHide).toBe(true);
     expect(addon.jobAssign).toHaveBeenCalledWith({ job: JOB.name }, child.pid, 220);
+    const { frame, after } = frameOf(written);
+    expect(frame).toEqual({ env: { FIXTURE: "value", NODE_OPTIONS: "--require evil" }, cwd: base });
+    expect(after).toBe("");
     expect(addon.jobCreate.mock.invocationCallOrder[0]).toBeLessThan(native.spawn.mock.invocationCallOrder[0]!);
     expect(addon.jobClose).not.toHaveBeenCalled();
     // the CLI's exit closes the server's handle, which ends anything it left in the job (as the supervisor's exit did)
@@ -218,9 +252,9 @@ describe("Windows PIP job ownership", () => {
     (child.stdin as PassThrough).write = ((chunk: unknown, ...rest: unknown[]) => { order.push("stdin"); return (write as (...args: unknown[]) => boolean)(chunk, ...rest); }) as PassThrough["write"];
     native.spawn.mockImplementation(() => { order.push("spawn"); return child; });
     const owned = spawnCli("fixture.exe", [], { cwd: base, stdio: ["pipe", "pipe", "pipe"] }, JOB);
-    expect(order).toEqual(["spawn", "assign"]); // spawnCli returned: assigned, nothing written yet
+    expect(order).toEqual(["spawn", "assign", "stdin"]); // spawnCli returned: assigned, then the frame (the only write)
     owned.stdin.write("prompt");
-    expect(order).toEqual(["spawn", "assign", "stdin"]);
+    expect(order).toEqual(["spawn", "assign", "stdin", "stdin"]); // the prompt follows the frame in the same pipe
   });
 
   // Astra nops #4: a descendant that inherited stdout holds the root's streams (and its `close`) open.
@@ -256,177 +290,305 @@ describe("Windows PIP job ownership", () => {
     expect(native.execFile).not.toHaveBeenCalled();
   });
 
-  it("terminates the job first, then requires the root itself to have exited", async () => {
+  // U24 design R5: the launcher and the CLI are members before their first instruction, so an empty job is the whole tree
+  // gone; nothing is waited for after it. A root still reported alive gets the root kill, which closes the handle.
+  it("an empty job confirms at once; a root not yet seen exited gets the root kill, and nothing is waited for", async () => {
     const owned = spawnCli("fixture.exe", [], { cwd: base, stdio: ["pipe", "pipe", "pipe"] }, JOB);
     const stopped = awaitCliTreeStopped(owned);
     await vi.advanceTimersByTimeAsync(0);
     expect(addon.jobStop).toHaveBeenCalledOnce();
-    expect(child.kill).toHaveBeenCalledOnce(); // the root had not exited yet
-    let resolved: boolean | undefined;
-    void stopped.then(value => { resolved = value; });
-    await vi.advanceTimersByTimeAsync(0);
-    expect(resolved).toBeUndefined();
-    child.emit("exit", null, "SIGTERM");
     await expect(stopped).resolves.toBe(true);
-  });
-
-  it("a root that never exits is not confirmed as stopped", async () => {
-    const owned = spawnCli("fixture.exe", [], { cwd: base, stdio: ["pipe", "pipe", "pipe"] }, JOB);
-    const stopped = awaitCliTreeStopped(owned);
-    await vi.advanceTimersByTimeAsync(2_000);
-    await expect(stopped).resolves.toBe(false);
-  });
-});
-
-// 1.0.3 gate box (SSH session-0 Standard user): taskkill /T is denied for every tree, so the root kill alone left grandchildren
-// holding the root's pipes and the run retained. Engine turns now get the owned job; a job is a better stop route, never a gate.
-describe("Windows engine job (optional, simulated)", () => {
-  const ENGINE_NAME = /^Local\\murage-pip-eng-[0-9a-f-]{36}$/;
-  const fakeChild = (pid: number): ChildProcess => Object.assign(new EventEmitter(), {
-    pid, exitCode: null, signalCode: null, stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: vi.fn(() => true),
-  }) as unknown as ChildProcess;
-
-  it("engineJob names a fresh job in the PIP namespace the addon accepts, marked optional", () => {
-    const a = engineJob(), b = engineJob();
-    expect(a).toEqual({ name: expect.stringMatching(ENGINE_NAME), fallback: "no-job" });
-    expect(b!.name).not.toBe(a!.name);
-  });
-
-  it("engineJob is undefined without the addon, or with one that cannot make jobs: today's taskkill route", () => {
-    addonState.present = false;
-    expect(engineJob()).toBeUndefined();
-    addonState.present = true;
-    const jobCreate = addon.jobCreate;
-    (addon as { jobCreate?: unknown }).jobCreate = undefined;
-    try { expect(engineJob()).toBeUndefined(); } finally { addon.jobCreate = jobCreate; }
-  });
-
-  it.each(["linux", "darwin"])("engineJob is undefined on %s, whatever the addon offers: nothing changes off Windows", (platform) => {
-    Object.defineProperty(process, "platform", { ...platformDescriptor, value: platform });
-    try { expect(engineJob()).toBeUndefined(); } finally { Object.defineProperty(process, "platform", { ...platformDescriptor, value: "win32" }); }
-  });
-
-  it("an engine CLI in its job stops through the job, never taskkill", async () => {
-    const job = engineJob()!;
-    const owned = spawnCli("fuigo.exe", [], { cwd: base, stdio: ["pipe", "pipe", "pipe"] }, job);
-    expect(addon.jobCreate).toHaveBeenCalledWith(job.name);
-    expect(addon.jobAssign).toHaveBeenCalledWith({ job: job.name }, child.pid, 220);
-    expect(cliJobFallback(owned)).toBeUndefined();
-    const stopped = awaitCliTreeStopped(owned);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(addon.jobStop).toHaveBeenCalledWith(job.name, expect.any(Number));
-    child.emit("exit", null, "SIGTERM");
-    await expect(stopped).resolves.toBe(true);
+    expect(child.kill).toHaveBeenCalledOnce();
     expect(native.execFile).not.toHaveBeenCalled();
   });
 
-  it("a job that cannot be created does not refuse the turn: the CLI starts without one and stops through taskkill /T", async () => {
-    addon.jobCreate.mockImplementation(() => { throw Object.assign(new Error("exists"), { code: "EEXIST" }); });
-    native.execFile.mockImplementation((_command, _args, _options, callback) => { queueMicrotask(() => child.emit("close", 1, null)); callback(null); });
-    const owned = spawnCli("fuigo.exe", [], { cwd: base, stdio: ["pipe", "pipe", "pipe"] }, engineJob());
-    expect(native.spawn).toHaveBeenCalledOnce();
-    expect(owned).toBe(child);
-    expect(cliJobRefused(owned)).toBe(false);
-    expect(cliJobFallback(owned)).toBe("create");
-    await expect(awaitCliTreeStopped(owned)).resolves.toBe(true);
-    expect(addon.jobStop).not.toHaveBeenCalled();
-    expect(native.execFile).toHaveBeenCalledWith("taskkill", expect.arrayContaining(["/T", "/F"]), expect.any(Object), expect.any(Function));
+  // U24 design R5 / T5d: the first caller, a caller that joins later, and the ChildTeardown that joins on root close all read
+  // false at JOB_STOP_CAP_MS; the native empty answer after the cap marks the tree stopped and releases the teardown through
+  // the stopped signal, with no further Stop.
+  it("T5d: root close joins the attempt, every caller reads false at the cap, and a late empty answer releases the teardown", async () => {
+    let answer!: (value: { state: string; activeProcesses?: number }) => void;
+    addon.jobStop.mockImplementation(() => new Promise((resolve) => { answer = resolve; }));
+    const owned = spawnCli("fixture.exe", [], { cwd: base, stdio: ["pipe", "pipe", "pipe"] }, JOB);
+    const teardown = new ChildTeardown(owned); // real confirm (awaitCliTreeStopped) and real stopped signal
+    const closedAt: number[] = [];
+    teardown.onClosed(() => closedAt.push(Date.now()));
+    const results: Array<[string, boolean]> = [];
+    const first = awaitCliTreeStopped(owned); void first.then((v) => results.push(["first", v]));
+    await vi.advanceTimersByTimeAsync(1_000);
+    const joined = awaitCliTreeStopped(owned); void joined.then((v) => results.push(["joined", v]));
+    teardown.markStopRequested();
+    child.emit("close", null, "SIGTERM"); // root close: the teardown joins the attempt too
+    const wait = teardown.wait({ closeMs: 5_000, maxMs: 5_000 });
+    let waited: unknown; void wait.then((v) => { waited = v; });
+    await vi.advanceTimersByTimeAsync(JOB_STOP_CAP_MS - 1_000); // 4.5 s after the first caller
+    expect(results).toEqual([["first", false]]);
+    await vi.advanceTimersByTimeAsync(1_000); // 4.5 s after the joined caller
+    expect(results).toEqual([["first", false], ["joined", false]]);
+    expect(teardown.closed).toBe(false);
+    await vi.advanceTimersByTimeAsync(500); // the teardown's own 5 s budget
+    expect(waited).toEqual({ closeConfirmed: false, reason: "timeout" });
+    expect(addon.jobStop).toHaveBeenCalledOnce(); // one attempt, joined by everyone
+    await vi.advanceTimersByTimeAsync(300);
+    answer({ state: "absent" }); // 6.3 s in, well after every caller's cap: the attempt was never ended
+    await vi.advanceTimersByTimeAsync(0);
+    expect(cliTreeConfirmedStopped(owned)).toBe(true);
+    expect(teardown.closed).toBe(true);
+    expect(closedAt).toHaveLength(1);
+    await expect(teardown.wait({ closeMs: 5_000, maxMs: 5_000 })).resolves.toEqual({ closeConfirmed: true });
   });
 
-  it.each([["the addon answers false (a nested job not allowed, a process it could not open)", (): boolean => false], ["the addon throws", (): boolean => { throw new Error("EACCES"); }]] as const)(
-    "a refused assignment does not refuse the turn: the refused start is ended unwritten and the CLI starts once more without a job: %s", async (_case, assign) => {
-      addon.jobAssign.mockImplementation(assign);
-      const refused = child;
-      const written: string[] = [];
-      (refused.stdin as PassThrough).on("data", (chunk: Buffer) => written.push(chunk.toString()));
-      const second = fakeChild(process.pid + 20_000);
-      native.spawn.mockReset().mockReturnValueOnce(refused).mockReturnValueOnce(second);
-      const owned = spawnCli("codex.exe", ["app-server"], { cwd: base, env: { FIXTURE: "value" }, stdio: ["pipe", "pipe", "pipe"] }, engineJob());
-      expect(refused.kill).toHaveBeenCalledOnce();
-      expect(refused.stdin!.destroyed).toBe(true);
-      expect(written).toEqual([]);
-      expect(addon.jobClose).toHaveBeenCalledOnce();
-      expect(native.spawn).toHaveBeenCalledTimes(2);
-      expect(native.spawn.mock.calls[1]).toEqual(native.spawn.mock.calls[0]); // the same command, argv and options
-      expect(owned).toBe(second);
-      expect(cliJobRefused(owned)).toBe(false);
-      expect(cliJobFallback(owned)).toBe("assign");
-      expect(addon.jobAssign).toHaveBeenCalledOnce(); // the second start is never put in a job
-      owned.stdin.write("prompt");
-      expect(written).toEqual([]);
-      // the no-job route: taskkill /T first, then the root's close confirms
-      native.execFile.mockImplementation((_command, _args, _options, callback) => { queueMicrotask(() => second.emit("close", 1, null)); callback(null); });
-      await expect(awaitCliTreeStopped(owned)).resolves.toBe(true);
-      expect(addon.jobStop).not.toHaveBeenCalled();
-      expect(native.execFile).toHaveBeenCalledWith("taskkill", expect.arrayContaining(["/T", "/F", "/PID", String(second.pid)]), expect.any(Object), expect.any(Function));
-      refused.emit("close", 220, null);
-    });
+  // Astra final review r2: an explicit longer deadline (a reset or dispatch caller's CLI_CALLER_DEADLINE_MS) is clamped to the cap.
+  it("an explicit deadline longer than JOB_STOP_CAP_MS is clamped to it, for the first caller and for one that joins", async () => {
+    addon.jobStop.mockImplementation(() => new Promise(() => {}));
+    const owned = spawnCli("fixture.exe", [], { cwd: base, stdio: ["pipe", "pipe", "pipe"] }, JOB);
+    const results: string[] = [];
+    void awaitCliTreeStopped(owned, undefined, 5_500).then((v) => results.push(`first:${v}`));
+    await vi.advanceTimersByTimeAsync(500);
+    void awaitCliTreeStopped(owned, undefined, 9_000).then((v) => results.push(`joined:${v}`));
+    await vi.advanceTimersByTimeAsync(JOB_STOP_CAP_MS - 500);
+    expect(results).toEqual(["first:false"]);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(results).toEqual(["first:false", "joined:false"]);
+  });
 
-  it("PIP's job stays required: the same refusal still refuses a PIP run (no second start)", () => {
-    addon.jobAssign.mockReturnValue(false);
-    const owned = spawnCli("claude.exe", [], { cwd: base, stdio: ["pipe", "pipe", "pipe"] }, { name: "Local\\murage-pip-fixture" });
-    expect(native.spawn).toHaveBeenCalledOnce();
-    expect(cliJobRefused(owned)).toBe(true);
-    expect(cliJobFallback(owned)).toBeUndefined();
+  it("a job stop that never answers: every caller reads false at JOB_STOP_CAP_MS; a late empty answer still marks the tree stopped", async () => {
+    let answer!: (value: { state: string; activeProcesses?: number }) => void;
+    addon.jobStop.mockImplementation(() => new Promise((resolve) => { answer = resolve; }));
+    const owned = spawnCli("fixture.exe", [], { cwd: base, stdio: ["pipe", "pipe", "pipe"] }, JOB);
+    const stopped = awaitCliTreeStopped(owned);
+    let resolved: boolean | undefined;
+    void stopped.then(value => { resolved = value; });
+    await vi.advanceTimersByTimeAsync(JOB_STOP_CAP_MS - 1);
+    expect(resolved).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(resolved).toBe(false);
+    expect(cliTreeConfirmedStopped(owned)).toBe(false);
+    await vi.advanceTimersByTimeAsync(300);
+    answer({ state: "absent" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(cliTreeConfirmedStopped(owned)).toBe(true);
   });
 });
 
-// Fable Medium on be91a65c6: libuv starts the CLI running, so a grandchild born between spawn and jobAssign was in no job.
-describe("descendants started before the assignment (simulated)", () => {
-  const row = (pid: number, ppid: number, start: number) => ({ pid, ppid, start, mine: true, exe: null, argv: null });
-  it.each([["an engine job", () => engineJob()!], ["a PIP job", () => ({ name: "Local\\murage-pip-fixture" })]] as const)(
-    "%s: one sweep puts the root's descendants in the job, grandchildren included, and nothing else", (_case, job) => {
-      const root = child.pid!;
-      // starts as the addon reports them: fractional seconds. root+3 is a same-user orphan whose stale ppid names the reused root pid.
-      addon.processes.mockReturnValue([row(root, 4, 100.5), row(root + 1, root, 100.7), row(root + 2, root + 1, 100.9), row(root + 3, root, 100.2), row(root + 4, 4, 101.1)]);
-      const owned = spawnCli("fuigo.exe", [], { cwd: base, stdio: ["pipe", "pipe", "pipe"] }, job());
-      const pids = addon.jobAssign.mock.calls.map((call) => call[1]);
-      // the root first, then its child and grandchild; never the older row under a reused parent pid, never an unrelated process
-      expect(pids).toEqual([root, root + 1, root + 2]);
-      expect(addon.processes).toHaveBeenCalledOnce();
-      expect(cliJobFallback(owned)).toBeUndefined();
-      expect(cliJobRefused(owned)).toBe(false);
-    });
+// U24 design R2/R3: on Windows an engine turn runs on the job route (launcher first, CLI inside the job) or is refused, exactly
+// as PIP is; no engine turn ever runs on the taskkill route.
+describe("Windows engine job: contained or refused (U24)", () => {
+  const ENGINE_NAME = /^Local\\murage-pip-eng-[0-9a-f-]{36}$/;
+  const withReport = () => {
+    const report = new PassThrough();
+    (child as unknown as { stdio: unknown[] }).stdio = [child.stdin, child.stdout, child.stderr, report];
+    return report;
+  };
 
-  it("a descendant the addon cannot assign is logged, never thrown, and the CLI keeps its job", async () => {
-    const root = child.pid!;
-    addon.processes.mockReturnValue([row(root, 4, 100.5), row(root + 1, root, 100.7)]);
-    addon.jobAssign.mockImplementation((_job: unknown, pid: number) => { if (pid === root) return true; throw new Error("EACCES"); });
+  it("engineJob always names a fresh job on Windows, and nothing off it", () => {
+    const a = engineJob(), b = engineJob();
+    expect(a).toEqual({ name: expect.stringMatching(ENGINE_NAME) });
+    expect(b!.name).not.toBe(a!.name);
+    Object.defineProperty(process, "platform", { ...platformDescriptor, value: "linux" });
+    try { expect(engineJob()).toBeUndefined(); } finally { Object.defineProperty(process, "platform", { ...platformDescriptor, value: "win32" }); }
+  });
+
+  it("the engine job is created like the PIP job: the name only, no breakaway of any kind", () => {
+    const job = engineJob()!;
+    spawnCli("fuigo.exe", [], { cwd: base, stdio: ["pipe", "pipe", "pipe"] }, job);
+    expect(addon.jobCreate).toHaveBeenCalledWith(job.name);
+    expect(addon.jobCreate.mock.calls[0]).toHaveLength(1);
+  });
+
+  it("the launcher is in the job before the CLI exists: the frame is written only after jobAssign succeeded; no table is read", () => {
+    const order: string[] = [];
+    addon.jobAssign.mockImplementation(() => { order.push("assign"); return true; });
+    (child.stdin as PassThrough).on("data", () => order.push("frame"));
+    native.spawn.mockImplementation(() => { order.push("spawn"); return child; });
+    const owned = spawnCli("fuigo.exe", ["--acp"], { cwd: base, env: { MURAGE_TOKEN: "t" }, stdio: ["pipe", "pipe", "pipe"] }, engineJob());
+    expect(order).toEqual(["spawn", "assign", "frame"]);
+    expect(addon.jobAssign).toHaveBeenCalledWith(expect.anything(), child.pid, 220); // Node's own handle pins that pid
+    expect(addon.processes).not.toHaveBeenCalled();
+    expect(cliJobRefused(owned)).toBe(false);
+    expect(cliContainment(owned)).toBe("job");
+  });
+
+  it("the launcher's report names the engine CLI; a CLI that could not start becomes an error event on the child", async () => {
+    const report = withReport();
+    const owned = spawnCli("fuigo.exe", [], { cwd: base, stdio: ["pipe", "pipe", "pipe"] }, engineJob());
+    expect(cliProcessPid(owned)).toBeUndefined();
+    expect(engineProcessPid(owned)).toBe(child.pid);
+    report.write('{"pid":777}\n');
+    await nextTick();
+    expect(cliProcessPid(owned)).toBe(777);
+    expect(engineProcessPid(owned)).toBe(777); // tree probes look at the engine, not the launcher
+
+    const errors: NodeJS.ErrnoException[] = [];
+    const second = Object.assign(new EventEmitter(), { pid: child.pid! + 1, exitCode: null, signalCode: null, stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: vi.fn(() => true) }) as unknown as ChildProcess;
+    const secondReport = new PassThrough();
+    (second as unknown as { stdio: unknown[] }).stdio = [second.stdin, second.stdout, second.stderr, secondReport];
+    native.spawn.mockReturnValue(second);
+    const failed = spawnCli("missing.exe", [], { cwd: base, stdio: ["pipe", "pipe", "pipe"] }, engineJob());
+    failed.on("error", (error) => errors.push(error));
+    secondReport.write('{"error":{"code":"ENOENT","syscall":"spawn","path":"missing.exe"}}\n');
+    await nextTick();
+    expect(errors).toHaveLength(1);
+    expect(errors[0].code).toBe("ENOENT");
+    expect(errors[0].syscall).toBe("spawn");
+    second.emit("close", 127, null);
+  });
+
+  it("a launcher that could not be put in its job is ended, gets no frame, and the engine turn is refused with ECONTAIN; its own exit confirms it", async () => {
+    addon.jobAssign.mockReturnValue(false);
+    const written: string[] = [];
+    (child.stdin as PassThrough).on("data", (chunk: Buffer) => written.push(chunk.toString()));
+    const errors: NodeJS.ErrnoException[] = [];
+    const owned = spawnCli("fuigo.exe", [], { cwd: base, stdio: ["pipe", "pipe", "pipe"] }, engineJob());
+    owned.on("error", (error) => errors.push(error));
+    expect(child.kill).toHaveBeenCalledOnce();
+    expect(addon.jobClose).toHaveBeenCalledOnce();
+    expect(owned.stdin.destroyed).toBe(true);
+    expect(written).toEqual([]);
+    expect(native.spawn).toHaveBeenCalledOnce(); // no second, uncontained spawn
+    expect(cliJobRefused(owned)).toBe(true);
+    expect(cliContainment(owned)).toBe("none");
+    await nextTick();
+    expect(errors).toHaveLength(1);
+    expect(errors[0].code).toBe(ENGINE_CONTAINMENT_CODE);
+    expect(errors[0].message).toContain("Restart Murage");
+    expect(errors[0].message).not.toMatch(/safe|unsafe|\u2014/);
+    // ownership until its exit: a refusal that stays alive is never "stopped"
+    const stopped = awaitCliTreeStopped(owned);
+    let resolved: boolean | undefined;
+    void stopped.then((value) => { resolved = value; });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(resolved).toBeUndefined();
+    child.emit("exit", 220, null);
+    await expect(stopped).resolves.toBe(true);
+    expect(native.execFile).not.toHaveBeenCalled();
+    expect(addon.jobStop).not.toHaveBeenCalled();
+  });
+
+  // T9d: a driver tracks the refused child like any child; the thread is released only on its close.
+  it("a refused launcher tracked by a ChildTeardown keeps the teardown pending until it closes", async () => {
+    addon.jobAssign.mockReturnValue(false);
+    const owned = spawnCli("fuigo.exe", [], { cwd: base, stdio: ["pipe", "pipe", "pipe"] }, engineJob());
+    owned.on("error", () => {});
+    const teardown = new ChildTeardown(owned);
+    teardown.markStopRequested();
+    const wait = teardown.wait({ closeMs: 1_000, maxMs: 1_000 });
+    await vi.advanceTimersByTimeAsync(1_000);
+    await expect(wait).resolves.toEqual({ closeConfirmed: false, reason: "timeout" });
+    expect(teardown.closed).toBe(false);
+    child.emit("exit", 220, null);
+    child.emit("close", 220, null);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(teardown.closed).toBe(true);
+  });
+
+  it("a refused launcher that never exits is not confirmed, and is named in the app log once it is overdue (T9b)", async () => {
+    addon.jobAssign.mockReturnValue(false);
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
-      const job = engineJob()!;
-      const owned = spawnCli("fuigo.exe", [], { cwd: base, stdio: ["pipe", "pipe", "pipe"] }, job);
-      expect(addon.jobAssign).toHaveBeenCalledTimes(2);
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining(`descendant ${root + 1}`));
-      expect(native.spawn).toHaveBeenCalledOnce();
-      expect(cliJobFallback(owned)).toBeUndefined();
+      const owned = spawnCli("fuigo.exe", [], { cwd: base, stdio: ["pipe", "pipe", "pipe"] }, engineJob());
+      owned.on("error", () => {});
       const stopped = awaitCliTreeStopped(owned);
-      await vi.advanceTimersByTimeAsync(0);
-      expect(addon.jobStop).toHaveBeenCalledWith(job.name, expect.any(Number));
-      child.emit("exit", null, "SIGTERM");
-      await expect(stopped).resolves.toBe(true);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(warn.mock.calls.map((call) => String(call[0])).join("\n")).toContain(`refused launcher (pid ${child.pid}) is still running`);
+      await vi.advanceTimersByTimeAsync(3_000);
+      await expect(stopped).resolves.toBe(false);
     } finally { warn.mockRestore(); }
   });
 
-  it("a row whose start cannot be read (0) is skipped, and an unreadable root start assigns nothing", () => {
-    const root = child.pid!;
-    addon.processes.mockReturnValue([row(root, 4, 100.5), row(root + 1, root, 0), row(root + 2, root, 100.7)]);
-    spawnCli("fuigo.exe", [], { cwd: base, stdio: ["pipe", "pipe", "pipe"] }, engineJob());
-    expect(addon.jobAssign.mock.calls.map((call) => call[1])).toEqual([root, root + 2]);
-    addon.jobAssign.mockClear();
-    addon.processes.mockReturnValue([row(root, 4, 0), row(root + 1, root, 100.7)]);
-    spawnCli("fuigo.exe", [], { cwd: base, stdio: ["pipe", "pipe", "pipe"] }, engineJob());
-    expect(addon.jobAssign.mock.calls.map((call) => call[1])).toEqual([root]);
+  it.each([
+    ["no job launcher file in the build", () => { proxyState.launcher = join(base, "missing-launcher.js"); }],
+    ["the job could not be created", () => { addon.jobCreate.mockImplementation(() => { throw Object.assign(new Error("exists"), { code: "EEXIST" }); }); }],
+    ["no usable addon", () => { addonState.present = false; }],
+  ])("%s: the engine turn is refused before anything starts, as Node reports ENOENT", async (_case, arrange) => {
+    arrange();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const events: string[] = [];
+      const owned = spawnCli("fuigo.exe", [], { cwd: base, stdio: ["pipe", "pipe", "pipe"] }, engineJob());
+      owned.on("error", (error: NodeJS.ErrnoException) => events.push(`error:${error.code}`));
+      owned.on("exit", (code) => events.push(`exit:${code}`));
+      owned.on("close", (code) => events.push(`close:${code}`));
+      expect(owned.pid).toBeUndefined();
+      expect(native.spawn).not.toHaveBeenCalled();
+      await nextTick();
+      await nextTick();
+      expect(events).toEqual([`error:${ENGINE_CONTAINMENT_CODE}`, "exit:-2", "close:-2"]);
+      await expect(awaitCliTreeStopped(owned)).resolves.toBe(true); // nothing started: nothing to stop
+      // (1b) the exact cause reaches the app log
+      expect(warn.mock.calls.map((call) => call.map(String).join(" ")).join("\n")).toContain("engine launch refused for fuigo.exe");
+    } finally { warn.mockRestore(); }
   });
 
-  it("no sweep when the assignment was refused, or with no process table", () => {
-    addon.jobAssign.mockReturnValue(false);
-    spawnCli("claude.exe", [], { cwd: base, stdio: ["pipe", "pipe", "pipe"] }, { name: "Local\\murage-pip-fixture" });
-    expect(addon.processes).not.toHaveBeenCalled();
-    addon.jobAssign.mockReturnValue(true);
-    addon.processes.mockImplementation(() => { throw new Error("snapshot failed"); });
+  it("engineJob says exactly once per server process when the build cannot contain engines, and nothing when it can", async () => {
+    vi.resetModules(); // a fresh procs.ts: the once-per-process flag starts clear (the mocks stay)
+    const fresh = await import("./procs.ts");
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try { expect(() => spawnCli("claude.exe", [], { cwd: base, stdio: ["pipe", "pipe", "pipe"] }, { name: "Local\\murage-pip-fixture-2" })).not.toThrow(); }
-    finally { warn.mockRestore(); }
+    try {
+      fresh.engineJob(); fresh.engineJob();
+      expect(warn).not.toHaveBeenCalled();
+      addonState.present = false;
+      fresh.engineJob(); fresh.engineJob(); fresh.engineJob();
+      expect(warn.mock.calls.filter((call) => String(call[0]).includes("cannot be contained"))).toHaveLength(1);
+    } finally { warn.mockRestore(); }
+  });
+});
+
+// U24 design R4/R6: the taskkill route (non-turn Windows CLIs). One taskkill per root, ever; a taskkill that never answers is
+// settled by the watchdog, which sends the root kill, so a retry is never stuck behind it.
+describe("Windows taskkill route: one taskkill per root and the watchdog (U24)", () => {
+  it("a repeat stop after a delivered taskkill sends the root kill only, never a second taskkill", async () => {
+    const owned = spawnCli("tool.exe", [], { cwd: base, stdio: ["pipe", "pipe", "pipe"] });
+    killCliTree(owned);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(native.execFile).toHaveBeenCalledOnce();
+    expect(cliStopDelivery(owned).pending).toBeNull();
+    killCliTree(owned);
+    expect(native.execFile).toHaveBeenCalledOnce();
+    expect(child.kill).toHaveBeenCalledOnce();
+  });
+
+  // Astra final review 2: a confirmation after a delivered taskkill must not issue a second taskkill either.
+  it("a confirmation after a delivered taskkill sends the root kill only: still one taskkill per root", async () => {
+    const owned = spawnCli("tool.exe", [], { cwd: base, stdio: ["pipe", "pipe", "pipe"] });
+    killCliTree(owned);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(native.execFile).toHaveBeenCalledOnce();
+    const stopped = awaitCliTreeStopped(owned);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(native.execFile).toHaveBeenCalledOnce();
+    expect(child.kill).toHaveBeenCalledOnce();
+    child.emit("close", null, "SIGTERM");
+    await expect(stopped).resolves.toBe(true);
+  });
+
+  // Astra final review 3: a confirmation started with no taskkill in flight whose taskkill never calls back: the watchdog's
+  // root kill goes out before the close budget starts.
+  it("a confirmation whose taskkill never answers gets the watchdog's root kill at cap + watchdog, then the close budget", async () => {
+    native.execFile.mockImplementation(() => {});
+    const owned = spawnCli("tool.exe", [], { cwd: base, stdio: ["pipe", "pipe", "pipe"] });
+    const stopped = awaitCliTreeStopped(owned);
+    await vi.advanceTimersByTimeAsync(WINDOWS_TASKKILL_CAP_MS + WINDOWS_ROUTE_WATCHDOG_MS - 1);
+    expect(child.kill).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(child.kill).toHaveBeenCalledOnce();
+    expect(cliStopDelivery(owned).pending).toBeNull();
+    child.emit("close", null, "SIGTERM");
+    await expect(stopped).resolves.toBe(true);
+    expect(native.execFile).toHaveBeenCalledOnce();
+  });
+
+  it("a taskkill whose callback never comes: the watchdog sends the root kill and settles delivery at cap + watchdog", async () => {
+    native.execFile.mockImplementation(() => {});
+    const owned = spawnCli("tool.exe", [], { cwd: base, stdio: ["pipe", "pipe", "pipe"] });
+    killCliTree(owned);
+    expect(cliStopDelivery(owned).pending).not.toBeNull();
+    await vi.advanceTimersByTimeAsync(WINDOWS_TASKKILL_CAP_MS + WINDOWS_ROUTE_WATCHDOG_MS - 1);
+    expect(child.kill).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(child.kill).toHaveBeenCalledOnce();
+    expect(cliStopDelivery(owned).pending).toBeNull();
+    killCliTree(owned); // a retry: the root kill again, still one taskkill
+    expect(native.execFile).toHaveBeenCalledOnce();
+    expect(child.kill).toHaveBeenCalledTimes(2);
   });
 });

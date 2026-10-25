@@ -319,12 +319,12 @@ describe("home only, and the health shape", () => {
     expect(startUiCanary(launcher)).toBeUndefined();
     expect(launcher).not.toHaveBeenCalled();
     expect(uiHealth()).toBeUndefined();
-    expect(publicHealthBody()).toEqual({ app: "murage", door: "v2" });
+    expect(publicHealthBody()).toEqual({ app: "murage", door: "v2", ownerFactor: 1 });
     expect(cloudHealthVersion()).not.toHaveProperty("ui");
   });
   it("on a home, public health is exactly app and ui", async () => {
     vi.stubEnv("MURAGE_CLOUD_ROLE", "home");
-    const keys = ["app", "door", "instance", "ui", "uiAt"];
+    const keys = ["app", "door", "instance", "ownerFactor", "ui", "uiAt"];
     const first = publicHealthBody();
     expect(Object.keys(first).sort()).toEqual(keys);
     expect(first).toMatchObject({ app: "murage", ui: "pending", uiAt: null });

@@ -54,7 +54,8 @@
         "title": "SOP Writer",
         "description": "Recipe prepares an SOP with trigger, steps and completion checks. Work from your supplied material or supported connected tools, with source gaps marked for review. For persistent project records, use Planning with Files. For broad operations coordination, use Ops.",
         "appearance": {
-          "color": "orange"
+          "color": "red",
+          "mascotBody": "blob"
         },
         "skills": [
           "sop-writing",

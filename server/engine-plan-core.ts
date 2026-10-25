@@ -397,7 +397,7 @@ interface StepBase {
  * has that skeleton. */
 export interface RowRef { off: number; len: number; sha: string }
 export type Step = StepBase & (
-  | { k: "remove"; root: string; target: string; /** the names found under `target` (and under its aside) when this was planned; present means the folder is moved aside, listed again, and its entries removed one by one, only those listed here */ expect?: string[]; /** for a Codex rollout: the evidence (rolloutEvidence) of its first line, read again on the held file before it is removed */ owner?: string; /** for a listed folder: the association fingerprint of each .jsonl entry; an entry that no longer matches is kept (see associationsOf) */ assoc?: Record<string, string>; /** for a single file: its association fingerprint, checked before it is removed */ fp?: string; }
+  | { k: "remove"; root: string; target: string; /** the names found under `target` (and under its aside) when this was planned; present means the folder is moved aside, listed again, and its entries removed one by one, only those listed here */ expect?: string[]; /** for a Codex rollout: the evidence (rolloutEvidence) of its first line, read again on the held file before it is removed */ owner?: string; /** for a listed folder: the association fingerprint of each .jsonl entry; an entry that no longer matches is kept (see associationsOf) */ assoc?: Record<string, string>; /** for a single file: its association fingerprint, checked before it is removed */ fp?: string; /** Claude Code plan files: kept (and the step counts as done) when any transcript still under `projects` names one of `slugs` when the step runs (slugsReferenced) */ slugRefs?: { projects: string; slugs: string[] }; }
   | { k: "rewrite"; path: string; /** the only mode: the content of the rows in `lines` is overwritten in place (see JSONL_FORMAT) */ mode: "blank"; pred: Pred; needles: string[]; fp: Fingerprint;
       /** the file's format, a key of JSONL_FORMAT */ format: string;
       /** how the engine's writer is kept off the file: "lock" (the engine's own whole-file lock, held while Murage compares, writes and syncs), "dirlock" (the engine's own directory lock, `<file>.lock`, made and refreshed while Murage compares, writes and syncs: Claude Code) "inplace" (no lock and no aside: the rows are compared again on the open file, overwritten, synced and found again by name; Codex's session_index.jsonl, which its writer appends to and replaces by rename) or "exclusive" (the file is moved aside and nobody has it open, or on Windows opened with sharing off) */ how: "lock" | "exclusive" | "dirlock" | "inplace";
@@ -461,6 +461,52 @@ export function associationsOf(fs: EngineFs, path: string, needles: readonly str
   }, fd);
   const sorted = { cwds: [...cwds].sort(), slugs: [...slugs].sort() };
   return { cwds: [...cwds], slugs: [...slugs], fp: sha16(Buffer.from(JSON.stringify(sorted))) };
+}
+
+// ── Claude Code plan slugs ───────────────────────────────────────────────
+
+const SLUG_DEPTH = 8;
+/** Every string value of a `slug` field anywhere in `value` (the row's own field, and any nested one), parsed, so whitespace and
+ * escapes in the JSON make no difference. */
+function slugFields(value: unknown, into: Set<string>, depth = 0): void {
+  if (!value || typeof value !== "object" || depth > SLUG_DEPTH) return;
+  if (Array.isArray(value)) { for (const item of value) slugFields(item, into, depth + 1); return; }
+  for (const [name, inner] of Object.entries(value as Record<string, unknown>)) {
+    if (name === "slug" && typeof inner === "string") into.add(inner);
+    else if (inner && typeof inner === "object") slugFields(inner, into, depth + 1);
+  }
+}
+
+/** Which of `slugs` a Claude Code transcript under `projects` (`projects/<folder>/<id>.jsonl`, the aside copies a crash left included)
+ * still names, other than the files in `skip` (the transcripts the same plan removes). A plan file is shared by every session that
+ * carries its slug, so it goes only when none that stays names it. The slug is read from the parsed rows (never a byte search of the
+ * JSON). A row that cannot be parsed and still carries a slug's text, or the word "slug", cannot be told: it counts as naming every
+ * slug asked about (the plan file is kept). A file that cannot be read throws (PlanError: nothing of the home is touched). */
+export function slugsReferenced(fs: EngineFs, projects: string, slugs: readonly string[], skip: ReadonlySet<string> = new Set()): Set<string> {
+  const wanted = new Set(slugs);
+  const found = new Set<string>();
+  if (!wanted.size) return found;
+  const api = pathApiFor(projects);
+  for (const folder of fs.readdir(projects)) {
+    const dir = api.join(projects, folder);
+    for (const file of fs.readdir(dir)) {
+      const plain = file.endsWith(ASIDE_SUFFIX) ? file.slice(0, -ASIDE_SUFFIX.length) : file;
+      const path = api.join(dir, file);
+      if (!plain.endsWith(".jsonl") || skip.has(path) || !fs.lstat(path)?.isFile()) continue;
+      fs.eachRow(path, [], (row, line) => {
+        if (row) {
+          const named = new Set<string>();
+          slugFields(row, named);
+          for (const slug of named) if (wanted.has(slug)) found.add(slug);
+          return;
+        }
+        const text = line.toString("utf8");
+        if (text.trim() !== "" && (text.includes("slug") || [...wanted].some((slug) => text.includes(slug)))) for (const slug of wanted) found.add(slug);
+      });
+      if (found.size === wanted.size) return found;
+    }
+  }
+  return found;
 }
 
 // ── the planner ──────────────────────────────────────────────────────────

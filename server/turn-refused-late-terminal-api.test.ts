@@ -184,12 +184,13 @@ export async function verifyAgentBrowserBinary(binary, env) {
   afterAll(async () => { await fixture?.close(); });
 
   it("direct path: the re-dispatched user turn still runs and exactly one reply lands", async () => {
-    const bot = await createBot("Late terminal direct");
+    const bot = await createBot("Late terminal direct"), bystander = await createBot("Roster change during direct dispatch");
     resetGates();
     const repliesBefore = (await replies(bot.threadId)).length;
     expect((await api("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "held, refused, re-dispatched under a late terminal event" })).status).toBe(202);
     const refusedTurnId = await refuseThenLandLateTerminal(bot.threadId, async () => {
-      expect((await api("POST", "/api/bots", { name: "Roster change during direct dispatch", modelSelection: { instanceId: "late", model: "late-1" } })).status).toBe(201);
+      // an audience change (a bot moving to another team); adding a bot withdraws nothing and would not refuse the turn
+      expect((await api("PATCH", `/api/bots/${bystander.id}`, { section: "Moved during direct dispatch" })).status).toBe(200);
     }, `[memory] context revoked during dispatch on thread ${bot.threadId}; re-preparing (1 of 3)`);
 
     // Without the owner-aware fold the re-dispatch dies here with

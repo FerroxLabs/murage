@@ -65,7 +65,7 @@ const DIRECTORY_SYNC_UNSUPPORTED = new Set(["EINVAL", "ENOTSUP", "EOPNOTSUPP", "
 /** fsync the directory holding `path`, so the rename that put the file there survives a power loss too.
  * Windows cannot open a directory for fsync, so there it is skipped; a filesystem that refuses a directory
  * sync is skipped the same way. Any other failure (an I/O error) is thrown like a failed write. */
-function syncParentDirectory(path: string, platform: NodeJS.Platform = process.platform): void {
+export function syncParentDirectory(path: string, platform: NodeJS.Platform = process.platform): void {
   if (platform === "win32") return;
   let fd: number;
   try { fd = openSync(dirname(path), "r"); }

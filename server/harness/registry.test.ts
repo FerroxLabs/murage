@@ -5,7 +5,26 @@ import { describe, expect, it } from "vitest";
 
 import type { ModelCatalog } from "../contracts.ts";
 import { makeFakeDriver } from "../testing/fake-driver.ts";
+import { instanceAuthFailed, noteInstanceAuthFailure, resetKeyRejectionsForTests } from "../key-rejections.ts";
 import { ProviderRegistry } from "./registry.ts";
+
+describe("saving a key ends the signed-out mark (item 139)", () => {
+  it("a scoped reload clears that engine's mark and leaves the others; a full load clears all", async () => {
+    resetKeyRejectionsForTests();
+    const fake = makeFakeDriver();
+    const registry = new ProviderRegistry([fake.driver]);
+    await registry.load({ claude: { driver: "fake" }, codex: { driver: "fake" }, opencode: { driver: "fake" } });
+    for (const id of ["claude", "codex", "opencode"]) noteInstanceAuthFailure(id);
+    await registry.reload(new Set(["claude"]), { claude: { driver: "fake" }, codex: { driver: "fake" }, opencode: { driver: "fake" } });
+    expect(instanceAuthFailed("claude")).toBe(false);
+    expect(instanceAuthFailed("codex")).toBe(true);
+    await registry.reload(new Set(["codex"]), { claude: { driver: "fake" }, codex: { driver: "fake" }, opencode: { driver: "fake" } });
+    expect(instanceAuthFailed("codex")).toBe(false);
+    expect(instanceAuthFailed("opencode")).toBe(true);
+    await registry.load({ opencode: { driver: "fake" } });
+    expect(instanceAuthFailed("opencode")).toBe(false);
+  });
+});
 
 describe("ProviderRegistry", () => {
   it("disabled instances never reach driver configuration, creation or discovery", async () => {

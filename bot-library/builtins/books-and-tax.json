@@ -110,7 +110,8 @@
         "role": "leader",
         "team": "Books and Tax",
         "appearance": {
-          "color": "blue"
+          "color": "blue",
+          "mascotBody": "squircle"
         },
         "skills": [
           "finance-pl",
@@ -133,7 +134,8 @@
         "role": "member",
         "team": "Books and Tax",
         "appearance": {
-          "color": "blue"
+          "color": "green",
+          "mascotBody": "diamond"
         },
         "skills": [
           "finance-sales-tax",
@@ -155,7 +157,8 @@
         "role": "member",
         "team": "Books and Tax",
         "appearance": {
-          "color": "purple"
+          "color": "purple",
+          "mascotBody": "capsule"
         },
         "skills": [
           "expense-report-builder",
@@ -175,7 +178,8 @@
         "role": "member",
         "team": "Books and Tax",
         "appearance": {
-          "color": "green"
+          "color": "orange",
+          "mascotBody": "drop"
         },
         "skills": [
           "subscription-audit",
@@ -195,7 +199,8 @@
         "role": "member",
         "team": "Books and Tax",
         "appearance": {
-          "color": "green"
+          "color": "teal",
+          "mascotBody": "circle"
         },
         "skills": [
           "spreadsheet-data-cleaning",

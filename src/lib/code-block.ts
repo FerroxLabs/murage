@@ -85,3 +85,17 @@ export function saveCodeSnippet(fileName: string, code: string): boolean {
   }
   return true;
 }
+
+/** A fence's info string, split. "```js wrap" reaches the renderer with the first word
+ * on the language class and the rest as meta; "```wrap js" has them the other way round.
+ * `wrap` is a directive for the block, never a language. */
+export function parseFenceInfo(lang: string, meta?: string | null): { lang: string; wrap: boolean } {
+  const words = [lang, ...(meta ?? "").split(/\s+/)].map((word) => word.trim()).filter(Boolean);
+  let wrap = false;
+  let language = "";
+  for (const word of words) {
+    if (word.toLowerCase() === "wrap") wrap = true;
+    else if (!language) language = word;
+  }
+  return { lang: language, wrap };
+}

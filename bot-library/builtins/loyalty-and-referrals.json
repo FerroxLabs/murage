@@ -54,7 +54,8 @@
         "title": "Loyalty and Referrals",
         "description": "Loyal prepares a program outline and eligibility rules for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For broader storefront work, use Storefront. For channel strategy, use Channels.",
         "appearance": {
-          "color": "green"
+          "color": "green",
+          "mascotBody": "squircle"
         },
         "skills": [
           "subscription-model-designer",

@@ -2,7 +2,7 @@
 Description=Murage Cloud home
 After=network-online.target murage-egress.service data.mount
 Requires=murage-egress.service data.mount
-Wants=network-online.target murage-control.service murage-egress-proxy.service
+Wants=network-online.target murage-control.service murage-egress-proxy.service murage-egress-dns.service
 RequiresMountsFor=/data
 # Never started (by boot, the recovery timer or anyone) while murage-commands holds a data transition (a reset, undo or update swap)
 # unresolved: it sets this file before stopping the writers and removes it only once the transition is durably resolved.

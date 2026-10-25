@@ -18,7 +18,10 @@
         "733a71ce7ca81653": "function read(text: string, cwd: string | undefined, shell?: \"pwsh\"): AlwaysAskHit | null ",
         "6348bf7838a7c242": "return (shell === \"pwsh\" ? walkPwsh(text, newContext(cwd || undefined), visitor) : readRul",
         "5224e533a4b1c64f": "export function alwaysAskRoutineCommand(text: string | undefined, cwd?: string, shell?: \"p",
-        "dc0d467803f91f89": "case \"pwsh\": return walkPwsh(text, ctx, visitor);"
+        "dc0d467803f91f89": "case \"pwsh\": return walkPwsh(text, ctx, visitor);",
+        "355ce97061f015b7": "readWhole signature: the dialect a text is read in; starts nothing",
+        "00dfe41692902268": "unseenShapeAdmits signature: the dialect a text is read in; starts nothing",
+        "a2686ec8e9bae1b7": "the on-disk relief is POSIX only: a PowerShell text keeps asking; starts nothing"
       }
     },
     "server/auto-approve.ts": {
@@ -106,20 +109,21 @@
         "cf822222c93d11ea": "if (option === \"-ec\" || abbreviates(option, \"-encodedcommand\") || abbreviates(option, \"-en",
         "33b5a96c564d490a": "if (!ctx.written.has(resolveWritten(ctx, path))) throw new Unreadable(\"pwsh\", \"a shell run",
         "8a7858771328d279": "function scriptFile(spelled: string, name: string, dialect: \"pwsh\" | \"cmd\"): boolean {",
-        "3470ab6abf3d1e05": "function unmodelled(name: string, spelled: string, args: Word[], stdin: Provenance | undef",
         "010785822862ee19": "export function shellDialectOf(form: readonly string[] | undefined): \"pwsh\" | undefined {",
         "017242b6056ce69c": "return program !== undefined && (programBase(program) === \"powershell\" || programBase(prog",
         "5b6978843826ba92": "throw new Unreadable(\"pwsh\", \"a .NET call\");",
         "dbfbdb7a8bcbb2e9": "if (!set) throw new Unreadable(\"pwsh\", \"Set-Variable with a value the reader does not foll",
         "987d8b811a9778d6": "if (dashed && slashed) throw new Unreadable(\"pwsh\", `${program} with both -Parameters and ",
-        "ef8ccf162d4eef25": "unmodelled(name, renderPwshWord(call[0]!), args, stdin, \"pwsh\");",
         "a387e386e017f5c9": "if ((program === \"foreach-object\" || program === \"%\") && callsMember(args)) throw new Unre",
         "416c8c274eae452f": "export function looksLikePowerShell(text: string): \"pwsh\" | \"cmd\" | \"both\" | null {",
         "470ad91e307cab39": "if (/^\\s*\\[[A-Za-z][\\w.]*\\]::[A-Za-z]/.test(text)) return \"pwsh\";",
         "fe7db5fc453ccf18": "if (/^\\s*\\$[A-Za-z_][\\w:]*\\s*=/.test(text)) return \"pwsh\";",
         "93246a19243b672f": "if (/^[A-Z][a-z]+-[A-Z]/.test(first)) return \"pwsh\";",
         "4d1662205ce5d0a0": "if (POWERSHELLS.has(lower)) return \"pwsh\";",
-        "b2a8a5d6d9a7c37a": "return [\"format-volume\", \"clear-disk\", \"initialize-disk\", \"remove-item\", \"ri\", \"set-locati"
+        "b2a8a5d6d9a7c37a": "return [\"format-volume\", \"clear-disk\", \"initialize-disk\", \"remove-item\", \"ri\", \"set-locati",
+        "a17aad16a0219d2b": "unmodelled signature: the dialect a program is read in; starts nothing",
+        "f50cd4e5846055b2": "the shared loader check read on PowerShell and cmd text (1.0.5 r8); starts nothing",
+        "ee0e5b0d5c218135": "unmodelled call for a PowerShell statement; starts nothing"
       }
     },
     "server/startup-files.ts": {
@@ -158,6 +162,14 @@
       "lines": {
         "157d38cc85d2dda0": "export function pinOverrideIn(text: string, pins: ReadonlyMap<string, string>, shell?: \"pw",
         "8f9595f034647086": "return (shell === \"pwsh\" ? pwshPinTouch(text) : null) ?? pinTouch(text, pins) ?? judgeText"
+      }
+    },
+    "server/shell/loaders.ts": {
+      "reason": "recognizer: the shared list of loader variables and flags the command readers judge (1.0.5 r8); parses a proposed command, starts nothing",
+      "lines": {
+        "ef1e7d5327790b70": "the shared loader check: which dialect a text is read in; starts nothing",
+        "9314154261a656db": "the shared loader check: PowerShell backticks taken out of a name; starts nothing",
+        "2631599405df977a": "the shared loader check: which dialect a text is read in; starts nothing"
       }
     }
   },
