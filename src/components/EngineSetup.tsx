@@ -2,6 +2,8 @@ import { t } from "@/lib/i18n";
 // A focused setup card shared by onboarding, the model picker, and runtime
 // errors. The command has one inline copy action and one primary next step;
 // unusable model lists stay out of the way until the engine is ready.
+import { canOpenSetupTerminal, checkAgainMessage } from "@/lib/engine-setup-check";
+import { probeInstances } from "@/lib/instances-probe";
 import { useEffect, useRef, useState } from "react";
 import { Check, Copy, Download, ExternalLink, LogIn, TerminalSquare } from "lucide-react";
 import { api, useStore, type EngineInstall, type InstanceInfo } from "@/state/store";
@@ -11,6 +13,7 @@ import { FluxKeyCard } from "./FluxKeyCard";
 import { LOCAL_MODELS_TITLE, OPEN_LOCAL_MODELS_EVENT } from "@/lib/local-models-view";
 import { localEngineSupport } from "../../shared/local-models";
 import { opensPurchasePages } from "@/lib/native-shell";
+import { copyTextOrThrow } from "@/lib/copy-text";
 
 type Platform = "darwin" | "win32" | "linux";
 
@@ -26,7 +29,7 @@ function hostPlatform(): Platform {
 /** The install command for this machine, or null when the engine has none
  * here (a GUI download, or a POSIX-only installer viewed on Windows). */
 export function installCommandFor(install: EngineInstall | undefined): string | null {
-  return install?.command?.[hostPlatform()] ?? null;
+  return install?.command?.[install.platform ?? hostPlatform()] ?? null;
 }
 
 /** Installed but missing the cloud account session. */
@@ -40,11 +43,11 @@ export function needsCli(instance: InstanceInfo | undefined): boolean {
   return instance?.snapshot.state !== "available";
 }
 
-function CommandRow({ command, actionLabel, instanceId, action }: { command: string; actionLabel: string; instanceId: string; action: "install" | "connect" }) {
+function CommandRow({ command, actionLabel, instanceId, action, onTerminalOpened }: { command: string; actionLabel: string; instanceId: string; action: "install" | "connect"; onTerminalOpened?: () => void }) {
   const [status, setStatus] = useState<"copied" | "opening" | "opened" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const opening = useRef(false);
-  const canOpen = Boolean(window.muragebox?.openEngineSetupTerminal);
+  const canOpen = canOpenSetupTerminal(window.muragebox, typeof document === "undefined" ? undefined : document);
 
   const settle = (next: "copied" | "opened") => {
     setStatus(next);
@@ -53,7 +56,7 @@ function CommandRow({ command, actionLabel, instanceId, action }: { command: str
   const copy = async () => {
     setError(null);
     try {
-      await navigator.clipboard.writeText(command);
+      await copyTextOrThrow(command);
       settle("copied");
     } catch {
       setError("Could not copy the command. Select it above and copy it manually.");
@@ -69,6 +72,7 @@ function CommandRow({ command, actionLabel, instanceId, action }: { command: str
       const opened = await window.muragebox!.openEngineSetupTerminal!({ instanceId, action });
       if (!opened) throw new Error("Terminal did not open");
       settle("opened");
+      onTerminalOpened?.();
     } catch {
       setStatus(null);
       setError("Could not open Terminal. Copy the command and run it in your terminal, or try again.");
@@ -152,21 +156,19 @@ export function EngineSetup({
   const [checkMessage, setCheckMessage] = useState<string | null>(null);
   const [checkError, setCheckError] = useState<string | null>(null);
   const checkGate = useRef(false);
+  /** An install command was started from this card (its Terminal opened), so the next check confirms it. */
+  const installStarted = useRef(false);
   const checkAgain = async () => {
     if (checkGate.current) return;
     checkGate.current = true;
     setChecking(true); setCheckError(null); setCheckMessage(null);
     try {
-      const { instances }: { instances: InstanceInfo[] } = await api("/api/instances");
+      const { instances }: { instances: InstanceInfo[] } = await probeInstances("/api/instances", api);
       const current = instances.find((item) => item.instanceId === instance.instanceId);
       if (!current) throw new Error("This engine was not returned. Refresh Settings and try again.");
       dispatch({ type: "instances", instances });
       if (current.snapshot.state === "available" && (!authRequired || current.snapshot.authenticated === true)) onReady?.();
-      setCheckMessage(current.snapshot.state !== "available"
-        ? current.snapshot.reason ?? "The engine is not detected yet. Finish setup and check again."
-        : needsSignIn(current) && intent === "cloud"
-          ? "Engine detected. Finish sign-in, then check again."
-          : "Engine detected. Select a model to test it with a task.");
+      setCheckMessage(checkAgainMessage(current, { signInOnly: current.snapshot.state === "available" && needsSignIn(current), installStarted: installStarted.current, cloudIntent: intent === "cloud" }));
     } catch (error) {
       setCheckError(error instanceof Error ? error.message : "Could not check this engine. Try again.");
     } finally { checkGate.current = false; setChecking(false); }
@@ -255,7 +257,7 @@ export function EngineSetup({
 
       {instance.driverKind === "codex" && !signInOnly && <EngineManagement instance={instance} />}
       {command ? (
-        <CommandRow key={command} command={command} instanceId={instance.instanceId} action={signInOnly ? "connect" : "install"} actionLabel={signInOnly ? t("setup.openSignIn") : t("setup.openInstall")} />
+        <CommandRow key={command} command={command} instanceId={instance.instanceId} action={signInOnly ? "connect" : "install"} onTerminalOpened={() => { if (!signInOnly) installStarted.current = true; }} actionLabel={signInOnly ? t("setup.openSignIn") : t("setup.openInstall")} />
       ) : (
         <p className="mt-3 rounded-lg bg-inset px-2.5 py-2 text-[12px] leading-relaxed text-ink-secondary">
           There isn’t a one-line installer for this platform. Use the setup guide below.

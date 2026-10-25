@@ -129,7 +129,8 @@ function buildBotPackageExport(input: BotPackageExportInput) {
     // room goal as a bot task would change what it does after import, so keep
     // it out until the portable format can name a package-local room.
     const agent = idToKey.get(routine.botId);
-    if (routine.target === "room-goal" || !agent) {
+    // 1.0.4 SL-I I3: a limit_reset schedule names an engine of this computer, which a package cannot carry
+    if (routine.target === "room-goal" || !agent || routine.schedule.type === "limit_reset") {
       routineCandidates.push({ id: routine.id, key: null, name: routine.name, botId: routine.botId, supported: false, prompt: routine.prompt, schedule: routine.schedule });
       return [];
     }

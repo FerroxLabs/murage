@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, useStore, type Bot, type Group, type ModelSelection } from "@/state/store";
 import { fromAnswer } from "@/state/answer-tag";
 import type { Routine } from "@/lib/routines";
-import { getDraft, getDraftAttachments, restoreComposerDraft } from "@/lib/drafts";
+import { DRAFT_RECORD_PREFIX, restoreComposerDraftIfEmpty } from "@/lib/drafts";
 import { starterFirstTaskDraft } from "@/lib/starter-first-task";
 
 interface Profile {
@@ -71,14 +71,19 @@ export function StarterProfiles({ initialProfileId, modelSelection, onFirstTask 
         : "Could not confirm the import. Check your workspace, then review again before retrying.");
     } finally { gate.current = false; setBusy(null); }
   };
-  const openFirstTask = () => {
+  const openFirstTask = async () => {
     const bot = imported?.bots[0];
     if (!bot || !imported) return;
     const id = "bot:" + bot.id + ":" + bot.threadId;
     try {
       const storage = window.localStorage;
-      // Draft helpers intentionally swallow storage errors. Check raw reads
-      // first so an unreadable/malformed drawer is never treated as empty.
+      // Draft reads swallow storage errors. Check the raw record (and the 1.0.4 keys it may still be migrated from)
+      // first, so an unreadable or malformed draft is never treated as empty.
+      const record = storage.getItem(DRAFT_RECORD_PREFIX + id);
+      if (record !== null) {
+        const value = JSON.parse(record);
+        if (!value || typeof value !== "object" || Array.isArray(value) || typeof value.text !== "string" || !Array.isArray(value.att)) throw new Error("Unreadable draft");
+      }
       for (const key of ["murage-drafts", "murage-draft-attachments"]) {
         const raw = storage.getItem(key);
         if (raw !== null) {
@@ -87,14 +92,13 @@ export function StarterProfiles({ initialProfileId, modelSelection, onFirstTask 
           if (Object.hasOwn(value, id) && (key === "murage-drafts" ? typeof value[id] !== "string" : !Array.isArray(value[id]))) throw new Error("Unreadable draft");
         }
       }
-      const existing = getDraft(storage, id);
-      const attachments = getDraftAttachments(storage, id);
-      const rawAttachments = JSON.parse(storage.getItem("murage-draft-attachments") ?? "{}")[id];
-      const text = starterFirstTaskDraft(imported.profileId, existing, Math.max(attachments.length, rawAttachments?.length ?? 0));
-      if (text !== null) {
-        restoreComposerDraft(id, { text, attachments: [] });
-        if (getDraft(storage, id) !== text) throw new Error("Draft did not persist");
-      }
+      // The emptiness check and the insert are one locked section (A3): words that landed first are never replaced.
+      // True once the record holds the suggestion, or kept the person's own draft.
+      const kept = await restoreComposerDraftIfEmpty(id, (current) => {
+        const text = starterFirstTaskDraft(imported.profileId, current.text, current.att.length);
+        return text === null ? null : { text, attachments: [] };
+      });
+      if (!kept) throw new Error("Draft did not persist");
       dispatch({ type: "select", id: bot.id });
       dispatch({ type: "toggleAppSettings", open: false });
       onFirstTask?.();

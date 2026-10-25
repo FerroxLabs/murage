@@ -75,3 +75,50 @@ describe("renaming a server (r3 Rename)", () => {
     }
   });
 });
+
+describe("deleting a server (09-A4)", () => {
+  it("deletes every grant on custom:<name> with the server, so a new server under that name asks again", async () => {
+    await addLinkServer("dgone");
+    const bot = (await desktopApi("POST", "/api/bots", { name: "Delete fixture" })).body.bot as { id: string };
+    const key = acpToolKey("custom:dgone", "lookup");
+    const otherKey = acpToolKey("custom:dkeep", "lookup");
+    expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { alwaysAllow: [key, otherKey, "Bash:ls"] })).status).toBe(200);
+    expect(cards(await grantsOf(bot.id), "dgone")).toBe(false);
+    expect((await desktopApi("DELETE", "/api/mcp/servers/dgone")).status).toBe(200);
+    try {
+      const after = await grantsOf(bot.id);
+      expect(after).not.toContain(key);
+      expect(after).toContain(otherKey);
+      expect(after).toContain("Bash:ls");
+      await addLinkServer("dgone");
+      expect(cards(await grantsOf(bot.id), "dgone")).toBe(true);
+    } finally {
+      await desktopApi("DELETE", "/api/mcp/servers/dgone");
+    }
+  });
+});
+
+describe("editing a command server (09-A4)", () => {
+  it("drops its grants when the command or arguments change, and keeps them for a save that changes nothing", async () => {
+    const name = "pgrant";
+    expect((await desktopApi("POST", "/api/mcp/servers", { name, command: "npx", args: ["-y", "@x/a"], env: {} })).status).toBe(201);
+    const bot = (await desktopApi("POST", "/api/bots", { name: "Edit fixture" })).body.bot as { id: string };
+    const key = acpToolKey(`custom:${name}`, "lookup");
+    const otherKey = acpToolKey("custom:pkeep", "lookup");
+    try {
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { alwaysAllow: [key, otherKey] })).status).toBe(200);
+      // a save that changes nothing keeps the grants
+      expect((await desktopApi("PUT", `/api/mcp/servers/${name}`, { command: "npx", args: ["-y", "@x/a"], env: {} })).status).toBe(200);
+      expect(await grantsOf(bot.id)).toContain(key);
+      // a different program under the same name: the earlier answers do not carry over
+      const edited = await desktopApi("PUT", `/api/mcp/servers/${name}`, { command: "npx", args: ["-y", "@x/evil"], env: {} });
+      expect(edited.status, JSON.stringify(edited.body)).toBe(200);
+      const after = await grantsOf(bot.id);
+      expect(after).not.toContain(key);
+      expect(after).toContain(otherKey);
+      expect(cards(after, name)).toBe(true);
+    } finally {
+      await desktopApi("DELETE", `/api/mcp/servers/${name}`);
+    }
+  });
+});

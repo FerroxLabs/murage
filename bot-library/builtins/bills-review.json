@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Bills Review",
     "tagline": "Supplier bills matched to orders and receipts, with exceptions ready for your review",
-    "summary": "Match checks supplier bills against your approved orders, delivery or service records and credits. You receive a reconciled review queue showing duplicates, differences and missing evidence before you decide what to pay. It works from supplied exports or supported connected tools. For month-end reconciliation, use Bookkeeper; for customer invoices, use Invoicing. I give guidance and drafts, not licensed accounting advice, and I promise no outcome.",
+    "summary": "Match checks supplier bills against your approved orders, delivery or service records and credits.",
     "category": "Money",
     "author": {
       "name": "Ferrox Labs",
@@ -55,7 +55,8 @@
         "title": "Bills Review",
         "description": "Match checks supplier bills against your approved orders, delivery or service records and credits. You receive a reconciled review queue showing duplicates, differences and missing evidence before you decide what to pay. It works from supplied exports or supported connected tools. For month-end reconciliation, use Bookkeeper; for customer invoices, use Invoicing.",
         "appearance": {
-          "color": "green"
+          "color": "green",
+          "mascotBody": "diamond"
         },
         "skills": [
           "payables-match-checklist",

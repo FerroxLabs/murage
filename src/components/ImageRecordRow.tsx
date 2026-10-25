@@ -19,7 +19,7 @@ export function ImageRecordRow({ message }: { message: Message }) {
   if (!tool || !record) return null;
   return (
     <div className="flex justify-start">
-      <div data-testid="image-record-row" className="min-w-0 max-w-[min(42rem,78%)] rounded-2xl border border-hairline/40 bg-panel px-3 py-2 text-[13px] max-md:max-w-full">
+      <div data-testid="image-record-row" className="min-w-0 max-w-[min(var(--chat-bubble-max),var(--chat-bubble-pct))] rounded-2xl border border-hairline/40 bg-panel px-3 py-2 text-[13px] max-md:max-w-full">
         <div className={`${CHIP_NAME} text-ink-secondary`}>{tool.name}</div>
         <div className="mt-0.5 text-[12px] text-ink-secondary">{record.summary}</div>
         <CollapsibleText text={record.prompt} className="mt-1 text-[12px] text-ink-secondary" />
