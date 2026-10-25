@@ -179,7 +179,7 @@ test("Murage retry, reassignment, task count and CA1 link work with tool calls h
   await row.getByRole("button", { name: "Reassign request", exact: true }).click();
   await expect.poll(() => calls.filter((call) => call.path.endsWith("/retry")).length).toBe(2);
   expect(calls.filter((call) => call.path.endsWith("/retry"))[1].body).toEqual({ assigneeBotId: ids.bot });
-  await page.getByRole("button", { name: "All threads", exact: true }).click();
+  await page.getByRole("button", { name: "Chat list", exact: true }).click();
   await expect(page.getByText("3 unread", { exact: false })).toBeVisible();
   await page.keyboard.press("Escape");
   await page.getByTitle("Open the conversation with Finch fixture").click();

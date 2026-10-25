@@ -19,6 +19,9 @@ import { assertInstallationRecords } from "./installation-record-validation.ts";
 import { DEFAULT_INSTANCES } from "./default-instances.ts";
 import { RESTORED_CONNECTIONS_FILE } from "../electron/restored-connections.mjs";
 import { RESTORE_REVIEW_FILE } from "../electron/restore-review.mjs";
+import { isRestorableDataDirName } from "./data-dir-inventory.ts";
+/** Said in the restore review for a name that is not an exact inventory row. */
+export const RESTORE_UNRECOGNISED = "Not something Murage restores, so the restore leaves it out";
 import { notificationPreferencesSchema } from "../shared/notification-preferences.ts";
 import { hermesProfileCarry } from "../shared/hermes-profile-name.ts";
 import { isReservedBotId } from "../shared/bot-identity.ts";
@@ -33,9 +36,15 @@ const object = (value: unknown): value is RecordValue => value !== null && typeo
 function fail(code: string): never { throw new InstallationSnapshotError(code); }
 const id = (value: unknown): value is string => typeof value === "string" && /^[\w-]{1,160}$/.test(value);
 const MAX_JSON_BYTES = 64 * 1024 ** 2;
-// browser-extension: Murage for Chrome pairings and helper registration are
-// credentials of the computer that made them (data-dir-inventory.ts).
-const RESERVED_RESTORE_FILES = new Set<string>([RESTORE_REVIEW_FILE, RESTORED_CONNECTIONS_FILE, "recovery-quarantine", "connection-profiles", "companion", "browser-extension", "bx-run"]);
+// The one real refusal (1.0.6): a name the restore writes itself, its review
+// notes, its fresh connection profile and its quarantine folder. An archive that
+// carries one could overwrite or pre-seed the restore's own record, so it stops
+// with RESERVED_RESTORE_COMPONENT and nothing changes. Every other name a restore
+// does not install (credentials, device pairings, script-access grants, runtime
+// state, unknown leftovers) is left out and listed below instead: never
+// installed, never a reason to fail the whole restore, and still in the backup file.
+const RESTORE_MARKERS = new Set<string>([RESTORE_REVIEW_FILE, RESTORED_CONNECTIONS_FILE, "recovery-quarantine"]);
+const restoreMarker = (path: string): boolean => RESTORE_MARKERS.has(path.split("/")[0]!.toLowerCase());
 const terminal = new Set(["completed", "failed", "cancelled", "missed", "blocked", "limit"]);
 
 /** A name this system can hold as it is. */
@@ -93,6 +102,13 @@ function materializeOwnerEntries(state: string, manifest: InstallationArchiveMan
   }
 }
 
+/** Whether a path is the app-made working folder `workspaces/<bot>/threads/<thread>` of some data directory. */
+function isManagedDesk(path: string, botId: string, threadId: string): boolean {
+  const normal = path.replace(/\\/g, "/").replace(/\/+$/, "");
+  const tail = `workspaces/${botId}/threads/${threadId}`;
+  return normal === tail || normal.endsWith(`/${tail}`);
+}
+
 /** Prepare a private review-only candidate. It never replaces an installation
  * and does not clear the startup barrier. The original archive is unchanged;
  * pending queue/cleanup/skill writes are retained separately as evidence. */
@@ -128,7 +144,25 @@ export async function prepareInstallationRestore(archive: string, outputParent: 
   try {
     // No future archive may place its own marker/quarantine over ours.
     const stored = [...files, ...(inspected.manifest.links ?? []).map(link => link.path), ...(inspected.manifest.copies ?? []).map(copy => copy.path)];
-    if (stored.some(path => RESERVED_RESTORE_FILES.has(path.toLowerCase()) || ["recovery-quarantine/", "connection-profiles/", "companion/", "browser-extension/", "bx-run/"].some(prefix => path.toLowerCase().startsWith(prefix)))) fail("RESERVED_RESTORE_COMPONENT");
+    if (stored.some(restoreMarker)) fail("RESERVED_RESTORE_COMPONENT");
+    // A restore installs only what a backup stores (isRestorableDataDirName), whatever archive it
+    // came from. Any other top-level name (an unknown one such as myconfig.json, or a row a backup
+    // never holds such as env, providers, companion or mcp-grants.json, in any spelling) is taken
+    // out of this private extraction, never out of the backup file or the live data folder, after
+    // the marker refusal above and before the first record is read, and listed once in the restore
+    // review. Shortcuts and second names live only inside owner folders (installation-archive.ts),
+    // which are restorable, so nothing else can bring a left-out name back.
+    const topNames = [...new Set([...files].map(path => path.split("/")[0]!))].sort();
+    // Two spellings of one top-level name (workspaces and Workspaces) are one folder on a
+    // case-insensitive disk, so leaving one out would take the other's files with it. No backup
+    // Murage makes holds both, so the restore stops before anything is removed or installed.
+    if (new Set(topNames.map(name => name.toLowerCase())).size !== topNames.length) fail("UNSAFE_ARCHIVE_PATH");
+    for (const name of topNames) {
+      if (isRestorableDataDirName(name)) continue;
+      rmSync(join(state, name), { recursive: true, force: true });
+      for (const path of [...files]) if (path === name || path.startsWith(`${name}/`)) files.delete(path);
+      modifications.push({ component: name, action: RESTORE_UNRECOGNISED });
+    }
     for (const path of ["routines.json", "calendar-calls.json", "webhooks.json", "delegation-receipts.json", "section-contexts.json"]) {
       if (files.has(path)) assertInstallationRecords(path, read(path));
     }
@@ -192,6 +226,9 @@ export async function prepareInstallationRestore(archive: string, outputParent: 
             seen.add(task.threadId); claim(task.threadId);
             const copy = { ...task, autoApprove: false, alwaysAllow: [], resumeCursors: {} };
             delete (copy as RecordValue).lastInstanceId;
+            // The bot's own working folder for this conversation names the old installation's data directory: the next turn pins this one's.
+            const deskPath = (task as RecordValue).cwd;
+            if (path === "bots.json" && typeof deskPath === "string" && isManagedDesk(deskPath, String(value.id), String(task.threadId))) delete (copy as RecordValue).cwd;
             return copy;
           });
         }

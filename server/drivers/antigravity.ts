@@ -377,7 +377,8 @@ function decodeConfig(raw: unknown): AntigravityConfig {
 
 export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
   driverKind: DRIVER_KIND,
-  metadata: { displayName: "Antigravity", supportsMultipleInstances: true },
+  // Named for what people look for in the engine list (upstream OpenMausBot #3173, Apache-2.0).
+  metadata: { displayName: "Google Gemini (Antigravity)", supportsMultipleInstances: true },
   install: {
     command: {
       darwin: "curl -fsSL https://antigravity.google/cli/install.sh | bash",

@@ -133,12 +133,23 @@ it("remote downloads reject wrong identity oversized metadata and corrupt bytes"
  for(const mode of ["foreign","large","corrupt"]){
   const f=fixture();await f.adapter.connect();const original=f.run.getMockImplementation()!;let restores=0;
   f.run.mockImplementation(async request=>{
-   if(request.args.includes("dump"))return{code:0,stdout:JSON.stringify({...f.receipt,...(mode==="large"?{bytes:2*1024**3}:{})})};
+   if(request.args.includes("dump"))return{code:0,stdout:JSON.stringify({...f.receipt,...(mode==="large"?{bytes:1024**4+1}:{})})};
    if(operation(request.args)==="snapshots")return{code:0,stdout:JSON.stringify([{id:mode==="foreign"?"f".repeat(64):id,hostname:"murage",time:"2026-09-13T00:00:00Z",tags:[`murage-job:${f.receipt.jobId}`],paths:["/old/backup.age","/old/receipt.json"]}])};
    if(operation(request.args)==="restore"){restores++;const directory=request.args[request.args.indexOf("--target")+1];writeFileSync(join(directory,"backup.age"),Buffer.alloc(f.bytes.length));writeFileSync(join(directory,"receipt.json"),JSON.stringify(f.receipt));return{code:0,stdout:""};}
    return original(request);
   });await expect(f.adapter.downloadBackup(id)).rejects.toThrow("DOWNLOAD_UNCONFIRMED");expect(restores).toBe(mode==="corrupt"?1:0);expect(readFileSync(f.input)).toEqual(f.bytes);
  }
+});
+it("a copy over 1 GiB that upload accepts is not refused at download by size (A4)",async()=>{
+ const f=fixture();await f.adapter.connect();const original=f.run.getMockImplementation()!;let restores=0;
+ f.run.mockImplementation(async request=>{
+  if(request.args.includes("dump"))return{code:0,stdout:JSON.stringify({...f.receipt,bytes:2*1024**3})};
+  if(operation(request.args)==="snapshots")return{code:0,stdout:JSON.stringify([{id,hostname:"murage",time:"2026-09-13T00:00:00Z",tags:[`murage-job:${f.receipt.jobId}`],paths:["/old/backup.age","/old/receipt.json"]}])};
+  if(operation(request.args)==="restore"){restores++;const directory=request.args[request.args.indexOf("--target")+1];writeFileSync(join(directory,"backup.age"),f.bytes);writeFileSync(join(directory,"receipt.json"),JSON.stringify(f.receipt));return{code:0,stdout:""};}
+  return original(request);
+ });
+ // The bytes on disk do not match the 2 GiB receipt, so verification still refuses; the point is that the size gate let it reach the restore.
+ await expect(f.adapter.downloadBackup(id)).rejects.toThrow("DOWNLOAD_UNCONFIRMED");expect(restores).toBe(1);
 });
 it.skipIf(process.platform!=="darwin"||process.arch!=="arm64")("actual runner creates only the admitted AWS environment and private stdin using mocked spawn",async()=>{
  const child=Object.assign(new EventEmitter(),{stdin:new PassThrough(),stdout:new PassThrough(),stderr:new PassThrough(),kill:vi.fn()});let stdin="";child.stdin.on("data",chunk=>{stdin+=chunk;});vi.mocked(spawn).mockImplementation(()=>{queueMicrotask(()=>child.emit("close",0));return child as never;});

@@ -3,6 +3,7 @@
 // a finish frame followed by clean EOF. In-band errors, unreadable frames,
 // truncation and empty replies fail the turn, and any output that did arrive
 // is kept ahead of the failed terminal instead of being dropped.
+import { ANY_ADDRESS, KEY_REJECTED_REASON, noteKeyAccepted, noteKeyRejected, resetKeyRejectionsForTests } from "../key-rejections.ts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ensureDirs } from "../config.ts";
@@ -75,6 +76,7 @@ describe("createOpenAIChatRuntime stream contract", () => {
 
   beforeEach(() => {
     ensureDirs();
+    resetKeyRejectionsForTests();
     previousFetch = globalThis.fetch;
     responders = [];
     calls = 0;
@@ -93,7 +95,7 @@ describe("createOpenAIChatRuntime stream contract", () => {
     for (const instance of instances.splice(0)) await instance.dispose();
   });
 
-  const create = (overrides: { retryScale?: number; reasoning?: boolean; timeoutMs?: number | undefined } = {}) => {
+  const create = (overrides: { retryScale?: number; reasoning?: boolean; timeoutMs?: number | undefined; apiKey?: string } = {}) => {
     const instance = createOpenAIChatRuntime({
       input: { instanceId: "chat-test", displayName: "Chat test", environment: {}, enabled: true, config: {} },
       driverKind: "openai-chat-test",
@@ -633,6 +635,67 @@ describe("createOpenAIChatRuntime stream contract", () => {
     // The provider's own words stay available, with the key redacted.
     expect(failure && "details" in failure ? failure.details : "").toContain("Incorrect API key provided");
     expect(JSON.stringify(recorder.events)).not.toContain(SECRET);
+  });
+
+  it("a 402 turn reads the provider's reason under the plain line, with the key still masked", async () => {
+    responders = [() => new Response(
+      JSON.stringify({ error: { message: `Your team has used all credits. Key ${SECRET} was checked.`, code: "credit_exhausted" } }),
+      { status: 402, headers: { "content-type": "application/json" } },
+    )];
+    const instance = create();
+    const recorder = recordEvents(instance.adapter);
+    await instance.adapter.sendTurn({ threadId: "t-402", text: "hello" });
+    await recorder.until((event) => event.type === "turn.completed");
+    recorder.stop();
+    const failure = recorder.events.find((event) => event.type === "runtime.error");
+    expect(failure?.message).toContain("The model provider needs payment or account access before it will answer. The provider says: Your team has used all credits.");
+    expect(failure?.message).not.toContain("credit_exhausted");
+    expect(failure && "details" in failure ? failure.details : "").toContain("Your team has used all credits.");
+    expect(failure && "details" in failure ? failure.details : "").toContain("(credit_exhausted)");
+    expect(failure && "details" in failure ? failure.details : "").not.toContain('{"error"');
+    expect(JSON.stringify(recorder.events)).not.toContain(SECRET);
+  });
+
+  const sendAndSettle = async (instance: ProviderInstance, threadId: string) => {
+    const recorder = recordEvents(instance.adapter);
+    await instance.adapter.sendTurn({ threadId, text: "hello" });
+    await recorder.until((event) => event.type === "turn.completed");
+    recorder.stop();
+  };
+
+  it("a refused key shows signed out with a reason, and Ready again once a request goes through (item 139)", async () => {
+    responders = [() => new Response(JSON.stringify({ error: { code: "invalid_api_key", message: "Incorrect API key provided" } }), { status: 401 })];
+    const instance = create();
+    expect(await instance.snapshot()).toMatchObject({ state: "available", authenticated: true });
+    await sendAndSettle(instance, "t-139-a");
+    expect(await instance.snapshot()).toMatchObject({ state: "available", authenticated: false, reason: KEY_REJECTED_REASON });
+    responders = [() => sse([contentFrame("ok", "stop"), DONE])];
+    await sendAndSettle(instance, "t-139-b");
+    expect(await instance.snapshot()).toMatchObject({ state: "available", authenticated: true });
+  });
+
+  it("the Settings Test button sets and clears the mark from its result (item 139)", async () => {
+    const instance = create();
+    noteKeyRejected(ANY_ADDRESS, SECRET);
+    expect(await instance.snapshot()).toMatchObject({ authenticated: false, reason: KEY_REJECTED_REASON });
+    noteKeyAccepted(ANY_ADDRESS, SECRET);
+    expect(await instance.snapshot()).toMatchObject({ authenticated: true });
+  });
+
+  it("a quota or model-access refusal leaves the engine Ready (item 139)", async () => {
+    responders = [() => new Response(JSON.stringify({ error: { code: "insufficient_quota", message: "You exceeded your current quota" } }), { status: 403 })];
+    const instance = create();
+    await sendAndSettle(instance, "t-139-c");
+    expect(await instance.snapshot()).toMatchObject({ authenticated: true });
+  });
+
+  it("a different key starts clean after a refusal (item 139)", async () => {
+    responders = [() => new Response("{}", { status: 401 })];
+    const first = create();
+    await sendAndSettle(first, "t-139-d");
+    expect(await first.snapshot()).toMatchObject({ authenticated: false });
+    const second = create({ apiKey: "sk-a-new-key" });
+    expect(await second.snapshot()).toMatchObject({ authenticated: true });
   });
 
   it("surfaces an in-band error from a non-streamed helper call", async () => {

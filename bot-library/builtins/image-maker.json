@@ -48,7 +48,8 @@
         "title": "Image Maker",
         "description": "Canvas prepares a ten-image campaign brief set from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For visuals, video and general social content, use Creator.",
         "appearance": {
-          "color": "blue"
+          "color": "pink",
+          "mascotBody": "blob"
         },
         "skills": [
           "midjourney-prompting",

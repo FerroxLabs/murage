@@ -21,6 +21,20 @@ const askBrowser = (method: string, path: string, authenticated = true) =>
 
 const allowed = (method: string, path: string) => ask(method, path) === null;
 
+describe("owner chat history", () => {
+  it("admits chat pages and only bounded chat searches to an authenticated device", () => {
+    expect(ask("GET", "/api/chats")).toBeNull();
+    expect(askBrowser("GET", "/api/chats")?.status).toBe(404);
+    const request = { path: "/api/search", method: "GET", authenticated: true, surface: "device" as const, search: "view=chats&q=lease&limit=40" };
+    expect(denyReason(request)).toBeNull();
+    expect(denyReason({ ...request, surface: "browser" })?.status).toBe(404);
+    expect(denyReason({ ...request, authenticated: false })?.status).toBe(401);
+    for (const search of ["q=lease", "view=chats&q=e", "view=chats&q=lease&limit=41", "view=chats&q=lease&limit=NaN"]) {
+      expect(denyReason({ ...request, search })?.status).toBe(404);
+    }
+  });
+});
+
 describe("credentials", () => {
   it("lets an unpaired device pair, and do nothing else", () => {
     expect(ask("POST", "/api/pair", false)).toBeNull();
@@ -271,6 +285,7 @@ describe("surfaces do not converge", () => {
         : entry.path.source.includes("chat|rooms") ? "/chat/bot_123"
         : entry.path.source.includes("icons") ? "/icons/murage-192.png"
         : entry.path.source.includes("murage-logo") ? "/murage-logo.png"
+        : entry.path.source.includes("library-art") ? "/library-art/advisor-256.webp"
         : entry.path.source.replace(/[\\^$]/g, "").replace(/\(\?:.*/, "");
       expect(ask("GET", path), path).not.toBeNull();
       expect(askBrowser("GET", path), path).toBeNull();

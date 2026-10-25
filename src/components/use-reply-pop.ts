@@ -17,9 +17,12 @@ export function useReplyPop(resetKey: string, lastMessage: Message | undefined, 
     wasWaiting.current = false;
     setPopping(null);
   }, [resetKey]);
+  // Armed while the member works; a new row other than a bot's own text
+  // re-arms it, because the mascot now stays through a mid-turn sentence
+  // (upstream #3374) and `waiting` alone no longer turns over between steps.
   useEffect(() => {
-    if (waiting) wasWaiting.current = true;
-  }, [waiting]);
+    if (waiting && !(lastMessage?.role === "bot" && lastMessage.kind === "text")) wasWaiting.current = true;
+  }, [waiting, lastMessage?.id, lastMessage?.role, lastMessage?.kind]);
   useEffect(() => {
     // A new last row cancels the previous settle timer (the cleanup below),
     // so it must retire that pop too. In an Everyone responds room the next

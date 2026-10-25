@@ -130,6 +130,11 @@ export function rememberHand(handed: HandedEnv): void {
   while (hands.length > HANDS_MAX) hands.shift();
 }
 
+/** Tests only: the hands remembered so far (item 175 proves a spawn-only key is in none of them). */
+export function rememberedHandsForTest(): readonly HandedEnv[] {
+  return [...hands];
+}
+
 function knownHands(): HandedEnv[] {
   if (hands.length) return [...hands];
   // no engine was handed a map yet: the server's own account stands in

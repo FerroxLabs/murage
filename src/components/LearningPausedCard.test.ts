@@ -51,3 +51,9 @@ describe("the Needs you card and the Usage page", () => {
     expect(en["settings.l6.paused.leave"]).toBe("Leave paused");
   });
 });
+
+describe("while learning is paused (PASTE-CAPTURE-FIX S1)", () => {
+  it("says new chats are still noted, so learning picks up where it left off", () => {
+    expect(en["settings.l6.paused.body"]).toContain("Murage keeps noting new chats so learning picks up where it left off.");
+  });
+});

@@ -1,4 +1,4 @@
-import { cloudEngineHome, cloudTurnBot, cloudTurnEnvironment, cloudTurnRender, type CloudCodexPolicy, type CloudMcpStanza } from "../cloud-home/turn-process.ts";
+import { cloudEngineHome, cloudTurnBot, cloudTurnEnvironment, cloudTurnRender, cloudTurnRenderContents, type CloudCodexPolicy, type CloudMcpStanza } from "../cloud-home/turn-process.ts";
 import { queryCloudBotState, type CloudLauncherSpawn } from "../cloud-home/bot-state.ts";
 import { cloudMcpStanza } from "../cloud-home/engine-render.ts";
 import { CODEX_TOOL_SURFACE, renderMurageTurn } from "../murage-tool-surface.ts";
@@ -30,7 +30,8 @@ import { CODEX_APPROVAL_PIN_ARGS, codexIsolationArgs, codexTurnPolicy, scopedCod
 import { ScopeUnavailableError, engineUpdateRequired, scopeLocalFailureOf, withScopeRetry } from "./scoped-cli-home.ts";
 import {
   CODEX_GATE_MIN, CodexHookGate, HOOK_ASK_BOUND_MS, HookDecisionTable, hookLivenessSetting, codexGatePlan, codexShellFormArgs,
-  CODEX_HOOK_EXE_ENV, CODEX_HOOK_LAUNCH_ENV, hookConfigOf, hookWindowsLaunchValue, newHookToken, routeDelivery, tripwireLine, trustHooks, versionAtLeast, writeHookFiles,
+  CODEX_HOOK_EXE_ENV, CODEX_HOOK_LAUNCH_ENV, hookConfigOf, hooksListBounds, hookWindowsLaunchValue, newHookToken, routeDelivery, tripwireLine, trustHooks, versionAtLeast, writeHookFiles,
+  HOOK_ENV_VAR, hookEnvPathOf, sweepHookEnv,
   type CodexGatePlan, type HookAnswer, type HookDelivery, type HookRoute,
 } from "./codex-hook.ts";
 import { execEnvHanded, execEnvNow, handedEngineEnv, ownedTurnNames, type HandedEnv } from "../engine-env.ts";
@@ -44,7 +45,7 @@ import { customMountEntries } from "../custom-mcp-mounts.ts";
 import { codexConfigMcpServerNames, externalMcpRecords, mountedMcpServerNames } from "./codex-mcp-names.ts";
 import type { ExecEnv, McpMountRecord } from "../../shared/mount-identity.ts";
 import { createPrewarmGate, createTurnMemory, spawnInputsOf, TAKEOVER_FAILED_MESSAGE, warmPool, pastWarmMaxAge, spawnedAtOf } from "./warm-pool.ts";
-import { awaitCliTreeStopped, describeSpawnFailure, engineJob, execCli, killCliTree, spawnCli } from "../procs.ts";
+import { awaitCliTreeStopped, cliVersionReader, describeSpawnFailure, engineJob, execCli, killCliTree, spawnCli } from "../procs.ts";
 import { cachedCliVersion } from "../cli-version-cache.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
 
@@ -62,6 +63,7 @@ import { decodeCodexSelection, readCodexModelCatalog, STATIC_CODEX_MODELS } from
 import { codexLocalProviderArgs } from "./local-inject.ts";
 import { withCliMemoryLearning } from "./cli-memory-learning.ts";
 import { fluxKey } from "../flux-config.ts";
+import { FLUX_CODEX_TABLE_HEADERS } from "../flux-memory-wire.ts";
 import { applyFluxSurface, FLUX_CODEX_ENV_KEY, FLUX_CODEX_PROVIDER, FLUX_RESPONSES_BASE } from "../flux-routing.ts";
 import { codexFluxProviderFor, codexHttpHeaderArgs, fluxMemoryContextForTurn, fluxMemoryDecision, logFluxMemoryHeaders } from "../flux-memory-headers.ts";
 import { fluxIdIsRoutable } from "../flux-surface.ts";
@@ -74,6 +76,7 @@ import { registerIntake } from "../harness/intake.ts";
 import {
   codexNoAnswers,
   fromCodex,
+  fromCodexAsync,
   fromElicitationForm,
   toCodexAnswers,
   toElicitationContent,
@@ -250,6 +253,19 @@ export const CODEX_CUSTOM_MCP_STARTUP_TIMEOUT_SEC = 60;
  * arrives before Codex drops the server from the turn. */
 export const CODEX_MURAGE_MCP_STARTUP_TIMEOUT_SEC = 20;
 
+const MCP_ENV_LAUNCHER_MARK = "murage-env-launch";
+/** Runs as `node -e`: restores each aliased variable under the server's own name for the real command, then runs it. */
+const MCP_ENV_LAUNCHER = [
+  'const cp=require("node:child_process");const a=process.argv;const i=a.indexOf("murage-env-launch");',
+  'const map=JSON.parse(a[i+1]);const cmd=a[i+2];const args=a.slice(i+3);const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;',
+  'for(const[k,v]of Object.entries(map)){env[k]=env[v];delete env[v];}',
+  'const q=(x)=>\'"\'+String(x).replace(/"/g,\'\\\\"\')+\'"\';',
+  'const run=(sh)=>{const c=sh?cp.spawn([cmd,...args].map(q).join(" "),{stdio:"inherit",env,shell:true}):cp.spawn(cmd,args,{stdio:"inherit",env});',
+  'c.on("error",(e)=>{if(!sh&&process.platform==="win32"&&e.code==="ENOENT")return run(true);console.error(e.message);process.exit(127);});',
+  'c.on("exit",(code,sig)=>process.exit(code??(sig?1:0)));',
+  'for(const s of["SIGTERM","SIGINT"])process.on(s,()=>c.kill(s));};run(false);',
+].join("");
+
 function mountMcpServer(
   appServerArgs: string[],
   env: Record<string, string | undefined>,
@@ -264,17 +280,37 @@ function mountMcpServer(
   // secrets and differ per server, so they ride the server's own `env` table
   // rather than the app-server's shared environment.
   const own = new Set([CRED_FILE_ENV, CRED_SERVER_ENV]);
-  const shared = Object.fromEntries(Object.entries(server.env).filter(([key]) => !own.has(key)));
+  const wanted = Object.entries(server.env).filter(([key]) => !own.has(key));
+  // One app-server process serves every mounted server, so a shared name holds one value. A name another server
+  // (or the turn) already set to a DIFFERENT value rides this server's own `env` table instead, so no server's
+  // child receives a value that belongs to a different server.
+  const shared: Record<string, string> = {};
+  const perServer: Record<string, string> = {};
+  for (const [key, value] of wanted) {
+    if (typeof env[key] === "string" && env[key] !== value) perServer[key] = value;
+    else shared[key] = value;
+  }
   Object.assign(env, shared);
   const prefix = `mcp_servers.${name}`;
+  // 03-A1 / argv: a colliding value must not ride the argv (it would be readable for the life of the process). It goes into the
+  // app-server's environment under a private alias name, forwarded by name like the shared ones, and a tiny launcher (run by this
+  // program as node) puts it back under the server's own name for that one child before running the real command.
+  const aliases: Record<string, string> = {};
+  for (const [key, value] of Object.entries(perServer)) {
+    const alias = `MURAGE_MCPV_${createHash("sha256").update(`${name}\0${key}`).digest("hex").slice(0, 16)}`;
+    env[alias] = value;
+    aliases[key] = alias;
+  }
+  const wrapped = Object.keys(aliases).length > 0;
   appServerArgs.push(
-    "-c", `${prefix}.command=${JSON.stringify(server.command)}`,
-    "-c", `${prefix}.args=${JSON.stringify(server.args)}`,
+    "-c", `${prefix}.command=${JSON.stringify(wrapped ? process.execPath : server.command)}`,
+    "-c", `${prefix}.args=${JSON.stringify(wrapped ? ["-e", MCP_ENV_LAUNCHER, MCP_ENV_LAUNCHER_MARK, JSON.stringify(aliases), server.command, ...server.args] : server.args)}`,
     // Values stay in the child environment; argv contains names only so
     // credentials never appear in process listings or diagnostics.
-    "-c", `${prefix}.env_vars=${JSON.stringify(Object.keys(shared))}`,
+    "-c", `${prefix}.env_vars=${JSON.stringify([...Object.keys(shared), ...Object.values(aliases)])}`,
     "-c", `${prefix}.tool_timeout_sec=${CODEX_MCP_TOOL_TIMEOUT_SEC}`,
   );
+  if (wrapped) appServerArgs.push("-c", `${prefix}.env.ELECTRON_RUN_AS_NODE="1"`);
   for (const key of own) {
     if (typeof server.env[key] === "string") appServerArgs.push("-c", `${prefix}.env.${key}=${JSON.stringify(server.env[key])}`);
   }
@@ -327,9 +363,28 @@ export function codexRpcTimeoutMessage(method: string, timeoutMs: number, engine
   const step = method === "initialize" ? " while starting"
     : method.startsWith("thread/") ? " while opening the conversation"
     : method.startsWith("turn/") || method.startsWith("review/") ? " while starting the turn"
+    : method === "hooks/list" ? " while getting its hooks ready"
     : "";
   return `${engine} timed out${step} (no answer for ${plainDuration(timeoutMs)}).`;
 }
+
+/** G03-2: an RPC Codex never answered. Unlike an error answer it says nothing about whether the engine took the request, so a
+ *  turn/start that timed out is never sent again. */
+export class CodexRpcTimeout extends Error {
+  /** Read by the hooks/list handshake (codex-hook.ts trustHooks): no answer is not an answer, and never a version fact. */
+  readonly noAnswer = true;
+}
+/** An error answer from the app-server, with its JSON-RPC code kept (-32601: the method does not exist on this build). */
+export class CodexRpcErrorAnswer extends Error {
+  readonly rpcCode: number | undefined;
+  constructor(error: { code?: unknown; message?: unknown }) {
+    super(typeof error.message === "string" ? error.message : JSON.stringify(error));
+    this.rpcCode = typeof error.code === "number" ? error.code : undefined;
+  }
+}
+
+/** The turn/start answer bound; tests shorten it (MURAGE_CODEX_RPC_TIMEOUT_MS). */
+const turnStartTimeoutMs = (): number => Number(process.env.MURAGE_CODEX_RPC_TIMEOUT_MS) > 0 ? Number(process.env.MURAGE_CODEX_RPC_TIMEOUT_MS) : 60_000;
 
 export const CodexDriver: ProviderDriver<CodexConfig> = {
   driverKind: DRIVER_KIND,
@@ -422,6 +477,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
     // One warm app-server per chat thread, kept between turns while every
     // spawn input is unchanged and recycled otherwise.
     const retained = new Map<string, Retained>();
+    // 03-1: each scope's leftover hook env files are swept once per driver start, at its first gated launch (sweepHookEnv keeps every
+    // file a live owner holds: another instance's, or another live Murage's).
+    const sweptScopes = new Set<string>();
     const closingProcs = new Set<Promise<boolean>>();
     const stuck = new Map<Retained, string>();
     const configuredIdleMinimum = Number(process.env.MURAGE_CODEX_SESSION_IDLE_MIN_MS);
@@ -444,7 +502,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       // A process that did not stop stays owned until it does.
       void done.then((stopped) => {
         closingProcs.delete(done);
-        if (!stopped) stuck.set(r, threadId);
+        // 03-1: the env file goes only with a process confirmed gone; one that would not stop keeps it (its hooks still run)
+        if (!stopped) stuck.set(r, threadId); else r.hookGate?.release();
       }, () => { closingProcs.delete(done); stuck.set(r, threadId); });
       return done;
     };
@@ -453,7 +512,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       const results = await Promise.all([...stuck].filter(([, owner]) => only === undefined || owner === only).map(async ([r]) => {
         killCliTree(r.child);
         const stopped = await awaitCliTreeStopped(r.child).catch(() => false);
-        if (stopped) stuck.delete(r);
+        if (stopped) { stuck.delete(r); r.hookGate?.release(); }
         return stopped;
       }));
       return !results.includes(false);
@@ -601,7 +660,14 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         approval: enforceApproval ? "untrusted" : config.fullAuto ? "never" : "on-request",
         sandbox: turn.proposalOnly ? "read-only" : config.fullAuto ? "danger-full-access" : "workspace-write",
       };
+      // B13: a slow hook handshake gets ONE relaunch of the app-server; a second slow one ends the turn with a clear line, so the
+      // whole wait stays near 2 minutes (two 60 s handshake deadlines and one backoff), never three.
+      let slowHandshakeRelaunched = false;
+      // ...and the whole startup of the turn (every initialize and handshake, across the relaunch) ends by two handshake deadlines
+      // after the first launch: no further relaunch once a slow handshake has used its one and this has passed.
+      let startupCapAt = 0;
       const launchAttempt = async (attempt: number): Promise<void> => {
+        if (attempt === 0 || !startupCapAt) { const b = hooksListBounds(); startupCapAt = Date.now() + 2 * (b.first + b.retry); }
         const env = childEnv();
         // The app-server is the codex whose `--version` this env probed (codexVersionForTurn) and whose catalog the picker shows,
         // resolved here, before env becomes the handed map: the owner's captured shell PATH can find another codex first (1.0.3
@@ -634,19 +700,24 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         const fluxProvider = codexFluxProviderFor(fluxMemory);
         const providerBinding = turn.providerRoute ? applyProviderRoute(DRIVER_KIND, env, turn.providerRoute) : null;
         // A Flux connection (a named provider route) carries the headers on its own table.
-        if (providerBinding?.modelProvider && turn.providerRoute?.preset === "flux") {
-          providerBinding.args.push(...codexHttpHeaderArgs(providerBinding.modelProvider, fluxMemory.headers));
-          logFluxMemoryHeaders(DRIVER_KIND, fluxMemory);
-        }
         // Cloud home: the launcher renders every provider table into config.toml from a typed
         // route and refuses `-c model_providers.*` (CLOUD-ENGINES-DESIGN.md 4.1). A home has no
-        // local model servers of its own; a Flux model rides the route's key variable.
+        // local model servers of its own; a Flux model rides the route's key variable, and the
+        // memory headers ride the route too (rendered as the table's http_headers).
         const cloudHome = process.env.MURAGE_CLOUD_ROLE === "home";
+        if (providerBinding?.modelProvider && turn.providerRoute?.preset === "flux") {
+          if (cloudHome) {
+            const rendered = cloudTurnRenderContents(env).route;
+            if (rendered) cloudTurnRender(env, "route", { ...rendered, headers: fluxMemory.headers });
+          } else providerBinding.args.push(...codexHttpHeaderArgs(providerBinding.modelProvider, fluxMemory.headers));
+          logFluxMemoryHeaders(DRIVER_KIND, fluxMemory);
+        }
         if (cloudHome && flux?.applied) {
           const key = env[FLUX_CODEX_ENV_KEY];
           delete env[FLUX_CODEX_ENV_KEY];
           env.MURAGE_PROVIDER_API_KEY = key;
-          cloudTurnRender(env, "route", { provider: FLUX_CODEX_PROVIDER, baseUrl: FLUX_RESPONSES_BASE, model: flux.model ?? "", apiKey: key ?? "", label: "Flux Router" });
+          // The decided table (flux, flux-off or flux-noinject) is the one thread/start selects.
+          cloudTurnRender(env, "route", { provider: fluxProvider, baseUrl: FLUX_RESPONSES_BASE, model: flux.model ?? "", apiKey: key ?? "", label: "Flux Router", headers: FLUX_CODEX_TABLE_HEADERS[fluxProvider] });
         }
         const appServerArgs = [
           "app-server",
@@ -1006,11 +1077,15 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         const gated = gatePlan.mode === "gated" && scopedHome !== null; // a gated plan always has its scope (thrown above otherwise)
         const hookToken = newHookToken();
         let hookGate: CodexHookGate | undefined = reuse?.hookGate;
+        if (gated && !sweptScopes.has(scopedHome!)) { sweptScopes.add(scopedHome!); sweepHookEnv(scopedHome!); }
         if (gated && !hookGate) {
           hookGate = new CodexHookGate();
-          await hookGate.listen();
+          hookGate.envPath = hookEnvPathOf(scopedHome!, hookGate.id);
+          try { await hookGate.listen(); } catch (error) { hookGate.close(); hookGate.release(); throw error; }
         }
-        const hookFiles = gated && hookGate ? writeHookFiles(scopedHome!, hookGate.path, hookToken) : null;
+        // 03-1: this process's own env file, named in its environment; a reused process rewrites only its own
+        const hookFiles = gated && hookGate ? writeHookFiles(scopedHome!, hookGate.path, hookToken, hookGate.envPath!) : null;
+        if (hookFiles && !reuse) env[HOOK_ENV_VAR] = hookFiles.envFile;
         // Windows: the hooks.json command is `<system cmd.exe> /d /v:off /c %MURAGE_CODEX_HOOK%` (codex-hook.ts), the same in cmd and
         // PowerShell; it expands to the quoted path of the scope's launcher (murage-hook.cmd, which sets ELECTRON_RUN_AS_NODE and runs
         // the script with MURAGE_CODEX_EXE, this program), and that value rides in this process's environment, which Codex hands each hook it runs.
@@ -1040,7 +1115,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             }, engineJob());
           }
         } catch (error) {
-          if (!reuse) hookGate?.close();
+          if (!reuse) { hookGate?.close(); hookGate?.release(); }
           throw error;
         }
         if (!reuse && hookGate) { const owned = hookGate; child.once("exit", () => owned.close()); }
@@ -1116,7 +1191,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           // a wedged app-server can accept stdin and never reply; without this
           // the handshake await hangs forever and the bot stays busy for good
           const timer = setTimeout(() => {
-            if (rpcPending.delete(id)) reject(new Error(codexRpcTimeoutMessage(method, timeoutMs, ENGINE)));
+            if (rpcPending.delete(id)) reject(new CodexRpcTimeout(codexRpcTimeoutMessage(method, timeoutMs, ENGINE)));
           }, timeoutMs);
           if (typeof timer.unref === "function") timer.unref();
           rpcPending.set(id, {
@@ -1148,6 +1223,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         killCliTree(child);
         return awaitCliTreeStopped(child).then((stopped) => {
           if (!stopped) stopping = undefined;
+          // 03-1: confirmed gone, so its env file goes; a held kill keeps it
+          else hookGate?.release();
           return stopped;
         });
       })();
@@ -1156,19 +1233,34 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       const stop = async () => {
         stopRequested = true;
         stopSignal.abort();
+        // Astra r2 #1: the turn's authority is revoked before the kill is awaited, so a held or failed kill leaves no allow path. The hook
+        // gate is disarmed (a decision still in flight replies deny, a new delivery is refused), every open ask is denied, and approval
+        // requests that arrive from here on are refused (handleServerRequest reads stopRequested).
+        hookGate?.disarm(hookToken);
+        for (const finish of [...asks.values()]) finish("deny", "Murage: the turn ended", "system");
         const stopped = await terminate();
         if (stopped) completeStoppedTurn?.();
         return stopped;
       };
 
+      // STOP1: once the person's Stop is in, the turn ends as that Stop, whichever path settles it (a clean end the Stop's own
+      // deny let Codex reach, a held turn's helpers finishing, the background cap, a provider failure while the process dies).
+      // Kept as they are: a refusal or tripwire incident raised before the Stop (refuseUnproven raises none after it), and a
+      // process that would not stop. An end that settled before the Stop is untouched (state.settled), so finished work stays finished.
+      const stopWins = (stopReason: string | null) => stopRequested && !incidentRaised && !refusal.refused && stopReason !== "shutdown_timeout";
       const settle = async (ok: boolean, stopReason: string | null): Promise<void> => {
         if (state.settled) return;
+        if (stopWins(stopReason)) { ok = true; stopReason = "cancelled"; }
         if (ok && refusal.refused) return settle(false, incidentRaised ? "gate_incident" : "scope_unavailable");
         // Rule 68c: a refused turn never ends clean. A clean end on a gated process whose hook is not yet proven waits for the proof;
         // unproven, the refusal settles it.
-        if (ok && hookGate && !refusal.hookLive) {
-          if (!(await proveLiveness())) return;
+        // A user Stop kills the process: it is not a clean end of engine work, so it never waits for the proof (Astra r1 #2).
+        if (ok && hookGate && !refusal.hookLive && !(stopRequested && stopReason === "cancelled")) {
+          const live = await proveLiveness();
           if (state.settled) return;
+          // a Stop that came in while this clean end waited for the proof wins: the end is that Stop, not a refusal
+          if (stopWins(stopReason)) { ok = true; stopReason = "cancelled"; }
+          else if (!live) return;
         }
         state.settled = true;
         if (helpers.cap) clearTimeout(helpers.cap);
@@ -1294,6 +1386,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       // The refusal is one-way and said at once (the line names whether an item had started); the interrupt follows, and a turn that
       // completes meanwhile settles refused, never clean.
       const refuseUnproven = () => {
+        // After a Stop the turn's authority is already revoked (stop() disarms the gate and denies every ask): an unproven hook
+        // then refuses nothing more and raises no error card; the turn settles as the Stop (STOP1).
+        if (stopRequested) return;
         if (!refusal.refuse((startedFirst) => hookDidNotStartLine(ENGINE, startedFirst))) return;
         const refused = new ScopeUnavailableError(refusal.cause!, false, { engine: ENGINE });
         if (!state.settled && !abandoned) emit({ ...base(threadId, turnId), type: "runtime.error", message: refused.message, localFailure: scopeLocalFailureOf(refused), localFailureEngine: ENGINE });
@@ -1402,7 +1497,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       };
       if (hookGate) hookGate.arm({ token: hookToken, onSession: () => sessionSeen?.(), onPreTool });
       const handleServerRequest = (msg: any) => {
-        if (refusal.refused) return send({ jsonrpc: "2.0", id: msg.id, ...idleRefusal(String(msg.method)) });
+        if (refusal.refused || stopRequested) return send({ jsonrpc: "2.0", id: msg.id, ...idleRefusal(String(msg.method)) });
         const method = msg.method as string;
         const params = msg.params ?? {};
         const legacy = method === "execCommandApproval" || method === "applyPatchApproval";
@@ -1626,6 +1721,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           helpers.holding = true;
           helpers.cap = setTimeout(() => {
             if (state.settled) return;
+            // a Stop already in: no cap note, the turn ends as that Stop (STOP1)
+            if (stopRequested) { void settle(true, "cancelled"); return; }
             const note = backgroundCapNote(backgroundWaitCapMs());
             emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "assistant_text", delta: note });
             emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", origin: "murage", text: note });
@@ -1765,6 +1862,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
                 state.sawStreamDelta = false;
                 emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", origin: "engine", text: item.text });
               }
+              // QW Q3 (173): Codex asked and keeps working. The server shows the question card; no ask is open here,
+              // so the answer is the owner's next message (queued: Codex cannot be steered).
+              const asyncQuestions = fromCodexAsync(item);
+              if (asyncQuestions) emit({ ...base(threadId, turnId), type: "question.async", questions: asyncQuestions });
             } else if (item.type === "imageGeneration" && item.status !== "failed") {
               // Current Codex app-server returns the generated raster as
               // base64 `result` and may also expose a local `savedPath`. Use
@@ -1847,6 +1948,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           }
           case "turn/completed": {
             const t = p.turn ?? {};
+            // STOP1: an end Codex reports after the person's Stop (a clean end the Stop's own deny let it reach, an
+            // interrupted or failed end while it dies) is that Stop: no error card, and settle ends it as cancelled.
+            if (stopRequested) { void settle(true, "cancelled"); break; }
             const terminalMessage = typeof t.error?.message === "string" ? t.error.message.slice(0, 400) : undefined;
             if (t.status === "failed" && terminalMessage && terminalMessage !== lastProviderError) {
               emit({ ...base(threadId, turnId), type: "runtime.error", message: terminalMessage });
@@ -1861,7 +1965,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             // {error:{message}} — surface either (agentcal armor)
             {
               const message = p.message ?? p.error?.message;
-              if (message) {
+              // a provider error while a stopped process dies is part of the Stop, not an error card (STOP1)
+              if (message && !stopRequested) {
                 lastProviderError = String(message).slice(0, 400);
                 emit({ ...base(threadId, turnId), type: "runtime.error", message: lastProviderError });
               }
@@ -1911,7 +2016,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           const pend = rpcPending.get(msg.id);
           if (pend) {
             rpcPending.delete(msg.id);
-            msg.error ? pend.reject(new Error(msg.error.message ?? JSON.stringify(msg.error))) : pend.resolve(msg.result);
+            msg.error ? pend.reject(new CodexRpcErrorAnswer(msg.error)) : pend.resolve(msg.result);
           }
         } else if (msg.id !== undefined && msg.method) {
           // Rule 68c: an approval request on a gated process waits for the hook's proof; unproven, it is never answered (the refusal
@@ -2041,12 +2146,42 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         // Rule 68b: both handlers listed, trusted and enabled before anything is asked of the model; any other listing refuses the
         // turn before a model request. Checked again on a retained process (the trust record lives in the scope's config).
         if (hookGate && hookFiles) {
-          const shake = await trustHooks(request, hookFiles.hooksJson, turn.cwd ?? homedir());
+          // B13: a slow step explains itself. When the first bound runs out the owner sees a short line for the rest of the wait,
+          // closed when the list arrives or the attempt ends.
+          const waitItemId = `hooks-${turnId}-${attempt}`;
+          let waitShown = false;
+          const shake = await trustHooks(request, hookFiles.hooksJson, turn.cwd ?? homedir(), {
+            // only the relaunch after a slow handshake is held to the startup cap; an ordinary transient retry keeps its full wait
+            notAfter: slowHandshakeRelaunched ? startupCapAt : undefined,
+            onWait: (_waitedMs, nextMs) => {
+              if (waitShown || abandoned || state.settled || stopRequested) return;
+              waitShown = true;
+              const seconds = Math.max(1, Math.round(nextMs / 1000));
+              const line = `${ENGINE} is taking a moment to get ready; waiting up to ${seconds} second${seconds === 1 ? "" : "s"} more`;
+              console.info(`codex hooks slow thread=${threadId} attempt=${attempt}`);
+              // `spoken` carries the line to the mascot's working line, which shows with Tool calls off (the chip does not)
+              emit({ ...base(threadId, turnId), type: "item.started", itemType: "tool", origin: "murage", itemId: waitItemId, title: line, spoken: line });
+            },
+          });
+          // closed on every path, a Stop or a failure included (as the Preparing chip is), so no wait line outlives its attempt
+          if (waitShown) emit({ ...base(threadId, turnId), type: "item.completed", itemType: "tool", itemId: waitItemId, ok: shake.ok });
           if (cancelledBeforeStart()) return;
           if (!shake.ok) {
-            throw shake.why.startsWith("hooks/list")
+            // B13: only Codex saying hooks/list is not a method is a version fact (an installed version below the floor was already
+            // refused before the spawn, from `codex --version`). No answer in time, after one wider wait, is a slow start: its own
+            // "timed out" error goes to the transient retry below (one relaunch), and the turn still does not start without the gate.
+            if (shake.kind === "slow" && shake.cause instanceof Error) {
+              if (!slowHandshakeRelaunched) { slowHandshakeRelaunched = true; throw shake.cause; }
+              throw new Error(`${ENGINE} did not get its hooks ready in time, even after a fresh start; try again in a moment.`);
+            }
+            // A missing method is an update only when the version is unknown or below the floor; a build that reports a current
+            // version and still lacks hooks/list is named as it is, never "older than".
+            const reportedCurrent = Boolean(codexVersion) && versionAtLeast(codexVersion, CODEX_GATE_MIN);
+            throw shake.kind === "absent" && !reportedCurrent
               ? engineUpdateRequired(ENGINE, codexVersion || undefined, CODEX_GATE_MIN)
-              : new ScopeUnavailableError(`${ENGINE}'s pre-execution hook could not be trusted (${shake.why}), so this turn did not start.`, false, { engine: ENGINE });
+              : shake.kind === "absent"
+                ? new ScopeUnavailableError(`${ENGINE} ${codexVersion} has no hook list (hooks/list), so its pre-execution gate cannot run and this turn did not start.`, false, { engine: ENGINE })
+                : new ScopeUnavailableError(`${ENGINE}'s pre-execution hook could not be trusted (${shake.why}), so this turn did not start.`, false, { engine: ENGINE });
           }
         }
         const cursor = !reuse && !turn.sessionReset && typeof turn.resumeCursor === "string" ? turn.resumeCursor : null;
@@ -2054,17 +2189,24 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         // "no rollout found for thread id …"; a 1.0.1 or earlier cursor lives in another root): ONE new
         // thread starts and the conversation the harness sent is replayed into it.
         let replayHistory = false;
+        // The selected model and provider: what a new thread starts with, what a resumed thread is asked to run on (03-2), and what
+        // every turn/start names. A Flux selection names the table whose headers match its audience: the headers belong to the table,
+        // and the audience may have changed since the thread started.
+        const selection = providerBinding ? { model: providerBinding.model, modelProvider: providerBinding.modelProvider } : decodeCodexSelection(turn.model);
+        const fluxSelected = Boolean(flux?.applied && !providerBinding && selection.modelProvider === FLUX_CODEX_PROVIDER);
+        if (fluxSelected) selection.modelProvider = fluxProvider;
         if (cursor) {
+          let resumed: any;
           try {
-            // A resumed Flux thread names its table again: the headers belong to the
-            // table, and the audience may have changed since the thread started.
-            const resumeSelection = !providerBinding ? decodeCodexSelection(turn.model) : null;
-            const resumeFlux = flux?.applied && resumeSelection?.modelProvider === FLUX_CODEX_PROVIDER;
             // A resumed thread is pinned again: it may have started under another policy or sandbox. Off a home the policy is the
             // one spelled for the installed Codex (gated: on-request behind the gate; legacy: the policy the driver always sent); a
             // Cloud home names the same codexPolicy the launcher renders as the effective one.
             const resumePolicy = process.env.MURAGE_CLOUD_ROLE === "home" ? { sandbox: codexPolicy.sandbox, approvalPolicy: codexPolicy.approval } : policy();
-            const resumed = await request("thread/resume", { threadId: cursor, ...resumePolicy, ...(resumeFlux ? { modelProvider: fluxProvider } : {}) });
+            resumed = await request("thread/resume", {
+              threadId: cursor, ...resumePolicy,
+              ...(selection.model ? { model: selection.model } : {}),
+              ...(selection.modelProvider ? { modelProvider: selection.modelProvider } : {}),
+            });
             if (cancelledBeforeStart()) return;
             codexThreadId = resumed?.thread?.id ?? cursor;
           } catch {
@@ -2073,14 +2215,31 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             baseline = undefined;
             replayHistory = true;
           }
+          // 03-2: the resumed thread is used only when its answer proves it runs on the chosen model (and provider, when one was named). The
+          // default selection names no model, so any answered model is taken. A thread that does not prove it is not used: the
+          // conversation goes to a new thread on the chosen model, replayed from the transcript, exactly as a failed resume.
+          if (codexThreadId) {
+            const verified = (!selection.model || resumed?.model === selection.model)
+              && (!selection.modelProvider || resumed?.modelProvider === selection.modelProvider);
+            if (verified) startedModel = typeof resumed?.model === "string" ? resumed.model : null;
+            else {
+              console.info(`codex resume thread=${threadId} model-mismatch=true`);
+              // A command is never replayed (replay is skipped for every engine command), so it must not open a new thread: it ends
+              // before anything is written and the conversation keeps its thread.
+              if (turn.engineCommand) {
+                emit({ ...base(threadId, turnId), type: "runtime.error", message: `The model for this conversation changed. Send a message first, then run /${turn.engineCommand.name} again.` });
+                void settle(false, "resume_model_changed");
+                return;
+              }
+              settledTotals.delete(threadId);
+              baseline = undefined;
+              replayHistory = true;
+              codexThreadId = null;
+            }
+          }
         }
         if (!codexThreadId) {
-          const selection = providerBinding ? { model: providerBinding.model, modelProvider: providerBinding.modelProvider } : decodeCodexSelection(turn.model);
-          // A Flux thread starts under the table whose headers match its audience.
-          if (flux?.applied && !providerBinding && selection.modelProvider === FLUX_CODEX_PROVIDER) {
-            selection.modelProvider = fluxProvider;
-            logFluxMemoryHeaders(DRIVER_KIND, fluxMemory);
-          }
+          if (fluxSelected) logFluxMemoryHeaders(DRIVER_KIND, fluxMemory);
           const started = await request("thread/start", {
             cwd: turn.cwd ?? (process.env.MURAGE_CLOUD_ROLE === "home" ? cloudEngineHome("codex") : homedir()),
             model: selection.model,
@@ -2110,7 +2269,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             if (!(await stop())) {
               // Not confirmed closed: the child stays owned, in the stuck-process registry,
               // which Stop, dispose and the next dispatch of this thread retry and wait on.
-              stuck.set({ child, warm, cred, conn, codexThreadId, closing: true, detachIdle: () => {} }, threadId);
+              stuck.set({ child, warm, cred, conn, codexThreadId, closing: true, detachIdle: () => {}, ...(hookGate ? { hookGate } : {}) }, threadId);
               console.warn(`codex close thread=${threadId} confirmed=false reason=credential clear failed`);
             }
             if (active.get(threadId)?.stop === stop) active.delete(threadId);
@@ -2219,6 +2378,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           // data URL is the variant that fits — `localImage` would hand codex
           // a path to re-open under its own sandbox, which is the read-tool
           // detour this change exists to remove.
+          // 03-2: the selected model on every turn (equal on a verified thread; covers a reused process should the warm key ever drop the model)
+          ...(selection.model ? { model: selection.model } : {}),
           input: [
             { type: "text", text: turnText },
             ...(skillInput ? [skillInput] : []),
@@ -2239,7 +2400,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           // (a Cloud home names codexPolicy's approval, as its thread/start and the launcher's render do)
           ...(process.env.MURAGE_CLOUD_ROLE === "home" ? (enforceApproval ? { approvalPolicy: codexPolicy.approval } : {})
             : gatePlan.mode === "gated" || enforceApproval ? { approvalPolicy: policy().approvalPolicy } : {}),
-        }, 60_000, (result) => {
+        }, turnStartTimeoutMs(), (result) => {
           // compaction answers `{}`; its first notification names the turn
           if (adoptFirstTurn) return;
           awaitingTurnStart = false;
@@ -2266,6 +2427,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         // A retired attempt's late rejection (an RPC timer after a close-path
         // relaunch) must neither report an error nor relaunch again.
         if (abandoned) return;
+        // G03-2: once turn/start is written, the turn is relaunched only when Codex ANSWERED that it did not take it (an error answer with
+        // nothing buffered and no ask open). A timeout says nothing, an ACK or a buffered notification says it ran: never sent again.
+        // Read before anything below clears them.
+        const submitted = turnStartSent && (e instanceof CodexRpcTimeout || codexTurnId !== null || earlyNotifications.length > 0 || asks.size > 0);
         // The gate could not be established (Rule 68): a structured owner-facing failure and no retry; the process goes with the turn.
         if (e instanceof ScopeUnavailableError) {
           if (!state.settled) {
@@ -2285,7 +2450,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           if (!state.settled) void settle(true, "cancelled");
           return;
         }
-        if (!state.settled && ownsProcess && !turn.prewarm && !needsAuth && verdict.transient && attempt < RETRY_MAX_ATTEMPTS - 1 && state.sawStreamDelta === false) {
+        // B13: once a slow handshake has had its relaunch, nothing relaunches past the startup cap
+        const pastStartupCap = slowHandshakeRelaunched && Date.now() >= startupCapAt;
+        if (!state.settled && ownsProcess && !turn.prewarm && !needsAuth && !submitted && verdict.transient && attempt < RETRY_MAX_ATTEMPTS - 1 && state.sawStreamDelta === false && !pastStartupCap) {
           const delayMs = computeBackoff(attempt);
           attempt++;
           emit({
@@ -2350,11 +2517,14 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
     return retained.has(threadId);
   };
 
+  // Upstream #3433: a slow probe keeps the last version; only a real miss reads as not installed.
+  const snapshotVersionOf = cliVersionReader(config.cli);
   const snapshot = async (): Promise<ProviderSnapshot> => {
     const env = childEnv();
     const probed = await cachedCliVersion(config.cli, env, execCli);
-    const version = probed.error ? null : probed.stdout.trim();
-    if (!version) return { state: "unavailable", reason: `\`${config.cli}\` CLI not found` };
+    const probe = snapshotVersionOf(probed.error, probed.stdout);
+    if (!("version" in probe)) return { state: "unavailable", reason: probe.reason };
+    const { version } = probe;
     const authenticated = await new Promise<boolean>((resolve) => {
       execCli(config.cli, ["login", "status"], { timeout: 8000, env }, (err, stdout, stderr) =>
         resolve(!err && /^logged in\b/im.test(`${stdout}\n${stderr ?? ""}`)),

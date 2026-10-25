@@ -504,8 +504,9 @@ function affect(db: DatabaseSync, job: RevocationJob, id: string, version: numbe
   const prior = st(db, "SELECT state FROM memory_records WHERE id=? AND version=?").get(id, version);
   if (!prior) return;
   st(db, "UPDATE memory_records SET state='deleted',owner_pinned=0 WHERE id=? AND version=?").run(id, version);
-  if (job.thread) st(db, `UPDATE memory_records SET text='' WHERE id=?1 AND version=?2 AND text!='' AND EXISTS (SELECT 1 FROM memory_evidence e JOIN memory_sources s ON s.id=e.source_id
-    WHERE e.record_id=?1 AND e.record_version=?2 AND s.thread_id=?3)`).run(id, version, job.thread);
+  // Forget means the words are gone (Learn about me r3 C3): every record a forget ends loses its text in this same step, not only
+  // those resting on a deleted conversation. Readers are already refused from the forget's commit; the indexes drop it by id.
+  st(db, "UPDATE memory_records SET text='' WHERE id=? AND version=? AND text!=''").run(id, version);
   // Completed deletion work stays completed (scale finding A6): a receipt already 'deleted' is not queued again.
   st(db, "UPDATE memory_projection_receipts SET lexical_status='delete-pending',embedding_status='delete-pending' WHERE record_id=? AND record_version=? AND lexical_status!='deleted'").run(id, version);
   // (indexed by record; the events naming it as their prior go in the learning phase's rowid windows: evolution-forgetting.ts)
@@ -860,9 +861,13 @@ export const REVOCATION_MIN_PAUSE_MS = 4;
 /** The pause after a slice is at least this many times the slice: the runner keeps the main thread at most a quarter busy. */
 export const REVOCATION_PAUSE_FACTOR = 3;
 export const REVOCATION_BUSY_PAUSE_MS = 250;
-/** The longest the marker yields to foreground turns in a row (1.0.3 revoke storm, M3): then one budgeted slice runs, so turns that never
- * stop (a routine every few seconds) do not hold every revoke's window open for good. */
+/** 1.0.3 (revoke storm, M3) let the marker yield to foreground turns for this long, then run one slice: with bots whose turns never stop
+ * (a routine every few seconds) that was one slice every 10 s, the walks took days, and every line under their windows read "checking"
+ * for as long (SELF-OVERLOAD-105 item 1c). The marker now trickles under a live turn instead: a half slice every busy pause (see tick). The
+ * constant stays for callers; nothing reads it here. */
 export const REVOCATION_MAX_YIELD_MS = 10_000;
+/** Under a live turn the marker's slice is this fraction of the normal one, once every busyPauseMs (250 ms): about 1.6% of a core. */
+export const REVOCATION_LIVE_SLICE_FRACTION = 0.5;
 const START_ROWS = 64, MIN_ROWS = 8, MAX_ROWS = 4096, LOCK_RETRY_MS = 1000, RETRY_CAP_MS = 60_000;
 export type RevocationRunnerOptions = { admit?: () => Promise<void>; busy?: () => boolean; sliceMs?: number; pauseMs?: number; busyPauseMs?: number; retryMs?: number };
 /** maxSliceMs is the whole slice, its COMMIT included (on a file database that can carry SQLite's WAL auto-checkpoint, a disk cost
@@ -870,8 +875,6 @@ export type RevocationRunnerOptions = { admit?: () => Promise<void>; busy?: () =
 export const memoryRevocationStats = { slices: 0, maxSliceMs: 0, maxWorkMs: 0, busyPauses: 0, errorRetries: 0, lockedRetries: 0, workMs: 0, pauseMs: 0, maxJobBytes: 0, lateSlices: 0, markerSlices: 0, budgetWaits: 0, markerYields: 0 };
 let getDbRef: (() => DatabaseSync) | null = null, options: RevocationRunnerOptions = {}, timer: ReturnType<typeof setTimeout> | null = null;
 let running = false, stopped = false, rowsPerSlice = START_ROWS, backoff = LOCK_RETRY_MS, idleWaiters: Array<() => void> = [];
-/** When the marker began yielding to foreground turns (null: it is not yielding). */
-let yieldingSince: number | null = null;
 
 /** Next slice size: grow while well inside the budget, halve at once when a slice came near it. */
 export function nextRevocationRows(rows: number, ms: number, budget: number): number {
@@ -893,18 +896,17 @@ async function tick(): Promise<void> {
     if (options.admit) await options.admit();
     if (stopped) { running = false; wakeAll(); return; }
     const db = getDbRef();
-    // the marker walks inside its write budget and yields to foreground turns (1.0.3 revoke storm, M3; revoke-budget.ts)
+    // the marker walks inside its write budget (revoke-budget.ts); under a live foreground turn it trickles (a half slice every busy pause)
+    // rather than stopping: a window the walk holds open reads "checking" to every turn until the walk is done (SELF-OVERLOAD-105 item 1c)
+    const live = options.busy?.() === true;
+    let marker = false;
     if (markerWorkPending(db)) {
       const wait = revokeWriteWaitMs(revokeSliceNeed(db));
       if (wait > 0) { memoryRevocationStats.budgetWaits++; schedule(wait); return; }
-      if (options.busy?.()) {
-        const now = performance.now();
-        yieldingSince ??= now;
-        if (now - yieldingSince < REVOCATION_MAX_YIELD_MS) { memoryRevocationStats.markerYields++; schedule(options.busyPauseMs ?? REVOCATION_BUSY_PAUSE_MS); return; }
-        yieldingSince = now;
-      } else yieldingSince = null;
+      marker = true;
+      if (live) memoryRevocationStats.markerYields++;
     }
-    const budget = options.sliceMs ?? REVOCATION_SLICE_MS, t0 = performance.now();
+    const budget = (options.sliceMs ?? REVOCATION_SLICE_MS) * (live && marker ? REVOCATION_LIVE_SLICE_FRACTION : 1), t0 = performance.now();
     let more = false, budgetWait = false;
     // a background runner: the write lock is taken within the background budget, never the handle's 1 s wait (a busy start retries)
     beginBackground(db, "revocation-job");
@@ -945,7 +947,7 @@ async function tick(): Promise<void> {
     memoryRevocationStats.slices++; memoryRevocationStats.workMs += ms;
     memoryRevocationStats.maxSliceMs = Math.max(memoryRevocationStats.maxSliceMs, ms);
     rowsPerSlice = nextRevocationRows(rowsPerSlice, ms, budget); backoff = options.retryMs ?? LOCK_RETRY_MS;
-    if (options.busy?.()) { memoryRevocationStats.busyPauses++; schedule(options.busyPauseMs ?? REVOCATION_BUSY_PAUSE_MS); }
+    if (live) { if (!marker) memoryRevocationStats.busyPauses++; schedule(options.busyPauseMs ?? REVOCATION_BUSY_PAUSE_MS); }
     else schedule(Math.max(options.pauseMs ?? REVOCATION_MIN_PAUSE_MS, Math.ceil(ms * REVOCATION_PAUSE_FACTOR)));
   } catch (error) {
     // the job stays in its row: a lock is tried again shortly, anything else with a doubling delay, until it completes

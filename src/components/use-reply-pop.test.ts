@@ -150,4 +150,23 @@ describe("room reply pop", () => {
     room.advance(2_000);
     expect(room.pop).toBeNull();
   });
+
+  it("the mascot staying through a mid-turn sentence still pops the turn's final reply, once (upstream #3374)", () => {
+    const midTurn: Message = { ...emberReply, id: "e-mid", text: "I'll look that up now.", at: 2.5 } as Message;
+    const room = mount({ resetKey: "room", last: user, waiting: true });
+    // `waiting` stays true for the whole turn now.
+    room.update({ last: midTurn, waiting: true });
+    expect(room.pop?.id).toBe("e-mid");
+    room.advance(600);
+    expect(room.pop).toBeNull();
+    // The same sentence updating in place does not pop again.
+    room.update({ last: { ...midTurn, text: `${midTurn.text} One moment.` }, waiting: true });
+    expect(room.pop).toBeNull();
+    // A tool row re-arms it, so the final reply pops.
+    room.update({ last: emberStep, waiting: true });
+    room.update({ last: emberReply, waiting: true });
+    expect(room.pop?.id).toBe("e1");
+    room.advance(600);
+    expect(room.pop).toBeNull();
+  });
 });

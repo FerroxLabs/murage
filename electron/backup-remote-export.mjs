@@ -1,5 +1,6 @@
+import {MAX_BACKUP_BYTES} from "../shared/backup-max-bytes.mjs";
 import {createHash,randomUUID} from "node:crypto";
-import {constants,openSync,closeSync,readSync,writeSync,fsyncSync,lstatSync,fstatSync,readFileSync,realpathSync,mkdirSync,mkdtempSync,chmodSync,rmdirSync,renameSync,writeFileSync,linkSync,unlinkSync} from "node:fs";
+import {constants,openSync,closeSync,readSync,writeSync,fsyncSync,lstatSync,fstatSync,readFileSync,realpathSync,mkdirSync,mkdtempSync,chmodSync,rmdirSync,renameSync,writeFileSync,linkSync,unlinkSync,rmSync} from "node:fs";
 import path from "node:path";
 const fail=()=>{throw Error("BACKUP_REMOTE_EXPORT_UNCONFIRMED");};
 const SHARED="BACKUP_REMOTE_DOWNLOAD_FOLDER_SHARED";
@@ -23,10 +24,15 @@ export function holdsPermissions(folder){
  catch{return true;}
  finally{if(probe)try{rmdirSync(probe);}catch{/* An empty probe folder left behind is harmless. */}}
 }
+/** A failed export must not leave the verified download (restore-*) behind: it is a full second copy. Only a restore-* folder inside the host's own work root is removed. */
+function discardDownloadedCopy(copy,sourceRoot){
+ try{const dir=path.dirname(copy.archivePath),root=realpathSync.native(sourceRoot),real=realpathSync.native(dir);
+  if(path.basename(real).startsWith("restore-")&&real.startsWith(root+path.sep))rmSync(real,{recursive:true,force:true});}catch{/* nothing to clean, or not ours */}
+}
 /** Errors link() gives on a drive without hard links (exFAT, FAT32). */
 const NO_HARD_LINKS=new Set(["EPERM","ENOTSUP","EOPNOTSUPP","ENOSYS","EINVAL","EMLINK","EXDEV","EISDIR","UNKNOWN"]);
 /** Only main supplies destination/source roots. Partial copies remain unadvertised. */
-export function exportRemoteBackup(copy,parent,{sourceRoot,excludedRoots,maxBytes=1024**3,createId=randomUUID}){
+export function exportRemoteBackup(copy,parent,{sourceRoot,excludedRoots,maxBytes=MAX_BACKUP_BYTES,createId=randomUUID}){
  let input,output,directory,published=false;
  try{
   const receipt=copy?.receipt;if(copy?.state!=="downloaded-verified"||!/^[a-f0-9]{64}$/.test(copy.snapshotId)||!Number.isSafeInteger(receipt?.bytes)||receipt.bytes<1||receipt.bytes>maxBytes||!/^[a-f0-9]{64}$/.test(receipt.sha256))fail();
@@ -61,7 +67,7 @@ export function exportRemoteBackup(copy,parent,{sourceRoot,excludedRoots,maxByte
    if(!ours())fail();renameSync(partial,archivePath);}
   published=true;
   return{saved:true,archivePath,directory};
- }catch(error){if(error?.message===SHARED)throw error;return fail();}
+ }catch(error){discardDownloadedCopy(copy,sourceRoot);if(error?.message===SHARED)throw error;return fail();}
  finally{
   if(input!==undefined)closeSync(input);if(output!==undefined)closeSync(output);
   // A failed export leaves nothing behind: only the files it made itself, in

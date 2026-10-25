@@ -101,3 +101,16 @@ export function writeStampOf(db: DatabaseSync): string {
   const row = db.prepare("SELECT total_changes() AS changes,(SELECT data_version FROM pragma_data_version) AS version").get();
   return `${row?.changes}:${row?.version}`;
 }
+/** A stamp of the memory CONTENT the scans of `tables` read, not of every write (SELF-OVERLOAD-105 item 4): the write-time marker commits
+ * dozens of times a second while a revoke walks, which moved writeStampOf and re-ran every status pass over the whole store each interval
+ * though no memory had changed. Reads: memory_meta.data_revision (every content writer bumps it), the newest rowid of each scanned table
+ * (new rows), and deny_generation (a revoke's phase ended: receipts and records it flipped). None of them moves per marker slice. A table
+ * or meta row that is not there reads as absent, so a file without it still stamps. */
+export function contentStampOf(db: DatabaseSync, tables: readonly string[]): string {
+  const parts: string[] = [];
+  const read = (sql: string): string => { try { const row = db.prepare(sql).get() as Record<string, unknown> | undefined; return String(row ? Object.values(row)[0] : "-"); } catch { return "-"; } };
+  parts.push(read("SELECT data_revision FROM memory_meta WHERE id=1"));
+  for (const table of tables) parts.push(read(`SELECT max(rowid) FROM ${table}`));
+  parts.push(read("SELECT value FROM memory_lineage_lsn_meta WHERE key='deny_generation'"));
+  return parts.join(":");
+}
