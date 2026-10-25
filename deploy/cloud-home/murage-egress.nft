@@ -44,10 +44,31 @@ table inet murage_home {
         meta skuid "murage-turn" meta skgid "murage-eng-opencodeGo" ip daddr != 127.0.0.0/8 tcp dport 443 counter redirect to :8821
         meta skuid "murage-turn" meta skgid "murage-eng-pi" ip daddr != 127.0.0.0/8 tcp dport 443 counter redirect to :8822
         meta skuid "murage-turn" meta skgid "murage-eng-qwenAgent" ip daddr != 127.0.0.0/8 tcp dport 443 counter redirect to :8823
+        # A2: the turn's DNS (pasta relays 192.0.2.53 to the host stub 127.0.0.53) is
+        # steered by engine gid to that engine's synthetic forwarder (murage-egress-proxy dns,
+        # ports 5310 + index). The stub is never reachable by a turn; tcp/53 has no accept.
+        meta skuid "murage-turn" meta skgid "murage-eng-antigravity" ip daddr 127.0.0.53 udp dport 53 counter redirect to :5310
+        meta skuid "murage-turn" meta skgid "murage-eng-claudeAgent" ip daddr 127.0.0.53 udp dport 53 counter redirect to :5311
+        meta skuid "murage-turn" meta skgid "murage-eng-codex" ip daddr 127.0.0.53 udp dport 53 counter redirect to :5312
+        meta skuid "murage-turn" meta skgid "murage-eng-cursorAgent" ip daddr 127.0.0.53 udp dport 53 counter redirect to :5313
+        meta skuid "murage-turn" meta skgid "murage-eng-customAcp" ip daddr 127.0.0.53 udp dport 53 counter redirect to :5314
+        meta skuid "murage-turn" meta skgid "murage-eng-droidAgent" ip daddr 127.0.0.53 udp dport 53 counter redirect to :5315
+        meta skuid "murage-turn" meta skgid "murage-eng-fuigoAgent" ip daddr 127.0.0.53 udp dport 53 counter redirect to :5316
+        meta skuid "murage-turn" meta skgid "murage-eng-geminiAgent" ip daddr 127.0.0.53 udp dport 53 counter redirect to :5317
+        meta skuid "murage-turn" meta skgid "murage-eng-grokAgent" ip daddr 127.0.0.53 udp dport 53 counter redirect to :5318
+        meta skuid "murage-turn" meta skgid "murage-eng-hermesAgent" ip daddr 127.0.0.53 udp dport 53 counter redirect to :5319
+        meta skuid "murage-turn" meta skgid "murage-eng-kimiAgent" ip daddr 127.0.0.53 udp dport 53 counter redirect to :5320
+        meta skuid "murage-turn" meta skgid "murage-eng-opencodeGo" ip daddr 127.0.0.53 udp dport 53 counter redirect to :5321
+        meta skuid "murage-turn" meta skgid "murage-eng-pi" ip daddr 127.0.0.53 udp dport 53 counter redirect to :5322
+        meta skuid "murage-turn" meta skgid "murage-eng-qwenAgent" ip daddr 127.0.0.53 udp dport 53 counter redirect to :5323
     }
     chain output {
         type filter hook output priority filter; policy accept;
         meta skuid != 0 ip daddr 169.254.169.254 counter drop
+        # Only the redirected turn+engine-gid path may reach a DNS forwarder port (A2); replies
+        # carry these as SOURCE ports and are unaffected. No root exemption.
+        meta skuid != "murage-turn" ip daddr 127.0.0.1 udp dport 5310-5323 counter drop
+        meta skuid != "murage-turn" ip daddr 127.0.0.1 tcp dport 5310-5323 counter drop
         # Caddy's plain-HTTP hop (127.0.0.1:8830) is the Cloudflare Tunnel's origin and
         # must never be spoken to as if it were the internet: only root and
         # murage-tunnel may connect to it (loopback and the host's own addresses).
@@ -71,8 +92,22 @@ table inet murage_home {
         # All engines' outbound connections leave as uid murage-egress, so the
         # cap is sized for 14 engines together (14 x 120/min per engine = 1680).
         oifname != "lo" meta skuid "murage-egress" ct state new update @egress_connections { meta skuid timeout 2m limit rate over 1200/minute burst 600 packets } counter drop
-        meta skuid "murage-turn" ip daddr 127.0.0.53 udp dport 53 counter accept
-        meta skuid "murage-turn" ip daddr 127.0.0.53 tcp dport 53 counter accept
+        # Redirected DNS (A2) arrives as udp to 127.0.0.1:<5310+index>, gid pinned to port, and only packets carrying the nat redirect's conntrack state (dnat, original daddr 127.0.0.53) match: a direct send to the port drops. Before
+        # the engine_connections meter so DNS bursts do not use the 120/min proxy budget.
+        meta skuid "murage-turn" meta skgid "murage-eng-antigravity" ip daddr 127.0.0.1 udp dport 5310 ct status dnat ct original ip daddr 127.0.0.53 counter accept
+        meta skuid "murage-turn" meta skgid "murage-eng-claudeAgent" ip daddr 127.0.0.1 udp dport 5311 ct status dnat ct original ip daddr 127.0.0.53 counter accept
+        meta skuid "murage-turn" meta skgid "murage-eng-codex" ip daddr 127.0.0.1 udp dport 5312 ct status dnat ct original ip daddr 127.0.0.53 counter accept
+        meta skuid "murage-turn" meta skgid "murage-eng-cursorAgent" ip daddr 127.0.0.1 udp dport 5313 ct status dnat ct original ip daddr 127.0.0.53 counter accept
+        meta skuid "murage-turn" meta skgid "murage-eng-customAcp" ip daddr 127.0.0.1 udp dport 5314 ct status dnat ct original ip daddr 127.0.0.53 counter accept
+        meta skuid "murage-turn" meta skgid "murage-eng-droidAgent" ip daddr 127.0.0.1 udp dport 5315 ct status dnat ct original ip daddr 127.0.0.53 counter accept
+        meta skuid "murage-turn" meta skgid "murage-eng-fuigoAgent" ip daddr 127.0.0.1 udp dport 5316 ct status dnat ct original ip daddr 127.0.0.53 counter accept
+        meta skuid "murage-turn" meta skgid "murage-eng-geminiAgent" ip daddr 127.0.0.1 udp dport 5317 ct status dnat ct original ip daddr 127.0.0.53 counter accept
+        meta skuid "murage-turn" meta skgid "murage-eng-grokAgent" ip daddr 127.0.0.1 udp dport 5318 ct status dnat ct original ip daddr 127.0.0.53 counter accept
+        meta skuid "murage-turn" meta skgid "murage-eng-hermesAgent" ip daddr 127.0.0.1 udp dport 5319 ct status dnat ct original ip daddr 127.0.0.53 counter accept
+        meta skuid "murage-turn" meta skgid "murage-eng-kimiAgent" ip daddr 127.0.0.1 udp dport 5320 ct status dnat ct original ip daddr 127.0.0.53 counter accept
+        meta skuid "murage-turn" meta skgid "murage-eng-opencodeGo" ip daddr 127.0.0.1 udp dport 5321 ct status dnat ct original ip daddr 127.0.0.53 counter accept
+        meta skuid "murage-turn" meta skgid "murage-eng-pi" ip daddr 127.0.0.1 udp dport 5322 ct status dnat ct original ip daddr 127.0.0.53 counter accept
+        meta skuid "murage-turn" meta skgid "murage-eng-qwenAgent" ip daddr 127.0.0.1 udp dport 5323 ct status dnat ct original ip daddr 127.0.0.53 counter accept
         meta skuid "murage-turn" ip daddr 127.0.0.0/8 tcp dport 8799 counter accept
         meta skuid "murage-turn" ip6 daddr ::1 tcp dport 8799 counter accept
         # New turn -> proxy connections on lo, metered per engine gid so one engine
@@ -134,6 +169,9 @@ table inet murage_home {
         meta skuid "murage-egress" fib daddr type local counter drop
         meta skuid "murage-egress" tcp dport 443 counter accept
         meta skuid "murage-egress" counter drop
+        # murage-dns (A2 forwarder): loopback replies to redirected queries, nothing else.
+        meta skuid "murage-dns" oifname "lo" ct state established,related counter accept
+        meta skuid "murage-dns" counter drop
     }
     # Host input policy. Browser veth traffic (mbh*) is dropped by browser_input
     # (priority -10) before this chain; browser egress/replies are forwarded and

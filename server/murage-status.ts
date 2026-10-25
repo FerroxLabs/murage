@@ -8,8 +8,9 @@
 import { RECEIPT_ORIGIN_UNCONFIRMED_LINE } from "./card-result-source.ts";
 import { ROOM_REPLY_CHECKING, ROOM_REPLY_WITHHELD } from "./room-context.ts";
 import { EgressViolation, ReleasedText, recordRendered } from "./released-text.ts";
-import { FAILURE_CODES, failureCodeFrom, type FailureCode } from "./failure-code.ts";
+import { FAILURE_CODES, START_FAILURE_CODES, failureCodeFrom, startFailureCodeFrom, type FailureCode, type StartFailureCode } from "./failure-code.ts";
 import { hostStoppedDisplayName } from "../shared/host-stop.ts";
+import { loopNoticeDisplayName } from "../shared/loop-notice.ts";
 import { sendNoticeDisplayName } from "../shared/send-notice.ts";
 import { folderTrustDisplayName } from "../shared/folder-trust.ts";
 
@@ -23,9 +24,8 @@ export type CardTitle = string & { readonly __cardTitle: unique symbol };
 export function cardTitle(record: { title: string }, shown: (record: { title: string }) => string = card => `'${card.title}'`): CardTitle { return shown(record) as CardTitle; }
 
 /** Why a delegated or asked turn did not finish, in the few ways a bot can act on. Provider detail stays with the owner. */
-export { FAILURE_CODES, failureCodeFrom, type FailureCode };
+export { FAILURE_CODES, START_FAILURE_CODES, failureCodeFrom, startFailureCodeFrom, type FailureCode, type StartFailureCode };
 export type StopReasonCode = FailureCode;
-export type StartFailureCode = FailureCode;
 
 const FAILURE_WORDS: Record<FailureCode, string> = {
   rate_limit: "the provider is limiting requests right now",
@@ -34,6 +34,24 @@ const FAILURE_WORDS: Record<FailureCode, string> = {
   provider_error: "its provider had an error",
   other: "it did not say why",
 };
+/** Why a turn could not start, always a named reason: a start is Murage's own step, so it never reads "it did not say why". */
+const START_WORDS: Record<StartFailureCode, string> = {
+  rate_limit: FAILURE_WORDS.rate_limit,
+  auth: FAILURE_WORDS.auth,
+  timeout: FAILURE_WORDS.timeout,
+  provider_error: FAILURE_WORDS.provider_error,
+  not_reachable: "it cannot be reached from this conversation",
+  archived: "it is archived",
+  sharing_removed: "it is no longer shared with this team",
+  team_deleted: "its team was removed",
+  binding_mismatch: "the request no longer fits its conversation",
+  shared_paused: "sharing is paused",
+  setup: "Murage could not set up its turn. Its conversation has the details",
+};
+/** A kept start code: one of today's, or a code an earlier build kept ("other" reads as a setup failure). */
+/** A start code as a line takes it: today's codes, or "other" (an older caller, a kept ending), which names the start a setup failure. */
+export type StartWhy = StartFailureCode | "other";
+const startCodeOf = (why: StartWhy): StartFailureCode => why === "other" ? "setup" : why;
 
 export const ENDED_REASONS = ["stopped", "failed", "error", "interrupted"] as const;
 export type EndedReason = (typeof ENDED_REASONS)[number];
@@ -112,13 +130,15 @@ const TABLE = {
   nothing: () => "",
   no_reply: () => "(the bot finished without a text reply)",
   wait_timed_out: () => "(timed out waiting for the bot to reply)",
-  could_not_start: (p: { why: StartFailureCode }) => `(couldn't start that bot: ${FAILURE_WORDS[p.why]})`,
+  could_not_start: (p: { why: StartWhy }) => `(couldn't start that bot: ${START_WORDS[startCodeOf(p.why)]})`,
   no_audience_task: () => "(no audience task)",
   withheld: () => `[${ROOM_REPLY_WITHHELD}]`,
   // a result left out only until an earlier check finishes (REPLY-WITHHELD-CONTRACT C1): nothing was withdrawn
   checking: () => `[${ROOM_REPLY_CHECKING}]`,
   // a delegation result whose check has not finished: the asking bot's final answer for that request (lanes/release103/NOHOLD-DELEGATION.md)
   no_answer_checking: () => "(no answer: that memory is still being checked, try again later)",
+  // a delegation result whose check did not finish within the wait (1.0.5, DELEGATED-REPLY-WITHHELD.md): the asker learns the worker finished and where the words are
+  no_answer_check_timed_out: (p: { name: BotName }) => `(no answer yet: @${p.name} finished, but the reply is still being checked against earlier memory. Read it in @${p.name}'s own conversation, or ask again in a minute)`,
   origin_unconfirmed: () => RECEIPT_ORIGIN_UNCONFIRMED_LINE,
   request_finished: () => "The request finished.",
   request_failed: () => "The request did not finish.",
@@ -142,10 +162,10 @@ const TABLE = {
   delegated_turn_engine_changed: () => "Delegated turn did not finish: its engine was turned off or changed",
   delegated_turn_failed: (p: { why: FailureCode }) => `Delegated turn did not finish: ${FAILURE_WORDS[p.why]}`,
   delegated_turn_failed_plain: () => "Delegated turn did not finish",
-  delegated_turn_could_not_start: (p: { why: StartFailureCode }) => `Delegated turn could not start: ${FAILURE_WORDS[p.why]}`,
+  delegated_turn_could_not_start: (p: { why: StartWhy }) => `Delegated turn could not start: ${START_WORDS[startCodeOf(p.why)]}`,
   turn_stopped_early: () => "Turn was stopped before it finished",
   turn_failed_note: (p: { code: FailureCode }) => `Turn did not finish: ${FAILURE_WORDS[p.code]}`,
-  peer_could_not_start: (p: { name: BotName; why: StartFailureCode }) => `${p.name} could not start: ${FAILURE_WORDS[p.why]}`,
+  peer_could_not_start: (p: { name: BotName; why: StartWhy }) => `${p.name} could not start: ${START_WORDS[startCodeOf(p.why)]}`,
   still_working: (p: { name: BotName }) => `@${p.name} is still working: ask converted to a delegation`,
   // a hand-off's ending, as the delegation receipt keeps it
   receipt_cancelled: () => "cancelled",
@@ -173,7 +193,7 @@ const TABLE = {
   row_denied: (p: { name: BotName }) => `Delegation to @${p.name} denied by user`,
   row_still_busy: (p: { name: BotName; tries: number }) => `Delegation to @${p.name} canceled: still busy after ${p.tries} retries`,
   row_other_section: (p: { name: BotName }) => `Delegation to @${p.name} canceled: bots now belong to different sections`,
-  row_could_not_start: (p: { name: BotName; why: StartFailureCode }) => `error: delegation to @${p.name} could not start: ${FAILURE_WORDS[p.why]}`,
+  row_could_not_start: (p: { name: BotName; why: StartWhy }) => `error: delegation to @${p.name} could not start: ${START_WORDS[startCodeOf(p.why)]}`,
   row_failed_to_run: (p: { why: FailureCode }) => `error: delegation did not finish: ${FAILURE_WORDS[p.why]}`,
   row_no_such_bot: (p: { name: BotName }) => `error: delegation to ${p.name} did not finish: no such bot`,
   row_approval: (p: { name: BotName; line: Outbound }) => `Delegation to @${p.name}: ${wordsOf(p.line)}`,
@@ -186,7 +206,7 @@ const TABLE = {
   // the owner confirmed a first-run setup step
   setup_confirmed: () => "That setup step is saved.",
   // a row of a running delegation's recent activity (the words inside were released by the gate)
-  activity_name: (p: { name: Outbound }) => { const name = wordsOf(p.name).trim(); return hostStoppedDisplayName(name) ?? sendNoticeDisplayName(name) ?? folderTrustDisplayName(name) ?? `tool: ${name}`; },
+  activity_name: (p: { name: Outbound }) => { const name = wordsOf(p.name).trim(); return hostStoppedDisplayName(name) ?? sendNoticeDisplayName(name) ?? loopNoticeDisplayName(name) ?? folderTrustDisplayName(name) ?? `tool: ${name}`; },
   activity_text: (p: { text: Outbound }) => {
     const text = oneLine(wordsOf(p.text));
     return `text: ${text.slice(0, 140)}${text.length > 140 ? "…" : ""}`;
@@ -213,24 +233,24 @@ export const TABLE_TAKES_NO_RAW_STRINGS: [OffendingKeys] extends [never] ? true 
 /** The keys a stored record (a receipt, a request's ending) may keep, and the exact parameters each keeps. A kept line is written again only when
  * its parameters match this schema: a bot's name must be the name of a bot on the roster now, a code one of the five, a count a small whole
  * number. Anything else reads as no line at all, so nothing kept can carry words that are not Murage's. */
-type ParamKind = "bot" | "card" | "code" | "count" | "close";
+type ParamKind = "bot" | "card" | "code" | "start" | "count" | "close";
 const KEPT: Readonly<Record<string, Readonly<Record<string, ParamKind>>>> = {
   no_such_bot: {}, receipt_cancelled: {}, receipt_owner_stopped: {}, receipt_turn_unfinished: {}, receipt_denied: {}, receipt_expired: {}, receipt_not_approved: {},
   receipt_deleted: {}, receipt_restart: {}, receipt_dismissed: {}, receipt_unreadable: {}, receipt_request_gone: {}, receipt_uncertain: { name: "bot" }, receipt_held_busy: { name: "bot" }, receipt_held_didnotstart: { name: "bot" },
   receipt_failed: {}, receipt_source_gone: {}, receipt_bots_gone: {}, receipt_stayed_busy: { name: "bot", tries: "count" }, receipt_other_section: { from: "bot", to: "bot" },
   request_finished: {}, request_failed: {}, result_unavailable: {}, shared_not_approved: {}, turn_stopped_early: {}, delegation_failed_plain: { name: "bot" },
   delegation_stopped_early: { name: "bot" }, delegation_completed_no_text: { name: "bot" }, delegated_turn_failed_plain: {}, delegated_turn_failed: { why: "code" },
-  delegated_turn_could_not_start: { why: "code" }, delegated_turn_completed: {}, delegated_turn_stalled: {}, delegated_turn_stopped: {},
+  delegated_turn_could_not_start: { why: "start" }, delegated_turn_completed: {}, delegated_turn_stalled: {}, delegated_turn_stopped: {},
   delegated_turn_settings_changed: {}, delegated_turn_engine_changed: {}, turn_failed_note: { code: "code" }, row_failed_to_run: { why: "code" }, turn_failed: { code: "code" },
   queue_paused_steps: { steps: "count" }, queue_closed: { name: "bot", why: "close" },
-  withheld: {}, checking: {}, no_answer_checking: {}, card_result_line: { desk: "bot", lead: "bot", card: "card" }, criteria_claim_corrected: { met: "count", total: "count" }, call_ended: { minutes: "count" },
+  withheld: {}, checking: {}, no_answer_checking: {}, no_answer_check_timed_out: { name: "bot" }, card_result_line: { desk: "bot", lead: "bot", card: "card" }, criteria_claim_corrected: { met: "count", total: "count" }, call_ended: { minutes: "count" },
   setup_confirmed: {},
 };
 const PERSISTABLE = new Set<string>(Object.keys(KEPT));
 
 /** The status lines a bot may read (LINEAGE-DESIGN-S6 rule 14), each rendered fresh from what its row keeps. Every other line in the table is
  * the owner's only: a bot reading a row that carries one reads nothing there. Each key here is one a row keeps (KEPT). */
-export const BOT_VISIBLE_STATUS: ReadonlySet<StatusKey> = new Set<StatusKey>(["withheld", "checking", "no_answer_checking", "request_finished", "result_unavailable", "card_result_line", "criteria_claim_corrected", "call_ended", "setup_confirmed"]);
+export const BOT_VISIBLE_STATUS: ReadonlySet<StatusKey> = new Set<StatusKey>(["withheld", "checking", "no_answer_checking", "no_answer_check_timed_out", "request_finished", "result_unavailable", "card_result_line", "criteria_claim_corrected", "call_ended", "setup_confirmed"]);
 
 /** Is this a bot on the roster now? Supplied once by the server; with none, no kept line naming a bot is written again (fail closed). */
 let rosterHas: ((name: string) => boolean) | undefined;
@@ -314,6 +334,7 @@ function keptParams(key: string, data: unknown, roster: boolean): Record<string,
   for (const [name, value] of entries) {
     const kind = Object.prototype.hasOwnProperty.call(schema, name) ? schema[name] : undefined;
     if (kind === "code") { if (typeof value !== "string" || !(FAILURE_CODES as readonly string[]).includes(value)) return undefined; }
+    else if (kind === "start") { if (typeof value !== "string" || !([...START_FAILURE_CODES, "other"] as readonly string[]).includes(value)) return undefined; }
     else if (kind === "count") { if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 1000) return undefined; }
     else if (kind === "close") { if (typeof value !== "string" || !(QUEUE_CLOSE_CODES as readonly string[]).includes(value)) return undefined; }
     else if (kind === "bot") {
@@ -371,7 +392,7 @@ const LEGACY_NOTES: Array<[RegExp, () => MurageStatus]> = [
   [/^@(.{1,80}) and @(.{1,80}) now belong to different sections$/, () => status("request_failed")],
   [/^stopped before it finished$/, () => status("turn_stopped_early")],
   [/^stopped$/, () => status("turn_stopped_early")],
-  [/^could not start$/, () => status("delegated_turn_could_not_start", { why: "other" })],
+  [/^could not start$/, () => status("delegated_turn_could_not_start", { why: "setup" })],
   [/^The shared request was not approved\.$/, () => status("shared_not_approved")],
 ];
 

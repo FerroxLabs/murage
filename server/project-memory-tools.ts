@@ -252,7 +252,7 @@ function readProjectPageWork(db: DatabaseSync, roster: NamedRoster, groupId: str
     bytes += Buffer.byteLength(text) + 200;
     if (bytes > PAGE_BYTES && messages.length) break;
     if (!hidden) shown.push(row.id);
-    messages.push({ id: row.id, speaker, ...(message.to?.length ? { to: message.to.map(id => names.get(id) ?? "a member") } : {}), ...(message.replyToId && !hidden ? { re: message.replyToId } : {}), at: Number(row.at), text });
+    messages.push({ id: row.id, speaker, ...(message.to?.length ? { to: message.to.map(id => names.get(id) ?? "a member") } : {}), ...(message.replyToId && !hidden && (!bot || !reader || partitionSourcesAllowed(db, reader.id, bot.threadId, [message.replyToId], { threads: [threadId], only: true })) ? { re: message.replyToId } : {}), at: Number(row.at), text });
   }
   messages.reverse();
   const oldest = messages[0];

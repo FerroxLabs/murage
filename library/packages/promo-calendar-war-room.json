@@ -28,7 +28,8 @@
         "title": "Channels",
         "description": "Channels specialist - channel-mix and discovery via Avinash Kaushik's See/Think/Do/Care intent-based framework.",
         "appearance": {
-          "color": "green"
+          "color": "orange",
+          "mascotBody": "star"
         },
         "skills": [
           "beacon-channel-strategy",
@@ -52,7 +53,8 @@
         "title": "Research",
         "description": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method.",
         "appearance": {
-          "color": "blue"
+          "color": "blue",
+          "mascotBody": "capsule"
         },
         "skills": [
           "research-jtbd-interviews",
@@ -75,7 +77,8 @@
         "title": "Copy",
         "description": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage.",
         "appearance": {
-          "color": "red"
+          "color": "purple",
+          "mascotBody": "drop"
         },
         "skills": [
           "copy-customer-voice",
@@ -92,7 +95,8 @@
         "title": "Ops",
         "description": "Ops specialist - operating rhythms, CRM hygiene, and SOP design via Verne Harnish's Scaling Up cadence discipline.",
         "appearance": {
-          "color": "orange"
+          "color": "teal",
+          "mascotBody": "squircle"
         },
         "skills": [
           "patch-operating-rhythm",

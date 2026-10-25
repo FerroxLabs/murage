@@ -1,4 +1,6 @@
 import { NO_TOOL_SURFACE, renderMurageTurn } from "../murage-tool-surface.ts";
+import { KEY_REJECTED_REASON, keyRejected, noteKeyAccepted, noteKeyRejected, rejectsKey } from "../key-rejections.ts";
+import { httpErrorDetail, providerSentence } from "./provider-error-body.ts";
 import { awaitIntake, isIntakeOpen } from "../harness/intake.ts";
 import { readFluxMemoryResponse } from "../flux-memory-envelope.ts";
 import { fluxMemoryAtSend, fluxMemoryContextForTurn, fluxMemorySend, isFluxUrl, type FluxMemorySend } from "../flux-memory-headers.ts";
@@ -173,8 +175,14 @@ class ProviderHttpError extends Error {
   readonly data: { http_status: number; message: string };
   readonly details: string;
 
-  constructor(status: number, body: string, label: string) {
-    super(providerHttpMessage(status));
+  constructor(status: number, rawBody: string, label: string) {
+    // rawBody is already redacted. The Technical details carry the provider's
+    // own sentence (and its machine code), not the first bytes of its JSON.
+    const body = httpErrorDetail(rawBody, 500);
+    // A payment or access refusal says why in the provider's words; show that
+    // one sentence under our line so the person knows what to do next.
+    const why = status === 402 || status === 403 ? providerSentence(rawBody) : undefined;
+    super(why ? `${providerHttpMessage(status)} The provider says: ${why}` : providerHttpMessage(status));
     this.name = "ProviderHttpError";
     this.data = { http_status: status, message: body };
     this.details = `${label} HTTP ${status}${body ? `: ${body}` : ""}`;
@@ -625,8 +633,11 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     if (!response.ok) {
       const rawBody = await readBoundedBody(response, requestSignal, RAW_BODY_MAX, true).catch(() => "");
       const body = redact(rawBody);
-      throw new ProviderHttpError(response.status, body.slice(0, 200), label);
+      // A refusal that says the key itself is bad is remembered (in memory only), so the engine shows signed out until the key works.
+      if (secret && rejectsKey(response.status, body)) noteKeyRejected(providerRoute?.baseUrl ?? options.apiUrl, secret);
+      throw new ProviderHttpError(response.status, body, label);
     }
+    if (secret) noteKeyAccepted(providerRoute?.baseUrl ?? options.apiUrl, secret);
 
     if (!stream) {
       const json = (JSON.parse(await readBoundedBody(response, requestSignal, MAX_RESPONSE_BYTES, false, idle.renew)) ?? {}) as CompletionJson;
@@ -1026,12 +1037,15 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     driverKind: options.driverKind,
     displayName: input.displayName,
     enabled: input.enabled,
+    tracksKeyRejection: true,
     get models() {
       return options.models();
     },
     ...(options.refreshModels ? { refreshModels: options.refreshModels } : {}),
     // A runtime with no key still answers for the Local models servers it serves.
-    snapshot: async () => options.apiKey || options.models().options.some((option) => options.localEndpoint?.(option.id))
+    snapshot: async () => options.apiKey && keyRejected(options.apiUrl, options.apiKey)
+      ? { state: "available", authenticated: false, reason: KEY_REJECTED_REASON, version: null, ...(options.billing ? { billing: options.billing } : {}) }
+      : options.apiKey || options.models().options.some((option) => options.localEndpoint?.(option.id))
       ? { state: "available", authenticated: true, version: null, ...(options.billing ? { billing: options.billing } : {}) }
       : { state: "unavailable", reason: options.unavailableReason },
     adapter: {

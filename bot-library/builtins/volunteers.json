@@ -54,7 +54,8 @@
         "title": "Volunteers",
         "description": "Rally prepares a volunteer schedule with role and availability checks for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For broad operations coordination, use Ops.",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "star"
         },
         "skills": [
           "volunteer-coordinator",

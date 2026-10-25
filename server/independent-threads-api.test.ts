@@ -97,7 +97,7 @@ it("waits for a competing working folder, keeps the message, and runs when the h
   const holderTitle=(await taskState(bot.id,bot.first)).title;
   expect((await api("POST",`/api/bots/${bot.id}/messages`,{threadId:bot.second,text:"__fixture_hold_authority__ workspace-waiter"})).status).toBe(202);
   // Barrier: the server publishes the waiting marker only once the waiter is queued.
-  await expect.poll(async()=>(await taskState(bot.id,bot.second)).waitingFor,{timeout:5000}).toEqual({resource:"working-folder",holderTitle});
+  await expect.poll(async()=>(await taskState(bot.id,bot.second)).waitingFor,{timeout:5000}).toMatchObject({resource:"working-folder",holderTitle,position:1});
   const waiting=await taskState(bot.id,bot.second);
   expect(waiting).toMatchObject({busy:true,activity:"working"});
   expect((await messages(bot.second)).some(message=>message.role==="user"&&message.text?.includes("workspace-waiter"))).toBe(true);
@@ -302,25 +302,27 @@ it("routes owner defaults separately and refuses ambiguous legacy multi-thread s
   const created=(await api("POST","/api/bots",{name:"Defaults fixture",modelSelection:{instanceId:"verification",model:modelOne}})).body.bot;
   await api("PATCH",`/api/bots/${created.id}`,{computer:"off"});
   expect((await api("PATCH",`/api/bots/${created.id}`,{settingsScope:"defaults",modelSelection:{instanceId:"second",model:modelTwo},autoApprove:true})).status).toBe(200);
-  expect((await botState(created.id)).tasks[0]).toMatchObject({modelSelection:{instanceId:"verification",model:modelOne},autoApprove:false});
+  // 1.0.4 K1: chats with no model of their own follow the bot's new default; permissions stay per chat
+  expect((await botState(created.id)).tasks[0]).toMatchObject({followsBotModel:true,autoApprove:false});
   const second=(await api("POST",`/api/bots/${created.id}/tasks`,{})).body.task;
-  expect(second).toMatchObject({modelSelection:{instanceId:"verification",model:modelOne},autoApprove:true});
+  expect(second).toMatchObject({followsBotModel:true,autoApprove:true});
   expect((await api("PATCH",`/api/bots/${created.id}`,{autoApprove:false})).status).toBe(409);
   expect((await api("PATCH",`/api/bots/${created.id}`,{settingsScope:"defaults",autoApprove:false},false)).status).toBe(404);
 });
 
-it("new task retains the visible engine and model through the actual API and dispatch",async()=>{
+it("a new task follows the bot, not the visible task's pick, through the actual API and dispatch (1.0.4 K1)",async()=>{
   const bot=await create();
   const selection={instanceId:"second",model:modelTwo,effort:"high"};
   expect((await api("PATCH",`/api/bots/${bot.id}/tasks/${bot.second}`,{modelSelection:selection})).status).toBe(200);
   const created=await api("POST",`/api/bots/${bot.id}/tasks`,{});
   expect(created.status).toBe(201);
-  expect(created.body.task.modelSelection).toEqual(selection);
+  expect(created.body.task.modelSelection).toBeUndefined();
+  expect(created.body.task.followsBotModel).toBe(true);
   const state=await botState(bot.id);
   expect(state.threadId).toBe(created.body.task.threadId);
-  expect(state.tasks.find((task:any)=>task.threadId===state.threadId).modelSelection).toEqual(selection);
-  const invocation=await hold(bot.id,state.threadId,"inherited-selection",true);
-  expect(invocation.argv).toContain(modelTwo);
+  expect(state.tasks.find((task:any)=>task.threadId===bot.second).modelSelection).toEqual(selection);
+  const invocation=await hold(bot.id,state.threadId,"inherited-selection");
+  expect(invocation.argv).toContain(modelOne);
   expect(invocation.argv).not.toContain("--resume");
   expect((await api("POST",`/api/bots/${bot.id}/interrupt`,{threadId:state.threadId})).status).toBe(200);
 },30000);

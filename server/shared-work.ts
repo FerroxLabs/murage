@@ -22,7 +22,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DATA_DIR } from "./config.ts";
 import { writeFileAtomic } from "./atomic.ts";
-import { completeRequest, insertRoomRequest, isTerminalRoomRequestState, markRequestDispatched, queuedRoomRequests, recordRoomRequestRefusal, roomRequest, roomRequestByKey, type RoomRequest, type CompletionHooks } from "./room-requests.ts";
+import { completeRequest, insertRoomRequest, RequestEndedError, isTerminalRoomRequestState, markRequestDispatched, queuedRoomRequests, recordRoomRequestRefusal, roomRequest, roomRequestByKey, type RoomRequest, type CompletionHooks } from "./room-requests.ts";
 import { ROOT_CAP_WAKES, type AdmissionClaim, type AdmissionInput, type ExecutionAudience, type WorkAdmission } from "./work-admission.ts";
 import { murageLine } from "./murage-line.ts";
 
@@ -217,7 +217,12 @@ export function enqueueSharedWork(store: Store, input: { routineAuthority?: Rout
     // provenance (routine or explicitly none) commits with the request itself, so a restart can always tell
     if(inserted.created){recordProvenance(inserted.request.id,input.routineAuthority);if(input.eventId)recordSharedRequestEvent(inserted.request.id,input.eventId);if(input.routineAuthority){ceilings().set(inserted.request.id,validCeiling(input.routineAuthority));saveCeilings();}}
     db.exec("RELEASE shared_enqueue");return {ok:true as const,...inserted};
-  }catch(error){db.exec("ROLLBACK TO shared_enqueue; RELEASE shared_enqueue");throw error;}
+  }catch(error){
+    db.exec("ROLLBACK TO shared_enqueue; RELEASE shared_enqueue");
+    // F3 fence: the request that asked was cancelled (inside this insert's transaction): a refusal, never a new request
+    if(error instanceof RequestEndedError)return {ok:false as const,code:"request_ended" as const,retry:"never" as const,line:"The request that asked for this has ended, so nothing more can be handed on from it."};
+    throw error;
+  }
   });
 }
 export function sharedCapacity(botId:string,teamId:string): "shared_team_cap"|"shared_total_cap"|null {

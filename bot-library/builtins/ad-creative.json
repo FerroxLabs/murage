@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Ad Creative",
     "tagline": "Ten ad-copy variants with image briefs and a clear test plan",
-    "summary": "Flare prepares ten ad-copy variants with headlines and calls to action. Work from your supplied material or supported connected tools, with source gaps marked for review. For visuals, video and general social content, use Creator. For general conversion copy, use Copy. For a paid campaign team, use Paid Ads War Room. For an ad account review team, use Ad Account Mechanic.",
+    "summary": "Flare prepares ten ad-copy variants with headlines and calls to action.",
     "category": "Marketing",
     "author": {
       "name": "Ferrox Labs",
@@ -54,7 +54,8 @@
         "title": "Ad Creative",
         "description": "Flare prepares ten ad-copy variants with headlines and calls to action. Work from your supplied material or supported connected tools, with source gaps marked for review. For visuals, video and general social content, use Creator. For general conversion copy, use Copy. For a paid campaign team, use Paid Ads War Room. For an ad account review team, use Ad Account Mechanic.",
         "appearance": {
-          "color": "green"
+          "color": "pink",
+          "mascotBody": "star"
         },
         "skills": [
           "ad-copy-generator",

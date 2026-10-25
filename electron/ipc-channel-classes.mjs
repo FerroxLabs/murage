@@ -115,6 +115,8 @@ export const LOCAL_ONLY_CHANNELS = Object.freeze([
   "browser:reload",
   "browser:set-human-control",
   "browser:state",
+  // clipboard
+  "clipboard:write",
   // companion-account
   "companion-account:request-code",
   "companion-account:retry",

@@ -18,7 +18,8 @@ import {
 } from "./package-install-command.mjs";
 import { openBlankTerminal } from "./terminal-launch.mjs";
 import { createUpdaterCoordinator } from "./updater-coordinator.mjs";
-import { createLinuxUpdateVerifier } from "./update-signature.mjs";
+import { createUpdateDownloadVerifier } from "./update-build-version.mjs";
+import { createGithubFallbackFeed } from "./updater-fallback.mjs";
 import { installWindowsUpdateVerifier } from "./windows-update-signature.mjs";
 
 const require = createRequire(import.meta.url);
@@ -87,8 +88,10 @@ function setState(patch) {
     if (patch.percent === undefined) delete state.percent;
     delete state.message;
   }
+  if (patch.status === "available" && patch.releaseNotesText === undefined) delete state.releaseNotesText;
   if (patch.status && patch.status !== "error" && patch.message === undefined) delete state.message;
   if (patch.status && patch.action === undefined) delete state.action;
+  if ("staleCheckSince" in patch && patch.staleCheckSince === undefined) delete state.staleCheckSince;
   try {
     win?.webContents?.send("update:state", publicState());
   } catch {
@@ -163,7 +166,10 @@ export function startUpdater({ beforeInstall = null, scheduleChecks = true } = {
     nativeUpdater: autoUpdater.autoInstallOnAppQuit ? autoUpdater.nativeUpdater : null,
     handOffInstall: handOff ? handOffDownloadedPackage(packageType) : null,
     beforeInstall,
-    ...(process.platform === "linux" ? { verifyDownload: createLinuxUpdateVerifier({ currentVersion: runningVersion(), packageType: packageType ?? "AppImage" }) } : {}),
+    fallbackFeed: createGithubFallbackFeed(autoUpdater, { log: (line) => autoUpdater.logger.info(line) }),
+    // Every platform checks the download against something signed, whichever feed (the normal one or the latest-release
+    // fallback) named it: Linux a signed SHA256SUMS, macOS and Windows the version the signed build itself carries.
+    verifyDownload: createUpdateDownloadVerifier({ currentVersion: runningVersion(), packageType }),
   });
 
   // first check ~15s after launch (let the app settle), then hourly — both

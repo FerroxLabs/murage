@@ -106,10 +106,15 @@ export function resetIncarnatedSessionCursors(root: string, db: DatabaseSync): n
  * has no turn that reads it), the Claude sign-in card's remembered answers (claude-signin-answers.json: 1.0.2 has no such card, and the card simply asks again) and the frozen-replies recovery cursor (a later 1.0.3 start reads again from the start and
  * changes nothing a second time). The Cloud-only names are never on a desktop that reinstalls 1.0.2. */
 export const DATA_DIR_NAMES_AFTER_102 = ["claude-private", "claude-signin-answers.json", "env", "frozen-replies-recovery.json", "learning-paused-left.json", "memory-model-adopted.json", "memory-model-adopted.json.tmp", "memory-repairs.json", "memory-repairs.json.tmp", "pending-grants.json", "setup-backup.json"] as const;
+/** Owner-kept notes written after 1.0.2 (backed up, so they are not in the derived list above), that 1.0.2's backup does not classify
+ * either. The follow-model marker (thread-follow-model.ts) only records that the one-time chat model cleanup ran; 1.0.2 never reads
+ * it. Removing it lets 1.0.2 take a backup; a later upgrade runs the cleanup once more, which drops only pins proved equal to the
+ * bot's model and keeps every different pick. */
+export const DATA_DIR_OWNER_NOTES_AFTER_102 = [".threads-follow-model-v1"] as const;
 /** Removes those names from the data folder (a link is removed, never followed). Idempotent; returns the names removed. */
 export function removeDataDirNamesAfter102(root: string): string[] {
   const removed: string[] = [];
-  for (const name of DATA_DIR_NAMES_AFTER_102) {
+  for (const name of [...DATA_DIR_NAMES_AFTER_102, ...DATA_DIR_OWNER_NOTES_AFTER_102]) {
     const path = join(root, name);
     let stat;
     try { stat = lstatSync(path); } catch { continue; }
