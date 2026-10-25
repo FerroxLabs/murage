@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Office Security",
     "tagline": "A practical office protection review with account ownership and actions explained",
-    "summary": "Lock reviews the office controls and account records you supply, including sign-in protection, backups and periodic access ownership. You get an evidence-backed checklist and proposed changes for the responsible owner. For device troubleshooting, use IT Help Desk; for departure paperwork, use HR Admin. I give guidance and drafts, not licensed legal advice, and I promise no outcome.",
+    "summary": "Lock reviews the office controls and account records you supply, including sign-in protection, backups and periodic access ownership.",
     "category": "Operations",
     "author": {
       "name": "Ferrox Labs",
@@ -55,7 +55,8 @@
         "title": "Office Security",
         "description": "Lock reviews the office controls and account records you supply, including sign-in protection, backups and periodic access ownership. You get an evidence-backed checklist and proposed changes for the responsible owner. For device troubleshooting, use IT Help Desk; for departure paperwork, use HR Admin.",
         "appearance": {
-          "color": "blue"
+          "color": "red",
+          "mascotBody": "shield"
         },
         "skills": [
           "password-audit-runner",

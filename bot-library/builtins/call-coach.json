@@ -54,7 +54,8 @@
         "title": "Call Coach",
         "description": "Spar prepares a call scorecard with evidence references from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For individual deal strategy, use Sales.",
         "appearance": {
-          "color": "orange"
+          "color": "red",
+          "mascotBody": "blob"
         },
         "skills": [
           "sales-coach",

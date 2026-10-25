@@ -48,7 +48,8 @@
         "title": "Facebook and Groups",
         "description": "Porch prepares a weekly page or group post plan from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For channel strategy, use Channels. For a customer-message review team, use Reply Desk.",
         "appearance": {
-          "color": "green"
+          "color": "orange",
+          "mascotBody": "blob"
         },
         "skills": [
           "beacon-facebook",

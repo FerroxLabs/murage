@@ -141,8 +141,11 @@ test("on Linux a due closed backup with no desktop session waits and says why in
   // Checked again while it waits: the same result is not rewritten.
   f.setNow(f.now()+20000);await run({HOME:"/home/me"});assert.deepEqual(f.coordinator.status().lastClosedResult,first);
   assert.equal((await run({WAYLAND_DISPLAY:"wayland-0"})).status,"verified");assert.equal(launches,1);
-  // Other platforms do not depend on these variables.
-  assert.equal((await runBackupScheduleTrigger(["--murage-backup-descriptor",descriptor],{provider:f.provider,now:f.now,environment:{},launch,platform:"darwin"})).status,"verified");
+  // Other platforms do not depend on these variables. The macOS volume check
+  // reads real device ids, which on a Linux host with /tmp on its own tmpfs
+  // (Ubuntu 26.04 runners) would name the fixture "another volume"; that check
+  // has its own test, so it is held neutral here.
+  assert.equal((await runBackupScheduleTrigger(["--murage-backup-descriptor",descriptor],{provider:f.provider,now:f.now,environment:{},launch,platform:"darwin",volumeProblem:()=>null})).status,"verified");
 });
 
 const main=readFileSync(new URL("./main.mjs",import.meta.url),"utf8"),parsed=ts.createSourceFile("main.mjs",main,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
@@ -165,7 +168,9 @@ test("ordinary launch forks without waiting on the backup tool check; closed and
   const complete=start.indexOf("await backupScheduleHost.completeUpgrade");
   assert.ok(complete>0&&start.lastIndexOf("await backupToolCheck",complete)>start.lastIndexOf("install-requested",complete),"a pending upgrade awaits the check before completing");
   assert.ok(start.indexOf("await initializeBackupScheduleHost()")<start.indexOf('phase==="handoff-armed"'),"the armed-handoff check still reads a built host");
-  assert.match(start,/handoff-armed[\s\S]{0,400}desktopBackupTool\.waitReady\(\)/,"the handoff path waits for the tool before resuming");
+  // The armed-handoff block, up to its own return, waits for the tool before it resumes the backup.
+  const armed=start.slice(start.indexOf('phase==="handoff-armed"'));
+  assert.match(armed.slice(0,armed.indexOf("return;")),/desktopBackupTool\.waitReady\(\)[\s\S]*resumeOffline\(\)/,"the handoff path waits for the tool before resuming");
 });
 test("backup mode awaits the tool check before showing the recovery page",()=>{
   const show=main.lastIndexOf('showDesktopRecovery("BACKUP_REQUESTED")');

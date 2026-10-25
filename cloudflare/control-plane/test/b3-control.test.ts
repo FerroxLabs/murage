@@ -650,6 +650,20 @@ describe("B3 automatic canary: a paid home in checking passes on live evidence",
     expect((await heartbeat(c, { appResponding: true, checks: OK_CHECKS }, { "x-murage-door": "v3" })).status).toBe(200);
     expect(await doorOf()).toBeNull();
   });
+  const doorProofOf = async () => (await env.DB.prepare("SELECT door_proof FROM cloud_homes WHERE id='home-1'").first<{ door_proof: number }>())?.door_proof;
+  it("D1 heartbeat: X-Murage-Owner-Factor 1 stamps door_proof, any other value clears it, independent of door_version (owner factor r3)", async () => {
+    const c = await enrolled();
+    expect(await doorProofOf()).toBe(0);
+    expect((await heartbeat(c, { appResponding: true, checks: OK_CHECKS }, { "x-murage-owner-factor": "1", "x-murage-door": "v2" })).status).toBe(200);
+    expect(await doorProofOf()).toBe(1); expect(await doorOf()).toBe("v2");
+    for (const value of ["true", "v2", "01"]) {
+      expect((await heartbeat(c, { appResponding: true, checks: OK_CHECKS }, { "x-murage-owner-factor": value, "x-murage-door": "v2" })).status).toBe(200);
+      expect(await doorProofOf()).toBe(0);
+    }
+    // door_version is independent: v2 with no owner-factor header keeps door_proof 0 and door_version v2.
+    expect((await heartbeat(c, { appResponding: true, checks: OK_CHECKS }, { "x-murage-door": "v2" })).status).toBe(200);
+    expect(await doorProofOf()).toBe(0); expect(await doorOf()).toBe("v2");
+  });
   it("D1 heartbeat: a stale generation changes nothing, header or not", async () => {
     const c = await enrolled();
     expect((await heartbeat(c, { appResponding: true, checks: OK_CHECKS }, { "x-murage-door": "v2" })).status).toBe(200);

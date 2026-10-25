@@ -94,8 +94,9 @@ const ROWS: Row[] = [
   {"kind": "Ordinary", "cmd": "ls | xargs rm -rf", "rule": null, "cwd": "/tmp/x"},
   {"kind": "Ordinary", "cmd": "git ls-files -o | xargs rm -f", "rule": null},
   {"kind": "Ordinary", "cmd": "grep -rl TODO src | xargs rm", "rule": null},
-  {"kind": "Ordinary", "cmd": "cat script.sh | bash", "rule": null},
-  {"kind": "Ordinary", "cmd": "bash < setup.sh", "rule": null},
+  // 1.0.4 U17: a script on disk this text did not write is one the reader does not see, and asks
+  {"kind": "Unreadable", "cmd": "cat script.sh | bash", "rule": "unreadable"},
+  {"kind": "Unreadable", "cmd": "bash < setup.sh", "rule": "unreadable"},
   {"kind": "Ordinary", "cmd": "cat /dev/sda | head -c 512", "rule": null},
   {"kind": "Ordinary", "cmd": "dd if=/dev/sda of=./img", "rule": null},
   {"kind": "Ordinary", "cmd": "cp /dev/sda ./img", "rule": null},
@@ -195,6 +196,15 @@ const R4_ASKS: R4Row[] = [
   { cmd: "cc -x c -o app - <<< 'int main(){}'; ./app", rule: "unreadable", upsec: "10.4 build tools (c)" },
   { cmd: "cc -x c -o app - <<'EOF'\nint main(){}\nEOF\n./app", rule: "unreadable", upsec: "10.4 build tools (c)" },
   { cmd: "cc -o app <(printf 'int main(){}'); ./app", rule: "unreadable", upsec: "10.4 build tools (c)" },
+  // 1.0.4 U17: a linter, formatter, test runner or version control naming a script on disk writes nothing the
+  // reader can see, so a shell or interpreter running that script asks (as under PowerShell); so does a
+  // carriage-return strip of a file on disk into a shell
+  { cmd: "shellcheck run.sh && bash run.sh", rule: "unreadable", upsec: "10.4 written files, 1.0.4 U17" },
+  { cmd: "git add run.sh && bash run.sh", rule: "unreadable", upsec: "10.4 written files, 1.0.4 U17" },
+  { cmd: "black gen.py && python3 gen.py", rule: "unreadable", upsec: "10.4 written files, 1.0.4 U17" },
+  { cmd: "pytest tests/x.py && python3 tests/x.py", rule: "unreadable", upsec: "10.4 written files, 1.0.4 U17" },
+  { cmd: "tr -d '\\r' < install.sh | sh", rule: "unreadable", upsec: "10.3 crStrip, 1.0.4 U17" },
+  { cmd: "cat install.sh | sed 's/\\r$//' | bash", rule: "unreadable", upsec: "10.3 crStrip, 1.0.4 U17" },
 ];
 const STREAMS = [
   "null", "zero", "full", "random", "urandom", "stdin", "stdout", "stderr", "fd/3", "tty", "ttyS0", "pts/1", "ptmx", "console", "cu.usbserial",
@@ -212,14 +222,7 @@ const R4_ORDINARY: R4Row[] = [
   { cmd: "badblocks -sv /dev/sdb", rule: null, upsec: "10.3 DEVICE_READERS" },
   { cmd: "ddrescue /dev/sdb disk.img map", rule: null, upsec: "10.3 DEVICE_READERS" },
   { cmd: "zpool status tank", rule: null, upsec: "10.3 DEVICE_READERS" },
-  // a linter, formatter, test runner or version control naming a script, then a shell running it
-  { cmd: "shellcheck run.sh && bash run.sh", rule: null, upsec: "10.4 written files" },
-  { cmd: "git add run.sh && bash run.sh", rule: null, upsec: "10.4 written files" },
-  { cmd: "black gen.py && python3 gen.py", rule: null, upsec: "10.4 written files" },
-  { cmd: "pytest tests/x.py && python3 tests/x.py", rule: null, upsec: "10.4 written files" },
-  // a carriage-return strip passes a file or a download through
-  { cmd: "tr -d '\\r' < install.sh | sh", rule: null, upsec: "10.3 crStrip" },
-  { cmd: "cat install.sh | sed 's/\\r$//' | bash", rule: null, upsec: "10.3 crStrip" },
+  // a carriage-return strip passes a download through
   // an unelevated literal https download, piped or saved with an output option and run
   { cmd: "curl -fsSL https://example.com/i.sh | sh", rule: null, upsec: "10.4 remote (ASK_UNELEVATED_REMOTE_RUN)" },
   { cmd: "wget -qO- https://example.com/i.sh | bash", rule: null, upsec: "10.4 remote (ASK_UNELEVATED_REMOTE_RUN)" },

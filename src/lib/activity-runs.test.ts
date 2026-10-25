@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { describeRun, groupActivityRuns, groupTranscript } from "./activity-runs";
+import { describeRun, describeRunRaw, groupActivityRuns, groupTranscript } from "./activity-runs";
 import type { Message } from "@/state/store";
 import { STOPPED_MID_DESKTOP_ACTION } from "../../shared/host-stop";
 import { browserUnavailableActivityName } from "../../shared/browser-unavailable";
@@ -97,17 +97,21 @@ describe("groupActivityRuns", () => {
 });
 
 describe("describeRun", () => {
-  it("counts repeats and names the tools in order of first use", () => {
-    expect(describeRun([tool("Edit"), tool("Bash"), tool("Edit"), tool("Edit")])).toBe("4 steps · Edit ×3, Bash");
+  it("names the work in plain words, once each, in order of first use", () => {
+    expect(describeRun([tool("Edit"), tool("Bash"), tool("Edit"), tool("Edit")])).toBe("4 steps · edited files, ran commands");
   });
 
-  it("names a single repeat without a multiplier", () => {
-    expect(describeRun([tool("Edit"), tool("Bash")])).toBe("2 steps · Edit, Bash");
+  it("reads a long run the way a person would say it", () => {
+    expect(describeRun([tool("Read"), tool("Edit"), tool("Bash")])).toBe("3 steps · read files, edited files, ran commands");
   });
 
-  it("trims a long tail of tool names rather than running off the row", () => {
-    expect(describeRun([tool("Edit"), tool("Bash"), tool("Write"), tool("Grep"), tool("Read")])).toBe(
-      "5 steps · Edit, Bash, Write +2 more",
+  it("keeps the exact tool names for the hover text", () => {
+    expect(describeRunRaw([tool("Edit"), tool("Bash"), tool("Edit"), tool("Edit")])).toBe("Edit ×3, Bash");
+  });
+
+  it("trims a long tail of names rather than running off the row", () => {
+    expect(describeRun([tool("Edit"), tool("Bash"), tool("WebSearch"), tool("Grep"), tool("Read")])).toBe(
+      "5 steps · edited files, ran commands, searched the web +2 more",
     );
   });
 });

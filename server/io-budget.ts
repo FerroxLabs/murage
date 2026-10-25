@@ -68,6 +68,12 @@ export class IoBudget {
   private systemOverloaded: () => { overloaded: boolean; why: string } | null;
   private deferredSource: string | null = null;
   private deferUntil = 0;
+  /** Bytes written in the last minute under a budget of their own (the revoke marker's, revoke-budget.ts): planned, capped there, and
+   *  taken off the minute's writes before the verdict, so a walk at its allowance is not reported as a fault and punished with a slower poll
+   *  rate for everything else (SELF-OVERLOAD-105 item 1b). */
+  private plannedBytes: (() => number) | null = null;
+  /** The most the planned reader is believed for in one minute: its own budget plus a margin. A reader that claims more hides nothing. */
+  private plannedCap = Number.POSITIVE_INFINITY;
   /** Totals at the last statement-trace line, so each line is one minute's cost. */
   private traced = new Map<string, { calls: number; ms: number }>();
   private traceTimer: ReturnType<typeof setInterval> | null = null;
@@ -88,6 +94,9 @@ export class IoBudget {
   setOnScale(listener: (scale: number) => void): void { this.onScale = listener; }
   setIsIdle(read: () => boolean): void { this.isIdle = read; }
   setOnMemoryWork(listener: () => void): void { this.onMemoryWork = listener; }
+  /** A reader of the bytes a writer with its own budget wrote in the last minute (null: none), and the most it is believed for (its budget
+   *  plus a margin): the exemption is for a writer that keeps to its plan, never a blank cheque. */
+  setPlannedBytes(read: (() => number) | null, capBytesPerMinute = Number.POSITIVE_INFINITY): void { this.plannedBytes = read; this.plannedCap = capBytesPerMinute > 0 ? capBytesPerMinute : Number.POSITIVE_INFINITY; }
   notifyMemoryWork(): void { try { this.onMemoryWork?.(); } catch { /* notifications do not change a write's result */ } }
 
   noteBytes(source: string, bytes: number): void {
@@ -203,7 +212,9 @@ export class IoBudget {
     if (reading.at <= previous.at) return null;
     const minutes = (reading.at - previous.at) / 60_000;
     const osBytes = Math.max(0, (reading.fsWriteBlocks - previous.fsWriteBlocks) * BLOCK_BYTES);
-    const writeBytesPerMinute = Math.max(osBytes, applicationBytes) / minutes;
+    let planned = 0;
+    if (this.plannedBytes) { try { planned = Math.min(this.plannedCap * minutes, Math.max(0, Number(this.plannedBytes()) || 0)); } catch { planned = 0; } }
+    const writeBytesPerMinute = Math.max(0, Math.max(osBytes, applicationBytes) - planned) / minutes;
     const cpu = (reading.cpuMicros - previous.cpuMicros) / 1000 / (reading.at - previous.at);
     let system: { overloaded: boolean; why: string } | null = null;
     try { system = this.systemOverloaded(); } catch { /* unknown load: Murage's own CPU decides */ }
@@ -221,7 +232,7 @@ export class IoBudget {
       const next = Math.min(IO_BUDGET_MAX_SCALE, this.scale * 2);
       this.deferredSource = [...this.bytes].sort((a,b) => b[1]-a[1])[0]?.[0] ?? this.topStatements(1)[0]?.sql ?? "process";
       this.deferUntil = reading.at + next * IO_BUDGET_INTERVAL_MS;
-      this.log(`[io-budget] ${writing ? `writing ${(writeBytesPerMinute / 1048576).toFixed(1)} MB/min (budget ${(budget / 1048576).toFixed(0)})` : ""}`
+      this.log(`[io-budget] ${writing ? `writing ${(writeBytesPerMinute / 1048576).toFixed(1)} MB/min (budget ${(budget / 1048576).toFixed(0)}${planned > 0 ? `, ${(planned / minutes / 1048576).toFixed(1)} MB/min planned not counted` : ""})` : ""}`
         + `${writing && spinning ? ", " : ""}${spinning ? `cpu ${(cpu * 100).toFixed(0)}%${systemHot ? ` (computer: ${system!.why})` : ""} for ${this.hotCpuMinutes} min` : ""}; source: ${this.deferredSource}; top statements: ${top}; poll rate x1/${next}`);
       this.setScale(next);
       this.statements.clear(); this.traced.clear();

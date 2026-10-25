@@ -101,6 +101,42 @@ describe("readClaudeModelCatalog", () => {
   });
 });
 
+describe("readClaudeModelCatalog: the owner's own Claude Code models", () => {
+  const catalogWithEnv = (env: Record<string, unknown>, processEnv: Record<string, string | undefined> = {}) => {
+    const home = mkdtempSync(join(tmpdir(), "murage-claude-extras-"));
+    scratchDirs.push(home);
+    mkdirSync(join(home, ".claude"), { recursive: true });
+    writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify({ env }));
+    return readClaudeModelCatalog({ HOME: home, ...processEnv }).options.slice(STATIC_CLAUDE_MODELS.options.length);
+  };
+
+  it("lists the custom model option, labelled by its name when there is one", () => {
+    expect(catalogWithEnv({ ANTHROPIC_CUSTOM_MODEL_OPTION: "gateway/glm-5", ANTHROPIC_CUSTOM_MODEL_OPTION_NAME: "Gateway GLM" })).toEqual([
+      { id: "gateway/glm-5", label: "Gateway GLM", custom: true },
+    ]);
+    expect(catalogWithEnv({ ANTHROPIC_CUSTOM_MODEL_OPTION: "gateway/glm-5" })).toEqual([
+      { id: "gateway/glm-5", label: "gateway/glm-5", custom: true },
+    ]);
+  });
+
+  it("lists a non-official tier model by tier, and not an official claude-* id again", () => {
+    expect(catalogWithEnv({
+      ANTHROPIC_DEFAULT_SONNET_MODEL: "bedrock:sonnet-gw",
+      ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-5",
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-haiku-5-5",
+    })).toEqual([{ id: "bedrock:sonnet-gw", label: "Sonnet tier: bedrock:sonnet-gw", custom: true }]);
+  });
+
+  it("drops ids with characters a model id never has", () => {
+    expect(catalogWithEnv({ ANTHROPIC_CUSTOM_MODEL_OPTION: "bad id; rm -rf", ANTHROPIC_DEFAULT_HAIKU_MODEL: "x y" })).toEqual([]);
+  });
+
+  it("does not offer a value only a shell left behind, and never copies a key", () => {
+    expect(catalogWithEnv({}, { ANTHROPIC_CUSTOM_MODEL_OPTION: "leftover", ANTHROPIC_DEFAULT_SONNET_MODEL: "leftover-2" })).toEqual([]);
+    expect(JSON.stringify(catalogWithEnv({ ANTHROPIC_API_KEY: "sk-secret", ANTHROPIC_CUSTOM_MODEL_OPTION: "m1" }))).not.toContain("sk-secret");
+  });
+});
+
 describe("ClaudeDriver catalog", () => {
   it("loads extras when the instance is created", async () => {
     const home = mkdtempSync(join(tmpdir(), "murage-claude-instance-"));

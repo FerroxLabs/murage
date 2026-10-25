@@ -81,6 +81,11 @@ const packageSchema = z.object({
       }),
       playbooks: z.array(key).max(40).optional(),
       skills: z.array(key).max(200).optional(),
+      /** "draft-only": the installed bot prepares drafts and can never send.
+       * Install stamps `draftOnly` on the bot, and the connected-app relay
+       * then refuses every app action that is not a verified read
+       * (server/bot-access.ts). It only ever narrows what a bot may do. */
+      outbound: z.literal("draft-only").optional(),
     })).min(1).max(200),
     chiefOfStaff: key.optional(),
     rooms: z.array(z.object({
