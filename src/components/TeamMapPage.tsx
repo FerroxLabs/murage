@@ -20,6 +20,7 @@ import { MemorySettings } from "./MemorySettings";
 import { sharedIntoTeam, sharedRowLabel } from "@/lib/shared-teams";
 import { SectionContextDialog } from "./SectionContextDialog";
 import { OpenBotListButton } from "./OpenBotListButton";
+import { useWindowDrag } from "@/hooks/use-window-drag";
 
 const statusTone = {
   success: "bg-success",
@@ -171,6 +172,7 @@ function TeamCard({
 }
 
 export function TeamMapPage() {
+  const windowDrag = useWindowDrag();
   const { state } = useStore();
   const [snapshot, setSnapshot] = useState<TeamMapSnapshot>(EMPTY_TEAM_MAP_SNAPSHOT);
   const [refreshing, setRefreshing] = useState(false);
@@ -235,7 +237,7 @@ export function TeamMapPage() {
 
   return (
     <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-app text-ink">
-      <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-hairline/40 px-4 pb-5 pt-[calc(1.25rem+env(safe-area-inset-top))] sm:px-7 max-md:pl-3">
+      <header {...windowDrag} className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-hairline/40 px-4 pb-5 pt-[calc(1.25rem+env(safe-area-inset-top))] sm:px-7 max-md:pl-3">
         <div>
           <div className="flex items-center gap-2.5">
             {/* Phones only, on the title's row (OpenBotListButton.tsx). */}

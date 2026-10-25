@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Exit Prep",
     "tagline": "A due-diligence index with evidence gaps and clear owners",
-    "summary": "Harbor prepares a due-diligence readiness checklist with owners. Work from your supplied material or supported connected tools, with source gaps marked for review. For broader business financial decisions, use Numbers. For a broader legal exposure review, use Counsel. For a new-business planning team, use Founder Setup. I give guidance and drafts, not licensed legal, accounting or financial advice, and I promise no outcome.",
+    "summary": "Harbor prepares a due-diligence readiness checklist with owners.",
     "category": "Money",
     "author": {
       "name": "Ferrox Labs",
@@ -42,7 +42,8 @@
         "title": "Exit Prep",
         "description": "Harbor prepares a due-diligence readiness checklist with owners. Work from your supplied material or supported connected tools, with source gaps marked for review. For broader business financial decisions, use Numbers. For a broader legal exposure review, use Counsel. For a new-business planning team, use Founder Setup.",
         "appearance": {
-          "color": "blue"
+          "color": "blue",
+          "mascotBody": "drop"
         },
         "skills": [
           "exit-your-business",

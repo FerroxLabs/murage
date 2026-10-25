@@ -351,8 +351,11 @@ export function createNativeBrowser(spec: AgentBrowserSpec, options: NativeBrows
       beforeEngineStart();
       await startEngine();
       let reply: unknown;
+      // A dialog the page opens during the bot's call is answered by the guard's connection (see answerDialogs).
+      if (method === "tools/call") guard.answerDialogs(true);
       try { reply = method === "tools/call" && restore?.waiting() ? await restoringCall(params ?? {}) : await client!.request(method, params); }
       catch (error) { if (cloudRestore) cloudSuspect = true; throw error; }
+      finally { if (method === "tools/call") guard.answerDialogs(false); }
       engineAnswered();
       return reply;
     },

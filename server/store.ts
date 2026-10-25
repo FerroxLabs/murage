@@ -1,5 +1,7 @@
 import type { HeldContinuation } from "./external-context-delivery.ts";
 import type { AskerWakeSnapshot } from "./asker-wake.ts";
+import { formerChiefOutcome } from "../shared/chief-handover.ts";
+import { lastChangeRequestUrl } from "../shared/thread-link.ts";
 import type { ApprovalGrantRequest } from "../shared/approval-grant-request.ts";
 import { renderMurageTools, NEUTRAL_TOOL_SURFACE } from "./murage-tool-surface.ts";
 import { assignMissingVoices, pickDefaultVoice } from "./bot-voice.ts";
@@ -32,6 +34,7 @@ import { cancelCoalesced, flushCoalesced, scheduleCoalesced, tightenOwnerOnlyFil
 import { readPersistedRecords } from "./persisted-state.ts";
 import { peerAllowKey, type PeerAction } from "./peer-approval-key.ts";
 import { DATA_DIR, loadBrowserProfileIdAliases } from "./config.ts";
+import { clearFollowingPins, followCleanupDone, markFollowCleanupDone } from "./thread-follow-model.ts";
 import * as mdb from "./message-db.ts";
 import { murageLine } from "./murage-line.ts";
 import { guardHandoffPrompt, isHandoffPromptId } from "./handoff-stamp.ts";
@@ -51,14 +54,14 @@ import { deleteProjectRows } from "./project-tables.ts";
 import { botDeletionKey, groupDeletionKey, recordOwnerDeletion, withdrawOwnerDeletion } from "./owner-deletions.ts";
 import { recordMemorySettlement, type MemoryTurnOutcome } from "./memory/settlement.ts";
 import { workspaceDir } from "./workspace.ts";
-import { newId, type CloudBackend, type ModelSelection, type ThreadId } from "./contracts.ts";
+import { newId, type CloudBackend, type EffortLevel, type ModelSelection, type ThreadId } from "./contracts.ts";
 import { pickBotName, DEFAULT_BOT_COLOR } from "./names.ts";
 import { redactSecretsForCard, redactSecretsInText } from "./redact.ts";
 import { queueExternalUpdate } from "./external-context-delivery.ts";
 import { botAvatarProfile, type BotAvatarCrop } from "../shared/bot-avatar.ts";
 import { BOT_PROFILE_LIMITS } from "../shared/bot-profile.ts";
 import type { MascotBodyId } from "../shared/mascot-bodies.ts";
-import type { RoutineRequestCardData } from "../shared/routine-request.ts";
+import type { AutomationRequestCardData } from "../shared/routine-request.ts";
 import type { RoutineRunCardData } from "../shared/routine-run.ts";
 import type { SkillRequestCardData } from "../shared/skill-request.ts";
 import type { GroupGoalRunCardData } from "../shared/group-goal-run.ts";
@@ -100,8 +103,10 @@ export interface OptionCardData {
   /** Optional owner-approved browser connection with one explicit continuation. */
   browserSetup?: import("../shared/browser-setup-card.ts").BrowserSetupCardData;
   /** A publish approval card (server/publish): never auto-approved, in any access mode. */
-  kind?: "publish";
+  kind?: "publish" | "mcpEnable";
   publish?: import("../shared/publish-card.ts").PublishCardData;
+  /** A "Turn on <name>?" card for a server a bot filed switched off (item 118, server/mcp-bot-cards.ts). */
+  mcpEnable?: import("./mcp-bot-cards.ts").McpEnableCardData;
   title: string;
   subtitle: string;
   options: string[];
@@ -109,6 +114,8 @@ export interface OptionCardData {
   dismissed?: boolean;
   /** Present when this card is a live provider ask (approval/question). */
   requestId?: string;
+  /** 1.0.4 SL-I I5: the harness's own limit offer (engines that can answer now, with their billing). */
+  limitOffer?: import("./limit-continuation.ts").LimitOffer;
   /** permission cards: the tool being requested, so the card can show what
    * is actually being asked and offer "always allow this tool". */
   tool?: string;
@@ -160,6 +167,15 @@ export interface OptionCardData {
   expired?: boolean;
   /** An expired question's answer went to the bot as an ordinary message. */
   sentAsMessage?: boolean;
+  /** QW Q1: a question from the agents `ask_user` tool, a murage-question fence or Codex's async ask. Its answer is an
+   * ordinary owner send (the person's next message), never an engine reply. Server-written only. */
+  answerAsSend?: boolean;
+  /** QW Q1: the provider turn the question was asked in, the only turn its answer may be steered into. */
+  turnId?: string;
+  /** QW Q1, Q1b: the owner send an answer became ("ask-" + the card's id). */
+  sendId?: string;
+  /** QW Q2: the fence of a bot message this card was made from: that message and the fence's place among its fences. */
+  fenceOf?: { messageId: string; index: number };
   /** D7: an approval left open by a previous process, found at startup. The
    * request behind it died with that process, so it no longer counts as
    * waiting in the Inbox; the card itself stays and answering it says the
@@ -176,7 +192,9 @@ export interface OptionCardData {
   folderTrust?: { key: string; folder: string; sources: string[]; late?: "finished" | "stopped" | "failed" | "timeout" };
   /** A durable chat-created routine proposal. The scheduler only applies it
    * after this card is explicitly confirmed by the user. */
-  routineRequest?: RoutineRequestCardData;
+  routineRequest?: AutomationRequestCardData;
+  /** SL-J J2: Undo put back what this applied routine or webhook change replaced. */
+  undone?: boolean;
   /** Hash of what this routine proposal SAID when it was rendered — the
    * operation together with the title and subtitle the person actually read.
    * Checked on confirmation so an approval cannot apply an operation other
@@ -246,7 +264,7 @@ export interface McpSignInCardData {
 
 export interface SecretRequestCardData {
   /** Fixed allowlisted credential id; never an arbitrary config path. */
-  target: import("../shared/credential-request.ts").CredentialTargetId;
+  target: import("../shared/credential-request.ts").AnyCredentialTargetId;
   label: string;
   description: string;
   placeholder: string;
@@ -301,6 +319,9 @@ export interface Message {
   role: "bot" | "user";
   kind: "text" | "options" | "activity" | "screen" | "connector" | "mcpSignIn" | "secret" | "routine.run" | "goal.run";
   text?: string;
+  /** QW Q4: a bot-authored widget (shared/widget.ts), its tree canonical, on a bot `kind: "text"` row whose `text` is its
+   * readable version (no new kind: 1.0.3 backs up, restores and reads such a row as its text). Drawn wherever it is present. */
+  widget?: import("../shared/widget.ts").WidgetPayload;
   /** Durable provider output stored by the harness. Paths always point into
    * Murage's private attachment directory; renderers receive only the
    * existing allowlisted /api/attachments URL. */
@@ -341,6 +362,9 @@ export interface Message {
    * (per-turn count or bytes, shared/turn-image-note.ts). A later replay of
    * the message leaves them out too, so the bot is never handed their paths. */
   imagesNotSent?: string[];
+  /** User rows: memory left this message out as notes exported from another assistant (memory/capture.ts exportPasteNoted).
+   * Written by the server in the message's own transaction; the chat shows a line under the message. */
+  memoryNote?: "export-paste";
   /** Provider turn that produced this message. Assistant output can arrive
    * in several pieces around tool calls; the UI uses this identity to keep
    * those pieces together without discarding them. */
@@ -562,6 +586,9 @@ export interface GroupRecord {
 /** Thread recall (design S1): recall output was released on this thread. */
 export const threadSealed = (task: Pick<TaskRecord, "sealGeneration"> | undefined | null): boolean => (task?.sealGeneration ?? 0) > 0;
 
+/** 1.0.4 SL-K K4: a task copy whose session was reset forgets what its engine was last sent. */
+function withoutEffortSent<T extends { effortSent?: unknown }>(task: T): T { const { effortSent: _effortSent, ...rest } = task; return rest as T; }
+
 export interface TaskRecord {
   /** Server-owned: what this conversation's hand-offs still owe it (asker-wake.ts), kept so a restart still continues the work. */
   askerWakes?: AskerWakeSnapshot;
@@ -574,6 +601,10 @@ export interface TaskRecord {
   threadId: ThreadId;
   title: string;
   createdAt: number;
+  /** An address the person (or, by default, the bot's own last pull request) attached to this conversation. */
+  link?: string;
+  /** True while `link` was suggested from the bot's reply; a person's own choice clears it and is never overwritten. */
+  linkAuto?: boolean;
   /** provider-native continuation per instance, for THIS task only */
   resumeCursors: Record<string, unknown>;
   /** SPEC-P 13.1 (lane E1): the audience fingerprint each cursor was made
@@ -591,8 +622,16 @@ export interface TaskRecord {
   /** The incarnation each cursor's session was started under (lineage S6 rule 27, memory/session-incarnation.ts), from 2 on: the memory
    * session key is formed from the cursor and this. Absent for n = 1 and for a cursor from before. */
   resumeIncarnations?: Record<string, number>;
-  /** Independent direct-thread settings; copied from the bot on creation. */
+  /** This chat's own model, set only when the owner picked one in this chat
+   * (1.0.4 SL-K K1). Absent: the chat follows its bot's model. */
   modelSelection?: ModelSelection;
+  /** 1.0.4 SL-K K4: the effort the Codex engine was last sent on this chat's
+   * session ("default": a session known to be on Default). Absent with a
+   * Codex cursor reads as "untracked" (a session from before 1.0.4).
+   * Cleared with every cursor reset. Server bookkeeping, never on the wire. */
+  effortSent?: { instanceId: string; effort: EffortLevel | "default" };
+  /** 1.0.4 SL-I I4: the chat is on its bot's limit backup; the row id in limit-failovers.json. */
+  limitFailover?: string;
   autoApprove?: boolean;
   /** Full access for this task: above Auto, and only while autoApprove is on. */
   fullAccess?: boolean;
@@ -618,6 +657,9 @@ export interface TaskRecord {
    * The chat's elapsed readout counts from here, so it survives a thread
    * switch. Stamped on an idle-to-busy transition, cleared when idle. */
   turnStartedAt?: number;
+  /** Runtime only: the running turn actually has the browser mounted (not
+   * yielded, held or run without it). Cleared when the task goes idle. */
+  browserMounted?: boolean;
   /** which instance dispatched the most recent turn. A cursor alone can't
    * say whether an engine's session is current — another engine may have
    * taken turns since — so this is what decides an inline replay. Absent
@@ -661,6 +703,10 @@ export interface TaskResourceWait {
   resource: TaskResourceWaitKind;
   /** Title of the thread being waited for, only when the viewer may see it. */
   holderTitle?: string;
+  /** SL-L L1: place in line (1 = next), counting distinct earlier waiters. */
+  position?: number;
+  /** SL-L L2: about how long until this turn starts; absent until measured. */
+  estimateMs?: number;
 }
 
 export interface TaskUsage {
@@ -752,7 +798,24 @@ function redactBotAuthored<T extends Omit<Message, "id" | "at"> & { at?: number 
     // Routine definitions are executable bot-authored text stored behind the
     // visible summary. Scrub the durable payload too so nesting it on a card
     // cannot bypass the transcript's secret-redaction boundary.
-    if (card.routineRequest) {
+    if (card.routineRequest?.kind === "webhook") {
+      const operation = card.routineRequest.operation;
+      card.routineRequest = {
+        ...card.routineRequest,
+        operation: operation.action === "create"
+          ? { ...operation, webhook: { ...operation.webhook, name: redactSecretsInText(operation.webhook.name), prompt: redactSecretsInText(operation.webhook.prompt) } }
+          : operation.action === "update"
+            ? {
+                ...operation,
+                changes: {
+                  ...operation.changes,
+                  ...(typeof operation.changes.name === "string" ? { name: redactSecretsInText(operation.changes.name) } : {}),
+                  ...(typeof operation.changes.prompt === "string" ? { prompt: redactSecretsInText(operation.changes.prompt) } : {}),
+                },
+              }
+            : { ...operation },
+      };
+    } else if (card.routineRequest) {
       const operation = card.routineRequest.operation;
       card.routineRequest = {
         ...card.routineRequest,
@@ -920,6 +983,10 @@ export interface BotRecord {
   avatarCrop?: BotAvatarCrop;
   unread: boolean;
   modelSelection: ModelSelection;
+  /** 1.0.4 SL-I I4: the engine the owner chose to take over when this bot's
+   * engine hits its limit (once, on the limit card or in the model section).
+   * `routines`: the owner also said so for routines. */
+  limitBackup?: { selection: ModelSelection; routines: boolean; at: number };
   /** provider-native continuation per instance (e.g. claude session id) */
   resumeCursors: Record<string, unknown>;
   /** Presentation only; never excludes the bot from authority or routing. */
@@ -1417,7 +1484,7 @@ const messageBytes = (m: Message): number => 512 + (m.text?.length ?? 0) * 2 + (
 function persistedBotsJson(bots: readonly BotRecord[]): string {
   return JSON.stringify(bots.map(({ busy: _busy, activity: _activity, ...bot }) => ({
     ...bot,
-    tasks: bot.tasks?.map(({ busy: _taskBusy, activity: _taskActivity, waitingFor: _taskWaitingFor, turnStartedAt: _taskTurnStartedAt, ...task }) => task),
+    tasks: bot.tasks?.map(({ busy: _taskBusy, activity: _taskActivity, waitingFor: _taskWaitingFor, turnStartedAt: _taskTurnStartedAt, browserMounted: _taskBrowserMounted, ...task }) => task),
   })));
 }
 
@@ -1823,13 +1890,13 @@ export class Store {
         for (const item of task.heldContinuations ?? []) if (!item.botId || !item.dispatcher || !item.principal) {
           item.botId = b.id; item.state = "recovery"; item.error = "Authorize this saved continuation before it can run."; botsMigrated = true;
         } else if (item.error && !item.state) { item.state = "authority"; botsMigrated = true; }
-        if (task.modelSelection === undefined) { task.modelSelection=structuredClone(b.modelSelection); botsMigrated=true; }
+        // 1.0.4 SL-K K1: an absent model means the chat follows its bot; it is never backfilled from the bot.
         if (task.autoApprove === undefined) { task.autoApprove=b.autoApprove===true; botsMigrated=true; }
         if (task.alwaysAllow === undefined) { task.alwaysAllow=structuredClone(b.alwaysAllow??[]); botsMigrated=true; }
         if (task.unread === undefined) { task.unread=task.threadId===b.threadId&&b.unread; botsMigrated=true; }
         task.resumeCursors ??= task.threadId===b.threadId?structuredClone(b.resumeCursors??{}):{};
         if (task.threadId===b.threadId) { task.rewound??=b.rewound; task.pinnedMessageId??=b.pinnedMessageId; }
-        task.busy=false;task.activity="idle";delete task.waitingFor;delete task.turnStartedAt;
+        task.busy=false;task.activity="idle";delete task.waitingFor;delete task.turnStartedAt;delete task.browserMounted;
       }
       b.unread=b.tasks.some(task=>task.unread);
     }
@@ -1852,7 +1919,11 @@ export class Store {
         botsMigrated = true;
       }
     }
+    // 1.0.4 SL-K K1: once, drop every chat model that only copied its bot's (marker written after the save lands).
+    const followCleanup = !followCleanupDone(DATA_DIR);
+    if (followCleanup && clearFollowingPins(this.bots) > 0) botsMigrated = true;
     if (botsMigrated) this.saveBots();
+    if (followCleanup) markFollowCleanupDone(DATA_DIR);
     // Search reads SQLite directly, so migrate every known legacy transcript
     // at startup rather than waiting until the user happens to open it. Only
     // pending JSON files are touched; already-migrated threads stay lazy.
@@ -3383,7 +3454,8 @@ export class Store {
       // other turns than one turn interleaves (TURN_TERMINAL_GAP) has left it.
       let gap = 0;
       this.walkActiveBranch(threadId, (m) => {
-        if (m.role === "bot" && m.kind === "text" && m.turnId === turnId) { message = m; return true; }
+        // a widget row (QW Q4) is a card the bot showed, never its closing answer
+        if (m.role === "bot" && m.kind === "text" && m.turnId === turnId && !m.widget) { message = m; return true; }
         if (m.turnId === turnId) gap = 0; else if (++gap > TURN_TERMINAL_GAP) return true;
         return false;
       });
@@ -3776,7 +3848,8 @@ export class Store {
         if (!step) return null;
         const before = sanitizeMessageDiagnostic({ ...step.message, parentId: step.parent });
         const next = sanitizeMessageDiagnostic({ ...before, ...boundRemovedText(patch), card: patch.card ?? before.card });
-        mdb.updateMessage(threadId, next);
+        // `within` joins this write too: a card settled with the send it became (QW Q1) is one transaction on an unloaded thread as well
+        mdb.updateMessage(threadId, next, within);
         this.emit({ type: "message.patch", threadId, message: next, before });
         return next;
       }
@@ -3847,7 +3920,7 @@ export class Store {
     bot.voice = pickDefaultVoice(this.bots);
     bot.voiceAssigned = true;
     if (opts.noAccess) { bot.computer = "off"; bot.browser = false; bot.composio = false; }
-    bot.tasks = [{ threadId: bot.threadId, title: UNTITLED_TASK, createdAt: bot.createdAt, resumeCursors: {},modelSelection:structuredClone(bot.modelSelection),autoApprove:false,alwaysAllow:[],unread:false }];
+    bot.tasks = [{ threadId: bot.threadId, title: UNTITLED_TASK, createdAt: bot.createdAt, resumeCursors: {},autoApprove:false,alwaysAllow:[],unread:false }];
     this.bots.unshift(bot);
     this.saveBots();
     // Announce the owner before its onboarding transcript. SSE clients need
@@ -3997,9 +4070,11 @@ export class Store {
     const bot = this.bot(id);
     if (!bot) return null;
     if (Object.hasOwn(patch, "section")) { assertSectionUnlocked(); assertHomeMove(bot, patch.section); }
-    if (!options.preserveTaskSettings && patch.modelSelection && patch.modelSelection.connectionId !== bot.modelSelection.connectionId) {
+    // 1.0.4 SL-K K1: a bot's account change resets the session of every chat that follows the bot; a chat's own pick is left alone.
+    if (patch.modelSelection && patch.modelSelection.connectionId !== bot.modelSelection.connectionId) {
       const tasks = patch.tasks ?? bot.tasks;
-      patch = { ...patch, ...(tasks?.length===1 ? {resumeCursors:{},tasks:tasks.map(task=>({...task,resumeCursors:{},modelSelection:structuredClone(patch.modelSelection!)}))} : {}) };
+      const activeFollows = tasks?.some(task => task.threadId === bot.threadId && task.modelSelection === undefined);
+      patch = { ...patch, ...(activeFollows ? { resumeCursors: {} } : {}), ...(tasks ? { tasks: tasks.map(task => task.modelSelection === undefined ? withoutEffortSent({ ...task, resumeCursors: {} }) : task) } : {}) };
     }
     const partitionedAt = bot.partitionedAt ?? patch.partitionedAt ?? (patch.sharedWith && patch.sharedWith.mode !== "none" ? Date.now() : undefined);
     const formerName = bot.name;
@@ -4016,7 +4091,8 @@ export class Store {
     if (partitionedAt !== undefined) bot.partitionedAt = partitionedAt;
     if(bot.tasks?.length===1){
       const task=bot.tasks[0];
-      for(const key of ["modelSelection","autoApprove","fullAccess","noLimits","alwaysAllow","unread","rewound","pinnedMessageId","resumeCursors"] as const)if(Object.hasOwn(patch,key)&&(!options.preserveTaskSettings||!["modelSelection","autoApprove","fullAccess","noLimits","alwaysAllow"].includes(key)))Object.assign(task,{[key]:structuredClone(patch[key])});
+      // 1.0.4 SL-K K1: the model is no longer mirrored onto the one task (it follows the bot unless picked); the permission mirror stays.
+      for(const key of ["autoApprove","fullAccess","noLimits","alwaysAllow","unread","rewound","pinnedMessageId","resumeCursors"] as const)if(Object.hasOwn(patch,key)&&(!options.preserveTaskSettings||!["autoApprove","fullAccess","noLimits","alwaysAllow"].includes(key)))Object.assign(task,{[key]:structuredClone(patch[key])});
     }
     this.saveBots();
     this.emit({ type: "bot", botId: id });
@@ -4188,9 +4264,17 @@ export class Store {
     task.activity=activity;task.busy=ACTIVITY_BUSY.has(activity);if(activity!=="working")delete task.waitingFor;
     // The turn's start is its first busy transition: an approval parked on
     // waiting-on-you keeps the anchor, and only idle clears it.
-    if(task.busy&&!wasBusy)task.turnStartedAt=Date.now();else if(!task.busy)delete task.turnStartedAt;
+    if(task.busy&&!wasBusy)task.turnStartedAt=Date.now();else if(!task.busy){delete task.turnStartedAt;delete task.browserMounted;}
     this.refreshBotActivity(bot);
     this.emit({type:"bot",botId});return bot;
+  }
+
+  /** Runtime-only: whether this task's running turn has the browser mounted. */
+  setTaskBrowserMounted(botId:string,threadId:string,mounted:boolean):void {
+    const task=this.taskByThread(botId,threadId);
+    if(!task||Boolean(task.browserMounted)===mounted)return;
+    if(mounted)task.browserMounted=true;else delete task.browserMounted;
+    this.emit({type:"bot",botId});
   }
 
   /** Runtime-only waiting marker for a busy task; cleared by any non-working
@@ -4237,9 +4321,16 @@ export class Store {
     id: string | null,
     section?: string | null,
     scope?: "section" | "workspace",
+    /** Whether a bot's engine can contact the bots it leads. Only read when
+     * a workspace handover has to decide if the former Chief can keep
+     * leading its team. Absent means it can. */
+    canLead?: (bot: BotRecord) => boolean,
   ): BotRecord[] | null {
     const selected = id ? this.bot(id) : null;
     if (id && !selected) return null;
+    const formerChief = scope === "workspace" && id
+      ? this.bots.find((bot) => bot.id !== id && bot.chiefOfStaff === true && bot.chiefScope === "workspace")
+      : undefined;
     const targetSection = sectionKey(selected?.section ?? section);
     const changed: BotRecord[] = [];
     const touch = (bot: BotRecord) => {
@@ -4302,6 +4393,14 @@ export class Store {
       delete selected.chiefScope;
       touch(selected);
     }
+    // The handover is one change: the former Chief has already lost the tier
+    // above; here it either keeps its own team or joins it as a member.
+    if (formerChief && formerChief.chiefOfStaff === true) {
+      if (formerChiefOutcome(formerChief, this.bots, canLead ? canLead(formerChief) : true) === "member") {
+        formerChief.chiefOfStaff = false;
+        touch(formerChief);
+      }
+    }
     if (changed.length) this.saveBots();
     for (const bot of changed) this.emit({ type: "bot", botId: bot.id });
     return changed;
@@ -4341,6 +4440,8 @@ export class Store {
     const task = threadId ? this.taskByThread(botId, threadId) : this.activeTask(botId);
     if (task) {
       task.resumeCursors[instanceId] = cursor;
+      // 1.0.4 SL-K K4: a cleared session takes what it was last sent with it
+      if (cursor === undefined && task.effortSent?.instanceId === instanceId) delete task.effortSent;
       // and to the audience it was made for (SPEC-P 13.1)
       if (audience !== undefined) task.resumeAudiences = { ...task.resumeAudiences, [instanceId]: audience };
       // and to the session contract it was made under (claude.ts CLAUDE_ISOLATION_CONTRACT)
@@ -4660,6 +4761,22 @@ export class Store {
     return task.usage;
   }
 
+  /** Bank one settled room or project-room turn into the speaking bot's month bucket (Settings, Usage). Room turns have no
+   * task of the bot's own, so addTaskUsage never saw them while the project ledger (settleProjectUsage) counted the same
+   * tokens against the limit. Same figures, same turn event: Usage and the limit now read one stream. A redelivery adds nothing. */
+  private roomUsageKeys = new Set<string>();
+  addRoomTurnUsage(botId: string, turn: { input?: number; output?: number; cachedInput?: number }, turnKey: string): boolean {
+    const owner = this.bots.find(candidate => candidate.id === botId);
+    if (!owner || this.roomUsageKeys.has(turnKey)) return false;
+    this.roomUsageKeys.add(turnKey);
+    if (this.roomUsageKeys.size > 512) this.roomUsageKeys.delete(this.roomUsageKeys.values().next().value as string);
+    owner.usageMonths ??= {};
+    bumpUsageMonth(owner.usageMonths, turn);
+    this.saveBots(this.bots, { defer: true });
+    this.emit({ type: "bot", botId });
+    return true;
+  }
+
   /** The folder a task's turn runs in. Pins on first call from the bot's
    * current folder — unless the task already has a session (a thread from
    * before folders existed), which pins to the default so the folder can't
@@ -4802,13 +4919,17 @@ export class Store {
     try{this.saveGroups();}catch(error){holder.procedurePins=prior;throw error;}
   }
 
-  patchTask(botId:string,threadId:string,patch:Partial<Pick<TaskRecord,"title"|"modelSelection"|"autoApprove"|"fullAccess"|"noLimits"|"alwaysAllow"|"unread"|"rewound"|"pinnedMessageId"|"resumeCursors"|"cwd">>&{pinned?:boolean}):TaskRecord|null {
+  patchTask(botId:string,threadId:string,patch:Partial<Pick<TaskRecord,"title"|"modelSelection"|"autoApprove"|"fullAccess"|"noLimits"|"alwaysAllow"|"unread"|"rewound"|"pinnedMessageId"|"resumeCursors"|"cwd"|"link"|"linkAuto"|"effortSent"|"limitFailover">>&{pinned?:boolean}):TaskRecord|null {
     const bot=this.bot(botId),task=this.taskByThread(botId,threadId);if(!bot||!task)return null;
     const {pinned,...rest}=patch;
     const next:TaskRecord={...task,...structuredClone(rest)};
+    // 1.0.4 SL-K: an explicit undefined removes the field (a chat returns to following its bot; a failover marker or effort record ends)
+    for(const key of ["modelSelection","effortSent","limitFailover"] as const)if(Object.hasOwn(patch,key)&&patch[key]===undefined)delete next[key];
     if(pinned===true)next.pinned=true;else if(pinned===false)delete next.pinned;
     if(patch.title!==undefined)next.title=patch.title.trim().slice(0,80)||UNTITLED_TASK;
-    if(patch.modelSelection&&patch.modelSelection.connectionId!==task.modelSelection?.connectionId)next.resumeCursors={};
+    if(patch.modelSelection&&patch.modelSelection.connectionId!==(task.modelSelection??bot.modelSelection)?.connectionId)next.resumeCursors={};
+    // 1.0.4 SL-K K4: what the engine was last sent belongs to the session; a cursor reset ends it (unless this patch records the new one)
+    if(Object.keys(next.resumeCursors??{}).length===0&&Object.keys(task.resumeCursors??{}).length>0&&!Object.hasOwn(patch,"effortSent"))delete next.effortSent;
     // The first pick adopts.
     //
     // A bot made before any engine could answer carries the honest-empty
@@ -4834,7 +4955,7 @@ export class Store {
     // security or routing state and keep their immediate, throwing write, and
     // so does `rewound`: lost on a crash, the next turn would resume a provider
     // session that still holds the abandoned branch.
-    const cosmetic=Object.keys(patch).every(key=>["unread","pinnedMessageId","pinned","title"].includes(key))&&!adopts;
+    const cosmetic=Object.keys(patch).every(key=>["unread","pinnedMessageId","pinned","title","link","linkAuto"].includes(key))&&!adopts;
     if(cosmetic){
       Object.assign(task,next);if(!next.pinned)delete task.pinned;Object.assign(bot,mirrors,{unread:candidate.unread});
       this.saveBots(this.bots,{defer:true});
@@ -4843,6 +4964,38 @@ export class Store {
     Object.assign(task,next);if(!next.pinned)delete task.pinned;Object.assign(bot,mirrors,adopted,{unread:candidate.unread});
     }
     this.emit({type:"bot",botId});return task;
+  }
+
+  /** After a turn: the last pull or merge request the bot's reply named becomes the thread's link, unless
+   * the person chose one themselves (or removed the suggestion). Reads only the bot's own text, never fetches. */
+  suggestTaskLink(botId: string, threadId: string, text: string, remoteHosts: readonly string[] = []): TaskRecord | null {
+    const url = lastChangeRequestUrl(text, remoteHosts);
+    const task = this.taskByThread(botId, threadId);
+    if (!url || !task || task.linkAuto === false || (task.link && !task.linkAuto) || task.link === url) return null;
+    return this.patchTask(botId, threadId, { link: url, linkAuto: true });
+  }
+
+  /** 1.0.4 SL-K K1 "Switch them too": every idle chat with a model of its own
+   * goes back to following the bot (pin deleted, session reset, a limit
+   * failover ended). A busy chat is left as it is and counted. One save. */
+  followBotModel(botId:string,isBusy:(threadId:string)=>boolean):{switched:string[];busy:number;endedFailovers:string[]}|null {
+    const bot=this.bot(botId);if(!bot)return null;
+    const switched:string[]=[],endedFailovers:string[]=[];let busy=0;
+    const changed=new Map<TaskRecord,TaskRecord>();
+    const tasks=(bot.tasks??[]).map(task=>{
+      if(task.modelSelection===undefined)return task;
+      if(task.busy||isBusy(task.threadId)){busy++;return task;}
+      switched.push(task.threadId);if(task.limitFailover)endedFailovers.push(task.limitFailover);
+      const {modelSelection:_modelSelection,effortSent:_effortSent,limitFailover:_limitFailover,...rest}=task;
+      const next={...rest,resumeCursors:{}};changed.set(task,next);return next;
+    });
+    if(!switched.length)return {switched,busy,endedFailovers};
+    const mirrors=switched.includes(bot.threadId)?{resumeCursors:{}}:{};
+    this.saveBots(this.bots.map(current=>current===bot?{...bot,...mirrors,tasks}:current));
+    for(const [task,next] of changed){delete task.modelSelection;delete task.effortSent;delete task.limitFailover;Object.assign(task,next);}
+    Object.assign(bot,mirrors);
+    this.emit({type:"bot",botId});
+    return {switched,busy,endedFailovers};
   }
 
   /** A fresh context on the same bot: new thread, new session, same
@@ -4858,7 +5011,8 @@ export class Store {
       ...(sharedWork ? { sharedWork, cwd: partitionRoots(bot, { kind: "team", teamId: sharedWork.teamId })[0] } : {}),
       createdAt: Date.now(),
       resumeCursors: {},
-      modelSelection:structuredClone((activate ? this.activeTask(botId)?.modelSelection : undefined) ?? bot.modelSelection),autoApprove:bot.autoApprove===true,fullAccess:bot.autoApprove===true&&bot.fullAccess===true,noLimits:bot.autoApprove===true&&bot.fullAccess===true&&bot.noLimits===true,alwaysAllow:structuredClone(bot.alwaysAllow??[]),unread:false,activity:"idle",busy:false,
+      // 1.0.4 SL-K K1: born following the bot's model (no copy)
+      autoApprove:bot.autoApprove===true,fullAccess:bot.autoApprove===true&&bot.fullAccess===true,noLimits:bot.autoApprove===true&&bot.fullAccess===true&&bot.noLimits===true,alwaysAllow:structuredClone(bot.alwaysAllow??[]),unread:false,activity:"idle",busy:false,
     };
     bot.tasks = [task, ...(bot.tasks ?? [])];
     if (activate) {

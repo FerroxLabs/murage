@@ -638,3 +638,19 @@ test("downloads are not started while installation is preparing", async () => {
   pending.reject(new Error("cleanup unavailable"));
   await install;
 });
+
+test("update-available carries the release notes as plain text, capped", async () => {
+  const { updater, getState } = harness();
+  updater.emit("update-available", { version: "2.0.0", releaseNotes: "<h2>New</h2><ul><li>Faster <b>search</b></li><li>Fix &amp; polish</li></ul><script>alert(1)</script>" });
+  assert.equal(getState().status, "available");
+  assert.ok(!/[<>]/.test(getState().releaseNotesText));
+  assert.match(getState().releaseNotesText, /- Faster search/);
+  assert.match(getState().releaseNotesText, /- Fix & polish/);
+  assert.doesNotMatch(getState().releaseNotesText, /alert/);
+  updater.emit("update-available", { version: "2.0.1", releaseNotes: "x".repeat(20000) });
+  assert.equal(getState().releaseNotesText.length, 8000);
+  updater.emit("update-available", { version: "2.0.2", releaseNotes: [{ version: "2.0.2", note: "Plain note" }] });
+  assert.equal(getState().releaseNotesText, "Plain note");
+  updater.emit("update-available", { version: "2.0.3" });
+  assert.ok(!("releaseNotesText" in getState()) || getState().releaseNotesText === "Plain note");
+});

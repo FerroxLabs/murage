@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Chat and Saved Replies",
     "tagline": "Useful chat drafts and a consistent saved-reply library",
-    "summary": "Porter prepares reply drafts for the supplied open chats. Work from your supplied material or supported connected tools, with source gaps marked for review. For ticket triage and broader customer support, use Support. For a customer-message review team, use Reply Desk. For a team designing support operations, use Support Stack.",
+    "summary": "Porter prepares reply drafts for the supplied open chats.",
     "category": "Support",
     "author": {
       "name": "Ferrox Labs",
@@ -60,7 +60,8 @@
         "title": "Chat and Saved Replies",
         "description": "Porter prepares reply drafts for the supplied open chats. Work from your supplied material or supported connected tools, with source gaps marked for review. For ticket triage and broader customer support, use Support. For a customer-message review team, use Reply Desk. For a team designing support operations, use Support Stack.",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "blob"
         },
         "skills": [
           "customer-support-specialist",

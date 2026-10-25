@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { createSupervisorPort, CLOUD_PRIVATE_MESSAGE_TYPES } from "./supervisor-port.ts";
 import { cloudHomeCopy } from "./copy.ts";
+import { LEGACY_PENDING_REVOKE_KEY, pendingRevokes } from "./credential-projection.ts";
 import { ensureFluxComposioBrokerToken, fluxKeyFingerprint } from "../../electron/flux-composio-token.mjs";
 
 function fixture() {
@@ -128,8 +129,190 @@ describe("cloud supervisor private port", () => {
   it("re-seals writes before acknowledging, with a provider dispatch fence", async () => {
     const f = fixture(); await f.port.handle({ type: "murage:cloud-credential-write", requestId: "1", credentials: { fluxApiKey: "new-fixture" } });
     expect(f.store.getAll().fluxApiKey).toBe("new-fixture");
-    expect(f.send.mock.calls.map(call => call[0].type)).toEqual(["murage:provider-bank-fence", "murage:cloud-credential-result", "murage:provider-bank-fence"]);
-    expect(f.send.mock.calls[0][0].held).toBe(true); expect(f.send.mock.calls[2][0].held).toBe(false);
+    expect(f.send.mock.calls.map(call => call[0].type)).toEqual(["murage:provider-bank-fence", "murage:managed-composio", "murage:cloud-credential-result", "murage:provider-bank-fence", "murage:cloud-credentials", "murage:managed-composio"]);
+    expect(f.send.mock.calls[0][0].held).toBe(true); expect(f.send.mock.calls[3][0].held).toBe(false);
+  });
+  it("a new Flux key clears the old broker token in the same write and re-mints before the next connected-app call (1.0.4 audit 11-5)", async () => {
+    const oldToken = "c".repeat(64), newToken = "d".repeat(64);
+    let records: Record<string, string> = { fluxApiKey: "fixture-key", fluxComposioBrokerToken: oldToken, fluxComposioBrokerTokenKeyFingerprint: fluxKeyFingerprint("fixture-key"), fluxComposioBrokerTokenExpiresAt: "2099-01-01T00:00:00.000Z", fluxComposioAccountKind: "personal" };
+    const store = { getAll: () => ({ ...records }), patch: (patch: Record<string, string>) => (records = { ...records, ...patch }) };
+    const send = vi.fn();
+    const seenAtRemint: Array<Record<string, string>> = [];
+    const remintConnectedApps = vi.fn(async (credentials: Record<string, string>, _options: { force: boolean }) => {
+      seenAtRemint.push({ ...credentials });
+      return { ...credentials, fluxComposioBrokerToken: newToken, fluxComposioBrokerTokenKeyFingerprint: fluxKeyFingerprint(credentials.fluxApiKey ?? ""), fluxComposioAccountKind: "shared" };
+    });
+    const revokeBrokerToken = vi.fn(async () => true);
+    const port = createSupervisorPort({ store, send, remintConnectedApps, revokeBrokerToken });
+    await port.handle({ type: "murage:cloud-credential-write", requestId: "swap", credentials: { fluxApiKey: "next-account-key" } });
+    expect(remintConnectedApps).toHaveBeenCalledOnce();
+    expect(remintConnectedApps.mock.calls[0][1]).toEqual({ force: false });
+    // The re-mint never sees (so can never keep) the old key's token.
+    expect(seenAtRemint[0]?.fluxComposioBrokerToken ?? "").toBe("");
+    expect(seenAtRemint[0]?.fluxApiKey).toBe("next-account-key");
+    expect(store.getAll().fluxComposioBrokerToken).toBe(newToken);
+    // Nothing sent to the server after the write carries the old token; the
+    // server is told "no broker" before the write is acknowledged.
+    expect(JSON.stringify(send.mock.calls)).not.toContain(oldToken);
+    const types = send.mock.calls.map(call => call[0].type);
+    const cleared = types.indexOf("murage:managed-composio");
+    expect(cleared).toBeGreaterThan(-1);
+    expect(cleared).toBeLessThan(types.indexOf("murage:cloud-credential-result"));
+    expect(send.mock.calls[cleared][0].fluxAccess).toBeNull();
+    const last = send.mock.calls.filter(call => call[0].type === "murage:managed-composio").at(-1)?.[0];
+    expect(last?.fluxAccess?.token ?? newToken).toBe(newToken);
+    expect(send.mock.calls.find(call => call[0].type === "murage:cloud-credentials")?.[0].credentials.fluxComposioBrokerToken).toBe(newToken);
+    // The replaced token is revoked at Flux, best effort.
+    expect(revokeBrokerToken).toHaveBeenCalledWith(expect.any(String), oldToken);
+  });
+  it("a failed re-mint after a Flux key swap leaves no token, so connected apps fail closed", async () => {
+    const oldToken = "e".repeat(64);
+    let records: Record<string, string> = { fluxApiKey: "fixture-key", fluxComposioBrokerToken: oldToken, fluxComposioBrokerTokenKeyFingerprint: fluxKeyFingerprint("fixture-key") };
+    const store = { getAll: () => ({ ...records }), patch: (patch: Record<string, string>) => (records = { ...records, ...patch }) };
+    const send = vi.fn();
+    const remintConnectedApps = vi.fn(async () => { throw new Error("synthetic broker outage"); });
+    const port = createSupervisorPort({ store, send, remintConnectedApps, revokeBrokerToken: async () => true });
+    await port.handle({ type: "murage:cloud-credential-write", requestId: "swap", credentials: { fluxApiKey: "next-account-key" } });
+    expect(remintConnectedApps).toHaveBeenCalledOnce();
+    expect(store.getAll().fluxComposioBrokerToken).toBe("");
+    expect(JSON.stringify(send.mock.calls)).not.toContain(oldToken);
+  });
+  it("a credential write that keeps the same Flux key does not re-mint or drop the token", async () => {
+    const token = "f".repeat(64);
+    let records: Record<string, string> = { fluxApiKey: "fixture-key", fluxComposioBrokerToken: token, anthropicApiKey: "a-fixture" };
+    const store = { getAll: () => ({ ...records }), patch: (patch: Record<string, string>) => (records = { ...records, ...patch }) };
+    const send = vi.fn();
+    const remintConnectedApps = vi.fn(async (credentials: Record<string, string>) => credentials);
+    const revokeBrokerToken = vi.fn(async () => true);
+    const port = createSupervisorPort({ store, send, remintConnectedApps, revokeBrokerToken });
+    await port.handle({ type: "murage:cloud-credential-write", requestId: "same", credentials: { fluxApiKey: " fixture-key ", anthropicApiKey: "b-fixture" } });
+    await port.handle({ type: "murage:cloud-credential-write", requestId: "other", credentials: { anthropicApiKey: "c-fixture" } });
+    expect(remintConnectedApps).not.toHaveBeenCalled();
+    expect(revokeBrokerToken).not.toHaveBeenCalled();
+    expect(store.getAll().fluxComposioBrokerToken).toBe(token);
+    expect(send.mock.calls.map(call => call[0].type)).not.toContain("murage:managed-composio");
+  });
+  function mem(initial: Record<string, string>) {
+    let records = { ...initial };
+    return { getAll: () => ({ ...records }), patch: (patch: Record<string, string>) => (records = { ...records, ...patch }) };
+  }
+  it("re-saving the same Flux key re-mints when the earlier mint failed; with a token present it does not (audit M1)", async () => {
+    const store = mem({ fluxApiKey: "fixture-key", fluxComposioBrokerToken: "1".repeat(64), fluxComposioBrokerTokenKeyFingerprint: fluxKeyFingerprint("fixture-key") });
+    const send = vi.fn();
+    let fail = true;
+    const remintConnectedApps = vi.fn(async (c: Record<string, string>) => { if (fail) throw new Error("synthetic outage"); return { ...c, fluxComposioBrokerToken: "2".repeat(64) }; });
+    const port = createSupervisorPort({ store, send, remintConnectedApps, revokeBrokerToken: async () => true });
+    await port.handle({ type: "murage:cloud-credential-write", requestId: "a", credentials: { fluxApiKey: "next-key" } });
+    expect(store.getAll().fluxComposioBrokerToken).toBe("");
+    fail = false;
+    await port.handle({ type: "murage:cloud-credential-write", requestId: "b", credentials: { fluxApiKey: "next-key" } });
+    expect(remintConnectedApps).toHaveBeenCalledTimes(2);
+    expect(store.getAll().fluxComposioBrokerToken).toBe("2".repeat(64));
+    await port.handle({ type: "murage:cloud-credential-write", requestId: "c", credentials: { fluxApiKey: "next-key" } });
+    expect(remintConnectedApps).toHaveBeenCalledTimes(2);
+  });
+  it("a mint that fails after a Flux key write is retried on a backoff until a token is stored", async () => {
+    vi.useFakeTimers();
+    try {
+      const store = mem({ fluxApiKey: "fixture-key" });
+      let calls = 0;
+      const remintConnectedApps = vi.fn(async (c: Record<string, string>) => { if (++calls === 1) throw new Error("synthetic outage"); return { ...c, fluxComposioBrokerToken: "7".repeat(64) }; });
+      const port = createSupervisorPort({ store, send: vi.fn(), remintConnectedApps, revokeBrokerToken: async () => true, mintRetryDelaysMs: [1_000] });
+      await port.handle({ type: "murage:cloud-credential-write", requestId: "a", credentials: { fluxApiKey: "next-key" } });
+      expect(store.getAll().fluxComposioBrokerToken ?? "").toBe("");
+      await vi.advanceTimersByTimeAsync(1_500);
+      expect(store.getAll().fluxComposioBrokerToken).toBe("7".repeat(64));
+      port.dispose();
+    } finally { vi.useRealTimers(); }
+  });
+  it("a write queued behind a swap does not wait for a hanging revoke (audit M2)", async () => {
+    const store = mem({ fluxApiKey: "fixture-key", fluxComposioBrokerToken: "3".repeat(64) });
+    const send = vi.fn();
+    const port = createSupervisorPort({
+      store, send, remintConnectedApps: async c => ({ ...c, fluxComposioBrokerToken: "4".repeat(64) }),
+      revokeBrokerToken: () => new Promise(() => {}),
+    });
+    const swap = port.handle({ type: "murage:cloud-credential-write", requestId: "swap", credentials: { fluxApiKey: "next-key" } });
+    const queued = port.handle({ type: "murage:cloud-credential-write", requestId: "queued", credentials: { anthropicApiKey: "x" } });
+    const outcome = await Promise.race([Promise.all([swap, queued]).then(() => "done"), new Promise(r => setTimeout(() => r("hung"), 500))]);
+    expect(outcome).toBe("done");
+  });
+  it("the replaced token is sealed as a pending revoke, drained on start, and cleared once revoked", async () => {
+    const old = "5".repeat(64);
+    const store = mem({ fluxApiKey: "fixture-key", fluxComposioBrokerToken: old });
+    const send = vi.fn();
+    const revokes: string[] = [];
+    let revokeOk = false;
+    const revokeBrokerToken = vi.fn(async (_u: string, t: string) => { revokes.push(t); return revokeOk; });
+    const port = createSupervisorPort({ store, send, remintConnectedApps: async c => ({ ...c, fluxComposioBrokerToken: "6".repeat(64) }), revokeBrokerToken });
+    await port.handle({ type: "murage:cloud-credential-write", requestId: "swap", credentials: { fluxApiKey: "next-key" } });
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    // Revoke failed: the marker stays sealed, and is never sent to the server.
+    expect(pendingRevokes(store.getAll())).toEqual([old]);
+    expect(JSON.stringify(send.mock.calls)).not.toContain(old);
+    // Next start with Flux reachable: drained and cleared.
+    revokeOk = true;
+    const restarted = createSupervisorPort({ store, send, remintConnectedApps: async c => c, revokeBrokerToken });
+    await restarted.configure();
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    expect(revokes.at(-1)).toBe(old);
+    expect(pendingRevokes(store.getAll())).toEqual([]);
+  });
+  const settle = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
+  it("two swaps during a Flux outage are both revoked after recovery, and the list empties (bounded list)", async () => {
+    const t1 = "1".repeat(64), t2 = "2".repeat(64), t3 = "3".repeat(64);
+    const store = mem({ fluxApiKey: "k0", fluxComposioBrokerToken: t1 });
+    let up = false; const revoked: string[] = [];
+    let next = t2;
+    const revokeBrokerToken = vi.fn(async (_u: string, t: string) => { if (up) revoked.push(t); return up; });
+    const remintConnectedApps = async (c: Record<string, string>) => ({ ...c, fluxComposioBrokerToken: next });
+    const port = createSupervisorPort({ store, send: vi.fn(), remintConnectedApps, revokeBrokerToken });
+    await port.handle({ type: "murage:cloud-credential-write", requestId: "a", credentials: { fluxApiKey: "k1" } });
+    next = t3;
+    await port.handle({ type: "murage:cloud-credential-write", requestId: "b", credentials: { fluxApiKey: "k2" } });
+    await settle();
+    expect(pendingRevokes(store.getAll())).toEqual([t1, t2]);
+    up = true;
+    await port.configure(); await settle();
+    expect(revoked.sort()).toEqual([t1, t2]);
+    expect(pendingRevokes(store.getAll())).toEqual([]);
+  });
+  it("when one of two revokes fails only that entry remains", async () => {
+    const a = "a".repeat(64), b = "b".repeat(64);
+    const store = mem({ fluxApiKey: "k", fluxComposioBrokerToken: "c".repeat(64), fluxComposioPendingRevokeTokens: JSON.stringify([a, b]) });
+    const revokeBrokerToken = vi.fn(async (_u: string, t: string) => { if (t === a) throw new Error("boom"); return true; });
+    const port = createSupervisorPort({ store, send: vi.fn(), remintConnectedApps: async c => c, revokeBrokerToken });
+    await port.configure(); await settle();
+    // The failed entry is retried by the post-mint drain; the confirmed one is revoked exactly once.
+    expect(revokeBrokerToken.mock.calls.filter(call => call[1] === b)).toHaveLength(1);
+    expect(revokeBrokerToken.mock.calls.some(call => call[1] === a)).toBe(true);
+    expect(pendingRevokes(store.getAll())).toEqual([a]);
+  });
+  it("five swaps keep four entries; the oldest is dropped after one revoke attempt", async () => {
+    const tokens = [1, 2, 3, 4, 5].map(n => String(n).repeat(64));
+    const store = mem({ fluxApiKey: "k0", fluxComposioBrokerToken: tokens[0] });
+    const attempts: string[] = [];
+    let i = 1;
+    const port = createSupervisorPort({ store, send: vi.fn(),
+      remintConnectedApps: async c => ({ ...c, fluxComposioBrokerToken: tokens[Math.min(i++, 4)] }),
+      revokeBrokerToken: async (_u, t) => { attempts.push(t); return false; } });
+    for (let n = 1; n <= 5; n++) await port.handle({ type: "murage:cloud-credential-write", requestId: `s${n}`, credentials: { fluxApiKey: `k${n}` } });
+    await settle();
+    const list = pendingRevokes(store.getAll());
+    expect(list).toHaveLength(4);
+    expect(list).not.toContain(tokens[0]);
+    expect(attempts).toContain(tokens[0]);
+  });
+  it("migrates a legacy single pending field into the list", async () => {
+    const old = "9".repeat(64);
+    const store = mem({ fluxApiKey: "k", fluxComposioBrokerToken: "8".repeat(64), [LEGACY_PENDING_REVOKE_KEY]: old });
+    const revoked: string[] = [];
+    const port = createSupervisorPort({ store, send: vi.fn(), remintConnectedApps: async c => c, revokeBrokerToken: async (_u, t) => { revoked.push(t); return true; } });
+    expect(pendingRevokes(store.getAll())).toEqual([old]);
+    await port.configure(); await settle();
+    expect(revoked).toEqual([old]);
+    expect(pendingRevokes(store.getAll())).toEqual([]);
+    expect(store.getAll()[LEGACY_PENDING_REVOKE_KEY]).toBe("");
   });
   it("keeps the model sign-in document out of generic credential responses and writes", async () => {
     const f = fixture();

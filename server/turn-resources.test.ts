@@ -141,6 +141,26 @@ it("startTurn admits through the claim boundary and releases what it did not mou
   expect(code).toContain("admissionComputerClaims({ botId: bot.id, wants, autoCloudPossible, autoHostScreenPossible })");
   expect(code).toContain("unusedComputerClaims({");
   expect(code).toContain("directRuns.releaseResources(run, giveBack)");
-  // and the wait that had no deadline now has one
-  expect(code).toContain("RESOURCE_WAIT_TIMEOUT_MS");
+  // SL-L L3 (1.0.4): the turn's waits pass no deadline, so nothing fails
+  // after an hour in line; one "still waiting" line is written instead.
+  expect(code).not.toMatch(/directRuns\.acquire\([^)]*RESOURCE_WAIT_TIMEOUT_MS/);
+  expect(code).toContain("directRuns.acquire(run,resources,onWait,undefined,yieldPolicy,longWait)");
+  expect(code).toContain("directRuns.acquire(run,rest,onWait,undefined,undefined,longWait)");
+  expect(code).toContain("stillWaitingRemainingMs(firstWaitAt,Date.now())");
+});
+
+// SL-L L4 (1.0.4): a routine run's INITIAL turn reports its first-seat wait to
+// the run, and a card continuation never does. User failure: a routine queued
+// behind a busy folder is failed at restart, or stopped by its own limit while
+// it was only waiting in line.
+it("startTurn records a routine's first-seat wait on its run, never for a card continuation", () => {
+  const code = readFileSync(new URL("./index.ts", import.meta.url), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith("//"))
+    .join("\n");
+  expect(code).toContain("...(routineRunId ? { seatWaitRunId: routineRunId } : {})");
+  expect(code).toContain("if (opts?.seatWaitRunId && !opts.cardContinuation && liveRun && liveRun.botId === bot.id && liveRun.runId === opts.seatWaitRunId)");
+  expect(code).toContain("if(seatRunId)routines?.runSeatWait(seatRunId,waitingFor.resource);");
+  expect(code).toContain("if(waited&&seated&&seatRunId)routines?.runSeatWait(seatRunId,null);");
 });

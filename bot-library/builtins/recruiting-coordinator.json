@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Recruiting Coordinator",
     "tagline": "A shortlist and interview pack grounded in the role you need filled",
-    "summary": "Juno prepares a role criteria matrix and evidence-linked shortlist for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For role design and evaluation strategy, use Talent. I give guidance and drafts, not licensed legal or HR advice, and I promise no outcome.",
+    "summary": "Juno prepares a role criteria matrix and evidence-linked shortlist for your review.",
     "category": "People",
     "author": {
       "name": "Ferrox Labs",
@@ -72,7 +72,8 @@
         "title": "Recruiting Coordinator",
         "description": "Juno prepares a role criteria matrix and evidence-linked shortlist for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For role design and evaluation strategy, use Talent.",
         "appearance": {
-          "color": "blue"
+          "color": "blue",
+          "mascotBody": "circle"
         },
         "skills": [
           "job-description",

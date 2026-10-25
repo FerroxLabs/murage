@@ -6,7 +6,7 @@ import { database } from "./database.ts";
 import { botDeleted } from "./owner-deletions.ts";
 import { threadHasKeyed } from "./message-db.ts";
 import { type BotRecord, type GroupRecord, type Store, type TaskRecord, sectionKey, isWorkspaceChief, isIndividualAssistant } from "./store.ts";
-import { OWNER, assertHumanPrincipal, bindHumanThread, humanTask, isLocalOwner, threadHumanPrincipal, withBindingScope, type HumanPrincipal } from "./human-principals.ts";
+import { OWNER, assertHumanPrincipal, bindHumanThread, humanTask, isGroupPrincipal, isLocalOwner, isWorkspaceOwner, threadHumanPrincipal, withBindingScope, type HumanPrincipal } from "./human-principals.ts";
 import { teamIdFor, teamMemoryKey } from "./team-identities.ts";
 import { outOfReachLine } from "./coordination-target.ts";
 import { isAutomationThread, mayMessage } from "./message-allow.ts";
@@ -107,6 +107,27 @@ export function isOwnUnsharedThread(bot: BotRecord | undefined, threadId: string
   const task = bot?.tasks?.find(t => t.threadId === threadId);
   return Boolean(bot && task && !task.sharedWork && threadPartition(bot, threadId).kind === "home"
     && JSON.stringify(threadHumanPrincipal(threadId)) === JSON.stringify(OWNER));
+}
+/** isOwnUnsharedThread's shape without its owner clause: a task of the bot, no shared work on it, in the bot's home partition. */
+function isUnsharedHomeTask(bot: BotRecord | undefined, threadId: string): boolean {
+  const task = bot?.tasks?.find(t => t.threadId === threadId);
+  return Boolean(bot && task && !task.sharedWork && threadPartition(bot, threadId).kind === "home");
+}
+/** SL-E E2 (r3 section 10): true only when both threads are positively the `reader`'s own unshared conversations, read live now: the reader is
+ * not the owner (a channel account linked as the owner keeps the owner's own rule), the reader equals the exact binding (person, binding,
+ * revision) of both threads, that binding is active at that revision, it is not a group, and each thread is a task of its bot with no shared work
+ * in its home partition. With no origin thread, the source thread alone. `reader` is required: a caller that cannot name who reads gets no
+ * person proof. Anything that cannot be proven is false, so callers fail closed. */
+export function isSamePersonUnsharedPair(reader: HumanPrincipal, from: BotRecord | undefined, fromThreadId: string, target: BotRecord | undefined, originThreadId?: string): boolean {
+  try {
+    const person = reader;
+    if (isLocalOwner(person) || isWorkspaceOwner(person)) return false;
+    if (JSON.stringify(threadHumanPrincipal(fromThreadId)) !== JSON.stringify(person)) return false;
+    if (originThreadId !== undefined && JSON.stringify(threadHumanPrincipal(originThreadId)) !== JSON.stringify(person)) return false;
+    assertHumanPrincipal(person);
+    if (isGroupPrincipal(person)) return false;
+    return isUnsharedHomeTask(from, fromThreadId) && (originThreadId === undefined || isUnsharedHomeTask(target, originThreadId));
+  } catch { return false; }
 }
 export function homeThread(bot: BotRecord): TaskRecord {
   // (thread bindings remembered for the whole selection: human-principals.ts withBindingScope)

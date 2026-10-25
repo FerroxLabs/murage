@@ -128,7 +128,7 @@ it("a steer into a running session whose disclosed source was retired is refused
 
 it("the image-await check and the live steer both go through the full session validation", () => {
   const source = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
-  const imagesAt = source.indexOf("await collectTurnImages(instance.driverKind, threadId, bot.id, text)");
+  const imagesAt = source.indexOf("await collectTurnImages(instance.driverKind, threadId, bot.id, imageText)");
   const afterImages = source.indexOf("memoryReceipt?.assertCurrent();", imagesAt);
   expect(imagesAt).toBeGreaterThan(0);
   expect(afterImages).toBeGreaterThan(imagesAt);
@@ -136,7 +136,7 @@ it("the image-await check and the live steer both go through the full session va
   // retained session's own (memory off), and the same gate is the steer's
   // write fence, run again right before a late write (round 3)
   const holdsAt = source.indexOf("const steerSessionHolds = (): boolean => {");
-  expect(source.slice(holdsAt, holdsAt + 600)).toMatch(/receipt\.steerable\(\)[\s\S]*retainedSessionInvalid\(/);
+  expect(source.slice(holdsAt, holdsAt + 800)).toMatch(/receipt\.steerable\(\)[\s\S]*retainedSessionInvalid\(/);
   // (1.0.2: only for an engine that can take the line mid-turn; any other
   // queues it, and that turn's own pre-submit check decides)
   const gateAt = source.indexOf("const memorySessionHolds = steerable && steerSessionHolds();");
@@ -176,14 +176,36 @@ it("a room member turn resets the engine session before its bundle and never res
   expect(room).not.toMatch(/resumeCursor/);
   expect(room).not.toMatch(/\.resumes\(/);
   expect(room).not.toMatch(/steerBusyDesk|steerWithQuoteLineage|\.steer\(/);
-  // the one steer call is the direct-message route, limited to the bot's own task threads
+  // the one steer call is the owner's send to a bot's own chat (acceptBotSend, 1.0.4 SL-I I4), limited to the bot's own task threads:
+  // reached only from the direct-message route, after the bot and its task are resolved, and from a limit failover's resend of the
+  // owner's own message into the same task
   expect(source.split("steerBusyDesk(").length - 1).toBe(0);
   expect(source.split("steerWithQuoteLineage(").length - 1).toBe(1);
   const route = source.indexOf("m = path.match(/^\\/api\\/bots\\/([\\w-]+)\\/messages$/);");
   const direct = source.indexOf("const bot = requestedDirectBot(m[1],body.threadId);", route);
-  const steer = source.indexOf("steerWithQuoteLineage(", route);
+  const ownTask = source.indexOf("if (!store.taskByThread(bot.id, threadId)) {", direct);
   expect(route).toBeGreaterThan(0);
   expect(direct).toBeGreaterThan(route);
-  expect(steer).toBeGreaterThan(direct);
+  expect(ownTask).toBeGreaterThan(direct);
+  // the direct route (after its own-task check) and a limit failover's resend are the only two ways into acceptBotSend
+  const callers = [...source.matchAll(/acceptBotSend\(\{/g)].map(match => match.index!);
+  expect(callers).toHaveLength(2);
+  expect(callers.filter(at => at > ownTask && at < source.indexOf("\n    m = path.match(", ownTask))).toHaveLength(1);
+  const resend = source.indexOf("function resendFailover(row: FailoverRow): void {");
+  expect(resend).toBeGreaterThan(0);
+  expect(callers.filter(at => at > resend && at < source.indexOf("\n}\n", resend))).toHaveLength(1);
+  // the failover's thread is a task of the bot it fails over (failOverThread resolves it before the resend)
+  expect(source).toContain("function failOverThread(turn: { botId: string; threadId: string; selection: ModelSelection; sourceMessageId: string }, to: ModelSelection, resetsAt: number | null, now: number): FailoverRow | null {\n  const task = store.taskByThread(turn.botId, turn.threadId);\n  if (!task) return null;");
+  // QW Q1: acceptBotSend admits through admitDirectSend, which holds the one steer (an ask_user answer shares it)
+  const accept = source.indexOf("async function acceptBotSend(");
+  const admit = source.indexOf("return admitDirectSend({ bot, threadId, row, text, replyTo, sendId, origin, unprovenSend });", accept);
+  const admitter = source.indexOf("function admitDirectSend(");
+  const steer = source.indexOf("steerWithQuoteLineage(", admitter);
+  expect(accept).toBeGreaterThan(0);
+  expect(admit).toBeGreaterThan(accept);
+  expect(admit).toBeLessThan(source.indexOf("\n}\n", accept));
+  expect(admitter).toBeGreaterThan(0);
+  expect(steer).toBeGreaterThan(admitter);
+  expect(steer).toBeLessThan(source.indexOf("\n}\n", admitter));
   expect(source).toContain("const threadId=requireDirectThreadTarget(store.tasks(botId).map(task=>task.threadId),requested);");
 });

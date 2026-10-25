@@ -30,9 +30,13 @@ function usageFixture() {
     roomRequest: () => request, database: () => ({}), projectGroupForThread: () => ({ id: "g", channelProject: true }),
     store: { messagesFor: () => [], newestMatching: () => undefined, group: () => ({ id: "g" }) }, insertRoomRequest: insert, activeRoomGoal: () => "goal",
     roomLineage: () => ({ notOwnerAudience: true }), projectUsagePending: pending, projectUsageTurns: turns,
-    settleProjectUsage: settle, completeRequest: complete, projectFrames: { strip: vi.fn() }, projectBudgetGate: { evaluate: vi.fn() },
+    settleProjectUsage: settle, completeRequest: complete,
+    // F3 (540bec1c0): a usage root's completion is handed to afterRoomCompletion (cancelled subtree, interrupts, wakes); its own subject is request-tree-f3.test.ts
+    afterRoomCompletion: vi.fn(), projectFrames: { strip: vi.fn() }, projectBudgetGate: { evaluate: vi.fn() },
     // the warm-engine identity the usage turn now carries (mobile lane): no proven human here
     threadHumanPrincipal: () => undefined,
+    // the Flux number hold (1.0.4): this thread holds no number
+    fluxCaptureHeld: () => false,
     // background work is told by the dispatch's own request (a routine's): the real classifier
     turnIsBackground,
   };
@@ -40,7 +44,8 @@ function usageFixture() {
 }
 it("F3 refuses an ask from the lead reply at the project budget line", () => {
   const check = vi.fn(() => ({ ok: false, line: "Budget reached: raise it or stop." }));
-  const ask = seam("roomAskRefused", { roomAskParent: () => ({ id: "reply", groupId: "g", projectGoalId: "goal" }), database: () => ({}),
+  // F3 (540bec1c0): roomAskRefused first refuses under a cancelled ancestor; nothing above this reply is cancelled here
+  const ask = seam("roomAskRefused", { cancelledAncestorOrSelf: () => false, roomAskParent: () => ({ id: "reply", groupId: "g", projectGoalId: "goal" }), database: () => ({}),
     askWouldDeadlock: () => false, store: { group: () => ({ id: "g", channelProject: true }) },
     roomProjectContext: () => ({ mode: "goal", goalId: "goal", goalState: "working" }), projectBudgetGate: { check }, cfg: { features: {} } });
   expect(ask("lead", "worker", "thread")).toBe("Budget reached: raise it or stop.");
