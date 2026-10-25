@@ -204,3 +204,27 @@ describe("L11a: a closed shadow root is never clear", () => {
     expect(await protectedDocumentTargeted(send, "guard()", "w")).toBe(false);
   });
 });
+
+describe("05-A3: a keyboard step is judged on the element that really has focus", () => {
+  const snapshot = (yaml: string) => ({ content: [{ type: "text", text: yaml }] });
+  it("Enter after filling Search is the owner's turn when the page moved focus to a Pay button", async () => {
+    const gate = new BuiltinFloorGate();
+    gate.rememberToolResult("agent_browser_snapshot", snapshot('- textbox "Search" [ref=e1]\n- button "Pay $500" [ref=e2]'));
+    expect(await gate.guardAgentBrowser("agent_browser_fill", { selector: "@e1", text: "boots" })).toBeNull();
+    const read = async (selector: string) => (selector === ":focus" ? "<button type=\"submit\">Pay $500</button>" : "");
+    expect(await gate.guardAgentBrowser("agent_browser_press", { key: "Enter" }, read)).toMatch(/^YOUR TURN:/);
+  });
+  it("Enter is the owner's turn when the live focus cannot be read", async () => {
+    const gate = new BuiltinFloorGate();
+    gate.rememberToolResult("agent_browser_snapshot", snapshot('- textbox "Search" [ref=e1]'));
+    expect(await gate.guardAgentBrowser("agent_browser_fill", { selector: "@e1", text: "boots" })).toBeNull();
+    expect(await gate.guardAgentBrowser("agent_browser_press", { key: "Enter" }, async () => "")).toMatch(/^YOUR TURN:/);
+  });
+  it("Enter in a plain search field that really has focus goes ahead", async () => {
+    const gate = new BuiltinFloorGate();
+    gate.rememberToolResult("agent_browser_snapshot", snapshot('- textbox "Search" [ref=e1]'));
+    expect(await gate.guardAgentBrowser("agent_browser_fill", { selector: "@e1", text: "boots" })).toBeNull();
+    const read = async () => '<input type="search" aria-label="Search">';
+    expect(await gate.guardAgentBrowser("agent_browser_press", { key: "Enter" }, read)).toBeNull();
+  });
+});

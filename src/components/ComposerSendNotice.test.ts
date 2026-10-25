@@ -52,6 +52,14 @@ describe("ComposerSendNotice", () => {
   });
 });
 
+describe("U36 send notices", () => {
+  it("say why a press was not sent, from the language packs, with the words still in the box", () => {
+    expect(composerSendNoticeText({ kind: "not-saved" })).toBe("Your words are still here. This device could not record the send, so nothing went out. Press Send again in a moment.");
+    expect(composerSendNoticeText({ kind: "earlier-arrived" })).toBe("Your earlier message already reached the bot. Your edited words are still here, ready to send as a new message.");
+    expect(composerSendNoticeText({ kind: "check-failed" })).toBe("Your words are still here. Murage could not yet confirm whether your earlier message arrived. Press Send again in a moment.");
+  });
+});
+
 describe("the composer's send", () => {
   const start = composerSource.indexOf("const send = () => {");
   const send = composerSource.slice(start, composerSource.indexOf("// native dictation", start));
@@ -60,7 +68,7 @@ describe("the composer's send", () => {
     expect(start).toBeGreaterThan(-1);
     const check = send.indexOf("if (messageIsTooLarge(t)) {");
     expect(check).toBeGreaterThan(-1);
-    for (const later of ['type: "sendGroup"', 'type: "send",', "replyToIntake(", "clearAcknowledgedDraft("]) {
+    for (const later of ['type: "sendGroup"', 'type: "send",', "replyToIntake(", "beginDraftSend("]) {
       expect(send.indexOf(later), later).toBeGreaterThan(check);
     }
     // up to the block's own closing brace, past the notice object literal
@@ -78,10 +86,11 @@ describe("the composer's send", () => {
     // sentence the direct send's own handler is already holding the draft
     // for. Restoring the draft there would fight the send that succeeded, and
     // a setup card that did not appear is not a message that did not send.
-    // Both paths share one failure handler (restore the draft, show the size notice)...
+    // Both paths share one failure handler (show the size notice). U36: the words never left the box (its
+    // record), so nothing is restored.
     expect(send.match(/onError: failedSend/g)).toHaveLength(2);
     expect(send.match(/refusedForSize\(error\)/g)).toHaveLength(1);
-    expect(send.match(/restoreDraft\(sentDraft\)/g)).toHaveLength(1);
+    expect(send).not.toContain("restoreDraft(");
     // a setup card that did not hear it is said quietly; it never fails the send
     expect(send).toContain("{ alongside: true }).then(() => setIntakeNotice(null), () => setIntakeNotice(INTAKE_NOT_RECORDED))");
   });

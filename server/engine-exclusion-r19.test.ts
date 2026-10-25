@@ -205,17 +205,17 @@ describe("an engine's files are changed only while that engine is closed", () =>
     mkdirSync(data, { recursive: true });
     const db = new DatabaseSync(join(data, "messages.db"));
     openDatabases.push(db);
-    const deletions = new ConversationDeletions({ dataDir: data, database: () => db, retryDelaysMs: [] });
+    const deletions = new ConversationDeletions({ dataDir: data, database: () => db, retryDelaysMs: [], owedGraceMs: 0 });
     engineHistoryTestHooks.createWorker = () => new ScriptedWorker((message, worker) => worker.emit("message", { type: "result", result: runEngineHistoryJob(message) })) as unknown as Worker;
     const release = fake.openEngine("fuigo");
     const first = await runConversationDeletion(deletions, { threadIds: ["2e9018ee-1f45-46be-8ed1-7a02fc022807"], engineHomes: fx.homes }, () => true);
     expect(first.report.failed).toContain(fx.homes[0]!.home);
     expect(writes()).toEqual([]);
-    expect(deletions.notices().map((item) => [item.text, item.tryAgain])).toEqual([["Fuigo is open. Close Fuigo and Murage will finish removing this conversation from it.", true]]);
+    expect(deletions.notices().map((item) => [item.text, item.tryAgain])).toEqual([["Fuigo is open. Murage finishes removing this conversation from it by itself once Fuigo is closed. Nothing is needed from you.", true]]);
     release();
-    expect(await deletions.retryNow()).toBe(1);
+    expect((await deletions.retryNow()).finished).toEqual(["fuigo"]);
     expect(deletions.pending()).toEqual([]);
-    expect(deletions.notices().map((item) => [item.text, item.tryAgain])).toEqual([["Removed from Fuigo.", false]]);
+    expect(deletions.notices()).toEqual([]); // F16: no "Removed from" line
     deletions.dispose();
   });
 
@@ -252,13 +252,13 @@ describe("an engine's files are changed only while that engine is closed", () =>
     const first = await runConversationDeletion(deletions, { threadIds: ["2e9018ee-1f45-46be-8ed1-7a02fc022807"], engineHomes: fx.homes }, () => true);
     expect(first.report.failed).toContain(fx.homes[0]!.home);
     expect(writes()).toEqual([]);
-    expect(deletions.pending()[0]!.owed?.homes).toEqual([{ engine: "fuigo", code: "engine-unchecked" }]);
+    expect(deletions.pending()[0]!.owed?.items.map((item) => [item.engine, item.code])).toEqual(fx.homes.map(() => ["fuigo", "engine-unchecked"]));
     expect(canaryHits(fx.root, fx.canaries).length).toBeGreaterThan(0);
     deletions.dispose();
   });
 
   it("the owner's words", () => {
-    expect(ownerNoticeText("Codex", "engine-open")).toBe("Codex is open. Close Codex and Murage will finish removing this conversation from it.");
+    expect(ownerNoticeText("Codex", "engine-open")).toBe("Codex is open. Murage finishes removing this conversation from it by itself once Codex is closed. Nothing is needed from you.");
     expect(ownerNoticeText("Claude Code", "engine-open")).not.toMatch(/—|–|\bsafe(ly|ty)?\b|\bunsafe\b/i);
   });
 });

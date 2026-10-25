@@ -42,7 +42,8 @@
         "title": "Negotiation Prep",
         "description": "Parley prepares a one-page negotiation brief from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For individual deal strategy, use Sales. For offer design, use Offer.",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "shield"
         },
         "skills": [
           "negotiation-master",

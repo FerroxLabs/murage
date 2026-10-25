@@ -643,7 +643,7 @@ class ScriptedWorker extends EventEmitter {
   terminate() { setImmediate(() => this.emit("exit", 0)); return Promise.resolve(0); }
 }
 
-describe("r17-12: 'Removed from <Engine>.' runs out for an open window as well", () => {
+describe("r17-12 (F16): there is no 'Removed from <Engine>.' line: once nothing is owed the window is told with an empty list", () => {
   async function finishedDeletion() {
     const fx = buildFixture("fuigo", scratch);
     const log = join(fx.homes[0]!.home, "logs", "unified.jsonl");
@@ -652,41 +652,28 @@ describe("r17-12: 'Removed from <Engine>.' runs out for an open window as well",
     const db = new DatabaseSync(join(data, "messages.db"));
     openDatabases.push(db);
     const seen: Array<{ texts: string[]; rev: number }> = [];
-    const deletions = new ConversationDeletions({ dataDir: data, database: () => db, retryDelaysMs: [], onOwed: (notices, rev) => seen.push({ texts: notices.map((item) => item.text), rev }) });
+    const deletions = new ConversationDeletions({ dataDir: data, database: () => db, retryDelaysMs: [], owedGraceMs: 0, onOwed: (notices, rev) => seen.push({ texts: notices.map((item) => item.text), rev }) });
     engineHistoryTestHooks.createWorker = () => new ScriptedWorker((message, worker) => worker.emit("message", { type: "result", result: runEngineHistoryJob(message) })) as unknown as Worker;
     const release = fake.keepLock(log);
     await runConversationDeletion(deletions, { threadIds: ["2e9018ee-1f45-46be-8ed1-7a02fc022807"], engineHomes: fx.homes }, () => true);
+    expect(seen.at(-1)!.texts).toHaveLength(1);
+    const shown = seen.at(-1)!.rev;
     release();
-    expect(await deletions.retryNow()).toBe(1);
-    expect(seen.at(-1)!.texts).toEqual(["Removed from Fuigo."]);
+    expect((await deletions.retryNow()).started).toBe(1);
+    expect(seen.at(-1)!.texts).toEqual([]);
+    expect(seen.at(-1)!.rev).toBeGreaterThan(shown);
     return { deletions, seen };
   }
 
-  it("when the line runs out the revision advances and the window is told with an empty list (by the timer)", async () => {
+  it("the copy is gone: the last broadcast is empty, newer than the line it replaced, and stays empty minutes later", async () => {
     vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
     try {
       const { deletions, seen } = await finishedDeletion();
-      const shown = seen.at(-1)!.rev;
       const told = seen.length;
       vi.advanceTimersByTime(5 * 60_000 + 100);
-      expect(seen.length).toBeGreaterThan(told);
-      expect(seen.at(-1)!.texts).toEqual([]);
-      expect(seen.at(-1)!.rev).toBeGreaterThan(shown);
+      expect(seen.length).toBe(told);
+      expect(deletions.notices()).toEqual([]);
       expect(deletions.currentRev()).toBe(seen.at(-1)!.rev);
-      expect(deletions.notices()).toEqual([]);
-      deletions.dispose();
-    } finally { vi.useRealTimers(); }
-  });
-
-  it("an answer asked after the line ran out is empty and newer than the one that showed it", async () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
-    try {
-      const { deletions, seen } = await finishedDeletion();
-      const shown = seen.at(-1)!.rev;
-      vi.setSystemTime(Date.now() + 5 * 60_000 + 1000);
-      expect(deletions.notices()).toEqual([]);
-      expect(seen.at(-1)!.texts).toEqual([]);
-      expect(deletions.currentRev()).toBeGreaterThan(shown);
       deletions.dispose();
     } finally { vi.useRealTimers(); }
   });
@@ -707,7 +694,7 @@ describe("real-engine (b): a deletion right after closing Codex is tried again e
     engineHistoryTestHooks.createWorker = () => new ScriptedWorker((message, worker) => { jobs++; worker.emit("message", { type: "result", result: runEngineHistoryJob(message) }); }) as unknown as Worker;
     fake.keepLock(held); // the engine keeps its lock for the whole test
     await runConversationDeletion(deletions, { threadIds: ["2e9018ee-1f45-46be-8ed1-7a02fc022807"], engineHomes: fx.homes }, () => true);
-    expect(deletions.pending()[0]!.owed?.homes[0]?.code).toBe("engine-open");
+    expect(deletions.pending()[0]!.owed?.items[0]?.code).toBe("engine-open");
     return { deletions, jobs: () => jobs };
   }
   const flush = async () => { for (let i = 0; i < 8; i++) await new Promise<void>((resolve) => setImmediate(resolve)); };

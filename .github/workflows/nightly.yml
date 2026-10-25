@@ -25,12 +25,14 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # 2026-10-25: Linux runners are pinned to ubuntu-24.04. ubuntu-latest moved to 26.04, which stays pinned out until
+  # Playwright supports chromium there and the electron no-desktop-session backup test passes on it (1.0.7 follow-up).
   slow:
     name: nightly tests ${{ matrix.shard }}/3 (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
+        os: [macos-latest, ubuntu-24.04, windows-latest]
         shard: [1, 2, 3]
     runs-on: ${{ matrix.os }}
     # The slowest single test measured 13.7 min (Windows, 1.0.2); the tagged set is about 70 Windows
@@ -83,7 +85,7 @@ jobs:
     # One result for the release gate and for branch rules: success only if every job passed.
     if: ${{ always() }}
     needs: [slow]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - env:

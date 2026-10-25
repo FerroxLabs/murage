@@ -57,6 +57,7 @@ import { ioBudget } from "./io-budget.ts";
 import type { LineageReader, LineageRef, LineageVerdict, PromptPart } from "./memory/lineage-types.ts";
 import { fileRef, lineRefs, memoryRefs, murageObjectRef, noneRef, promptPart } from "./memory/prompt-parts.ts";
 import { denyLookup, memoryLookup } from "./memory/deny-read.ts";
+import { venueKinds, type VenueKind } from "./venue-awareness.ts";
 import { memoryRefKey, type MemoryRef } from "./memory/lineage-types.ts";
 
 export const WORKING_CONTEXT_MAX_BYTES = 1536;
@@ -90,6 +91,8 @@ export interface WorkingContextInput {
   now: number;
   /** What started the turn (the routine trigger): a scheduled or webhook run gets no block and does no work for it. */
   trigger?: string;
+  /** Lifecycle facts from this turn's venue build. null means that build was unavailable. */
+  venueKinds?: ReadonlyMap<string, VenueKind> | null;
 }
 
 type Candidate = { threadId: string; label: string; title?: { name: string; render: (title: string) => string; fallback: string } };
@@ -111,12 +114,13 @@ function taskIndex(tasks: ReadonlyArray<TaskLike> | undefined): ReadonlyMap<stri
 
 type LiveBot = NonNullable<ReturnType<NonNullable<ReturnType<typeof executionStore>>["bot"]>>;
 /** Who the block is for: the bot as the input names it, its live record and its direct chat. */
-type Subject = { bot: WorkingContextInput["bots"][number]; liveBot: LiveBot | undefined; directThread: string };
-function subject(input: WorkingContextInput): Subject | undefined {
+/** `kinds`: the lifecycle class of each room the bot is a member of (venue-awareness.ts venueKinds), read once per build. */
+type Subject = { bot: WorkingContextInput["bots"][number]; liveBot: LiveBot | undefined; directThread: string; kinds: ReadonlyMap<string, VenueKind> };
+function subject(input: WorkingContextInput, db: DatabaseSync): Subject | undefined {
   const bot = input.bots.find(entry => entry.id === input.botId);
   if (!bot) return undefined;
   const liveBot = executionStore()?.bot(bot.id) ?? undefined;
-  return { bot, liveBot, directThread: liveBot ? homeThread(liveBot).threadId : bot.threadId };
+  return { bot, liveBot, directThread: liveBot ? homeThread(liveBot).threadId : bot.threadId, kinds: input.venueKinds ?? venueKinds(db, input.groups, input.botId) };
 }
 
 /** What `threadId` is to the bot right now, read from the live input: its direct chat, one of its tasks, or a room
@@ -126,12 +130,13 @@ function candidateFor(input: WorkingContextInput, who: Subject, threadId: string
   const task = taskIndex(who.bot.tasks).get(threadId);
   if (task) {
     const desk = task.channelProjectDesk ? input.groups.find(group => group.id === task.channelProjectDesk!.groupId) : undefined;
-    return desk ? { threadId, label: `My work thread for the project "${name(desk.name)}"` }
+    // an ended project, or one with no settings row, is a channel here as in the venue list (design 3.4)
+    return desk ? { threadId, label: `My work thread for the ${who.kinds.get(desk.id) === "project" ? "project" : "channel"} "${name(desk.name)}"` }
       : { threadId, label: "", title: { name: task.title, render: title => `Task "${name(title)}"`, fallback: "A task" } };
   }
   for (const group of input.groups) {
     if (group.dm || !group.memberIds.includes(input.botId)) continue;
-    const kind = group.channelProject ? "Project" : "Channel";
+    const kind = who.kinds.get(group.id) === "project" ? "Project" : "Channel";
     if (group.threadId === threadId) return { threadId, label: `${kind} "${name(group.name)}"` };
     const roomTask = taskIndex(group.tasks).get(threadId);
     if (roomTask) return { threadId, label: "", title: { name: roomTask.title, render: title => `${kind} "${name(group.name)}", thread "${name(title)}"`, fallback: `${kind} "${name(group.name)}", another thread` } };
@@ -195,8 +200,8 @@ function quote(text: string): string {
   return JSON.stringify(text).replace(/</g, "\\u003c").replace(/>/g, "\\u003e");
 }
 /** Owner-written names (tasks, rooms, routines) on one line, no tags. */
-function name(text: string): string {
-  return text.replace(/\s+/g, " ").replace(/[<>]/g, "").trim().slice(0, 80);
+export function name(text: string, maxChars = 80): string {
+  return text.replace(/\s+/g, " ").replace(/[<>]/g, "").trim().slice(0, maxChars);
 }
 
 function clip(text: string): string {
@@ -495,12 +500,14 @@ function buildWorkingContext(allowance: LineageAllowance, input: WorkingContextI
 function buildWorkingContextScoped(allowance: LineageAllowance, input: WorkingContextInput, db: DatabaseSync, refs: LineageRef[], reader?: LineageReader): { text: string; quoted: WorkingContextQuote[] } {
   // a scheduled or webhook run is not a turn with the owner: no block, and no work for it
   if (input.trigger === "schedule" || input.trigger === "webhook") return { text: "", quoted: [] };
-  const who = subject(input);
+  // Do not retry a failed venue lookup or contradict its unavailable line with stale project labels.
+  if (input.venueKinds === null) return { text: "", quoted: [] };
+  const who = subject(input, db);
   if (!who) return { text: "", quoted: [] };
   const excluded = excludedThreads(db);
   const eligible = eligibility(input, db, who, excluded);
   const lines: string[] = [];
-  const projectGroups = input.groups.filter(group => group.channelProject && !group.dm && group.memberIds.includes(input.botId));
+  const projectGroups = input.groups.filter(group => who.kinds.get(group.id) === "project" && !group.dm && group.memberIds.includes(input.botId));
   if (projectGroups.length && projectTableExists(db, "project_work_items")) {
     for (const group of projectGroups) {
       if (lines.length === MAX_THREADS) break;
@@ -578,4 +585,9 @@ export function workingContextForTurn(sessionKey: string, block: string, freshSe
 
 export function withWorkingContext(text: string, block: string): string {
   return block ? `<working-context>\n${block}\n</working-context>\n\n${text}` : text;
+}
+
+/** "Where I belong" (venue-awareness.ts) rides first on the message, on every owner-audience direct turn. */
+export function withVenues(text: string, block: string): string {
+  return block ? `<where-i-belong>\n${block}\n</where-i-belong>\n\n${text}` : text;
 }

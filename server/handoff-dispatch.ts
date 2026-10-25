@@ -16,8 +16,9 @@
 //            start on the STORED destination with the ticket.
 //   failure  decided by the row's state, never by an error's text (delegations.ts settleAfterFailure): a start that never began waits, it is not ended.
 import { database, transaction } from "./database.ts";
-import { failureCodeFrom } from "./failure-code.ts";
+import { startFailureCodeFrom, type StartFailureCode } from "./failure-code.ts";
 import { MurageStatus, cancelledEnding, status, type Outbound } from "./murage-status.ts";
+import { DRAFT_ONLY_HANDOFF_REFUSAL } from "./draft-only.ts";
 const isDeletedEnding = (result: Outbound): boolean => MurageStatus.is(result) && result.key === "receipt_deleted";
 import { recordRefusedStart } from "./refused-start.ts";
 import { claimMinter, isLiveTicket } from "./handoff-capability.ts";
@@ -25,7 +26,7 @@ import { getOrCreateChannel, mirrorExchange, type CommsBus, type QueuedSource } 
 import { peerApprovalFailure, requestPeerApproval, type ApprovalBus } from "./peer-approval.ts";
 import { botDeleted, ownerDeletedThread } from "./owner-deletions.ts";
 import { delegationAdmissionHeld, delegationTurnKey } from "./pending-delegations-schema.ts";
-import { enterOwnerWait, isTerminalRoomRequestState, leaveOwnerWait, handoffRequest, markRequestDispatched, type RoomRequest } from "./room-requests.ts";
+import { askerEnded, CANCELLED_WITH_ASKER, enterOwnerWait, isTerminalRoomRequestState, leaveOwnerWait, handoffRequest, markRequestDispatched, type RoomRequest } from "./room-requests.ts";
 import { admitShared, cancelDeletedSharedRequest, drainSharedWork, isSharedWorkRow, settleShared, sharedClock, sharedDrainOpen, sharedRequestDeleted, sharedRequestIsNext, sharedResolution, type SharedVerdict } from "./shared-work.ts";
 import type { AdmissionClaim, ExecutionAudience } from "./work-admission.ts";
 import type { RoutinePeerSource } from "./routine-permissions.ts";
@@ -33,7 +34,7 @@ import type { CoordinationTrace } from "./coordination-budget.ts";
 import type { BotRecord, Message } from "./store.ts";
 import {
   DELEGATION_DELETED, DELEGATION_NOT_STARTABLE, DELETED_NOTE, MAX_BUSY_ATTEMPTS, acknowledgeDelegation, announceHeld, appendDelegationRow, cancelForDeletion, clearWaitLine,
-  coded, countPersistWrite, deletionOf, dropForRoster, findDelegationReceipt, settleReceipted, handoffRow, holdBusyGaveUp, handoffItem, parkForRetry, parkUnresolvedIfDue, parkWaiting, queuedHandoff, recordDelegationReceipt,
+  appendHandoffClosingLine, requestEndedForHandoff, coded, keepRealOutcome, countPersistWrite, DELEGATION_REQUEST_ENDED, deletionOf, dropForRoster, findDelegationReceipt, settleReceipted, handoffRow, holdBusyGaveUp, handoffItem, parkForRetry, parkUnresolvedIfDue, parkWaiting, queuedHandoff, recordDelegationReceipt,
   saveHandoffItem, settleAfterFailure, settleLateAcceptance, sourceStillOwned, storeHandoffDestination, unmigratedOwnerRecordRan, unreachableVerdict,
   type DelegationOrigin, type DelegationReceipt, type HandoffRow, type HeldDelegation, type HeldReason, type PendingDelegationItem, type SettleOptions,
 } from "./delegations.ts";
@@ -112,7 +113,8 @@ export interface HandoffHost {
   };
 }
 
-export interface CouldNotStart { id: string; sourceThreadId: string; fromBotId: string | undefined; toBotId: string; why: string; shared: boolean; executionAudience?: ExecutionAudience }
+/** `why` is the start's own error text (it stays with the owner); `code` is the reason the could-not-start line names. */
+export interface CouldNotStart { id: string; sourceThreadId: string; fromBotId: string | undefined; toBotId: string; why: string; code: StartFailureCode; shared: boolean; executionAudience?: ExecutionAudience }
 
 export interface HandoffEnv { bus: CommsBus; approvalBus: ApprovalBus }
 let host: HandoffHost | undefined;
@@ -216,9 +218,24 @@ function startDelegation(ticket: DispatchTicket, targetThreadId: string, options
 /** Written and committed immediately BEFORE the provider is handed the turn. From here a restart cannot know whether the provider took it, so it never runs
  * again by itself. Throws when it cannot be recorded: the turn is then not submitted. */
 function markDelegationSubmitted(ticket: DispatchTicket): void {
-  const changed = database().prepare("UPDATE pending_delegations SET submitted_at=COALESCE(submitted_at, ?) WHERE id=? AND phase='started'").run(Date.now(), ticket.id);
-  countPersistWrite();
-  if (Number(changed.changes) !== 1) throw coded(DELEGATION_NOT_STARTABLE, "this handoff is not started, so it is not submitted");
+  transaction(() => {
+    assertRequestStillAsking(ticket.id, "submitted");
+    const changed = database().prepare("UPDATE pending_delegations SET submitted_at=COALESCE(submitted_at, ?) WHERE id=? AND phase='started'").run(Date.now(), ticket.id);
+    countPersistWrite();
+    if (Number(changed.changes) !== 1) throw coded(DELEGATION_NOT_STARTABLE, "this handoff is not started, so it is not submitted");
+  }, { op: "handoff-submitted" });
+}
+
+/** CANCEL-TREE-104 R2: the hand-over (submitted, accepted) is refused, and nothing written, unless the hand-off's request is still the one asking: a room
+ * request must be `running`, a shared one `running` or `waiting_owner`; a request that ended, or is gone, refuses with DELEGATION_REQUEST_ENDED (the host's
+ * quiet cancelled path), any other state with DELEGATION_NOT_STARTABLE. A direct hand-off (no request) is decided by its row alone. Inside the caller's transaction. */
+function assertRequestStillAsking(id: string, step: "submitted" | "accepted"): void {
+  const row = handoffRow(id);
+  if (!row || (row.origin !== "room" && row.origin !== "shared")) return;
+  const request = handoffRequest(database(), id);
+  if (!request || isTerminalRoomRequestState(request.state)) throw coded(DELEGATION_REQUEST_ENDED, `the request that asked ended before the handoff was ${step}`);
+  const asking = row.origin === "room" ? request.state === "running" : request.state === "running" || request.state === "waiting_owner";
+  if (!asking) throw coded(DELEGATION_NOT_STARTABLE, `the request of this handoff is not running, so it is not ${step}`);
 }
 
 /** The provider took the turn: from here a restart never runs it again (it reports it interrupted). The write is tried three times and a failure is thrown to the
@@ -229,12 +246,16 @@ function markDelegationAccepted(ticket: DispatchTicket, turnId: string): void {
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const db = database();
-      db.prepare("UPDATE pending_delegations SET accepted_turn_id=?, submitted_at=COALESCE(submitted_at, ?) WHERE id=? AND phase='started'").run(turnId, Date.now(), ticket.id);
-      countPersistWrite();
-      const row = db.prepare("SELECT started_at FROM pending_delegations WHERE id=? AND phase='started'").get(ticket.id) as { started_at: number | null } | undefined;
+      const row = transaction(() => {
+        assertRequestStillAsking(ticket.id, "accepted");
+        const changed = db.prepare("UPDATE pending_delegations SET accepted_turn_id=?, submitted_at=COALESCE(submitted_at, ?) WHERE id=? AND phase='started'").run(turnId, Date.now(), ticket.id);
+        countPersistWrite();
+        if (Number(changed.changes) !== 1) throw coded(DELEGATION_NOT_STARTABLE, "this handoff is not started, so it is not accepted");
+        return db.prepare("SELECT started_at FROM pending_delegations WHERE id=? AND phase='started'").get(ticket.id) as { started_at: number | null } | undefined;
+      }, { op: "handoff-accepted" });
       if (row && row.started_at === null) settleLateAcceptance((defaults ?? undefined)?.bus, ticket.id);
       return;
-    } catch (error) { failure = error; }
+    } catch (error) { failure = error; const code = (error as { code?: string })?.code; if (code === DELEGATION_REQUEST_ENDED || code === DELEGATION_NOT_STARTABLE) throw error; }
   }
   console.error("delegations: could not record that a handoff's turn was accepted", failure);
   throw failure;
@@ -319,13 +340,20 @@ function decide(id: string, env: HandoffEnv, options: AdmitOptions, taken: { cla
     return { kind: "cancel", receipt: { status: "error", result: status("no_such_bot") }, chip: `error: delegation to ${item.toBotId} did not finish: no such bot` };
   }
   if (deletionOf(source, row.from_bot_id, row.to_bot_id)) return { kind: "cancel", receipt: { status: "cancelled", result: status("receipt_deleted") }, quiet: true };
+  // A draft-only sender (server/draft-only.ts) never starts a bot that can send: refused before any approval or launch, at every level.
+  if (sender.draftOnly && !target.draftOnly) return { kind: "cancel", receipt: { status: "denied", result: status("receipt_draft_only") }, chip: `Delegation to @${target.name}: ${DRAFT_ONLY_HANDOFF_REFUSAL}` };
   // the request side: an item enqueued as shared work is decided by that request, a room request that ended cancels the hand-off
   // (a development build's stand-in record is not a request: the clean-up removes it, and until then it only says whether the hand-off ran, asked above)
   const request = handoffRequest(db, id);
   const shared = request !== null && isSharedWorkRow(request);
   let claim = options.claim;
   if (shared) {
+    // a shared request the owner's cancel ended is receipted and closed like a plain one (CANCEL-TREE-104 R3/R6); any other ending is on record from the shared run's own finish
+    if (request!.state === "cancelled") return { kind: "cancel", receipt: { status: "cancelled", result: cancelledEnding(request!.outcomeNote) }, request };
     if (isTerminalRoomRequestState(request!.state)) return { kind: "settled", why: "ended" };
+    // F3 start guard (CANCEL-TREE-104 D4) for shared work too: a queued shared ask whose asker ended never starts and takes no capacity; the cancelled
+    // receipt ends its request (the receipt listener). The shared drain never starts a hand-off's request, so this is the one start check it gets.
+    if (request!.state === "queued" && askerEnded(db, request!)) return { kind: "cancel", receipt: { status: "cancelled", result: cancelledEnding(CANCELLED_WITH_ASKER) }, request };
     // unresolved (the target's bot or task is not in the registry yet, and no tombstone): parked, kept. A tombstone is settled by the shared admission below.
     if (sharedResolution(request!, bus.store) === "unresolved") return { kind: "wait", reason: "unresolved-target", ctx: { row, item, target, shared: true } };
     if (!sharedDrainOpen()) return { kind: "wait", reason: "gate" };
@@ -342,6 +370,8 @@ function decide(id: string, env: HandoffEnv, options: AdmitOptions, taken: { cla
     return { kind: "cancel", receipt: { status: "failed", result: status("receipt_request_gone") } };
   } else {
     if (request && isTerminalRoomRequestState(request.state)) return { kind: "cancel", receipt: { status: "cancelled", result: cancelledEnding(request.outcomeNote) }, request };
+    // F3 start guard (CANCEL-TREE-104 D4): a queued ask whose asker ended never starts; the cancelled receipt ends its request (the receipt listener)
+    if (request && request.state === "queued" && askerEnded(db, request)) return { kind: "cancel", receipt: { status: "cancelled", result: cancelledEnding(CANCELLED_WITH_ASKER) }, request };
     const roster = unreachableVerdict(bus, sender, target, source, item);
     if (roster) return { kind: "cancel", receipt: { status: "dropped", result: roster.result }, roster: { target, item, verdict: roster } };
   }
@@ -489,7 +519,18 @@ function apply(id: string, env: HandoffEnv, verdict: Exclude<Verdict, { kind: "s
       }
       if (verdict.roster) { dropForRoster(bus, verdict.roster.target, source, verdict.roster.item, verdict.roster.verdict); removeQueued(env, source, id); return "settled"; }
       // a room request that ended while the handoff waited is receipted as cancelled unless its real outcome is already on record
-      if (verdict.request && verdict.receipt.status === "cancelled") { if (!findDelegationReceipt(id)) recordDelegationReceipt({ id, sourceThreadId: source, toBotId, toBotName: targetName, status: "cancelled", result: verdict.receipt.result }); removeQueued(env, source, id); return "settled"; }
+      if (verdict.request && verdict.receipt.status === "cancelled") {
+        // the hand-off's real outcome (its answer) is already on record: it is kept, no closing line, only the row goes
+        const real = keepRealOutcome(id);
+        if (real === "unsaved") return "waiting";
+        if (real === "kept") { removeQueued(env, source, id); return "settled"; }
+        // CANCEL-TREE-104 R6 site 1: the closing line, the receipt on disk, then the queue row; a step that fails keeps the row for the next drain
+        if (!appendHandoffClosingLine(bus, { id, sourceThreadId: source, fromBotId: item?.fromBotId ?? row?.from_bot_id ?? undefined, targetName, requestId: verdict.request.id })) return "waiting";
+        // on disk, or nothing is removed (a receipt only in memory never authorizes the removal); recording it again replaces an equal one
+        if (!recordDelegationReceipt({ id, sourceThreadId: source, toBotId, toBotName: targetName, status: "cancelled", result: verdict.receipt.result })) return "waiting";
+        removeQueued(env, source, id);
+        return "settled";
+      }
       recordDelegationReceipt({ id, sourceThreadId: source, toBotId, toBotName: verdict.receipt.status === "error" ? toBotId : targetName, status: verdict.receipt.status, result: verdict.receipt.result });
       if (verdict.chip && source) appendDelegationRow(bus, source, item?.fromBotId ?? row?.from_bot_id ?? undefined, { role: "bot", kind: "activity", tool: { name: verdict.chip, ok: false } });
       removeQueued(env, source, id);
@@ -562,7 +603,9 @@ function applyGaveUp(id: string, env: HandoffEnv, ctx: Pick<StartContext, "row" 
 
 /** How a held hand-off is announced: the receipt, and the line the server writes under the conversation it was made in. */
 export function settleOptions(env: HandoffEnv): SettleOptions {
-  return { botName: (botId) => env.bus.store.bot(botId)?.name, notice: (held) => { hostOrThrow().noticeHeld(held); }, store: env.bus.store };
+  return { botName: (botId) => env.bus.store.bot(botId)?.name, notice: (held) => { hostOrThrow().noticeHeld(held); }, store: env.bus.store,
+    // CLOUD-COMPUTER-BOOT-105 H1: a handed or held hand-off whose request ended gets the R6 closing line
+    closingLine: (line) => appendHandoffClosingLine(env.bus, line) };
 }
 
 // ── shared origin ───────────────────────────────────────────────────────────────────
@@ -630,13 +673,19 @@ async function launch(ctx: StartContext, env: HandoffEnv, running?: SharedRun, s
     release();
     if (watching) h.watch.end(destination);
     const message = error instanceof Error ? error.message : String(error);
-    handled = afterStartFailure(ctx, env, message, running);
+    handled = afterStartFailure(ctx, env, message, startFailureCodeFrom(error), running);
     return handled;
   };
   try {
     if (ctx.shared) {
       text = sharedOps!.text(request!);
       options = sharedOps!.turnOptions(request!);
+      // F3 (02-3): a shared hand-off's worker carries its trace like the non-shared one: derived from the request tree (turnOptions), else the
+      // trace its asker advanced and the row carries (a parentless hand-off from a direct conversation)
+      if (options.coordination === undefined && item.coordination !== undefined) {
+        const carried = item.coordination as CoordinationTrace;
+        options = { ...options, coordination: carried, commsDepth: carried.path.length - 1 };
+      }
       sharedOps!.mirror(request!, { sourceMessageId: item.sourceMessageId });
     } else {
       release = h.reserveSlot(destination);
@@ -675,7 +724,7 @@ async function launch(ctx: StartContext, env: HandoffEnv, running?: SharedRun, s
     await h.startTurn(target.id, text, {
       ...options,
       threadId: destination,
-      commsDepth: ctx.shared ? 1 : item.depth + 1,
+      commsDepth: ctx.shared ? (typeof options.commsDepth === "number" ? options.commsDepth : 1) : item.depth + 1,
       delegationRun: ticket,
       ...(running ? { sharedWorkRun: running.sharedWorkRun } : {}),
       onDispatchError: (message: string, error?: unknown) => { failure(error ?? new Error(message)); },
@@ -697,16 +746,30 @@ const channelIdOf = (channel: { id?: string } | undefined): string | undefined =
  *  - never started: the hand-off waits (asked again from the row; a still-startable one spends a busy retry, past the limit it is held for the owner);
  *  - started, not submitted: reset to run once more with its stored prompt (a third cut-short start is held for the owner as "didn't start", never deleted);
  *  - submitted, no evidence: held, the owner decides; accepted, or the engine's reply to the prompt was stored (recorded as it was written): interrupted. */
-function afterStartFailure(ctx: StartContext, env: HandoffEnv, message: string, running?: SharedRun): DispatchResult {
+function afterStartFailure(ctx: StartContext, env: HandoffEnv, message: string, code: StartFailureCode, running?: SharedRun): DispatchResult {
   const { id } = ctx;
-  const botName = (botId: string) => env.bus.store.bot(botId)?.name;
   // decided from the row BEFORE settling: the engine was never handed the turn (not accepted, not submitted, nothing shows it ran)
   const before = handoffRow(id);
   const neverHanded = before !== undefined && !before.accepted_turn_id && !before.submitted_at && before.evidence_at === null;
-  const settled = settleAfterFailure(id, botName);
+  // CANCEL-TREE-104 R3: the asker ended while the turn was being set up and nothing was handed over: no could-not-start chip (nothing could have
+  // started), and once the row is reset it is admitted at once, so decide() settles it as cancelled (receipt, closing line) instead of a retry
+  const askerEnded = neverHanded && (() => { const request = handoffRequest(database(), id); return request !== null && isTerminalRoomRequestState(request.state); })();
+  // CLOUD-COMPUTER-BOOT-105 H1: a start that failed after the hand-over (the box took the POST, accepted() was refused) under a request that ended is
+  // settled as cancelled by the row's settle (closing line, cancelled receipt), never held for the owner
+  const endedAfterHandOver = !neverHanded && before !== undefined && (() => { const request = handoffRequest(database(), id); return request !== null && requestEndedForHandoff(request); })();
+  const settled = settleAfterFailure(id, settleOptions(env));
+  if (endedAfterHandOver && settled === "receipted") { running?.abandon(); return "settled"; }
+  if (askerEnded && (settled === "fresh" || settled === "redispatched" || settled === "waiting")) {
+    running?.abandon();
+    const again = admit(id, env, { probe: true });
+    if (again.kind !== "start") return apply(id, env, again);
+    again.ctx.claim?.release();
+    parkForRetry(id);
+    return "waiting";
+  }
   if (neverHanded && (settled === "waiting" || settled === "fresh" || settled === "redispatched" || settled === "held" || settled === "alreadyHeld")) {
     try {
-      hostOrThrow().couldNotStart?.({ id, sourceThreadId: ctx.row.source_thread_id, fromBotId: ctx.item.fromBotId ?? ctx.row.from_bot_id ?? undefined, toBotId: ctx.target.id, why: message, shared: ctx.shared,
+      hostOrThrow().couldNotStart?.({ id, sourceThreadId: ctx.row.source_thread_id, fromBotId: ctx.item.fromBotId ?? ctx.row.from_bot_id ?? undefined, toBotId: ctx.target.id, why: message, code, shared: ctx.shared,
         ...(ctx.item.executionAudience ? { executionAudience: ctx.item.executionAudience } : {}) });
     } catch (error) { console.error("delegations: could not write the could-not-start chip", error); }
   }
@@ -724,13 +787,13 @@ function afterStartFailure(ctx: StartContext, env: HandoffEnv, message: string, 
       return "waiting";
     case "held":
     case "alreadyHeld":
-      running?.finish(undefined, { ending: status("delegated_turn_could_not_start", { why: failureCodeFrom(message) }), diagnostic: message.slice(0, 200) });
+      running?.finish(undefined, { ending: status("delegated_turn_could_not_start", { why: code }), diagnostic: message.slice(0, 200) });
       announceHeld(id, settleOptions(env));
       return "settled";
     case "gone":
     case "receipted":
     case "interrupted":
-      running?.finish(undefined, { ending: status("delegated_turn_could_not_start", { why: failureCodeFrom(message) }), diagnostic: message.slice(0, 200) });
+      running?.finish(undefined, { ending: status("delegated_turn_could_not_start", { why: code }), diagnostic: message.slice(0, 200) });
       return "settled";
     case "unsettled":
       // the receipt is recorded but its settling did not commit: the row and the request stay as they are and the next pass settles both through the receipt

@@ -25,7 +25,7 @@ describe("browser WebAuthn and P256 sessions",()=>{
       // mint() no longer enrolls browsers (the door does, with no factor row), so a browser that has a factor is written as an older home stored it.
       sessions.db.prepare("INSERT INTO cloud_meta VALUES ('account','owner')").run();
       sessions.db.prepare("INSERT INTO cloud_devices (id,account,scope,publicKey,assertionKey,revoked,addedAt,lastSeenAt) VALUES ('dev-1','owner','browser',?,?,0,0,0)").run(pem(key),pem(confirm));
-      sessions.db.prepare("INSERT INTO cloud_browser_factors VALUES ('dev-1',?)").run(JSON.stringify({...factor,counter:1}));
+      sessions.db.prepare("INSERT INTO cloud_browser_factors (device,payload) VALUES ('dev-1',?)").run(JSON.stringify({...factor,counter:1}));
       const paired={deviceId:"dev-1"};
       const refresh=sessions.challenge(paired.deviceId),refreshMessage=`murage:${sessions.environmentId}:${paired.deviceId}:refresh:${refresh}:${now}`;
       const sig=sign("sha256",Buffer.from(refreshMessage),{key:key.privateKey,dsaEncoding:"ieee-p1363"}).toString("base64url");

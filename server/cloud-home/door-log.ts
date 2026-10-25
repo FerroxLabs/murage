@@ -44,6 +44,7 @@ export const DOOR_OUTCOMES = [
   "device_key_invalid",
   "device_bind_refused",    // the key is not the key the ticket was minted for
   "device_proof_refused",   // the key did not sign this ticket
+  "assertion_proof_refused",// the assertion key did not sign this ticket (remembered-owner enrolment, §4.2)
   "device_limit",           // ten browsers are already connected
   "desktop_hold_required",  // a computer needs a completed hold claim
   "pair_hold_refused",      // the hold claim could not be spent
@@ -84,6 +85,17 @@ export function doorOutcomeOf(error: unknown): DoorOutcome {
   return error instanceof DoorRefusal ? error.outcome : "internal_error";
 }
 
+/** The remembered-owner factor outcomes, logged by server/cloud-sessions.ts enterDoor (§4.4). Log-only: they never reach a
+ *  caller. `owner_factor_withheld` carries one reason. Every word stays under 24 characters for the runner's scrubber. */
+export const OWNER_FACTOR_OUTCOMES = ["owner_factor_issued", "owner_factor_renewed", "owner_factor_withheld"] as const;
+export type OwnerFactorOutcome = typeof OWNER_FACTOR_OUTCOMES[number];
+export const OWNER_FACTOR_WITHHELD_REASONS = ["stale_proof", "proof_kind_after_revoke"] as const;
+export type OwnerFactorWithheldReason = typeof OWNER_FACTOR_WITHHELD_REASONS[number];
+/** `Cloud owner factor: <outcome>` (with the withheld reason when present); always at info. */
+export function logOwnerFactor(outcome: OwnerFactorOutcome, reason?: OwnerFactorWithheldReason): void {
+  console.info(`Cloud owner factor: ${outcome}${reason ? ` ${reason}` : ""}`);
+}
+
 const OK: ReadonlySet<DoorOutcome> = new Set(["state_answered", "signed_in_first", "signed_in_known", "signed_in_added"]);
 /** `Cloud door <route>: <outcome>`. Successes at info, internal errors at error, every refusal at warn. */
 export function logDoorOutcome(route: DoorRoute, outcome: DoorOutcome): void {
@@ -113,4 +125,5 @@ export const DOOR_LOG_EVENTS = [
   `Cloud door ${alt(DOOR_ROUTES)}: ${alt(DOOR_OUTCOMES)}`,
   `Cloud door page: ${alt(DOOR_PAGE_STAGES)} ${alt(DOOR_PAGE_ERRORS)}`,
   `Cloud door page: device_open ${alt(DOOR_OPEN_CAUSES)} ${alt(DOOR_BROWSERS)}`,
+  `Cloud owner factor: ${alt(OWNER_FACTOR_OUTCOMES)}(?: ${alt(OWNER_FACTOR_WITHHELD_REASONS)})?`,
 ] as const;

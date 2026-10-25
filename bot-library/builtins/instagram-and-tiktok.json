@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Instagram and TikTok",
     "tagline": "Twelve short-video concepts with hooks, shots and captions",
-    "summary": "Gram prepares a monthly set of 12 reel concepts from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For visuals, video and general social content, use Creator. For a carousel copy team, use Caption & Carousel Studio. For a video hook review team, use Hook Lab.",
+    "summary": "Gram prepares a monthly set of 12 reel concepts from the material you supply.",
     "category": "Marketing",
     "author": {
       "name": "Ferrox Labs",
@@ -60,7 +60,8 @@
         "title": "Instagram and TikTok",
         "description": "Gram prepares a monthly set of 12 reel concepts from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For visuals, video and general social content, use Creator. For a carousel copy team, use Caption & Carousel Studio. For a video hook review team, use Hook Lab.",
         "appearance": {
-          "color": "blue"
+          "color": "teal",
+          "mascotBody": "circle"
         },
         "skills": [
           "instagram-caption",

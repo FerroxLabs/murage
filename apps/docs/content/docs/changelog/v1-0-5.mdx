@@ -1,12 +1,19 @@
 ---
 title: What changed in Murage 1.0.5
-description: The 1.0.4 hotfix. Bots can now clean up files across folders in one command, and Fuigo starts on Windows from every install.
+description: Deleting a conversation finishes and tells you where it stands, connected apps say when they need you, and hand-offs name why they could not start.
 icon: Clock
 ---
 
-Murage 1.0.5 is the hotfix for 1.0.4. Everything in [1.0.4](/docs/changelog/v1-0-4) is included.
+{/* Release notes are completed at the release cut from INT-104-RC1.md's merge table. */}
 
-## Bots in 1.0.5
+## Conversations in 1.0.5
 
-- **Bots can now clean up files across folders in one command.** A delete that names folders in different places, such as `/tmp/a` and `~/b`, or `C:\a` and `D:\b` on Windows, gets its answer straight away, so Murage keeps responding while the bot works. It still asks or stops exactly as your access level sets.
-- **Fuigo now starts on Windows from every install, including npm.** Install Fuigo with npm, from its own installer, or use the one that ships with Murage, and your bots on Fuigo answer from the first turn.
+- **Deleting a conversation finishes on its own.** Murage keeps working through a deletion until every engine's copy is gone, and the notice tells you what is still on the way.
+
+## Connected apps in 1.0.5
+
+- **Connected apps tell you when they need you.** When an app needs to be connected again, Murage shows it in the chat, with the step to bring it back.
+
+## Teams in 1.0.5
+
+- **Hand-offs name what held them up.** When a teammate cannot pick up a hand-off, the project's Activity says why, so you know what to change.

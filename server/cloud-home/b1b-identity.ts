@@ -69,6 +69,9 @@ const doorTicketSchema = z.object({
   bind: z.string().regex(/^[0-9a-f]{64}$/), kind: z.enum(["browser","desktop"]),
   /** Only a desktop ticket for a home that has (or had) a full-scope device: the completed pair hold the CP reserved. */
   pairHold: z.string().regex(/^[\w-]{16,128}$/).optional(),
+  /** CP-signed proof this ticket's sign-in carried an emailed code (`email`) or a trusted authenticator (`factor`): the
+   *  remembered-owner factor is issued only for a browser ticket that carries it (§4.1, §4.4). Absent = a chat-level browser. */
+  proof: z.enum(["email","factor"]).optional(),
 }).strict();
 export type DoorTicketClaims = z.infer<typeof doorTicketSchema>;
 /** The URL fragment value `<payload>.<signature>` (split on the first dot) as the same ES256 envelope the home-key verifier takes. */
