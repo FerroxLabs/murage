@@ -32,7 +32,7 @@ export function QueuedComposerMessages({
   return (
     <div className="mb-2 flex flex-col items-end gap-1.5 px-1" aria-label="Queued messages">
       {items.map((item) => (
-        <div key={item.queueId} className="flex max-w-[min(42rem,86%)] flex-col items-end">
+        <div key={item.queueId} className="flex max-w-[min(var(--chat-bubble-max),var(--chat-bubble-pct))] flex-col items-end">
           <div className="rounded-2xl rounded-br-md border border-dashed border-hairline/70 bg-panel/80 px-4 py-2.5 text-[14px] leading-relaxed whitespace-pre-wrap text-ink-secondary shadow-sm">
             {item.text}
           </div>

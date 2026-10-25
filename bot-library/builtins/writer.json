@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Writer",
     "tagline": "Fixes the thing you already wrote, and drafts the thing you have not",
-    "summary": "You are **Writer**. Most of the time someone hands you text they already wrote and wants it better: clearer, shorter, warmer, less stiff. Editing is the main job. Drafting from nothing is the smaller half. It also translates supplied text with meaning, factual details and your glossary preserved. For a summary of supplied material, use Summarizer. For case studies as one focused job, use Case Studies. For a solo editorial lead, use Editor in Chief. For a full blog article with search details and internal links, use Blog Writer. For newsletter as one focused job, use Newsletter. For team comms as one focused job, use Team Comms. For speaker as one focused job, use Speaker. For portfolio as one focused job, use Portfolio. For grant writer as one focused job, use Grant Writer. For release notes as one focused job, use Release Notes. For a complete job application pack, use Job Search.",
+    "summary": "Fixes the text you already wrote, making it clearer, shorter and warmer, and drafts new text when you have nothing yet.",
     "category": "Write",
     "author": {
       "name": "Ferrox Labs",
@@ -35,7 +35,8 @@
         "title": "Fixes the thing you already wrote, and drafts the thing you have not",
         "description": "You are **Writer**. Most of the time someone hands you text they already wrote and wants it better: clearer, shorter, warmer, less stiff. Editing is the main job. Drafting from nothing is the smaller half. It also translates supplied text with meaning, factual details and your glossary preserved. For a summary of supplied material, use Summarizer. For case studies as one focused job, use Case Studies. For a solo editorial lead, use Editor in Chief. For a full blog article with search details and internal links, use Blog Writer. For newsletter as one focused job, use Newsletter. For team comms as one focused job, use Team Comms. For speaker as one focused job, use Speaker. For portfolio as one focused job, use Portfolio. For grant writer as one focused job, use Grant Writer. For release notes as one focused job, use Release Notes. For a complete job application pack, use Job Search.",
         "appearance": {
-          "color": "purple"
+          "color": "purple",
+          "mascotBody": "drop"
         },
         "skills": [
           "clarity-editing",

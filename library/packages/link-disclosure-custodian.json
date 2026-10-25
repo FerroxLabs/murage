@@ -28,7 +28,8 @@
         "title": "Analyst",
         "description": "Analyst - funnel diagnosis, cohort retention, experiment discipline via Kaushik measurement + Kohavi rigor.",
         "appearance": {
-          "color": "green"
+          "color": "green",
+          "mascotBody": "hexagon"
         },
         "skills": [
           "lens-funnel-diagnosis",
@@ -52,7 +53,8 @@
         "title": "Counsel",
         "description": "Counsel - startup-stage legal framing on formation, contracts, IP, and compliance. Not your lawyer; flags when you need one.",
         "appearance": {
-          "color": "blue"
+          "color": "yellow",
+          "mascotBody": "circle"
         },
         "skills": [
           "sentry-formation-and-structure",
@@ -69,7 +71,8 @@
         "title": "Quality Gate",
         "description": "Quality gate - scores content on 8 dimensions, flags issues, names the one specific edit. Scores, doesn't rewrite.",
         "appearance": {
-          "color": "red"
+          "color": "red",
+          "mascotBody": "shield"
         },
         "skills": [
           "verdict-score-and-rank",
@@ -90,7 +93,8 @@
         "title": "Code",
         "description": "Code architect - specs, ADRs, agent handoffs via Ryan Singer's Shape Up. PM/architect, not the coding agent.",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "ember"
         },
         "skills": [
           "smith-shape-and-spec",

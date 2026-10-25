@@ -20,6 +20,7 @@ import {
   Archive,
   ArrowDownToLine,
   BellDot,
+  CheckCheck,
   BellOff,
   BookOpen,
   Bot as BotIcon,
@@ -53,6 +54,8 @@ import {
   Settings,
   Smartphone,
   Puzzle,
+  MessageSquarePlus,
+  MessagesSquare,
   Target,
   Trash2,
   UserRound,
@@ -71,8 +74,13 @@ import { formatRelativeListTime, formatTaskMoment } from "@/lib/task-list";
 import { useRelativeNow } from "@/lib/relative-now";
 
 import { BotAvatar } from "./Avatar";
+import { SidebarNewChatPanel } from "./SidebarNewChatPanel";
+import { UpdateIndicator } from "./UpdateIndicator";
+import { UpdateDot } from "./UpdateDot";
+import { hasEmptyConversation } from "@/lib/new-chat-bots";
 import { ConfirmDelete } from "./ConfirmDelete";
-import { stateForBot } from "@/lib/mascot";
+import { isMascotAnimated, stateForBot } from "@/lib/mascot";
+import { botUnreadThreadIds, markBotRead } from "@/lib/bot-read";
 import { useUpdaterState } from "@/lib/updater";
 import { cn } from "@/lib/cn";
 import { skillRecorderEnabled } from "@/lib/feature-flags";
@@ -176,6 +184,8 @@ import { taskCount } from "@/lib/task-window";
 import { LEADERSHIP_BLOCKED_HINT, leadershipPromotionBlocked } from "@/lib/new-team";
 import { hiddenPatchFrom } from "@/lib/record-numbers";
 import { isUnseenRoutineProblem } from "../../shared/routine-problems";
+import { copyOrReport } from "@/lib/copy-text";
+import { raiseTransientError } from "@/state/chat-error";
 
 /** Shown when a dragged section order was kept on this device but did not reach the computer. */
 export const SECTION_ORDER_NOT_SYNCED = "Couldn't sync the order to your computer. It is kept on this device for now.";
@@ -460,6 +470,15 @@ function activityLineText(tool: NonNullable<SidebarLine["tool"]>): string {
   return hostStoppedLabel(tool.name) ?? sendNoticeLabel(tool.name) ?? folderTrustLabel(tool.name) ?? errorPreview(tool) ?? tool.name;
 }
 
+/** A connection card's row: "<app> · <state>", in the reader's language. */
+export function connectorRowText(connector: NonNullable<SidebarLine["connector"]>): string {
+  const state = connector.status === "connected" ? t("sidebar.connector.connected")
+    : connector.status === "authorizing" ? t("sidebar.connector.authorizing")
+    : connector.status === "failed" ? t("sidebar.connector.failed")
+    : t("sidebar.connector.required");
+  return `${connector.label} · ${state}`;
+}
+
 /** The text of a bot's sidebar line (the visible branch head, shared/sidebar-line.ts), remembered per line object: a row asks for it on every
  * render, and the reducer replaces the line only when it changes. */
 const tailPreviewCache = new WeakMap<SidebarLine, string>();
@@ -473,6 +492,7 @@ function tailPreview(bot: Bot): string {
   if (last.kind === "options" && last.cardTitle !== undefined) text = plainText(last.cardTitle);
   else if (last.kind === "activity" && last.tool) text = activityLineText(last.tool);
   else if (last.kind === "screen") text = "Screen frame";
+  else if (last.kind === "connector" && last.connector) text = connectorRowText(last.connector);
   else text = plainText(last.text ?? "");
   tailPreviewCache.set(last, text);
   return text;
@@ -820,7 +840,7 @@ function RoomContextMenu({
       )}
       <button
         onClick={() => {
-          void navigator.clipboard?.writeText(group.threadId);
+          void copyOrReport(group.threadId, (message) => raiseTransientError(dispatch, message));
           onClose();
         }}
         className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
@@ -1118,6 +1138,7 @@ export { leadershipPromotionBlocked } from "@/lib/new-team";
 export function SidebarCreateMenu({
   archivedCount,
   archivedChannelCount = 0,
+  onNewChat,
   onNewBot,
   onNewTeam,
   onNewChannel,
@@ -1130,6 +1151,8 @@ export function SidebarCreateMenu({
 }: {
   archivedCount: number;
   archivedChannelCount?: number;
+  /** Opens the bot picker that starts a fresh chat with any bot. */
+  onNewChat?: () => void;
   /** Opens the New Bot chooser (a template, or start blank). */
   onNewBot: () => void;
   /** Opens the New Team chooser (a template, or pick from my bots). */
@@ -1150,7 +1173,11 @@ export function SidebarCreateMenu({
   const row = "flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70";
   return (
     <>
-      <button autoFocus onClick={onNewBot} className={row}>
+      {onNewChat && <button autoFocus onClick={onNewChat} className={row}>
+        <MessageSquarePlus size={16} className="text-ink-secondary" />
+        {t("nav.newChat")}
+      </button>}
+      <button autoFocus={!onNewChat} onClick={onNewBot} className={row}>
         <BotIcon size={16} className="text-ink-secondary" />
         New Bot
       </button>
@@ -1387,6 +1414,11 @@ export function BotContextMenu({
         item(<BellDot size={16} className="text-ink-secondary" />, "Mark as Unread", () =>
           dispatch({ type: "markUnread", botId: bot.id }),
         ),
+        item(<CheckCheck size={16} className="text-ink-secondary" />, t("sidebar.markAllRead"), () => {
+          void markBotRead(bot, (threadId) => api(`/api/bots/${bot.id}/read`, { method: "POST", body: JSON.stringify({ threadId }) })).then((out) => {
+            if (out.failed) dispatch({ type: "error", message: t("sidebar.markAllReadFailed") });
+          });
+        }, { disabled: botUnreadThreadIds(bot).length === 0 }),
         ...(snoozable && onSnooze ? [item(<BellOff size={16} className="text-ink-secondary" />, "Snooze…", () => onSnooze(bot))] : []),
         divider("d1"),
         // Straight to this bot's window, picker open: finding a skill never
@@ -1404,7 +1436,7 @@ export function BotContextMenu({
         ),
         divider("d2"),
         item(<ClipboardCopy size={16} className="text-ink-secondary" />, "Copy conversation ID", () => {
-          void navigator.clipboard?.writeText(bot.threadId);
+          void copyOrReport(bot.threadId, (message) => raiseTransientError(dispatch, message));
         }),
         divider("d3"),
         item(bot.sidebarHidden ? <Eye size={16} /> : <EyeOff size={16} />,
@@ -1506,7 +1538,7 @@ export const BotListItem = memo(function BotListItem({
         // pose — N idle rows bobbing at display rate was most of the app's
         // visible-idle CPU (states are keyword-derived, so "working" can be
         // decorative; busy/unread/motion are the real signals).
-        animated={Boolean(bot.busy) || Boolean(weighed.unread) || (mascotMotion?.kind ?? "none") !== "none"}
+        animated={isMascotAnimated({ busy: bot.busy, unread: weighed.unread }, mascotMotion?.kind)}
       />
       </span>
       <div className={cn("pointer-events-none relative z-10 min-w-0 flex-1", iconOnly && "hidden")}>
@@ -1554,7 +1586,7 @@ export const BotListItem = memo(function BotListItem({
             )}
             {bot.shared && <span className="shrink-0 rounded bg-control px-1 text-[10.5px] font-medium text-ink-secondary" title={SHARING_COPY.sharedMark}>{SHARING_COPY.sharedMark}</span>}
             {botRole(bot) !== "member" && rowPreview && <span className="shrink-0 text-ink-secondary/60">·</span>}
-            <span className="truncate">{rowPreview}</span>
+            <span dir="auto" className="truncate">{rowPreview}</span>
           </span>
           <span className="flex shrink-0 items-center gap-1">
             {row.snoozedUntil !== undefined && <SnoozedMarker until={row.snoozedUntil} now={now} untilActivity={row.snoozedUntilActivity} iconOnly />}
@@ -2141,6 +2173,7 @@ export function Sidebar({ open, onClose, onReturnFocus }: { open: boolean; onClo
   >(null);
   const [roomSectionPicker, setRoomSectionPicker] = useState<({ groupId: string } & MenuAnchor) | null>(null);
   const [plusOpen, setPlusOpen] = useState(false);
+  const [plusView, setPlusView] = useState<"menu" | "chat">("menu");
   // null = closed. The value says which of the two the "+" menu asked for,
   // because a project and a channel are made by the same panel.
   const [newRoom, setNewRoom] = useState<"channel" | "project" | null>(null);
@@ -2790,14 +2823,15 @@ export function Sidebar({ open, onClose, onReturnFocus }: { open: boolean; onClo
             onClick={toggleCollapsed}
             aria-label={density === "icons" ? t("nav.expand") : t("nav.collapse")}
             // The phone's drawer has no rail; closing the drawer is its fold.
-            className="flex size-10 items-center justify-center rounded-md text-ink-secondary hover:bg-raised hover:text-ink max-md:hidden"
+            className="relative flex size-10 items-center justify-center rounded-md text-ink-secondary hover:bg-raised hover:text-ink max-md:hidden"
             title={density === "icons" ? t("nav.tip.expand") : t("nav.tip.collapse")}
           >
             {density === "icons" ? <PanelLeftOpen size={20} /> : <PanelLeftClose size={20} />}
+            {density === "icons" && <UpdateDot />}
           </button>
           <button
             ref={importReturnRef}
-            onClick={() => setPlusOpen((o) => !o)}
+            onClick={() => { setPlusView("menu"); setPlusOpen((o) => !o); }}
             aria-label={t("nav.newOrShare")}
             aria-expanded={plusOpen}
             aria-controls="sidebar-create-options"
@@ -2816,10 +2850,26 @@ export function Sidebar({ open, onClose, onReturnFocus }: { open: boolean; onClo
                   importReturnRef.current?.focus();
                 }
               }} className={cn(
-                "absolute top-full z-40 mt-1 w-56 overflow-hidden rounded-xl border border-hairline/50 bg-card py-1.5 shadow-2xl shadow-black/60",
+                "absolute top-full z-40 mt-1 overflow-hidden",
+                plusView === "chat" ? "w-64" : "w-56",
+                "rounded-xl border border-hairline/50 bg-card py-1.5 shadow-2xl shadow-black/60",
                 density === "icons" ? "left-0" : "right-0 max-md:left-0 max-md:right-auto",
               )}>
-                <SidebarCreateMenu
+                {plusView === "chat" ? (
+                  <SidebarNewChatPanel
+                    bots={state.bots}
+                    onClose={() => { setPlusOpen(false); importReturnRef.current?.focus(); }}
+                    onPick={(bot) => {
+                      setPlusOpen(false);
+                      // The same fresh-conversation path the task list's "new" uses: it makes the thread and sends nothing.
+                      dispatch({ type: "select", id: bot.id });
+                      // A bot whose current conversation is still empty is reused, not stacked with another empty one.
+                      if (!hasEmptyConversation(bot)) dispatch({ type: "newTask", botId: bot.id });
+                      onNavigate();
+                    }}
+                  />
+                ) : <SidebarCreateMenu
+                  onNewChat={() => setPlusView("chat")}
                   showNewProject={desktop !== undefined}
                   archivedCount={archivedBots.length}
                   onNewBot={() => {
@@ -2856,11 +2906,48 @@ export function Sidebar({ open, onClose, onReturnFocus }: { open: boolean; onClo
                     setPlusOpen(false);
                     dispatch({ type: "showTeamLibrary" });
                   }}
-                />
+                />}
               </div>
             </>
           )}
+          {/* The rail hides the search field; this opens the same search (the command palette). */}
+          {density === "icons" && (
+            <button
+              type="button"
+              onClick={() => { onNavigate(); openCommandPalette(); }}
+              aria-label={t("nav.searchRail")}
+              title={t("nav.searchEverythingTitle", { keys: modShortcut("K") })}
+              data-testid="rail-search"
+              className="flex size-10 items-center justify-center rounded-md text-ink-secondary hover:bg-raised hover:text-ink"
+            >
+              <Search size={20} />
+            </button>
+          )}
         </div>
+      </div>
+
+      {/* All chats (CHATS-FINDABILITY-DESIGN 3.1): every chat with every bot and
+          channel, a view switch above the bot list, in every density. */}
+      <div className={cn("pt-1", density === "icons" ? "flex justify-center px-2" : "px-3")}>
+        <button
+          type="button"
+          data-testid="all-chats-entry"
+          onClick={() => {
+            dispatch(state.activeView === "all-chats" ? { type: "closeAllChats" } : { type: "showAllChats" });
+            onNavigate();
+          }}
+          aria-current={state.activeView === "all-chats" ? "page" : undefined}
+          aria-label={density === "icons" ? "All chats" : undefined}
+          title={`All chats (${modShortcut("K", { shift: true })})`}
+          className={cn(
+            "flex items-center gap-2.5 rounded-lg text-[14px] text-ink hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent",
+            density === "icons" ? "size-10 justify-center" : "min-h-9 w-full px-3",
+            state.activeView === "all-chats" && "bg-raised",
+          )}
+        >
+          <MessagesSquare size={density === "icons" ? 20 : 17} aria-hidden="true" className="shrink-0 text-ink-secondary" />
+          {density !== "icons" && <span className="min-w-0 flex-1 truncate text-left">All chats</span>}
+        </button>
       </div>
 
       {/* Search: names and messages, filtered in place. The key hint opens
@@ -3103,6 +3190,7 @@ export function Sidebar({ open, onClose, onReturnFocus }: { open: boolean; onClo
             items={youItems}
             triggerRef={youTriggerRef}
           />
+          <UpdateIndicator />
           {/* The only thing this button does is open Settings → Phone, and that
               section does not exist on a phone — it is the setup screen for
               getting Murage ONTO one. A dot that opens an empty pane is worse

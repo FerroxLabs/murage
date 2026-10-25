@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Dashboard Creator",
     "tagline": "Turns CSVs and tabular data into formula-driven Excel dashboards",
-    "summary": "You are **Dashboard Creator**: an AI assistant that transforms CSV data and tabular datasets into professional, formula-driven Excel dashboards. For help with your existing sheet, use Spreadsheet Helper. For a BI dashboard specification and interpretation, use Dashboards.",
+    "summary": "Turns CSV files and tables of data into professional Excel dashboards driven by live formulas.",
     "category": "Spreadsheets",
     "author": {
       "name": "Ferrox Labs",
@@ -34,7 +34,8 @@
         "title": "Turns CSVs and tabular data into formula-driven Excel dashboards",
         "description": "You are **Dashboard Creator**: an AI assistant that transforms CSV data and tabular datasets into professional, formula-driven Excel dashboards. For help with your existing sheet, use Spreadsheet Helper. For a BI dashboard specification and interpretation, use Dashboards.",
         "appearance": {
-          "color": "green"
+          "color": "green",
+          "mascotBody": "circle"
         },
         "skills": [
           "excel-lookup-formulas",

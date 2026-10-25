@@ -157,6 +157,76 @@ export interface NewRoomRequest {
   deadlineAt?: number | null;
   /** `running` for a turn that starts at once (dispatched_at = now). */
   state?: "queued" | "running";
+  /** A waiting asker's continuation wake (`wake:<parent>`, inserted by `wakeWaitingParent`). Only this input, and an `ask`, engage the
+   * cancelled-ancestor fence (F3): the fence is applied by call site, never by admission key or parent state, so a return wake that carries
+   * the same `wake:<id>` key under a cancelled request (a cancelled card returned to its lead) is a lineage edge and is never refused. */
+  continuation?: boolean;
+}
+
+/** F3 fence: an `ask` or a continuation wake under a request that is itself, or has an ancestor, `cancelled` is refused. */
+export const REQUEST_ENDED = "REQUEST_ENDED";
+export class RequestEndedError extends Error {
+  readonly code = REQUEST_ENDED;
+  readonly status = 409;
+  constructor() { super("the request that asked has ended"); }
+}
+/** Has the request `id` (the parent of an ask or a continuation wake) ended so that what it asked for must not start (F3 fence)? Walks up `parent_id`:
+ * true at a `cancelled` row on any edge, and at a `failed` row reached only through dependency edges (asks and continuation wakes), so the cards a failed
+ * lead turn handed out keep their own asks (CANCEL-TREE-104 D1). No hop limit; a loop (corrupt rows) is fail-closed (D2). */
+export function cancelledAncestorOrSelf(db: DatabaseSync, id: string | null | undefined): boolean {
+  return endedUpChain(db, id, true);
+}
+
+/** Walks up `parent_id` from `id`: true at a `cancelled` row on any edge; with `failedEnds`, also at a `failed` row reached only through dependency
+ * edges. A loop (corrupt rows) is fail-closed. */
+function endedUpChain(db: DatabaseSync, id: string | null | undefined, failedEnds: boolean): boolean {
+  const seen = new Set<string>();
+  let bound = true;
+  for (let current = id ?? null; current;) {
+    if (seen.has(current)) {
+      console.error("[request-fence] request chain loops; treated as ended", { id });
+      return true;
+    }
+    seen.add(current);
+    const row = roomRequest(db, current);
+    if (!row) return false;
+    if (row.state === "cancelled" || (failedEnds && bound && row.state === "failed")) return true;
+    bound = bound && isDependencyEdge(db, row);
+    current = row.parentId;
+  }
+  return false;
+}
+
+/** F3 start guard (CANCEL-TREE-104 D3, D4): decided on a fresh read. An `ask`, or a continuation wake, whose asker has ended (cancelledAncestorOrSelf)
+ * is completed `cancelled` instead of started; returns that completion, or null when the row may start. A continuation that absorbed another
+ * request's result once its asker ended (the asker no longer waiting, so the result joined it) gives that result up to a kept wake (R5) and ends. Called only before the
+ * row's turn begins: while it is queued (the card executor) or just marked running by the caller's own dispatch (the room dispatcher, the shared drain).
+ * A row that may start takes no write lock (a held lock never stops a start that the guard allows). */
+export function closeQueuedIfAskerEnded(db: DatabaseSync, id: string, now: number, hooks: CompletionHooks = {}): CompletionResult | null {
+  const unstarted = (request: RoomRequest | null): request is RoomRequest => request !== null && (request.state === "queued" || request.state === "running");
+  const before = roomRequest(db, id);
+  if (!unstarted(before) || !askerEnded(db, before)) return null;
+  return withTx(db, () => {
+    const request = roomRequest(db, id);
+    if (!unstarted(request) || !askerEnded(db, request)) return null;
+    return completeRequest(db, id, { state: "cancelled", now, outcomeNote: CANCELLED_WITH_ASKER }, hooks, { continuation: false });
+  });
+}
+
+/** Read-only: would `closeQueuedIfAskerEnded` close this row? (the hand-off dispatch's decide(), which only returns a verdict). */
+export function askerEnded(db: DatabaseSync, request: RoomRequest): boolean {
+  return askerChainEnded(db, request, true);
+}
+
+/** CLOUD-COMPUTER-BOOT-105 (Grok r1 Medium): askerEnded's rows (an `ask`, a continuation wake), but ended only by a CANCEL: some request above
+ * it is `cancelled`. An asker above it that FAILED does not count: what it handed out keeps running and answers on its own (requestEndedForHandoff). */
+export function askerCancelled(db: DatabaseSync, request: RoomRequest): boolean {
+  return askerChainEnded(db, request, false);
+}
+
+function askerChainEnded(db: DatabaseSync, request: RoomRequest, failedEnds: boolean): boolean {
+  const continuation = isContinuationWake(db, request) !== null;
+  return (request.verb === "ask" || continuation) && request.parentId !== null && endedUpChain(db, request.parentId, failedEnds);
 }
 
 /** What other lanes plug into the one completion transaction. Each runs
@@ -256,6 +326,10 @@ export interface CompletionResult {
   /** Wakes this completion queued (committed with it). */
   wakes: RoomRequest[];
   changed: boolean;
+  /** Descendants this completion cancelled (F3: a request that ends other than `done` cancels its open subtree first). */
+  cancelled?: RoomRequest[];
+  /** Of those, the ones whose turn was running: the caller interrupts each after the commit (`adapter.interruptTurn`, idempotent). */
+  interrupt?: RoomRequest[];
 }
 
 function withTx<T>(db: DatabaseSync, operation: () => T): T {
@@ -368,6 +442,8 @@ export function insertRoomRequest(db: DatabaseSync, input: NewRoomRequest): { re
     if (input.parentId) {
       const parent = roomRequest(db, input.parentId);
       if (!parent) throw new Error(`room request parent ${input.parentId} does not exist`);
+      // F3 fence, inside this write transaction: no new ask and no continuation wake under a cancelled request. Lineage edges pass.
+      if ((input.verb === "ask" || input.continuation === true) && cancelledAncestorOrSelf(db, parent.id)) throw new RequestEndedError();
       rootId = parent.rootId;
       lineage = {
         rootThreadId: parent.rootThreadId,
@@ -601,6 +677,8 @@ function insertWake(
     now: number;
     card?: boolean;
     absorb: boolean;
+    /** A waiting asker's continuation wake: the only wake the cancelled-ancestor fence refuses. */
+    continuation?: boolean;
   },
 ): RoomRequest | null {
   if (input.parent.notOwnerAudience) return null;
@@ -621,7 +699,9 @@ function insertWake(
       return null;
     }
   }
-  const { request, created } = insertRoomRequest(db, {
+  let inserted: { request: RoomRequest; created: boolean };
+  try {
+    inserted = insertRoomRequest(db, {
     groupId: input.parent.groupId,
     verb: "wake",
     fromKind: "murage",
@@ -634,13 +714,44 @@ function insertWake(
     admissionKey: input.key,
     priority: "coordinator",
     now: input.now,
-  });
-  return created ? request : null;
+    ...(input.continuation ? { continuation: true } : {}),
+    });
+  } catch (error) {
+    if (error instanceof RequestEndedError) return null;
+    throw error;
+  }
+  return inserted.created ? inserted.request : null;
+}
+
+/** What one completion did below its own row (F3): the descendants it cancelled and, among them, the ones whose turn was running. */
+interface TreeEffects {
+  cancelled: RoomRequest[]; interrupt: RoomRequest[];
+  /** results a cancelled wake carried from outside the cancelled work, re-queued once every write of the completion is done (CANCEL-TREE-104 R5) */
+  orphaned?: Array<{ wake: RoomRequest; results: ContinuationResult[] }>;
+  /** the wakes that re-queued them */
+  kept?: RoomRequest[];
+}
+/** The note on a descendant cancelled because a request above it ended other than `done`. */
+export const CANCELLED_WITH_ASKER = "cancelled with the request that asked";
+
+/** Can a waiting request be handed its asks' results by a continuation wake (the gate of `wakeWaitingParent`)? */
+function canBeWoken(request: RoomRequest): boolean {
+  return !request.notOwnerAudience && Boolean(request.toBotId) && Boolean(request.targetThreadId);
 }
 
 /**
  * The one completion primitive (SPEC-P 5.2). Idempotent: completing a
  * terminal request changes nothing and queues nothing.
+ *
+ * F3, one completion rule for every caller (a turn's end, a hand-off's
+ * finalizer, the sync close, the receipt listener, both boot passes): a
+ * request does not finish `done` while it has a completion dependency:
+ *  (i) an open `ask` child: it is parked `waiting_bot`, its last ask's end wakes it;
+ *  (ii) finished asks whose results it has not seen, while it has no `wake:<id>`
+ *       at all and can be woken: parked, and its one continuation wake is queued now;
+ *  (iii) its own open continuation wake: nothing changes, that wake's end completes it.
+ * Any other terminal state cancels its whole open subtree first (one walk, every
+ * verb), returning the running descendants in `interrupt` for the caller to stop.
  */
 export function completeRequest(
   db: DatabaseSync,
@@ -656,6 +767,103 @@ export function completeRequest(
   return withTx(db, () => {
     const current = roomRequest(db, id);
     if (!current) throw new Error(`no room request ${id}`);
+    if (isTerminalRoomRequestState(current.state)) return { request: current, wakes: [], changed: false, cancelled: [], interrupt: [] };
+    if (outcome.state === "done") {
+      const unchanged = (): CompletionResult => ({ request: current, wakes: [], changed: false, cancelled: [], interrupt: [] });
+      const park = () => {
+        if (current.state === "waiting_bot") return;
+        const ownerWait = current.waitingSince !== null ? Math.max(0, outcome.now - current.waitingSince) : 0;
+        // Waiting on teammates is not this request's work either: the wait is
+        // timed from here and joins owner_wait_ms at completion (work time is
+        // terminal - dispatched - owner_wait_ms, SPEC-P 3.8).
+        db.prepare(`UPDATE room_requests SET state='waiting_bot', waiting_since=?, owner_wait_ms=owner_wait_ms+?,
+            result_message_id=COALESCE(?, result_message_id) WHERE id=?`).run(outcome.now, ownerWait, outcome.resultMessageId ?? null, id);
+      };
+      // (i) open asks: the last one to end wakes it (continueFrom)
+      if (openAskChildren(db, id).length > 0) {
+        if (current.state === "waiting_bot") return unchanged();
+        park();
+        return { request: roomRequest(db, id)!, wakes: [], changed: true, cancelled: [], interrupt: [] };
+      }
+      const ownWake = roomRequestByKey(db, `wake:${id}`);
+      // (iii) its continuation wake is open: that wake's end completes it
+      if (ownWake && ownWake.parentId === id && !isTerminalRoomRequestState(ownWake.state)) return unchanged();
+      // (ii) results it has not seen, no wake yet, and someone to hand them to: the one wake, now
+      if (!ownWake && canBeWoken(current) && undeliveredAskResults(db, id).length > 0) {
+        park();
+        const wakes = wakeWaitingParent(db, roomRequest(db, id)!, outcome.now, hooks);
+        if (wakes.length > 0) return { request: roomRequest(db, id)!, wakes, changed: true, cancelled: [], interrupt: [] };
+        // the fence refused the wake (a request above it was cancelled): nobody takes the results, so it completes here
+      }
+    }
+    const effects: TreeEffects = { cancelled: [], interrupt: [] };
+    // CANCEL-TREE-104 R5 root rule: a cancelled wake with results owns its parent's result (a return wake) and, when it is the parent's own
+    // continuation (isContinuationWake: it carries the parent's asks' results; a return wake shares the `wake:<id>` key but not this), the parent's whole subtree; results absorbed from outside that are kept
+    // (keepResults, after the terminal write). An ordinary return wake's parent is done and its subtree is not this wake's: a sibling's result is kept.
+    const rootOwn = new Set<string>();
+    let rootOutside: ContinuationResult[] = [];
+    if (outcome.state === "cancelled" && current.verb === "wake" && current.parentId && continuationResults(current).length > 0) {
+      rootOwn.add(current.parentId);
+      if (isContinuationWake(db, current) !== null) for (const row of collectSubtree(db, current.parentId, "whole")) rootOwn.add(row.id);
+    }
+    // an explicit cancel (the owner's Cancel, Stop all, deletion) closes everything below it; any other ending (failed, expired, unknown: a
+    // failed turn, a restart) closes only what depends on this request's answer, never the work it handed out (SPEC-P line 488: restart of a card run)
+    if (outcome.state !== "done") cancelOpenSubtree(db, id, outcome.now, hooks, effects, outcome.state === "cancelled" ? "whole" : "dependencies", rootOwn);
+    if (rootOwn.size > 0) {
+      const own = new Set<string>([id, ...rootOwn, ...collectSubtree(db, id, "whole").map((row) => row.id)]);
+      rootOutside = outsideResults(db, current, own);
+      stripOutsideResults(db, current, rootOutside);
+    }
+    const ended = terminalWrite(db, current, outcome, hooks, options, effects);
+    // every write of this completion is done (the walk, the root, its cascade): now the kept results, so none can be absorbed into a row this cancel ends
+    for (const { wake, results } of effects.orphaned ?? []) keepResults(db, wake, results, outcome.now, effects);
+    keepResults(db, current, rootOutside, outcome.now, effects);
+    return { ...ended, wakes: [...ended.wakes, ...(effects.kept ?? [])], cancelled: effects.cancelled, interrupt: effects.interrupt };
+  });
+}
+
+/** Does `row` exist only to answer its parent: an `ask` (a hand-off whose result the asker waits on) or the parent's own continuation wake?
+ * Cards (`assign`, `review`), member room turns and return wakes are work handed out, not dependencies. */
+function isDependencyEdge(db: DatabaseSync, row: RoomRequest): boolean {
+  return row.verb === "ask" || isContinuationWake(db, row) !== null;
+}
+
+/** The ONE subtree walk (F3). `whole` (an explicit cancel): every descendant by `parent_id`, any verb, any state (so a queued return wake under a
+ * finished intermediate is found). `dependencies` (failed, expired, unknown): only the asks and continuation wakes below it, recursively; the
+ * cards a lead's turn created inherit that turn as parent but are not waiting on it, so they keep running (or wait for Retry after a restart).
+ * Each open row reached is written `cancelled` with no continuation (nothing inside the subtree continues), and the running ones are listed for
+ * interruption. Inside the caller's transaction. */
+function cancelOpenSubtree(db: DatabaseSync, rootId: string, now: number, hooks: CompletionHooks, effects: TreeEffects, scope: "whole" | "dependencies", ownScope: ReadonlySet<string> = new Set()): void {
+  // the scope first (CANCEL-TREE-104 R5), then the writes: a wake's results are judged against everything this cancel ends
+  const rows = collectSubtree(db, rootId, scope);
+  const own = new Set<string>([rootId, ...ownScope, ...rows.map((row) => row.id)]);
+  const orphaned: Array<{ wake: RoomRequest; results: ContinuationResult[] }> = [];
+  for (const row of rows) {
+    if (isTerminalRoomRequestState(row.state)) continue;
+    const running = row.state === "running" || row.state === "waiting_owner";
+    const outside = row.verb === "wake" ? outsideResults(db, row, own) : [];
+    stripOutsideResults(db, row, outside);
+    const ended = terminalWrite(db, row, { state: "cancelled", now, outcomeNote: CANCELLED_WITH_ASKER }, hooks, { continuation: false }, effects);
+    if (!ended.changed) continue;
+    effects.cancelled.push(ended.request);
+    if (running) effects.interrupt.push(ended.request);
+    if (outside.length) orphaned.push({ wake: row, results: outside });
+  }
+  // re-queued by completeRequest after its own terminal write: a kept wake can only join a wake this completion leaves alone (never the root)
+  (effects.orphaned ??= []).push(...orphaned);
+}
+
+/** The terminal write itself: state, card effect, usage, activity, owner words, and the continuation (SPEC-P 5.2). Only `completeRequest` and the
+ * subtree walk call it. */
+function terminalWrite(
+  db: DatabaseSync,
+  current: RoomRequest,
+  outcome: Parameters<typeof completeRequest>[2],
+  hooks: CompletionHooks,
+  options: { continuation?: boolean; suppressReturnWake?: boolean; stopped?: boolean },
+  effects: TreeEffects,
+): { request: RoomRequest; wakes: RoomRequest[]; changed: boolean } {
+    const id = current.id;
     if (isTerminalRoomRequestState(current.state)) return { request: current, wakes: [], changed: false };
     const ran = current.dispatchedAt !== null;
     // only a run that started can be superseded: a queued card run carries
@@ -688,14 +896,72 @@ export function completeRequest(
     // continuation was interrupted. Retry or Skip must precede another wake.
     if (!fenced && done.state === "unknown" && done.workItemId && done.verb === "wake" && done.parentId && done.admissionKey === `wake:${done.parentId}`) {
       const parent = roomRequest(db, done.parentId);
-      if (parent?.state === "waiting_bot") completeRequest(db, parent.id, { state: "unknown", now: outcome.now, outcomeNote: done.outcomeNote }, hooks, { continuation: false });
+      if (parent?.state === "waiting_bot") absorb(effects, completeRequest(db, parent.id, { state: "unknown", now: outcome.now, outcomeNote: done.outcomeNote }, hooks, { continuation: false }));
     }
     if (fenced || options.continuation === false || (done.state === "unknown" && done.workItemId !== null)) return { request: done, wakes: [], changed: true };
-    return { request: done, wakes: continueFrom(db, done, outcome.now, hooks, options.suppressReturnWake, options.stopped), changed: true };
+    return { request: done, wakes: continueFrom(db, done, outcome.now, hooks, options.suppressReturnWake, options.stopped, effects), changed: true };
+}
+
+/** A nested completion's cancellations reach the outermost caller. */
+function absorb(effects: TreeEffects, result: CompletionResult): CompletionResult {
+  effects.cancelled.push(...(result.cancelled ?? []));
+  effects.interrupt.push(...(result.interrupt ?? []));
+  return result;
+}
+
+/** The rows a walk from `rootId` visits, in BFS order, root excluded: every descendant (`whole`) or only the asks and continuation wakes (`dependencies`). */
+function collectSubtree(db: DatabaseSync, rootId: string, scope: "whole" | "dependencies"): RoomRequest[] {
+  const children = db.prepare("SELECT * FROM room_requests WHERE parent_id=? ORDER BY created_at, id");
+  const seen = new Set<string>([rootId]);
+  const rows: RoomRequest[] = [];
+  for (let frontier = [rootId]; frontier.length > 0;) {
+    const next: string[] = [];
+    for (const parentId of frontier) {
+      for (const row of (children.all(parentId) as Record<string, unknown>[]).map(fromRow)) {
+        if (seen.has(row.id)) continue;
+        if (scope === "dependencies" && !isDependencyEdge(db, row)) continue;
+        seen.add(row.id);
+        next.push(row.id);
+        rows.push(row);
+      }
+    }
+    frontier = next;
+  }
+  return rows;
+}
+
+/** CANCEL-TREE-104 R5: the results a wake carries that belong outside `own` (the work being cancelled), whose request still exists. A result whose request row
+ * is gone has nobody to return to: it ends with the wake. */
+function outsideResults(db: DatabaseSync, wake: RoomRequest, own: ReadonlySet<string>): ContinuationResult[] {
+  return continuationResults(wake).filter((result) => {
+    if (typeof result?.requestId !== "string" || own.has(result.requestId)) return false;
+    if (roomRequest(db, result.requestId) !== null) return true;
+    console.error("[request-fence] a cancelled wake carried a result whose request is gone; it ends with the wake", { wake: wake.id, result: result.requestId });
+    return false;
   });
 }
 
-function continueFrom(db: DatabaseSync, done: RoomRequest, now: number, hooks: CompletionHooks, suppressReturnWake = false, stopped = false): RoomRequest[] {
+/** The cancelled wake keeps only its own results; the outside ones are re-queued after every write of the walk (keepResults). */
+function stripOutsideResults(db: DatabaseSync, wake: RoomRequest, outside: readonly ContinuationResult[]): void {
+  if (!outside.length) return;
+  const gone = new Set(outside.map((result) => result.requestId));
+  db.prepare("UPDATE room_requests SET payload_text=? WHERE id=?").run(JSON.stringify(continuationResults(wake).filter((result) => !gone.has(result.requestId))), wake.id);
+}
+
+/** Re-queues the results a cancelled wake carried from outside the cancelled work: one wake to the same bot and thread (absorb: it joins a queued wake of
+ * theirs, never a cancelled one, since every write of the walk is done), under `wake:kept:<cancelled wake>` (`:2`, `:3` when taken), parent = the request of
+ * the first result (outside the cancelled work, so no fence refuses it). */
+function keepResults(db: DatabaseSync, wake: RoomRequest, results: ContinuationResult[], now: number, effects: TreeEffects): void {
+  if (!results.length || !wake.toBotId || !wake.targetThreadId) return;
+  const parent = roomRequest(db, results[0]!.requestId);
+  if (!parent) return;
+  let key = `wake:kept:${wake.id}`;
+  for (let n = 2; roomRequestByKey(db, key); n++) key = `wake:kept:${wake.id}:${n}`;
+  const kept = insertWake(db, { parent, key, toBotId: wake.toBotId, threadId: wake.targetThreadId, results, now, absorb: true });
+  if (kept) (effects.kept ??= []).push(kept);
+}
+
+function continueFrom(db: DatabaseSync, done: RoomRequest, now: number, hooks: CompletionHooks, suppressReturnWake = false, stopped = false, effects: TreeEffects = { cancelled: [], interrupt: [] }): RoomRequest[] {
   const parent = done.parentId ? roomRequest(db, done.parentId) : null;
   // An asker waiting on its asks: the last one to finish wakes it, once.
   if (done.verb === "ask" && parent && parent.state === "waiting_bot") {
@@ -708,7 +974,7 @@ function continueFrom(db: DatabaseSync, done: RoomRequest, now: number, hooks: C
     // a restart that cut the continuation off is a restart for the asker too,
     // not a failure of its work (a card waits for Retry step, SPEC-P 5.6)
     const state: RoomRequestTerminalState = done.state === "done" ? "done" : done.state === "cancelled" ? "cancelled" : done.state === "unknown" ? "unknown" : "failed";
-    return completeRequest(db, parent.id, { state, now, resultMessageId: done.resultMessageId, ...(done.state === "unknown" || suppressReturnWake ? { outcomeNote: done.outcomeNote } : {}) }, hooks, { suppressReturnWake, stopped }).wakes;
+    return absorb(effects, completeRequest(db, parent.id, { state, now, resultMessageId: done.resultMessageId, ...(done.state === "unknown" || suppressReturnWake ? { outcomeNote: done.outcomeNote } : {}) }, hooks, { suppressReturnWake, stopped })).wakes;
   }
   // Stop still settles the waiting parent and its card effect; only the
   // outgoing handoff to the lead is suppressed.
@@ -834,11 +1100,21 @@ export function requestReplyTarget(db: DatabaseSync, request: RoomRequest | null
   return undefined;
 }
 
+/** Whether a wake is a continuation of a request that runs on its worker's own thread (a desk or home thread that is not one of the room's
+ * tasks): the bot that asked on the parent request, woken on the thread that request was started in, with what its own asks returned. Such
+ * a wake is the parent's to continue, not a room turn, so the room does not have to own the thread (it is started there). */
+export function wakeContinuesOnParentThread(db: DatabaseSync, request: Pick<RoomRequest, "verb" | "parentId" | "toBotId" | "targetThreadId" | "admissionKey">): boolean {
+  if (request.verb !== "wake" || !request.parentId || !request.targetThreadId || request.admissionKey !== `wake:${request.parentId}`) return false;
+  const parent = roomRequest(db, request.parentId);
+  return Boolean(parent && parent.toBotId && parent.toBotId === request.toBotId && parent.targetThreadId === request.targetThreadId);
+}
+
 function wakeWaitingParent(db: DatabaseSync, parent: RoomRequest, now: number, hooks: CompletionHooks = {}): RoomRequest[] {
   // Nobody to hand the results to (a chain that is not the owner's, or no
   // bot or thread): the asker finishes here instead of waiting forever.
   if (parent.notOwnerAudience || !parent.toBotId || !parent.targetThreadId) {
-    if (parent.state === "waiting_bot") return completeRequest(db, parent.id, { state: "done", now, outcomeNote: "answers posted, nobody woken" }, hooks, { continuation: false }).wakes;
+    // a normal completion (F3): its own asker, non-owner too, is reached through continueFrom and ends the same way
+    if (parent.state === "waiting_bot") return completeRequest(db, parent.id, { state: "done", now, outcomeNote: "answers posted, nobody woken" }, hooks).wakes;
     return [];
   }
   const wake = insertWake(db, {
@@ -850,15 +1126,16 @@ function wakeWaitingParent(db: DatabaseSync, parent: RoomRequest, now: number, h
     now,
     card: parent.workItemId !== null,
     absorb: false,
+    continuation: true,
   });
   return wake ? [wake] : [];
 }
 
 /**
  * A request's turn ended (the engine's terminal event, or a setup failure).
- * With open asks it waits for them; with asks that finished while it ran it
- * waits for the one wake that hands their results over; otherwise it
- * completes.
+ * The turn-end entry of the one completion rule (`completeRequest`): with open
+ * asks it waits for them; with asks that finished while it ran it waits for the
+ * one wake that hands their results over; otherwise it completes.
  */
 export function finishRequestTurn(
   db: DatabaseSync,
@@ -874,54 +1151,75 @@ export function finishRequestTurn(
     }
     if (!input.ok) return completeRequest(db, id, { state: "failed", now: input.now, resultMessageId: input.resultMessageId, outcomeNote: input.outcomeNote,
       ...(input.ending ? { ending: input.ending } : {}), ...(input.diagnostic !== undefined ? { diagnostic: input.diagnostic } : {}) }, hooks);
-    const waitOnAsks = () => {
-      const ownerWait = current.waitingSince !== null ? Math.max(0, input.now - current.waitingSince) : 0;
-      // Waiting on teammates is not this request's work either: the wait is
-      // timed from here and joins owner_wait_ms at completion (work time is
-      // terminal - dispatched - owner_wait_ms, SPEC-P 3.8).
-      db.prepare(`UPDATE room_requests SET state='waiting_bot', waiting_since=?, owner_wait_ms=owner_wait_ms+?,
-          result_message_id=COALESCE(?, result_message_id) WHERE id=?`).run(input.now, ownerWait, input.resultMessageId ?? null, id);
-    };
-    if (openAskChildren(db, id).length > 0) {
-      waitOnAsks();
-      return { request: roomRequest(db, id)!, wakes: [], changed: true };
-    }
-    if (undeliveredAskResults(db, id).length > 0 && !current.notOwnerAudience) {
-      waitOnAsks();
-      const wakes = wakeWaitingParent(db, roomRequest(db, id)!, input.now);
-      return { request: roomRequest(db, id)!, wakes, changed: true };
-    }
     return completeRequest(db, id, { state: "done", now: input.now, resultMessageId: input.resultMessageId, outcomeNote: input.outcomeNote }, hooks);
   });
 }
 
 /**
  * Cancel a `queued` or `waiting_bot` request (the owner's Cancel, Stop all,
- * room deletion). A waiting asker's open asks are cancelled with it and
- * nobody is woken. Returns null when the request cannot be cancelled here
- * (running: interrupt the turn instead), plus the asks that were still
- * running so the caller can interrupt their turns.
+ * room deletion) and, in the same transaction, its whole open subtree (F3):
+ * every descendant, any verb, is cancelled and nothing inside it continues;
+ * the running ones come back in `interrupt` for the caller to stop after the
+ * commit. The cancelled request itself keeps its continuation (a waiting
+ * asker above it is woken by its last open child, as ever). Returns null when
+ * the request cannot be cancelled here (running: interrupt the turn instead).
  */
 export function cancelRoomRequest(
   db: DatabaseSync,
   id: string,
   input: { now: number; note?: string },
   hooks: CompletionHooks = {},
-): (RoomRequest & { runningChildren: RoomRequest[] }) | null {
+): { request: RoomRequest; cancelled: RoomRequest[]; interrupt: RoomRequest[] } | null {
   return withTx(db, () => {
     const current = roomRequest(db, id);
     if (!current || (current.state !== "queued" && current.state !== "waiting_bot")) return null;
-    const children = current.state === "waiting_bot" ? openAskChildren(db, id) : [];
-    const noWake = current.state === "waiting_bot";
-    const done = completeRequest(db, id, { state: "cancelled", now: input.now, outcomeNote: input.note ?? "cancelled" }, hooks, { continuation: !noWake }).request;
-    const runningChildren: RoomRequest[] = [];
-    for (const child of children) {
-      if (child.state === "running" || child.state === "waiting_owner") runningChildren.push(child);
-      if (child.state === "waiting_bot") cancelRoomRequest(db, child.id, input, hooks);
-      else completeRequest(db, child.id, { state: "cancelled", now: input.now, outcomeNote: "cancelled with the request that asked" }, hooks);
-    }
-    return { ...done, runningChildren };
+    const ended = completeRequest(db, id, { state: "cancelled", now: input.now, outcomeNote: input.note ?? "cancelled" }, hooks, { continuation: true });
+    return { request: ended.request, cancelled: ended.cancelled ?? [], interrupt: ended.interrupt ?? [] };
   });
+}
+
+/** A waiting asker's own continuation wake (`wake:<parent>` addressed to the asker itself), as opposed to a return wake under the same key. A return
+ * wake carries its parent's own result; a continuation never does (it carries the parent's asks' results), so a same-bot return (the lead reviewing
+ * a card it returns to) is told apart by its payload, not by key and bot alone (CANCEL-TREE-104 H1). */
+function isContinuationWake(db: DatabaseSync, request: RoomRequest): RoomRequest | null {
+  if (request.verb !== "wake" || !request.parentId || request.admissionKey !== `wake:${request.parentId}`) return null;
+  if (continuationResults(request).some((result) => result?.requestId === request.parentId)) return null;
+  const parent = roomRequest(db, request.parentId);
+  return parent && parent.toBotId !== null && parent.toBotId === request.toBotId ? parent : null;
+}
+
+/** The coordination trace a request's turn carries (F3, 02-3), derived from the request tree, never stored: the execution-chain root R is the
+ * nearest ancestor-or-self that is neither an `ask` nor a continuation wake (a row whose depth-0 turn ran it: a member or usage `room_turn`,
+ * `routine`, `assign`, `review`, a return or review wake); `rootId` is `req:<R.id>`; `path` is R's bot then the bot of each ask from R down to
+ * the request, continuation wakes skipped; `commsDepth` is `path.length - 1`. Null for a parentless `ask` (a shared ask from a direct
+ * conversation: the caller derives its trace from its admission key or carries its hand-off row's), for an owner root (no bot), and for a
+ * chain the walk cannot finish (a missing row, more than 50 hops). */
+export function requestTrace(db: DatabaseSync, request: RoomRequest): { rootId: string; path: string[]; commsDepth: number } | null {
+  const asks: string[] = [];
+  const seen = new Set<string>();
+  for (let current: RoomRequest | null = request; current && !seen.has(current.id) && seen.size < 50;) {
+    seen.add(current.id);
+    if (current.verb === "ask") {
+      if (!current.toBotId || !current.parentId) return null;
+      asks.push(current.toBotId);
+      current = roomRequest(db, current.parentId);
+      continue;
+    }
+    const asker = isContinuationWake(db, current);
+    if (asker) { current = asker; continue; }
+    if (!current.toBotId) return null;
+    const path = [current.toBotId, ...asks.reverse()];
+    return { rootId: `req:${current.id}`, path, commsDepth: path.length - 1 };
+  }
+  return null;
+}
+
+/** The turn generation in a sync ask's admission key (`ask:<thread>:<generation>:<hash>`, server/index.ts roomAskKey): the asker's depth-0 root
+ * when the ask has no request tree (a shared ask from a direct conversation). */
+export function askKeyGeneration(admissionKey: string): string | null {
+  if (!admissionKey.startsWith("ask:") || admissionKey.startsWith("ask:delegation:")) return null;
+  const parts = admissionKey.split(":");
+  return parts.length >= 4 && parts[parts.length - 2] ? parts[parts.length - 2] : null;
 }
 
 /**
@@ -1018,6 +1316,16 @@ export function recoverCommittedAskResults(
     woke.push(...completeRequest(db, row.id, { state: result.ok ? "done" : "failed", now, resultMessageId: result.messageId }, hooks).wakes);
   }
   return woke;
+}
+
+/** The running asks a restart is about to end as `unknown` with nobody told: an ask from a direct chat to a teammate (no parent request, no return
+ * thread, and no hand-off row to decide it). Nothing wakes the asker and no result is owed for it, so the chat it was made in is told once.
+ * Read before `reconcileRoomRequestsAtBoot`, which is what ends them. */
+export function parentlessAsksInterruptedByRestart(db: DatabaseSync): Array<{ id: string; toBotId: string; threadId: string }> {
+  const partner = tableExists(db, "pending_delegations") ? " AND NOT EXISTS (SELECT 1 FROM pending_delegations p WHERE p.id=room_requests.id)" : "";
+  const rows = db.prepare(`SELECT id, to_bot_id, root_thread_id FROM room_requests WHERE state IN ('running','waiting_owner') AND verb='ask' AND parent_id IS NULL AND return_thread_id IS NULL AND work_item_id IS NULL${partner} ORDER BY created_at, id`)
+    .all() as Array<{ id: string; to_bot_id: string | null; root_thread_id: string }>;
+  return rows.filter(row => row.to_bot_id).map(row => ({ id: row.id, toBotId: row.to_bot_id!, threadId: row.root_thread_id }));
 }
 
 /**

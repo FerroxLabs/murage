@@ -19,7 +19,7 @@ import { delimiter, dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { augmentedPath, resetPathCacheForTests, restrictInstallScanDirsForTests } from "./env-path.ts";
-import { reachBundledFuigo } from "./drivers/acp/fuigo.ts";
+import { fuigoLaunchFile, reachBundledFuigo } from "./drivers/acp/fuigo.ts";
 import { engineLaunchFile } from "./drivers/isolation-cache.ts";
 import { resolveCli } from "./procs.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
@@ -74,11 +74,16 @@ function exe(dir: string): string {
   chmodSync(file, 0o755);
   return file;
 }
-/** What a Fuigo turn spawns: the driver's env, then the launch file on that env's PATH, then the spawn resolution. */
-function fuigoTurnSpawn(): { command: string; args: string[] } {
+/** What a Fuigo turn spawns: the driver's env, the driver's launch file (core.ts launchCliFor), that file on the env's
+ *  PATH (engineLaunchFile), then the spawn resolution. */
+function fuigoTurn(): { env: Record<string, string | undefined>; spawn: { command: string; args: string[] } } {
   const env: Record<string, string | undefined> = { PATH: augmentedPath(), MURAGE_FUIGO_DIR: process.env.MURAGE_FUIGO_DIR };
   reachBundledFuigo(env);
-  return resolveCli(engineLaunchFile("fuigo", { PATH: env.PATH }), ["agent", "--no-leader", "stdio"]);
+  const target = fuigoLaunchFile(env, { cli: "fuigo" });
+  return { env, spawn: resolveCli(engineLaunchFile(target, { PATH: env.PATH }), ["agent", "--no-leader", "stdio"]) };
+}
+function fuigoTurnSpawn(): { command: string; args: string[] } {
+  return fuigoTurn().spawn;
 }
 
 describe("Fuigo starts on Windows from every install shape (1.0.5)", () => {
@@ -187,6 +192,19 @@ describe("Fuigo starts on Windows from every install shape (1.0.5)", () => {
     // windowsKnownDirs' own order: %APPDATA%\npm before ~/.fuigo/bin
     restrictInstallScanDirsForTests([npmDir, join(root, ".fuigo", "bin")]);
     expect(fuigoTurnSpawn()).toEqual({ command: home, args: ["agent", "--no-leader", "stdio"] });
+  });
+
+  it("a PATH fuigo.exe is launched by its absolute path and its folder is not put in front of the child's PATH", () => {
+    npmInstall(npmDir);
+    const home = exe(join(root, ".fuigo", "bin"));
+    // something else in the exe's folder that the engine's own children must not pick up ahead of the owner's PATH
+    writeFileSync(join(root, ".fuigo", "bin", "git.exe"), "MZ-not-really");
+    restrictInstallScanDirsForTests([npmDir, join(root, ".fuigo", "bin")]);
+    const before = augmentedPath();
+    const { env, spawn } = fuigoTurn();
+    expect(spawn.command).toBe(home);
+    expect(env.PATH).toBe(before);
+    expect((env.PATH ?? "").split(delimiter)[0]).not.toBe(dirname(home));
   });
 
   it("an npm user prefix on PATH and nothing else: the shim's node script runs", () => {

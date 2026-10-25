@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { EngineSetup, needsCli, needsSignIn } from "./EngineSetup";
+import { EngineSetup, installCommandFor, needsCli, needsSignIn } from "./EngineSetup";
 import type { InstanceInfo } from "@/state/store";
 
 vi.mock("@/state/store", async (original) => ({ ...await original<typeof import("@/state/store")>(), useStore: () => ({ dispatch: vi.fn() }) }));
@@ -49,5 +49,19 @@ describe("needsCli / needsSignIn", () => {
     const ready = instance({ state: "available", authenticated: true, version: "0.36.1" });
     expect(needsCli(ready)).toBe(false);
     expect(needsSignIn(ready)).toBe(false);
+  });
+});
+
+describe("the install command is the server's (item 167)", () => {
+  const command = { darwin: "curl mac", win32: "winget windows", linux: "apt linux" };
+  it("shows the command for the computer running the server, not the browser device", () => {
+    vi.stubGlobal("window", { muragebox: undefined });
+    vi.stubGlobal("navigator", { userAgent: "iPhone Mac OS X" });
+    expect(installCommandFor({ command, platform: "win32" })).toBe("winget windows");
+    expect(installCommandFor({ command, platform: "linux" })).toBe("apt linux");
+  });
+  it("falls back to the viewing device when the server did not say", () => {
+    vi.stubGlobal("window", { muragebox: { platform: "darwin" } });
+    expect(installCommandFor({ command })).toBe("curl mac");
   });
 });
