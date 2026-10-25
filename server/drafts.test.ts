@@ -1,189 +1,104 @@
+// Composer drafts (src/lib/drafts.ts). U36: each draft is one record, `murage-draft:<draftId>`, holding its words,
+// attachments, mode and reply; a send never takes the words out of the box, so a failure has nothing to restore.
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import {
-  clearReplyDraft,
-  discardReplyDraft,
-  draftRevision,
-  failedComposerSends,
-  replyDraft,
-  forgetFailedComposerSend,
-  getDraft,
-  getDraftAttachments,
-  markDraftEdited,
-  recoverFailedComposerSend,
-  rememberReplyDraft,
-  restoredSendId,
-  selectReplyDraft,
-  setDraft,
-  setDraftAttachments,
-} from "../src/lib/drafts.ts";
 import { fileAttachment, pasteAttachment } from "../src/lib/composer-attachments.ts";
 
 function memoryStore() {
   const values = new Map<string, string>();
   return {
+    values,
     getItem: (key: string) => values.get(key) ?? null,
     setItem: (key: string, value: string) => void values.set(key, value),
+    removeItem: (key: string) => void values.delete(key),
+    key: (index: number) => [...values.keys()][index] ?? null,
+    get length() { return values.size; },
   };
 }
+const load = async (store: unknown) => { vi.resetModules(); vi.stubGlobal("localStorage", store); return import("../src/lib/drafts.ts"); };
+const flush = async () => { for (let i = 0; i < 4; i += 1) await new Promise((resolve) => setTimeout(resolve, 0)); };
+const build = (sendId: string, content: { text: string; reply?: string }) => ({ sendId, kind: "bot" as const, botId: "b", threadId: "thread-a", text: content.text, ...(content.reply ? { replyToId: content.reply } : {}), at: 1, attempts: 0 });
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.resetModules(); });
 
 describe("composer drafts", () => {
-  it("reports denied attachment persistence and retains the supplied local fallback", () => {
+  it("keeps attachments in this page when storage refuses the write, and stores them when it can", async () => {
     const attachment = pasteAttachment("Keep this attachment");
-    const denied = {
-      getItem: () => { throw new Error("storage denied"); },
-      setItem: () => { throw new Error("storage denied"); },
-    };
-    expect(setDraftAttachments(denied, "bot:denied", [attachment])).toBe(false);
-    expect(getDraftAttachments(denied, "bot:denied", [attachment])).toEqual([attachment]);
-    expect(setDraftAttachments(undefined, "bot:denied", [attachment])).toBe(false);
-    expect(getDraftAttachments(undefined, "bot:denied", [attachment])).toEqual([attachment]);
+    const denied = await load({ getItem: () => null, setItem: () => { throw new Error("storage denied"); } });
+    denied.setComposerDraftAttachments("bot:denied:t", [attachment]);
+    await flush();
+    expect(denied.readComposerDraft("bot:denied:t").att).toEqual([attachment]);
     const store = memoryStore();
-    expect(setDraftAttachments(store, "bot:working", [attachment])).toBe(true);
-    expect(getDraftAttachments(store, "bot:working")).toEqual([attachment]);
+    const working = await load(store);
+    working.setComposerDraftAttachments("bot:working:t", [attachment]);
+    await flush();
+    expect(JSON.parse(store.getItem("murage-draft:bot:working:t")!).att).toEqual([attachment]);
+    expect((await load(store)).readComposerDraft("bot:working:t").att).toEqual([attachment]);
   });
 
-  it("keeps text and attachments isolated per bot or room", () => {
+  it("keeps text and attachments isolated per bot or room", async () => {
     const store = memoryStore();
+    const drafts = await load(store);
     const paste = pasteAttachment("bot paste");
     const file = fileAttachment("notes.txt", "/tmp/notes.txt", 12);
-    setDraft(store, "bot:one", "hello");
-    setDraftAttachments(store, "bot:one", [paste, file]);
-    setDraft(store, "group:two", "room text");
-
-    expect(getDraft(store, "bot:one")).toBe("hello");
-    expect(getDraftAttachments(store, "bot:one")).toEqual([paste, file]);
-    expect(getDraft(store, "group:two")).toBe("room text");
-    expect(getDraftAttachments(store, "group:two")).toEqual([]);
+    drafts.setComposerDraftText("bot:one:t", "hello");
+    drafts.setComposerDraftAttachments("bot:one:t", [paste, file]);
+    drafts.setComposerDraftText("group:two:t", "room text");
+    await flush();
+    const reloaded = await load(store);
+    expect(reloaded.readComposerDraft("bot:one:t")).toMatchObject({ text: "hello", att: [paste, file] });
+    expect(reloaded.readComposerDraft("group:two:t")).toMatchObject({ text: "room text", att: [] });
   });
 
-  it("clears empty entries and ignores malformed stored attachments", () => {
+  it("ignores a malformed record and malformed stored attachments", async () => {
     const store = memoryStore();
-    setDraft(store, "bot:one", "hello");
-    setDraft(store, "bot:one", "");
-    store.setItem(
-      "murage-draft-attachments",
-      JSON.stringify({ "bot:one": [{ kind: "paste", id: "broken" }] }),
-    );
-
-    expect(getDraft(store, "bot:one")).toBe("");
-    expect(getDraftAttachments(store, "bot:one")).toEqual([]);
+    store.setItem("murage-draft:bot:one:t", "{not json");
+    store.setItem("murage-draft:bot:two:t", JSON.stringify({ v: 3, n: 0, text: "kept", att: [{ kind: "paste", id: "broken" }], mode: "chat" }));
+    const drafts = await load(store);
+    expect(drafts.readComposerDraft("bot:one:t").text).toBe("");
+    expect(drafts.readComposerDraft("bot:two:t")).toMatchObject({ text: "kept", att: [] });
   });
 
-  it("restores a rejected send into its task draft", () => {
+  it("a rejected send leaves its words, attachments and reply in the box, owned by the same send id", async () => {
     const store = memoryStore();
-    vi.stubGlobal("localStorage", store);
+    const drafts = await load(store);
     const draftId = "bot:restore:thread-a";
     const attachment = fileAttachment("notes.txt", "/tmp/notes.txt", 12);
-    const revision = draftRevision(draftId);
-
-    expect(
-      recoverFailedComposerSend({
-        draftId,
-        revision,
-        sendId: "send-restore",
-        text: "please retry",
-        requestText: "please retry\n\n<attached-file path=\"/tmp/notes.txt\" />",
-        attachments: [attachment],
-        threadId: "thread-a",
-      }),
-    ).toBe("restored");
-    expect(getDraft(store, draftId)).toBe("please retry");
-    expect(getDraftAttachments(store, draftId)).toEqual([attachment]);
-    expect(restoredSendId(draftId)).toBe("send-restore");
-    markDraftEdited(draftId);
-    expect(restoredSendId(draftId)).toBeUndefined();
+    drafts.setComposerDraftText(draftId, "please retry");
+    drafts.setComposerDraftAttachments(draftId, [attachment]);
+    drafts.setComposerDraftReply(draftId, "message-1");
+    await flush();
+    const begun = await drafts.beginDraftSend(draftId, { text: "please retry", att: [attachment], mode: "chat" }, build);
+    if (!begun.ok) throw new Error(begun.reason);
+    await drafts.settleDraftSend(draftId, begun.sendId, begun.attemptId, "failed");
+    expect(drafts.readComposerDraft(draftId)).toMatchObject({ text: "please retry", att: [attachment], reply: "message-1", held: false });
+    expect(JSON.parse(store.getItem(`murage-draft:${draftId}`)!).pin.s).toBe(begun.sendId);
   });
 
-  it("keeps a failed send in the outbox when a newer draft exists", () => {
-    const store = memoryStore();
-    vi.stubGlobal("localStorage", store);
+  it("keeps a failed retry in the retry list, and forgets it when dismissed", async () => {
+    const drafts = await load(memoryStore());
     const draftId = "group:preserve:thread-b";
-    const revision = draftRevision(draftId);
-    markDraftEdited(draftId);
-    setDraft(store, draftId, "new draft");
-
-    expect(
-      recoverFailedComposerSend({
-        draftId,
-        revision,
-        sendId: "send-preserve",
-        text: "older failed send",
-        requestText: "older failed send",
-        attachments: [],
-        replyToId: "message-1",
-        threadId: "thread-b",
-      }),
-    ).toBe("outbox");
-    expect(getDraft(store, draftId)).toBe("new draft");
-    expect(failedComposerSends(draftId)).toMatchObject([
-      {
-        text: "older failed send",
-        requestText: "older failed send",
-        replyToId: "message-1",
-        threadId: "thread-b",
-      },
+    drafts.rememberFailedComposerSend(draftId, { sendId: "send-preserve", text: "older failed send", requestText: "older failed send", replyToId: "message-1", threadId: "thread-b" });
+    expect(drafts.failedComposerSends(draftId)).toMatchObject([
+      { text: "older failed send", requestText: "older failed send", replyToId: "message-1", threadId: "thread-b" },
     ]);
-
-    const [failed] = failedComposerSends(draftId);
-    forgetFailedComposerSend(draftId, failed.id);
-    expect(failedComposerSends(draftId)).toEqual([]);
+    const [failed] = drafts.failedComposerSends(draftId);
+    drafts.forgetFailedComposerSend(draftId, failed.id);
+    expect(drafts.failedComposerSends(draftId)).toEqual([]);
   });
 
-  it("keeps reply targets isolated by task", () => {
-    rememberReplyDraft("thread-reply-a", "message-a");
-    rememberReplyDraft("thread-reply-b", "message-b");
-    expect(replyDraft("thread-reply-a")).toBe("message-a");
-    expect(replyDraft("thread-reply-b")).toBe("message-b");
-    clearReplyDraft("thread-reply-a");
-    expect(replyDraft("thread-reply-a")).toBeUndefined();
-    expect(replyDraft("thread-reply-b")).toBe("message-b");
-    clearReplyDraft("thread-reply-b");
-  });
-
-  it("preserves the original send separately after a reply-only edit", () => {
+  it("keeps reply targets isolated by task, in each task's record", async () => {
     const store = memoryStore();
-    vi.stubGlobal("localStorage", store);
-    const draftId = "bot:reply-edit:thread-c";
-    const threadId = "thread-c";
-    const revision = draftRevision(draftId);
-
-    selectReplyDraft(draftId, threadId, "new-reply");
-    expect(
-      recoverFailedComposerSend({
-        draftId,
-        revision,
-        sendId: "send-reply-select",
-        text: "reply to the original",
-        requestText: "reply to the original",
-        attachments: [],
-        replyToId: "original-reply",
-        threadId,
-      }),
-    ).toBe("outbox");
-    expect(replyDraft(threadId)).toBe("new-reply");
-    expect(failedComposerSends(draftId)[0]?.replyToId).toBe("original-reply");
-
-    const nextRevision = draftRevision(draftId);
-    discardReplyDraft(draftId, threadId);
-    expect(
-      recoverFailedComposerSend({
-        draftId,
-        revision: nextRevision,
-        sendId: "send-reply-clear",
-        text: "second original",
-        requestText: "second original",
-        attachments: [],
-        replyToId: "another-reply",
-        threadId,
-      }),
-    ).toBe("outbox");
-    expect(replyDraft(threadId)).toBeUndefined();
-
-    for (const failed of failedComposerSends(draftId)) {
-      forgetFailedComposerSend(draftId, failed.id);
-    }
+    const drafts = await load(store);
+    drafts.setComposerDraftReply("bot:r:thread-reply-a", "message-a");
+    drafts.setComposerDraftReply("bot:r:thread-reply-b", "message-b");
+    await flush();
+    const reloaded = await load(store);
+    expect(reloaded.readComposerDraft("bot:r:thread-reply-a").reply).toBe("message-a");
+    expect(reloaded.readComposerDraft("bot:r:thread-reply-b").reply).toBe("message-b");
+    reloaded.setComposerDraftReply("bot:r:thread-reply-a", undefined);
+    await flush();
+    expect(reloaded.readComposerDraft("bot:r:thread-reply-a").reply).toBeUndefined();
+    expect(reloaded.readComposerDraft("bot:r:thread-reply-b").reply).toBe("message-b");
   });
 });

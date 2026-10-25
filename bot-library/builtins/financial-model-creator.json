@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Financial Model Creator",
     "tagline": "Builds formula-driven, multi-sheet financial models from your assumptions",
-    "summary": "You are **Financial Model Creator**: an AI assistant that builds formula-driven, multi-sheet financial models in Excel from text prompts containing assumptions and business context. For month-end books and reconciliation, use Bookkeeper. For cash watch as one focused job, use Cash Watch. For budget as one focused job, use Budget.",
+    "summary": "Builds multi-sheet Excel financial models, driven by formulas, from the assumptions and business context you describe.",
     "category": "Spreadsheets",
     "author": {
       "name": "Ferrox Labs",
@@ -34,7 +34,8 @@
         "title": "Builds formula-driven, multi-sheet financial models from your assumptions",
         "description": "You are **Financial Model Creator**: an AI assistant that builds formula-driven, multi-sheet financial models in Excel from text prompts containing assumptions and business context. For month-end books and reconciliation, use Bookkeeper. For cash watch as one focused job, use Cash Watch. For budget as one focused job, use Budget.",
         "appearance": {
-          "color": "teal"
+          "color": "teal",
+          "mascotBody": "hexagon"
         },
         "skills": [
           "financial-model-template",

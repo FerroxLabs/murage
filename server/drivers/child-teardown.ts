@@ -10,7 +10,7 @@
 import type { ChildProcess } from "node:child_process";
 
 import type { ProviderStopResult } from "../contracts.ts";
-import { awaitCliTreeStopped, cliStopDelivery, type StopDelivery } from "../procs.ts";
+import { awaitCliTreeStopped, cliStopDelivery, cliTreeStoppedSignal, WINDOWS_STOP_ROUTE_CAP_MS, type StopDelivery } from "../procs.ts";
 
 /** Wait for `close` after termination was requested. Same bound codex uses. */
 export const PROVIDER_CLOSE_DEADLINE_MS = 5_000;
@@ -44,6 +44,22 @@ export interface TeardownWait {
   maxMs: number;
 }
 
+/** An immediate stop (dispose at Quit, stopAll at an engine switch) answers inside this, on every platform: one second inside
+ * the server's own shutdown (graceful-shutdown.ts SERVER_SHUTDOWN_TIMEOUT_MS), which is inside the desktop's graceful close.
+ * A stop still unconfirmed at the budget keeps running in the background (its own route cap, the stopped signal), and on
+ * Windows the engine job's members end with the server's handles whatever the server itself manages (U24 design R7). */
+export const PROVIDER_DISPOSE_BUDGET_MS = 5_000;
+
+/** U24: the budget for a stop whose kill goes out after `graceMs` (an ACP session/cancel grace). With no grace it is the
+ * immediate-stop budget above. With a grace (an interactive Stop, nothing above it has a shorter deadline) the absolute cap
+ * is the grace plus the longest route: on Windows the taskkill route's cap (WINDOWS_STOP_ROUTE_CAP_MS, which caps taskkill
+ * itself), elsewhere the close budget. The close budget counts from delivery (ChildTeardown), so a stop delivered quickly is
+ * not held longer. */
+export function stopBudget(graceMs: number, closeMs: number = providerCloseDeadlineMs(), platform: NodeJS.Platform = process.platform): TeardownWait {
+  if (graceMs <= 0) return { closeMs: Math.min(closeMs, PROVIDER_DISPOSE_BUDGET_MS), maxMs: PROVIDER_DISPOSE_BUDGET_MS };
+  return { closeMs, maxMs: graceMs + (platform === "win32" ? Math.max(closeMs, WINDOWS_STOP_ROUTE_CAP_MS) : closeMs) };
+}
+
 const CONFIRMED: ProviderStopResult = Object.freeze({ closeConfirmed: true });
 const timedOut = (): UnconfirmedStop => ({ closeConfirmed: false, reason: "timeout" });
 
@@ -60,20 +76,24 @@ export class ChildTeardown {
   #rootClosed = false;
   #confirming = false;
   #stopRequested = false;
+  #subscribed = false;
   readonly #waiters = new Set<Waiter>();
   readonly #onClosed: Array<() => void> = [];
   private readonly child: ChildProcess;
   private readonly confirm: (child: ChildProcess) => Promise<boolean>;
   private readonly delivery: (child: ChildProcess) => StopDelivery;
+  private readonly stoppedSignal: (child: ChildProcess) => Promise<true>;
 
   constructor(
     child: ChildProcess,
     confirm: (child: ChildProcess) => Promise<boolean> = awaitCliTreeStopped,
     delivery: (child: ChildProcess) => StopDelivery = cliStopDelivery,
+    stoppedSignal: (child: ChildProcess) => Promise<true> = cliTreeStoppedSignal,
   ) {
     this.child = child;
     this.confirm = confirm;
     this.delivery = delivery;
+    this.stoppedSignal = stoppedSignal;
     // spawn() assigns the pid synchronously on success. No pid means the OS
     // never created a process (ENOENT, EACCES): there is nothing to close.
     this.#closed = child.pid === undefined;
@@ -131,7 +151,18 @@ export class ChildTeardown {
     void this.confirm(this.child).then((stopped) => {
       this.#confirming = false;
       if (stopped) this.#markClosed();
-    }, () => { this.#confirming = false; });
+      else this.#subscribe();
+    }, () => { this.#confirming = false; this.#subscribe(); });
+  }
+
+  // U24 design R5: a confirmation that read "not stopped" at a caller cap (the Windows job route answers every caller at
+  // JOB_STOP_CAP_MS while its attempt continues) is followed by the tree's durable stopped signal, so a late success
+  // releases every waiter and onClosed callback without another Stop. The signal holds no timer and never resolves for
+  // a tree that is never confirmed; subscribing once is enough.
+  #subscribe(): void {
+    if (this.#subscribed || this.#closed) return;
+    this.#subscribed = true;
+    void this.stoppedSignal(this.child).then(() => this.#markClosed(), () => {});
   }
 
   #armClose(waiter: Waiter): void {
@@ -191,17 +222,20 @@ export class TurnTeardowns {
   readonly #byTurn = new Map<string, { threadId: string; teardown: ChildTeardown }>();
   private readonly confirm: (child: ChildProcess) => Promise<boolean>;
   private readonly delivery: (child: ChildProcess) => StopDelivery;
+  private readonly stoppedSignal: (child: ChildProcess) => Promise<true>;
 
   constructor(
     confirm: (child: ChildProcess) => Promise<boolean> = awaitCliTreeStopped,
     delivery: (child: ChildProcess) => StopDelivery = cliStopDelivery,
+    stoppedSignal: (child: ChildProcess) => Promise<true> = cliTreeStoppedSignal,
   ) {
     this.confirm = confirm;
     this.delivery = delivery;
+    this.stoppedSignal = stoppedSignal;
   }
 
   track(threadId: string, turnId: string, child: ChildProcess): ChildTeardown {
-    const teardown = new ChildTeardown(child, this.confirm, this.delivery);
+    const teardown = new ChildTeardown(child, this.confirm, this.delivery, this.stoppedSignal);
     if (!teardown.closed) {
       const entry = { threadId, teardown };
       this.#byTurn.set(turnId, entry);

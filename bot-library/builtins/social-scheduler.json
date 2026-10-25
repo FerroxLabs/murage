@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Social Scheduler",
     "tagline": "A week of post drafts with captions, image briefs and proposed times",
-    "summary": "Buzz prepares a seven-day post plan with proposed times from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For visuals, video and general social content, use Creator. For channel strategy, use Channels. For a team adapting a brief across channels, use Content Pipeline.",
+    "summary": "Buzz prepares a seven-day post plan with proposed times from the material you supply.",
     "category": "Marketing",
     "author": {
       "name": "Ferrox Labs",
@@ -66,7 +66,8 @@
         "title": "Social Scheduler",
         "description": "Buzz prepares a seven-day post plan with proposed times from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For visuals, video and general social content, use Creator. For channel strategy, use Channels. For a team adapting a brief across channels, use Content Pipeline.",
         "appearance": {
-          "color": "blue"
+          "color": "blue",
+          "mascotBody": "star"
         },
         "skills": [
           "content-calendar",

@@ -16,3 +16,19 @@ export function failureCodeFrom(detail: string | null | undefined): FailureCode 
   if (/\b5\d\d\b|provider|upstream|server error|internal error|unavailable|bad gateway/.test(text)) return "provider_error";
   return "other";
 }
+
+/** Why a turn could not START, which is more than a provider failure: Murage's own refusals at the start (a teammate this conversation cannot reach,
+ * an archived bot, sharing removed, a request that no longer fits its conversation) carry their own code on the error, so the line names the real
+ * reason instead of "it did not say why". `setup` is a start that failed for any other reason; its detail goes with the line for the owner. */
+export const START_REFUSAL_CODES = ["not_reachable", "archived", "sharing_removed", "team_deleted", "binding_mismatch", "shared_paused", "setup"] as const;
+export type StartRefusalCode = (typeof START_REFUSAL_CODES)[number];
+export type StartFailureCode = Exclude<FailureCode, "other"> | StartRefusalCode;
+export const START_FAILURE_CODES: readonly StartFailureCode[] = [...FAILURE_CODES.filter((code): code is Exclude<FailureCode, "other"> => code !== "other"), ...START_REFUSAL_CODES];
+
+/** Sorts a failed start into a code: Murage's own refusal code when the error carries one, else the provider kind, else `setup`. */
+export function startFailureCodeFrom(error: unknown): StartFailureCode {
+  const code = (error as { code?: unknown } | null | undefined)?.code;
+  if (typeof code === "string" && (START_REFUSAL_CODES as readonly string[]).includes(code)) return code as StartRefusalCode;
+  const kind = failureCodeFrom(error instanceof Error ? error.message : typeof error === "string" ? error : String(error ?? ""));
+  return kind === "other" ? "setup" : kind;
+}

@@ -41,10 +41,18 @@ class Checks {
 
 const readJson = (file: string): any => existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : null;
 /** The fixture Chief's persisted tasks (the store's bots file), for engine/task identity. */
-function chiefTasks(data: string, chiefId: string): any[] {
+function chiefBot(data: string, chiefId: string): any {
   const file = readJson(join(data, "bots.json"));
   const bots = Array.isArray(file) ? file : file?.bots ?? [];
-  return bots.find((bot: any) => bot.id === chiefId)?.tasks ?? [];
+  return bots.find((bot: any) => bot.id === chiefId);
+}
+function chiefTasks(data: string, chiefId: string): any[] {
+  return chiefBot(data, chiefId)?.tasks ?? [];
+}
+/** The engine a Chief task's turns run on. 1.0.4 SL-K K1 (server/thread-follow-model.ts): a chat with no
+ * modelSelection of its own follows its bot, so a new channel task carries no pin and runs on the bot's. */
+function taskSelection(data: string, chiefId: string, task: any): any {
+  return task?.modelSelection ?? chiefBot(data, chiefId)?.modelSelection;
 }
 function pick(value: any) {
   if (!value || typeof value !== "object") return value;
@@ -501,7 +509,8 @@ export function buttonTaskProblems(data: string, chiefId: string, run: any): str
   const tasks = chiefTasks(data, chiefId).filter(task => task.threadId === run?.threadId);
   if (tasks.length !== 1) return ["permission run does not have one Chief task"];
   const task = tasks[0];
-  return task.modelSelection?.instanceId !== BUTTON_ENGINE.instanceId || task.modelSelection?.model !== BUTTON_ENGINE.model
+  const selection = taskSelection(data, chiefId, task);
+  return selection?.instanceId !== BUTTON_ENGINE.instanceId || selection?.model !== BUTTON_ENGINE.model
     || task.autoApprove === true || task.alwaysAllow?.length ? ["permission task has wrong engine or grants"] : [];
 }
 
@@ -568,7 +577,7 @@ export async function handleFixtureReplySetup(harness: Harness, platform: Platfo
   if (!run.threadId) return false;
   if (run.status === "completed" && ![...ownerActions.values()].some(action => action.runId === run.id && !action.settled)) return false;
   const task = chiefTasks(harness.data, chiefId).find(item => item.threadId === run.threadId);
-  if (!task || task.modelSelection?.instanceId !== instanceId) throw new LiveStop("channel reply task is not pinned to the admitted engine");
+  if (!task || taskSelection(harness.data, chiefId, task)?.instanceId !== instanceId) throw new LiveStop("channel reply task is not pinned to the admitted engine");
   const messages = await harness.request("GET", `/api/threads/${run.threadId}/messages?limit=200`);
   if (messages.status !== 200) throw new LiveStop("could not inspect channel reply prerequisites");
   // Only a card observed pending for this exact run can later count as its owner decision.

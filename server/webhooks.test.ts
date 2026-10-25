@@ -51,7 +51,7 @@ function create(manager: WebhookManager) {
     name: "New lead",
     prompt: "Qualify the incoming lead and prepare a response",
     botId: "ember-sales",
-    runOn: "cloud",
+    runOn: "ember",
   });
 }
 
@@ -93,7 +93,7 @@ describe("WebhookManager", () => {
     const created = create(h.manager);
 
     expect(created.secret).toMatch(/^whsec_/);
-    expect(created.webhook).toMatchObject({ name: "New lead", runOn: "cloud", deliveryCount: 0 });
+    expect(created.webhook).toMatchObject({ name: "New lead", runOn: "ember", deliveryCount: 0 });
     expect(created.webhook).not.toHaveProperty("durationMinutes");
     expect(JSON.stringify(created.webhook)).not.toContain(created.secret);
     expect(JSON.stringify(h.manager.list())).not.toContain("secretHash");
@@ -128,7 +128,7 @@ describe("WebhookManager", () => {
       webhookId: webhook.id,
       webhookName: "New lead",
       botId: "ember-sales",
-      runOn: "cloud",
+      runOn: "ember",
       deliveryId: "evt-123",
     });
     expect(h.queued[0]).not.toHaveProperty("durationMinutes");
@@ -271,5 +271,93 @@ describe("WebhookManager", () => {
       h.manager.receive(webhook.endpointId, secret, { payload: { index }, eventName: "push", deliveryId: `delivery-${index}` });
     }
     expect(() => h.manager.receive(webhook.endpointId, secret, { payload: { overflow: true }, eventName: "push" })).toThrow("rate limit");
+  });
+
+  // F2 (1.0.4) G04-1 option A: Cloud VM webhooks start when Cloud approvals arrive.
+  it("refuses a new Cloud VM webhook and lets a saved one be renamed, paused or moved to this computer", () => {
+    const h = harness();
+    const copy = "Cloud VM webhooks start when Cloud approvals arrive. Choose This computer for now.";
+    let refused: unknown;
+    try { h.manager.create({ name: "VM hook", prompt: "On the VM", botId: "ember-sales", runOn: "cloud" }); } catch (error) { refused = error; }
+    expect(refused).toMatchObject({ status: 409, message: copy });
+    expect(h.manager.list()).toEqual([]);
+    const { webhook } = create(h.manager);
+    let switched: unknown;
+    try { h.manager.update(webhook.id, { runOn: "cloud" }); } catch (error) { switched = error; }
+    expect(switched).toMatchObject({ status: 409, message: copy });
+    expect(h.manager.list()[0]).toMatchObject({ runOn: "ember" });
+    // a webhook saved on the Cloud VM by an earlier build keeps its record
+    const disk = JSON.parse(readFileSync(h.file, "utf8")) as { webhooks: Array<Record<string, unknown>> };
+    disk.webhooks[0]!.runOn = "cloud";
+    writeFileSync(h.file, JSON.stringify(disk));
+    const reloaded = new WebhookManager(h.options);
+    expect(reloaded.update(webhook.id, { name: "Renamed" })).toMatchObject({ name: "Renamed", runOn: "cloud" });
+    expect(reloaded.update(webhook.id, { enabled: false })).toMatchObject({ enabled: false, runOn: "cloud" });
+    expect(reloaded.update(webhook.id, { runOn: "ember" })).toMatchObject({ runOn: "ember" });
+  });
+});
+
+// SL-J J1: the webhook half of "same card, same guard".
+describe("webhooks made and changed from chat", () => {
+  it("keeps updatedAt monotonic for two writes in one millisecond, at every write", () => {
+    const { manager, file } = harness();
+    const { webhook, secret } = create(manager);
+    const created = webhook.updatedAt;
+    // the clock never moves in this test: each write must still move updatedAt
+    const renamed = manager.update(webhook.id, { name: "Renamed" })!;
+    expect(renamed.updatedAt).toBeGreaterThan(created);
+    const rotated = manager.rotateSecret(webhook.id)!;
+    expect(rotated.webhook.updatedAt).toBeGreaterThan(renamed.updatedAt);
+    manager.receive(webhook.endpointId, rotated.secret, { payload: { event: "push" }, deliveryId: "d-1" });
+    const delivered = manager.list()[0]!.updatedAt;
+    expect(delivered).toBeGreaterThan(rotated.webhook.updatedAt);
+    manager.disableForBot("ember-sales");
+    expect(manager.list()[0]!.updatedAt).toBeGreaterThan(delivered);
+    expect(secret).toMatch(/^whsec_/);
+    // and the verification capture path
+    const { webhook: pending, secret: pendingSecret } = manager.create({ name: "Capture", prompt: "", botId: "ember-sales", enabled: false, verificationPending: true });
+    const before = manager.list().find((item) => item.id === pending.id)!.updatedAt;
+    manager.receive(pending.endpointId, pendingSecret, { payload: { hello: true } });
+    expect(manager.list().find((item) => item.id === pending.id)!.updatedAt).toBeGreaterThan(before);
+    expect(JSON.parse(readFileSync(file, "utf8")).webhooks).toHaveLength(2);
+  });
+
+  it("creates an unminted webhook with the given id: no secret is returned and no caller is accepted", () => {
+    const { manager, file, queued } = harness();
+    const made = manager.create({ name: "From chat", prompt: "Summarize the event", botId: "ember-sales", runOn: "ember" }, { id: "hook-from-card", mint: false });
+    expect(made.webhook.id).toBe("hook-from-card");
+    expect(made).not.toHaveProperty("secret");
+    expect(JSON.stringify(made)).not.toMatch(/whsec_/);
+    expect(manager.authorize(made.webhook.endpointId, "")).toBe(false);
+    expect(manager.authorize(made.webhook.endpointId, "whsec_guess")).toBe(false);
+    expect(() => manager.receive(made.webhook.endpointId, "whsec_guess", { payload: {} })).toThrow(/Invalid webhook URL or secret/);
+    expect(queued).toHaveLength(0);
+    // the stored hash is a real one nobody holds, so the file still loads
+    expect(JSON.parse(readFileSync(file, "utf8")).webhooks[0].secretHash).toMatch(/^[a-f0-9]{64}$/);
+    // the bound id is refused the second time (a retry finds the record instead)
+    expect(() => manager.create({ name: "Again", prompt: "x", botId: "ember-sales" }, { id: "hook-from-card", mint: false })).toThrow(/already exists/);
+    // the owner mints the first link in the panel; then it works
+    const minted = manager.rotateSecret("hook-from-card")!;
+    expect(manager.authorize(made.webhook.endpointId, minted.secret)).toBe(true);
+  });
+
+  it("refuses update, remove and the enabled flip with webhook_changed when updatedAt moved", () => {
+    const { manager } = harness();
+    const { webhook } = create(manager);
+    const stale = webhook.updatedAt;
+    manager.update(webhook.id, { name: "Owner edit" });
+    for (const write of [
+      () => manager.update(webhook.id, { prompt: "chat edit" }, { expectedUpdatedAt: stale }),
+      () => manager.update(webhook.id, { enabled: false }, { expectedUpdatedAt: stale }),
+      () => manager.remove(webhook.id, { expectedUpdatedAt: stale }),
+    ]) {
+      let caught: unknown;
+      try { write(); } catch (error) { caught = error; }
+      expect(caught).toMatchObject({ status: 409, code: "webhook_changed" });
+    }
+    const current = manager.list()[0]!;
+    expect(current).toMatchObject({ name: "Owner edit", enabled: true, prompt: "Qualify the incoming lead and prepare a response" });
+    expect(manager.update(webhook.id, { enabled: false }, { expectedUpdatedAt: current.updatedAt })!.enabled).toBe(false);
+    expect(manager.remove(webhook.id, { expectedUpdatedAt: manager.list()[0]!.updatedAt })).toBe(true);
   });
 });

@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Investor Update",
     "tagline": "A clear investor update with checked metrics and specific asks",
-    "summary": "Dispatch prepares an investor or board update email draft. Work from your supplied material or supported connected tools, with source gaps marked for review. For an investor pitch narrative, use Pitch. For a fundraising preparation team, use Fundraise. I give guidance and drafts, not licensed financial advice, and I promise no outcome.",
+    "summary": "Dispatch prepares an investor or board update email draft.",
     "category": "Money",
     "author": {
       "name": "Ferrox Labs",
@@ -54,7 +54,8 @@
         "title": "Investor Update",
         "description": "Dispatch prepares an investor or board update email draft. Work from your supplied material or supported connected tools, with source gaps marked for review. For an investor pitch narrative, use Pitch. For a fundraising preparation team, use Fundraise.",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "squircle"
         },
         "skills": [
           "investor-update-email",

@@ -1,4 +1,5 @@
 import { hostStoppedReason } from "../../shared/host-stop.ts";
+import { loopNoticeDisplayName } from "../../shared/loop-notice.ts";
 import { sendNoticeDisplayName } from "../../shared/send-notice.ts";
 import { folderTrustDisplayName } from "../../shared/folder-trust.ts";
 import { browserUnavailableDisplayName } from "../../shared/browser-unavailable.ts";
@@ -49,7 +50,7 @@ export function timelineEvents(messages: TimelineMessage[]): TimelineEvent[] {
         events.push({ id: message.id, at: message.at, label: `Stopped: ${stoppedReason}`, state: "observed", kind: "tool" });
         continue;
       }
-      const sendNotice = sendNoticeDisplayName(message.tool.name);
+      const sendNotice = sendNoticeDisplayName(message.tool.name) ?? loopNoticeDisplayName(message.tool.name);
       if (sendNotice) {
         events.push({ id: message.id, at: message.at, label: sendNotice, state: "observed", kind: "tool" });
         continue;

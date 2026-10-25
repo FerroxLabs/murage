@@ -350,4 +350,15 @@ posixOnly("deny by default on a running server", () => {
     expect(mine.status).toBe(200);
     expect((mine.body as { state: string }).state).toBe("ok");
   });
+
+  // 1.0.4 SL-H: Remove answers the desktop only, like the list.
+  it("Storage Remove refuses the phone, the door, a bot and nobody; the desktop is answered", async () => {
+    const route = "/api/storage/attachments/remove";
+    expect(await call("POST", route, { "x-murage-companion": "1", "x-murage-companion-token": COMPANION_TOKEN })).toEqual({ status: 403, body: { error: DESKTOP_ONLY_SENTENCE } });
+    expect(await call("POST", route, { "x-murage-companion": "1", ...door })).toEqual({ status: 404, body: { error: "no such route" } });
+    expect(await call("POST", route, { ...bare, authorization: `Bearer ${botToken}` })).toEqual({ status: 403, body: { error: DESKTOP_ONLY_SENTENCE } });
+    expect(await call("POST", route)).toEqual({ status: 404, body: { error: "no such route" } });
+    // the desktop reaches it: an empty body is the route's own 400, never the gate's refusal
+    expect((await call("POST", route, desktop)).status).toBe(400);
+  });
 });
