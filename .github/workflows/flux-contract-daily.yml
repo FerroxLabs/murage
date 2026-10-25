@@ -21,9 +21,11 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # 2026-10-25: Linux runners are pinned to ubuntu-24.04. ubuntu-latest moved to 26.04, which stays pinned out until
+  # Playwright supports chromium there and the electron no-desktop-session backup test passes on it (1.0.7 follow-up).
   contract:
     name: live Flux contract
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

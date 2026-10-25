@@ -6,7 +6,7 @@
 // SQLite stores). Each is the engine's removal body with every write replaced by a step; the keys, ownership checks and SQL
 // predicates are unchanged. No fs, no sqlite, no try: reads go through `pl.fs` only.
 import { claudeProjectKey, fuigoMemoryKey, fuigoSessionKey } from "./engine-keys.ts";
-import { ASIDE_SUFFIX, DEFAULT_PRAGMAS, pathApiFor, rolloutEvidence, sameFolder, type Planner, type SqlStatement } from "./engine-plan-core.ts";
+import { ASIDE_SUFFIX, DEFAULT_PRAGMAS, pathApiFor, rolloutEvidence, sameFolder, slugsReferenced, type Planner, type SqlStatement } from "./engine-plan-core.ts";
 
 const ID = /^[\w-]+$/;
 const FIRST_LINE_BYTES = 1024 * 1024;
@@ -114,6 +114,8 @@ export function planClaudeProjects(pl: Planner, home: string, folders: string[],
     byBase.set(base, list);
   }
   const listed = new Map<string, { names: Set<string>; assoc: Record<string, string> }>();
+  // the transcripts this plan removes (physical paths): every other transcript in `projects` may share a plan slug with them
+  const removedTranscripts = new Set<string>();
   for (const [base, dirs] of byBase) {
     if (dirs.some((item) => item.conflict)) {
       // The current conflict wins over the saved name. Only a session file that names this conversation's folder and nothing
@@ -127,6 +129,7 @@ export function planClaudeProjects(pl: Planner, home: string, folders: string[],
           if (ID.test(session.id)) sessionIds.add(session.id);
           for (const slug of session.slugs) if (ID.test(slug)) slugs.add(slug);
           pl.removeExact(projects, api.join(item.dir, session.file), session.fp);
+          removedTranscripts.add(api.join(item.dir, session.file));
           if ((item.files.includes(session.id) || item.files.includes(`${session.id}${ASIDE_SUFFIX}`)) && !idDirs.has(session.id)) {
             idDirs.add(session.id);
             pl.remove(projects, api.join(item.dir, session.id));
@@ -143,6 +146,7 @@ export function planClaudeProjects(pl: Planner, home: string, folders: string[],
       const prefix = item.name.endsWith(ASIDE_SUFFIX) ? `${ASIDE_SUFFIX}/` : "";
       for (const session of item.sessions) {
         assoc[`${prefix}${session.file}`] = session.fp;
+        removedTranscripts.add(api.join(item.dir, session.file));
         if (ID.test(session.id)) sessionIds.add(session.id);
         for (const slug of session.slugs) if (ID.test(slug)) slugs.add(slug);
       }
@@ -186,13 +190,21 @@ export function planClaudeProjects(pl: Planner, home: string, folders: string[],
     const suffixes = [...sessionIds].map((id) => `${id}.txt`);
     if (suffixes.some((suffix) => target.endsWith(suffix))) pl.push({ k: "unlinkIfLinkTo", cls: "content", path: latest, suffixes });
   }
+  // A plan file belongs to its slug, and a slug can be carried by more than one session (a session forked or resumed from another
+  // folder, a collision in Claude Code's own slug names): a plan file goes only when no transcript that stays names one of its slugs,
+  // read now from the parsed rows, and read again when the step runs (the step's `slugRefs`). Anything that cannot be told keeps it.
   const plans = api.join(home, "plans");
-  for (const name of pl.fs.readdir(plans)) {
+  const planNames = pl.fs.readdir(plans);
+  const plainOf = (name: string) => (name.endsWith(ASIDE_SUFFIX) ? name.slice(0, -ASIDE_SUFFIX.length) : name);
+  const slugsOf = (name: string) => [...slugs].filter((slug) => ID.test(slug) && (plainOf(name) === `${slug}.md` || plainOf(name) === `${slug}.workshop.md` || (plainOf(name).startsWith(`${slug}-agent-`) && plainOf(name).endsWith(".md"))));
+  const asked = [...new Set(planNames.flatMap(slugsOf))];
+  const elsewhere = asked.length ? slugsReferenced(pl.fs, projects, asked, removedTranscripts) : new Set<string>();
+  for (const name of planNames) {
     // a plan file a crash left aside is the same plan: removed as a file of its own
-    const plain = name.endsWith(ASIDE_SUFFIX) ? name.slice(0, -ASIDE_SUFFIX.length) : name;
-    if ([...slugs].some((slug) => plain === `${slug}.md` || plain === `${slug}.workshop.md` || (plain.startsWith(`${slug}-agent-`) && plain.endsWith(".md")))) {
-      pl.removeExact(plans, api.join(plans, name));
-    }
+    const named = slugsOf(name);
+    if (!named.length || named.some((slug) => elsewhere.has(slug))) continue;
+    if (pl.fs.lstat(api.join(plans, name)) === null) continue;
+    pl.push({ k: "remove", cls: "content", root: plans, target: api.join(plans, name), slugRefs: { projects, slugs: named } });
   }
 }
 

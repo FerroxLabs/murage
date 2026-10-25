@@ -274,3 +274,25 @@ describe("the signed pairing generation against this home's own pin (Astra STEPU
     expect(devices()).toBe(0);
   });
 });
+
+describe("a device revoked while its request body is still arriving", () => {
+  const deleteWithHeldBody = (port: number, token: string, revokeBeforeEnd?: () => void) => new Promise<{ status: number; body: any }>((resolve, reject) => {
+    const payload = Buffer.from(JSON.stringify({ reason: "fixture" }));
+    const req = request({ host: "127.0.0.1", port, method: "DELETE", path: "/api/bots/b1/tasks/t1", agent: false, headers: {
+      host: "home.example", origin, "content-type": "application/json", cookie: `__Host-murage=${token}`, "content-length": String(payload.length) } }, res => {
+      const chunks: Buffer[] = []; res.on("data", c => chunks.push(c)); res.on("end", () => { const t = Buffer.concat(chunks).toString(); resolve({ status: res.statusCode!, body: t ? JSON.parse(t) : null }); });
+    });
+    req.on("error", reject);
+    req.write(payload.subarray(0, 4));
+    setTimeout(() => { revokeBeforeEnd?.(); req.end(payload.subarray(4)); }, 150);
+  });
+  it("is refused after the body arrives and never reaches the delete handler", async () => {
+    const port = await start(), device = pair("browser");
+    const reached = await deleteWithHeldBody(port, device.accessToken);
+    expect(reached.status).toBe(200);
+    const second = pair("browser");
+    const result = await deleteWithHeldBody(port, second.accessToken, () => sessions.revoke(second.deviceId));
+    expect(result.status).toBe(403);
+    expect(result.body?.reachedHandler).toBeUndefined();
+  });
+});

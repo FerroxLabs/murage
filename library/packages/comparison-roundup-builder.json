@@ -28,7 +28,8 @@
         "title": "Research",
         "description": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method.",
         "appearance": {
-          "color": "green"
+          "color": "blue",
+          "mascotBody": "capsule"
         },
         "skills": [
           "research-jtbd-interviews",
@@ -51,7 +52,8 @@
         "title": "Copy",
         "description": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage.",
         "appearance": {
-          "color": "blue"
+          "color": "purple",
+          "mascotBody": "drop"
         },
         "skills": [
           "copy-customer-voice",
@@ -68,7 +70,8 @@
         "title": "Quality Gate",
         "description": "Quality gate - scores content on 8 dimensions, flags issues, names the one specific edit. Scores, doesn't rewrite.",
         "appearance": {
-          "color": "red"
+          "color": "red",
+          "mascotBody": "shield"
         },
         "skills": [
           "verdict-score-and-rank",
@@ -89,7 +92,8 @@
         "title": "Code",
         "description": "Code architect - specs, ADRs, agent handoffs via Ryan Singer's Shape Up. PM/architect, not the coding agent.",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "ember"
         },
         "skills": [
           "smith-shape-and-spec",

@@ -89,7 +89,7 @@ export function LiveThinking({
   const { open } = fold;
   return (
     <div className="flex justify-start" data-testid="live-thinking">
-      <div className="flex min-w-0 max-w-[min(42rem,78%)] max-md:max-w-full flex-col items-start gap-1">
+      <div className="flex min-w-0 max-w-[min(var(--chat-bubble-max),var(--chat-bubble-pct))] max-md:max-w-full flex-col items-start gap-1">
         <button
           type="button"
           onClick={() => setStored((current) => thinkingFoldAfter(current, { type: "toggle" }))}

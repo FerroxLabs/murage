@@ -57,6 +57,9 @@ function forgetInTransaction(ticket: object, target: {kind:"source"|"record";id:
       if(versions.length>FORGET_INLINE_ROWS){before=["imports"];job={imports:{id:target.id,below:Number(versions[FORGET_INLINE_ROWS-1]!.revision),mark:Number(db.prepare("SELECT max(rowid) AS m FROM memory_sources").get()?.m??0),scope:String(versions[0]!.scope_id)}};}
       ended=[{id:target.id,revision:rev}];
     } else {
+      // Forget means the words are gone from this commit on (Learn about me R5 C1): the record's newest versions lose their text here,
+      // the rest in the expand phase; the state stays for that phase's affect, which reads it to queue what was derived from the record
+      db.prepare(`UPDATE memory_records SET text='' WHERE rowid IN (SELECT rowid FROM memory_records WHERE id=?${rev===null?"":" AND version=?"} ORDER BY version DESC LIMIT ?) AND text!=''`).run(...(rev===null?[target.id]:[target.id,rev]),FORGET_INLINE_ROWS);
       // the newest evidence rows of the record (the largest primary keys, a descending range): their sources' supporting and import
       // tombstones now; every smaller key is the job's supporting phase
       const rows=db.prepare(`SELECT record_version AS v,source_id AS s,source_revision AS r,start_byte AS b FROM memory_evidence WHERE record_id=?${rev===null?"":" AND record_version=?"} ORDER BY record_version DESC,source_id DESC,source_revision DESC,start_byte DESC LIMIT ?`).all(...(rev===null?[target.id]:[target.id,rev]),FORGET_INLINE_ROWS+1);

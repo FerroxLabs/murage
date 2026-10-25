@@ -41,8 +41,9 @@ const turns = (): Turn[] => {
     if (phase === "memory.assemble") turn.resumed = /resumed=true/.test(rest!);
     if (phase === "turn.done" && /outcome=setup-failed/.test(rest!)) turn.refused = true;
   }
-  // (a dispatch the send fence refused before anything was submitted is re-prepared as a fresh dispatch of the same turn: a content
-  // revoke's * window behind a spent write budget can do that; the turn is the attempt that ran)
+  // (a dispatch the send fence refused before anything was submitted is re-prepared as a fresh dispatch of the same turn: a background
+  // write held pending under a revoke still in its flow phase, DRAIN-104 2.11, or a content revoke's * window behind a spent write
+  // budget can do that; the turn is the attempt that ran)
   return order.map(id => byId.get(id)!).filter(turn => turn.resumed !== undefined && !turn.refused);
 };
 
@@ -105,13 +106,15 @@ posixOnly("a memory-active thread keeps its engine session across ordinary turns
     expect(third).toMatchObject({ resumed: true, built: 1 });
   }, 120000);
 
-  it("ends the session when a bot is added to the roster", async () => {
-    // policy.ts treats any added bot as a roster change: the policy revision
-    // moves and every receipt is revoked, so no session outlives it.
+  it("ends the session when a bot moves to another team", async () => {
+    // policy.ts treats a team move as an audience change: the policy revision
+    // moves and every receipt is revoked, so no session outlives it. (Adding a
+    // bot withdraws nothing and takes the additive path: SCOPED-REVOKES.md.)
     const bot = await createBot("Roster bystander");
+    const newcomer = await createBot("Newcomer");
     await turn(bot, "first");
     expect((await turn(bot, "second")).resumed).toBe(true);
-    await createBot("Newcomer");
+    expect((await api("PATCH", `/api/bots/${newcomer.id}`, { section: "Moved team" })).status).toBe(200);
     expect(await turn(bot, "third")).toMatchObject({ resumed: false, built: 1 });
   }, 120000);
 

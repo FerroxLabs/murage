@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Editor in Chief",
     "tagline": "A month of editorial work with clear briefs and reviewed drafts",
-    "summary": "Editor prepares a 30-day editorial calendar from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For general writing and editing, use Writer. For manuscript line editing and proofreading, use The Copy Editor. For a complete editorial team, use Editorial Newsroom.",
+    "summary": "Editor prepares a 30-day editorial calendar from the material you supply.",
     "category": "Marketing",
     "author": {
       "name": "Ferrox Labs",
@@ -54,7 +54,8 @@
         "title": "Editor in Chief",
         "description": "Editor prepares a 30-day editorial calendar from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For general writing and editing, use Writer. For manuscript line editing and proofreading, use The Copy Editor. For a complete editorial team, use Editorial Newsroom.",
         "appearance": {
-          "color": "blue"
+          "color": "blue",
+          "mascotBody": "ember"
         },
         "skills": [
           "editorial-calendar",

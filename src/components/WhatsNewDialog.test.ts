@@ -1,6 +1,6 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -21,7 +21,7 @@ class FakeElement {
 }
 Object.assign(globalThis, { HTMLElement: FakeElement });
 vi.mock("@/lib/analytics", () => ({ analyticsEnabled: () => false, setAnalyticsEnabled: () => {}, initAnalytics: () => {}, track: () => {} }));
-const { WhatsNewCard, WHATS_NEW_CARD_COUNT, WHATS_NEW_TILES, WHATS_NEW_MORE, WHATS_NEW_TILES_102, WHATS_NEW_MORE_102, whatsNewContentFor, whatsNewArrowStep } = await import("./WhatsNewDialog");
+const { WhatsNewCard, WHATS_NEW_CARD_COUNT, WHATS_NEW_TILES, WHATS_NEW_MORE, WHATS_NEW_TILES_102, WHATS_NEW_MORE_102, WHATS_NEW_TILES_106, WHATS_NEW_MORE_106, whatsNewContentFor, whatsNewArrowStep } = await import("./WhatsNewDialog");
 const { runWhatsNewAction } = await import("./WhatsNewHost");
 
 const source = readFileSync(new URL("./WhatsNewDialog.tsx", import.meta.url), "utf8");
@@ -300,7 +300,12 @@ describe("the 1.0.2 page", () => {
     expect(go("memory")).toEqual({ went: true, calls: [[{ type: "toggleAppSettings", open: true, section: "memory" }]] });
     expect(go("speed")).toEqual({ went: true, calls: [[{ type: "toggleAppSettings", open: true, section: "memory" }]] });
     expect(go("engines")).toEqual({ went: true, calls: [[{ type: "toggleAppSettings", open: true, section: "engines" }]] });
-    expect(go("chrome")).toEqual({ went: true, calls: [[{ type: "toggleAppSettings", open: true, section: "computer" }]] });
+    // Murage for Chrome: its Chrome Web Store page, outside the app, where it is added.
+    const opened: string[] = [];
+    const store = vi.fn();
+    expect(runWhatsNewAction("chrome", store, (url) => opened.push(url))).toBe(false);
+    expect(store).not.toHaveBeenCalled();
+    expect(opened).toEqual(["https://chromewebstore.google.com/detail/gpilijlcanhphjaoogelbghhbhhminol"]);
     const desktops = go("desktops");
     expect(desktops.calls).toEqual([[{ type: "toggleAppSettings", open: true, section: "computer" }]]);
     const limit = new FakeElement();
@@ -310,5 +315,89 @@ describe("the 1.0.2 page", () => {
     expect(go("library")).toEqual({ went: true, calls: [[{ type: "showTeamLibrary", view: "teams" }]] });
     const routing = go("routing");
     expect(routing.calls).toEqual([[{ type: "toggleAppSettings", open: true, section: "botDefaults", anchor: "room-routing-label" }]]);
+  });
+});
+
+
+describe("the 1.0.6 page", () => {
+  const render106 = (index: number) => renderToStaticMarkup(createElement(WhatsNewCard, {
+    index, version: "1.0.6", releaseNotesUrl: "https://github.com/FerroxLabs/murage-releases/releases/tag/v1.0.6",
+    onNext: () => {}, onClose: () => {}, onAction: () => {},
+  }));
+  const buttons = (html: string) => [...html.matchAll(/<button(?![^>]*data-whats-new-dot)[^>]*>([\s\S]*?)<\/button>/g)].map(([, inner]) => text(inner).trim());
+
+  it("leads with Murage for Chrome in the Chrome Web Store", () => {
+    const hero = text(render106(0));
+    expect(hero).toContain("NEW IN MURAGE");
+    expect(hero).toContain("Murage for Chrome is here");
+    expect(hero).toContain("Add it from the Chrome Web Store and your bot works beside you in your own browser, on the sites you choose.");
+    expect(buttons(render106(0))).toEqual(["", "Open Chrome Web Store", "Next"]);
+    expect(render106(0)).toContain('alt="Two matching gold glass rings, one set inside the other"');
+    expect(render106(0)).toMatch(/<img[^>]*class="block h-full w-full object-contain object-right"/);
+    expect(whatsNewContentFor("1.0.6")).toBe("1.0.6");
+  });
+
+  it("has six tiles from the 1.0.6 changelog, each on art already in the app", () => {
+    expect(WHATS_NEW_TILES_106.map((tile) => [tile.action, tile.title, tile.body])).toEqual([
+      ["allChats", "Every chat in one list", "Find any conversation in one searchable list, opened from a wider chat pop-up."],
+      ["draftOnly", "Bots that draft, you send", "A draft-only bot prepares replies for you to review and send, on every engine and channel. Ticket Triage in the library works this way."],
+      ["venues", "Bots know where they belong", "Each bot knows which projects and groups it is part of."],
+      ["ownWords", "Memories in your own words", "What your bots learn from you is anchored to what you said, and Forget clears it the moment you click."],
+      ["fuigo", "Fuigo starts fast on Windows", "Fuigo starts quickly and steadily on Windows, however Murage was installed."],
+      ["backups", "Backups that cover it all", "Every backup includes every folder Murage keeps."],
+    ]);
+    const html = render106(1);
+    for (const tile of WHATS_NEW_TILES_106) { expect(text(html)).toContain(tile.title); expect(text(html)).toContain(tile.body); expect(html).toContain(`data-whats-new-tile="${tile.action}"`); }
+    expect(html.match(/<img/g)?.length).toBe(6);
+    // the same pictures as the earlier pages, each with the words that describe it there
+    const earlier = new Map([...WHATS_NEW_TILES, ...WHATS_NEW_TILES_102].map((tile) => [tile.img, tile.alt]));
+    for (const tile of WHATS_NEW_TILES_106) expect(earlier.get(tile.img), tile.action).toBe(tile.alt);
+    expect(readdirSync(new URL("../assets/whats-new/", import.meta.url)).sort()).toEqual([
+      "memory-hero.webp", "team-hero.webp", "tile-blocks.webp", "tile-chrome.webp", "tile-desktops.webp", "tile-engines.webp", "tile-gemini.webp",
+      "tile-labs.webp", "tile-longwork.webp", "tile-packs.webp", "tile-rooms.webp", "tile-routing.webp", "tile-shapes.webp", "tile-speed.webp",
+    ]);
+  });
+
+  it("lists the small wins and links its own release notes", () => {
+    expect(WHATS_NEW_MORE_106).toHaveLength(12);
+    const more = text(render106(2));
+    for (const line of WHATS_NEW_MORE_106) expect(more).toContain(line);
+    expect(render106(2)).toMatch(/<a href="https:\/\/github.com\/FerroxLabs\/murage-releases\/releases\/tag\/v1.0.6" target="_blank" rel="noopener noreferrer"[^>]*>Read the full release notes<\/a>/);
+  });
+
+  it("follows the house copy rules", () => {
+    const copy = [0, 1, 2].map((index) => text(render106(index))).join(" ");
+    expect(copy).not.toMatch(/[—–]/);
+    expect(copy).not.toMatch(/\b(un)?saf(e|ely|ety)\b/i);
+    expect(copy).not.toMatch(/composio|price|pricing|cost|cheap|free\b|\$\d/i);
+    expect(copy).not.toMatch(/\d+x\b|\bmilliseconds?\b|\bfaster than\b|\binstant/i);
+    expect(copy).not.toMatch(/\b(broke|broken|used to|no longer|fixed|bug|crash)/i);
+  });
+
+  it("keeps every 1.0.6 tile and button a 44px target", () => {
+    for (let index = 0; index < 3; index += 1) {
+      for (const [tag] of render106(index).matchAll(/<(button|a)\b[^>]*>/g)) expect(tag.includes("data-whats-new-tile") || /min-h-11|size-11/.test(tag), tag).toBe(true);
+    }
+  });
+
+  it("sends every shortcut somewhere real", () => {
+    const go = (action: Parameters<typeof runWhatsNewAction>[0]) => { const dispatch = vi.fn(); const opened: string[] = []; return { went: runWhatsNewAction(action, dispatch, (url) => opened.push(url)), calls: dispatch.mock.calls, opened }; };
+    expect(go("allChats")).toEqual({ went: true, calls: [[{ type: "showAllChats" }]], opened: [] });
+    expect(go("draftOnly")).toEqual({ went: true, calls: [[{ type: "showTeamLibrary", view: "bots" }]], opened: [] });
+    expect(go("venues")).toEqual({ went: true, calls: [[{ type: "showTeamMap" }]], opened: [] });
+    expect(go("ownWords")).toEqual({ went: true, calls: [[{ type: "toggleAppSettings", open: true, section: "memory" }]], opened: [] });
+    expect(go("fuigo")).toEqual({ went: true, calls: [[{ type: "toggleAppSettings", open: true, section: "engines" }]], opened: [] });
+    expect(go("backups")).toEqual({ went: true, calls: [[{ type: "toggleAppSettings", open: true, section: "backups" }]], opened: [] });
+    expect(go("chrome")).toEqual({ went: false, calls: [], opened: ["https://chromewebstore.google.com/detail/gpilijlcanhphjaoogelbghhbhhminol"] });
+    // Ticket Triage is the draft-only bot the tile names, and a one-bot package shows on the Bots view
+    const triage = JSON.parse(readFileSync(new URL("../../bot-library/builtins/ticket-triage.json", import.meta.url), "utf8")) as { package: { name: string; agents: Array<{ outbound?: string }> } };
+    expect(triage.package.name).toBe("Ticket Triage");
+    expect(triage.package.agents.map((agent) => agent.outbound)).toEqual(["draft-only"]);
+  });
+
+  it("leaves the 1.0.2 and 0.1.61 pages as they were", () => {
+    expect(text(render(0))).toContain("Your team, in step.");
+    expect(whatsNewContentFor("1.0.5")).toBe("0.1.61");
+    expect(WHATS_NEW_TILES_102.map((tile) => tile.action)).toEqual(["routing", "library", "engines", "chrome", "speed", "desktops"]);
   });
 });

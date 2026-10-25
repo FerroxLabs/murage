@@ -54,7 +54,8 @@
         "title": "Donor Relations",
         "description": "Patron prepares a donor update grounded in program records for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For general conversion copy, use Copy.",
         "appearance": {
-          "color": "teal"
+          "color": "teal",
+          "mascotBody": "blob"
         },
         "skills": [
           "fundraising-strategist",

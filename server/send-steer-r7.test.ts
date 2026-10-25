@@ -167,7 +167,7 @@ describe("closure and chip are one transaction, or recovered (r6 P1 #5)", () => 
     const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
     expect(source).toContain("ownerWords: (_db, request) => keepRefusedOwnerSend(request),");
     expect(source).toMatch(/reconcileRoomRequestsAtBoot\(db, Date\.now\(\), roomCompletionHooks\);\n\s*recoverOwnerWords\(\);/);
-    expect(source).toMatch(/outcomeNote: "could not start", ending: status\("delegated_turn_could_not_start", \{ why: "other" \}\) \}, roomCompletionHooks\)\);\n\s*roomRequestsChanged/);
+    expect(source).toMatch(/outcomeNote: "could not start", ending: status\("delegated_turn_could_not_start", \{ why: "setup" \}\) \}, roomCompletionHooks\)\);\n\s*roomRequestsChanged/);
   });
 });
 

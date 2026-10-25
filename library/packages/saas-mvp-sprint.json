@@ -28,7 +28,8 @@
         "title": "Code",
         "description": "Code architect - specs, ADRs, agent handoffs via Ryan Singer's Shape Up. PM/architect, not the coding agent.",
         "appearance": {
-          "color": "green"
+          "color": "orange",
+          "mascotBody": "ember"
         },
         "skills": [
           "smith-shape-and-spec",
@@ -51,7 +52,8 @@
         "title": "Validator",
         "description": "Validator - quantitative validation, fake-door tests, MVP discipline via Eric Ries's build-measure-learn.",
         "appearance": {
-          "color": "blue"
+          "color": "cyan",
+          "mascotBody": "diamond"
         },
         "skills": [
           "probe-fake-door-tests",
@@ -72,7 +74,8 @@
         "title": "Copy",
         "description": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage.",
         "appearance": {
-          "color": "red"
+          "color": "purple",
+          "mascotBody": "drop"
         },
         "skills": [
           "copy-customer-voice",
@@ -89,7 +92,8 @@
         "title": "Brand",
         "description": "Brand specialist - onlyness-first positioning and visual systems via Marty Neumeier's difference-beats-betterness method.",
         "appearance": {
-          "color": "orange"
+          "color": "pink",
+          "mascotBody": "blob"
         },
         "skills": [
           "mira-brand-foundation",
