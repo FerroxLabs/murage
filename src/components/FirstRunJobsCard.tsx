@@ -26,7 +26,15 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
-import { connectApp } from "@/lib/connect-app";
+import {
+  connectApp,
+  connectLabelTaken,
+  firstFreeConnectLabel,
+  readConnectAppStatus,
+  type ConfirmedConnectLabel,
+  type ConnectAppAccount,
+} from "@/lib/connect-app";
+import { ConnectLabelForm } from "./ConnectLabelForm";
 import { opensPurchasePages } from "@/lib/native-shell";
 import { FIRST_RUN_COPY, firstRunAddress } from "@/lib/first-run-copy";
 import { enableFirstRunReview, installFirstRunCrew } from "@/lib/first-run-crew";
@@ -334,7 +342,12 @@ export function FirstRunConnectView({
   busy,
   failure,
   desktop,
+  labelling = "",
+  labelInitial,
+  takenLabel,
   onConnect,
+  onConfirmLabel = () => {},
+  onCancelLabel = () => {},
   onSkipToInput,
   onElsewhere,
 }: {
@@ -342,7 +355,17 @@ export function FirstRunConnectView({
   busy: FirstRunJobNeed | "";
   failure: string;
   desktop: boolean | undefined;
+  /** The app whose label form is open, or "". An app sign-in starts only
+   *  from that form's confirmed label (#758), never from Connect itself. */
+  labelling?: FirstRunJobNeed | "";
+  /** The label the open form fills in: the first one no account on that app
+   *  holds yet. Defaults to the first free label with no accounts known. */
+  labelInitial?: string;
+  /** A label the server refused as in use, said on the open form. */
+  takenLabel?: string;
   onConnect: (need: FirstRunJobNeed) => void;
+  onConfirmLabel?: (need: FirstRunJobNeed, alias: ConfirmedConnectLabel) => void;
+  onCancelLabel?: () => void;
   onSkipToInput: () => void;
   onElsewhere: () => void;
 }) {
@@ -362,7 +385,19 @@ export function FirstRunConnectView({
             {/* The key is pasted in here; an app sign-in happens in a browser
                 window this machine has to be able to open. Never a button
                 that cannot work: a phone is told where the switch is. */}
-            {row.need === "flux" || desktop === true ? (
+            {labelling === row.need && row.need !== "flux" && desktop === true ? (
+              // The label form, filled in: confirming it is the one press
+              // that opens the sign-in.
+              <ConnectLabelForm
+                id={row.need}
+                service={row.bold}
+                initial={labelInitial ?? firstFreeConnectLabel(undefined)}
+                takenLabel={takenLabel}
+                busy={Boolean(busy)}
+                onConfirm={(alias) => onConfirmLabel(row.need, alias)}
+                onCancel={onCancelLabel}
+              />
+            ) : row.need === "flux" || desktop === true ? (
               <button
                 type="button"
                 disabled={Boolean(busy)}
@@ -783,6 +818,12 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
   const [items, setItems] = useState<readonly FirstRunItem[]>([]);
   const [shown, setShown] = useState(1);
   const [busyNeed, setBusyNeed] = useState<FirstRunJobNeed | "">("");
+  const [labelling, setLabelling] = useState<FirstRunJobNeed | "">("");
+  /** The accounts each app on the connect screen already has, so its label
+   *  form fills in a label still free. */
+  const [knownAccounts, setKnownAccounts] = useState<Partial<Record<FirstRunJobNeed, readonly ConnectAppAccount[]>>>({});
+  /** A label the server refused as in use, on the app it was tried for. */
+  const [taken, setTaken] = useState<{ need: FirstRunJobNeed; label: string } | null>(null);
   const [pasting, setPasting] = useState(false);
   const [key, setKey] = useState("");
   const [busy, setBusy] = useState(false);
@@ -821,6 +862,20 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
   // account, and asking for a key before letting somebody type a sentence is
   // the form this release exists to delete.
   const stage: FirstRunFlowStage | null = firstRunStage(job, world, moved, tookEscapeHatch());
+
+  // The apps on the connect screen, read once each time that list changes,
+  // for the labels their accounts already hold.
+  const connectApps = stage === "connect" && job && world
+    ? (firstRunConnectScreen(job, world)?.rows ?? []).map((row) => row.need).filter((need) => need !== "flux").join(",")
+    : "";
+  useEffect(() => {
+    if (!connectApps) return;
+    for (const need of connectApps.split(",") as FirstRunJobNeed[]) {
+      void readConnectAppStatus(need, api).then((next) => {
+        if (!gone.current && next) setKnownAccounts((current) => ({ ...current, [need]: next.accounts ?? [] }));
+      });
+    }
+  }, [connectApps]);
 
   /**
    * The ordinary send, exactly as the composer sends, AND HEARD BACK FROM.
@@ -944,13 +999,26 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
       return;
     }
     if (desktop !== true) return;
+    // An app's Connect opens its label form; the sign-in starts only from
+    // the confirmed label (confirmLabel), the same rule as Connected apps.
+    setFailure("");
+    setTaken(null);
+    setLabelling((current) => (current === need ? "" : need));
+  };
+
+  const confirmLabel = async (need: FirstRunJobNeed, alias: ConfirmedConnectLabel) => {
+    if (!job || !world || busyNeed || need === "flux" || desktop !== true) return;
     setBusyNeed(need);
     setFailure("");
+    setTaken(null);
+    // The row goes back to its button, which says to finish in the browser.
+    setLabelling("");
     try {
       const result = await connectApp(need as SetupJobApp, {
         request: api,
         openExternal: openOutside,
         desktop,
+        alias,
         cancelled: () => gone.current,
       });
       if (gone.current) return;
@@ -962,7 +1030,15 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
       setStage(afterConnect(job, now));
       forgetSetupView();
     } catch (cause) {
-      if (!gone.current) setFailure(failureText(cause, appsCopy.failure));
+      if (gone.current) return;
+      if (connectLabelTaken(cause)) {
+        // Said on the form, holding the label, rather than as the general
+        // failure line.
+        setTaken({ need, label: alias });
+        setLabelling(need);
+      } else {
+        setFailure(failureText(cause, appsCopy.failure));
+      }
     } finally {
       if (!gone.current) setBusyNeed("");
     }
@@ -1094,7 +1170,12 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
         busy={busyNeed}
         failure={failure}
         desktop={desktop}
+        labelling={labelling}
+        labelInitial={labelling && taken?.need === labelling ? taken.label : firstFreeConnectLabel(labelling ? knownAccounts[labelling] : undefined)}
+        takenLabel={labelling && taken?.need === labelling ? taken.label : undefined}
         onConnect={(need) => void connect(need)}
+        onConfirmLabel={(need, alias) => void confirmLabel(need, alias)}
+        onCancelLabel={() => { setLabelling(""); setTaken(null); }}
         onSkipToInput={() => setStage("input")}
         onElsewhere={() => void elsewhere()}
       />

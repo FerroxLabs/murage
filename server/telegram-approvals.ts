@@ -2,6 +2,8 @@ import { randomBytes } from "node:crypto";
 import type { TelegramUpdate } from "./telegram-update.ts";
 import type { TelegramButton, TelegramTransport } from "./telegram-transport.ts";
 import { QUESTION_LIMITS, QUESTION_TIMEOUT_MS, type QuestionAnswer, type QuestionSpec } from "../shared/questions.ts";
+import { channelReply, channelReplyNumber } from "./channels/reply-text.ts";
+import { approvalButtonLabel, approvalResultLabel } from "./channels/approval-labels.ts";
 
 export interface TelegramApproval {
   id: string;
@@ -46,8 +48,9 @@ type Offer = { approval: TelegramApproval; nonce: string; expires: number; messa
 type ApprovalTransport = Pick<TelegramTransport, "sendMessage" | "answerCallbackQuery"> & Partial<Pick<TelegramTransport, "settleApprovalMessage" | "editQuestionMessage">>;
 
 /** A computer-control card in a chat: approved on the desktop only, while a
- * Deny tap is fine from anywhere (denying never widens what a bot can do). */
-export const DESKTOP_ONLY_LINE = "Approve this on your computer. You can deny it here. Expires in 10 minutes.";
+ * Deny tap is fine from anywhere (denying never widens what a bot can do).
+ * Read when sent, so it follows the owner's app language (channels/reply-text.ts). */
+export const desktopOnlyLine = (): string => channelReply("channelReply.desktopOnly");
 const PERMISSION_TTL = 600000;
 /** A question offer lives as long as the engine waits for the card. */
 const QUESTION_TTL = QUESTION_TIMEOUT_MS;
@@ -56,9 +59,9 @@ const QUESTION_TEXT_MAX = 3500;
 const label = (text: string) => (text.length > 60 ? `${text.slice(0, 59)}…` : text);
 const CHECKED = "☑";
 const UNCHECKED = "☐";
-const TEXT_ANSWER = "Reply with text";
-const SKIP = "Skip question";
-const SUBMIT = "Submit";
+const TEXT_ANSWER = (): string => channelReply("channelReply.buttonTextAnswer");
+const SKIP = (): string => channelReply("channelReply.buttonSkip");
+const SUBMIT = (): string => channelReply("channelReply.buttonSubmit");
 
 /** Process-local offers intentionally die on restart/revoke. They authorize one
  * exact pending action, not a new user turn or permanent policy change. */
@@ -92,8 +95,8 @@ export class TelegramApprovals {
       if (!pending.some(item => item.id === id && item.fingerprint === offer.approval.fingerprint) || this.now() >= offer.expires) {
         offer.consumed = true;
         offer.outcome ??= this.now() >= offer.expires
-          ? (offer.draft ? "Expired. If you still want to answer, do it in Murage." : "Expired. Review this action in Murage.")
-          : (offer.draft ? "No longer waiting for an answer. See the conversation in Murage." : "No longer pending. Review the decision in Murage.");
+          ? (offer.draft ? channelReply("channelReply.expiredQuestion") : channelReply("channelReply.expiredAction"))
+          : (offer.draft ? channelReply("channelReply.noLongerWaiting") : channelReply("channelReply.noLongerPendingDecision"));
         await this.settle(offer, owner, signal);
         if (this.now() > offer.expires + 600000 || pending.some(item => item.id === id && item.fingerprint !== offer.approval.fingerprint)) this.offers.delete(id);
       }
@@ -116,8 +119,8 @@ export class TelegramApprovals {
       this.offers.set(approval.id, offer); // uncertain send must not auto-repeat
       if (approval.desktopOnly) {
         // Deny only: no Approve or Allow-for-task button exists for this offer
-        const message = await this.transport.sendMessage({ chatId: owner.chatId, text: `${approval.summary}\n\n${DESKTOP_ONLY_LINE}`,
-          buttons: [{ text: "Deny", data: `${offer.nonce}:d` }], signal });
+        const message = await this.transport.sendMessage({ chatId: owner.chatId, text: `${approval.summary}\n\n${desktopOnlyLine()}`,
+          buttons: [{ text: approvalButtonLabel("deny"), data: `${offer.nonce}:d` }], signal });
         if (active() && this.offers.get(approval.id) === offer) offer.messageId = message.messageId;
         continue;
       }
@@ -126,11 +129,11 @@ export class TelegramApprovals {
       // same kind of action in the same place. Nothing wider is offered here.
       const message = await this.transport.sendMessage({ chatId: owner.chatId,
         text: approval.taskAllow
-          ? `${approval.summary}\n\nApprove once, allow the same kind of action in the same place for the rest of this task, or deny. Expires in 10 minutes.`
-          : `${approval.summary}\n\nApprove once or deny this exact action. Expires in 10 minutes.`,
+          ? `${approval.summary}\n\n${channelReply("channelReply.approveTaskOrDeny")}`
+          : `${approval.summary}\n\n${channelReply("channelReply.approveOrDeny")}`,
         buttons: approval.taskAllow
-          ? [{ text: "Approve once", data: `${offer.nonce}:a` }, { text: "Allow for this task", data: `${offer.nonce}:t` }, { text: "Deny", data: `${offer.nonce}:d` }]
-          : [{ text: "Approve once", data: `${offer.nonce}:a` }, { text: "Deny", data: `${offer.nonce}:d` }], signal });
+          ? [{ text: approvalButtonLabel("approveOnce"), data: `${offer.nonce}:a` }, { text: approvalButtonLabel("allowTask"), data: `${offer.nonce}:t` }, { text: approvalButtonLabel("deny"), data: `${offer.nonce}:d` }]
+          : [{ text: approvalButtonLabel("approveOnce"), data: `${offer.nonce}:a` }, { text: approvalButtonLabel("deny"), data: `${offer.nonce}:d` }], signal });
       if (active() && this.offers.get(approval.id) === offer) offer.messageId = message.messageId;
     }
   }
@@ -154,12 +157,12 @@ export class TelegramApprovals {
   }
   private questionHint(question: QuestionSpec): string {
     const how = question.multiSelect
-      ? "Tap the options you want, then Submit."
+      ? channelReply("channelReply.questionPickMany")
       : question.options.length
-        ? "Tap an answer."
+        ? channelReply("channelReply.questionPickOne")
         : "";
-    const text = question.allowOther ? `${how ? `${how} ` : ""}Tap "${TEXT_ANSWER}" to answer in your own words.` : how;
-    return `${text}\nExpires in ${Math.round(QUESTION_TTL / 60000)} minutes.`;
+    const text = question.allowOther ? `${how ? `${how} ` : ""}${channelReply("channelReply.questionOwnWords", { button: TEXT_ANSWER() })}` : how;
+    return `${text}\n${channelReply("channelReply.questionExpires", { minutes: channelReplyNumber(Math.round(QUESTION_TTL / 60000)) })}`;
   }
   private questionKeyboard(offer: Offer): TelegramButton[][] {
     const draft = offer.draft!;
@@ -170,16 +173,16 @@ export class TelegramApprovals {
       data: key(question.multiSelect ? `t${i}` : `o${i}`),
     }]);
     const actions: TelegramButton[] = [];
-    if (question.allowOther) actions.push({ text: draft.other ? `${CHECKED} ${TEXT_ANSWER}` : TEXT_ANSWER, data: key("w") });
-    if (question.multiSelect) actions.push({ text: SUBMIT, data: key("s") });
-    actions.push({ text: SKIP, data: key("x") });
+    if (question.allowOther) actions.push({ text: draft.other ? `${CHECKED} ${TEXT_ANSWER()}` : TEXT_ANSWER(), data: key("w") });
+    if (question.multiSelect) actions.push({ text: SUBMIT(), data: key("s") });
+    actions.push({ text: SKIP(), data: key("x") });
     rows.push(actions);
     return rows;
   }
   private questionBody(offer: Offer): string {
     const draft = offer.draft!;
     const question = offer.approval.questions![draft.cursor]!;
-    const note = draft.other ? `\nYour words: ${draft.other}` : "";
+    const note = draft.other ? `\n${channelReply("channelReply.questionYourWords", { text: draft.other })}` : "";
     return `${this.questionText(offer, draft.cursor)}${note}\n\n${this.questionHint(question)}`;
   }
   private async publishQuestion(approval: TelegramApproval, owner: Owner, active: () => boolean, signal: AbortSignal) {
@@ -215,20 +218,20 @@ export class TelegramApprovals {
     if (draft.cursor + 1 < questions.length) {
       // close this question's message, then ask the next
       if (offer.messageId && this.transport.settleApprovalMessage) {
-        try { await this.transport.settleApprovalMessage({ chatId: owner.chatId, messageId: offer.messageId, text: `${this.questionText(offer, draft.cursor)}\n\nYour answer: ${words}`, signal }); } catch { /* cosmetic */ }
+        try { await this.transport.settleApprovalMessage({ chatId: owner.chatId, messageId: offer.messageId, text: `${this.questionText(offer, draft.cursor)}\n\n${channelReply("channelReply.questionYourAnswer", { text: words })}`, signal }); } catch { /* cosmetic */ }
       }
       draft.cursor += 1; draft.picks = []; delete draft.other; draft.awaitingText = false;
       offer.messageId = undefined;
       if (active()) await this.sendQuestion(offer, owner, active, signal);
-      return `Noted: ${words}`.slice(0, 200);
+      return channelReply("channelReply.questionNoted", { text: words }).slice(0, 200);
     }
     // Consume before invoking the engine; exceptions never authorize replay.
     offer.consumed = true;
     let text: string;
     try {
-      const result = active() ? await this.actions.answer!(offer.approval, { behavior: "answer", answers: draft.answers }) : { ok: false as const, error: "Telegram is no longer connected." };
-      text = result.ok ? "Answered." : `Not delivered: ${result.error}`.slice(0, 200);
-    } catch { text = "Could not confirm this answer reached your bot. Check the conversation in Murage; do not repeat it."; }
+      const result = active() ? await this.actions.answer!(offer.approval, { behavior: "answer", answers: draft.answers }) : { ok: false as const, error: channelReply("channelReply.questionDisconnected") };
+      text = result.ok ? channelReply("channelReply.questionAnswered") : channelReply("channelReply.questionNotDelivered", { reason: result.error }).slice(0, 200);
+    } catch { text = channelReply("channelReply.questionAnswerUnconfirmed"); }
     offer.outcome = text;
     return text;
   }
@@ -245,13 +248,13 @@ export class TelegramApprovals {
     let reply: string;
     if (/^\/cancel$/i.test(text)) {
       draft.awaitingText = false;
-      reply = "Okay. Tap an option or Skip on the question above.";
+      reply = channelReply("channelReply.questionCancelled");
     } else if (text.length > QUESTION_LIMITS.otherChars) {
-      reply = `That answer is longer than ${QUESTION_LIMITS.otherChars.toLocaleString("en-US")} characters. Send a shorter one.`;
+      reply = channelReply("channelReply.questionTooLong", { count: channelReplyNumber(QUESTION_LIMITS.otherChars) });
     } else if (question.multiSelect) {
       draft.other = text; draft.awaitingText = false;
       await this.redrawQuestion(offer, owner, signal);
-      reply = "Noted. Tap Submit when you are done, or keep picking options.";
+      reply = channelReply("channelReply.questionNotedSubmit");
     } else {
       draft.awaitingText = false;
       reply = await this.advance(offer, owner, { id: question.id, selected: [], other: text }, active, signal);
@@ -263,41 +266,41 @@ export class TelegramApprovals {
   private async answerQuestion(offer: Offer, index: number, action: string, owner: Owner, active: () => boolean, signal: AbortSignal): Promise<string> {
     const draft = offer.draft!;
     const question = offer.approval.questions![draft.cursor]!;
-    if (index !== draft.cursor) return "That question was already answered.";
+    if (index !== draft.cursor) return channelReply("channelReply.questionAlreadyAnswered");
     const optionAt = (n: number) => question.options[n]?.label;
     if (action === "x") {
       offer.consumed = true;
       let text: string;
       try {
-        const result = active() ? await this.actions.answer!(offer.approval, { behavior: "skip" }) : { ok: false as const, error: "Telegram is no longer connected." };
-        text = result.ok ? "Skipped. Your bot was told you did not answer." : `Not delivered: ${result.error}`.slice(0, 200);
-      } catch { text = "Could not confirm the skip reached your bot. Check the conversation in Murage."; }
+        const result = active() ? await this.actions.answer!(offer.approval, { behavior: "skip" }) : { ok: false as const, error: channelReply("channelReply.questionDisconnected") };
+        text = result.ok ? channelReply("channelReply.questionSkipped") : channelReply("channelReply.questionNotDelivered", { reason: result.error }).slice(0, 200);
+      } catch { text = channelReply("channelReply.questionSkipUnconfirmed"); }
       offer.outcome = text;
       return text;
     }
     if (action === "w") {
-      if (!question.allowOther) return "This question takes one of its options.";
+      if (!question.allowOther) return channelReply("channelReply.questionTakesOption");
       draft.awaitingText = true;
-      return "Reply in this chat with your answer. Send /cancel to go back to the options.";
+      return channelReply("channelReply.questionReplyHere");
     }
     if (action.startsWith("o")) {
       const picked = question.multiSelect ? undefined : optionAt(Number(action.slice(1)));
-      if (!picked) return "That option is not available.";
+      if (!picked) return channelReply("channelReply.questionOptionUnavailable");
       return this.advance(offer, owner, { id: question.id, selected: [picked] }, active, signal);
     }
     if (action.startsWith("t")) {
       const picked = question.multiSelect ? optionAt(Number(action.slice(1))) : undefined;
-      if (!picked) return "That option is not available.";
+      if (!picked) return channelReply("channelReply.questionOptionUnavailable");
       draft.picks = draft.picks.includes(picked) ? draft.picks.filter(item => item !== picked) : [...draft.picks, picked];
       await this.redrawQuestion(offer, owner, signal);
-      return draft.picks.length ? `Selected: ${draft.picks.join(", ")}`.slice(0, 200) : "Nothing selected yet.";
+      return draft.picks.length ? channelReply("channelReply.questionSelected", { items: draft.picks.join(", ") }).slice(0, 200) : channelReply("channelReply.questionNothingSelected");
     }
     if (action === "s") {
-      if (!question.multiSelect) return "That option is not available.";
-      if (!draft.picks.length && !draft.other) return "Pick at least one option first.";
+      if (!question.multiSelect) return channelReply("channelReply.questionOptionUnavailable");
+      if (!draft.picks.length && !draft.other) return channelReply("channelReply.questionPickFirst");
       return this.advance(offer, owner, { id: question.id, selected: [...draft.picks], ...(draft.other ? { other: draft.other } : {}) }, active, signal);
     }
-    return "That option is not available.";
+    return channelReply("channelReply.questionOptionUnavailable");
   }
 
   async answer(update: Extract<TelegramUpdate, { kind: "callback" }>, owner: Owner, active: () => boolean, signal: AbortSignal) {
@@ -307,7 +310,7 @@ export class TelegramApprovals {
     const nonce = permission?.[1] ?? question?.[1];
     const offer = nonce ? [...this.offers.values()].find(item => item.nonce === nonce) : undefined;
     let text = offer?.consumed && offer.messageId === update.messageId && offer.outcome
-      ? offer.outcome : "This approval is expired, changed, or already answered. Review it in Murage.";
+      ? offer.outcome : channelReply("channelReply.approvalStale");
     if (offer && !offer.consumed && offer.messageId === update.messageId && this.now() < offer.expires && this.stillPending(offer)) {
       if (question && offer.draft) {
         text = await this.answerQuestion(offer, Number(question[2]), question[3]!, owner, active, signal);
@@ -322,8 +325,8 @@ export class TelegramApprovals {
           const ok = active() && (forTask
             ? await this.actions.resolve(offer.approval, "allow", true)
             : await this.actions.resolve(offer.approval, allow ? "allow" : "deny"));
-          if (ok) text = forTask ? "Allowed for this task." : allow ? "Allowed once." : "Denied.";
-        } catch { text = "Could not confirm this decision. Review the action in Murage; do not repeat it."; }
+          if (ok) text = approvalResultLabel(forTask ? "allowTask" : allow ? "approveOnce" : "deny");
+        } catch { text = channelReply("channelReply.decisionNotConfirmed"); }
         offer.outcome = text;
       }
     }

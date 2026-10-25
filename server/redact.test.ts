@@ -446,6 +446,41 @@ describe("redactSecretsInText is linear in its input", () => {
   });
 });
 
+// The financial rule (shared/financial-ids.ts) on its own hostile shapes: digit
+// runs, single-digit groups, IBANs and context-gated ids, each repeated to the
+// size. Its budgets at 64 and 128 KiB allow for its larger constant (eight
+// passes, each placing masks); 1 MiB under 500 ms is the linearity proof, the
+// same budget every rule above meets.
+describe("the financial rule is linear in its input", () => {
+  const KIB = 1024;
+  const shapes: Array<[string, (n: number) => string]> = [
+    ["a run of digits", (n) => "4".repeat(n)],
+    ["single digits between spaces", (n) => "4 ".repeat(n / 2)],
+    ["IBANs one after another", (n) => "DE89 3704 0044 0532 0130 00 ".repeat(Math.ceil(n / 28)).slice(0, n)],
+    ["SSNs one after another", (n) => "SSN 123-45-6789 ".repeat(Math.ceil(n / 16)).slice(0, n)],
+    ["id words before a long run", (n) => `${"VAT ".repeat(n / 8)}${"1 ".repeat(n / 4)}`],
+    ["account words before digits", (n) => "account ending 4471 card 4111 1111 1111 1111 ".repeat(Math.ceil(n / 46)).slice(0, n)],
+  ];
+  const cpuMs = (run: () => void) => {
+    const started = process.cpuUsage();
+    run();
+    const used = process.cpuUsage(started);
+    return (used.user + used.system) / 1000;
+  };
+  it.each([
+    ["64 KiB", 64, 100],
+    ["128 KiB", 128, 150],
+    ["1 MiB", 1024, 500],
+  ])("redacts %s of every financial shape inside its budget, whole chain and the rule alone", (_size, kib, budgetMs) => {
+    const rule = TEXT_RULES.find(([name]) => name === "FINANCIAL_ID")![1];
+    for (const [shape, make] of shapes) {
+      const text = make(kib * KIB);
+      expect(cpuMs(() => redactSecretsInText(text)), shape).toBeLessThan(budgetMs);
+      expect(cpuMs(() => rule(text)), `FINANCIAL_ID, ${shape}`).toBeLessThan(budgetMs);
+    }
+  });
+});
+
 // The linear forms must match EXACTLY what the rules they replace matched —
 // same spans, same output — or "no cut before redaction" buys nothing. The
 // oracle is the rule set as it stood before round 10 (base 0.1.53 plus the
@@ -555,5 +590,26 @@ describe("redactSecrets name masking with a length floor", () => {
   });
   it("redactSecrets itself is unchanged for short values", () => {
     expect((redactSecrets({ token: "USDC" }) as any).token).not.toBe("USDC");
+  });
+});
+
+describe("redactSecretsInText masks bank, card and account numbers", () => {
+  it("S1: an account ending is masked, byte for byte", () => {
+    expect(redactSecretsInText("account ending 4471")).toBe("account ending ****");
+    expect(redactSecretsInText("card 4111 1111 1111 1111 and SSN 123-45-6789")).toBe("card **** **** **** **** and SSN ***-**-****");
+  });
+
+  it("the whole chain is idempotent over the secret fixtures and the financial vectors", async () => {
+    const { readFileSync } = await import("node:fs");
+    const vectors = JSON.parse(readFileSync(new URL("../shared/financial-ids.vectors.json", import.meta.url), "utf8")) as { mask: { input: string }[] };
+    const fixtures = [
+      "foo-bar_token=abcdefghij", "\"api_key\": \"abcdefghij\"", "Bearer abcdefghijklmnop", "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----",
+      "eyJabcdefgh.abcdefghij.abcdefghij", "https://a.test/?token=abcdefghij", "sk-ant-abcdefghijklmnopqrstu account ending 4471", // secret-scan: fixture
+      ...vectors.mask.map((row) => row.input),
+    ];
+    for (const text of fixtures) {
+      const once = redactSecretsInText(text);
+      expect(redactSecretsInText(once), text).toBe(once);
+    }
   });
 });

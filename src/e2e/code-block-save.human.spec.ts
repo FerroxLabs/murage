@@ -50,9 +50,9 @@ import {ChatMarkdown, CodeBlock} from '/src/components/ChatMarkdown.tsx';
 import '/src/styles.css';
 const h=React.createElement;
 createRoot(document.getElementById('root')).render(h(React.StrictMode,{},h('main',{style:{background:'var(--color-app)',color:'var(--color-ink)',padding:16,height:'100dvh',overflowY:'auto'}},
-  h('section',{'data-testid':'markdown',className:'max-w-[min(42rem,100%)]'},h(ChatMarkdown,{text:${JSON.stringify(MARKDOWN)}})),
+  h('section',{'data-testid':'markdown',className:'max-w-[min(var(--chat-bubble-max),100%)]'},h(ChatMarkdown,{text:${JSON.stringify(MARKDOWN)}})),
   // .chat-md as ChatMarkdown provides it: Shiki's light-dark() follows the skin only inside it
-  h('section',{'data-testid':'crlf',className:'chat-md max-w-[min(42rem,100%)]'},h(CodeBlock,{code:${JSON.stringify(CRLF)},lang:'ts',streaming:false})))));`;
+  h('section',{'data-testid':'crlf',className:'chat-md max-w-[min(var(--chat-bubble-max),100%)]'},h(CodeBlock,{code:${JSON.stringify(CRLF)},lang:'ts',streaming:false})))));`;
       },
       configureServer(vite) { vite.middlewares.use((req, res, next) => {
         if (new URL(req.url ?? "/", "http://fixture").pathname === "/__code") {
@@ -96,9 +96,9 @@ async function downloadBytes(page: Page, trigger: () => Promise<void>) {
 test("Save downloads exactly what Copy copies, named from the fence language, with no request and no saved claim", async ({ page, context }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin });
   await open(page);
-  // let Shiki's lazily loaded highlighter finish (three known languages; the
-  // hostile hint stays a plain <pre>) so fixture module loads are not counted
-  await expect(page.locator("pre.shiki")).toHaveCount(3);
+  // let Shiki's lazily loaded highlighter finish (three known languages, and the
+  // hostile hint renders as plain-text Shiki markup) so fixture module loads are not counted
+  await expect(page.locator("pre.shiki")).toHaveCount(4);
   await page.waitForLoadState("networkidle");
   let requests: string[] = [];
   page.on("request", (request) => requests.push(request.url()));

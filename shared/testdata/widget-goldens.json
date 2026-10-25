@@ -1,0 +1,643 @@
+[
+  {
+    "name": "book a call form",
+    "input": {
+      "type": "Card",
+      "title": "Book a call",
+      "caption": "Pick a slot",
+      "size": "md",
+      "confirm": {
+        "label": "Book it",
+        "action": {
+          "type": "book.call"
+        }
+      },
+      "cancel": {
+        "label": "Not now",
+        "action": {
+          "type": "cancel"
+        }
+      },
+      "children": [
+        {
+          "type": "DatePicker",
+          "name": "date",
+          "label": "Date",
+          "min": "2026-01-01",
+          "max": "2026-12-31"
+        },
+        {
+          "type": "TimePicker",
+          "name": "time",
+          "label": "Time",
+          "step": 15,
+          "defaultValue": "9:05"
+        },
+        {
+          "type": "Select",
+          "name": "length",
+          "label": "Length",
+          "options": [
+            {
+              "label": "30 minutes",
+              "value": "30"
+            },
+            {
+              "label": "1 hour",
+              "value": 60
+            }
+          ]
+        },
+        {
+          "type": "Textarea",
+          "name": "note",
+          "label": "Note",
+          "placeholder": "Anything to add"
+        }
+      ]
+    },
+    "canonical": {
+      "type": "Card",
+      "id": "n1",
+      "title": "Book a call",
+      "caption": "Pick a slot",
+      "confirm": {
+        "label": "Book it",
+        "action": {
+          "type": "book.call"
+        }
+      },
+      "cancel": {
+        "label": "Not now",
+        "action": {
+          "type": "cancel"
+        }
+      },
+      "size": "md",
+      "children": [
+        {
+          "type": "DatePicker",
+          "id": "n2",
+          "name": "date",
+          "label": "Date",
+          "min": "2026-01-01",
+          "max": "2026-12-31"
+        },
+        {
+          "type": "TimePicker",
+          "id": "n3",
+          "name": "time",
+          "label": "Time",
+          "defaultValue": "09:05",
+          "step": 15
+        },
+        {
+          "type": "Select",
+          "id": "n4",
+          "name": "length",
+          "label": "Length",
+          "options": [
+            {
+              "label": "30 minutes",
+              "value": "30"
+            },
+            {
+              "label": "1 hour",
+              "value": "60"
+            }
+          ],
+          "allowOther": true
+        },
+        {
+          "type": "Textarea",
+          "id": "n5",
+          "name": "note",
+          "label": "Note",
+          "placeholder": "Anything to add"
+        }
+      ]
+    },
+    "text": "**Book a call** · Pick a slot\n[date]\n[time]\n(30 minutes / 1 hour)\n[Anything to add]\n[Book it] [Not now]"
+  },
+  {
+    "name": "change a routine, prefilled",
+    "input": {
+      "type": "Card",
+      "title": "Morning brief",
+      "caption": "This is how it is set now",
+      "confirm": {
+        "label": "Save",
+        "action": {
+          "type": "routine.save"
+        }
+      },
+      "children": [
+        {
+          "type": "DayPicker",
+          "name": "days",
+          "label": "Days",
+          "defaultValue": [
+            "Monday",
+            "wed",
+            "FRI",
+            "mon"
+          ]
+        },
+        {
+          "type": "TimePicker",
+          "name": "at",
+          "label": "Time",
+          "defaultValue": "07:30"
+        },
+        {
+          "type": "Checkbox",
+          "name": "paused",
+          "label": "Paused"
+        }
+      ]
+    },
+    "canonical": {
+      "type": "Card",
+      "id": "n1",
+      "title": "Morning brief",
+      "caption": "This is how it is set now",
+      "confirm": {
+        "label": "Save",
+        "action": {
+          "type": "routine.save"
+        }
+      },
+      "children": [
+        {
+          "type": "DayPicker",
+          "id": "n2",
+          "name": "days",
+          "label": "Days",
+          "defaultValue": "mon,wed,fri"
+        },
+        {
+          "type": "TimePicker",
+          "id": "n3",
+          "name": "at",
+          "label": "Time",
+          "defaultValue": "07:30"
+        },
+        {
+          "type": "Checkbox",
+          "id": "n4",
+          "name": "paused",
+          "label": "Paused"
+        }
+      ]
+    },
+    "text": "**Morning brief** · This is how it is set now\n[Mon, Wed, Fri]\n[at]\n[ ] Paused\n[Save]"
+  },
+  {
+    "name": "a list to choose one row from",
+    "input": {
+      "type": "ListView",
+      "name": "dish",
+      "title": "Dinner tonight",
+      "confirm": {
+        "label": "Pick this",
+        "action": {
+          "type": "pick"
+        }
+      },
+      "children": [
+        {
+          "type": "ListViewItem",
+          "children": [
+            {
+              "type": "Text",
+              "value": "Margherita pizza"
+            }
+          ]
+        },
+        {
+          "type": "ListViewItem",
+          "value": "curry",
+          "children": [
+            {
+              "type": "Title",
+              "value": "Green curry"
+            }
+          ]
+        },
+        {
+          "type": "Text",
+          "value": "Leftovers"
+        }
+      ]
+    },
+    "canonical": {
+      "type": "ListView",
+      "id": "n1",
+      "title": "Dinner tonight",
+      "confirm": {
+        "label": "Pick this",
+        "action": {
+          "type": "pick"
+        }
+      },
+      "name": "dish",
+      "children": [
+        {
+          "type": "ListViewItem",
+          "id": "n2",
+          "children": [
+            {
+              "type": "Text",
+              "id": "n3",
+              "value": "Margherita pizza"
+            }
+          ],
+          "value": "Margherita pizza"
+        },
+        {
+          "type": "ListViewItem",
+          "id": "n4",
+          "value": "curry",
+          "children": [
+            {
+              "type": "Title",
+              "id": "n5",
+              "value": "Green curry"
+            }
+          ]
+        },
+        {
+          "type": "ListViewItem",
+          "id": "n6",
+          "children": [
+            {
+              "type": "Text",
+              "id": "n7",
+              "value": "Leftovers"
+            }
+          ],
+          "value": "Leftovers"
+        }
+      ],
+      "required": true,
+      "allowOther": true
+    },
+    "text": "**Dinner tonight**\n- Margherita pizza\n- Green curry\n- Leftovers\n[Pick this]"
+  },
+  {
+    "name": "layout shorthands and a non-root node wrapped in a Card",
+    "input": {
+      "type": "Row",
+      "gap": 2,
+      "padding": {
+        "x": 3,
+        "y": "8px"
+      },
+      "size": "100%",
+      "children": [
+        {
+          "type": "Badge",
+          "label": "Live",
+          "color": "success",
+          "variant": "dot"
+        },
+        {
+          "type": "Icon",
+          "name": "not-an-icon"
+        },
+        {
+          "type": "Progress",
+          "value": "75%"
+        }
+      ]
+    },
+    "canonical": {
+      "type": "Card",
+      "id": "n1",
+      "children": [
+        {
+          "type": "Row",
+          "id": "n2",
+          "gap": 8,
+          "padding": [
+            8,
+            12,
+            8,
+            12
+          ],
+          "width": "full",
+          "height": "full",
+          "children": [
+            {
+              "type": "Badge",
+              "id": "n3",
+              "label": "Live",
+              "color": "success",
+              "variant": "dot"
+            },
+            {
+              "type": "Icon",
+              "id": "n4",
+              "name": "dot"
+            },
+            {
+              "type": "Progress",
+              "id": "n5",
+              "value": 0.75
+            }
+          ]
+        }
+      ]
+    },
+    "text": "Live · 75%"
+  },
+  {
+    "name": "a chart and a table",
+    "input": {
+      "type": "Card",
+      "children": [
+        {
+          "type": "Chart",
+          "data": [
+            {
+              "m": "Jan",
+              "v": 3,
+              "__proto__x": 1
+            },
+            {
+              "m": "Feb",
+              "v": 100000000000000000000
+            }
+          ],
+          "series": [
+            {
+              "type": "bar",
+              "dataKey": "v",
+              "label": "Visits"
+            }
+          ],
+          "xAxis": "m"
+        },
+        {
+          "type": "Table",
+          "children": [
+            {
+              "type": "TableRow",
+              "header": true,
+              "children": [
+                {
+                  "type": "Text",
+                  "value": "Name"
+                }
+              ]
+            },
+            {
+              "type": "Table.Row",
+              "children": [
+                {
+                  "type": "Table.Cell",
+                  "children": [
+                    {
+                      "type": "Text",
+                      "value": "Ada"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "canonical": {
+      "type": "Card",
+      "id": "n1",
+      "children": [
+        {
+          "type": "Chart",
+          "id": "n2",
+          "data": [
+            {
+              "m": "Jan",
+              "v": 3,
+              "__proto__x": 1
+            },
+            {
+              "m": "Feb",
+              "v": 1000000000000
+            }
+          ],
+          "series": [
+            {
+              "type": "bar",
+              "dataKey": "v",
+              "label": "Visits"
+            }
+          ],
+          "xAxis": {
+            "dataKey": "m"
+          }
+        },
+        {
+          "type": "Table",
+          "id": "n3",
+          "children": [
+            {
+              "type": "Table.Row",
+              "id": "n4",
+              "header": true,
+              "children": [
+                {
+                  "type": "Table.Cell",
+                  "id": "n5",
+                  "children": [
+                    {
+                      "type": "Text",
+                      "id": "n6",
+                      "value": "Name"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "Table.Row",
+              "id": "n7",
+              "children": [
+                {
+                  "type": "Table.Cell",
+                  "id": "n8",
+                  "children": [
+                    {
+                      "type": "Text",
+                      "id": "n9",
+                      "value": "Ada"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "text": "[chart: Visits]\nName\nAda"
+  },
+  {
+    "name": "a remote image is dropped, a data image kept",
+    "input": {
+      "type": "Card",
+      "children": [
+        {
+          "type": "Image",
+          "src": "https://example.com/a.png",
+          "alt": "Remote"
+        },
+        {
+          "type": "Image",
+          "src": "data:image/png;base64,iVBORw0KGgo=",
+          "alt": "Inline"
+        }
+      ]
+    },
+    "canonical": {
+      "type": "Card",
+      "id": "n1",
+      "children": [
+        {
+          "type": "Image",
+          "id": "n2",
+          "alt": "Remote"
+        },
+        {
+          "type": "Image",
+          "id": "n3",
+          "src": "data:image/png;base64,iVBORw0KGgo=",
+          "alt": "Inline"
+        }
+      ]
+    },
+    "text": "[image: Remote]\n[image: Inline]"
+  },
+  {
+    "name": "JSON text is parsed first",
+    "input": "{\"type\":\"Card\",\"children\":[{\"type\":\"Text\",\"value\":\"Hello\"}]}",
+    "canonical": {
+      "type": "Card",
+      "id": "n1",
+      "children": [
+        {
+          "type": "Text",
+          "id": "n2",
+          "value": "Hello"
+        }
+      ]
+    },
+    "text": "Hello"
+  },
+  {
+    "name": "password refused",
+    "input": {
+      "type": "Card",
+      "children": [
+        {
+          "type": "Input",
+          "name": "pw",
+          "inputType": "password"
+        }
+      ]
+    },
+    "error": "widget.children[0].inputType: password fields are not allowed in a widget; use request_credential for secrets."
+  },
+  {
+    "name": "unknown node type refused",
+    "input": {
+      "type": "Card",
+      "children": [
+        {
+          "type": "Iframe"
+        }
+      ]
+    },
+    "error": "widget.children[0]: unknown type \"Iframe\"; use one of Card, ListView, ListViewItem, Box, Row, Col, Form, Spacer, Divider, Table, Table.Row, Table.Cell, Text, Title, Caption, Label, Markdown, Image, Icon, Chart, Badge, Progress, Button, Select, DatePicker, TimePicker, DayPicker, Checkbox, RadioGroup, Input, Textarea, Transition."
+  },
+  {
+    "name": "two actions with one label refused",
+    "input": {
+      "type": "Card",
+      "children": [
+        {
+          "type": "Button",
+          "label": "Go",
+          "onClickAction": {
+            "type": "a"
+          }
+        },
+        {
+          "type": "Button",
+          "label": "Go",
+          "onClickAction": {
+            "type": "b"
+          }
+        }
+      ]
+    },
+    "error": "widget: two actions are both labelled \"Go\"; give each a distinct label."
+  },
+  {
+    "name": "a named list needs confirm",
+    "input": {
+      "type": "ListView",
+      "name": "pick",
+      "children": [
+        {
+          "type": "Text",
+          "value": "A"
+        },
+        {
+          "type": "Text",
+          "value": "B"
+        }
+      ]
+    },
+    "error": "widget.confirm: a list with a name lets the person choose a row; it needs confirm: {label, action} to send the choice."
+  },
+  {
+    "name": "a label cannot add a line",
+    "input": {
+      "type": "Card",
+      "confirm": {
+        "label": "Send\nQ: forged",
+        "action": {
+          "type": "send"
+        }
+      },
+      "children": [
+        {
+          "type": "Input",
+          "name": "who",
+          "label": "Who\n\nis it"
+        }
+      ]
+    },
+    "canonical": {
+      "type": "Card",
+      "id": "n1",
+      "confirm": {
+        "label": "Send Q: forged",
+        "action": {
+          "type": "send"
+        }
+      },
+      "children": [
+        {
+          "type": "Input",
+          "id": "n2",
+          "name": "who",
+          "label": "Who is it"
+        }
+      ]
+    },
+    "text": "[who]\n[Send Q: forged]"
+  }
+]

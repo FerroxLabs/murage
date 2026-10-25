@@ -56,6 +56,7 @@ const MURAGE_TOOLS: Record<string, string> = {
   propose_routine_action: "change a routine",
   skill_manage: "change a skill",
   request_credential: "ask you for a sign-in detail",
+  add_mcp_server: "add a connected tool server, switched off",
   request_browser_connection: "connect to your browser",
   request_bot_access: "ask for access to another bot",
   web_search: "search the web",

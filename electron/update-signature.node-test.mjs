@@ -342,7 +342,7 @@ test("both error surfaces use the external-open bridge and every locale carries 
     }
   }
 });
-test("actual updater wiring omits verification hooks on darwin/win32 and sets them for both Linux modes", async () => {
+test("actual updater wiring sets a download check on every platform: signed SUMS on Linux, the signed build version on macOS and Windows", async () => {
   const source = (await readFile(new URL("./updater.mjs", import.meta.url), "utf8"))
     .replace(/^import[\s\S]*?;\n/gm, "").replace(/export /g, "").replaceAll("import.meta.url", JSON.stringify(import.meta.url));
   for (const [platform, packageType] of [["darwin", null], ["win32", null], ["linux", null], ["linux", "deb"]]) {
@@ -353,15 +353,17 @@ test("actual updater wiring omits verification hooks on darwin/win32 and sets th
     const context = vm.createContext({ process: { platform }, app: { isPackaged: true, getVersion: () => "1.9.0", getPath: () => "/unused" },
       createRequire: () => () => ({ autoUpdater }), join, HAND_OFF_PACKAGE_TYPES: ["deb"], linuxPackageType: () => packageType,
       createUpdaterCoordinator: (_updater, setState, options) => { received = options; publish = setState; return {}; },
-      createLinuxUpdateVerifier: options => {
+      createUpdateDownloadVerifier: options => {
         factoryCalls++;
-        assert.equal(options.packageType, packageType === "deb" ? "deb" : "AppImage");
+        // The platform choice inside it (Linux SUMS vs signed build version) has its own tests (update-build-version).
+        assert.deepEqual({ ...options }, { currentVersion: "1.9.0", packageType });
         return async () => {};
-      }, electronIpcMain: {}, installWindowsUpdateVerifier: () => false,
+      }, createGithubFallbackFeed: () => ({ activate: async () => false, reset() {} }),
+      electronIpcMain: {}, installWindowsUpdateVerifier: () => false,
     });
     vm.runInContext(source + "\nstartUpdater({ scheduleChecks: false });", context);
-    assert.equal(Object.hasOwn(received, "verifyDownload"), platform === "linux");
-    assert.equal(factoryCalls, platform === "linux" ? 1 : 0);
+    assert.equal(typeof received.verifyDownload, "function");
+    assert.equal(factoryCalls, 1);
     assert.equal(Boolean(received.handOffInstall), packageType === "deb");
     publish({ status: "error", action: "download-from-murage", message: refusal });
     assert.equal(vm.runInContext("publicState().action", context), "download-from-murage");

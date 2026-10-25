@@ -131,6 +131,8 @@ export function slotAt(day: number, clientY: number, top: number, hourHeight: nu
 
 export function scheduleAt(schedule: RoutineSchedule, occurrenceAt: number, nextAt: number): RoutineSchedule {
   if (schedule.type === "once") return { type: "once", at: nextAt };
+  // a limit reset is not a time: moving its marker changes nothing
+  if (schedule.type === "limit_reset") return { ...schedule };
   if (schedule.type === "interval") {
     return {
       type: "interval",
@@ -196,7 +198,8 @@ export function projectedRoutineItems(
       }
       continue;
     }
-    if (routine.schedule.type === "interval") {
+    // a limit reset routine's only known time is its persisted nextRunAt, as an interval's is
+    if (routine.schedule.type === "interval" || routine.schedule.type === "limit_reset") {
       // The scheduler deliberately skips overlapping and stale interval ticks.
       // Its persisted nextRunAt is the only future occurrence users can act on;
       // reconstructing an unreceipted tick would resurrect work it skipped.

@@ -1,8 +1,14 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import {
+  CHAT_LIST_WIDTH,
+  chatListMaxHeight,
+  chatListShortcut,
+  chatNoun,
   TASK_PICKER_DISMISS_MS,
   TASK_RENAME_HINT,
   ConversationTaskPicker,
@@ -180,10 +186,10 @@ describe("task list rendering", () => {
 
   it("offers the filters and the sort, and hides an empty untitled task", () => {
     const html = render();
-    for (const chip of ["All", "Chats", "Routines", "From other bots", "Unread"]) {
+    for (const chip of ["All", "Yours", "Routines", "From other bots", "Unread"]) {
       expect(html).toMatch(new RegExp(`aria-pressed="(true|false)"[^>]*>${chip}<`));
     }
-    expect(html).toContain('aria-label="Sort tasks"');
+    expect(html).toContain('aria-label="Sort chats"');
     expect(html).toContain(">Last activity<");
     expect(html).toContain(">Created<");
     expect(html).not.toContain(">New task</div>");
@@ -379,23 +385,114 @@ describe("tasks past the window", () => {
       ...extra,
     }));
 
-  it("shows the count of every task and a Show older tasks row only while some are left out", () => {
+  it("shows the count of every task and a Show older chats row only while some are left out", () => {
     const more = render({ total: 5000, older: { hasMore: true, loading: false, failed: false, onLoadMore: noop } });
     expect(more).toContain(">5000<");
-    expect(more).toContain("Show older tasks");
+    expect(more).toContain("Show older chats");
     expect(more).toContain("data-show-older");
     const done = render({ total: 5000, older: { hasMore: false, loading: false, failed: false, onLoadMore: noop } });
-    expect(done).not.toContain("Show older tasks");
-    expect(render()).not.toContain("Show older tasks");
+    expect(done).not.toContain("Show older chats");
+    expect(render()).not.toContain("Show older chats");
     expect(render()).toContain(">2<");
   });
 
   it("says when it is loading and when it could not, in plain words", () => {
     const loading = render({ older: { hasMore: true, loading: true, failed: false, onLoadMore: noop } });
-    expect(loading).toContain("Loading older tasks");
+    expect(loading).toContain("Loading older chats");
     expect(loading).toContain("disabled");
     const failed = render({ older: { hasMore: true, loading: false, failed: true, onLoadMore: noop } });
-    expect(failed).toContain("Could not load older tasks. Try again.");
+    expect(failed).toContain("Could not load older chats. Try again.");
     for (const text of [loading, failed]) expect(text).not.toContain("—");
+  });
+});
+
+describe("the chat list, slice 1 (CHATS-FINDABILITY-DESIGN 2)", () => {
+  const noop = () => {};
+  const tasks = [
+    { threadId: "chat", title: "Austin lease", createdAt: Date.parse("2026-10-24T09:00:00-04:00") },
+    { threadId: "older", title: "Dinner ideas", createdAt: Date.parse("2026-10-20T09:00:00-04:00") },
+  ];
+  const render = (extra: Record<string, unknown> = {}) =>
+    renderToStaticMarkup(createElement(ConversationTaskPicker, {
+      threadId: "chat", tasks, busy: false, onNew: noop, onSwitch: noop, onRename: noop, onDelete: noop,
+      initialOpen: true, now: Date.parse("2026-10-24T12:00:00-04:00"), timeZone: "America/New_York", locale: "en-US",
+      heading: "Chats with Ember", onExpand: noop, total: 42,
+      older: { hasMore: true, loading: false, failed: false, onLoadMore: noop },
+      ...extra,
+    }));
+
+  it("is 440 px wide with a 60 vh list, titled for the bot, with Expand", () => {
+    const html = render();
+    expect(html).toContain("w-[440px]");
+    expect(html).toContain("max-h-[min(60vh,640px)]");
+    expect(html).not.toContain("w-[320px]");
+    expect(html).toContain("Chats with Ember");
+    expect(html).toContain(">42<");
+    expect(html).toContain('aria-label="Expand to All chats"');
+    expect(CHAT_LIST_WIDTH).toBe(440);
+  });
+
+  it("keeps the whole pop-up on screen: a column whose list gives way to the space below the chip", () => {
+    const html = render();
+    expect(html).toMatch(/class="absolute right-0 top-full z-40 mt-1 flex w-\[440px\][^"]*flex-col/);
+    // the list is the one part that gives; every block of chrome above and below it holds its height
+    expect(html).toMatch(/class="max-h-\[min\(60vh,640px\)\] overflow-y-auto[^"]*min-h-0"/);
+    expect(html).toContain('class="flex shrink-0 items-center gap-2 px-2 pb-1.5 pt-1.5"');
+    expect(html).toContain('class="shrink-0 px-2 pb-1.5"');
+    expect(html).toMatch(/class="mt-1 flex w-full shrink-0[^"]*"[^>]*>(<svg[\s\S]*?<\/svg>)? New chat/);
+    // a phone's two-row header puts the chip near y=330 on an 844 px screen: the menu ends 8 px above the edge
+    expect(chatListMaxHeight(330, 844)).toEqual({ maxHeight: 502, tight: false });
+    expect(chatListMaxHeight(60, 900)).toEqual({ maxHeight: 828, tight: false });
+    // the keyboard up (visual viewport ~508 px): under chrome + two rows (340 px), so the whole pop-up scrolls above it
+    expect(chatListMaxHeight(330, 508)).toEqual({ maxHeight: 166, tight: true });
+    expect(chatListMaxHeight(800, 844)).toEqual({ maxHeight: 92, tight: true });
+    // the floor is the live chrome plus two rows: less chrome, less room needed
+    expect(chatListMaxHeight(330, 600, 150)?.tight).toBe(false);
+    expect(chatListMaxHeight(undefined, 844)).toBeUndefined();
+    expect(chatListMaxHeight(Number.NaN, 844)).toBeUndefined();
+    // re-measured while open (once per frame), against the visual viewport a phone keyboard shrinks
+    const source = readFileSync(fileURLToPath(new URL("./TaskPicker.tsx", import.meta.url)), "utf8");
+    expect(source).toMatch(/visualViewport[\s\S]{0,400}addEventListener\("resize", schedule\)/);
+    expect(source).toMatch(/requestAnimationFrame\(\(\) => \{ frame = 0; measure\(\); \}\)/);
+  });
+
+  it("calls them chats: Search chats, New chat, Show older chats, and a two-line row of title and time", () => {
+    const html = render();
+    expect(html).toContain('placeholder="Search chats"');
+    expect(html).toContain("New chat");
+    expect(html).not.toContain("New task");
+    expect(html).toContain("Show older chats");
+    expect(html).toContain('aria-label="Chat list"');
+    expect(html).toContain('aria-label="Filter chats"');
+    // line two of a row: the time
+    expect(html).toMatch(/<time dateTime="[^"]+"[^>]*>[^<]+<\/time>/);
+    for (const pattern of [/—/, /\bsafe\b/i, /\bunsafe\b/i, /\bsafety\b/i, /composio/i]) expect(html).not.toMatch(pattern);
+  });
+
+  it("keeps the word task for routine runs and work from other bots", () => {
+    expect(chatNoun("chat")).toBe("chat");
+    expect(chatNoun("routine")).toBe("task");
+    expect(chatNoun("bot")).toBe("task");
+  });
+
+  it("uses New chat for an untitled chat and leaves monetary amounts out of the token tooltip", () => {
+    const html = render({ tasks: [{ threadId: "chat", title: "New task", createdAt: 1, usage: { input: 100, output: 20, costUsd: 12.34, turns: 1 } }] });
+    expect(html).toContain("New chat");
+    expect(html).not.toContain("New task");
+    expect(html).toContain("120 tokens");
+    expect(html).not.toContain("12.34");
+    expect(html).not.toMatch(/\$\d/);
+  });
+
+  it("answers Mod+J and Mod+Shift+N, and leaves Mod+N (new bot) and Mod+K (palette) alone", () => {
+    const key = (key: string, extra: Partial<KeyboardEvent> = {}) => ({ metaKey: false, ctrlKey: true, shiftKey: false, altKey: false, key, code: `Key${key.toUpperCase()}`, ...extra });
+    expect(chatListShortcut(key("j"))).toBe("toggle");
+    expect(chatListShortcut(key("j", { ctrlKey: false, metaKey: true }))).toBe("toggle");
+    expect(chatListShortcut(key("N", { shiftKey: true }))).toBe("new");
+    expect(chatListShortcut(key("n"))).toBeNull();
+    expect(chatListShortcut(key("k"))).toBeNull();
+    expect(chatListShortcut(key("K", { shiftKey: true }))).toBeNull();
+    expect(chatListShortcut(key("j", { ctrlKey: false }))).toBeNull();
+    expect(chatListShortcut(key("j", { altKey: true }))).toBeNull();
   });
 });

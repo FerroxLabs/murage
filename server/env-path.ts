@@ -77,6 +77,7 @@ function windowsKnownDirs(): string[] {
     join(appData, "npm"), // npm -g shims: claude, codex
     join(home, ".grok", "bin"), // x.ai installer
     join(home, ".fuigo", "bin"), // fuigo installer (npm postinstall target)
+    join(home, ".kimi-code", "bin"), // kimi-code installer
     join(localAppData, "agy", "bin"), // Antigravity installer
     join(home, ".local", "bin"), // claude native installer
     join(home, ".claude", "local"),
@@ -137,6 +138,11 @@ export function restrictInstallScanDirsForTests(dirs: readonly string[] | null):
  * system directories. */
 export function installScanDirsForTests(): string[] {
   return installScanDirs();
+}
+
+/** Test hook: the Windows install locations, whatever machine the test runs on. */
+export function windowsInstallDirsForTests(): string[] {
+  return windowsKnownDirs();
 }
 
 let cached: string | null = null;
