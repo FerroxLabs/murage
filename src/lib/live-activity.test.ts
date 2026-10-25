@@ -71,3 +71,34 @@ describe("turnStatusLabel", () => {
     expect(modelStillThinking("Reading a file", false)).toBe(false);
   });
 });
+
+import { liveActivityPhrases, phraseAt } from "./live-activity";
+describe("working label rotation", () => {
+  it("starts with the plain label and has alternates for each fallback label", () => {
+    expect(liveActivityPhrases("Reading a file")[0]).toBe("Reading a file");
+    expect(liveActivityPhrases("Reading a file").length).toBeGreaterThan(1);
+  });
+  it("never rewords text it does not know, such as server narration", () => {
+    expect(liveActivityPhrases("Booking your flight to Austin")).toEqual(["Booking your flight to Austin"]);
+    expect(liveActivityPhrases("constructor")).toEqual(["constructor"]);
+  });
+  it("wraps around and tolerates an empty list", () => {
+    const phrases = liveActivityPhrases("Working");
+    expect(phraseAt(phrases, 0)).toBe("Working");
+    expect(phraseAt(phrases, phrases.length)).toBe("Working");
+    expect(phraseAt([], 3)).toBe("");
+  });
+  it("uses no dashes or banned wording", () => {
+    for (const label of ["Thinking", "Working", "Answering", "Running a command", "Searching"]) {
+      for (const phrase of liveActivityPhrases(label)) expect(phrase).not.toMatch(/—|–|\b(safe|safely|safety|unsafe)\b/i);
+    }
+  });
+});
+
+describe("rotation list copy", () => {
+  it("lists each phrase once, and the web search label has no duplicate", () => {
+    const phrases = liveActivityPhrases("Searching the web");
+    expect(new Set(phrases).size).toBe(phrases.length);
+    expect(phrases).not.toContain("Checking sources");
+  });
+});

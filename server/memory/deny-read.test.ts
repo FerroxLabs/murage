@@ -462,6 +462,18 @@ describe("refs and the send fence", () => {
     expect(fenceVerdict(f.db, built, MEMBER)).toEqual(C("lookup-error"));
   });
 
+  it("(01-B2) a non-owner room prefix's shown lines are rechecked by the audience reader at the fence: a policy bump after the build refuses once the pending rows are tidied", () => {
+    const f = make().reply("T", "old", 20, { memLsn: 5 }).meta("deny_generation", 3);
+    const turn: TurnLineage = { threadId: "T", turnId: "t", turnLsn: 30, parents: [], denyGeneration: 3 };
+    const prefix = (extra: object = {}) => buildPrompt(turn, [promptPart("room transcript", [{ kind: "prefix", threadId: "T", headLsn: 30, shown: ["old"], ...extra }])]);
+    expect(fenceVerdict(f.db, prefix(), MEMBER)).toEqual(SHOWN);
+    f.meta("policy_bump_lsn", 10).meta("deny_generation", 4); // the owner changed memory settings; no pending row is left (tidy ran)
+    expect(fenceVerdict(f.db, prefix(), MEMBER)).toEqual(W("watermark"));
+    // the owner-audience room (content: true) and a content reader keep the content recheck: the watermark never holds them
+    expect(fenceVerdict(f.db, prefix({ content: true }), MEMBER)).toEqual(SHOWN);
+    expect(fenceVerdict(f.db, prefix(), CONTENT)).toEqual(SHOWN);
+  });
+
   it("lineageLive turns on with the first line row written, not with an lsn a setting change took", () => {
     const f = make();
     expect(lineageLive(f.db)).toBe(false);

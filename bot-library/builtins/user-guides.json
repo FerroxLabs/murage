@@ -54,7 +54,8 @@
         "title": "User Guides",
         "description": "Manual prepares a guide organized around user tasks for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For learning a topic, use Explainer. For a Word document, use Word Creator.",
         "appearance": {
-          "color": "coral"
+          "color": "coral",
+          "mascotBody": "squircle"
         },
         "skills": [
           "user-guide",

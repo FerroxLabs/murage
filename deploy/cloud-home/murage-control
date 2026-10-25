@@ -213,8 +213,11 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         raise ValueError("Control redirect refused")
 
 DOOR_HEADER = ("X-Murage-Door", "v2")
+# The owner-factor capability header (CLOUD-DOOR-OWNER-FACTOR-DESIGN-r3 4.1): sent on a heartbeat only when the last probe read
+# exactly ownerFactor 1. An old app server never emits the health field, so this header is never sent and the CP stays door_proof 0.
+OWNER_FACTOR_HEADER = ("X-Murage-Owner-Factor", "1")
 
-def machine_request(binding, operation, body=None, door=False):
+def machine_request(binding, operation, body=None, door=False, owner_factor=False):
     if operation not in ("lease", "heartbeat", "desired"):
         raise ValueError("Invalid control operation")
     url = binding["adminUrl"] + "/v1/machines/" + binding["homeId"] + "/" + operation
@@ -225,6 +228,8 @@ def machine_request(binding, operation, body=None, door=False):
         headers[EVIDENCE_HEADER[0]] = EVIDENCE_HEADER[1]
         if door:
             headers[DOOR_HEADER[0]] = DOOR_HEADER[1]
+        if owner_factor:
+            headers[OWNER_FACTOR_HEADER[0]] = OWNER_FACTOR_HEADER[1]
     request = urllib.request.Request(url, headers=headers, method="GET" if body is None else "POST",
                                      data=None if body is None else json.dumps(body).encode())
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
@@ -346,7 +351,7 @@ def app_report(public_origin, opener=None, timeout=5):
     none has finished: None), instance the opaque id the app minted at process start. A missing or malformed uiAt is MISSING and a missing
     or malformed instance None: each is then left off the heartbeat, and the control plane never treats the render as evidence without
     them (a cached "ok" is evidence only while young, and only for the process and boot that rendered it). Never raises."""
-    report = {"ok": False, "ui": None, "uiAt": MISSING, "instance": None, "door": None}
+    report = {"ok": False, "ui": None, "uiAt": MISSING, "instance": None, "door": None, "ownerFactor": False}
     try:
         host = urllib.parse.urlsplit(public_origin).hostname
         if not host:
@@ -364,6 +369,8 @@ def app_report(public_origin, opener=None, timeout=5):
         # The entry protocol the app speaks (Door v2): "v2" only when the app says exactly that; anything else None.
         if body.get("door") == "v2":
             report["door"] = "v2"
+        # The owner factor: True only when the app says exactly the integer 1 (an old server never emits the field).
+        report["ownerFactor"] = type(body.get("ownerFactor")) is int and body.get("ownerFactor") == 1
         if "ui" in body:
             report["ui"] = body["ui"] == "ok"
         ui_at = body.get("uiAt", MISSING)
@@ -374,7 +381,7 @@ def app_report(public_origin, opener=None, timeout=5):
             report["instance"] = instance
         return report
     except Exception:
-        return {"ok": False, "ui": None, "uiAt": MISSING, "instance": None, "door": None}
+        return {"ok": False, "ui": None, "uiAt": MISSING, "instance": None, "door": None, "ownerFactor": False}
 
 def app_responding(public_origin, opener=None, timeout=5):
     """True only when the app answers GET /api/health through Caddy with its own body. Never raises; anything else is False."""
@@ -785,7 +792,11 @@ def _poll_once(binding, context=None, request=machine_request, clock=read_clock,
     # a restart or a hiccup never flaps the home to v1; a successful probe without door (an image rolled back) clears it.
     if isinstance(answer, dict) and answer.get("ok") is True:
         context["doorV2"] = answer.get("door") == "v2"
+        context["ownerFactor"] = answer.get("ownerFactor") is True
     door = context.get("doorV2") is True
+    owner_factor = context.get("ownerFactor") is True
+    # Pass the keyword only when it is True, so a transport without the parameter keeps working exactly as before.
+    owner_extra = {"owner_factor": True} if owner_factor else {}
     boot_id = context.get("bootId", read_boot_id)()
     health, consumed = collect_health(app=app, boot_id=boot_id, ui_renders=ui, ui_at=ui_at,
                                       ui_instance=ui_instance, clock=after)
@@ -815,7 +826,7 @@ def _poll_once(binding, context=None, request=machine_request, clock=read_clock,
             oldest = None  # already the oldest shape: nothing to fall back to
     try:
         try:
-            heartbeat = request(binding, "heartbeat", body, door=True) if door else request(binding, "heartbeat", body)
+            heartbeat = request(binding, "heartbeat", body, door=True, **owner_extra) if door else request(binding, "heartbeat", body, **owner_extra)
         except urllib.error.HTTPError as error:
             if error.code != 400 or oldest is None:
                 raise
@@ -826,7 +837,7 @@ def _poll_once(binding, context=None, request=machine_request, clock=read_clock,
             body = {"generation": binding["generation"]}
             if oldest:
                 body["health"] = oldest
-            heartbeat = request(binding, "heartbeat", body, door=True) if door else request(binding, "heartbeat", body)
+            heartbeat = request(binding, "heartbeat", body, door=True, **owner_extra) if door else request(binding, "heartbeat", body, **owner_extra)
     except urllib.error.HTTPError as error:
         if error.code >= 500:
             context["heartbeatRetryS"] = retry_after(error)

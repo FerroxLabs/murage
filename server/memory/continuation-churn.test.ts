@@ -178,7 +178,10 @@ it("(e) a policy revision or deletion epoch move: reset", async () => {
   {
     const { w, second } = await twoTurns();
     const record = second.recordVersions.find(r => !r.id.startsWith("checkpoint:"))!;
-    pinMemory(ownerMemoryTicket(), record.id, record.version, true);  // policy revision only
+    // lane 106: pinning withdraws nothing and keeps the session (memory-changed-reset-106.test.ts); unpinning can take the mark away
+    pinMemory(ownerMemoryTicket(), record.id, record.version, true);
+    expect(w.revoked("S1")).toEqual({ result: false, why: undefined });
+    pinMemory(ownerMemoryTicket(), record.id, record.version, false);
     expect(w.revoked("S1")).toEqual({ result: true, why: expect.stringMatching(WHY_RESET) });
   }
   closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });

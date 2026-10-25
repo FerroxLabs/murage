@@ -203,7 +203,7 @@ posixOnly("the turn engine: queue, durable sends, wakes, caps", () => {
     await hideEveryone();
     const { readFileSync, rmSync: rm, writeFileSync: write } = await import("node:fs");
     const tess = await bot("Tessa", "verification"), uma = await bot("Uma", "verification");
-    expect((await api("PUT", `/api/bots/${tess.id}/memory`, { text: "# Memory\n\n- NOTEBOOK_CANARY_OWNER_ONLY the launch is Tuesday\n" })).status).toBe(200);
+    expect((await api("PUT", `/api/bots/${tess.id}/memory`, { baseRevision: (await api("GET", `/api/bots/${tess.id}/memory`)).body.revision, text: "# Memory\n\n- NOTEBOOK_CANARY_OWNER_ONLY the launch is Tuesday\n" })).status).toBe(200);
     const hold = await room("Hold room", [tess.id], { kind: "member", botId: tess.id });
     const office = await room("Script office", [tess.id, uma.id], { kind: "member", botId: tess.id });
     const dump = () => { try { return JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8")) as { pid: number; prompt: unknown; systemPrompt: string | null }; } catch { return null; } };

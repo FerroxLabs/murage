@@ -222,8 +222,16 @@ export function fluxHermesHome(env: Record<string, string | undefined>): string 
  * Write the scoped `config.yaml` and return the directory to set as HERMES_HOME.
  *
  * Regenerated on EVERY flux-routed spawn (Wayland hermesConfig.ts:47 does the
- * same) so a rotated key or a different tier can never be served from a stale
- * file, and so a half-written home from a crashed run cannot survive.
+ * same) so a rotated key can never be served from a stale file, and so a
+ * half-written home from a crashed run cannot survive.
+ *
+ * It holds NO tier. Every Flux Hermes bot shares this one file and Hermes
+ * re-reads it through an mtime cache, so a `model.default` here was last
+ * writer wins: two overlapping turns on different tiers could both run, and be
+ * billed, on whichever tier spawned second (audit 03-4 / G03-1). The tier
+ * rides the per-turn managed-scope overlay instead (`writeHermesTurnOverlay`),
+ * the same channel the Flux Memory headers use, so the bytes here are the same
+ * for every bot and every tier.
  *
  * Three details are load-bearing and were paid for in Wayland
  * (hermesConfig.ts:20-30, HERMES-PROOF.md:32-35, proven against hermes 0.14.0):
@@ -246,7 +254,6 @@ export function fluxHermesHome(env: Record<string, string | undefined>): string 
 export function materializeFluxHermesHome(
   env: Record<string, string | undefined>,
   key: string,
-  model: string,
 ): string {
   const dir = fluxHermesHome(env);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -257,7 +264,6 @@ export function materializeFluxHermesHome(
   }
   const text = [
     "model:",
-    `  default: ${quoteYaml(model)}`,
     "  provider: custom",
     `  base_url: ${quoteYaml(FLUX_OPENAI_BASE)}`,
     "  api_mode: chat_completions",
@@ -314,9 +320,60 @@ export function applyHermesFluxHome(
       `This bot runs the Hermes profile "${hermesProfileOf(config)}", whose persona and sign-ins live in that profile. Flux Router would replace it, so pick one of the profile's own models.`,
     );
   }
-  env.HERMES_HOME = materializeFluxHermesHome(env, key, tier);
+  env.HERMES_HOME = materializeFluxHermesHome(env, key);
   markHermesRoutedHome(env);
+  writeHermesTurnOverlay(env, { model: { default: tier } });
   return tier;
+}
+
+/** Murage's own per-turn overlays live here, content addressed. */
+function hermesOverlayRoot(env: Record<string, string | undefined>): string {
+  return join(env.MURAGE_DATA_DIR || DATA_DIR, "native", "flux-memory");
+}
+
+function ownOverlay(env: Record<string, string | undefined>): string | null {
+  const named = (env.HERMES_MANAGED_DIR ?? "").trim();
+  return named && resolve(named).startsWith(resolve(hermesOverlayRoot(env))) ? named : null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+/** What this child's overlay already holds: Murage's own overlay when an
+ * earlier step of this turn wrote one, else the administrator's managed config. */
+function overlayBase(env: Record<string, string | undefined>): Record<string, unknown> {
+  const own = ownOverlay(env);
+  if (!own) return adminManagedConfig(env);
+  try { return asRecord(parseYaml(readFileSync(join(own, "config.yaml"), "utf8"))); } catch { return {}; }
+}
+
+/**
+ * Write this turn's managed-scope overlay and point the child at it.
+ *
+ * The base is what this child would already read: Murage's own overlay when an
+ * earlier step of this turn wrote one (it already carries the administrator's
+ * config), else the administrator's managed config. `model` keys are merged
+ * over the base's `model`; anything else is replaced. Content addressed, so a
+ * child only ever reads its own turn's tier and headers, and the pool key (a
+ * digest of the child env) never reuses a warm child across tiers.
+ */
+function writeHermesTurnOverlay(
+  env: Record<string, string | undefined>,
+  patch: { model: Record<string, unknown> },
+): void {
+  const base = overlayBase(env);
+  const overlay = stringifyYaml({ ...base, model: { ...asRecord(base.model), ...patch.model } });
+  const dir = join(hermesOverlayRoot(env), `hermes-${createHash("sha256").update(overlay).digest("hex").slice(0, 16)}`);
+  const file = join(dir, "config.yaml");
+  let current: string | null = null;
+  try { current = readFileSync(file, "utf8"); } catch { current = null; }
+  if (current !== overlay) {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    try { chmodSync(dir, 0o700); } catch { /* Windows ignores POSIX modes */ }
+    writeFileAtomic(file, overlay, { mode: 0o600 });
+  }
+  env.HERMES_MANAGED_DIR = dir;
 }
 
 /** Hermes's built-in managed-scope directory (hermes_cli/managed_scope.py `_DEFAULT_MANAGED_DIR`). */
@@ -352,21 +409,10 @@ export function applyHermesFluxMemory(env: Record<string, string | undefined>, d
     if (decision.capture === "off" || decision.inject === "off") throw new Error(FLUX_HEADER_REFUSAL);
     return;
   }
-  const admin = adminManagedConfig(env);
-  const model = admin.model && typeof admin.model === "object" && !Array.isArray(admin.model) ? admin.model as Record<string, unknown> : {};
-  const held = model.extra_headers && typeof model.extra_headers === "object" && !Array.isArray(model.extra_headers) ? model.extra_headers as Record<string, unknown> : {};
+  const base = overlayBase(env);
+  const held = asRecord(asRecord(base.model).extra_headers);
   const kept = Object.fromEntries(Object.entries(held).filter(([name]) => !name.toLowerCase().startsWith("x-flux-memory")));
-  const overlay = stringifyYaml({ ...admin, model: { ...model, extra_headers: { ...kept, ...decision.headers } } });
-  const dir = join(env.MURAGE_DATA_DIR || DATA_DIR, "native", "flux-memory", `hermes-${createHash("sha256").update(overlay).digest("hex").slice(0, 16)}`);
-  const file = join(dir, "config.yaml");
-  let current: string | null = null;
-  try { current = readFileSync(file, "utf8"); } catch { current = null; }
-  if (current !== overlay) {
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
-    try { chmodSync(dir, 0o700); } catch { /* Windows ignores POSIX modes */ }
-    writeFileAtomic(file, overlay, { mode: 0o600 });
-  }
-  env.HERMES_MANAGED_DIR = dir;
+  writeHermesTurnOverlay(env, { model: { extra_headers: { ...kept, ...decision.headers } } });
 }
 
 /** First Hermes release that reads `HERMES_MANAGED_DIR`: 0.17.0 (tag v2026.6.19),
@@ -380,26 +426,46 @@ export function parseHermesVersion(banner: string): [number, number, number] | n
   return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
 }
 
+/** Shown when a Hermes too old for the managed-scope overlay is picked for a Flux tier. */
+export const HERMES_FLUX_UPDATE_COPY = "This Hermes is older than 0.17, so it cannot run a Flux Router tier here. Update Hermes (hermes update), then send again.";
+
+let unknownVersionLogged = false;
+/** Test hook: lets the once-per-process unknown-version log fire again. */
+export function resetHermesUnknownVersionLog(): void { unknownVersionLogged = false; }
+
 /** A turn whose Flux Memory headers say "off" rides only the managed-scope
  * overlay. On a Hermes older than the first managed-scope build, or one whose
  * version is unknown, that overlay would be ignored and the turn would go out
- * without its "off" headers, so the turn is refused. All-on turns carry no
- * "off" and still run. */
-export function hermesFluxHeaderGate(cliVersion: string, decision: FluxMemoryDecision): string | null {
-  if (decision.capture !== "off" && decision.inject !== "off") return null;
+ * without its "off" headers, so the turn is refused.
+ *
+ * The Flux tier rides the same overlay on Murage's shared Flux home (not on a
+ * provider-connection home, which is per turn and names its own model), so a
+ * Hermes KNOWN to predate it is refused for every tier: it would ignore the
+ * overlay and run without the tier the bot picked. An unknown version runs
+ * (the turn path fails open on a version it could not read), and the overlay
+ * still carries the tier for any Hermes that reads it. */
+export function hermesFluxHeaderGate(cliVersion: string, decision: FluxMemoryDecision, ctx?: { providerRoute?: boolean }): string | null {
   const v = parseHermesVersion(cliVersion);
-  if (v) {
+  const managed = v ? (() => {
     const [a, b, c] = v;
     const [x, y, z] = HERMES_MIN_MANAGED_SCOPE;
-    if (a !== x ? a > x : b !== y ? b > y : c >= z) return null;
+    return a !== x ? a > x : b !== y ? b > y : c >= z;
+  })() : null;
+  if (decision.capture === "off" || decision.inject === "off") return managed === true ? null : FLUX_HEADER_REFUSAL;
+  if (!ctx?.providerRoute && managed === false) return HERMES_FLUX_UPDATE_COPY;
+  if (!ctx?.providerRoute && managed === null && !unknownVersionLogged) {
+    // The turn runs, but a Hermes that ignores the overlay would answer on some
+    // other model; say so once, with the version text only, so it can be diagnosed.
+    unknownVersionLogged = true;
+    console.warn(`[acp] hermes version not readable (${JSON.stringify(cliVersion.trim().slice(0, 80))}); running the Flux tier on the managed-scope overlay unverified`);
   }
-  return FLUX_HEADER_REFUSAL;
+  return null;
 }
 
 /** The managed config Hermes would have applied on its own: `HERMES_MANAGED_DIR`
  * from the parent env, else /etc/hermes. Malformed or absent is `{}`, as in Hermes. */
 function adminManagedConfig(env: Record<string, string | undefined>): Record<string, unknown> {
-  const own = join(env.MURAGE_DATA_DIR || DATA_DIR, "native", "flux-memory");
+  const own = hermesOverlayRoot(env);
   const named = (env.HERMES_MANAGED_DIR ?? "").trim();
   if (named && resolve(named).startsWith(resolve(own))) return {}; // already one of ours
   const dir = named || (process.platform === "win32" ? "" : HERMES_DEFAULT_MANAGED_DIR);
@@ -488,7 +554,7 @@ export function ensureHermesInjectProvider(
   }
 
   const dir = hermesHome(env);
-  mkdirSync(dir, { recursive: true });
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
   const path = join(dir, "config.yaml");
   let text = "";
   try {
@@ -497,7 +563,17 @@ export function ensureHermesInjectProvider(
     text = "";
   }
   const next = upsertHermesProvider(text, inject.host, host.baseUrl, hostApiKey(host, env));
-  if (next !== text) writeFileSync(path, next);
+  if (next !== text) writeFileSync(path, next, { mode: 0o600 });
+  // The file now holds the local server's bearer key: keep the folder and the file owner-only
+  // even when they already existed with a wider mode. Windows ignores POSIX modes.
+  if (process.platform !== "win32") {
+    try {
+      chmodSync(dir, 0o700);
+      chmodSync(path, 0o600);
+    } catch {
+      /* best effort: a read-only home must not stop the turn */
+    }
+  }
   return hermesAcpModelId(modelId) ?? modelId;
 }
 
@@ -805,9 +881,10 @@ const support: AcpSupport = {
    *
    * The returned id is the bare `flux-*` alias on purpose: `hermesAcpModelId`
    * returns null for it (no colon, not an inject id), so `configureSession`
-   * sends no `session/set_model` and hermes takes `model.default` out of the
-   * scoped config.yaml. `spawnArgs` passes no `-m` either — hermes' ACP mode
-   * ignores it — so nothing can override that choice.
+   * sends no `session/set_model` and hermes takes `model.default` out of this
+   * turn's own managed-scope overlay (never the shared config.yaml, which every
+   * Flux Hermes bot reads). `spawnArgs` passes no `-m` either — hermes' ACP
+   * mode ignores it — so nothing can override that choice.
    */
   decodeExtra: (raw) => ({
     ...(isHermesProfileName(raw.profile) ? { profile: raw.profile } : {}),
@@ -858,6 +935,8 @@ const support: AcpSupport = {
    * without them.
    */
   applyFluxMemory: (env, { decision }) => applyHermesFluxMemory(env, decision),
+  // Every Flux turn: the tier rides the overlay too, not only "off" headers.
+  fluxGateEveryTurn: true,
   fluxHeaderGate: hermesFluxHeaderGate,
   transformEnv: (env) => {
     // A leftover OPENAI_API_KEY makes Hermes auto-resolve to OpenRouter and

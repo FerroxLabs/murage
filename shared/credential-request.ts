@@ -49,6 +49,43 @@ export function isCredentialTargetId(value: unknown): value is CredentialTargetI
   return typeof value === "string" && Object.prototype.hasOwnProperty.call(CREDENTIAL_TARGETS, value);
 }
 
+/**
+ * The dynamic family of item 118 (MCP-118-175 118-3): one key of one custom MCP
+ * server, `mcp:<server>:<KEY>:<rev>`. The id names a slot the stored entry
+ * declares, and the revision of that entry it was made for; the server resolves
+ * it against the entry every time, so a card for an entry that changed saves
+ * nothing. Never a config path.
+ */
+export type McpCredentialId = `mcp:${string}:${string}:${string}`;
+export type AnyCredentialTargetId = CredentialTargetId | McpCredentialId;
+const MCP_CREDENTIAL_ID = /^mcp:([a-z][a-z0-9_-]{0,31}):([A-Za-z][A-Za-z0-9_-]{0,63}):([0-9a-f]{12})$/;
+
+export function parseMcpCredentialId(value: unknown): { name: string; key: string; rev: string } | null {
+  if (typeof value !== "string") return null;
+  const match = MCP_CREDENTIAL_ID.exec(value);
+  return match ? { name: match[1]!, key: match[2]!, rev: match[3]! } : null;
+}
+
+export function isMcpCredentialId(value: unknown): value is McpCredentialId {
+  return parseMcpCredentialId(value) !== null;
+}
+
+export function mcpCredentialId(name: string, key: string, rev: string): McpCredentialId {
+  return `mcp:${name}:${key}:${rev}`;
+}
+
+/** The card words for one MCP key: names only, never a value. */
+export function mcpCredentialCardText(name: string, key: string): { label: string; description: string; placeholder: string } {
+  return {
+    label: `${key} for ${name}`,
+    description: `The value ${name} needs for ${key}. It goes to that server only, and your bot never sees it.`,
+    placeholder: `Paste the value for ${key}`,
+  };
+}
+
+/** The sentence a stale MCP card shows (the server changed after the card was made). */
+export const MCP_CARD_STALE = "This server changed; ask again";
+
 export function credentialConfigPatch(id: CredentialTargetId, value: string): CredentialConfig {
   switch (id) {
     case "xaiApiKey":
@@ -85,7 +122,7 @@ export function isReusableCredentialRequest(
     secret?: { target?: unknown; provided?: unknown; dismissed?: unknown };
     from?: { botId?: unknown };
   },
-  target: CredentialTargetId,
+  target: AnyCredentialTargetId,
   requestingBotId: string,
   roomThread: boolean,
 ): boolean {

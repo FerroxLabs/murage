@@ -12,6 +12,9 @@
   const KEY_INSIDE = "Keep the recovery key outside Murage's own data folder, then choose it from there.";
   const KEY_NEEDS_ORIGINAL = "To make a backup here, choose the original recovery key file Murage made, not a copy that was edited.";
   const DAMAGED = "This backup file is damaged or incomplete, so nothing was restored. Choose another backup, or download the off-site copy again.";
+  // The one name a restore refuses (installation-restore-preparation.ts): its own review notes,
+  // connection profile or quarantine folder. A backup Murage makes never holds one.
+  const RESTORE_RECORD = "This file holds Murage's own restore notes, which a backup Murage makes never contains, so nothing was restored and nothing on this computer changed. Choose a backup file Murage made, such as the newest one on the Backups page.";
   const CHANGED = "The backup file changed while Murage was checking it. Choose it again, then try once more.";
   const REVIEW_CHANGED = "The restored copy changed after it was checked. Choose Review restored installation again.";
   const TOOL = "Murage couldn't check its own backup tool on this computer. Reinstall Murage, then try again.";
@@ -56,8 +59,9 @@
       "INVALID_ACTIVE_BRANCH", "INVALID_MESSAGE_IDENTITY", "INVALID_MESSAGE_JSON", "INVALID_MESSAGE_PARENT", "INVALID_RESTORE_CALENDAR", "INVALID_RESTORE_COMPONENT", "INVALID_RESTORE_CONFIG",
       "INVALID_RESTORE_MEMBERSHIP", "INVALID_RESTORE_MEMORY_REVIEW", "INVALID_RESTORE_MESSAGE", "INVALID_RESTORE_ROSTER", "INVALID_RESTORE_ROUTINES", "INVALID_RESTORE_SKILLS",
       "INVALID_RESTORE_WEBHOOKS", "INVALID_ROSTER_COMPONENT", "INVALID_WEBHOOK_COMPONENT", "INVALID_CONFIG_COMPONENT", "INVALID_JSON_COMPONENT", "JSON_COMPONENT_TOO_LARGE",
-      "RESERVED_RESTORE_COMPONENT", "RESERVED_RESTORE_ID", "RESTORE_COMPONENT_TOO_LARGE", "RESTORE_TRANSCRIPT_LIMIT", "INVALID_INSTALLATION_RECORDS", "INVALID_RECOVERY_PREVIEW", "INVALID_REVIEW_FILE",
+      "RESERVED_RESTORE_ID", "RESTORE_COMPONENT_TOO_LARGE", "RESTORE_TRANSCRIPT_LIMIT", "INVALID_INSTALLATION_RECORDS", "INVALID_RECOVERY_PREVIEW", "INVALID_REVIEW_FILE",
       "INVALID_REVIEW_MESSAGE", "INVALID_REVIEW_RECORDS", "NONPORTABLE_SNAPSHOT_PATH", "UNSAFE_SNAPSHOT_ENTRY"]],
+    [RESTORE_RECORD, ["RESERVED_RESTORE_COMPONENT"]],
     [CHANGED, ["ARCHIVE_CHANGED", "ARCHIVE_HASH_CHANGED", "SOURCE_CHANGED"]],
     [REVIEW_CHANGED, ["REVIEW_STATE_CHANGED", "RESTORE_CANDIDATE_IDENTITY_CHANGED", "RESTORE_ORIGINAL_IDENTITY_CHANGED"]],
     [TOOL, ["BACKUP_UNAVAILABLE", "AGE_TOOL_PLATFORM_UNQUALIFIED", "AGE_TOOL_UNVERIFIED", "AGE_PROCESS_CLOSE_UNCONFIRMED"]],
@@ -71,6 +75,7 @@
     [PLACE, ["DESTINATION_EXISTS", "DESTINATION_INSIDE_INSTALLATION", "INVALID_DESTINATION", "RESTORE_PATH_ALREADY_EXISTS", "BROAD_RESTORE_TARGET_REFUSED", "RESTORE_SOURCE_TARGET_REFUSED",
       "UNSAFE_RESTORE_DIRECTORY", "UNSAFE_RESTORE_TARGET", "INVALID_PRIVATE_RESTORE_PARENT", "RESTORE_NEW_TARGET_REQUIRED", "INSTALLATION_SELECTION_INVALID"]],
     [PAUSED, ["RESTORE_REVIEW_REQUIRED", "RESTORE_ALREADY_REQUIRES_REVIEW"]],
+    ["This restored copy has a note to read before it opens. Choose Review restored installation, read the note, then Approve and open.", ["RESTORE_NOTICE_UNACKNOWLEDGED"]],
     [NOT_PAUSED, ["RESTORE_WORK_NOT_PAUSED", "RESTORE_MEMORY_NOT_PAUSED", "INVALID_RESTORE_REVIEW", "REVIEW_HASH_REQUIRED"]],
     [NOTHING_TO_UNDO, ["NO_RESTORE_TO_ROLL_BACK"]],
     [UNDO_FIRST, ["INTERRUPTED_RESTORE_REQUIRES_ROLLBACK", "INVALID_RESTORE_JOURNAL"]],
@@ -142,6 +147,7 @@
     "too-deep": "too many folders deep",
     "linked-folder": "a shortcut to a folder outside Murage's data folder, so its contents aren't in the backup",
     "path-too-long": "its path is too long for another computer to hold",
+    unrecognised: "not recognised by Murage, so the backup leaves it out; it stays where it is, so move it somewhere you keep your files if it matters",
   };
   const skippedLines = skipped => {
     if (!skipped || typeof skipped !== "object" || !Number.isSafeInteger(skipped.count) || skipped.count < 1 || !Array.isArray(skipped.items)) return [];

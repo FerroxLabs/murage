@@ -9,20 +9,29 @@ import { redactSecretsInText } from "./redact.ts";
 import { parseJson, schemaIssue, type JsonObject, type JsonValue } from "./schema.ts";
 import {
   nextOccurrence,
+  type AutomationUndoBefore,
   type Routine,
   type RoutineInput,
   type RoutineManager,
   type RoutineRequestCommit,
+  type RoutineRequestReceipt,
   type RoutineSchedule,
 } from "./routines.ts";
-import type {
-  RoutineRequestCardData,
-  RoutineRequestChanges,
-  RoutineRequestDefinition,
-  RoutineRequestOperation,
-  RoutineRequestRunOn,
-  RoutineRequestSchedule,
+import {
+  AUTOMATION_UNDO_WINDOW_MS,
+  automationActionUndoable,
+  type AutomationRequestCardData,
+  type RoutineRequestCardData,
+  type RoutineRequestChanges,
+  type RoutineRequestDefinition,
+  type RoutineRequestOperation,
+  type RoutineRequestRunOn,
+  type RoutineRequestSchedule,
+  type WebhookRequestCardData,
+  type WebhookRequestChanges,
+  type WebhookRequestOperation,
 } from "../shared/routine-request.ts";
+import type { WebhookTrigger, WebhookWriteGuard } from "./webhooks.ts";
 import type { RoutineWatchSource } from "../shared/routine-watch.ts";
 import { routineFileWatchProposalSchema, routineWatchInput, routineWatchInputSchema } from "./routine-watch-integration.ts";
 import { murageToolOnThisServer } from "./murage-tool-surface.ts";
@@ -162,6 +171,102 @@ const routineRequestCardDataSchema = z.object({
   resultId: z.string().min(1).max(128).optional(),
 }).strict();
 
+// ---- Webhooks from chat (SL-J J1) ------------------------------------------
+const WEBHOOK_ID = /^[A-Za-z0-9_-]{1,128}$/;
+const webhookEventTypesSchema = z.array(z.string().max(200)).max(20);
+const webhookToolDefinitionSchema = z.object({
+  name: z.string().max(80),
+  instructions: z.string().max(20_000),
+  eventTypes: webhookEventTypesSchema.optional(),
+}).strict();
+const webhookToolChangesSchema = webhookToolDefinitionSchema.partial().strict().refine(
+  (changes) => Object.values(changes).some((value) => value !== undefined),
+  "Choose at least one webhook field to update",
+);
+const webhookProposalSchema = z.discriminatedUnion("action", [
+  z.object({ kind: z.literal("webhook"), action: z.literal("create"), webhook: webhookToolDefinitionSchema }).strict(),
+  z.object({ kind: z.literal("webhook"), action: z.literal("update"), webhookId: z.string().max(128), changes: webhookToolChangesSchema }).strict(),
+  z.object({ kind: z.literal("webhook"), action: z.literal("pause"), webhookId: z.string().max(128) }).strict(),
+  z.object({ kind: z.literal("webhook"), action: z.literal("resume"), webhookId: z.string().max(128) }).strict(),
+  z.object({ kind: z.literal("webhook"), action: z.literal("delete"), webhookId: z.string().max(128) }).strict(),
+]);
+const storedEventTypesSchema = z.array(z.string().trim().min(1).max(200)).max(20);
+const storedWebhookManageBase = {
+  webhookId: z.string().regex(WEBHOOK_ID),
+  expectedUpdatedAt: z.number().int().nonnegative(),
+};
+const storedWebhookOperationSchema = z.discriminatedUnion("action", [
+  z.object({
+    action: z.literal("create"),
+    webhook: z.object({
+      id: z.string().regex(WEBHOOK_ID),
+      name: z.string().trim().min(1).max(80),
+      prompt: z.string().trim().min(1).max(20_000),
+      eventTypes: storedEventTypesSchema.min(1).optional(),
+    }).strict(),
+  }).strict(),
+  z.object({
+    action: z.literal("update"),
+    ...storedWebhookManageBase,
+    changes: z.object({
+      name: z.string().trim().min(1).max(80).optional(),
+      prompt: z.string().trim().min(1).max(20_000).optional(),
+      eventTypes: storedEventTypesSchema.optional(),
+    }).strict().refine(
+      (changes) => Object.values(changes).some((value) => value !== undefined),
+      "Stored webhook update must change at least one field",
+    ),
+  }).strict(),
+  z.object({ action: z.literal("pause"), ...storedWebhookManageBase }).strict(),
+  z.object({ action: z.literal("resume"), ...storedWebhookManageBase }).strict(),
+  z.object({ action: z.literal("delete"), ...storedWebhookManageBase }).strict(),
+]);
+const webhookRequestCardDataSchema = z.object({
+  version: z.literal(1),
+  kind: z.literal("webhook"),
+  requestId: z.string().min(1).max(128),
+  botId: z.string().min(1).max(128),
+  threadId: z.string().min(1).max(128),
+  createdAt: z.number().int().nonnegative(),
+  operation: storedWebhookOperationSchema,
+  appliedAt: z.number().int().nonnegative().optional(),
+  resultId: z.string().min(1).max(128).optional(),
+}).strict();
+
+/** What Undo restores, read back from the receipt and checked before use. */
+const routineBeforeSchema = z.object({
+  name: z.string().min(1),
+  prompt: z.string().min(1),
+  schedule: z.custom<RoutineSchedule>((value) => value !== null && typeof value === "object" && typeof (value as { type?: unknown }).type === "string"),
+  overlap: z.enum(["skip", "queue"]),
+  timeoutMinutes: z.number().int().nullable(),
+  enabled: z.boolean(),
+}).strict();
+const webhookBeforeSchema = z.object({
+  name: z.string().min(1),
+  prompt: z.string(),
+  eventTypes: z.array(z.string()).max(20),
+  enabled: z.boolean(),
+}).strict();
+const absentBeforeSchema = z.object({ absent: z.literal(true) }).strict();
+
+/** Bound to the request id, so a Confirm pressed again finds the same record. */
+export function webhookIdForRequest(requestId: string): string {
+  const hex = createHash("sha256").update(`murage-chat-webhook:${requestId}`).digest("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
+const AUTOMATION_CHANGED_SINCE =
+  "This changed after it was applied (an edit, a new link, a delivery or a run), so Undo cannot put it back. Change it on the Automations page instead.";
+
+/** The narrow view of the webhook manager this service uses. */
+export interface WebhookRequestTarget {
+  get(id: string): WebhookTrigger | null;
+  create(input: JsonValue, options: { id: string; mint: false }): { webhook: WebhookTrigger };
+  update(id: string, value: JsonValue, guard?: WebhookWriteGuard): WebhookTrigger | null;
+  remove(id: string, guard?: WebhookWriteGuard): boolean;
+}
+
 export type RoutineToolScheduleInput = z.infer<typeof routineToolScheduleSchema>;
 export type RoutineToolDefinitionInput = z.infer<typeof routineToolDefinitionSchema>;
 export type RoutineToolChangesInput = z.infer<typeof routineToolChangesSchema>;
@@ -177,9 +282,11 @@ export interface RoutineRequestOptionCard {
   requestId?: string;
   tool?: string;
   held?: string;
-  routineRequest?: RoutineRequestCardData;
+  routineRequest?: AutomationRequestCardData;
   /** Mirrors OptionCardData.routineProposalDigest — see store.ts. */
   routineProposalDigest?: string;
+  /** Undo restored what this applied change replaced (SL-J J2). */
+  undone?: boolean;
 }
 
 export interface RoutineRequestMessage {
@@ -226,6 +333,8 @@ export interface RoutineRequestServiceOptions {
    * bot is deleted or moved to another section). Returns the sentence to
    * refuse with, or null to allow. Checked at propose AND confirm time. */
   validateTarget?: (proposerBotId: string, target: { botId: string; name: string }) => string | null;
+  /** Webhooks proposed from chat apply through here (SL-J J1). */
+  webhooks?: () => WebhookRequestTarget;
 }
 
 export interface ProposeRoutineRequestArgs {
@@ -256,14 +365,15 @@ interface RoutineCardCopy {
   summary: string;
   detail: string;
   nextRunAt: number | null;
-  tool: "schedule_routine" | "manage_routine";
+  tool: "schedule_routine" | "manage_routine" | "create_webhook" | "manage_webhook";
 }
 
 export type ResolveRoutineRequestResult =
   | { claimed: false; state: "not_found" }
-  | { claimed: true; state: "invalid"; error: string; status: number }
+  | { claimed: true; state: "invalid"; error: string; status: number; code?: "changed_since" }
   | { claimed: true; state: "already_settled"; behavior: string }
   | { claimed: true; state: "denied" }
+  | { claimed: true; state: "undone"; action: RoutineRequestOperation["action"] }
   | {
       claimed: true;
       state: "applied";
@@ -502,7 +612,8 @@ function scheduleText(schedule: RoutineRequestSchedule, timeZone: string): strin
 function effectiveDefinition(operation: RoutineRequestOperation, manager: RoutineManager): RoutineRequestDefinition | null {
   if (operation.action === "create") return operation.routine;
   const existing = manager.listRoutines().find((routine) => routine.id === operation.routineId);
-  if (!existing) return null;
+  // 1.0.4 SL-I I3: a routine that waits for an engine's limit is changed in the app, not through a bot's request
+  if (!existing || existing.schedule.type === "limit_reset") return null;
   const base: RoutineRequestDefinition = {
     ...(existing.watch ? { watch: routineWatchInput(existing.watch) } : {}),
     name: existing.name,
@@ -592,6 +703,8 @@ function cardCopy(
       `Next run: ${nextDescription}`,
       `Runs on: ${destination}`,
       `Run limit: ${definition.timeoutMinutes === undefined ? "No limit" : `${definition.timeoutMinutes} minutes`}`,
+      ...(definition.schedule.type !== "once" && (operation.action === "create" || current?.carryLastReport === true)
+        ? ["Starts each run with the last run's report"] : []),
       "",
       "Instructions:",
       visibleInstructions,
@@ -612,6 +725,7 @@ function inputFromDefinition(definition: RoutineRequestDefinition, botId: string
     schedule: asSchedule(definition.schedule, now),
     durationMinutes: definition.durationMinutes,
     ...(definition.timeoutMinutes === undefined ? {} : { timeoutMinutes: definition.timeoutMinutes }),
+    carryLastReport: true,
   };
 }
 
@@ -642,11 +756,13 @@ function canonicalValue(value: JsonValue): JsonValue {
  * operation. Recursive key sorting keeps old receipts valid if a future
  * schema refactor changes object construction order. */
 export function routineRequestFingerprint(
-  payload: Pick<RoutineRequestCardData, "version" | "requestId" | "botId" | "threadId" | "operation">,
+  payload: Pick<AutomationRequestCardData, "version" | "requestId" | "botId" | "threadId" | "operation" | "kind">,
   messageId: string,
 ): string {
   const document = parseJson(JSON.stringify({
     fingerprintVersion: ROUTINE_REQUEST_FINGERPRINT_VERSION,
+    // a routine card's fingerprint is unchanged from 1.0.3 (no kind)
+    ...(payload.kind ? { kind: payload.kind } : {}),
     cardVersion: payload.version,
     requestId: payload.requestId,
     messageId,
@@ -671,11 +787,12 @@ export function routineRequestFingerprint(
  * on a mismatch, so an operation cannot be swapped underneath copy the user
  * already read. Found by an external audit, 2026-09-05. */
 export function routineProposalDigest(
-  payload: Pick<RoutineRequestCardData, "version" | "requestId" | "botId" | "threadId" | "operation">,
+  payload: Pick<AutomationRequestCardData, "version" | "requestId" | "botId" | "threadId" | "operation" | "kind">,
   display: { title: string; subtitle: string },
 ): string {
   const document = parseJson(JSON.stringify({
     digestVersion: 1,
+    ...(payload.kind ? { kind: payload.kind } : {}),
     cardVersion: payload.version,
     requestId: payload.requestId,
     botId: payload.botId,
@@ -703,7 +820,7 @@ function verifyManageSnapshot(
   return current;
 }
 
-function requestCommit(payload: RoutineRequestCardData, messageId: string): RoutineRequestCommit {
+function requestCommit(payload: AutomationRequestCardData, messageId: string): RoutineRequestCommit {
   return {
     requestId: payload.requestId,
     messageId,
@@ -798,6 +915,141 @@ function revalidateOperation(operation: RoutineRequestOperation, manager: Routin
   }
 }
 
+// ---- Webhook cards (SL-J J1) ----------------------------------------------
+const WEBHOOK_ACTION_COPY = {
+  create: { title: "Create webhook", detail: "Create webhook" },
+  update: { title: "Update webhook", detail: "Update webhook" },
+  pause: { title: "Pause webhook", detail: "Pause webhook" },
+  resume: { title: "Resume webhook", detail: "Resume webhook" },
+  delete: { title: "Delete webhook", detail: "Delete webhook" },
+} as const satisfies Record<WebhookRequestOperation["action"], { title: string; detail: string }>;
+
+function eventTypeList(values: readonly string[] | undefined): string[] | undefined {
+  if (values === undefined) return undefined;
+  return Array.from(new Set(values.map((value) => redactSecretsInText(value.trim()).slice(0, 200)).filter(Boolean))).slice(0, 20);
+}
+
+function webhookId(value: string): string {
+  if (!WEBHOOK_ID.test(value)) throw new RoutineRequestError("Choose a valid webhook id");
+  return value;
+}
+
+function ownedWebhook(webhooks: WebhookRequestTarget, id: string, botId: string): WebhookTrigger | null {
+  const current = webhooks.get(id);
+  return current && current.botId === botId ? current : null;
+}
+
+function verifyWebhookSnapshot(
+  operation: Exclude<WebhookRequestOperation, { action: "create" }>,
+  webhooks: WebhookRequestTarget,
+  botId: string,
+): WebhookTrigger {
+  const current = ownedWebhook(webhooks, operation.webhookId, botId);
+  if (!current) throw new RoutineRequestError("That webhook no longer exists", 404);
+  if (current.updatedAt !== operation.expectedUpdatedAt) {
+    throw new RoutineRequestError(
+      "That webhook changed after this confirmation card was prepared. Ask the bot to review it and propose the action again.",
+      409,
+    );
+  }
+  return current;
+}
+
+function normalizedWebhookOperation(
+  webhooks: WebhookRequestTarget,
+  botId: string,
+  validated: z.output<typeof webhookProposalSchema>,
+): WebhookRequestOperation {
+  if (validated.action === "create") {
+    const eventTypes = eventTypeList(validated.webhook.eventTypes);
+    return {
+      action: "create",
+      // replaced by the request-bound id once the request id exists (propose)
+      webhook: {
+        id: "pending",
+        name: text(validated.webhook.name, "name", 80),
+        prompt: text(validated.webhook.instructions, "instructions", 20_000),
+        ...(eventTypes?.length ? { eventTypes } : {}),
+      },
+    };
+  }
+  const id = webhookId(validated.webhookId);
+  const current = ownedWebhook(webhooks, id, botId);
+  if (!current) throw new RoutineRequestError("That webhook does not exist", 404);
+  if (validated.action === "update") {
+    const changes: WebhookRequestChanges = {};
+    if (validated.changes.name !== undefined) changes.name = text(validated.changes.name, "name", 80);
+    if (validated.changes.instructions !== undefined) changes.prompt = text(validated.changes.instructions, "instructions", 20_000);
+    if (validated.changes.eventTypes !== undefined) changes.eventTypes = eventTypeList(validated.changes.eventTypes) ?? [];
+    return { action: "update", webhookId: id, expectedUpdatedAt: current.updatedAt, changes };
+  }
+  return { action: validated.action, webhookId: id, expectedUpdatedAt: current.updatedAt };
+}
+
+function webhookCardCopy(operation: WebhookRequestOperation, webhooks: WebhookRequestTarget): RoutineCardCopy {
+  const current = operation.action === "create" ? null : webhooks.get(operation.webhookId);
+  const name = redactSecretsInText(
+    operation.action === "create" ? operation.webhook.name
+      : operation.action === "update" && operation.changes.name !== undefined ? operation.changes.name
+        : current?.name ?? "webhook",
+  );
+  const prompt = operation.action === "create" ? operation.webhook.prompt
+    : operation.action === "update" && operation.changes.prompt !== undefined ? operation.changes.prompt
+      : current?.prompt ?? "";
+  const eventTypes = operation.action === "create" ? operation.webhook.eventTypes
+    : operation.action === "update" && operation.changes.eventTypes !== undefined ? operation.changes.eventTypes
+      : current?.eventTypes;
+  const copy = WEBHOOK_ACTION_COPY[operation.action];
+  const title = `${copy.title} “${name}”?`;
+  const events = eventTypes?.length ? eventTypes.map((value) => redactSecretsInText(value)).join(", ") : "Every event";
+  const status = operation.action === "pause" ? "Paused: calls are refused until it is resumed"
+    : operation.action === "resume" ? "On: calls start a task again"
+      : operation.action === "delete" ? "Deleted with its history"
+        : operation.action === "update" && current?.enabled === false ? "Remains paused" : "On";
+  const detail = [
+    `Action: ${copy.detail}`,
+    `Name: ${name}`,
+    "Runs: each time another app calls this webhook's link",
+    `Events: ${events}`,
+    `Status: ${status}`,
+    ...(operation.action === "create"
+      ? ["Link: none yet. You make it on the Automations page with Copy command. The bot never sees the link or its secret."]
+      : []),
+    ...(prompt ? ["", "Instructions:", redactSecretsInText(prompt)] : []),
+  ].join("\n");
+  return {
+    title,
+    summary: `${copy.title} “${name}” · ${events} · ${status}`,
+    detail,
+    nextRunAt: null,
+    tool: operation.action === "create" ? "create_webhook" : "manage_webhook",
+  };
+}
+
+function routineBefore(routine: Routine): AutomationUndoBefore {
+  return {
+    name: routine.name,
+    prompt: routine.prompt,
+    schedule: structuredClone(routine.schedule),
+    overlap: routine.overlap ?? "skip",
+    timeoutMinutes: routine.timeoutMinutes ?? null,
+    enabled: routine.enabled,
+  };
+}
+
+function webhookBefore(webhook: WebhookTrigger): AutomationUndoBefore {
+  return { name: webhook.name, prompt: webhook.prompt, eventTypes: [...(webhook.eventTypes ?? [])], enabled: webhook.enabled };
+}
+
+function statusOf(error: unknown): number {
+  const status = (error as { status?: unknown } | null)?.status;
+  return typeof status === "number" ? status : 400;
+}
+
+function changedSince(error: unknown): boolean {
+  return (error as { code?: unknown } | null)?.code === "webhook_changed";
+}
+
 export class RoutineRequestService {
   private readonly store: RoutineRequestStore;
   private readonly routines: RoutineManager;
@@ -807,8 +1059,10 @@ export class RoutineRequestService {
   private readonly canPersist?: RoutineRequestServiceOptions["canPersist"];
   private readonly validateTarget?: RoutineRequestServiceOptions["validateTarget"];
   private readonly resolveWatchSource?: RoutineRequestServiceOptions["resolveWatchSource"];
+  private readonly webhookTarget?: RoutineRequestServiceOptions["webhooks"];
 
   constructor(options: RoutineRequestServiceOptions) {
+    this.webhookTarget = options.webhooks;
     this.store = options.store;
     this.routines = options.routines;
     this.now = options.now ?? Date.now;
@@ -819,9 +1073,16 @@ export class RoutineRequestService {
     this.resolveWatchSource = options.resolveWatchSource;
   }
 
+  private webhooks(): WebhookRequestTarget {
+    const target = this.webhookTarget?.();
+    if (!target) throw new RoutineRequestError("Webhooks are unavailable here", 409);
+    return target;
+  }
+
   async propose(args: ProposeRoutineRequestArgs): Promise<RoutineProposalResult> {
     const botId = text(args.botId, "botId", 128);
     const threadId = text(args.threadId, "threadId", 128);
+    if ((args.proposal as { kind?: unknown } | null)?.kind === "webhook") return this.proposeWebhook(args, botId, threadId);
     const at = this.now();
     const parsedProposal = routineProposalSchema.safeParse(args.proposal);
     if (!parsedProposal.success) {
@@ -892,6 +1153,50 @@ export class RoutineRequestService {
     };
   }
 
+  /** A webhook card: same card, same guard, same Confirm (SL-J J1). */
+  private proposeWebhook(args: ProposeRoutineRequestArgs, botId: string, threadId: string): RoutineProposalResult {
+    const parsedProposal = webhookProposalSchema.safeParse(args.proposal);
+    if (!parsedProposal.success) {
+      throw new RoutineRequestError(schemaIssue(parsedProposal.error, "Invalid webhook proposal"));
+    }
+    const webhooks = this.webhooks();
+    const operation = normalizedWebhookOperation(webhooks, botId, parsedProposal.data);
+    const requestId = newId();
+    // The id is derived once, here, from the request id (section 8 item 1).
+    if (operation.action === "create") operation.webhook.id = webhookIdForRequest(requestId);
+    else verifyWebhookSnapshot(operation, webhooks, botId);
+    const cardAt = this.now();
+    const payload: WebhookRequestCardData = { version: 1, kind: "webhook", requestId, botId, threadId, createdAt: cardAt, operation };
+    const copy = webhookCardCopy(operation, webhooks);
+    const messageInput: Parameters<RoutineRequestStore["appendMessage"]>[1] = {
+      role: "bot",
+      kind: "options",
+      card: {
+        title: copy.title,
+        subtitle: copy.detail,
+        options: ["Confirm", "Cancel"],
+        requestId,
+        tool: copy.tool,
+        routineRequest: payload,
+        routineProposalDigest: routineProposalDigest(payload, { title: copy.title, subtitle: copy.detail }),
+      },
+    };
+    if (args.from) messageInput.from = args.from;
+    const persistence = this.canPersist?.(botId, threadId);
+    if (persistence && !persistence.ok) throw new RoutineRequestError(persistence.error, persistence.status);
+    args.canCommit?.();
+    const message = this.store.appendMessage(threadId, murageLine(messageInput));
+    return {
+      requestId,
+      messageId: message.id,
+      title: copy.title,
+      summary: copy.summary,
+      detail: copy.detail,
+      nextRunAt: null,
+      timeZone: this.timeZone(),
+    };
+  }
+
   private async requireCloudReadiness(operation: RoutineRequestOperation): Promise<void> {
     if (!this.cloudReady || operation.action === "pause" || operation.action === "delete") return;
     const definition = effectiveDefinition(operation, this.routines);
@@ -928,6 +1233,7 @@ export class RoutineRequestService {
     const card = message?.card;
     const rawPayload = card?.routineRequest;
     if (!message || !card || !rawPayload) return { claimed: false, state: "not_found" };
+    if (args.behavior === "undo") return this.undo(args, message.id, card, rawPayload);
     if (args.behavior !== "allow" && args.behavior !== "deny") {
       return {
         claimed: true,
@@ -944,7 +1250,7 @@ export class RoutineRequestService {
       if (recovered) return recovered;
       return { claimed: true, state: "invalid", error: "This routine request belongs to another conversation", status: 403 };
     }
-    const parsedPayload = routineRequestCardDataSchema.safeParse(rawPayload);
+    const parsedPayload = parseCardPayload(rawPayload);
     if (!parsedPayload.success) {
       if (card.answered) return { claimed: true, state: "already_settled", behavior: card.answered };
       const recovered = this.settleCommittedReceipt(args, message.id, card);
@@ -962,7 +1268,7 @@ export class RoutineRequestService {
       });
       return { claimed: true, state: "invalid", error: detail, status: 400 };
     }
-    const payload: RoutineRequestCardData = parsedPayload.data;
+    const payload: AutomationRequestCardData = parsedPayload.data;
     if (payload.requestId !== args.requestId) {
       const recovered = this.settleCommittedReceipt(args, message.id, card);
       if (recovered) return recovered;
@@ -973,7 +1279,7 @@ export class RoutineRequestService {
       return { claimed: true, state: "invalid", error: "This routine request id does not match its confirmation card", status: 400 };
     }
     if (card.answered) {
-      this.forgetSettledReceipt(payload, message.id);
+      this.releaseSettledReceipt(payload, message.id, card);
       return { claimed: true, state: "already_settled", behavior: card.answered };
     }
 
@@ -998,14 +1304,21 @@ export class RoutineRequestService {
           }
           throw new RoutineRequestError("This routine request does not match its durable commit receipt", 409);
         }
-        return this.settleApplied(
-          args.threadId,
-          message.id,
-          card,
-          payload,
-          receipt.resultId,
-          receipt.appliedAt,
-        );
+        if (receipt.resultId !== undefined) {
+          return this.settleApplied(
+            args.threadId,
+            message.id,
+            card,
+            payload,
+            receipt.resultId,
+            receipt.appliedAt,
+          );
+        }
+        // Written before apply, then the change did not finish (section 4).
+        // A webhook create finds the record its bound id already made.
+        const recovered = this.recoverPendingWebhookCreate(payload, message.id);
+        if (recovered) return this.settleApplied(args.threadId, message.id, card, payload, recovered);
+        if (args.behavior === "deny") this.forgetReceipt(requestCommit(payload, message.id));
       }
       if (args.behavior === "deny") {
         this.store.patchMessage(args.threadId, message.id, { card: { ...card, answered: "deny", held: undefined } });
@@ -1027,12 +1340,21 @@ export class RoutineRequestService {
           409,
         );
       }
-      revalidateOperation(payload.operation, this.routines, payload.botId, this.now());
-      if (payload.operation.action === "create" && payload.operation.forBot && this.validateTarget) {
-        const refusal = this.validateTarget(payload.botId, payload.operation.forBot);
-        if (refusal) throw new RoutineRequestError(refusal, 404);
+      if (payload.kind === "webhook") {
+        const operation = payload.operation;
+        if (operation.action === "create") {
+          if (this.webhooks().get(operation.webhook.id)) throw new RoutineRequestError("A webhook with this id already exists", 409);
+        } else verifyWebhookSnapshot(operation, this.webhooks(), payload.botId);
+      } else {
+        revalidateOperation(payload.operation, this.routines, payload.botId, this.now());
+        if (payload.operation.action === "create" && payload.operation.forBot && this.validateTarget) {
+          const refusal = this.validateTarget(payload.botId, payload.operation.forBot);
+          if (refusal) throw new RoutineRequestError(refusal, 404);
+        }
       }
-      const resultId = this.apply(payload, message.id, fingerprint);
+      const resultId = payload.kind === "webhook"
+        ? this.applyWebhook(payload, message.id)
+        : this.apply(payload, message.id, fingerprint);
       return this.settleApplied(args.threadId, message.id, card, payload, resultId);
     } catch (error) {
       const status = error instanceof RoutineRequestError ? error.status : 400;
@@ -1053,24 +1375,45 @@ export class RoutineRequestService {
     threadId: string,
     messageId: string,
     card: RoutineRequestOptionCard,
-    payload: RoutineRequestCardData,
+    payload: AutomationRequestCardData,
     resultId: string,
     appliedAt = this.now(),
   ): ResolveRoutineRequestResult {
-    const applied: RoutineRequestCardData = {
+    const applied = {
       ...payload,
       appliedAt,
       resultId,
-    };
-    const settled = this.store.patchMessage(threadId, messageId, {
-      card: { ...card, answered: "allow", held: undefined, routineRequest: applied },
-    });
+    } as AutomationRequestCardData;
+    const settledCard: RoutineRequestOptionCard = { ...card, answered: "allow", held: undefined, routineRequest: applied };
+    const settled = this.store.patchMessage(threadId, messageId, { card: settledCard });
     if (!settled) throw new RoutineRequestError("This routine confirmation card is no longer available", 409);
-    this.forgetSettledReceipt(payload, messageId);
+    this.releaseSettledReceipt(payload, messageId, settledCard);
     return { claimed: true, state: "applied", action: payload.operation.action, resultId };
   }
 
-  private forgetSettledReceipt(payload: RoutineRequestCardData, messageId: string): void {
+  /** Undo is offered while the card is applied, not undone, its change has a
+   * `before`, and it was applied in the last 7 days (section 8 item 2). */
+  private undoOffered(receipt: RoutineRequestReceipt | null, card: RoutineRequestOptionCard): boolean {
+    return Boolean(
+      receipt
+      && card.answered === "allow"
+      && !card.undone
+      && receipt.undoneAt === undefined
+      && automationActionUndoable(receipt.action)
+      && receipt.before !== undefined && receipt.before !== null
+      && receipt.appliedAt !== undefined
+      && this.now() - receipt.appliedAt <= AUTOMATION_UNDO_WINDOW_MS,
+    );
+  }
+
+  /** A settled card's receipt is kept while it offers Undo; otherwise it is
+   * redundant once the transcript is settled. */
+  private releaseSettledReceipt(payload: AutomationRequestCardData, messageId: string, card: RoutineRequestOptionCard): void {
+    if (this.undoOffered(this.routines.routineRequestReceipt(payload.requestId), card)) return;
+    this.forgetSettledReceipt(payload, messageId);
+  }
+
+  private forgetSettledReceipt(payload: AutomationRequestCardData, messageId: string): void {
     this.forgetReceipt(requestCommit(payload, messageId));
   }
 
@@ -1080,7 +1423,7 @@ export class RoutineRequestService {
     card: RoutineRequestOptionCard,
   ): ResolveRoutineRequestResult | null {
     const receipt = this.routines.routineRequestReceipt(args.requestId);
-    if (!receipt) return null;
+    if (!receipt || receipt.resultId === undefined) return null;
     if (receipt.botId !== args.botId || receipt.threadId !== args.threadId || receipt.messageId !== messageId) {
       return {
         claimed: true,
@@ -1089,9 +1432,8 @@ export class RoutineRequestService {
         status: 403,
       };
     }
-    const settled = this.store.patchMessage(args.threadId, messageId, {
-      card: { ...card, answered: "allow", held: undefined },
-    });
+    const settledCard: RoutineRequestOptionCard = { ...card, answered: "allow", held: undefined };
+    const settled = this.store.patchMessage(args.threadId, messageId, { card: settledCard });
     if (!settled) {
       return {
         claimed: true,
@@ -1100,7 +1442,7 @@ export class RoutineRequestService {
         status: 409,
       };
     }
-    this.forgetReceipt(receipt);
+    if (!this.undoOffered(receipt, settledCard)) this.forgetReceipt(receipt);
     return {
       claimed: true,
       state: "applied",
@@ -1119,9 +1461,95 @@ export class RoutineRequestService {
     }
   }
 
+  /** Crash after the webhook was saved and before its receipt gained the
+   * result: the request-bound id finds the record, nothing is made twice. */
+  private recoverPendingWebhookCreate(payload: AutomationRequestCardData, messageId: string): string | null {
+    if (payload.kind !== "webhook" || payload.operation.action !== "create") return null;
+    const existing = this.webhooks().get(payload.operation.webhook.id);
+    if (!existing || existing.botId !== payload.botId) return null;
+    // `createdAt` is the `updatedAt` create left: any later write (a minted
+    // link, a delivery) makes Undo answer changed_since.
+    this.routines.completeRoutineRequest(requestCommit(payload, messageId), existing.id, this.now(), existing.createdAt);
+    return existing.id;
+  }
+
+  /** SL-J J2 order for a webhook: (1) receipt with `before` in routines.json,
+   * (2) the change in webhooks.json, then the result in routines.json. */
+  private applyWebhook(payload: WebhookRequestCardData, messageId: string): string {
+    const webhooks = this.webhooks();
+    const operation = payload.operation;
+    const commit = requestCommit(payload, messageId);
+    const current = operation.action === "create" ? null : verifyWebhookSnapshot(operation, webhooks, payload.botId);
+    this.routines.beginRoutineRequest(commit, {
+      kind: "webhook",
+      before: operation.action === "create" ? { absent: true } : operation.action === "delete" ? null : webhookBefore(current!),
+      ...(operation.action === "create" ? {} : { expectedUpdatedAt: operation.expectedUpdatedAt }),
+    });
+    let resultId: string;
+    let appliedUpdatedAt: number | undefined;
+    try {
+      if (operation.action === "create") {
+        const created = webhooks.create({
+          name: operation.webhook.name,
+          prompt: operation.webhook.prompt,
+          botId: payload.botId,
+          runOn: "ember",
+          enabled: true,
+          ...(operation.webhook.eventTypes ? { eventTypes: [...operation.webhook.eventTypes] } : {}),
+        }, { id: operation.webhook.id, mint: false });
+        resultId = created.webhook.id;
+        appliedUpdatedAt = created.webhook.updatedAt;
+      } else if (operation.action === "delete") {
+        if (!webhooks.remove(operation.webhookId, { expectedUpdatedAt: operation.expectedUpdatedAt })) {
+          throw new RoutineRequestError("That webhook no longer exists", 404);
+        }
+        resultId = operation.webhookId;
+      } else {
+        const patch: JsonObject = operation.action === "update"
+          ? {
+              ...(operation.changes.name === undefined ? {} : { name: operation.changes.name }),
+              ...(operation.changes.prompt === undefined ? {} : { prompt: operation.changes.prompt }),
+              ...(operation.changes.eventTypes === undefined ? {} : { eventTypes: [...operation.changes.eventTypes] }),
+            }
+          : { enabled: operation.action === "resume" };
+        const updated = webhooks.update(operation.webhookId, patch, { expectedUpdatedAt: operation.expectedUpdatedAt });
+        if (!updated) throw new RoutineRequestError("That webhook no longer exists", 404);
+        resultId = updated.id;
+        appliedUpdatedAt = updated.updatedAt;
+      }
+    } catch (error) {
+      // nothing changed: the receipt written before it goes too
+      this.forgetReceipt(commit);
+      if (error instanceof RoutineRequestError) throw error;
+      throw new RoutineRequestError(error instanceof Error ? error.message : String(error), statusOf(error));
+    }
+    this.routines.completeRoutineRequest(commit, resultId, this.now(), appliedUpdatedAt);
+    return resultId;
+  }
+
   private apply(payload: RoutineRequestCardData, messageId: string, fingerprint: string): string {
     const operation = payload.operation;
     const confirmationAt = this.now();
+    // SL-J J2 step 1: the receipt with `before`, saved before the change. The
+    // change below fills its result in the same write as the change itself.
+    const current = operation.action === "create" ? null : verifyManageSnapshot(operation, this.routines, payload.botId);
+    const commit = requestCommit(payload, messageId);
+    this.routines.beginRoutineRequest(commit, {
+      before: operation.action === "create" ? { absent: true }
+        : automationActionUndoable(operation.action) ? routineBefore(current!) : null,
+      ...(operation.action === "create" ? {} : { expectedUpdatedAt: operation.expectedUpdatedAt }),
+    });
+    try {
+      return this.applyRoutine(payload, messageId, fingerprint, confirmationAt);
+    } catch (error) {
+      // the routine change and its result are one write: nothing changed
+      if (this.routines.routineRequestReceipt(payload.requestId)?.resultId === undefined) this.forgetReceipt(commit);
+      throw error;
+    }
+  }
+
+  private applyRoutine(payload: RoutineRequestCardData, messageId: string, fingerprint: string, confirmationAt: number): string {
+    const operation = payload.operation;
     switch (operation.action) {
       case "create":
         return this.routines.create(inputFromDefinition(
@@ -1198,4 +1626,113 @@ export class RoutineRequestService {
         throw new RoutineRequestError("Unsupported persisted routine action");
     }
   }
+
+  /** SL-J J2: Undo restores the receipt's `before` exactly, as one manage
+   * operation guarded by the `updatedAt` the change left. It never reads the
+   * current record to build an inverse. */
+  private undo(
+    args: { botId: string; threadId: string; requestId: string },
+    messageId: string,
+    card: RoutineRequestOptionCard,
+    rawPayload: AutomationRequestCardData,
+  ): ResolveRoutineRequestResult {
+    const refuse = (error: string, status = 409, code?: "changed_since"): ResolveRoutineRequestResult =>
+      ({ claimed: true, state: "invalid", error, status, ...(code ? { code } : {}) });
+    if (rawPayload.botId !== args.botId || rawPayload.threadId !== args.threadId) {
+      return refuse("This routine request belongs to another conversation", 403);
+    }
+    if (card.undone) return { claimed: true, state: "already_settled", behavior: "undo" };
+    if (card.answered !== "allow") return refuse("Only a change that was applied can be undone.");
+    const parsed = parseCardPayload(rawPayload);
+    if (!parsed.success || parsed.data.requestId !== args.requestId) return refuse("This change cannot be undone because its card could not be read.");
+    const payload = parsed.data;
+    if (!automationActionUndoable(payload.operation.action)) return refuse("Undo is not offered for delete or run now.");
+    const receipt = this.routines.routineRequestReceipt(payload.requestId);
+    const unavailable = "Undo is no longer available for this change. Change it on the Automations page instead.";
+    if (
+      !receipt
+      || receipt.messageId !== messageId
+      || receipt.botId !== payload.botId
+      || receipt.threadId !== payload.threadId
+      || receipt.action !== payload.operation.action
+      || receipt.fingerprint !== routineRequestFingerprint(payload, messageId)
+      || (receipt.kind ?? undefined) !== payload.kind
+    ) return refuse(unavailable);
+    // Undo finished, then the card was not marked: mark it now.
+    if (receipt.undoneAt !== undefined) return this.settleUndone(args.threadId, messageId, card, payload);
+    if (receipt.resultId === undefined || receipt.appliedUpdatedAt === undefined || receipt.appliedAt === undefined) return refuse(unavailable);
+    if (this.now() - receipt.appliedAt > AUTOMATION_UNDO_WINDOW_MS) {
+      return refuse("Undo is available for 7 days after a change. Change it on the Automations page instead.");
+    }
+    const absent = absentBeforeSchema.safeParse(receipt.before);
+    const resultId = receipt.resultId;
+    const expectedUpdatedAt = receipt.appliedUpdatedAt;
+    try {
+      if (payload.kind === "webhook") {
+        const webhooks = this.webhooks();
+        if (!ownedWebhook(webhooks, resultId, payload.botId)) return refuse(AUTOMATION_CHANGED_SINCE, 409, "changed_since");
+        if (absent.success) {
+          if (!webhooks.remove(resultId, { expectedUpdatedAt })) return refuse(AUTOMATION_CHANGED_SINCE, 409, "changed_since");
+        } else {
+          const before = webhookBeforeSchema.safeParse(receipt.before);
+          if (!before.success) return refuse(unavailable);
+          if (!webhooks.update(resultId, { ...before.data, eventTypes: [...before.data.eventTypes] }, { expectedUpdatedAt })) {
+            return refuse(AUTOMATION_CHANGED_SINCE, 409, "changed_since");
+          }
+        }
+        this.routines.markRoutineRequestUndone(payload.requestId, this.now());
+      } else {
+        if (!ownedRoutine(this.routines, resultId, payload.botId)) return refuse(AUTOMATION_CHANGED_SINCE, 409, "changed_since");
+        let outcome: "undone" | "changed" | "missing";
+        if (absent.success) outcome = this.routines.undoRoutineRequest(payload.requestId, resultId, expectedUpdatedAt, { remove: true });
+        else {
+          const before = routineBeforeSchema.safeParse(receipt.before);
+          if (!before.success) return refuse(unavailable);
+          outcome = this.routines.undoRoutineRequest(payload.requestId, resultId, expectedUpdatedAt, {
+            patch: {
+              name: before.data.name,
+              prompt: before.data.prompt,
+              schedule: structuredClone(before.data.schedule),
+              overlap: before.data.overlap,
+              timeoutMinutes: before.data.timeoutMinutes,
+              enabled: before.data.enabled,
+            },
+          });
+        }
+        if (outcome !== "undone") return refuse(AUTOMATION_CHANGED_SINCE, 409, "changed_since");
+      }
+    } catch (error) {
+      if (changedSince(error)) return refuse(AUTOMATION_CHANGED_SINCE, 409, "changed_since");
+      return refuse(error instanceof Error ? error.message : String(error), statusOf(error));
+    }
+    return this.settleUndone(args.threadId, messageId, card, payload);
+  }
+
+  private settleUndone(
+    threadId: string,
+    messageId: string,
+    card: RoutineRequestOptionCard,
+    payload: AutomationRequestCardData,
+  ): ResolveRoutineRequestResult {
+    const settled = this.store.patchMessage(threadId, messageId, { card: { ...card, undone: true, held: undefined } });
+    if (!settled) {
+      return { claimed: true, state: "invalid", error: "This routine confirmation card is no longer available", status: 409 };
+    }
+    this.forgetSettledReceipt(payload, messageId);
+    return { claimed: true, state: "undone", action: payload.operation.action };
+  }
+}
+
+type ParsedCardPayload =
+  | { success: true; data: AutomationRequestCardData }
+  | { success: false; error: z.ZodError };
+
+/** A webhook card parses against the webhook schema; anything else is a routine card. */
+function parseCardPayload(raw: unknown): ParsedCardPayload {
+  if ((raw as { kind?: unknown } | null)?.kind === "webhook") {
+    const parsed = webhookRequestCardDataSchema.safeParse(raw);
+    return parsed.success ? { success: true, data: parsed.data } : { success: false, error: parsed.error };
+  }
+  const parsed = routineRequestCardDataSchema.safeParse(raw);
+  return parsed.success ? { success: true, data: parsed.data } : { success: false, error: parsed.error };
 }
