@@ -280,26 +280,179 @@ export function createBrowserExtensionRuntime(api, options = {}) {
   // Downloads. A tab's debugger cannot set download behavior (Chrome treats it as browser level), so a download is cancelled
   // through the downloads API, and only when the bot's own tab announced it (Page.downloadWillBegin on an attached, owned tab).
   // A filename decision carries no tab, so an origin match proves nothing: the owner's other tabs on the same site are never
-  // cancelled or erased. The announcement and the downloads event can arrive in either order; whichever comes second cancels.
+  // cancelled or erased. The announcement and the downloads event can arrive in either order: an item is cancelled only up to its
+  // filename step; one the filename step already let through is never removed on a later announcement's word (blockDownload).
   // Announcements expire, so an old URL never cancels a later download.
-  const recentDownloads = new Map(), blockedUrls = new Map(), downloadWaiters = new Set();
-  let lastCommandAt = 0;
-  const remember = (map, key, value) => { map.delete(key); map.set(key, { value, at: Date.now() }); while (map.size > 32) map.delete(map.keys().next().value); };
+  // recentDownloads: every address an item was seen under (its url and its finalUrl) -> { id, urls }. blockedUrls: an announcement no
+  // item has met yet -> { notify, binding, saidBlocked, filenameOnly }. passedIds: item id -> { binding, urls, told } for an item the
+  // filename step let through while that binding's bot action ran (`actor`): the only items any bot is told were kept, and only that
+  // bot. stoppedIds: items Murage stopped at onCreated, never counted as let through. addressIds: address -> every item id Murage saw
+  // under it (bounded), only so the fresh look below also asks about those items by id.
+  // Nothing here remembers that a file "is kept": whether a file with an address may still be on disk is asked of the browser, fresh,
+  // at the moment a bot would be told "nothing was saved" (onDisk, tell). A lost memory entry can only make Murage say less.
+  const recentDownloads = new Map(), blockedUrls = new Map(), downloadWaiters = new Set(), pendingRemovals = new Map(), passedIds = new Map(), stoppedIds = new Map(), addressIds = new Map();
+  let lastCommandAt = 0, actor;
+  const DOWNLOAD_KEYS = 64, PENDING_REMOVALS = 32, PASSED_KEYS = 1024;
+  const remember = (map, key, value) => {
+    map.delete(key); map.set(key, { value, at: Date.now() });
+    while (map.size > DOWNLOAD_KEYS) map.delete(map.keys().next().value);
+  };
   const recall = (map, key) => { const entry = map.get(key); if (!entry) return undefined; if (Date.now() - entry.at > DOWNLOAD_TTL_MS) { map.delete(key); return undefined; } return entry; };
-  async function cancelDownload(id) { await api.downloads.cancel(id).catch(() => {}); await api.downloads.erase({ id }).catch(() => {}); }
+  // stoppedIds (and passedIds) never drop an entry inside its 30 s window: past PASSED_KEYS they shed only expired ones.
+  const rememberFresh = (map, key, value) => {
+    map.delete(key); map.set(key, { value, at: Date.now() });
+    if (map.size > PASSED_KEYS) for (const [old, entry] of map) if (Date.now() - entry.at > DOWNLOAD_TTL_MS) map.delete(old);
+  };
+  // An address whose seen ids were dropped from addressIds (cap) is remembered in lostAddresses: a fresh look that finds nothing there is
+  // not proof of "nothing on disk" (a dropped item's history row may be gone while its file stays), so it is said as unknown. Past
+  // LOST_KEYS addresses every empty look is unknown (lostAll): losing memory only ever makes Murage say less.
+  const lostAddresses = new Set(), LOST_KEYS = 8192;
+  let lostAll = false;
+  const lose = url => { if (lostAll) return; lostAddresses.add(url); if (lostAddresses.size > LOST_KEYS) { lostAll = true; lostAddresses.clear(); } };
+  const sawItem = item => {
+    for (const url of new Set([item.url, item.finalUrl].filter(Boolean))) {
+      const ids = addressIds.get(url) ?? new Set(); addressIds.delete(url); ids.delete(item.id); ids.add(item.id); addressIds.set(url, ids);
+      if (ids.size > 32) { lose(url); while (ids.size > 32) ids.delete(ids.values().next().value); }
+    }
+    while (addressIds.size > PASSED_KEYS) { const old = addressIds.keys().next().value; if (addressIds.get(old).size) lose(old); addressIds.delete(old); }
+  };
+  const forgetItem = id => { for (const [key, entry] of recentDownloads) if (entry.value.id === id) recentDownloads.delete(key); };
+  // Murage confirmed this item's file gone and erased its entry: it is no longer asked about (an erased item is not in the list).
+  const forgetRemoved = id => { forgetItem(id); passedIds.delete(id); for (const ids of addressIds.values()) ids.delete(id); };
+  const attempt = thunk => Promise.resolve().then(thunk);
+  async function downloadItem(id) {
+    if (typeof api.downloads.search !== 'function') return undefined;
+    try { return (await api.downloads.search({ id }))?.[0]; } catch { return undefined; }
+  }
+  // One look at the downloads list: 'unknown' when it cannot answer, never "no item".
+  async function lookup(query) {
+    if (typeof api.downloads.search !== 'function') return 'unknown';
+    try { const items = await api.downloads.search(query); return Array.isArray(items) ? items : []; } catch { return 'unknown'; }
+  }
+  const anchored = url => `^${url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`;
+  // The items whose file may still be on disk under any of these addresses, asked fresh and with no time cutoff. Each address is looked
+  // up as an item's address and as its redirect address (finalUrl), both as the exact address and as an anchored pattern, and only an
+  // item whose own address is exactly one of these counts; every item Murage saw under these addresses is also looked up by id. An item
+  // counts unless the browser reports its file missing; an item Murage saw that the list no longer has (its entry erased, so the browser
+  // can no longer say) counts too, unless Murage itself removed it (forgetRemoved). `except` is the item whose removal was just
+  // confirmed. 'unknown' when any look cannot answer.
+  async function onDisk(urls, except) {
+    const found = new Map();
+    for (const url of urls) {
+      for (const query of [{ url }, { finalUrl: url }, { urlRegex: anchored(url) }, { finalUrlRegex: anchored(url) }]) {
+        const items = await lookup(query);
+        if (items === 'unknown') return 'unknown';
+        for (const item of items) if (Number.isSafeInteger(item?.id) && (urls.includes(item.url) || urls.includes(item.finalUrl))) found.set(item.id, item);
+      }
+    }
+    const seen = new Set();
+    for (const url of urls) { const hit = recentDownloads.get(url); if (hit) seen.add(hit.value.id); for (const id of addressIds.get(url) ?? []) seen.add(id); }
+    for (const [id, passed] of passedIds) if (passed.urls.some(url => urls.includes(url))) seen.add(id);
+    for (const id of seen) {
+      if (found.has(id)) continue;
+      const items = await lookup({ id });
+      if (items === 'unknown') return 'unknown';
+      found.set(id, items[0] ?? { id });
+    }
+    const present = [...found.values()].filter(item => item.id !== except && item.exists !== false).map(item => item.id);
+    if (!present.length && (lostAll || urls.some(url => lostAddresses.has(url)))) return 'unknown';
+    return present;
+  }
+  // What one bot is told about an address. 'download_blocked' only when the browser shows no file with it left on disk (said once per
+  // announcement). Otherwise 'download_kept' only for a file this bot's own action let through and it was not told of yet; any other
+  // file (the owner's, another bot's, one that cannot be looked up) is never mentioned, and nothing is said when the list cannot answer.
+  async function tell(urls, except, entry) {
+    const present = await onDisk(urls, except);
+    if (present === 'unknown') return;
+    if (!present.length) { if (!entry.saidBlocked) entry.saidBlocked = entry.notify('download_blocked') !== false; return; }
+    const mine = present.map(id => passedIds.get(id)).filter(passed => passed && entry.binding !== undefined && passed.binding === entry.binding && !passed.told);
+    if (!mine.length) return;
+    for (const passed of mine) passed.told = true;
+    entry.notify('download_kept');
+  }
+  // Stop a download and remove what it saved. 'removed': nothing of it is left and its entry is erased. 'pending': it is still being
+  // written (a cancel that did not take); the removal runs once it completes. 'kept': its file could not be removed, and its entry
+  // stays on the downloads shelf so the owner can see it.
+  async function cancelDownload(id) {
+    await attempt(() => api.downloads.cancel(id)).catch(() => {});
+    const item = await downloadItem(id);
+    if (item?.state === 'in_progress') return 'pending';
+    if (!await fileGone(id, item)) return 'kept';
+    await attempt(() => api.downloads.erase({ id })).catch(() => {});
+    forgetRemoved(id);
+    return 'removed';
+  }
+  // Whether nothing the download wrote is left on disk, by the browser's own word. A cancelled download's partial file is deleted by the
+  // browser later, not at once, and a resumable interrupt keeps it: so an item counts as gone only when the browser reports it missing,
+  // or when removeFile resolves and a fresh look does not still show the file. Anything else is kept, and its shelf entry stays.
+  async function fileGone(id, item) {
+    if (item?.exists === false) return true;
+    const removed = await attempt(() => api.downloads.removeFile(id)).then(() => true, () => false);
+    const after = await downloadItem(id);
+    // a fresh look that fails or finds no item leaves the outcome unknown: unknown is said as kept, never as gone
+    return removed ? !!after && after.exists !== true : after?.exists === false;
+  }
+  // The outcome of one download Murage stopped, handed to `notify`: 'download_blocked' once its file is gone (the bot hears it only if
+  // nothing else with its address is on disk: tell), 'download_kept' when Murage could not remove it. A download still being written is
+  // settled when it finishes (downloadChanged); until then the browser itself reports its file, so no other removal at its address can
+  // be said as blocked.
+  async function settle(id, notify) {
+    const result = await cancelDownload(id);
+    if (result === 'pending') return holdRemoval(id, notify);
+    await notify(result === 'removed' ? 'download_blocked' : 'download_kept');
+  }
+  async function holdRemoval(id, notify) {
+    pendingRemovals.set(id, { notify, at: Date.now() });
+    while (pendingRemovals.size > PENDING_REMOVALS) { const [oldest, entry] = pendingRemovals.entries().next().value; pendingRemovals.delete(oldest); await entry.notify('download_kept'); }
+    // it may have finished between the cancel and this registration, before any change event could find it here
+    const item = await downloadItem(id);
+    if (item && item.state !== 'in_progress') await downloadChanged({ id, state: { current: item.state } });
+  }
+  async function downloadChanged(delta) {
+    const pending = delta && pendingRemovals.get(delta.id);
+    const state = delta?.state?.current;
+    if (!pending || (state !== 'complete' && state !== 'interrupted')) return;
+    pendingRemovals.delete(delta.id);
+    const removed = await fileGone(delta.id, (await downloadItem(delta.id)) ?? { state });
+    if (removed) { await attempt(() => api.downloads.erase({ id: delta.id })).catch(() => {}); forgetRemoved(delta.id); }
+    await pending.notify(removed ? 'download_blocked' : 'download_kept');
+  }
+  // An armed announcement met its item `id`: a file Murage could not remove is said as kept; a removal is said through tell.
+  const armedNotify = (urls, entry, id) => async kind => { if (kind === 'download_kept') entry.notify(kind); else await tell(urls, id, entry); };
   async function downloadCreated(item) {
     if (!connected || !item || !Number.isSafeInteger(item.id)) return;
-    for (const url of [item.url, item.finalUrl]) if (url && recall(blockedUrls, url)) { blockedUrls.delete(url); await cancelDownload(item.id); return; }
-    remember(recentDownloads, item.url, item.id);
+    sawItem(item);
+    const urls = [...new Set([item.url, item.finalUrl].filter(Boolean))];
+    for (const url of urls) {
+      const armed = url && recall(blockedUrls, url);
+      // an arm made while an item for the address may already exist acts only at the filename step: before it, this item could be the
+      // owner's retry with a small file already written, and nothing ties it to the bot
+      if (armed && !armed.value.filenameOnly) { blockedUrls.delete(url); rememberFresh(stoppedIds, item.id, true); await settle(item.id, armedNotify(urls, armed.value, item.id)); return; }
+    }
+    for (const url of urls) remember(recentDownloads, url, { id: item.id, urls });
   }
   // The filename step: Chrome holds the download here until every listener answers, so a cancel now happens before any file is
   // written (onCreated alone can lose the race to a small file). Unrelated downloads are answered at once. Only while a bot action is
   // running, and only for a download from an owned tab's site, is the page's own announcement waited for, briefly.
+  // An item let through here is never removed by a later announcement. One let through while a bot action ran is recorded for that
+  // bot (passedIds); one let through while no bot action ran is the owner's and is never mentioned to any bot. An item Murage already
+  // stopped at onCreated (or is still removing) was not let through.
   async function downloadDetermining(item) {
+    const by = botActive() ? actor : undefined;
+    if (connected && Number.isSafeInteger(item?.id)) sawItem(item);
+    const stop = await decideFilename(item);
+    if (!stop && by !== undefined && Number.isSafeInteger(item?.id) && !recall(stoppedIds, item.id) && !pendingRemovals.has(item.id)) {
+      passedIds.delete(item.id); passedIds.set(item.id, { binding: by, urls: [...new Set([item.url, item.finalUrl].filter(Boolean))], told: false, at: Date.now() });
+      // like stoppedIds, never drops an entry inside its 30 s window: past PASSED_KEYS it sheds only older ones
+      if (passedIds.size > PASSED_KEYS) for (const [old, passed] of passedIds) if (Date.now() - passed.at > DOWNLOAD_TTL_MS) passedIds.delete(old);
+    }
+    return stop;
+  }
+  async function decideFilename(item) {
     if (!connected || !item || !Number.isSafeInteger(item.id)) return false;
     const urls = [item.url, item.finalUrl].filter(Boolean);
     const proven = () => urls.find(url => recall(blockedUrls, url));
-    const cancelProven = async url => { blockedUrls.delete(url); recentDownloads.delete(item.url); await cancelDownload(item.id); return true; };
+    const cancelProven = async url => { const armed = recall(blockedUrls, url); blockedUrls.delete(url); forgetItem(item.id); await settle(item.id, armed ? armedNotify(urls, armed.value, item.id) : () => {}); return true; };
     const first = proven();
     if (first) return cancelProven(first);
     // Not while a bot action runs or has only just ended: nothing the bot did can explain this download.
@@ -316,14 +469,20 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     return url ? cancelProven(url) : false;
   }
   const botActive = () => writeBusy || Date.now() - lastCommandAt <= (options.downloadAfterMs ?? 1500);
-  async function blockDownload(url) {
+  // The page of `binding` announced a download (Page.downloadWillBegin, or a popup's first address). The address is armed first, so an
+  // item still at (or not yet at) the filename step is stopped there. Then the bot is told what the browser shows (tell): blocked when no
+  // file with the address is on disk (its item, when it comes, is stopped before any file is written), kept for a file its own action
+  // let through, and nothing otherwise. An item the filename step already let through is never cancelled, removed or erased here:
+  // Chrome does not say which tab a download came from, so it may be the owner's, and deleting an owner's file cannot be undone. When
+  // an item for the address may already exist, the arm acts only at the filename step (see downloadCreated).
+  async function blockDownload(url, notify = () => {}, binding) {
     if (!url) return;
-    // An item already seen for this address is cancelled only while a bot action explains it (the same address can be the owner's own
-    // download); the announcement is kept otherwise, so the bot's own item that follows is still caught.
-    const recent = recall(recentDownloads, url);
-    if (recent && botActive()) { recentDownloads.delete(url); await cancelDownload(recent.value); return; }
-    remember(blockedUrls, url, true);
+    const entry = { notify, binding, saidBlocked: false, filenameOnly: true };
+    remember(blockedUrls, url, entry);
     for (const check of [...downloadWaiters]) check();
+    const present = await onDisk([url]);
+    entry.filenameOnly = present === 'unknown' || present.length > 0;
+    await tell([url], undefined, entry);
   }
   async function disarmGuard(tabId, t) {
     const source = { tabId }, limit = options.releaseTabMs ?? RELEASE_LIMITS.tabMs;
@@ -743,7 +902,7 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     // dialog is answered, so the answer has to pass while that command is in flight. It never takes or clears the busy flag then.
     if (writeBusy && !dialog) fail('busy');
     const ownsBusy = !writeBusy;
-    writeBusy = true;
+    writeBusy = true; if (ownsBusy) actor = b.id; // a dialog answer inside another command never takes its downloads
     let shotHidden;
     try {
       if (!b.attached.has(t.tabId)) {
@@ -964,7 +1123,16 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     await tabCreated({ id: details.tabId, openerTabId: details.sourceTabId });
     // A new tab the bot's tab opened is not attached, so it announces no download. Its first address is the announcement:
     // a download from it is the bot's (a target=_blank link to a file), and is blocked like one from the bot's own tab.
-    if (candidates.has(details.tabId) && typeof details.url === 'string' && details.url && details.url !== 'about:blank') { popupUrls.set(details.tabId, details.url); while (popupUrls.size > MAX_OPENER_CANDIDATES) popupUrls.delete(popupUrls.keys().next().value); await blockDownload(details.url); }
+    if (candidates.has(details.tabId) && typeof details.url === 'string' && details.url && details.url !== 'about:blank') { popupUrls.set(details.tabId, details.url); while (popupUrls.size > MAX_OPENER_CANDIDATES) popupUrls.delete(popupUrls.keys().next().value); await blockDownload(details.url, popupNotify(details), bindings.get(candidates.get(details.tabId))?.id); }
+  }
+  // A popup's first address may still turn out to be a page, so only a kept file (an item already let through under that address during
+  // bot activity, so a real download) is said from here; "blocked" waits for a real announcement.
+  function popupNotify(details) {
+    const b = bindings.get(candidates.get(details.tabId));
+    const origin = b?.tabs.get(details.sourceTabId)?.origin ?? '';
+    let name = '';
+    try { name = clip(decodeURIComponent(new URL(details.url).pathname.split('/').pop() ?? ''), 80); } catch { name = ''; }
+    return kind => { if (kind !== 'download_kept' || !b || b.state !== 'active') return false; event(b, 'notice', { kind, tabId: details.sourceTabId, origin, name }); return true; };
   }
   async function openerNavigation(details) {
     if (!details.url || details.url === 'about:blank') return; // still waiting for the first real page
@@ -1016,7 +1184,7 @@ export function createBrowserExtensionRuntime(api, options = {}) {
         continue;
       }
       // What the owner's page did that the bot cannot see otherwise: said in plain words by the server.
-      if (method === 'Page.downloadWillBegin') { event(b, 'notice', { kind: 'download_blocked', tabId: t.tabId, origin: t.origin, name: clip(params.suggestedFilename, 80) }); await blockDownload(params.url); continue; }
+      if (method === 'Page.downloadWillBegin') { const name = clip(params.suggestedFilename, 80), tabId = t.tabId, origin = t.origin; await blockDownload(params.url, kind => event(b, 'notice', { kind, tabId, origin, name }), b.id); continue; }
       if (method === 'Page.javascriptDialogOpening') event(b, 'notice', { kind: 'dialog', tabId: t.tabId, origin: t.origin, dialogType: clip(params.type, 16), text: clip(params.message, 500) });
       // Setup context/lifecycle metadata may be needed before first navigation;
       // page contents, console and arbitrary CDP notifications never leave here.
@@ -1132,5 +1300,5 @@ export function createBrowserExtensionRuntime(api, options = {}) {
       event(b, 'notice', { kind: 'tab_discarded', tabId, navigationEpoch: t.navigationEpoch });
     }
   }
-  return { restartReports, driving, busy, setUpdateWaiting: value => { updateWaiting = !!value; pushStatus(); }, status: statusSnapshot, drivingBotName, pauseDriving, replaced, discarded, initialize, connection, handleRequest, handlePanel, navigation, tabCreated, navigationTarget, downloadCreated, downloadDetermining, debuggerEvent, removed: async tabId => { candidates.delete(tabId); for (const b of bindings.values()) if (b.tabs.has(tabId)) await unshare(b, tabId); }, detached: async tabId => { for (const b of bindings.values()) if (b.attached.has(tabId)) { b.attached.delete(tabId); await fence(b, 'paused', 'takeover'); } } };
+  return { restartReports, driving, busy, setUpdateWaiting: value => { updateWaiting = !!value; pushStatus(); }, status: statusSnapshot, drivingBotName, pauseDriving, replaced, discarded, initialize, connection, handleRequest, handlePanel, navigation, tabCreated, navigationTarget, downloadCreated, downloadDetermining, downloadChanged, debuggerEvent, removed: async tabId => { candidates.delete(tabId); for (const b of bindings.values()) if (b.tabs.has(tabId)) await unshare(b, tabId); }, detached: async tabId => { for (const b of bindings.values()) if (b.attached.has(tabId)) { b.attached.delete(tabId); await fence(b, 'paused', 'takeover'); } } };
 }

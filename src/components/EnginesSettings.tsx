@@ -17,6 +17,7 @@ import { engineFamilies, engineFamilyHeader } from "@/lib/provider-model-picker"
 import { engineLocalLine, LOCAL_MODELS_TITLE, OPEN_LOCAL_MODELS_EVENT } from "@/lib/local-models-view";
 import { localEngineSupport } from "../../shared/local-models";
 import { cn } from "@/lib/cn";
+import { homeSetUpLine } from "@/lib/cloud-signin-status";
 import { Card, InAdvanced } from "./SettingsPrimitives";
 
 /** What a Cloud home's engine card says when Claude's sign-in is due (the desktop app's Cloud home page signs it in again).
@@ -281,7 +282,7 @@ function EngineRow({ instance }: { instance: InstanceInfo }) {
           : instance.driverKind === "fuigoAgent"
             ? needsSignIn(instance) ? "Included · connect an AI provider" : instance.snapshot.authenticated === true ? "Included · connected" : "Included · connection not verified"
           : needsSignIn(instance) ? "Detected · sign-in required"
-            : instance.snapshot.authenticated === true ? "Detected · signed in" : "Detected · sign-in not verified"}
+            : instance.snapshot.setUpOnHome === true ? homeSetUpLine(instance.displayName) : instance.snapshot.authenticated === true ? "Detected · signed in" : "Detected · sign-in not verified"}
       </p>
       {/* Cloud home (CLOUD-ENGINES-DESIGN.md r8 R3.1): Claude's long-lived token is due for renewal. The sign-in
           runs from the desktop app, which holds the home's pairing. */}

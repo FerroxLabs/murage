@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Meal Planner",
     "tagline": "Meals, quantities and one shopping list shaped around your household",
-    "summary": "Supper turns your household size, preferences, available ingredients and time into a practical meal plan. You get recipe choices, checked quantities, pantry deductions and a preparation order. It works from supplied recipes or clearly labeled suggestions. For appointments and broader household tasks, use Personal / Home.",
+    "summary": "Supper turns your household size, preferences, available ingredients and time into a practical meal plan.",
     "category": "Everyday",
     "author": {
       "name": "Ferrox Labs",
@@ -36,7 +36,8 @@
         "title": "Meal Planner",
         "description": "Supper turns your household size, preferences, available ingredients and time into a practical meal plan. You get recipe choices, checked quantities, pantry deductions and a preparation order. It works from supplied recipes or clearly labeled suggestions. For appointments and broader household tasks, use Personal / Home.",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "blob"
         },
         "skills": [
           "meal-planner",

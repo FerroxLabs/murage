@@ -30,6 +30,8 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # 2026-10-25: Linux runners are pinned to ubuntu-24.04. ubuntu-latest moved to 26.04, which stays pinned out until
+  # Playwright supports chromium there and the electron no-desktop-session backup test passes on it (1.0.7 follow-up).
   quality:
     if: ${{ !inputs.human_files }}
     name: quality gates (${{ matrix.os }})
@@ -38,11 +40,11 @@ jobs:
       matrix:
         # The harness and pure desktop capabilities stay portable across all
         # supported host platforms. POSIX-only process tests self-skip.
-        os: ${{ fromJSON(inputs.windows_only && '["windows-latest"]' || '["macos-latest","ubuntu-latest","windows-latest"]') }}
+        os: ${{ fromJSON(inputs.windows_only && '["windows-latest"]' || '["macos-latest","ubuntu-24.04","windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     # Ubuntu also runs the complete desktop/mobile human suite after runtime
     # checks; the recorded 16-minute prelude left too little of the old 20m cap.
-    timeout-minutes: ${{ matrix.os == 'windows-latest' && 40 || matrix.os == 'ubuntu-latest' && 30 || 20 }}
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 40 || matrix.os == 'ubuntu-24.04' && 30 || 20 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Reject private operational records in Git
@@ -80,12 +82,12 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Validate locale catalogs
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-24.04'
         run: pnpm i18n:check
       - name: Every Vitest file is classified GATE or EXTENDED
         # A new test file must be added to ci/gate-tests.txt (with its OSes and the user failure it prevents) or
         # to ci/extended-tests.txt; docs/testing.md has the rule.
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-24.04'
         run: node scripts/ci-test-tiers.mjs check
       - name: Validate the bundled model metadata snapshot
         # Offline on purpose: this compares the committed snapshot against what
@@ -93,7 +95,7 @@ jobs:
         # digest. models.dev being down must never redden CI — refreshing the
         # snapshot is the only step that touches the network, and a person runs
         # that deliberately with `pnpm models:build`.
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-24.04'
         run: pnpm models:check
       - name: Prepare Electron test runtime
         # Electron 43 lazily downloads its runtime on first import. Resolve it
@@ -145,6 +147,12 @@ jobs:
       - name: Murage for Chrome script tests
         if: matrix.os != 'windows-latest'
         run: pnpm test:browser-extension-scripts
+      # installer/test/*.test.mjs (the installer's bind, pairing, systemd and
+      # sidecar rules) ran in no job before; a failure here fails the run the
+      # release-ci-gate reads. Ubuntu only: several files are about Linux hosts.
+      - name: Installer tests
+        if: matrix.os == 'ubuntu-24.04'
+        run: pnpm test:installer
       - run: pnpm test:packaged-server
       - name: Probe upstream Electron Windows sandbox regression
         if: matrix.os == 'windows-latest'
@@ -170,7 +178,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(inputs.windows_only && '["windows-latest"]' || '["macos-latest","ubuntu-latest","windows-latest"]') }}
+        os: ${{ fromJSON(inputs.windows_only && '["windows-latest"]' || '["macos-latest","ubuntu-24.04","windows-latest"]') }}
         # Scoped dispatch keeps its existing single selected-file confirmation;
         # ordinary CI uses ten bounded shards: 1.0.0's suite outgrew three
         # (every 20-minute shard was cancelled mid-run, CI 37727970532) and
@@ -186,9 +194,9 @@ jobs:
             vitest_shard: 11
           - os: macos-latest
             vitest_shard: 12
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             vitest_shard: 11
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             vitest_shard: 12
     runs-on: ${{ matrix.os }}
     # Windows runners are the slowest per shard: a 20-minute cap cancelled
@@ -217,7 +225,7 @@ jobs:
         # path; its tests (server/cloud-home/engine-*.test.ts) run real paths under the checkout and that node. A hosted
         # runner keeps node under /opt (mode 775), which no Cloud home has, so those parents lose the write bit for group
         # and others here, as the Linux package job does for /opt.
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-24.04'
         shell: bash
         run: |
           for start in "$GITHUB_WORKSPACE" "$(readlink -f /usr/local/bin/node)"; do
@@ -252,11 +260,19 @@ jobs:
           SHARD: ${{ matrix.vitest_shard }}/${{ matrix.os == 'windows-latest' && 12 || 10 }}
         run: |
           case "$RUNNER_OS_NAME" in ubuntu-*) os=linux ;; macos-*) os=mac ;; windows-*) os=windows ;; *) exit 1 ;; esac
-          node scripts/ci-test-tiers.mjs list --tier gate --os "$os" --shard "$SHARD" > "$RUNNER_TEMP/vitest-args.txt"
+          node scripts/ci-test-tiers.mjs list --tier gate --os "$os" --shard "$SHARD" --skip server/cloud-home/placeholder-launcher.test.ts > "$RUNNER_TEMP/vitest-args.txt"
           args=(); while IFS= read -r arg; do args+=("${arg%$'\r'}"); done < "$RUNNER_TEMP/vitest-args.txt"
           test "${#args[@]}" -gt 0 || { echo "::error::no GATE files selected for $os shard $SHARD"; exit 1; }
           echo "GATE files for $os, shard $SHARD: ${#args[@]} arguments"
           node node_modules/vitest/vitest.mjs run --tags-filter='!nightly && !perf-budget' "${args[@]}"
+      - name: Run the root-only placeholder-launcher test as root
+        # server/cloud-home/placeholder-launcher.test.ts is left out of the shard run above and runs here as root: the launcher
+        # makes .agents a 0555 directory and then creates the mask targets inside it, which only root (the Cloud home launcher's
+        # user) can do; its fixtures 4 and 5 fail loudly for any other user. Fixture 3 holds under root too (the immutable flag is
+        # stood in for by the seam). Nothing skips it. One shard carries it; sudo -E keeps the environment and PATH is passed through.
+        if: ${{ !cancelled() && inputs.vitest_file == '' && matrix.os == 'ubuntu-24.04' && matrix.vitest_shard == 1 }}
+        shell: bash
+        run: sudo -E env "PATH=$PATH" "$(command -v node)" node_modules/vitest/vitest.mjs run server/cloud-home/placeholder-launcher.test.ts
       - name: Scoped Vitest confirmation
         if: inputs.vitest_file != ''
         shell: bash
@@ -287,7 +303,7 @@ jobs:
       fail-fast: false
       matrix:
         human_shard: [1, 2, 3, 4, 5, 6]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -348,7 +364,7 @@ jobs:
       fail-fast: false
       matrix:
         extended_shard: [1, 2, 3, 4, 5]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -384,7 +400,7 @@ jobs:
     if: ${{ always() && !inputs.windows_only && !inputs.vitest_file && !inputs.human_files }}
     name: required CI completion
     needs: [quality, vitest, human, control-plane, mobile, package-linux]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Require every ordinary CI job to succeed
@@ -407,7 +423,7 @@ jobs:
   human-confirmation:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.human_files != '' }}
     name: Scoped Ubuntu human confirmation
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -477,7 +493,7 @@ jobs:
   control-plane:
     if: ${{ !inputs.windows_only && !inputs.human_files }}
     name: control-plane check + workerd tests + dry run
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -501,7 +517,7 @@ jobs:
     # on (the shared fixtures, the channel scripts, the source guards) and the
     # launcher; nothing else runs it. No native builds: Xcode and Gradle stay
     # off CI, and the fixture oracles also run in the root suite.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

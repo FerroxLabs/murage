@@ -77,7 +77,9 @@ export const SHAPE_CATALOGUE: Record<string, CatalogueEntry> = {
   tagged: { group: "turn", label: "Tagged bots", what: "The bots you tagged in your message.", locked: true },
   "project-brief": { group: "identity", label: "Project brief", what: "Your rules and done means for the project, then the lead's decisions and notes. Only when it is talking with you.", locked: true },
   "project-status": { group: "turn", label: "Project board and summary", what: "Its cards on the board, where the project stands, and a note on its first turn in the project.", locked: true },
+  "where-i-belong": { group: "turn", label: "Where it belongs", what: "The projects and channels it is a member of, so it knows them when you talk to it one to one. Only when it is talking with you.", locked: true },
   "working-context": { group: "turn", label: "What I've been working on", what: "Its own recent chats, projects, files and routines, so it knows what it has been doing. Only when it is talking with you.", locked: true },
+  "ask-rules": { group: "turn", label: "Asking you", what: "How it asks you a question or shows you a form, the same on every engine.", locked: true },
   now: { group: "turn", label: "Date and time", what: "Today's date, the time and your time zone, at the top of each message, so it never has to guess.", locked: true },
 };
 
@@ -291,7 +293,7 @@ export interface DirectTurnShapeInput {
 export const COMPUTER_UNAVAILABLE = " You cannot control the computer this turn. Do not claim to have taken, or to be able to take, any computer actions; if asked, say plainly that you can't do that here.";
 
 /** Said when the bot is set to "this computer" but local control is not enabled: the turn still runs. */
-export const COMPUTER_LOCAL_CONTROL_OFF = " This bot is set to use this computer, but local control is not enabled yet, so you cannot control it this turn. Do not claim to have taken, or to be able to take, any computer actions. If the person asks for one, tell them plainly: turn on local control in Settings > Computer, then ask again. Everything else you can still do as usual.";
+export const COMPUTER_LOCAL_CONTROL_OFF = " This bot is set to use this computer, but local control is not enabled yet, so you cannot control it this turn. Do not claim to have taken, or to be able to take, any computer actions. If the person asks for one, tell them plainly: turn on local control in Settings > Computer, then ask again. Computer actions are screen actions only: screenshots, clicks, typing on the screen and moving windows. Shell commands, file reads and writes and your other tools are not computer actions; run them as usual, through the normal approval flow.";
 
 const PEER_TASK_PREAMBLE = /^\[(?:Message from|Delegated by) @([^,\]\n]+),/;
 /** A delegated message or peer ask opens with a "[Delegated by @X ...]" line.
@@ -380,9 +382,9 @@ export interface TurnShapes {
 }
 const lastTurns = new Map<string, TurnShapes>();
 /** Layers that ride the turn's message, not the system prompt. */
-const MESSAGE_LAYERS = new Set(["tool-binding", "now", "working-context", "project-status", "learned"]);
+const MESSAGE_LAYERS = new Set(["tool-binding", "now", "where-i-belong", "working-context", "project-status", "learned"]);
 
-export function recordTurnShapes(botId: string, turn: { where: "chat" | "room"; threadId: string; layers: ShapeLayer[] }, at = Date.now(), surface: McpToolSurface = NEUTRAL_TOOL_SURFACE, mounts: MurageToolMounts = { agents: "agents", memory: "murage-memory", phone: "phone", browser: "browser" }, body?: { mounts: MurageToolMounts; binding: string }): void {
+export function recordTurnShapes(botId: string, turn: { where: "chat" | "room"; threadId: string; layers: ShapeLayer[] }, at = Date.now(), surface: McpToolSurface = NEUTRAL_TOOL_SURFACE, mounts: MurageToolMounts = { agents: "agents", memory: "murage-memory", phone: "phone", browser: "browser" }, body?: { mounts: MurageToolMounts; binding: string; askRules?: string }): void {
   // Neutral until the driver reports its actual mounts. Message layers are
   // inspected separately from the system prompt that the engine receives.
   // System layers show the system's mounts (stable label); message layers and
@@ -390,6 +392,8 @@ export function recordTurnShapes(botId: string, turn: { where: "chat" | "room"; 
   const layers = turn.layers.map(layer => ({ ...layer, text: renderMurageTools(layer.text, surface, MESSAGE_LAYERS.has(layer.id) ? body?.mounts ?? mounts : mounts) }));
   const hint = murageToolHowTo(surface, mounts);
   if (hint) layers.push(shapeLayer("tool-surface", hint));
+  // QW 208: the ask rule line is appended to the engine's system text after the tool how-to (renderMurageTurn); joined by a blank line there.
+  if (body?.askRules) layers.push(shapeLayer("ask-rules", layers.some(layer => !MESSAGE_LAYERS.has(layer.id) && layer.text) ? `\n\n${body.askRules}` : body.askRules));
   if (body?.binding) layers.push(shapeLayer("tool-binding", body.binding));
   lastTurns.set(botId, { ...turn, layers, text: joinShapeLayers(layers.filter(layer => !MESSAGE_LAYERS.has(layer.id))), at });
 }
@@ -431,9 +435,9 @@ export interface CurrentShapes {
 // The direct turn's order, with a room turn's own layers where they fit.
 const ORDER = ["house-rules", "about-me", "persona", "room", "project-brief", "computer", "computer-protected-input", "connected-apps", "required-apps", "browser", "coordination", "peer-task", "speak-as",
   "credential", "images", "web-search", "routines", "learn", "goal", "learned", "skills-index", "own-skills", "team-brief", "memory", "capabilities", "skill:*", "chief-guide",
-  "playbooks", "output-folder", "automation", "tagged", "project-status", "working-context", "now"];
+  "playbooks", "output-folder", "automation", "tagged", "project-status", "where-i-belong", "working-context", "now"];
 // Shown before the first turn as "decided when a message arrives".
-const PENDING = new Set(["computer", "connected-apps", "browser", "credential", "web-search", "routines", "capabilities", "output-folder", "project-status", "working-context", "now"]);
+const PENDING = new Set(["computer", "connected-apps", "browser", "credential", "web-search", "routines", "capabilities", "output-folder", "project-status", "where-i-belong", "working-context", "now"]);
 
 function row(id: string, text: string | null, extra: Partial<ShapeRow> = {}): ShapeRow {
   const entry = entryFor(id);

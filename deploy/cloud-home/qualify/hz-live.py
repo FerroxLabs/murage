@@ -6,6 +6,26 @@ Safety model: every resource it creates is named mcq-* and labelled mcq=1;
 every delete path refuses anything lacking BOTH. The API token is read once,
 held in memory only, never logged, never passed to children, never put in
 exception text. A spend ledger caps projected cost before any create.
+
+Staging image build (`image`), the Lane G three-step order (LANE-G r3 sec. 2, build runbook r7). build-image.sh has no one-pass mode, so
+the driver runs, in this order, and stops at the first failure:
+  1. on the builder: MURAGE_IMAGE_STAGE=tree build-image.sh (the tree, unsealed, plus the stage 1 marker);
+  2. on the builder: cloud-home-release.sh prepare ARCH REV ... SEQUENCE OUT (copy of the tree; unsigned manifest.json);
+  3. manifest.json is copied back to THIS machine;
+  4. HERE: scripts/cloud-home-sign.sh signs it. The release private key never leaves this machine: it is only read by that local
+     script (path in its environment), never copied, never an argument of any ssh/rsync command, never logged;
+  5. the .sig and the PUBLIC half of the key (derived locally) are copied to the builder;
+  6. on the builder: cloud-home-release.sh finalize ARCH REV OUT PUBLIC_KEY;
+  7. on the builder: MURAGE_IMAGE_STAGE=seal build-image.sh with the channel URL, public key, manifest and signature;
+  8. only then the unchanged snapshot logic (shutdown, create_image, delete the builder).
+Required `image` options (no defaults; a missing or bad one fails before any server is created):
+  --release-signing-key PATH   Ed25519 private key (PEM) on this machine, e.g. the STAGING release key
+  --release-channel URL        https URL of the signed release channel baked into the image (MURAGE_RELEASE_CHANNEL_URL)
+  --release-sequence N         positive integer release sequence for this build
+  --openssl PATH               optional; OpenSSL 3 binary used for the local signing. Default on macOS: /opt/homebrew/bin/openssl.
+                               LibreSSL (macOS /usr/bin/openssl) is refused; elsewhere `openssl` on PATH must be OpenSSL 3+.
+The architecture is derived from the builder (--lane arm = aarch64 on a cax* type, any other lane = x86_64 on a non-cax type; the builder needs 8 GB: cx33 or cax21 at minimum, default cx33), is
+cross-checked against the builder's `uname -m`, and is passed explicitly to prepare, sign and finalize.
 """
 import argparse
 import datetime as dt
@@ -17,6 +37,7 @@ import os
 import pathlib
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -27,6 +48,11 @@ import urllib.request
 BASE = "https://api.hetzner.cloud/v1"
 PREFIX = "mcq-"
 LABELS = {"mcq": "1"}
+VERIFY_PREFIX = "mv-verify-"
+VERIFY_LABELS = {"purpose": "image-verify"}
+CHECK_VERSION = "1"
+VERIFIER = "hz-live-rescue"
+IMAGE_ENVS = ("staging", "prod")
 HOURS_PER_MONTH = decimal.Decimal(730)
 D = decimal.Decimal
 
@@ -69,6 +95,53 @@ def public_control_jwk(file):
     if jwk.get("kty") != "EC" or jwk.get("crv") != "P-256" or not all(isinstance(jwk.get(f), str) and jwk[f] for f in ("x", "y")):
         raise QualError("--control-public-key must be a P-256 EC public JWK")
     return json.dumps({f: jwk[f] for f in ("kty", "crv", "x", "y", "kid", "alg", "use") if f in jwk}, sort_keys=True)
+
+
+ARM_LANES = ("arm", "arm64", "aarch64")
+RELEASE_SEQUENCE = re.compile(r"[1-9][0-9]{0,8}")
+CHANNEL_URL = re.compile(r"https://[A-Za-z0-9.-]+(/[A-Za-z0-9._/-]*)?")
+# The staging driver must never sign with the production release key (public values only; the private key is never read here).
+PROD_KEY_DIR = "~/.config/murage-prod"
+PROD_RELEASE_PUBLIC_B64 = "MCowBQYDK2VwAyEAAu65BN00px2IYJzVXjLOjdyXh2mjRAm1zckEO09fmDc="
+PROD_RELEASE_CHANNEL = "https://releases.murage.ai/cloud-home"
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
+
+
+# Builder server types the image build accepts: 8 GB or more (cx33 and cax21 are the minimum; cx23 and cax11 have 4 GB and tsc is
+# OOM-killed, measured 2026-10-25).
+BUILDER_TYPES = ("cx33", "cx43", "cx53", "cpx32", "cpx42", "cpx52", "cax21", "cax31", "cax41")
+
+
+def builder_arch(lane, typ):
+    """x86_64 or aarch64 for the builder, from its lane and cross-checked against its server type (build host CAX is arm64). A builder with
+    under 8 GB is refused before any server is created."""
+    if str(typ).lower() not in BUILDER_TYPES:
+        raise QualError("--type %s cannot build the image (needs 8 GB RAM): use cx33 (x86_64) or cax21 (arm64), or larger (%s)" % (typ, ", ".join(BUILDER_TYPES)))
+    arch = "aarch64" if lane in ARM_LANES else "x86_64"
+    if str(typ).lower().startswith("cax") != (arch == "aarch64"):
+        raise QualError("--lane %s is %s but --type %s is not: an arm64 image needs --lane arm on a cax* type, an x86_64 image a non-cax type" % (lane, arch, typ))
+    return arch
+
+
+def resolve_openssl(explicit=None, run=subprocess.run, platform=sys.platform):
+    """An OpenSSL 3 binary for local Ed25519 signing. LibreSSL (macOS /usr/bin/openssl) cannot sign raw Ed25519 and is refused."""
+    if explicit:
+        path = explicit
+    elif platform == "darwin":
+        path = "/opt/homebrew/bin/openssl"
+        if not os.path.exists(path):
+            raise QualError("OpenSSL 3 not found at /opt/homebrew/bin/openssl (brew install openssl@3) and no --openssl given; macOS /usr/bin/openssl is LibreSSL and cannot sign")
+    else:
+        path = shutil.which("openssl")
+        if not path:
+            raise QualError("openssl not found on PATH; install OpenSSL 3 or pass --openssl")
+    try:
+        text = run([path, "version"], capture_output=True, text=True).stdout.strip()
+    except OSError:
+        raise QualError("cannot run %s --version" % path) from None
+    if not re.match(r"OpenSSL [3-9]\.", text):
+        raise QualError("%s is %r; local signing needs OpenSSL 3 or newer (LibreSSL is refused)" % (path, text[:40] or "unknown"))
+    return path
 
 
 class Client:
@@ -610,13 +683,168 @@ class Driver:
             self.out("public_origin=%s (through the Cloudflare Tunnel; no 80/443 opened)" % origin)
 
     # ---- image
-    def run(self, argv, **kw):
+    def smallest_type(self, image, location):
+        """The cheapest non-deprecated server type that matches the image's architecture and has a disk big enough for it."""
+        need = float(image.get("disk_size") or 0)
+        arch = image.get("architecture") or "x86"
+        best = None
+        for t in self.c.list_all("/server_types?x=1", "server_types"):
+            if t.get("deprecated") or t.get("architecture", "x86") != arch or float(t.get("disk") or 0) < need:
+                continue
+            # A type is only orderable where this location lists it as available (a priced type can still be sold out or retired there).
+            loc = next((l for l in t.get("locations", []) if l.get("name") == location), None)
+            if t.get("locations") and (loc is None or not loc.get("available") or loc.get("deprecation")):
+                continue
+            price = next((D(p["price_hourly"]["gross"]) for p in t.get("prices", []) if p.get("location") == location), None)
+            if price is not None and (best is None or price < best[0]):
+                best = (price, t["name"])
+        if best is None:
+            raise QualError("verify-image: no server type fits image disk %sGB in %s" % (need, location))
+        return best[1]
+
+    def delete_verifier(self, server_id, created):
+        """Delete the verifier server by its EXACT id, then confirm it is gone. Refuses anything that is not a verifier."""
+        if str(created.get("id")) != str(server_id) or not str(created.get("name", "")).startswith(VERIFY_PREFIX) \
+                or (created.get("labels") or {}).get("purpose") != VERIFY_LABELS["purpose"]:
+            raise QualError("NAME GUARD: refusing to delete %r (not a verify-image server)" % created.get("name"))
+        try:
+            self.c.wait_actions(self.c.request("DELETE", "/servers/%s" % server_id))
+        except QualError as exc:
+            if "HTTP 404" not in str(exc):
+                raise
+        for _ in range(24):
+            try:
+                self.c.request("GET", "/servers/%s" % server_id)
+            except QualError as exc:
+                if "HTTP 404" in str(exc):
+                    self.ledger.delete("server:%s" % server_id, "ipv4:%s" % server_id)
+                    return
+                raise
+            self.c.sleep(5)
+        raise QualError("verify-image: server %s is STILL PRESENT after delete; remove it by id" % server_id)
+
+    def cmd_verify_image(self, image_id, ssh_key, typ=None, location="fsn1"):
+        """Release gate on the EXACT published snapshot id. A throwaway server is created from the snapshot and booted into
+        build host RESCUE (the image's own sshd is never needed); the root disk is mounted READ-ONLY and image-release-check.sh
+        runs on the mounted tree; the server is deleted by exact id in a finally block. Only a PASS writes the snapshot labels
+        murage/image-kind=customer, murage/verified-at, murage/check-version and murage/verified-by: the kind label is a RESULT
+        of this check, never an input from the build step."""
+        if not re.fullmatch(r"[0-9]{1,20}", str(image_id)):
+            raise QualError("--image-id must be a numeric snapshot id")
+        image = self.c.request("GET", "/images/%s" % image_id)["image"]
+        labels = dict(image.get("labels") or {})
+        desc = str(image.get("description") or "")
+        if str(image.get("id")) != str(image_id) or image.get("type") != "snapshot":
+            raise QualError("verify-image: %s is not a snapshot" % image_id)
+        if not desc.startswith("mcq-home-") or labels.get("murage/role") != "image":
+            raise QualError("verify-image: %s is not a Murage home image" % image_id)
+        if labels.get("murage/env") not in IMAGE_ENVS:
+            raise QualError("verify-image: %s has no murage/env label (staging or prod); refusing to verify an image that does not name its environment" % image_id)
+        if labels.get("murage/image-kind") == "customer" and (labels.get("murage/verified-by") != VERIFIER or not labels.get("murage/verified-at")):
+            raise QualError("verify-image: %s carries kind=customer without the verifier's labels; a build cannot set it. Refusing" % image_id)
+        typ = typ or self.smallest_type(image, location)
+        hourly = self.server_hourly(typ, location) + self.ipv4_hourly(location)
+        self.check_cap(hourly)
+        cur = self.currency()
+        script = pathlib.Path(__file__).resolve().parent.parent.joinpath("image-release-check.sh").read_bytes()
+        self.evidence.mkdir(parents=True, exist_ok=True)
+        name = VERIFY_PREFIX + str(image_id)[-12:]
+        created, passed, verdict = None, False, []
+        try:
+            sdata = self.c.request("POST", "/servers", {"name": name, "server_type": typ, "location": location, "image": int(image_id), "ssh_keys": [ssh_key],
+                                                        "labels": dict(VERIFY_LABELS, **{"murage/verify-image": str(image_id)}), "start_after_create": False,
+                                                        "public_net": {"enable_ipv4": True, "enable_ipv6": False}})
+            created = sdata["server"]
+            self.ledger.create("server", created["id"], created["name"], typ, location, self.server_hourly(typ, location), cur)
+            self.ledger.create("ipv4", created["id"], created["name"], "primary_ipv4", location, self.ipv4_hourly(location), cur)
+            sid = created["id"]
+            self.c.wait_actions(sdata)
+            rescue = self.c.request("POST", "/servers/%s/actions/enable_rescue" % sid, {"type": "linux64", "ssh_keys": [ssh_key]})
+            self.c.wait_action(rescue.get("action"))
+            self.c.wait_action(self.c.request("POST", "/servers/%s/actions/poweron" % sid).get("action"))
+            deadline = self.c.clock() + 300
+            while True:
+                server = self.c.request("GET", "/servers/%s" % sid)["server"]
+                if server.get("status") == "running":
+                    break
+                if self.c.clock() >= deadline:
+                    raise QualError("verify-image: server did not reach running")
+                self.c.sleep(5)
+            ip = server["public_net"]["ipv4"]["ip"]
+            known = self.evidence / ("known_hosts-%s" % sid)
+            ssh = ["ssh", "-o", "StrictHostKeyChecking=accept-new", "-o", "UserKnownHostsFile=" + str(known), "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"] + ssh_jump() + ["root@" + ip]
+            for _ in range(40):
+                if self.run(ssh + ["true"], capture_output=True).returncode == 0:
+                    break
+                self.c.sleep(15)
+            else:
+                raise QualError("verify-image: rescue ssh never became ready")
+            mount = ("set -e; mkdir -p /mnt/img; dev=/dev/disk/by-label/cloudimg-rootfs; [ -e $dev ] || dev=/dev/sda1; "
+                     "mount -o ro,noload $dev /mnt/img; awk '$2==\"/mnt/img\"{print $4}' /proc/mounts | grep '^ro' >/dev/null; "
+                     "[ -r /mnt/img/var/lib/dpkg/status ]")
+            res = self.run(ssh + [mount], capture_output=True)
+            if res.returncode:
+                raise QualError("verify-image: could not mount the image root disk read-only")
+            res = self.run(ssh + ["bash -s -- /mnt/img %s" % image_id], input=script, capture_output=True)
+            verdict = ((res.stdout or b"") + (res.stderr or b"")).decode(errors="replace").strip().splitlines()
+            (self.evidence / ("verify-%s.log" % image_id)).write_text("\n".join(verdict) + "\n")
+            for line in verdict:
+                self.out(line)
+            passed = res.returncode == 0
+        finally:
+            if created is not None:
+                self.delete_verifier(created["id"], created)
+        if not passed:
+            raise QualError("verify-image: FAILED release check for %s (no label written): %s" % (image_id, "; ".join(l for l in verdict if "FAIL" in l) or "see log"))
+        if labels.get("murage/image-kind") == "staging-ops-ssh" or desc.endswith("-stagingssh"):
+            raise QualError("verify-image: %s is a staging image; no customer label written" % image_id)
+        labels.update({"murage/image-kind": "customer", "murage/verified-at": self.ledger.now().strftime("%Y%m%dT%H%M%SZ"),
+                       "murage/check-version": CHECK_VERSION, "murage/verified-by": VERIFIER})
+        self.c.request("PUT", "/images/%s" % image_id, {"labels": labels})
+        self.out("verify-image ok id=%s kind=customer description=%s" % (image_id, desc))
+
+    def run(self, argv, env_extra=None, **kw):
         env = {k: v for k, v in os.environ.items() if "TOKEN" not in k.upper() and "HCLOUD" not in k.upper()}
+        env.update(env_extra or {})
         return subprocess.run(argv, env=env, **kw)
 
-    def cmd_image(self, revision, source, typ, location, ssh_key, control_public_key=None, lane=None):
+    def _stage(self, ssh, log_name, command, what):
+        with open(self.evidence / log_name, "wb") as log:
+            rc = self.run(ssh + [command], stdout=log, stderr=subprocess.STDOUT).returncode
+        if rc:
+            raise QualError("%s failed rc=%d (see %s)" % (what, rc, log_name))
+
+    def cmd_image(self, revision, source, typ, location, ssh_key, control_public_key=None, lane=None, staging_ops_ssh=False, env=None,
+                  release_key=None, release_channel=None, release_sequence=None, openssl=None):
+        if env not in IMAGE_ENVS:
+            raise QualError("--env staging|prod is required: the image label murage/env names the environment it is built for")
+        if staging_ops_ssh and env != "staging":
+            raise QualError("--staging-ops-ssh images are staging only (--env staging)")
         if not re.fullmatch(r"[0-9a-f]{40}", revision):
             raise QualError("--revision must be 40 hex")
+        # Everything the signed build needs is checked here, before any API call, so a bad input never costs a server.
+        if not release_key:
+            raise QualError("--release-signing-key is required (path of the Ed25519 release private key on this machine); there is no default")
+        if not release_channel:
+            raise QualError("--release-channel is required (https URL of the signed release channel); there is no default")
+        if not release_sequence or not RELEASE_SEQUENCE.fullmatch(str(release_sequence)):
+            raise QualError("--release-sequence is required and must be a positive integer")
+        if not CHANNEL_URL.fullmatch(release_channel):
+            raise QualError("--release-channel must be an https URL (letters, digits, . - and a plain path)")
+        release_sequence = str(release_sequence)
+        if release_channel.rstrip("/").lower() == PROD_RELEASE_CHANNEL:
+            raise QualError("--release-channel is the production channel; this staging driver refuses it")
+        key_path = pathlib.Path(os.path.realpath(os.path.expanduser(release_key)))
+        prod_dir = os.path.realpath(os.path.expanduser(PROD_KEY_DIR))
+        if key_path == pathlib.Path(prod_dir) or pathlib.Path(prod_dir) in key_path.parents:
+            raise QualError("--release-signing-key resolves under %s (the production keys); this staging driver refuses it" % PROD_KEY_DIR)
+        if not key_path.is_file():
+            raise QualError("--release-signing-key is not a readable file")
+        sign_script = REPO_ROOT / "scripts" / "cloud-home-sign.sh"
+        if not sign_script.is_file():
+            raise QualError("scripts/cloud-home-sign.sh not found next to this driver")
+        arch = builder_arch(lane, typ)
+        openssl_bin = resolve_openssl(openssl)
         src = pathlib.Path(source)
         head = subprocess.run(["git", "-C", str(src), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
         dirty = subprocess.run(["git", "-C", str(src), "status", "--porcelain"], capture_output=True, text=True).stdout.strip()
@@ -629,11 +857,28 @@ class Driver:
         if lane is not None and not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,20}", lane):
             raise QualError("bad --lane")
         name = ("mcq-%s-build" % lane) if lane else "mcq-builder-" + short
-        snap_desc = "mcq-home-" + short + (("-" + lane) if lane else "")
+        snap_desc = "mcq-home-" + short + (("-" + lane) if lane else "") + ("-stagingssh" if staging_ops_ssh else "")
+        # a staging image keeps sshd and says so in a label. A customer build is labelled "unverified": only verify-image
+        # (rescue-mode check of the exact snapshot) may write "customer".
+        image_kind = "staging-ops-ssh" if staging_ops_ssh else "unverified"
+        self.evidence.mkdir(parents=True, exist_ok=True)
+        release_dir = (self.evidence / ("release-%s-%s" % (short, arch))).resolve()
+        release_dir.mkdir(parents=True, exist_ok=True)
+        os.chmod(release_dir, 0o700)
+        public_pem = release_dir / "release-public.pem"
+        derived = self.run([openssl_bin, "pkey", "-in", str(key_path), "-pubout", "-out", str(public_pem)], capture_output=True)
+        if derived.returncode:
+            raise QualError("cannot derive the public key from --release-signing-key (not a PEM private key?)")
+        body = "".join(l for l in public_pem.read_text().splitlines() if not l.startswith("-----"))
+        if body == PROD_RELEASE_PUBLIC_B64:
+            public_pem.unlink(missing_ok=True)
+            raise QualError("--release-signing-key is the production release key (its public half matches); this staging driver refuses it")
+        shown = self.run([openssl_bin, "pkey", "-pubin", "-in", str(public_pem), "-noout", "-text"], capture_output=True)
+        if shown.returncode or b"ED25519 Public-Key" not in shown.stdout:
+            raise QualError("--release-signing-key must be an Ed25519 private key")
         hourly = self.server_hourly(typ, location) + self.ipv4_hourly(location)
         self.check_cap(hourly)
         cur = self.currency()
-        self.evidence.mkdir(parents=True, exist_ok=True)
         known = self.evidence / "known_hosts"
         labels = dict(LABELS, **{"murage/role": "builder", "murage/build": revision})
         if lane:
@@ -687,21 +932,44 @@ class Driver:
             (self.evidence / "prep.log").write_bytes(res.stdout + res.stderr)
             if res.returncode:
                 raise QualError("remote prep failed: %s" % ((res.stdout + res.stderr).decode(errors="replace").strip().splitlines() or [""])[-1])
-            with open(self.evidence / "build.log", "wb") as log:
-                proc = subprocess.Popen(ssh + ["NODE_OPTIONS=--max-old-space-size=3072 /build/murage/deploy/cloud-home/build-image.sh %s /build/murage%s" % (revision, trust)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                        env={k: v for k, v in os.environ.items() if "TOKEN" not in k.upper()})
-                for chunk in iter(lambda: proc.stdout.read(4096), b""):
-                    log.write(chunk)
-                    log.flush()
-                rc = proc.wait()
-            if rc:
-                raise QualError("build-image.sh failed rc=%d (see build.log)" % rc)
+            if self.run(ssh + ["[ \"$(uname -m)\" = %s ]" % arch], capture_output=True).returncode:
+                raise QualError("builder is not %s: lane/type and builder disagree" % arch)
+            remote_build = ("STAGING_OPS_SSH=1 " if staging_ops_ssh else "") + "/build/murage/deploy/cloud-home/build-image.sh %s /build/murage%s" % (revision, trust)
+            remote_release = "/build/murage/scripts/cloud-home-release.sh"
+            out_dir, tree_copy, remote_pub = "/build/out", "/build/tree", "/build/release-public.pem"
+            remote_manifest = "%s/%s/manifest.json" % (out_dir, arch)
+            # 1. stage tree: builds the final slot A tree (pnpm runs here, once) and writes the stage 1 marker.
+            self._stage(ssh, "build.log", "NODE_OPTIONS=--max-old-space-size=3072 MURAGE_IMAGE_STAGE=tree " + remote_build, "build-image.sh stage tree")
+            # 2. prepare on a copy of the tree: archive plus unsigned manifest.json (no key on the builder).
+            self._stage(ssh, "prepare.log", "install -d -m 0755 %s && cp -a /opt/murage-releases/A/. %s/ && %s prepare %s %s /build/murage %s %s %s"
+                        % (tree_copy, tree_copy, remote_release, arch, revision, tree_copy, release_sequence, out_dir), "release prepare")
+            # 3. manifest.json back to this machine.
+            for stale in ("manifest.json", "manifest.json.sig"):
+                (release_dir / stale).unlink(missing_ok=True)
+            if self.run(["rsync", "-a", "--no-owner", "--no-group", "-e", sshcmd, "root@%s:%s" % (ip, remote_manifest), str(release_dir) + "/"], capture_output=True).returncode:
+                raise QualError("copy of manifest.json back from the builder failed")
+            # 4. sign LOCALLY. The key path is only in this local process's environment: never in argv, never sent to the builder.
+            signed = self.run(["bash", str(REPO_ROOT / "scripts" / "cloud-home-sign.sh"), str(release_dir / "manifest.json"), revision, arch, release_sequence],
+                              env_extra={"MURAGE_RELEASE_SIGNING_KEY": str(key_path), "MURAGE_OPENSSL": openssl_bin,
+                                         "PATH": os.path.dirname(openssl_bin) + os.pathsep + os.environ.get("PATH", "")}, capture_output=True)
+            (self.evidence / "sign.log").write_bytes(self.redact((signed.stdout or b"").decode(errors="replace") + (signed.stderr or b"").decode(errors="replace"), str(key_path)).encode())
+            if signed.returncode:
+                raise QualError("local signing failed (see sign.log)")
+            # 5. signature and PUBLIC key to the builder.
+            if self.run(["rsync", "-a", "--no-owner", "--no-group", "-e", sshcmd, str(release_dir / "manifest.json.sig"), "root@%s:%s/%s/manifest.json.sig" % (ip, out_dir, arch)], capture_output=True).returncode \
+                    or self.run(["rsync", "-a", "--no-owner", "--no-group", "-e", sshcmd, str(public_pem), "root@%s:%s" % (ip, remote_pub)], capture_output=True).returncode:
+                raise QualError("copy of signature and public key to the builder failed")
+            # 6. finalize: the builder re-verifies the signature and the published bytes with the home's own code.
+            self._stage(ssh, "finalize.log", "%s finalize %s %s %s %s" % (remote_release, arch, revision, out_dir, remote_pub), "release finalize")
+            # 7. stage seal on the same host and revision.
+            self._stage(ssh, "seal.log", "MURAGE_IMAGE_STAGE=seal MURAGE_RELEASE_CHANNEL_URL=%s MURAGE_RELEASE_PUBLIC_KEY=%s MURAGE_RELEASE_MANIFEST=%s MURAGE_RELEASE_MANIFEST_SIG=%s %s"
+                        % (shlex.quote(release_channel), remote_pub, remote_manifest, remote_manifest + ".sig", remote_build), "build-image.sh stage seal")
             # A hard poweroff loses files still in the page cache: the first
             # real home booted with every late-written unit and helper at 0
             # bytes. Flush, prove the key files are intact, then shut down.
             # The snapshot is the builder's disk: nothing of the build may remain
             # on a customer home (audit A1-01: /build/murage shipped world-readable).
-            check = ("swapoff /mcq-build.swap && rm -f /mcq-build.swap && rm -rf /build /root/.bash_history /root/.cache /root/.gitconfig /root/.ssh/authorized_keys /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub"
+            check = ("cp /build/murage/deploy/cloud-home/finalize-customer-image.sh /build/murage/deploy/cloud-home/image-release-check.sh /run/ && swapoff /mcq-build.swap && rm -f /mcq-build.swap && rm -rf /build /root/.bash_history /root/.cache /root/.gitconfig /root/.ssh/authorized_keys /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub"
                      " && apt-get clean && journalctl --rotate >/dev/null && journalctl --vacuum-time=1s >/dev/null"
                      # Per-instance identity: every home generates its own machine-id on
                      # first boot (seen on a real home: all homes shared the builder's).
@@ -710,6 +978,10 @@ class Driver:
                      " && [ ! -e /build ] || { echo 'BUILD LEFTOVERS'; exit 1; }; sync; for f in /etc/systemd/system/murage-home.service /etc/systemd/system/murage-volume.service "
                      "/usr/local/libexec/murage-turn-launch /usr/local/libexec/murage-enroll /usr/local/libexec/murage-seccomp.bpf "
                      "/etc/murage-home/murage-egress.nft /etc/murage-home/identity.json; do [ -s \"$f\" ] || { echo \"EMPTY $f\"; exit 1; }; done; sync")
+            # A customer image: purge sshd and run the release check as the very last command of this last ssh session, on the
+            # disk that becomes the snapshot. The server is shut down through the API; nothing connects after the purge.
+            if not staging_ops_ssh:
+                check += "; bash /run/finalize-customer-image.sh build-%s" % short
             res = self.run(ssh + [check], capture_output=True)
             (self.evidence / "check.log").write_bytes(res.stdout + res.stderr)
             if res.returncode:
@@ -722,13 +994,13 @@ class Driver:
             else:
                 raise QualError("builder did not shut down cleanly; refusing to snapshot")
             idata = self.c.request("POST", "/servers/%s/actions/create_image" % builder["id"],
-                                   {"type": "snapshot", "description": snap_desc, "labels": dict({"mcq": "1", "murage/build": revision, "murage/role": "image"}, **({"lane": lane} if lane else {}))})
+                                   {"type": "snapshot", "description": snap_desc, "labels": dict({"mcq": "1", "murage/build": revision, "murage/role": "image", "murage/image-kind": image_kind, "murage/env": env}, **({"lane": lane} if lane else {}))})
             image = idata["image"]
             self.ledger.create("snapshot", image["id"], snap_desc, "snapshot", location, self.snapshot_hourly(float(image.get("image_size") or 20)), cur)
             # build host has taken over 10 min for a 4 GB snapshot (2026-10-14); a timeout
             # here deletes the builder and the half-made snapshot with it, so wait long.
             self.c.wait_action(idata.get("action"), timeout=3600, interval=10)
-            self.out("snapshot id=%s description=%s" % (image["id"], snap_desc))
+            self.out("snapshot id=%s description=%s image-kind=%s" % (image["id"], snap_desc, image_kind))
         finally:
             try:
                 self.delete_server(builder)
@@ -752,10 +1024,21 @@ def build_parser():
     i.add_argument("--revision", required=True)
     i.add_argument("--source", required=True)
     i.add_argument("--control-public-key")
-    i.add_argument("--type", default="cpx32")
+    i.add_argument("--type", default="cx33", help="builder server type, 8 GB or more: cx33 (x86_64) or cax21 (arm64, with --lane arm) at minimum")
     i.add_argument("--location", default="fsn1")
     i.add_argument("--ssh-key", required=True)
+    i.add_argument("--env", required=True, choices=IMAGE_ENVS, help="environment this image is built for; written to the murage/env label")
+    i.add_argument("--staging-ops-ssh", action="store_true", help="STAGING ONLY: keep sshd and mark the image staging-ops-ssh; the control plane refuses it for any non-staging home")
+    i.add_argument("--release-signing-key", required=True, help="Ed25519 release private key (PEM) on THIS machine (staging key; the production key is refused); never sent to the builder")
+    i.add_argument("--release-channel", required=True, help="https URL of the signed release channel baked into the image (the production channel is refused)")
+    i.add_argument("--release-sequence", required=True, help="positive integer release sequence")
+    i.add_argument("--openssl", help="OpenSSL 3 binary for local signing (default on macOS: /opt/homebrew/bin/openssl; LibreSSL refused)")
     i.add_argument("--lane", help="name the builder mcq-LANE-build, label lane=LANE and suffix the snapshot description (arm64 images)")
+    v = sub.add_parser("verify-image", parents=[common])
+    v.add_argument("--image-id", required=True)
+    v.add_argument("--ssh-key", required=True)
+    v.add_argument("--type", help="default: the cheapest server type that fits the image")
+    v.add_argument("--location", default="fsn1")
     h = sub.add_parser("create-home", parents=[common])
     h.add_argument("--name", required=True)
     h.add_argument("--type", required=True)
@@ -798,7 +1081,10 @@ def main(argv=None, transport=urllib_transport, cp_transport=urllib_transport, s
         elif args.cmd == "spend":
             drv.cmd_spend()
         elif args.cmd == "image":
-            drv.cmd_image(args.revision, args.source, args.type, args.location, args.ssh_key, args.control_public_key, args.lane)
+            drv.cmd_image(args.revision, args.source, args.type, args.location, args.ssh_key, args.control_public_key, args.lane,
+                           args.staging_ops_ssh, args.env, args.release_signing_key, args.release_channel, args.release_sequence, args.openssl)
+        elif args.cmd == "verify-image":
+            drv.cmd_verify_image(args.image_id, args.ssh_key, args.type, args.location)
         elif args.cmd == "create-home":
             drv.cmd_create_home(args.name, args.type, args.location, args.image, args.ssh_key, args.volume_gb, args.user_data_file, args.managed_endpoint)
         elif args.cmd == "enroll-home":

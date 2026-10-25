@@ -54,7 +54,8 @@
         "title": "Marketplace Seller",
         "description": "Bazaar prepares a listing health report by product for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For broader storefront work, use Storefront. For a marketplace listing team, use Listing Forge.",
         "appearance": {
-          "color": "blue"
+          "color": "blue",
+          "mascotBody": "squircle"
         },
         "skills": [
           "vault-marketplace-ops",

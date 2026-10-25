@@ -16,7 +16,8 @@ import type { Writable } from "node:stream";
 import { cloudHomeCopy } from "./copy.ts";
 import { TURN_LAUNCHER } from "./turn-process.ts";
 
-export interface BotStateEngine { mode: "apikey" | "oauth-token" | "chatgpt" | "oauth" | null; signedIn: boolean; expiresAt: number | null }
+/** `source`: which store answered, the home-wide one or the bot's own (null when the launcher does not say). */
+export interface BotStateEngine { mode: "apikey" | "oauth-token" | "chatgpt" | "oauth" | null; signedIn: boolean; expiresAt: number | null; source?: "home" | "bot" | null }
 export interface BotStateQuery { tombstoned: boolean; engines: Record<string, BotStateEngine> }
 /** Test seam: how a launcher request is run. */
 export type CloudLauncherSpawn = (request: Record<string, unknown>) => ChildProcess;
@@ -80,7 +81,8 @@ function parseQuery(stdout: string): BotStateQuery {
       // An entry that is not an object says nothing about the engine: it is left out.
       if (!value || typeof value !== "object" || Array.isArray(value)) continue;
       const mode = typeof value?.mode === "string" && MODES.has(value.mode) ? value.mode as BotStateEngine["mode"] : null;
-      engines[name] = { mode, signedIn: value?.signedIn === true, expiresAt: typeof value?.expiresAt === "number" ? value.expiresAt : null };
+      const source = value?.source === "home" || value?.source === "bot" ? value.source : null;
+      engines[name] = { mode, signedIn: value?.signedIn === true, expiresAt: typeof value?.expiresAt === "number" ? value.expiresAt : null, source };
     }
   }
   return { tombstoned: raw.tombstoned === true, engines };

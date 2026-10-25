@@ -85,6 +85,8 @@ it("pure objective parsing preserves exact UTF-8 spans and never activates recor
   const text="ส่งแล้ว",raw=JSON.stringify([{text,quote:text,startByte:0,endByte:Buffer.byteLength(text),claimType:"observation"}]);
   const before=database().prepare("SELECT count(*) AS count FROM memory_records").get()!.count;
   expect(parseMemoryExtractionCandidates(text,raw)[0]!.quote).toBe(text);
-  expect(()=>parseMemoryExtractionCandidates(text,JSON.stringify([{text,quote:text,startByte:1,endByte:Buffer.byteLength(text)}]))).toThrow("ungrounded span");
+  // 1.0.5: offsets are a hint, the span is the quote's own bytes; a quote the source does not contain is still refused
+  expect(parseMemoryExtractionCandidates(text,JSON.stringify([{text,quote:text,startByte:1,endByte:Buffer.byteLength(text)}]))[0]).toMatchObject({startByte:0,endByte:Buffer.byteLength(text)});
+  expect(()=>parseMemoryExtractionCandidates(text,JSON.stringify([{text,quote:"ส่ง?",startByte:0,endByte:3}]))).toThrow("ungrounded span");
   expect(database().prepare("SELECT count(*) AS count FROM memory_records").get()!.count).toBe(before);
 });

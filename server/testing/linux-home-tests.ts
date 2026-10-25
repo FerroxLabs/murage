@@ -35,6 +35,7 @@ export const LINUX_HOME_TESTS: readonly string[] = [
   "server/cloud-home/enroll.test.ts",
   "server/cloud-home/fresh-home-launcher.test.ts",
   "server/cloud-home/home-commands.test.ts",
+  "server/cloud-home/home-launch.test.ts",
   "server/cloud-home/home-recover.test.ts",
   "server/cloud-home/launcher-validation.test.ts",
   "server/cloud-home/mining-event-path.test.ts",

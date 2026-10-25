@@ -180,6 +180,10 @@ describe("G09-3: a PowerShell \"Always allow\" is scoped like Bash's", () => {
   });
 });
 
+// realKeyPaths reads a Windows spelling with its backslashes as `/` too (the way the in-project check reads it),
+// so on Windows each real place is listed in both spellings; elsewhere the two are one.
+const spellings = (path: string) => [...new Set([path, path.replace(/\\/g, "/")])];
+
 describe("09-1: a key file reached through a link is judged where it lands", () => {
   let root = "";
   beforeEach(() => {
@@ -201,13 +205,13 @@ describe("09-1: a key file reached through a link is judged where it lands", () 
   it("resolves the paths a call names, relative to its folder", () => {
     const project = join(root, "project");
     const creds = join(root, "home", ".aws", "credentials");
-    expect(realKeyPaths({ path: "config-link" }, undefined, project)).toEqual({ paths: [creds], cannot: null });
-    expect(realKeyPaths({ file_path: join(project, "config-link") }, undefined, undefined)).toEqual({ paths: [creds], cannot: null });
-    expect(realKeyPaths(undefined, [join(project, "config-link")], project)).toEqual({ paths: [creds], cannot: null });
+    expect(realKeyPaths({ path: "config-link" }, undefined, project)).toEqual({ paths: spellings(creds), cannot: null });
+    expect(realKeyPaths({ file_path: join(project, "config-link") }, undefined, undefined)).toEqual({ paths: spellings(creds), cannot: null });
+    expect(realKeyPaths(undefined, [join(project, "config-link")], project)).toEqual({ paths: spellings(creds), cannot: null });
     // a plain file reads as itself, and a missing one is kept as written beneath its real folder: neither is a key file nor an error
-    expect(realKeyPaths({ path: "notes.txt" }, undefined, project)).toEqual({ paths: [join(project, "notes.txt")], cannot: null });
+    expect(realKeyPaths({ path: "notes.txt" }, undefined, project)).toEqual({ paths: spellings(join(project, "notes.txt")), cannot: null });
     expect(realKeyPaths({ path: join(project, "notes.txt") }, undefined, project)).toEqual({ paths: [], cannot: null });
-    expect(realKeyPaths({ path: "missing" }, undefined, project)).toEqual({ paths: [join(project, "missing")], cannot: null });
+    expect(realKeyPaths({ path: "missing" }, undefined, project)).toEqual({ paths: spellings(join(project, "missing")), cannot: null });
     for (const path of realKeyPaths({ paths: ["notes.txt", "missing"] }, undefined, project).paths) expect(looksSensitive(path), path).toBe(false);
   });
 
@@ -217,9 +221,9 @@ describe("09-1: a key file reached through a link is judged where it lands", () 
     symlinkSync(join(root, "home", ".aws", "credentials"), join(root, "elsewhere", "key-link"));
     symlinkSync(join(root, "elsewhere"), join(project, "conf"));
     const creds = join(root, "home", ".aws", "credentials");
-    expect(realKeyPaths({ path: "conf/key-link" }, undefined, project)).toEqual({ paths: [creds], cannot: null });
+    expect(realKeyPaths({ path: "conf/key-link" }, undefined, project)).toEqual({ paths: spellings(creds), cannot: null });
     // a climb through the linked folder starts from where it points
-    expect(realKeyPaths({ path: "conf/../home/.aws/credentials" }, undefined, project)).toEqual({ paths: [creds], cannot: null });
+    expect(realKeyPaths({ path: "conf/../home/.aws/credentials" }, undefined, project)).toEqual({ paths: spellings(creds), cannot: null });
     const input = { path: "conf/key-link" };
     const { paths } = realKeyPaths(input, undefined, project);
     expect(autoVerdict(AUTO, "read", "pi wants to use read", { call: { toolCall: { name: "read", input } }, realPaths: paths })).toMatchObject({ approve: null, source: "sensitive-guard" });

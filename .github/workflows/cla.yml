@@ -20,8 +20,10 @@ permissions:
   statuses: write
 
 jobs:
+  # 2026-10-25: Linux runners are pinned to ubuntu-24.04. ubuntu-latest moved to 26.04, which stays pinned out until
+  # Playwright supports chromium there and the electron no-desktop-session backup test passes on it (1.0.7 follow-up).
   cla:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: CLA assistant
         if: (github.event.comment.body == 'recheck' || github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA') || github.event_name == 'pull_request_target'

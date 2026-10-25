@@ -134,6 +134,14 @@ jobs:
           $publisher = $signature.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false)
           if ($publisher -ne 'Ferrox Labs, LLC') { throw 'Unexpected installer publisher' }
           @{ sourceSha = (git rev-parse HEAD); file = $installer.Name; sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $installer.FullName).Hash.ToLowerInvariant(); publisher = $publisher } | ConvertTo-Json | Set-Content -LiteralPath qualification-evidence/windows-installer.json -Encoding utf8
+      # The Node halves of release.yml's Windows gates (backup tools + our helper's signature, signed browser runtime
+      # admission), from the same script, so a broken gate shows up on a package build instead of first on the release runner.
+      - name: "Gate: release backup-tool signature and browser admission checks"
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/windows-release-gates.mjs backup
+          node scripts/windows-release-gates.mjs admission
       # Three things silently produce an installer that builds fine and is
       # broken in the field, and none of them can be checked from the Mac the
       # release is cut on — the artifact carries only the .exe. So assert them
