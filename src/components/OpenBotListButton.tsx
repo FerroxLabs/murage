@@ -17,6 +17,7 @@ import { Menu } from "lucide-react";
 
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
+import { UpdateDot } from "./UpdateDot";
 
 export interface BotListDrawerControl {
   /** Whether the drawer is open (the button's aria-expanded). */
@@ -132,9 +133,10 @@ export function BotListButton({ control, className }: { control: BotListDrawerCo
       // What an overlay opened from the closed, inert drawer gives focus to
       // (return-focus.ts): one main view is mounted, so one button.
       data-focus-fallback=""
-      className={cn("shrink-0 rounded-md p-1.5 text-ink-secondary hover:bg-raised hover:text-ink md:hidden", className)}
+      className={cn("relative shrink-0 rounded-md p-1.5 text-ink-secondary hover:bg-raised hover:text-ink md:hidden", className)}
     >
       <Menu size={18} />
+      <UpdateDot />
     </button>
   );
 }

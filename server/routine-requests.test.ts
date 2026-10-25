@@ -137,7 +137,7 @@ describe("RoutineRequestService", () => {
     await service.propose({ botId: "bot-a", threadId: "thread-a", proposal: createProposal() });
     const messageId = store.messagesFor("thread-a")[0]!.id;
     const original = store.messagesFor("thread-a")[0]!.card!.routineRequest!;
-    if (original.operation.action !== "create") throw new Error("Expected a create proposal");
+    if (original.operation.action !== "create" || !("routine" in original.operation)) throw new Error("Expected a create proposal");
     const routine = original.operation.routine;
     const reordered: typeof original = {
       operation: {
@@ -332,7 +332,7 @@ describe("RoutineRequestService", () => {
       routine: { schedule: { type: "interval", everyMinutes: 5 } },
     });
     const deferred = store.messagesFor("thread-b")[0]?.card?.routineRequest?.operation;
-    if (deferred?.action !== "create") throw new Error("Expected a create operation");
+    if (deferred?.action !== "create" || !("routine" in deferred)) throw new Error("Expected a create operation");
     expect(deferred.routine.schedule).not.toHaveProperty("anchorAt");
 
     clock.now = now + 7 * 60_000;
@@ -705,7 +705,7 @@ describe("RoutineRequestService", () => {
     const card = store.messagesFor("thread-a")[0]!.card!;
     card.routineProposalDigest = digest;
     const operation = card.routineRequest!.operation;
-    if (operation.action !== "create") throw new Error("Expected create proposal");
+    if (operation.action !== "create" || !("routine" in operation)) throw new Error("Expected create proposal");
     operation.routine.instructions = "Changed after the original review";
     const args = { botId: "bot-a", threadId: "thread-a", requestId: proposal.requestId };
 
@@ -728,7 +728,7 @@ describe("RoutineRequestService", () => {
     if (tamper === "digest") card.routineProposalDigest = "incorrect";
     if (tamper === "copy") card.subtitle = "Different displayed instructions";
     if (tamper === "operation" && card.routineRequest!.operation.action === "create") {
-      card.routineRequest!.operation.routine.instructions = "Different executable instructions";
+      (card.routineRequest!.operation as { routine: { instructions: string } }).routine.instructions = "Different executable instructions";
     }
     const args = { botId: "bot-a", threadId: "thread-a", requestId: proposal.requestId };
     expect(service.resolve({ ...args, behavior: "allow" })).toMatchObject({ state: "invalid", status: 409 });
@@ -1340,5 +1340,27 @@ describe("cross-bot routine targeting", () => {
     expect(routines.listRoutines()).toHaveLength(0);
     // the refusal is written back onto the card so the user sees why
     expect(store.messagesFor("thread-a")[0]?.card?.held).toMatch(/no longer exists/);
+  });
+});
+
+describe("SL-M: a confirmed chat proposal for a repeating routine starts each run with the last run's report", () => {
+  const confirm = async (proposal: RoutineProposalInput) => {
+    const { routines, service } = harness();
+    const proposed = await service.propose({ botId: "bot-a", threadId: "thread-a", proposal });
+    expect(service.resolve({ botId: "bot-a", threadId: "thread-a", requestId: proposed.requestId, behavior: "allow" }))
+      .toMatchObject({ claimed: true, state: "applied" });
+    return { routine: routines.listRoutines()[0]!, detail: proposed.detail };
+  };
+  it("a weekly or interval routine confirmed from chat carries, and its confirm card says so", async () => {
+    const weekly = await confirm(createProposal());
+    expect(weekly.routine.carryLastReport).toBe(true);
+    expect(weekly.detail).toContain("Starts each run with the last run's report");
+    const interval = await confirm(createProposal({ schedule: { type: "interval", everyMinutes: 30 } }));
+    expect(interval.routine.carryLastReport).toBe(true);
+  });
+  it("a one-time routine confirmed from chat does not, and its card does not claim it", async () => {
+    const once = await confirm(createProposal({ schedule: { type: "once", at: new Date(Date.parse("2026-08-28T12:00:00Z")).toISOString() } }));
+    expect(once.routine.carryLastReport).toBeUndefined();
+    expect(once.detail).not.toContain("last run's report");
   });
 });

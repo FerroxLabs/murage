@@ -86,14 +86,16 @@ fi
 # printf, never an argument) to a Bash started with only the map's names that are not shell names (Windows'
 # ProgramFiles(x86), ...) in its environment, which exports each one as data and then runs the shell exactly as
 # above. Its own bookkeeping (SHLVL, PWD, OLDPWD) is unset first, so the shell sees only what the map and the server
-# list (a read-only name of the shell's own, such as SHELLOPTS, is skipped).
+# list (a read-only name of the shell's own, such as SHELLOPTS, is skipped). That Bash runs with --norc: started with no
+# SHLVL and a socket on stdin (how Node hands pipes on macOS), Bash would otherwise read ~/.bashrc, whose commands run
+# without HOME (Homebrew's shellenv: "$HOME must be set") and whose exports would reach the server beyond its map.
 murage_exec_names=()
 murage_exec_others=()
 for pair in "${args[@]}"; do
   if [[ "${pair%%=*}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then murage_exec_names+=("$pair"); else murage_exec_others+=("$pair"); fi
 done
 exec 3< <(printf '%s\0' "${murage_exec_names[@]}" "${murage_exec_kept[@]}")
-exec env -i "${murage_exec_others[@]}" "$BASH" -c 'unset SHLVL PWD OLDPWD
+exec env -i "${murage_exec_others[@]}" "$BASH" --norc -c 'unset SHLVL PWD OLDPWD
 while IFS= read -r -d "" murage_exec_pair <&3; do export "$murage_exec_pair" 2>/dev/null || :; done
 exec 3<&-
 unset murage_exec_pair

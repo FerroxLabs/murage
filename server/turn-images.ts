@@ -4,7 +4,7 @@ import { basename, join } from "node:path";
 import type { Store, Message } from "./store.ts";
 import type { SendTurnInput } from "./contracts.ts";
 import { sniffMedia } from "./media-assets.ts";
-import { ATTACHMENT_READ_CEILING, attachmentNameOf, attachmentsHomeOf, readAttachmentFile } from "./attachment-read.ts";
+import { ATTACHMENT_READ_CEILING, attachmentNameOf, attachmentRemoved, attachmentsHomeOf, readAttachmentFile } from "./attachment-read.ts";
 import { IMAGE_REFERENCE_MIMES, TURN_IMAGE_LIMITS } from "../shared/media-assets.ts";
 import { splitTranscriptAttachments, withoutImageTags } from "../src/lib/composer-attachments.ts";
 
@@ -61,6 +61,23 @@ export interface CollectedTurnImages {
   overCount: string[];
   /** Did not fit the per-image ceiling or the turn's byte budget: left out. */
   tooLarge: string[];
+  /** Removed from storage by the owner (SL-H): left out, never read again. */
+  removed: string[];
+}
+
+/** SL-H H2(b): the image paths in these texts whose attachment was removed
+ * from storage, each asked of its marker now. A path that is not a stored
+ * attachment's has no marker. The dispatch strips their tags from what the
+ * engine reads before the image plan is chosen, whatever the plan, so
+ * neither an inline read nor a path handed to the engine reaches a removed
+ * file. */
+export function removedImagePaths(dataDir: string, texts: readonly string[]): string[] {
+  const home = attachmentsHomeOf(dataDir);
+  const paths = new Set(texts.flatMap(text => splitTranscriptAttachments(text).images));
+  return [...paths].filter(path => {
+    const name = attachmentNameOf(home, path);
+    return name !== null && attachmentRemoved(home, name);
+  });
 }
 
 /** Validate actual ownership, including detached tasks and room membership. */
@@ -141,7 +158,8 @@ export class TurnImages {
     const images: CollectedTurnImages["images"] = [];
     const unbound: string[] = [];
     const tooLarge: string[] = [];
-    if (!paths.length) return { images, unbound, overCount, tooLarge };
+    const removed: string[] = [];
+    if (!paths.length) return { images, unbound, overCount, tooLarge, removed };
     if (!turnImageAudience(this.store, threadId, botId)) throw fail();
     const allowed = new Set(this.store.boundAttachments(threadId, paths).keys());
     // A forged path inside the count is refused before anything is read,
@@ -159,6 +177,8 @@ export class TurnImages {
       if (spent) { tooLarge.push(path); continue; }
       const home = attachmentsHomeOf(this.dataDir), name = attachmentNameOf(home, path);
       if (!name) throw fail();
+      // Removed from storage: never read (SL-H).
+      if (attachmentRemoved(home, name)) { removed.push(path); continue; }
       const remaining = TURN_IMAGE_LIMITS.maxTotalBytes - total;
       if (remaining < MIN_IMAGE_BUDGET) { spent = true; tooLarge.push(path); continue; }
       // Read only what can be sent or shrunk, never more than the attachment
@@ -167,6 +187,8 @@ export class TurnImages {
       const readable = Math.min(shrink ? TURN_IMAGE_LIMITS.maxReadBytes : fit.hardMaxBytes, ATTACHMENT_READ_CEILING);
       const read = await readAttachmentFile(home, name, readable);
       if (!read.ok && read.reason === "too-large") { tooLarge.push(path); continue; }
+      // The read awaited: a Remove made during it leaves the image out (SL-H).
+      if (attachmentRemoved(home, name)) { removed.push(path); continue; }
       // The read awaited: the audience and the path's binding to this thread are asked again.
       if (!read.ok || !turnImageAudience(this.store, threadId, botId) || !this.store.boundAttachments(threadId, [path]).has(path)) throw fail();
       const bytes = read.bytes;
@@ -206,7 +228,7 @@ export class TurnImages {
       const bound = this.store.boundAttachments(threadId, included);
       if (included.some(path => !bound.has(path))) throw fail();
     }
-    return { images, unbound, overCount, tooLarge };
+    return { images, unbound, overCount, tooLarge, removed };
   }
   /** `collect`, but an unbound path is a refusal of the whole turn. This is
    * what the Fuigo dispatch has done since inline images arrived; see

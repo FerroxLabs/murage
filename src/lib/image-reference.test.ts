@@ -46,7 +46,7 @@ describe("composer targets", () => {
 describe("addImageReference", () => {
   it("asks the harness to pin the image into the target conversation and adds an ordinary image chip", async () => {
     register("thread-a", "bot:a:thread-a", "bot-a");
-    const request = vi.fn(async () => response()), append = vi.fn();
+    const request = vi.fn(async () => response()), append = vi.fn(async () => true);
     const result = await addImageReference({ source: { kind: "attachment", attachmentId: "11111111-1111-4111-8111-111111111111.png" } }, request, append);
     expect(request).toHaveBeenCalledWith(MEDIA_ROUTES.reference, { method: "POST", body: JSON.stringify({ threadId: "thread-a", botId: "bot-a", source: { kind: "attachment", attachmentId: "11111111-1111-4111-8111-111111111111.png" } }) });
     expect(result.status).toBe("added");
@@ -55,7 +55,7 @@ describe("addImageReference", () => {
 
   it("never sends a saved file to a different conversation's composer", async () => {
     register("thread-a", "bot:a:thread-a");
-    const request = vi.fn(async () => response()), append = vi.fn();
+    const request = vi.fn(async () => response()), append = vi.fn(async () => true);
     const result = await addImageReference({ source: { kind: "artifact", artifactId: "0f2a1c3e-1111-4222-8333-944455566677", sha256: "c".repeat(64) }, threadId: "thread-b" }, request, append);
     expect(result).toEqual({ status: "no-conversation" });
     expect(request).not.toHaveBeenCalled(); expect(append).not.toHaveBeenCalled();
@@ -63,7 +63,7 @@ describe("addImageReference", () => {
 
   it("surfaces the harness refusal and adds nothing", async () => {
     register("thread-a", "bot:a:thread-a");
-    const append = vi.fn();
+    const append = vi.fn(async () => true);
     await expect(addImageReference({ source: { kind: "attachment", attachmentId: "a.png" } }, async () => { throw new Error("That image is not in this conversation. No reference image was prepared."); }, append))
       .rejects.toThrow("not in this conversation");
     await expect(addImageReference({ source: { kind: "attachment", attachmentId: "a.png" } }, async () => ({}), append)).rejects.toThrow("could not be prepared");

@@ -193,6 +193,60 @@ function safeErrorName(error) {
   }
 }
 
+function count(value) {
+  return Number.isSafeInteger(value) && value >= 0 ? value : "unknown";
+}
+
+// The renderer's last memory sample, as plain non-negative integers. Kilobytes
+// for the process (Electron's app.getAppMetrics unit), megabytes for the host.
+// The Crashpad dump that belongs to this crash, by file name only. Present
+// only on records that went looking for one; "none" when Crashpad wrote nothing.
+function dumpField(event) {
+  if (!Object.hasOwn(event, "dump")) return "";
+  return typeof event.dump === "string" && /^[A-Za-z0-9._-]{1,128}\.dmp$/.test(event.dump) ? ` dump=${event.dump}` : " dump=none";
+}
+
+function memoryFields(memory) {
+  if (!memory || typeof memory !== "object") return " mem=none";
+  return ` mem=sampled sampleAgeSec=${count(memory.sampleAgeSec)} workingSetKb=${count(memory.workingSetKb)}`
+    + ` peakWorkingSetKb=${count(memory.peakWorkingSetKb)} privateKb=${count(memory.privateKb)} sysFreeMb=${count(memory.sysFreeMb)}`;
+}
+
+/** Keeps the latest memory reading per web contents so a renderer that dies
+ * can still be described. The pid of a dead process cannot be queried, so the
+ * reading is taken while it is alive. Dependencies are injected for tests. */
+export function createRendererMemorySampler({ listContents, getMetrics, freeMemoryMb = () => undefined, now = Date.now }) {
+  const samples = new WeakMap();
+  const sample = () => {
+    try {
+      const metrics = getMetrics();
+      const byPid = new Map(metrics.map((metric) => [metric.pid, metric.memory]));
+      for (const contents of listContents()) {
+        if (!contents) continue;
+        const pid = contents.getOSProcessId?.();
+        const memory = byPid.get(pid);
+        if (!memory) continue;
+        samples.set(contents, {
+          at: now(),
+          workingSetKb: memory.workingSetSize,
+          peakWorkingSetKb: memory.peakWorkingSetSize,
+          privateKb: memory.privateBytes,
+          sysFreeMb: freeMemoryMb(),
+        });
+      }
+    } catch {
+      // Sampling must never disturb the app it observes.
+    }
+  };
+  const last = (contents) => {
+    const entry = contents && typeof contents === "object" ? samples.get(contents) : undefined;
+    if (!entry) return null;
+    const { at, ...rest } = entry;
+    return { ...rest, sampleAgeSec: Math.max(0, Math.round((now() - at) / 1000)) };
+  };
+  return { sample, last };
+}
+
 /** Build one privacy-safe line for desktop-crashes.log. Unknown event shapes
  * are dropped rather than serialised, so new Electron fields cannot leak by
  * accident. clean-exit is normal lifecycle noise and is not a crash record. */
@@ -202,13 +256,18 @@ export function formatDesktopCrashRecord(event = {}) {
       const reason = known(event.reason, PROCESS_GONE_REASONS);
       if (reason === "clean-exit") return null;
       const surface = event.surface === "main-window" ? "main-window" : "auxiliary";
-      return `event=render-process-gone surface=${surface} reason=${reason} exitCode=${exitCode(event.exitCode)}`;
+      return `event=render-process-gone surface=${surface} reason=${reason} exitCode=${exitCode(event.exitCode)}${memoryFields(event.memory)}${dumpField(event)}`;
     }
     if (event.kind === "child") {
       const reason = known(event.reason, PROCESS_GONE_REASONS);
       if (reason === "clean-exit") return null;
       const type = known(event.type, CHILD_PROCESS_TYPES);
-      return `event=child-process-gone type=${type} reason=${reason} exitCode=${exitCode(event.exitCode)}`;
+      return `event=child-process-gone type=${type} reason=${reason} exitCode=${exitCode(event.exitCode)}${dumpField(event)}`;
+    }
+    if (event.kind === "earlier-dump") {
+      // The app closed before it could write a line; the next start names the dump.
+      const field = dumpField(event);
+      return field === " dump=none" || !field ? null : `event=earlier-crash${field}`;
     }
     if (event.kind === "main") {
       const origin = known(event.origin, MAIN_FAILURE_ORIGINS, "uncaughtException");
@@ -230,15 +289,19 @@ export function installDesktopCrashListeners({
   record,
   isShuttingDown = () => false,
   mainWebContents = () => null,
+  memoryFor = () => null,
 }) {
   const onMainFailure = (error, origin) => record({ kind: "main", error, origin });
   const onRendererGone = (_event, contents, details) => {
     if (isShuttingDown()) return;
+    let memory = null;
+    try { memory = memoryFor(contents); } catch { /* the crash line is written without it */ }
     record({
       kind: "renderer",
       surface: contents === mainWebContents() ? "main-window" : "auxiliary",
       reason: details?.reason,
       exitCode: details?.exitCode,
+      ...(memory ? { memory } : {}),
     });
   };
   const onChildGone = (_event, details) => {

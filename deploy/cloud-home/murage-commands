@@ -1087,7 +1087,7 @@ def carry_credentials(previous, data, displaced=None, extra=()):
 # only when minted at the home's current generation pin: legacy codes (no generation) and codes of a superseded generation are dropped
 # (Astra STEPUP-EMAIL-8 #1), as the app itself does the moment its pin appears or changes.
 AUTH_DB = os.path.join("home", "messages.db")
-AUTH_TABLES = ("cloud_meta", "cloud_devices", "cloud_browser_factors", "cloud_recovery", "cloud_access", "cloud_challenges", "cloud_codes",
+AUTH_TABLES = ("cloud_meta", "cloud_devices", "cloud_browser_factors", "cloud_owner_watermarks", "cloud_recovery", "cloud_access", "cloud_challenges", "cloud_codes",
                "cloud_nonces", "cloud_lockout", "cloud_code_limits", "cloud_source_limits")
 
 def carry_auth_state(current_db, restored_db, generation=None):
@@ -1233,6 +1233,22 @@ def swap_unresolved(ctx, reset_id, operation):
         return True
     return found is not None and found["phase"] in ("swap", "committed")
 
+BACKUP_STAGE_DIR = ".murage-backup"
+
+def place_database_snapshot(restored):
+    """A nightly snapshot holds the home database as SQLite's online backup in a staging folder (murage-backup), not the live
+    WAL files. Put it where the home reads it and drop any -wal/-shm that came with an older snapshot. Absent: nothing to do."""
+    stage = os.path.join(restored, BACKUP_STAGE_DIR)
+    staged = os.path.join(stage, "messages.db")
+    if os.path.isfile(staged) and not os.path.islink(staged):
+        live = os.path.join(restored, AUTH_DB)
+        for suffix in ("-wal", "-shm"):
+            if os.path.lexists(live + suffix):
+                os.unlink(live + suffix)
+        os.makedirs(os.path.dirname(live), exist_ok=True)
+        os.replace(staged, live)
+    shutil.rmtree(stage, ignore_errors=True)
+
 def restore_into_place(ctx, cfg, snapshot, reset_id, operation, check_deadline=lambda: None):
     work = work_dir(ctx, reset_id, operation)
     shutil.rmtree(work, ignore_errors=True)
@@ -1244,6 +1260,7 @@ def restore_into_place(ctx, cfg, snapshot, reset_id, operation, check_deadline=l
     try:
         if code != 0 or not os.path.isdir(restored):
             raise ValueError("Restore failed")
+        place_database_snapshot(restored)
         # The current sign-in state replaces the restored one in the staged copy, before anything is swapped.
         carry_auth_state(os.path.join(data, AUTH_DB), os.path.join(restored, AUTH_DB), ctx["binding"].get("generation"))
         carry_preflight(data, restored)
@@ -1469,9 +1486,10 @@ LOG_EVENTS = (
     r"Self-service (?:command poll|housekeeping|start-up recovery) unavailable",
     r"Self-service (?:command runner refused|recovery pending|update rollback unhealthy)",
     # The Cloud door (server/cloud-home/door-log.ts): one fixed line per outcome, no ticket, key, cookie, id or address.
-    r"Cloud door (?:state|enter): (?:source_locked|budget_closed|internal_error|origin_refused|query_token_refused|bearer_refused|body_too_large|body_malformed|state_answered|state_rate_limited|door_unconfigured|home_unbound|ticket_malformed|ticket_wrong_type|ticket_bad_signature|ticket_wrong_home|ticket_expired|ticket_bad_times|ticket_stale_step_up|ticket_reused|account_suspended|account_mismatch|device_key_invalid|device_bind_refused|device_proof_refused|device_limit|desktop_hold_required|pair_hold_refused|signed_in_first|signed_in_known|signed_in_added)",
+    r"Cloud door (?:state|enter): (?:source_locked|budget_closed|internal_error|origin_refused|query_token_refused|bearer_refused|body_too_large|body_malformed|state_answered|state_rate_limited|door_unconfigured|home_unbound|ticket_malformed|ticket_wrong_type|ticket_bad_signature|ticket_wrong_home|ticket_expired|ticket_bad_times|ticket_stale_step_up|ticket_reused|account_suspended|account_mismatch|device_key_invalid|device_bind_refused|device_proof_refused|assertion_proof_refused|device_limit|desktop_hold_required|pair_hold_refused|signed_in_first|signed_in_known|signed_in_added)",
     r"Cloud door page: (?:no_ticket|device_load|device_save|device_forget|refresh|bounce|v1_record|unexpected|unknown) (?:none|NotAllowedError|AbortError|InvalidStateError|SecurityError|NotSupportedError|ConstraintError|UnknownError|DataError|QuotaExceededError|TimeoutError|TypeError|NetworkError|OperationError|VersionError|ReadOnlyError|SyntaxError|unknown)",
     r"Cloud door page: device_open (?:timeout|blocked|error|unknown) (?:chrome|safari|firefox|edge|other|unknown)",
+    r"Cloud owner factor: (?:owner_factor_issued|owner_factor_renewed|owner_factor_withheld)(?: (?:stale_proof|proof_kind_after_revoke))?",
     r"(?:Error|TypeError|RangeError|ReferenceError|SyntaxError|AbortError|TimeoutError)(?: \[ERR_[A-Z0-9_]{1,60}\])?",
     r"at (?:(?:async )?[A-Za-z0-9_$.<>\[\] ]{1,100} )?\(?(?:/opt/murage/[A-Za-z0-9_./@-]{1,200}|node:[a-z_/]{1,80}):\d{1,7}:\d{1,7}\)?",
     r"\[\d{1,4} lines? omitted\]",

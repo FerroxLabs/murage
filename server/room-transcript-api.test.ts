@@ -62,7 +62,7 @@ posixOnly("a room member reads every teammate reply after a roster change", () =
       expect((await api("PATCH", `/api/bots/${bot.id}`, { computer: "off", browser: false, composio: false })).status).toBe(200);
       return bot;
     };
-    const alpha = await bot("Alpha"), bravo = await bot("Bravo");
+    const alpha = await bot("Alpha"), bravo = await bot("Bravo"), charlie = await bot("Charlie");
     const created = await api("POST", "/api/groups", { name: "Transcript room", memberIds: [alpha.id, bravo.id], setup: { bulletin: "", defaultResponder: { kind: "member", botId: alpha.id } } });
     expect(created.status).toBe(201);
     const room = created.body.group as { id: string; threadId: string };
@@ -107,9 +107,10 @@ posixOnly("a room member reads every teammate reply after a roster change", () =
       }
       expect(JSON.parse(receiptFor(second.id)!.record_versions).length).toBeGreaterThan(0);
 
-      // The roster changes: a bot is added to the workspace. Every receipt in
-      // the install is revoked, the ones on Alpha's replies included.
-      await bot("Charlie");
+      // The roster changes: a bot in the workspace moves to another team (an
+      // audience change; adding a bot withdraws nothing). Every receipt in the
+      // install is revoked, the ones on Alpha's replies included.
+      expect((await api("PATCH", `/api/bots/${charlie.id}`, { section: "Moved team" })).status).toBe(200);
       await expect.poll(() => receiptFor(first.id)?.state, { timeout: 10000 }).toBe("revoked");
 
       // Bravo's next prompt still carries both of Alpha's replies.

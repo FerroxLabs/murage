@@ -353,9 +353,11 @@ export function rowsShown(db: DatabaseSync, viewer: Viewer, held: ReadonlyArray<
  * audience it is released for (an owner audience as the owner's own chat, as the gate's write-time lookup). */
 /** `ownerConversation`: as result-egress.ts writetimeLinesShown, lines of the owner's own direct conversation released to the owner's own
  * audience are read as that conversation reads them (content reader); every other thread keeps the explicit owner audience. */
-export function doorEgress(db: () => DatabaseSync, ownerConversation?: (threadId: string) => boolean): (readerBotId: string, threadId: string, messageIds: readonly string[], notOwnerAudience: boolean) => LineVerdictState {
-  return (readerBotId, threadId, messageIds, notOwnerAudience) => storedRowsVerdict(db(), botViewer(readerBotId), threadId, messageIds,
-    !notOwnerAudience && ownerConversation?.(threadId) === true ? { audience: null }
+/** `scopeIds` (SL-E r3 W9): a proven person reader's S(P): the same door, for the audience `{ owner: false, scopeIds }`. Absent: today's rule. */
+export function doorEgress(db: () => DatabaseSync, ownerConversation?: (threadId: string) => boolean): (readerBotId: string, threadId: string, messageIds: readonly string[], notOwnerAudience: boolean, scopeIds?: readonly string[]) => LineVerdictState {
+  return (readerBotId, threadId, messageIds, notOwnerAudience, scopeIds) => storedRowsVerdict(db(), botViewer(readerBotId), threadId, messageIds,
+    notOwnerAudience && scopeIds !== undefined ? { audience: { owner: false, scopeIds: [...scopeIds] }, ownerOwnChat: false }
+    : !notOwnerAudience && ownerConversation?.(threadId) === true ? { audience: null }
       : { audience: { owner: !notOwnerAudience, scopeIds: [] }, ownerOwnChat: !notOwnerAudience });
 }
 

@@ -4,6 +4,7 @@
 // in-panel capture. Linux local mode is an automation readiness state and its
 // separate preview remains explicitly user-initiated. Auto never selects a
 // Linux user's desktop.
+import { t } from "@/lib/i18n";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import {
@@ -71,6 +72,7 @@ import {
 import { usePagedScreenFrame } from "@/lib/paged-screen-frame";
 import { describeDesktopOnlyRouteError, routeErrorFrom } from "@/lib/desktop-only-route-error";
 import { engineWithoutComputerText } from "../../shared/engine-switch";
+import { useWindowDrag } from "@/hooks/use-window-drag";
 
 export function ScreenStreamNotice({ message }: { message?: string }) {
   return message ? <p role="status" className="mt-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12px] text-warning">{message}</p> : null;
@@ -198,6 +200,7 @@ function routineScheduleLabel(routine: Routine) {
   if (routine.schedule.type === "interval") {
     return `Every ${routine.schedule.everyMinutes} min`;
   }
+  if (routine.schedule.type === "limit_reset") return t("slik.scheduleLimitReset");
   const days = routine.schedule.weekdays;
   const cadence =
     days.length === 7
@@ -349,6 +352,9 @@ export function PhoneComputerPanelBody({ bot }: { bot: PhoneEmptyStateBot }) {
   );
 }
 
+/** How often the open viewer tells the harness the owner is still there (well inside the shortest idle window). */
+const VIEWER_KEEPALIVE_MS = 5 * 60_000;
+
 export function ComputerPanel({
   bot,
   onOpenVmWorkspace,
@@ -358,6 +364,7 @@ export function ComputerPanel({
   onOpenVmWorkspace?: (botId: string) => void;
   onExpandBrowser?: (botId: string) => void;
 }) {
+  const windowDrag = useWindowDrag();
   // The panel is a fixed column by default; a drag handle on its left edge
   // makes it wide enough to actually read a page in the Browser tab.
   const [panelWidth, setPanelWidth] = useState(readPanelWidth);
@@ -767,6 +774,16 @@ export function ComputerPanel({
     };
   }, [panelView, phase, bot.id, viewerOpen, pageVisible, bot.busy]);
 
+  // The interactive viewer connects straight to the container and the preview poll above pauses while it is open, so tell the
+  // harness the owner is still there; it stops with the viewer.
+  useEffect(() => {
+    if (panelView !== "computer" || phase !== "vm" || !viewerOpen) return;
+    const beat = () => { void api(`/api/bots/${bot.id}/local-computer/keepalive`, { method: "POST" }).catch(() => undefined); };
+    beat();
+    const timer = window.setInterval(beat, VIEWER_KEEPALIVE_MS);
+    return () => window.clearInterval(timer);
+  }, [panelView, phase, viewerOpen, bot.id]);
+
   // local preview: frames from the Electron main process. The FIRST capture
   // attempt is what makes macOS show the Screen Recording prompt (there is
   // no reliable pre-grant flow on macOS 15+), so repeated empty frames mean
@@ -1106,10 +1123,10 @@ export function ComputerPanel({
         onPointerCancel={onResizeEnd}
         // a drag handle on a touch screen fights the scroll gesture, and there
         // is no column left to resize once the panel is full-width
-        className="absolute inset-y-0 left-0 z-10 w-1.5 cursor-col-resize hover:bg-accent/40 max-md:hidden"
+        data-no-window-drag="" className="absolute inset-y-0 left-0 z-10 w-1.5 cursor-col-resize hover:bg-accent/40 max-md:hidden"
       />
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3">
+      <div {...windowDrag} className="flex items-center justify-between px-4 py-3">
         <button
           onClick={() => dispatch({ type: "toggleSettings", open: true })}
           className="rounded-md p-1 text-ink-secondary hover:bg-control hover:text-ink"
@@ -1162,6 +1179,7 @@ export function ComputerPanel({
         )}
         <button
           onClick={() => dispatch({ type: "toggleComputer", open: false })}
+          aria-label={t("computerPanel.closeAria")}
           className="rounded-md p-1 text-ink-secondary hover:bg-control hover:text-ink"
         >
           <X size={18} />

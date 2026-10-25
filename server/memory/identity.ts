@@ -10,6 +10,8 @@ import type { MemoryBundle } from "../../shared/memory.ts";
 import { applyRecordTombstone } from "./restore.ts";
 import { revokeRecordDisclosures, revokeAllDisclosures } from "./revocation.ts";
 import { inheritEdge } from "./revoke-commit.ts";
+import { insertMemoryRecord } from "./record-write.ts";
+import { assertOwnerPinsFit, ownerPinUse } from "./bundle.ts";
 
 const key = z.string().regex(/^[a-zA-Z0-9_-]{1,120}$/);
 export const identityWriteSchema = z.object({
@@ -113,8 +115,10 @@ export function writeBotIdentity(ticket:object,input:IdentityWrite,roster:Memory
       }
     }
     const text=redactSecretsInText(input.kind==="reveal-state"?JSON.stringify({canonId:input.canon!.id,audience:input.audience,revealed:input.revealed,note:input.text}):input.text);
+    // A pinned row keeps its pin on the new version (a character canon or reveal state is pinnable): measured below (1.0.4).
+    const pinUse=previous?.owner_pinned===1?ownerPinUse(db,scopeId,roster):undefined;
     if(previous)db.prepare("UPDATE memory_records SET state='superseded',valid_to=? WHERE id=? AND version=?").run(now,id,input.expectedVersion);
-    db.prepare("INSERT INTO memory_records VALUES(?,?,?,?,?,'owner-statement','active',?,?,NULL,?,?)").run(id,version,scopeId,input.kind,text,previous?.owner_pinned??0,now,previous?id:null,now);
+    insertMemoryRecord(db,{id,version:Number(version),scopeId:String(scopeId),kind:String(input.kind),text,assertion:"owner-statement",state:"active",ownerPinned:Number(previous?.owner_pinned??0),validFrom:now,supersedesId:previous?id:null,createdAt:now});
     db.prepare("UPDATE memory_record_details SET partition='identity',attention='current',confidence_basis=?,entities=? WHERE record_id=? AND record_version=?")
       .run(ownerRow?PIP_BASIS:input.basis==="fiction"?"Owner-authored fictional continuity; not model autobiography or world truth":"Owner-authored continuity; not independently verified",JSON.stringify(lived?[input.audience,identityKey,claimEntity(parseAuthoredStatement(text)),`gen:${lived.generation+1}`,`reinforcedAt:${now}`]:ownerRow?[input.audience,identityKey,claimEntity(parseAuthoredStatement(text)),"gen:1"]:[input.audience,identityKey]),id,version);
     if(lived){
@@ -125,6 +129,8 @@ export function writeBotIdentity(ticket:object,input:IdentityWrite,roster:Memory
         applyRecordTombstone(db,counter);
       }
     }
+    // Measured after the details are written: the rendered line carries the identity attribution.
+    if(pinUse!==undefined)assertOwnerPinsFit(db,scopeId,pinUse,roster);
     if(input.canon){db.prepare("INSERT INTO memory_derivations VALUES(?,?,?,?)").run(input.canon.id,input.canon.version,id,version);inheritEdge(db,{kind:"record",id,version},{kind:"record",id:input.canon.id,version:input.canon.version});}
     // Continuity rows are never projected into the shared recall index (PIP):
     // no lexical or embedding receipt, so the FTS corpus the other rows rank

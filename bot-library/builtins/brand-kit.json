@@ -54,7 +54,8 @@
         "title": "Brand Kit",
         "description": "Glint prepares a visual brand kit brief from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For brand strategy and positioning, use Brand. For capturing your personal writing voice, use Voiceprint.",
         "appearance": {
-          "color": "blue"
+          "color": "pink",
+          "mascotBody": "blob"
         },
         "skills": [
           "brand-identity-brief",

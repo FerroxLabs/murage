@@ -60,7 +60,8 @@
         "title": "New Hire Onboarding",
         "description": "Bridge prepares a day-one and first-30-days onboarding plan for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For role design and evaluation strategy, use Talent. For broad operations coordination, use Ops.",
         "appearance": {
-          "color": "purple"
+          "color": "teal",
+          "mascotBody": "squircle"
         },
         "skills": [
           "onboarding-plan",
