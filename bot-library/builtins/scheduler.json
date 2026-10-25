@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Scheduler",
     "tagline": "Three meeting options and a week with focus time protected",
-    "summary": "Tempo prepares up to three checked meeting times with timezone labels. Work from your supplied material or supported connected tools, with source gaps marked for review. For household plans, use Personal / Home. For broad operations coordination, use Ops. For a multi-person staff rota and coverage checks, use Shift Planner.",
+    "summary": "Tempo prepares up to three checked meeting times with timezone labels.",
     "category": "Front office",
     "author": {
       "name": "Ferrox Labs",
@@ -60,7 +60,8 @@
         "title": "Scheduler",
         "description": "Tempo prepares up to three checked meeting times with timezone labels. Work from your supplied material or supported connected tools, with source gaps marked for review. For household plans, use Personal / Home. For broad operations coordination, use Ops. For a multi-person staff rota and coverage checks, use Shift Planner.",
         "appearance": {
-          "color": "teal"
+          "color": "teal",
+          "mascotBody": "diamond"
         },
         "skills": [
           "calendar-optimizer",

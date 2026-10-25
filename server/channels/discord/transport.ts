@@ -1,5 +1,6 @@
 import type { PermissionAction } from "../permission-approvals.ts";
 import { ChannelSendError } from "../durable-delivery.ts";
+import { approvalButtonLabel } from "../approval-labels.ts";
 import { discordId } from "./event.ts";
 
 type Health = "connected" | "disconnected" | "error" | "blocked";
@@ -126,8 +127,8 @@ export class DiscordGatewayTransport implements DiscordTransport {
     try {
       const result = object(await sdk.rest.post(`/channels/${input.dmId}/messages`, { signal: input.signal, body: {
         content: input.text, allowed_mentions: { parse: [], replied_user: false }, tts: false, flags: 4,
-        components: [{ type: 1, components: [...(input.denyOnly ? [] : [{ type: 2, style: 3, label: "Approve once", custom_id: input.approveId }]),
-          { type: 2, style: 4, label: "Deny", custom_id: input.denyId }] }] } }));
+        components: [{ type: 1, components: [...(input.denyOnly ? [] : [{ type: 2, style: 3, label: approvalButtonLabel("approveOnce"), custom_id: input.approveId }]),
+          { type: 2, style: 4, label: approvalButtonLabel("deny"), custom_id: input.denyId }] }] } }));
       if (result.channel_id !== input.dmId || !discordId.safeParse(result.id).success) throw new ChannelSendError("invalid-request", true);
       return { channel: result.channel_id as string, messageId: result.id as string };
     } catch (error) { throw safeFailure(error, true); }

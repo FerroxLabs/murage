@@ -598,6 +598,170 @@ static napi_value list_processes(napi_env env, napi_callback_info info) {
 }
 #endif
 
+// ── environment(pid, names): all platforms ──────────────────────────────
+//
+// The values of a few named variables in another process's environment, only the ones it has, as { name: value }; null when the
+// environment cannot be read (the process is gone, another user's or protected; on Windows a 32-bit process on 64-bit Windows).
+// Murage asks it only of a process that is an engine, and only for the variables that decide the engine's home (engine-closed.ts
+// homeScope): nothing else of the process's environment is copied out. macOS: KERN_PROCARGS2 (the environment follows the
+// arguments); Linux: /proc/<pid>/environ; Windows: the block ProcessParameters->Environment points to in the process's PEB, read
+// page by page up to its double NUL, with names matched in any case.
+#define ENVIRONMENT_NAMES_MAX 32
+#define ENVIRONMENT_BLOCK_MAX (1024 * 1024)
+
+/** The names asked for, as UTF-8 strings the caller frees with free_names; -1 when the argument is not an array of strings. */
+static int read_names(napi_env env, napi_value value, char **names) {
+  bool is_array = false;
+  uint32_t count = 0;
+  if (napi_is_array(env, value, &is_array) != napi_ok || !is_array || napi_get_array_length(env, value, &count) != napi_ok || count > ENVIRONMENT_NAMES_MAX) return -1;
+  for (uint32_t i = 0; i < count; i++) {
+    napi_value item;
+    napi_valuetype type;
+    names[i] = NULL;
+    if (napi_get_element(env, value, i, &item) != napi_ok || napi_typeof(env, item, &type) != napi_ok || type != napi_string) { for (uint32_t j = 0; j < i; j++) free(names[j]); return -1; }
+    size_t length = 0, copied = 0;
+    napi_get_value_string_utf8(env, item, NULL, 0, &length);
+    names[i] = malloc(length + 1);
+    if (!names[i] || napi_get_value_string_utf8(env, item, names[i], length + 1, &copied) != napi_ok) { for (uint32_t j = 0; j <= i; j++) free(names[j]); return -1; }
+    names[i][copied] = '\0';
+  }
+  return (int)count;
+}
+
+static void free_names(char **names, int count) { for (int i = 0; i < count; i++) free(names[i]); }
+
+#ifndef _WIN32
+/** Picks the asked-for names out of NUL-ended "NAME=value" entries (exact names), into `out`. */
+static void pick_entries(napi_env env, const char *block, size_t length, char **names, int count, napi_value out) {
+  size_t at = 0;
+  while (at < length) {
+    const char *entry = block + at;
+    size_t left = length - at, n = 0;
+    while (n < left && entry[n] != '\0') n++;
+    if (n == 0) break;  // an empty string ends the environment (macOS: the system's own strings follow it)
+    const char *equals = memchr(entry, '=', n);
+    if (equals && equals != entry) {
+      size_t key = (size_t)(equals - entry);
+      for (int i = 0; i < count; i++) {
+        if (strlen(names[i]) == key && memcmp(names[i], entry, key) == 0) {
+          napi_value text;
+          if (napi_create_string_utf8(env, equals + 1, n - key - 1, &text) == napi_ok) napi_set_named_property(env, out, names[i], text);
+          break;
+        }
+      }
+    }
+    at += n + 1;
+  }
+}
+#endif
+
+static napi_value environment_of(napi_env env, napi_callback_info info) {
+  size_t argc = 2;
+  napi_value argv[2];
+  uint32_t pid = 0;
+  napi_get_cb_info(env, info, &argc, argv, NULL, NULL);
+  if (argc < 2 || napi_get_value_uint32(env, argv[0], &pid) != napi_ok || pid == 0) return fail(env, "environment needs a pid and names");
+  char *names[ENVIRONMENT_NAMES_MAX];
+  int count = read_names(env, argv[1], names);
+  if (count < 0) return fail(env, "environment needs an array of at most 32 names");
+  napi_value out;
+  napi_create_object(env, &out);
+  int ok = 0;
+#if defined(__linux__)
+  char path[64];
+  snprintf(path, sizeof path, "/proc/%lu/environ", (unsigned long)pid);
+  char *block = NULL;
+  size_t length = 0;
+  if (read_proc_file(path, &block, &length) == 0) { pick_entries(env, block, length, names, count, out); ok = 1; }
+  free(block);
+#elif defined(__APPLE__)
+  int mib_max[2] = {CTL_KERN, KERN_ARGMAX};
+  int arg_max = 0;
+  size_t arg_max_size = sizeof arg_max;
+  if (sysctl(mib_max, 2, &arg_max, &arg_max_size, NULL, 0) != 0 || arg_max <= 0) arg_max = 1024 * 1024;
+  char *buffer = malloc((size_t)arg_max);
+  int mib[3] = {CTL_KERN, KERN_PROCARGS2, (int)pid};
+  size_t size = (size_t)arg_max;
+  if (buffer && sysctl(mib, 3, buffer, &size, NULL, 0) == 0 && size > sizeof(int)) {
+    // an int argc, the executable's path, padding NULs, argc NUL-ended arguments, then the environment
+    int args = 0;
+    memcpy(&args, buffer, sizeof args);
+    char *at = buffer + sizeof args, *limit = buffer + size;
+    while (at < limit && *at != '\0') at++;
+    while (at < limit && *at == '\0') at++;
+    int seen = 0;
+    while (at < limit && seen < args) { if (*at == '\0') seen++; at++; }
+    if (seen == args) { pick_entries(env, at, (size_t)(limit - at), names, count, out); ok = 1; }
+  }
+  free(buffer);
+#else
+  HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, FALSE, pid);
+  NtQueryInformationProcessFn query = (NtQueryInformationProcessFn)(void *)GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtQueryInformationProcess");
+  BOOL wow = TRUE;
+  if (process && query && IsWow64Process(process, &wow) && !wow) {
+    PROCESS_BASIC_INFORMATION basic;
+    ULONG returned = 0;
+    PEB peb;
+    // <winternl.h> declares RTL_USER_PROCESS_PARAMETERS only up to CommandLine; Environment is the pointer right after it
+    struct { RTL_USER_PROCESS_PARAMETERS head; PVOID environment; } parameters;
+    SIZE_T read = 0;
+    if (query(process, 0, &basic, sizeof basic, &returned) == 0 && basic.PebBaseAddress &&
+        ReadProcessMemory(process, basic.PebBaseAddress, &peb, sizeof peb, &read) && read == sizeof peb && peb.ProcessParameters &&
+        ReadProcessMemory(process, peb.ProcessParameters, &parameters, sizeof parameters, &read) && read == sizeof parameters && parameters.environment) {
+      wchar_t *block = malloc(ENVIRONMENT_BLOCK_MAX + 2 * sizeof(wchar_t));
+      size_t got = 0, units = 0, end = (size_t)-1;
+      uintptr_t address = (uintptr_t)parameters.environment;
+      // one page at a time: a read that crosses into a page the process does not have fails as a whole
+      while (block && end == (size_t)-1 && got < ENVIRONMENT_BLOCK_MAX) {
+        size_t step = 4096 - (size_t)(address % 4096);
+        if (step > ENVIRONMENT_BLOCK_MAX - got) step = ENVIRONMENT_BLOCK_MAX - got;
+        if (!ReadProcessMemory(process, (LPCVOID)address, (char *)block + got, step, &read) || read != step) break;
+        got += step;
+        address += step;
+        size_t now = got / sizeof(wchar_t);
+        for (size_t i = units > 0 ? units - 1 : 0; i + 1 < now; i++) if (block[i] == L'\0' && block[i + 1] == L'\0') { end = i; break; }
+        units = now;
+      }
+      if (block && end != (size_t)-1) {
+        ok = 1;
+        wchar_t *wide[ENVIRONMENT_NAMES_MAX];
+        for (int i = 0; i < count; i++) {
+          int need = MultiByteToWideChar(CP_UTF8, 0, names[i], -1, NULL, 0);
+          wide[i] = need > 0 ? malloc((size_t)need * sizeof(wchar_t)) : NULL;
+          if (wide[i] && MultiByteToWideChar(CP_UTF8, 0, names[i], -1, wide[i], need) != need) { free(wide[i]); wide[i] = NULL; }
+        }
+        size_t at = 0;
+        while (at < end + 1 && block[at] != L'\0') {
+          const wchar_t *entry = block + at;
+          size_t n = wcslen(entry);
+          // "=C:=C:\..." entries start with "=": the name is never empty
+          const wchar_t *equals = n > 1 ? wcschr(entry + 1, L'=') : NULL;
+          if (equals) {
+            int key = (int)(equals - entry);
+            for (int i = 0; i < count; i++) {
+              if (wide[i] && CompareStringOrdinal(entry, key, wide[i], -1, TRUE) == CSTR_EQUAL) {
+                char *value = wide_to_utf8(equals + 1, (int)(n - (size_t)key - 1));
+                napi_value text;
+                if (value && napi_create_string_utf8(env, value, NAPI_AUTO_LENGTH, &text) == napi_ok) napi_set_named_property(env, out, names[i], text);
+                free(value);
+                break;
+              }
+            }
+          }
+          at += n + 1;
+        }
+        for (int i = 0; i < count; i++) free(wide[i]);
+      }
+      free(block);
+    }
+  }
+  if (process) CloseHandle(process);
+#endif
+  free_names(names, count);
+  if (!ok) napi_get_null(env, &out);
+  return out;
+}
+
 // ── renameNoReplace(from, to): all platforms ────────────────────────────
 
 static napi_value rename_no_replace(napi_env env, napi_callback_info info) {
@@ -1671,6 +1835,10 @@ static int job_name_ok(const wchar_t *name) {
     if (!((*c >= L'a' && *c <= L'z') || (*c >= L'A' && *c <= L'Z') || (*c >= L'0' && *c <= L'9') || *c == L'-')) return 0;
   return 1;
 }
+// jobCreate(name): KILL_ON_JOB_CLOSE and no breakaway of any kind (U24 design R1): a process a member starts is in the job before
+// its first instruction. This job never grants a breakaway: a CreateProcess that asks for CREATE_BREAKAWAY_FROM_JOB may still
+// succeed when an outer job in the hierarchy permits it (libuv's own job does), but the child stays a member of this job and ends
+// with it (gate box, 2026-10-25). Engine and PIP jobs are the same job.
 static napi_value job_create(napi_env env, napi_callback_info info) {
   size_t argc = 1;
   napi_value argv[1], out;
@@ -2160,6 +2328,7 @@ NAPI_MODULE_INIT() {
   add(env, exports, "lock", lock_file);
   add(env, exports, "processes", list_processes);
   add(env, exports, "renameNoReplace", rename_no_replace);
+  add(env, exports, "environment", environment_of);
 #ifndef _WIN32
   add(env, exports, "writers", list_writers);
   add(env, exports, "fullSync", full_sync);

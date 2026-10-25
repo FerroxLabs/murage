@@ -28,7 +28,8 @@
         "title": "Analyst",
         "description": "Analyst - funnel diagnosis, cohort retention, experiment discipline via Kaushik measurement + Kohavi rigor.",
         "appearance": {
-          "color": "green"
+          "color": "green",
+          "mascotBody": "hexagon"
         },
         "skills": [
           "lens-funnel-diagnosis",
@@ -52,7 +53,8 @@
         "title": "Research",
         "description": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method.",
         "appearance": {
-          "color": "blue"
+          "color": "blue",
+          "mascotBody": "capsule"
         },
         "skills": [
           "research-jtbd-interviews",
@@ -75,7 +77,8 @@
         "title": "Channels",
         "description": "Channels specialist - channel-mix and discovery via Avinash Kaushik's See/Think/Do/Care intent-based framework.",
         "appearance": {
-          "color": "red"
+          "color": "orange",
+          "mascotBody": "star"
         },
         "skills": [
           "beacon-channel-strategy",

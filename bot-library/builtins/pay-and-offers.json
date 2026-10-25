@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Pay and Offers",
     "tagline": "A salary range, affordability check and offer draft ready for your decision",
-    "summary": "Scale prepares a sourced compensation comparison with limitations for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For role design and evaluation strategy, use Talent. For broader business financial decisions, use Numbers. I give guidance and drafts, not licensed legal, tax, accounting or HR advice, and I promise no outcome.",
+    "summary": "Scale prepares a sourced compensation comparison with limitations for your review.",
     "category": "People",
     "author": {
       "name": "Ferrox Labs",
@@ -48,7 +48,8 @@
         "title": "Pay and Offers",
         "description": "Scale prepares a sourced compensation comparison with limitations for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For role design and evaluation strategy, use Talent. For broader business financial decisions, use Numbers.",
         "appearance": {
-          "color": "pink"
+          "color": "pink",
+          "mascotBody": "diamond"
         },
         "skills": [
           "compensation-benchmarking",

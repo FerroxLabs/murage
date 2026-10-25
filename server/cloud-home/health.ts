@@ -15,6 +15,6 @@ export function cloudHealthVersion(): { serverVersion: string; protocol: number;
 
 /** What an unsigned visitor to a Cloud home may learn: exactly app, door, ui, uiAt and instance; never version, protocol or role.
  *  door names the entry protocol this build speaks; it discloses nothing the /enter page does not. */
-export function publicHealthBody(): { app: "murage"; door: "v2"; ui?: UiState; uiAt?: number | null; instance?: string } {
-  return { app: "murage", door: "v2", ...uiHealth() };
+export function publicHealthBody(): { app: "murage"; door: "v2"; ownerFactor: 1; ui?: UiState; uiAt?: number | null; instance?: string } {
+  return { app: "murage", door: "v2", ownerFactor: 1, ...uiHealth() };
 }

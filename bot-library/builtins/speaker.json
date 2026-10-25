@@ -48,7 +48,8 @@
         "title": "Speaker",
         "description": "Podium prepares a timed talk outline with speaker notes for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For an investor pitch narrative, use Pitch. For a PowerPoint file, use PPT Creator. For general writing and editing, use Writer.",
         "appearance": {
-          "color": "purple"
+          "color": "purple",
+          "mascotBody": "circle"
         },
         "skills": [
           "speechwriter",

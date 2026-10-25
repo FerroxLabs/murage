@@ -15,10 +15,11 @@ import { learningWriteDecision,learningEvidenceScopes,learningSourceBot } from "
 import { recordLearningEvent } from "./learning-ledger.ts";
 import { activateGroundedMemory, candidateReviewReason, holdMemoryCandidate, learningReviewReason, ownerLearningRefusal, pendingSaveNote } from "./automatic-learning.ts";
 import { readMemoryLearning } from "./learning-policy.ts";
-import { saveProjectCloseLesson, saveMemoryCandidate, saveGroundedMemory, assertMemoryCaptureComplete, assertGenericMemoryTarget } from "./authority.ts";
+import { saveProjectCloseLesson, saveMemoryCandidate, saveGroundedMemory, assertMemoryCaptureComplete, assertGenericMemoryTarget, savedMemoryEvidence } from "./authority.ts";
 import { MEMORY_HANDLE_PATTERN } from "../../shared/memory.ts";
 import { enqueueProcedureCorrectionReview } from "./procedure-review.ts";
 import { revokeRecordDisclosures } from "./revocation.ts";
+import { resolveQuotedEvidence } from "./quote-evidence.ts";
 import { inheritEdge } from "./revoke-commit.ts";
 
 /** Resolves the turn-local handles of the dispatch this capability belongs to
@@ -32,7 +33,10 @@ export interface MemoryHandleResolver {
 const id=z.string().min(1).max(256);
 const version=z.number().int().min(1);
 const evidenceHandle=z.object({sourceId:id,revision:version,startByte:z.number().int().nonnegative(),endByte:z.number().int().positive()}).strict();
-const evidence=z.array(evidenceHandle).min(1).max(20);
+// 1.0.5: or the words themselves, from this conversation or from a message thread_search/thread_read returned (quote-evidence.ts)
+const quotedEvidence=z.object({quote:z.string().min(1).max(4096),messageId:id.optional()}).strict();
+const evidenceItem=z.union([evidenceHandle,quotedEvidence]);
+const evidence=z.array(evidenceItem).min(1).max(20);
 const key=z.string().regex(/^[\w-]{1,160}$/);
 const search=z.object({query:z.string().min(1).refine(s=>Buffer.byteLength(s)<=4096),limit:z.number().int().min(1).max(20).optional(),historical:z.boolean().optional(),cursor:z.string().min(1).max(MEMORY_CURSOR_MAX_CHARS).optional()}).strict();
 const turnHandle=z.string().regex(MEMORY_HANDLE_PATTERN);
@@ -40,7 +44,7 @@ const turnHandle=z.string().regex(MEMORY_HANDLE_PATTERN);
 // the exact id/version memory_search returned; never by a mix of the two.
 const reference=z.union([z.object({id,version}).strict(),z.object({handle:turnHandle}).strict()]);
 const get=z.object({handles:z.array(reference).min(1).max(20)}).strict();
-const save=z.object({text:z.string().min(1).max(4096),evidence,idempotencyKey:key,ownerInvitation:evidenceHandle.optional(),claimType:z.enum(["owner-statement","observation","inference","character-canon","procedure"]).optional()}).strict();
+const save=z.object({text:z.string().min(1).max(4096),evidence,idempotencyKey:key,ownerInvitation:evidenceItem.optional(),claimType:z.enum(["owner-statement","observation","inference","character-canon","procedure"]).optional()}).strict();
 const proposal={replacement:z.string().min(1).max(4096),evidence,idempotencyKey:key};
 const correction=z.union([z.object({id,version,...proposal}).strict(),z.object({handle:turnHandle,...proposal}).strict()]);
 
@@ -91,7 +95,10 @@ export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAcc
       return result;
     }
     if(path==="/api/internal/memory/save"){
-      const input=save.parse(body);
+      const parsed=save.parse(body),db=database();
+      // a retry of the same save (same key) re-resolves its quotes to the evidence the first one stored, never to a newer echo of the words
+      const prior=savedMemoryEvidence(db,access.threadId,parsed.idempotencyKey);
+      const input={...parsed,evidence:resolveQuotedEvidence(db,parsed.evidence,access,prior),ownerInvitation:parsed.ownerInvitation?resolveQuotedEvidence(db,[parsed.ownerInvitation],access,prior)[0]:undefined};
       if(input.ownerInvitation&&input.claimType!=="character-canon")throw Object.assign(new Error("Owner invitations can only support character canon."),{status:400});
       const executing = executingRequestId ? roomRequest(database(),executingRequestId) : null;
       // A close turn saves only through the lesson path, which refuses once its authority is gone
@@ -105,9 +112,11 @@ export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAcc
       return {candidateId,state,pendingReview:true,note:pendingSaveNote(candidateReviewReason(database(),candidateId,1)??learningReviewReason("needs-owner-approval"))};
     }
     if(path==="/api/internal/memory/propose-correction"){
-      const input=correction.parse(body);
+      const parsed=correction.parse(body),input={...parsed,evidence:resolveQuotedEvidence(database(),parsed.evidence,access)};
       const target="handle" in input?resolve(input.handle):{id:input.id,version:input.version};
-      hydrateMemoryRecord(target.id,target.version,access,{allowance:LineageAllowance.tool()});
+      // the reader's own rule, as memory_get applies it: a record resting on a line this reader may not see is not a target
+      const withheld=readerWithheldMessage(access);
+      hydrateMemoryRecord(target.id,target.version,access,{allowance:LineageAllowance.tool(),...withheld?{withheldMessage:withheld}:{}});
       const db=database();
       assertGenericMemoryTarget(db,target.id,target.version);
       const targetBefore=db.prepare("SELECT text,state,owner_pinned,scope_id FROM memory_records WHERE id=? AND version=?").get(target.id,target.version)!;

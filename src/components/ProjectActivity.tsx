@@ -10,7 +10,7 @@ import { projectClient, refreshProject } from "@/lib/use-project";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { BOARD_BUTTON } from "./ProjectBoardDialog";
 export function ProjectActivityItem({ row, cards, goal, members, now = Date.now() }: { row: ProjectActivityRow; cards: ProjectCard[]; goal: ProjectGoal | null; members: Bot[]; now?: number }) {
-  return <li className="min-w-0 space-y-1 break-words border-b border-hairline/30 py-3"><p>{activityLine(row, cards, goal)}</p><p className="text-xs text-ink-secondary">{activityActor(row.actor, members)} · <time dateTime={new Date(row.at).toISOString()} title={new Date(row.at).toLocaleString()}>{activityTime(row.at, now)}</time></p></li>;
+  return <li className="min-w-0 space-y-1 break-words border-b border-hairline/30 py-3"><p>{activityLine(row, cards, goal, members)}</p><p className="text-xs text-ink-secondary">{activityActor(row.actor, members)} · <time dateTime={new Date(row.at).toISOString()} title={new Date(row.at).toLocaleString()}>{activityTime(row.at, now)}</time></p></li>;
 }
 export default function ProjectActivity({ group, members, project, digestEnabled = true }: { group: Group; members: Bot[]; project: ProjectRead | null; digestEnabled?: boolean }) {
   const { state } = useStore(), desktop = useDesktopSurface();

@@ -723,7 +723,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "url": "https://murage.app/docs/changelog/v1-0-3#spending-ceiling-and-setup-backup-in-1-0-3",
-    "text": "- The monthly learning ceiling holds. Replies that report no usage are counted as unmetered, and learning stops at the ceiling you set.\n- First-run backup ends verified. Setup finishes only when your first backup has run and checked out, or when you have turned backups off yourself. A lost record of either no longer lets setup finish early."
+    "text": "- The monthly learning ceiling holds. Replies that report no usage are counted as unmetered, and learning stops at the ceiling you set.\n- First-run backup ends verified. Setup finishes only when your first backup has run and checked out, or when you have turned backups off yourself. Setup checks both records before it finishes."
   },
   {
     "id": "changelog/v1-0-3#rooms-and-memory-in-1-0-3",
@@ -733,7 +733,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "url": "https://murage.app/docs/changelog/v1-0-3#rooms-and-memory-in-1-0-3",
-    "text": "- A room with memory off works as it should. A room member whose memory is off keeps its place in the conversation, and Keep all lets every turn run.\n- Rooms keep their order. Each message in a room has one place in the conversation, on every window and on your phone.\n- Search and browse show your newest memories first."
+    "text": "- Rooms run with memory off. A room member whose memory is off keeps its place in the conversation, and Keep all lets every turn run.\n- Rooms keep their order. Each message in a room has one place in the conversation, on every window and on your phone.\n- Search and browse show your newest memories first."
   },
   {
     "id": "changelog/v1-0-3#thread-recall-in-1-0-3",
@@ -833,7 +833,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "url": "https://murage.app/docs/changelog/v1-0-3#also-in-1-0-3",
-    "text": "- Forgetting a memory is quick and complete. Removing a memory costs only its own deletion, and the memory helper starts with the server's data directory, so it always works on the right store.\n- Memory changes settle in the background at a steady pace. Changes to what a bot may remember are applied in measured slices under a per-minute budget, so your rooms keep responding while the work completes.\n- The memory panel and review section draw on first open, and markup drawn before the sanitizer loaded is drawn again once it is ready.\n- First paint is back under budget, with the engine sign-in work moved out of the way.\n- Routines due at boot run.…"
+    "text": "- Forgetting a memory is quick and complete. Removing a memory costs only its own deletion, and the memory helper starts with the server's data directory, so it always works on the right store.\n- Memory changes settle in the background at a steady pace. Changes to what a bot may remember are applied in measured slices under a per-minute budget, so your rooms keep responding while the work completes.\n- The memory panel and review section draw on first open, and markup drawn before the sanitizer loaded is drawn again once it is ready.\n- First paint is quicker, with the engine sign-in work moved out of the way.\n- Routines due at boot run.…"
   },
   {
     "id": "changelog/v1-0-3#known-limits-in-1-0-3",
@@ -885,23 +885,84 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "- Claude now asks before phone, web search and site tools. Tapping, typing or swiping on your phone, web search, and publishing a site each show an approval card first, as your access level sets.\n- Claude on Windows with Git Bash now starts its approval tools reliably. When Git for Windows is installed, Claude's turns reach Murage's approval tools, so Always ask shows its card as it should."
   },
   {
-    "id": "changelog/v1-0-5#overview",
+    "id": "changelog/v1-0-5#conversations-in-1-0-5",
     "title": "What changed in Murage 1.0.5",
-    "description": "The 1.0.4 hotfix. Bots can now clean up files across folders in one command, and Fuigo starts on Windows from every install.",
+    "description": "Deleting a conversation finishes and tells you where it stands, connected apps say when they need you, and hand-offs name why they could not start.",
+    "heading": "Conversations in 1.0.5",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.5",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.5",
-    "url": "https://murage.app/docs/changelog/v1-0-5",
-    "text": "Murage 1.0.5 is the hotfix for 1.0.4. Everything in 1.0.4 is included."
+    "url": "https://murage.app/docs/changelog/v1-0-5#conversations-in-1-0-5",
+    "text": "- Deleting a conversation finishes on its own. Murage keeps working through a deletion until every engine's copy is gone, and the notice tells you what is still on the way."
   },
   {
-    "id": "changelog/v1-0-5#bots-in-1-0-5",
+    "id": "changelog/v1-0-5#connected-apps-in-1-0-5",
     "title": "What changed in Murage 1.0.5",
-    "description": "The 1.0.4 hotfix. Bots can now clean up files across folders in one command, and Fuigo starts on Windows from every install.",
-    "heading": "Bots in 1.0.5",
+    "description": "Deleting a conversation finishes and tells you where it stands, connected apps say when they need you, and hand-offs name why they could not start.",
+    "heading": "Connected apps in 1.0.5",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.5",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.5",
-    "url": "https://murage.app/docs/changelog/v1-0-5#bots-in-1-0-5",
-    "text": "- Bots can now clean up files across folders in one command. A delete that names folders in different places, such as /tmp/a and ~/b, or C:\\a and D:\\b on Windows, gets its answer straight away, so Murage keeps responding while the bot works. It still asks or stops exactly as your access level sets.\n- Fuigo now starts on Windows from every install, including npm. Install Fuigo with npm, from its own installer, or use the one that ships with Murage, and your bots on Fuigo answer from the first turn."
+    "url": "https://murage.app/docs/changelog/v1-0-5#connected-apps-in-1-0-5",
+    "text": "- Connected apps tell you when they need you. When an app needs to be connected again, Murage shows it in the chat, with the step to bring it back."
+  },
+  {
+    "id": "changelog/v1-0-5#teams-in-1-0-5",
+    "title": "What changed in Murage 1.0.5",
+    "description": "Deleting a conversation finishes and tells you where it stands, connected apps say when they need you, and hand-offs name why they could not start.",
+    "heading": "Teams in 1.0.5",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.5",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.5",
+    "url": "https://murage.app/docs/changelog/v1-0-5#teams-in-1-0-5",
+    "text": "- Hand-offs name what held them up. When a teammate cannot pick up a hand-off, the project's Activity says why, so you know what to change."
+  },
+  {
+    "id": "changelog/v1-0-6#chats-in-1-0-6",
+    "title": "What changed in Murage 1.0.6",
+    "description": "All chats in one searchable list, draft-only bots, bots that know where they belong, steadier Fuigo starts on Windows and quicker memory upkeep on long histories.",
+    "heading": "Chats in 1.0.6",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.6",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.6",
+    "url": "https://murage.app/docs/changelog/v1-0-6#chats-in-1-0-6",
+    "text": "- All chats. Every conversation sits in one searchable list, opened from a wider chat pop-up."
+  },
+  {
+    "id": "changelog/v1-0-6#bots-in-1-0-6",
+    "title": "What changed in Murage 1.0.6",
+    "description": "All chats in one searchable list, draft-only bots, bots that know where they belong, steadier Fuigo starts on Windows and quicker memory upkeep on long histories.",
+    "heading": "Bots in 1.0.6",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.6",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.6",
+    "url": "https://murage.app/docs/changelog/v1-0-6#bots-in-1-0-6",
+    "text": "- Draft-only bots. A bot can prepare replies and drafts for you to review and send, and it keeps to that on every engine and channel.\n- Bots know where they belong. Each bot knows which projects and groups it is part of.\n- Your own scripts run at Full access. A script on disk, like bash build.sh, runs straight through at Full access and No limits. Ask and Auto still check with you first."
+  },
+  {
+    "id": "changelog/v1-0-6#engines-in-1-0-6",
+    "title": "What changed in Murage 1.0.6",
+    "description": "All chats in one searchable list, draft-only bots, bots that know where they belong, steadier Fuigo starts on Windows and quicker memory upkeep on long histories.",
+    "heading": "Engines in 1.0.6",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.6",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.6",
+    "url": "https://murage.app/docs/changelog/v1-0-6#engines-in-1-0-6",
+    "text": "- Fuigo starts faster on Windows. Fuigo starts steadily from every install shape.\n- Codex explains a slow start. A Codex that takes a moment to get ready says so, and is never called out of date.\n- Stop means stopped on Codex. Stop on a Codex turn always ends it as stopped by you.\n- Clearer model chips. A new chat follows its bot's model, and the chip shows it.\n- Stop that ends just your turn. Stop on a cloud computer ends your own turn, even when the computer is shared, and a hand-off answer already on record is kept."
+  },
+  {
+    "id": "changelog/v1-0-6#memory-and-data-in-1-0-6",
+    "title": "What changed in Murage 1.0.6",
+    "description": "All chats in one searchable list, draft-only bots, bots that know where they belong, steadier Fuigo starts on Windows and quicker memory upkeep on long histories.",
+    "heading": "Memory and data in 1.0.6",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.6",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.6",
+    "url": "https://murage.app/docs/changelog/v1-0-6#memory-and-data-in-1-0-6",
+    "text": "- Forget means gone at once. Forget a memory and its words are gone the moment you click.\n- Memories in your own words. What your bots learn from you is anchored to what you actually said.\n- Past chats at hand. Bots look through your past chats without stopping to ask, and a line you forgot never turns up.\n- Quicker upkeep on long histories. Deleting conversations finishes faster, and Stop on a routine ends it cleanly.\n- More numbers masked. Account and card numbers you paste are masked in more formats, IBANs included.\n- Backups run straight through. Backups know every folder Murage keeps."
+  },
+  {
+    "id": "changelog/v1-0-6#everyday-use-in-1-0-6",
+    "title": "What changed in Murage 1.0.6",
+    "description": "All chats in one searchable list, draft-only bots, bots that know where they belong, steadier Fuigo starts on Windows and quicker memory upkeep on long histories.",
+    "heading": "Everyday use in 1.0.6",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.6",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.6",
+    "url": "https://murage.app/docs/changelog/v1-0-6#everyday-use-in-1-0-6",
+    "text": "- Live updates without internet. On a desktop with no internet, chats keep their live updates from your own computer.\n- Hand-offs land where they belong. A reply a teammate hands back waits for its check, then arrives in the right conversation.\n- A smoother first run. An app connects under the label you confirm.\n- Kept downloads, in plain words. Files you keep from the browser are reported as kept.\n- Clearer library cards. Each template's card says in plain words what it does for you."
   },
   {
     "id": "computers/cloud-and-vps#box-cloud-computer",
@@ -1564,7 +1625,17 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → What bots can do for themselves",
     "where": "Murage docs → Features → What bots can do for themselves",
     "url": "https://murage.app/docs/features/bot-tools#allowing-and-asking",
-    "text": "allow_for_task records something you just told a bot it may do for the rest of the task, such as delete in a folder you named, message a person you named, or pay a payee you named. request_browser_connection asks if the bot may use your signed-in browser. request_credential asks you for a login or key it needs."
+    "text": "allow_for_task records something you just told a bot it may do for the rest of the task, such as delete in a folder you named, message a person you named, or pay a payee you named. request_browser_connection asks if the bot may use your signed-in browser. request_credential asks you for a login or key it needs. add_mcp_server saves a connected tool server you asked for, switched off: you turn it on with one click and enter any key on a card of its own, which the bot never sees."
+  },
+  {
+    "id": "features/bot-tools#asking-you",
+    "title": "What bots can do for themselves",
+    "description": "The tools every bot has inside Murage, in plain words, such as murage_help, list_bots, ask_bot, delegate_bot, routines, skills, images, voice notes and project tools.",
+    "heading": "Asking you",
+    "breadcrumb": "Murage docs → Features → What bots can do for themselves",
+    "where": "Murage docs → Features → What bots can do for themselves",
+    "url": "https://murage.app/docs/features/bot-tools#asking-you",
+    "text": "ask_user puts one to four questions on a card in the conversation, with options to pick and room for your own words, and your answer arrives as your next message. show_widget shows a form, a pick-one list, a confirmation or a short status in the conversation, such as a date and time picker. update_widget changes a widget the bot showed earlier, for example a progress bar moving, until you have answered it."
   },
   {
     "id": "features/bot-tools#routines",
@@ -2385,81 +2456,81 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   },
   {
     "id": "features/messaging-apps#what-messaging-apps-do",
-    "title": "Telegram, Slack and Discord",
-    "description": "Set up Telegram, Slack or Discord to message your Chief of Staff from your phone, step by step, with pairing codes and what each one can do.",
+    "title": "Telegram, Slack, Discord and WhatsApp",
+    "description": "Set up Telegram, Slack, Discord or WhatsApp to message your Chief of Staff from your phone, step by step, with pairing codes and what each one can do.",
     "heading": "What messaging apps do",
-    "breadcrumb": "Murage docs → Features → Telegram, Slack and Discord",
+    "breadcrumb": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
     "where": "Settings → Messaging apps",
     "url": "https://murage.app/docs/features/messaging-apps#what-messaging-apps-do",
-    "text": "Messaging apps let you message your Chief of Staff from Telegram, Slack or Discord. Set them up in Settings → Messaging apps. Murage must be running to receive messages. Approvals that matter stay in Murage."
+    "text": "Messaging apps let you message your Chief of Staff from Telegram, Slack, Discord or WhatsApp. Set them up in Settings → Messaging apps. Murage must be running to receive messages. Approvals that matter stay in Murage."
   },
   {
     "id": "features/messaging-apps#what-you-need-first",
-    "title": "Telegram, Slack and Discord",
-    "description": "Set up Telegram, Slack or Discord to message your Chief of Staff from your phone, step by step, with pairing codes and what each one can do.",
+    "title": "Telegram, Slack, Discord and WhatsApp",
+    "description": "Set up Telegram, Slack, Discord or WhatsApp to message your Chief of Staff from your phone, step by step, with pairing codes and what each one can do.",
     "heading": "What you need first",
-    "breadcrumb": "Murage docs → Features → Telegram, Slack and Discord",
-    "where": "Murage docs → Features → Telegram, Slack and Discord",
+    "breadcrumb": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
+    "where": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
     "url": "https://murage.app/docs/features/messaging-apps#what-you-need-first",
     "text": "Each connection pairs with your Chief of Staff, so pick one first. Every connection is private to you: only the owner account you name can pair and send messages. Tokens are stored encrypted on this computer and are never shown again."
   },
   {
     "id": "features/messaging-apps#telegram-set-up",
-    "title": "Telegram, Slack and Discord",
-    "description": "Set up Telegram, Slack or Discord to message your Chief of Staff from your phone, step by step, with pairing codes and what each one can do.",
+    "title": "Telegram, Slack, Discord and WhatsApp",
+    "description": "Set up Telegram, Slack, Discord or WhatsApp to message your Chief of Staff from your phone, step by step, with pairing codes and what each one can do.",
     "heading": "Telegram: set up",
-    "breadcrumb": "Murage docs → Features → Telegram, Slack and Discord",
+    "breadcrumb": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
     "where": "Settings → Messaging apps → Telegram",
     "url": "https://murage.app/docs/features/messaging-apps#telegram-set-up",
     "text": "1. Open BotFather in Telegram, send /newbot and follow the prompts. Copy the bot token.\n2. In Settings → Messaging apps → Telegram, paste the token and press Save token.\n3. Press Pair with Chief to get a code. Send /pair followed by the code to your new bot in a private Telegram chat.\n\nWhen it says Connected, message your bot to talk to your Chief. Messages share the Chief's current conversation. Owner-only buttons let you allow once or deny pending actions. Use Revoke to disconnect, or Replace token to move to a new token for the same bot."
   },
   {
     "id": "features/messaging-apps#slack-set-up",
-    "title": "Telegram, Slack and Discord",
-    "description": "Set up Telegram, Slack or Discord to message your Chief of Staff from your phone, step by step, with pairing codes and what each one can do.",
+    "title": "Telegram, Slack, Discord and WhatsApp",
+    "description": "Set up Telegram, Slack, Discord or WhatsApp to message your Chief of Staff from your phone, step by step, with pairing codes and what each one can do.",
     "heading": "Slack: set up",
-    "breadcrumb": "Murage docs → Features → Telegram, Slack and Discord",
-    "where": "Murage docs → Features → Telegram, Slack and Discord",
+    "breadcrumb": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
+    "where": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
     "url": "https://murage.app/docs/features/messaging-apps#slack-set-up",
     "text": "Use a private Slack app with Socket Mode on. The app-level token needs connections:write. The bot token needs im:history and chat:write, with the message.im event on. Add files:write if you want voice notes sent here.\n\n1. Save credentials: paste the App-level token and the Bot token.\n2. Choose your workspace and owner: enter the Workspace ID, App ID and your Owner member ID, then Save workspace details.\n3. Press Pair with Chief and send the code to your Slack app in a direct message from the owner."
   },
   {
     "id": "features/messaging-apps#discord-set-up",
-    "title": "Telegram, Slack and Discord",
-    "description": "Set up Telegram, Slack or Discord to message your Chief of Staff from your phone, step by step, with pairing codes and what each one can do.",
+    "title": "Telegram, Slack, Discord and WhatsApp",
+    "description": "Set up Telegram, Slack, Discord or WhatsApp to message your Chief of Staff from your phone, step by step, with pairing codes and what each one can do.",
     "heading": "Discord: set up",
-    "breadcrumb": "Murage docs → Features → Telegram, Slack and Discord",
-    "where": "Murage docs → Features → Telegram, Slack and Discord",
+    "breadcrumb": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
+    "where": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
     "url": "https://murage.app/docs/features/messaging-apps#discord-set-up",
     "text": "Create your own application and bot in the Discord Developer Portal. Murage reads only direct messages from the owner you name. Server messages and Discord approval buttons are not supported.\n\n1. Save credentials: paste the bot token.\n2. Choose your application and owner: enter the Application ID and your Owner user ID, then Save application details.\n3. Press Pair with Chief and send the code to your Discord app in a direct message.\n\nLong replies show as a preview, with the full result in Murage. Messages sent while Murage is stopped may not be recovered."
   },
   {
     "id": "features/messaging-apps#whatsapp-set-up",
-    "title": "Telegram, Slack and Discord",
-    "description": "Set up Telegram, Slack or Discord to message your Chief of Staff from your phone, step by step, with pairing codes and what each one can do.",
+    "title": "Telegram, Slack, Discord and WhatsApp",
+    "description": "Set up Telegram, Slack, Discord or WhatsApp to message your Chief of Staff from your phone, step by step, with pairing codes and what each one can do.",
     "heading": "WhatsApp: set up",
-    "breadcrumb": "Murage docs → Features → Telegram, Slack and Discord",
+    "breadcrumb": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
     "where": "Settings → Channels → WhatsApp",
     "url": "https://murage.app/docs/features/messaging-apps#whatsapp-set-up",
     "text": "Murage links to WhatsApp the way WhatsApp Web does, from this computer, using your own number, by QR or phone code. WhatsApp does not offer this link officially, and it may restrict or remove a number it sees driven by other software, without notice. A spare number on a second SIM or eSIM, set up in the WhatsApp Business app, is the best way to use this; linking your main number is your number to risk. The session and its credentials stay on this computer. Only the linked number is the owner. Chosen contacts can chat after approval. Groups start disabled.\n\n1. In Settings → Channels → WhatsApp, read the note, then press Link WhatsApp.\n2.…"
   },
   {
     "id": "features/messaging-apps#if-a-connection-stops",
-    "title": "Telegram, Slack and Discord",
-    "description": "Set up Telegram, Slack or Discord to message your Chief of Staff from your phone, step by step, with pairing codes and what each one can do.",
+    "title": "Telegram, Slack, Discord and WhatsApp",
+    "description": "Set up Telegram, Slack, Discord or WhatsApp to message your Chief of Staff from your phone, step by step, with pairing codes and what each one can do.",
     "heading": "If a connection stops",
-    "breadcrumb": "Murage docs → Features → Telegram, Slack and Discord",
-    "where": "Murage docs → Features → Telegram, Slack and Discord",
+    "breadcrumb": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
+    "where": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
     "url": "https://murage.app/docs/features/messaging-apps#if-a-connection-stops",
     "text": "The status line under each heading says what is happening, such as Connected to Chief, Waiting for your message, Pairing code expired or Connection needs attention. Use Refresh status, Retry connection, or Revoke connection and pair again. If you change your Chief of Staff, revoke the connection and pair with the new one."
   },
   {
     "id": "features/messaging-apps#voice-notes-and-full-access",
-    "title": "Telegram, Slack and Discord",
-    "description": "Set up Telegram, Slack or Discord to message your Chief of Staff from your phone, step by step, with pairing codes and what each one can do.",
+    "title": "Telegram, Slack, Discord and WhatsApp",
+    "description": "Set up Telegram, Slack, Discord or WhatsApp to message your Chief of Staff from your phone, step by step, with pairing codes and what each one can do.",
     "heading": "Voice notes and Full access",
-    "breadcrumb": "Murage docs → Features → Telegram, Slack and Discord",
-    "where": "Murage docs → Features → Telegram, Slack and Discord",
+    "breadcrumb": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
+    "where": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
     "url": "https://murage.app/docs/features/messaging-apps#voice-notes-and-full-access",
     "text": "A bot can send a voice note to these apps when you ask for one. Messages from these apps run at the bot's normal approval level. Full access applies to them only if you switch on the Full access option for channel messages."
   },
