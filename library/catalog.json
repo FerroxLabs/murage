@@ -33,7 +33,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "95f857f805c4efd6822bd19992901893ab29cefa387527171c54180b5606d68c",
+      "profileReviewHash": "4ae56c15d435859db89af8946bceca625cd56ef94bfccd8ee9a9415b92812e35",
       "requires": {
         "apps": []
       }
@@ -41,7 +41,7 @@
     {
       "slug": "coin",
       "name": "Numbers",
-      "summary": "Numbers specialist - runway, unit economics, pricing math via Greg Crabtree's Simple Numbers founder-friendly frame.",
+      "summary": "Works out whether your numbers hold up: your runway, unit economics and what you can actually afford, using the Simple Numbers approach.",
       "category": "Office",
       "outcome": "What's my runway given $[cash] and $[monthly burn]?",
       "setupMinutes": 5,
@@ -69,7 +69,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "5b66c9d6efc71ea391f815331fb43ea66ffaf6f6d28d0b19a9c96567af4d8884",
+      "profileReviewHash": "11c3fc16bbca138ec5394138c2c9c428b9d7c94efa82498d68385bef4cfb6d1a",
       "requires": {
         "apps": []
       }
@@ -77,7 +77,7 @@
     {
       "slug": "copy",
       "name": "Copy",
-      "summary": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage.",
+      "summary": "Writes copy that converts: hooks, headlines, calls to action, sales pages, rewrites and personal-marketing copy, anchored on your customers' own words.",
       "category": "Write",
       "outcome": "Write a hook for [audience] - the second line has to feel inevitable.",
       "setupMinutes": 5,
@@ -99,7 +99,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "fba657f69dfecb4c869d5bd5753647dfce71aabde5ad073ee295b2ce5ba9759e",
+      "profileReviewHash": "edefa783d7af6a90c7b57421e992dd9f36276837cb6e61590f4d4c23a28ede26",
       "requires": {
         "apps": []
       }
@@ -107,7 +107,7 @@
     {
       "slug": "forge",
       "name": "Offer",
-      "summary": "Offer specialist - value-based pricing, willingness-to-pay research, and offer-construction grounded in Madhavan Ramanujam.",
+      "summary": "Helps you decide what you are selling, at what price, and how to package it, using value-based research on what customers will pay.",
       "category": "Sell",
       "outcome": "Price my [product] based on the outcome the buyer actually pays for.",
       "setupMinutes": 5,
@@ -131,7 +131,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "0631c326975afa4c9057ace0a9aa847677c573b65018c261130d2c9306af0fc2",
+      "profileReviewHash": "3b834529c9034f1d56c970dc1cb27f62f9b9291ed3a32dc741cd070189280398",
       "requires": {
         "apps": []
       }
@@ -139,7 +139,7 @@
     {
       "slug": "helm",
       "name": "Coach",
-      "summary": "Coach - decision frames, founder cadence, stuck-and-unstuck thinking via Ben Horowitz's no-shortcuts tradition.",
+      "summary": "Acts as a founder coach, helping you spot what you are avoiding and get unstuck with clear decision frames and a steady weekly cadence.",
       "category": "Run",
       "outcome": "What am I avoiding right now?",
       "setupMinutes": 5,
@@ -166,7 +166,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "bf88e3d13c39734424e06505342a9a025be99309282178054cdcf865f4d74f6b",
+      "profileReviewHash": "d5b89216de479407d1e3d89a3d4767f48704a82214732501eb21e84aa08f9c43",
       "requires": {
         "apps": []
       }
@@ -174,7 +174,7 @@
     {
       "slug": "humanizer",
       "name": "Humanizer",
-      "summary": "Catches AI-tells in your drafts and rewrites them to read human.",
+      "summary": "Catches AI-tells in your drafts and rewrites them to read human. It layers your Voiceprint on top so the result sounds like you, not a model.",
       "category": "Write",
       "outcome": "Scan this draft for AI tells: give me a score.",
       "setupMinutes": 5,
@@ -199,7 +199,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "3a42cbddfbf2b588a9d542a44b0b4437d5253315eda3f79f26768fa2cdb73bc9",
+      "profileReviewHash": "60d8d232bb670f4fa357a9ec4a5dca668043f59d6306b2362dfe3f9447cdf1f6",
       "requires": {
         "apps": []
       }
@@ -207,7 +207,7 @@
     {
       "slug": "lens",
       "name": "Analyst",
-      "summary": "Analyst - funnel diagnosis, cohort retention, experiment discipline via Kaushik measurement + Kohavi rigor.",
+      "summary": "Reads your funnel and cohort data to find where people drop off and which group sticks around, then designs the experiment that settles the argument.",
       "category": "Research",
       "outcome": "Diagnose where my funnel drops - start with the leading indicator.",
       "setupMinutes": 5,
@@ -234,7 +234,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "c27bb5949a616ff9923092b2e7a736e7789fccc7c07b52148dc53a1f0c7c2fcd",
+      "profileReviewHash": "0d7bdd5cbb61037ccda2a9024d938ea13290701e115adbdb7e322dfc1e83904d",
       "requires": {
         "apps": []
       }
@@ -242,7 +242,7 @@
     {
       "slug": "mend",
       "name": "Support",
-      "summary": "Support specialist - ticket triage, onboarding flow, churn prevention via Lincoln Murphy's Desired Outcome framework.",
+      "summary": "Helps you triage support tickets, improve onboarding and reduce churn by checking whether the product is moving customers toward what they came to achieve.",
       "category": "Run",
       "outcome": "Design the onboarding flow - the Desired Outcome path.",
       "setupMinutes": 5,
@@ -267,7 +267,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "aed20fc9e65b67ab8a5466fa3358f937e8b16efb695dec9a87f619574a2e4aed",
+      "profileReviewHash": "03ff726ed59befb7a4be01cfe30df331999d9827a1efab738dc968a4f0df915d",
       "requires": {
         "apps": []
       }
@@ -275,7 +275,7 @@
     {
       "slug": "mira",
       "name": "Brand",
-      "summary": "Brand specialist - onlyness-first positioning and visual systems via Marty Neumeier's difference-beats-betterness method.",
+      "summary": "Helps you build a brand people recognize, with positioning built on what makes you different and a visual and verbal look that fits.",
       "category": "Write",
       "outcome": "Write my onlyness statement - one sentence, no betterness.",
       "setupMinutes": 5,
@@ -298,7 +298,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "0a330b1668e7378f7b081719415b07492b8930691b1ddf172f9e43a8c21c1061",
+      "profileReviewHash": "d1c63eb305dc44fab8b1f6f7926dc98d06929dc08b87cee4142efb22f5d98788",
       "requires": {
         "apps": []
       }
@@ -306,7 +306,7 @@
     {
       "slug": "patch",
       "name": "Ops",
-      "summary": "Turn project notes into owners, dependencies and next actions",
+      "summary": "Ops helps coordinate projects, operating rhythms, CRM reviews and short SOPs from supplied notes.",
       "category": "Run",
       "outcome": "Project plan with owners, dependencies and next actions",
       "setupMinutes": 5,
@@ -331,7 +331,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "bfad8fd304606dcf590f16e7ea40db26feddeaf0440e45cea01de501fc359055",
+      "profileReviewHash": "aa3198938d2158f91dec9da6bc106fa04d4dbdfb884241eb8a57eead4e4d981b",
       "requires": {
         "apps": []
       }
@@ -339,7 +339,7 @@
     {
       "slug": "probe",
       "name": "Validator",
-      "summary": "Validator - quantitative validation, fake-door tests, MVP discipline via Eric Ries's build-measure-learn.",
+      "summary": "Tests whether an idea is worth building, using fake-door tests and small experiments so you can drop a weak idea cheaply.",
       "category": "Research",
       "outcome": "Design a fake-door test for [hypothesis].",
       "setupMinutes": 5,
@@ -363,7 +363,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "711e11b8d0a3cfcdc6b1e00e03d48b6bf8f39b7614a0a33bc698f495daac1396",
+      "profileReviewHash": "9730d51077707e93755a586d20a62d4230e8ac9e9fa4894a2ea88f739bd80f2c",
       "requires": {
         "apps": []
       }
@@ -371,7 +371,7 @@
     {
       "slug": "quiet-money-career-strategist",
       "name": "Career Strategist",
-      "summary": "Layer C specialist - trajectory check, market value calibration, skill stack, switching cost, negotiation reps.",
+      "summary": "Looks at your career as your biggest financial lever: where your trajectory is heading, what your skills are worth in the market, and how to prepare for a raise, promotion or job switch.",
       "category": "Office",
       "outcome": "Read `quiet-money/position.md` first. The Position Auditor captured income, jurisdiction, and equity comp. Don't re-ask.",
       "setupMinutes": 5,
@@ -398,7 +398,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "97e97ca819ba5c854089e38cb0227c948b11407ff7acb3bfbef3b349be6d4b7a",
+      "profileReviewHash": "36f106e1b1aaeae3d706cdaefc6dfb4a097a3cd7d0377a6300f81ffb2d7df381",
       "requires": {
         "apps": []
       }
@@ -406,7 +406,7 @@
     {
       "slug": "quiet-money-generational-planner",
       "name": "Generational Planner",
-      "summary": "Layer G specialist - term life + will + guardians + education vehicle + beneficiaries + disability. The will-and-guardian decision is non-deferrable.",
+      "summary": "Helps you plan for your family: term life cover, a will, guardians, education savings, beneficiaries, disability cover and the care of aging parents.",
       "category": "Office",
       "outcome": "Read `quiet-money/position.md` first for dependent count, ages, income, equity, jurisdiction.",
       "setupMinutes": 5,
@@ -431,7 +431,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "ee6d0bfb682ecfb2164fb4b3bae9c5489773c287a87fd76f5d0941bce4a58b4a",
+      "profileReviewHash": "0d0c8596a01ba496b69d4659ef92d19cab7b4fd5c91ea36102fa6d9f5a5e67d8",
       "requires": {
         "apps": []
       }
@@ -439,7 +439,7 @@
     {
       "slug": "quiet-money-position-auditor",
       "name": "Position Auditor",
-      "summary": "Layer 1 specialist - extracts complete financial snapshot (income, spend, savings, debt, equity, insurance, jurisdiction) into quiet-money/position.md.",
+      "summary": "Builds a complete snapshot of your finances (income, spending, savings, debt, equity, insurance and where you live) and saves it as a position document the rest of the Quiet Money team works from.",
       "category": "Office",
       "outcome": "One-question-at-a-time intake. Don't dump 20 fields on the user.",
       "setupMinutes": 5,
@@ -466,7 +466,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "1a9896dcbac646b7fd6a13257a8b391b8c023c8eec2d358252631798ed2b3568",
+      "profileReviewHash": "0af048cab9bfd1f6a63694e5579620bce44e032515c3503bc17e16c37737fe34",
       "requires": {
         "apps": []
       }
@@ -474,7 +474,7 @@
     {
       "slug": "quiet-money-spending-auditor",
       "name": "Spending Auditor",
-      "summary": "Layer S specialist - 3-bucket spending (Foundations/Joy/Signal), lifestyle ratchet defense, annual Spending Audit, no-one-knows test.",
+      "summary": "Reviews your spending in three buckets (Foundations, Joy and Signal) and helps you hold your lifestyle steady as your income rises.",
       "category": "Office",
       "outcome": "Read `quiet-money/position.md` first. Don't re-ask for total spend.",
       "setupMinutes": 5,
@@ -501,7 +501,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "fcae251c2f89df148e2701125726493d00cfbc5f882c564bca2a3b4fc3606e7f",
+      "profileReviewHash": "5e2e18dbaa48f87c5a13cc11b443326039aec89bf716814ce7933f7b9df891d8",
       "requires": {
         "apps": []
       }
@@ -509,7 +509,7 @@
     {
       "slug": "quiet-money-time-coach",
       "name": "Time Coach",
-      "summary": "Layer T specialist - hourly cost, conversion test, weekly Friday question, annual deathbed audit. Wealth is time you control.",
+      "summary": "Helps you see money as time you control, with an hourly cost for your spending, a weekly Friday question and a yearly review of what matters.",
       "category": "Office",
       "outcome": "Read `quiet-money/position.md` for income + Four Freedoms weighting (from `enough-number.md`).",
       "setupMinutes": 5,
@@ -535,7 +535,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "3215a10b946b6e155ccbb70d43d104e89c8a4fe24bfd84743692e64fcaa790ea",
+      "profileReviewHash": "e779a8c2597d622b911440ba465ed7988dab00c362575264b905068016d93679",
       "requires": {
         "apps": []
       }
@@ -543,7 +543,7 @@
     {
       "slug": "quiet-money-windfall-navigator",
       "name": "Windfall Navigator",
-      "summary": "Layer W specialist - 5 protocols for sudden money, income shock, divorce, health shock, sudden expense. The 12-month rule for windfalls.",
+      "summary": "Walks you through the big money moments (sudden money, income shock, divorce, health shock or a sudden expense) with a clear step-by-step protocol and a 12-month rule for windfalls.",
       "category": "Office",
       "outcome": "Identify the subtype on first contact. Sudden money, income shock, divorce, health shock, sudden expense. Each gets a different protocol.",
       "setupMinutes": 5,
@@ -570,7 +570,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "a42f929d33356cb7a4c853452b07d6e46a9c4833d649c6b5a20bfcdbab8394a6",
+      "profileReviewHash": "1f4b95bc1f87b782f41f05738322f1be5aeaf8dea4d7af6bce82faa5dcf3cc76",
       "requires": {
         "apps": []
       }
@@ -578,7 +578,7 @@
     {
       "slug": "quiet-money",
       "name": "Quiet Money",
-      "summary": "Personal wealth coach - builds real durable wealth via the boring path. Anti-guru, anti-urgency, pro-math. Educational only; not financial advice.",
+      "summary": "A personal wealth coach that helps you tell the quiet money play from the loud one, building lasting wealth through a few boring habits, backed by the math. Educational only, not financial advice.",
       "category": "Office",
       "outcome": "Run me through the 6-question intake and tell me where I stand.",
       "setupMinutes": 5,
@@ -603,7 +603,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "a38f4bb2f7ec8bd1208cd3067867b7f286c7a49a167e0618b04f547d6f12fe1f",
+      "profileReviewHash": "a39b3671dfbd09d85decd49914fe572c427377edd3c222c8e723d25eb19fb2a4",
       "requires": {
         "apps": []
       }
@@ -611,7 +611,7 @@
     {
       "slug": "research",
       "name": "Research",
-      "summary": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method.",
+      "summary": "Finds out who will buy your product and why now, using switch interviews and the Jobs-to-be-Done method.",
       "category": "Research",
       "outcome": "Find me the real customer for [product] - I'm tired of guessing.",
       "setupMinutes": 5,
@@ -637,7 +637,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "f3328f658eb389b7f3625a632fe6ec3783c8f28d2a85febbab79897d447f0664",
+      "profileReviewHash": "bafbcf5071b359ceae8ef9f1afb3da8b2f7fa8d4d20e5539e904fae0e5c8a2d8",
       "requires": {
         "apps": []
       }
@@ -645,7 +645,7 @@
     {
       "slug": "sales",
       "name": "Sales",
-      "summary": "Sales specialist - SPIN-disciplined discovery, real-vs-stated objection sorting, and advancement-not-continuation close mechanics.",
+      "summary": "Helps you run better sales conversations: sharper discovery questions, sorting real objections from stated ones, and closes that move the deal forward.",
       "category": "Sell",
       "outcome": "Run me through a SPIN discovery call for a $[X] sale.",
       "setupMinutes": 5,
@@ -669,7 +669,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "1638e79c20b4ed1d6c6a0b5de99d45ad67d64cb11fdfaec27507fbfe7b4ff56d",
+      "profileReviewHash": "248784757c6da0e726094f13d9f3d2aaebafa3610f92b2f0527fbc5baa83933d",
       "requires": {
         "apps": []
       }
@@ -677,7 +677,7 @@
     {
       "slug": "sentry",
       "name": "Counsel",
-      "summary": "Counsel - startup-stage legal framing on formation, contracts, IP, and compliance. Not your lawyer; flags when you need one.",
+      "summary": "Gives startup-stage legal framing on formation, contracts, IP and compliance, and tells you when it is time to bring in a real lawyer.",
       "category": "Office",
       "outcome": "I'm starting a business - LLC, C-corp, or S-corp?",
       "setupMinutes": 5,
@@ -703,7 +703,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "dfcabd58673f4d9c860c65126bf8e7421b57f832622acd207676d0aa17bbc09b",
+      "profileReviewHash": "10a42f4c427cc5eca56f30a8e24fa8172ffab63f70413845a7463c9fe79b06ff",
       "requires": {
         "apps": []
       }
@@ -711,7 +711,7 @@
     {
       "slug": "slate",
       "name": "Talent",
-      "summary": "Hiring specialist: role design, structured candidate evaluation, contractor-vs-employee structuring via Claire Hughes Johnson's Scaling People.",
+      "summary": "Helps you decide who to hire and when, design the role, evaluate candidates in a structured way and choose between a contractor and an employee.",
       "category": "Run",
       "outcome": "Design the role before I post the job: what outcome stops being delivered?",
       "setupMinutes": 5,
@@ -738,7 +738,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "8b3bd418c31f6c01a4b62cc4d36a588b51ecee2400504835d7219d94ea355785",
+      "profileReviewHash": "c351e6bdbc47201f6dca52f35fec8a30f360416949c9ef4f9cab645511bfc179",
       "requires": {
         "apps": []
       }
@@ -746,7 +746,7 @@
     {
       "slug": "smith",
       "name": "Code",
-      "summary": "Code architect - specs, ADRs, agent handoffs via Ryan Singer's Shape Up. PM/architect, not the coding agent.",
+      "summary": "Turns an idea into a clear spec with an agreed scope, ready to hand to a coding agent, using the Shape Up method.",
       "category": "Build",
       "outcome": "Shape this feature - my appetite is 6 weeks.",
       "setupMinutes": 5,
@@ -772,7 +772,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "1abf59c90d25b66dcc749650b631cedcd0d8cd4cd2a57d708eb7989487e1daa6",
+      "profileReviewHash": "b996dfb95c435f621d811c78432784c18da537ac4b5e7355663e13e0faf164d7",
       "requires": {
         "apps": []
       }
@@ -780,7 +780,7 @@
     {
       "slug": "spark",
       "name": "Build",
-      "summary": "Long-form builder - course, book, and curriculum architecture via Wiggins & McTighe's Backward Design.",
+      "summary": "Helps you plan a course, book or curriculum by starting from what the learner should walk away with and working backward to the shortest path.",
       "category": "Build",
       "outcome": "Outline a course that delivers a specific learner transformation.",
       "setupMinutes": 5,
@@ -805,7 +805,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "c5df33f72fffa706c71162ce242fc5f80791df02bd8ff6ecef9baeab928f26ca",
+      "profileReviewHash": "6343b76e6b67edc8446257fe4893693cb5e717628bce4d7d261dfb2e808cc41d",
       "requires": {
         "apps": []
       }
@@ -813,7 +813,7 @@
     {
       "slug": "stage",
       "name": "Pitch",
-      "summary": "Pitch specialist - investor decks, strategic narrative, and demo-day craft via Sequoia + Andy Raskin's shift framing.",
+      "summary": "Builds your investor pitch: the strategic story, a ten-slide deck that backs it up, and the craft for demo day.",
       "category": "Sell",
       "outcome": "Name the macro-trend shift that makes my company inevitable.",
       "setupMinutes": 5,
@@ -839,7 +839,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "adcfafd33270e77d2862b855079688c9697208e4979fa851b59eec4465033923",
+      "profileReviewHash": "c53beedbcac31f3f4129b59700bff1de101d17705762e4239434073738db9297",
       "requires": {
         "apps": []
       }
@@ -847,7 +847,7 @@
     {
       "slug": "vault",
       "name": "Storefront",
-      "summary": "Storefront specialist - DTC, marketplace, and agentic GEO (generative engine optimization) for modern ecommerce.",
+      "summary": "Helps you sell physical and digital goods through your storefront and the marketplaces where buyers already are, from product pages and listings to being found by AI shopping agents.",
       "category": "Sell",
       "outcome": "Optimize my PDP for AI-shopping discovery (GEO).",
       "setupMinutes": 5,
@@ -872,7 +872,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "2643d6b39c435f59b7085e0847fb881d154d82e9c3bb163c417ef1fac1a56535",
+      "profileReviewHash": "9a492d74f452521286a4116494428f1be516af5a62e30136ec4ed0459666ea50",
       "requires": {
         "apps": []
       }
@@ -880,7 +880,7 @@
     {
       "slug": "verdict",
       "name": "Quality Gate",
-      "summary": "Quality gate: scores content on 8 dimensions, flags issues, names the one specific edit. Scores, doesn't rewrite.",
+      "summary": "Gives your content a last critical read before it ships: a score across eight dimensions, the flagged issues and the one edit that would lift it most. It scores, it does not rewrite.",
       "category": "Build",
       "outcome": "Score this draft on the 8 dimensions and name the one edit.",
       "setupMinutes": 5,
@@ -904,7 +904,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "4432280300f2d7d25e4f936d2a6f11f8142439130ea5c528f920c04d2e3e3017",
+      "profileReviewHash": "1036682e5ca791d9b442ceff5e090d7be0b1a388819ef2573647773ac6e36b24",
       "requires": {
         "apps": []
       }
@@ -912,7 +912,7 @@
     {
       "slug": "voiceprint",
       "name": "Voiceprint",
-      "summary": "Voice-profile builder - captures how you write so any AI can write as you. Samples beat self-report.",
+      "summary": "Captures how you write from your own samples, so any AI can write as you.",
       "category": "Write",
       "outcome": "Build my voice profile - I have 5 writing samples ready (full path, ~1 hr).",
       "setupMinutes": 5,
@@ -938,7 +938,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "dd28890096da482f49b0b7d17686ec470e0c1ecde57c611826a6b2e6ecb2c226",
+      "profileReviewHash": "ac5891f93a720579274ee5ddc7caa3ea8fe635924c807ec81d0b025809da4c5c",
       "requires": {
         "apps": []
       }
@@ -946,7 +946,7 @@
     {
       "slug": "academic-paper",
       "name": "Academic Paper Creator",
-      "summary": "You are **Academic Paper Creator** - an AI assistant that creates formally structured academic papers, research papers, white papers, and technical reports with native Word TOC fields, LaTeX-to-OMML equations, scholarly bibliography, and professional formatting.",
+      "summary": "Writes formally structured academic papers, white papers and technical reports as Word documents, with a real table of contents, proper equations and a scholarly bibliography.",
       "category": "Documents",
       "outcome": "A formatted .docx paper with a native, auto-updating Table of Contents",
       "setupMinutes": 3,
@@ -967,7 +967,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "e925e638990c843718318e959c06c9aec0221b5f8f836ce332cc390e2ed6038e",
+      "profileReviewHash": "da9aed2c82e456139596fb46b2d793d7b698d7deeb0aea9b10235da4c14fb3de",
       "requires": {
         "apps": []
       }
@@ -975,7 +975,7 @@
     {
       "slug": "account-research",
       "name": "Account Research",
-      "summary": "An evidence-backed account plan and three relevant opening messages",
+      "summary": "Compass prepares an account plan with source references from the material you supply.",
       "category": "Sales",
       "outcome": "An account plan with source references",
       "setupMinutes": 5,
@@ -996,7 +996,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "feb0cd68f4fa8b3c2fc35ea3d1a3dcfb1085b386f14381f67819ff0daa78b698",
+      "profileReviewHash": "818eeb10d01ffcfa44077e74116a1b6300ef1c5295765922024d2cdd811b7c9e",
       "requires": {
         "apps": [
           "LinkedIn",
@@ -1008,7 +1008,7 @@
     {
       "slug": "ad-creative",
       "name": "Ad Creative",
-      "summary": "Ten ad-copy variants with image briefs and a clear test plan",
+      "summary": "Flare prepares ten ad-copy variants with headlines and calls to action.",
       "category": "Marketing",
       "outcome": "Ten ad-copy variants with headlines and calls to action",
       "setupMinutes": 5,
@@ -1029,7 +1029,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "df91317cbed93a7e6f2c2025ea0e287633a8e12b377699674d861704b80ff9ce",
+      "profileReviewHash": "0572215830bfc0735fd70de8409f7bdeb1077cc8f49f747de7fa3052e7e4ce2c",
       "requires": {
         "apps": [
           "Meta Ads",
@@ -1041,7 +1041,7 @@
     {
       "slug": "advisor",
       "name": "Advisor",
-      "summary": "A sounding board for decisions, plans, and the admin of life",
+      "summary": "Helps you think through a decision, plan or the admin of life out loud, as a second head that never tells you how to live.",
       "category": "Decide",
       "outcome": "The decision laid out on the criteria you actually care about, with a pick",
       "setupMinutes": 2,
@@ -1069,7 +1069,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "091d81309eb0a027125d27a21068f25a98034ef0f4cc012fb67175a4b28c6bce",
+      "profileReviewHash": "4d0738d04fdee9748af8bc3e2fdbfb022d08aedb04cb77f667d6098720c999b7",
       "requires": {
         "apps": []
       }
@@ -1098,7 +1098,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "2321e4297efdf94551c1e764ce8972cfde9acc4b21f15b509511b0e642d3f2d2",
+      "profileReviewHash": "9f882ba6e6c3eec5e30afcd3f9a09dc240a796f6525a7aaadd1ed3de06c15223",
       "requires": {
         "apps": [
           "Harvest",
@@ -1197,7 +1197,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "4e64ae5b117df47b495022761f9cdd2393f5940dc7a3eacf40df463fe93e6b16",
+      "profileReviewHash": "0c9eb6eabf5626c05cfea6ebe1f9d199b383b75d1dca7a99f96522d11eaf6e83",
       "requires": {
         "apps": [
           "Google Sheets",
@@ -1208,7 +1208,7 @@
     {
       "slug": "beautiful-mermaid",
       "name": "Beautiful Mermaid",
-      "summary": "You are a diagram creation assistant specialized in generating beautiful Mermaid diagrams.",
+      "summary": "Turns a description of a process or system into a clean flowchart, sequence, state, class or ER diagram, rendered as SVG or ASCII.",
       "category": "Diagrams",
       "outcome": "A rendered diagram as themed SVG, or ASCII for the terminal",
       "setupMinutes": 2,
@@ -1226,7 +1226,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "d137d3a5e1c7cc00ca4a66c4b3f136474e41d824449786d104b3acc784094c8b",
+      "profileReviewHash": "ead89eb31cf7b18f75e862b4abe546c58f656e0256d57e1585d154367f97106c",
       "requires": {
         "apps": []
       }
@@ -1234,7 +1234,7 @@
     {
       "slug": "bills-review",
       "name": "Bills Review",
-      "summary": "Supplier bills matched to orders and receipts, with exceptions ready for your review",
+      "summary": "Match checks supplier bills against your approved orders, delivery or service records and credits.",
       "category": "Money",
       "outcome": "A source-linked queue of matched bills and exceptions",
       "setupMinutes": 5,
@@ -1256,7 +1256,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "73be2fb681f945a4e4b033ed1a6c220e9d33172a09af84b6b7e8d9183077f581",
+      "profileReviewHash": "4beb8b372edb09fd0c5a9678a044a44366a7abee0980dcad6c6c029e6205d325",
       "requires": {
         "apps": [
           "QuickBooks Online",
@@ -1268,7 +1268,7 @@
     {
       "slug": "blog-writer",
       "name": "Blog Writer",
-      "summary": "Complete blog drafts with search basics, links and image briefs",
+      "summary": "Ink prepares a blog brief, outline and complete article draft.",
       "category": "Marketing",
       "outcome": "A blog brief, outline and complete article draft",
       "setupMinutes": 5,
@@ -1289,7 +1289,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "179536cc480cc36d5564e06d7b0fe5667cda29d6ac3b7630926312b2d538d188",
+      "profileReviewHash": "cf74985d75d0f674957db904ab67347b6e46234ab7386fe9e649e2a1de797ee0",
       "requires": {
         "apps": [
           "WordPress",
@@ -1322,7 +1322,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "b096fde9935213a475d68515f81ca0ede1fbc91e665639b9b693b50126df55f7",
+      "profileReviewHash": "ae873d87ff04996683932034cfdc8e4252e9d6eac3ab6ce4402a6979d5245b56",
       "requires": {
         "apps": [
           "Google Slides",
@@ -1333,7 +1333,7 @@
     {
       "slug": "book-copy-editor",
       "name": "The Copy Editor",
-      "summary": "Line-level correctness and consistency across a whole manuscript",
+      "summary": "Goes through a whole manuscript and makes every page correct, consistent and clean, without changing what the book says.",
       "category": "Publishing",
       "outcome": "A copy-edited manuscript with every change traceable",
       "setupMinutes": 3,
@@ -1353,7 +1353,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "65352004dc246660170ce098dd4c8a7e0c13048c4465c0dac98f5f04dc42f79c",
+      "profileReviewHash": "d90e553587f7d8b3cdec16c180b9c6d65c5f33488798575a3ed621654a57c918",
       "requires": {
         "apps": []
       }
@@ -1361,7 +1361,7 @@
     {
       "slug": "book-developmental-editor",
       "name": "The Developmental Editor",
-      "summary": "Structural editing that shows exactly what to strengthen and where",
+      "summary": "Reads your drafted manuscript against its plan and tells you honestly where the structure holds together and what to strengthen.",
       "category": "Publishing",
       "outcome": "A chapter-by-chapter editorial report the architect can act on",
       "setupMinutes": 3,
@@ -1380,7 +1380,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "73f8a9f51107f2dd09c805c919ba5b4cf22a6975bb1462361d1c17f0ac9828c2",
+      "profileReviewHash": "080219ba2264c2995ec02b3c84ea0e63d0bbfaa417c93b1ca26c1187922d2514",
       "requires": {
         "apps": []
       }
@@ -1388,7 +1388,7 @@
     {
       "slug": "book-nonfiction-architect",
       "name": "Non-Fiction Architect",
-      "summary": "Owns the argument, chapter plan and drafts of a non-fiction book",
+      "summary": "Plans a non-fiction book as an argument and drafts its chapters, keeping a register of your facts and sources.",
       "category": "Publishing",
       "outcome": "A chapter plan where every chapter earns its place",
       "setupMinutes": 5,
@@ -1409,7 +1409,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "7ade081077e1fa8c455d6da3ef9c4f779b62854a1e4ccb6d4b1ddd0ae85925b1",
+      "profileReviewHash": "6d94fae3df4f8474e8deb7d13f042041b71fc573331eaa93d19188b4935641b7",
       "requires": {
         "apps": []
       }
@@ -1417,7 +1417,7 @@
     {
       "slug": "book-production",
       "name": "Production and Publishing",
-      "summary": "Turns a copy-clean manuscript into the package a store will accept",
+      "summary": "Turns a finished, copy-clean manuscript into the files a bookstore will accept for upload.",
       "category": "Publishing",
       "outcome": "A formatted manuscript with front and back matter",
       "setupMinutes": 5,
@@ -1435,7 +1435,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "68a76e8ab18e55b18c732fdac3019a9b0445a8b57cc0bb4b82298866ef33a182",
+      "profileReviewHash": "9080196d90196d53b32cd3bd7f1027580d6e51ab0cc2a0073724f670aeb07bed",
       "requires": {
         "apps": []
       }
@@ -1443,7 +1443,7 @@
     {
       "slug": "book-publisher",
       "name": "The Publisher",
-      "summary": "You are The Publisher: the fastest way to get a book project off the ground. You take an idea, scope it into a clean brief, set up the shared `book/` workspace, and then stand up the right team to actually write, edit, and produce it. You are the on-ramp, not the whole house.",
+      "summary": "Turns your book idea into a clear brief, sets up a shared book workspace and brings in the right team to write, edit and produce it.",
       "category": "Publishing",
       "outcome": "A clean book brief",
       "setupMinutes": 4,
@@ -1463,7 +1463,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "05bec8b4d4668fe600bc0e0905596cc9ad44e27285821317f09fe81010533aea",
+      "profileReviewHash": "6902896ea842149658d0a74db604eb1e72d8004438b1b855c679e46281a1e362",
       "requires": {
         "apps": []
       }
@@ -1471,9 +1471,8 @@
     {
       "slug": "book-publishing-house",
       "name": "Book Publishing House",
-      "summary": "Your book plan, manuscript reviews and production preparation in one place",
+      "summary": "A tracked book plan, chapter edits and a production checklist.",
       "category": "Creators",
-      "outcome": "A tracked book plan, chapter edits and a production checklist",
       "setupMinutes": 5,
       "manifest": "teams/book-publishing-house/book-publishing-house.emberteam.json",
       "readme": "teams/book-publishing-house/README.md",
@@ -1547,7 +1546,7 @@
     {
       "slug": "book-story-architect",
       "name": "Story Architect",
-      "summary": "Fiction planning and drafting lead: outline, story bible and chapters",
+      "summary": "Plans your novel with an outline and a story bible, drafts the chapters and revises them as the story changes.",
       "category": "Publishing",
       "outcome": "A working outline and a maintained story bible",
       "setupMinutes": 5,
@@ -1570,7 +1569,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "ce629ca741c3df1acc9d78ebc8066aa6bf2c657a8ac0dd3decca10ab2b8f8623",
+      "profileReviewHash": "f2fe707c596823803ec325229f5627b195fa645ba72c1ad1d07ba24a4bad8803",
       "requires": {
         "apps": []
       }
@@ -1599,7 +1598,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "013f71219c3e44f5c872bb8f7d20b4a427952f1a1dd668f6fe25500fb6499cd6",
+      "profileReviewHash": "f121b92bfaded5ceb2793794d11449cef8e4c7add2ce53a0386d561e4e962b57",
       "requires": {
         "apps": [
           "Calendly",
@@ -1613,7 +1612,7 @@
     {
       "slug": "bookkeeper",
       "name": "Bookkeeper",
-      "summary": "A reconciled month-end pack with questions your accountant can resolve",
+      "summary": "Ledger prepares a month-end pack with supported reports and exceptions.",
       "category": "Money",
       "outcome": "A month-end pack with supported reports and exceptions",
       "setupMinutes": 5,
@@ -1637,7 +1636,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "f85c00956f698a2c258003595983fa9f093a44ff3deac692b59773368db50897",
+      "profileReviewHash": "24f8d97bbfa2d45b9b465e82e94b58e7add9297b191d73a74d8ca42365b10ab3",
       "requires": {
         "apps": [
           "QuickBooks Online",
@@ -1748,7 +1747,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "015362354942a73d257fcc5fe82ac4076cf38f8715fb0a488b40dd771ecfd844",
+      "profileReviewHash": "9e9da39fdf0503467b3cf4cbaf58056350005c2716f6f19512b075ba74f63008",
       "requires": {
         "apps": [
           "Canva",
@@ -1760,7 +1759,7 @@
     {
       "slug": "brand-voice-guide",
       "name": "Brand Voice Guide",
-      "summary": "A usable voice guide with examples and specific draft corrections",
+      "summary": "Tone prepares a brand voice and style guide from the material you supply.",
       "category": "Marketing",
       "outcome": "A brand voice and style guide",
       "setupMinutes": 5,
@@ -1781,7 +1780,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "6134ee84f68b8592acc84f401c6f2b71367e7bc79f835b147ea872564c49b32f",
+      "profileReviewHash": "867e616314b72d56ce6dd3808d866aeb0a39ec3758435b9c633b28ba429221b3",
       "requires": {
         "apps": [
           "Google Docs",
@@ -1792,7 +1791,7 @@
     {
       "slug": "budget",
       "name": "Budget",
-      "summary": "A budget and monthly variance sheet with three lines to watch",
+      "summary": "Gauge prepares an annual budget with monthly assumptions.",
       "category": "Money",
       "outcome": "An annual budget with monthly assumptions",
       "setupMinutes": 5,
@@ -1813,7 +1812,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "2d7017dff01c22dca99e92544310fa789ddb2078fe9e1a97fcf23dd526ad1188",
+      "profileReviewHash": "b9df0fce5dc4cb694827b5bddcfe3a9e0bd294dff5466053a563facbfb21f7c1",
       "requires": {
         "apps": [
           "QuickBooks Online",
@@ -1825,7 +1824,7 @@
     {
       "slug": "builder",
       "name": "Builder",
-      "summary": "Code, scripts and automations, including the bots and skills you build next",
+      "summary": "Writes and debugs code, designs automations and helps you build your next bot or skill, showing it running rather than just saying it works.",
       "category": "Build",
       "outcome": "Working code with the way you verified it stated, not just asserted",
       "setupMinutes": 3,
@@ -1855,7 +1854,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "8bfcced777a1eabf299dc0f258cf5eb1adae0df93315dbe163ec7808f0b22ff9",
+      "profileReviewHash": "ada02ef638eae8abaf5279f7338122404fbf3e0457fae46075d1f3769ae6fd6f",
       "requires": {
         "apps": []
       }
@@ -1863,7 +1862,7 @@
     {
       "slug": "business-plan",
       "name": "Business Plan",
-      "summary": "A practical business plan with assumptions and company questions visible",
+      "summary": "Blueprint prepares a business plan with a concrete operating model for your review.",
       "category": "Founders",
       "outcome": "A business plan with a concrete operating model",
       "setupMinutes": 5,
@@ -1884,7 +1883,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "1012ba257e31df388cb914997afadafb93df30312043ba632c0f8e291b4445b3",
+      "profileReviewHash": "df3c9976107b65fe240cdab1dccec168871b3e59525e032c2b3b7e6c54f50c1f",
       "requires": {
         "apps": [
           "Google Docs"
@@ -1915,7 +1914,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "06a8c6bda59224326bae479c35c10bada370cd8794aed51fdb28d0c4e56dd3b3",
+      "profileReviewHash": "ae2ed5b467de71605413804de24d99edc6edf7fe41952d65eb00c0aa736821be",
       "requires": {
         "apps": [
           "Gong",
@@ -1948,7 +1947,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "4e58972c78d3ae9495411037f05f5d5d4d6b1dc3d1c2e53b7ddbb022036c3c98",
+      "profileReviewHash": "2c2e53058f97e153d8e134850ef91fe70cfd421936b81d8b698db8b2f5b5e0c9",
       "requires": {
         "apps": [
           "Shopify",
@@ -1980,7 +1979,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "38e26d7bf1af8d7893084e1cbc72d9ca7cfe7e403b50093b072ad797abb7b884",
+      "profileReviewHash": "f7c6335150019702ecd5a4173a6cdc8c53bbb5f2ab9c366b747bf349230ec380",
       "requires": {
         "apps": [
           "Google Docs",
@@ -1991,7 +1990,7 @@
     {
       "slug": "cash-watch",
       "name": "Cash Watch",
-      "summary": "Thirteen weeks of cash, with tight weeks and choices made clear",
+      "summary": "Tally prepares a thirteen-week cash forecast with visible assumptions.",
       "category": "Money",
       "outcome": "A thirteen-week cash forecast with visible assumptions",
       "setupMinutes": 5,
@@ -2013,7 +2012,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "d49e792933d03faf450297319e2b217c316a7ecd2aa05076f2dd64bd755df1bd",
+      "profileReviewHash": "fe829e997262fdfc3c32a75e7d2b3789206256129c4bbd05201af4d1f3b25726",
       "requires": {
         "apps": [
           "QuickBooks Online",
@@ -2026,7 +2025,7 @@
     {
       "slug": "chat-and-saved-replies",
       "name": "Chat and Saved Replies",
-      "summary": "Useful chat drafts and a consistent saved-reply library",
+      "summary": "Porter prepares reply drafts for the supplied open chats.",
       "category": "Support",
       "outcome": "Reply drafts for the supplied open chats",
       "setupMinutes": 5,
@@ -2047,7 +2046,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "35df7fac683acf76352ba3879d553453ceb5af148ca18771083cddd644b86d00",
+      "profileReviewHash": "b5f1fa50f76e4d5124ca05cd2f7e6093ded640ffce5b3d2da7c94dc31689a8fb",
       "requires": {
         "apps": [
           "Intercom",
@@ -2081,7 +2080,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "70065cab60e21b721b4b9d0fcdd8f25eec693677c6aff6c765acc3e26810dd26",
+      "profileReviewHash": "4493598648ca4f53f99032349356686e8a36c7113dfe32c68fd2f77c748fd990",
       "requires": {
         "apps": [
           "Jobber",
@@ -2092,7 +2091,7 @@
     {
       "slug": "cli-setup",
       "name": "CLI Setup Expert",
-      "summary": "You are the CLI Setup Expert. You help users install, authenticate, and connect coding-agent CLIs as Murage backends: Claude Code, Codex, Kimi Code, OpenCode, and Qwen Code. You get them from \"nothing installed\" to \"this backend answers in Murage\", and you restore connections.",
+      "summary": "Installs, signs in and connects coding-agent tools such as Claude Code, Codex, Kimi Code, OpenCode and Qwen Code, so each one answers inside Murage.",
       "category": "Setup",
       "outcome": "A coding-agent CLI installed and authenticated",
       "setupMinutes": 15,
@@ -2108,7 +2107,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "e701087f40e31fd0f5dfba2468cbd9756be3d91260b4aed80e6ed90cfed05682",
+      "profileReviewHash": "33fd71fb67518fb9e60aa6fb8fb61af3184f88fe90f914e2d4a3d25fc2cf792b",
       "requires": {
         "apps": []
       }
@@ -2116,7 +2115,7 @@
     {
       "slug": "client-onboarding",
       "name": "Client Onboarding",
-      "summary": "A kickoff pack that turns a signed scope into a clear start",
+      "summary": "Hana prepares a client kickoff pack with welcome email draft.",
       "category": "Sales",
       "outcome": "A client kickoff pack with welcome email draft",
       "setupMinutes": 5,
@@ -2137,7 +2136,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "8f2f062fd2bf90d01aa84cd9681ad9fb95a9744b28be8497a8ff27dd03890a23",
+      "profileReviewHash": "dc62e67f7e302c5f28ab2ad1d99be2916b53dcf5f74ce6c80b6ccc6f6f070161",
       "requires": {
         "apps": [
           "Gmail",
@@ -2172,7 +2171,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "dfe0cac39c98dd4e71ed955fc0e7e7085083695cd31c494a86ab28fea00b3e67",
+      "profileReviewHash": "b6c5c9a974e51714fe22fac38cc55cd11677ee7f20876059e9f1acdf79141790",
       "requires": {
         "apps": [
           "Google Analytics 4",
@@ -2186,7 +2185,7 @@
     {
       "slug": "collections",
       "name": "Collections",
-      "summary": "Overdue balances, three priority chases and ready-to-review reminders",
+      "summary": "Penny prepares an aged receivables list with reconciled balances.",
       "category": "Money",
       "outcome": "An aged receivables list with reconciled balances",
       "setupMinutes": 5,
@@ -2208,7 +2207,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "d04a40fef600a6f0ebef279b7549fceacbf14921ca7f2c78d1c720f3a153e6ab",
+      "profileReviewHash": "472114eb06911af15158b30bc14ae417f9f78a963889832334dc25dc5e09b68a",
       "requires": {
         "apps": [
           "QuickBooks Online",
@@ -2302,7 +2301,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "5360f19de77c82473c19109d48606deb603f55ccdc54e18d48a219c3566998ec",
+      "profileReviewHash": "808a64a47dc707e3f6c10560c5c694c1ae08ec99f5c0fc4b0b410e2caa99ce3e",
       "requires": {
         "apps": [
           "Discord",
@@ -2316,7 +2315,7 @@
     {
       "slug": "company-wiki",
       "name": "Company Wiki",
-      "summary": "Company knowledge organized into useful pages and answers with clear sources",
+      "summary": "Shelf organizes your supplied company documents into a wiki and drafts the first useful pages.",
       "category": "Front office",
       "outcome": "A wiki structure and useful draft pages from your source documents",
       "setupMinutes": 5,
@@ -2340,7 +2339,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "8ea7c1172bde1d73a63f224328fc9b883d2dcc12533e7475bdc30a5cf022850f",
+      "profileReviewHash": "ca1a3124df8eed5870a77c51c6f32bd494768d76db99f393fc7a652b2b0623f6",
       "requires": {
         "apps": [
           "Notion",
@@ -2352,7 +2351,7 @@
     {
       "slug": "compliance-calendar",
       "name": "Compliance Calendar",
-      "summary": "A ninety-day filing and renewal calendar with owners and evidence",
+      "summary": "Ward prepares a ninety-day obligation and renewal calendar.",
       "category": "Operations",
       "outcome": "A ninety-day obligation and renewal calendar",
       "setupMinutes": 5,
@@ -2373,7 +2372,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "c0f6882c8aa25d82722966c5f1eee41aece14b3a831488546a54dc47915b157b",
+      "profileReviewHash": "c954111b5e29d2044bba60f1d6b8ce136968ff92df260786c2233e12ac7bc5dd",
       "requires": {
         "apps": [
           "Google Calendar",
@@ -2385,7 +2384,7 @@
     {
       "slug": "concierge",
       "name": "Concierge",
-      "summary": "Murage product help grounded in the version and surface you are using",
+      "summary": "Answers your questions about Murage, grounded in the version and surface you are using.",
       "category": "Everyday",
       "outcome": "Clear steps for the user's Murage version and surface",
       "setupMinutes": 2,
@@ -2408,7 +2407,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "2e9affe88a266341111158abde3869134eec6a8e6e1a3e85346c76dbe437adff",
+      "profileReviewHash": "690eb2a572572141b87712297f81e0aee094f2b2e50ad24254d2b389ac627bfa",
       "requires": {
         "apps": []
       }
@@ -2416,7 +2415,7 @@
     {
       "slug": "consulting-practice",
       "name": "Consulting Practice",
-      "summary": "A clear consulting offer, engagement outline and prospect tracker",
+      "summary": "Sage prepares a consulting offer sheet from the material you supply.",
       "category": "Agencies",
       "outcome": "A consulting offer sheet",
       "setupMinutes": 5,
@@ -2437,7 +2436,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "c13a7562842906399b913202fc9aed15536233a9e2425fc0bc2f8e71d1b526d5",
+      "profileReviewHash": "edd80da11a5518d8e9946059eecc508ddc53aed6e576e2bb8557ee62430a7246",
       "requires": {
         "apps": [
           "Google Docs",
@@ -2470,7 +2469,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "b95101016d2ab52f34088a65f4b416b2788b9b320c8b2703aedd3102498bfa11",
+      "profileReviewHash": "09d9b73050feef4d57c5bc749965b8ab597d8f0efeca7c0f49d29e7d6aa59d1d",
       "requires": {
         "apps": [
           "Notion",
@@ -2482,7 +2481,7 @@
     {
       "slug": "contract-drafts",
       "name": "Contract Drafts",
-      "summary": "A contract draft with explained clauses and open terms for counsel",
+      "summary": "Clause prepares a contract draft based on your supplied terms.",
       "category": "Legal",
       "outcome": "A contract draft based on your supplied terms",
       "setupMinutes": 5,
@@ -2503,7 +2502,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "1f89ecd7e35e6fb793ed76a0a839e2bd48fb982f9f9cf10044418e6912b80486",
+      "profileReviewHash": "c95f88c2e39101c4cc0258efdcc06302579aa9f7a83a6b1c6b4e10a21b3e9ea9",
       "requires": {
         "apps": [
           "Google Docs",
@@ -2514,7 +2513,7 @@
     {
       "slug": "contractors",
       "name": "Contractors",
-      "summary": "A contractor brief and paperwork pack with deliverables and terms made clear",
+      "summary": "Gig prepares a scoped contractor brief and acceptance checklist for your review.",
       "category": "People",
       "outcome": "A scoped contractor brief and acceptance checklist",
       "setupMinutes": 5,
@@ -2535,7 +2534,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "52ca8df41319115aacddb76c5cce4ef029a67599b18d681bf3c0b8dc873924b3",
+      "profileReviewHash": "2b6e447da120841f532053aada8b403d1a81c4df8903b076c5f6d9b0087ad432",
       "requires": {
         "apps": [
           "Upwork",
@@ -2548,7 +2547,7 @@
     {
       "slug": "cowork",
       "name": "Cowork",
-      "summary": "Outcome-oriented knowledge work: useful, editable, verifiable output",
+      "summary": "Turns your goal and source material into useful, editable work you can check, working inside the workspace you choose.",
       "category": "Knowledge work",
       "outcome": "A finished artifact in the workspace, not a description of one",
       "setupMinutes": 2,
@@ -2564,7 +2563,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "8d81cb836068fac84421a6c055d964de2813659afa73db87d78ecb209e36aed2",
+      "profileReviewHash": "0be553d875a1f46f6727b58709a2980d8e245fdc53b52d52a830c2fb8965554f",
       "requires": {
         "apps": []
       }
@@ -2572,7 +2571,7 @@
     {
       "slug": "creator",
       "name": "Creator",
-      "summary": "Images, video and social content, from the prompt to the finished post",
+      "summary": "Helps you make images, video scripts and social posts, with image prompts that produce what you pictured and posts that read like a person wrote them.",
       "category": "Creative",
       "outcome": "An image prompt written for the model you're actually using, not a generic one",
       "setupMinutes": 2,
@@ -2599,7 +2598,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "0be18c7cf30750e29083ff918d67dc039025168d2e8653ffed3fd15eceb40f30",
+      "profileReviewHash": "eb45d8d1ed1d4f710b3b1bef7abb7cd0b28542fdd97e65525bf38aeda3ac38a4",
       "requires": {
         "apps": []
       }
@@ -2607,7 +2606,7 @@
     {
       "slug": "customer-experience-audit",
       "name": "Customer Experience Audit",
-      "summary": "A ranked journey map showing where customers hesitate and what to improve",
+      "summary": "Journey prepares a journey map linked to observed evidence for your review.",
       "category": "Support",
       "outcome": "A journey map linked to observed evidence",
       "setupMinutes": 5,
@@ -2628,7 +2627,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "439f3f260c759c434b2496c2ee52583622a421dcad8b150a5167ced4c8367f85",
+      "profileReviewHash": "dd31c4086d78d8ce2df05ac000f2dd036281298b7f0544533f3fcd08c491de3a",
       "requires": {
         "apps": [
           "Google Docs",
@@ -2639,7 +2638,7 @@
     {
       "slug": "customer-feedback",
       "name": "Customer Feedback",
-      "summary": "Feedback themes with evidence and a practical first improvement",
+      "summary": "Hark prepares a feedback report with up to five evidence-backed themes.",
       "category": "Support",
       "outcome": "A feedback report with up to five evidence-backed themes",
       "setupMinutes": 5,
@@ -2660,7 +2659,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "61eef76ffc64b328163a62450537d5a4f41b4df9c7b673f970ff3caf8da9aefc",
+      "profileReviewHash": "0135f916798ef69b7d83a0f702fb96dee519af45fb9997bef8c6957c39721962",
       "requires": {
         "apps": [
           "Typeform",
@@ -2673,7 +2672,7 @@
     {
       "slug": "dashboard-creator",
       "name": "Dashboard Creator",
-      "summary": "You are **Dashboard Creator**: an AI assistant that transforms CSV data and tabular datasets into professional, formula-driven Excel dashboards. For help with your existing sheet, use Spreadsheet Helper. For a BI dashboard specification and interpretation, use Dashboards.",
+      "summary": "Turns CSV files and tables of data into professional Excel dashboards driven by live formulas.",
       "category": "Spreadsheets",
       "outcome": "An .xlsx dashboard driven by real formulas, not pasted values",
       "setupMinutes": 3,
@@ -2694,7 +2693,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "90726d0624e872002ca172dd7f1211f7955d87873939cc3f6c0c7a11b541f246",
+      "profileReviewHash": "5b3b32dd8f96f4cc57b62349460b3fe9293167133385ea2000dea3cbe12fba66",
       "requires": {
         "apps": []
       }
@@ -2723,7 +2722,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "8c223fef40190df1daf78d9505e357b04ec176c47044d0a9a72bf8b964b14b17",
+      "profileReviewHash": "ba984bd4e4a5b799039a37a080d852336b214545ca8d4d6c52077e218d0c11bc",
       "requires": {
         "apps": [
           "Looker Studio",
@@ -2735,7 +2734,7 @@
     {
       "slug": "disputes",
       "name": "Disputes",
-      "summary": "A factual dispute timeline, letter draft and evidence checklist",
+      "summary": "Settle prepares a dated dispute chronology with document references for your review.",
       "category": "Legal",
       "outcome": "A dated dispute chronology with document references",
       "setupMinutes": 5,
@@ -2756,7 +2755,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "bc67c2c3e56031ccb3f4c8684bc7e4d04f6a9051d92dce41b757f91f09ecff84",
+      "profileReviewHash": "3319d7a9dda4158f240fa824a3f91bd306c554595bbc0184bcf9c0352ec8a5bc",
       "requires": {
         "apps": [
           "Google Docs",
@@ -2788,7 +2787,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "120b9d7cbf9d5d2be1b859ba12388ded4e88305f51184501b52a154a316c013b",
+      "profileReviewHash": "3456db4ef6970bf69d57ee356b2dcb8fedb778087c01c66135b64826dac82b8d",
       "requires": {
         "apps": [
           "Mailchimp",
@@ -2821,7 +2820,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "e37ed83d4cb6aa0b072d9e343252bf837ae36359962d057eaffe648f58fe1e37",
+      "profileReviewHash": "fa2b4e316ae00cdc3ae9eb4d71c66a6a62b3e33c8662aaba78e5d269fd4b494d",
       "requires": {
         "apps": [
           "Shopify",
@@ -2833,7 +2832,7 @@
     {
       "slug": "editor-in-chief",
       "name": "Editor in Chief",
-      "summary": "A month of editorial work with clear briefs and reviewed drafts",
+      "summary": "Editor prepares a 30-day editorial calendar from the material you supply.",
       "category": "Marketing",
       "outcome": "A 30-day editorial calendar",
       "setupMinutes": 5,
@@ -2854,7 +2853,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "6e57aae6acc37794f63547b73f4c80d7760773dd5721e6192395c81f89da3fe5",
+      "profileReviewHash": "be73f99f7a15832fbc2d5e4b2f236f7707069b93fc7db0589dcd99d14cf017de",
       "requires": {
         "apps": [
           "Google Docs",
@@ -2951,7 +2950,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "5b8ffe3ca9a3756da15891f5047b272c0865cb8b111adfb68a47543b1f28960b",
+      "profileReviewHash": "d3851671fdb3ce9593146c1caaa0aec739f00c7913e07f4612f8327c9db30613",
       "requires": {
         "apps": [
           "Mailchimp",
@@ -2964,7 +2963,7 @@
     {
       "slug": "equity-and-partners",
       "name": "Equity and Partners",
-      "summary": "A readable ownership table and partner terms for legal review",
+      "summary": "Stake prepares a cap table with stated ownership assumptions.",
       "category": "Money",
       "outcome": "A cap table with stated ownership assumptions",
       "setupMinutes": 5,
@@ -2985,7 +2984,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "c519670daeef04514d2ad537f282f99784e95cab046499dd9784e4ae396efbd6",
+      "profileReviewHash": "256fb649e8eb9d923565a8bef8d32a1324fd1e9efe6e3260063d7628e7134518",
       "requires": {
         "apps": [
           "Google Sheets",
@@ -3017,7 +3016,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "1ff7b71e1dd73c54e9af13006228c570568998daf39623f1fda7ab870bb95e48",
+      "profileReviewHash": "21dc1204149d5d8b2302e958dea5d1c341ba330127898cee4a6a45a0df305091",
       "requires": {
         "apps": [
           "Jobber",
@@ -3030,7 +3029,7 @@
     {
       "slug": "excel-creator",
       "name": "Excel Creator",
-      "summary": "Clean supplied data, explain calculations and build checked spreadsheets",
+      "summary": "Turn supplied rows into a cleaned table, formula plan or checked workbook.",
       "category": "Spreadsheets",
       "outcome": "Cleaned table with assumptions and reconciliation checks",
       "setupMinutes": 3,
@@ -3051,7 +3050,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "f6d53469dc83665add6438d2727ca44bb651b5f2b355800785ce560cac9dafd6",
+      "profileReviewHash": "9d2c2e64af8f0364ea9e1373a22ede67c3358e3050e014adab4349ef83af402b",
       "requires": {
         "apps": []
       }
@@ -3059,7 +3058,7 @@
     {
       "slug": "exit-prep",
       "name": "Exit Prep",
-      "summary": "A due-diligence index with evidence gaps and clear owners",
+      "summary": "Harbor prepares a due-diligence readiness checklist with owners.",
       "category": "Money",
       "outcome": "A due-diligence readiness checklist with owners",
       "setupMinutes": 5,
@@ -3080,7 +3079,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "61c0ebc33d3f8858cf1b83ed2fde7feebc8f1c29642ea55449816eaa71c689e0",
+      "profileReviewHash": "ea14b3018098e11db7ff79e3e87b7efa7730facde88f88400b6a5ed4d84036df",
       "requires": {
         "apps": [
           "Google Drive"
@@ -3090,7 +3089,7 @@
     {
       "slug": "expense-claims",
       "name": "Expense Claims",
-      "summary": "An expense report with receipts matched and exceptions ready to review",
+      "summary": "Receipt prepares a monthly expense report linked to receipts.",
       "category": "Money",
       "outcome": "A monthly expense report linked to receipts",
       "setupMinutes": 5,
@@ -3111,7 +3110,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "528e8f571f41383e760b029b8601149b1b3cb260a23fa0d09309c8858ecfb5f1",
+      "profileReviewHash": "cf0f16035400224d7478453d897a870f6d0dfec2a12dc07484ed18efc4487845",
       "requires": {
         "apps": [
           "Expensify",
@@ -3125,7 +3124,7 @@
     {
       "slug": "explainer",
       "name": "Explainer",
-      "summary": "Explains things properly, like you're smart but new, not like you're twelve",
+      "summary": "Teaches concepts, subjects and step-by-step how-tos so you can do it yourself next time, treating you as smart but new to the topic.",
       "category": "Learn",
       "outcome": "An explanation you actually follow, at your level, with a worked example",
       "setupMinutes": 2,
@@ -3156,7 +3155,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "e1c31a576ac322733cd5e0504d2c490755b3d6fa586f121986954b8a1dd034ac",
+      "profileReviewHash": "deb769b58df0ed858b7128baf2308414ece2a3d17a779fd03ce1d8bfad09f22e",
       "requires": {
         "apps": []
       }
@@ -3185,7 +3184,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "a9accdc401125343583913f6ade3a72607503dabff5a2c40db4cdfcd9aacaf95",
+      "profileReviewHash": "7c8dfcbbe64b652f3f42958a36ac51f09be0bcd8009c604d651d86df00964503",
       "requires": {
         "apps": [
           "Facebook Pages",
@@ -3196,7 +3195,7 @@
     {
       "slug": "financial-model-creator",
       "name": "Financial Model Creator",
-      "summary": "Builds formula-driven, multi-sheet financial models from your assumptions",
+      "summary": "Builds multi-sheet Excel financial models, driven by formulas, from the assumptions and business context you describe.",
       "category": "Spreadsheets",
       "outcome": "A multi-sheet model where every output traces back to an assumption cell",
       "setupMinutes": 5,
@@ -3217,7 +3216,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "b1547f5115ad5b932d5b7b60c9f08f1277e3603ccd57594bdaa512be83cb4ef4",
+      "profileReviewHash": "04b6a993cd3e9c3d752e7c6d0f0049f3316e19126b78eaffff85638733d295ff",
       "requires": {
         "apps": []
       }
@@ -3279,9 +3278,8 @@
     {
       "slug": "front-desk",
       "name": "Front Desk",
-      "summary": "One morning pack for your inbox, meetings and follow-ups",
+      "summary": "The 7am brief, inbox drafts, meeting prep and notes with follow-ups.",
       "category": "Front office",
-      "outcome": "The 7am brief, inbox drafts, meeting prep and notes with follow-ups",
       "setupMinutes": 5,
       "manifest": "teams/front-desk/front-desk.emberteam.json",
       "readme": "teams/front-desk/README.md",
@@ -3358,7 +3356,7 @@
     {
       "slug": "game-3d",
       "name": "3D Star Adventure",
-      "summary": "You are a specialized assistant for generating 3D games. When the user requests, you must **immediately** generate a complete, runnable HTML file containing a 3D platformer game based on Three.js.",
+      "summary": "Makes a playable 3D platformer game you open in your browser.",
       "category": "Games",
       "outcome": "A single self-contained HTML file that runs a 3D platformer",
       "setupMinutes": 2,
@@ -3374,7 +3372,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "43b02f6ae5393d78dca01ec8bb633c7ea541bbeece973217d37a8fa52bd78731",
+      "profileReviewHash": "863f13030257e30831b357a5bf6e2ea61cfe6c1b29cb0efb5e78c3d33efb5ec1",
       "requires": {
         "apps": []
       }
@@ -3469,7 +3467,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "b1f09ab341e85aac5ecf1f44abb45dd51c181f13fe52e9c948ab47698e3e466b",
+      "profileReviewHash": "2103cfe7502b1ddf7dbedb90bf4a288a2d0e88e7173a2d0c2fee3ab5059a4cd7",
       "requires": {
         "apps": [
           "Notion",
@@ -3501,7 +3499,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "e225d61635b31577b52459da2f876e05871f26b463331d9364504e5e37158cf5",
+      "profileReviewHash": "ea33fc5e5cb7046411f878e46c03ba231bd78bd9d4ef09f448242e12813e3d80",
       "requires": {
         "apps": [
           "Google Docs",
@@ -3535,7 +3533,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "6c5de52b67cdef858e00d29d7d139156d6e6d8e1a90cc0a5b6c273adaa72213f",
+      "profileReviewHash": "061a6a7246cfbfcab124d7b4b00b5ebe5cd0593694f65df3863e98d59aac2e39",
       "requires": {
         "apps": [
           "Mindbody",
@@ -3548,7 +3546,7 @@
     {
       "slug": "handmade-shop",
       "name": "Handmade Shop",
-      "summary": "Handmade listing drafts with material details and realistic margins",
+      "summary": "Craft prepares product listing drafts with titles and tags for your review.",
       "category": "Ecommerce",
       "outcome": "Product listing drafts with titles and tags",
       "setupMinutes": 5,
@@ -3569,7 +3567,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "a49f527ff9f545cbcdf4f85d5c3976045f3391a114cda2f83128e65f67aaf5e9",
+      "profileReviewHash": "df05b0495744ebfc5214218638b3151cf72703a9cf30c0f1dc8808e77e2a546c",
       "requires": {
         "apps": [
           "Etsy",
@@ -3580,7 +3578,7 @@
     {
       "slug": "hard-conversations",
       "name": "Hard Conversations",
-      "summary": "A calm reply draft with practical resolution choices for review",
+      "summary": "Calm prepares a calm customer reply draft.",
       "category": "Support",
       "outcome": "A calm customer reply draft",
       "setupMinutes": 5,
@@ -3601,7 +3599,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "cab536a45f63b9eb711d49c9de4e68133065f855a9348ad7652a5cc37292d2bc",
+      "profileReviewHash": "22397d6795dd4b68476cc481a24e6a993b596f6cf2c085166c7a611a3a1a6097",
       "requires": {
         "apps": [
           "Gmail",
@@ -3634,7 +3632,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "ec77ac428172c60a6777c9a37d59162b8075a118407414b65ee0b5e53c59e237",
+      "profileReviewHash": "e09ba7fb51ce42b1d68bc4ea40ab8970ad50bc74170505069fd4a2dacb75b96a",
       "requires": {
         "apps": [
           "HubSpot",
@@ -3647,7 +3645,7 @@
     {
       "slug": "head-of-engineering",
       "name": "Head of Engineering",
-      "summary": "Engineering priorities and incident updates grounded in the team's actual evidence",
+      "summary": "Ship organizes engineering priorities, release decisions and incident coordination from the evidence your team supplies.",
       "category": "Founders",
       "outcome": "A weekly engineering plan with owners and acceptance checks",
       "setupMinutes": 5,
@@ -3671,7 +3669,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "058abe2ec0ab50bcbd50d855bfe5d9a1412a54ca65a37713d9ff5bb62ee3ecfc",
+      "profileReviewHash": "0ec7e86cdd2c4edb5a4d6473571c6205740e5a8330d9523593cb5b658a518aba",
       "requires": {
         "apps": [
           "GitHub",
@@ -3683,7 +3681,7 @@
     {
       "slug": "head-of-marketing",
       "name": "Head of Marketing",
-      "summary": "A monthly marketing plan with a weekly note on what worked",
+      "summary": "Director prepares a monthly campaign plan with owners and budget.",
       "category": "Marketing",
       "outcome": "A monthly campaign plan with owners and budget",
       "setupMinutes": 5,
@@ -3704,7 +3702,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "663823197423a7ae521ec367abc93a7b76789eefc2a1e9d2ca4a0ab98f75e462",
+      "profileReviewHash": "151460e40d00808f43f476f7f4e75d1e71cb68948184271e6f6fd7edef770f36",
       "requires": {
         "apps": [
           "Google Sheets",
@@ -3737,7 +3735,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "09c2a7fe717c262f4d9e168a39bc9d83d540a18932f6b988a40416aa63600447",
+      "profileReviewHash": "6948f347fed27011c21f26a24710ccfc1c7107532256d05a6588592fb40e4d0f",
       "requires": {
         "apps": [
           "HubSpot",
@@ -3750,7 +3748,7 @@
     {
       "slug": "help-center-writer",
       "name": "Help Center Writer",
-      "summary": "Help articles and saved replies grounded in real customer questions",
+      "summary": "Nell prepares up to five help article drafts or revisions per batch.",
       "category": "Support",
       "outcome": "Up to five help article drafts or revisions per batch",
       "setupMinutes": 5,
@@ -3771,7 +3769,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "476fd979470f7c99ec0c5eecad09249ac3bce007af5750ab4578da7d4feecc0d",
+      "profileReviewHash": "94ea0f33933d36a1595dfcbc88bcb562e759242a59cd8a4ae087e11b9d06fa74",
       "requires": {
         "apps": [
           "Zendesk",
@@ -3784,9 +3782,8 @@
     {
       "slug": "help-center",
       "name": "Help Center",
-      "summary": "Help articles, saved replies and feedback themes in one support pack",
+      "summary": "Help articles, saved replies, hard-case drafts and a feedback theme report.",
       "category": "Support",
-      "outcome": "Help articles, saved replies, hard-case drafts and a feedback theme report",
       "setupMinutes": 5,
       "manifest": "teams/help-center/help-center.emberteam.json",
       "readme": "teams/help-center/README.md",
@@ -3912,7 +3909,7 @@
     {
       "slug": "hr-admin",
       "name": "HR Admin",
-      "summary": "Policy answers and people paperwork with the source beside each decision",
+      "summary": "Haven prepares a policy answer linked to the supplied handbook for your review.",
       "category": "People",
       "outcome": "A policy answer linked to the supplied handbook",
       "setupMinutes": 5,
@@ -3934,7 +3931,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "21b12965a3f635915625f7fdd1093ebf3ca433401f3cf0abb79a31904ffdab3e",
+      "profileReviewHash": "49c4489c6af640dede90a6589b165ace4877c18e4962518b1a63d8d834fa284d",
       "requires": {
         "apps": [
           "Gusto",
@@ -3947,7 +3944,7 @@
     {
       "slug": "human-3-coach",
       "name": "HUMAN 3.0 Development Coach",
-      "summary": "You are a specialized development coach based on Dan Koe's HUMAN 3.0 framework - a holistic personal development system that integrates Mind, Body, Spirit, and Vocation to help individuals reach their highest potential.",
+      "summary": "Coaches your personal development across Mind, Body, Spirit and Vocation, using Dan Koe's HUMAN 3.0 framework.",
       "category": "Coaching",
       "outcome": "A personal development system across the four domains",
       "setupMinutes": 3,
@@ -3965,7 +3962,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "fcdcf3d94613388d77014c674171f47137d9e43cf68ef922ccb9adb59a680e22",
+      "profileReviewHash": "3d332ecde8a187e45e4b99b894594cd3b7dafb67e7025b04c5a0567c25fb1648",
       "requires": {
         "apps": []
       }
@@ -3973,7 +3970,7 @@
     {
       "slug": "idea-check",
       "name": "Idea Check",
-      "summary": "A one-page idea verdict and three tests of your riskiest assumptions",
+      "summary": "Seed prepares a lean canvas separating facts and assumptions for your review.",
       "category": "Founders",
       "outcome": "A lean canvas separating facts and assumptions",
       "setupMinutes": 5,
@@ -3994,7 +3991,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "80f356e7da968c5f6baf00c8072a5729251c6e1fe14ccf0d83dda02f58a485e1",
+      "profileReviewHash": "5f2328df3d1caf5579a545b05e11af424aaea33283c41ca10062b85132b4076a",
       "requires": {
         "apps": [
           "Google Docs"
@@ -4004,7 +4001,7 @@
     {
       "slug": "ignition",
       "name": "IGNITION",
-      "summary": "Takes a total beginner from blank page to one live income asset in 7 days",
+      "summary": "Takes you from a blank page to one live income asset in seven days, planning, building and publishing it with you.",
       "category": "Business",
       "outcome": "One income asset designed, built and live at a real URL",
       "setupMinutes": 20,
@@ -4032,7 +4029,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "6ecd91cdd08221ed2e6bfb946aaf041edcf3429bba4278e546cbf9745a0ffa58",
+      "profileReviewHash": "21c3df588a877ed9a7ce39cfdf80d9fc7a0e1b116a7a170dccd1abe17ec57e65",
       "requires": {
         "apps": []
       }
@@ -4061,7 +4058,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "7703da6bf1d37c74d19f1323280ee9c1d1370efd2b63137d561ad581ad2a0d41",
+      "profileReviewHash": "c74618b8eb1b96066bdec68e5a923c451fda63b3cb175d62af9a584ba69c90f8",
       "requires": {
         "apps": [
           "Canva",
@@ -4072,7 +4069,7 @@
     {
       "slug": "inbox-triage",
       "name": "Inbox Triage",
-      "summary": "Your important messages and reply drafts in one review queue",
+      "summary": "Sift prepares a ranked inbox queue with the messages that need you.",
       "category": "Front office",
       "outcome": "A ranked inbox queue with the messages that need you",
       "setupMinutes": 5,
@@ -4094,7 +4091,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "3341a3b20e86986609a5c8562e389ca719070b2dc04bcd786073eacec3aa21f1",
+      "profileReviewHash": "e08497327a8d65ef9af01565e66a1379888f6049355b7e85152d64d03ef54da4",
       "requires": {
         "apps": [
           "Gmail",
@@ -4106,7 +4103,7 @@
     {
       "slug": "instagram-and-tiktok",
       "name": "Instagram and TikTok",
-      "summary": "Twelve short-video concepts with hooks, shots and captions",
+      "summary": "Gram prepares a monthly set of 12 reel concepts from the material you supply.",
       "category": "Marketing",
       "outcome": "A monthly set of 12 reel concepts",
       "setupMinutes": 5,
@@ -4127,7 +4124,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "f48b425259d0039003fc8663d4ab9a1da606994a0e9cb6b1cb94ea781cc090a3",
+      "profileReviewHash": "1c85252f7184a4e6734eb9e7d8e8b155d3b40a80bfbb5d0014846019ed6c6125",
       "requires": {
         "apps": [
           "Instagram",
@@ -4140,7 +4137,7 @@
     {
       "slug": "investor-update",
       "name": "Investor Update",
-      "summary": "A clear investor update with checked metrics and specific asks",
+      "summary": "Dispatch prepares an investor or board update email draft.",
       "category": "Money",
       "outcome": "An investor or board update email draft",
       "setupMinutes": 5,
@@ -4161,7 +4158,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "9666cfbd315dc68a3f3b62809693178ce2a657724cdb22e00516b2ac572615ee",
+      "profileReviewHash": "0b7b2db52395d784e6755156e33eec64add338b85b61ff8a1a3f05ebf0d2be2c",
       "requires": {
         "apps": [
           "Google Sheets",
@@ -4173,7 +4170,7 @@
     {
       "slug": "invoicing",
       "name": "Invoicing",
-      "summary": "Checked invoice drafts from completed work and agreed rates",
+      "summary": "Mint prepares invoice drafts with checked line items and totals.",
       "category": "Money",
       "outcome": "Invoice drafts with checked line items and totals",
       "setupMinutes": 5,
@@ -4194,7 +4191,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "a33b4b52539a70eb828a12b2f6ed60d0ca347a416302341106ecf06cf442c2ad",
+      "profileReviewHash": "27b079eda137846f48368c5b0156ebc915dc233184af2880b88047dc4fd52df6",
       "requires": {
         "apps": [
           "QuickBooks Online",
@@ -4208,7 +4205,7 @@
     {
       "slug": "it-help-desk",
       "name": "IT Help Desk",
-      "summary": "A clear next check and a useful support packet for a device or connection problem",
+      "summary": "Remy helps you investigate a device, network or workplace-tool problem one supported step at a time.",
       "category": "Everyday",
       "outcome": "A short diagnosis note grounded in the symptoms you supply",
       "setupMinutes": 2,
@@ -4229,7 +4226,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "a6beea69706df1f72a92d072f6ecc1503004d4443ed6fff425a8612ba1187520",
+      "profileReviewHash": "4e8a32bebb46b0834206db46224a6fdec4f4da3d983c1ea4d857a1b54cc76ca0",
       "requires": {
         "apps": []
       }
@@ -4237,7 +4234,7 @@
     {
       "slug": "job-search",
       "name": "Job Search",
-      "summary": "A truthful application pack shaped around the role you want",
+      "summary": "Arden turns your real experience and a job advert into a tailored CV, cover letter and interview practice.",
       "category": "Everyday",
       "outcome": "A CV and cover letter grounded in your actual experience",
       "setupMinutes": 2,
@@ -4259,7 +4256,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "1035ac56d1530292f107068a281b157cfb3ace95cb316e5ef64f676c4989717c",
+      "profileReviewHash": "8b33a96b8205ce71bce098b354387c60ae8fab1f7ddc2103a990840a2d3b7405",
       "requires": {
         "apps": []
       }
@@ -4267,7 +4264,7 @@
     {
       "slug": "landing-pages",
       "name": "Landing Pages",
-      "summary": "A complete page draft with three headlines and a focused test plan",
+      "summary": "Fold prepares a landing page that converts, from the material you supply: three headlines, the full page copy and a focused test plan.",
       "category": "Marketing",
       "outcome": "A complete landing-page copy draft",
       "setupMinutes": 5,
@@ -4288,7 +4285,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "7fa7d0504c9b4771157943b899c967adc6ad3e2bf6b1740fd77f4ea0cbd15752",
+      "profileReviewHash": "9c25e86e0eb03219ade7ed8055c4249c99acc8f1e025bd27930a6840879a76db",
       "requires": {
         "apps": [
           "Webflow",
@@ -4301,7 +4298,7 @@
     {
       "slug": "launch-day",
       "name": "Launch Day",
-      "summary": "A launch checklist, copy pack and timed plan with clear go decisions",
+      "summary": "Launchpad prepares a launch readiness checklist from the material you supply.",
       "category": "Marketing",
       "outcome": "A launch readiness checklist",
       "setupMinutes": 5,
@@ -4322,7 +4319,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "ccc8a740feedd746653add05ad956bc33a8af5d3718a1b8e7a70291e34c161f8",
+      "profileReviewHash": "7352cc594a369638f350ff32385b4c6bf298226644b44f23901b373775ee91ff",
       "requires": {
         "apps": [
           "Product Hunt",
@@ -4335,7 +4332,7 @@
     {
       "slug": "lead-responder",
       "name": "Lead Responder",
-      "summary": "Every enquiry organized with a useful first reply draft",
+      "summary": "Swift prepares a qualified enquiry queue with reasons for each rating.",
       "category": "Sales",
       "outcome": "A qualified enquiry queue with reasons for each rating",
       "setupMinutes": 5,
@@ -4357,7 +4354,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "6429e77e091d6f3d9d6ede650d33229e0d887e50af0a05571bfb1edf6ba52100",
+      "profileReviewHash": "7571b1b24ff59ef797cc230c47b471797bff35f42308701faa1f3a92b3c835af",
       "requires": {
         "apps": [
           "HubSpot",
@@ -4371,7 +4368,7 @@
     {
       "slug": "linkedin-outreach",
       "name": "LinkedIn Outreach",
-      "summary": "Personal connection notes grounded in what each prospect actually shared",
+      "summary": "Thread prepares a set of personalized connection-note drafts from the material you supply.",
       "category": "Sales",
       "outcome": "A set of personalized connection-note drafts",
       "setupMinutes": 5,
@@ -4392,7 +4389,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "ec8dcddd1d6c606172a3993c80fd2a00cd3942eb8cb3477eb259b31ee352fcc4",
+      "profileReviewHash": "2a2d45fb6225dd91e65e2f1029b67d4531744156a5de62f78a8e6a8b4ec7b8b8",
       "requires": {
         "apps": [
           "LinkedIn",
@@ -4403,7 +4400,7 @@
     {
       "slug": "linkedin-voice",
       "name": "LinkedIn Voice",
-      "summary": "Three founder posts and an article shaped around your real experience",
+      "summary": "Byline prepares three complete LinkedIn post drafts in your voice.",
       "category": "Marketing",
       "outcome": "Three complete LinkedIn post drafts in your voice",
       "setupMinutes": 5,
@@ -4424,7 +4421,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "dc2b4567c9071c1a7b57282d020981e0d9b97b158351c46570ab71c0887cf082",
+      "profileReviewHash": "64d650c63b2d93d73ea3aeadd394b97655736f42403c6871b271422f98aa3632",
       "requires": {
         "apps": [
           "LinkedIn"
@@ -4434,9 +4431,8 @@
     {
       "slug": "local-reputation",
       "name": "Local Reputation",
-      "summary": "Review replies, local listing improvements and booking drafts together",
+      "summary": "Review replies, profile posts, booking reminders and a fix list.",
       "category": "Marketing",
-      "outcome": "Review replies, profile posts, booking reminders and a fix list",
       "setupMinutes": 5,
       "manifest": "teams/local-reputation/local-reputation.emberteam.json",
       "readme": "teams/local-reputation/README.md",
@@ -4498,7 +4494,7 @@
     {
       "slug": "local-search",
       "name": "Local Search",
-      "summary": "A local listing review, four profile posts and prioritized corrections",
+      "summary": "Pin prepares a monthly local listing report from the material you supply.",
       "category": "Marketing",
       "outcome": "A monthly local listing report",
       "setupMinutes": 5,
@@ -4519,7 +4515,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "5c66cd6126da8fbaa3a89226ca435aa68a4cec4c51021f58aebefafb10422049",
+      "profileReviewHash": "9038a195685f79e82d8617f59ac65180f5430e6167b4c9d654729beabfca59f2",
       "requires": {
         "apps": [
           "Google Business Profile",
@@ -4552,7 +4548,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "cbb0a800191d4cac933d52fa0a0b69ab8fea34244667fe8eda66ed16d3839cf0",
+      "profileReviewHash": "7ea215343f8e8c7c5c5f57548b2c8d34bc6c8cc419414ede9e524fe4e7b6ee0a",
       "requires": {
         "apps": [
           "Shopify",
@@ -4585,7 +4581,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "b085f70d4b85629c90a5e4b9a0df927b128dc424c6f619ccaf12401030a6754c",
+      "profileReviewHash": "809f24b3c222f51a2311505c29c6898594eccdaa0bc35afb15538da6317c1b7f",
       "requires": {
         "apps": [
           "Google Docs",
@@ -4596,7 +4592,7 @@
     {
       "slug": "marketing-analytics",
       "name": "Marketing Analytics",
-      "summary": "Channel spend and results reconciled into three practical next moves",
+      "summary": "Tracer prepares a channel report with spend and lead totals from the material you supply.",
       "category": "Marketing",
       "outcome": "A channel report with spend and lead totals",
       "setupMinutes": 5,
@@ -4617,7 +4613,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "fff25d8b235207c935e77a68ee3869ad0e905aa918124dee26954c7d38e5fdc6",
+      "profileReviewHash": "90de960646d602ed7ffcd8ad5d4060355b9661868c29b6f8b7a29dee9d101039",
       "requires": {
         "apps": [
           "Google Analytics 4",
@@ -4651,7 +4647,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "2d39c04bc4e7e00088c475d38866da661160867c9c0c543f4e2ad554cbb152d9",
+      "profileReviewHash": "d502caa287a5af23a3c12f3353aaae451f363a88a83364c8dbbbfeb2a41059eb",
       "requires": {
         "apps": [
           "Amazon Seller Central",
@@ -4663,7 +4659,7 @@
     {
       "slug": "meal-planner",
       "name": "Meal Planner",
-      "summary": "Meals, quantities and one shopping list shaped around your household",
+      "summary": "Supper turns your household size, preferences, available ingredients and time into a practical meal plan.",
       "category": "Everyday",
       "outcome": "A meal plan matched to your household and stated exclusions",
       "setupMinutes": 2,
@@ -4684,7 +4680,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "b91d3a37a412b091431f9ea2c3d237058f462ad9a449a6d07d81cc5b89affa9a",
+      "profileReviewHash": "e8d8516ddb59a6f1dca6ff7253e6bf7903d3a560056fa38f973bcef083c087fb",
       "requires": {
         "apps": []
       }
@@ -4714,7 +4710,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "b983a13847737f530eddf5674972aa535bc41a161aa56a6c8b7f5f71a91f4a49",
+      "profileReviewHash": "c322211993d1bd1feb5f2aceae11a6233399f2499e81ad5fec6947e7b8b89865",
       "requires": {
         "apps": [
           "Zoom",
@@ -4750,7 +4746,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "abe0328a87d22275e44500671b3ca244fe8e4382d1f193e7266aa4fa65eb0e6c",
+      "profileReviewHash": "3612907873686b4bdf1e318691d8519c974a199fe1a83c3a6ba673aff6b3cf9a",
       "requires": {
         "apps": [
           "Google Calendar",
@@ -4779,7 +4775,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "a9ee3770d1caa7cea9066a6bb2584a382def079f1c14ad2561c24f69f16318bb",
+      "profileReviewHash": "ebdcd3ae3d780a4d7b461162da25fa79c779025fe40d383f16c39c016057816e",
       "requires": {
         "apps": []
       }
@@ -4787,7 +4783,7 @@
     {
       "slug": "moltbook",
       "name": "Moltbook Assistant",
-      "summary": "You are a moltbook assistant - helping AI agents interact with the moltbook social network.",
+      "summary": "Registers an AI agent on the Moltbook social network and helps it post and interact there.",
       "category": "Social",
       "outcome": "A registered, verified Moltbook agent",
       "setupMinutes": 10,
@@ -4803,7 +4799,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "7d4eee280d1370c64aacb25755a225473c5d914619792b28c992c32efec24d2e",
+      "profileReviewHash": "3c7400de81dba04bef7bf8cbaa4b6608a0d81a7913678f4067ea8da77e26ae5f",
       "requires": {
         "apps": []
       }
@@ -4832,7 +4828,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "9a778d343a9d15516b29ad7d73682fe6e6ed36a11813cbe8fe458399b750903f",
+      "profileReviewHash": "d1a139cc6d7c46bc20851e5d7ebb1c3f5e9b18c2c136c3528b752329f111b198",
       "requires": {
         "apps": [
           "Notion",
@@ -4865,7 +4861,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "d502dba6687d29cea6ed975a558fe77f598ad49f71b4cbc3cb2c39c0aba12da1",
+      "profileReviewHash": "8f96527582c625829c299905389ae58b320ac98599d9b7f92498756f34fc67e2",
       "requires": {
         "apps": [
           "Gmail",
@@ -4879,7 +4875,7 @@
     {
       "slug": "morph-ppt-3d",
       "name": "3D Morph PPT",
-      "summary": "You are **3D Morph PPT**, an assistant that turns GLB 3D models into cinematic presentations with smooth Morph transitions.",
+      "summary": "Turns 3D models in GLB format into cinematic presentations with smooth Morph transitions.",
       "category": "Presentations",
       "outcome": "A .pptx deck built from GLB models with Morph transitions",
       "setupMinutes": 5,
@@ -4895,7 +4891,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "36014e10ca84a36f04b4ca8d680c31b7604f0f83b41d444452326960889a26e2",
+      "profileReviewHash": "8175f4039ea48db955f378971bb881d058797c3046e6e9c1297c280fbe52138d",
       "requires": {
         "apps": []
       }
@@ -4903,7 +4899,7 @@
     {
       "slug": "morph-ppt",
       "name": "Morph PPT",
-      "summary": "You are **Morph PPT** - an AI assistant that creates beautiful, Morph-animated presentations.",
+      "summary": "Creates presentations with smooth Morph animations that look professionally designed.",
       "category": "Presentations",
       "outcome": "A .pptx deck with Morph animation between slides",
       "setupMinutes": 3,
@@ -4919,7 +4915,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "f2605c96c6503f313b63b28410052667139447e4b69b55fe735834877405bbb9",
+      "profileReviewHash": "3782a5a9daa116a007f5d93c42571cad339bdc5b2e3a8314b4c8d2a4ee918e6d",
       "requires": {
         "apps": []
       }
@@ -4948,7 +4944,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "56f312de842470df50a84667f2bc3eb24577e01af8acab43b45e64acfd1fba0a",
+      "profileReviewHash": "79ca9c1bf0d52cdb4242b8270c0e7f75a16df66ac94db0d7429a9fca8545a54e",
       "requires": {
         "apps": [
           "Google Docs"
@@ -4979,7 +4975,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "b81e7907dc749b8f4ed98776f3bf3c9e2551fe7404a79d961853bb865afd4c34",
+      "profileReviewHash": "c1c857c8ac91fd4d8c4b8856fca7d8c1c15b2b9bf1a1e5f166e0add55bafc4bd",
       "requires": {
         "apps": [
           "Google Workspace",
@@ -5013,7 +5009,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "8baa837ae9e33bddc0216e13eee7d67ea2dbe48ca951787460162d2546230abf",
+      "profileReviewHash": "5c2a72a1b0d563f0a462d9baad8bfa4d357c90dbb40d3c601aad8a75a2d3c14f",
       "requires": {
         "apps": [
           "Substack",
@@ -5025,7 +5021,7 @@
     {
       "slug": "newsletter",
       "name": "Newsletter",
-      "summary": "A complete newsletter draft with three honest subject lines",
+      "summary": "Letty prepares a complete newsletter issue draft from the material you supply.",
       "category": "Marketing",
       "outcome": "A complete newsletter issue draft",
       "setupMinutes": 5,
@@ -5046,7 +5042,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "0e66156ee545b24a2cef5882a58a99b501f75f1186da91fa1133f2593289b53a",
+      "profileReviewHash": "bbc4f83ef2218a517e865bd9d4c302a8e4ee3519c2e47428c8958f21e16eaa60",
       "requires": {
         "apps": [
           "Mailchimp",
@@ -5124,7 +5120,7 @@
     {
       "slug": "office-security",
       "name": "Office Security",
-      "summary": "A practical office protection review with account ownership and actions explained",
+      "summary": "Lock reviews the office controls and account records you supply, including sign-in protection, backups and periodic access ownership.",
       "category": "Operations",
       "outcome": "A prioritized review of the controls evidenced by your records",
       "setupMinutes": 5,
@@ -5146,7 +5142,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "12131b223c40e6e982dab91e3b908051d7b647bed84c559f4078908c4dedb356",
+      "profileReviewHash": "85644f4ac850a1e8068b8de547eae65233b9e9afc91f94d454614314c7db351c",
       "requires": {
         "apps": [
           "Google Workspace",
@@ -5180,7 +5176,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "e591bdc2040d3ffe6f52c20c53bee3a1224780348fe04899d4717ec90ef62904",
+      "profileReviewHash": "b12595165f3ed673db081fdbc988c65551a7ec1c51497beda7faaa50ffaa31ac",
       "requires": {
         "apps": [
           "Google Drive",
@@ -5214,7 +5210,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "162fd04dd92f847391f086a384bdc88b915b2dfbebcf770ce54204d8c8fcb10a",
+      "profileReviewHash": "940864da60023ffd5cff9aa19a174efd14b455938a9fa46a0e4fee6391cb75e2",
       "requires": {
         "apps": [
           "Instagram",
@@ -5227,7 +5223,7 @@
     {
       "slug": "pay-and-offers",
       "name": "Pay and Offers",
-      "summary": "A salary range, affordability check and offer draft ready for your decision",
+      "summary": "Scale prepares a sourced compensation comparison with limitations for your review.",
       "category": "People",
       "outcome": "A sourced compensation comparison with limitations",
       "setupMinutes": 5,
@@ -5248,7 +5244,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "ae1ae947c92344dfa4d496eb0516bc903f4b954b353428c82e891c780814adfc",
+      "profileReviewHash": "5640ba1ab2da4d9d603350f2f4d4d7f37763b89aa4ff027b4a99f89403078523",
       "requires": {
         "apps": [
           "Google Sheets",
@@ -5259,7 +5255,7 @@
     {
       "slug": "payroll-prep",
       "name": "Payroll Prep",
-      "summary": "A pay-run review pack with hours, changes and exceptions reconciled",
+      "summary": "Roll prepares a pre-payroll reconciliation by employee and period for your review.",
       "category": "People",
       "outcome": "A pre-payroll reconciliation by employee and period",
       "setupMinutes": 5,
@@ -5280,7 +5276,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "9cdbdceeb1a39900e0fa62b0de02c80d01f126228e6a6da5148f56e4481946e3",
+      "profileReviewHash": "ff61ffc66e75c50fd80acbd533fa949bb6b2aac5a5d552d06067ca493ead6022",
       "requires": {
         "apps": [
           "Gusto",
@@ -5370,7 +5366,7 @@
     {
       "slug": "performance-reviews",
       "name": "Performance Reviews",
-      "summary": "An evidence-based review with clear expectations and practical next steps",
+      "summary": "Rubric prepares a review draft linked to observed work for your review.",
       "category": "People",
       "outcome": "A review draft linked to observed work",
       "setupMinutes": 5,
@@ -5391,7 +5387,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "4aec82d6c280cd52aaef112faee749c74d76789ca79b7f69d17a6aa9c0a199db",
+      "profileReviewHash": "13bbeaf1165207d78f4a784be150b5c8125fdbd08e765564a7e8b0bd6faa9c02",
       "requires": {
         "apps": [
           "Google Docs",
@@ -5424,7 +5420,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "2ff98a2d36e58c44057bfe2120d1363a2b0a63567150a3fd2de6e1b867427a10",
+      "profileReviewHash": "ea8d6bb212d1a9373c69b8ae6f2bb715d4a31bc53d38566095f087671128a11a",
       "requires": {
         "apps": [
           "Gmail",
@@ -5436,7 +5432,7 @@
     {
       "slug": "pitch-deck-creator",
       "name": "Pitch Deck Creator",
-      "summary": "You are **Pitch Deck Creator** -- an AI assistant that builds professional pitch presentations from scratch using officecli. For a written proposal with scope and options, use Proposal Writer. For a prospect-specific sales narrative, use Sales Deck.",
+      "summary": "Builds a professional pitch deck for you from scratch.",
       "category": "Presentations",
       "outcome": "A .pptx pitch deck with the standard investor narrative",
       "setupMinutes": 3,
@@ -5459,7 +5455,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "5d14e59de9a1f915a01647bb00e60442299982bbba4b8c23a4dc9644db5c8534",
+      "profileReviewHash": "02f47c8da2dcfa87a88ab68bc871c71aa67a3f4b8b46fff04b5c2086cd70c416",
       "requires": {
         "apps": []
       }
@@ -5467,7 +5463,7 @@
     {
       "slug": "planning-with-files",
       "name": "Planning with Files",
-      "summary": "File-based planning: persistent markdown as working memory on disk",
+      "summary": "Plans your work with persistent markdown files on disk, used as working memory across a long task.",
       "category": "Productivity",
       "outcome": "A plan that survives the context window, on disk",
       "setupMinutes": 2,
@@ -5483,7 +5479,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "87a4c2753b5023037d4dd08b89ce64bf52114d60aa8d5283fd43390e6e81dc73",
+      "profileReviewHash": "633c8053a2534b7da0416305812d6ec456810ac18bb9c0f1264c07400b99f774",
       "requires": {
         "apps": []
       }
@@ -5512,7 +5508,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "dc81ce572d7bde5cc63a02b558d47546aa520e74f6db0d6e861fda15d96d8917",
+      "profileReviewHash": "adcce18ea3498d543ad2223911ff34de3feedf4fa33e0c5cd03e9d5fc1aa22d0",
       "requires": {
         "apps": [
           "YouTube",
@@ -5525,7 +5521,7 @@
     {
       "slug": "portfolio",
       "name": "Portfolio",
-      "summary": "Five evidence-based case pages that show what you contributed",
+      "summary": "Folio prepares a portfolio outline with up to five case-page drafts from the material you supply.",
       "category": "Agencies",
       "outcome": "A portfolio outline with up to five case-page drafts",
       "setupMinutes": 5,
@@ -5546,7 +5542,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "584efee869ad2bbc6ae6d7864b4881687fe023480d70d5471b1dfbb52cd68df9",
+      "profileReviewHash": "ac68d23388b65193fab41d56e749286384e515bdabc8c153ecfe24577afb893f",
       "requires": {
         "apps": [
           "Webflow",
@@ -5558,7 +5554,7 @@
     {
       "slug": "ppt-creator",
       "name": "PPT Creator",
-      "summary": "You are **PPT Creator**: an AI assistant that creates, edits, and analyzes professional PowerPoint presentations using officecli. For a prospect-specific sales narrative, use Sales Deck. For speaker as one focused job, use Speaker.",
+      "summary": "Creates, edits and analyzes professional PowerPoint presentations.",
       "category": "Presentations",
       "outcome": "A professional .pptx deck",
       "setupMinutes": 3,
@@ -5574,7 +5570,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "8cbbb6bf3fd3d0c671e70f0b76e44b7b35ded0b30b3aebb81d8e3a312813350b",
+      "profileReviewHash": "8411aa0f2612a973abe6939304441b27b4ae5053eb62122316d06395c3648993",
       "requires": {
         "apps": []
       }
@@ -5603,7 +5599,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "7222f95541ec1c32118ef60c06deb62749378f733cfa2e013592ae7d72d6080e",
+      "profileReviewHash": "0f6d3fd0c48d478a432f95264ad70849affd6703223b5c0f590e18a3e648f306",
       "requires": {
         "apps": [
           "Gmail",
@@ -5635,7 +5631,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "8a3543b140030afe0f21691296a4e0e54784c67a6e160d76fdba600f1036c082",
+      "profileReviewHash": "bf7a3aafdd57620cb02b660a13cdd3fd220bf3abb5cdd0081121b1d10f2b5cf0",
       "requires": {
         "apps": [
           "Printful",
@@ -5647,7 +5643,7 @@
     {
       "slug": "priority-planner",
       "name": "Priority Planner",
-      "summary": "A realistic week with three outcomes and room to finish them",
+      "summary": "Focus prepares a weekly plan built around three outcomes.",
       "category": "Front office",
       "outcome": "A weekly plan built around three outcomes",
       "setupMinutes": 5,
@@ -5669,7 +5665,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "07073d10e4955f82e96a7b0e0729bc9d81052da0bc42df5653961b6b75779d69",
+      "profileReviewHash": "0c8d97101e0cb55c22837f91daaf9be85fdaae15780accd10616b7a096b9434c",
       "requires": {
         "apps": [
           "Google Calendar",
@@ -5703,7 +5699,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "9342bef6d021bdb50359cf4015b2ab9bce1b7278fbf3349d84cf2ba5acca916b",
+      "profileReviewHash": "3259df98c7b33e9e0555864ad7e4cae37d306adf9f219375453df3e4bd435b28",
       "requires": {
         "apps": [
           "Google Docs",
@@ -5735,7 +5731,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "e5ca42dfbb0b3adbc59ebfeeb690928220c2d7a17630ac3216f4a82ace5dd67d",
+      "profileReviewHash": "4274c620ae79d4f1db33d91ef6b55c4dd664e7aeca283a78b046cda34e2bbe8d",
       "requires": {
         "apps": [
           "Linear",
@@ -5747,7 +5743,7 @@
     {
       "slug": "product-photos",
       "name": "Product Photos",
-      "summary": "A product shot list with practical lighting and editing checks",
+      "summary": "Studio prepares a product-specific shot list from the material you supply.",
       "category": "Marketing",
       "outcome": "A product-specific shot list",
       "setupMinutes": 5,
@@ -5768,7 +5764,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "70a4e17340f0c21ab6ba67b0fde318eccdeeec1cd0123e0261551f627acedad7",
+      "profileReviewHash": "d96748e4563e640fdaf0a2414eee054c02a5651f303256a9029104b1c3e8a1cd",
       "requires": {
         "apps": [
           "Shopify",
@@ -5780,7 +5776,7 @@
     {
       "slug": "project-coordinator",
       "name": "Project Coordinator",
-      "summary": "Project status, slipping dates and next actions with owners",
+      "summary": "Stride prepares a weekly status page for each supplied project.",
       "category": "Operations",
       "outcome": "A weekly status page for each supplied project",
       "setupMinutes": 5,
@@ -5802,7 +5798,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "eb5daf9f141055747d811bdabdb71b48d86214390e4f66f753f5e16e82dcf437",
+      "profileReviewHash": "753cd675d9c06dae267f780d608a7dda47d1d1f7373d9a379824be5c56a6d172",
       "requires": {
         "apps": [
           "Asana",
@@ -5838,7 +5834,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "e9b65405d3256df61168199729502dbf2f7f708beb6a0c92c4e6d2f5071da74d",
+      "profileReviewHash": "919f29cdf4b5d2e0ac605af5bd242d6c845d12bb830a9297e7d80707cbaf4262",
       "requires": {
         "apps": [
           "Notion",
@@ -5850,7 +5846,7 @@
     {
       "slug": "proposal-writer",
       "name": "Proposal Writer",
-      "summary": "A scoped proposal with three options and clear next steps",
+      "summary": "Bid prepares a client proposal with three scoped options.",
       "category": "Sales",
       "outcome": "A client proposal with three scoped options",
       "setupMinutes": 5,
@@ -5872,7 +5868,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "a709b27d11dca2320dffcc2c8ab55e10174014620abb274d1a43cde6717976e4",
+      "profileReviewHash": "ef7c075b0b0d11e032126f483da8ae3ca585b07132b002d3789a7e0e97ca6797",
       "requires": {
         "apps": [
           "Google Docs",
@@ -5885,7 +5881,7 @@
     {
       "slug": "recruiting-coordinator",
       "name": "Recruiting Coordinator",
-      "summary": "A shortlist and interview pack grounded in the role you need filled",
+      "summary": "Juno prepares a role criteria matrix and evidence-linked shortlist for your review.",
       "category": "People",
       "outcome": "A role criteria matrix and evidence-linked shortlist",
       "setupMinutes": 5,
@@ -5907,7 +5903,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "e8bfb8d081aab29d9ae99180b5364e5b77873d4bb66fcf47425cfe7ccaa617f0",
+      "profileReviewHash": "c8efabc494782138c510267bafbd17f4fcf3bd111fc62dd0f831ba9335ca883f",
       "requires": {
         "apps": [
           "LinkedIn",
@@ -5943,7 +5939,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "03956aa78f12319266b8725a7d1669a1567bb3708889d9468b20230518b8c781",
+      "profileReviewHash": "5f1bd53a5c34a445aacab6e04b94c23627f3cb7b686d2af9fa1975594f06d4a8",
       "requires": {
         "apps": [
           "GitHub",
@@ -5955,7 +5951,7 @@
     {
       "slug": "renewals-and-expansion",
       "name": "Renewals and Expansion",
-      "summary": "Renewal dates, account concerns and next conversations in one clear list",
+      "summary": "Anchor prepares a dated 90-day renewal list from the material you supply.",
       "category": "Sales",
       "outcome": "A dated 90-day renewal list",
       "setupMinutes": 5,
@@ -5976,7 +5972,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "02d76c720e22a453aef8d615100dff130c80fef6bddf964d280da9610216f938",
+      "profileReviewHash": "350fda8f8c92f00ad77d46e69395945f8e26aa8b64db4187bb5ba3cb43002b4a",
       "requires": {
         "apps": [
           "HubSpot",
@@ -5988,7 +5984,7 @@
     {
       "slug": "researcher",
       "name": "Researcher",
-      "summary": "Finds the real answer and shows you where it came from",
+      "summary": "Answers your question, names the source behind every claim and separates what it verified from what it is only inferring.",
       "category": "Research",
       "outcome": "An answer with its sources attached, not a confident paragraph from nowhere",
       "setupMinutes": 2,
@@ -6017,7 +6013,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "73c9ab0210d059b829cd62cfa2e263640b0c85921a12e683476cd866cd656939",
+      "profileReviewHash": "feced19238b41d64b5b37e10694fb574767ca6838f6dfbccffe0d6ccef27535f",
       "requires": {
         "apps": [
           "Tavily"
@@ -6048,7 +6044,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "2298a535d8b0087a0644a4c40c3f40479a715bbad490216bd19cdb9c6f4ae136",
+      "profileReviewHash": "0957eaed827b26a5aee14e1661984d9b07cb0b119f598084cb3ad5aca4dcd4c2",
       "requires": {
         "apps": [
           "Toast",
@@ -6082,7 +6078,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "b7806a2bb6a5b43998d426998e6b6189866caa83da1684fc1a6820f2176f0ea2",
+      "profileReviewHash": "5eacce04f18fd13ae743cd5ca77d1d67451358c0133502f6bf20abd26a63e3da",
       "requires": {
         "apps": [
           "Square",
@@ -6094,7 +6090,7 @@
     {
       "slug": "reviews",
       "name": "Reviews",
-      "summary": "Thoughtful review replies and an evidence-based improvement list",
+      "summary": "Kudos prepares a weekly review digest and reply drafts from the material you supply.",
       "category": "Marketing",
       "outcome": "A weekly review digest and reply drafts",
       "setupMinutes": 5,
@@ -6115,7 +6111,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "0605157caa09d87f6df62741b240654e12d180a670eec2dc982c84f016800383",
+      "profileReviewHash": "7013a86e0c033713ee01c433002e6a43ad1da1765623fe76dafed65f60637ed6",
       "requires": {
         "apps": [
           "Google Business Profile",
@@ -6149,7 +6145,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "c03a57b31b69d41f41dc89e9ec4621f0ff1d601909234cfc531b8900958e7f18",
+      "profileReviewHash": "099d397bc9c7d242d349625ee095a438aeac9a8d717840c7812410e59070c292",
       "requires": {
         "apps": [
           "Google Docs",
@@ -6160,7 +6156,7 @@
     {
       "slug": "risk-register",
       "name": "Risk Register",
-      "summary": "A ranked risk register with three practical actions for this month",
+      "summary": "Bulwark prepares a risk register with evidence and ownership for your review.",
       "category": "Operations",
       "outcome": "A risk register with evidence and ownership",
       "setupMinutes": 5,
@@ -6181,7 +6177,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "3ad6d8e628911fb43d0c0480725af98c213070ba80c3d4dbc918a5bd1010ae5c",
+      "profileReviewHash": "f855e306833f54da68c11bcef75f0890b0d3fe5639fb63a4de59d26dbe4ae18f",
       "requires": {
         "apps": [
           "Google Sheets",
@@ -6247,7 +6243,7 @@
     {
       "slug": "sales-deck",
       "name": "Sales Deck",
-      "summary": "A ten-slide sales story with evidence and speaker notes",
+      "summary": "Easel prepares a ten-slide sales deck outline from the material you supply.",
       "category": "Sales",
       "outcome": "A ten-slide sales deck outline",
       "setupMinutes": 5,
@@ -6268,7 +6264,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "6b3c3cb4a914e2415eba5e12794d68733cf2bd9a5fcbaaddf3fe47a9521e2237",
+      "profileReviewHash": "e6f1845dd949266a68ad938975189b2d333ca69bf4b42701f43ccb7de4049a8b",
       "requires": {
         "apps": [
           "Google Slides",
@@ -6301,7 +6297,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "d5a9c45f636d594f23662e75299df0833b3d2002d7f4b1505668d24813b10f5d",
+      "profileReviewHash": "a72b7c962efb37feeb835daa2c24f4d340fd4ed87e4ca52e312244345fd66a50",
       "requires": {
         "apps": [
           "Square Appointments",
@@ -6313,7 +6309,7 @@
     {
       "slug": "scheduler",
       "name": "Scheduler",
-      "summary": "Three meeting options and a week with focus time protected",
+      "summary": "Tempo prepares up to three checked meeting times with timezone labels.",
       "category": "Front office",
       "outcome": "Up to three checked meeting times with timezone labels",
       "setupMinutes": 5,
@@ -6334,7 +6330,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "42e2a32964a990ff89e4cae0a157573173774c001fac25f9ed3016d678c86646",
+      "profileReviewHash": "6134de5fcff298733c3bf296c0a8deff0ea3019ca86023081853b28204ca6d38",
       "requires": {
         "apps": [
           "Google Calendar",
@@ -6347,7 +6343,7 @@
     {
       "slug": "shift-planner",
       "name": "Shift Planner",
-      "summary": "A staff rota with coverage, hours and unresolved conflicts shown clearly",
+      "summary": "Roster drafts a staff rota from your coverage requirements, availability and work rules.",
       "category": "People",
       "outcome": "A proposed rota linked to supplied workers and shifts",
       "setupMinutes": 5,
@@ -6368,7 +6364,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "b3f9b3f072150e235a44047dc9d4f5adb0eaae258a432b8ef50cc75433fb5f50",
+      "profileReviewHash": "6e3d0d8c973be6111e59a3ab1605e6c65a0dadf822bc2542eebd7ad8e5e3c95f",
       "requires": {
         "apps": [
           "Google Sheets"
@@ -6378,9 +6374,8 @@
     {
       "slug": "shop-back-office",
       "name": "Shop Back Office",
-      "summary": "Orders, stock and customer follow-ups organized into one review queue",
+      "summary": "Order and stock report, cart flows, win-back lists and order reply drafts.",
       "category": "Ecommerce",
-      "outcome": "Order and stock report, cart flows, win-back lists and order reply drafts",
       "setupMinutes": 5,
       "manifest": "teams/shop-back-office/shop-back-office.emberteam.json",
       "readme": "teams/shop-back-office/README.md",
@@ -6453,7 +6448,7 @@
     {
       "slug": "shop-ops",
       "name": "Shop Ops",
-      "summary": "An order and stock review with exceptions and customer replies ready",
+      "summary": "Stock prepares an order-exception queue with source references for your review.",
       "category": "Ecommerce",
       "outcome": "An order-exception queue with source references",
       "setupMinutes": 5,
@@ -6474,7 +6469,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "099454b112069f2df467f935232b6769f09a0e37528458baf01e9cbc2e1cd3f4",
+      "profileReviewHash": "13c8d41d62f85b838b20794520edbc946b6ab654a4f0ad3f34614dd82eee6d98",
       "requires": {
         "apps": [
           "Shopify",
@@ -6509,7 +6504,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "0b37e2c7065962f3313f889a029b8fb6fc9b73b157fe050fee065c8273f60b23",
+      "profileReviewHash": "6293ef49ff5ac7c9d4152d7d2c82ea9192eb41d953f4867763afdd2122436015",
       "requires": {
         "apps": [
           "Airbnb",
@@ -6521,7 +6516,7 @@
     {
       "slug": "site-builder",
       "name": "Site Builder",
-      "summary": "You are Site Builder. Help an owner create a quiz, survey, lead capture page or landing page, review it in plain language and publish it with Netlify when requested.",
+      "summary": "Helps you create a quiz, survey, lead capture page or landing page, reviews it with you in plain language and publishes it to Netlify when you ask.",
       "category": "Build",
       "outcome": "A small website shaped around what your visitors need",
       "setupMinutes": 5,
@@ -6539,7 +6534,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "431114955d9c59c6eab70c8aa8adc1d3a312012abfc0e617ab7f2592cb9d6dbe",
+      "profileReviewHash": "e4f6704ee5ab6cc668adbbf838f9ad6ef8cb4252af1e9f82200d408e27c6e2d7",
       "requires": {
         "apps": []
       }
@@ -6547,7 +6542,7 @@
     {
       "slug": "smart-trader",
       "name": "Smart Trader",
-      "summary": "You are **Smart Trader**. You help someone read their own charts and get a clear picture of their",
+      "summary": "Reads your own TradingView charts and gives you a pre-open watchlist brief. It never places a trade.",
       "category": "Markets",
       "outcome": "TVControl set up and proven to be answering, not just installed",
       "setupMinutes": 15,
@@ -6575,7 +6570,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "20270988dee49ffe0ebd0da9baae45f6b450e24ee1be108128aa30302b759b0c",
+      "profileReviewHash": "9e21a16fe542dbad595ff0560492fe9c94623a3fa6fa308a6526663c09ee826f",
       "requires": {
         "apps": []
       }
@@ -6583,7 +6578,7 @@
     {
       "slug": "social-scheduler",
       "name": "Social Scheduler",
-      "summary": "A week of post drafts with captions, image briefs and proposed times",
+      "summary": "Buzz prepares a seven-day post plan with proposed times from the material you supply.",
       "category": "Marketing",
       "outcome": "A seven-day post plan with proposed times",
       "setupMinutes": 5,
@@ -6605,7 +6600,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "f5b205c83e818c605b1c504602074f0f40ccedf77b29d3d5388cfd11f8cb0a2f",
+      "profileReviewHash": "37d415ccdf06d4ee804140693873e1f58f5b24faf82093caf527830160540231",
       "requires": {
         "apps": [
           "Buffer",
@@ -6619,7 +6614,7 @@
     {
       "slug": "social-week",
       "name": "Social Week",
-      "summary": "A coordinated week of social drafts ready for your review",
+      "summary": "A week of post drafts that stay in the conversation until the owner says yes.",
       "category": "Marketing",
       "outcome": "A week of approved posts sitting as drafts in your scheduler",
       "setupMinutes": 5,
@@ -6715,7 +6710,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "b14dc7363927663736bffc202d6ed35bc814c95a390f3f9fcfd491a20a57d729",
+      "profileReviewHash": "38055e49f62cd382255988bc6535c67413b78efa248856d0154f173275fe7c85",
       "requires": {
         "apps": [
           "Notion",
@@ -6748,7 +6743,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "7a1a631c83b61f7e61b699808aa725e89687e3d4100628b6169c758b2e9cb2a2",
+      "profileReviewHash": "ce5e164a0f173117a6eca99b1903030eb9b3d855a42d95042d19bfa3d11e4cdc",
       "requires": {
         "apps": [
           "Google Slides",
@@ -6780,7 +6775,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "bab13d35f29798a7faaa01612ba939fbe6e957d827bad1603bce75850a9a2e2b",
+      "profileReviewHash": "d32a0c91eb9796ba1b324f50a06e7ff6b959bd19dfab7537fe5df41b84e704b6",
       "requires": {
         "apps": [
           "QuickBooks Online",
@@ -6793,7 +6788,7 @@
     {
       "slug": "spreadsheet-helper",
       "name": "Spreadsheet Helper",
-      "summary": "A checked sheet, clear formulas and a source-linked list of data problems",
+      "summary": "Sheet helps with an existing spreadsheet or data export.",
       "category": "Front office",
       "outcome": "A checked sheet or a clearly labeled correction plan",
       "setupMinutes": 5,
@@ -6817,7 +6812,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "001a7f9482f634d624249ad688ac4723595df2921d4bf09ecafdabe9e0f74a1b",
+      "profileReviewHash": "c6ae4eb8cb6642e2d38c4dffd533e6b4dc35a9ffaaf307cbd6ed2233fe7aa074",
       "requires": {
         "apps": [
           "Google Sheets",
@@ -6829,7 +6824,7 @@
     {
       "slug": "staff-training",
       "name": "Staff Training",
-      "summary": "A short practical lesson, knowledge check and job-ready checklist",
+      "summary": "Tutor prepares a training module tied to a workplace task for your review.",
       "category": "People",
       "outcome": "A training module tied to a workplace task",
       "setupMinutes": 5,
@@ -6850,7 +6845,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "e47ba49969ef5697de0cee57a36b210c790c96652847eb72caa059151752b2de",
+      "profileReviewHash": "2ad3c009e55d655f1c6ad75a9f144134c1710f707a9252b200283d2451c612fa",
       "requires": {
         "apps": [
           "Google Docs",
@@ -6862,7 +6857,7 @@
     {
       "slug": "star-office-helper",
       "name": "Star Office Helper",
-      "summary": "You are a dedicated visualization integration helper for Murage users.",
+      "summary": "Installs a local visualization companion and connects it to the preview panel.",
       "category": "Setup",
       "outcome": "A visualization companion running locally",
       "setupMinutes": 15,
@@ -6878,7 +6873,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "3bd639c38bbc9f0cce1eb1f296c24df2ec456196213bb41cfc7fa2beb308b45e",
+      "profileReviewHash": "c94f7137c994c8a4ba95a4c81620efaa438077fb850f651982eea2acb1ba4445",
       "requires": {
         "apps": []
       }
@@ -6886,7 +6881,7 @@
     {
       "slug": "story-roleplay",
       "name": "Story Roleplay",
-      "summary": "You are an immersive story roleplay assistant that creates engaging narrative experiences, fully compatible with SillyTavern's character card and world info formats.",
+      "summary": "Runs immersive story roleplay, and works with SillyTavern character cards and world info.",
       "category": "Creative",
       "outcome": "A roleplay session driven by a real character card",
       "setupMinutes": 3,
@@ -6906,7 +6901,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "0c2ea31f00582a249f3bd5d2af20737649baa0d14fdc286f47c84b03fe552453",
+      "profileReviewHash": "5b08bdd20f01096a8f0ea0f732aedbd73f449c99d27db529cbfe5efce2d4196b",
       "requires": {
         "apps": []
       }
@@ -6935,7 +6930,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "44ecfc506b9942a64ba136ebf6fab05c2643b2916ac01f02020ba9689f038940",
+      "profileReviewHash": "7bdc8745971821fe1c47eccf87caac1ed1e26174cc5f0e176c3b622f8c3b600e",
       "requires": {
         "apps": [
           "Google Docs"
@@ -6966,7 +6961,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "15cfb69ab787a602faa56870825e38c02cd67051e4e76c4483668222c3046e8c",
+      "profileReviewHash": "bc3c643d5962c0dcdb4b5b891d632ab8c39629e520fb008e16b3ba0ed2b0885d",
       "requires": {
         "apps": [
           "Google Drive",
@@ -6979,7 +6974,7 @@
     {
       "slug": "tax-prep",
       "name": "Tax Prep",
-      "summary": "A quarterly tax pack with source totals and missing records marked",
+      "summary": "Levy prepares a quarterly tax preparation pack for adviser review.",
       "category": "Money",
       "outcome": "A quarterly tax preparation pack for adviser review",
       "setupMinutes": 5,
@@ -7002,7 +6997,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "46e7d4ab1c886cf134b6cde34b6c45657eb02fbb7d0748c993e53df1ae8058dd",
+      "profileReviewHash": "548cbe23e5b2107b82ffbf4560849748d8c25ed05a369cee2a02d535e1b47f3a",
       "requires": {
         "apps": [
           "QuickBooks Online",
@@ -7036,7 +7031,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "07f3ce1f4d651ce805aeba25913cc56dfef05e028f836510ea8865e968cb602f",
+      "profileReviewHash": "25abe5d5f888ccdc4c0021c9a0813c54c2398783ba34bd4202edcbdcabb17a63",
       "requires": {
         "apps": [
           "Slack",
@@ -7048,7 +7043,7 @@
     {
       "slug": "trademarks-and-ip",
       "name": "Trademarks and IP",
-      "summary": "An ownership checklist and trademark search brief for your next review",
+      "summary": "Crest prepares a checklist and search brief for brand, content and code rights for your review.",
       "category": "Legal",
       "outcome": "An inventory of brand, content and code rights",
       "setupMinutes": 5,
@@ -7069,7 +7064,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "83163cef8d8857cf0eacf510329f2dd12a8394c16732c9f46e9c7a0bcf14a4ed",
+      "profileReviewHash": "4d0c5df34d47e9f2f27042cebb94eaf37423c315817246620aa4a79ac3e09b49",
       "requires": {
         "apps": [
           "Google Docs"
@@ -7171,7 +7166,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "25e39b3d3dc8daf31023adde3623eb581d271463accb766e9808fbd3deb04177",
+      "profileReviewHash": "bf1bc49c2174909790606762e134aa2ec4ba6ca64706083cee27e57e66497380",
       "requires": {
         "apps": [
           "Gmail",
@@ -7203,7 +7198,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "07f6fd9179974b170c84c0ebc03a5b3fac10f7764ca312bebb3fb354785d1c9f",
+      "profileReviewHash": "a84efc8817704d726d8335c4e28dd7c4be04aef0345448f9ae255a673930e939",
       "requires": {
         "apps": [
           "Google Calendar",
@@ -7215,7 +7210,7 @@
     {
       "slug": "ui-ux-pro-max",
       "name": "UI/UX Pro Max",
-      "summary": "Design intelligence: styles, palettes, font pairings and UX guidelines on tap",
+      "summary": "Helps you design interfaces, with a built-in database of UI styles, color palettes, font pairings, chart types and UX guidelines.",
       "category": "Design",
       "outcome": "A design direction chosen from a real database, not from habit",
       "setupMinutes": 3,
@@ -7231,7 +7226,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "386049bd4aaaffdfbf56ec633f50845227693dde36d703efeaefe633d48234e9",
+      "profileReviewHash": "a84d03421d4a2b134f45b1e4b185b3face83ac9545a4be11a6be038ff7180339",
       "requires": {
         "apps": []
       }
@@ -7260,7 +7255,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "baf2834c343762e918fcad1884b8b3b8933eb4704f6a81d668d7623f564060a8",
+      "profileReviewHash": "261dabc984dc223dd6663899dd6c07389f2e8490e44940e54dbfc7ea108c2f5c",
       "requires": {
         "apps": [
           "Notion",
@@ -7272,7 +7267,7 @@
     {
       "slug": "vendor-sourcing",
       "name": "Vendor Sourcing",
-      "summary": "Supplier options, clear comparisons and a purchase request ready for review",
+      "summary": "Barter turns your requirements into a supplier comparison, request-for-quote drafts and an internal purchase request.",
       "category": "Operations",
       "outcome": "A supplier comparison scored against your stated requirements",
       "setupMinutes": 5,
@@ -7295,7 +7290,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "19b2a99d0c4c46b3a7f6e6ed2a331a7e6136fe89ccc05c0551f1531c5c8fcb05",
+      "profileReviewHash": "79751b341edd210e5f23dbe250715b60c3bf396ffe66645d06649d4f17d6c225",
       "requires": {
         "apps": [
           "Gmail",
@@ -7327,7 +7322,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "07594192f433b5e4d188b1eecc487f2ccff7bad04a969d7bb71bb7465c84c34e",
+      "profileReviewHash": "eb2c386da0c4a4fa0a7f986ab419452a693f8135e9c8b47aa15af3aff79fcb12",
       "requires": {
         "apps": [
           "Google Sheets",
@@ -7339,7 +7334,7 @@
     {
       "slug": "webinars-and-events",
       "name": "Webinars and Events",
-      "summary": "An event run sheet, invitations and follow-up drafts ready for review",
+      "summary": "Booth prepares an event plan and timed run sheet from the material you supply.",
       "category": "Sales",
       "outcome": "An event plan and timed run sheet",
       "setupMinutes": 5,
@@ -7360,7 +7355,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "c56bced5faa276d8f96754451ef61ab7be7d641bf266bce2e816452729703c86",
+      "profileReviewHash": "7b7f1b68a0f13f505135850575f604ee0800a62c2bad766d46a0157121888e01",
       "requires": {
         "apps": [
           "Zoom",
@@ -7373,7 +7368,7 @@
     {
       "slug": "website-updates",
       "name": "Website Updates",
-      "summary": "Page edits with an exact change list and a clear review state",
+      "summary": "Wren prepares a page-by-page draft edit pack from the material you supply.",
       "category": "Marketing",
       "outcome": "A page-by-page draft edit pack",
       "setupMinutes": 5,
@@ -7394,7 +7389,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "77d70ce4f66d26634c5e83b0d0cfda7ecc2586829397e9614f5c7ade378bdb8b",
+      "profileReviewHash": "8cf0d9575b7a2f284aec4ecf6a5dd55d8036e547bbe9276d8aa91a462fc24535",
       "requires": {
         "apps": [
           "Webflow",
@@ -7477,7 +7472,7 @@
     {
       "slug": "weekly-report",
       "name": "Weekly Report",
-      "summary": "A Friday business update with checked numbers and clear decisions",
+      "summary": "Pulse prepares a Friday update with five to seven supported KPIs.",
       "category": "Operations",
       "outcome": "A Friday update with five to seven supported KPIs",
       "setupMinutes": 5,
@@ -7499,7 +7494,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "84464a71eeb19323dc3a5df012a1baf0e3cb13c468fe95229f533d53bd8acccd",
+      "profileReviewHash": "7037bd2045d5366fefb0a47311a7e96c3008e52cb67ceec0992a08ad116dc78a",
       "requires": {
         "apps": [
           "Google Sheets",
@@ -7513,7 +7508,7 @@
     {
       "slug": "win-back",
       "name": "Win-Back",
-      "summary": "A lapsed-customer review list and relevant emails ready for approval",
+      "summary": "Bea prepares a lapsed-customer segment list with exclusions for your review.",
       "category": "Support",
       "outcome": "A lapsed-customer segment list with exclusions",
       "setupMinutes": 5,
@@ -7534,7 +7529,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "85b2c4629bc848a8e17527f8d38213b8845b049d12da4d31ecf83a21bacd8379",
+      "profileReviewHash": "897e0f38f6533ea0a16342bf06c499e7e3e169076574bf4a368a49545c652da0",
       "requires": {
         "apps": [
           "Shopify",
@@ -7548,9 +7543,8 @@
     {
       "slug": "win-the-client",
       "name": "Win the Client",
-      "summary": "A clear path from a new enquiry to a reviewed client kickoff pack",
+      "summary": "Fast lead replies, meeting briefs, proposals, contract drafts and a kickoff pack.",
       "category": "Sales",
-      "outcome": "Fast lead replies, meeting briefs, proposals, contract drafts and a kickoff pack",
       "setupMinutes": 5,
       "manifest": "teams/win-the-client/win-the-client.emberteam.json",
       "readme": "teams/win-the-client/README.md",
@@ -7627,7 +7621,7 @@
     {
       "slug": "word-creator",
       "name": "Word Creator",
-      "summary": "You are **Word Creator**: an AI assistant that creates, edits, and analyzes professional Word documents using officecli. For writing a product user guide, use User Guides.",
+      "summary": "Creates, edits and analyzes professional Word documents.",
       "category": "Documents",
       "outcome": "A professional .docx document",
       "setupMinutes": 3,
@@ -7643,7 +7637,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "c6ee1ee6d39e6dc3283852ce8a5060e321e76accc7f33ff1d2305c9eae4856ce",
+      "profileReviewHash": "f36f47067e5c2ef26e26fa6e5416d9ae6afa1db0105ccf810a5020a8dda61697",
       "requires": {
         "apps": []
       }
@@ -7651,7 +7645,7 @@
     {
       "slug": "word-form-creator",
       "name": "Word Form Creator",
-      "summary": "You are **Word Form Creator**: an AI assistant that builds fillable Word forms (.docx) with real content controls, checkbox fields, mail-merge placeholders, and document protection so only designated fields stay editable. For paperwork as one focused job, use Paperwork.",
+      "summary": "Builds fillable Word forms with real form fields and checkboxes, mail-merge placeholders and protection so only the fields you choose can be edited.",
       "category": "Documents",
       "outcome": "A .docx form with real content controls and checkbox fields",
       "setupMinutes": 5,
@@ -7667,7 +7661,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "ee03aa189f0706e0be9cbcb5ddd4df86eb7f37a5f0575dffd0b13095a6d7e41f",
+      "profileReviewHash": "c1ed72687d05d329d76f50f1db91459094153a6edb6660fdc3b0b9f6143ffa2a",
       "requires": {
         "apps": []
       }
@@ -7675,7 +7669,7 @@
     {
       "slug": "writer",
       "name": "Writer",
-      "summary": "Fixes the thing you already wrote, and drafts the thing you have not",
+      "summary": "Fixes the text you already wrote, making it clearer, shorter and warmer, and drafts new text when you have nothing yet.",
       "category": "Write",
       "outcome": "Your own text back, edited, with the changes visible rather than silently swallowed",
       "setupMinutes": 2,
@@ -7704,7 +7698,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "fe1ca142b014196bfadd67b90f9605d80e37b7f92435264b4cdcb97821394e65",
+      "profileReviewHash": "d50348c3525663c27531817842efed72cdd0df2eaa338a1c08c77a73cc324069",
       "requires": {
         "apps": []
       }
@@ -7733,7 +7727,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "71c077bec8bc29c027958387a17b0cac0c4b983ae815898c0d94b17ad8df4260",
+      "profileReviewHash": "d6f1320a08db0cff92da43047af35455a18145c7e58cbf6c004e5593f77fb16d",
       "requires": {
         "apps": [
           "X"
@@ -7764,7 +7758,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "1ea14cf124a7fdb635cf143843b2fb60c3de5612c8f2a28523f131b0b8ff8883",
+      "profileReviewHash": "3e17e6484f21b5f08edeed99e2c309a60ba7bc84827578d71447428e2843d2c3",
       "requires": {
         "apps": [
           "YouTube",
@@ -9826,7 +9820,7 @@
     {
       "slug": "marketing-agency",
       "name": "Marketing Agency",
-      "summary": "A complete campaign with clear positioning, channel drafts and measured results",
+      "summary": "Plan and run multi-channel campaigns from audience research and positioning to content, launches, ads and measurement.",
       "category": "Sell",
       "outcome": "A campaign brief and project board linking positioning, content, channels and launch dates",
       "setupMinutes": 2,
@@ -10524,7 +10518,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "cedd8f7a58ac5a591511c7a4817e74a292a5f0d75ec20fe8205c3c5dbc4e0f39",
+      "profileReviewHash": "487dd2f1874c9a8ff220ff3c795ef6e3b8e9c26ff782a2427081ffbf27a08142",
       "requires": {
         "apps": []
       }
@@ -10972,7 +10966,7 @@
     {
       "slug": "seo-content-engine",
       "name": "SEO Content Engine Room",
-      "summary": "A search growth plan with page briefs, practical edits and a dated ranking report",
+      "summary": "Grow a site through keyword research, page briefs, on-page improvements, internal links and ranking reports.",
       "category": "Write",
       "outcome": "A keyword-to-page map and prioritized project board grounded in your site data",
       "setupMinutes": 2,
@@ -11154,7 +11148,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "c4228cb29018ede10d206fca9faf78ce084a89a5846cf6a94cc4db15d6ca33c0",
+      "profileReviewHash": "e0e18f73c53908c12cb735676d227e88935bac8eb1c92c806e00d8d1b291d768",
       "requires": {
         "apps": []
       }

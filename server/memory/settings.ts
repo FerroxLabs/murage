@@ -23,7 +23,8 @@ import { DATA_DIR } from "../config.ts";
 import { SERVER_ROOT } from "../proxy-paths.ts";
 import { database, memoryHoldCode, transaction } from "../database.ts";
 import { holdMessage } from "./integrity-pass.ts";
-import { requireMemoryOwner, approveMemory, pinMemory, correctMemory, bindMemoryScope, readCorrectionTarget } from "./authority.ts";
+import { requireMemoryOwner, approveMemory, pinMemory, correctMemory, bindMemoryScope, readCorrectionTarget, rememberMemory, REMEMBER_TEXT_MAX } from "./authority.ts";
+import { LAM_PROVIDERS } from "../../shared/learn-about-me/parse.ts";
 import { forgetMemory, memoryDeletionStatus, MEMORY_COUNT_CAP } from "./forget.ts";
 import { backgroundMemoryScopes, ensureScope, type MemoryRoster } from "./policy.ts";
 import { memoryState } from "./repository.ts";
@@ -45,6 +46,8 @@ import { revokeAllDisclosures } from "./revocation.ts";
 import { reviewBack, reviewEdit, reviewKeep, reviewKeepAll, reviewLater, reviewList, reviewSources, reviewSummary, reviewUndo } from "./review.ts";
 import { sealedTurnSummary } from "./reset-watch.ts";
 import { inheritEdge } from "./revoke-commit.ts";
+import { insertMemoryRecord } from "./record-write.ts";
+import { maskFinancialIdentifiers } from "../../shared/financial-ids.ts";
 
 const SETTINGS="memory-owner-settings";
 type Configuration={excludedThreadIds:string[];extractorInstanceId:string|null};
@@ -112,6 +115,8 @@ const actions=z.discriminatedUnion("action",[
   z.object({action:z.literal("restore-archive"),id,version}).strict(),
   z.object({action:z.literal("pin"),id,version,pinned:z.boolean()}).strict(),
   z.object({action:z.literal("correct"),id,version,text:z.string().min(1).max(4096),correctionPin:z.enum(["transfer","unpin"]).optional()}).strict(),
+  // Learn about me: one kept line, the exact words the owner saw, and where they came from (a label only)
+  z.object({action:z.literal("remember"),actionId,text:z.string().min(1).max(REMEMBER_TEXT_MAX),origin:z.object({provider:z.enum(LAM_PROVIDERS),date:z.string().regex(/^\d{4}(-\d{2}(-\d{2})?)?$/).optional()}).strict().optional()}).strict(),
   z.object({action:z.literal("promote"),id,version,scopeId:id}).strict(),
   z.object({action:z.literal("forget"),kind:z.enum(["source","record"]),id,revision:z.number().int().nonnegative().optional()}).strict(),
   z.object({action:z.literal("bind"),scopeId:id,...subject}).strict(),
@@ -137,11 +142,17 @@ function configuration():Configuration {
 }
 function record(row:Record<string,unknown>):MemoryRecord {
   const reviewReason=row.state==="candidate"?candidateReviewReason(database(),String(row.id),Number(row.version)):undefined;
-  return {...(reviewReason?{reviewReason}:{}),id:String(row.id),version:Number(row.version),scopeId:String(row.scope_id),kind:String(row.kind),text:String(row.text),assertion:row.assertion as MemoryRecord["assertion"],state:row.state as MemoryRecord["state"],ownerPinned:row.owner_pinned===1,validFrom:Number(row.valid_from),validTo:row.valid_to===null?null:Number(row.valid_to)};
+  return {...(reviewReason?{reviewReason}:{}),id:String(row.id),version:Number(row.version),scopeId:String(row.scope_id),kind:String(row.kind),text:maskFinancialIdentifiers(String(row.text)),assertion:row.assertion as MemoryRecord["assertion"],state:row.state as MemoryRecord["state"],ownerPinned:row.owner_pinned===1,validFrom:Number(row.valid_from),validTo:row.valid_to===null?null:Number(row.valid_to)};
 }
 function getRecord(id:string,version:number){
   const row=database().prepare("SELECT * FROM memory_records WHERE id=? AND version=?").get(id,version);
-  if(!row)throw new Error("MEMORY_NOT_FOUND");return record(row);
+  if(!row)throw new Error("MEMORY_NOT_FOUND");
+  // Learn about me R5.1 C4: every owner route that answers a record shows a forgotten one (RECORD tombstone) with no words, including
+  // a version past the newest 64 that keeps its text until the expand phase, and a replayed Keep.
+  return forgottenRecord(id,version)?{...record(row),text:""}:record(row);
+}
+function forgottenRecord(id:string,version:number){
+  return Boolean(database().prepare("SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? AND (revision IS NULL OR revision=?) LIMIT 1").get(id,version));
 }
 function isPipRecord(id:string):boolean{
   const row=database().prepare("SELECT kind FROM memory_records WHERE id=? LIMIT 1").get(id);
@@ -475,9 +486,12 @@ export async function memoryOwnerRoute(path:string,body:unknown,ticket:object,ro
   }
   if(input.action==="inspect"){
     const current=getRecord(input.id,input.version);let remaining=32768;
+    // Learn about me R5.1 C4: a forgotten record (RECORD tombstone) shows no words, even a version past the newest 64 that keeps its
+    // text until the expand phase.
+    if(forgottenRecord(input.id,input.version))return {record:current,evidence:[],correction:null};
     const evidence=db.prepare("SELECT e.*,s.speaker,v.payload,v.content_hash FROM memory_evidence e JOIN memory_sources s ON s.id=e.source_id JOIN memory_source_versions v ON v.source_id=e.source_id AND v.revision=e.source_revision WHERE e.record_id=? AND e.record_version=? LIMIT 21").all(input.id,input.version);
     if(evidence.length>20)throw new Error("MEMORY_RESPONSE_LIMIT");
-    return {record:current,evidence:evidence.map(row=>{const payload=JSON.parse(String(row.payload)),bytes=Buffer.from(payload.text??"").subarray(Number(row.start_byte),Number(row.end_byte));if(bytes.length>remaining)throw new Error("MEMORY_RESPONSE_LIMIT");remaining-=bytes.length;return {sourceId:String(row.source_id),revision:Number(row.source_revision),startByte:Number(row.start_byte),endByte:Number(row.end_byte),text:bytes.toString("utf8"),path:typeof payload.path==="string"?payload.path:undefined,hash:String(row.content_hash),speaker:String(row.speaker)};}),lineage:db.prepare("SELECT parent_id AS id,parent_version AS version FROM memory_derivations WHERE child_id=? AND child_version=? LIMIT 100").all(input.id,input.version),
+    return {record:current,evidence:evidence.map(row=>{const payload=JSON.parse(String(row.payload)),bytes=Buffer.from(payload.text??"").subarray(Number(row.start_byte),Number(row.end_byte));if(bytes.length>remaining)throw new Error("MEMORY_RESPONSE_LIMIT");remaining-=bytes.length;return {sourceId:String(row.source_id),revision:Number(row.source_revision),startByte:Number(row.start_byte),endByte:Number(row.end_byte),text:maskFinancialIdentifiers(bytes.toString("utf8")),path:typeof payload.path==="string"?payload.path:undefined,hash:String(row.content_hash),speaker:String(row.speaker)};}),lineage:db.prepare("SELECT parent_id AS id,parent_version AS version FROM memory_derivations WHERE child_id=? AND child_version=? LIMIT 100").all(input.id,input.version),
       correction:current.state==="candidate"?readCorrectionTarget(db,input.id,input.version):null};
   }
   if(input.action==="review-as-skill"){
@@ -500,12 +514,13 @@ export async function memoryOwnerRoute(path:string,body:unknown,ticket:object,ro
   if(input.action==="archive"){archiveMemoryRecord(ticket,input.id,input.version);return {record:getRecord(input.id,input.version)};}
   if(input.action==="restore-archive"){plainMemoryEditError(()=>restoreArchivedMemoryRecord(ticket,input.id,input.version));return {record:getRecord(input.id,input.version)};}
   if(input.action==="approve"){approveMemory(ticket,input.id,input.version,input.correctionPin?{correctionPin:input.correctionPin}:{});reindex(input.id,input.version);return {record:getRecord(input.id,input.version)};}
-  if(input.action==="pin"){pinMemory(ticket,input.id,input.version,input.pinned);return {record:getRecord(input.id,input.version)};}
+  if(input.action==="remember"){const kept=rememberMemory(ticket,input);if(kept.fresh)reindex(kept.id,kept.version);return {record:getRecord(kept.id,kept.version),...(kept.duplicate?{duplicate:true as const}:{})};}
+  if(input.action==="pin"){pinMemory(ticket,input.id,input.version,input.pinned,roster);return {record:getRecord(input.id,input.version)};}
   if(input.action==="correct"){const next=plainMemoryEditError(()=>correctMemory(ticket,input.id,input.version,input.text,{correctionPin:input.correctionPin}));reindex(input.id,next);return {record:getRecord(input.id,next)};}
   if(input.action==="promote"){
     return transaction(()=>{const original=getRecord(input.id,input.version);if(original.state!=="active"&&original.state!=="candidate")throw new Error("MEMORY_VERSION_CONFLICT");
       if(!db.prepare("SELECT 1 FROM memory_scopes WHERE id=?").get(input.scopeId))throw new Error("MEMORY_SCOPE_UNKNOWN");
-      const copy=randomUUID();db.prepare("INSERT INTO memory_records VALUES(?,1,?,?,?,'owner-statement','active',0,?,NULL,NULL,?)").run(copy,input.scopeId,original.kind,original.text,Date.now(),Date.now());db.prepare("INSERT INTO memory_derivations VALUES(?,?,?,1)").run(original.id,original.version,copy);inheritEdge(db,{kind:"record",id:copy,version:1},{kind:"record",id:original.id,version:original.version});
+      const copy=randomUUID();insertMemoryRecord(db,{id:copy,version:1,scopeId:String(input.scopeId),kind:String(original.kind),text:String(original.text),assertion:"owner-statement",state:"active",validFrom:Date.now(),createdAt:Date.now()});db.prepare("INSERT INTO memory_derivations VALUES(?,?,?,1)").run(original.id,original.version,copy);inheritEdge(db,{kind:"record",id:copy,version:1},{kind:"record",id:original.id,version:original.version});
       db.exec("UPDATE memory_meta SET policy_revision=policy_revision+1");reindex(copy,1);return {record:getRecord(copy,1)};});
   }
   if(input.action==="forget")return forgetMemory(ticket,input);

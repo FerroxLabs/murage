@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Landing Pages",
     "tagline": "A complete page draft with three headlines and a focused test plan",
-    "summary": "Fold prepares a complete landing-page copy draft from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For creating a website and publishing it when requested, use Site Builder. For general conversion copy, use Copy. For interface and visual design, use UI/UX Pro Max. For a lead magnet team, use Lead Magnet Forge.",
+    "summary": "Fold prepares a landing page that converts, from the material you supply: three headlines, the full page copy and a focused test plan.",
     "category": "Marketing",
     "author": {
       "name": "Ferrox Labs",
@@ -60,7 +60,8 @@
         "title": "Landing Pages",
         "description": "Fold prepares a complete landing-page copy draft from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For creating a website and publishing it when requested, use Site Builder. For general conversion copy, use Copy. For interface and visual design, use UI/UX Pro Max. For a lead magnet team, use Lead Magnet Forge.",
         "appearance": {
-          "color": "blue"
+          "color": "blue",
+          "mascotBody": "star"
         },
         "skills": [
           "landing-page-copy",

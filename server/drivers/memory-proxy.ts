@@ -22,7 +22,11 @@ const evidence = z.object({
   sourceId: boundedId, revision: z.number().int().positive().safe(),
   startByte: z.number().int().nonnegative().safe(), endByte: z.number().int().positive().safe(),
 }).strict().refine(value => value.endByte > value.startByte);
-const evidenceList = z.array(evidence).min(1).max(20);
+// 1.0.5: or the cited words themselves (quote-evidence.ts resolves them to the line that holds them): the only way a bot can
+// cite something said in a conversation, since no tool hands it a conversation line's sourceId.
+const quoted = z.object({ quote: z.string().min(1).max(4096).refine(value => value.trim().length > 0, "quote must be the exact words"), messageId: boundedId.optional() }).strict();
+const evidenceItem = z.union([evidence, quoted], { error: "each evidence item is {quote} with the exact words from this conversation (optionally with messageId), or {sourceId, revision, startByte, endByte} from a memory_search or memory_get result" });
+const evidenceList = z.array(evidenceItem).min(1).max(20);
 const text = z.string().min(1).max(4096).refine(value => value.trim().length > 0);
 // Thread recall (THREAD-RECALL-DESIGN r6 rule 4): a date or a date-time, never a row id; this adapter is spawned standalone, so the pattern is repeated.
 const threadBefore = z.string().regex(/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}\.\d{3}Z)?$/, "before must be YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS.sssZ");
@@ -39,7 +43,7 @@ const schemas = {
   memory_get: z.object({ handles: z.array(handle).min(1).max(20) }).strict(),
   memory_save: z.object({ text, evidence: evidenceList, idempotencyKey,
     claimType:z.enum(["owner-statement","observation","inference","character-canon","procedure"]).optional(),
-    ownerInvitation:evidence.optional(),
+    ownerInvitation:evidenceItem.optional(),
   }).strict(),
   memory_propose_correction: z.union([
     z.object({ id: boundedId, version: z.number().int().positive().safe(), replacement: text, evidence: evidenceList, idempotencyKey }).strict(),
@@ -52,9 +56,13 @@ const handleProperties = {
   version: { type: "integer", minimum: 1, description: `Exact record version from ${murageToolOnThisServer("memory_search")}; requires id.` },
 };
 const handleSchema = { type: "object", additionalProperties: false, properties: handleProperties, required: [] };
+// One flat object with every field optional (no anyOf), so every engine's tool layer reads the same plain shape.
+const EVIDENCE_HELP = "Cite what supports the memory. Usually {quote}: the exact words, copied character for character from this conversation (one sentence is enough). For an older conversation add messageId from thread_search or thread_read. To reuse a remembered line's source, give sourceId, revision, startByte and endByte exactly as memory_search or memory_get returned them instead of quote.";
 const evidenceSchema = {
-  type: "array", minItems: 1, maxItems: 20,
-  items: { type: "object", additionalProperties: false, required: ["sourceId", "revision", "startByte", "endByte"], properties: {
+  type: "array", minItems: 1, maxItems: 20, description: EVIDENCE_HELP,
+  items: { type: "object", additionalProperties: false, required: [], description: EVIDENCE_HELP, properties: {
+    quote: { type: "string", minLength: 1, maxLength: 4096, description: "Exact words from the conversation, copied as written." },
+    messageId: { type: "string", minLength: 1, maxLength: 256, description: "Optional: the message the quote is in, as thread_search or thread_read returned it." },
     sourceId: { type: "string", minLength: 1, maxLength: 256 }, revision: { type: "integer", minimum: 1 },
     startByte: { type: "integer", minimum: 0 }, endByte: { type: "integer", minimum: 1 },
   } },
@@ -74,7 +82,7 @@ const tools = [
         handles: { type: "array", minItems: 1, maxItems: 20, items: handleSchema },
       },
     } },
-  { name: "memory_save", description: "Save a memory backed by source evidence. Murage applies the owner's learning policy: grounded claims may become active; unsupported claims remain provisional. Character canon is fictional and requires owner-invitation evidence. A classification never grants authority. Reuse the idempotency key for the same save.",
+  { name: "memory_save", description: "Save a memory backed by source evidence. Evidence is usually [{\"quote\": \"exact words the owner wrote in this conversation\"}]; no ids are needed. Murage applies the owner's learning policy: grounded claims may become active; unsupported claims remain provisional. Character canon is fictional and requires owner-invitation evidence. A classification never grants authority. Reuse the idempotency key for the same save.",
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }, inputSchema: {
       type: "object", additionalProperties: false, required: ["text", "evidence", "idempotencyKey"], properties: {
         text: textSchema, evidence: evidenceSchema, idempotencyKey: { type: "string", minLength: 1, maxLength: 160, pattern: "^[A-Za-z0-9_-]+$" },

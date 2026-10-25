@@ -28,7 +28,8 @@
         "title": "Support",
         "description": "Support specialist - ticket triage, onboarding flow, churn prevention via Lincoln Murphy's Desired Outcome framework.",
         "appearance": {
-          "color": "green"
+          "color": "coral",
+          "mascotBody": "circle"
         },
         "skills": [
           "mend-ticket-triage",
@@ -49,7 +50,8 @@
         "title": "Research",
         "description": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method.",
         "appearance": {
-          "color": "blue"
+          "color": "blue",
+          "mascotBody": "capsule"
         },
         "skills": [
           "research-jtbd-interviews",
@@ -72,7 +74,8 @@
         "title": "Ops",
         "description": "Ops specialist - operating rhythms, CRM hygiene, and SOP design via Verne Harnish's Scaling Up cadence discipline.",
         "appearance": {
-          "color": "red"
+          "color": "teal",
+          "mascotBody": "squircle"
         },
         "skills": [
           "patch-operating-rhythm",
@@ -94,7 +97,8 @@
         "title": "Coach",
         "description": "Coach - decision frames, founder cadence, stuck-and-unstuck thinking via Ben Horowitz's no-shortcuts tradition.",
         "appearance": {
-          "color": "orange"
+          "color": "green",
+          "mascotBody": "hexagon"
         },
         "skills": [
           "helm-decision-frames",

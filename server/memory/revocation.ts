@@ -53,7 +53,12 @@ export function revokeThreadDisclosures(db: DatabaseSync, threadId: string, caus
   return noteRevocation("thread", cause, Number(db.prepare(sql).run(threadId).changes));
 }
 
-export function revokeRecordDisclosures(db: DatabaseSync, cause: string, affected: { recordIds?: readonly string[]; sourceIds?: readonly string[]; viaSources?: boolean }): number {
+export function revokeRecordDisclosures(db: DatabaseSync, cause: string, affected: { recordIds?: readonly string[]; sourceIds?: readonly string[]; viaSources?: boolean; withdraws?: false }): number {
+  // A change that withdraws nothing any session was shown and adds nothing one must not keep (designs/MEMORY-CHANGED-RESET-106.md):
+  // pinning (a mark is added, never removed), keeping a learned memory (its confirmation, not its words) and remembering a brand-new
+  // record (nothing can cite an id that did not exist). No receipt ends and no write-time revoke is committed, so a warm engine
+  // session stays warm; its next frame carries the change. Every other writer, unpin and undo included, keeps both.
+  if (affected.withdraws === false) return noteRevocation("records", cause, 0);
   const recordIds = [...new Set(affected.recordIds ?? [])], sourceIds = [...new Set(affected.sourceIds ?? [])];
   if (!recordIds.length && !sourceIds.length) return noteRevocation("records", cause, 0);
   // write-time: what was shown from these records is withdrawn (a soft memory revoke per record: its citing receipts, those of the

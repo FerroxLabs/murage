@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { isCredentialTargetId } from "../shared/credential-request.ts";
+import { isCredentialTargetId, isMcpCredentialId } from "../shared/credential-request.ts";
 import type { Message } from "./store.ts";
 
 // Pure recovery schemas. Do not import runtime managers or normalize historic
@@ -49,7 +49,7 @@ const card = z.object({
 }).passthrough();
 const connector = z.object({ slug: text, alias: text.optional(), label: text, description: text, status: z.enum(["required", "authorizing", "connected", "failed"]), resumeKey: text, error: text.optional(), dismissed: boolean.optional(), resumed: boolean.optional() }).passthrough();
 const mcpSignIn = z.object({ name: text, host: text, bot: text, reason: z.enum(["sign-in-ended", "needs-more-access"]), status: z.enum(["required", "signed-in"]), resumeKey: text, title: text, body: text, phone: text, error: text.optional(), dismissed: boolean.optional(), resumed: boolean.optional() }).passthrough();
-const secret = z.object({ target: z.custom<string>(isCredentialTargetId), label: text, description: text, placeholder: text, helpUrl: text, requestKey: text, provided: boolean.optional(), dismissed: boolean.optional(), resumed: boolean.optional(), error: text.optional() }).passthrough();
+const secret = z.object({ target: z.custom<string>((value) => isCredentialTargetId(value) || isMcpCredentialId(value)), label: text, description: text, placeholder: text, helpUrl: text, requestKey: text, provided: boolean.optional(), dismissed: boolean.optional(), resumed: boolean.optional(), error: text.optional() }).passthrough();
 // Sparse historic terminal receipts are supported. Supplied provenance fields
 // must have their declared types; they need not be invented during recovery.
 const routineRun = z.object({ status: runStatus, runId: text.optional(), routineId: text.optional(), routineName: text.optional(), goalStatus: goalStatus.optional(), executionThreadId: text.optional(), summary: text.optional(), error: text.optional() }).passthrough();

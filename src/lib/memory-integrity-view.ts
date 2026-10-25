@@ -34,6 +34,7 @@ const PHASE_KEYS: Record<string, LocaleKey> = {
   "output-index": "memoryStrip.phase.output-index", references: "memoryStrip.phase.references", learning: "memoryStrip.phase.learning",
   lineage: "memoryStrip.phase.lineage", shapes: "memoryStrip.phase.shapes", storage: "memoryStrip.phase.storage",
   "message-index": "memoryStrip.phase.message-index", "search-index": "memoryStrip.phase.search-index", marker: "memoryStrip.phase.marker",
+  masking: "memoryStrip.phase.masking", settling: "memoryStrip.phase.settling",
 };
 export function phaseLabel(id: string | undefined | null): string | null {
   return id && Object.hasOwn(PHASE_KEYS, id) ? t(PHASE_KEYS[id]!) : null;

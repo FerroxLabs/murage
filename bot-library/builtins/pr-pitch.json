@@ -48,7 +48,8 @@
         "title": "PR Pitch",
         "description": "Pippa prepares three request-matched pitch drafts from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For general conversion copy, use Copy. For a public response team, use Damage Control.",
         "appearance": {
-          "color": "blue"
+          "color": "blue",
+          "mascotBody": "capsule"
         },
         "skills": [
           "pr-pitch",

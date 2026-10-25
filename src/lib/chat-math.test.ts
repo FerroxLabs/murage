@@ -117,3 +117,30 @@ describe("KaTeX options", () => {
     expect(katexOptions(false).macros).not.toBe(katexOptions(false).macros);
   });
 });
+
+// Release finding 12-A1: an opener with no closer made the lazy body walk the rest of the text, once per opener, so a long
+// document of unclosed "\[" froze the preview on the UI thread. The work is bounded now.
+describe("unclosed openers cost bounded work", () => {
+  const timed = (text: string) => {
+    const started = performance.now();
+    const result = extractMath(text);
+    return { ms: performance.now() - started, result };
+  };
+  it("returns quickly for a long run of unclosed bracket openers", () => {
+    const { ms, result } = timed(" \\[".repeat(60_000));
+    expect(result.spans).toEqual([]);
+    expect(ms).toBeLessThan(500);
+  }, 120_000);
+  it("returns quickly for a long run of unclosed paren openers on one line", () => {
+    const { ms, result } = timed(" \\(".repeat(60_000));
+    expect(result.spans).toEqual([]);
+    expect(ms).toBeLessThan(500);
+  }, 120_000);
+  it("returns quickly when one closer sits at the very end", () => {
+    const { ms } = timed(" \\[".repeat(60_000) + " x \\]");
+    expect(ms).toBeLessThan(500);
+  }, 120_000);
+  it("still finds ordinary math", () => {
+    expect(texOf("where \\(x\\) is and \\[y^2\\] too")).toEqual([["x", false], ["y^2", true]]);
+  });
+});

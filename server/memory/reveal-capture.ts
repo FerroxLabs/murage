@@ -10,6 +10,7 @@ import { readMemoryLearning } from "./learning-policy.ts";
 import type { MemoryRoster } from "./policy.ts";
 import { revokeRecordDisclosures } from "./revocation.ts";
 import { inheritEdge } from "./revoke-commit.ts";
+import { insertMemoryRecord } from "./record-write.ts";
 
 type Receipt={cursor:string;status:"pending"|"complete";retryAt:number;reason?:string;attempts?:number};
 /** A minute, doubling while the SAME reason keeps coming back, up to an hour.
@@ -90,13 +91,21 @@ interface ScanMark{hwm:number;open:number[];spill?:{from:number;to:number}}
  *  now. Everything here is rebuilt from the database after a restart. */
 const scan={db:null as DatabaseSync|null,mark:{hwm:0,open:[]} as ScanMark,retryCursor:0,retryWake:0,cycleMin:Infinity,eventMin:Infinity,cycleCandidates:false,hot:new Set<string>(),
   /** Pending receipts by job id with the time each is due, filled by the first full pass over the receipts and kept current by every write this module makes. Once `loaded`, the sweep reads no receipt rows but the ones that are due. */
-  known:new Map<string,number>(),loaded:false};
+  known:new Map<string,number>(),loaded:false,
+  /** Looks that found each pending receipt's job ineligible, in a row (the backoff's exponent); cleared when it is taken or settled. */
+  ineligible:new Map<string,number>()};
 /** The most receipts held in memory; beyond it the sweep keeps reading the table in windows. */
 const KNOWN_LIMIT=200_000;
-/** A receipt that is due but whose job is not eligible (the job's own state, not the roster) is looked at again after this. */
-const INELIGIBLE_RECHECK_MS=600_000;
+/** A receipt that is due but whose job is not eligible (the job's own state, not the roster) is looked at again after this, doubling with
+ *  every look that finds it still ineligible, up to INELIGIBLE_RECHECK_MAX_MS (SELF-OVERLOAD-105 item 3: a store with 80k such receipts needed
+ *  134 looks a second at a flat 10 minutes, more than the sweep reads, so the sweep never stopped). The count is in memory: a restart looks
+ *  at every receipt once more at 10 minutes. */
+export const INELIGIBLE_RECHECK_MS=600_000;
+export const INELIGIBLE_RECHECK_MAX_MS=24*3_600_000;
+/** The delay before the next look at a receipt found ineligible `looks` times before. */
+export function ineligibleRecheckMs(looks:number):number{return Math.min(INELIGIBLE_RECHECK_MAX_MS,INELIGIBLE_RECHECK_MS*2**Math.max(0,Math.min(looks,12)));}
 /** Forget what is held in memory, as a restart does: the persisted mark remains. */
-export function resetRevealScan(){revealWindow=1024;scan.db=null;scan.mark={hwm:0,open:[]};scan.retryCursor=0;scan.retryWake=0;scan.cycleMin=Infinity;scan.eventMin=Infinity;scan.cycleCandidates=false;scan.hot.clear();scan.known.clear();scan.loaded=false;}
+export function resetRevealScan(){revealWindow=1024;scan.db=null;scan.mark={hwm:0,open:[]};scan.retryCursor=0;scan.retryWake=0;scan.cycleMin=Infinity;scan.eventMin=Infinity;scan.cycleCandidates=false;scan.hot.clear();scan.known.clear();scan.ineligible.clear();scan.loaded=false;}
 function loadScan(db:DatabaseSync){
   if(scan.db===db)return;
   resetRevealScan();scan.db=db;
@@ -216,10 +225,10 @@ function sweepKnown(db:DatabaseSync,now:number,want:number,found:string[],take:(
     reads++;
     const row=read.get(receiptId(jobId));
     let value:Receipt|undefined;try{value=row?JSON.parse(String(row.intent)):undefined;}catch{/* unreadable: dropped below */}
-    if(!value||value.status!=="pending"){scan.known.delete(jobId);continue;}
+    if(!value||value.status!=="pending"){scan.known.delete(jobId);scan.ineligible.delete(jobId);continue;}
     if(value.retryAt>now){scan.known.set(jobId,value.retryAt);next=Math.min(next,value.retryAt);continue;}
-    if(eligible.get(jobId)){take(jobId);next=Math.min(next,now+1000);}
-    else{scan.known.set(jobId,now+INELIGIBLE_RECHECK_MS);next=Math.min(next,now+INELIGIBLE_RECHECK_MS);}
+    if(eligible.get(jobId)){scan.ineligible.delete(jobId);take(jobId);next=Math.min(next,now+1000);}
+    else{const looks=scan.ineligible.get(jobId)??0,delay=ineligibleRecheckMs(looks);scan.ineligible.set(jobId,looks+1);scan.known.set(jobId,now+delay);next=Math.min(next,now+delay);}
   }
   scan.retryWake=Math.min(next,scan.eventMin);scan.eventMin=Infinity;
 }
@@ -300,7 +309,7 @@ export async function captureBotReveals(jobId:string,roster:()=>MemoryRoster,ext
         const version=Number(previous?.version??0)+1,state=learning.reviewMode?"candidate":"active";
         if(previous)db.prepare("UPDATE memory_records SET state='superseded',valid_to=? WHERE id=? AND version=?").run(now,id,previous.version);
         const text=JSON.stringify({canonId:canon.id,canonVersion:canon.version,audience:"owner-private",revealed:true,note:`Observed disclosure of fictional canon: ${String(canon.text)}`});
-        db.prepare("INSERT INTO memory_records VALUES(?,?,?,'reveal-state',?,'assistant-inference',?,0,?,NULL,?,?)").run(id,version,current.scopeId,text,state,now,previous?id:null,now);
+        insertMemoryRecord(db,{id,version,scopeId:current.scopeId,kind:"reveal-state",text,assertion:"assistant-inference",state,validFrom:now,supersedesId:previous?id:null,createdAt:now});
         db.prepare("UPDATE memory_record_details SET partition='identity',attention='current',confidence_basis=?,entities=? WHERE record_id=? AND record_version=?")
           .run(`Observed terminal disclosure (${support.reason}); fictional continuity only, not world truth`,JSON.stringify(["owner-private",canon.id]),id,version);
         db.prepare("INSERT INTO memory_derivations VALUES(?,?,?,?)").run(canon.id,canon.version,id,version);

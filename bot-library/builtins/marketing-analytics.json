@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Marketing Analytics",
     "tagline": "Channel spend and results reconciled into three practical next moves",
-    "summary": "Tracer prepares a channel report with spend and lead totals from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For funnel, cohort and experiment analysis, use Analyst. For an ad account review team, use Ad Account Mechanic. For a growth constraint review team, use Growth Loop.",
+    "summary": "Tracer prepares a channel report with spend and lead totals from the material you supply.",
     "category": "Marketing",
     "author": {
       "name": "Ferrox Labs",
@@ -60,7 +60,8 @@
         "title": "Marketing Analytics",
         "description": "Tracer prepares a channel report with spend and lead totals from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For funnel, cohort and experiment analysis, use Analyst. For an ad account review team, use Ad Account Mechanic. For a growth constraint review team, use Growth Loop.",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "capsule"
         },
         "skills": [
           "lens-marketing-attribution",

@@ -12,6 +12,7 @@ import {
   verifyCloudflaredExecutable,
 } from "./prepare-cloudflared.mjs";
 import { validatePackagedMemoryModel } from "./stage-memory-model.mjs";
+import { validatePackagedProdPin } from "./packaged-prod-pin.mjs";
 import { FUIGO_EXECUTABLE_NAMES, HARNESS_RESOURCE_DIRECTORIES } from "../electron/harness-resources.mjs";
 import { FUIGO_VERSION, verifyFuigoExecutable } from "./prepare-fuigo.mjs";
 import { validateFuigoProbeResources, stampSignedFuigoProbe } from "./fuigo-probe-resources.mjs";
@@ -344,6 +345,8 @@ export default async function afterPack(context) {
       : path.join(context.appOutDir, "resources")
   );
   validatePackagedGepa(resources, context);
+  // A desktop without the production control-plane key refuses every production Cloud home: the packaged control-plane module must be byte-identical to the gate-tested source.
+  if (context.packager) console.log("control-plane pin:", JSON.stringify(await validatePackagedProdPin(resources)));
   if(context.electronPlatformName==="darwin"&&context.packager){const arch=typeof context.arch==="string"?context.arch:({1:"x64",3:"arm64"})[context.arch];validateNotificationAuthorizationResource(resources,arch);await requireRegularFile(path.join(resources,"notification-authorization.node"),0o755);}
   // Without the engine-exclusion addon Murage cannot clean a deleted conversation out of the engines' files; refuse a package that lacks it.
   if (context.packager) {

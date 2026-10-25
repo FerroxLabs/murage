@@ -7,12 +7,15 @@
 // routing, living at `<state dir>/agents/<name>`. The state dir is
 // `$OPENCLAW_STATE_DIR` when set (OpenClaw's own override; `--profile <p>`
 // makes it `~/.openclaw-<p>`), else `~/.openclaw`. The bridge picks the agent
-// from `--session agent:<name>:main`, so every spawn names its agent and a
-// terminal-side default can never change which agent answers.
+// from the `agent:<name>:` prefix of `--session`, so every spawn names its
+// agent and a terminal-side default can never change which agent answers. The
+// rest of the key names the Murage conversation and its audience, so two
+// conversations never share one OpenClaw conversation (audit 03-3).
 //
 // This module only reads the filesystem. It never starts the CLI: listing
 // through `openclaw agents list` would boot a Node gateway client per call.
 // Same discipline as hermes-profiles.ts.
+import { createHash } from "node:crypto";
 import { lstatSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -57,10 +60,41 @@ export function openclawAgentOf(config: unknown): string {
   return isOpenclawAgentName(agent) ? agent : DEFAULT_OPENCLAW_AGENT;
 }
 
-/** The `--session` key that selects an agent at the ACP bridge. */
-export function openclawSessionKey(agent: string): string {
+/** Who one Murage conversation runs for (SendTurnInput.warmIdentity's parts). */
+export interface OpenclawSessionScope {
+  threadId: string;
+  audience?: "owner" | "non-owner";
+  humanPrincipal?: string;
+  /** How many times this conversation's session was reset (an edit, a rewind, a memory revocation).
+   *  Each reset moves the conversation to a new gateway key so the gateway cannot hand back what was removed. */
+  generation?: number;
+}
+
+/** The `--session` key for one Murage conversation on one agent.
+ *
+ * The bridge binds every session it opens or loads to this key, and the
+ * gateway keeps one conversation per key. A fixed `agent:<agent>:main` let a
+ * private owner conversation and any other conversation on the same agent
+ * (another thread, a channel, a guest) read each other's history. So the key
+ * carries the thread, and a turn that is not known to be the owner's gets a
+ * separate key per person: the owner's key is never handed to anyone else.
+ * Hashed, so the key holds no raw ids and stays in the bridge's key alphabet.
+ *
+ * Upgrade: the old shared `agent:<agent>:main` history stays in the gateway and
+ * is attached to nobody (the owner included). The bridge binds a resumed
+ * session to the argv key, so an old resume cursor does not carry that history
+ * over: each conversation and each person starts fresh on its own key. */
+export function openclawSessionKey(agent: string, scope: OpenclawSessionScope): string {
   if (!isOpenclawAgentName(agent)) throw new Error(`"${String(agent).slice(0, 80)}" is not an OpenClaw agent name`);
-  return `agent:${agent}:main`;
+  if (typeof scope?.threadId !== "string" || !scope.threadId) throw new Error("an OpenClaw session key needs the conversation it belongs to");
+  const owner = scope.audience === "owner";
+  const part = owner ? "owner" : "guest";
+  const digest = createHash("sha256")
+    // Generation 0 hashes exactly as before, so a conversation that was never reset keeps its key.
+    .update(["murage", agent, scope.threadId, part, owner ? "" : scope.humanPrincipal ?? "", ...(scope.generation && scope.generation > 0 ? [`gen${Math.floor(scope.generation)}`] : [])].join("\0"))
+    .digest("hex")
+    .slice(0, 24);
+  return `agent:${agent}:murage-${part}-${digest}`;
 }
 
 /** Entries OpenClaw creates inside a real agent dir (`agent/` holds
