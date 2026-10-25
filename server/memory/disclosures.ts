@@ -1,11 +1,12 @@
 import { database, onDatabaseClose, transaction } from "../database.ts";
 import type { MemoryBundle } from "../../shared/memory.ts";
-import { accessIncludesRoom, assertMemoryAccess, inMemoryAccessPass, memoryAccessIsOwnerAudience, memoryAccessNotOwnerAudience, type MemoryAccess } from "./policy.ts";
+import { accessIncludesRoom, assertMemoryAccess, inMemoryAccessPass, lineageReaderScopes, memoryAccessIsOwnerAudience, memoryAccessNotOwnerAudience, type MemoryAccess } from "./policy.ts";
 import { assertMemoryBundle, hydrateDisclosedMemoryRecord } from "./bundle.ts";
 import { authorityParts, authorityStamp, softChangedSince } from "./authority-epoch.ts";
-import { isLineageLimit, LineageAllowance, contentRevoked, messageCopy, messageSourceForgotten, outputRootsBad, recordSessionRoots, preLineageSessionRevoked, replayExclusions, sessionLineageBad, sessionOutputRoots, type Disclosure, type ReplayAudience, type ReplayMessage } from "./replay-lineage.ts";
+import { integrityUntrusted, isLineageLimit, LineageAllowance, contentRevoked, messageCopy, messageSourceForgotten, outputRootsBad, recordSessionRoots, preLineageSessionRevoked, replayExclusions, sessionLineageBad, sessionOutputRoots, type Disclosure, type ReplayAudience, type ReplayMessage } from "./replay-lineage.ts";
 import { isWorkspaceOwner, threadHumanPrincipal } from "../human-principals.ts";
-import { denyLookup, doorEpochVerdict, lineageLive, sessionLookup } from "./deny-read.ts";
+import { denyGeneration, denyLookup, denyReadMeter, doorEpochVerdict, lineageLive, sessionLookup } from "./deny-read.ts";
+import { totalChanges } from "./revoke-marker.ts";
 import { STALE_MEM_LSN, type LineageReader, type LineageRef } from "./lineage-types.ts";
 import { addTurnParents, currentLsn, extendLineage, runningTurnFor } from "./lineage-write.ts";
 import { noteReceiptOutput, noteReceiptSession, wakeFlipMarker } from "./receipt-outputs.ts";
@@ -115,12 +116,15 @@ type Hold = {
   seen: Seen;
   /** ids of the sources the session cites, of the sources its cited records rest on, and (as record:<id>) of the records it cites */
   sourceIds: Set<string>;
+  /** the scopes the reader held when the hold was made: a reader holding every one of them (and more: a task or a room added since,
+   * SCOPED-REVOKES R4) is answered by it, since everything that hydrated under fewer scopes hydrates under more; a narrower reader is not */
+  scopeIds: readonly string[];
 };
 const sessionHolds = new Map<string, Hold>();
 const SESSION_HOLDS_MAX = 512;
 const HOLD_KEYS_MAX = 20000;
 const sessionHoldKey = (threadId: string, driverInstance: string, nativeSession: string, access: MemoryAccess) =>
-  JSON.stringify([threadId, driverInstance, nativeSession, access.botId, access.humanPrincipal, memoryAccessNotOwnerAudience(access), access.scopeIds, access.policyRevision, access.deletionEpoch]);
+  JSON.stringify([threadId, driverInstance, nativeSession, access.botId, access.humanPrincipal, memoryAccessNotOwnerAudience(access), access.policyRevision, access.deletionEpoch]);
 
 /** Unknown historical sessions also require a fresh replay: legacy disclosure is unproven. */
 function continuationMemoryRevokedWork(allowance: LineageAllowance, threadId: string, driverInstance: string, nativeSession: string, access: MemoryAccess, why?: { reason?: string }): boolean {
@@ -134,11 +138,12 @@ function continuationMemoryRevokedWork(allowance: LineageAllowance, threadId: st
   if (lineageLive(database())) {
     // the owner's own direct chat is judged by content (an audience-only revoke never resets it, 1.0.2 Keep all P0); any other reader keeps
     // every mark, audience-only ones included
-    const verdict = sessionLookup(database(), { threadId, driverInstance, nativeSession }, ownerDirectChat(threadId, access) ? { audience: null } : { audience: { owner: memoryAccessIsOwnerAudience(access), scopeIds: access.scopeIds } });
+    const verdict = sessionLookup(database(), { threadId, driverInstance, nativeSession }, ownerDirectChat(threadId, access) ? { audience: null } : { audience: { owner: memoryAccessIsOwnerAudience(access), scopeIds: lineageReaderScopes(access) } });
     if (verdict.state !== "shown") { if (why && !why.reason) why.reason = verdict.state === "checking" ? "checking" : `writetime-${verdict.reason}`; return true; }
   }
   const parts = authorityParts(), key = sessionHoldKey(threadId, driverInstance, nativeSession, access);
-  const hold = sessionHolds.get(key);
+  let hold = sessionHolds.get(key);
+  if (hold && !hold.scopeIds.every(scope => access.scopeIds.includes(scope))) { sessionHolds.delete(key); hold = undefined; }
   if (parts && hold && hold.stamp === parts.stamp) { sessionHolds.delete(key); sessionHolds.set(key, hold); return false; }
   let resume: Hold | undefined;
   if (parts && hold && hold.hard === parts.hard) {
@@ -171,7 +176,7 @@ function continuationMemoryRevokedWork(allowance: LineageAllowance, threadId: st
       progress.seen.added = []; progress.seen.addedSources = [];
       if (sessionHolds.size >= SESSION_HOLDS_MAX) sessionHolds.delete(sessionHolds.keys().next().value!);
       if (!closeHooked) { closeHooked = true; onDatabaseClose(resetSessionHolds); }
-      sessionHolds.set(key, { stamp: parts.stamp, hard: parts.hard, seq: parts.seq, upTo: progress.upTo, seen: progress.seen, sourceIds });
+      sessionHolds.set(key, { stamp: parts.stamp, hard: parts.hard, seq: parts.seq, upTo: progress.upTo, seen: progress.seen, sourceIds, scopeIds: access.scopeIds });
     }
   }
   return revoked;
@@ -347,7 +352,8 @@ export function linkMemoryDisclosureOutput(bundleId: string, messageId: string) 
 /** The write-time reader for a memory capability (DESIGN-WRITETIME 1): its audience is the owner's when the capability proved it, and its
  * scopes are the ones the footprint rule compares (a non-owner reader must hold every scope a line's memory ancestry read from). */
 export function lineageReaderOf(access: MemoryAccess): LineageReader {
-  return { audience: { owner: memoryAccessIsOwnerAudience(access) && !memoryAccessNotOwnerAudience(access), scopeIds: [...access.scopeIds] } };
+  // (SL-E r3.2 R1: a linked person's turn reads its scopes together with S(P), memory/policy.ts lineageReaderScopes)
+  return { audience: { owner: memoryAccessIsOwnerAudience(access) && !memoryAccessNotOwnerAudience(access), scopeIds: lineageReaderScopes(access) } };
 }
 /** The write-time layer of a replay check (S4): the lines of `messages` denyLookup does not show this reader. A line that reads "checking" is
  * also added to `checking`. Until write-time lineage is written on this file (lineageLive) the read-time judge alone decides; from then on a
@@ -560,33 +566,84 @@ export function roomReplayWithheld(allowance: LineageAllowance, threadId: string
   return withheld;
 }
 
-/** A room turn whose audience is not the owner (a channel person's room,
- * words nobody proved are the owner's) reads the room through
- * filterMemoryReplay. What that filter removes from the transcript is not
- * handed back by recall or memory search either (0.1.61). Undefined
- * for every other turn, whose rule is the content rule alone
- * (replay-lineage.ts). */
+/** Originals of a copy the cross-thread judge reads for one line (XTHREAD-JUDGE R2(c)); a copy of more is withheld. */
+const XTHREAD_COPY_ORIGINALS = 16;
+/** The most rows one page lookup reads (deny-read.ts lookupPage: fixed seeks, the pending and deny_range reads of at most 257 rows each, a
+ * footprint set of at most 33), reserved from the allowance before each page (R4). */
+const XTHREAD_PAGE_ROWS = 600;
+
+/** What a verdict of the reader rule rests on (XTHREAD-JUDGE R1): the authority stamp, the deny generation and this connection's write
+ * count. Undefined (nothing is kept) inside a transaction or when the generation cannot be read. */
+function readerRuleStamp(): string | undefined {
+  const authority = authorityStamp();
+  if (authority === undefined) return undefined;
+  const db = database();
+  const generation = denyGeneration(db);
+  if (generation < 0) return undefined;
+  return `${authority}\u0000${generation}\u0000${totalChanges(db)}`;
+}
+
+/** The reader's own rule for the lines a recalled record rests on, for every reader whose audience is not the owner (a channel person, a
+ * group guest, a hand-off, a person's own chat, a room turn or any turn whose words were not proven). A line of the reader's own thread is
+ * judged as its transcript is (filterMemoryReplay); a line of any other thread is judged with the reader's audience by the write-time
+ * lookup, as the reader's own transcript would be (XTHREAD-JUDGE R2): marks including audience-only ones, pending windows, the watermark
+ * and the footprint. What that rule leaves out is not handed back by recall or memory search either (0.1.61). Undefined for an
+ * owner audience, whose rule is the content rule alone (replay-lineage.ts). */
 export function readerWithheldMessage(access: MemoryAccess): ((threadId: string, messageId: string, allowance: LineageAllowance) => boolean) | undefined {
-  // a room turn that is not the owner's, or any turn whose words were not
-  // proven (a direct one included)
-  if (memoryAccessIsOwnerAudience(access) || (!accessIncludesRoom(access) && !memoryAccessNotOwnerAudience(access))) return undefined;
-  // A verdict holds only while nothing changed: a receipt revoked while
-  // recall waits is seen by the check after the wait and at dispatch.
+  if (memoryAccessIsOwnerAudience(access)) return undefined;
+  // A verdict holds only while nothing changed: a receipt revoked or a mark committed while recall waits, or a line rewritten on this
+  // connection, is seen by the next check and at dispatch.
   const verdicts = new Map<string, boolean>();
   let stamp: string | undefined;
+  let reader: LineageReader | undefined;
   return (threadId, messageId, allowance) => {
-    if (threadId !== access.threadId) return false;
-    const now = authorityStamp();
-    if (now === undefined || now !== stamp) { verdicts.clear(); stamp = now; }
-    let known = verdicts.get(messageId);
-    if (known === undefined) {
-      const copy = messageCopy(threadId, messageId);
-      const checking = new Set<string>();
-      known = filterMemoryReplay(allowance, threadId, [{ id: messageId, ...(copy ? { copyOf: copy } : {}) }], access, { persist: false, failClosed: true, checking }).length === 0;
-      // a reply left out only because the allowance ran out is not remembered as withheld: the next check, with room, may prove it
-      if (!checking.has(messageId)) verdicts.set(messageId, known);
+    const now = readerRuleStamp();
+    if (now === undefined || now !== stamp) { verdicts.clear(); stamp = now; reader = undefined; }
+    const key = `${threadId}\u0000${messageId}`;
+    if (threadId === access.threadId) {
+      let known = verdicts.get(key);
+      if (known === undefined) {
+        const copy = messageCopy(threadId, messageId);
+        const checking = new Set<string>();
+        known = filterMemoryReplay(allowance, threadId, [{ id: messageId, ...(copy ? { copyOf: copy } : {}) }], access, { persist: false, failClosed: true, checking }).length === 0;
+        // a reply left out only because the allowance ran out is not remembered as withheld: the next check, with room, may prove it
+        if (!checking.has(messageId) && now !== undefined) verdicts.set(key, known);
+      }
+      return known;
     }
-    return known;
+    // Another thread. Every lookup is paid for before it is made and charged with what it read; a check the allowance cannot cover
+    // withholds the line for now and keeps nothing.
+    const db = database();
+    try {
+      allowance.reserveRows("", 2);
+      const untrusted = integrityUntrusted(db);
+      allowance.spendRows("", 2);
+      if (untrusted) return true;
+      if (verdicts.get(key) === false) return false;
+      allowance.reserveRows("", 1);
+      const live = lineageLive(db);
+      allowance.spendRows("", 1);
+      // no line row on this file yet: no write-time marks, and the read-time judge is bound to the reader's own thread (fail closed)
+      if (!live) return true;
+      allowance.reserveRows("", 1);
+      const copy = messageCopy(threadId, messageId);
+      allowance.spendRows("", 1);
+      if (copy && copy.messageIds.length > XTHREAD_COPY_ORIGINALS) return true;
+      reader ??= lineageReaderOf(access);
+      const pages: Array<[string, string]> = [[threadId, messageId], ...(copy ? copy.messageIds.map(id => [copy.threadId, id] as [string, string]) : [])];
+      for (const [thread, id] of pages) {
+        allowance.reserveRows("", XTHREAD_PAGE_ROWS);
+        const before = denyReadMeter().rows;
+        const held = writetimeReplayWithheld(thread, [{ id, role: "bot" }], reader, new Set<string>());
+        allowance.spendRows("", Math.max(1, denyReadMeter().rows - before + 1));
+        if (held.size) return true;
+      }
+      if (now !== undefined) verdicts.set(key, false);
+      return false;
+    } catch (error) {
+      if (isLineageLimit(error)) return true;
+      throw error;
+    }
   };
 }
 

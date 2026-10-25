@@ -54,7 +54,8 @@
         "title": "Product Manager",
         "description": "Waypoint prepares a roadmap ranked against explicit criteria for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For technical specifications and architecture, use Code. For a small software product team, use SaaS MVP Sprint.",
         "appearance": {
-          "color": "cyan"
+          "color": "cyan",
+          "mascotBody": "squircle"
         },
         "skills": [
           "prd-writing",

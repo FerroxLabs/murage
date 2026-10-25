@@ -1753,7 +1753,7 @@ describe("harness HTTP API", () => {
     }
   });
 
-  it("a skill or routine proposed from a room is reviewed by the bot that proposed it", async () => {
+  it("a skill proposed from a room is reviewed by the bot that proposed it; a routine or webhook from a room is refused", async () => {
     const bot = (await desktopApi("POST", "/api/bots", {})).body.bot;
     let room: any;
     try {
@@ -1765,10 +1765,6 @@ describe("harness HTTP API", () => {
       expect((await desktopApi("POST", `/api/groups/${room.id}/messages`, { text: "prepare a skill and a routine" })).status).toBe(202);
       const dump = await readJsonFileWhenReady<{ mcpConfig: { mcpServers: { agents: { env: { MURAGE_COMMS_TOKEN: string } } } } }>(fakeClaudeDump);
       const headers = { authorization: `Bearer ${dump.mcpConfig.mcpServers.agents.env.MURAGE_COMMS_TOKEN}`, "content-type": "application/json" };
-      const card = async (requestId: string) => {
-        const state = (await api("GET", "/api/bots?messages=50")).body;
-        return state.groups.find((candidate: { id: string }) => candidate.id === room.id)?.messages.find((message: { card?: { requestId?: string } }) => message.card?.requestId === requestId);
-      };
       const skill = await fetch(`${BASE}/api/internal/skills/stage`, { method: "POST", headers, body: JSON.stringify({
         fromBotId: bot.id, fromThreadId: room.threadId, action: "create", source: "conversation", gist: "Room skill",
         skill_md: "---\nname: room-skill\ndescription: Room skill\n---\n\n# room-skill\n\nDo the reviewed thing.\n" }) });
@@ -1779,17 +1775,20 @@ describe("harness HTTP API", () => {
       expect(skillMessage?.from?.botId, staged.summary).toBe(bot.id);
       const reviewed = await desktopApi("POST", `/api/threads/${room.threadId}/respond`, { requestId: skillMessage.card.requestId, behavior: "allow", reviewedSha256: skillMessage.card.skillRequest.sha256 });
       expect(reviewed).toMatchObject({ status: 200, body: { outcome: "allowed-once" } });
-      const routine = await fetch(`${BASE}/api/internal/routine-requests`, { method: "POST", headers, body: JSON.stringify({
-        fromBotId: bot.id, fromThreadId: room.threadId, action: "create",
-        routine: { name: "Room brief", instructions: "Summarize the room.", schedule: { type: "weekly", time: "09:00", weekdays: ["monday"] }, runOn: "ember" } }) });
-      expect(routine.status).toBe(201);
-      const proposed = await routine.json() as { requestId: string };
-      expect((await card(proposed.requestId))?.from?.botId).toBe(bot.id);
-      const confirmed = await desktopApi("POST", `/api/threads/${room.threadId}/respond`, { requestId: proposed.requestId, behavior: "allow" });
-      expect(confirmed.status).toBe(200);
-      const made = (await api("GET", "/api/routines")).body.routines.find((item: { id: string }) => item.id === confirmed.body.resultId);
-      expect(made).toMatchObject({ botId: bot.id, sourceThreadId: room.threadId });
-      if (confirmed.body.resultId) await desktopApi("DELETE", `/api/routines/${confirmed.body.resultId}`);
+      // SL-J J1: a room never proposes a routine or a webhook: one plain line, no card, nothing made.
+      for (const proposal of [
+        { action: "create", routine: { name: "Room brief", instructions: "Summarize the room.", schedule: { type: "weekly", time: "09:00", weekdays: ["monday"] }, runOn: "ember" } },
+        { kind: "webhook", action: "create", webhook: { name: "Room hook", instructions: "Summarize the event." } },
+      ]) {
+        const refused = await fetch(`${BASE}/api/internal/routine-requests`, { method: "POST", headers, body: JSON.stringify({
+          fromBotId: bot.id, fromThreadId: room.threadId, ...proposal }) });
+        expect(refused.status).toBe(403);
+        expect(((await refused.json()) as { error: string }).error).toBe("Routines and webhooks can only be set up in the owner's own conversation with this bot, not from a routine or webhook run, a channel message, a room or a conversation for someone else.");
+      }
+      const roomMessages = (await api("GET", "/api/bots?messages=50")).body.groups.find((candidate: { id: string }) => candidate.id === room!.id)?.messages ?? [];
+      expect(roomMessages.some((message: { card?: { routineRequest?: unknown } }) => message.card?.routineRequest)).toBe(false);
+      expect((await api("GET", "/api/routines")).body.routines.some((item: { name: string }) => item.name === "Room brief")).toBe(false);
+      expect((await desktopApi("GET", "/api/webhooks")).body.webhooks.some((item: { name: string }) => item.name === "Room hook")).toBe(false);
     } finally {
       if (room) { await api("POST", `/api/groups/${room.id}/interrupt`, {}).catch(() => undefined); await desktopApi("DELETE", `/api/groups/${room.id}`).catch(() => undefined); }
       await desktopApi("DELETE", `/api/bots/${bot.id}`).catch(() => undefined);

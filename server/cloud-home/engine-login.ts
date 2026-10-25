@@ -22,8 +22,8 @@ import { cloudIdentity } from "../cloud-request-identity.ts";
 import { spawnCloudLauncher } from "./bot-state.ts";
 import { cloudHomeCopy } from "./copy.ts";
 
-export const ENGINE_LOGIN_ENGINES = ["codex", "claudeAgent", "grokAgent", "kimiAgent", "opencodeGo"] as const;
-export type EngineLoginEngine = (typeof ENGINE_LOGIN_ENGINES)[number];
+import { ENGINE_LOGIN_PATH, type EngineLoginEngine } from "./engine-login-engines.ts";
+export { ENGINE_LOGIN_ENGINES, ENGINE_LOGIN_PATH, type EngineLoginEngine } from "./engine-login-engines.ts";
 export const ENGINE_LOGIN_ACTIONS = ["login", "logout", "enroll-key"] as const;
 export type EngineLoginAction = (typeof ENGINE_LOGIN_ACTIONS)[number];
 /** The actions each engine offers (mirrors LOGIN_COMMANDS and ENROLL_ENGINES in the launcher).
@@ -35,7 +35,6 @@ export const ENGINE_LOGIN_ENGINE_ACTIONS: Readonly<Record<EngineLoginEngine, rea
 };
 /** Every engine whose `login` is a per-bot (B mode) sign-in. Claude's login (`setup-token`) is engine-wide and takes no bot. */
 const BOT_LOGIN_ENGINES: readonly EngineLoginEngine[] = ["codex", "grokAgent", "kimiAgent", "opencodeGo"];
-export const ENGINE_LOGIN_PATH = /^\/api\/engine-login\/(codex|claudeAgent|grokAgent|kimiAgent|opencodeGo)$/;
 /** Same shapes the launcher validates; checked here too so a bad value never spawns anything. */
 const LOGIN_BOT = /^[\w-]{1,64}$/;
 const LOGIN_PROVIDER = /^[a-z][a-z0-9_-]{0,31}$/;

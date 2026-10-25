@@ -6,9 +6,46 @@ import { openExternalPage } from "@/lib/open-external";
 import { useAction } from "@/lib/use-action";
 import { ActionStatus } from "./ActionButton";
 import { endConnectorWait, startConnectorPoll } from "@/lib/connector-card-poll";
+import {
+  CONNECT_APP_DEFAULT_LABEL,
+  connectLabelTaken,
+  firstFreeConnectLabel,
+  readConnectAppStatus,
+  type ConfirmedConnectLabel,
+} from "@/lib/connect-app";
+import { ConnectLabelForm } from "./ConnectLabelForm";
 
 async function openConnectionPage(url: string) {
   await openExternalPage(url, "Your browser blocked the connection page. Allow pop-ups, then try again.");
+}
+
+/**
+ * The label the card's form opens with (#758).
+ *
+ * A bot may suggest one when it asks for the app; it is only a suggestion.
+ * On a card nobody has confirmed yet, it becomes the first label no account
+ * on that app holds ("work", then "work 2"...), and "personal" when the bot
+ * named none. Once the person confirmed a label, the card holds that one, and
+ * "Open again" or "Try again" fills it in as it is.
+ */
+export function connectorCardInitialLabel(
+  connector: { alias?: string; status: string },
+  accounts: readonly { alias?: string; status?: string }[] | undefined,
+): string {
+  const suggested = connector.alias?.trim() || CONNECT_APP_DEFAULT_LABEL;
+  return connector.status === "required" ? firstFreeConnectLabel(accounts, suggested) : suggested;
+}
+
+/** The app's own name, without the label the card's title carries. */
+export function connectorCardAppName(connector: { label: string; alias?: string }): string {
+  const suffix = connector.alias ? ` (${connector.alias})` : "";
+  return suffix && connector.label.endsWith(suffix) ? connector.label.slice(0, -suffix.length) : connector.label;
+}
+
+/** What the card's authorize request carries: the thread, and the label the
+ *  form confirmed. Only a confirmed label fits. */
+export function connectorCardAuthorizeBody(threadId: string, alias: ConfirmedConnectLabel): string {
+  return JSON.stringify({ threadId, alias });
 }
 
 export function ConnectorCard({ botId, threadId, message }: { botId: string; threadId: string; message: Message }) {
@@ -17,6 +54,9 @@ export function ConnectorCard({ botId, threadId, message }: { botId: string; thr
   const [localError, setLocalError] = useState<string | null>(null);
   /** the poll ended without a sign-in: the card stops waiting, whatever the transcript says yet */
   const [timedOut, setTimedOut] = useState(false);
+  /** The label form, open with this label; null while closed. A sign-in
+   *  starts only from the label confirmed there. */
+  const [labelForm, setLabelForm] = useState<{ initial: string; taken?: string } | null>(null);
 
   const endpoint = `/api/bots/${encodeURIComponent(botId)}/connector-cards/${encodeURIComponent(message.id)}`;
   const checkStatus = useCallback(async () => {
@@ -50,18 +90,38 @@ export function ConnectorCard({ botId, threadId, message }: { botId: string; thr
 
   if (connector.dismissed) return null;
 
-  const connect = async () => {
+  /** Connect, Open again and Try again open the label form; nothing is
+   *  authorized yet. The accounts already on the app pick a free label. */
+  const askLabel = async () => {
+    setBusy(true);
+    setLocalError(null);
+    try {
+      const status = connector.status === "required" ? await readConnectAppStatus(connector.slug, api) : undefined;
+      setLabelForm({ initial: connectorCardInitialLabel(connector, status?.accounts) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const connect = async (alias: ConfirmedConnectLabel) => {
     setBusy(true);
     setLocalError(null);
     setTimedOut(false);
     try {
       const result = await api(`${endpoint}/authorize`, {
         method: "POST",
-        body: JSON.stringify({ threadId }),
+        body: connectorCardAuthorizeBody(threadId, alias),
       });
+      setLabelForm(null);
       await openConnectionPage(String(result.url));
     } catch (error) {
-      setLocalError(error instanceof Error ? error.message : String(error));
+      if (connectLabelTaken(error)) {
+        // Said on the form, holding the label, so another one is one edit away.
+        setLabelForm({ initial: alias, taken: alias });
+      } else {
+        setLabelForm(null);
+        setLocalError(error instanceof Error ? error.message : String(error));
+      }
     } finally {
       setBusy(false);
     }
@@ -121,6 +181,20 @@ export function ConnectorCard({ botId, threadId, message }: { botId: string; thr
             </button>
           )}
         </div>
+        {!connected && labelForm && (
+          <div className="border-t border-hairline/40 px-4 pb-3">
+            <ConnectLabelForm
+              key={`${labelForm.initial}:${labelForm.taken ?? ""}`}
+              id={message.id}
+              service={connectorCardAppName(connector)}
+              initial={labelForm.initial}
+              takenLabel={labelForm.taken}
+              busy={busy}
+              onConfirm={(alias) => void connect(alias)}
+              onCancel={() => setLabelForm(null)}
+            />
+          </div>
+        )}
         <div className="flex items-center justify-between border-t border-hairline/40 bg-panel/40 px-4 py-2.5">
           <div className="flex items-center gap-1.5 text-[11.5px] text-ink-secondary">
             {authorizing ? <Loader2 size={12} className="animate-spin" /> : <PlugZap size={12} />}
@@ -128,8 +202,8 @@ export function ConnectorCard({ botId, threadId, message }: { botId: string; thr
           </div>
           {!connected ? (
             <button
-              onClick={() => void connect()}
-              disabled={busy}
+              onClick={() => void askLabel()}
+              disabled={busy || Boolean(labelForm)}
               className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white hover:opacity-90 disabled:opacity-50"
             >
               {busy || authorizing ? <Loader2 size={13} className="animate-spin" /> : <PlugZap size={13} />}

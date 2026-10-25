@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { scanSkill, verdictFor } from "./scan.ts";
+import { scanSkill, squeezeWhitespace, verdictFor } from "./scan.ts";
 import type { SkillFinding } from "./types.ts";
 
 const skill = (content: string, extra: Partial<Parameters<typeof scanSkill>[0]> = {}) =>
@@ -62,5 +62,16 @@ describe("scanSkill", () => {
     const start = performance.now();
     skill(big);
     expect(performance.now() - start).toBeLessThan(500);
+  });
+  it("scans a long run of spaces in linear time (A2)", () => {
+    const start = performance.now();
+    const scan = skill(`never${" ".repeat(60000)}!`);
+    expect(performance.now() - start).toBeLessThan(1000);
+    expect(scan.verdict).not.toBe("blocked");
+  });
+  it("keeps the kind of whitespace when it shortens a long run (A2)", () => {
+    expect(squeezeWhitespace(`a${" ".repeat(40)}b`)).toBe("a b");
+    expect(squeezeWhitespace(`a${" ".repeat(20)}\n${" ".repeat(20)}b`)).toBe("a\nb");
+    expect(squeezeWhitespace(`a${" ".repeat(32)}b`)).toBe(`a${" ".repeat(32)}b`);
   });
 });

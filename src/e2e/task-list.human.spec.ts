@@ -72,9 +72,9 @@ async function withRoutineRuns(page: Page) {
 async function openPicker(page: Page) {
   await withRoutineRuns(page);
   await page.goto(origin + "/__tasks");
-  const picker = page.getByRole("button", { name: "All threads", exact: true });
+  const picker = page.getByRole("button", { name: "Chat list", exact: true });
   await picker.click();
-  const list = page.getByRole("group", { name: "Tasks", exact: true });
+  const list = page.getByRole("group", { name: "Chats", exact: true });
   await expect(list).toBeVisible();
   return { picker, list };
 }
@@ -129,7 +129,7 @@ for (const [width, height] of [[1440, 900], [390, 844]] as const) for (const ski
 
 test("keyboard walks every group, opens a fold and picks a run", async ({ page }) => {
   const { picker, list } = await openPicker(page);
-  const search = page.getByRole("textbox", { name: "Search tasks", exact: true });
+  const search = page.getByRole("textbox", { name: "Search chats", exact: true });
   await expect(search).toBeFocused();
   await search.press("ArrowDown");
   await expect(list.getByRole("button", { name: /^Quarterly budget/ })).toBeFocused();
@@ -165,7 +165,7 @@ test("keyboard walks every group, opens a fold and picks a run", async ({ page }
 
 test("filters, search across everything, and the remembered sort", async ({ page }) => {
   const { list } = await openPicker(page);
-  const chip = (name: string) => page.getByRole("group", { name: "Filter tasks", exact: true }).getByRole("button", { name, exact: true });
+  const chip = (name: string) => page.getByRole("group", { name: "Filter chats", exact: true }).getByRole("button", { name, exact: true });
   await expect(chip("All")).toHaveAttribute("aria-pressed", "true");
   await chip("Routines").click();
   await expect(chip("Routines")).toHaveAttribute("aria-pressed", "true");
@@ -177,29 +177,29 @@ test("filters, search across everything, and the remembered sort", async ({ page
   await expect(list.getByRole("button", { name: /^From Kessler/ })).toBeVisible();
   await expect(list.getByRole("button", { name: /^Morning brief/ })).toHaveCount(1);
   await expect(list.getByRole("button", { name: /^Plan the launch/ })).toHaveCount(0);
-  await chip("Chats").click();
+  await chip("Yours").click();
   // search ignores the filter and matches the stored title as well as the readable one
-  const search = page.getByRole("textbox", { name: "Search tasks", exact: true });
-  const hits = page.getByRole("group", { name: /^\d+ matching tasks?$/ });
+  const search = page.getByRole("textbox", { name: "Search chats", exact: true });
+  const hits = page.getByRole("group", { name: /^\d+ matching chats?$/ });
   await search.fill("delegated by");
-  await expect(hits).toHaveAccessibleName("1 matching task");
+  await expect(hits).toHaveAccessibleName("1 matching chat");
   await expect(hits.getByRole("button", { name: /^From Kessler: Check the March invoices/ })).toBeVisible();
   await search.fill("from sable");
   await expect(hits.getByRole("button", { name: /^From Sable/ })).toBeVisible();
   await search.fill("");
 
   // sort by creation and keep it across a reload
-  await page.getByRole("combobox", { name: "Sort tasks", exact: true }).selectOption("created");
+  await page.getByRole("combobox", { name: "Sort chats", exact: true }).selectOption("created");
   await chip("All").click();
   const firstUnpinned = list.locator("[role=group][aria-labelledby]").nth(1).locator("[data-task-nav]").first();
   await expect(firstUnpinned).toHaveAccessibleName(/^Morning brief · 3 runs/);
   expect(await page.evaluate(() => localStorage.getItem("murage-task-sort"))).toBe("created");
   await page.reload();
-  await page.getByRole("button", { name: "All threads", exact: true }).click();
-  await expect(page.getByRole("combobox", { name: "Sort tasks", exact: true })).toHaveValue("created");
+  await page.getByRole("button", { name: "Chat list", exact: true }).click();
+  await expect(page.getByRole("combobox", { name: "Sort chats", exact: true })).toHaveValue("created");
   // Plan the launch was created 20 days ago: by creation it leaves Today
   await expect(page.getByRole("group", { name: "Today", exact: true }).getByRole("button", { name: /^Plan the launch/ })).toHaveCount(0);
-  await page.getByRole("combobox", { name: "Sort tasks", exact: true }).selectOption("activity");
+  await page.getByRole("combobox", { name: "Sort chats", exact: true }).selectOption("activity");
   await expect(page.getByRole("group", { name: "Today", exact: true }).getByRole("button", { name: /^Plan the launch/ })).toBeVisible();
 });
 

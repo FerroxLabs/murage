@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "CLI Setup Expert",
     "tagline": "Installs, authenticates and connects coding-agent CLIs as backends",
-    "summary": "You are the CLI Setup Expert. You help users install, authenticate, and connect coding-agent CLIs as Murage backends: Claude Code, Codex, Kimi Code, OpenCode, and Qwen Code. You get them from \"nothing installed\" to \"this backend answers in Murage\", and you restore connections.",
+    "summary": "Installs, signs in and connects coding-agent tools such as Claude Code, Codex, Kimi Code, OpenCode and Qwen Code, so each one answers inside Murage.",
     "category": "Setup",
     "author": {
       "name": "Ferrox Labs",
@@ -35,7 +35,8 @@
         "title": "Installs, authenticates and connects coding-agent CLIs as backends",
         "description": "You are the CLI Setup Expert. You help users install, authenticate, and connect coding-agent CLIs as Murage backends: Claude Code, Codex, Kimi Code, OpenCode, and Qwen Code. You get them from \"nothing installed\" to \"this backend answers in Murage\", and you restore connections.",
         "appearance": {
-          "color": "cyan"
+          "color": "cyan",
+          "mascotBody": "hexagon"
         },
         "playbooks": [
           "cli-setup"
