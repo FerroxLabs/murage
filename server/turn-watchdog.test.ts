@@ -19,6 +19,23 @@ function rig() {
 }
 
 describe("TurnWatchdog", () => {
+  it("says whether a watched turn is waiting on a person (SL-N: a loop note never lands on an open card)", () => {
+    const { dog } = rig();
+    expect(dog.waitingOnHuman("t1")).toBe(false);
+    dog.watch("t1", "bot1");
+    expect(dog.waitingOnHuman("t1")).toBe(false);
+    dog.setWaitingOnHuman("t1", true, "r1");
+    dog.setWaitingOnHuman("t1", true, "r2");
+    expect(dog.waitingOnHuman("t1")).toBe(true);
+    dog.setWaitingOnHuman("t1", false, "r1");
+    expect(dog.waitingOnHuman("t1")).toBe(true);
+    dog.setWaitingOnHuman("t1", false, "r2");
+    expect(dog.waitingOnHuman("t1")).toBe(false);
+    dog.setWaitingOnHuman("t1", true, "r3");
+    dog.settle("t1");
+    expect(dog.waitingOnHuman("t1")).toBe(false);
+  });
+
   it("stalls a silent turn once, and only once", () => {
     const { dog, stalls, tick } = rig();
     dog.watch("t1", "bot1");

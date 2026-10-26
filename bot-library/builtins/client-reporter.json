@@ -66,7 +66,8 @@
         "title": "Client Reporter",
         "description": "Ari prepares a separate performance report for each client from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For funnel, cohort and experiment analysis, use Analyst. For a complete marketing team, use Marketing Agency.",
         "appearance": {
-          "color": "orange"
+          "color": "blue",
+          "mascotBody": "squircle"
         },
         "skills": [
           "marketing-analytics-report",

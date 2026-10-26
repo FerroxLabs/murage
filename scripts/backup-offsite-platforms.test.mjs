@@ -114,7 +114,10 @@ describe("packaging and the release gate", () => {
   it("the release job gates every platform's packaged tools", () => {
     expect(workflow).toContain('node scripts/verify-packaged-backup-tools.mjs "$app/Contents/Resources" darwin "$arch"');
     expect(workflow).toContain("node scripts/verify-packaged-backup-tools.mjs release/linux-unpacked/resources linux x64");
-    expect(workflow).toContain("verifyWindowsBackupTools(backup);");
+    // supply-chain 896689195: the Windows Node half is shared with package-win.yml in scripts/windows-release-gates.mjs
+    expect(workflow).toContain("& node scripts/windows-release-gates.mjs backup");
+    const gates = fs.readFileSync(new URL("./windows-release-gates.mjs", import.meta.url), "utf8");
+    expect(gates).toContain("verifyWindowsBackupTools(backup);");
     expect(workflow).toContain("backup-tools/x64/restic.exe'))");
   });
   function packaged(platform, arch, tools) {

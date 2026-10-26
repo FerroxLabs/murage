@@ -155,7 +155,8 @@ export class MemoryDispatchReceipt {
    * was submitted; the re-dispatch finds the session invalid and resets. */
   private assertSessionCurrent() {
     if(this.resumedSession===undefined)return;
-    if(resumedSessionInvalid(LineageAllowance.tool(),this.access.threadId,this.instanceId,this.resumedSession,this.access,this.sessionCheckedStamp))throw new Error("MEMORY_CONTEXT_REVOKED");
+    const why:{reason?:string}={};
+    if(resumedSessionInvalid(LineageAllowance.tool(),this.access.threadId,this.instanceId,this.resumedSession,this.access,this.sessionCheckedStamp,why))throw sessionCheckRefusal(why);
     this.sessionCheckedStamp=authorityStamp();
   }
   assertCurrent() { if(this.failure)throw this.failure; assertMemoryBundle(this.bundle,this.access); this.assertSessionCurrent(); }
@@ -183,10 +184,16 @@ export class MemoryDispatchReceipt {
     // A terminal event already settled the turn: no write can follow it, and
     // its capability may be gone; acceptance only confirms the bookkeeping.
     if(this.finished&&this.delivered)return;
-    assertMemoryDisclosureCurrent(this.bundle.bundleId,this.access);
+    // A record of the frame that reads "checking" here (a revoke still being walked: MEMORY_REPLAY_LIMIT) is not known to be allowed now: the
+    // write is refused as a revoked context is, so the turn takes the same rebuild path (the last rebuild carries no memory) instead of
+    // ending as "could not start" (designs/SEND-FENCE-RECEIPT-RACE.md, R2). Nothing is written either way.
+    // Both validations (this one and deliverMemoryDisclosure's own) map the same way (Astra design review M1); the cause keeps the limit for
+    // the refusal's diagnosis.
+    const revokedIfUnknown = (run: () => void) => { try { run(); } catch(error) { if(isLineageLimit(error))throw Object.assign(new Error("MEMORY_CONTEXT_REVOKED"),{cause:error,unproven:"memory-frame-checking"}); throw error; } };
+    revokedIfUnknown(()=>assertMemoryDisclosureCurrent(this.bundle.bundleId,this.access));
     this.assertSessionCurrent();
     if(!this.delivered){
-      deliverMemoryDisclosure(this.bundle.bundleId,this.access);this.delivered=true;
+      revokedIfUnknown(()=>deliverMemoryDisclosure(this.bundle.bundleId,this.access));this.delivered=true;
       for(const listener of this.deliveredListeners){try{listener(this.bundle);}catch{/* a bookkeeping failure never fails the turn */}}
     }
   }
@@ -249,7 +256,6 @@ export async function buildMemoryBundleAfterReset(
  * other failure, which keeps its own message. */
 export function pinnedMemoryFailure(error: unknown, subject: string): string | undefined {
   const message = error instanceof Error ? error.message : String(error);
-  if (message.startsWith("MEMORY_PIN_OVERFLOW")) return `${subject} pinned memories are too long for this model. Unpin some in Memory, or choose a model that takes more context.`;
   if (message.startsWith("MEMORY_PIN_UNAVAILABLE")) return `${subject} pinned memory rests on something that was deleted or changed. Unpin it or fix it in Memory.`;
   return undefined;
 }
@@ -262,6 +268,34 @@ export type TurnRefusedKind = "without-memory" | "not-started";
 export function turnRefusedLine(engine: string, kind: TurnRefusedKind): string {
   return kind === "without-memory" ? `Memory changed while ${engine} was starting, so this reply ran without remembered context.`
     : `${engine} could not start this reply. Send it again.`;
+}
+/** How many times a turn refused over revoked memory context and proven unwritten (refused before its write, or at a late write by an engine
+ * that hands its id back first: ACP, Codex, Grok, OpenCode, Gemini, openai-chat) is rebuilt and sent again, each time against the deny
+ * generation of its own build. The last of these rebuilds is the last resort (fresh session, no memory); past it the turn settles with a
+ * card (1.0.3 engine-switch: the second refusal used to return early with no card at all). */
+export const MEMORY_REDISPATCH_ATTEMPTS = 3;
+/** The next rebuild of a turn refused over memory and proven unwritten: its attempt number and whether it is the last resort (index.ts
+ * memoryLastResort / roomLastResort: fresh session, no memory frame, no working context, its replay lines judged one by one at the fence).
+ * Undefined once the last resort was refused too: the turn ends with a card. ONE rule for every site that rebuilds: the direct turn's setup
+ * refusal and late refusal, and the room member's two (1.0.4 SETUP-LAST-RESORT: the direct setup path rebuilt three times with memory and
+ * then showed the card, never reaching the last resort). `done` is the rebuilds already made (0 for the first dispatch). */
+export function nextMemoryRebuild(done: number): { attempt: number; lastResort: boolean } | undefined {
+  if (!(done >= 0) || done >= MEMORY_REDISPATCH_ATTEMPTS) return undefined;
+  const attempt = Math.floor(done) + 1;
+  return { attempt, lastResort: attempt >= MEMORY_REDISPATCH_ATTEMPTS };
+}
+/** The refusal a submission-boundary recheck of a resumed session throws (MemoryDispatchReceipt above, index.ts alsoCheck). Always
+ * MEMORY_CONTEXT_REVOKED, so it is handled as every refusal is and nothing unproven is ever written into the session (fail closed). When the
+ * check ran out of its allowance (its 100 ms or its nodes: "lineage-warming") rather than finding anything revoked, it says so (`unproven`),
+ * so a timeout is never logged as a revoke (1.0.4 SETUP-LAST-RESORT). */
+export function sessionCheckRefusal(why: { reason?: string }): Error {
+  const error = new Error("MEMORY_CONTEXT_REVOKED");
+  return why.reason === "lineage-warming" ? Object.assign(error, { unproven: why.reason }) : error;
+}
+/** For a re-prepare log line: empty for a revoke, the reason for a session check that ran out of its allowance. Never an id or text. */
+export function refusalCauseNote(error: unknown): string {
+  const unproven = error instanceof Error ? (error as Error & { unproven?: unknown }).unproven : undefined;
+  return typeof unproven === "string" ? `; the session check ran out of its lineage allowance (${unproven}), not a revoke` : "";
 }
 /** The owner-facing line when a turn's memory context was revoked at every send, the last rebuild included (index.ts
  * MEMORY_REDISPATCH_ATTEMPTS): what happened and what to do, naming the engine, never the code. */
@@ -285,6 +319,17 @@ export function withheldPinLine(threadId: string, bundle: MemoryBundle & {withhe
   const fresh = bundle.withheldPins.map(pin => `${pin.id}@${pin.version}`).filter(key => !noted.has(key));
   for (const key of fresh) noted.add(key);
   return fresh.length ? WITHHELD_PIN_LINE : undefined;
+}
+
+/** Murage's line when a turn ran without some owner pins because together they are longer than this model has room for (bundle.ts
+ * droppedPins, 1.0.4). Said once per thread: every later turn of a small model would leave the same pins out. */
+export const DROPPED_PIN_LINE = "Murage left some pinned memories out of this reply: together they are longer than this model has room for. To bring them back, unpin or shorten a few in Memory, or choose a model that takes more context.";
+const droppedPinsNoted = new Set<string>();
+export function droppedPinLine(threadId: string, bundle: MemoryBundle & {droppedPins?: ReadonlyArray<{id: string; version: number}>}): string | undefined {
+  if (!bundle.droppedPins?.length || droppedPinsNoted.has(threadId)) return undefined;
+  if (droppedPinsNoted.size >= 512) droppedPinsNoted.delete(droppedPinsNoted.values().next().value!);
+  droppedPinsNoted.add(threadId);
+  return DROPPED_PIN_LINE;
 }
 
 // ---- the entry points of the lineage reads, each timed (see LineageAllowance.timed) ----

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { StorageBlocked, StorageRefused, b64url, bindOf, bounceUrl, doorBrowser, doorErrorName, doorStorageTiming, ensureDevice, enterWithTicket, forgetThisBrowser, fromB64url, homeMeta, listDevices, loadDevice, refreshMessage, refreshSession, reportDoorProblem, saveDevice, spkiToPem, ticketFromHash } from "./cloud-door";
+import { StorageBlocked, StorageRefused, b64url, bindOf, bounceUrl, doorBrowser, doorErrorName, doorStorageTiming, ensureDevice, enteredOwnerState, enterWithTicket, forgetThisBrowser, fromB64url, homeMeta, listDevices, loadDevice, makeChatOnly, refreshMessage, refreshSession, reportDoorProblem, saveDevice, spkiToPem, ticketFromHash } from "./cloud-door";
 import { SURFACE_SECRET_HEADER, setDesktopSurfaceSecretForTest } from "./live-events";
 import { DOOR_BROWSERS, DOOR_OPEN_CAUSES, DOOR_PAGE_ERRORS, DOOR_PAGE_STAGES } from "../../server/cloud-home/door-log";
 
@@ -180,7 +180,18 @@ describe("entering with a ticket", () => {
     expect(createPublicKey(sent.device.assertionKey).export({ type: "spki", format: "pem" })).not.toBe(publicKey.export({ type: "spki", format: "pem" }));
     expect(nodeVerify("sha256", Buffer.from("murage-door-v2:payload.sig"), { key: publicKey, dsaEncoding: "ieee-p1363" }, Buffer.from(fromB64url(sent.device.proof)))).toBe(true);
     expect(nodeVerify("sha256", Buffer.from("murage-door-v2:other.sig"), { key: publicKey, dsaEncoding: "ieee-p1363" }, Buffer.from(fromB64url(sent.device.proof)))).toBe(false);
+    // §4.2: the assertion key signs its own message, verifiable by node ieee-p1363.
+    const assertionKey = createPublicKey(sent.device.assertionKey);
+    expect(nodeVerify("sha256", Buffer.from("murage-door-v2-assertion:payload.sig"), { key: assertionKey, dsaEncoding: "ieee-p1363" }, Buffer.from(fromB64url(sent.device.assertionProof)))).toBe(true);
+    expect(nodeVerify("sha256", Buffer.from("murage-door-v2:payload.sig"), { key: assertionKey, dsaEncoding: "ieee-p1363" }, Buffer.from(fromB64url(sent.device.assertionProof)))).toBe(false);
     expect((await loadDevice())?.deviceId).toBe("dev_9");
+  });
+  it("reads the owner state the home answers, and exports no signStepUp", async () => {
+    stubFetch(url => url === "/api/cloud/enter" ? { status: 200, body: { state: "signed-in", reason: "first-device", deviceId: "dev_o", scope: "browser", expiresIn: 900, owner: true, ownerUntil: 123 } } : { status: 200 });
+    expect(await enterWithTicket("p.s")).toBe("signed-in");
+    expect(enteredOwnerState()).toEqual({ owner: true, ownerUntil: 123 });
+    const mod = await import("./cloud-door");
+    expect("signStepUp" in mod).toBe(false);
   });
   it("maps the home's answers to coarse results", async () => {
     const cases: Array<[number, unknown, string]> = [
@@ -305,6 +316,20 @@ describe("door requests carry the desktop proof", () => {
     const posted = calls.filter(call => call.init!.method === "POST");
     for (const call of posted) expect((call.init!.headers as Record<string, string>)["content-type"], call.url).toBe("application/json");
     for (const call of calls) expect(call.init!.redirect, call.url).toBe("error");
+  });
+
+  it("Make chat-only drives the home's own owner-factor revoke route, not a shortcut", async () => {
+    setDesktopSurfaceSecretForTest("launch-secret");
+    // The button calls makeChatOnly, which must POST the home's atomic owner-factor revoke route for that exact device id.
+    const calls = stubFetch((url) => url === "/api/cloud/devices/dev-7/owner/revoke" ? { status: 200, body: { revoked: true } } : { status: 500 });
+    expect(await makeChatOnly("dev-7")).toBe(true);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toBe("/api/cloud/devices/dev-7/owner/revoke");
+    expect(calls[0]!.init!.method).toBe("POST");
+    expect((calls[0]!.init!.headers as Record<string, string>)["x-murage-surface"]).toBe("desktop");
+    const refused = stubFetch(() => ({ status: 403 }));
+    expect(await makeChatOnly("dev-7")).toBe(false);
+    expect(refused[0]!.url).toBe("/api/cloud/devices/dev-7/owner/revoke");
   });
 
   it("a redirect answer is refused, not followed: the proof never reaches the redirect target", async () => {

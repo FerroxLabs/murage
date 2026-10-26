@@ -7,12 +7,14 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { Worker } from "node:worker_threads";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
 import { setMemoryMode } from "./memory/repository.ts";
 import { downgradeInstallationMemorySchema } from "./installation-memory-downgrade.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { settleTestHandles } from "./test-handle-registry.ts";
 
 beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
@@ -30,17 +32,20 @@ function v101Resumes(dir: string, thread: string, instance: string, session: str
     return receipts === 0 ? true : false;
   } finally { db.close(); }
 }
-function fixture(reclaimMarker: 0 | 1) {
+async function fixture(reclaimMarker: 0 | 1) {
   const dir = DATA_DIR;
   setMemoryMode("capture"); // the real current-version file: every application and memory table
   database().prepare("INSERT OR REPLACE INTO memory_lineage_lsn_meta(key,value) VALUES('root_sets_dropped',?)").run(reclaimMarker);
-  closeDatabase();
+  // The server's own connection and its checkpointer thread both leave before the step back runs, as in the app (the server
+  // process has exited before the recovery worker starts). closeDatabase() only asks the checkpointer to leave; its last
+  // close copies the log back and removes it under the file's write lock, so the test waits for the thread's real exit.
+  await settleTestHandles(dir);
   writeFileSync(join(dir, "bots.json"), JSON.stringify([{ id: "b1", threadId: "th", resumeCursors: { drv: "sess-1" }, tasks: [{ threadId: "th", resumeCursors: { drv: "sess-1" } }, { threadId: "th2", resumeCursors: {} }] }]));
   return dir;
 }
 
-it("after a completed reclaim the downgrade leaves no retained provider session that 1.0.1 would resume", () => {
-  const dir = fixture(1);
+it("after a completed reclaim the downgrade leaves no retained provider session that 1.0.1 would resume", async () => {
+  const dir = await fixture(1);
   // the session row was deleted by the reclaim, and nothing else names the session: 1.0.1 would resume it
   expect(v101Resumes(dir, "th", "drv", "sess-1")).toBe(true);
   downgradeInstallationMemorySchema(dir, 6);
@@ -50,8 +55,38 @@ it("after a completed reclaim the downgrade leaves no retained provider session 
   expect(bots[0].tasks.every((task: { resumeCursors: object }) => Object.keys(task.resumeCursors).length === 0)).toBe(true);
 });
 
-it("a file the reclaim never touched keeps its retained sessions", () => {
-  const dir = fixture(0);
+it("a file the reclaim never touched keeps its retained sessions", async () => {
+  const dir = await fixture(0);
   downgradeInstallationMemorySchema(dir, 6);
   expect(v101Resumes(dir, "th", "drv", "sess-1")).toBe(true);
+});
+
+/** A connection that holds the whole file until it closes, as the checkpointer's last close does while it copies the log back.
+ * Resolves once it holds the lock; `left` resolves on the thread's real exit. */
+function holdFileUntilClose(file: string, holdMs: number) {
+  const signal = new Int32Array(new SharedArrayBuffer(4));
+  const worker = new Worker(`
+    const { workerData } = require("node:worker_threads");
+    const { DatabaseSync } = require("node:sqlite");
+    const db = new DatabaseSync(workerData.file);
+    db.exec("PRAGMA locking_mode=EXCLUSIVE; BEGIN IMMEDIATE; COMMIT;");
+    Atomics.store(workerData.signal, 0, 1); Atomics.notify(workerData.signal, 0);
+    const end = Date.now() + workerData.holdMs; while (Date.now() < end);
+    db.close();
+  `, { eval: true, workerData: { file, signal, holdMs } });
+  const left = new Promise<void>(resolve => worker.once("exit", () => resolve()));
+  Atomics.wait(signal, 0, 0, 10_000);
+  expect(Atomics.load(signal, 0)).toBe(1);
+  return left;
+}
+
+it("the step back waits for a connection still leaving the file instead of failing at once", async () => {
+  const dir = await fixture(1);
+  const file = join(dir, "messages.db");
+  const left = holdFileUntilClose(file, 400);
+  const started = Date.now();
+  downgradeInstallationMemorySchema(dir, 6); // the first statement meets the held file: it waits, then goes ahead
+  expect(Date.now() - started).toBeGreaterThanOrEqual(300);
+  await left;
+  expect(v101Resumes(dir, "th", "drv", "sess-1")).toBe(false);
 });

@@ -25,9 +25,10 @@ import type {
 } from "../contracts.ts";
 import { newEventId, newId } from "../contracts.ts";
 import { appendNative } from "./native.ts";
+import { BOX_AGENT_API, BOX_RUN_DONE, BOX_RUN_ENDED, CLOUD_COMPUTER_UNNAMED_TURN, cloudTurnFinished, cloudTurnStrict, sendCloudPrompt, stopCloudTurn } from "../cloud-computer-turns.ts";
 
 const DRIVER_KIND = "boxAgent";
-const BOX_API = "https://ascii.dev/api/box/v1";
+const BOX_API = BOX_AGENT_API;
 
 const MODELS = {
   default: "claude-fable-5",
@@ -43,6 +44,13 @@ const MODELS = {
 const EVENT_IDENTITY_KEYS = new Set(["id", "eventId", "ts", "timestamp", "time", "createdAt", "created_at"]);
 
 const providerFor = (model: string) => (model.startsWith("gpt") ? "codex" : "claude-code");
+/** An event's identity, the same for the snapshot before a prompt and the poll after it. */
+const eventId = (ev: any): string => String(ev?.id ?? ev?.eventId ?? JSON.stringify(ev).slice(0, 120));
+/** The prompt an event names, when it names one (CLOUD-COMPUTER-BOOT-105 section 6 item 4). */
+const eventPrompt = (ev: any): string | undefined => {
+  const named = ev?.promptId ?? ev?.promptRunId ?? ev?.data?.promptId ?? ev?.data?.promptRunId;
+  return typeof named === "string" && named ? named : undefined;
+};
 
 export interface BoxAgentConfig {
   pollMs: number;
@@ -112,17 +120,38 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
         .filter((s) => s !== undefined)
         .join("\n");
 
-      // The submission fence (SendTurnInput.beforeSubmit): api() starts its
-      // fetch with no await before it. A refusal throws, nothing is sent.
-      turn.beforeSubmit?.();
-      const started: any = await api(`/boxes/${boxId}/prompt`, {
-        method: "POST",
-        body: JSON.stringify({ provider: providerFor(model), model, prompt }),
+      // CLOUD-COMPUTER-BOOT-105 C3: the send runs under the box's lock. Work a restart or a failed Stop left on this box is confirmed
+      // stopped first (or the send is refused), the events listed now are taken as seen, and the prompt is on disk before it is sent.
+      // The submission fence (SendTurnInput.beforeSubmit) is called right before the POST's fetch, with no await between them: a refusal
+      // throws, nothing is sent.
+      const sent = await sendCloudPrompt({
+        turnId, boxId, threadId, token,
+        ...(turn.beforeSubmit ? { beforeSubmit: turn.beforeSubmit } : {}),
+        events: async () => { const listed: any = await api(`/boxes/${boxId}/events`); return listed?.events ?? listed?.items ?? []; },
+        post: async () => {
+          const res = await fetch(`${BOX_API}/boxes/${boxId}/prompt`, {
+            method: "POST",
+            headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+            body: JSON.stringify({ provider: providerFor(model), model, prompt }),
+            signal: AbortSignal.timeout(30_000),
+          });
+          return { status: res.status, body: await res.json().catch(() => null) };
+        },
       });
+      const started: any = sent.body;
       appendNative(threadId, { dir: "out", source: "box.prompt", msg: { model, prompt, response: started } });
       // real shape (2026-08): {type:"prompt.queued", promptId, promptRun:{id,…},
       // id:<box id>} — never fall back to the bare id, it's the box's
-      const promptId = started?.promptRun?.id ?? started?.prompt?.id ?? started?.promptId ?? null;
+      const promptId = sent.promptId;
+      // section 7.2 E1: a 2xx that names no prompt cannot be told apart from any other work on the box. Nothing of it is read; the entry is
+      // fenced (the next send clears it by the no-id rule) and the turn ends here, saying so.
+      if (!promptId) {
+        cloudTurnFinished(turnId, "unproven");
+        emit({ ...base(threadId, turnId), type: "turn.started" });
+        emit({ ...base(threadId, turnId), type: "runtime.error", message: CLOUD_COMPUTER_UNNAMED_TURN });
+        emit({ ...base(threadId, turnId), type: "turn.completed", ok: false, stopReason: "error", cost: null });
+        return { turnId };
+      }
 
       let cancelled = false;
       // Stop ends every wait of this turn at once, including the wait for room on the bus
@@ -138,7 +167,9 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
         cancel: () => {
           cancelled = true;
           stopped.abort();
-          void api(`/boxes/${boxId}/interrupt`, { method: "POST" }).catch(() => {});
+          // C5, section 8: no interrupt from here. The interrupt is box-wide, so it is sent only by stopCloudTurn, under the box lock, when no
+          // other turn on the box still needs it; the Stop is confirmed by the prompt's own status, or the box is fenced until it is cleared
+          void stopCloudTurn(turnId, token).catch((error) => console.error("cloud computer: the Stop could not be confirmed", error));
         },
       });
       emit({ ...base(threadId, turnId), type: "turn.started" });
@@ -146,7 +177,8 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
 
       // poll events + run status until the prompt settles
       (async () => {
-        const seen = new Set<string>();
+        // C3: what the box listed before this prompt is never this turn's work
+        const seen = new Set<string>(sent.before.map(eventId));
         /** Waits for the bus to have room for this thread before the next poll or the next emitted event. */
         const gate = async () => { if (!cancelled && !isIntakeOpen(threadId)) await unlessStopped(awaitIntake(threadId)); };
         // No clock of its own (0.1.61): every new box event reaches the
@@ -199,9 +231,15 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
             for (const ev of list) {
               await gate();
               if (cancelled) break;
-              const id = String(ev.id ?? ev.eventId ?? JSON.stringify(ev).slice(0, 120));
+              const id = eventId(ev);
               if (seen.has(id)) continue;
               seen.add(id);
+              // section 7.2 E2: an event that names another prompt is not this turn's
+              const named = eventPrompt(ev);
+              if (named !== undefined && named !== promptId) continue;
+              // E3: on a box that was not clean at the send, an event that names no prompt may be earlier work: activity only, never text,
+              // a tool row, an end or a line in this thread's native trace (the reply is this prompt's own status result)
+              if (named === undefined && cloudTurnStrict(turnId)) { working(ev); continue; }
               appendNative(threadId, { dir: "in", source: "box.events", msg: ev });
               const kind = String(ev.type ?? ev.kind ?? "");
               // "response" events carry the agent's text at data.content —
@@ -226,19 +264,9 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
                 // work the chat does not show is still work
                 working(ev);
               }
-              // shape-drift backstop: without a promptId the status poll
-              // below can never see a terminal state, so settle off the
-              // events themselves instead of waiting for the silence watch
-              if (!promptId && /complete|finish|done|success|fail|error/i.test(kind)) {
-                active.delete(threadId);
-                flushAssistantText();
-                const failed = /fail|error/i.test(kind);
-                emit({ ...base(threadId, turnId), type: "turn.completed", ok: !failed, stopReason: failed ? kind : null, cost: null });
-                return;
-              }
             }
             if (cancelled) break;
-            if (promptId) {
+            {
               await gate();
               if (cancelled) break;
               const status: any = await api(`/boxes/${boxId}/prompts/${promptId}`, { signal: AbortSignal.any([stopped.signal, AbortSignal.timeout(30_000)]) }).catch(() => null);
@@ -249,7 +277,7 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
               // flat fallbacks kept for drift
               const run: any = status?.promptRun ?? status?.prompt ?? status ?? {};
               const state = String(run?.status ?? "");
-              if (/completed|succeeded|done|finished/i.test(state)) {
+              if (BOX_RUN_DONE.test(state)) {
                 const result = run?.result ?? run?.output ?? lastText;
                 if (typeof result === "string" && result.trim() && result !== lastText) {
                   ingest(result);
@@ -259,12 +287,14 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
                 flushAssistantText();
                 if (silent) emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", origin: "murage", text: "(finished)" });
                 active.delete(threadId);
+                cloudTurnFinished(turnId, "ended");
                 emit({ ...base(threadId, turnId), type: "turn.completed", ok: true, stopReason: null, cost: null });
                 return;
               }
-              if (/failed|error|cancelled|interrupted/i.test(state)) {
+              if (BOX_RUN_ENDED.test(state)) {
                 flushAssistantText();
                 active.delete(threadId);
+                cloudTurnFinished(turnId, "ended");
                 // A box run that ended because Murage interrupted it is the
                 // user's Stop, not a failure (STOP1); a box that stopped on
                 // its own keeps its own state as the failure reason.
@@ -278,10 +308,12 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
           // settles a user Stop with (STOP1), not an engine failure.
           flushAssistantText();
           active.delete(threadId);
+          cloudTurnFinished(turnId, "ended", { terminal: false }); // marked stopping by the Stop: left to its confirmation; no status read, so a quarantine stays
           emit({ ...base(threadId, turnId), type: "turn.completed", ok: true, stopReason: "cancelled", cost: null });
         } catch (e) {
           flushAssistantText();
           active.delete(threadId);
+          cloudTurnFinished(turnId, "lost");                  // nothing watches the prompt now: fenced (C6)
           emit({ ...base(threadId, turnId), type: "runtime.error", message: (e as Error).message });
           emit({ ...base(threadId, turnId), type: "turn.completed", ok: false, stopReason: "error", cost: null });
         }

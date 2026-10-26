@@ -2878,6 +2878,10 @@ export function isHeartbeatRequest(method: string, pathname: string): boolean {
 export const EVIDENCE_HEADER = "x-murage-evidence";
 /** murage-control's door header (door v2): "v2" while the home's last successful probe answered door "v2" (b3-control.ts heartbeat). */
 export const DOOR_HEADER = "x-murage-door";
+/** murage-control's owner-factor header (CLOUD-DOOR-OWNER-FACTOR-DESIGN-r3 §4.1): "1" while the home's last probe answered
+ *  ownerFactor 1 (a 1.0.5 app). Absent or any other value clears it, like door_version. Distinct from the local door HMAC
+ *  header x-murage-door-proof, which is never sent to the CP. */
+export const OWNER_FACTOR_HEADER = "x-murage-owner-factor";
 /** DOOR_V2_REQUIRED (MurageCloud (a)): a home is marked ready only after it stamped door_version 'v2', so the first press after ready mints v2. */
 const doorReadySql = (env: Env) => (doorV2Required(env) ? " AND h.door_version='v2'" : "");
 /** Seconds after which a home whose heartbeat could not be recorded resends it (Astra AUTOCANARY-11 P1-1; murage-control's 5xx retry). */
@@ -2929,8 +2933,8 @@ async function heartbeat(request: Request, env: Env, h: Home): Promise<Response>
     const [home] = await env.DB.batch([
       // Door v2 (CLOUD-DOOR-V2-DESIGN.md 4B): the home's door, from the request header only (the body is strict on every CP in the field);
       // a heartbeat without it clears it. No ack change.
-      env.DB.prepare("UPDATE cloud_homes SET heartbeat_at=?, door_version=? WHERE id=? AND generation=?")
-        .bind(now, request.headers.get(DOOR_HEADER) === "v2" ? "v2" : null, h.id, h.generation),
+      env.DB.prepare("UPDATE cloud_homes SET heartbeat_at=?, door_version=?, door_proof=? WHERE id=? AND generation=?")
+        .bind(now, request.headers.get(DOOR_HEADER) === "v2" ? "v2" : null, request.headers.get(OWNER_FACTOR_HEADER) === "1" ? 1 : 0, h.id, h.generation),
       notePowerHeartbeat(env.DB, h.id, now), // power reservations count consecutive beats as they arrive (settlePower consumes them)
     ]);
     if (home!.meta.changes !== 1) return refuse("stale_generation", new HTTPError(409, "stale_generation")); // rotated after authentication

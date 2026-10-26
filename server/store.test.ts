@@ -231,6 +231,17 @@ describe("Store", () => {
     expect(reloaded.bot(a.id)?.usageMonths?.[key]?.replies).toBe(2);
   });
 
+  it("a room or project turn lands in the speaker's month Usage once: replies match the turns and tokens match what the project limit counted", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const key = usageMonthKey();
+    store.addTaskUsage(bot.id, bot.threadId, { input: 100, output: 20, costUsd: null }, "chat-1");
+    expect(store.addRoomTurnUsage(bot.id, { input: 3000, output: 500 }, "room:turn-1")).toBe(true);
+    expect(store.addRoomTurnUsage(bot.id, { input: 3000, output: 500 }, "room:turn-1")).toBe(false);
+    expect(store.addRoomTurnUsage(bot.id, { input: 2000, output: 100, cachedInput: 1500 }, "room:turn-2")).toBe(true);
+    expect(store.bot(bot.id)?.usageMonths?.[key]).toMatchObject({ replies: 3, input: 5100, output: 620, cachedInput: 1500 });
+  });
+
   it("turn path cost: one usage write adds one bounded bucket update, never a scan of history", () => {
     const store = new Store(selection);
     const bot = store.createBot();
@@ -1684,7 +1695,7 @@ describe("Store redacts bot-authored secrets on write", () => {
       },
     });
     expect(routineCard.card?.routineRequest?.operation.action).toBe("create");
-    if (routineCard.card?.routineRequest?.operation.action !== "create") throw new Error("missing routine payload");
+    if (routineCard.card?.routineRequest?.operation.action !== "create" || !("routine" in routineCard.card.routineRequest.operation)) throw new Error("missing routine payload");
     expect(routineCard.card.routineRequest.operation.routine.name).not.toContain(key);
     expect(routineCard.card.routineRequest.operation.routine.instructions).not.toContain(key);
     const skillCard = store.appendMessage(bot.threadId, {
@@ -2333,6 +2344,34 @@ describe("Store.setChiefOfStaff scope", () => {
     expect(reloaded.bot(ember.id)?.chiefScope).toBeUndefined();
     expect(reloaded.bot(nia.id)?.chiefScope).toBeUndefined(); // a tier with no role
     expect(reloaded.bot(nia.id)?.chiefOfStaff).toBeFalsy();
+  });
+});
+
+describe("Store.setChiefOfStaff workspace handover", () => {
+  beforeEach(() => {
+    removeTempDirSync(DATA_DIR);
+  });
+
+  it("keeps the former Chief as its team's leader when its engine can lead", () => {
+    const store = new Store(selection);
+    const sable = store.createBot({ name: "Sable" });
+    const rex = store.createBot({ name: "Rex", section: "Sales" });
+    store.setChiefOfStaff(sable.id, undefined, "workspace");
+    store.setChiefOfStaff(rex.id, undefined, "workspace", () => true);
+    expect(store.workspaceChief()?.id).toBe(rex.id);
+    expect(store.bot(sable.id)?.chiefOfStaff).toBe(true);
+    expect(store.bot(sable.id)?.chiefScope).toBeUndefined();
+  });
+
+  it("makes the former Chief a member when its engine cannot lead", () => {
+    const store = new Store(selection);
+    const sable = store.createBot({ name: "Sable" });
+    const rex = store.createBot({ name: "Rex", section: "Sales" });
+    store.setChiefOfStaff(sable.id, undefined, "workspace");
+    store.setChiefOfStaff(rex.id, undefined, "workspace", (bot) => bot.id !== sable.id);
+    expect(store.workspaceChief()?.id).toBe(rex.id);
+    expect(store.bot(sable.id)?.chiefOfStaff).toBeFalsy();
+    expect(store.bot(sable.id)?.chiefScope).toBeUndefined();
   });
 });
 

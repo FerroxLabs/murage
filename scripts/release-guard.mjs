@@ -201,6 +201,41 @@ export function publishDraft(version, id, assetsDir, run = execute) {
   if (release.draft) throw new Error("publication was not confirmed");
 }
 
+/** Any edit of a release body clears its tag: GitHub turns the release into "untagged-<hash>" (seen on 1.0.3 and 1.0.3.1).
+ * So the body PATCH is always followed at once, even when it failed part way, by a PATCH that sets tag_name,
+ * target_commitish and name again, and then the release is verified: its record, and for a published release the tag
+ * on the remote (git ls-remote) and the releases/latest API. */
+export function setReleaseBody(version, id, notesFile, target, run = execute) {
+  parseVersion(version);
+  if (!Number.isSafeInteger(id) || id <= 0) throw new Error("release id must be a positive integer");
+  if (!/^[A-Za-z0-9._/-]+$/.test(String(target ?? ""))) throw new Error("target_commitish must be a branch name or commit SHA");
+  if (!statSync(notesFile).isFile()) throw new Error("release notes must be a regular file");
+  const endpoint = `repos/${RELEASE_REPO}/releases/${id}`;
+  try {
+    checked("gh", ["api", "--method", "PATCH", endpoint, "--field", `body=@${notesFile}`], run);
+  } finally {
+    checked("gh", ["api", "--method", "PATCH", endpoint, "--raw-field", `tag_name=v${version}`,
+      "--raw-field", `target_commitish=${target}`, "--raw-field", `name=Murage ${version}`], run);
+  }
+  return verifyReleaseTag(version, id, run);
+}
+
+/** The release still carries its tag and title; a published one also has the tag on the remote and is releases/latest. */
+export function verifyReleaseTag(version, id, run = execute) {
+  const release = releaseRecord(apiGet(`repos/${RELEASE_REPO}/releases/${id}`, { run }), version, id);
+  if (release.name !== `Murage ${version}`) throw new Error(`release ${id} is titled ${JSON.stringify(release.name)}, not "Murage ${version}"`);
+  if (release.draft) return release;
+  const refs = String(checked("git", ["ls-remote", "--tags", `https://github.com/${RELEASE_REPO}.git`, `refs/tags/v${version}`], run));
+  if (!refs.split("\n").some(line => line === `${line.slice(0, 40)}\trefs/tags/v${version}` && /^[0-9a-f]{40}$/.test(line.slice(0, 40)))) {
+    throw new Error(`tag v${version} is not on ${RELEASE_REPO}; refusing to report the release as published`);
+  }
+  const latest = apiGet(`repos/${RELEASE_REPO}/releases/latest`, { run });
+  if (latest?.id !== id || latest?.tag_name !== `v${version}`) {
+    throw new Error(`releases/latest is ${latest?.tag_name ?? "missing"}, not v${version}`);
+  }
+  return release;
+}
+
 export function uploadDraft(version, directory, notesFile, run = execute) {
   parseVersion(version);
   const files = readdirSync(directory).sort().map(name => {
@@ -321,6 +356,10 @@ async function main([command, ...args]) {
     }
   } else if (command === "branch") output(inspectReleaseBranch(args[0], process.env.GITHUB_REPOSITORY));
   else if (command === "upload") console.log(uploadDraft(...args));
+  else if (command === "body") {
+    const [version, rawId, notesFile, target] = args;
+    setReleaseBody(version, Number(rawId), notesFile, target);
+  } else if (command === "verify-tag") verifyReleaseTag(args[0], Number(args[1]));
   else if (command === "publish") {
     const [version, rawId, assetsDir] = args;
     publishDraft(version, Number(rawId), assetsDir);

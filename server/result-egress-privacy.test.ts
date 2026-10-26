@@ -56,8 +56,9 @@ function world() {
   return { store, chief, worker, deps };
 }
 
-it("the owner receives a Chief's delegated reply after creating a sub-bot bumps policy between write and release", () => {
+it("the owner receives a Chief's delegated reply after moving a sub-bot to another team bumps policy between write and release", () => {
   const { store, chief, worker, deps } = world();
+  const subBot = store.createBot({ name: "New sub-bot", section: "Ops" }, { seedMessages: false });
   const turn = openTurnLineage(database(), { threadId: worker.threadId, turnId: "delegated" });
   // An inherited receipt age, with no receipt revocation: only the policy watermark is under test.
   addTurnParents(turn, [{ kind: "receipt", bundleId: "inherited", lsn: currentLsn(database()), scopeIds: [] }]);
@@ -66,7 +67,8 @@ it("the owner receives a Chief's delegated reply after creating a sub-bot bumps 
   const release = () => releaseAskReply({ requestId: "owner-ask", origin: { threadId: worker.threadId, messageIds: [message.id] } },
     worker.id, chief.threadId, { fromBotId: chief.id }, false, new WorkerText(SECRET), deps);
   expect(release()).toMatchObject({ ok: true, withheld: false });
-  store.createBot({ name: "New sub-bot", section: "Ops" }, { seedMessages: false });
+  // an audience change moves the policy revision; adding a bot withdraws nothing and would not
+  store.patchBot(subBot.id, { section: "Moved team" });
   const page = { threadId: worker.threadId, lines: [{ messageId: message.id, author: "generated" as const }] };
   expect(denyLookup(database(), page, { audience: { owner: true, scopeIds: [] } }).get(message.id))
     .toEqual({ state: "withheld", reason: "watermark" });
@@ -193,6 +195,7 @@ it("the direct-turn initializer flags a linked person's nested turn and preserve
       kind: "agents", skillAuthoring: false, ...(notOwner ? { notOwnerAudience: true as const } : {}) });
     expect(registry.resolve(`Bearer ${token}`)?.notOwnerAudience === true).toBe(expected);
   }
-  expect(source).toContain("beginInternalTurn(bot.id, threadId, dispatchClaimId, commsDepth, skillAuthoring, eventId, opts?.coordination, memoryNotOwner, directOwnerAudience)");
+  // F3 (6ef059ff6): the coordination argument is now the request tree's (requestCoordination falls back to opts?.coordination); the two audience arguments are unchanged
+  expect(source).toContain("beginInternalTurn(bot.id, threadId, dispatchClaimId, commsDepth, skillAuthoring, eventId, requestCoordination, memoryNotOwner, directOwnerAudience)");
   expect(source).toContain("beginInternalTurn(bot.id, threadId, internalGeneration, hop, skillAuthoring, undefined, undefined, !roomOwnerAudience, roomOwnerAudience)");
 });

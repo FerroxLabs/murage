@@ -196,7 +196,7 @@ it("memory-downgrade --to 10 steps 1.0.3 back to 1.0.2 without the 1.0.1 applica
  const f=fixture(),db=new DatabaseSync(join(f.data,"messages.db"));migrateMemorySchema(db);db.close();
  expect(JSON.parse((await run(["memory-downgrade","--data-dir",f.data,"--to","10"])).stdout)).toEqual({ok:true,operation:"memory-downgrade",status:"downgraded",from:MEMORY_SCHEMA_VERSION,to:10});
  expect(JSON.parse((await run(["memory-downgrade","--data-dir",f.data,"--to","10"])).stdout)).toMatchObject({status:"already-v10",from:10,to:10});
- // 11 (1.0.3 before the lineage door epoch) is a target since memory schema 12; 12, the current one, is not
- const refused=await run(["memory-downgrade","--data-dir",f.data,"--to","12"]).catch(error=>error);
- expect(refused.stderr).toContain("--to 1|2|3|4|5|6|7|8|9|10|11");
+ // 11 (1.0.3 before the lineage door epoch) is a target since memory schema 12, 12 (1.0.3 to 1.0.6) since 13; 13, the current one, is not
+ const refused=await run(["memory-downgrade","--data-dir",f.data,"--to","13"]).catch(error=>error);
+ expect(refused.stderr).toContain("--to 1|2|3|4|5|6|7|8|9|10|11|12]");
 });

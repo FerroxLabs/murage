@@ -21,7 +21,7 @@ it("joins the inject hint with a full stop, never an em dash", () => {
     "Finch is working. Inject now to interrupt with the queued message",
   );
   const composer = readFileSync(new URL("../components/Composer.tsx", import.meta.url), "utf8");
-  const hints = [...composer.matchAll(/\{ lead: `\$\{busyName\} is working`, hint: "([^"]+)" \}/g)].map((m) => m[1]);
+  const hints = [...composer.matchAll(/\{ lead: `\$\{busyName\} is working`, hint: ["`]([^"`]+)["`] \}/g)].map((m) => m[1]);
   expect(hints).toHaveLength(4);
   for (const hint of hints) expect(hint).not.toMatch(/—/);
   expect(composer).not.toMatch(/is working —/);

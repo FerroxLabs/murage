@@ -88,7 +88,9 @@ it("the upgrade from v8 creates no index on a table that holds rows, and the tri
   // (revoke-bounded r3's late objects are made at every open from v9 on, beside the versioned text: schema.ts REVOKE_LATE_SQL)
   // (1.0.3 lane 2's derived objects, the age-key table and its company, are made empty at every v10 open too: schema.ts ensureRecordKeys)
   const revokeLate = new Set([...ownerTailObjects, ...LANE2_DERIVED_NAMES, "memory_deny", "memory_revocation_targets", "memory_evidence_by_source", "memory_source_origins", "memory_late_build", "memory_revoke_fold", "memory_revoke_fold_bulk", "memory_evidence_by_source_insert", "memory_evidence_by_source_delete", "memory_source_origins_insert"]);
-  const added = after.filter(row => !before.has(row.name) && !revokeLate.has(row.name) && !(WRITETIME_TRIGGERS as readonly string[]).includes(row.name));
+  // (v13's source stamps, a table and its trigger on memory_source_versions, are created empty in the same step: schema.ts SOURCE_LSN_SCHEMA)
+  const sourceLsn = new Set(["memory_source_lsn", "memory_source_lsn_insert"]);
+  const added = after.filter(row => !before.has(row.name) && !revokeLate.has(row.name) && !sourceLsn.has(row.name) && !(WRITETIME_TRIGGERS as readonly string[]).includes(row.name));
   // everything that appeared belongs to the new tables or to a trigger on the sources: no index on a table that already held rows
   const indexes = added.filter(row => row.type === "index");
   expect(indexes.length).toBeGreaterThan(0);

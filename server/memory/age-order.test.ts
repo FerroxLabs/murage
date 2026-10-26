@@ -369,7 +369,7 @@ describe("the index in age order: fill, rename cutover under a reader mid-page, 
     expect(raw.prepare("SELECT name FROM sqlite_schema WHERE name LIKE 'lexical_age%'").all()).toEqual([]);
     expect(raw.prepare("SELECT key FROM index_meta WHERE key LIKE 'age_%' OR key LIKE 'lexical_%'").all()).toEqual([]);
     raw.close();
-    expect(downgradeMemorySchema(db, 10)).toMatchObject({ status: "downgraded", from: 12, to: 10 }); // 1.0.3: the file is v12, 1.0.2 reads v10
+    expect(downgradeMemorySchema(db, 10)).toMatchObject({ status: "downgraded", from: 13, to: 10 }); // 1.0.3: the file is v13, 1.0.2 reads v10
     expect(db.prepare("SELECT name FROM sqlite_schema WHERE name LIKE 'memory_record_keys%' OR name='memory_backfill_threads'").all()).toEqual([]);
     expect(() => validateMemorySchema(db)).not.toThrow();
     expect(downgradeMemorySchema(db, 10)).toMatchObject({ status: "already-v10" });
@@ -497,6 +497,9 @@ describe("owner search and browse over the keyed streams", () => {
 
   it("EXPLAIN pins: no statement of any view, state or search uses a temporary B-tree or scans the records or key table", async () => {
     const { other } = seed(600, { pending: 100, pins: [5] });
+    // The 50 ms gate below reads this test's own statements: slowestMs is never reset in production code, so without this it
+    // held the slowest of every statement since the file began, not only the statements checked here.
+    ownerSearchWork.slowestMs = 0;
     ownerSearchTrace.on = true; ownerSearchTrace.statements = [];
     const inputs: OwnerListInput[] = [
       { botId: "a" }, { botId: "a", view: "recent" }, { botId: "a", view: "important" }, { botId: "a", view: "review" }, { botId: "a", state: "archived" },

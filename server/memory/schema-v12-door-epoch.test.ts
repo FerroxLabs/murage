@@ -35,8 +35,8 @@ const session = (db: DatabaseSync, id: string) =>
 it("v12-fresh: a new file is v12 with the door epoch key at the lsn counter, the door_epoch column and the allocator", () => {
   const db = open();
   try {
-    expect(MEMORY_SCHEMA_VERSION).toBe(12);
-    expect(version(db)).toBe(12);
+    expect(MEMORY_SCHEMA_VERSION).toBe(13);
+    expect(version(db)).toBe(13);
     expect(meta(db).reader_door_epoch).toBe(next(db));
     expect(sqlOf(db, "memory_session_lineage")).toContain("door_epoch INTEGER");
     expect(sqlOf(db, "memory_session_incarnation")).toContain("PRIMARY KEY(thread_id,driver_instance,native_id,n)");
@@ -51,12 +51,12 @@ it("a v10 (1.0.2) file migrates to v12: same stored text as a new file, sessions
   try {
     session(db, "old");
     db.exec("UPDATE memory_lsn SET next=40 WHERE id=1");
-    expect(downgradeMemorySchema(db, 10)).toMatchObject({ status: "downgraded", from: 12, to: 10 });
+    expect(downgradeMemorySchema(db, 10)).toMatchObject({ status: "downgraded", from: 13, to: 10 });
     expect(version(db)).toBe(10);
     expect(meta(db).reader_door_epoch).toBeUndefined();
     expectWatermarkMoves(db);
     migrateMemorySchema(db);
-    expect(version(db)).toBe(12);
+    expect(version(db)).toBe(13);
     const fresh = frozen(MEMORY_SCHEMA);
     for (const name of DOOR_OBJECTS) expect(sqlOf(db, name)).toBe(fresh[name]);
     expect(db.prepare("SELECT native_session,first_lsn,last_lsn,door_epoch FROM memory_session_lineage").all()).toEqual([{ native_session: "old", first_lsn: 3, last_lsn: 5, door_epoch: null }]);
@@ -72,7 +72,7 @@ it("12 -> 11 -> 12: the watermark moves at v11 and after the re-upgrade; the sta
   try {
     session(db, "s1");
     db.exec("UPDATE memory_session_lineage SET door_epoch=1; INSERT INTO memory_session_incarnation VALUES('t','d','s1',1)");
-    expect(downgradeMemorySchema(db, 11)).toMatchObject({ status: "downgraded", from: 12, to: 11 });
+    expect(downgradeMemorySchema(db, 11)).toMatchObject({ status: "downgraded", from: 13, to: 11 });
     expect(version(db)).toBe(11);
     const v11 = frozen(MEMORY_SCHEMA_V11);
     for (const name of DOOR_OBJECTS) expect(sqlOf(db, name)).toBe(v11[name]);
@@ -83,7 +83,7 @@ it("12 -> 11 -> 12: the watermark moves at v11 and after the re-upgrade; the sta
     expectWatermarkMoves(db);
     expect(downgradeMemorySchema(db, 11)).toMatchObject({ status: "already-v11" });
     migrateMemorySchema(db);
-    expect(version(db)).toBe(12);
+    expect(version(db)).toBe(13);
     expect(db.prepare("SELECT door_epoch FROM memory_session_lineage").get()).toEqual({ door_epoch: null });
     expectWatermarkMoves(db);
   } finally { db.close(); }
