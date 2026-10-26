@@ -1,5 +1,5 @@
 import { murageToolOnThisServer } from "../murage-tool-surface.ts";
-import { PROJECT_TOOLS } from "./project-tool-schemas.ts";
+import { PROJECT_TOOLS, VENUE_READ_TOOL, venueReadBody } from "./project-tool-schemas.ts";
 // Agent-to-agent comms MCP proxy — spawned as an MCP server inside a bot's
 // agent process (via the "agents" integration). Exposes peer, routine, and
 // skill tools routed back through the harness so the harness stays the
@@ -63,6 +63,9 @@ const IMAGE_LIBRARY_ON = process.env[IMAGE_LIBRARY_ENV] !== "0";
  * Chief's hidden New project turn (lane N): it lists project_propose and
  * nothing else, and its capability reaches only that route. */
 const PROJECT_ROLE = process.env.MURAGE_PROJECT_ROLE === "lead" || process.env.MURAGE_PROJECT_ROLE === "member" || process.env.MURAGE_PROJECT_ROLE === "proposal" ? process.env.MURAGE_PROJECT_ROLE : "";
+/** Bot venue awareness (lane 106): venue_read_messages is listed on the owner's direct turns the harness mounted it for, never with a
+ * project role. Listing is presentation; the harness's generation-bound record decides every call (server/venue-read.ts). */
+const VENUE_READ = process.env.MURAGE_VENUE_READ === "1" && !PROJECT_ROLE;
 const MAX_CREATED_PER_TURN = 4;
 /** Attached to every murage_help answer. Documentation is data: it describes
  * the product, it does not extend this bot's permissions or override the
@@ -787,6 +790,7 @@ const LISTED_TOOLS = SKILL_AUTHORING_ENABLED ? TOOLS : TOOLS.filter((tool) => !S
 const AVAILABLE_TOOLS = PROJECT_ROLE === "proposal" ? [PROJECT_PROPOSE_TOOL] : [
   ...(IMAGE_LIBRARY_ON ? LISTED_TOOLS : withoutImageLibrary(LISTED_TOOLS)),
   ...(PROJECT_ROLE ? PROJECT_TOOLS.filter((tool) => PROJECT_TOOLS_FOR[PROJECT_ROLE]!.includes(tool.name)) : []),
+  ...(VENUE_READ ? [VENUE_READ_TOOL] : []),
 ];
 
 type Json = Record<string, unknown>;
@@ -999,6 +1003,9 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
   if (name === "project_propose") {
     const body = { members: args.members, leadBotId: args.leadBotId ?? null, mode: args.mode, brief: args.brief, budget: args.budget, planOutline: args.planOutline };
     return jsonToolResult(await api("/api/internal/project/propose", { method: "POST", body: JSON.stringify(body) }));
+  }
+  if (name === "venue_read_messages" && VENUE_READ) {
+    return jsonToolResult(await api("/api/internal/venue/read-messages", { method: "POST", body: JSON.stringify(venueReadBody(args)) }));
   }
   const project = PROJECT_TOOL_ROUTES[name];
   if (project) {

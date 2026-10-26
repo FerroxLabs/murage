@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { Bot, Group, Message } from "@/state/store";
 import { projectClient, refreshProject } from "@/lib/use-project";
 import { projectEvents } from "@/lib/project-events";
+import { loopNoticeLabel } from "@/lib/loop-notice";
 const BUTTON = "min-h-11 rounded-lg px-3 text-[13px] hover:bg-raised focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50";
 export function MurageMessageRow({ message, group, members, disabledReason }: { message: Message; group: Group; members: Bot[]; disabledReason?: string | null }) {
   const [busy, setBusy] = useState(false);
@@ -24,7 +25,7 @@ export function MurageMessageRow({ message, group, members, disabledReason }: { 
   }
   return <div data-testid="murage-row" className="min-w-0 rounded-lg border border-hairline/40 px-3 py-2 text-[13px] text-ink-secondary">
     <span className="font-medium text-ink">Murage</span>
-    <p className="whitespace-pre-wrap break-words">{message.text || message.tool?.name.replace(/^error:\s*/, "")}</p>
+    <p className="whitespace-pre-wrap break-words">{message.text || (message.tool ? loopNoticeLabel(message.tool.name) ?? message.tool.name.replace(/^error:\s*/, "") : undefined)}</p>
     {actions && <div className="flex flex-wrap items-center gap-1">
       {message.murage?.retry && <button type="button" className={BUTTON} disabled={busy || !!disabledReason || !requestId} onClick={() => void retry()}>Retry</button>}
       {message.murage?.reassign && <button type="button" className={BUTTON} disabled={busy || !!disabledReason || !requestId} onClick={() => setReassign(!reassign)}>Reassign</button>}

@@ -162,6 +162,7 @@ server/attachments-http.test.ts	all	uploads stream, retry and serve correct byte
 server/attachments.test.ts	all	attachment mime refusal and safe storage
 server/authorize-work.test.ts	all	Partitioned bots refuse cross-person work
 server/auto-approve-own-always-ask.test.ts	all	a remembered, task or routine grant never runs publish_site and the other always-ask own tools
+server/browser-document-guard-scope.test.ts	all	the page check looks at the bot's own tabs, so owners with many tabs can use their Chrome
 server/handoff-partition.test.ts	all	a partitioned bot never sees a copy or hand-off whose source is outside its partition
 server/memory/extraction-span-anchor.test.ts	all	learning keeps a slice whose quote is right even when the model miscounts byte offsets
 server/memory/quote-evidence.test.ts	all	a bot can save a memory from quoted words, not only from source ids it is never given
@@ -501,6 +502,7 @@ server/drivers/acp/engine-isolation.test.ts	all	OpenCode personal setup isolated
 server/drivers/acp/engine-tree-stop.test.ts	linux+mac	Stop on an ACP engine ends the whole process tree, so no engine keeps running after Stop
 server/drivers/acp/fuigo-1032.test.ts	all	Fuigo 1.0.32: no acceptEdits, only the turn credential
 server/drivers/acp/fuigo-memory-permission.test.ts	all	Fuigo memory permission exact identity
+server/drivers/acp/fuigo-apply-patch-107.test.ts	all	a Fuigo apply_patch read whole and judged as the same write, and a patch delete or move outside the bot's folders stopping
 server/drivers/acp/fuigo-write-readable.test.ts	all	plain file writes from Fuigo and Grok Build read whole: no "could not read" card, no Deny-only phone card
 server/drivers/acp/fuigo.test.ts	all	Fuigo engine turn behaviour
 server/drivers/acp/gemini-qwen-isolation.test.ts	all	Gemini personal setup isolated per bot
@@ -581,6 +583,7 @@ server/engine-deletion-scopes.test.ts	all	a bot's deletion removes only its own 
 server/engine-closed-scope-real.test.ts	all	a deleted conversation's engine files wait only for engines on that home (real addon reads the home)
 server/engine-closed-scope.test.ts	all	a deleted conversation stays pending forever while the owner's own CLI runs on another home
 server/engine-env-pins.test.ts	all	credential prompts and askpass pinned off
+server/engine-env-powershell-107.test.ts	all	a Windows Full access or No limits run reading the PowerShell form instead of stopping to ask, without Murage starting PowerShell
 server/engine-env.test.ts	all	Engine environment capture keeps last valid map
 server/engine-exclusion-called-exports.test.ts	all	packaged native addon missing a call the app makes (removeTree) is refused at build
 server/engine-exclusion-r17.test.ts	all	files changed only while engine cannot write
@@ -1152,7 +1155,7 @@ server/send-state-r6.test.ts	all	Unsent words kept until owner dismisses
 server/send-steer-r7.test.ts	all	failed send without line becomes visible chip
 server/send-steer-r8.test.ts	all	deleted conversation words stay deleted
 server/send-store.test.ts	all	accepted send is one committed row
-server/sendlane.test.ts	all	Desktop holds no Sendlane credential
+server/news-signup.test.ts	all	News signup: asked once, queued from the server, retried quietly, address deleted once settled
 server/sends-lookup-api.test.ts	all	a reloaded draft can ask whether its send arrived (no duplicate, no lost words)
 server/server-child-crash.test.ts	all	server child records fatal cause
 server/session-audience.test.ts	all	cursor resumed only for its audience
@@ -1250,7 +1253,9 @@ server/unattended.test.ts	all	Approval cards kept while attention notifications 
 server/upgrade-fast-readers.test.ts	all	upgrade fast readers still find pending approvals
 server/usage-ledger.test.ts	all	usage banks once per turn
 server/usage-root-failure-f3.api.test.ts	linux+mac	a failed project turn stops the teammates it asked and drops the hand-offs it queued
+server/use-my-chrome-107.test.ts	all	Use my Chrome picks the extension, never pins an Edge or Brave profile, asks for Allow once
 server/use-my-chrome.test.ts	all	owner Chrome off by default, opt-in only
+server/user-chrome-proxy.test.ts	all	no local program reaches the owner's Chrome without the owner's Allow
 server/user-stop-api.test.ts	all	Stop leaves stopped state, drops queued delegation
 server/venue-awareness.partition.test.ts	all	bot sees only its own team's venues
 server/venue-awareness.test.ts	all	bot knows the projects and channels it is in
@@ -1323,6 +1328,7 @@ src/components/ExportPasteNote.test.ts	all	says the paste was left out of memory
 src/components/FirstRunCard.test.ts	all	first run card flow dispatch
 src/components/FirstRunChrome.test.ts	all	setup poll stops and keeps asking correctly
 src/components/FirstRunHelloCard.test.ts	all	first run hello step profile save
+src/components/NewsSignupSettings.test.ts	all	Settings news signup posts only to the local server
 src/components/FluxKeyCard.test.ts	all	Flux key editor never holds or writes key
 src/components/GroupViewWithheld.test.ts	all	owner sees withheld and forgotten replies
 src/components/InboxRequest.test.ts	all	permission card title and command not from chat text
@@ -1463,3 +1469,23 @@ server/direct-rebuild-hold-late-api.test.ts	linux+mac	Protects Stop and replies:
 server/drivers/browser-extension-mcp-cancel.test.ts	all	a browser request the bot's engine cancelled still running, or one slow browser call holding every other request behind it
 scripts/browser-extension-late-download.test.mjs	all	a page download saved while the bot is told it was blocked (including after a kept file, or a removal no fresh look confirms); the owner's own download deleted on a late page announcement, or told to the bot when it was idle
 server/memory/excluded-thread-history.test.ts	all	a thread excluded from memory still read back through historical search
+server/database-open-wait.test.ts	all	Murage opens while another process holds the database: it waits instead of failing to start with 'database is locked'
+server/memory/dispatch-frame-checking.test.ts	all	a turn whose context is still being checked after a revoke is refused as revoked, never sent with that text
+server/memory/send-fence-room-copy.test.ts	all	a room copy of a forgotten or withheld line never reaches another bot's turn
+server/session-end-flush.test.ts	all	logging out or shutting down saves the chat in progress before Murage quits
+server/store-create-bot-atomic.test.ts	all	a bot that fails to create leaves no half-made bot in the roster or bots.json
+server/tts/flux-eleven.test.ts	all	the ElevenLabs voices Flux offers show up when Flux is connected, and not where only an own OpenAI key can speak
+server/typed-stop-api.test.ts	all	a typed 'stop' stops the running turn (steering and queueing engines) and a 'stop' sent as a reply stays an ordinary message
+server/typed-stop.test.ts	all	a typed 'stop' is told apart from ordinary messages that mention stopping
+server/venue-read-api.test.ts	all	the venue reader mounts only for the owner's turn; revoked or forged claims are refused
+server/venue-read.test.ts	all	a bot reading a project or group never sees another partition's rows, ids or sources; linked rows stay bare
+src/components/ChatHeader.phone.test.ts	all	on a phone the chat header keeps back, name, model, profile and the bot's computer reachable from the ... menu
+src/components/ComposerPlusMenu.test.ts	all	on a phone the composer + menu keeps Attach, Finish together and the approval level reachable
+server/routine-wake-approval.test.ts	all	at No limits, the owner's own routine answers a read-only command on its follow-through turn instead of stalling on an approval card
+server/mcp-error-result.test.ts	all	a text-only MCP tool error reaches the bot as a readable error, never a broken turn
+src/state/turn-status.test.ts	all	the working mascot stays for the whole turn and a late frame of an older turn never ends the newer one
+server/project-routine-approval-107.test.ts	all	the owner's own routine in a project room is approved at the lowest of its routine's and bot's levels, and webhook, channel or other-audience runs keep asking
+server/memory/recall-hydration-107.test.ts	all	recall comes back empty while any revoke is in flight, or shows a record or source made after a pending revoke began
+server/memory/schema-v13-source-lsn.test.ts	all	a source made after a pending revoke began read as shown after an upgrade, downgrade or re-upgrade; an older build refusing the downgraded file
+server/memory/recall-proof-allowance-107.test.ts	all	recall drops every proven memory once its search ran out of time, or shows a memory its own re-proof refused
+server/memory/revoke-narrow-18-107.test.ts	all	a revoked line held every thread that ever read its conversation, or a thread that read the line after the revoke read it as shown

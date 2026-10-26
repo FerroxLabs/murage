@@ -65,6 +65,11 @@ describe("project tool authorisation (SPEC-P 11.3)", () => {
     expect(call("card-update", "jax", cardRun, { cardId: "c1", blocked: "waiting on the API key" })).toMatchObject({ ok: true });
     expect(call("card-update", "jax", cardRun, { cardId: "c1", milestone: "x" })).toMatchObject({ status: 409 });
   });
+
+  it("T27 project reads still authorize both room and card generations", () => {
+    expect(call("read-messages", "lead", turn)).toMatchObject({ ok: true });
+    expect(call("read-messages", "jax", cardRun)).toMatchObject({ ok: true });
+  });
   it("every tool from a superseded card run is refused, not only the assignee's", () => {
     db.prepare("UPDATE project_work_items SET generation=5").run();
     expect(call("read-messages", "jax", cardRun)).toMatchObject({ status: 403, body: { error: "You are no longer on card 12." } });

@@ -82,6 +82,10 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   "setup.json": ownerFile(), "queued-messages.json": ownerFile(), "whats-new.json": ownerFile(),
   "announcements.json": ownerFile(), "house-rules.md": ownerFile(), "house-rules.json": ownerFile(),
   "about-me.md": ownerFile(),
+  // Whether the first-run news ask happened and how it ended (news-signup.ts). An address sits in it only while
+  // its one delivery is still owed, so it never travels in a backup. A restore still never re-asks in the chat:
+  // the hello step's own latch is the saved name in config.json and setup.json.
+  "news-signup.json": excluded("Whether the news signup was asked and how it ended, plus an address only while its delivery is owed; never in a backup"),
   // The random per-install id sent in the connected-apps token mint label
   // (electron/install-id.mjs). Random, never derived from hardware or a name;
   // kept across a backup and restore so the installation stays one identity.

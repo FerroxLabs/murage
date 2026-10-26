@@ -8,7 +8,7 @@ import type { MemoryBundle, MemoryEvidenceHandle } from "../../shared/memory.ts"
 import { MEMORY_HANDLE_LIMIT, MEMORY_REFERENCE_CLOSE, MEMORY_REFERENCE_OPEN, MEMORY_REFERENCE_PREAMBLE, memoryHandle, memoryHandlePosition, memoryRequestPrefix } from "../../shared/memory.ts";
 import { accessIncludesRoom, assertMemoryAccess, inMemoryAccessPass, ownerReaderScopeSets, type MemoryAccess, type MemoryRoster } from "./policy.ts";
 import { readableMemoryRecord, withReaderRule, type MemoryReadOptions } from "./readable.ts";
-import { noteRecallDegraded, searchMemory, type MemorySearchBridge } from "./search.ts";
+import { noteRecallDegraded, recallHydrationLimitMs, searchMemory, type MemorySearchBridge } from "./search.ts";
 import { causeOf } from "./worker-log.ts";
 import { episodeHits } from "./pip-episodes.ts";
 import { generationOf, readCounter } from "./pip-lived.ts";
@@ -50,9 +50,13 @@ export interface BoundedMemoryBundle extends MemoryBundle {
    * being marked): partial, never empty for that reason. Never part of `text`. */
   recallPartial?: true;
 }
-/** Recall's own lineage budget (DESIGN-WRITETIME, S4): a recall candidate is proven from this, never from the turn's transcript allowance, so a
- * turn whose transcript spent its allowance still recalls what can be proven, marked partial. The same bounds as a tool read. */
-export function recallBudget(): LineageAllowance { return LineageAllowance.tool(); }
+/** Recall's own lineage budget for its search (DESIGN-WRITETIME, S4): a recall candidate is proven from this, never from the turn's
+ * transcript allowance, so a turn whose transcript spent its allowance still recalls what can be proven, marked partial. 1.0.7 D3: its time
+ * is the search's own hydration limit (a turn's: 1,000 ms), so the search ends on its own limit, partial with what it proved. */
+export function recallBudget(): LineageAllowance { return LineageAllowance.search(recallHydrationLimitMs("turn")); }
+/** 1.0.7 D3: the bundle re-proves the recall hits it selected on a fresh allowance of its own (a tool read's bounds), so a search that spent
+ * its allowance does not make the bundle drop every hit the search proved. */
+export function recallProofBudget(): LineageAllowance { return LineageAllowance.tool(); }
 /** The owner's continuity brief's own lineage budget (U29): one owner-written row, read and re-proven apart from the turn's pins and recall. */
 export function briefBudget(): LineageAllowance { return LineageAllowance.tool(); }
 const BRIEF_LOG_MS = 60_000;
@@ -211,8 +215,10 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
   continuity?: boolean;
   /** The bot's `continuityOptions` as stored; part of the render-cache key (design §2.1). */
   continuityOptions?: object;
-  /** Recall's own budget; a fresh recallBudget() when absent. */
+  /** Recall's own budget for its search; a fresh recallBudget() when absent. */
   recallAllowance?: LineageAllowance;
+  /** What the bundle re-proves the recall hits from; a fresh recallProofBudget() when absent. */
+  recallProofAllowance?: LineageAllowance;
   /** The owner's continuity brief's own budget (U29); a fresh briefBudget() when absent. */
   briefAllowance?: LineageAllowance}): Promise<BoundedMemoryBundle> {
   // the reader's transcript rule, defaulted for a reader whose audience is not the owner (readable.ts withReaderRule): pins, recall and
@@ -221,7 +227,8 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
   const evolutionPolicy=options.evolutionPolicy??readMemoryEvolutionPolicy();
   // every record read here is judged with options.withheldMessage by this function itself (below), so the reads take null, not the default
   const allowance=options.allowance, reading={allowance,withheldMessage:null};
-  const recall=options.recallAllowance??recallBudget(), recallReading={allowance:recall,withheldMessage:null};
+  // the search spends `recall`; every hit the bundle hydrates and re-proves is paid from `recallProof` (D3: never the search's)
+  const recall=options.recallAllowance??recallBudget(), recallProof=options.recallProofAllowance??recallProofBudget(), recallReading={allowance:recallProof,withheldMessage:null};
   // the owner's continuity brief is read and re-proven on its own budget (U29): pins or recall that spent the turn's do not leave it out,
   // and a brief that is left out says so in the log
   const briefAllowance=options.briefAllowance??briefBudget(), briefReading={allowance:briefAllowance,withheldMessage:null};
@@ -514,10 +521,10 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
             // A sibling thread's checkpoint stays out of recall as well: it is
             // that thread's working state, and it rolls under this turn.
             if (record.kind==="checkpoint" && !ownCheckpoints.includes(record.id)) continue;
-            if (options.withheldMessage && recordRestsOnWithheldMessage(recall,record.id,record.version,options.withheldMessage)) throw new Error("MEMORY_EVIDENCE_UNAVAILABLE");
+            if (options.withheldMessage && recordRestsOnWithheldMessage(recallProof,record.id,record.version,options.withheldMessage)) throw new Error("MEMORY_EVIDENCE_UNAVAILABLE");
             if (!citesOnly(record,ownSources)) add(record,evidence);
           }
-          catch (error) { assertMemoryAccess(access); degradedReason = "MEMORY_OPTIONAL_EVIDENCE_UNAVAILABLE"; if (isLineageLimit(error) || recall.hit) recallPartial = true; }
+          catch (error) { assertMemoryAccess(access); degradedReason = "MEMORY_OPTIONAL_EVIDENCE_UNAVAILABLE"; if (isLineageLimit(error) || recallProof.hit) recallPartial = true; }
         }
       });
     } catch (error) {
@@ -531,9 +538,9 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
       for (const hit of episodeHits(db,access.botId,query)) {
         try {
           const record = hydrateMemoryRecord(hit.id,hit.version,access,recallReading);
-          if (options.withheldMessage && recordRestsOnWithheldMessage(recall,record.id,record.version,options.withheldMessage)) continue;
+          if (options.withheldMessage && recordRestsOnWithheldMessage(recallProof,record.id,record.version,options.withheldMessage)) continue;
           if (!citesOnly(record,ownSources)) add(record,evidence);
-        } catch (error) { assertMemoryAccess(access); if (isLineageLimit(error) || recall.hit) recallPartial = true; }
+        } catch (error) { assertMemoryAccess(access); if (isLineageLimit(error) || recallProof.hit) recallPartial = true; }
       }
     }
   }
@@ -570,7 +577,7 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
         continue;
       }
       try {
-        // a recall hit is re-proven from recall's own budget, the rest from the turn's
+        // a recall hit is re-proven from recall's own proof budget, the rest from the turn's
         const proof = evidence.includes(record) ? recallReading : briefRecords.has(record) ? briefReading : reading;
         const current = hydrateDisclosedMemoryRecord(record.id,record.version,access,proof);
         if (!sameRecord(current,record)) throw new Error("MEMORY_RECORD_CHANGED");
@@ -579,7 +586,7 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
         if (options.withheldMessage && recordRestsOnWithheldMessage(proof.allowance,record.id,record.version,options.withheldMessage)) throw new Error("MEMORY_EVIDENCE_UNAVAILABLE");
       } catch (error) {
         assertMemoryAccess(access);
-        if (evidence.includes(record) && (isLineageLimit(error) || recall.hit)) recallPartial = true;
+        if (evidence.includes(record) && (isLineageLimit(error) || recallProof.hit)) recallPartial = true;
         if (briefRecords.has(record)) briefLeftOut(error,"proof");
         const withheldPin = record.pinned && pinRestsOnWithheldReply(allowance,record.id,record.version,options.withheldMessage);
         if (record.pinned && !withheldPin) throw new Error("MEMORY_PIN_UNAVAILABLE: repair or unpin the owner constraint before dispatch");

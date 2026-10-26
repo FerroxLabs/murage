@@ -17,6 +17,7 @@ import net from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { parseApplyPatch } from "../../shared/apply-patch.ts";
 import { inProjectCheck, realPathInOrder } from "../../shared/in-project.ts";
 import { isOwnUnasked } from "../../shared/own-servers.ts";
 import { ABSENT_PINS } from "../../shared/arg-vocabulary.ts";
@@ -652,39 +653,8 @@ export class CodexHookGate {
 // ---------------------------------------------------------------------------------------------------------------------
 // Rule 68e: the delivery as a decision
 
-/** apply_patch destinations: `*** Add File:`, `*** Update File:`, `*** Delete File:` and `*** Move to:` headers. A patch that is not
- *  one whole well-formed envelope is unread (null). */
-export function parseApplyPatch(patch: unknown): { destinations: string[]; added: Map<string, string> } | null {
-  if (typeof patch !== "string" || Buffer.byteLength(patch, "utf8") > GATE_MESSAGE_BYTES) return null;
-  const lines = patch.replace(/\r\n/g, "\n").split("\n");
-  while (lines.length && lines[lines.length - 1] === "") lines.pop();
-  if (lines[0] !== "*** Begin Patch" || lines[lines.length - 1] !== "*** End Patch") return null;
-  const destinations: string[] = [];
-  const added = new Map<string, string[]>();
-  let current: string | null = null;
-  for (const line of lines.slice(1, -1)) {
-    const header = /^\*\*\* (Add File|Update File|Delete File|Move to): (.+)$/.exec(line);
-    if (header) {
-      const path = header[2]!;
-      if (!path.trim()) return null;
-      destinations.push(path);
-      // Rule 64: every body a destination receives is read (an Update's added lines too, and a Move carries the update's body to
-      // its new name), so a template file is never written unread
-      if (header[1] === "Move to" && current) { added.set(path, added.get(current)!); continue; }
-      current = header[1] === "Delete File" ? null : path;
-      if (current && !added.has(current)) added.set(current, []);
-      continue;
-    }
-    if (line.startsWith("*** ")) return null;
-    if (line === "" || line.startsWith("@@") || line === "*** End of File" || /^[ +\-]/.test(line)) {
-      if (current && line.startsWith("+")) added.get(current)!.push(line.slice(1));
-      continue;
-    }
-    return null;
-  }
-  if (!destinations.length) return null;
-  return { destinations, added: new Map([...added].map(([k, v]) => [k, v.join("\n")])) };
-}
+/** apply_patch destinations (the one reader, shared/apply-patch.ts; Fuigo's codex/apply_patch reads through it too). */
+export { parseApplyPatch };
 
 export type HookRoute =
   | { route: "allow"; final: boolean; why: string; destinations?: string[]; cwd?: string }

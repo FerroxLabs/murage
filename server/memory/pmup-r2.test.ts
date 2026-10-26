@@ -200,7 +200,7 @@ it("P1 r2: the upgrade's blocking stretch is covered by a heartbeat that always 
   migrateMemorySchema(db, "off", { onBlocking: first => { steps.push(first); return { step: step => { steps.push(step); }, end: () => { ended++; } }; } });
   expect(steps).toEqual(["tables", "indexes", "validating", "committing"]);
   expect(ended).toBe(1);
-  expect(db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(12);
+  expect(db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(13);
   // a failed upgrade ends the heartbeat too
   downgradeMemorySchema(db, 7);
   db.exec("CREATE TEMP TRIGGER boom BEFORE INSERT ON main.memory_lineage_meta BEGIN SELECT RAISE(ABORT,'boom'); END");

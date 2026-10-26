@@ -23,7 +23,7 @@ function savedFluxValue(env: NodeJS.ProcessEnv): string {
 }
 
 /** Config first, then env, so a packaged build can be pointed at a different
- *  key without a rebuild — the same order `announcementsBaseUrl()` uses.
+ *  key without a rebuild — the same order the other endpoint overrides use.
  *  Returns null rather than throwing: no key simply means Flux routing is
  *  unavailable, and a malformed config.json must not take the server down.
  *

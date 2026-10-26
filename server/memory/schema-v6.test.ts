@@ -93,7 +93,7 @@ it("upgrades a copy of a used v5 data dir additively, writes no root set (v10), 
     for (const table of NEW_TABLES) expect(db.prepare("SELECT 1 FROM sqlite_schema WHERE name=?").get(table), table).toBeUndefined();
     const before = rows(db), metaBefore = db.prepare("SELECT * FROM memory_meta").get(), bindingsBefore = withoutMarker(db);
     migrateMemorySchema(db);
-    expect(db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(12);
+    expect(db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(13);
     validateMemorySchema(db, { references: true });
     const after = rows(db);
     // every existing table keeps every row, byte for byte (the shape-check marker aside)
@@ -104,7 +104,7 @@ it("upgrades a copy of a used v5 data dir additively, writes no root set (v10), 
     // 1.0.3 (v11): the learning settings become v3, every other field kept
     expect(readMemoryLearning(db)).toMatchObject({ version: 3, ceiling: { input: 100_000_000, output: 15_000_000 } });
     expect(withoutMarker(db)).toBe(bindingsBefore);
-    expect(db.prepare("SELECT * FROM memory_meta").get()).toEqual({ ...metaBefore, schema_version: 12 });
+    expect(db.prepare("SELECT * FROM memory_meta").get()).toEqual({ ...metaBefore, schema_version: 13 });
     // v10: the migration writes no root-set rows (root sets are frozen and the upgrade does not convert them); Y's ancestry is read from the
     // receipts by the write-time backfill (lineage-backfill.ts), whose certificate starts not ready on an upgraded file
     const roots = db.prepare("SELECT o.thread_id,o.message_id,m.root_thread_id,m.root_message_id FROM memory_output_roots o JOIN memory_root_set_members m ON m.set_id=o.set_id ORDER BY o.message_id").all();
@@ -118,7 +118,7 @@ it("upgrades a copy of a used v5 data dir additively, writes no root set (v10), 
     migrateMemorySchema(db);
     for (const table of NEW_TABLES) expect(rows(db).get(table), table).toBe(after.get(table));
     // the inverse: back to the v5 file, every row as it was
-    expect(downgradeMemorySchema(db, 5)).toEqual({ status: "downgraded", from: 12, to: 5 });
+    expect(downgradeMemorySchema(db, 5)).toEqual({ status: "downgraded", from: 13, to: 5 });
     validateMemorySchema(db, { references: true });
     for (const table of NEW_TABLES) expect(db.prepare("SELECT 1 FROM sqlite_schema WHERE name=?").get(table), table).toBeUndefined();
     const back = rows(db);
@@ -132,7 +132,7 @@ it("after the upgrade and the write-time backfill, revoking X withholds the pre-
   rmSync(join(DATA_DIR, "messages.db"), { force: true });
   for (const suffix of ["-wal", "-shm"]) if (existsSync(join(DATA_DIR, `messages.db${suffix}`))) rmSync(join(DATA_DIR, `messages.db${suffix}`));
   copyFileSync(copy, join(DATA_DIR, "messages.db"));
-  expect(database().prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(12);
+  expect(database().prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(13);
   finishBackgroundUpgradeWorkNow(); // the write-time backfill is background work now (the root-set repair is retired on v10)
   // v10: the replay a turn gets is the read-time judge (legacy rows, none here) AND the write-time lookup over the backfilled lines (filterMemoryReplay)
   const lines = ["early", "x-prime", "y"].map(id => ({ id, role: "bot" }));
