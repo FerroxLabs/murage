@@ -22,20 +22,19 @@ import { cloudIdentity } from "../cloud-request-identity.ts";
 import { spawnCloudLauncher } from "./bot-state.ts";
 import { cloudHomeCopy } from "./copy.ts";
 
-export const ENGINE_LOGIN_ENGINES = ["codex", "claudeAgent", "grokAgent", "kimiAgent", "opencodeGo"] as const;
-export type EngineLoginEngine = (typeof ENGINE_LOGIN_ENGINES)[number];
+import { ENGINE_LOGIN_PATH, type EngineLoginEngine } from "./engine-login-engines.ts";
+export { ENGINE_LOGIN_ENGINES, ENGINE_LOGIN_PATH, type EngineLoginEngine } from "./engine-login-engines.ts";
 export const ENGINE_LOGIN_ACTIONS = ["login", "logout", "enroll-key"] as const;
 export type EngineLoginAction = (typeof ENGINE_LOGIN_ACTIONS)[number];
 /** The actions each engine offers (mirrors LOGIN_COMMANDS and ENROLL_ENGINES in the launcher).
  * No logout runs a CLI: every sign-out, Kimi's included, is the launcher's own publish of an empty
  * sign-in generation (publish_login), through this same relay and log. */
 export const ENGINE_LOGIN_ENGINE_ACTIONS: Readonly<Record<EngineLoginEngine, readonly EngineLoginAction[]>> = {
-  codex: ["login", "logout", "enroll-key"], claudeAgent: ["login", "logout"], grokAgent: ["login", "logout"], kimiAgent: ["login", "logout"],
+  codex: ["login", "logout", "enroll-key"], claudeAgent: ["login", "logout"], antigravityAgent: ["login", "logout"], grokAgent: ["login", "logout"], kimiAgent: ["login", "logout"],
   opencodeGo: ["login", "logout", "enroll-key"],
 };
 /** Every engine whose `login` is a per-bot (B mode) sign-in. Claude's login (`setup-token`) is engine-wide and takes no bot. */
-const BOT_LOGIN_ENGINES: readonly EngineLoginEngine[] = ["codex", "grokAgent", "kimiAgent", "opencodeGo"];
-export const ENGINE_LOGIN_PATH = /^\/api\/engine-login\/(codex|claudeAgent|grokAgent|kimiAgent|opencodeGo)$/;
+const BOT_LOGIN_ENGINES: readonly EngineLoginEngine[] = ["codex", "antigravityAgent", "grokAgent", "kimiAgent", "opencodeGo"];
 /** Same shapes the launcher validates; checked here too so a bad value never spawns anything. */
 const LOGIN_BOT = /^[\w-]{1,64}$/;
 const LOGIN_PROVIDER = /^[a-z][a-z0-9_-]{0,31}$/;
@@ -60,13 +59,17 @@ export interface EngineLoginOptions {
   /** Test seam: the launcher process. */
   spawnLauncher?: (engine: EngineLoginEngine, action: EngineLoginAction, extra: EngineLoginExtra) => ChildProcess;
   killGraceMs?: number;
+  /** Called after a session ended, with the engine, action and bot it was for (identifiers only). */
+  onEnded?: (engine: EngineLoginEngine, action: EngineLoginAction, extra: EngineLoginExtra) => void;
 }
 
 /** `sudo -n -C 4 -- murage-turn-launch` with the request on FD 3, like every turn. `enroll-key` and `logout`
  * run no CLI, so only `login` asks for a terminal. */
+/** The launcher names Antigravity by its short engine name (turn-process.ts CLOUD_ENGINES); the registry and the desktop use the driver kind. */
+export const launcherEngineName = (engine: EngineLoginEngine): string => (engine === "antigravityAgent" ? "antigravity" : engine);
 export function spawnEngineLoginLauncher(engine: EngineLoginEngine, action: EngineLoginAction, extra: EngineLoginExtra = {}): ChildProcess {
   // No files: the launcher renders the engine's base configuration itself (CLOUD-ENGINES-DESIGN.md 2.1).
-  return spawnCloudLauncher({ mode: "login", engine, action, ...(action === "login" ? { pty: true } : {}),
+  return spawnCloudLauncher({ mode: "login", engine: launcherEngineName(engine), action, ...(action === "login" ? { pty: true } : {}),
     ...(extra.bot ? { bot: extra.bot } : {}), ...(extra.provider ? { provider: extra.provider } : {}), ...(extra.secret ? { secret: extra.secret } : {}) });
 }
 
@@ -98,7 +101,8 @@ export function createEngineLoginRelay(options: EngineLoginOptions = {}) {
     if (bot !== undefined && !LOGIN_BOT.test(bot)) { reject(socket, 400, cloudHomeCopy.engineLoginUnknownAction); return true; }
     // A per-bot sign-in must name its bot; Claude's engine-wide login and a key enrollment take none.
     if (action === "login" && BOT_LOGIN_ENGINES.includes(engine) && bot === undefined) { reject(socket, 400, cloudHomeCopy.engineLoginBotRequired); return true; }
-    if (action === "enroll-key" ? bot !== undefined : (engine === "claudeAgent" && action === "login" && bot !== undefined)) { reject(socket, 400, cloudHomeCopy.engineLoginUnknownAction); return true; }
+    // Claude's login is the home's own unless it names a bot: that bot's own Claude sign-in (F4 C2).
+    if (action === "enroll-key" && bot !== undefined) { reject(socket, 400, cloudHomeCopy.engineLoginUnknownAction); return true; }
     // `provider` names the OpenCode key being enrolled, and nothing else.
     if (action === "enroll-key" && engine === "opencodeGo" ? provider === undefined || !LOGIN_PROVIDER.test(provider) : provider !== undefined) { reject(socket, 400, cloudHomeCopy.engineLoginUnknownAction); return true; }
     if (active.has(engine)) { reject(socket, 409, cloudHomeCopy.engineLoginAlreadyOpen); return true; }
@@ -120,7 +124,7 @@ export function createEngineLoginRelay(options: EngineLoginOptions = {}) {
           try { child = launch(engine, action as EngineLoginAction, { ...(bot ? { bot } : {}), ...(provider ? { provider } : {}), ...(secret ? { secret } : {}) }); }
           catch { release(); ws.close(1011, "launch-error"); return; }
           log(`engine-login start engine=${engine} action=${action} device=${device}`);
-          relay(ws, child, engine, action, device, release, action !== "enroll-key");
+          relay(ws, child, engine, action, device, () => { release(); try { options.onEnded?.(engine, action as EngineLoginAction, bot ? { bot } : {}); } catch { /* a notice never ends the relay */ } }, action !== "enroll-key");
         };
         if (action !== "enroll-key") { begin(); return; }
         // The key arrives as the first message, once the upgrade is done, so it never rides a URL or a log.

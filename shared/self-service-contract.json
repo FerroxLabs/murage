@@ -5,7 +5,7 @@
   "commands": {
     "restart_service": { "reason": "customer" },
     "safe_mode": { "reason": "customer" },
-    "update_software": { "keep": ["files", "settings", "logins"], "reason": "customer" },
+    "update_software": { "keep": ["files", "settings", "logins"], "reason": "customer", "sequence": 5 },
     "reset_from_backup": { "resetId": "0b1c2d3e-aaaa-4bbb-8ccc-123456789abc", "from": "last_good_backup", "snapshotFirst": true,
       "snapshotTag": "murage-pre-reset-0b1c2d3e-aaaa-4bbb-8ccc-123456789abc", "keepSnapshotDays": 9 },
     "undo_reset": { "resetId": "0b1c2d3e-aaaa-4bbb-8ccc-123456789abc", "snapshotTag": "murage-pre-reset-0b1c2d3e-aaaa-4bbb-8ccc-123456789abc" },
@@ -13,7 +13,10 @@
     "export_archive": { "requestId": "export-0b1c2d3e-aaaa-4bbb-8ccc-123456789abc", "deliverBy": 1800000000000, "format": "tar.zst.age",
       "path": "exports/export-0b1c2d3e-aaaa-4bbb-8ccc-123456789abc/archive.tar.zst.age", "maxBytes": 107374182400 }
   },
+  "optionalPayloadFields": { "update_software": ["sequence"] },
   "homeBodies": {
+    "update-state": ["generation", "installedSequence", "lastResult", "stuck"],
+    "updateLastResult": ["commandId", "outcome", "reason"],
     "commands/ack": ["generation", "commandId", "outcome"],
     "ackOutcomes": ["done", "failed", "unsupported"],
     "logs": ["generation", "commandId", "chunk", "final", "lines"],
@@ -55,9 +58,10 @@
     "Self-service command (?:restart_service|safe_mode|update_software|reset_from_backup|undo_reset|collect_logs|export_archive|unknown): (?:done|failed|unsupported|reported)",
     "Self-service (?:command poll|housekeeping|start-up recovery) unavailable",
     "Self-service (?:command runner refused|recovery pending|update rollback unhealthy)",
-    "Cloud door (?:state|enter): (?:source_locked|budget_closed|internal_error|origin_refused|query_token_refused|bearer_refused|body_too_large|body_malformed|state_answered|state_rate_limited|door_unconfigured|home_unbound|ticket_malformed|ticket_wrong_type|ticket_bad_signature|ticket_wrong_home|ticket_expired|ticket_bad_times|ticket_stale_step_up|ticket_reused|account_suspended|account_mismatch|device_key_invalid|device_bind_refused|device_proof_refused|device_limit|desktop_hold_required|pair_hold_refused|signed_in_first|signed_in_known|signed_in_added)",
+    "Cloud door (?:state|enter): (?:source_locked|budget_closed|internal_error|origin_refused|query_token_refused|bearer_refused|body_too_large|body_malformed|state_answered|state_rate_limited|door_unconfigured|home_unbound|ticket_malformed|ticket_wrong_type|ticket_bad_signature|ticket_wrong_home|ticket_expired|ticket_bad_times|ticket_stale_step_up|ticket_reused|account_suspended|account_mismatch|device_key_invalid|device_bind_refused|device_proof_refused|assertion_proof_refused|device_limit|desktop_hold_required|pair_hold_refused|signed_in_first|signed_in_known|signed_in_added)",
     "Cloud door page: (?:no_ticket|device_load|device_save|device_forget|refresh|bounce|v1_record|unexpected|unknown) (?:none|NotAllowedError|AbortError|InvalidStateError|SecurityError|NotSupportedError|ConstraintError|UnknownError|DataError|QuotaExceededError|TimeoutError|TypeError|NetworkError|OperationError|VersionError|ReadOnlyError|SyntaxError|unknown)",
     "Cloud door page: device_open (?:timeout|blocked|error|unknown) (?:chrome|safari|firefox|edge|other|unknown)",
+    "Cloud owner factor: (?:owner_factor_issued|owner_factor_renewed|owner_factor_withheld)(?: (?:stale_proof|proof_kind_after_revoke))?",
     "(?:Error|TypeError|RangeError|ReferenceError|SyntaxError|AbortError|TimeoutError)(?: \\[ERR_[A-Z0-9_]{1,60}\\])?",
     "at (?:(?:async )?[A-Za-z0-9_$.<>\\[\\] ]{1,100} )?\\(?(?:/opt/murage/[A-Za-z0-9_./@-]{1,200}|node:[a-z_/]{1,80}):\\d{1,7}:\\d{1,7}\\)?",
     "\\[\\d{1,4} lines? omitted\\]"

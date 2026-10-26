@@ -19,7 +19,7 @@ const RESUME = "0f1e2d3c-4b5a-4968-8776-655443322110", SESSION = "0b7f1c2e-3d4a-
 const ROLLOUT = (id: string) => `.codex/sessions/2026/10/16/rollout-2026-10-16T00-00-00-${id}.jsonl`;
 // r9 "state scopes": a bot's conversation state lives in bots/<bot>/, its B-mode sign-in set in the
 // versioned store bots/<bot>/signin/ (r8 R2: `current` names generation 1, relative to the engine home).
-const SIGNIN = [".codex/auth.json", ".grok/auth.json", ".kimi-code/credentials/", ".local/share/opencode/auth.json"];
+const SIGNIN = [".gemini/antigravity-cli/antigravity-oauth-token", ".codex/auth.json", ".grok/auth.json", ".kimi-code/credentials/", ".local/share/opencode/auth.json"];
 const isSignin = (relative: string) => SIGNIN.some(p => relative === p || (p.endsWith("/") && relative.startsWith(p)));
 const STORE = (relative: string, bot = FIXTURE_BOT) => `bots/${bot}/${isSignin(relative) ? "signin/1/" : ""}${relative}`;
 /** `before` entries for an engine's state: sign-in files as a B store generation, the rest in the bot store. */
@@ -76,6 +76,7 @@ const HIDDEN: Record<string, string[]> = {
   claudeAgent: [".claude.json", ".claude/CLAUDE.md", ".claude/hooks/stop.sh", ".claude/plugins/installed_plugins.json", ".claude/skills/x/SKILL.md", ".claude/shell-snapshots/s.sh",
     ".claude/projects/p/" + FOREIGN + ".jsonl", ".claude/projects/p/" + FOREIGN + "/subagents/a.jsonl", ".claude/.credentials.json.bak", ".claude/statsig/x"],
   codex: [".codex/config.toml.bak", ".codex/hooks/x.sh", ".codex/skills/x/SKILL.md", ".codex/rules/x.toml", ".codex/history.jsonl", ".codex/state_5.sqlite", ROLLOUT(FOREIGN), ".codex/archived_sessions/" + ROLLOUT(FOREIGN).slice(".codex/sessions/".length), ".agents/skills/x/SKILL.md"],
+  antigravity: [".gemini/config/hooks.json", ".gemini/config/mcp_config.json", ".gemini/skills/x/SKILL.md", ".gemini/antigravity-cli/conversations/c.pb", ".gemini/antigravity-cli/cache/antigravity-keyring-unavailable", ".config/antigravity/plugin-secrets.json"],
   grokAgent: [".grok/managed_config.toml", ".grok/requirements.toml", ".grok/hooks/x.sh", ".grok/plugins/x/plugin.toml", ".grok/sessions/s.json", ".claude/skills/x/SKILL.md", ".cursor/hooks.json"],
   kimiAgent: [".kimi-code/hooks/x.sh", ".kimi-code/credentials/planted.toml", ".kimi-code/credentials/nested/x.json", ".kimi-code/sessions/s.json", ".claude/skills/x/SKILL.md", ".codex/skills/x/SKILL.md"],
   opencodeGo: [".local/share/opencode/snapshot/git/config", ".local/share/opencode/storage/session/s.json", ".cache/opencode/models.json", ".cache/opencode/bin/rg", ".local/state/opencode/model.json", ".config/opencode/plugin/x.js"],
@@ -86,6 +87,7 @@ const HIDDEN: Record<string, string[]> = {
 const KEPT: Record<string, Record<string, string>> = {
   claudeAgent: { ".claude/.claude.json": '{"hasCompletedOnboarding":true,"oauthAccount":{"emailAddress":"o@x"},"mcpServers":{"evil":{"command":"/bin/true"}},"projects":{"/x":{"allowedTools":["Bash"]}}}' },
   codex: { ".codex/auth.json": '{"tokens":{"access_token":"t"}}' },
+  antigravity: { ".gemini/antigravity-cli/antigravity-oauth-token": '{"access_token":"t","refresh_token":"r"}' },
   grokAgent: { ".grok/auth.json": '{"token":"t"}' },
   kimiAgent: { ".kimi-code/credentials/kimi-code.json": '{"accessToken":"t"}', ".kimi-code/credentials/kimi-code-env-0e4f99c69cc27850.json": "{}" },
   opencodeGo: { ".local/share/opencode/auth.json": '{"anthropic":{"type":"oauth","refresh":"r","access":"a","expires":1}}' },
@@ -112,13 +114,13 @@ describe.each(CLOUD_TURN_ENGINES)("%s", engine => {
       if (relative.endsWith(".claude.json")) { expect(JSON.parse(staged)).toEqual({ hasCompletedOnboarding: true, oauthAccount: { emailAddress: "o@x" } }); } else expect(staged).toBe(text);
     }
     expect(result.dests.filter((d: string) => d === h || d.startsWith(`${h}/`)).length).toBeGreaterThan(0);
-    for (const entry of readdirSync(result.turnHome)) expect([".claude", ".codex", ".grok", ".kimi-code", ".config", ".local", ".fuigo"]).toContain(entry);
+    for (const entry of readdirSync(result.turnHome)) expect([".claude", ".codex", ".grok", ".kimi-code", ".config", ".local", ".fuigo", ".gemini"]).toContain(entry);
   });
   it("refuses an allowlisted file with a bad shape and leaves it on disk", () => {
     const h = rig.home(engine);
     if (engine === "fuigoAgent") { expect(JSON.parse(rig.py(`print(json.dumps(m.PERSISTED_STATE["fuigoAgent"]))`))).toEqual([]); return; }
     const [relative] = Object.keys(KEPT[engine]);
-    for (const bad of ["not json", "[]", '"str"', "{", "\u0000"]) {
+    for (const bad of engine === "antigravity" ? ["", "\u0000", "ab\u0000cd"] : ["not json", "[]", '"str"', "{", "\u0000"]) {
       for (const [path, text] of Object.entries(planted(engine, { [relative]: bad }))) plant(`${h}/${path}`, text);
       const out = rig.py(`
 import io,contextlib,tempfile
@@ -237,6 +239,14 @@ it("pins OpenCode's model catalog to the binary's own snapshot: no catalog fetch
   expect(rig.plan(rig.request("opencodeGo")).ok!.env.OPENCODE_DISABLE_MODELS_FETCH).toBe("1");
 });
 
+it("pins Fuigo's startup model refresh off, whatever the request says (Fuigo 1.0.32)", () => {
+  expect(rig.plan(rig.request("fuigoAgent")).ok!.env.FUIGO_DISABLE_MODEL_REFRESH).toBe("1");
+});
+
+it("pins Fuigo's own subagents off: a request FUIGO_SUBAGENTS=1 is ignored", () => {
+  expect(rig.plan(rig.request("fuigoAgent", { env: { FUIGO_SUBAGENTS: "1" } })).ok!.env.FUIGO_SUBAGENTS).toBe("0");
+});
+
 // The owner's workspace: every mask is mounted whether or not the path exists (no check-then-mount), only
 // over directories, and no rendered file lands in the workspace, so bwrap can create at most an empty
 // dot-directory as a mount point.
@@ -246,7 +256,7 @@ const tree = (root: string): string[] => readdirSync(root, { withFileTypes: true
 }).sort();
 const CHAIN_ARGS: Record<string, string[]> = {
   claudeAgent: [...MINIMAL_ARGV.claudeAgent, "--add-dir", "@extra"], codex: MINIMAL_ARGV.codex, grokAgent: MINIMAL_ARGV.grokAgent,
-  kimiAgent: MINIMAL_ARGV.kimiAgent, opencodeGo: MINIMAL_ARGV.opencodeGo, fuigoAgent: MINIMAL_ARGV.fuigoAgent,
+  kimiAgent: MINIMAL_ARGV.kimiAgent, opencodeGo: MINIMAL_ARGV.opencodeGo, fuigoAgent: MINIMAL_ARGV.fuigoAgent, antigravity: MINIMAL_ARGV.antigravity,
 };
 // r5 R5.1: every engine masks the union of every engine's project config names, not only its own.
 const MASK_NAMES = [".claude", ".codex", ".fuigo", ".grok", ".kimi-code", ".opencode"];
@@ -264,7 +274,10 @@ describe.each(CLOUD_TURN_ENGINES)("%s in a workspace", engine => {
     // Nothing exists at cwd/<mask> yet; the plan masks every name anyway.
     for (const name of MASK_NAMES) expect(result.view[`${cwd}/${name}/settings.json`]).toBe("fresh");
     // Every destination inside the workspace is cwd, an --add-dir, a mask tmpfs or a path inside one (bwrap creates those in the tmpfs).
-    const masked = (dest: string) => (result.tmpfs as string[]).some(mask => dest === mask || dest.startsWith(`${mask}/`));
+    // antigravity also binds its two hook-file masks in each of the four customization roots (.agents, .agent, _agents, _agent) over the repository's own paths (bwrap --dir creates the root)
+    const agyRoots = [".agents", ".agent", "_agents", "_agent"];
+    const agyFiles = engine === "antigravity" ? [cwd, extra].flatMap(dir => agyRoots.flatMap(root => [`${dir}/${root}/hooks.json`, `${dir}/${root}/plugins.json`])) : [];
+    const masked = (dest: string) => agyFiles.includes(dest) || (engine === "antigravity" && [cwd, extra].some(dir => agyRoots.some(root => dest === `${dir}/${root}`))) || (result.tmpfs as string[]).some(mask => dest === mask || dest.startsWith(`${mask}/`));
     for (const dest of result.dests as string[]) if (dest.startsWith(`${rig.workspaces}/`)) expect([dest, dest === cwd || dest === extra || masked(dest)]).toEqual([dest, true]);
   });
 });

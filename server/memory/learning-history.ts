@@ -78,6 +78,7 @@ export function changeLearningEvent(db:DatabaseSync,eventId:string,action:"undo"
  }
  recordLearningEvent(db,{kind:action==="undo"?"owner-undo":"owner-keep",scopeId:String(event.scope_id),recordId:String(event.record_id),recordVersion:Number(event.record_version),sourceId:event.source_id===null?undefined:String(event.source_id),sourceRevision:event.source_revision===null?undefined:Number(event.source_revision),botId:event.bot_id===null?null:String(event.bot_id)});
  db.exec("UPDATE memory_meta SET data_revision=data_revision+1");
- revokeRecordDisclosures(db,action==="undo"?"learning-undo":"learning-keep",{recordIds:[String(event.record_id),...(event.prior_id?[String(event.prior_id)]:[]),...(record!.supersedes_id?[String(record!.supersedes_id)]:[])]});
+ // keep confirms the learned memory and changes none of the three records' words or states: nothing a session holds is withdrawn
+ revokeRecordDisclosures(db,action==="undo"?"learning-undo":"learning-keep",{recordIds:[String(event.record_id),...(event.prior_id?[String(event.prior_id)]:[]),...(record!.supersedes_id?[String(record!.supersedes_id)]:[])],...(action==="undo"?{}:{withdraws:false as const})});
  return action==="undo"?{ok:true,eventId,undone:true}:{ok:true,eventId,kept:true};
 }

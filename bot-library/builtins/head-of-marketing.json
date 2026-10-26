@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Head of Marketing",
     "tagline": "A monthly marketing plan with a weekly note on what worked",
-    "summary": "Director prepares a monthly campaign plan with owners and budget. Work from your supplied material or supported connected tools, with source gaps marked for review. For channel strategy, use Channels. For a complete marketing team, use Marketing Agency. For a marketing planning team, use Marketing Plan. For a focused campaign team, use Launch a Measurable Campaign.",
+    "summary": "Director prepares a monthly campaign plan with owners and budget.",
     "category": "Marketing",
     "author": {
       "name": "Ferrox Labs",
@@ -54,7 +54,8 @@
         "title": "Head of Marketing",
         "description": "Director prepares a monthly campaign plan with owners and budget. Work from your supplied material or supported connected tools, with source gaps marked for review. For channel strategy, use Channels. For a complete marketing team, use Marketing Agency. For a marketing planning team, use Marketing Plan. For a focused campaign team, use Launch a Measurable Campaign.",
         "appearance": {
-          "color": "cyan"
+          "color": "cyan",
+          "mascotBody": "ember"
         },
         "skills": [
           "marketing-strategist",

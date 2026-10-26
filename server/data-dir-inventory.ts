@@ -36,6 +36,8 @@ export interface DataDirEntry {
   why: string;
   /** Only for "refused": the backup's stop code. */
   code?: string;
+  /** Listed to the person after the backup under this reason (shared/backup-limits.ts). */
+  skip?: "unrecognised";
 }
 
 const APPLICATION = "Application data preserved in encrypted fidelity payload";
@@ -72,6 +74,11 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   "mcp-grants.json": excluded("Script access grants, switched on again by the owner after a restore; not restored"),
   "send-ledger.json": excluded("Retired: sends are rows of messages.db now (owner_sends). A leftover file is deleted at startup, not restored"),
   "mcp-access.token": excluded("Local tool access key, created again at startup; not restored"),
+  // CLOUD-COMPUTER-BOOT-105 (cloud-computer-turns.ts): the prompts this installation has handed to its bots' cloud computers until each is known to
+  // be done there, and an unreadable copy of that record set aside. Runtime state of this installation: a restore never brings back stops for
+  // computers it did not start.
+  "cloud-computer-turns.json": excluded("Prompts handed to the bots' cloud computers until each is confirmed done there; runtime state, not restored"),
+  "cloud-computer-turns.json.unreadable": excluded("An unreadable copy of the cloud computer prompt record, set aside; not restored"),
   "setup.json": ownerFile(), "queued-messages.json": ownerFile(), "whats-new.json": ownerFile(),
   "announcements.json": ownerFile(), "house-rules.md": ownerFile(), "house-rules.json": ownerFile(),
   "about-me.md": ownerFile(),
@@ -81,6 +88,10 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   "install-id.json": { backup: "owner-file", why: "Random per-install id for the connected-apps token label; kept by a backup and restore so the installation stays one identity" },
   // The sidebar's section order, the same on every device (sidebar-order.ts).
   "sidebar-order.json": ownerFile(),
+  // 1.0.4 SL-K (thread-follow-model.ts): proof that the one-time drop of chat model copies already ran on THIS bots.json. It travels
+  // with bots.json: a 1.0.4 backup restored without it would run the drop again and erase a model the owner picked in a chat since,
+  // when that pick equals the bot's model. A backup from before 1.0.4 has none, so its restore still runs the drop once.
+  ".threads-follow-model-v1": { backup: "owner-file", why: "Marks that the one-time chat model cleanup already ran on these bots; kept with bots.json so a restore never runs it again over the owner's later picks" },
   // Which Terms/Privacy version the owner accepted and when (terms.ts). A
   // per-install legal record meant to survive a reinstall and a second device,
   // so a backup keeps it and a restore brings it back.
@@ -153,6 +164,9 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   "claude-private": excluded("Settings of a running Claude turn, removed when it ends and at startup; not restored"),
   // The owner's remembered answers to the Claude sign-in card (drivers/claude-signin-answers.ts): HMACs keyed by a per-install secret salt, so a
   // restored copy would match nothing and carry a salt that belongs to the old install. Never restored; the card asks again.
+  // The empty working folder of each draft-only Claude turn (drivers/claude.ts claudeDraftOnlyCwd): one per thread, emptied before every
+  // launch so no workspace settings load. Holds nothing of the owner's.
+  "draft-only-cwd": excluded("Empty working folders of draft-only Claude turns, emptied before each launch; not restored"),
   "claude-signin-answers.json": excluded("Remembered answers to the Claude sign-in card, keyed by this install's own secret salt; not restored, the card asks again"),
   "models": excluded(RUNTIME), "logs": excluded(RUNTIME), "tmp": excluded(RUNTIME), "connector-tools-cache": excluded(DOWNLOADED), "browser-profiles": excluded(RUNTIME),
   "browser-engine": excluded(RUNTIME),
@@ -194,6 +208,8 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   "memory-model-adopted.json.tmp": excluded(LEFTOVER),
   // "Leave paused" on the learning-paused Inbox item (inbox-learning-paused.ts): the one month it was set aside for. It clears
   // itself when the month changes; after a restore the item is simply asked again.
+  "cloud-signin-offers.json": excluded("Which \"sign this bot in and use it\" offers the owner dismissed on a Cloud home (cloud-home/signin-offers.ts); names only, and an offer that comes back is simply dismissed again, so it is not restored"),
+  "cloud-signin-offers.json.tmp": excluded(LEFTOVER),
   "learning-paused-left.json": excluded("This month's Leave paused choice on the learning-paused item; clears itself when the month changes, so not restored"),
 
   // Trust Murage asks for again on a restored computer: the host identity,
@@ -226,7 +242,7 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   // Home supervision owns these outside ordinary workspace restoration.
   ".murage-home-machine": excluded(TRUST),
   // The root-owned scratch directory murage-control's data-write readiness check writes one temp file in and removes
-  // (cloud-home/supervisor.ts prepareHealthProbeDir). Empty between checks; made again on every home start.
+  // (cloud-home/home-volume-spec.ts prepareHealthProbeDir, run by deploy/cloud-home/murage-home-launch.py). Empty between checks; made again on every home start.
   ".murage-health": excluded("Readiness check scratch directory, made again on every home start; not restored"),
   "secrets": excluded(CREDENTIAL), "server-home": excluded(CREDENTIAL), "proxy": excluded(RUNTIME),
   // A Cloud home's connection to the owner's own server (cloud-home/own-server.ts): its ssh key, ssh config, known hosts and the
@@ -320,4 +336,35 @@ const namesOf = (...kinds: DataDirBackup[]) => Object.freeze(Object.entries(DATA
 /** Required JSON records. */
 export const DATA_DIR_RECORDS = namesOf("record");
 /** Everything the restorable stage copies when present. */
-export const DATA_DIR_RESTORABLE = namesOf("record", "owner-file", "owner-folder", "database");
+const RESTORABLE_KINDS = ["record", "owner-file", "owner-folder", "database"] as const satisfies readonly DataDirBackup[];
+export const DATA_DIR_RESTORABLE = namesOf(...RESTORABLE_KINDS);
+/** The one allow-list for both sides: a backup stores, and a restore installs, a top-level
+ * name only when its exact row (an entry or a pattern) is one of these kinds. */
+export function isRestorableDataDirName(name: string): boolean {
+  const kind = classifyDataDirEntry(name)?.backup;
+  return kind !== undefined && (RESTORABLE_KINDS as readonly DataDirBackup[]).includes(kind);
+}
+
+// ---------------------------------------------------------------------------
+// THE RULE for a top-level name `classifyDataDirEntry` does not know (1.0.4).
+//
+// A name that is not an exact row of the list above (DATA_DIR_ENTRIES or
+// DATA_DIR_PATTERNS) is never stored, under any name, file or folder alike:
+// the backup leaves it out, keeps going, and lists it to the person after the
+// backup with where it is ("not recognised by Murage, so the backup leaves it
+// out"). Nothing is guessed from the name: a stray copy of a key-bearing file
+// can carry any name at all (`myconfig.json`, `backup.tar`, `env2`), and only
+// an exact row has a backup rule that knows what its bytes hold. Since it is
+// never stored, a restore never writes it back. The file itself stays where
+// it is; nothing is deleted.
+//
+// 1.0.3 stopped the whole backup on such a name (BACKUP_UNCLASSIFIED_COMPONENT),
+// so one leftover file meant no backup at all. Exact rows keep their own
+// handling, including the names Murage knows to refuse.
+// ---------------------------------------------------------------------------
+const UNRECOGNISED_WHY = "Not recognised by Murage, so the backup leaves it out; it stays where it is in the data folder";
+
+/** What a backup does with this top-level name, ALWAYS answering (see the rule above). */
+export function classifyDataDirEntryForBackup(name: string): DataDirEntry {
+  return classifyDataDirEntry(name) ?? { backup: "excluded", why: UNRECOGNISED_WHY, skip: "unrecognised" };
+}

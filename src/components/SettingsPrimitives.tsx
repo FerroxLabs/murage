@@ -1,9 +1,10 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from "react";
+import { createContext, useContext, useMemo, useState, type ComponentProps, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Check, ChevronDown, Copy } from "lucide-react";
+import { Check, ChevronDown, Copy, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import { advancedRegionId, type AdvancedSectionProps } from "@/lib/settings-cards";
+import { useCopyFeedback } from "@/lib/copy-text";
 
 export function Switch({
   checked,
@@ -54,26 +55,7 @@ export function Card({
 
 /** A command the user is meant to run, with one-click copy. */
 export function CommandLine({ command }: { command: string }) {
-  const [copied, setCopied] = useState(false);
-  const resetTimer = useRef<number | null>(null);
-
-  useEffect(
-    () => () => {
-      if (resetTimer.current !== null) window.clearTimeout(resetTimer.current);
-    },
-    [],
-  );
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(command);
-      setCopied(true);
-      if (resetTimer.current !== null) window.clearTimeout(resetTimer.current);
-      resetTimer.current = window.setTimeout(() => setCopied(false), 1200);
-    } catch {
-      /* clipboard permission can be denied; leave the button unchanged */
-    }
-  };
+  const { mark, copy } = useCopyFeedback();
 
   return (
     <div className="flex items-center gap-2 rounded-lg bg-inset px-3 py-2">
@@ -81,12 +63,14 @@ export function CommandLine({ command }: { command: string }) {
         {command}
       </code>
       <button
-        onClick={() => void copy()}
-        aria-label="Copy command"
-        className="shrink-0 rounded p-1 text-ink-secondary hover:bg-raised hover:text-ink"
+        onClick={() => void copy(command)}
+        aria-label={mark === "failed" ? t("copy.failed") : "Copy command"}
+        title={mark === "failed" ? t("copy.failed") : undefined}
+        className={`shrink-0 rounded p-1 hover:bg-raised hover:text-ink ${mark === "failed" ? "text-danger" : "text-ink-secondary"}`}
       >
-        {copied ? <Check size={13} className="text-success" /> : <Copy size={13} />}
+        {mark === "copied" ? <Check size={13} className="text-success" /> : mark === "failed" ? <X size={13} /> : <Copy size={13} />}
       </button>
+      {mark === "failed" && <span role="status" className="sr-only">{t("copy.failed")}</span>}
     </div>
   );
 }

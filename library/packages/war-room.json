@@ -28,7 +28,8 @@
         "title": "Coach",
         "description": "Coach - decision frames, founder cadence, stuck-and-unstuck thinking via Ben Horowitz's no-shortcuts tradition.",
         "appearance": {
-          "color": "green"
+          "color": "green",
+          "mascotBody": "hexagon"
         },
         "skills": [
           "helm-decision-frames",
@@ -52,7 +53,8 @@
         "title": "Numbers",
         "description": "Numbers specialist - runway, unit economics, pricing math via Greg Crabtree's Simple Numbers founder-friendly frame.",
         "appearance": {
-          "color": "blue"
+          "color": "cyan",
+          "mascotBody": "diamond"
         },
         "skills": [
           "coin-runway-and-burn",
@@ -69,7 +71,8 @@
         "title": "Channels",
         "description": "Channels specialist - channel-mix and discovery via Avinash Kaushik's See/Think/Do/Care intent-based framework.",
         "appearance": {
-          "color": "red"
+          "color": "orange",
+          "mascotBody": "star"
         },
         "skills": [
           "beacon-channel-strategy",
@@ -93,7 +96,8 @@
         "title": "Counsel",
         "description": "Counsel - startup-stage legal framing on formation, contracts, IP, and compliance. Not your lawyer; flags when you need one.",
         "appearance": {
-          "color": "orange"
+          "color": "yellow",
+          "mascotBody": "circle"
         },
         "skills": [
           "sentry-formation-and-structure",
@@ -110,7 +114,8 @@
         "title": "Sales",
         "description": "Sales specialist - SPIN-disciplined discovery, real-vs-stated objection sorting, and advancement-not-continuation close mechanics.",
         "appearance": {
-          "color": "purple"
+          "color": "red",
+          "mascotBody": "ember"
         },
         "skills": [
           "sales-discovery-call",

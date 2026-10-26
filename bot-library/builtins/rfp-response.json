@@ -48,7 +48,8 @@
         "title": "RFP Response",
         "description": "Tender prepares a filled RFP response draft from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For individual deal strategy, use Sales. For a broader legal exposure review, use Counsel.",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "capsule"
         },
         "skills": [
           "rfp-response",

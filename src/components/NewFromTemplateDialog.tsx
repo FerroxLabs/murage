@@ -6,6 +6,7 @@
 // Clicking a template shows what it comes with before anything is made.
 import { ChevronLeft, ChevronRight, Search, X } from "lucide-react";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { LibraryArt } from "./LibraryArt";
 import { createPortal } from "react-dom";
 
 import { track } from "@/lib/analytics";
@@ -216,6 +217,7 @@ export function NewFromTemplateDialog({ kind, onClose, onBlank, onOpenFile, onCr
   const Row = ({ entry }: { entry: TemplateEntry }) => (
     <li>
       <button type="button" onClick={() => void open(entry)} className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left hover:bg-control">
+        <LibraryArt slug={entry.slug} name={entry.name} team={entry.members > 1} size={256} className="size-12" fallback={null} />
         <div className="min-w-0 flex-1">
           <div className="truncate text-[13.5px] font-medium text-ink">{entry.name}</div>
           <div className="truncate text-[12px] text-ink-secondary">{plainSummary(entry.summary)}</div>
@@ -250,6 +252,7 @@ export function NewFromTemplateDialog({ kind, onClose, onBlank, onOpenFile, onCr
                 <ChevronLeft size={14} aria-hidden="true" />
                 Back
               </button>
+              <LibraryArt slug={screen.entry.slug} name={screen.entry.name} team={screen.entry.members > 1} size={512} className="mt-3 size-36 rounded-2xl" fallback={null} />
               <h3 className="mt-2 text-[16px] font-medium text-ink">{screen.entry.name}</h3>
               <p className="mt-1 text-[13px] leading-relaxed text-ink-secondary">{plainSummary(screen.preview?.description || screen.entry.summary)}</p>
               {screen.error && <div role="alert" className="mt-3 rounded-lg bg-danger/10 px-3 py-2 text-[12px] text-danger">{screen.error}</div>}

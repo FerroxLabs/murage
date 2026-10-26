@@ -112,7 +112,7 @@ describe("image boot ordering", () => {
   }
   it("build-image.sh runs the ordering gate after every unit is enabled", () => {
     expect(begin).toBeGreaterThan(build.lastIndexOf("\nsystemctl enable ")); expect(end).toBeGreaterThan(begin);
-    expect(block).toContain("python3 -I deploy/cloud-home/qualify/unit-order-check.py --root / ||");
+    expect(block).toContain("python3 -I -B deploy/cloud-home/qualify/unit-order-check.py --root / ||");
     image();
     expect(runGate("exit 0").status).toBe(0);
     expect(runGate("echo 'some unrelated unit warning' >&2; exit 1").status).toBe(0); // verify's exit 1 alone is not a cycle

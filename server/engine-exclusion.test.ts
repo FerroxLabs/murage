@@ -33,9 +33,9 @@ const stop = (child: ChildProcess) => { try { process.kill(-child.pid!, "SIGKILL
 afterEach(() => { for (const child of children.splice(0)) stop(child); });
 
 /** A second process that prints `ready` once it holds what it was asked to hold, and then waits. */
-function holder(script: string): Promise<ChildProcess> {
+function holder(script: string, env: Record<string, string> = {}): Promise<ChildProcess> {
   return new Promise((resolve, reject) => {
-    const child = spawn("sh", ["-c", script], { stdio: ["ignore", "pipe", "ignore"], detached: true });
+    const child = spawn("sh", ["-c", script], { stdio: ["ignore", "pipe", "ignore"], detached: true, env: { ...process.env, ...env } });
     children.push(child);
     child.on("error", reject);
     child.stdout!.once("data", () => resolve(child));
@@ -66,7 +66,7 @@ describe.skipIf(!built || !posix)("the real addon, with real second processes", 
   it("loads, and says what it is", () => {
     const addon = loadExclusionAddon()!;
     expect(addon.version()).toBe(9);
-    expect(Object.keys(addon).sort()).toEqual(["bootId", "fullSync", "lock", "processes", "renameNoReplace", "version", "writers"]);
+    expect(Object.keys(addon).sort()).toEqual(["bootId", "environment", "fullSync", "lock", "processes", "renameNoReplace", "version", "writers"]);
   });
 
   it("lock: free file is locked at once; a lock another process keeps is waited for about a second and then refused; released, it is taken", async () => {
@@ -98,8 +98,9 @@ describe.skipIf(!built || !posix)("the real addon, with real second processes", 
     return file;
   };
   /** The process is running as the engine's program (the shell has started it, which is not the same as it having become it). */
-  const running = async (file: string): Promise<ChildProcess> => {
-    const child = await holder(`${file} 30 & echo ready; wait`);
+  // `env`: the engine's own home variable, so the process runs ON the home a test checks (engine-closed.ts homeScope)
+  const running = async (file: string, env: Record<string, string> = {}): Promise<ChildProcess> => {
+    const child = await holder(`${file} 30 & echo ready; wait`, env);
     const addon = loadExclusionAddon()!;
     for (let waited = 0; waited < 5000 && !addon.processes().some((item) => item.exe === file); waited += 20) await new Promise((resolve) => setTimeout(resolve, 20));
     return child;
@@ -145,7 +146,7 @@ const python = process.platform === "linux" && spawnSync("python3", ["-V"]).stat
     const history = join(fx.homes[0]!.home, "history.jsonl");
     const before = readFileSync(history);
     const plan = planEngineHistory(job(fx)).plans!;
-    const other = await running(engineBinary("claude"));
+    const other = await running(engineBinary("claude"), { CLAUDE_CONFIG_DIR: fx.homes[0]!.home });
     const refused = executeEnginePlans(structuredClone(plan));
     expect(refused.homeReasons[key(fx)]).toBe("engine-open");
     expect(readFileSync(history).equals(before)).toBe(true);
@@ -191,7 +192,7 @@ const python = process.platform === "linux" && spawnSync("python3", ["-V"]).stat
     const before = readFileSync(index);
     const inode = lstatSync(index).ino;
     const plan = planEngineHistory(job(fx)).plans!;
-    const other = await running(engineBinary("codex"));
+    const other = await running(engineBinary("codex"), { CODEX_HOME: fx.homes[0]!.home });
     const refused = executeEnginePlans(structuredClone(plan));
     expect(refused.homeReasons[key(fx)]).toBe("engine-open");
     expect(readFileSync(index).equals(before)).toBe(true);

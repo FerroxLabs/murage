@@ -207,6 +207,8 @@ export const exclOps = {
   /** is this path inside a folder a sync client mirrors? The same with the platform, home, environment and disk given (tests). */
   syncedHomeIn: (path: string, given: Partial<SyncedHomeEnv>): boolean => isSyncedHome(path, given),
   realpathOf: (path: string): string | null => { try { return realpathSync.native(path); } catch { return null; } },
+  /** Murage's private engine scopes (engine-closed.ts): is this path a real folder, not a link or a junction? */
+  isRealDir: (path: string): boolean => { try { const stat = lstatSync(path); return stat.isDirectory() && !stat.isSymbolicLink(); } catch { return false; } },
   /** Every running process, for deciding whether an engine is open (engine-closed.ts). */
   processes: (): NativeProcess[] => loadExclusionAddon()!.processes(),
   /** macOS, Linux: the other processes that have one of `paths` open for writing, and those whose open files could not be read. */
@@ -224,6 +226,14 @@ export const exclOps = {
     const addon = loadExclusionAddon()!;
     const native = addon.openFile!(longPath(path), kind === "exclusive" ? 0 : kind === "delete" ? 1 : kind === "shared" ? 2 : 3);
     return native ? heldFileOf(addon, native) : null;
+  },
+  /** The values of `names` in another process's environment (only those it has), for telling whose home an engine process uses
+   * (engine-closed.ts homeScope). null when they cannot be read: another user's or a protected process, one that is gone, an older addon. */
+  environment: (pid: number, names: readonly string[]): Record<string, string> | null => {
+    const addon = loadExclusionAddon();
+    if (typeof addon?.environment !== "function") return null;
+    const got = addon.environment(pid, [...names]);
+    return got !== null && typeof got === "object" ? got : null;
   },
 };
 

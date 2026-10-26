@@ -9,14 +9,14 @@
 // the climb to their common folder stopped only at a folder that holds both,
 // and `/` was never one (server/stop-line.ts deleteHit).
 //
-// Every reader entry point is fed ~7k generated strings (cmd, PowerShell,
-// POSIX, backslashes, rd, nested quotes, long inputs), in a worker the test
-// can stop: a call that does not come back
+// Every reader entry point is fed ~5k generated strings (cmd, PowerShell,
+// POSIX, backslashes, rd, nested quotes, long inputs) plus the asked-before
+// corpus, in a worker the test can stop: a call that does not come back
 // within the watchdog fails the test with its input, and no call may take
 // longer than 50 ms (the slowest of three tries, so a busy runner's pause is
 // not counted against the reader).
 // Fixture strings are inert data, never executed.
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Worker } from "node:worker_threads";
@@ -190,12 +190,22 @@ describe("the 1.0.4 stop-line hang", () => {
     expect(outcome.threw).toEqual([]);
     expect(outcome.slow).toEqual([]);
   }, 60_000);
+
+  it("those deletes are stops", async () => {
+    const { classifyStopLine } = await import("./stop-line.ts");
+    const { posix, win32 } = await import("node:path");
+    const nix = { cwd: "/work/project", roots: ["/work/project", "/tmp"], home: "/home/tester", knownRecipients: new Set<string>(), realpath: (p: string) => posix.normalize(p) };
+    const win = { cwd: "C:\\Users\\owner\\site", roots: ["C:\\Users\\owner\\site"], home: "C:\\Users\\owner", knownRecipients: new Set<string>(), realpath: (p: string) => win32.normalize(p) };
+    for (const command of ["rm -rf /tmp/a /var/b", "rm -r /a /b"]) expect(classifyStopLine("Bash", { command }, "", nix), command).toMatchObject({ kind: "delete" });
+    expect(classifyStopLine("PowerShell", { command: "rd /s /q C:\\Windows" }, "", win)).toMatchObject({ kind: "delete" });
+  });
 });
 
 describe("no command text holds a reader", () => {
-  const corpus = [...new Set(generated(8_200))];
-  it("the corpus is ~7k generated strings", () => {
-    expect(corpus.length, String(corpus.length)).toBeGreaterThan(7_000);
+  const before = JSON.parse(readFileSync(new URL("./testing/reader-gaps-104-asked-before.json", import.meta.url), "utf8")) as Record<string, string[]>;
+  const corpus = [...new Set([...generated(5_000), ...Object.values(before).flat()])];
+  it("the corpus is ~5k generated strings plus every asked-before command", () => {
+    expect(corpus.length).toBeGreaterThan(7_000);
     expect(corpus.some((text) => text.length > 20_000)).toBe(true);
   });
   it(`every entry point returns within ${CALL_MS} ms on every string`, async () => {

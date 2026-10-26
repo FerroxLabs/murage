@@ -1,12 +1,38 @@
 import { useState, type FormEvent } from "react";
 import { Check, ExternalLink, KeyRound, Loader2, LockKeyhole, RefreshCw, X } from "lucide-react";
 
-import { credentialConfigPatch, credentialResumeOutcome } from "../../shared/credential-request";
+import { MCP_CARD_STALE, credentialConfigPatch, credentialResumeOutcome, parseMcpCredentialId, type CredentialTargetId } from "../../shared/credential-request";
 import { cn } from "@/lib/cn";
 import { useAction } from "@/lib/use-action";
 import { ActionStatus } from "./ActionButton";
 import { api, useStore, type ConfigStatus, type Message } from "@/state/store";
 import { opensPurchasePages } from "@/lib/native-shell";
+import { usableMcpBridge } from "@/lib/mcp-bridge";
+import { t } from "@/lib/i18n";
+
+/** Item 118: save one key of a server a bot filed. Packaged: through the
+ * desktop shell, bound to the card's revision (main refuses a stale one before
+ * it writes anything). No shell (dev, headless): to the card's own route,
+ * which keeps it in config.json as that run keeps every value. */
+export async function saveMcpCardValue(
+  deps: { api: typeof api; bridge: () => ReturnType<typeof usableMcpBridge> },
+  card: { name: string; key: string; rev: string },
+  endpoint: string,
+  threadId: string,
+  value: string,
+): Promise<void> {
+  const bridge = await deps.bridge();
+  if (!bridge) {
+    await deps.api(`${endpoint}/value`, { method: "POST", body: JSON.stringify({ threadId, value }) });
+    return;
+  }
+  const listing = await deps.api("/api/mcp/servers") as { servers?: Array<{ name?: string; kind?: string }> };
+  const server = listing.servers?.find((row) => row.name === card.name);
+  if (!server) throw new Error(t("mcp.card.stale"));
+  const input = server.kind === "remote" ? { headers: { [card.key]: value } } : { env: { [card.key]: value } };
+  const saved = await bridge.saveSecrets(card.name, { ...input, rev: card.rev });
+  if (!saved.ok) throw new Error(saved.error === "stale" ? t("mcp.card.stale") : saved.message);
+}
 
 export function SecretRequestCard({
   botId,
@@ -19,6 +45,7 @@ export function SecretRequestCard({
 }) {
   const { dispatch } = useStore();
   const secret = message.secret!;
+  const mcp = parseMcpCredentialId(secret.target);
   const [value, setValue] = useState("");
   const [saving, setSaving] = useState(false);
   const [savedLocally, setSavedLocally] = useState(false);
@@ -45,6 +72,19 @@ export function SecretRequestCard({
       : error
         ? "The key is stored; resuming failed"
         : "Waiting to resume";
+
+  // Item 118: a card whose server changed after it was made saves nothing; it
+  // says so and offers no field.
+  if (mcp && secret.dismissed && secret.error === MCP_CARD_STALE) {
+    return (
+      <div className="flex w-full justify-start">
+        <div className="w-full max-w-[520px] rounded-2xl border border-hairline/50 bg-card px-4 py-3 shadow-sm" data-testid="mcp-credential-stale">
+          <div className="truncate text-[14px] font-semibold text-ink">{secret.label}</div>
+          <p role="status" className="mt-0.5 text-[12.5px] text-ink-secondary">{t("mcp.card.stale")}</p>
+        </div>
+      </div>
+    );
+  }
 
   // A successful decline has no durable card to show. If its continuation
   // failed, bring the card back with the same retry affordance as a saved key.
@@ -81,13 +121,18 @@ export function SecretRequestCard({
     try {
       if (!savedLocally) {
         const next = value.trim();
-        const status: ConfigStatus = window.muragebox?.setCredential
-          ? await window.muragebox.setCredential(secret.target, next)
-          : await api("/api/config", {
-              method: "PUT",
-              body: JSON.stringify(credentialConfigPatch(secret.target, next)),
-            });
-        dispatch({ type: "configStatus", config: status });
+        if (mcp) {
+          await saveMcpCardValue({ api, bridge: usableMcpBridge }, mcp, endpoint, threadId, next);
+        } else {
+          const target = secret.target as CredentialTargetId;
+          const status: ConfigStatus = window.muragebox?.setCredential
+            ? await window.muragebox.setCredential(target, next)
+            : await api("/api/config", {
+                method: "PUT",
+                body: JSON.stringify(credentialConfigPatch(target, next)),
+              });
+          dispatch({ type: "configStatus", config: status });
+        }
         setValue("");
         setSavedLocally(true);
       }
@@ -162,7 +207,7 @@ export function SecretRequestCard({
                 {savedLocally ? "Continue task" : "Save securely"}
               </button>
             </div>
-            {opensPurchasePages() && <a
+            {opensPurchasePages() && secret.helpUrl && <a
               href={secret.helpUrl}
               target="_blank"
               rel="noopener noreferrer"

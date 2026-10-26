@@ -15,11 +15,14 @@ vi.mock("./browser-process.ts", () => ({
 
 const launcher = fileURLToPath(new URL("../../deploy/cloud-home/murage-turn-launch.py", import.meta.url));
 const fixture = fileURLToPath(new URL("./browser-session-host.fixture.py", import.meta.url));
+const EXECS_THROUGH_EXEC_SLOT = new Set(["three-invocations", "old-path-and-expiry", "idle-and-cap", "host-exits", "single-start", "rogue"]);
 afterEach(() => vi.unstubAllEnvs());
 
 for (const scenario of ["three-invocations", "old-path-and-expiry", "ensure-host", "spawn-host", "contract", "idle-and-cap", "host-exits", "single-start", "rogue", "sandbox-cgroup", "mcp-idle", "mcp-gate", "pump-death", "close-deadline", "relay"]) {
   // the real launcher's session host: O_PATH, /proc and Linux AF_UNIX path lengths (Python has no os.O_PATH elsewhere)
-  it.skipIf(process.platform !== "linux")(`session host: ${scenario}`, () => {
+  // These scenarios run the host's warm-up client and relay through the launcher's exec_slot in this process, as the test user; the
+  // guard refuses uid 0 (LANE-G r3 sec. 1.3: no slot-capable exec as root), so under a root test run they are left to unprivileged runners.
+  it.skipIf(process.platform !== "linux" || (process.getuid?.() === 0 && EXECS_THROUGH_EXEC_SLOT.has(scenario)))(`session host: ${scenario}`, () => {
     expect(execFileSync("python3", ["-I", fixture, launcher, scenario], { encoding: "utf8", timeout: 90_000, stdio: ["ignore", "pipe", "pipe"] })).toBe(`OK ${scenario}\n`);
   }, 100_000);
 }

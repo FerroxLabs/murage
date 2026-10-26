@@ -37,6 +37,19 @@ describe("home engine turns", () => {
     expect(cloudTurnEnvironment("kimiAgent", {})).toMatchObject({ KIMI_CODE_HOME: "/data/engine-homes/kimiAgent/.kimi-code", KIMI_CODE_NO_AUTO_UPDATE: "1" });
     expect(cloudTurnEnvironment("opencodeGo", {})).toMatchObject({ OPENCODE_DISABLE_AUTOUPDATE: "1" });
   });
+  it("turns agy's self-update off with exactly \"true\" (\"1\" still calls the updater, measured on 1.4.4) and keeps its HOME the engine home", () => {
+    vi.stubEnv("MURAGE_CLOUD_ROLE", "home");
+    const env = cloudTurnEnvironment("antigravity", {});
+    expect(env.AGY_CLI_DISABLE_AUTO_UPDATE).toBe("true");
+    expect(env.HOME).toBe("/data/engine-homes/antigravity");
+  });
+  it("sends the Antigravity driver's MCP stanzas and Ask hook to the launcher as render parts on a home, and builds no owner-home mirror", () => {
+    const driver = readFileSync(new URL("../drivers/antigravity.ts", import.meta.url), "utf8");
+    expect(driver).toContain('const onCloudHome = process.env.MURAGE_CLOUD_ROLE === "home";');
+    expect(driver).toContain("if (!onCloudHome) scoped = buildAntigravityScopedHome({");
+    expect(driver).toContain('cloudTurnRender(turnEnv, "mcp", stanzas)');
+    expect(driver).toContain('if (askStop) cloudTurnRender(turnEnv, "hooks", "ask")');
+  });
   it("keeps Claude Code's updater and non-allowlisted telemetry off on a home", () => {
     vi.stubEnv("MURAGE_CLOUD_ROLE", "home");
     expect(cloudTurnEnvironment("claudeAgent", {})).toMatchObject({ DISABLE_UPDATES: "1", DISABLE_AUTOUPDATER: "1", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1", DISABLE_TELEMETRY: "1", DISABLE_ERROR_REPORTING: "1" });
@@ -137,12 +150,12 @@ describe("server never writes inside an engine home", () => {
 });
 
 describe("Claude approval broker socket", () => {
-  it("lives in the shared broker directory, never an engine home, and the launcher binds only that for Claude", async () => {
+  it("lives in the shared broker directory, never an engine home, and the launcher binds only that for Claude and Antigravity (its relay hook)", async () => {
     vi.stubEnv("MURAGE_CLOUD_ROLE", "home");
     const { permissionSocketPath } = await import("../drivers/claude.ts");
     expect(permissionSocketPath("thread-1")).toMatch(/^\/data\/broker\/perm-[0-9a-z-]+\.sock$/u);
     const launcher = readFileSync(new URL("../../deploy/cloud-home/murage-turn-launch.py", import.meta.url), "utf8");
     expect(launcher).toContain('BROKER_DIR = "/data/broker"');
-    expect(launcher).toContain('if engine == "claudeAgent" and os.path.isdir(BROKER_DIR)');
+    expect(launcher).toContain('if engine in ("claudeAgent", "antigravity") and os.path.isdir(BROKER_DIR)');
   });
 });

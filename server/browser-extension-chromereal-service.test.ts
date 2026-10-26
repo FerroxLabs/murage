@@ -188,6 +188,11 @@ describe("Fable M4, M6, M7: what the page did is told to the bot, in plain words
     const said = text(await outcome(dispatch(f, "agent_browser_snapshot")));
     expect(said).toMatch(/blocked/i); expect(said).toContain("update.exe"); expect(said).toMatch(/nothing was saved/i);
   });
+  it("a download Murage could not remove is reported as kept, never as blocked (U37 r2)", async () => {
+    const f = await fixture(); await f.event("notice", { kind: "download_kept", tabId: 1, origin: "https://fixture.test", name: "update.exe" });
+    const said = text(await outcome(dispatch(f, "agent_browser_snapshot")));
+    expect(said).toContain("update.exe"); expect(said).toMatch(/announced a download/i); expect(said).toMatch(/left a matching file in place/i); expect(said).toMatch(/may still be in the owner's downloads folder/i); expect(said).not.toMatch(/blocked|nothing was saved|downloaded a file|\bsafe/i); expect(said).not.toMatch(/[\u2014\u2013]/);
+  });
   it("a new tab is reported, adopted or not", async () => {
     const f = await fixture(); await f.event("notice", { kind: "tab_opened", tabId: 5, origin: "https://fixture.test", adopted: true });
     expect(text(await outcome(dispatch(f, "agent_browser_snapshot")))).toMatch(/new tab/i);

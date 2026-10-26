@@ -56,7 +56,7 @@ interface SensitivePathRow {
 const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
   {
     id: "env",
-    re: /(^|[\s/"'])\.env(\.|$|["'\s])/i,
+    re: /(^|[\s/\\"'])\.env(\.|$|["'\s])/i,
     read: [".env", ".env.*"],
     bash: ["* .env*", "*/.env*"],
   },
@@ -83,7 +83,8 @@ const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
     // key by reading the shell profile. Shell rc files are where people keep
     // keys, and (Rule 74b) the files that shape every shell the owner runs.
     id: "shell-rc",
-    re: /(^|[\s"'=])~?[\w./-]*\.(zshrc|zshenv|zprofile|bashrc|bash_profile|profile)\b/i,
+    // `$HOME/.zshrc`, `${HOME}/.zshrc`, `$env:HOME\.zshrc` and `%USERPROFILE%\.zshrc` name the same file as `~/.zshrc`
+    re: /(^|[\s"'=])~?[\w./${}:%\\-]*\.(zshrc|zshenv|zprofile|bashrc|bash_profile|profile)\b/i,
     read: ["~/.zshrc", "~/.zshenv", "~/.zprofile", "~/.bashrc", "~/.bash_profile", "~/.profile"],
     bash: ["*.zshrc*", "*.zshenv*", "*.zprofile*", "*.bashrc*", "*.bash_profile*", "*.profile*"],
   },
@@ -193,6 +194,9 @@ const SENSITIVE_TEXT: readonly SensitiveTextRow[] = [
   { id: "bearer", re: /\bBearer\s+\$\{?[A-Za-z_]/i },
   { id: "key-literal", re: /\bsk-(proj|ant|or)?[-_]?[A-Za-z0-9]/ },
   { id: "env-grep", re: /\benv\b[^|;&]*\|\s*grep\b/i },
+  // A command that prints the whole environment (or one variable's value): `env`, `printenv`, `export -p`, `declare -p`, `set` alone.
+  // Only at the start of a command, so `env VAR=x cmd`, `export FOO=1` and a word like "environment" are ordinary.
+  { id: "env-dump", re: /(?:^|[;&|(`\n]|\$\()\s*(?:(?:sudo|command|builtin)\s+)?(?:env(?:\s+-[0aiuS]+)*|printenv(?:\s+[A-Za-z_][A-Za-z0-9_]*)*|export\s+-p|declare\s+-[xp]+|set)\s*(?=$|[;&|)>`\n])/i },
   // Rule 74b: cmd's AutoRun runs on every cmd start; a change to it is a
   // sensitive write.
   { id: "cmd-autorun", re: /Command Processor[\s\S]*\bAutoRun\b/i },
@@ -788,7 +792,7 @@ const FILE_TOOLS = new Set(["edit", "write"]);
 
 /** Rule 51's unasked pairs, by mountId (T59 compares this with OWN_UNASKED). */
 export const GATE_UNASKED: ReadonlyArray<readonly [string, readonly string[]]> = [
-  ["own:memory", ["memory_search", "memory_get", "memory_save", "memory_propose_correction"]],
+  ["own:memory", ["memory_search", "memory_get", "memory_save", "memory_propose_correction", "thread_search", "thread_list", "thread_read"]],
   ["own:agents", [
     "list_bots", "get_bot", "check_delegation", "wait_delegation", "get_permission_status", "list_routines", "skills_list",
     "list_reference_packs", "list_prompt_blocks", "get_prompt_block", "list_image_models", "tool_result_read", "murage_help",
@@ -797,8 +801,8 @@ export const GATE_UNASKED: ReadonlyArray<readonly [string, readonly string[]]> =
     "project_criteria", "project_blocked", "project_brief_update", "project_card_update", "project_review_result",
     "project_suggest", "project_summary_update", "project_bring_in",
     "allow_for_task",
-    "project_propose", "propose_outcome", "propose_routine", "propose_routine_action", "request_bot_access", "request_credential",
-    "request_browser_connection", "project_done",
+    "project_propose", "propose_outcome", "propose_routine", "propose_routine_action", "request_bot_access", "request_credential", "ask_user", "show_widget", "update_widget",
+    "request_browser_connection", "project_done", "add_mcp_server",
     "create_bot", "update_bot", "archive_bot", "restore_bot", "move_bot", "set_team_lead",
     "send_voice_note", "generate_image", "save_prompt_block", "save_reference_pack",
   ]],

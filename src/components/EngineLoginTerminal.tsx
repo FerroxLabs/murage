@@ -53,7 +53,7 @@ export const engineNeedsCode = (engine: EngineLoginEngine, action: EngineLoginAc
 export function engineLoginRequest(homeId: string, engine: EngineLoginEngine, action: EngineLoginAction, bot?: { id: string } | null, enrollment?: { key: string; provider?: string } | null): EngineLoginStart {
   return {
     homeId, engine, action,
-    ...(bot && action !== "enroll-key" && BOT_LOGIN_ENGINES.includes(engine) ? { bot: bot.id } : {}),
+    ...(bot && action !== "enroll-key" && (BOT_LOGIN_ENGINES.includes(engine) || engine === "claudeAgent") ? { bot: bot.id } : {}),
     ...(action === "enroll-key" && enrollment ? { secret: enrollment.key } : {}),
     ...(action === "enroll-key" && engine === "opencodeGo" && enrollment?.provider ? { provider: enrollment.provider } : {}),
   };
