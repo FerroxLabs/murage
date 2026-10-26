@@ -74,8 +74,11 @@ const REMEMBERED_OWNER_WRITES: [string, RegExp][] = [
 
 export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["GET"], path: ENGINE_LOGIN_PATH, class: "engine-login", arrives: "B2", why: "A paired owner desktop signs an engine in or out through the vendor's own CLI; step-up is required and a browser session is refused." },
+  { methods: ["GET"], path: "/api/cloud/engine-signins", class: "desktop", arrives: "B2", why: "A paired owner reads, per bot, whether its engine is signed in: names and booleans only, never a token." },
+  { methods: ["POST"], path: "/api/cloud/engine-signins/dismiss", class: "desktop", cloudWrite: "ordinary", why: "A paired owner hides the sign-in offer for one bot for good: a bot id and an engine name, never a token." },
   { methods: ["GET"], path: "/api/cloud/model-signins", class: "desktop", why: "Only paired owners read token-free home sign-in status." },
   { methods: ["GET"], path: /^\/api\/cloud\/model-signins\/(chatgpt|supergrok)\/attempts\/[A-Za-z0-9_-]{1,200}$/, class: "desktop", why: "The initiating paired device reads its pending sign-in." },
+  { methods: ["POST"], path: re(`/api/bots/${ID}/engine-signin/code`), class: "desktop", cloudWrite: "step-up", why: "A paired owner confirms and hands Google's one-time sign-in code to the waiting Antigravity sign-in; it never goes through the message pipeline." },
   { methods: ["POST"], path: /^\/api\/cloud\/model-signins\/(chatgpt|supergrok)\/(start|sign-out|attempts\/[A-Za-z0-9_-]{1,200}\/cancel)$/, class: "desktop", cloudWrite: "step-up", why: "A paired owner confirms a home model sign-in change." },
   { methods: ["DELETE"], path: /^\/api\/cloud\/model-signins\/(chatgpt|supergrok)$/, class: "desktop", cloudWrite: "step-up", why: "A paired owner confirms removing a home model connection." },
   { methods: "*", path: /^\/api\/cloud\/own-server(?:\/(?:confirm|test))?$/, class: "desktop", cloudWrite: "step-up", why: "A paired owner connects, checks or removes their own server for bots to use as a computer (server/cloud-home/own-server.ts)." },

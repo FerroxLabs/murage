@@ -1,5 +1,6 @@
 import { cliSig, engineLaunchFile, knownCliVersion, noteVersionProbe, rememberCliVersion, versionProbeAllowed } from "../isolation-cache.ts";
 import { cloudEngineHome, cloudTurnBot, cloudTurnEnvironment } from "../../cloud-home/turn-process.ts";
+import { cloudEngineSignedInSomewhere } from "../../cloud-home/signin-status.ts";
 import { renderDriverReplay } from "../../turn-context.ts";
 import { anyMountHoldsStandIn, anyMountIncomplete, clearMountsIncomplete, connectorMountRefOfEnv } from "../turn-credentials.ts";
 import { McpBackoff, MCP_REQUIRED_WAIT_MS, mcpReconnectWaitMs, mcpRecoveryMs, requiredMcpLabel, toolsMayBeLoadingNotice, toolsUnavailableNotice, unavailableLabels } from "../mcp-readiness.ts";
@@ -4929,7 +4930,11 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         lastCliVersion = probe.version;
         lastCliSigSeen = cliSig(launchCliFor(env), env);
         const versionNote = support.versionNote?.(probe.version);
-        return { state: "available", version: probe.version, authenticated: await support.isAuthenticated(env, config), ...(versionNote ? { versionNote } : {}) };
+        // On a Cloud home the sign-ins are root-only per-bot stores this server cannot read, so the engine's own
+        // check reads "not signed in" even when bots are signed in. The launcher's reading can only raise it.
+        const signedInOnHome = (await cloudEngineSignedInSomewhere(support.driverKind)) === true;
+        const authenticated = signedInOnHome || await support.isAuthenticated(env, config);
+        return { state: "available", version: probe.version, authenticated, ...(versionNote ? { versionNote } : {}), ...(signedInOnHome ? { setUpOnHome: true } : {}) };
       };
 
       return withCliMemoryLearning({

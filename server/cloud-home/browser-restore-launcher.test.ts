@@ -2,9 +2,9 @@
 // The launcher's browser-restore and browser-restore-mark modes: strict request validation, path
 // confinement, the bounded child, and (the cross-language fixture) that what the launcher's step writes is
 // exactly what the server's own store reads and writes, because it is the server's own store.
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, chownSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire, syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,7 +23,7 @@ const ORIGIN = "https://shop.example";
 const OTHER = "https://news.example:8443";
 
 const GEN = "0123456789abcdef".repeat(2);
-const harness = `import importlib.util,json,sys,os,io,types,inspect
+const harness = `import importlib.util,json,sys,os,io,types,inspect,pwd
 spec=importlib.util.spec_from_file_location("restore_fixture",sys.argv[1])
 module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
 def accepted(function, options):
@@ -59,14 +59,35 @@ function seed(bot = "bot-1", origins: Array<{ origin: string; localStorage: Arra
   writeFileSync(join(sessions(bot), file), encryptEngineData(Buffer.from(JSON.stringify(state)), KEY), { mode: 0o600 });
 }
 type LaunchOptions = { alive?: boolean; live?: boolean; script?: string; wait?: number; limit?: number; isolate?: boolean };
-const step = (options: LaunchOptions) => `node=${JSON.stringify(process.execPath)},script=${JSON.stringify(options.script ?? cli)},drop=False,wait=${options.wait ?? 20},limit=${options.limit ?? 33554432},isolate=${options.isolate ? "True" : "False"}`;
+// As root the step drops to `nobody` for real (the launcher's exec guard refuses uid 0); unprivileged, drop=False only skips the setuid.
+const asRoot = process.getuid?.() === 0;
+const stepAccount = asRoot ? 'pwd.getpwnam("nobody")' : "types.SimpleNamespace(pw_uid=os.getuid(),pw_gid=os.getgid())";
+const nobody = asRoot ? { uid: Number(execFileSync("id", ["-u", "nobody"], { encoding: "utf8" })), gid: Number(execFileSync("id", ["-g", "nobody"], { encoding: "utf8" })) } : null;
+// The step user must be able to read the step script (and this checkout's modules); a checkout under a 0700 home cannot be read by
+// `nobody`, so as root there the step-running tests are skipped rather than run as root (which the launcher's exec guard refuses).
+const canStep = !asRoot || spawnSync("runuser", ["-u", "nobody", "--", "test", "-r", cli]).status === 0;
+const steps = canStep ? it : it.skip;
+/** As root: everything under the browser root (the bots' homes and saved sessions, made by the test) becomes the step user's, as a real
+ * home's browser profiles are the browser user's; the root directory itself stays the launcher's (owner=os.getuid()). */
+function handToStep(directory = root): void {
+  if (!nobody) return;
+  for (const name of readdirSync(directory)) {
+    const path = join(directory, name);
+    const info = lstatSync(path);
+    if (directory === root && info.isFile()) continue; // the launcher's own records at the root
+    chownSync(path, nobody.uid, nobody.gid);
+    if (info.isDirectory()) handToStep(path);
+  }
+}
+const step = (options: LaunchOptions) => `node=${JSON.stringify(process.execPath)},script=${JSON.stringify(options.script ?? cli)},drop=${asRoot ? "True" : "False"},wait=${options.wait ?? 20},limit=${options.limit ?? 33554432},isolate=${options.isolate ? "True" : "False"}`;
 /** Runs launch_browser_restore as the test user (no privilege change), with the real step script under this node.
  * isolate (root only): the step's own mount and pid namespaces, as on a Cloud home. */
 function launch(input: unknown, options: LaunchOptions = {}) {
+  handToStep();
   const code = `
 req=json.loads(sys.argv[3])
 out=io.BytesIO()
-account=types.SimpleNamespace(pw_uid=os.getuid(),pw_gid=os.getgid())
+account=${stepAccount}
 try:
     module.launch_browser_restore(req,**accepted(module.launch_browser_restore,dict(root=${JSON.stringify(root)},account=account,fence=lambda r:None,alive=lambda h,s:${options.alive ? "True" : "False"},live=lambda *a:${options.live ? "True" : "False"},owner=os.getuid(),out=out,${step(options)})))
     print("DONE",out.getvalue().decode())
@@ -76,9 +97,10 @@ except Exception as error:
 }
 /** A browser host starting (ensure_session_host's split), for the given request's bot. Prints the generation or None. */
 function hostStart(input: unknown, options: LaunchOptions = {}) {
+  handToStep();
   const code = `
 req=json.loads(sys.argv[3])
-account=types.SimpleNamespace(pw_uid=os.getuid(),pw_gid=os.getgid())
+account=${stepAccount}
 if not hasattr(module,"split_for_host"):
     print("MISSING")
 else:
@@ -87,7 +109,7 @@ else:
 }
 /** The generation the launcher recorded for the fixture session, or "" */
 function generationFile(bot = "bot-1") { const path = join(root, `.restore-${bot}.${SESSION}`); return existsSync(path) ? readFileSync(path, "utf8") : ""; }
-const done = (text: string) => { expect(text.startsWith("DONE ")).toBe(true); return JSON.parse(text.slice(5)); };
+const done = (text: string) => { expect(text.startsWith("DONE "), text).toBe(true); return JSON.parse(text.slice(5)); };
 const spec = (bot = "bot-1") => ({ env: { HOME: home(bot), AGENT_BROWSER_RESTORE: SESSION, AGENT_BROWSER_ENCRYPTION_KEY: KEY, AGENT_BROWSER_RESTORE_SAVE: "auto" } }) as never;
 
 it("accepts exactly the two request shapes the relay sends and nothing else", () => {
@@ -145,7 +167,7 @@ it("builds the step's whole environment from five names, the key only in the env
   expect(JSON.stringify(plan.argv)).not.toContain(KEY);
 });
 
-it("splits the saved session as the browser user would and hands the storage back, then marks a visit", () => {
+steps("splits the saved session as the browser user would and hands the storage back, then marks a visit", () => {
   seed();
   const answer = done(launch(request()));
   expect(answer.state).toBe("ready");
@@ -170,7 +192,7 @@ it("splits the saved session as the browser user would and hands the storage bac
   expect(JSON.parse(decryptEngineData(readFileSync(sidecarPath), KEY).toString("utf8")).visited).toEqual([ORIGIN]);
 });
 
-it("reads and writes the one store format both ways (the cross-language fixture)", () => {
+steps("reads and writes the one store format both ways (the cross-language fixture)", () => {
   // The server's own store writes first, the launcher's step reads it.
   seed();
   const local = prepareBrowserRestore(spec(), () => {})!;
@@ -190,7 +212,7 @@ it("reads and writes the one store format both ways (the cross-language fixture)
   expect(again.pending(OTHER)).toEqual({ localStorage: [{ name: "seen", value: "1" }], sessionStorage: [] });
 });
 
-it("reads the old `restored` list name and prunes by the same age and count rules", () => {
+steps("reads the old `restored` list name and prunes by the same age and count rules", () => {
   seed();
   const sidecarPath = join(sessions(), `${SESSION}.murage-storage.enc`);
   const old = Date.now() - 91 * 24 * 60 * 60 * 1000;
@@ -203,7 +225,7 @@ it("reads the old `restored` list name and prunes by the same age and count rule
   expect(Object.keys(answer.origins)).toEqual([OTHER]);
 });
 
-it("answers none and changes nothing when there is no home, no session files or a running session", () => {
+steps("answers none and changes nothing when there is no home, no session files or a running session", () => {
   expect(done(launch(request()))).toEqual({ state: "none", logs: [] });
   expect(done(launch(request("browser-restore-mark", [GEN, ORIGIN])))).toEqual({ state: "stale" });
   mkdirSync(home(), { mode: 0o700 }); chmodSync(home(), 0o700);
@@ -217,7 +239,7 @@ it("answers none and changes nothing when there is no home, no session files or 
   expect(existsSync(join(sessions(), `${SESSION}.murage-storage.enc`))).toBe(false);
 });
 
-it("refuses a home or session directory that is a link, and a session file that is a link", () => {
+steps("refuses a home or session directory that is a link, and a session file that is a link", () => {
   // home itself a link to another bot's directory
   seed("bot-2");
   symlinkSync(home("bot-2"), home("bot-1"));
@@ -241,13 +263,13 @@ it("refuses a home or session directory that is a link, and a session file that 
   expect(launch(request())).toMatch(/^FAIL/);
 });
 
-it("refuses a browser directory that is not the root-owned 0711 one", () => {
+steps("refuses a browser directory that is not the root-owned 0711 one", () => {
   chmodSync(root, 0o755);
   seed();
   expect(launch(request())).toMatch(/^FAIL/);
 });
 
-it("bounds the step: a step that outlasts the deadline or prints too much fails closed", () => {
+steps("bounds the step: a step that outlasts the deadline or prints too much fails closed", () => {
   seed();
   const slow = join(root, "slow.mjs"); writeFileSync(slow, "setTimeout(() => {}, 30000);\n");
   const started = Date.now();
@@ -259,7 +281,7 @@ it("bounds the step: a step that outlasts the deadline or prints too much fails 
   expect(launch(request(), { script: failing })).toMatch(/^FAIL Refusal/);
 });
 
-it("gives the step only its five environment names", () => {
+steps("gives the step only its five environment names", () => {
   seed();
   const { generation } = done(launch(request()));
   const probe = join(root, "probe.mjs"); writeFileSync(probe, "process.stdout.write(JSON.stringify({ env: Object.keys(process.env).sort(), cwd: process.cwd(), argv: process.argv.slice(2) }));\n");
@@ -310,7 +332,7 @@ function isolatedFixture() {
 }
 afterEach(() => { if (outside) removeTempDirSync(outside); outside = ""; });
 
-it("#1 the isolated step sees only its own bot's home: no sibling, no other bot's file, its own /proc", { skip: !canIsolate }, () => {
+steps("#1 the isolated step sees only its own bot's home: no sibling, no other bot's file, its own /proc", { skip: !canIsolate || !canStep }, () => {
   const base = isolatedFixture();
   seed("bot-1"); seed("bot-2", [{ origin: "https://victim.example", localStorage: [{ name: "token", value: "secret" }] }]);
   const probe = join(base, "probe.mjs");
@@ -332,7 +354,7 @@ process.stdout.write(JSON.stringify({
   expect(answer.tmp).toBe(0);
 });
 
-it("#1 a concurrent link/rename swap toward another bot's directory is never followed", { skip: !canIsolate, timeout: 120_000 }, () => {
+steps("#1 a concurrent link/rename swap toward another bot's directory is never followed", { skip: !canIsolate || !canStep, timeout: 120_000 }, () => {
   isolatedFixture();
   seed("bot-1"); seed("bot-2", [{ origin: "https://victim.example", localStorage: [{ name: "token", value: "secret" }] }]);
   const victim = newestEngineState(sessions("bot-2"), SESSION)!;
@@ -371,7 +393,7 @@ while time.time()<end:
   expect(readdirSync(sessions("bot-2")).filter(name => !name.startsWith(".")).sort()).toEqual([`${SESSION}-abc.json.enc`]);
 });
 
-it("#2 refuses oversize input before reading it: one file over its bound, or all files over theirs", () => {
+steps("#2 refuses oversize input before reading it: one file over its bound, or all files over theirs", () => {
   seed();
   // One plain engine file just over 32 MiB.
   const big = join(sessions(), `${SESSION}-big.json`);
@@ -419,7 +441,7 @@ function expectTreeEnded() {
   expect(second).toBe(first);
 }
 
-it("#2 kills the step's whole tree at its deadline: a forked child dies with it", () => {
+steps("#2 kills the step's whole tree at its deadline: a forked child dies with it", () => {
   seed();
   const base = mkdtempSync(join(tmpdir(), "restore-fork-"));
   try {
@@ -428,14 +450,14 @@ it("#2 kills the step's whole tree at its deadline: a forked child dies with it"
   } finally { removeTempDirSync(base); }
 });
 
-it("#2 isolated: a forked child that left the step's session dies at the deadline too (pid namespace)", { skip: !canIsolate }, () => {
+steps("#2 isolated: a forked child that left the step's session dies at the deadline too (pid namespace)", { skip: !canIsolate || !canStep }, () => {
   const base = isolatedFixture();
   seed();
   expect(launch(request(), { script: forkingStep(base, true), wait: 1.5, isolate: true })).toMatch(/^FAIL Refusal/);
   expectTreeEnded();
 });
 
-it("#3 every browser host generation starts split, a host restart after idle exit without the server included", () => {
+steps("#3 every browser host generation starts split, a host restart after idle exit without the server included", () => {
   seed();
   // The server's first start: split, generation G1 (no host yet).
   const first = done(launch(request()));
@@ -466,7 +488,7 @@ it("#3 every browser host generation starts split, a host restart after idle exi
   expect(sha(newestEngineState(sessions(), SESSION)!)).toBe(unchanged);
 });
 
-it("#4 a mark from an obsolete generation is answered stale and never written", () => {
+steps("#4 a mark from an obsolete generation is answered stale and never written", () => {
   seed();
   const first = done(launch(request()));
   expect(hostStart(request())).toBe(first.generation);
@@ -481,7 +503,7 @@ it("#4 a mark from an obsolete generation is answered stale and never written", 
 });
 
 const realFs = createRequire(import.meta.url)("node:fs") as typeof import("node:fs");
-it("#5 the step fails (no quiet success) when the store cannot be written", () => {
+steps("#5 the step fails (no quiet success) when the store cannot be written", () => {
   seed();
   done(launch(request()));
   const rename = realFs.renameSync;
@@ -495,7 +517,7 @@ it("#5 the step fails (no quiet success) when the store cannot be written", () =
   expect(sidecarOf().visited).toEqual([]);
 });
 
-it("#7 a repeat mark persists its new last-seen time", () => {
+steps("#7 a repeat mark persists its new last-seen time", () => {
   seed();
   done(launch(request()));
   const now = vi.spyOn(Date, "now").mockReturnValue(1_800_000_000_000);

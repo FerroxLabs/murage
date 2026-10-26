@@ -1,0 +1,11 @@
+#!/bin/bash
+# Mock console helper: checks the input files exist and are non-empty, never prints them.
+echo "console-type" >> "$MOCK_LOG"
+for f in --url-file --vnc-pass-file --root-pass-file --command-file; do
+    path=""
+    for ((i = 1; i <= $#; i++)); do [[ ${!i} == "$f" ]] && { j=$((i + 1)); path=${!j}; }; done
+    [[ -s $path ]] || { echo "console-type mock: $f missing" >&2; exit 1; }
+done
+# the typed command must install the run's host key and client key
+for ((i = 1; i <= $#; i++)); do [[ ${!i} == --command-file ]] && { j=$((i + 1)); cp "${!j}" "$MOCK_STATE/typed.cmd"; }; done
+exit 0

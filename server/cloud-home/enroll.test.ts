@@ -92,7 +92,7 @@ ${wrapper}
 `, { mode: 0o700 });
     writeFileSync(node, "#!/bin/bash\necho supervisor-entered\n", { mode: 0o700 });
   }
-  const script = readFileSync(new URL("../../deploy/cloud-home/start-home.sh", import.meta.url), "utf8").replaceAll("/usr/local/libexec/murage-enroll", helper).replaceAll("/etc/murage-home/home.env", join(config, "home.env")).replaceAll("/usr/local/bin/node", node);
+  const script = readFileSync(new URL("../../deploy/cloud-home/start-home.sh", import.meta.url), "utf8").replaceAll("/usr/local/libexec/murage-enroll", helper).replaceAll("/etc/murage-home/home.env", join(config, "home.env")).replaceAll("/usr/bin/python3 -I /usr/local/libexec/murage-home-launch", node);
 
   return new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
     const child = mode === "boot" ? spawn(modernBash!, ["-c", script], { stdio: ["ignore", "pipe", "pipe"] }) : spawn("python3", ["-I", "-c", wrapper, program, state, config, userData, mode], { stdio: ["ignore", "pipe", "pipe"] });

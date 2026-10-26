@@ -236,6 +236,8 @@ describe("allowlist file", () => {
     expect(doc.extra).toEqual([]); expect(doc.engines.fuigoAgent).toEqual(["api.fluxrouter.ai"]);
     expect(doc.engines.antigravity).toEqual(["cloudcode-pa.googleapis.com", "oauth2.googleapis.com"]); expect(doc.engines.antigravity).not.toContain("www.googleapis.com");
     expect(Object.keys(doc.engines).sort()).toEqual(["antigravity", "claudeAgent", "codex", "cursorAgent", "fuigoAgent", "geminiAgent", "grokAgent", "kimiAgent", "opencodeGo"]);
+    // agy 1.4.4: its updater, flag service and telemetry hosts stay refused.
+    expect(py(`a = M["load_allowlist"](sys.argv[2]); print(a.allows("antigravity","oauth2.googleapis.com"), a.allows("antigravity","antigravity-unleash.goog"), a.allows("antigravity","play.googleapis.com"), a.allows("antigravity","antigravity-cli-auto-updater-974169037036.us-central1.run.app"))`, [deploy("egress-allow.json")])).toBe("True False False False");
     expect(py(`a = M["load_allowlist"](sys.argv[2]); print(a.allows("codex","sdmntprwestus.oaiusercontent.com"), a.allows("codex","oaiusercontent.com"), a.allows("codex","evil-oaiusercontent.com"), a.allows("claudeAgent","x.oaiusercontent.com"))`, [deploy("egress-allow.json")])).toBe("True False False False");
     expect(py(`a = M["load_allowlist"](sys.argv[2]); print(a.allows("claudeAgent","api.anthropic.com"), a.allows("claudeAgent","example.com"))`, [deploy("egress-allow.json")])).toBe("True False");
   });

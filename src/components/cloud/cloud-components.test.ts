@@ -12,6 +12,8 @@ import { CloudReconnectingBannerView, CloudUnreachableBannerView, REATTACH_WINDO
 import { ConnectHomeView, connectSecondsLeft, formatCountdown, resultText, retrySecondsLeft, type ConnectHomeViewProps } from "./ConnectHome";
 import en from "../../locales/en.json";
 import { EngineSignInsView, type EngineSignInsViewProps } from "./EngineSignIns";
+import { BotSignInOfferView, ChatSignInGate, linesKey, readHeld, runOfferSignIn, type HeldLines } from "./BotSignInOffer";
+import { ownSignInNeeded, ownSignedInOf, type HomeBot } from "@/lib/cloud-signin-status";
 import { WorkspaceSwitch, WorkspaceSwitchView } from "./WorkspaceSwitch";
 import { CLAUDE_CLOUD_RENEW_COPY } from "../EngineLoginTerminal";
 
@@ -51,6 +53,29 @@ describe("Cloud UI", () => {
     expect(wired).toContain("Save a Codex API key");
     expect(wired).not.toContain("Email me a code");
     expect(wired).not.toContain("6-digit code");
+  });
+
+  it("each bot shows its engine's sign-in line, with the one button that changes it, and the next bot is offered one at a time", () => {
+    const bots = [
+      { id: "atlas", name: "Atlas", signIn: { engine: "codex", label: "Codex", signedIn: true, uses: null } },
+      { id: "nova", name: "Nova", signIn: { engine: "codex", label: "Codex", signedIn: false, uses: null } },
+      { id: "ada", name: "Ada", signIn: { engine: "claudeAgent", label: "Claude", signedIn: true, uses: "home" as const } },
+      { id: "bo", name: "Bo", signIn: { engine: "claudeAgent", label: "Claude", signedIn: true, uses: "own" as const } },
+    ];
+    const html = signIns({ bots, onSignInBot: noop });
+    expect(html).toContain("Codex: signed in");
+    expect(html).toContain("Codex: needs sign-in");
+    expect(html).toContain("Claude: signed in with the home&#x27;s account");
+    expect(html).toContain("Claude: signed in with its own account");
+    expect(html).toContain("Use a different Claude account for this bot");
+    expect(html).toContain("Use the home&#x27;s Claude account");
+    expect(html.match(/>Sign in</g)?.length).toBe(1);
+    const offered = signIns({ bots, onSignInBot: noop, offer: { bot: bots[1]!, engine: "codex", label: "Codex" } });
+    expect(offered).toContain("Codex is signed in on another bot. Nova needs its own Codex sign-in.");
+    expect(offered).toContain("Sign Nova in to Codex and use it");
+    expect(offered).toContain("Not now");
+    expect(signIns({ bots, onSignInBot: noop, offer: { bot: bots[1]!, engine: "codex", label: "Codex" }, signIn: { homeId: "h2", engine: "claudeAgent", action: "login", bot: { id: "ada", name: "Ada" } } })).not.toContain("Not now");
+    expect(signIns({ bots: null })).not.toContain("Bot sign-ins");
   });
 
   it("a per-bot sign-in asks which bot it is for before any terminal opens; Claude's opens at once", () => {
@@ -248,6 +273,103 @@ describe("Cloud UI", () => {
       const html = view([device({ id: "r1", factor: "remembered-owner", factorExpiresAt: expiresAt }), device({ id: "c1", factor: null })]);
       expect(html).toContain(`>${DEVICES_COPY.forget}</button>`);
       for (const text of Object.values(DEVICES_COPY)) expect(text).not.toMatch(/–|—|\b(?:safe|safely|safety|unsafe)\b/i);
+    });
+  });
+
+  it("the create step and the bot-surface offer name the bot and the engine, with one way on and one way out", () => {
+    const step = { engine: "codex", label: "Codex" }, bot = { id: "bea", name: "Bea" };
+    const made = renderToStaticMarkup(createElement(BotSignInOfferView, { bot, step, variant: "step", onSignIn: noop, onDismiss: noop }));
+    expect(made).toContain("Sign Bea in to Codex");
+    expect(made).toContain("Skip for now");
+    expect(made).toContain("Bea starts on Fuigo");
+    const banner = renderToStaticMarkup(createElement(BotSignInOfferView, { bot, step, variant: "banner", onSignIn: noop, onDismiss: noop }));
+    expect(banner).toContain("Sign Bea in to Codex and use it");
+    expect(banner).toContain("Not now");
+    expect(made + banner).not.toMatch(/\u2014|safe|safety/i);
+  });
+
+  describe("a bot's chat reads the bot's own sign-in", () => {
+    const codex = (id: string, name: string, signedIn: boolean): HomeBot => ({ id, name, signIn: { engine: "codex", label: "Codex", signedIn, uses: null } });
+    const lines: HomeBot[] = [codex("a", "Atlas", true), codex("b", "Bea", false)];
+    const gate = (bot: { id: string; name: string }, over: HomeBot[] | null = lines) =>
+      renderToStaticMarkup(createElement(ChatSignInGate, { bot, lines: over ?? undefined, onSignIn: noop, children: createElement("div", { id: "composer" }, "COMPOSER") }));
+    it("A signed in to Codex, B not: B sees the sign-in prompt and no composer, A chats", () => {
+      const b = gate({ id: "b", name: "Bea" });
+      expect(b).toContain("Sign Bea in to Codex");
+      expect(b).toContain("Bea needs its own Codex sign-in before you can chat.");
+      expect(b).not.toContain("COMPOSER");
+      expect(b).not.toContain("Skip for now");
+      expect(b).not.toMatch(/\u2014|safe|safety/i);
+      expect(gate({ id: "a", name: "Atlas" })).toContain("COMPOSER");
+      expect(ownSignedInOf(lines, "a")).toBe(true);
+      expect(ownSignedInOf(lines, "b")).toBe(false);
+    });
+    it("says nothing and blocks nothing when the home did not answer, or the bot is on Fuigo", () => {
+      expect(gate({ id: "b", name: "Bea" }, null)).toContain("COMPOSER");
+      const fuigo: HomeBot[] = [{ id: "f", name: "Fay", signIn: { engine: "fuigoAgent", label: "Fuigo", signedIn: true, uses: null, signedInEngines: [] } }];
+      expect(ownSignInNeeded(fuigo, "f")).toBeNull();
+      expect(ownSignedInOf(fuigo, "f")).toBeUndefined();
+      expect(ownSignInNeeded(lines, "unknown")).toBeNull();
+    });
+    it("Claude counts as signed in when the home's sign-in is valid; a signed out Claude bot is asked", () => {
+      const claude = (signedIn: boolean, uses: "home" | "own" | null): HomeBot[] => [{ id: "c", name: "Cy", signIn: { engine: "claudeAgent", label: "Claude", signedIn, uses } }];
+      expect(ownSignInNeeded(claude(true, "home"), "c")).toBeNull();
+      expect(ownSignInNeeded(claude(true, "own"), "c")).toBeNull();
+      expect(ownSignInNeeded(claude(false, null), "c")).toEqual({ engine: "claudeAgent", label: "Claude" });
+    });
+  });
+
+  describe("the chat gate across a refetch", () => {
+    const codex = (id: string, name: string, signedIn: boolean): HomeBot => ({ id, name, signIn: { engine: "codex", label: "Codex", signedIn, uses: null } });
+    const bea = { id: "b", name: "Bea" };
+    const shown = (lines: readonly HomeBot[] | undefined) =>
+      renderToStaticMarkup(createElement(ChatSignInGate, { bot: bea, lines, onSignIn: noop, children: createElement("div", null, "COMPOSER") }));
+    it("a tick or focus refetch keeps the last lines, so the gate never unmounts and the composer never mounts while signed out", () => {
+      const key = linesKey("b", "m1");
+      let held: HeldLines = { key, lines: [codex("a", "Atlas", true), codex("b", "Bea", false)] };
+      const before = shown(readHeld(held, key));
+      expect(before).toContain("chat-signin-gate");
+      // The tick starts a refetch: the hook sets nothing, so what is read is unchanged until the new answer lands.
+      for (let i = 0; i < 3; i++) {
+        expect(readHeld(held, key)).toBe(held.lines);
+        const during = shown(readHeld(held, key));
+        expect(during).toBe(before);
+        expect(during).not.toContain("COMPOSER");
+      }
+      held = { key, lines: [codex("a", "Atlas", true), codex("b", "Bea", true)] };
+      expect(shown(readHeld(held, key))).toContain("COMPOSER");
+    });
+    it("lines held for another bot or another engine choice never gate this one", () => {
+      const held: HeldLines = { key: linesKey("a", "m1"), lines: [codex("b", "Bea", false)] };
+      expect(readHeld(held, linesKey("b", "m1"))).toBeUndefined();
+      expect(readHeld(held, linesKey("a", "m2"))).toBeUndefined();
+      expect(shown(readHeld(held, linesKey("b", "m1")))).toContain("COMPOSER");
+    });
+  });
+
+  describe("starting a sign-in from the offer", () => {
+    const run = async (bridge: unknown) => {
+      const g = globalThis as { window?: unknown };
+      const had = g.window;
+      g.window = bridge === undefined ? {} : { muragecloud: bridge };
+      const seen: string[] = [];
+      try {
+        const started = await runOfferSignIn("b", "codex", { setBusy: (busy) => seen.push(`busy:${busy}`), setError: (message) => seen.push(`error:${message}`) });
+        return { started, seen };
+      } finally { if (had === undefined) delete g.window; else g.window = had; }
+    };
+    it("without the local app it fails with the plain message, so the step stays open and shows it", async () => {
+      const { started, seen } = await run(undefined);
+      expect(started).toBe(false);
+      expect(seen).toEqual(["busy:true", "error:", "busy:false", "error:Open Murage on this computer to sign in."]);
+      const html = renderToStaticMarkup(createElement(BotSignInOfferView, { bot: { id: "b", name: "Bea" }, step: { engine: "codex", label: "Codex" }, variant: "step", error: "Open Murage on this computer to sign in.", onSignIn: noop, onDismiss: noop }));
+      expect(html).toContain("Open Murage on this computer to sign in.");
+    });
+    it("a bridge that throws fails with its message; one that works returns true", async () => {
+      expect((await run({ requestSignIn: async () => { throw new Error("No luck."); } })).started).toBe(false);
+      const ok = await run({ requestSignIn: async () => undefined });
+      expect(ok.started).toBe(true);
+      expect(ok.seen).toEqual(["busy:true", "error:", "busy:false"]);
     });
   });
 });

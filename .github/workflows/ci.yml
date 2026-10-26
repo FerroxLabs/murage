@@ -260,11 +260,21 @@ jobs:
           SHARD: ${{ matrix.vitest_shard }}/${{ matrix.os == 'windows-latest' && 12 || 10 }}
         run: |
           case "$RUNNER_OS_NAME" in ubuntu-*) os=linux ;; macos-*) os=mac ;; windows-*) os=windows ;; *) exit 1 ;; esac
-          node scripts/ci-test-tiers.mjs list --tier gate --os "$os" --shard "$SHARD" > "$RUNNER_TEMP/vitest-args.txt"
+          node scripts/ci-test-tiers.mjs list --tier gate --os "$os" --shard "$SHARD" --skip server/cloud-home/placeholder-launcher-root.test.ts > "$RUNNER_TEMP/vitest-args.txt"
           args=(); while IFS= read -r arg; do args+=("${arg%$'\r'}"); done < "$RUNNER_TEMP/vitest-args.txt"
           test "${#args[@]}" -gt 0 || { echo "::error::no GATE files selected for $os shard $SHARD"; exit 1; }
           echo "GATE files for $os, shard $SHARD: ${#args[@]} arguments"
           node node_modules/vitest/vitest.mjs run --tags-filter='!nightly && !perf-budget' "${args[@]}"
+      - name: Run the root-only placeholder-launcher test as root
+        # server/cloud-home/placeholder-launcher-root.test.ts is left out of the shard run above and runs here as root: the launcher
+        # makes .agents a 0555 directory and then creates the mask targets inside it, which only root (the Cloud home launcher's
+        # user) can do, so its tests (the .agents placeholder and the freeze that lasts for the turn only) fail loudly for any other
+        # user. The rest of the launcher tests are in server/cloud-home/placeholder-launcher.test.ts, which runs in the shards as the
+        # runner user: as root the launcher refuses the runner-owned checkout as a root-owned executable path, and nothing about
+        # that check is weakened. Nothing skips either file. One shard carries this step; sudo -E keeps the environment and PATH is passed through.
+        if: ${{ !cancelled() && inputs.vitest_file == '' && matrix.os == 'ubuntu-24.04' && matrix.vitest_shard == 1 }}
+        shell: bash
+        run: sudo -E env "PATH=$PATH" "$(command -v node)" node_modules/vitest/vitest.mjs run server/cloud-home/placeholder-launcher-root.test.ts
       - name: Scoped Vitest confirmation
         if: inputs.vitest_file != ''
         shell: bash

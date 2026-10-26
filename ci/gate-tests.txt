@@ -356,6 +356,10 @@ server/child-pipe-quiet.test.ts	linux+mac	child pipe cannot kill the server
 server/claude-accounts.test.ts	all	Claude account environments isolated, no inherited credentials
 server/cloud-auth-api.test.ts	all	cloud sign-in gates admin and write routes
 server/cloud-home/admission-launcher.test.ts	linux	turn locks refuse release, tombstones
+server/cloud-home/agy-launcher.test.ts	linux	Antigravity on a home: launcher argv, relay hook profile, project .agents masked, token persistence
+server/cloud-home/agy-signin-code.test.ts	linux	the in-chat Antigravity sign-in code never enters the message pipeline
+server/cloud-home/agy-signin-flow.test.ts	linux	the pasted Antigravity sign-in code is found in no stored file, log or forward
+server/cloud-home/served-ui-signin.test.ts	linux	the UI build a home serves carries the sign-in step, copy and chat gate
 server/cloud-home/apparmor-service-hardening.test.ts	linux	AppArmor profiles deny secrets and host state (sandbox)
 server/cloud-home/auth-startup.test.ts	linux	home refuses to start without auth
 server/cloud-home/b1b-auth.test.ts	linux	signed home request auth, recovery hold
@@ -404,6 +408,7 @@ server/cloud-home/model-signin-integration.test.ts	linux	paired owner sign-in cu
 server/cloud-home/model-signin.test.ts	linux	sealed custody, revoke and sign-out
 server/cloud-home/opencode-key-wiring.test.ts	linux	saved OpenCode key never reaches other engines
 server/cloud-home/own-server.test.ts	linux	own-server host validation refuses private addresses
+server/cloud-home/placeholder-launcher-root.test.ts	linux	antigravity .agents frozen for the turn only and cleaned after, run as root
 server/cloud-home/placeholder-launcher.test.ts	linux	credential chain names masked for every engine
 server/cloud-home/profile-cleanup.test.ts	linux	profile cleanup ACK only after full cleanup
 server/cloud-home/proxy-socket.test.ts	linux	forwarded IP trusted only on unix listener
@@ -521,6 +526,7 @@ server/drivers/acp/qwen.test.ts	all	Qwen Flux routing, workspace key never leake
 server/drivers/agents-proxy.test.ts	all	agents MCP tool surface and rule rows
 server/drivers/agents-result.test.ts	all	credential masked in parked copy (secrets)
 server/drivers/antigravity-auto.test.ts	linux+mac	Antigravity at Auto/Full runs commands and Murage tools only through Murage's check; stop line holds; unloaded hook refuses the turn
+server/drivers/antigravity-cloud-relay.test.ts	linux	Antigravity on a Cloud home: the hook-load check counts only the launcher's placeholders, the relay log is Murage's own and removed only as one plain file, the folder-hooks and self-guard rules hold
 server/drivers/antigravity-denied.test.ts	linux+mac	a command denied in accept-edits shows a plain line (Ask: the Ask note), never a blank reply
 server/drivers/antigravity-scope.test.ts	all	scoped home never writes owner files
 server/drivers/antigravity.test.ts	all	skips agy permissions only with the relay hook (Auto/Full), never at Ask; strips credentials
@@ -1463,3 +1469,12 @@ server/direct-rebuild-hold-late-api.test.ts	linux+mac	Protects Stop and replies:
 server/drivers/browser-extension-mcp-cancel.test.ts	all	a browser request the bot's engine cancelled still running, or one slow browser call holding every other request behind it
 scripts/browser-extension-late-download.test.mjs	all	a page download saved while the bot is told it was blocked (including after a kept file, or a removal no fresh look confirms); the owner's own download deleted on a late page announcement, or told to the bot when it was idle
 server/memory/excluded-thread-history.test.ts	all	a thread excluded from memory still read back through historical search
+server/cloud-home/contract/home-worker-contract.test.ts	linux	Home side of the pinned home <-> Worker wire contract (routes, pairing fields, door ticket)
+server/cloud-home/build-image-stages.test.ts	linux	a Cloud home image build that runs with no stage, or seals before its tree is built, so a half-built release ships
+server/cloud-home/engine-signin-status.test.ts	linux	a Cloud home reading a signed-in engine as signed out (a new bot falls to Fuigo) or a bot with no sign-in as signed in
+server/cloud-home/engine-signins.test.ts	linux	the per-bot sign-in lines, the queue of other bots to sign in and the turn guard naming the wrong bot or engine, or letting an unsigned bot run
+server/cloud-home/home-launch.test.ts	linux	a Cloud home slot starting without its signed manifest and seal, or a layout check that differs between the updater and the launcher
+server/cloud-home/image-kind.test.ts	linux	a staging image with sshd kept sold as a customer image, or a customer image that still has sshd or the staging marker
+server/cloud-home/signin-offers.test.ts	linux	the create-bot sign-in step and the sign-in offer starting a bot on the wrong engine after a skip or a failed sign-in
+server/cloud-home/update-launchers.test.ts	linux	update_software replacing the image-pinned root launchers, or the image build and the update disagreeing on the launcher list
+src/lib/cloud-signin-status.test.ts	all	the app showing a bot as signed in from another bot's sign-in, or queueing a bot that is already signed in

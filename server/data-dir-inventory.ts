@@ -208,6 +208,8 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   "memory-model-adopted.json.tmp": excluded(LEFTOVER),
   // "Leave paused" on the learning-paused Inbox item (inbox-learning-paused.ts): the one month it was set aside for. It clears
   // itself when the month changes; after a restore the item is simply asked again.
+  "cloud-signin-offers.json": excluded("Which \"sign this bot in and use it\" offers the owner dismissed on a Cloud home (cloud-home/signin-offers.ts); names only, and an offer that comes back is simply dismissed again, so it is not restored"),
+  "cloud-signin-offers.json.tmp": excluded(LEFTOVER),
   "learning-paused-left.json": excluded("This month's Leave paused choice on the learning-paused item; clears itself when the month changes, so not restored"),
 
   // Trust Murage asks for again on a restored computer: the host identity,
@@ -240,7 +242,7 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   // Home supervision owns these outside ordinary workspace restoration.
   ".murage-home-machine": excluded(TRUST),
   // The root-owned scratch directory murage-control's data-write readiness check writes one temp file in and removes
-  // (cloud-home/supervisor.ts prepareHealthProbeDir). Empty between checks; made again on every home start.
+  // (cloud-home/home-volume-spec.ts prepareHealthProbeDir, run by deploy/cloud-home/murage-home-launch.py). Empty between checks; made again on every home start.
   ".murage-health": excluded("Readiness check scratch directory, made again on every home start; not restored"),
   "secrets": excluded(CREDENTIAL), "server-home": excluded(CREDENTIAL), "proxy": excluded(RUNTIME),
   // A Cloud home's connection to the owner's own server (cloud-home/own-server.ts): its ssh key, ssh config, known hosts and the

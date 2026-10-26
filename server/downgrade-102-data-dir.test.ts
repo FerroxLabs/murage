@@ -26,7 +26,7 @@ const known102 = new Set((JSON.parse(readFileSync(join(import.meta.dirname, "tes
 /** Whether 1.0.2's backup classifies this top-level name (its patterns are 1.0.3's, unchanged). */
 const classifiedBy102 = (name: string) => known102.has(name) || DATA_DIR_PATTERNS.some(item => item.pattern.test(name));
 /** 1.0.3 names only a Cloud home writes (server/cloud-home/, the cloud browser and timezone): a Cloud home never reinstalls desktop 1.0.2. */
-const CLOUD_ONLY = [".murage-health", ".murage-home-machine", "cloud-browser-profile-usage.json", "own-server", "owner.json", "proxy", "secrets", "server-home"];
+const CLOUD_ONLY = [".murage-health", ".murage-home-machine", "cloud-browser-profile-usage.json", "cloud-signin-offers.json", "cloud-signin-offers.json.tmp", "own-server", "owner.json", "proxy", "secrets", "server-home"];
 
 beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => { closeDatabase(); });

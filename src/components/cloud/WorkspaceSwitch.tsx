@@ -26,11 +26,14 @@ export function WorkspaceSwitch({ bridge = cloudHomeBridge() }: { bridge?: Cloud
   const [workspace, setWorkspace] = useState<CloudWorkspace>({ enabled: false });
   const [pairing, setPairing] = useState(false);
   const [error, setError] = useState("");
+  const [signInRequest, setSignInRequest] = useState<{ homeId: string; bot: string; engine: string } | null>(null);
   const reload = useCallback(() => { void loadCloudWorkspace(bridge).then(setWorkspace); }, [bridge]);
   useEffect(() => { reload(); }, [reload]);
   useEffect(() => bridge?.onLive?.(() => reload()), [bridge, reload]);
   // This computer was disconnected (from the Cloud window's Settings, or from My Cloud): show the Connect panel.
   useEffect(() => bridge?.onShowConnect?.(() => { reload(); setPairing(true); }), [bridge, reload]);
+  // The Cloud window asked for a new bot's engine sign-in: show the Connect panel, which opens it.
+  useEffect(() => bridge?.onSignInRequested?.((request) => { reload(); setPairing(true); setSignInRequest(request); }), [bridge, reload]);
   // A Cloud link main handled (connect-cloud, a door link, an open-cloud for a home not connected here): show the card.
   useEffect(() => bridge?.onLinkEvent?.((event) => { reload(); if (event.kind !== "open-cloud") setPairing(true); }), [bridge, reload]);
   // A window opened after a disconnect also lands on the Connect panel.
@@ -52,7 +55,7 @@ export function WorkspaceSwitch({ bridge = cloudHomeBridge() }: { bridge?: Cloud
     <div className="flex flex-col gap-2 px-3 py-2">
       <WorkspaceSwitchView onCloud={chooseCloud} pairing={pairing} />
       {error ? <p role="alert" className="text-[13px] text-danger">{error}</p> : null}
-      {pairing ? <Suspense fallback={null}><ConnectHome bridge={bridge} paired={workspace.paired} onChanged={reload} /></Suspense> : null}
+      {pairing ? <Suspense fallback={null}><ConnectHome bridge={bridge} paired={workspace.paired} onChanged={reload} signInRequest={signInRequest} onSignInRequestHandled={() => setSignInRequest(null)} /></Suspense> : null}
     </div>
   );
 }

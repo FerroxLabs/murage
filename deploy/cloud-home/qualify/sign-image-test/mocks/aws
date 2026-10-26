@@ -1,0 +1,18 @@
+#!/bin/bash
+# Mock aws for sign-image.sh --dry-run. `kms sign` signs with a throwaway test key; nothing leaves this machine.
+set -u
+echo "aws $*" >> "$MOCK_LOG"
+case "$*" in
+    "configure list-profiles") echo "murage-image-verifier"; exit 0 ;;
+esac
+msg=""
+for a in "$@"; do case $a in fileb://*) msg=${a#fileb://} ;; esac; done
+if [[ $* == *"--profile murage-image-verifier"* ]]; then :; else
+    [[ ${AWS_ACCESS_KEY_ID:-} == FAKE-AWS-KEY-ID-7c2e && ${AWS_SECRET_ACCESS_KEY:-} == FAKE-AWS-SECRET-4d81 && ${AWS_REGION_FROM_FILE:-} == from-file ]] || { echo "aws mock: no credentials from the env file" >&2; exit 2; }
+    [[ $* != *"--profile"* ]] || { echo "aws mock: unexpected profile" >&2; exit 2; }
+    touch "$MOCK_STATE/aws.sawkey"
+fi
+[[ $* == *"--key-id alias/murage-image-verify"* && $* == *"--message-type RAW"* && $* == *"--signing-algorithm ECDSA_SHA_256"* && $* == *"--region eu-west-1"* ]] || { echo "aws mock: unexpected arguments" >&2; exit 2; }
+[[ -f $msg ]] || { echo "aws mock: no message file" >&2; exit 2; }
+cp "$msg" "$MOCK_STATE/signed.payload"
+exec node "$(dirname "${BASH_SOURCE[0]}")/sign-mock.mjs" "$msg"

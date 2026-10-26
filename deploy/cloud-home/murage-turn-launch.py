@@ -48,6 +48,40 @@ BROWSER_BWRAP = "/usr/local/libexec/murage-browser-bwrap"  # browser-bwrap.appar
 # shadow tmpfs only ever holds a few KiB of rendered config.
 SYSTEMD_RUN = "/usr/bin/systemd-run"
 SYSTEMCTL = "/usr/bin/systemctl"
+# LANE-G r3 sec. 1.6: this launcher is an image-owned regular file (root 0755, FS_IMMUTABLE_FL), never a link into a release slot.
+IMAGE_LAUNCHER = "/usr/local/libexec/murage-turn-launch"
+RELEASE_SLOT = re.compile(r"/opt/murage-releases/(A|B)(/.*)?")
+
+
+def exec_slot(path, argv, env):
+    """LANE-G r3 sec. 1.3: the one way this launcher execs anything that can be release-slot bytes. Refused (os._exit(1), nothing
+    exec'd) while uid 0 or euid 0 or with group 0 among the supplementary groups: the plain uid check is the invariant. A path reached
+    through /opt/murage or /opt/murage-releases must resolve under /opt/murage-releases/A or B. Never returns."""
+    if os.getuid() == 0 or os.geteuid() == 0 or 0 in os.getgroups():
+        os._exit(1)
+    for candidate in [path] + list(argv):
+        if isinstance(candidate, str) and (candidate.startswith("/opt/murage") or candidate.startswith("/proc/self/fd/")):
+            if not RELEASE_SLOT.fullmatch(os.path.realpath(candidate)):
+                os._exit(1)
+    os.execve(path, argv, env)
+    os._exit(1)
+
+
+def assert_image_launcher(path=IMAGE_LAUNCHER):
+    """LANE-G r3 sec. 1.6: the sudo entry point runs only as the image's inode: /usr/local/libexec/murage-turn-launch is a regular
+    file, uid 0, FS_IMMUTABLE_FL, and is this very file (st_dev, st_ino). A copy, a link or a replaced file refuses every turn."""
+    info = os.lstat(path)
+    own = os.stat(__file__)
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or (info.st_dev, info.st_ino) != (own.st_dev, own.st_ino):
+        raise ValueError("Cloud turn launcher must run from the image")
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        flags = bytearray(8)
+        fcntl.ioctl(fd, FS_IOC_GETFLAGS, flags)
+        if not int.from_bytes(flags[:4], sys.byteorder) & FS_IMMUTABLE_FL:
+            raise ValueError("Cloud turn launcher must run from the image")
+    finally:
+        os.close(fd)
 TURN_SLICE, BROWSER_SLICE = "murage-turns.slice", "murage-browsers.slice"
 TURN_RUNTIME_MAX_SEC = 6 * 60 * 60  # hard cap on an ordinary turn scope, enforced by systemd even if this launcher is SIGKILLed
 TURN_SCOPE_PROPERTIES = ["TasksMax=512", "MemoryMax=40%", "TimeoutStopSec=5", "BindsTo=murage-home.service", "After=murage-home.service", "RuntimeMaxSec=" + str(TURN_RUNTIME_MAX_SEC)]
@@ -78,6 +112,10 @@ LOGIN_COMMANDS = {
     "claudeAgent": ("/opt/murage/bin/claude", {"login": ["setup-token"]}),
     "grokAgent": ("/opt/murage/bin/grok", {"login": ["login", "--device-auth"]}),
     "kimiAgent": ("/opt/murage/bin/kimi", {"login": ["login", "--region", "global"]}),
+    # agy 1.4.4 has no login subcommand: bare `agy` in a pty shows its sign-in menu (1. Google OAuth),
+    # prints the Google link and then waits, with no time limit, for the pasted code. `-p` would give
+    # the code only 60 s, so the full-screen form is used and the launcher presses Enter on the menu.
+    "antigravity": ("/opt/murage/bin/agy", {"login": []}),
     "opencodeGo": ("/opt/murage/bin/opencode", {"login": ["auth", "login"]}),
 }
 # r9 "launcher modes": Claude's sign-in is C (engine-wide, takes no bot); every other
@@ -85,7 +123,9 @@ LOGIN_COMMANDS = {
 # for OpenCode with a provider; `logout` for every engine above.
 LOGIN_C_ENGINES = frozenset({"claudeAgent"})
 ENROLL_ENGINES = frozenset({"codex", "opencodeGo"})
-LOGIN_LABEL = {"codex": "Codex", "claudeAgent": "Claude", "grokAgent": "Grok", "kimiAgent": "Kimi", "opencodeGo": "OpenCode"}
+# One scripted keystroke, written once after the CLI's first output, so the customer never sees a menu.
+LOGIN_FIRST_INPUT = {"antigravity": "\r"}
+LOGIN_LABEL = {"codex": "Codex", "claudeAgent": "Claude", "antigravity": "Antigravity", "grokAgent": "Grok", "kimiAgent": "Kimi", "opencodeGo": "OpenCode"}
 LOGIN_SECRET_SHAPE = re.compile(r"[A-Za-z0-9._-]{20,512}", re.ASCII)
 LOGIN_PROVIDER_SHAPE = re.compile(r"[a-z][a-z0-9_-]{0,31}", re.ASCII)
 # Per-engine environment for a sign-in, relative to the engine home. It must name the
@@ -99,6 +139,8 @@ LOGIN_ENV = {
     "claudeAgent": {"CLAUDE_CONFIG_DIR": "/.claude", "DISABLE_UPDATES": "1", "DISABLE_AUTOUPDATER": "1"},
     "grokAgent": {"GROK_HOME": "/.grok", "GROK_DISABLE_AUTOUPDATER": "1"},
     "kimiAgent": {"KIMI_CODE_HOME": "/.kimi-code", "KIMI_CODE_NO_AUTO_UPDATE": "1"},
+    # agy updates itself unless this is exactly "true" (measured: "1" still calls the updater).
+    "antigravity": {"AGY_CLI_DISABLE_AUTO_UPDATE": "true"},
     "opencodeGo": {"OPENCODE_DISABLE_AUTOUPDATE": "1"},
 }
 LOGIN_RUNTIME_MAX_SEC = 20 * 60  # hard cap on an engine sign-in scope
@@ -224,7 +266,7 @@ def relay_run(argv, timeout=30):
             os.dup2(writefd, 1)
             os.dup2(os.open(os.devnull, os.O_WRONLY), 2)
             os.closerange(3, 1048576)
-            os.execve(argv[0], argv, os.environ)
+            exec_slot(argv[0], argv, os.environ)
         finally:
             os._exit(127)
     os.close(writefd)
@@ -1007,7 +1049,7 @@ def run_session_host(home, session, env, binary=BROWSER_BINARY, ready_fd=1, wait
             for target in (0, 1, 2):
                 os.dup2(null, target)
             os.closerange(3, 1048576)
-            os.execve(binary, [binary] + HOST_WARMUP, env)
+            exec_slot(binary, [binary] + HOST_WARMUP, env)
         finally:
             os._exit(127)
     deadline, status = time.monotonic() + wait, None
@@ -1804,8 +1846,8 @@ def run_browser_restore_step(plan, argv, node, script, uid, gid, wait=BROWSER_RE
                     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
                     if drop:
                         os.setgroups([]); os.setgid(gid); os.setuid(uid)
-                        if os.getuid() == 0 or os.geteuid() == 0:
-                            os._exit(1)
+                    if os.getuid() == 0 or os.geteuid() == 0:
+                        os._exit(1)  # never slot bytes as root, dropped here or by the caller (exec_slot repeats the check)
                     # After the uid drop (commit_creds clears the setting): die with the middle child.
                     if ctypes.CDLL(None, use_errno=True).prctl(PR_SET_PDEATHSIG, int(signal.SIGKILL), 0, 0, 0):
                         os._exit(1)
@@ -1813,7 +1855,7 @@ def run_browser_restore_step(plan, argv, node, script, uid, gid, wait=BROWSER_RE
                         os._exit(1)  # the middle is already gone: its end of the pipe closed
                     maximum = resource.getrlimit(resource.RLIMIT_NOFILE)[1]
                     os.closerange(3, maximum if maximum != resource.RLIM_INFINITY else 1048576)
-                    os.execve(node, [node, "--max-old-space-size=%d" % BROWSER_RESTORE_HEAP_MB, script] + argv, plan["env"])
+                    exec_slot(node, [node, "--max-old-space-size=%d" % BROWSER_RESTORE_HEAP_MB, script] + argv, plan["env"])
                 finally:
                     os._exit(1)
             os.close(alive_read)
@@ -2235,13 +2277,13 @@ def validate_request(request, manifest_path=ENGINE_MANIFEST, manifest_uid=0, eng
         raise Refusal("Cloud turn names no bot")
     # The request's env is a proposal: engine_environment() keeps only the names this
     # engine is allowed, pins every path itself and drops the rest (never a strip list).
-    env, dropped = engine_environment(engine, home, env, scratch)
+    env, dropped = engine_environment(engine, home, env, scratch, bot)
     if dropped:
         # Names only, never values: a credential under a wrong name must not reach the journal.
         print("Cloud turn environment dropped: " + " ".join(sorted(dropped)), file=sys.stderr)
     # C-mode sign-ins are rendered from the root store, never from the request or a staged
     # file; a login renders none (it runs on the base configuration).
-    render["credentials"] = {} if login else c_credentials(home, engine)
+    render["credentials"] = {} if login else c_credentials(home, engine, bot)
     signin_environment(engine, env, render)
     env.update(render_environment(engine, home, render))
     if engine == "opencodeGo" and render["credentials"].get("api") and opencode_oauth_staged(home, bot):
@@ -2274,7 +2316,9 @@ def validate_login_request(request, engine_root="/data/engine-homes", tombstones
     # engine-wide and never do (r8 R4, r9 "launcher modes").
     if action == "login" and engine not in LOGIN_C_ENGINES and bot is None:
         raise Refusal("Cloud sign-in names no bot")
-    if bot is not None and (action == "enroll-key" or (action == "login" and engine in LOGIN_C_ENGINES)):
+    # Claude's login is the home's own by default and may name a bot: that bot's own Claude sign-in
+    # (F4 C2), which wins over the home's for that bot only. A key enrollment never names a bot.
+    if bot is not None and action == "enroll-key":
         raise Refusal("Cloud sign-in takes no bot")
     if (secret is not None) != (action == "enroll-key") or (secret is not None and (not isinstance(secret, str) or LOGIN_SECRET_SHAPE.fullmatch(secret) is None)):
         raise Refusal("Cloud sign-in key is not allowed")
@@ -2404,6 +2448,7 @@ ENGINE_ENV_ALLOW = {
     "codex": frozenset({"OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL", "MURAGE_PROVIDER_API_KEY"}),
     # Grok Build runs on its own grok.com login in $GROK_HOME/auth.json; provider routing
     # on a Cloud home is refused server-side (grokRouteOnHome), so no route key is needed.
+    "antigravity": frozenset(),
     "grokAgent": frozenset({"GROK_CONFIG"}),
     "kimiAgent": frozenset({"KIMI_MODEL_NAME", "KIMI_MODEL_API_KEY", "KIMI_MODEL_BASE_URL", "KIMI_MODEL_PROVIDER_TYPE", "KIMI_MODEL_DISPLAY_NAME"}),
     "opencodeGo": frozenset({"OPENCODE_API_KEY", "OPENCODE_CONFIG_CONTENT"}),
@@ -2424,8 +2469,6 @@ FLUX_MEMORY_HEADERS = {"x-flux-memory-app": re.compile(r"murage"), "x-flux-memor
                        "x-flux-memory-space": re.compile(r"[A-Za-z0-9._:#-]{1,128}"),
                        "x-flux-memory-read": re.compile(r"[A-Za-z0-9._:#-]{1,128}(,[A-Za-z0-9._:#-]{1,128}){0,7}")}
 INLINE_CONFIG_MAX = 8192
-# The OpenCode turn permission set is carried once top level and once per OpenCode agent (opencode-go.ts).
-OPENCODE_CONFIG_MAX = 65536
 
 def _no_duplicate_keys(pairs):
     out = {}
@@ -2443,6 +2486,10 @@ def _memory_headers(value):
     return isinstance(value, dict) and "x-flux-memory-app" in value and all(
         name in FLUX_MEMORY_HEADERS and isinstance(text, str) and FLUX_MEMORY_HEADERS[name].fullmatch(text) for name, text in value.items())
 
+# The OpenCode overlay can also carry the turn permission set, which is written once at the top level and once per OpenCode agent
+# (about 2.4 KB each, 11.7 KB in all with 100 key-file read rules), so its cap is wider; it is still bounded and shape checked.
+OPENCODE_INLINE_CONFIG_MAX = 32768
+
 def _inline_config(value, limit=INLINE_CONFIG_MAX):
     if len(value.encode("utf-8", "surrogatepass")) > limit:
         return None
@@ -2456,46 +2503,47 @@ def fuigo_config_value(value):
     doc = _inline_config(value)
     return _only(doc, "models") and _only(doc["models"], "extra_headers") and _memory_headers(doc["models"]["extra_headers"])
 
-# applyOpenCodeTurnPermission (opencode-go.ts) writes the turn's permission set on every OpenCode spawn: everything that
-# acts asks, and only these read-only tools run unasked. The validator accepts that shape and nothing wider.
-OPENCODE_UNASKED_TOOLS = frozenset({"glob", "grep", "list", "todoread", "todowrite"})
-OPENCODE_AGENT_NAMES = frozenset({"build", "plan", "general", "explore"})
-OPENCODE_TOOL_NAME = re.compile(r"[A-Za-z0-9_.*-]{1,64}")
+OPENCODE_AGENTS = ("build", "plan", "general", "explore")
+# openCodeTurnPermission() (opencode-go.ts), spelled out. The env value is untrusted, so the launcher accepts exactly the
+# document the driver emits and nothing narrower or wider: a permission left out, widened or added is the owner's config
+# winning over Murage's access level. engine-env-allowlist.test.ts compares these constants with the driver's real output,
+# so a driver change that is not copied here fails the suite instead of refusing every OpenCode turn.
+OPENCODE_ASKED_TOOLS = ("bash", "edit", "write", "task", "skill", "lsp", "webfetch", "websearch", "codesearch", "external_directory", "doom_loop")
+OPENCODE_ALLOWED_TOOLS = ("glob", "grep", "list", "todoread", "todowrite")
+# Every key-file read rule the driver emits (SENSITIVE_PATHS through openCodeReadPattern), each set to "ask"; "*" is "allow".
+OPENCODE_READ_ASK = (
+    "*.env", "*.env.*", "*.ssh/*", "*.aws/credentials", "*.netrc", "*.npmrc", "*.pypirc", "*.docker/config.json", "*credentials.json",
+    "*credential.json", "*serviceaccount*", "*.zshrc", "*.zshenv", "*.zprofile", "*.bashrc", "*.bash_profile", "*.profile", "*.codex/auth.json",
+    "*.claude/.credentials*", "*.murage/config.json", "*provider-keys*", "*_netrc", "*_npmrc", "*.azure/*", "*AppData/Roaming/gcloud/*",
+    "*AppData/Roaming/npm/*", "*Login Data", "*id_ecdsa*", "*.ssh/*.pem", "*.ssh/*.ppk", "*.kube/config", "*.git-credentials", "*.pgpass",
+    "*credentials.db", "*.zlogin", "*.zlogout", "*.bash_login", "*.bash_logout", "*.psqlrc", "*.config/fish/config.fish", "*.config/fish/conf.d/*",
+    "*/etc/profile", "*/etc/profile.d/*", "*/etc/bash.bashrc", "*/etc/bashrc", "*/etc/zshenv", "*/etc/zsh/zshenv", "*/etc/zprofile", "*/etc/zshrc",
+    "*/etc/zlogin", "*.gitconfig", "*.git/config", "*.git/hooks/*", "*.claude/settings*.json", "*.vscode/tasks.json", "*.husky/*",
+    "*node_modules/.bin/*", "*murage-exec*/*", "*murage-exec*", "*native/antigravity-relay/*", "*native/antigravity-ask/*",
+    "*native/antigravity-scope/*", "*native/codex-scope/*", "*murage-agy-relay*", "*murage-hook.mjs", "*murage-hook.cmd", "*murage-hook.env",
+    "*ask-hook-*.cjs", "*.agents/hooks.json", "*.agent/hooks.json", "*_agents/hooks.json", "*_agent/hooks.json", "*.agents/plugins.json",
+    "*.agent/plugins.json", "*_agents/plugins.json", "*_agent/plugins.json", "*.agents/plugins/*", "*.agent/plugins/*", "*_agents/plugins/*",
+    "*_agent/plugins/*", "*.agents/agents/*", "*.agent/agents/*", "*_agents/agents/*", "*_agent/agents/*", "*.envrc",
+)
+# Insertion order is the driver's (openCodeTurnPermission): "*", the asked tools, `read`, then the allowed tools. It is serialized
+# as is and OpenCode applies the LAST matching glob, so `read` keeps "*" first and the ask patterns after it.
+OPENCODE_PERMISSION = {"*": "ask", **{tool: "ask" for tool in OPENCODE_ASKED_TOOLS},
+                       "read": {"*": "allow", **{pattern: "ask" for pattern in OPENCODE_READ_ASK}},
+                       **{tool: "allow" for tool in OPENCODE_ALLOWED_TOOLS}}
 
 def _opencode_permission(perm):
-    if not isinstance(perm, dict) or perm.get("*") != "ask" or len(perm) > 256:
-        return False
-    for tool, rule in perm.items():
-        if not isinstance(tool, str) or not OPENCODE_TOOL_NAME.fullmatch(tool):
-            return False
-        if tool == "read":
-            if not isinstance(rule, dict) or rule.get("*") != "allow" or len(rule) > 256 or not all(
-                    isinstance(k, str) and 0 < len(k) <= 256 and v in ("ask", "allow") for k, v in rule.items()):
-                return False
-        elif rule != ("allow" if tool in OPENCODE_UNASKED_TOOLS else "ask"):
-            return False
-    return True
+    """The permission set must equal openCodeTurnPermission() exactly: same keys, same values, same types. Equality on
+    plain dicts of strings is the whole check, so an extra, missing or widened entry (or a value of another type) fails."""
+    return (isinstance(perm, dict) and isinstance(perm.get("read"), dict) and len(perm) == len(OPENCODE_PERMISSION)
+            and len(perm["read"]) == len(OPENCODE_PERMISSION["read"]) and perm == OPENCODE_PERMISSION)
 
 def _opencode_agents(agent, perm):
-    return isinstance(agent, dict) and bool(agent) and set(agent) <= OPENCODE_AGENT_NAMES and all(
-        _only(entry, "permission") and entry["permission"] == perm for entry in agent.values())
+    """applyOpenCodeTurnPermission(): exactly OpenCode's own agents, each holding exactly the same permission set."""
+    return (isinstance(agent, dict) and set(agent) == set(OPENCODE_AGENTS)
+            and all(_only(entry, "permission") and _opencode_permission(entry["permission"]) for entry in agent.values()))
 
-def opencode_config_value(value):
-    """{"provider": {"flux": {"options": {"headers": {x-flux-memory-*: ...}}}}} plus, optionally,
-    "mcp": {name: {"enabled": false}}: the owner's MCP servers switched off, which only narrows.
-    The turn's permission set (permission, agent, default_agent) rides along as one unit."""
-    doc = _inline_config(value, OPENCODE_CONFIG_MAX)
-    # The provider block is optional: isolateOpenCodeFromPersonalSetup (opencode-go.ts) writes {"mcp": ...} alone when no
-    # memory overlay was built. A document with neither a provider nor a server to switch off carries nothing and is refused.
-    if isinstance(doc, dict) and "permission" in doc:
-        perm = doc["permission"]
-        if not (_opencode_permission(perm) and _opencode_agents(doc.get("agent"), perm) and doc.get("default_agent") == "build"):
-            return False
-        doc = {key: item for key, item in doc.items() if key not in ("permission", "agent", "default_agent")}
-        if not doc:
-            return True
-    if not isinstance(doc, dict) or not set(doc) <= {"provider", "mcp"} or not (doc.get("provider") or doc.get("mcp")):
-        return False
+def _opencode_provider_mcp(doc):
+    """The two non-permission fields the driver sends (opencodeConfigOverlay, isolateOpenCodeFromPersonalSetup), validated."""
     if "provider" in doc:
         provider = doc["provider"]
         if not (_only(provider, "flux") and _only(provider["flux"], "options") and _only(provider["flux"]["options"], "headers")
@@ -2503,6 +2551,48 @@ def opencode_config_value(value):
             return False
     mcp = doc.get("mcp", {})
     return isinstance(mcp, dict) and all(re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", name) and _only(entry, "enabled") and entry["enabled"] is False for name, entry in mcp.items())
+
+def opencode_config_value(value):
+    """PROBE turns only (no bot; --version, models): the proposal is forwarded as sent, so it must be exactly
+    {"provider": {"flux": {"options": {"headers": {x-flux-memory-*: ...}}}}} plus, optionally,
+    "mcp": {name: {"enabled": false}} and, optionally, the turn's permission set. A bot turn never forwards the string
+    (opencode_turn_config)."""
+    doc = _inline_config(value, OPENCODE_INLINE_CONFIG_MAX)
+    # The provider block is optional: isolateOpenCodeFromPersonalSetup (opencode-go.ts) writes {"mcp": ...} alone when no
+    # memory overlay was built. A document with neither a provider nor a server to switch off nor a permission set carries
+    # nothing and is refused.
+    if not isinstance(doc, dict) or not set(doc) <= {"provider", "mcp", "permission", "agent", "default_agent"} or not (doc.get("provider") or doc.get("mcp") or doc.get("permission")):
+        return False
+    # The three permission keys travel together (applyOpenCodeTurnPermission writes all of them).
+    if ("permission" in doc) != ("agent" in doc) or ("permission" in doc) != ("default_agent" in doc):
+        return False
+    if "permission" in doc and not (_opencode_permission(doc["permission"]) and _opencode_agents(doc["agent"], doc["permission"]) and doc["default_agent"] == "build"):
+        return False
+    return _opencode_provider_mcp(doc)
+
+def _opencode_json(value):
+    """JSON.stringify's bytes: compact separators, no ASCII escaping, insertion order."""
+    return json.dumps(value, separators=(",", ":"), ensure_ascii=False)
+
+def opencode_turn_sections():
+    """The launcher's own `permission` and `agent` sections, serialized in applyOpenCodeTurnPermission's order."""
+    return _opencode_json(OPENCODE_PERMISSION), _opencode_json({name: {"permission": OPENCODE_PERMISSION} for name in OPENCODE_AGENTS})
+
+def opencode_turn_config(value):
+    """The OPENCODE_CONFIG_CONTENT a BOT turn runs with: built here, never the proposed string (r5: a forwarded string keeps
+    its key order, and OpenCode applies the LAST matching glob; a document without `permission` ran on OpenCode's allow-all
+    defaults). Only the proposal's provider and mcp survive, validated; its permission, agent and default_agent are IGNORED
+    (not refused), because the launcher's sections always replace them, so a tampered copy has no effect and a driver that
+    re-orders its own output cannot get a turn refused. With no proposal at all the permission sections are synthesized
+    (not refused), so an Ask bot is carded on every turn however the document went missing. `value` is None when absent."""
+    doc = {}
+    if value is not None:
+        doc = _inline_config(value, OPENCODE_INLINE_CONFIG_MAX)
+        if not isinstance(doc, dict) or not set(doc) <= {"provider", "mcp", "permission", "agent", "default_agent"} or not (doc.get("provider") or doc.get("mcp") or doc.get("permission")) or not _opencode_provider_mcp(doc):
+            raise Refusal("Cloud engine environment OPENCODE_CONFIG_CONTENT is malformed")
+    permission, agent = opencode_turn_sections()
+    parts = [_opencode_json(key) + ":" + _opencode_json(doc[key]) for key in ("provider", "mcp") if key in doc]
+    return "{" + ",".join(parts + ['"permission":' + permission, '"agent":' + agent, '"default_agent":"build"']) + "}"
 
 # Grok Build shares Fuigo's shell: grok.ts applyFluxMemory builds GROK_CONFIG with the same
 # fuigoConfigOverlay, so it gets the same validator, for this engine only (1.0.4 audit 11-2 follow-up).
@@ -2513,6 +2603,7 @@ ENGINE_ENV_PIN = {
     "claudeAgent": {"CLAUDE_CONFIG_DIR": "/.claude", "DISABLE_UPDATES": "1", "DISABLE_AUTOUPDATER": "1", "DISABLE_TELEMETRY": "1",
                     "DISABLE_ERROR_REPORTING": "1", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"},
     "codex": {"CODEX_HOME": "/.codex"},
+    "antigravity": {"AGY_CLI_DISABLE_AUTO_UPDATE": "true"},
     "grokAgent": {"GROK_HOME": "/.grok", "GROK_DISABLE_AUTOUPDATER": "1"},
     "kimiAgent": {"KIMI_CODE_HOME": "/.kimi-code", "KIMI_CODE_NO_AUTO_UPDATE": "1"},
     "opencodeGo": {"OPENCODE_CONFIG": "/.config/opencode/opencode.json", "OPENCODE_CONFIG_DIR": "/.config/opencode", "OPENCODE_DISABLE_PROJECT_CONFIG": "1",
@@ -2576,15 +2667,18 @@ def pinned_environment(engine, home, scratch=()):
 def fuigo_home(home, scratch=()):
     return scratch[0] if scratch else home + "/.fuigo"
 
-def engine_environment(engine, home, proposal, scratch=()):
+def engine_environment(engine, home, proposal, scratch=(), bot=None):
     """The engine's environment from the request's proposal: allowed names copied, every
     path pinned, everything else dropped. Returns (env, dropped names)."""
     pinned = pinned_environment(engine, home, scratch)
     allowed = COMMON_ENV | ENGINE_ENV_ALLOW.get(engine, frozenset())
     env, dropped = {}, []
+    bot_opencode = engine == "opencodeGo" and bot is not None
     for key, value in proposal.items():
         if key in pinned:
             continue
+        if bot_opencode and key == "OPENCODE_CONFIG_CONTENT":
+            continue  # handled below: a bot turn gets the launcher's own document
         check = ENGINE_ENV_VALUE.get((engine, key))
         if check and key in allowed and not check(value):
             # Present but malformed: the driver meant a memory overlay, so running without it would
@@ -2594,6 +2688,8 @@ def engine_environment(engine, home, proposal, scratch=()):
             env[key] = value
         else:
             dropped.append(key)
+    if bot_opencode:
+        env["OPENCODE_CONFIG_CONTENT"] = opencode_turn_config(proposal.get("OPENCODE_CONFIG_CONTENT"))
     env.update(pinned)
     return env, dropped
 
@@ -2620,6 +2716,10 @@ HTTPS_URL_SHAPE = re.compile(r"https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?(?:/[A-Za-z
 LABEL_SHAPE = re.compile(r"[A-Za-z0-9 ._-]{1,64}", re.ASCII)
 INT_SHAPE = re.compile(r"[0-9]{1,9}", re.ASCII)
 BROKER_SOCKET_SHAPE = re.compile(r"/data/broker/[A-Za-z0-9_-]{8,80}\.sock", re.ASCII)
+# Antigravity's Auto/Full relay (hooks profile "relay"): the server binds this socket in /data/broker and agy writes this log there.
+AGY_RELAY_SOCKET_SHAPE = re.compile(r"/data/broker/agyr-[0-9a-f]{12}\.sock", re.ASCII)
+AGY_RELAY_LOG_SHAPE = re.compile(r"/data/broker/agyr-[0-9a-f]{12}\.log", re.ASCII)
+AGY_RELAY_TOKEN_SHAPE = re.compile(r"[0-9a-f]{48}", re.ASCII)
 UUID_SHAPE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.ASCII)
 TOOL_LIST_SHAPE = re.compile(r"[A-Za-z0-9_,:*() .-]{0,4096}", re.ASCII)
 SECRET_MAX = 4 * 1024
@@ -2673,6 +2773,7 @@ EFFORTS = frozenset({"none", "low", "medium", "high", "xhigh", "max"})  # contra
 RENDER_PARTS = {
     "claudeAgent": frozenset({"mcp", "systemPrompt"}),
     "codex": frozenset({"route", "mcp", "resume", "codexPolicy"}),
+    "antigravity": frozenset({"mcp", "hooks"}),
     "grokAgent": frozenset(),
     "kimiAgent": frozenset(),
     "opencodeGo": frozenset({"route"}),
@@ -2844,7 +2945,7 @@ def validate_render(engine, render, unit, login=False, manifest_path=ENGINE_MANI
     """The request's `render` (design 2.3), validated as a whole before any filesystem
     work. Returns the launcher's own copy; any unknown key, wrong type or value outside
     its shape refuses the turn."""
-    out = {"engine": engine, "unit": unit, "login": bool(login), "route": None, "mcp": {}, "systemPrompt": None, "memoryTools": False, "resume": None, "codexPolicy": None}
+    out = {"engine": engine, "unit": unit, "login": bool(login), "route": None, "mcp": {}, "systemPrompt": None, "memoryTools": False, "resume": None, "codexPolicy": None, "hooks": None}
     if render is None:
         return out
     if login:
@@ -2864,7 +2965,7 @@ def validate_render(engine, render, unit, login=False, manifest_path=ENGINE_MANI
         return out
     for key in render:
         if key not in parts:
-            raise Refusal("Cloud turn render part is not allowed: " + key if key in {"route", "mcp", "systemPrompt", "memoryTools", "resume", "codexPolicy"} else "Cloud turn render has an unknown key")
+            raise Refusal("Cloud turn render part is not allowed: " + key if key in {"route", "mcp", "systemPrompt", "memoryTools", "resume", "codexPolicy", "hooks"} else "Cloud turn render has an unknown key")
     if "route" in render:
         out["route"] = validate_route(engine, render["route"])
     if "mcp" in render:
@@ -2872,6 +2973,19 @@ def validate_render(engine, render, unit, login=False, manifest_path=ENGINE_MANI
         for stanza in out["mcp"].values():
             if MCP_PROXIES[stanza["proxy"]]["script"] is not None:
                 stanza["script"] = proxy_script(stanza["proxy"], manifest_path, manifest_uid, cache_root)
+    if "hooks" in render:
+        # A named profile, never hook text: the launcher owns the bytes (AGY_HOOK_PROFILES).
+        hooks = render["hooks"]
+        if isinstance(hooks, dict):
+            # The relay profile carries only this turn's socket and token (the launcher owns the hook program).
+            if set(hooks) != {"profile", "socket", "token"} or hooks["profile"] != "relay" or not isinstance(hooks["socket"], str) or not isinstance(hooks["token"], str) \
+                    or not shaped(AGY_RELAY_SOCKET_SHAPE, hooks["socket"]) or not shaped(AGY_RELAY_TOKEN_SHAPE, hooks["token"]):
+                raise Refusal("Cloud turn render hooks is not allowed")
+            out["hooks"] = {"profile": "relay", "socket": hooks["socket"], "token": hooks["token"]}
+        else:
+            if not isinstance(hooks, str) or hooks not in AGY_HOOK_PROFILES:
+                raise Refusal("Cloud turn render hooks is not allowed")
+            out["hooks"] = hooks
     if "systemPrompt" in render:
         if not text_value(render["systemPrompt"]):
             raise Refusal("Cloud turn system prompt is not allowed")
@@ -2914,17 +3028,25 @@ OPENCODE_AUTH_MAX = 64 * 1024
 CLAUDE_TOKEN_SHAPE = re.compile(r"sk-ant-oat01-[A-Za-z0-9_-]{40,}", re.ASCII)
 OPENCODE_SHADOWED = "Cloud OpenCode sign-in: key entries shadow the OAuth sign-in"
 
-def c_credentials(home, engine):
+def c_credentials(home, engine, bot=None):
     """The engine's C store as turns render it (r8 R3, r9 "state scopes"), read as root,
     fd-relative and O_NOFOLLOW: Claude {"token"}, Codex {"key"}, OpenCode {"api": {provider:
     entry}}; {} when the store is absent, signed out, damaged or holds a value outside its
-    shape. Never staged, never collected."""
+    shape. Never staged, never collected. Claude alone also has a per-bot store (F4 C2, the
+    bot's own sign-in): for a turn of that bot it is read first and wins over the home's;
+    absent, signed out or damaged, the home's store answers."""
+    if engine == "claudeAgent" and bot is not None:
+        return stored_credentials(home, engine, bot) or stored_credentials(home, engine, None)
+    return stored_credentials(home, engine, None)
+
+def stored_credentials(home, engine, bot=None):
+    """c_credentials for one store: the engine's C store (bot None) or the bot's own store."""
     try:
         home_fd = open_directory(home)
     except (OSError, ValueError):
         return {}
     try:
-        store = signin_store(home_fd)
+        store = signin_store(home_fd) if bot is None else signin_store(home_fd, bot)
         try:
             _generation, record, files = store_current(store)
         finally:
@@ -3036,6 +3158,93 @@ def claude_mcp_text(render):
         servers[name] = {"command": NODE, "args": args, "env": {"ELECTRON_RUN_AS_NODE": "1", **stanza["env"]}}
     return json.dumps({"mcpServers": servers}, separators=(",", ":"))
 
+# agy reads ~/.gemini/config/hooks.json and ~/.gemini/config/mcp_config.json. The Ask profile is the
+# driver's read-only PreToolUse hook (server/drivers/antigravity.ts ANTIGRAVITY_ASK_HOOK_SOURCE); a test
+# holds the two byte-equal. A further profile (the stop-line hook for Auto) is added here once proven.
+AGY_ASK_HOOK_SOURCE = """"use strict";
+const READS = new Set(["read_file","view_file","list_dir","list_directory","grep_search","find_by_name","view_file_outline","view_code_item","view_content_chunk","search_web"]);
+const REASON = "At Ask, I can read and plan. Choose Auto to let me make changes.";
+let raw = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { raw += chunk; });
+process.stdin.on("end", () => {
+  let name = "";
+  try { const call = JSON.parse(raw); name = call && call.toolCall && typeof call.toolCall.name === "string" ? call.toolCall.name : ""; } catch { name = ""; }
+  process.stdout.write(JSON.stringify(READS.has(name) ? { decision: "allow" } : { decision: "deny", reason: REASON }));
+});
+"""
+AGY_RELAY_SOURCE = r""""use strict";
+// Murage pre-tool relay for Antigravity. Generated; do not edit.
+const fs = require("node:fs");
+const net = require("node:net");
+const path = require("node:path");
+const out = (answer) => { try { process.stdout.write(JSON.stringify(answer)); } catch {} process.exit(0); };
+const deny = (why) => out({ decision: "deny", reason: "Murage did not allow this call: " + String(why).slice(0, 300) });
+try {
+  setTimeout(() => deny("the check took too long"), 910000).unref();
+  const env = {};
+  for (const line of fs.readFileSync(path.join(__dirname, "murage-agy-relay.env"), "utf8").split("\n")) {
+    const at = line.indexOf("=");
+    if (at > 0) env[line.slice(0, at)] = line.slice(at + 1);
+  }
+  if (!env.SOCKET || !env.TOKEN) deny("no socket");
+  let raw = "";
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (chunk) => { raw += chunk; });
+  process.stdin.on("error", () => deny("no input"));
+  process.stdin.on("end", () => {
+    let call;
+    try { call = JSON.parse(raw); } catch { return deny("the call could not be read"); }
+    const tool = call && call.toolCall;
+    if (!tool || typeof tool.name !== "string") return deny("the call names no tool");
+    const message = { kind: "pretool", token: env.TOKEN, tool_name: tool.name, tool_input: tool.args, tool_use_id: String(call.conversationId) + ":" + String(call.stepIdx), turn_id: call.conversationId };
+    const socket = net.connect(env.SOCKET);
+    let data = "";
+    socket.setEncoding("utf8");
+    socket.on("connect", () => socket.write(JSON.stringify(message) + "\n"));
+    socket.on("data", (d) => {
+      data += d;
+      const at = data.indexOf("\n");
+      if (at < 0) return;
+      socket.destroy();
+      let answer;
+      try { answer = JSON.parse(data.slice(0, at)); } catch { return deny("no usable answer"); }
+      if (answer && answer.decision === "allow") return out({ decision: "allow" });
+      if (answer && answer.decision === "deny") return out({ decision: "deny", reason: String(answer.reason || "Murage did not allow this call").slice(0, 2000) });
+      deny("no usable answer");
+    });
+    socket.on("error", () => deny("Murage could not be reached"));
+    socket.on("close", () => deny("Murage could not be reached"));
+  });
+} catch (error) {
+  deny(error && error.message ? error.message : "failed");
+}
+"""
+AGY_RELAY_SCRIPT = "murage-agy-relay.cjs"
+AGY_RELAY_ENV = "murage-agy-relay.env"
+AGY_RELAY_TIMEOUT = 930  # HOOK_TIMEOUT_SEC (codex-hook.ts): the server's 15-minute ask bound plus 30 s
+AGY_HOOK_SCRIPT = "murage-ask-hook.cjs"
+AGY_HOOK_PROFILES = frozenset({"ask"})
+
+def agy_mcp_text(render):
+    servers = {}
+    for name, stanza in render["mcp"].items():
+        row = MCP_PROXIES[stanza["proxy"]]
+        if row["script"] is None:
+            servers[name] = {"serverUrl": stanza["url"]}
+            continue
+        args = [stanza["script"]] + ([stanza["socket"]] if row["arg"] == "socket" else ["--server", stanza["server"]] if row["arg"] == "server" else [])
+        servers[name] = {"command": NODE, "args": args, "env": {"ELECTRON_RUN_AS_NODE": "1", **stanza["env"]}}
+    return json.dumps({"mcpServers": servers}, separators=(",", ":"))
+
+def agy_hooks_text(home):
+    command = '"' + NODE + '" "' + home + "/.gemini/config/" + AGY_HOOK_SCRIPT + '"'
+    return json.dumps({"murage-ask-stop": {"PreToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": command, "timeout": 15}]}]}}, indent=2) + "\n"
+
+def agy_relay_hooks_text(home):
+    command = '"' + NODE + '" "' + home + "/.gemini/config/" + AGY_RELAY_SCRIPT + '"'
+    return json.dumps({"murage-relay": {"PreToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": command, "timeout": AGY_RELAY_TIMEOUT}]}]}}, indent=2) + "\n"
+
 def codex_config_text(render):
     text = "check_for_update_on_startup = false\n"
     route = render["route"]
@@ -3090,6 +3299,7 @@ PARSED_FILES = frozenset({
     "codex.config", "codex.auth",
     "grok.config",
     "kimi.config", "kimi.tui", "kimi.mcp", "kimi.cwd.local", "kimi.cwd.mcp",
+    "agy.mcp", "agy.hooks", "agy.hook-script", "agy.hook-env", "agy.project-mask",
     "opencode.config", "opencode.gitignore",
     "fuigo.config", "fuigo.managed", "fuigo.requirements", "fuigo.sandbox", "fuigo.trusted-plugins", "fuigo.trusted-hook-projects", "fuigo.claude-json",
 })
@@ -3145,7 +3355,18 @@ def add_dirs(args):
 # r5 R5.1: the union of every engine's project config directory names. Every turn masks
 # all of them in every workspace directory it binds, whatever its engine, so a sibling
 # turn of another engine also holds a mount point there.
+# ".agents" is NOT in this list: a customer repository keeps other tools' config and skills there. Antigravity's hook
+# paths inside it are masked by file/dir (AGY_PROJECT_FILE_MASKS, AGY_PROJECT_DIR_MASKS), antigravity turns only.
 MASK_NAMES = (".claude", ".codex", ".fuigo", ".grok", ".kimi-code", ".opencode")
+# agy 1.4.4 reads hook definitions from these paths under <dir>/.agents in the cwd and every --add-dir (measured, see the
+# plan's masking section): hooks.json, plugin dirs (plugins/<name>/hooks.json with a plugin.json, and any plugins.json entry
+# path), and custom agents (agents/*.md carry `hooks:`). The two files are bound over with a valid empty hook table ("{}",
+# not an empty file: agy logs a parse failure on empty JSON); the two directories are empty read-only tmpfs mounts.
+# The server's hook-load check scans the same four customization roots (ANTIGRAVITY_WORKSPACE_ROOTS), so all four are masked.
+AGY_ROOTS = (".agents", ".agent", "_agents", "_agent")
+AGY_PROJECT_FILE_MASKS = tuple(root + "/" + leaf for root in AGY_ROOTS for leaf in ("hooks.json", "plugins.json"))
+AGY_PROJECT_DIR_MASKS = tuple(root + "/" + leaf for root in AGY_ROOTS for leaf in ("plugins", "agents"))
+AGY_MASK_FILE_TEXT = "{}\n"
 PLACEHOLDER_ATTEMPTS = 8
 PLACEHOLDER_OPEN = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 # Test seam: called as PLACEHOLDER_RACE(dfd, name) after this launcher's own mkdirat and
@@ -3210,21 +3431,342 @@ def ensure_placeholder(dfd, name, immutable=set_immutable):
 def placeholder_dirs(engine, home, cwd, args):
     """Every workspace directory the plan binds and masks in: the cwd and each Claude
     --add-dir (render_plan masks MASK_NAMES in exactly these)."""
-    dirs = [cwd] + (add_dirs(args) if engine == "claudeAgent" else [])
+    dirs = [cwd] + (add_dirs(args) if engine in ("claudeAgent", "antigravity") else [])
     return [d for i, d in enumerate(dirs) if d != home and d.startswith(WORKSPACE_ROOT + "/") and d not in dirs[:i]]
 
-def ensure_placeholders(directories, anchors=()):
+AGY_PLACEHOLDER_NAME = ".agents"
+# The freeze lasts for the turn only. Every freeze is recorded here (root-owned, outside every workspace, persistent across a
+# restart) with the targets this launcher created, so the turn's end, or a sweep after a crash, can thaw and clean it.
+AGY_LEDGER_DIR = "/var/lib/murage-turn/agy-freeze"
+AGY_LEDGER_FILE = "ledger.json"
+AGY_LEDGER_LOCK = "lock"
+
+def proc_start(pid):
+    """Start time (clock ticks since boot) of a process, or None: with the pid it identifies one process for good."""
+    try:
+        with open("/proc/%d/stat" % pid) as stream:
+            return int(stream.read().rsplit(")", 1)[1].split()[19])
+    except (OSError, ValueError, IndexError, TypeError):
+        return None
+
+def agy_self():
+    """One holder id per turn: this launcher process plus a random id (two turns never compare equal)."""
+    return {"pid": os.getpid(), "start": proc_start(os.getpid()), "id": secrets.token_hex(4)}
+
+def holder_live(holder):
+    return isinstance(holder, dict) and isinstance(holder.get("pid"), int) and holder.get("start") is not None and proc_start(holder["pid"]) == holder["start"]
+
+def agy_ledger_dir_fd(create=True):
+    if create:
+        parent = os.path.dirname(AGY_LEDGER_DIR)
+        os.makedirs(parent, 0o755, exist_ok=True)
+        try:
+            os.mkdir(AGY_LEDGER_DIR, 0o700)
+        except FileExistsError:
+            pass
+    fd = os.open(AGY_LEDGER_DIR, STATE_DIR_FLAGS)
+    try:
+        info = os.fstat(fd)
+        if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700:
+            raise ValueError("Invalid cloud freeze ledger directory")
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+def agy_ledger_read(dfd):
+    try:
+        fd = os.open(AGY_LEDGER_FILE, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=dfd)
+    except FileNotFoundError:
+        return {"freezes": {}}
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_size > 4 * 1024 * 1024:
+            raise ValueError("Invalid cloud freeze ledger")
+        state = json.loads(os.read(fd, info.st_size + 1) or b"{}")
+    finally:
+        os.close(fd)
+    if not isinstance(state, dict) or not isinstance(state.get("freezes", {}), dict):
+        raise ValueError("Invalid cloud freeze ledger")
+    state.setdefault("freezes", {})
+    return state
+
+def agy_ledger_write(dfd, state):
+    """Atomic: write a sibling, fsync it, rename over the ledger, fsync the directory."""
+    tmp = AGY_LEDGER_FILE + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=dfd)
+    try:
+        os.write(fd, json.dumps(state, sort_keys=True).encode("utf-8"))
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    os.rename(tmp, AGY_LEDGER_FILE, src_dir_fd=dfd, dst_dir_fd=dfd)
+    os.fsync(dfd)
+
+@contextlib.contextmanager
+def agy_ledger(create=True):
+    """Hold the ledger lock (flock LOCK_EX on <dir>/lock) and yield (state, save). save() writes the ledger now (used to
+    record a freeze before the flag is set); the ledger is written again on the way out, also when the body raised."""
+    dfd = agy_ledger_dir_fd(create)
+    try:
+        lock = os.open(AGY_LEDGER_LOCK, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=dfd)
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            state = agy_ledger_read(dfd)
+            try:
+                yield state, (lambda: agy_ledger_write(dfd, state))
+            finally:
+                agy_ledger_write(dfd, state)
+        finally:
+            os.close(lock)
+    finally:
+        os.close(dfd)
+
+def agy_log(text):
+    try:
+        sys.stderr.write(text + "\n"); sys.stderr.flush()
+    except Exception:
+        pass
+
+def agy_open_agents(dfd, name=AGY_PLACEHOLDER_NAME):
+    """fd of <dir>/<name> (one of AGY_ROOTS) and whether this call created it."""
+    try:
+        return os.open(name, PLACEHOLDER_OPEN, dir_fd=dfd), False
+    except FileNotFoundError:
+        pass
+    except OSError as error:
+        if error.errno in (errno.ELOOP, errno.ENOTDIR):
+            raise Refusal("Cloud turn mask path is not a plain directory: " + name) from error
+        raise
+    try:
+        os.mkdir(name, 0o555, dir_fd=dfd)
+        created = True
+    except FileExistsError:
+        created = False
+    try:
+        return os.open(name, PLACEHOLDER_OPEN, dir_fd=dfd), created
+    except OSError as error:
+        raise Refusal("Cloud turn mask path is not a plain directory: " + name) from error
+
+def agy_create_targets(fd, entry, name=AGY_PLACEHOLDER_NAME):
+    """Create the missing mask targets inside <name> (files 0444 empty, directories 0555) and record each in the entry
+    with its inode; existing ones are left as they are and never recorded."""
+    for path in AGY_PROJECT_DIR_MASKS + AGY_PROJECT_FILE_MASKS:
+        if not path.startswith(name + "/"):
+            continue
+        leaf = path[len(name) + 1:]
+        try:
+            os.lstat(leaf, dir_fd=fd)
+            continue
+        except FileNotFoundError:
+            pass
+        try:
+            if path in AGY_PROJECT_DIR_MASKS:
+                os.mkdir(leaf, 0o555, dir_fd=fd)
+                entry["dirs"][leaf] = os.lstat(leaf, dir_fd=fd).st_ino
+            else:
+                made = os.open(leaf, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o444, dir_fd=fd)
+                try:
+                    entry["files"][leaf] = os.fstat(made).st_ino
+                finally:
+                    os.close(made)
+        except FileExistsError:
+            pass
+        except OSError as error:
+            raise Refusal("Cloud turn cannot prepare the .agents placeholder") from error
+
+def agy_clean(key, entry):
+    """Thaw one recorded freeze and delete what this launcher created, but only what is still exactly what it made (an
+    empty file or empty directory with the recorded inode); anything else is the owner's. .agents itself goes only if
+    this launcher created it and it is now empty. True when nothing is left to retry; the entry shrinks as work is done."""
+    path = entry.get("path")
+    name = entry.get("name", AGY_PLACEHOLDER_NAME)
+    if not isinstance(path, str) or not path.startswith(WORKSPACE_ROOT + "/") or name not in AGY_ROOTS:
+        agy_log("Cloud agy freeze record dropped: bad path")
+        return True
+    try:
+        pfd = open_directory(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return True  # the directory is gone, and the freeze with it
+    except OSError:
+        return False
+    try:
+        try:
+            fd = os.open(name, PLACEHOLDER_OPEN, dir_fd=pfd)
+        except FileNotFoundError:
+            return True
+        except OSError:
+            agy_log("Cloud agy freeze record dropped: %s is no longer a directory" % name)
+            return True
+        try:
+            info = os.fstat(fd)
+            if "%d:%d" % (info.st_dev, info.st_ino) != key:
+                agy_log("Cloud agy freeze record dropped: %s is not the frozen inode" % name)
+                return True
+            try:
+                clear_immutable(fd)
+            except OSError:
+                return False
+            ok = True
+            for table, remove in ((entry.get("files") or {}, os.unlink), (entry.get("dirs") or {}, os.rmdir)):
+                for leaf, ino in list(table.items()):
+                    try:
+                        found = os.lstat(leaf, dir_fd=fd)
+                    except FileNotFoundError:
+                        table.pop(leaf, None)
+                        continue
+                    except OSError:
+                        ok = False
+                        continue
+                    isdir = table is entry.get("dirs")
+                    ours = found.st_ino == ino and (stat.S_ISDIR(found.st_mode) if isdir else stat.S_ISREG(found.st_mode) and found.st_size == 0 and found.st_nlink == 1)
+                    if ours:
+                        try:
+                            remove(leaf, dir_fd=fd)
+                        except OSError as error:
+                            if error.errno in (errno.ENOTEMPTY, errno.EEXIST):
+                                table.pop(leaf, None)  # the owner put something in it: theirs now
+                                continue
+                            ok = False
+                            continue
+                    table.pop(leaf, None)
+            if ok and entry.get("created_agents"):
+                try:
+                    os.rmdir(name, dir_fd=pfd)
+                except OSError as error:
+                    if error.errno not in (errno.ENOTEMPTY, errno.EEXIST):
+                        ok = False
+                entry["created_agents"] = False if ok else entry["created_agents"]
+            return ok
+        finally:
+            os.close(fd)
+    finally:
+        os.close(pfd)
+
+def agy_placeholder(dfd, path=None, holder=None, name=AGY_PLACEHOLDER_NAME):
+    """Antigravity turns only: freeze <dir>/.agents for the length of the turn the way a MASK_NAMES placeholder is frozen,
+    so no writer in another namespace can rename or replace it (or unlink one of the four mask targets inside it) and
+    detach a mask mid-turn. Unlike a MASK_NAMES name, .agents keeps the owner's content visible, so bwrap needs the four
+    mask mount points to exist before the directory is frozen: missing ones are created here (files 0444 empty,
+    directories 0555), existing ones are left as they are. The freeze is recorded in the root-owned ledger BEFORE the
+    flag is set, with its holder and what was created; two turns sharing the directory share one freeze (the last holder
+    out thaws and cleans, agy_release). If the flag cannot be set the turn is refused (fail closed), and the record is
+    rolled back. Returns (key, holder) for agy_release. `name` is one of AGY_ROOTS (ensure_placeholders freezes all four)."""
+    if name not in AGY_ROOTS:
+        raise Refusal("Cloud turn mask path is not an agy customization root: " + name)
+    holder = holder or agy_self()
+    fd, created_agents = agy_open_agents(dfd, name)
+    try:
+        info = os.fstat(fd)
+        key = "%d:%d" % (info.st_dev, info.st_ino)
+        with agy_ledger() as (state, save):
+            entry = state["freezes"].get(key)
+            if entry is None:
+                entry = {"path": path, "name": name, "created_agents": created_agents, "files": {}, "dirs": {}, "holders": []}
+                state["freezes"][key] = entry
+            entry["holders"] = [h for h in entry.get("holders", []) if holder_live(h)] + [holder]
+            try:
+                agy_create_targets(fd, entry, name)
+                save()
+                def freeze(target):
+                    try:
+                        set_immutable(target)
+                    except OSError as error:
+                        raise Refusal("Cloud turn refused: the %s placeholder could not be made immutable" % name) from error
+                ensure_placeholder(dfd, name, immutable=freeze)
+                placed = os.stat(name, dir_fd=dfd, follow_symlinks=False)
+                if "%d:%d" % (placed.st_dev, placed.st_ino) != key:
+                    raise Refusal("Cloud turn mask path is contested: " + name)
+            except BaseException:
+                entry["holders"] = [h for h in entry["holders"] if h != holder]
+                if not any(holder_live(h) for h in entry["holders"]) and agy_clean(key, entry):
+                    state["freezes"].pop(key, None)
+                raise
+    finally:
+        os.close(fd)
+    return key, holder
+
+def agy_release(held):
+    """Turn end, by success, error or Stop: drop this turn's hold; the last holder out thaws .agents and deletes what was
+    created for the turn. A failure is logged and left in the ledger for the next sweep."""
+    for key, holder in held:
+        try:
+            with agy_ledger() as (state, _save):
+                entry = state["freezes"].get(key)
+                if not isinstance(entry, dict):
+                    continue
+                entry["holders"] = [h for h in entry.get("holders", []) if h != holder and holder_live(h)]
+                if entry["holders"]:
+                    continue
+                if agy_clean(key, entry):
+                    state["freezes"].pop(key, None)
+                else:
+                    agy_log("Cloud agy .agents unfreeze failed; the next sweep retries it")
+        except Exception:
+            agy_log("Cloud agy .agents unfreeze failed; the next sweep retries it")
+
+def agy_sweep(quiet=False):
+    """Launcher start, server start and after every turn scope: thaw and clean every recorded freeze that no live turn
+    holds. Returns the number cleaned; raises Refusal when one could not be (so a boot sweep can report it)."""
+    cleaned = failed = 0
+    if not os.path.isdir(AGY_LEDGER_DIR):
+        return 0
+    with agy_ledger(create=False) as (state, _save):
+        for key, entry in list(state["freezes"].items()):
+            if not isinstance(entry, dict):
+                state["freezes"].pop(key, None)
+                continue
+            entry["holders"] = [h for h in entry.get("holders", []) if holder_live(h)]
+            if entry["holders"]:
+                continue
+            if agy_clean(key, entry):
+                state["freezes"].pop(key, None)
+                cleaned += 1
+            else:
+                failed += 1
+    if failed:
+        agy_log("Cloud agy .agents sweep: %d freeze(s) could not be cleaned; the next sweep retries" % failed)
+        if not quiet:
+            raise Refusal("Cloud agy .agents freezes remain")
+    return cleaned
+
+def agy_sweep_quiet():
+    try:
+        agy_sweep(quiet=True)
+    except Exception:
+        agy_log("Cloud agy .agents sweep failed; the next sweep retries it")
+
+def ensure_placeholders(directories, anchors=(), engine=None):
     """Root, after anchor_mounts and before the privilege drop. An anchored directory is
     opened through its anchor, the inode the turn will actually bind, so a rename of the
-    path since it was pinned cannot send the placeholders elsewhere."""
+    path since it was pinned cannot send the placeholders elsewhere. Returns the antigravity freezes held
+    (for agy_release); on a refusal the ones already taken are released first."""
     by_destination = {destination: path for path, destination in anchors}
-    for directory in directories:
-        dfd = open_directory(by_destination.get(directory, directory))
-        try:
-            for name in MASK_NAMES:
-                ensure_placeholder(dfd, name, immutable=set_immutable)
-        finally:
-            os.close(dfd)
+    held = []
+    try:
+        for directory in directories:
+            dfd = open_directory(by_destination.get(directory, directory))
+            try:
+                for name in MASK_NAMES:
+                    ensure_placeholder(dfd, name, immutable=set_immutable)
+                if engine == "antigravity":
+                    for root in AGY_ROOTS:
+                        held.append(agy_placeholder(dfd, directory, name=root))
+            finally:
+                os.close(dfd)
+    except BaseException:
+        agy_release(held)
+        raise
+    return held
+
+def run_frozen(directories, anchors, engine, body):
+    """Place the placeholders, run the turn, and always release the antigravity freeze afterwards: success, an error
+    or a stop signal all pass through the finally (a SIGKILLed launcher is covered by agy_sweep)."""
+    held = ensure_placeholders(directories, anchors, engine)
+    try:
+        return body()
+    finally:
+        agy_release(held)
 
 def regroup_workspace(rootfd, server_uid, turn_gid):
     """Re-group the server-owned part of a workspace tree for the turn (group rw, setgid
@@ -3240,6 +3782,11 @@ def regroup_workspace(rootfd, server_uid, turn_gid):
                 continue
             try:
                 st = os.fstat(fd)
+                try:
+                    if stat.S_ISDIR(st.st_mode) and inode_flags(fd) & FS_IMMUTABLE_FL:
+                        continue  # a frozen agy .agents placeholder: fchown would fail with EPERM; its children are still walked
+                except OSError:
+                    pass
                 if st.st_uid == server_uid and (stat.S_ISDIR(st.st_mode) or (stat.S_ISREG(st.st_mode) and st.st_nlink == 1)):
                     os.fchown(fd, -1, turn_gid)
                     os.fchmod(fd, stat.S_IMODE(st.st_mode) | ((st.st_mode & 0o700) >> 3) | (stat.S_ISGID if stat.S_ISDIR(st.st_mode) else 0))  # setgid: new files keep group murage-turn though the turn's egid is the engine group
@@ -3268,7 +3815,16 @@ def workspace_masks(files, shadows):
                 continue
             if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
                 raise Refusal("Cloud turn mask path is not a plain directory: " + os.path.basename(path))
-    for path, _text, _name in files:
+    for path, _text, name in files:
+        if name == "agy.project-mask":
+            # A file mask is bound over a path in the workspace on purpose; a directory there cannot take a file bind.
+            try:
+                info = os.lstat(path)
+            except FileNotFoundError:
+                continue
+            if stat.S_ISDIR(info.st_mode):
+                raise Refusal("Cloud turn mask path is a directory: " + os.path.basename(path))
+            continue
         if in_workspace(path) and not any(path.startswith(shadow + "/") for shadow in shadows):
             raise Refusal("Cloud rendered file would land in the workspace")
     return files, shadows
@@ -3322,6 +3878,19 @@ def render_plan(engine, home, cwd, render, scratch=(), extra_dirs=()):
         for directory in chain:
             if directory != home:
                 shadow(directory + "/.codex")
+    elif engine == "antigravity":
+        if render["mcp"]:
+            put(home + "/.gemini/config/mcp_config.json", agy_mcp_text(render), "agy.mcp")
+        if render["hooks"] == "ask":
+            put(home + "/.gemini/config/hooks.json", agy_hooks_text(home), "agy.hooks")
+            put(home + "/.gemini/config/" + AGY_HOOK_SCRIPT, AGY_ASK_HOOK_SOURCE, "agy.hook-script")
+        elif isinstance(render["hooks"], dict):
+            # Root-owned, read-only (put binds with --ro-bind-data): the turn's engine cannot edit the hook, its program or
+            # its socket and token. The program is the server's relay script, held byte-equal by a test.
+            relay = render["hooks"]
+            put(home + "/.gemini/config/hooks.json", agy_relay_hooks_text(home), "agy.hooks")
+            put(home + "/.gemini/config/" + AGY_RELAY_SCRIPT, AGY_RELAY_SOURCE, "agy.hook-script")
+            put(home + "/.gemini/config/" + AGY_RELAY_ENV, "SOCKET=" + relay["socket"] + "\nTOKEN=" + relay["token"] + "\n", "agy.hook-env")
     elif engine == "grokAgent":
         put(home + "/.grok/config.toml", "[cli]\nauto_update = false\n", "grok.config")
         # r5: Grok Build is the binary Fuigo is rebranded from, and its project loader reads
@@ -3387,6 +3956,11 @@ def render_plan(engine, home, cwd, render, scratch=(), extra_dirs=()):
         if directory != home and directory.startswith(WORKSPACE_ROOT + "/"):
             for name in MASK_NAMES:
                 shadow(directory + "/" + name)
+            if engine == "antigravity":
+                for name in AGY_PROJECT_DIR_MASKS:
+                    shadow(directory + "/" + name)
+                for name in AGY_PROJECT_FILE_MASKS:
+                    put(directory + "/" + name, AGY_MASK_FILE_TEXT, "agy.project-mask")
     files, shadows = workspace_masks(files, shadows)
     for path, text, name in files:
         if name not in PARSED_FILES and name not in PLAIN_FILES:
@@ -3485,6 +4059,13 @@ ARGV_RULES = {
                            "-m": MODEL_ID, "--reasoning-effort": EFFORT},
                           # both flags required: scopeGrokHome (applyMountEnv) rejects an unknown or <1.0.50 CLI before spawn, so spawnArgs always emits both on a home
                           required=("--permission-mode", "--no-memory", "--no-leader"), repeat=("--plugin-dir",), literals=("agent", "stdio"), tail=("stdio",)),
+    # antigravity.ts 617-629: stdin stream-JSON; the access level is exactly one of two forms
+    "antigravity": ArgvRule({"--input-format": one_of("stream-json"), "--output-format": one_of("stream-json"), "--print-timeout": one_of("8760h"),
+                             "--add-dir": WORKSPACE_DIR, "--dangerously-skip-permissions": None, "--mode": one_of("accept-edits"),
+                             "--model": MODEL_ID, "--conversation": UUID,
+                             # the relay hook's load check reads this log (AGY_RELAY_LOG_SHAPE); only with the relay profile (check_argv)
+                             "--log-file": Shape("agy relay log", lambda value, render: shaped(AGY_RELAY_LOG_SHAPE, value), path=True)},
+                            required=("--input-format", "--output-format")),
     # kimi.ts 573-576
     "kimiAgent": ArgvRule({"-m": MODEL_ID}, literals=("acp",), tail=("acp",)),
     # opencode-go.ts: exactly ["acp"]
@@ -3501,6 +4082,7 @@ ARGV_RULES = {
 ARGV_PROBES = {
     "claudeAgent": (["--version"], ["auth", "status", "--json"]),
     "codex": (["--version"], ["login", "status"]),
+    "antigravity": (["--version"], ["models"]),
     "grokAgent": (["--version"],),
     "kimiAgent": (["--version"],),
     "opencodeGo": (["--version"], ["models"], ["models", "--verbose"]),
@@ -3539,6 +4121,18 @@ def check_argv_rules(rules=None):
 check_argv_rules()
 
 def check_argv(engine, args, render, login=False):
+    """The grammar below, plus one cross-check: agy skips its own permissions only behind the Murage relay hook the
+    launcher renders (AGY_HOOK_PROFILES), and the relay's log flag only with it."""
+    out = check_argv_grammar(engine, args, render, login)
+    if engine == "antigravity" and not login:
+        relay = isinstance(render.get("hooks"), dict)
+        if "--dangerously-skip-permissions" in out and not relay:
+            raise Refusal("Cloud engine argument is not allowed: --dangerously-skip-permissions")
+        if "--log-file" in out and not relay:
+            raise Refusal("Cloud engine argument is not allowed: --log-file")
+    return out
+
+def check_argv_grammar(engine, args, render, login=False):
     """Refuse every argv the engine's grammar does not name (design 4.2); substitute the
     render placeholders. Only a flag or token kind ever reaches stderr, never a value."""
     if len(args) > ARGV_MAX_TOKENS:
@@ -3619,7 +4213,7 @@ def match_argv(rule, args, render):
 # root:<engine group> 2770 by the launcher inside the turn's home and pinned as their own
 # mounts there. The CLIs write their sign-ins and runtime state into them; the rendered
 # files bound inside stay read-only.
-STATE_DIRS_EXTRA = {"fuigoAgent": [".fuigo"]}
+STATE_DIRS_EXTRA = {"fuigoAgent": [".fuigo"], "antigravity": [".gemini"]}
 
 # r4: the state allowlist (CLOUD-ENGINES-DESIGN.md, "r4: state allowlist"; Astra r2 H x3,
 # closed as a class). A turn's $HOME is a tmpfs the launcher owns and that starts empty
@@ -3665,6 +4259,9 @@ PERSISTED_STATE = {
     "claudeAgent": ((".claude/.claude.json", "claude-state", "bot"),
                     (".claude/projects/*/@id.jsonl", "claude-jsonl", "bot"), (".claude/projects/*/@id/*/*.jsonl", "claude-jsonl", "bot")),
     "codex": ((".codex/auth.json", "codex-auth", "signin"), (".codex/sessions/*/*/*/rollout-@stamp-@id.jsonl", "codex-jsonl", "bot")),
+    # agy with no D-Bus keyring writes its Google token to this one file (measured, strace). The
+    # keyring-unavailable marker next to it is recreated by agy each turn and is not kept.
+    "antigravity": ((".gemini/antigravity-cli/antigravity-oauth-token", "agy-token", "signin"),),
     "grokAgent": ((".grok/auth.json", "json", "signin"),),
     "kimiAgent": ((".kimi-code/credentials/*.json", "json", "signin"),),
     "opencodeGo": ((".local/share/opencode/auth.json", "opencode-auth", "signin"),),
@@ -3769,7 +4366,19 @@ def shape_claude_jsonl(data):
     kept = [line for line, record in records if record is None or (isinstance(record.get("type"), str) and not CLAUDE_RECORD_DROP & set(record))]
     return b"\n".join(kept)
 
-STATE_SHAPES = {"json": shape_json, "codex-auth": shape_codex_auth, "claude-state": shape_claude_state, "jsonl": shape_jsonl,
+def shape_agy_token(data):
+    """agy's Google token file: non-empty UTF-8 text, no NUL, bytes preserved (its format is the
+    CLI's own; the launcher only refuses what is not text or is out of size)."""
+    if not data or len(data) > AGY_TOKEN_MAX or b"\x00" in data:
+        return None
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    return data
+
+AGY_TOKEN_MAX = 64 * 1024
+STATE_SHAPES = {"agy-token": shape_agy_token, "json": shape_json, "codex-auth": shape_codex_auth, "claude-state": shape_claude_state, "jsonl": shape_jsonl,
                 "claude-jsonl": shape_claude_jsonl, "codex-jsonl": shape_jsonl, "opencode-auth": shape_opencode_auth}
 
 # r6 R3 + r7 R4: a Codex rollout is staged rendered. Codex 0.162.1 restores a resumed
@@ -3868,7 +4477,7 @@ def check_state_tables():
             if head is None or not any(d == head or d.startswith(head + "/") or head.startswith(d + "/") for d in credential_dirs(engine)):
                 raise ValueError("Cloud state pattern is outside the engine's state directories: " + entry[0])
             for literal, _regex in components:
-                if literal is not None and STATE_NAME.fullmatch(literal) is None and literal not in {".claude", ".codex", ".grok", ".kimi-code", ".config", ".local", ".fuigo", ".credentials.json", ".claude.json"}:
+                if literal is not None and STATE_NAME.fullmatch(literal) is None and literal not in {".claude", ".codex", ".grok", ".kimi-code", ".config", ".local", ".fuigo", ".gemini", ".credentials.json", ".claude.json"}:
                     raise ValueError("Cloud state pattern names a bad component: " + entry[0])
             if entry[0].endswith((".toml", ".md", ".sh", ".js", ".mjs", ".py")):
                 raise ValueError("Cloud state pattern names a config or code file: " + entry[0])
@@ -4087,7 +4696,7 @@ SIGNIN_RECORD = "record.json"
 SIGNIN_GENERATION = re.compile(r"[0-9]{1,18}", re.ASCII)
 SIGNIN_YEAR = 365 * 24 * 60 * 60
 # The mode a B store's sign-in carries (r8 R3 modes table); a C store's mode is its writer's.
-B_MODES = {"codex": "chatgpt", "grokAgent": "oauth", "kimiAgent": "oauth", "opencodeGo": "oauth"}
+B_MODES = {"codex": "chatgpt", "antigravity": "oauth", "grokAgent": "oauth", "kimiAgent": "oauth", "opencodeGo": "oauth"}
 SIGNIN_MOVED = "Cloud engine sign-in changed during the turn; its refresh was not kept"
 
 class SigninSnapshot(dict):
@@ -4626,11 +5235,11 @@ def turn_mount_args(engine, mounts, home, cwd, command, args, render=None, scrat
         argv += ["--ro-bind", path, path]
     # Claude's approval proxy dials a socket the server binds here (root:murage-turn
     # 2770). The server never writes inside an engine home, so this one directory,
-    # and only for Claude, is bound in.
-    if engine == "claudeAgent" and os.path.isdir(BROKER_DIR):
+    # and only for Claude and Antigravity (its relay hook's socket and log), is bound in.
+    if engine in ("claudeAgent", "antigravity") and os.path.isdir(BROKER_DIR):
         argv += ["--bind", BROKER_DIR, BROKER_DIR]
     scratch = scratch_paths(engine, home, list(scratch))
-    files, shadows = render_plan(engine, home, cwd, render, scratch, [a for a in add_dirs(args)] if engine == "claudeAgent" else [])
+    files, shadows = render_plan(engine, home, cwd, render, scratch, [a for a in add_dirs(args)] if engine in ("claudeAgent", "antigravity") else [])
     # Scratch first, so a shadow or a file can land inside a scratch tmpfs (a routed
     # Fuigo turn's $FUIGO_HOME/plugins and config tiers).
     for path in scratch:
@@ -4664,6 +5273,7 @@ def turn_mount_args(engine, mounts, home, cwd, command, args, render=None, scrat
 RECOVERY_CREDENTIALS = {
     "claudeAgent": [".claude/.credentials.json"],
     "codex": [".codex/auth.json"],
+    "antigravity": [".gemini/antigravity-cli/antigravity-oauth-token"],
     "grokAgent": [".grok/auth.json"],
     "opencodeGo": [".local/share/opencode/auth.json", ".config/opencode/auth.json"],
     "kimiAgent": [".kimi-code/credentials"],
@@ -4947,7 +5557,7 @@ def current_scope(cgroup="/proc/self/cgroup"):
 def scope_plan(request):
     """(unit, slice, properties) for requests that run untrusted code; None otherwise."""
     mode = request.get("mode")
-    if mode in {"engine-signin-cleanup", "browser-cleanup", "bot-state-release", "bot-state-query"}:
+    if mode in {"engine-signin-cleanup", "browser-cleanup", "bot-state-release", "bot-state-query", "agy-unfreeze-sweep"}:
         return None
     if mode in BROWSER_RESTORE_MODES:
         # The saved-session steps read and decrypt files the browser wrote: limited like a browser launch,
@@ -5306,6 +5916,14 @@ def scope_cgroup_present(slice_name, unit, root=None):
     except OSError:
         return False
 
+def finish_turn(unit, slice_name=TURN_SLICE):
+    """The supervisor's after-hook: the admission entry goes with the scope, then any antigravity .agents freeze whose
+    launcher died with it (SIGKILL, OOM) is thawed and cleaned."""
+    try:
+        finish_admission(unit, slice_name)
+    finally:
+        agy_sweep_quiet()
+
 def finish_admission(unit, slice_name=TURN_SLICE, wait=CGROUP_GONE_WAIT, sleep=time.sleep, clock=time.monotonic):
     """Supervisor, after systemctl stop returned: unlink the entry only once the scope's cgroup
     directory is gone (bounded). On expiry the entry stays (r9 M retention): release's rule
@@ -5501,17 +6119,24 @@ def bot_state_query(request, engine_root=None):
     root = engine_root or ENGINE_ROOT
     engines = {}
     for engine in sorted(ENGINES):
-        status = signin_status(root + "/" + engine)
-        if (status is None or not status[1]) and bot is not None:
-            status = signin_status(root + "/" + engine + "/bots/" + bot) or status
+        status, source = signin_status(root + "/" + engine), "home"
+        if engine == "claudeAgent" and bot is not None:
+            # F4 C2: a bot's own Claude sign-in wins over the home's (the opposite of Codex's key).
+            own = signin_status(root + "/" + engine + "/bots/" + bot)
+            if own is not None and own[1]:
+                status, source = own, "bot"
+        elif (status is None or not status[1]) and bot is not None:
+            own = signin_status(root + "/" + engine + "/bots/" + bot)
+            if own is not None:
+                status, source = own, "bot"
         if status is not None:
-            engines[engine] = {"mode": status[0], "signedIn": status[1], "expiresAt": status[2]}
+            engines[engine] = {"mode": status[0], "signedIn": status[1], "expiresAt": status[2], "source": source}
     return {"tombstoned": bool(bot) and tombstoned(bot), "engines": engines}
 
 PTY_ROWS, PTY_COLS = 30, 100
 PTY_CHUNK = 4096
 
-def run_in_pty(argv, env, stdin_fd=0, stdout_fd=1):
+def run_in_pty(argv, env, stdin_fd=0, stdout_fd=1, first_input=None):
     """Run argv with a pseudo-terminal as its stdin/stdout/stderr (a vendor CLI's
     interactive sign-in needs a tty) and relay it to this process's own stdin and
     stdout, the pipes the home server holds. The pty is allocated here, after the
@@ -5527,11 +6152,12 @@ def run_in_pty(argv, env, stdin_fd=0, stdout_fd=1):
                 os.dup2(slave, target)
             if slave > 2:
                 os.close(slave)
-            os.execve(argv[0], argv, env)
+            exec_slot(argv[0], argv, env)
         finally:
             os._exit(127)
     os.close(slave)
     reading_stdin = True
+    pending_first = first_input.encode() if first_input else None
     try:
         while True:
             watch = [master] + ([stdin_fd] if reading_stdin else [])
@@ -5545,6 +6171,14 @@ def run_in_pty(argv, env, stdin_fd=0, stdout_fd=1):
                     break
                 while data:
                     data = data[os.write(stdout_fd, data):]
+                if pending_first is not None:
+                    # the CLI's menu is up: press its default once (LOGIN_FIRST_INPUT)
+                    time.sleep(0.5)
+                    try:
+                        os.write(master, pending_first)
+                    except OSError:
+                        pass
+                    pending_first = None
             if stdin_fd in ready:
                 data = os.read(stdin_fd, PTY_CHUNK)
                 if not data:
@@ -5642,7 +6276,7 @@ def relay_filtered(infd, outfd, chunk=PTY_CHUNK * 16):
             break
     return filt.token.decode("ascii") if filt.token is not None else None
 
-def claude_token_publisher(unit=None, engine_root=None):
+def claude_token_publisher(unit=None, engine_root=None, bot=None):
     """The capture run_turn calls at end of file: publish the token as the C store's next
     generation (r8 R3.1 record, a year's expiry); no token means not signed in. Returns the
     line the owner sees."""
@@ -5650,13 +6284,13 @@ def claude_token_publisher(unit=None, engine_root=None):
         if token is None:
             return b"Claude is not signed in on this Cloud home: no sign-in token was received.\r\n"
         now = int(time.time())
-        with section_lock("cred-claudeAgent", SECTION_LOCK_WAIT):
-            store = engine_signin_store("claudeAgent", None, create=True, engine_root=engine_root)
+        with section_lock("cred-claudeAgent" + ("-" + bot if bot else ""), SECTION_LOCK_WAIT):
+            store = engine_signin_store("claudeAgent", bot, create=True, engine_root=engine_root)
             try:
                 publish_generation(store, {"token": token.encode("ascii")}, {"mode": "oauth-token", "kind": "signin", "enrolledAt": now, "expiresAt": now + SIGNIN_YEAR}, unit)
             finally:
                 os.close(store)
-        return b"Signed in to Claude on this Cloud home.\r\n"
+        return b"Signed in to Claude for this bot on this Cloud home.\r\n" if bot else b"Signed in to Claude on this Cloud home.\r\n"
     return publish
 
 def launch(request, login=False):
@@ -5685,41 +6319,45 @@ def launch(request, login=False):
         regroup_workspace(rootfd, server.pw_uid, account.pw_gid)
     engine_gid = grp.getgrnam("murage-eng-" + engine).gr_gid
     mounts = anchor_mounts(mounts)
-    # r5 R5.1: root freezes a placeholder at every mask path before any turn code runs.
-    ensure_placeholders(placeholder_dirs(engine, home, cwd, args), mounts)
-    turn_home, turn_fd = mount_turn_home(account.pw_uid, engine_gid)
-    owners = (0, account.pw_uid)
-    ids = turn_state_ids(engine, args, render)
-    snapshot = stage_turn_home(home_fd, engine, turn_fd, engine_gid, owners, ids, account.pw_uid, bot=bot, cwd=cwd, render=render)
-    argv, blobs = turn_mount_args(engine, mounts, home, cwd, command, args, render, request.get("scratch", []), (account.pw_uid, account.pw_gid), turn_home=turn_home)
-    argv = with_seccomp(argv, FD_TOKEN + "seccomp")
-    blobs["seccomp"] = seccomp_filter()
-    # Root materialises every file the sandbox needs while it still can; the
-    # turn uid only ever reads them (see write_turn_dir).
-    turn_dir = write_turn_dir(argv, blobs, account.pw_gid)
-    def child(stdout_fd=None):
-        # murage-sandbox gates execution of /usr/bin/bwrap (0750 root:murage-sandbox).
-        # The engine group is the PRIMARY gid so the nft output hook can tell engines
-        # apart (meta skgid; supplementary groups are invisible to it) and give each
-        # its own egress allowlist. murage-turn's own group stays supplementary so
-        # the turn dir and workspace group access is unchanged.
-        os.setgroups([engine_gid, grp.getgrnam(SANDBOX_GROUP).gr_gid, account.pw_gid])
-        os.setgid(engine_gid)
-        os.setuid(account.pw_uid)
-        os.umask(0o007)
-        if request.get("pty") is True or stdout_fd is not None:
-            # Sign-in terminal (login mode only; validate_login_request is the sole source of the
-            # key). Claude's setup-token relays into run_turn's pipe, never the server's stdout.
-            os._exit(run_in_pty(pasta_argv(turn_dir), env, stdout_fd=1 if stdout_fd is None else stdout_fd))
-        # exec, never fork: the child becomes pasta, whose exit status is the sandboxed
-        # command's. There is no fallback path that runs bwrap without pasta;
-        # pasta_child (inside pasta) is the only caller of bwrap.
-        os.execve(PASTA, pasta_argv(turn_dir), env)
-    def collect():
-        collect_turn_home(home_fd, engine, turn_fd, snapshot, engine_gid, owners, ids, account.pw_uid, bot=bot, unit=request.get("unit"),
-                          login=login, signin=not signin_rendered(engine, render))
-    capture = claude_token_publisher(request.get("unit")) if login and engine == "claudeAgent" else None
-    sys.exit(run_turn(child, collect, capture=capture))
+    if engine == "antigravity":
+        agy_sweep_quiet()  # a freeze left by a crashed turn is thawed before this one starts
+    def turn():
+        turn_home, turn_fd = mount_turn_home(account.pw_uid, engine_gid)
+        owners = (0, account.pw_uid)
+        ids = turn_state_ids(engine, args, render)
+        snapshot = stage_turn_home(home_fd, engine, turn_fd, engine_gid, owners, ids, account.pw_uid, bot=bot, cwd=cwd, render=render)
+        argv, blobs = turn_mount_args(engine, mounts, home, cwd, command, args, render, request.get("scratch", []), (account.pw_uid, account.pw_gid), turn_home=turn_home)
+        argv = with_seccomp(argv, FD_TOKEN + "seccomp")
+        blobs["seccomp"] = seccomp_filter()
+        # Root materialises every file the sandbox needs while it still can; the
+        # turn uid only ever reads them (see write_turn_dir).
+        turn_dir = write_turn_dir(argv, blobs, account.pw_gid)
+        def child(stdout_fd=None):
+            # murage-sandbox gates execution of /usr/bin/bwrap (0750 root:murage-sandbox).
+            # The engine group is the PRIMARY gid so the nft output hook can tell engines
+            # apart (meta skgid; supplementary groups are invisible to it) and give each
+            # its own egress allowlist. murage-turn's own group stays supplementary so
+            # the turn dir and workspace group access is unchanged.
+            os.setgroups([engine_gid, grp.getgrnam(SANDBOX_GROUP).gr_gid, account.pw_gid])
+            os.setgid(engine_gid)
+            os.setuid(account.pw_uid)
+            os.umask(0o007)
+            if request.get("pty") is True or stdout_fd is not None:
+                # Sign-in terminal (login mode only; validate_login_request is the sole source of the
+                # key). Claude's setup-token relays into run_turn's pipe, never the server's stdout.
+                os._exit(run_in_pty(pasta_argv(turn_dir), env, stdout_fd=1 if stdout_fd is None else stdout_fd, first_input=LOGIN_FIRST_INPUT.get(engine)))
+            # exec, never fork: the child becomes pasta, whose exit status is the sandboxed
+            # command's. There is no fallback path that runs bwrap without pasta;
+            # pasta_child (inside pasta) is the only caller of bwrap.
+            os.execve(PASTA, pasta_argv(turn_dir), env)
+        def collect():
+            collect_turn_home(home_fd, engine, turn_fd, snapshot, engine_gid, owners, ids, account.pw_uid, bot=bot, unit=request.get("unit"),
+                              login=login, signin=not signin_rendered(engine, render))
+        capture = claude_token_publisher(request.get("unit"), bot=bot) if login and engine == "claudeAgent" else None
+        sys.exit(run_turn(child, collect, capture=capture))
+    # r5 R5.1: root freezes a placeholder at every mask path before any turn code runs; the antigravity .agents freeze is
+    # released when turn() ends, by success, error or stop signal (run_frozen), and swept after a crash.
+    run_frozen(placeholder_dirs(engine, home, cwd, args), mounts, engine, turn)
 
 def run_turn(child, collect, signals=(signal.SIGTERM, signal.SIGHUP, signal.SIGINT), capture=None):
     """Fork: the child drops privileges and becomes the sandbox (child()); this root
@@ -5953,7 +6591,7 @@ def main():
         # session files, never fork a daemon (the socket directory is read-only
         # here; the MCP server's stdin is gated per frame by the root pump).
         client_gate(home, session, args)
-        os.execve(BROWSER_BINARY, [BROWSER_BINARY] + args, os.environ)
+        exec_slot(BROWSER_BINARY, [BROWSER_BINARY] + args, os.environ)
     if len(sys.argv) == 3 and sys.argv[1] == "--pasta-child":
         pasta_child(sys.argv[2])
     if len(sys.argv) >= 3 and sys.argv[1] == "--child":
@@ -5963,10 +6601,14 @@ def main():
         # handles before untrusted code can use openat(fd, "../other-engine").
         maximum = resource.getrlimit(resource.RLIMIT_NOFILE)[1]
         os.closerange(3, maximum if maximum != resource.RLIM_INFINITY else 1048576)
-        os.execvpe(sys.argv[2], sys.argv[2:], os.environ)
+        found = shutil.which(sys.argv[2], path=os.environ.get("PATH", os.defpath)) if "/" not in sys.argv[2] else sys.argv[2]
+        if found is None:
+            raise ValueError("Cloud child command not found")
+        exec_slot(found, sys.argv[2:], os.environ)
     rescoped = len(sys.argv) == 3 and sys.argv[1] == "--in-scope"
     if not (len(sys.argv) == 1 or rescoped) or os.geteuid() != 0 or os.environ.get("SUDO_UID") != str(pwd.getpwnam("murage").pw_uid):
         raise ValueError("Cloud turn launcher requires the home server")
+    assert_image_launcher()
     if rescoped:
         payload = take_scope_request(sys.argv[2])
     else:
@@ -5995,7 +6637,7 @@ def main():
                 # is the admission lock holder (r7 R1) and hands the locks through the exec (r8 R1).
                 admission = admit(request, plan[0], request_bot(request))
                 sys.exit(supervise_scope(plan[0], lambda: enter_scope(payload, plan, admission=admission), max_runtime=scope_runtime_max(plan[2]),
-                                         after=lambda: finish_admission(plan[0], plan[1])))  # child execs
+                                         after=lambda: finish_turn(plan[0], plan[1])))  # child execs
             if request.get("mode") == "browser":
                 # Pre-scope window: hold the id's lock until the re-executed
                 # launcher is inside its scope (it closes this fd then), so a
@@ -6025,6 +6667,10 @@ def main():
             pass
     if request.get("mode") == "engine-signin-cleanup":
         cleanup_engine_signins(request)
+    elif request.get("mode") == "agy-unfreeze-sweep":
+        if set(request) != {"mode"}:
+            raise ValueError("Invalid cloud freeze sweep request")
+        agy_sweep()
     elif request.get("mode") == "bot-state-release":
         bot_state_release(request)
     elif request.get("mode") == "bot-state-query":

@@ -592,7 +592,9 @@ export class CodexHookGate {
   /** The env file of this gate's process, set by the driver at spawn. */
   envPath: string | null = null;
 
-  constructor(path = hookSocketPath()) { this.path = path; liveHookGates.add(this.id); }
+  /** `mode` is the socket file's mode: 0600 on a desktop; 0660 on a Cloud home, where the engine runs as another user of the murage-turn group. The turn token still guards it. */
+  private readonly mode: number;
+  constructor(path = hookSocketPath(), mode = 0o600) { this.path = path; this.mode = mode; liveHookGates.add(this.id); }
 
   /** The process is confirmed gone: its env file goes and the gate leaves the live registry. A failed kill never calls this. */
   release(): void {
@@ -605,7 +607,7 @@ export class CodexHookGate {
     this.server = server;
     await new Promise<void>((ok, fail) => { server.once("error", fail); server.listen(this.path, () => { server.off("error", fail); ok(); }); });
     server.on("error", () => { /* a failed accept never reaches the engine */ });
-    if (process.platform !== "win32") { try { chmodSync(this.path, 0o600); } catch { /* the token still guards it */ } }
+    if (process.platform !== "win32") { try { chmodSync(this.path, this.mode); } catch { /* the token still guards it */ } }
   }
 
   arm(turn: HookTurn): void { this.generation++; this.turn = turn; }

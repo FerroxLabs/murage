@@ -177,6 +177,8 @@ const MURAGE_COPY: Record<string, string> = {
   "host-computer-consent.ts :: { role: \"bot\", kind: \"options\", card: { title: `Let @${bot.name} use this computer?`, subtitle: `@${": "Murage composes these words (fixed copy, a bot's or skill's name, or a status line); no engine or bot text",
   "handoff-reply.ts :: { role: \"bot\", kind: \"text\", inboundKind: \"action\", text: outboundWords(line), murage: { kind: \"stat": "Murage composes these words (the no-answer status line, a kept status); no engine or bot text",
   "index.ts :: { role: \"bot\", kind: \"text\", text: line, setupEcho: echo }": "Murage composes these words (fixed copy, a bot's or skill's name, or a status line); no engine or bot text",
+  "index.ts :: { role: \"bot\", kind: \"text\", text }": "Murage composes these words (fixed copy, a bot's or skill's name, or a status line); no engine or bot text",
+  "index.ts :: { role: \"bot\", kind: \"text\", text: line }": "Murage composes these words (fixed copy, a bot's or skill's name, or a status line); no engine or bot text",
   "index.ts :: { role: \"bot\", kind: \"options\", card: { title: card.title, subtitle: card.subtitle, options: [], set": "Murage composes these words (fixed copy, a bot's or skill's name, or a status line); no engine or bot text",
   "index.ts :: { role: \"bot\", kind: \"activity\", // A room chip with no speaker renders unattributed; a 1:1 chip alr": "Murage composes these words (fixed copy, a bot's or skill's name, or a status line); no engine or bot text",
   "index.ts :: { role: \"bot\", kind: \"text\", text: `Connected-app access is waiting for your review for @${target.na": "Murage composes these words (fixed copy, a bot's or skill's name, or a status line); no engine or bot text",

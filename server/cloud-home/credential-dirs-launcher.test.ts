@@ -89,8 +89,10 @@ it("stages the turn home as root after the regroup walk, the anchors and the pla
   const at = (needle: string) => { const i = launch.indexOf(needle); expect(i, needle).toBeGreaterThan(0); return i; };
   expect(at("regroup_workspace(")).toBeLessThan(at("anchor_mounts(mounts)"));
   // r5 R5.1: placeholders are root's, after the anchors (through them) and before the drop.
-  expect(at("anchor_mounts(mounts)")).toBeLessThan(at("ensure_placeholders("));
-  expect(at("ensure_placeholders(")).toBeLessThan(at("mount_turn_home("));
+  // The turn body (mount_turn_home onward) is a nested turn() that run_frozen() calls only after ensure_placeholders() ran.
+  expect(at("anchor_mounts(mounts)")).toBeLessThan(at("run_frozen("));
+  expect(source.slice(source.indexOf("\ndef run_frozen("))).toMatch(/held = ensure_placeholders\([\s\S]*return body\(\)/);
+  expect(at("def turn():")).toBeLessThan(at("mount_turn_home("));
   expect(at("anchor_mounts(mounts)")).toBeLessThan(at("mount_turn_home("));
   expect(at("mount_turn_home(")).toBeLessThan(at("stage_turn_home("));
   expect(at("stage_turn_home(")).toBeLessThan(at("os.setuid(account.pw_uid)"));

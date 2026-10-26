@@ -1,6 +1,7 @@
 import { cloudEngineHome, cloudTurnBot, cloudTurnEnvironment, cloudTurnRender, cloudTurnRenderContents, type CloudCodexPolicy, type CloudMcpStanza } from "../cloud-home/turn-process.ts";
 import { queryCloudBotState, type CloudLauncherSpawn } from "../cloud-home/bot-state.ts";
 import { cloudMcpStanza } from "../cloud-home/engine-render.ts";
+import { cloudEngineSignedInSomewhere } from "../cloud-home/signin-status.ts";
 import { CODEX_TOOL_SURFACE, renderMurageTurn } from "../murage-tool-surface.ts";
 import { notePromptSent } from "../turn-hold.ts";
 // Codex driver — upstream CodexDriver skeleton over agentcal's
@@ -2532,7 +2533,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
     });
     // childEnv drops OPENAI_API_KEY on purpose: off a home turns run on the ChatGPT login. On a home
     // the launcher knows whether an API key (C store) or a ChatGPT sign-in pays for the turns.
-    return { state: "available", version, authenticated, billing: await codexCloudBilling() };
+    // On a home the probe above runs outside any bot's sign-in store, so it reads "not signed in" even when
+    // bots are signed in: ask the launcher whether the owner signed Codex in anywhere on this home (F4 C2).
+    const signedInOnHome = (await cloudEngineSignedInSomewhere(DRIVER_KIND)) === true;
+    return { state: "available", version, authenticated: authenticated || signedInOnHome, ...(signedInOnHome ? { setUpOnHome: true } : {}), billing: await codexCloudBilling() };
   };
 
   return withCliMemoryLearning({

@@ -762,6 +762,8 @@ export interface ProviderSnapshot {
   /** Cloud home: the engine's sign-in should be renewed (Claude's token expires within 30 days or
    * is no longer accepted). The UI offers the sign-in again. */
   renewSignIn?: boolean;
+  /** Cloud home: some bot on this home has a sign-in for the engine. Home-level SETUP status only: it never means a given bot is signed in. */
+  setUpOnHome?: boolean;
 }
 
 // ── engine install descriptor ───────────────────────────────────────────
