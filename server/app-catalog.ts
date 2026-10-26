@@ -44,6 +44,8 @@ export interface CatalogApp {
   /** managed: a hosted sign-in exists; own: the person brings their own
    * sign-in details; none: nothing to sign in to; absent: not reported */
   signIn?: SignIn;
+  /** The groups the service files the app under (Communication, Developer tools), at most 3. Absent when it did not say. */
+  categories?: string[];
 }
 
 /** Why the panel is showing featured apps instead of the whole catalog. */
@@ -145,6 +147,7 @@ export function slimApp(raw: unknown): CatalogApp | null {
   else if (typeof t.managed_sign_in === "boolean") signIn = t.managed_sign_in ? "managed" : "own";
   else if (t.signIn === "managed" || t.signIn === "own" || t.signIn === "none") signIn = t.signIn;
   else if (Array.isArray(t.composio_managed_auth_schemes)) signIn = t.composio_managed_auth_schemes.length ? "managed" : "own";
+  const categories = categoriesOf(t.categories ?? meta.categories);
   return {
     slug,
     label,
@@ -155,7 +158,27 @@ export function slimApp(raw: unknown): CatalogApp | null {
     noAuth,
     domain: typeof t.domain === "string" && /^[a-z0-9.-]{1,120}$/i.test(t.domain) ? t.domain : null,
     ...(signIn ? { signIn } : {}),
+    ...(categories.length ? { categories } : {}),
   };
+}
+
+/** Group names from the service's list: strings, or objects with a name or slug. Short, de-duplicated, never naming the service. */
+function categoriesOf(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of value) {
+    const raw = typeof item === "string" ? item : item && typeof item === "object" ? (item as { name?: unknown; slug?: unknown }).name ?? (item as { slug?: unknown }).slug : undefined;
+    if (typeof raw !== "string") continue;
+    const name = raw.replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 40);
+    if (!name || SERVICE_NAME.test(name) || OFF_COPY.test(name)) continue;
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(name.replace(/^\p{Ll}/u, (letter) => letter.toUpperCase()));
+    if (out.length === 3) break;
+  }
+  return out;
 }
 
 /** A card for a slug nobody described: the panel's monogram fallback. */

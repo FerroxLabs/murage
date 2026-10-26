@@ -11,6 +11,7 @@ import { useEffect, useMemo, useState } from "react";
 import { RichMarkdownEditor } from "./editor/RichMarkdownEditor";
 import { richEditable } from "./skills/SkillEditor";
 import { api } from "@/state/store";
+import { settingsDrafts } from "@/lib/settings-drafts";
 
 export interface HouseRules {
   text: string;
@@ -65,6 +66,8 @@ function Switch({ on, disabled, label, onChange }: { on: boolean; disabled?: boo
   );
 }
 
+const DRAFT_KEY = "house-rules";
+
 export function HouseRulesSettings() {
   const [loaded, setLoaded] = useState<HouseRules | null>(null);
   const [loadError, setLoadError] = useState("");
@@ -88,7 +91,13 @@ export function HouseRulesSettings() {
   useEffect(() => {
     let live = true;
     (api("/api/house-rules") as Promise<HouseRules>)
-      .then((rules) => { if (live) take(rules); })
+      .then((rules) => {
+        if (!live) return;
+        take(rules);
+        // Words typed before the page was left or searched away come back, if the saved rules have not changed under them.
+        const kept = settingsDrafts.recall(DRAFT_KEY, rules.text);
+        if (kept !== null) setDraft(kept);
+      })
       .catch((cause: unknown) => { if (live) setLoadError(cause instanceof Error && cause.message ? cause.message : "House rules couldn't be loaded."); });
     return () => { live = false; };
   }, []);
@@ -97,6 +106,7 @@ export function HouseRulesSettings() {
   const words = wordCount(draft);
   const hint = lengthHint(words);
   const dirty = draft !== saved;
+  useEffect(() => { if (loaded) settingsDrafts.remember(DRAFT_KEY, draft, saved); }, [loaded, draft, saved]);
 
   const run = async (work: () => Promise<void>) => {
     setBusy(true);
@@ -127,6 +137,7 @@ export function HouseRulesSettings() {
   const reset = () => run(async () => {
     const rules = (await api("/api/house-rules/reset", { method: "POST", body: "{}" })) as HouseRules;
     take(rules);
+    settingsDrafts.forget(DRAFT_KEY);
     setConfirmReset(false);
     setNotice("The default house rules are back.");
   });

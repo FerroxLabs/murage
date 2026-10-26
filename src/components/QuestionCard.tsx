@@ -17,11 +17,13 @@ import { t } from "@/lib/i18n";
 import { formatTime, useStore, type Message, type OptionCardData } from "@/state/store";
 import {
   answerComplete,
+  answersInOneTap,
   answersAsMessage,
   questionsForCard,
   type QuestionAnswer,
   type QuestionSpec,
 } from "../../shared/questions";
+import { ChoiceIndicator, OTHER_MAX_LENGTH, OtherRow } from "./ChoiceWithOther";
 
 export type QuestionCardState = "open" | "answered" | "skipped" | "expired" | "sent" | "closed";
 
@@ -151,6 +153,14 @@ export function QuestionCardView({
   const name = botName ?? t("questions.yourBot");
   const settledLabel = (label: string) => (settledAt ? t("questions.settledAt", { label, time: formatTime(settledAt) }) : label);
 
+  const oneTap = editable && answersInOneTap(questions, { state, folderTrust: trust });
+  // Tapping an option on a one-question, one-pick card answers at once.
+  const pick = (question: QuestionSpec, label: string) => {
+    const next = toggleOption(drafts, question, label);
+    setDrafts(next);
+    if (oneTap && draftsComplete(questions, next)) onSubmit(draftAnswers(questions, next));
+  };
+
   const submit = () => {
     if (!editable || !complete) return;
     const answers = draftAnswers(questions, drafts);
@@ -176,7 +186,7 @@ export function QuestionCardView({
     }
     if (!editable) return;
     event.preventDefault();
-    setDrafts((current) => toggleOption(current, question, question.options[action.index]!.label));
+    pick(question, question.options[action.index]!.label);
   };
 
   return (
@@ -252,7 +262,7 @@ export function QuestionCardView({
                       aria-checked={checked}
                       tabIndex={-1}
                       disabled={!editable}
-                      onClick={() => setDrafts((current) => toggleOption(current, question, option.label))}
+                      onClick={() => pick(question, option.label)}
                       className={cn(
                         "flex w-full items-start gap-3 rounded-[10px] border px-3 py-3 text-left transition-colors",
                         checked
@@ -261,7 +271,7 @@ export function QuestionCardView({
                         !editable && !checked && "opacity-50",
                       )}
                     >
-                      <Indicator multi={question.multiSelect} checked={checked} />
+                      <ChoiceIndicator multi={question.multiSelect} checked={checked} />
                       <span className="min-w-0 flex-1">
                         <span className="block text-[14px] font-medium leading-5 text-ink">{option.label}</span>
                         {option.description && (
@@ -277,49 +287,24 @@ export function QuestionCardView({
                   );
                 })}
                 {question.allowOther && (editable || otherOn) && (
-                  <label
-                    htmlFor={`${labelId}-other`}
-                    onClick={(event) => {
-                      if (!editable) return;
-                      setDrafts((current) => {
-                        const own = current[question.id] ?? emptyDraft;
-                        return { ...current, [question.id]: { ...own, selected: question.multiSelect ? own.selected : [], otherSelected: true } };
-                      });
-                      event.currentTarget.querySelector("input")?.focus();
-                    }}
-                    className={cn(
-                      "flex w-full items-center gap-3 rounded-[10px] border px-3 py-2 transition-colors",
-                      otherOn ? "border-accent-border bg-accent/10" : "border-hairline/40 bg-card",
-                    )}
-                  >
-                    <button
-                      type="button"
-                      role={question.multiSelect ? "checkbox" : "radio"}
-                      aria-label={t("questions.other")}
-                      aria-checked={otherOn}
-                      tabIndex={-1}
-                      disabled={!editable}
-                      className="shrink-0"
-                    >
-                      <Indicator multi={question.multiSelect} checked={otherOn} inline />
-                    </button>
-                    <span className="shrink-0 text-[14px] font-medium text-ink">{t("questions.other")}</span>
-                    <input
-                      id={`${labelId}-other`}
-                      type={question.secret ? "password" : "text"}
-                      value={draft.other}
-                      disabled={!editable}
-                      maxLength={2000}
-                      aria-label={t("questions.otherLabel", { question: question.question })}
-                      placeholder={t("questions.otherPlaceholder")}
-                      onChange={(event) => {
-                        const text = event.target.value;
-                        setDrafts((current) => setOther(current, question, text));
-                      }}
-                      // the composer's own pill: rounded, raised, a hairline that brightens on focus
-                      className="min-w-0 flex-1 rounded-full border border-hairline/40 bg-raised px-3.5 py-1.5 text-[14px] text-ink placeholder:text-ink-secondary focus:border-accent-border disabled:opacity-60"
-                    />
-                  </label>
+                  <OtherRow
+                    layout="inline"
+                    chosen={otherOn}
+                    text={draft.other}
+                    disabled={!editable}
+                    multi={question.multiSelect}
+                    label={t("questions.other")}
+                    inputId={`${labelId}-other`}
+                    inputLabel={t("questions.otherLabel", { question: question.question })}
+                    placeholder={t("questions.otherPlaceholder")}
+                    secret={question.secret}
+                    maxLength={OTHER_MAX_LENGTH}
+                    onChoose={() => setDrafts((current) => {
+                      const own = current[question.id] ?? emptyDraft;
+                      return { ...current, [question.id]: { ...own, selected: question.multiSelect ? own.selected : [], otherSelected: true } };
+                    })}
+                    onText={(text) => setDrafts((current) => setOther(current, question, text))}
+                  />
                 )}
               </div>
             </div>
@@ -372,7 +357,7 @@ export function QuestionCardView({
         </div>
       ) : (
         <div className={cn(footerRow, "text-[12.5px] text-ink-secondary")}>
-          {state === "open" && (
+          {state === "open" && !oneTap && (
             // the key map rides the button as a tooltip instead of a line of
             // its own; the digits on the rows already say the rest
             <button type="button" onClick={submit} disabled={!complete || busy} title={t("questions.keys")} className={primaryButton}>
@@ -404,24 +389,6 @@ export function QuestionCardView({
         </div>
       )}
     </section>
-  );
-}
-
-/** The radio or checkbox glyph: 18px, sitting on the label's first line
- * (`inline` centres it on a one-line row instead). */
-function Indicator({ multi, checked, inline = false }: { multi: boolean; checked: boolean; inline?: boolean }) {
-  return (
-    <span
-      aria-hidden
-      className={cn(
-        "flex size-[18px] shrink-0 items-center justify-center border transition-colors",
-        !inline && "mt-px",
-        multi ? "rounded-[5px]" : "rounded-full",
-        checked ? "border-accent bg-accent text-white" : "border-hairline bg-raised",
-      )}
-    >
-      {checked && (multi ? <Check size={12} strokeWidth={3} /> : <span className="size-2 rounded-full bg-current" />)}
-    </span>
   );
 }
 
@@ -485,7 +452,7 @@ export function QuestionCard({
       onSendAsMessage={(answers, text) => {
         setBusy(true);
         setError(null);
-        dispatch({ type: "sendQuestionAsMessage", botId, groupId, threadId, requestId, text, answers, onError: failed });
+        dispatch({ type: "sendQuestionAsMessage", botId, groupId, threadId, requestId, text, answers, ...(card.answerAsSend ? { answerAsSend: true } : {}), onError: failed });
       }}
     />
   );

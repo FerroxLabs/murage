@@ -3,7 +3,20 @@
 import { createHash } from "node:crypto";
 import type { SkillScanInput } from "./types.ts";
 
-const normalize = (text: string) => text.replace(/\r\n/g, "\n").replace(/[ \t]+$/gm, "").trim();
+/** Drops the spaces and tabs before each line end, as `/[ \t]+$/gm` does, in one pass: that pattern retries every start inside a long run of spaces. */
+export function stripTrailingBlanks(text: string): string {
+  const parts: string[] = [];
+  let runStart = -1, last = 0;
+  for (let i = 0; i <= text.length; i++) {
+    const c = i < text.length ? text.charCodeAt(i) : -1;
+    if (c === 32 || c === 9) { if (runStart < 0) runStart = i; continue; }
+    if (runStart >= 0 && (c === -1 || c === 10 || c === 13 || c === 0x2028 || c === 0x2029)) { parts.push(text.slice(last, runStart)); last = i; }
+    runStart = -1;
+  }
+  parts.push(text.slice(last));
+  return parts.join("");
+}
+const normalize = (text: string) => stripTrailingBlanks(text.replace(/\r\n/g, "\n")).trim();
 
 /** Binds a verdict (and an owner's "use it anyway") to exactly the content
  *  scanned: every file, the description and the trigger terms. Fields are

@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { BOT_PROFILE_LIMITS } from "../../shared/bot-profile";
+import { en } from "@/locales";
 
 const read = (file: string) => readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8");
 
@@ -24,7 +25,7 @@ const settings = read("./SettingsPanel.tsx");
 
 /** The Personality field alone, so a Description assertion cannot satisfy it. */
 const personaField = (() => {
-  const start = settings.indexOf('<Field label="Personality">');
+  const start = settings.indexOf('<Field label={t("settings.bot.identity.personality")}>');
   expect(start, "the Personality field is missing entirely").toBeGreaterThan(-1);
   return settings.slice(start, settings.indexOf("</Field>", start));
 })();
@@ -41,15 +42,17 @@ describe("the personality field", () => {
   });
 
   it("says it is spoken to the bot, and that nothing else reads it", () => {
-    expect(personaField).toMatch(/How this bot talks/);
-    expect(personaField).toMatch(/read by nothing else/);
-    expect(personaField).toMatch(/delegate/);
+    expect(en["settings.bot.identity.personality"]).toBe("Personality");
+    expect(personaField).toContain('t("settings.bot.identity.personalityHint")');
+    expect(en["settings.bot.identity.personalityHint"]).toMatch(/How this bot talks/);
+    expect(en["settings.bot.identity.personalityHint"]).toMatch(/read by nothing else/);
+    expect(en["settings.bot.identity.personalityHint"]).toMatch(/delegate/);
   });
 });
 
 describe("the description field stops hiding that it is a prompt", () => {
   const descriptionField = (() => {
-    const start = settings.indexOf('<Field label="Instructions">');
+    const start = settings.indexOf('<Field label={t("settings.bot.identity.instructions")}>');
     expect(start, "the instructions field is missing entirely").toBeGreaterThan(-1);
     return settings.slice(start, settings.indexOf("</Field>", start));
   })();
@@ -59,14 +62,17 @@ describe("the description field stops hiding that it is a prompt", () => {
     // metadata about the bot rather than instructions to it.
     expect(settings).not.toContain('<Field label="Description">');
     expect(settings).not.toContain('placeholder="What this agent is for"');
+    expect(en["settings.bot.identity.instructions"]).toBe("Instructions");
+    expect(Object.values(en)).not.toContain("What this agent is for");
   });
 
   it("still writes `description`, and says when the agent reads it", () => {
     expect(descriptionField).toContain("patch({ description: e.target.value })");
-    expect(descriptionField).toMatch(/every turn/);
+    expect(descriptionField).toContain('t("settings.bot.identity.instructionsHint")');
+    expect(en["settings.bot.identity.instructionsHint"]).toMatch(/every turn/);
   });
 
   it("warns that teammates read it too — which is why voice belongs next door", () => {
-    expect(descriptionField).toMatch(/teammates/);
+    expect(en["settings.bot.identity.instructionsHint"]).toMatch(/teammates/);
   });
 });

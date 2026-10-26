@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { fluxKeyFingerprint } from "./flux-composio-token.mjs";
 import { createSecureCredentialState } from "./secure-credential-state.mjs";
 import { mutateFluxCredentials } from "./flux-connection-control.mjs";
 import { fluxCredentialStatus, planFluxCredentialChange } from "./flux-credential-policy.mjs";
@@ -36,4 +37,35 @@ test("unknown compensation keeps runtime admission fenced", async () => {
 });
 test("managed disconnect overrides inherited environment on restart without retaining old key", () => {
   assert.deepEqual(workspaceCredentialEnv({ fluxApiKey: "", fluxConnectionManaged: "true", fluxConnectionAliases: "[]" }), { FLUX_API_KEY: "", MURAGE_FLUX_CONNECTION_ALIASES: "[]" });
+});
+test("replacing the Flux key drops the previous account's connected-app token in the same fenced write", async () => {
+  const f = fixture();
+  const old = { fluxComposioBrokerToken: "a".repeat(64), fluxComposioBrokerTokenExpiresAt: "2030-01-01T00:00:00.000Z", fluxComposioBrokerTokenKeyFingerprint: fluxKeyFingerprint("sk-flux-FAKE_OLD"), fluxComposioAccountKind: "shared" };
+  const seen = [];
+  const options = { ...f.options, updateDocument: (mutate, commit) => f.options.updateDocument(async (credentials) => { Object.assign(credentials, old); const out = await mutate(credentials); seen.push(structuredClone(out)); return out; }, commit) };
+  await mutateFluxCredentials(f.input, options);
+  assert.equal(seen[0].fluxApiKey, "sk-flux-FAKE_NEXT");
+  for (const field of Object.keys(old)) assert.equal(field in seen[0], false, field);
+  assert.equal(f.disk().fluxComposioBrokerToken, undefined);
+});
+test("re-saving the same Flux key keeps its connected-app token", async () => {
+  const f = fixture();
+  const old = { fluxComposioBrokerToken: "b".repeat(64), fluxComposioBrokerTokenKeyFingerprint: fluxKeyFingerprint("sk-flux-FAKE_NEXT") };
+  const options = { ...f.options, updateDocument: (mutate, commit) => f.options.updateDocument(async (credentials) => { Object.assign(credentials, old); return mutate(credentials); }, commit) };
+  await mutateFluxCredentials(f.input, options);
+  assert.equal(f.disk().fluxComposioBrokerToken, "b".repeat(64));
+});
+test("a send during the next account's mint cannot carry the previous account's token", async () => {
+  const f = fixture();
+  const old = { fluxComposioBrokerToken: "a".repeat(64), fluxComposioBrokerTokenKeyFingerprint: fluxKeyFingerprint("sk-flux-FAKE_OLD") };
+  // The harness holds whatever the shell last sent; it only learns of a clear when the shell syncs.
+  let harnessToken = old.fluxComposioBrokerToken, syncedWhileFenced;
+  const options = {
+    ...f.options,
+    updateDocument: (mutate, commit) => f.options.updateDocument(async (credentials) => { Object.assign(credentials, old); return mutate(credentials); }, commit),
+    afterDocument: () => { syncedWhileFenced = f.fenced(); harnessToken = f.disk().fluxComposioBrokerToken ?? null; },
+  };
+  await mutateFluxCredentials(f.input, options);
+  assert.equal(syncedWhileFenced, true);
+  assert.equal(harnessToken, null);
 });

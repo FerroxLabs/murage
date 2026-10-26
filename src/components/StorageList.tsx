@@ -8,10 +8,12 @@
 // route. Opening a file from here is not offered.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/state/store";
-import { loadFirst, loadMore, type StorageListAnswer, type StorageListState, type StorageOrder } from "@/lib/storage-list";
+import { isCloudOrigin } from "@/lib/cloud-workspace";
+import { loadFirst, loadMore, removeFile, type StorageListAnswer, type StorageListState, type StorageOrder } from "@/lib/storage-list";
 import { StorageListView } from "./StorageListView";
 
 const get = (url: string) => api(url) as Promise<StorageListAnswer>;
+const post = (url: string, body: unknown) => api(url, { method: "POST", body: JSON.stringify(body) });
 
 export function StorageList() {
   const [state, setState] = useState<StorageListState>({ phase: "loading" });
@@ -30,5 +32,24 @@ export function StorageList() {
     setState({ ...state, loadingMore: true });
     void loadMore(get, state).then(result => { if (generation.current === mine) setState(result); });
   }, [state]);
-  return <StorageListView state={state} order={order} onOrder={reload} onMore={more} onReload={() => reload(order)} />;
+  // Remove (1.0.4 SL-H): this computer only, never a Cloud home.
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const [removing, setRemoving] = useState<string | null>(null);
+  const [removeNotice, setRemoveNotice] = useState<string | null>(null);
+  const remove = useCallback((name: string) => {
+    setRemoving(name);
+    void removeFile(post, name).then(result => {
+      setRemoving(null);
+      setConfirming(null);
+      setRemoveNotice(result.line);
+      if (result.removed) reload(order);
+    });
+  }, [order, reload]);
+  const removable = !isCloudOrigin();
+  return (
+    <StorageListView state={state} order={order} onOrder={reload} onMore={more} onReload={() => reload(order)}
+      {...(removable ? {
+        remove: { confirming, removing, notice: removeNotice, onAsk: (name: string) => { setRemoveNotice(null); setConfirming(name); }, onCancel: () => setConfirming(null), onConfirm: remove },
+      } : {})} />
+  );
 }

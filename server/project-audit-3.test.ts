@@ -66,8 +66,20 @@ it("F3 legacy PATCH refuses every project edit except End", async () => {
       const response = await fetch(`${server.info.url}${path}`, { method, headers: { "content-type": "application/json", "x-murage-surface": "desktop", "x-murage-surface-secret": proof.secret }, body: JSON.stringify(body) });
       return { status: response.status, body: await response.json() as Record<string, any> };
     };
-    const bot = await api("POST", "/api/bots", { name: "Lead" });
-    const group = await api("POST", "/api/groups", { name: "Project", memberIds: [bot.body.bot.id], channelProject: { goal: "Ship" } });
+    // A create is checked for its 201 before its body is read, so a refused create names its status, its answer and the
+    // server's own log (CI 40179744623 read the missing bot as "reading 'id'" with none of these). Not repeated: the app
+    // does not repeat a create either, so any refusal here is one a person would see.
+    const create = async (path: string, body: unknown) => {
+      const answer = await api("POST", path, body);
+      if (answer.status !== 201) {
+        let log = "";
+        try { log = readFileSync(server.info.logPath, "utf8").slice(-4000); } catch { /* the log is evidence only */ }
+        expect.fail(`POST ${path} answered ${answer.status} ${JSON.stringify(answer.body)}\nserver log tail:\n${log}`);
+      }
+      return answer;
+    };
+    const bot = await create("/api/bots", { name: "Lead" });
+    const group = await create("/api/groups", { name: "Project", memberIds: [bot.body.bot.id], channelProject: { goal: "Ship" } });
     expect(group.status).toBe(201);
     for (const channelProject of [{ goal: "Bypass" }, {}, { status: "active" }, "bad", false]) {
       expect(await api("PATCH", `/api/groups/${group.body.group.id}`, { channelProject })).toMatchObject({ status: 409, body: { error: "not_allowed", reason: expect.stringMatching(/brief.*goal/i) } });

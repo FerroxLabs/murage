@@ -48,7 +48,8 @@
         "title": "Case Studies",
         "description": "Trophy prepares a source-grounded customer case study from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For general conversion copy, use Copy. For general writing and editing, use Writer.",
         "appearance": {
-          "color": "orange"
+          "color": "yellow",
+          "mascotBody": "star"
         },
         "skills": [
           "case-study-writing",

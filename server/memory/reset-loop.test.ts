@@ -171,7 +171,9 @@ it("a content change after the reset still ends the new session: forgetting what
   expect(w.resets).toHaveLength(2);
 });
 
-it("the replay a reset turn carries on a long thread is bounded and quick to assemble (timed)", windowsPerfBudget(), () => {
+// The 2 s budget below times the assembly alone. Writing the 6,000 stored lines and 3,000 receipts before it is the
+// slow part: about 50 s on a loaded Linux CI shard (1.0.6 CI 40172017933, assembly ms=10), past the 45 s default.
+it("the replay a reset turn carries on a long thread is bounded and quick to assemble (timed)", { timeout: 180_000, ...windowsPerfBudget() }, () => {
   // 3,000 turns of about 1.5 KB a line (9 MB of history) in one engine
   // session, every reply linked to its turn's receipt, then an install-wide
   // revoke: the reset turn's replay as a direct owner turn assembles it.

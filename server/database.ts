@@ -275,8 +275,11 @@ export function database(): DatabaseSync {
     // file, not left in free space for anyone reading the raw bytes.
     // A new file frees pages back to the disk in small steps (incremental
     // vacuum, root-set-compaction.ts); it can only be chosen before the first table.
+    // The wait comes before the first statement that reads the file: another connection still leaving it (a worker that opened it by
+    // path, a checkpointer) may hold it for a moment, and without the wait even this first pragma fails at once with "database is locked".
+    db.exec("PRAGMA busy_timeout=1000");
     if (freshInstallation) db.exec("PRAGMA auto_vacuum=INCREMENTAL");
-    db.exec("PRAGMA busy_timeout=1000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA secure_delete=ON;"); // (the wait first: a checkpointer still leaving the file may hold it for a moment)
+    db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA secure_delete=ON;");
     // The write-ahead log keeps the size of the largest transaction it ever
     // held unless told otherwise (a 3.6 GB log after the 1.0.0 upgrade). Zero:
     // the first commit after a checkpoint has copied the whole log restarts it

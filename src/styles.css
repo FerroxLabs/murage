@@ -290,7 +290,9 @@ body {
   background-color: var(--color-app);
   color: var(--color-ink);
   font-family: var(--font-sans);
-  -webkit-font-smoothing: antialiased;
+  /* The platform's own text smoothing: forcing greyscale made text thinner than the rest of the system. */
+  -webkit-font-smoothing: auto;
+  -moz-osx-font-smoothing: auto;
   overflow: hidden;
   /* Rubber-banding the document drags the whole app in a standalone iOS
      install and reveals the page ground under a keyboard that has not moved.
@@ -331,7 +333,16 @@ body {
    273px wide with a 97px dead gutter — a quarter of the only column there is,
    spent on nothing, wrapping the text at ~29 characters. 92% below md keeps the
    bubble reading as a bubble and gives the text back 49px. Paired with the
-   `max-w-[min(42rem,78%)]` sites in ChatView.tsx / GroupView.tsx. */
+   `max-w-[min(var(--chat-bubble-max),var(--chat-bubble-pct))]` sites in ChatView.tsx / GroupView.tsx. */
+
+/* One place to tune how wide chat bubbles and cards run. 52rem / 84% uses a big
+   screen sensibly (long replies, tables) without stretching a line past the
+   comfortable reading measure; below md the sites switch to the full column. */
+:root {
+  --chat-bubble-max: 52rem;
+  --chat-bubble-pct: 84%;
+  --chat-card-pct: 92%;
+}
 
 /* Overlay convention: a `position: fixed` box resolves against the LAYOUT
    viewport, which iOS never shrinks for the keyboard — so `fixed inset-0` on a
@@ -701,6 +712,11 @@ select.procedure-history-audience:focus-visible,
   stroke-width: 3.5px;
   stroke-dasharray: 1;
   stroke-dashoffset: 1;
+}
+
+/* The cream the template illustrations are drawn on; theme-invariant like the art itself. */
+.library-art-backdrop {
+  background-color: #f7f4ee;
 }
 
 .ember-speed-line--two {
@@ -1319,3 +1335,10 @@ button:disabled.bg-danger {
 ::highlight(murage-claim) {
   background-color: color-mix(in oklab, var(--color-accent) 28%, transparent);
 }
+
+/* Mac window drag from a view header (hooks/use-window-drag.ts). The header
+   moves the window; anything a person can click inside it must not. */
+[data-window-drag] { -webkit-app-region: drag; }
+[data-window-drag] :is(button, a, input, select, textarea, summary, label, [role="button"], [role="tab"], [role="menuitem"], [role="switch"], [role="combobox"], [tabindex]:not([tabindex="-1"]), [contenteditable="true"], [data-no-window-drag]) { -webkit-app-region: no-drag; }
+/* Never drag the window from an overlay, a menu, or the Computer panel's resize handle. */
+dialog, [role="dialog"], [aria-modal="true"], [role="menu"], [data-no-window-drag] { -webkit-app-region: no-drag; }

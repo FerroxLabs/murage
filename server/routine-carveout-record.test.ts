@@ -35,10 +35,10 @@ describe("routineValueTargetLine", () => {
   });
 
   it("a long key and a quoted password both stay out, however redaction changes their length (Astra)", () => {
-    const command = `TOKEN=${key}${"a".repeat(100)} PASSWORD='tiny!Password987' node build.js > "$OUT"`;
+    const command = `TOKEN=${key}${"a".repeat(100)} PASSWORD='tiny!Password987' make build > "$OUT"`;
     const line = lineOf(command);
     // Astra's case: a long value before the password, and the routine verdict approves
-    const astra = `TOKEN=${"a".repeat(100)} PASSWORD='tiny!Password987' node build.js > "$OUT"`;
+    const astra = `TOKEN=${"a".repeat(100)} PASSWORD='tiny!Password987' make build > "$OUT"`;
     const verdict = autoVerdict(ROUTINE, "Bash", astra, { commandText: astra, commandCwd: CWD, automated: true, routineLevel: true, routineCarveOut: true });
     expect(verdict.approve).toBeTruthy();
     expect(routineValueTargetLine(verdict.valueTarget!)).toBe(`${LEAD}a redirect to "$OUT"`);

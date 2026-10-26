@@ -184,6 +184,8 @@ type SkillRecordingPayload = {
     muragebox?: {
       platform: NodeJS.Platform;
       arch?: string;
+      /** Write text to the system clipboard from the desktop process. Write-only, capped at 1 MB; there is no read. */
+      copyText?(text: string): Promise<boolean>;
       backup?: {
         status(): Promise<{ supported:boolean; pending:boolean; unavailable?:"tool"|"closing" }>; restart(): Promise<{ restarting:boolean }>;
         /** Native save dialog; the private key never reaches the renderer. */
@@ -502,6 +504,8 @@ export interface McpSecretsInput {
   url?: string;
   /** Command servers: environment name to value. */
   env?: Record<string, string>;
+  /** Item 118: the revision a credential card was made for; refused as stale, before anything is written, when the entry changed. */
+  rev?: string;
 }
 
 export type McpBridgeError =
@@ -541,11 +545,15 @@ export interface UpdaterState {
     | "handed-off"
     | "error";
   version?: string;
+  /** The update's release notes as plain text (tags removed, at most 8000 characters); never markup. */
+  releaseNotesText?: string;
   /** The version of the app that is running now (app.getVersion()). */
   currentVersion?: string;
   percent?: number;
   message?: string;
   action?: "download-from-murage";
+  /** ISO time of the first failed update check in a streak that has lasted a day or more; absent once a check works. */
+  staleCheckSince?: string;
   /**
    * How the download gets applied. "restart" quits and installs in place;
    * "handoff" copies the install command and opens a terminal so the user
