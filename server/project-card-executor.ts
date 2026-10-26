@@ -16,7 +16,7 @@ import type { BuiltPrompt } from "./memory/lineage-types.ts";
 import { steerBuilt, type EngineFence } from "./drivers/engine-input.ts";
 import { enqueueCardRun, applyCardRunDispatched, applyCardWaiting, applyCardRunResumed } from "./project-cards.ts";
 import { projectCardById, insertProjectActivity } from "./project-records.ts";
-import { completeRequest, finishRequestTurn, markRequestDispatched, queuedRoomRequests, recordRoomRequestRefusal, roomRequest, isTerminalRoomRequestState, type CompletionHooks, type RoomRequest } from "./room-requests.ts";
+import { closeQueuedIfAskerEnded, completeRequest, finishRequestTurn, markRequestDispatched, queuedRoomRequests, recordRoomRequestRefusal, roomRequest, isTerminalRoomRequestState, type CompletionHooks, type RoomRequest } from "./room-requests.ts";
 import type { AdmissionClaim, ProjectContext, WorkAdmission, WriterRoot } from "./work-admission.ts";
 
 /** The card note for the owner's own Stop. */
@@ -250,6 +250,8 @@ export function createProjectCardExecutor(deps: CardExecutorDeps) {
           completeRequest(db, request.id, { state: "cancelled", now: deps.now(), outcomeNote: "This card run is no longer available." }, deps.hooks);
           cancelBackoff(request.id); deps.changed(request.groupId); continue;
         }
+        // F3 start guard (CANCEL-TREE-104 D4): a card continuation wake whose card run ended is cancelled, never started (fresh read, one transaction)
+        if (closeQueuedIfAskerEnded(db, request.id, deps.now(), deps.hooks)) { cancelBackoff(request.id); deps.changed(request.groupId); continue; }
         if (retry && retry.at > deps.now()) { schedule(retry.at); continue; }
         if (card.dependsOn.some(id => projectCardById(db, id)?.state !== "done")) {
           recordRoomRequestRefusal(db, request.id, "dependency"); continue;

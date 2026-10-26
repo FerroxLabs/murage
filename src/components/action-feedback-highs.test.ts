@@ -55,7 +55,7 @@ describe("High: Composer, Send while an intake question is open", () => {
   const source = read("./Composer.tsx");
   it("says so when the message could not be recorded as the answer, without calling the send failed", () => {
     noSwallow(source);
-    expect(source).toContain("replyToIntake(bot.id, question.id, t, api, { alongside: true }).then(() => setIntakeNotice(null), () => setIntakeNotice(INTAKE_NOT_RECORDED))");
+    expect(source).toContain("replyToIntake(bot.id, question.id, requestText, api, { alongside: true }).then(() => setIntakeNotice(null), () => setIntakeNotice(INTAKE_NOT_RECORDED))");
     expect(source).toContain('data-testid="intake-reply-notice"');
     expect(source).toMatch(/INTAKE_NOT_RECORDED = "Your message was sent\./);
   });
@@ -104,7 +104,7 @@ describe("High: X on the connector card and the secret request card", () => {
 describe("High: Continue on the hello card", () => {
   const deps = (subscribe: () => Promise<unknown>): HelloAnswerDeps => ({
     api: vi.fn(async (path: string) => (path === "/api/subscribe" ? subscribe() : { profile: { name: "Sean", email: "sean@example.com" } })),
-    identify: vi.fn(), markGate: vi.fn(), answer: vi.fn(async () => {}), skip: vi.fn(async () => {}),
+    markGate: vi.fn(), answer: vi.fn(async () => {}), skip: vi.fn(async () => {}),
   });
   const typed = { name: "Sean", email: "sean@example.com" };
   it("does not hold the person up, and reports a refused signup", async () => {
@@ -117,7 +117,7 @@ describe("High: Continue on the hello card", () => {
     await expect((await saveHelloAnswer({ name: "Sean", email: "" }, deps(async () => ({})))).signup).resolves.toBe("none");
   });
   it("tells the person in plain words, without blocking entry", () => {
-    expect(SIGNUP_FAILED_NOTE).toContain("could not add your email");
+    expect(SIGNUP_FAILED_NOTE).toContain("could not add you to Murage news");
     const source = read("./FirstRunHelloCard.tsx");
     expect(source).toContain('data-testid="hello-signup-note"');
     noSwallow(source);

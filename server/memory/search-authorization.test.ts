@@ -10,6 +10,7 @@ import { searchMemory, type MemorySearchBridge } from "./search.ts";
 import type { IndexHit } from "./index.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
+import { drainRevokeMarker } from "./memory-revocation.ts";
 
 beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
@@ -54,6 +55,11 @@ it("keeps per-record active version and source revision checks within a shared s
   const hits = [f.add("current"), f.add("stale-source"), f.add("old-version", undefined, 1, "superseded"), { id: "missing", version: 9, score: 1 }];
   database().prepare("INSERT INTO memory_evidence VALUES(?,1,?,?,0,8)").run("stale-source", source.id, source.revision);
   updateMessage("thread", { id: "source-message", at: 1, role: "user", kind: "text", text: "corrected" });
+  // The correction revokes the old revision; its write-time marker runs inline only within its budget and the rest in the background.
+  // Until it settles every record reads "checking" and recall answers partial and empty (fail closed, readable.ts
+  // writetimeRecordRefusal). This test is about the per-record checks once settled, so it drains the marker first (1.0.7: on a loaded
+  // box the inline budget ran out about 1 run in 24).
+  expect(drainRevokeMarker(database()).pending).toBe(false);
   const result = await searchMemory("current only", f.access, bridgeFor(hits), {allowance: LineageAllowance.tool(1_000_000_000)});
   expect(result.hits.map(hit => hit.id)).toEqual(["current"]);
 });

@@ -60,7 +60,8 @@
         "title": "Gym and Studio",
         "description": "Rep prepares a class capacity and outreach plan from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. ",
         "appearance": {
-          "color": "green"
+          "color": "green",
+          "mascotBody": "hexagon"
         },
         "skills": [
           "gym-studio-owner",

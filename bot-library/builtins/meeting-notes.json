@@ -72,7 +72,8 @@
         "title": "Meeting Notes",
         "description": "Minute prepares a source-linked meeting notes page. Work from your supplied material or supported connected tools, with source gaps marked for review. For general desk work, use Cowork.",
         "appearance": {
-          "color": "purple"
+          "color": "purple",
+          "mascotBody": "capsule"
         },
         "skills": [
           "meeting-notes-summarizer",

@@ -144,3 +144,21 @@ describe("the settings wiring", () => {
     expect(source.match(/api\(/g)).toHaveLength(2);
   });
 });
+
+describe("ElevenLabs voices through Flux in the picker", () => {
+  it("are grouped under their own source chip and tagged on each row", async () => {
+    const { FLUX_ELEVEN_VOICES } = await import("../../server/tts/flux-speech.ts");
+    const html = render({ voices: [...all, ...FLUX_ELEVEN_VOICES] });
+    expect(html.match(/role="option"/g)).toHaveLength(61);
+    expect(html).toContain('aria-label="Voice source"');
+    expect(html).toContain(">ElevenLabs (via Flux)<");
+    expect(html.match(/data-source="elevenlabs"/g)).toHaveLength(20);
+    expect(html).toContain('aria-label="Play Aria"');
+  });
+
+  it("a list from one source shows no source chips or tags", () => {
+    const html = render({ voices: XAI_VOICES });
+    expect(html).not.toContain('aria-label="Voice source"');
+    expect(html).not.toContain("data-source=");
+  });
+});

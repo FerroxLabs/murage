@@ -112,6 +112,10 @@ export function errorSentence(error: unknown): string {
   if (/MEMORY_CORRECTION_PIN/.test(text)) return w("error.correctionPin");
   if (/MEMORY_CORRECTION/.test(text)) return w("error.correction");
   if (/MEMORY_PIN_MUST_BE_UNPINNED/.test(text)) return w("error.unpin");
+  // A pin the share has no room for (409, 1.0.4): how much the pins would take and how much they have, in bytes.
+  const room = /MEMORY_PIN_BUDGET:\s*(\d+)\/(\d+)/.exec(text);
+  if (room) return w("error.pinBudget", { used: Number(room[1]).toLocaleString(), allowed: Number(room[2]).toLocaleString() });
+  if (/MEMORY_PIN_BUDGET/.test(text)) return w("error.pinBudgetPlain");
   if (/INVALID_MEMORY_TEXT/.test(text)) return w("error.writeWords");
   if (status === 403) return w("error.desktopOnly");
   return w("error.generic");

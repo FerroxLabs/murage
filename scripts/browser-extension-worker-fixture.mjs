@@ -28,7 +28,7 @@ export async function workerFixture() {
     tabs: { onRemoved: event(), onCreated: event(), create: async ({ url }) => { const tab = { id: ++nextTab, url }; tabs.set(tab.id, tab); await completed.fire({ tabId: tab.id, frameId: 0, url }); return tab; }, get: async id => tabs.get(id), group: async () => 1, remove: async id => tabs.delete(id) },
     tabGroups: { update: async () => {} }, action: { setBadgeText: async () => {} },
     debugger: { onDetach: event(), onEvent: event(), attach: async () => {}, detach: async () => {}, sendCommand: async () => ({}) },
-    downloads: { onCreated: event(), onDeterminingFilename: event(), cancel: vi.fn(async () => {}), erase: vi.fn(async () => {}) },
+    downloads: { onCreated: event(), onDeterminingFilename: event(), onChanged: event(), cancel: vi.fn(async () => {}), removeFile: vi.fn(async () => {}), erase: vi.fn(async () => {}) },
     alarms: { create: vi.fn(), onAlarm: event() },
     sidePanel: { setPanelBehavior: async () => {} },
   };

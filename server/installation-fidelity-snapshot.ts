@@ -5,7 +5,7 @@ import { backupSelectionSchema, type BackupSelection, type BackupCoverage } from
 import { portableArchivePath, type ArchiveLimits } from "./installation-archive.ts";
 import { InstallationSnapshotError, type OfflineInstallation } from "./installation-database-snapshot.ts";
 import type { StateSnapshotManifest } from "./installation-state-snapshot.ts";
-import { classifyDataDirEntry } from "./data-dir-inventory.ts";
+import { classifyDataDirEntry, classifyDataDirEntryForBackup } from "./data-dir-inventory.ts";
 import { MAX_BACKUP_BYTES, MAX_BACKUP_FILES } from "../shared/backup-limits.ts";
 // Every top-level name is classified by data-dir-inventory.ts, the one list
 // shared with the restorable stage and the damaged-installation export. A
@@ -27,8 +27,7 @@ export async function inventoryFidelity(installation:OfflineInstallation,stage:{
   const memorySidecar=(name:string)=>name==="memory-index.db-wal"||name==="memory-index.db-shm";
   if(!memoryIndexPresent&&roots.some(memorySidecar))fail("BACKUP_UNCLASSIFIED_COMPONENT");
   for(const name of roots){
-    const entry=classifyDataDirEntry(name);
-    if(!entry)fail("BACKUP_UNCLASSIFIED_COMPONENT",name);
+    const entry=classifyDataDirEntryForBackup(name);
     if(entry.backup==="refused")fail(entry.code??"BACKUP_UNCLASSIFIED_COMPONENT",name);
     if(entry.backup==="sidecar")continue;
     if(entry.backup==="excluded"){components.push({path:name,status:"excluded",reason:entry.why});continue;}

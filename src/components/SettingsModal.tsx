@@ -1,6 +1,8 @@
 import { LazyBoundary, retryableLazy } from "./LazyBoundary";
 import { effortLabel } from "@/lib/effort-label";
 import { t } from "@/lib/i18n";
+import { DISCARD_SETTINGS_CHANGES, settingsDrafts } from "@/lib/settings-drafts";
+import { SEND_KEYS, chooseSendKey, currentSendKey, isMacPlatform, sendKeyName, subscribeSendKey } from "@/lib/send-key";
 import { waitForAnchor } from "@/lib/anchor-wait";
 // App settings, as a real modal with sections rather than one long panel.
 // Per-bot settings (persona, model, computer) stay in SettingsPanel; this is
@@ -10,7 +12,7 @@ import { waitForAnchor } from "@/lib/anchor-wait";
 // 0.1.62 (NAV-OVERHAUL.md, Option B): six group headings over short pages
 // that each do one job. The section ids, their groups and their search words
 // live in lib/settings-sections.ts; this file owns the icons and the pages.
-import { Suspense, useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Archive, BookOpen, Bot, Brain, Coins, Globe, LifeBuoy, MessageCircle, Puzzle, Search, Smartphone, Trash2, User, Wrench, X } from "lucide-react";
 import { api, useStore, type AppSettingsSection, type ConfigStatus } from "@/state/store";
 import { analyticsEnabled, setAnalyticsEnabled } from "@/lib/analytics";
@@ -41,6 +43,7 @@ import { BackupSettings } from "./BackupSettings";
 import { StorageSettings } from "./StorageSettings";
 import { StartupSettings } from "./StartupSettings";
 import { AnnouncementsSettings } from "./AnnouncementsSettings";
+import { NewsSignupSettings } from "./NewsSignupSettings";
 import { TelegramSettings } from "./TelegramSettings";
 import { SlackSettings } from "./SlackSettings";
 import { WhatsAppSettings } from "./WhatsAppSettings";
@@ -81,6 +84,7 @@ import { copyVersionText } from "@/lib/about-version";
 import { APP_VERSION } from "@/lib/whats-new";
 import { sourceCodeLink, sourceVersionLabel } from "@/lib/source-code";
 import { openKeyboardShortcuts, openWhatsNew } from "@/lib/app-events";
+import { copyText } from "@/lib/copy-text";
 
 export { sectionsForSurface, settingsSectionRedirect } from "@/lib/settings-sections";
 export { settingsSearchResults } from "@/lib/settings-search";
@@ -743,13 +747,16 @@ function AboutVersionCard() {
   const desktop = useDesktopSurface();
   const { dispatch } = useStore();
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
   const version = s?.currentVersion || APP_VERSION;
   const copy = () => {
     const line = copyVersionText(version, window.muragebox?.platform, window.muragebox?.arch);
-    void navigator.clipboard?.writeText(line).then(() => {
+    void copyText(line).then((ok) => {
+      setCopyFailed(!ok);
+      if (!ok) return;
       setCopied(true);
       window.setTimeout(() => setCopied(false), 2000);
-    }, () => {});
+    });
   };
   return (
     <Card title={t("settings.about.versionTitle", { version })} subtitle={window.muragebox?.updater ? updatesStatusLine(s) : undefined}>
@@ -768,7 +775,7 @@ function AboutVersionCard() {
           </button>
         )}
         <button type="button" onClick={copy} className={secondaryButton}>
-          {copied ? t("settings.about.versionCopied") : t("settings.about.versionCopy")}
+          {copyFailed ? t("copy.failed") : copied ? t("settings.about.versionCopied") : t("settings.about.versionCopy")}
         </button>
       </div>
       <span role="status" className="sr-only">{copied ? t("settings.about.versionCopied") : ""}</span>
@@ -812,6 +819,50 @@ function SourceCodeRow() {
       >
         {t("settings.about.sourceOpen")}
       </a>
+    </Card>
+  );
+}
+
+/** Which key sends a message. Enter stays the default, Japanese starts on
+ *  Ctrl/Cmd+Enter (an input method confirms its candidate with Enter), and the
+ *  choice is kept on this device. */
+function SendKeyRow() {
+  const mode = useSyncExternalStore(subscribeSendKey, currentSendKey, currentSendKey);
+  const mac = isMacPlatform();
+  return (
+    <Card title={t("settings.sendKey.title")} subtitle={t("settings.sendKey.note")}>
+      <div role="radiogroup" aria-label={t("settings.sendKey.title")} className="grid grid-cols-3 overflow-hidden rounded-lg border border-hairline">
+        {SEND_KEYS.map((id, index) => {
+          const selected = mode === id;
+          return (
+            <button
+              key={id}
+              type="button"
+              role="radio"
+              aria-checked={selected}
+              tabIndex={selected ? 0 : -1}
+              onKeyDown={(event) => {
+                const step = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 0;
+                if (!step) return;
+                event.preventDefault();
+                const at = (index + step + SEND_KEYS.length) % SEND_KEYS.length;
+                chooseSendKey(SEND_KEYS[at]);
+                event.currentTarget.parentElement?.querySelectorAll("button")[at]?.focus();
+              }}
+              onClick={() => chooseSendKey(id)}
+              className={cn(
+                "flex h-9 items-center justify-center px-3 text-[13px] transition-colors",
+                index > 0 && "border-l border-hairline",
+                selected
+                  ? "bg-control font-medium text-accent-text shadow-[inset_0_0_0_1px_var(--color-accent-border)]"
+                  : "text-ink-secondary hover:bg-control/50",
+              )}
+            >
+              {sendKeyName(id, mac)}
+            </button>
+          );
+        })}
+      </div>
     </Card>
   );
 }
@@ -907,6 +958,15 @@ function moveBetweenSections(event: ReactKeyboardEvent<HTMLElement>) {
   buttons[next]?.focus();
 }
 
+/** Whether the Settings focus trap counts a control as a Tab stop. The browser skips anything under a hidden
+ * ancestor (the open page a search keeps mounted) and the contents of a folded details element (but not its
+ * summary), so the trap's first and last stops have to skip them too or Tab escapes the dialog. */
+export function inSettingsTabOrder(element: Pick<Element, "closest" | "parentElement" | "tagName">): boolean {
+  if (element.closest("[hidden]")) return false;
+  const folded = element.closest("details:not([open])");
+  return !folded || (element.parentElement === folded && element.tagName === "SUMMARY");
+}
+
 export function SettingsModal() {
   const { state, dispatch } = useStore();
   // The store keeps the id it was asked for (any of the 19); the page it lands on is `section` below, so the page
@@ -982,6 +1042,14 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
     }
   }, [requested]);
 
+  // Closing with words typed in House rules or About me and not saved asks first, the way bot settings does; a page change or a
+  // search does not lose them, they are kept (lib/settings-drafts.ts) and come back when the page does.
+  const closeSettings = useCallback(() => {
+    if (settingsDrafts.anyUnsaved() && !window.confirm(DISCARD_SETTINGS_CHANGES)) return;
+    settingsDrafts.clear();
+    dispatch({ type: "toggleAppSettings", open: false });
+  }, [dispatch]);
+
   useEffect(() => {
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const dialog = dialogRef.current;
@@ -990,21 +1058,17 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        dispatch({ type: "toggleAppSettings", open: false });
+        closeSettings();
         return;
       }
       if (event.key !== "Tab" || !dialog) return;
 
-      // A folded details element keeps its contents out
-      // of the Tab order but its summary in it, so the loop has to agree.
+      // Only the stops the browser itself would Tab to (see inSettingsTabOrder).
       const focusable = Array.from(
         dialog.querySelectorAll<HTMLElement>(
           'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])',
         ),
-      ).filter((element) => {
-        const folded = element.closest("details:not([open])");
-        return !folded || element.parentElement === folded && element.tagName === "SUMMARY";
-      });
+      ).filter(inSettingsTabOrder);
       if (focusable.length === 0) {
         event.preventDefault();
         dialog.focus();
@@ -1028,7 +1092,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
       window.removeEventListener("keydown", onKey);
       returnFocus(previousFocus);
     };
-  }, [dispatch]);
+  }, [closeSettings, dispatch]);
 
   // A handful of sections (a paired phone sees three) read better as plain
   // chips on the phone strip than under headings that each hold one or two.
@@ -1040,7 +1104,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
       // shrink for the keyboard, so inset-0 would leave this centred in the
       // full 844px with the bottom half behind the keys. Height tracks --vvh.
       className="fixed inset-x-0 top-0 z-50 flex h-[var(--vvh,100%)] items-center justify-center bg-black/50 p-6 max-md:p-0"
-      onMouseDown={(e) => e.target === e.currentTarget && dispatch({ type: "toggleAppSettings", open: false })}
+      onMouseDown={(e) => e.target === e.currentTarget && closeSettings()}
     >
       <div
         ref={dialogRef}
@@ -1098,7 +1162,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
                 if (e.key !== "Escape") return;
                 e.stopPropagation();
                 if (query) setQuery("");
-                else dispatch({ type: "toggleAppSettings", open: false });
+                else closeSettings();
               }}
               placeholder={t("settings.search")}
               aria-label={t("settings.searchAria")}
@@ -1171,7 +1235,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
               )}
             </div>
             <button
-              onClick={() => dispatch({ type: "toggleAppSettings", open: false })}
+              onClick={closeSettings}
               aria-label={t("settings.close")}
               className="flex size-10 shrink-0 items-center justify-center rounded-md text-ink-secondary hover:bg-control hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
             >
@@ -1180,7 +1244,10 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
           </div>
 
           <div ref={paneRef} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain px-5 pb-5">
-            {q ? <SettingsSearchResults query={q} desktop={desktop} onOpen={openCard} /> : <>
+            {q && <SettingsSearchResults query={q} desktop={desktop} onOpen={openCard} />}
+            {/* A search hides the open page instead of unmounting it, so words typed and not yet
+              * saved there (a skill being written, House rules) are still there when the search clears. */}
+            <div data-settings-page-body hidden={q ? true : undefined} className={q ? "hidden" : "contents"}>
             {blocked && (
               <Card title={ON_YOUR_COMPUTER_ONLY} subtitle={ON_YOUR_COMPUTER_ONLY_DETAIL}>
                 <p data-cloud-computer-only={requested} className="text-[13px] text-ink-secondary">{settingsSectionLabel(requested)}</p>
@@ -1200,6 +1267,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
                   </Card>
                 </Anchor>
                 {desktop === true && <Anchor id="language-heading"><LanguageRow /></Anchor>}
+                {!inNativeShell() && <Anchor id="send-key-heading"><SendKeyRow /></Anchor>}
                 {desktop === true && <Anchor id="notifications-heading"><NotificationSettings /></Anchor>}
                 {desktop !== true && <p className="text-[12px] text-ink-secondary">{t("settings.general.remoteNote")}</p>}
                 {/* Confirmed remote only. `undefined` renders the neutral
@@ -1263,6 +1331,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
                 <Anchor id="about-version-heading"><AboutVersionCard /></Anchor>
                 {window.muragebox?.updater && !cloudCardHidden("updates-heading", cloud) && <Anchor id="updates-heading"><UpdatesRow /></Anchor>}
                 {desktop === true && <Anchor id="whats-new-heading"><WhatsNewRow /></Anchor>}
+                {desktop === true && <Anchor id="news-heading"><NewsSignupSettings /></Anchor>}
                 {desktop === true && !cloudCardHidden("setup-heading", cloud) && <Anchor id="setup-heading"><SetupAgainRow /></Anchor>}
                 <Anchor id="shortcuts-heading"><ShortcutsRow /></Anchor>
                 <Anchor id="previous-version-heading"><PreviousVersionRow /></Anchor>
@@ -1274,7 +1343,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
                 </AdvancedSection>
               </>
             )}
-            </>}
+            </div>
           </div>
         </div>
       </div>

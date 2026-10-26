@@ -20,7 +20,7 @@ export function ApprovedStepsRow({ message }: { message: Message }) {
   const hidden = (tool.stepCount ?? tool.steps.length) - tool.steps.length;
   return (
     <div className="flex justify-start">
-      <details data-testid="approved-steps-row" className="group min-w-0 max-w-[min(42rem,78%)] max-md:max-w-full">
+      <details data-testid="approved-steps-row" className="group min-w-0 max-w-[min(var(--chat-bubble-max),var(--chat-bubble-pct))] max-md:max-w-full">
         <summary className={`${CHIP} cursor-pointer list-none text-ink-secondary hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus`}>
           <ChevronRight size={13} aria-hidden="true" className="shrink-0 transition-transform group-open:rotate-90" />
           <span className={CHIP_NAME}>{tool.name}</span>

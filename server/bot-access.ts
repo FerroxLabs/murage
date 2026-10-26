@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { ACCESS_REQUEST_TTL_MS, accessRequestExpired, CONNECTED_APP_TOOLS, accessGrantSchema, type AccessGrant } from "../shared/bot-access.ts";
-import { isConnectedAppStatusTool } from "../shared/connected-app-calls.ts";
+import { connectedAppToolId, isConnectedAppStatusTool } from "../shared/connected-app-calls.ts";
+import { classifyConnectedAppCall } from "../shared/connected-app-readonly.ts";
 import { accessRoleBinding, botAccessPolicy } from "./bot-access-role.ts";
 import { isWorkspaceChief, sectionKey, type BotRecord, type Store } from "./store.ts";
 const fail=(message:string,status=403):never=>{throw Object.assign(new Error(message),{status});};
@@ -74,6 +75,7 @@ function forbiddenAuthArguments(value:unknown):boolean {
  */
 export function assertConnectedAppCall(bot:BotRecord,input:unknown):void {
  if(bot.hidden||bot.composio===false)fail("Connected apps are disabled for this bot.");
+ if(bot.draftOnly)assertDraftOnlyCall(input);
  const policy=botAccessPolicy(bot);
  if(policy.mode==="unrestricted")return;
  if(!object(input))fail("Restricted connected-app access requires one explicit tool request.");
@@ -98,6 +100,27 @@ export function assertConnectedAppCall(bot:BotRecord,input:unknown):void {
   if(known!.writes&&!policy.allowWrites)fail("The owner has blocked connected-app writes for this bot.");
   if(!policy.grants.some(grant=>grant.toolkit===known!.toolkit&&grant.accountId===call.account&&grant.tools.includes(call.tool_slug)))fail("This tool or connected account has not been approved for this bot.");
   if(forbiddenAuthArguments(call.arguments)||(known!.toolkit==="gmail"&&call.arguments.user_id!==undefined&&call.arguments.user_id!=="me"))fail("Tool arguments cannot override the approved connected account.");
+ }
+}
+
+export const DRAFT_ONLY_REFUSAL="This bot prepares drafts and does not send. It can read your connected apps; give the owner the draft to review and send.";
+/** Tool discovery a draft-only bot may use: finding a tool and reading its
+ * schema. Connection management and the workbench are not discovery. */
+const DRAFT_ONLY_DISCOVERY=/^COMPOSIO_(SEARCH_TOOLS|GET_TOOL_SCHEMAS)$/;
+/** A draft-only bot (store.ts draftOnly) reads and drafts. Whatever its access
+ * level, grants or write switch, the relay runs for it only a verified read
+ * (shared/connected-app-read-tools.ts), tool discovery, or the status of its own
+ * earlier call. Everything else, unknown tools included, is refused here before
+ * any approval or upstream request: the block is the relay, not the prompt. */
+export function assertDraftOnlyCall(input:unknown):void {
+ for(const message of Array.isArray(input)?input:[input]) {
+  if(!object(message))fail(DRAFT_ONLY_REFUSAL);
+  // Only tools/call runs anything in an app; the handshake and listings do not.
+  if(message.method!=="tools/call")continue;
+  const params=object(message.params)?message.params as Record<string,unknown>:{};
+  const name=String(params.name??"");
+  if(isConnectedAppStatusTool(name)||DRAFT_ONLY_DISCOVERY.test(connectedAppToolId(name)))continue;
+  if(classifyConnectedAppCall(name,params.arguments)!=="read")fail(DRAFT_ONLY_REFUSAL);
  }
 }
 

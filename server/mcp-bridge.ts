@@ -18,6 +18,11 @@
 // rewritten to a provider-safe root (mcp-tool-schema.ts, upstream #1390);
 // the far end still validates each call against its own schema.
 //
+// The fourth is an error result carrying a screenshot or other non-text
+// content: the Anthropic API refuses a non-text is_error tool_result and fails
+// the whole turn, so such a result keeps its text and drops the rest, with a
+// note saying so (mcp-error-result.ts, upstream #3181).
+//
 // A configured gate fails CLOSED (0.1.52 decision U-11, audit A5): when the
 // harness control endpoint times out, errors or answers malformed, nobody can
 // say the person is not driving, so a tools/call is refused with reconnect
@@ -43,6 +48,7 @@ import {
   createControlClient,
 } from "./control-client.ts";
 import { augmentedPath, resolveCliSpawn } from "./env-path.ts";
+import { textOnlyErrorResultLine } from "./mcp-error-result.ts";
 import { createToolListNormalizer } from "./mcp-tool-schema.ts";
 
 // 45s of TOTAL silence before the bridge even probes. An MCP session is
@@ -370,7 +376,7 @@ export function runMcpBridge(options: BridgeOptions): void {
     toolLists.observeRequest(line);
     return intercept(line);
   }, () => child.stdin.end(), transportFailed);
-  pipeMcpLines(child.stdout, (line) => answer(toolLists.rewriteResponse(line)), () => {}, transportFailed);
+  pipeMcpLines(child.stdout, (line) => answer(textOnlyErrorResultLine(toolLists.rewriteResponse(line))), () => {}, transportFailed);
 
   let watchdog: WatchdogHandle | null = null;
   if (options.liveness) {
