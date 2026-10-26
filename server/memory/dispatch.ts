@@ -184,10 +184,16 @@ export class MemoryDispatchReceipt {
     // A terminal event already settled the turn: no write can follow it, and
     // its capability may be gone; acceptance only confirms the bookkeeping.
     if(this.finished&&this.delivered)return;
-    assertMemoryDisclosureCurrent(this.bundle.bundleId,this.access);
+    // A record of the frame that reads "checking" here (a revoke still being walked: MEMORY_REPLAY_LIMIT) is not known to be allowed now: the
+    // write is refused as a revoked context is, so the turn takes the same rebuild path (the last rebuild carries no memory) instead of
+    // ending as "could not start" (designs/SEND-FENCE-RECEIPT-RACE.md, R2). Nothing is written either way.
+    // Both validations (this one and deliverMemoryDisclosure's own) map the same way (Astra design review M1); the cause keeps the limit for
+    // the refusal's diagnosis.
+    const revokedIfUnknown = (run: () => void) => { try { run(); } catch(error) { if(isLineageLimit(error))throw Object.assign(new Error("MEMORY_CONTEXT_REVOKED"),{cause:error,unproven:"memory-frame-checking"}); throw error; } };
+    revokedIfUnknown(()=>assertMemoryDisclosureCurrent(this.bundle.bundleId,this.access));
     this.assertSessionCurrent();
     if(!this.delivered){
-      deliverMemoryDisclosure(this.bundle.bundleId,this.access);this.delivered=true;
+      revokedIfUnknown(()=>deliverMemoryDisclosure(this.bundle.bundleId,this.access));this.delivered=true;
       for(const listener of this.deliveredListeners){try{listener(this.bundle);}catch{/* a bookkeeping failure never fails the turn */}}
     }
   }

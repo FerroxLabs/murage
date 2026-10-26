@@ -13,6 +13,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
+import WebSocket, { WebSocketServer } from "ws";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 import { browserSessionId } from "./browser-engine.ts";
 import { BROWSER_UNAVAILABLE_PREFIX, USER_CHROME_ALLOW_REASON, USER_CHROME_UNREACHABLE_REASON } from "../shared/browser-unavailable.ts";
@@ -194,7 +195,16 @@ it("is off by default: a new bot keeps its isolated profile even when the owner'
 }, 60_000);
 
 it("attaches an opted-in bot to the owner's Chrome in its own tab, never saving the owner's cookies", async () => {
-  enableRemoteDebugging(39222);
+  // The owner's Chrome, played by a WebSocket server that answers CDP on the browser path.
+  const chrome = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  await new Promise<void>((resolve) => chrome.once("listening", () => resolve()));
+  const dialed: string[] = [];
+  chrome.on("connection", (socket, request) => {
+    dialed.push(request.url ?? "");
+    socket.on("message", (raw) => { const message = JSON.parse(String(raw)); socket.send(JSON.stringify({ id: message.id, result: { product: "Chrome/fixture" } })); });
+  });
+  const chromePort = (chrome.address() as { port: number }).port;
+  enableRemoteDebugging(chromePort);
   const bot = await makeBot("Uses my Chrome", "verification", { useMyChrome: true });
   try {
     expect((await state(bot.id)).useMyChrome).toBe(true);
@@ -203,13 +213,28 @@ it("attaches an opted-in bot to the owner's Chrome in its own tab, never saving 
     // restore file holds that profile's own cookies.
     expect(session).not.toBe(browserSessionId(bot.id, "", "original-installation"));
     const env = created(session)!.env!;
-    expect(env.AGENT_BROWSER_CDP).toBe(`ws://127.0.0.1:39222/devtools/browser/${BROWSER_ID}`);
+    // The engine dials Murage's one shared connection (user-chrome-proxy.ts),
+    // a loopback URL with its own unguessable token, never Chrome directly, so
+    // Chrome asks the owner to Allow once rather than on every engine start.
+    expect(env.AGENT_BROWSER_CDP).toMatch(/^ws:\/\/127\.0\.0\.1:[0-9]{1,5}\/devtools\/browser\/[0-9a-f]{48}$/u);
+    expect(env.AGENT_BROWSER_CDP).not.toContain(`:${chromePort}/`);
+    expect(env.AGENT_BROWSER_CDP).not.toContain(BROWSER_ID);
+    // Connecting there dials the owner's Chrome once, on its own browser path, and CDP flows through.
+    const engine = new WebSocket(env.AGENT_BROWSER_CDP!);
+    const answer = await new Promise<any>((resolve, reject) => {
+      engine.once("error", reject);
+      engine.once("open", () => engine.send(JSON.stringify({ id: 7, method: "Browser.getVersion" })));
+      engine.once("message", (raw) => resolve(JSON.parse(String(raw))));
+    });
+    engine.close();
+    expect(answer).toEqual({ id: 7, result: { product: "Chrome/fixture" } });
+    expect(dialed).toEqual([`/devtools/browser/${BROWSER_ID}`]);
     // Own tab: unpinned, agent-browser drives whatever tab is active.
     expect(env.AGENT_BROWSER_PIN_TAB).toBe("1");
     // The owner's cookie jar is never exported into Murage's restore store.
     expect(env.AGENT_BROWSER_RESTORE_SAVE).toBe("never");
     expect(env).not.toHaveProperty("AGENT_BROWSER_RESTORE");
-  } finally { await stop(bot); await api("PATCH", `/api/bots/${bot.id}`, { useMyChrome: false }); disableRemoteDebugging(); }
+  } finally { await stop(bot); await api("PATCH", `/api/bots/${bot.id}`, { useMyChrome: false }); disableRemoteDebugging(); chrome.close(); }
 }, 60_000);
 
 it("follows the owner's Chrome to its new connection after Chrome restarts", async () => {
@@ -222,7 +247,12 @@ it("follows the owner's Chrome to its new connection after Chrome restarts", asy
     enableRemoteDebugging(39333, restarted);
     const after = await driven(bot, "restart-after", true);
     expect(after).toBe(before);
-    expect(created(after)?.env?.AGENT_BROWSER_CDP).toBe(`ws://127.0.0.1:39333/devtools/browser/${restarted}`);
+    // A new shared connection for the restarted Chrome (the engine dials Murage's proxy, user-chrome-proxy.ts).
+    const cdp = (entry?: LogEntry) => entry?.env?.AGENT_BROWSER_CDP;
+    const creates = sessionLog().filter(entry => entry.kind === "create" && entry.session === after);
+    expect(creates.length).toBeGreaterThanOrEqual(2);
+    expect(cdp(creates.at(-1))).toMatch(/^ws:\/\/127\.0\.0\.1:[0-9]{1,5}\/devtools\/browser\/[0-9a-f]{48}$/u);
+    expect(cdp(creates.at(-1))).not.toBe(cdp(creates.at(-2)));
     // The stale connection's session was closed before rebinding.
     expect(sessionLog().filter(entry => entry.kind === "close" && entry.session === before).length).toBeGreaterThan(0);
   } finally { await stop(bot); await api("PATCH", `/api/bots/${bot.id}`, { useMyChrome: false }); disableRemoteDebugging(); }

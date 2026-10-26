@@ -24,11 +24,14 @@ export async function browserOwnerRequest(controller: UnifiedBrowserController, 
   if (method !== "POST") throw Object.assign(new Error("Browser route requires GET or POST"), { status: 405 });
   if (JSON.stringify(body).length > 16_384) throw Object.assign(new Error("Browser input exceeds its bound"), { status: 413 });
   const generation = body.generation;
-  if (body.action !== "take" && body.action !== "restart" && !Number.isSafeInteger(generation)) throw Object.assign(new Error("A current browser generation is required"), { status: 400 });
+  const control = Number.isSafeInteger(body.control) ? body.control as number : undefined;
+  if (body.action !== "take" && body.action !== "restart" && body.action !== "retry" && !(body.action === "release" && control !== undefined) && !Number.isSafeInteger(generation)) throw Object.assign(new Error("A current browser generation is required"), { status: 400 });
   switch (body.action) {
     case "reclaim": if (!authority!.canReclaim) throw Object.assign(new Error("Only the desktop owner may reclaim control"), { status: 403 }); await controller.reclaim(profileKey, owner); break;
     case "take": await controller.take(profileKey, owner); break;
-    case "release": await controller.release(profileKey, owner, generation as number); break;
+    case "release": await controller.release(profileKey, owner, generation as number, control); break;
+    // "Use my Chrome": one new attach after a failed one (no timer retries).
+    case "retry": await controller.retry(profileKey); break;
     case "navigate": if (typeof body.url !== "string") throw new Error("A browser address is required"); await controller.navigate(profileKey, owner, generation as number, body.url); break;
     case "input": if (!body.event || typeof body.event !== "object" || Array.isArray(body.event)) throw new Error("A browser input event is required"); await controller.input(profileKey, owner, generation as number, body.event as Record<string, unknown>); break;
     case "reopen": await controller.reopen(profileKey, owner, generation as number); break;

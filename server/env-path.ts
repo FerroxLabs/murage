@@ -9,7 +9,7 @@
 // the inherited PATH, plus the well-known install locations that exist
 // on this machine, plus (async, best-effort) whatever PATH the user's
 // real login shell reports.
-import { execFile, spawnSync } from "node:child_process";
+import { execFile, spawn, spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { accessSync, chmodSync, closeSync, constants, existsSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, statSync, readdirSync, writeFileSync } from "node:fs";
 import { CAPTURE_BYTES, CAPTURE_MS } from "../shared/scan-limits.ts";
@@ -334,22 +334,75 @@ function readKept(shell: string): Record<string, string> | null {
 }
 
 /** Run the interactive login capture once. Murage's own process, not a tool
- * call; no model text anywhere in it. */
+ * call; no model text anywhere in it.
+ *
+ * POSIX: the shell runs in a session of its own (`detached`, setsid) with no
+ * controlling terminal and stdin on /dev/null. A forced `-i` shell that can
+ * reach a terminal starts job control on it: it takes the terminal's
+ * foreground, and from a background group its SIGTTIN stops Murage's whole
+ * process group (a terminal, sudo or WSL-shell launch). With no terminal it
+ * only notes "no job control". `-i` stays: rc-file PATH exports (stock
+ * .bashrc returns early unless interactive) are the owner's terminal
+ * environment (Rule 74a). On timeout or overflow its whole group is
+ * SIGKILLed (an interactive shell ignores SIGTERM, a stopped one cannot act
+ * on it) and the capture resolves at once, never waiting for a pipe that a
+ * daemonised rc-file child may hold open. Only the group this call spawned
+ * is ever signalled. */
 function runCapture(shell: string): Promise<{ env: Record<string, string> } | { cause: string }> {
   const mark = `__MURAGE_ENV_${randomBytes(12).toString("hex")}__`;
   const script = `printf '%s' "$MURAGE_ENV_MARK"; env -0; printf '%s' "$MURAGE_ENV_MARK"`;
-  return new Promise((resolve) => {
-    const child = execFile(
-      shell,
-      ["-l", "-i", "-c", script],
-      { timeout: CAPTURE_MS, maxBuffer: CAPTURE_BYTES, encoding: "utf8", env: { ...process.env, MURAGE_ENV_MARK: mark } },
-      (error, stdout) => {
+  const env = { ...process.env, MURAGE_ENV_MARK: mark };
+  if (process.platform === "win32") {
+    // reached only with a named shell (tests): Windows has no terminal job control, and detached would open a console
+    return new Promise((resolve) => {
+      const child = execFile(shell, ["-l", "-i", "-c", script], { timeout: CAPTURE_MS, maxBuffer: CAPTURE_BYTES, encoding: "utf8", env }, (error, stdout) => {
         if (error) return resolve({ cause: error.killed ? "it took too long" : `the shell exited with ${String((error as { code?: unknown }).code ?? "an error")}` });
-        const env = readCapture(stdout, mark);
-        resolve(env ? { env } : { cause: "its output could not be read whole" });
-      },
-    );
-    child.stdin?.end();
+        const read = readCapture(stdout, mark);
+        resolve(read ? { env: read } : { cause: "its output could not be read whole" });
+      });
+      child.stdin?.end();
+    });
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    let bytes = 0;
+    const chunks: Buffer[] = [];
+    let child: ReturnType<typeof spawn>;
+    const killGroup = (): void => {
+      // the negative pid is this capture's own session and group (setsid made it leader); never a pid read from anywhere else.
+      // Only while the leader is unreaped: until Node reaps it the kernel keeps its pid, so -pid cannot name a reused group.
+      // Reaping runs on this same event loop, so the check cannot race. Once reaped, nothing is signalled.
+      if (child?.pid && child.exitCode === null && child.signalCode === null) {
+        try { process.kill(-child.pid, "SIGKILL"); } catch { /* the group is already gone */ }
+      }
+      child?.stdout?.destroy();
+      child?.stderr?.destroy();
+    };
+    const settle = (result: { env: Record<string, string> } | { cause: string }): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+    const timer = setTimeout(() => { killGroup(); settle({ cause: "it took too long" }); }, CAPTURE_MS);
+    try {
+      child = spawn(shell, ["-l", "-i", "-c", script], { detached: true, stdio: ["ignore", "pipe", "pipe"], env });
+    } catch (error) {
+      settle({ cause: `the shell exited with ${String((error as { code?: unknown }).code ?? "an error")}` });
+      return;
+    }
+    child.stdout?.on("data", (chunk: Buffer) => {
+      bytes += chunk.length;
+      if (bytes > CAPTURE_BYTES) { killGroup(); settle({ cause: "its output could not be read whole" }); return; }
+      chunks.push(chunk);
+    });
+    child.stderr?.resume();
+    child.on("error", (error) => { killGroup(); settle({ cause: `the shell exited with ${String((error as { code?: unknown }).code ?? "an error")}` }); });
+    child.on("close", (code, signal) => {
+      if (code !== 0) return settle({ cause: `the shell exited with ${String(code ?? signal ?? "an error")}` });
+      const read = readCapture(Buffer.concat(chunks).toString("utf8"), mark);
+      settle(read ? { env: read } : { cause: "its output could not be read whole" });
+    });
   });
 }
 

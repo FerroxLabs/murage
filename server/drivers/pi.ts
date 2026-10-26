@@ -33,7 +33,7 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { deleteEnvNames, PROVIDER_CREDENTIAL_ENV, stripRoutingEnv, stripWorkspaceCredentialEnv } from "../config.ts";
 import { computerProxyEnv } from "../container-computer.ts";
 import { augmentedPath } from "../env-path.ts";
-import { describeSpawnFailure, engineJob, killCliTree, spawnCli } from "../procs.ts";
+import { cliVersionReader, describeSpawnFailure, engineJob, killCliTree, spawnCli } from "../procs.ts";
 import { ProviderStopUnconfirmedError, providerCloseDeadlineMs, TurnTeardowns, type TeardownWait } from "./child-teardown.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
 import { customMountEntries } from "../custom-mcp-mounts.ts";
@@ -1377,14 +1377,21 @@ export const PiDriver: ProviderDriver<PiConfig> = {
     };
 
     const snapshot = async (): Promise<ProviderSnapshot> => {
-      const version = await probePiVersion();
-      if (!version) return { state: "unavailable", reason: `\`${config.cli}\` CLI not found` };
+      const probe = await probePi();
+      if (!("version" in probe)) return { state: "unavailable", reason: probe.reason };
+      const { version } = probe;
       // pi manages its own credentials (~/.pi/agent/auth.json); there is no
       // separate sign-in step the harness can probe, so treat it as authed.
       return { state: "available", version, authenticated: true };
     };
+    // Upstream #3433: a slow probe keeps the last version; only a real miss reads as not installed.
+    const snapshotVersionOf = cliVersionReader(config.cli);
     async function probePiVersion(): Promise<string | null> {
-      const version = await new Promise<string | null>((resolve) => {
+      const probe = await probePi();
+      return "version" in probe ? probe.version : null;
+    }
+    async function probePi(): Promise<{ version: string } | { reason: string }> {
+      const answer = await new Promise<{ err: Error | null; out: string }>((resolve) => {
         const child = spawnCli(config.cli, ["--version"], {
           stdio: ["ignore", "pipe", "pipe"],
           env: piProbeEnv(),
@@ -1398,22 +1405,23 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           } catch {
             /* ignore */
           }
-          resolve(null);
+          resolve({ err: Object.assign(new Error("pi --version timed out"), { killed: true }), out: "" });
         }, 8000);
         timer.unref?.();
-        child.on("error", () => {
+        child.on("error", (error) => {
           clearTimeout(timer);
-          resolve(null);
+          resolve({ err: error, out: "" });
         });
         child.on("close", () => {
           clearTimeout(timer);
-          resolve(out.trim() || null);
+          resolve({ err: out.trim() ? null : new Error("pi --version printed nothing"), out });
         });
       });
+      const version = answer.err ? null : answer.out.trim();
       const sig = cliSig(config.cli, piProbeEnv());
       noteVersionProbe(`pi|${config.cli}`, sig, Boolean(version));
       if (version) { piVersion = version; piCliSig = sig; rememberCliVersion(`pi|${config.cli}`, sig, version); }
-      return version;
+      return snapshotVersionOf(answer.err, answer.out);
     }
 
     return {

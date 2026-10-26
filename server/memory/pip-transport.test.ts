@@ -3,14 +3,14 @@
 //
 // PIP P2 B2: transport pieces that need no process (parser, per-run gate, miss
 // map, schema subset, fingerprint, route binding over homeRoot, temp root).
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
-import { execFile } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { execFile, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_ALLOWED_HOME_NEW, assertSupportedSchema, listFiles, unsupportedSchemaKeyword,
-  binaryIdentity, preflightRoute, bindReflectionRoute, buildReflectionEnv, buildIsolationReport, createTempRoot, emptyMissHistory, gateRun, httpVerdict, isReportedOverLimit,
+  binaryIdentity, preflightRoute, bindReflectionRoute, buildReflectionEnv, buildIsolationReport, createTempRoot, emptyMissHistory, markReflectionGitRoot, REFLECTION_GIT_HEAD, gateRun, httpVerdict, isReportedOverLimit,
   parseHeadlessMessages, recordMiss, removeTempRoot, routeFingerprint, settleOutputTokens, validateAgainstSchema, type GateObservation,
 } from "./pip-transport.ts";
 import { applyProviderRoute, type ProviderTurnRoute } from "../provider-routing.ts";
@@ -254,6 +254,51 @@ describe("temp root and route binding", () => {
     expect(removeTempRoot(tmp, tmp)).toBe(false);
     expect(removeTempRoot(tmp, t.root)).toBe(true);
     expect(existsSync(t.root)).toBe(false);
+  });
+  // libgit2-style discovery: the nearest ancestor whose .git holds HEAD, objects/ and refs/.
+  const isRepoDir = (g: string) => existsSync(join(g, "HEAD")) && existsSync(join(g, "objects")) && statSync(join(g, "objects")).isDirectory()
+    && existsSync(join(g, "refs")) && statSync(join(g, "refs")).isDirectory();
+  const discoverRepoRoot = (start: string): string | null => {
+    for (let d = resolve(start); ; d = dirname(d)) {
+      const g = join(d, ".git");
+      if (existsSync(g) && statSync(g).isDirectory() && isRepoDir(g)) return d;
+      if (dirname(d) === d) return null;
+    }
+  };
+  // Real git, when the host has it; null when git is not installed.
+  const gitToplevel = (cwd: string): string | null => {
+    const r = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf8", env: { PATH: process.env.PATH ?? "", HOME: base } });
+    if (r.error) return null;
+    expect(r.status).toBe(0);
+    return realpathSync(r.stdout.trim());
+  };
+  it("work/ is its own git repository root, so a project walk from the reflection cwd stops there", () => {
+    const t = createTempRoot(join(base, "pip-tmp"), "rungit", 1, "p");
+    expect(readFileSync(join(t.work, ".git", "HEAD"), "utf8")).toBe(REFLECTION_GIT_HEAD);
+    expect(discoverRepoRoot(t.work)).toBe(resolve(t.work));
+    const top = gitToplevel(t.work);
+    if (top !== null) expect(top).toBe(realpathSync(t.work));
+    // in the cwd inventory from the start, so the snapshot taken before the spawn holds them and none is ever new
+    expect(listFiles(t.work)).toEqual([".git/HEAD", ".git/config"]);
+    expect(removeTempRoot(join(base, "pip-tmp"), t.root)).toBe(true);
+    expect(existsSync(t.root)).toBe(false);
+  });
+  it("an owner home that is itself a git repository is never reached: discovery from cwd still stops at cwd", () => {
+    const owner = join(base, "owner");
+    mkdirSync(owner);
+    const init = spawnSync("git", ["init", "-q", owner], { encoding: "utf8", env: { PATH: process.env.PATH ?? "", HOME: base } });
+    if (init.error) markReflectionGitRoot(owner); else expect(init.status).toBe(0);
+    const tmp = join(owner, ".murage", "pip-tmp");
+    const t = createTempRoot(tmp, "rungit2", 1, "p");
+    // the control: above work/ the walk does reach the owner's repository
+    expect(discoverRepoRoot(t.root)).toBe(resolve(owner));
+    expect(discoverRepoRoot(t.work)).toBe(resolve(t.work));
+    const above = gitToplevel(t.root);
+    if (above !== null) {
+      expect(above).toBe(realpathSync(owner));
+      expect(gitToplevel(t.work)).toBe(realpathSync(t.work));
+    }
+    expect(removeTempRoot(tmp, t.root)).toBe(true);
   });
   it("applyProviderRoute honours homeRoot for Fuigo and Grok without creating retained homes", () => {
     const t = createTempRoot(join(base, "pip-tmp"), "run1", 1, "p");

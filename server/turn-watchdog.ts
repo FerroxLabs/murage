@@ -26,6 +26,15 @@
 //   - setup is latched: until the turn is dispatched, silence is measured
 //     against the longer setup ceiling, so slow provider or integration setup
 //     is not mistaken for a stall, while a setup that never returns still is.
+//
+// Heartbeats are capped (1.0.7, after upstream #3328): Claude Code sends a
+// tool_progress tick every 30 s while a tool or sub-agent runs, and those
+// ticks count as activity so a long build is not taken for a stall. A tool
+// that hangs (a command waiting on a lock, a sub-agent in a loop) ticks for
+// as long as it hangs, so on heartbeats alone the silence limit never fires.
+// `heartbeatOnlyMs` bounds that: a running turn whose only sign of life for
+// that long is heartbeats is stopped as stalled. Any real engine event (text,
+// reasoning, a tool starting or finishing) restarts that clock too.
 
 /** Why a turn is waiting rather than working. */
 export type StallWaitReason =
@@ -59,6 +68,15 @@ export interface WatchedTurn {
   phase: "setup" | "running";
   /** The turn's own claim; lets a finished setup settle only its own watch. */
   generation?: string;
+  /** The last sign of life that was not a heartbeat (`touch` with
+   * `heartbeat: true`). Equal to lastEventAt until a heartbeat lands. */
+  lastWorkAt: number;
+  /** Set on the turn handed to onStall: "silence" when nothing arrived for
+   * the silence limit, "heartbeat-only" when only heartbeats arrived for
+   * heartbeatOnlyMs. */
+  stalledBy?: "silence" | "heartbeat-only";
+  /** The heartbeat-only state was logged once for this turn. */
+  heartbeatNoted?: boolean;
   /** The engine's id for this turn once known (room replies and direct
    * turns bind it). A completion naming another turn on the thread then
    * leaves this watch, its open cards and its waits in place. */
@@ -69,6 +87,10 @@ export interface TurnWatchdogOptions {
   stallMs: number;
   /** Silence allowed before dispatch. Never shorter than stallMs. */
   setupStallMs?: number;
+  /** The longest a running turn stays alive on heartbeats alone. Never
+   * shorter than the turn's own silence limit; absent, heartbeats count as
+   * activity without a cap. */
+  heartbeatOnlyMs?: number;
   checkMs: number;
   /** Called once per stalled turn, after the entry is removed. */
   onStall: (turn: WatchedTurn) => void;
@@ -130,6 +152,7 @@ export class TurnWatchdog {
       botId,
       startedAt: at,
       lastEventAt: at,
+      lastWorkAt: at,
       waitingOnHuman: false,
       openRequests: new Set(),
       phase: opts.setup ? "setup" : "running",
@@ -146,7 +169,7 @@ export class TurnWatchdog {
     const turn = this.owned(threadId, generation);
     if (turn && (generation === undefined || turn.generation === generation || turn.generation === undefined)) {
       turn.phase = "running";
-      turn.lastEventAt = this.now();
+      turn.lastEventAt = turn.lastWorkAt = this.now();
       if (opts.stallMs !== undefined) turn.stallMs = opts.stallMs;
       return;
     }
@@ -167,7 +190,7 @@ export class TurnWatchdog {
     return () => {
       const current = this.turnWaits.get(turn);
       if (!current?.delete(key)) return;
-      if (this.turns.get(turn.threadId) === turn) turn.lastEventAt = this.now();
+      if (this.turns.get(turn.threadId) === turn) turn.lastEventAt = turn.lastWorkAt = this.now();
     };
   }
 
@@ -177,10 +200,17 @@ export class TurnWatchdog {
     return turn ? [...(this.turnWaits.get(turn)?.values() ?? [])] : [];
   }
 
-  /** Any provider event for the thread proves the turn is alive. */
-  touch(threadId: string): void {
+  /** Any provider event for the thread proves the turn is alive. A
+   * heartbeat (an engine's "a tool is still running" tick) keeps it alive for
+   * at most heartbeatOnlyMs past the last real event. */
+  touch(threadId: string, opts: { heartbeat?: boolean } = {}): void {
     const turn = this.turns.get(threadId);
-    if (turn) turn.lastEventAt = this.now();
+    if (!turn) return;
+    turn.lastEventAt = this.now();
+    if (!opts.heartbeat) {
+      turn.lastWorkAt = turn.lastEventAt;
+      turn.heartbeatNoted = false;
+    }
   }
 
   /** The silence a running turn on this thread is allowed (its own limit,
@@ -200,7 +230,7 @@ export class TurnWatchdog {
     if (waiting) turn.openRequests.add(requestId);
     else turn.openRequests.delete(requestId);
     turn.waitingOnHuman = turn.openRequests.size > 0;
-    turn.lastEventAt = this.now();
+    turn.lastEventAt = turn.lastWorkAt = this.now();
   }
 
   /** The turn settled normally — stop watching it. With a generation, only
@@ -260,7 +290,19 @@ export class TurnWatchdog {
       if (this.turnWaits.get(turn)?.size) continue;
       const running = turn.stallMs ?? this.opts.stallMs;
       const ceiling = turn.phase === "setup" ? Math.max(running, setupStallMs) : running;
-      if (at - turn.lastEventAt < ceiling) continue;
+      const heartbeatCap = turn.phase === "running" && this.opts.heartbeatOnlyMs !== undefined
+        ? Math.max(running, this.opts.heartbeatOnlyMs)
+        : undefined;
+      const silent = at - turn.lastEventAt >= ceiling;
+      const heartbeatOnly = heartbeatCap !== undefined && at - turn.lastWorkAt >= heartbeatCap;
+      if (!silent && !heartbeatOnly) {
+        if (turn.phase === "running" && !turn.heartbeatNoted && at - turn.lastWorkAt >= running) {
+          turn.heartbeatNoted = true;
+          console.info(`[watchdog] thread ${turn.threadId}: alive on tool heartbeats alone for ${Math.round((at - turn.lastWorkAt) / 60_000)} min`);
+        }
+        continue;
+      }
+      turn.stalledBy = silent ? "silence" : "heartbeat-only";
       this.forget(turn);
       if (turn.generation !== undefined) {
         this.stalledGenerations.add(turn.generation);

@@ -49,7 +49,7 @@ export function assertSendFence(built: BuiltPrompt, reader: LineageReader, db?: 
 
 /** The most refs one refusal's diagnosis looks up again. */
 const FENCE_DIAGNOSIS_REFS = 256;
-const refLabel = (ref: LineageRef): string => ref.kind === "line" ? (ref.replay ? "own-replay-line" : "line")
+const refLabel = (ref: LineageRef): string => ref.kind === "line" ? (ref.replay ? "own-replay-line" : ref.copyOfShown ? "own-copy-origin" : "line")
   : ref.kind === "prefix" ? (ref.content ? "own-prefix" : "prefix") : ref.kind;
 export type FenceRefusalCounts = { reader: "content" | "audience"; parts: number; refusedParts: number; refs: Record<string, number>; reasons: Record<string, number>; truncated: boolean };
 /** Which parts of a refused prompt the fence refused, as counts only (1.0.3 revoke drain: the re-prepare diagnosis): per refused part, each

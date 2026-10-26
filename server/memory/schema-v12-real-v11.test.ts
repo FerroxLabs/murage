@@ -62,12 +62,12 @@ it("a real v11 file (int/1.0.3's code) goes 11 -> 12 -> 11 -> 12 with its v3 set
   expect(() => validateMemorySchema(db)).not.toThrow();
 
   migrateMemorySchema(db);
-  expect(version(db)).toBe(12);
+  expect(version(db)).toBe(13);
   expect(settings(db)).toEqual(v3);
   expect(db.prepare("SELECT 1 FROM memory_scope_bindings WHERE id='learning-spend:2026-10'").get()).toBeTruthy();
   expect(() => validateMemorySchema(db)).not.toThrow();
 
-  expect(downgradeMemorySchema(db, 11)).toMatchObject({ status: "downgraded", from: 12, to: 11 });
+  expect(downgradeMemorySchema(db, 11)).toMatchObject({ status: "downgraded", from: 13, to: 11 });
   expect(version(db)).toBe(11);
   expect(settings(db)).toEqual(v3);
   // every memory object left is one int's v11 holds, with int's exact text (derived lane-2 objects may leave; int's next open makes them)
@@ -80,12 +80,12 @@ it("a real v11 file (int/1.0.3's code) goes 11 -> 12 -> 11 -> 12 with its v3 set
   expect(() => validateMemorySchema(db)).not.toThrow();
 
   migrateMemorySchema(db);
-  expect(version(db)).toBe(12);
+  expect(version(db)).toBe(13);
   expect(settings(db)).toEqual(v3);
   expect(sessions(db)).toEqual(["s1", "s2"]);
   expect(() => validateMemorySchema(db)).not.toThrow();
 
-  expect(downgradeMemorySchema(db, 10)).toMatchObject({ status: "downgraded", from: 12, to: 10 });
+  expect(downgradeMemorySchema(db, 10)).toMatchObject({ status: "downgraded", from: 13, to: 10 });
   expect(memoryLearningV2Schema.parse(settings(db))).toMatchObject({ version: 2, reviewMode: true, dailyInputTokens: 0, dailyOutputTokens: 0, botsPaused: ["bot-a"] });
   expect(db.prepare("SELECT text FROM messages").get()!.text).toBe("a chat line");
   expect(db.prepare("SELECT text FROM memory_records WHERE id='r1'").get()!.text).toBe("Owner likes tea");
@@ -146,10 +146,10 @@ for (const to of [11, 10] as const) {
       expect(allocateIncarnation(db, "t", "d", "s")).toBe(3);
       db.exec("INSERT INTO memory_deny_session VALUES('t','d','s#3',1)");
       row.run("u");
-      expect(downgradeMemorySchema(db, to)).toMatchObject({ status: "downgraded", from: 12, to });
+      expect(downgradeMemorySchema(db, to)).toMatchObject({ status: "downgraded", from: 13, to });
       expect(db.prepare("SELECT 1 FROM sqlite_schema WHERE name='memory_session_incarnation'").get()).toBeUndefined();
       migrateMemorySchema(db);
-      expect(version(db)).toBe(12);
+      expect(version(db)).toBe(13);
       expect(latestIncarnation(db, "t", "d", "s")).toBe(3);
       expect(allocateIncarnation(db, "t", "d", "s")).toBe(4);
       // an id no later incarnation used is as before: its raw row counts as 1

@@ -167,7 +167,11 @@ if (process.env.FAKE_AGY_DUMP) {
   writeFileSync(process.env.FAKE_AGY_DUMP, JSON.stringify({ argv, env: fixtureDumpEnvironment() }, null, 2));
 }
 if (argv.includes("--version")) {
-  const versionDelayMs = Number(process.env.FAKE_AGY_VERSION_DELAY_MS ?? 0);
+  // FAKE_AGY_VERSION_DELAY_FILE: a file holding the delay, read per call, so a
+  // test can slow the probe of a driver whose environment is already fixed.
+  const delayFile = process.env.FAKE_AGY_VERSION_DELAY_FILE;
+  const fileDelay = delayFile && existsSync(delayFile) ? readFileSync(delayFile, "utf8").trim() : undefined;
+  const versionDelayMs = Number(fileDelay ?? process.env.FAKE_AGY_VERSION_DELAY_MS ?? 0);
   if (Number.isFinite(versionDelayMs) && versionDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, versionDelayMs));
   console.log(process.env.FAKE_AGY_VERSION ?? "1.1.22");
   process.exit(0);

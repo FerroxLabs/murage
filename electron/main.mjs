@@ -9,7 +9,7 @@ import { mutateFluxCredentials } from "./flux-connection-control.mjs";
 import { CRASH_WINDOW_MS, createServerSupervisor } from "./server-supervisor.mjs";
 import { compileCacheEnvironment } from "./compile-cache.mjs";
 import { createDesktopTrace } from "./desktop-trace.mjs";
-import { app, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain as electronIpcMain, Menu, MenuItem, Notification, Tray, nativeImage, nativeTheme, net, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, utilityProcess, webContents } from "electron";
+import { app, BaseWindow, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain as electronIpcMain, Menu, MenuItem, Notification, Tray, nativeImage, nativeTheme, net, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, utilityProcess, webContents } from "electron";
 import { protocol as electronProtocol } from "electron";
 import { crashReporter } from "electron";
 import { createCrashDumpLinker, crashDumpNamesInLog, includeCrashDumpOnRequest, pruneCrashDumps, startLocalCrashReporter, unnamedCrashDumps } from "./crash-dumps.mjs";
@@ -38,7 +38,7 @@ import { createClosedBackupController,closedControlDirectory } from "./backup-cl
 import { tightenOwnedDirectory } from "./private-directory.mjs";
 import { relaunchBlockedCode, relaunchDesktop } from "./desktop-relaunch.mjs";
 import { backupRefusal } from "./backup-waiting.mjs";
-import { announceBackupFailure } from "./backup-failure-notice.mjs";
+import { announceBackupFailure, announceBackupResult } from "./backup-failure-notice.mjs";
 import { windowsElevated } from "./windows-elevation.mjs";
 import { createNativeClosedBackupProvider } from "./backup-closed-native.mjs";
 import { createRemotePasswordStore } from "./backup-remote-password.mjs";
@@ -97,7 +97,7 @@ import { migrateLegacyDataDirectory } from "./data-dir-migration.mjs";
 import { assertRestoreReviewed } from "./restore-review.mjs";
 import { restoredConnectionProfile, restoredHarnessEnvironment, restoredBrowserPartition } from "./restored-connections.mjs";
 import { openInstallationRecoveryWindow } from "./installation-recovery-window.mjs";
-import { openBackupProgressWindow } from "./backup-progress-window.mjs";
+import { backupProgressKind, openBackupProgressWindow } from "./backup-progress-window.mjs";
 import { runInstallationRecoveryWorker } from "./installation-recovery-runner.mjs";
 import { captureRecoveryCopy } from "./installation-recovery-snapshot.mjs";
 import { resolveInstallationSelection, retireUndoneInstallationSelection, planSeparateInstallation, allocateSeparateInstallation, publishInstallationSelection } from "./installation-selection.mjs";
@@ -105,6 +105,7 @@ import { createRendererRecovery, repaintAfterGpuLoss, RECONNECTING_LINE } from "
 import { createCompanionRestarter } from "./companion-restart.mjs";
 import { safeStorageSeal } from "./companion-stale.mjs";
 import { createServerChildLifecycle, awaitOwnedWork, SERVER_CHILD_STOP_TIMEOUT_MS } from "./server-child-lifecycle.mjs";
+import { createSessionEndHandler } from "./session-end.mjs";
 import { desktopViewerPermissionAllowed } from "./desktop-viewer-permissions.mjs";
 import {
   createMainWindowOpenHandler,
@@ -122,6 +123,7 @@ import { activeDesktopDataRoot, createSaveFileHandler, createSkillRecordingSaveH
 import { createConfirmDialogHandler } from "./confirm-dialog.mjs";
 import { verifiedArtifactNativePath } from "./artifact-action.mjs";
 import { createWorkspaceFileActionHandler } from "./workspace-file-actions.mjs";
+import { linuxGpuDecision } from "./linux-gpu.mjs";
 import { pasteMenuItem } from "./paste-menu-item.mjs";
 import { createServerConnections, openServerPrompt } from "./server-connection.mjs";
 import {
@@ -350,7 +352,7 @@ if (cloudHome?.client) registerEngineLoginIpc({ ipcMain, active: () => cloudHome
 let backgroundLifecycle=null;
 let backupScheduleHost=null;
 let backupRemoteHost=null;
-let backupProgress=null; // the "Setting up your first backup" window while the offline capture runs
+let backupProgress=null; // the "Backing up your workspace" window while the offline capture runs
 let backupToolSettleUntil=0; // set at each server start: a tool check that fails before this is pending, not failed
 let backupRemoteInitializing=false; // the off-site host is still starting: its status reads checking, not unavailable
 let backupRemoteReady=Promise.resolve();
@@ -767,12 +769,13 @@ function applyUnreadBadge(win = mainWindow) {
 }
 
 // GNOME groups the window with its installed desktop entry only when both
-// identities match. This must run before Electron becomes ready. Ubuntu also
-// uses Chromium's software renderer: the supported machine reproduced two
-// NVIDIA/libGLES GPU-process crashes that left an invisible focused window
-// intercepting input. This app is not graphics-heavy, so reliability wins.
+// identities match. This must run before Electron becomes ready. Software
+// rendering is kept only where the GPU process is unreliable (NVIDIA and
+// nouveau, or MURAGE_LINUX_GPU=off); see electron/linux-gpu.mjs.
 if (process.platform === "linux") {
-  app.disableHardwareAcceleration();
+  const gpu = linuxGpuDecision();
+  if (gpu.disable) app.disableHardwareAcceleration();
+  console.log(`[desktop] Linux GPU acceleration ${gpu.disable ? "off" : "on"} (${gpu.reason})`);
   app.setDesktopName("com.murage.app.desktop");
 }
 // Windows shows an app's toast notifications only under the identity its
@@ -927,6 +930,34 @@ app.on("second-instance", (_event, commandLine) => {
 // alternate ports until one binds AND identifies as ours (the probe checks
 // our API shape, not just a 200).
 let serverProc = null;
+/** The OS ending the session (session-end.mjs): the live harness writes its deferred saves first, then the app quits. */
+const sessionEnd = createSessionEndHandler({
+  // every harness this app owns that has not exited, from the moment it is forked (not only once it answered health)
+  children: () => [...ownedServerChildren].filter((child) => !child.exited),
+  beginQuit: () => backgroundLifecycle?.beginQuit(),
+  quit: () => app.quit(),
+  ackDir: os.tmpdir(),
+  log: (line) => slog(line),
+});
+// Windows logoff, restart or shutdown reaches every window (main, viewers, Cloud, splash): whichever exist, the harness writes its
+// deferred saves before the OS callback returns (session-end.mjs); the committed end then quits.
+let sessionStandIn = null;
+app.on("browser-window-created", (_event, win) => {
+  win.on("query-session-end", () => sessionEnd.query());
+  win.on("session-end", () => sessionEnd.end());
+  // the first real window hears the session from now on; the hidden stand-in goes (after this event, so it is never the last window)
+  const standIn = sessionStandIn;
+  sessionStandIn = null;
+  if (standIn) setImmediate(() => { if (!standIn.isDestroyed()) standIn.destroy(); });
+});
+/** Windows tells only top-level windows that the session ends. A login start has none until background startup is done (no splash), so
+ * one hidden BaseWindow (never shown, never listed by BrowserWindow.getAllWindows) hears it until the first BrowserWindow exists. */
+function listenForSessionEndWithoutWindows() {
+  if (process.platform !== "win32" || sessionStandIn || BrowserWindow.getAllWindows().length) return;
+  sessionStandIn = new BaseWindow({ show: false, width: 1, height: 1, skipTaskbar: true, title: "Murage" });
+  sessionStandIn.on("query-session-end", () => sessionEnd.query());
+  sessionStandIn.on("session-end", () => sessionEnd.end());
+}
 /** The newest server child, from its spawn, for plan sign-in pushes that must
  * not wait for the health check that sets serverProc. */
 let modelSignInTarget = null;
@@ -3303,8 +3334,6 @@ function createWindow({quiet=false}={}) {
     setTimeout(reveal, WINDOW_REVEAL_FALLBACK_MS).unref?.();
   }
   win.on("close",event=>backgroundLifecycle?.handleClose(event));
-  win.on("query-session-end",()=>backgroundLifecycle?.beginQuit());
-  win.on("session-end",()=>backgroundLifecycle?.beginQuit());
   attachUpdaterWindow(win);
   // Browser execution and viewing are owned by the unified harness engine.
   installWindowStatePersistence(win);
@@ -4335,6 +4364,20 @@ async function announceLastBackupFailure(){
       notice.show();
     }});
 }
+/** 1.0.7: a Back up now that worked says so once Murage reopens (one
+ * notification per backup; daily backups stay quiet). */
+async function announceLastBackupResult(){
+  for(let tries=0;tries<120&&!(serverReady&&mainWindow)&&!desktopShutdownStarted;tries++)await new Promise(resolve=>setTimeout(resolve,1000));
+  if(!backupScheduleHost||desktopShutdownStarted||desktopRecoveryMode||!serverReady)return;
+  let folderName;try{folderName=await backupScheduleHost.destinationLabel();}catch{/* the sentence says "your backup folder" */}
+  announceBackupResult({status:backupScheduleHost.internalStatus(),folderName,userData:app.getPath("userData"),
+    showNotice:({title,body})=>{
+      if(!Notification.isSupported())return;
+      const notice=new Notification({title,body});
+      notice.on("click",()=>{const win=mainWindow;if(win&&!win.isDestroyed()){if(win.isMinimized())win.restore();win.show();win.focus();}});
+      notice.show();
+    }});
+}
 /** Backups can't run from this window (D1): the Inbox row when the harness
  * can take it, one notification, once per episode. The Backups page says the
  * same words from its own status. Daily backups never just stop. */
@@ -4590,6 +4633,12 @@ async function initializeBackupScheduleHost(){
     },
   });
 }
+// The OS ending the session is heard from the first moment, before any window (session-end.mjs): Linux/macOS through powerMonitor,
+// Windows through a hidden stand-in window until the first real one. Queued ahead of the boot block, like the sleep hook below.
+app.whenReady().then(() => {
+  powerMonitor.on("shutdown",()=>sessionEnd.shutdown());
+  listenForSessionEndWithoutWindows();
+}).catch((error) => slog(`session-end listener: ${error?.message ?? error}`));
 // Registered before the first boot (this callback is queued ahead of the boot block below, and powerMonitor may only be used once the app is ready): a sleep
 // during a long upgrade must not read as a stalled start when the machine wakes. It is its own callback so the boot block references nothing but its own wiring.
 app.whenReady().then(() => {
@@ -4639,12 +4688,14 @@ const desktopStartup = app.whenReady().then(async () => {
     // A slow first check of the backup tool (macOS still assessing the app)
     // must not turn this backup into one that needs review: wait for it.
     // The window would otherwise stay blank while the first backup is taken.
-    try{backupProgress=openBackupProgressWindow({BrowserWindow,baseDir:__dirname,skin:readPersistedSkin()??(nativeTheme.shouldUseDarkColors?"dark":"light")});}catch(error){slog(`backup progress window not shown: ${error?.message??error}`);}
+    try{backupProgress=openBackupProgressWindow({BrowserWindow,baseDir:__dirname,skin:readPersistedSkin()??(nativeTheme.shouldUseDarkColors?"dark":"light"),kind:backupProgressKind(backupScheduleHost.internalStatus())});}catch(error){slog(`backup progress window not shown: ${error?.message??error}`);}
     void desktopStartup.then(()=>desktopBackupTool.waitReady().catch(()=>{})).then(()=>backupScheduleHost.resumeOffline()).catch(()=>{try{if(!desktopShutdownStarted)showDesktopRecovery("BACKUP_REQUESTED");}finally{backupProgress?.close();backupProgress=null;}});
     return;
   }
   // W-D7: say so when the last backup stopped, once the harness is up.
   if(backupScheduleHost)void desktopStartup.then(announceLastBackupFailure).catch(()=>{});
+  // 1.0.7: and say so when the Back up now that closed Murage worked.
+  if(backupScheduleHost)void desktopStartup.then(announceLastBackupResult).catch(()=>{});
   const upgrade=backupScheduleHost?.pendingUpgrade();
   if(upgrade){
     const updater=ensureDesktopUpdater(false);
@@ -4857,7 +4908,6 @@ void androidDevice.reclaimOrphan().catch(() => {});
       if(result.disconnected){showCloudConnect(homeId);console.log("[cloud] door: revoked");}
     }))).catch(()=>console.log("[cloud] door: resume-failed"));
   });
-  powerMonitor.on("shutdown",()=>backgroundLifecycle?.beginQuit());
   stopDeskPresence=startDeskPresenceReporting();
   // Reconcile incomplete setup and resume interrupted sign-out only after the
   // local app is usable. This background network work never gates LAN pairing

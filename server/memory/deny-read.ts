@@ -264,7 +264,8 @@ function lookupPage(db: DatabaseSync, threadId: string, lines: readonly PageLine
 
 // ---- memory objects ----
 
-/** created_lsn, when S3 adds it to a memory table (the pending-scope gate compares it with since_lsn); absent = unknown = "checking". */
+/** created_lsn, when a memory table carries it as a column (lessons: none yet; the pending-scope gate compares it with since_lsn); absent =
+ * unknown = "checking". Records and sources are stamped in tables of their own (recordCreated, sourceCreated). */
 const createdColumn = new WeakMap<DatabaseSync, Map<string, boolean>>();
 function hasCreatedLsn(db: DatabaseSync, table: string): boolean {
   let tables = createdColumn.get(db);
@@ -283,6 +284,8 @@ function revokeInFlight(db: DatabaseSync, memo: { inFlight?: boolean }): boolean
     || Boolean(one(db, "SELECT 1 AS x FROM memory_scope_bindings WHERE subject_type='system' AND subject_id='memory-revocation' LIMIT 1"));
 }
 interface MemoryMemo { inFlight?: boolean; every?: number | null; anyScope?: boolean; scopes: Map<string, number | null>; denied: Map<string, boolean>;
+  /** lineage_upgrade_lsn, read once per lookup (recordUnstampedBound); null = no key. */
+  upgradeLsn?: number | null;
   /** Versioned record refs read in one statement (row, its deny_memory mark, its tombstone), by memoryRefKey; null = no such version. */
   records: Map<string, Row | null>;
   /** Rule 23 verdicts of records already walked in this lookup, by `id\0version`; null = no Murage anchor. */
@@ -312,6 +315,47 @@ function memoryPendingSince(db: DatabaseSync, scopeId: string | null, memo: Memo
   return scoped === null ? memo.every : memo.every === null ? scoped : Math.min(scoped, memo.every);
 }
 
+// ---- created lsn of a record or source version (1.0.7 memory-recall-hydration D1, D2) ----
+//
+// DESIGN-WRITETIME 1: an object is held "checking" by a pending window only when since <= its created lsn. The created lsn is the stamp of
+// THE VERSION READ (an unversioned ref reads its latest version's), from memory_record_lsn (v10 S3) and memory_source_lsn (v13). A version
+// with no stamp row predates its table, and its created lsn is at most a known bound, used in its place (a bound never shows an object a
+// window could have tainted: since <= bound holds for every since <= the true created lsn). No bound known: null, "checking". Each read is
+// one primary-key seek, made only when a pending window covers the object's scope.
+
+/** A record version with no memory_record_lsn row was made before v10: its created lsn is at most lineage_upgrade_lsn (the first lsn 1.0.2
+ * wrote). Read once per lookup; no key: null (unknown, "checking"). */
+function recordUnstampedBound(db: DatabaseSync, memo: MemoryMemo): number | null {
+  if (memo.upgradeLsn === undefined) memo.upgradeLsn = num(one(db, "SELECT value FROM memory_lineage_lsn_meta WHERE key='lineage_upgrade_lsn'")?.value);
+  return memo.upgradeLsn;
+}
+/** The created lsn of record version (id, version): its stamp, or the pre-v10 bound. */
+function recordCreated(db: DatabaseSync, id: string, version: number, memo: MemoryMemo): number | null {
+  const stamp = one(db, "SELECT created_lsn AS c FROM memory_record_lsn WHERE id=? AND version=?", id, version);
+  return stamp ? num(stamp.c) : recordUnstampedBound(db, memo);
+}
+/** The first source stamp per database handle, kept while the schema is unchanged (PRAGMA schema_version: a downgrade and re-upgrade on one
+ * handle starts the table empty again, and the old floor would then be too low a bound). */
+const sourceFloors = new WeakMap<DatabaseSync, { cookie: number; floor: number }>();
+/** v13: every source version inserted since the migration is stamped (memory_source_lsn_insert), so one without a row predates the first
+ * stamp: its created lsn is at most min(created_lsn), or, with no stamp yet, the lsn counter now. The first non-null minimum can only stay
+ * or rise as stamps are added, so it is kept per handle; with no stamp yet it is read per lookup. */
+function sourceUnstampedBound(db: DatabaseSync): number | null {
+  const cookie = Number(one(db, "PRAGMA schema_version")?.schema_version);
+  const known = sourceFloors.get(db);
+  if (known && known.cookie === cookie) return known.floor;
+  const floor = num(one(db, "SELECT min(created_lsn) AS m FROM memory_source_lsn")?.m);
+  if (floor !== null) { sourceFloors.set(db, { cookie, floor }); return floor; }
+  return num(one(db, "SELECT next FROM memory_lsn WHERE id=1")?.next);
+}
+/** The created lsn of source revision `version` (0: its latest revision): its stamp, or the pre-v13 bound. */
+function sourceCreated(db: DatabaseSync, id: string, version: number): number | null {
+  const stamp = version
+    ? one(db, "SELECT created_lsn AS c FROM memory_source_lsn WHERE source_id=? AND revision=?", id, version)
+    : one(db, "SELECT l.created_lsn AS c FROM memory_source_versions v LEFT JOIN memory_source_lsn l ON l.source_id=v.source_id AND l.revision=v.revision WHERE v.source_id=? ORDER BY v.revision DESC LIMIT 1", id);
+  return stamp && stamp.c !== null && stamp.c !== undefined ? num(stamp.c) : sourceUnstampedBound(db);
+}
+
 function memoryVerdict(db: DatabaseSync, ref: MemoryRef, memo: MemoryMemo): LineageVerdict {
   const version = ref.version ?? 0;
   const batched = ref.kind === "record" && version ? memo.records.get(memoryRefKey(ref)) : undefined;
@@ -321,18 +365,19 @@ function memoryVerdict(db: DatabaseSync, ref: MemoryRef, memo: MemoryMemo): Line
     if (Number(batched.tomb)) return withheld("tombstone");
     const anchored = recordAnchorVerdict(db, ref.id, version, memo);
     if (anchored) return anchored;
-    return memoryScopeVerdict(db, String(batched.scope_id), num(batched.created_lsn), memo);
+    return memoryScopeVerdict(db, String(batched.scope_id), () => Number(batched.stamped) ? num(batched.stamp) : recordUnstampedBound(db, memo), memo);
   }
   const marked = version
     ? one(db, `SELECT 1 AS x FROM memory_deny_memory WHERE kind=? AND id=? AND version IN (0,?) AND ${NOT_AUDIENCE_MEMORY} LIMIT 1`, ref.kind, ref.id, version)
     : one(db, `SELECT 1 AS x FROM memory_deny_memory WHERE kind=? AND id=? AND ${NOT_AUDIENCE_MEMORY} LIMIT 1`, ref.kind, ref.id);
   if (marked) return withheld("deny-memory");
-  let scopeId: string | null = ref.scopeId ?? null, created: number | null = null;
+  let scopeId: string | null = ref.scopeId ?? null, created: () => number | null = () => null;
   if (ref.kind === "record") {
-    const cols = `version,scope_id${hasCreatedLsn(db, "memory_records") ? ",created_lsn" : ""}`;
-    const row = version ? one(db, `SELECT ${cols} FROM memory_records WHERE id=? AND version=?`, ref.id, version) : one(db, `SELECT ${cols} FROM memory_records WHERE id=? ORDER BY version DESC LIMIT 1`, ref.id);
+    const row = version ? one(db, "SELECT version,scope_id FROM memory_records WHERE id=? AND version=?", ref.id, version) : one(db, "SELECT version,scope_id FROM memory_records WHERE id=? ORDER BY version DESC LIMIT 1", ref.id);
     if (!row) return withheld("tombstone");
-    scopeId = String(row.scope_id); created = num(row.created_lsn);
+    // the version read: an unversioned ref is its latest version, and that version's stamp decides (never the earliest's)
+    const read = Number(row.version);
+    scopeId = String(row.scope_id); created = () => recordCreated(db, ref.id, read, memo);
     const tomb = version
       ? one(db, "SELECT 1 AS x FROM memory_tombstones WHERE target_type='record' AND target_id=? AND (revision IS NULL OR revision=?) LIMIT 1", ref.id, version)
       : one(db, "SELECT 1 AS x FROM memory_tombstones WHERE target_type='record' AND target_id=? LIMIT 1", ref.id);
@@ -340,10 +385,9 @@ function memoryVerdict(db: DatabaseSync, ref: MemoryRef, memo: MemoryMemo): Line
     const anchored = recordAnchorVerdict(db, ref.id, Number(row.version), memo);
     if (anchored) return anchored;
   } else if (ref.kind === "source") {
-    const cols = `s.scope_id,s.state,s.kind,s.content_hash,s.thread_id,s.message_id,${DENIED_SOURCE("s")} AS denied${hasCreatedLsn(db, "memory_sources") ? ",s.created_lsn" : ""}`;
-    const row = one(db, `SELECT ${cols} FROM memory_sources s WHERE s.id=?`, ref.id);
+    const row = one(db, `SELECT s.scope_id,s.state,s.kind,s.content_hash,s.thread_id,s.message_id,${DENIED_SOURCE("s")} AS denied FROM memory_sources s WHERE s.id=?`, ref.id);
     if (!row) return withheld("tombstone");
-    scopeId = String(row.scope_id); created = num(row.created_lsn);
+    scopeId = String(row.scope_id); created = () => sourceCreated(db, ref.id, version);
     if (row.state === "deleted") return withheld("tombstone");
     if (Number(row.denied)) return withheld("scope-deny");
     // revbound r3 A6: an import admitted while its hash tombstone was still on the way is refused once the tombstone is there (one seek on
@@ -370,7 +414,8 @@ function memoryVerdict(db: DatabaseSync, ref: MemoryRef, memo: MemoryMemo): Line
     const cols = `id${hasCreatedLsn(db, "memory_lessons") ? ",created_lsn" : ""}`;
     const row = version ? one(db, `SELECT ${cols} FROM memory_lessons WHERE id=? AND version=?`, ref.id, version) : one(db, `SELECT ${cols} FROM memory_lessons WHERE id=? ORDER BY version DESC LIMIT 1`, ref.id);
     if (!row) return withheld("tombstone");
-    created = num(row.created_lsn);
+    const lesson = num(row.created_lsn);
+    created = () => lesson;
   }
   return memoryScopeVerdict(db, scopeId, created, memo);
 }
@@ -448,23 +493,28 @@ function receiptAnchorVerdict(db: DatabaseSync, bundleId: string): LineageVerdic
   }
   return undefined;
 }
-/** The scope's deny row, then the pending window (created lsn unknown = checking). */
-function memoryScopeVerdict(db: DatabaseSync, scopeId: string | null, created: number | null, memo: MemoryMemo): LineageVerdict {
+/** The scope's deny row, then the pending window: "checking" when since <= the created lsn (unknown = checking). The created lsn is read
+ * only when a window covers the scope. */
+function memoryScopeVerdict(db: DatabaseSync, scopeId: string | null, createdLsn: () => number | null, memo: MemoryMemo): LineageVerdict {
   if (scopeId !== null && scopeDenied(db, scopeId, memo)) return withheld("scope-deny");
   const since = memoryPendingSince(db, scopeId, memo);
-  if (since !== null && (created === null || since <= created)) return checking("pending");
+  if (since === null) return SHOWN;
+  const created = createdLsn();
+  if (created === null || since <= created) return checking("pending");
   return SHOWN;
 }
-/** Reads every versioned record ref in one statement: a primary-key seek, one deny_memory seek and one tombstone seek per ref. */
+/** Reads every versioned record ref in one statement: a primary-key seek, one deny_memory seek, one tombstone seek and one stamp seek
+ * (memory_record_lsn, the version's created lsn) per ref. */
 function batchRecords(db: DatabaseSync, refs: readonly MemoryRef[], memo: MemoryMemo): void {
   const wanted = [...new Map(refs.filter(ref => ref.kind === "record" && ref.version).map(ref => [memoryRefKey(ref), ref])).values()];
   for (let at = 0; at < wanted.length; at += BATCH) {
     const slice = wanted.slice(at, at + BATCH);
     for (const ref of slice) memo.records.set(memoryRefKey(ref), null);
-    const rows = all(db, `SELECT r.id,r.version,r.scope_id${hasCreatedLsn(db, "memory_records") ? ",r.created_lsn" : ""},
+    const rows = all(db, `SELECT r.id,r.version,r.scope_id,l.created_lsn AS stamp,l.id IS NOT NULL AS stamped,
         EXISTS (SELECT 1 FROM memory_deny_memory dm WHERE dm.kind='record' AND dm.id=r.id AND dm.version IN (0,r.version) AND dm.${NOT_AUDIENCE_ONLY} AND dm.revoke_id<>${AUDIENCE_COALESCED}) AS marked,
         EXISTS (SELECT 1 FROM memory_tombstones t WHERE t.target_type='record' AND t.target_id=r.id AND (t.revision IS NULL OR t.revision=r.version)) AS tomb
-      FROM json_each(?) j JOIN memory_records r ON r.id=json_extract(j.value,'$[0]') AND r.version=json_extract(j.value,'$[1]')`, JSON.stringify(slice.map(ref => [ref.id, ref.version])));
+      FROM json_each(?) j JOIN memory_records r ON r.id=json_extract(j.value,'$[0]') AND r.version=json_extract(j.value,'$[1]')
+      LEFT JOIN memory_record_lsn l ON l.id=r.id AND l.version=r.version`, JSON.stringify(slice.map(ref => [ref.id, ref.version])));
     for (const row of rows) memo.records.set(memoryRefKey({ kind: "record", id: String(row.id), version: Number(row.version) }), row);
   }
 }
@@ -555,7 +605,7 @@ export function refsLookup(db: DatabaseSync, refs: readonly LineageRef[], reader
     const memory: MemoryRef[] = [];
     for (const ref of refs) {
       // a replayed line of the prompt's own thread is judged by content, as a prefix's shown lines are (below); every other line for the reader
-      if (ref.kind === "line" && ref.replay) { const set = shownLines.get(ref.threadId) ?? new Set<string>(); set.add(ref.messageId); shownLines.set(ref.threadId, set); }
+      if (ref.kind === "line" && (ref.replay || ref.copyOfShown)) { const set = shownLines.get(ref.threadId) ?? new Set<string>(); set.add(ref.messageId); shownLines.set(ref.threadId, set); }
       else if (ref.kind === "line") { const list = lines.get(ref.threadId) ?? []; list.push(ref.messageId); lines.set(ref.threadId, list); }
       else if (ref.kind === "memory") memory.push(ref.ref);
       else if (ref.kind === "prefix") {

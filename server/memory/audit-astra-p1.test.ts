@@ -201,7 +201,7 @@ describe("Astra audit P1", () => {
   it("9. a v10 file the earlier lane wrote (the carry key without the child thread, NULL for a record child) is rebuilt with every row and validates", () => {
     const db = database();
     // a 1.0.2-era file: v10 stays explicit (the repair runs only on a v10 file)
-    expect(downgradeMemorySchema(db, 10)).toMatchObject({ status: "downgraded", from: 12, to: 10 });
+    expect(downgradeMemorySchema(db, 10)).toMatchObject({ status: "downgraded", from: 13, to: 10 });
     const rows = [[1, 5, 5, 1, "7", 2], [1, 5, 5, 3, "note:n1:0", null], [2, 9, 3, 0, "9", 4]] as const;
     db.exec("DROP TABLE memory_lineage_carry");
     db.exec("CREATE TABLE memory_lineage_carry (\n parent_thread_no INTEGER NOT NULL, to_lsn INTEGER NOT NULL, from_lsn INTEGER NOT NULL, child_kind INTEGER NOT NULL CHECK(child_kind BETWEEN 0 AND 3),\n child_ref TEXT NOT NULL, child_thread_no INTEGER,\n PRIMARY KEY(parent_thread_no,to_lsn,from_lsn,child_kind,child_ref)) WITHOUT ROWID");

@@ -796,7 +796,7 @@ export const GATE_UNASKED: ReadonlyArray<readonly [string, readonly string[]]> =
   ["own:agents", [
     "list_bots", "get_bot", "check_delegation", "wait_delegation", "get_permission_status", "list_routines", "skills_list",
     "list_reference_packs", "list_prompt_blocks", "get_prompt_block", "list_image_models", "tool_result_read", "murage_help",
-    "project_read_messages",
+    "project_read_messages", "venue_read_messages",
     "ask_bot", "delegate_bot", "project_assign", "project_accept", "project_card_manage", "project_review_assign",
     "project_criteria", "project_blocked", "project_brief_update", "project_card_update", "project_review_result",
     "project_suggest", "project_summary_update", "project_bring_in",
