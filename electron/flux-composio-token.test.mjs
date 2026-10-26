@@ -151,6 +151,22 @@ describe("minting the FluxRouter connected-apps token", () => {
     expect(next.fluxComposioTokenError).toBe(code);
   });
 
+  it("never keeps the previous account's token when minting for a different key fails", async () => {
+    const credentials = {
+      fluxComposioBrokerToken: TOKEN,
+      fluxComposioBrokerTokenExpiresAt: iso(20 * DAY),
+      fluxComposioBrokerTokenKeyFingerprint: fluxKeyFingerprint("sk-flux-previous"),
+    };
+    const offline = await ensureFluxComposioBrokerToken(base({ credentials, fetchImpl: async () => { throw new Error("offline"); } }));
+    expect(offline.fluxComposioBrokerToken).toBeUndefined();
+    expect(offline.fluxComposioBrokerTokenKeyFingerprint).toBeUndefined();
+    const { impl } = fakeFetch({ "/v1/tokens": declined(401, "invalid_key") });
+    const refused = await ensureFluxComposioBrokerToken(base({ credentials, fetchImpl: impl }));
+    expect(refused.fluxComposioBrokerToken).toBeUndefined();
+    expect(refused.fluxComposioTokenError).toBe("invalid_key");
+    expect(refused.fluxComposioTokenRefusedKeyFingerprint).toBe(fluxKeyFingerprint(KEY));
+  });
+
   it("keeps everything on a network error or an unexpected status", async () => {
     const credentials = { fluxComposioBrokerToken: TOKEN, fluxComposioBrokerTokenExpiresAt: iso(1 * DAY), fluxComposioBrokerTokenKeyFingerprint: fluxKeyFingerprint(KEY) };
     const thrown = await ensureFluxComposioBrokerToken(base({

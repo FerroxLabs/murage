@@ -7,6 +7,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { peerContactHint } from "@/lib/permission-mode";
+import { en } from "@/locales";
 
 const source = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 
@@ -35,11 +36,14 @@ describe("0.1.60 copy flags", () => {
   });
 
   it("Review routine approvals never says safe", () => {
+    // The card's copy lives in the language pack (settings.bot.review.*).
     const panel = source("./components/SettingsPanel.tsx");
-    const at = panel.indexOf("Review routine approvals");
-    const block = panel.slice(at, panel.indexOf("</div>\n            <div", at) + 400);
-    expect(block).not.toMatch(/\bsafe(ly|ty)?\b/i);
-    expect(block).toContain("This engine cannot run a separate review, so approval cards keep waiting for you.");
+    expect(panel).toContain('t("settings.bot.review.title")');
+    expect(panel).toContain('t("settings.bot.review.unsupported")');
+    const block = Object.entries(en).filter(([key]) => key.startsWith("settings.bot.review.")).map(([, value]) => value);
+    expect(block).toContain("Review routine approvals");
+    for (const line of block) expect(line).not.toMatch(/\bsafe(ly|ty)?\b/i);
+    expect(en["settings.bot.review.unsupported"]).toBe("This engine cannot run a separate review, so approval cards keep waiting for you.");
   });
 
   // Routines follow their own level in 0.1.60 (the bot's unless a routine has

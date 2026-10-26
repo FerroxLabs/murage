@@ -243,9 +243,15 @@ it("a source cited by 20k receipts: the request flips only a few, timed backgrou
   expect(Number(db.prepare("SELECT count(*) AS n FROM memory_disclosure_refs WHERE ref_id='heavy'").get()!.n)).toBe(20_000);
   const t0 = performance.now();
   forgetMemory(ownerMemoryTicket(), { kind: "source", id: "heavy" });
-  expect(performance.now() - t0).toBeLessThan(50);
+  const requestMs = performance.now() - t0;
+  // The work bound is the row count: the request flips at most its inline budget of receipts (INLINE_REVOCATION, 256 rows), and an
+  // unbounded request would flip all 20k here. Its reads are seeks and ranges, never a scan (the query plans are pinned in the 500k
+  // test above). Wall time only guards against gross regressions: about 20 ms on an idle 8-CPU runner, and a loaded CI shard stalled
+  // the same bounded call to 142 ms, so the bound is loose like the other request bounds in this file.
   const revokedNow = Number(db.prepare("SELECT count(*) AS n FROM memory_disclosures WHERE state='revoked'").get()!.n);
+  expect(revokedNow).toBeGreaterThan(0);
   expect(revokedNow).toBeLessThanOrEqual(256);
+  expect(requestMs).toBeLessThan(300);
   await memoryRevocationIdle();
   expect(Number(db.prepare("SELECT count(*) AS n FROM memory_disclosures WHERE state!='revoked'").get()!.n)).toBe(0);
   // a file database: each slice's own work stays inside its 8 ms budget plus one step; its COMMIT may also carry SQLite's WAL

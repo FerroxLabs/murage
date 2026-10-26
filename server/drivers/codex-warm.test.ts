@@ -1,7 +1,8 @@
 // One warm `codex app-server` per chat thread: reused while every spawn input
 // is unchanged, recycled otherwise, with the per-turn capability token read from
 // a per-process 0600 file instead of the long-lived environment.
-import { chmodSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,6 +15,7 @@ import { bindCredentialPathInArgs, CodexDriver } from "./codex.ts";
 import { CRED_FILE_PLACEHOLDER } from "./turn-credentials.ts";
 import { cacheEnvFromProcess, markMountIncomplete, markMountReady } from "../connector-cache.ts";
 import { warmPool } from "./warm-pool.ts";
+import { resetIsolationCache } from "./isolation-cache.ts";
 
 // The process probe, replaceable per test: `probe.override` answers instead of `ps`.
 const probe = vi.hoisted(() => ({ override: null as null | ((pid: number) => Promise<Set<number> | null>) }));
@@ -57,7 +59,7 @@ vi.mock("./warm-key.ts", async (original) => {
 });
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-codex-app-server.ts");
-const ENV = ["FAKE_CODEX_RESUME_GATE", "MURAGE_PREWARM_WAIT_MS", "MURAGE_PREWARM_TAKEOVER_MS", "FAKE_CODEX_DUMP", "FAKE_CODEX_SPAWN_LOG", "FAKE_CODEX_WARM", "FAKE_CODEX_MODE_FILE", "FAKE_CODEX_MODE", "MURAGE_CODEX_SESSION_IDLE_MS", "MURAGE_CODEX_SESSION_IDLE_MIN_MS", "FAKE_CODEX_CALL_LOG", "FLUX_API_KEY"];
+const ENV = ["FAKE_CODEX_RESUME_GATE", "MURAGE_PREWARM_WAIT_MS", "MURAGE_PREWARM_TAKEOVER_MS", "FAKE_CODEX_DUMP", "FAKE_CODEX_SPAWN_LOG", "FAKE_CODEX_WARM", "FAKE_CODEX_MODE_FILE", "FAKE_CODEX_MODE", "MURAGE_CODEX_SESSION_IDLE_MS", "MURAGE_CODEX_SESSION_IDLE_MIN_MS", "FAKE_CODEX_CALL_LOG", "FLUX_API_KEY", "FAKE_CODEX_RESUME_MODEL", "FAKE_CODEX_VERSION", "FAKE_CODEX_TOOLS"];
 
 describe("CodexDriver warm app-server (fake app-server)", () => {
   let instance: ProviderInstance;
@@ -594,6 +596,193 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
       const value = bound!.slice(bound!.indexOf("=") + 1);
       expect(JSON.parse(value)).toBe(winPath);
       expect(bound).toContain("C:\\\\Users");
+    });
+  });
+
+  // F4 design 2b (03-2): a model change spawns a new process; the resumed thread must prove it runs on the chosen model.
+  describe("F4: the chosen model answers on a resumed conversation", () => {
+    const calls = (seen: any, method: string) => (seen?.calls ?? []).filter((c: { method: string }) => c.method === method).map((c: { params: any }) => c.params);
+    afterEach(() => { delete process.env.FAKE_CODEX_RESUME_MODEL; });
+
+    it("F7: a model switched between turns rides thread/resume, the answer proves it, and the turn runs on the resumed thread", async () => {
+      await create();
+      await run("t-f7", "one", { ...base, model: "gpt-a" });
+      const second = await run("t-f7", "two", { ...base, model: "gpt-b" });
+      expect(spawns()).toHaveLength(2);
+      expect(calls(second.seen, "thread/resume")).toEqual([expect.objectContaining({ threadId: "codex-thread-1", model: "gpt-b" })]);
+      expect(calls(second.seen, "thread/start")).toEqual([]);
+      expect(calls(second.seen, "turn/start").at(-1)).toMatchObject({ threadId: "codex-thread-1", model: "gpt-b" });
+      expect(last("session.started")).toMatchObject({ sessionId: "codex-thread-1", model: "gpt-b" });
+      expect(second.completed).toMatchObject({ ok: true });
+    });
+
+    it.each(["stale", "none"])("F8: a resume answer naming another model (%s) => a new thread on the chosen model, the conversation replayed", async (answer) => {
+      await create();
+      await run("t-f8", "one", { ...base, model: "gpt-a" });
+      process.env.FAKE_CODEX_RESUME_MODEL = answer;
+      const second = await run("t-f8", "two", { ...base, model: "gpt-b", transcript: [{ role: "user", text: "one" }, { role: "assistant", text: "done from fake codex" }] });
+      expect(calls(second.seen, "thread/resume")).toHaveLength(1);
+      expect(calls(second.seen, "thread/start")).toEqual([expect.objectContaining({ model: "gpt-b" })]);
+      expect(JSON.stringify(calls(second.seen, "turn/start").at(-1).input)).toContain("[Your previous session could not be restored");
+      expect(second.completed).toMatchObject({ ok: true });
+    });
+
+    it("F16: a model mismatch on a resumed /compact settles failed before anything is written; the conversation keeps its thread", async () => {
+      const callLog = join(scratch, "f16-calls.log");
+      process.env.FAKE_CODEX_CALL_LOG = callLog;
+      await create();
+      await run("t-f16", "one", { ...base, model: "gpt-a" });
+      process.env.FAKE_CODEX_RESUME_MODEL = "stale";
+      const second = await run("t-f16", "", { ...base, model: "gpt-b", engineCommand: { name: "compact", args: "" } });
+      expect(second.completed).toMatchObject({ ok: false, stopReason: "resume_model_changed" });
+      // the second process (the model changed) was asked to resume and nothing else: no new thread, no compaction, no turn
+      const secondPid = spawns().at(-1)!;
+      const methods = readFileSync(callLog, "utf8").split("\n").filter((l) => l.startsWith(`${secondPid} `)).map((l) => l.split(" ")[1]);
+      expect(methods).toContain("thread/resume");
+      expect(methods.filter((m) => m === "thread/start" || m === "thread/compact/start" || m === "turn/start")).toEqual([]);
+      expect(recorder.events.filter((e) => e.type === "runtime.error").map((e: any) => e.message)).toEqual(["The model for this conversation changed. Send a message first, then run /compact again."]);
+      expect(sessions.get("t-f16")).toBe("codex-thread-1");
+    });
+
+    it("F17 (GUARD): the default selection resumes with no model, takes the answered model, and starts no new thread", async () => {
+      await create();
+      await run("t-f17", "one", base);
+      await instance.adapter.interruptTurn("t-f17");
+      const second = await run("t-f17", "two", base);
+      expect(spawns()).toHaveLength(2);
+      const [resume] = calls(second.seen, "thread/resume");
+      expect(resume).toBeDefined();
+      expect(resume).not.toHaveProperty("model");
+      expect(calls(second.seen, "thread/start")).toEqual([]);
+      expect(second.completed).toMatchObject({ ok: true });
+    });
+  });
+
+  // F4 design 2c (03-1): one env file per gated process, rewritten only by its own turns, removed only with the process.
+  describe("F4: hook env per process", () => {
+    let ownerHome: string;
+    const gated = async () => {
+      resetIsolationCache();
+      process.env.FAKE_CODEX_VERSION = "codex-cli 0.150.0";
+      instance = await CodexDriver.create({
+        instanceId: "codex-warm-gated", displayName: "Codex Warm Test", environment: { CODEX_HOME: ownerHome }, enabled: true,
+        config: { cli: FAKE_CLI, fullAuto: false },
+      });
+      recorder = recordEvents(instance.adapter);
+      catalogSpawns = allSpawns().length;
+      // the fake plays one shell call through the hook on every gated turn: its card is allowed
+      const inst = instance;
+      inst.adapter.onEvent((e: any) => { if (e.type === "request.opened" && !holdThreads.has(e.threadId)) void inst.adapter.respondToRequest(e.threadId, e.requestId, { behavior: "allow" }); });
+    };
+    const envOf = (r: { seen: any }) => r.seen.env.MURAGE_CODEX_HOOK_ENV as string;
+    // a conversation whose card is left open: its process stays busy (the pool keeps one idle spare per engine)
+    const holdThreads = new Set<string>();
+    beforeEach(() => {
+      ownerHome = join(scratch, "owner-home");
+      mkdirSync(ownerHome, { recursive: true });
+      writeFileSync(join(ownerHome, "config.toml"), 'model = "gpt-owner"\n');
+      // two kept engines at once: the pool's memory admission must not evict one on a loaded test box
+      process.env.MURAGE_WARM_POOL_MIN_FREE_MB = "0";
+      process.env.MURAGE_WARM_POOL_BUDGET_MB = "1000000";
+      // the settle-time probe is not under test here: nothing is left under the app-server
+      probe.override = async () => new Set<number>();
+    });
+    // the probed version is cached per CLI: later tests must not inherit the gated one
+    afterEach(() => {
+      for (const name of ["FAKE_CODEX_VERSION", "FAKE_CODEX_TOOLS", "MURAGE_WARM_POOL_MIN_FREE_MB", "MURAGE_WARM_POOL_BUDGET_MB"]) delete process.env[name];
+      resetIsolationCache();
+    });
+
+    it("F13 + F14: each conversation's process has its own file; a reused turn rewrites only its own; a close removes it", async () => {
+      await gated();
+      // a first conversation names the scope; closing it removes its process's file
+      const w = await run("t-env-0", "one", { ...base, cwd: scratch });
+      const envW = envOf(w);
+      const home = dirname(envW);
+      expect(home).toBe(join(w.seen.env.CODEX_HOME, "hook-env"));
+      expect(existsSync(envW)).toBe(true);
+      await instance.adapter.interruptTurn("t-env-0");
+      await eventually(() => !existsSync(envW));
+      holdThreads.add("t-env-a");
+      try {
+        // A is busy on an open card: its process and its file are live
+        const a = await instance.adapter.sendTurn({ threadId: "t-env-a", text: "one", ...base, cwd: scratch });
+        const card: any = await recorder.until((e: any) => e.type === "request.opened" && e.turnId === a.turnId);
+        const filesNow = () => readdirSync(home).filter((f) => f.endsWith(".env"));
+        expect(filesNow()).toHaveLength(1);
+        const envA = join(home, filesNow()[0]!);
+        const tokenA = readFileSync(envA, "utf8");
+        // B's two turns on one kept process
+        const b1 = await run("t-env-b", "one", { ...base, cwd: scratch });
+        const envB = envOf(b1);
+        expect(envB).not.toBe(envA);
+        expect(dirname(envB)).toBe(home);
+        const tokenB = readFileSync(envB, "utf8");
+        const b2 = await run("t-env-b", "two", { ...base, cwd: scratch });
+        expect(lines.join(" | ")).toContain("thread=t-env-b process=reused");
+        expect(b2.pid).toBe(b1.pid);
+        expect(envOf(b2)).toBe(envB);
+        expect(readFileSync(envB, "utf8")).not.toBe(tokenB);
+        // A's file was never touched by B's turns
+        expect(readFileSync(envA, "utf8")).toBe(tokenA);
+        holdThreads.delete("t-env-a");
+        await instance.adapter.respondToRequest("t-env-a", card.requestId, { behavior: "allow" });
+        await recorder.until((e: any) => e.type === "turn.completed" && e.turnId === a.turnId);
+        // a close removes the process's own file and leaves the other's
+        await instance.adapter.interruptTurn("t-env-b");
+        await eventually(() => !existsSync(envB));
+      } finally {
+        holdThreads.clear();
+      }
+    });
+
+    it("F19: a close whose kill is not confirmed keeps the file and the conversation owned; a hook whose file was swept is blocked", async () => {
+      await gated();
+      const a1 = await run("t-env-stuck", "one", { ...base, cwd: scratch });
+      const envA = envOf(a1);
+      hooks.stuck = true;
+      await expect(instance.adapter.interruptTurn("t-env-stuck")).rejects.toThrow(/still pending/);
+      expect(existsSync(envA)).toBe(true);
+      await expect(instance.adapter.sendTurn({ threadId: "t-env-stuck", text: "again", ...base, cwd: scratch })).rejects.toThrow(/has not closed yet/);
+      hooks.stuck = false;
+      await instance.adapter.interruptTurn("t-env-stuck");
+      await eventually(() => !existsSync(envA));
+      // a leftover engine of an earlier Murage run finds no file: its hook blocks, it is never handed another process's socket
+      const blocked = spawnSync(process.execPath, [join(a1.seen.env.CODEX_HOME, "murage-hook.mjs")], {
+        input: JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command: "ls" }, tool_use_id: "x" }),
+        env: { ...process.env, MURAGE_CODEX_HOOK_ENV: envA },
+      });
+      // PreToolUse blocks with the documented deny on stdout and exit 0 since 1.0.3 (codex-hook.ts block()).
+      expect(blocked.status).toBe(0);
+      expect(JSON.parse(String(blocked.stdout)).hookSpecificOutput).toMatchObject({ hookEventName: "PreToolUse", permissionDecision: "deny" });
+      expect(String(blocked.stderr)).toContain("Murage blocked this call");
+    });
+
+    it("F21: a second Codex instance on the same scope sweeps at its start and keeps the first instance's live file; the first's hooks keep working", async () => {
+      await gated();
+      const x = instance;
+      const xRecorder = recorder;
+      const x1 = await run("t-env-x", "one", { ...base, cwd: scratch });
+      const envX = envOf(x1);
+      const home = x1.seen.env.CODEX_HOME as string;
+      const dead = join(home, "hook-env", "999999-0dead.env");
+      writeFileSync(dead, "SOCKET=x\nTOKEN=y\n");
+      // the second instance: its own driver start, the same bot scope
+      await gated();
+      const y1 = await run("t-env-y", "one", { ...base, cwd: scratch });
+      expect(y1.seen.env.CODEX_HOME).toBe(home);
+      expect(existsSync(dead)).toBe(false);
+      expect(existsSync(envX)).toBe(true);
+      const y = instance;
+      recorder.stop();
+      await y.dispose();
+      // back on the first instance: its retained process's hook still reaches its own turn (an in-project edit is allowed by the hook)
+      instance = x;
+      recorder = xRecorder;
+      const x2 = await run("t-env-x", "two", { ...base, cwd: scratch });
+      expect(x2.pid).toBe(x1.pid);
+      expect(x2.completed).toMatchObject({ ok: true });
+      expect(x2.seen.hookLog.at(-1)).toMatchObject({ id: "i1", verdict: "allow" });
     });
   });
 });

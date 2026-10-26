@@ -28,17 +28,26 @@ export type EngineDiscovery = Record<string, Record<string, string[]>>;
 export interface EngineHistoryJob {
   /** "plan" only reads: it plans the homes in `only` (default all) and reports their plans and ids. "execute" runs the steps of
    * `plans` that are not done and reports each finished step as it goes. No kind runs the whole plan / execute / verify loop
-   * inline (the facade removeEngineHistoryFiles). */
-  kind?: "plan" | "execute" | "recover";
+   * inline (the facade removeEngineHistoryFiles). "probe" only reads the process list: which homes a program Murage did not start has
+   * open (engine-closed.ts foreignEngineHolders), so an attempt leaves them alone before it pauses or holds anything. */
+  kind?: "plan" | "execute" | "recover" | "probe" | "openPass";
   homes: DeletionEngineHome[]; folders: string[]; memoryFolders: string[]; sessions: Partial<Record<DeletionEngine, string[]>>;
   /** ids saved by an earlier plan; a plan works from these as well as from what it can still see */
   known?: EngineDiscovery;
   /** plan: only these homes (`engine\0home`) */
   only?: string[];
+  /** plan: homes (`engine\0home`) whose holder line the service already wrote for this holder (its whole try once an hour, lane 106):
+   * still gated and skipped exactly as any open home, only without a second `home not read` line */
+  quiet?: string[];
   /** execute: the saved plans to run, by `engine\0home` */
   plans?: Record<string, HomePlanData>;
   /** where the crash journals are kept (<data folder>/engine-redo); "recover" finishes every journal there */
   redoDir?: string;
+  /** <data folder>/native, where Murage's private engine scopes are (engine-closed.ts configureScopes): unset, no home is private */
+  nativeDir?: string;
+  /** "recover" before any hold (the start-up pass): journals of homes inside an engine's scope folder are left for the attempt that
+   * holds them */
+  skipScopes?: boolean;
 }
 export interface EngineHistoryResult {
   removed: string[]; failed: string[]; leftovers: DeletionLeftover[];
@@ -68,6 +77,9 @@ export interface EngineHistoryResult {
   /** plan: the homes (`engine\0home`) in a folder a sync client mirrors. Their owner is told once, after the deletion, that the cloud
    * provider may still hold older copies. */
   syncedHomes?: string[];
+  /** probe: the homes (`engine\0home`) a program Murage did not start has open, with the desktop application when that is why and the
+   * holders for the log line. A home not listed was not seen open that way; the attempt goes on to the full gate as before. */
+  foreignHomes?: Record<string, { app?: string; holders?: Array<{ pid: number; ppid: number; name: string | null; exe: string | null; argv: string[]; by: string }>; kinds?: string[] }>;
 }
 export interface EngineHistoryOptions {
   workerPath?: string;

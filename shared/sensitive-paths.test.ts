@@ -48,3 +48,24 @@ describe("Rule 64 template carve-out", () => {
     expect(sensitivePathRow("/p/.envrc", true)).toBe("envrc");
   });
 });
+
+describe("09-A3: a native Windows path to .env is a key file", () => {
+  it("matches a backslash before .env", () => {
+    const env = SENSITIVE_PATHS.find((row) => row.id === "env")!;
+    expect(env.re.test("C:\\work\\project\\.env")).toBe(true);
+    expect(env.re.test("C:\\work\\project\\.env.local")).toBe(true);
+  });
+});
+
+describe("09-B1: environment dumps and $HOME profile reads are sensitive text and paths", () => {
+  it("reads $HOME spellings of the shell profile", () => {
+    for (const text of ["cat $HOME/.zshrc", 'cat "$HOME/.zshrc"', "cat ${HOME}/.zshrc", "type %USERPROFILE%\\.bashrc", "cat ~/.zshrc"]) {
+      expect(sensitivePathRow(text, false), text).toBe("shell-rc");
+    }
+  });
+  it("matches a bare environment dump and leaves wrappers and prose alone", () => {
+    const row = SENSITIVE_TEXT.find((r) => r.id === "env-dump")!;
+    for (const text of ["env", "printenv", "printenv HOME", "export -p", "declare -p", "set", "ls; env", "env > /tmp/x", "sudo env"]) expect(row.re.test(text), text).toBe(true);
+    for (const text of ["env FOO=1 ls", "export FOO=1", "set -e", "the environment is fine", "node --env-file x"]) expect(row.re.test(text), text).toBe(false);
+  });
+});

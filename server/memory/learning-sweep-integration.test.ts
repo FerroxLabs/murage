@@ -7,12 +7,18 @@
 import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
-import { closeDatabase, database } from "../database.ts";
+import { closeDatabase, database, transaction } from "../database.ts";
 import * as messages from "../message-db.ts";
 import { setMemoryMode } from "./repository.ts";
+import { runRevocationJobsNow } from "./memory-revocation.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 
 beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); });
+/** Deletes the conversation and lets its durable revocation job finish. The delete itself runs the job inline for at most
+ * INLINE_REVOCATION (256 rows, 8 ms) and leaves the rest to the background runner (restore.ts startRevocationJob); readers refuse the
+ * material by ancestry from the commit on. On a loaded box the learning step falls past those 8 ms, so the test drains the job here
+ * instead of reading the stored rows halfway through it (1.0.7: 1 in 10 idle, 3 in 24 under load on base). */
+const deleteThread = (threadId: string) => { messages.deleteThread(threadId); transaction(db => runRevocationJobsNow(db)); };
 const msg = (id: string, text: string, role: "user" | "bot" = "user") => ({ id, text, parentId: null, at: 1, role, kind: "text" as const });
 
 function seedLearning(thread: string, messageId: string) {
@@ -29,7 +35,7 @@ it("deleting a conversation sweeps the owner's typed feedback text, outcome reas
   messages.appendMessage("kept", msg("m2", "a different conversation"));
   const db = seedLearning("gone", "m1");
   seedLearning("kept", "m2");
-  messages.deleteThread("gone");
+  deleteThread("gone");
   expect(db.prepare("SELECT state,correction FROM memory_feedback WHERE id='fb-gone'").get()).toMatchObject({ state: "expired", correction: null });
   expect(db.prepare("SELECT reason FROM memory_outcomes WHERE id='o-gone'").get()?.reason).toBeNull();
   expect(db.prepare("SELECT state FROM memory_lessons WHERE id='l-gone'").get()?.state).toBe("unsupported");
@@ -44,7 +50,7 @@ it("does so even when memory was off and nothing from that conversation was capt
   messages.appendMessage("gone", msg("m1", "no, send it to my private address"));
   const db = seedLearning("gone", "m1");
   expect(db.prepare("SELECT 1 FROM memory_sources WHERE thread_id='gone'").get()).toBeUndefined();
-  messages.deleteThread("gone");
+  deleteThread("gone");
   expect(db.prepare("SELECT correction FROM memory_feedback WHERE id='fb-gone'").get()?.correction).toBeNull();
   expect(db.prepare("SELECT reason FROM memory_outcomes WHERE id='o-gone'").get()?.reason).toBeNull();
 });
@@ -67,7 +73,7 @@ it("T1-16: deleting a conversation empties the text of lessons derived from it a
   db.prepare("UPDATE memory_lessons SET text='lead with the 2-question reframe for Acme CFO Jane' WHERE id='l-gone'").run();
   ledger(db, "ev-gone", "bot", "feedback-detected", { chip: 1, threadId: "gone", replyMessageId: "r1", label: "Dear Jane, about the Acme renewal" });
   ledger(db, "ev-kept", "bot", "feedback-detected", { chip: 1, threadId: "kept", replyMessageId: "r2", label: "A reply in another chat" });
-  messages.deleteThread("gone");
+  deleteThread("gone");
   expect(db.prepare("SELECT state,text FROM memory_lessons WHERE id='l-gone'").get()).toMatchObject({ state: "unsupported", text: "" });
   expect(JSON.stringify(db.prepare("SELECT detail FROM memory_learning_events WHERE id='ev-gone'").get())).not.toContain("Acme");
   expect(JSON.stringify(db.prepare("SELECT detail FROM memory_learning_events WHERE id='ev-kept'").get())).toContain("another chat");
@@ -80,7 +86,7 @@ it("T1-16: deleting a conversation removes learning-local lessons that rested on
   writeFileSync(join(dir, "pl1.json"), JSON.stringify({ id: "pl1", botId: "bot", text: "call Jane first", evidence: { feedbackId: "f", messageId: "m1" } }));
   writeFileSync(join(dir, "pl2.json"), JSON.stringify({ id: "pl2", botId: "bot", text: "unrelated", evidence: { feedbackId: "f", messageId: "other" } }));
   seedLearning("gone", "m1");
-  messages.deleteThread("gone");
+  deleteThread("gone");
   expect(existsSync(join(dir, "pl1.json"))).toBe(false);
   expect(readFileSync(join(dir, "pl2.json"), "utf8")).toContain("unrelated");
 });

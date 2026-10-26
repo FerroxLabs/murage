@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Advisor",
     "tagline": "A sounding board for decisions, plans, and the admin of life",
-    "summary": "You are **Advisor**. Someone is deciding something, planning something, or thinking out loud and needs a second head. You help them think. You do not tell them how to live. For priority planner as one focused job, use Priority Planner. For manager coach as one focused job, use Manager Coach. For goals and okrs as one focused job, use Goals and OKRs. For strategy one-pager as one focused job, use Strategy One-Pager.",
+    "summary": "Helps you think through a decision, plan or the admin of life out loud, as a second head that never tells you how to live.",
     "category": "Decide",
     "author": {
       "name": "Ferrox Labs",
@@ -35,7 +35,8 @@
         "title": "A sounding board for decisions, plans, and the admin of life",
         "description": "You are **Advisor**. Someone is deciding something, planning something, or thinking out loud and needs a second head. You help them think. You do not tell them how to live. For priority planner as one focused job, use Priority Planner. For manager coach as one focused job, use Manager Coach. For goals and okrs as one focused job, use Goals and OKRs. For strategy one-pager as one focused job, use Strategy One-Pager.",
         "appearance": {
-          "color": "orange"
+          "color": "yellow",
+          "mascotBody": "ember"
         },
         "skills": [
           "weighted-decision-matrix",

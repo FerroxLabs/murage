@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, Loader2, TriangleAlert } from "lucide-react";
 
+import { owedSettingsLines } from "@/lib/deletion-notes";
 import { api, useStore, type InstanceInfo, type ShellEnvironment } from "@/state/store";
 import { EngineManagement } from "./EngineManagement";
 import { ClaudeAccountsSettings } from "./ClaudeAccountsSettings";
@@ -427,6 +428,8 @@ export function EnginesSettings() {
   // (and a Set CLI… path) for engines the running build doesn't recognize.
   const rows = state.instances.filter((i) => i.enabled !== undefined || i.cli !== undefined || i.cliDefault !== undefined || i.snapshot.state === "unavailable");
   const shellLine = shellEnvironmentLine(state.shellEnvironment);
+  // Engine copies of deleted conversations Murage is still removing: one quiet line, no action (it retries by itself).
+  const owedLines = owedSettingsLines(state.owedNote);
 
   return (
     <div className="flex flex-col gap-5">
@@ -442,6 +445,7 @@ export function EnginesSettings() {
           <span>{note}</span>
         </div>
       ))}
+      {owedLines.map((line) => <p key={line} role="status" className="text-[12px] leading-relaxed text-ink-secondary">{line}</p>)}
       {rows.length === 0 && (
         <div className="text-[13px] text-ink-secondary">No CLI engines detected yet.</div>
       )}

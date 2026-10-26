@@ -25,7 +25,9 @@ import {
   previewButton,
   sortVoices,
   typeAhead,
+  SOURCE_LABEL,
   type GenderFilter,
+  type VoiceSource,
   type PickerVoice,
   type RowPreviewState,
 } from "./voice-picker-model";
@@ -56,12 +58,13 @@ export function VoicePicker({ voices, pinned = [], value, onChange, label, loadi
   const [query, setQuery] = useState("");
   const [gender, setGender] = useState<GenderFilter>("all");
   const [accent, setAccent] = useState("all");
+  const [source, setSource] = useState<"all" | VoiceSource>("all");
   const sorted = useMemo(() => sortVoices(voices), [voices]);
   const filters = useMemo(() => pickerFilters(voices), [voices]);
-  const filtering = Boolean(query.trim()) || gender !== "all" || accent !== "all";
+  const filtering = Boolean(query.trim()) || gender !== "all" || accent !== "all" || source !== "all";
   const rows = useMemo(
-    () => [...(filtering ? [] : pinned), ...filterVoices(sorted, { query, gender, accent })],
-    [filtering, pinned, sorted, query, gender, accent],
+    () => [...(filtering ? [] : pinned), ...filterVoices(sorted, { query, gender, accent, source })],
+    [filtering, pinned, sorted, query, gender, accent, source],
   );
   const selectedIndex = rows.findIndex((v) => v.id === value);
   const [active, setActive] = useState(-1);
@@ -127,6 +130,7 @@ export function VoicePicker({ voices, pinned = [], value, onChange, label, loadi
     setQuery("");
     setGender("all");
     setAccent("all");
+    setSource("all");
   };
 
   return (
@@ -150,6 +154,19 @@ export function VoicePicker({ voices, pinned = [], value, onChange, label, loadi
           className="h-11 w-full rounded-lg border border-hairline/40 bg-inset pl-9 pr-3 text-[13px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none"
         />
       </div>
+
+      {filters.sources.length > 0 && (
+        // One list can mix sources (Flux: Grok, OpenAI and ElevenLabs); each
+        // keeps to its own block in the list and has its own chip here.
+        <div role="group" aria-label="Voice source" className="mt-2 flex flex-wrap gap-x-1.5 gap-y-3 py-1.5">
+          <Chip pressed={source === "all"} onClick={() => setSource("all")}>All sources</Chip>
+          {filters.sources.map((s) => (
+            <Chip key={s} pressed={source === s} onClick={() => setSource(source === s ? "all" : s)}>
+              {SOURCE_LABEL[s]}
+            </Chip>
+          ))}
+        </div>
+      )}
 
       {(filters.genders.length > 1 || filters.accents.length > 0) && (
         <div role="group" aria-label="Filter voices" className="mt-2 flex flex-wrap gap-x-1.5 gap-y-3 py-1.5">
@@ -231,6 +248,11 @@ export function VoicePicker({ voices, pinned = [], value, onChange, label, loadi
                     )
                   )}
                 </span>
+                {voice.provider && filters.sources.length > 0 && source === "all" && (
+                  <span className="hidden shrink-0 text-[11px] text-ink-secondary sm:inline" data-source={voice.provider}>
+                    {voice.provider === "elevenlabs" ? "ElevenLabs" : SOURCE_LABEL[voice.provider]}
+                  </span>
+                )}
                 {voice.gender && gender === "all" && (
                   <span className="hidden shrink-0 text-[11px] text-ink-secondary sm:inline">{GENDER_LABEL[voice.gender]}</span>
                 )}

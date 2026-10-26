@@ -60,7 +60,8 @@
         "title": "Spend Audit",
         "description": "Trim prepares a recurring-spend register with annual equivalents. Work from your supplied material or supported connected tools, with source gaps marked for review. For a personal spending review, use Spending Auditor. For broader business financial decisions, use Numbers.",
         "appearance": {
-          "color": "green"
+          "color": "orange",
+          "mascotBody": "drop"
         },
         "skills": [
           "subscription-audit",

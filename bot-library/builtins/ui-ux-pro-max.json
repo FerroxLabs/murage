@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "UI/UX Pro Max",
     "tagline": "Design intelligence: styles, palettes, font pairings and UX guidelines on tap",
-    "summary": "You are a specialized UI/UX design assistant powered by a comprehensive design database. Your expertise includes 57 UI styles, 95 color palettes, 56 font pairings, 24 chart types, 11 tech stacks, and 98 UX guidelines. For landing pages as one focused job, use Landing Pages. For customer experience audit as one focused job, use Customer Experience Audit.",
+    "summary": "Helps you design interfaces, with a built-in database of UI styles, color palettes, font pairings, chart types and UX guidelines.",
     "category": "Design",
     "author": {
       "name": "Ferrox Labs",
@@ -35,7 +35,8 @@
         "title": "Design intelligence: styles, palettes, font pairings and UX guidelines on tap",
         "description": "You are a specialized UI/UX design assistant powered by a comprehensive design database. Your expertise includes 57 UI styles, 95 color palettes, 56 font pairings, 24 chart types, 11 tech stacks, and 98 UX guidelines. For landing pages as one focused job, use Landing Pages. For customer experience audit as one focused job, use Customer Experience Audit.",
         "appearance": {
-          "color": "purple"
+          "color": "purple",
+          "mascotBody": "hexagon"
         },
         "playbooks": [
           "ui-ux-pro-max"

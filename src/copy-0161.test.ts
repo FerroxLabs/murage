@@ -5,6 +5,8 @@
 // approved it (whats-new-art-0161/preview.html): the hero, the highlights
 // card's six tiles and the more card's twelve lines. A rewording anywhere
 // fails here first, and none of it may break the house copy rules.
+// Since 1.0.6 each version's hero lives in WHATS_NEW_CONTENT as data, so the
+// 0.1.61 hero title and button are held as their record fields there.
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
@@ -13,9 +15,9 @@ const dialog = source("./components/WhatsNewDialog.tsx");
 
 const HERO = [
   "NEW IN MURAGE",
-  ">Your team, in step.<",
+  'title: "Your team, in step."',
   "Every bot in a room sees what its teammates said, on every engine. Images get saved looks and reference packs, and long work runs until it is done.",
-  ">Open Teams<",
+  'button: "Open Teams"',
   ">Next<",
 ];
 

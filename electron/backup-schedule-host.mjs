@@ -41,6 +41,21 @@ function verifiedArtifact(output,maxBytes){
 // The two closed sets live in shared/backup-capture-failure.mjs, next to the
 // plain-English sentence built from them, so the Backups page, the Backup
 // mode page and this host all name a failure the same way.
+// One log line when a verified backup left something out, so a leftover file in
+// the data folder (Sean's config.json.bak-20260918-openaicompat, 1.0.4) is named
+// once in the log as well as on the Backups page. The worker's list is untrusted:
+// only top-level names (never a path inside a folder), at most 10, and only
+// plain reason words are written.
+export function skippedOutcomeLine(job,skipped){
+  if(!skipped||typeof skipped!=="object"||!Number.isSafeInteger(skipped.count)||skipped.count<1)return null;
+  const reasons=Object.create(null),names=[];
+  for(const item of Array.isArray(skipped.items)?skipped.items:[]){
+    if(!item||typeof item.path!=="string"||typeof item.reason!=="string"||!/^[a-z][a-z-]{0,31}$/.test(item.reason))continue;
+    reasons[item.reason]=(reasons[item.reason]??0)+1;
+    if(names.length<10&&item.path.length>0&&!/[\\/]/.test(item.path))names.push(item.path.slice(0,120));
+  }
+  return `backup skipped ${JSON.stringify({job,count:skipped.count,reasons,names})}`;
+}
 const captureFailureStages=new Set(BACKUP_CAPTURE_STAGES);
 const captureFailureCodes=new Set(BACKUP_CAPTURE_CODES);
 const ownedCaptureWaits=new Map([
@@ -298,22 +313,28 @@ export function createBackupScheduleHost(host) {
     const s=coordinator.status(),intent=s.job?.handoff;let claimed=false,captureStage="precondition";
     try{
       if(!intent||s.phase!=="handoff-armed")throw Error("BACKUP_HANDOFF_REJECTED");
-      captureStage="references";const b=await checked();if(!host.supported())throw Error("BACKUP_UNAVAILABLE");
+      const note=line=>{try{host.reportOutcome?.(line);}catch{/* Logging never changes the backup. */}};
+      const stage=name=>{try{host.reportProgress?.(name);}catch{/* A progress screen never changes the backup. */}};
+      note(`backup started ${JSON.stringify({job:String(s.job?.id??"").slice(0,8),closed})}`);
+      stage("references");captureStage="references";const b=await checked();if(!host.supported())throw Error("BACKUP_UNAVAILABLE");
       captureStage="claim";coordinator.claimHandoff(intent.id,hash(b),installationIdentity(host.installation()));
       claimed=true;
       const output=path.join(b.destination,s.job.id+".age");
       const readIdentity=async()=>{await checked();await verifyIdentityAccess();const key=readBackupIdentity(b.keyFile,host.installation());if(key.recipient!==b.recipient)throw Error("BACKUP_REFERENCE_CHANGED");return key.identity;};
       coordinator.beginHandoffCapture(intent.id);
-      captureStage="capture";const result=await host.capture({output,recipient:b.recipient,readIdentity,maxBytes:s.schedule.maxBytes,maxDurationMs:s.schedule.maxDurationMs});
-      captureStage="artifact-readback";
+      stage("capture");captureStage="capture";const result=await host.capture({output,recipient:b.recipient,readIdentity,maxBytes:s.schedule.maxBytes,maxDurationMs:s.schedule.maxDurationMs});
+      stage("artifact-readback");captureStage="artifact-readback";
       // The worker reports the archive in its canonical spelling, which on
       // Windows is lower case; the file checked below is always our own path.
       if(result?.ok!==true||result.operation!=="backup-encrypted"||!samePath(result.path,output)||result.coverage?.fullInstallation!==false||result.coverage?.scope!=="application-data")throw Error("BACKUP_RECEIPT_MISMATCH");
       const {sha256,bytes}=verifiedArtifact(output,s.schedule.maxBytes);
+      note(`backup local written ${JSON.stringify({job:s.job.id.slice(0,8),bytes})}`);
       if(sha256!==result.sha256)throw Error("BACKUP_RECEIPT_MISMATCH");
+      note(`backup local verified ${JSON.stringify({job:s.job.id.slice(0,8),bytes,how:"file re-read and its sha256 matched the encrypting worker's"})}`);
+      {let line=null;try{line=skippedOutcomeLine(s.job.id.slice(0,8),result.skipped);}catch{/* Logging never changes the backup. */}if(line)note(line);}
       captureStage="receipt-commit";coordinator.clearCaptureFailure?.();coordinator.recordSkipped?.(s.job.id,result.skipped);coordinator.completeHandoff(intent.id,{jobId:s.job.id,installationRef:b.installationRef,destinationRef:b.destinationRef,selectionHash:hash(s.schedule.selection),snapshotId:result.snapshotId,artifactRef:s.job.id,sha256,bytes,verifiedAt:now(),...(intent.upgrade?{candidateId:intent.upgrade.candidateId}:{})});
       // Durable receipt precedes relaunch. A failed return never recaptures.
-      captureStage="return";if(closed)coordinator.completeReturn(intent.id);
+      stage("return");captureStage="return";if(closed)coordinator.completeReturn(intent.id);
       else await host.relaunch("normal");
       return {verified:true};
     }catch(error){
@@ -321,6 +342,7 @@ export function createBackupScheduleHost(host) {
       // The log alone also gets the redacted cause behind the code; the
       // durable record below (and so the window) keeps only stage and code.
       let cause=null;try{cause=normalizeCaptureCause(error?.captureCause);}catch{/* Diagnostic properties are not trusted. */}
+      try{host.reportOutcome?.(`backup local failed ${JSON.stringify({stage:diagnostic.stage,code:diagnostic.code})}`);}catch{/* Logging never changes the result. */}
       try{host.reportCaptureFailure?.(cause?{...diagnostic,cause}:diagnostic);}catch{/* Diagnostic failure never changes the handoff result. */}
       // Durable, so the reason survives the return to the workspace and the
       // Backups page can say what happened instead of only that it failed.

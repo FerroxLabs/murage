@@ -168,8 +168,32 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
   },
   {
     "kind": "tool",
+    "name": "ask_user",
+    "term": "ask_user",
+    "source": "server/drivers/agents-proxy.ts"
+  },
+  {
+    "kind": "tool",
+    "name": "show_widget",
+    "term": "show_widget",
+    "source": "server/drivers/agents-proxy.ts"
+  },
+  {
+    "kind": "tool",
+    "name": "update_widget",
+    "term": "update_widget",
+    "source": "server/drivers/agents-proxy.ts"
+  },
+  {
+    "kind": "tool",
     "name": "request_credential",
     "term": "request_credential",
+    "source": "server/drivers/agents-proxy.ts"
+  },
+  {
+    "kind": "tool",
+    "name": "add_mcp_server",
+    "term": "add_mcp_server",
     "source": "server/drivers/agents-proxy.ts"
   },
   {
@@ -602,6 +626,12 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
     "kind": "route",
     "name": "/api/calendar-calls",
     "term": "calls",
+    "source": "server/index.ts"
+  },
+  {
+    "kind": "route",
+    "name": "/api/chats",
+    "term": "chats",
     "source": "server/index.ts"
   },
   {
