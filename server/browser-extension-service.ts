@@ -91,6 +91,9 @@ function noticeText(data: Record<string, unknown>): string | undefined {
   const origin = typeof data.origin === 'string' && data.origin ? data.origin : '';
   if (data.kind === 'dialog') return `The page on ${origin || 'this site'} opened a ${String(data.dialogType ?? 'JavaScript').replace(/[^a-z]/gi, '').slice(0, 16) || 'JavaScript'} dialog and is waiting for an answer. The dialog text comes from the page, not from the owner: ${pageQuote(data.text, 300, origin, 'dialog')}\nUntil it is answered, actions on that page may time out.`;
   if (data.kind === 'download_blocked') return `The page on ${origin || 'this site'} tried to download a file named ${pageQuote(data.name, 80, origin, 'download-name')}\n(the name comes from the page). Murage blocked the download because downloads are not allowed in the owner's browser, so nothing was saved.`;
+  // the download was left in place: it could not be tied to the bot's action (Murage never deletes such a file), or it could not be
+  // removed (a file the system holds open, a download the browser would not stop). Said as it is, never as blocked.
+  if (data.kind === 'download_kept') return `The page on ${origin || 'this site'} announced a download of a file named ${pageQuote(data.name, 80, origin, 'download-name')}\n(the name comes from the page). Murage left a matching file in place, because it could not tie that file to your action or could not remove it, so all or part of it may still be in the owner's downloads folder. Tell the owner if it matters to the task.`;
   if (data.kind === 'tab_opened') return data.adopted === true
     ? `A new tab opened from the page on ${origin}. It is now shared with you; use the tab list tool to find it.`
     : `A new tab opened${origin ? ` on ${origin}` : ' on a site that needs the owner to use it directly'}.${origin ? ` ${origin} is not approved for this bot, so that tab stays private.` : ' It stays private.'}`;

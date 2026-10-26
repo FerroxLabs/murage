@@ -108,3 +108,17 @@ describe("withClaimRows", () => {
     expect(out.map(r => r.key)).toEqual(["a", "b", "claim:x", "c", "claim:y"]);
   });
 });
+
+// 1.0.5 (training rig): an automatic own-workspace save showed "allow · user", as though the owner had clicked. The engine
+// records every server answer as `user`; the decision log names the rule, and the Inspector says it.
+describe("who answered an ask", () => {
+  const resolved = (extra: Record<string, unknown>) => ({ ...base, type: "request.resolved" as const, requestId: "r", behavior: "allow" as const, source: "user" as const, ...extra });
+  it("an automatic answer reads as automatic with its rule, on every engine, and a person's click still reads as user", () => {
+    expect(summarizeRuntime(resolved({ decidedBy: "own-workspace" })).summary).toBe("resolved allow · automatic (own workspace)");
+    expect(summarizeRuntime(resolved({ provider: "fuigoAgent", decidedBy: "auto-mode" })).summary).toBe("resolved allow · automatic (Auto mode)");
+    expect(summarizeRuntime(resolved({ provider: "codex", decidedBy: "routine-allow" })).summary).toBe("resolved allow · automatic (routine grant)");
+    expect(summarizeRuntime(resolved({ decidedBy: "always-allow" })).summary).toBe("resolved allow · automatic (always allow)");
+    expect(summarizeRuntime(resolved({ source: "auto" })).summary).toBe("resolved allow · automatic");
+    expect(summarizeRuntime(resolved({})).summary).toBe("resolved allow · user");
+  });
+});

@@ -1,5 +1,6 @@
 import type { PermissionAction } from "../permission-approvals.ts";
 import { ChannelSendError } from "../durable-delivery.ts";
+import { approvalButtonLabel } from "../approval-labels.ts";
 import { slackId } from "./event.ts";
 
 export interface SlackTransport {
@@ -98,10 +99,10 @@ export class SlackSocketTransport implements SlackTransport {
   async stop() { this.stopped = true; this.generation++; await this.sdk?.socket.disconnect(); }
   async sendPermission(input: { dmId: string; text: string; approveId: string; denyId: string; denyOnly?: boolean; signal: AbortSignal }) {
     if (!/^murage:[a-f0-9]{48}:a$/.test(input.approveId) || input.denyId !== input.approveId.slice(0, -1) + "d") throw new ChannelSendError("invalid-request", false);
-    const deny = { type: "button", text: { type: "plain_text", text: "Deny" }, style: "danger", action_id: input.denyId };
+    const deny = { type: "button", text: { type: "plain_text", text: approvalButtonLabel("deny") }, style: "danger", action_id: input.denyId };
     return this.permissionMessage(input, [{ type: "section", text: { type: "plain_text", text: input.text, emoji: false } },
       { type: "actions", elements: input.denyOnly ? [deny]
-        : [{ type: "button", text: { type: "plain_text", text: "Approve once" }, style: "primary", action_id: input.approveId }, deny] }]);
+        : [{ type: "button", text: { type: "plain_text", text: approvalButtonLabel("approveOnce") }, style: "primary", action_id: input.approveId }, deny] }]);
   }
   async settlePermission(input: { dmId: string; messageId: string; text: string; signal: AbortSignal }) {
     if (!/^\d+\.\d+$/.test(input.messageId)) throw new ChannelSendError("invalid-request", false);

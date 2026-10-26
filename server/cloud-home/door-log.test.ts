@@ -36,11 +36,14 @@ function ticket(now: number, over: Record<string, unknown> = {}, key = cp.privat
 const mkDevice = (kind: "p256" | "ed25519" = "p256") => ({ key: kind === "p256" ? ec() : ed(), assertion: kind === "p256" ? ec() : ed() });
 type Dev = ReturnType<typeof mkDevice>;
 /** The body a page posts: a ticket minted for this device's key and a proof by it. */
-function enter(now: number, dev: Dev, over: Record<string, unknown> = {}, tamper: { proofKey?: Pair } = {}) {
+function enter(now: number, dev: Dev, over: Record<string, unknown> = {}, tamper: { proofKey?: Pair; assertionProofKey?: Pair; omitAssertionProof?: boolean } = {}) {
   const t = ticket(now, { bind: bindOf(dev.key), ...over });
   const proof = signWith(tamper.proofKey ?? dev.key, `murage-door-v2:${t}`);
-  for (const v of [pem(dev.key), pem(dev.assertion), proof, bindOf(dev.key)]) sent.add(v);
-  return { ticket: t, device: { deviceId: null, publicKey: pem(dev.key), assertionKey: pem(dev.assertion), proof } };
+  const assertionProof = signWith(tamper.assertionProofKey ?? dev.assertion, `murage-door-v2-assertion:${t}`);
+  for (const v of [pem(dev.key), pem(dev.assertion), proof, assertionProof, bindOf(dev.key)]) sent.add(v);
+  const device: Record<string, unknown> = { deviceId: null, publicKey: pem(dev.key), assertionKey: pem(dev.assertion), proof };
+  if (!tamper.omitAssertionProof) device.assertionProof = assertionProof;
+  return { ticket: t, device };
 }
 
 type Res = { status: number; body: any; cookies: string[] };
@@ -188,6 +191,7 @@ describe("one line per door outcome", () => {
     await refused(enter(now, mkDevice("ed25519")), "device_key_invalid");
     await refused(enter(now, dev, { bind: bindOf(ec()) }), "device_bind_refused");
     await refused(enter(now, dev, {}, { proofKey: ec() }), "device_proof_refused");
+    await refused(enter(now, dev, {}, { assertionProofKey: ec() }), "assertion_proof_refused");
     // ten browsers, then the eleventh
     const g = await home();
     for (let i = 0; i < 10; i++) expect((await g.call("POST", "/api/cloud/enter", enter(g.now(), mkDevice()))).status).toBe(200);

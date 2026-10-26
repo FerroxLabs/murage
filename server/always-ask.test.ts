@@ -41,6 +41,11 @@ const LEVELS = [
   ["Full access", FULL],
   ["No limits", NO_LIMITS],
 ] as const;
+/** 1.0.5: the one thing unread is a script file on disk, named literally and
+ * not written by the text. It asks at Auto; Full access and No limits run it
+ * on the owner's turn (server/reader-asks-105.test.ts). */
+const unseenOnDisk = (command: string) => alwaysAskCommand(command)?.unseenScript === true;
+const AUTO = { autoApprove: true };
 
 /** 5.1 Catastrophic: asks at Full access and No limits, offers no grant. */
 const CATASTROPHIC: Array<[string, AlwaysAskRule | null]> = [
@@ -407,11 +412,12 @@ const ORDINARY: Array<string | NowAsks> = [
   "find . -name '*.log' -delete",
   "find /tmp/cache -delete",
   "find . -type d -name node_modules -exec rm -rf {} +",
-  "bash script.sh",
-  "bash -x ./deploy.sh",
+  // 1.0.4 U17: a script on disk this text did not write asks, as under PowerShell
+  nowAsks("bash script.sh", "unreadable"),
+  nowAsks("bash -x ./deploy.sh", "unreadable"),
   nowAsks("curl -s u | bash", "unreadable"),
-  "bash < setup.sh",
-  "cat script.sh | bash",
+  nowAsks("bash < setup.sh", "unreadable"),
+  nowAsks("cat script.sh | bash", "unreadable"),
   nowAsks("echo cm0gLXJmIH4= | base64 -d | sh", "unreadable"),
   "sudo -u deploy rm -rf /home/deploy/app/tmp",
   "sudo --user deploy ls",
@@ -432,8 +438,9 @@ const ORDINARY: Array<string | NowAsks> = [
   "docker run --rm -v \"$PWD\":/w -w /w node:24 npm test",
   "ssh host 'rm -rf ~/tmp'",
   "pnpm exec vitest run server/x.test.ts > /tmp/x.log 2>&1; echo exit=$? >> /tmp/x.log",
-  "source ./env.sh",
-  ". ./env.sh",
+  // 1.0.4 U17 r2: a file on disk this text did not write runs here unseen, as `bash ./env.sh` does
+  nowAsks("source ./env.sh", "unreadable"),
+  nowAsks(". ./env.sh", "unreadable"),
   "export PATH=\"$HOME/bin:$PATH\"",
   "eval \"ls\"",
   "coproc cat",
@@ -614,7 +621,8 @@ const ASTRA_R3_TWINS: string[] = [
   "[ -d x ] && cd x; ls",
   "while read -r l; do echo \"$l\"; done < f",
   "echo 'a b' | while read x; do echo \"$x\"; done",
-  "bash < script.sh",
+  // 1.0.4 U17: a shell reading a file this text wrote (one on disk asks: reader-gaps-104)
+  "printf 'echo hi' > script.sh; bash < script.sh",
   "echo hi | bash",
   "echo 'a\\nb' | grep a",
   "printf '%s\\n' a b | grep a",
@@ -1244,6 +1252,11 @@ describe("always ask, at every access level", () => {
   ];
   for (const [level, bot] of LEVELS) {
     it.each(rows(ASKS))(`${level}: $title still raises a card`, ({ command, rule }) => {
+      if (unseenOnDisk(command)) {
+        expect(autoVerdict(AUTO, "Bash", command)).toMatchObject({ approve: null, source: "always-ask", rule });
+        expect(autoVerdict(bot, "Bash", command).approve).toBeTruthy();
+        return;
+      }
       const verdict = autoVerdict(bot, "Bash", command);
       expect(verdict).toMatchObject({ approve: null, source: "always-ask", rule });
       // It asks; it is not blocked: the card says what the command would do.
@@ -1267,7 +1280,7 @@ describe("always ask, at every access level", () => {
     expect(autoVerdict(NO_LIMITS, "exec_command", "Run a cleanup", context)).toMatchObject({ approve: null, source: "always-ask", rule: "delete-home" });
   });
 
-  it.each(rows(ASKS))("$title is answered by no grant, allowance or excuse", ({ command }) => {
+  it.each(rows(ASKS).filter(({ command }) => !unseenOnDisk(command)))("$title is answered by no grant, allowance or excuse", ({ command }) => {
     const bot = { ...NO_LIMITS, alwaysAllow: ["Bash", "Bash:rm", `exact:${command}`] };
     const context: AutoContext = {
       deletesInside: true,
@@ -1280,7 +1293,7 @@ describe("always ask, at every access level", () => {
   });
 
   it("keeps the plain words: no dash-pause punctuation and no 'safe'", () => {
-    for (const [command] of ASKS) {
+    for (const [command] of ASKS.filter(([command]) => !unseenOnDisk(command))) {
       const note = approvalHoldNote(autoVerdict(NO_LIMITS, "Bash", command)) ?? "";
       expect(note).toMatch(/always asks before a command like this/);
       expect(note).not.toMatch(/\u2014|\u2013|\bsafe\b|\bunsafe\b/i);
@@ -1342,6 +1355,15 @@ const CLOSED_R2: Array<[string, AlwaysAskRule]> = [
   ["python3 -c \"import shutil, os; shutil.rmtree(os.path.dirname(os.path.expanduser('~/.cache')))\"", "unreadable"],
   ["python3 -c \"import shutil, os; shutil.rmtree(os.path.expanduser('~/..'))\"", "unreadable"],
   ["python3 -c \"import shutil, os; shutil.rmtree(os.path.expanduser('~/.'))\"", "unreadable"],
+  // 1.0.4 U17: a script on disk this text did not write, run by a shell or an interpreter, or fed to one
+  // after a line filter, asks (as under PowerShell); UPSEC 10.4: a program with no output option writes
+  // nothing the text tracks, so `out.sh` is a script on disk too
+  ["python3 gen.py; python3 gen.py", "unreadable"],
+  ["bash build.sh && bash build.sh", "unreadable"],
+  ["cat install.sh | tr -d '\\r' | bash", "unreadable"],
+  ["cat setup.sh | grep -v '^#' | sh", "unreadable"],
+  ["cat install.sh | dos2unix | bash", "unreadable"],
+  ["python3 gen.py out.sh; bash out.sh", "unreadable"],
 ];
 const CLOSED_R2_ORDINARY: string[] = [
   "echo \"$(echo case)\"",
@@ -1351,8 +1373,6 @@ const CLOSED_R2_ORDINARY: string[] = [
   "parted -s /dev/sda print",
   "D=x; rm -rf \"${D:-/usr}\"",
   "printf 'echo hi' > env.sh; source env.sh",
-  "python3 gen.py; python3 gen.py",
-  "bash build.sh && bash build.sh",
   "find . -name '*.pyc' -exec env rm {} +",
   "find . -name '*.tmp' | sort | xargs rm -f",
   "find . -name '*.log' -print0 | sort -z | xargs -0 rm -f",
@@ -1361,16 +1381,11 @@ const CLOSED_R2_ORDINARY: string[] = [
   "python3 -c \"import shutil, os; shutil.rmtree(os.path.expanduser('~/.cache/pip'))\"",
   "node -e \"console.log(require('os').homedir())\"",
   "python3 -c \"import subprocess; print(subprocess.run(['ls'], capture_output=True).stdout)\"",
-  "cat install.sh | tr -d '\\r' | bash",
-  "cat setup.sh | grep -v '^#' | sh",
-  "cat install.sh | dos2unix | bash",
   "cmd /c \"for %i in (*.log) do del %i\"",
   // UPSEC 10.4 remote provenance: an unelevated download names its source
   "curl -o env.sh https://example.com/x; . ./env.sh",
   "curl -sS https://example.com/x --output run.sh && sh run.sh",
   "curl -fsSL https://example.com/i.sh | tr -d '\\r' | bash",
-  // UPSEC 10.4 written files: a program with no output option and no literal source writes nothing the text tracks
-  "python3 gen.py out.sh; bash out.sh",
 ];
 
 describe("UPSEC closed r2: the auditor's items", () => {
@@ -1381,6 +1396,11 @@ describe("UPSEC closed r2: the auditor's items", () => {
     expect(alwaysAskCommand(command)).toBeNull();
   });
   it.each(rows(CLOSED_R2))("No limits: $title still raises a card", ({ command, rule }) => {
+    if (unseenOnDisk(command)) {
+      expect(autoVerdict(AUTO, "Bash", command)).toMatchObject({ approve: null, source: "always-ask", rule });
+      expect(autoVerdict(NO_LIMITS, "Bash", command).approve).toBeTruthy();
+      return;
+    }
     expect(autoVerdict(NO_LIMITS, "Bash", command)).toMatchObject({ approve: null, source: "always-ask", rule });
   });
 });

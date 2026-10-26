@@ -44,6 +44,9 @@ export interface AskerWakeIntent {
    * its thread would read as the owner's own (Full access "owner" origin, the
    * bot's level instead of the routine's), so its wake runs unattended. */
   routineRun?: boolean;
+  /** NOLIMITS-ROUTINE-WAKE-107: the asking turn was the owner's own scheduled or manual routine run (or that run's own wake), as the
+   * routine manager said when it asked, with a ceiling the routine itself gave (never a routine conversation's owner-turn level). */
+  ownRoutine?: boolean;
   /** the automation budget the asking turn ran under; the wake spends the same one */
   eventId?: string;
   /** the routine ceiling the asking turn ran under, taken when it asked. The wake runs under this one, never under
@@ -79,7 +82,7 @@ export interface AskerWakeRecord {
 }
 
 const sameAuthority = (a: AskerWakeIntent, b: AskerWakeIntent): boolean =>
-  a.botId === b.botId && Boolean(a.routineRun) === Boolean(b.routineRun) && a.depth === b.depth && a.notOwnerAudience === b.notOwnerAudience && a.unattended === b.unattended
+  a.botId === b.botId && Boolean(a.routineRun) === Boolean(b.routineRun) && Boolean(a.ownRoutine) === Boolean(b.ownRoutine) && a.depth === b.depth && a.notOwnerAudience === b.notOwnerAudience && a.unattended === b.unattended
   && a.eventId === b.eventId && a.coordination?.rootId === b.coordination?.rootId
   && a.routineAuthority?.permissionMode === b.routineAuthority?.permissionMode && a.routineAuthority?.triggerSource === b.routineAuthority?.triggerSource
   && a.askingMode === b.askingMode
@@ -113,6 +116,7 @@ function restoredIntent(value: unknown, threadId: string): AskerWakeIntent | und
     || typeof v.notOwnerAudience !== "boolean" || typeof v.unattended !== "boolean") return undefined;
   const intent: AskerWakeIntent = { botId: v.botId, threadId, depth: v.depth as number, notOwnerAudience: v.notOwnerAudience, unattended: v.unattended };
   if (v.routineRun !== undefined) { if (v.routineRun !== true) return undefined; intent.routineRun = true; }
+  if (v.ownRoutine !== undefined) { if (v.ownRoutine !== true || !intent.routineRun) return undefined; intent.ownRoutine = true; }
   if (v.eventId !== undefined) { if (!text(v.eventId)) return undefined; intent.eventId = v.eventId; }
   if (v.coordination !== undefined) {
     const trace = coordinationTraceSchema.safeParse(v.coordination);
@@ -473,7 +477,7 @@ export function askerWakeHeldIds(items: readonly HeldContinuation[] | undefined)
  * as the owner's. */
 export function askerWakeTurnOptions(intent: AskerWakeIntent): {
   askerWake: true; commsDepth?: number; coordination?: CoordinationTrace; notOwnerAudience?: true; chainNotOwner?: true; unattended?: true; eventId?: string;
-  routineAuthority?: RoutinePeerSource; askerWakeCeiling?: RoutinePermissionMode;
+  routineAuthority?: RoutinePeerSource; askerWakeCeiling?: RoutinePermissionMode; routineWake?: true;
 } {
   return {
     // marks the turn as a wake: it never reads the thread's live routine record, and Stop finds it if it is held
@@ -483,9 +487,21 @@ export function askerWakeTurnOptions(intent: AskerWakeIntent): {
     ...(intent.coordination ? { coordination: intent.coordination } : {}),
     ...(intent.notOwnerAudience ? { notOwnerAudience: true as const, chainNotOwner: true as const } : {}),
     ...(intent.unattended || intent.routineRun ? { unattended: true as const } : {}),
+    // NOLIMITS-ROUTINE-WAKE-107: the follow-through of the owner's own scheduled or manual routine. It stays marked unattended for
+    // everything that mark drives (the browser, peer contact, hand-offs), but its tool approvals are judged as that routine's turn at
+    // the ceiling it carries, as the routine's own turn was. Never for a routine an outside event started (that asking turn was
+    // already unattended), and never without the ceiling.
+    ...(routineWakeOf(intent) ? { routineWake: true as const } : {}),
     ...(intent.eventId ? { eventId: intent.eventId } : {}),
     ...(intent.routineAuthority ? { routineAuthority: { ...intent.routineAuthority } } : {}),
   };
+}
+
+/** Whether a wake resumes the owner's own routine run: scheduled or manual, the asking turn neither unattended nor answering words
+ * nobody proved were the owner's, and its ceiling captured. */
+export function routineWakeOf(intent: Pick<AskerWakeIntent, "routineRun" | "ownRoutine" | "unattended" | "notOwnerAudience" | "routineAuthority">): boolean {
+  const trigger = intent.routineAuthority?.triggerSource;
+  return intent.routineRun === true && intent.ownRoutine === true && !intent.unattended && !intent.notOwnerAudience && (trigger === "schedule" || trigger === "manual");
 }
 
 /** The one control-plane line that resumes the asker. It names the task and the

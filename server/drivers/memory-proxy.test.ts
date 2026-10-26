@@ -33,13 +33,37 @@ it("advertises and forwards typed grounded memory and fictional invitation evide
   const listed=await rpc("tools/list");
   const save=listed.result.tools.find((tool:Json)=>tool.name==="memory_save");
   expect(save.inputSchema.properties.claimType.enum).toContain("character-canon");
-  expect(save.inputSchema.properties.ownerInvitation.required).toContain("sourceId");
+  expect(save.inputSchema.properties.ownerInvitation.properties).toHaveProperty("sourceId");
+  expect(save.inputSchema.properties.ownerInvitation.properties).toHaveProperty("quote");
   response=JSON.stringify({candidateId:"canon",state:"active",pendingReview:false});
   const input={text:"Fictional background",evidence,idempotencyKey:"canon",claimType:"character-canon",ownerInvitation:{sourceId:"invitation",revision:1,startByte:0,endByte:8}};
   const saved=await call("memory_save",input);
   expect(saved.result.isError).toBe(false);expect(requests[0].body).toEqual(input);
   expect(requests[0].path).toBe("/api/internal/memory/save");
   requests=[];await call("memory_save",{...input,claimType:"grant-permission"});expect(requests).toEqual([]);
+});
+
+// 1.0.5: a bot cites a conversation line by its words. No tool hands it a conversation line's sourceId, so before this a bot
+// could save nothing it heard (Ember on the training rig: "needs conversation sources in a specific format I couldn't provide").
+it("advertises and forwards evidence given as the quoted words, with or without a messageId, and names a malformed item", async () => {
+  const listed=await rpc("tools/list");
+  for(const name of ["memory_save","memory_propose_correction"]){
+    const tool=listed.result.tools.find((item:Json)=>item.name===name);
+    const items=tool.inputSchema.properties.evidence.items;
+    // one flat object, every field optional: no anyOf for an engine's tool layer to misread
+    expect(items.required).toEqual([]);expect(items.anyOf).toBeUndefined();
+    expect(Object.keys(items.properties)).toEqual(expect.arrayContaining(["quote","messageId","sourceId","revision","startByte","endByte"]));
+    expect(tool.inputSchema.properties.evidence.description).toContain("quote");
+  }
+  response=JSON.stringify({candidateId:"c",state:"active",pendingReview:false});
+  requests=[];
+  const input={text:"Maya runs Wren & Willow.",evidence:[{quote:"I run Wren & Willow."},{quote:"We open at nine.",messageId:"msg-1"}],idempotencyKey:"quoted"};
+  const saved=await call("memory_save",input);
+  expect(saved.result.isError).toBe(false);expect(requests[0].body).toEqual(input);
+  requests=[];
+  const bad=await call("memory_save",{...input,evidence:[{}]});
+  expect(bad.result.isError).toBe(true);expect(requests).toEqual([]);
+  expect(bad.result.content[0].text).toContain("{quote}");
 });
 
 beforeAll(async () => {

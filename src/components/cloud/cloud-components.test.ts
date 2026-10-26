@@ -5,7 +5,9 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
+import { CloudDevicesSettingsView, DEVICES_COPY, factorText } from "./CloudDevicesSettings";
 import { CloudDisconnectComputer, CloudDisconnectComputerView } from "./CloudDisconnectComputer";
+import type { HomeDevice } from "@/lib/cloud-door";
 import { CloudReconnectingBannerView, CloudUnreachableBannerView, REATTACH_WINDOW_MS, bannerState, nextReachabilityCheckMs, wokeFromSleep } from "./CloudUnreachableBanner";
 import { ConnectHomeView, connectSecondsLeft, formatCountdown, resultText, retrySecondsLeft, type ConnectHomeViewProps } from "./ConnectHome";
 import en from "../../locales/en.json";
@@ -211,6 +213,41 @@ describe("Cloud UI", () => {
     it("shows nothing without the Cloud window's bridge", () => {
       expect(renderToStaticMarkup(createElement(CloudDisconnectComputer, {}))).toBe("");
       expect(renderToStaticMarkup(createElement(CloudDisconnectComputer, { bridge: { disconnectThisComputer: async () => ({ disconnected: true as const }) } }))).toContain("Disconnect this computer");
+    });
+  });
+
+  describe("Devices on a Cloud home: owner state and Make chat-only", () => {
+    const device = (over: Partial<HomeDevice>): HomeDevice => ({ id: "d", scope: "browser", addedAt: 0, lastSeenAt: 1_700_000_000_000, keyHash: "aa", ...over });
+    const view = (devices: HomeDevice[]) => renderToStaticMarkup(createElement(CloudDevicesSettingsView, { devices, mine: null, failed: false, busy: false, onForget: noop, onMakeChatOnly: noop }));
+    const expiresAt = 1_800_000_000_000;
+
+    it("a remembered-owner row says Owner until the date and offers Make chat-only", () => {
+      const html = view([device({ id: "r1", factor: "remembered-owner", factorExpiresAt: expiresAt })]);
+      expect(html).toContain(`${DEVICES_COPY.ownerUntil} ${new Date(expiresAt).toLocaleDateString()}`);
+      expect(html).toContain(`>${DEVICES_COPY.makeChatOnly}</button>`);
+      expect(factorText(device({ factor: "remembered-owner", factorExpiresAt: expiresAt }))).toBe(`Owner until ${new Date(expiresAt).toLocaleDateString()}`);
+    });
+
+    it("a chat-only row (no factor) says Chat only and offers no factor action", () => {
+      const html = view([device({ id: "c1", factor: null })]);
+      expect(html).toContain(DEVICES_COPY.chatOnly);
+      expect(html).not.toContain(DEVICES_COPY.makeChatOnly);
+      expect(html).not.toContain(DEVICES_COPY.ownerUntil);
+      expect(factorText(device({ factor: false }))).toBe("Chat only");
+    });
+
+    it("a passkey row says Owner with no expiry and offers no Make chat-only", () => {
+      const html = view([device({ id: "p1", factor: "passkey" })]);
+      expect(html).toContain(`>${DEVICES_COPY.owner}</span>`);
+      expect(html).not.toContain(DEVICES_COPY.ownerUntil);
+      expect(html).not.toContain(DEVICES_COPY.makeChatOnly);
+      expect(factorText(device({ factor: "passkey" }))).toBe("Owner");
+    });
+
+    it("keeps Forget this browser and uses plain words with no dashes or the word safe", () => {
+      const html = view([device({ id: "r1", factor: "remembered-owner", factorExpiresAt: expiresAt }), device({ id: "c1", factor: null })]);
+      expect(html).toContain(`>${DEVICES_COPY.forget}</button>`);
+      for (const text of Object.values(DEVICES_COPY)) expect(text).not.toMatch(/–|—|\b(?:safe|safely|safety|unsafe)\b/i);
     });
   });
 });

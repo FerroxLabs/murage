@@ -7,7 +7,9 @@ export type MemoryWork = z.infer<typeof workSchema>;
 export const resultSchema = z.object({id:z.string(),leaseGeneration:z.number().int(),status:z.enum(["complete","partial","deferred","failed"]),nextCursor:z.number().int().nonnegative(),chunks:z.array(chunkSchema).max(1024),reason:z.string().max(160).optional()});
 export type MemoryWorkResult = z.infer<typeof resultSchema>;
 export const indexBatchSchema=z.array(z.object({id:z.string(),version:z.number().int(),scopeId:z.string(),text:z.string().max(65536),deleted:z.boolean(),archived:z.boolean().optional(),rolled:z.boolean().optional(),ageKey:z.number().int().nonnegative().nullable().optional()})).max(16);
-export const searchInputSchema=z.object({query:z.string().max(4096),scopeIds:z.array(z.string()).max(256),policyRevision:z.number().int(),deletionEpoch:z.number().int(),historical:z.boolean(),cursor:z.string(),limit:z.number().int().min(1).max(20),semantic:z.boolean(),deadlineAt:z.number().optional(),profile:z.boolean().optional()});
+export const searchInputSchema=z.object({query:z.string().max(4096),scopeIds:z.array(z.string().max(512)).max(256),scopeCount:z.number().int().min(1).max(200000).optional(),policyRevision:z.number().int(),deletionEpoch:z.number().int(),historical:z.boolean(),cursor:z.string(),limit:z.number().int().min(1).max(20),semantic:z.boolean(),deadlineAt:z.number().optional(),profile:z.boolean().optional()});
+/** One bounded part of a scope list too long for the query message itself (scope-set.ts). */
+export const scopePartSchema=z.object({part:z.number().int().nonnegative(),ids:z.array(z.string().max(512)).max(256)});
 export type MemorySearchInput=z.infer<typeof searchInputSchema>;
 /** Candidates the helper hands back per list. The main thread checks each against what the reader may read, in order, and
  * pages on when candidates are refused, so a refused record can never crowd a readable one out (msearch review round 3). */

@@ -1,4 +1,5 @@
 import { test, expect } from "./page-error-guard";
+import { headerMoreButton, openBotProfile, phoneLayout } from "./chat-controls";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -125,7 +126,9 @@ for (const skin of ["light", "dark"]) for (const width of [390, 1440]) test(`sec
   await expect.poll(async () => (await storedBots()).some(bot => bot.chiefOfStaff)).toBe(true);
   const authority = ({ chiefOfStaff, autoApprove, composio }: StoredBot) => ({ chiefOfStaff: Boolean(chiefOfStaff), autoApprove: Boolean(autoApprove), composio: Boolean(composio) });
   const before = authority((await storedBots()).find(bot => bot.id === botId)!);
-  const opener = page.getByRole("button", { name: "Open Settings proof bot's profile", exact: true }).first(); await opener.click();
+  // A phone opens the profile from the header's "..." menu, and focus comes back to that button.
+  const opener = await phoneLayout(page) ? headerMoreButton(page) : page.getByRole("button", { name: "Open Settings proof bot's profile", exact: true }).first();
+  await openBotProfile(page, "Settings proof bot");
   const dialog = page.getByRole("dialog", { name: "Bot settings", exact: true }); await expect(dialog).toBeVisible();
   await expect(dialog.getByText("Imported role: Team leader", { exact: true })).toBeVisible();
   await expect(dialog.getByText("Imported team: Studio", { exact: true })).toBeVisible();

@@ -3,6 +3,7 @@ import { lstatSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { writeFileAtomic } from "../../atomic.ts";
+import { channelReply } from "../reply-text.ts";
 import { ChannelSendError, DurableDelivery, type ChannelRuns } from "../durable-delivery.ts";
 import { normalizeSlackMessage, slackBindingSchema, slackId, slackPrompt, type SlackBinding } from "./event.ts";
 import type { SlackTransport } from "./transport.ts";
@@ -176,7 +177,7 @@ export class SlackService {
     }
     const pairedNow = !c.binding;
     this.ledger!.accept({ deliveryId: message.deliveryId, occurredAt: message.occurredAt,
-      ...(pairedNow ? { prompt: "", response: "Slack is paired with Murage. Before chatting, link this channel account in Murage Settings → Memory. Then send your message again." } : slackPrompt(message.text)) });
+      ...(pairedNow ? { prompt: "", response: channelReply("channelReply.paired", { channel: "Slack" }) } : slackPrompt(message.text)) });
     await ack();
     if (this.now() - started > 1000) this.error = "ack-slow";
     // Model work stays outside receipt/ACK handling.
