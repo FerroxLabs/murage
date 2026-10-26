@@ -92,6 +92,10 @@ function ownerIsAlive(owner, recordPath) {
 // engine-exclusion addon, only when a lease is contested. Only a successful, well-formed, different answer proves death;
 // every unavailable, slow, denied, busy or missing probe keeps PID exclusion.
 const WINDOWS_START = /^[1-9][0-9]{0,19}$/;
+// Linux identity (version 3): the owner's /proc starttime, clock ticks since
+// boot. With the boot id it names one process exactly, so a live PID with
+// another starttime is a reused PID and its owner is gone.
+const LINUX_START = /^[0-9]{1,20}$/;
 const MAX_FILETIME = 0x7fffffffffffffffn;
 const IDENTITY_KEYS = ["version", "pid", "token", "start"];
 const HELD_IDENTITY_KEYS = ["version", "pid", "token"];
@@ -101,9 +105,9 @@ const validStart = (value) => typeof value === "string" && WINDOWS_START.test(va
 const identityPath = (recordPath, owner) => `${recordPath}.identity-${owner.token}`;
 function isIdentity(value) {
   if (!value || typeof value !== "object" || Array.isArray(value) || !isPid(value.pid) || typeof value.token !== "string" || !UUID.test(value.token)) return false;
-  const keys = value.version === 1 ? IDENTITY_KEYS : value.version === 2 ? HELD_IDENTITY_KEYS : null;
+  const keys = value.version === 1 || value.version === 3 ? IDENTITY_KEYS : value.version === 2 ? HELD_IDENTITY_KEYS : null;
   return Boolean(keys) && Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key))
-    && (value.version === 2 || validStart(value.start));
+    && (value.version === 2 || (value.version === 3 ? typeof value.start === "string" && LINUX_START.test(value.start) : validStart(value.start)));
 }
 // libuv's share-none open flag (Windows only; the documented value where a
 // build does not name it).
@@ -139,9 +143,17 @@ function readIdentity(recordPath, owner) {
 }
 
 function creationIdentityDisproves(owner, recordPath) {
+  if (process.platform === "linux") {
+    // Only a clean, different starttime disproves; a missing, unreadable or
+    // malformed answer keeps PID exclusion. Never any other platform's kind.
+    const identity = readIdentity(recordPath, owner);
+    if (!identity || identity.version !== 3) return false;
+    const stat = linuxProcStat(owner.pid);
+    return stat !== null && stat[1] !== identity.start;
+  }
   if (process.platform !== "win32") return false;
   const identity = readIdentity(recordPath, owner);
-  if (!identity) return false;
+  if (!identity || identity.version === 3) return false;
   const key = `${identity.pid}:${identity.token}:${identity.start ?? "held"}`;
   if (disproved.has(key)) return true;
   if (identity.version === 2) {
@@ -159,7 +171,19 @@ function creationIdentityDisproves(owner, recordPath) {
  * still-held record. No PowerShell runs and nothing waits. Without an
  * identity, checkers keep PID exclusion. */
 function recordOwnIdentity(recordPath, owner, isReleased) {
-  if (process.platform !== "win32" || owner.pid !== process.pid) return;
+  if (owner.pid !== process.pid) return;
+  if (process.platform === "linux") {
+    const stat = linuxProcStat("self");
+    if (!stat) return;
+    try {
+      if (isReleased() || !sameOwner(readRecord(recordPath)?.owner, owner)) return;
+      publishRecord(identityPath(recordPath, owner), { version: 3, pid: owner.pid, token: owner.token, start: stat[1] });
+      // A release that ran while this was published leaves no identity behind.
+      if (isReleased() || !sameOwner(readRecord(recordPath)?.owner, owner)) removeIdentity(recordPath, owner);
+    } catch { /* Missing identity keeps the PID-only protocol. */ }
+    return;
+  }
+  if (process.platform !== "win32") return;
   let fd;
   try {
     fd = openSync(heldPath(recordPath, owner), constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | EXLOCK, 0o600);
@@ -397,13 +421,39 @@ function readRecord(path, reaperTarget, validate = (value) => isOwner(value, rea
 const HELD_TOKENS = Symbol.for("murage.data-dir-lease.held-tokens");
 const heldTokens = globalThis[HELD_TOKENS] ??= new Set();
 
+// Linux /proc/<pid>/stat: [state, starttime] or null when unreadable or
+// malformed. comm (field 2) may hold spaces and parentheses, so the fields
+// are read after the LAST ')'. state is field 3, starttime field 22 (clock
+// ticks since boot): index 0 and 19 of the rest.
+function linuxProcStat(pid) {
+  let raw;
+  try { raw = readFileSync(`/proc/${pid}/stat`, "latin1"); } catch { return null; }
+  const close = typeof raw === "string" ? raw.lastIndexOf(")") : -1;
+  if (close < 0) return null;
+  const rest = raw.slice(close + 1);
+  if (!/^\s/.test(rest)) return null;
+  const fields = rest.trim().split(/\s+/);
+  const state = fields[0];
+  const start = fields[19];
+  if (typeof state !== "string" || !/^[A-Za-z]$/.test(state) || typeof start !== "string" || !LINUX_START.test(start)) return null;
+  return [state, start];
+}
+
 function processIsAlive(pid) {
-  try { process.kill(pid, 0); return true; }
+  try { process.kill(pid, 0); }
   catch (error) {
     if (error?.code === "ESRCH") return false;
-    if (error?.code === "EPERM") return true;
-    throw fail("LEASE_OWNER_UNVERIFIED");
+    if (error?.code !== "EPERM") throw fail("LEASE_OWNER_UNVERIFIED");
   }
+  // kill(pid, 0) succeeds on a zombie. Where PID 1 does not reap (WSL, a
+  // container with a plain init), a killed child stays a zombie for ever and
+  // would hold its lease for ever. Only a readable Z or X state proves death;
+  // an unreadable /proc keeps the owner alive (fails closed).
+  if (process.platform === "linux") {
+    const stat = linuxProcStat(pid);
+    if (stat && (stat[0] === "Z" || stat[0] === "X")) return false;
+  }
+  return true;
 }
 
 function publishRecord(path, owner) {

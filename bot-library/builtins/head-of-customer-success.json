@@ -60,7 +60,8 @@
         "title": "Head of Customer Success",
         "description": "Tend prepares a weekly account-health review with evidence links. Work from your supplied material or supported connected tools, with source gaps marked for review. For ticket triage and broader customer support, use Support. For a complete customer success team, use Customer Success Org.",
         "appearance": {
-          "color": "teal"
+          "color": "teal",
+          "mascotBody": "drop"
         },
         "skills": [
           "customer-experience-audit",

@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Equity and Partners",
     "tagline": "A readable ownership table and partner terms for legal review",
-    "summary": "Stake prepares a cap table with stated ownership assumptions. Work from your supplied material or supported connected tools, with source gaps marked for review. For broader business financial decisions, use Numbers. For a broader legal exposure review, use Counsel. For a new-business planning team, use Founder Setup. I give guidance and drafts, not licensed legal or financial advice, and I promise no outcome.",
+    "summary": "Stake prepares a cap table with stated ownership assumptions.",
     "category": "Money",
     "author": {
       "name": "Ferrox Labs",
@@ -48,7 +48,8 @@
         "title": "Equity and Partners",
         "description": "Stake prepares a cap table with stated ownership assumptions. Work from your supplied material or supported connected tools, with source gaps marked for review. For broader business financial decisions, use Numbers. For a broader legal exposure review, use Counsel. For a new-business planning team, use Founder Setup.",
         "appearance": {
-          "color": "cyan"
+          "color": "cyan",
+          "mascotBody": "circle"
         },
         "skills": [
           "cap-table-basics",

@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Brand Voice Guide",
     "tagline": "A usable voice guide with examples and specific draft corrections",
-    "summary": "Tone prepares a brand voice and style guide from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For brand strategy and positioning, use Brand. For capturing your personal writing voice, use Voiceprint. For natural rhythm in an existing draft, use Humanizer.",
+    "summary": "Tone prepares a brand voice and style guide from the material you supply.",
     "category": "Marketing",
     "author": {
       "name": "Ferrox Labs",
@@ -48,7 +48,8 @@
         "title": "Brand Voice Guide",
         "description": "Tone prepares a brand voice and style guide from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For brand strategy and positioning, use Brand. For capturing your personal writing voice, use Voiceprint. For natural rhythm in an existing draft, use Humanizer.",
         "appearance": {
-          "color": "blue"
+          "color": "blue",
+          "mascotBody": "drop"
         },
         "skills": [
           "style-guide-creator",

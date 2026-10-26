@@ -34,7 +34,7 @@ function render(state) {
   byId("restore-separate").hidden = !state.selection?.separate||!!state.selection?.encrypted;
   byId("restore-encrypted-new").hidden=!state.selection?.encrypted;
   byId("activation-review").hidden = !state.review;
-  if (state.review) byId("activation-summary").textContent = "Checked " + state.review.files + " files. AI engines and schedules stay off until you turn them on, and messaging apps need connecting again.";
+  if (state.review) byId("activation-summary").textContent = "Checked " + state.review.files + " files. AI engines and schedules stay off until you turn them on, and messaging apps need connecting again." + (state.review.notice ? " " + state.review.notice : "");
   if (state.selection) {
     byId("backup-name").textContent = state.selection.name;
     byId("backup-summary").textContent = state.selection.encrypted?"Encrypted backup from Murage. It holds your settings, bots, conversations, files and channel history. Sign-ins to AI engines and messaging apps are not restored; you connect those again.":"Older unencrypted recovery file. Some items were left out of it (" + (state.selection.omittedCount ?? 0) + "), and connections need setting up again after the restore.";

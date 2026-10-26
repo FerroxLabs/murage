@@ -24,6 +24,7 @@ import {
   connectorMigration,
   connectorPanelFields,
   connectorSystemPrompt,
+  dropFluxBrokerToken,
   invalidateBrokerReadiness,
   LEGACY_BROKER_RETIRED,
   LEGACY_BROKER_RETIRED_FLUX_READY,
@@ -851,5 +852,14 @@ describe("a turn that expects connected apps at launch", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(await turnConnectedAppsReady(cfg())).toBe(false);
     await first;
+  });
+});
+
+describe("a Flux key change", () => {
+  it("stops sending the previous account's token at once, before the next mint lands", async () => {
+    await readyFlux({ claim: { state: "claimed" } });
+    expect(connectionBroker(cfg())).toBe("flux");
+    dropFluxBrokerToken();
+    expect(connectionBroker(cfg())).not.toBe("flux");
   });
 });

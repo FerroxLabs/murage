@@ -61,7 +61,7 @@ const ALLOWED: Readonly<Record<string, readonly string[]>> = {
   "engine-plan-files.ts": ["./engine-keys.ts", "./engine-plan-core.ts"],
   "engine-keys.ts": ["./blake3.ts", "./engine-plan-core.ts"],
   "engine-history-deletion.ts": ["node:crypto", "node:path", "./engine-plan-core.ts"],
-  "engine-closed.ts": ["node:path", "./engine-fs.ts"],
+  "engine-closed.ts": ["node:path", "./engine-fs.ts", "./engine-plan-core.ts"],
   "engine-exec.ts": ["node:path", "./engine-closed.ts", "./engine-fs.ts", "./engine-plan-core.ts", "./engine-redo.ts", "./sqlite-checkpoint.ts"],
   "engine-redo.ts": ["node:path", "node:crypto", "./engine-fs.ts", "./engine-plan-core.ts"],
   "engine-history-run.ts": ["./engine-closed.ts", "./engine-exec.ts", "./engine-redo.ts", "./engine-fs.ts", "./engine-plan-acp.ts", "./engine-plan-files.ts", "./engine-plan-core.ts"],
@@ -206,8 +206,11 @@ function layerViolations(name: string, file: ts.SourceFile): string[] {
   return out;
 }
 
+/** The planner functions that take the reader as an argument and only read through it. */
+const READ_ONLY_PLANNER_FUNCTIONS: ReadonlySet<string> = new Set(["associationsOf", "slugsReferenced"]);
+
 /** The reader the executor gets from realEngineFs() is held in a plain const and used as `reader.method(...)`, or handed to
- * associationsOf (a planner function that only reads). Nothing else: no destructuring, no computed method, no spread, no alias. */
+ * associationsOf or slugsReferenced (planner functions that only read). Nothing else: no destructuring, no computed method, no spread, no alias. */
 function readerViolations(name: string, file: ts.SourceFile): string[] {
   const out: string[] = [];
   const readers = new Set<string>();
@@ -225,7 +228,7 @@ function readerViolations(name: string, file: ts.SourceFile): string[] {
     if (ts.isPropertyAccessExpression(parent) && parent.expression === node) return;
     if (ts.isPropertyAccessExpression(parent) && parent.name === node) return;
     if (ts.isPropertyAssignment(parent) && parent.name === node) return;
-    if (ts.isCallExpression(parent) && ts.isIdentifier(parent.expression) && parent.expression.text === "associationsOf" && parent.arguments.includes(node as unknown as ts.Expression)) return;
+    if (ts.isCallExpression(parent) && ts.isIdentifier(parent.expression) && READ_ONLY_PLANNER_FUNCTIONS.has(parent.expression.text) && parent.arguments.includes(node as unknown as ts.Expression)) return;
     out.push(`${name}: uses the reader \`${node.text}\` other than as ${node.text}.method(...); it may not be destructured, aliased, indexed or passed on`);
   });
   return [...new Set(out)];

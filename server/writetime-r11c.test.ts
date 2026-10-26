@@ -129,6 +129,34 @@ describe("evhand r11c: a short secret copied into a note is withheld with what t
     expect(prompt).toContain('action "send_back"');                     // the verdict still tells the lead what to do
   });
 
+  it("U02: a note held back after a forget is said in the redo, so the member asks for it instead of working as if none was written", () => {
+    changesRequested("Fix the figures.");
+    leadSaidPin();
+    fakeLineage.open("room");
+    expect(cards.sendProjectCardBack(db, { cardId: "c1", actor: lead(), note: "Please use PIN 1234 for the sheet", now: tick() }).ok).toBe(true);
+    expect(redo()).not.toContain("not available to you now");
+    fakeLineage.deny("room", "m-lead"); put("room", "m-lead", { withheldFromBots: true });
+    const held = redo();
+    expect(held).not.toContain("PIN 1234");
+    expect(held).toContain("Fix the figures.");
+    expect(held).toContain("This card has the lead's note on your earlier result, not available to you now.");
+    expect(cards.releasedRedoNotes(db, cards.redoContext(db, "c1"), false)).toMatchObject({ leadNoteHeld: true });
+  });
+
+  it("U02: the lead's wake says the reviewer's notes are held, and still tells it what to do", () => {
+    const review = changesRequested("Please use CODE 5678 when you redo it.", () => {
+      fakeLineage.write("desk-rev", "m-rev-early"); put("desk-rev", "m-rev-early");
+      fakeLineage.open("desk-rev");
+    });
+    expect(wake(review)).not.toContain("not available to you now");
+    fakeLineage.deny("desk-rev", "m-rev-early");
+    const prompt = wake(review);
+    expect(prompt).not.toContain("CODE 5678");
+    expect(prompt).toContain("The reviewer's notes on Card 1");
+    expect(prompt).toContain("are not available to you now. Ask the reviewer to say again what to change");
+    expect(prompt).toContain('action "send_back"');
+  });
+
   it("a copy from another thread the lead's turn was shown is withheld too (the turn's parents carry onto the note)", () => {
     changesRequested("Fix the figures.");
     fakeLineage.write("dm-owner", "m-plan"); put("dm-owner", "m-plan");

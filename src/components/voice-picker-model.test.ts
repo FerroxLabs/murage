@@ -1,10 +1,11 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { FLUX_VOICES } from "../../server/tts/flux-speech.ts";
+import { FLUX_ELEVEN_VOICES, FLUX_VOICES } from "../../server/tts/flux-speech.ts";
 import { XAI_VOICES } from "../../server/tts/xai-speech.ts";
 import { Speaker } from "@/lib/tts";
 import {
+  FLUX_ELEVEN_NOTE,
   filterVoices,
   isVoicePreview,
   listKey,
@@ -16,6 +17,7 @@ import {
   markAssigned,
   typeAhead,
   voiceAccent,
+  SOURCE_LABEL,
   type VoiceFilter,
 } from "./voice-picker-model";
 
@@ -51,10 +53,33 @@ describe("the voice list", () => {
   });
 
   it("offers only the filters the list can use", () => {
-    expect(pickerFilters(all)).toEqual({ genders: ["female", "male", "neutral"], accents: ["American", "British"] });
-    expect(pickerFilters(XAI_VOICES)).toEqual({ genders: ["female", "male"], accents: ["American", "British"] });
-    // ElevenLabs and built-in voices carry neither
-    expect(pickerFilters([{ id: "a", label: "Rachel", description: "calm" }])).toEqual({ genders: [], accents: [] });
+    expect(pickerFilters(all)).toEqual({ genders: ["female", "male", "neutral"], accents: ["American", "British"], sources: ["grok", "openai"] });
+    expect(pickerFilters(XAI_VOICES)).toEqual({ genders: ["female", "male"], accents: ["American", "British"], sources: [] });
+    // an own ElevenLabs key's and built-in voices carry neither
+    expect(pickerFilters([{ id: "a", label: "Rachel", description: "calm" }])).toEqual({ genders: [], accents: [], sources: [] });
+  });
+});
+
+describe("ElevenLabs voices through Flux in the same list", () => {
+  const mixed = [...FLUX_VOICES, ...XAI_VOICES, ...FLUX_ELEVEN_VOICES];
+
+  it("keep to their own block after Grok's and OpenAI's", () => {
+    const sorted = sortVoices(mixed);
+    expect(sorted).toHaveLength(61);
+    expect(sorted.slice(0, 28).every((v) => v.provider === "grok")).toBe(true);
+    expect(sorted.slice(28, 41).every((v) => v.provider === "openai")).toBe(true);
+    expect(sorted.slice(41).map((v) => v.label)).toEqual(FLUX_ELEVEN_VOICES.map((v) => v.label).sort((a, b) => a.localeCompare(b)));
+  });
+
+  it("get a source filter of their own, named for where they come from", () => {
+    expect(pickerFilters(mixed).sources).toEqual(["grok", "openai", "elevenlabs"]);
+    expect(SOURCE_LABEL.elevenlabs).toBe("ElevenLabs (via Flux)");
+    const only = filterVoices(mixed, { ...none, source: "elevenlabs" });
+    expect(only).toHaveLength(20);
+    expect(only.every((v) => v.provider === "elevenlabs")).toBe(true);
+    expect(filterVoices(mixed, { ...none, source: "all" })).toHaveLength(61);
+    // the other filters still apply inside a source
+    expect(filterVoices(mixed, { ...none, source: "elevenlabs", accent: "British" }).map((v) => v.id).sort()).toEqual(["Alice", "Daniel", "George", "Lily"]);
   });
 });
 
@@ -223,5 +248,17 @@ describe("one preview at a time", () => {
     await speaker.speak("Morning.", { voiceId: "fable", botId: "b", messageId: id });
     expect(rowPreview(speaker.state, id)).toEqual({ state: "error", error: "Flux voices aren't switched on for this account yet." });
     expect(rowPreview(speaker.state, previewMessageId("b", "marin")).state).toBe("idle");
+  });
+});
+
+describe("the line under the picker when Flux's ElevenLabs voices are missing", () => {
+  it("says what to do for each reason, and nothing when they are on or there is no Flux", () => {
+    expect(Object.keys(FLUX_ELEVEN_NOTE).sort()).toEqual(["locked", "notOnKey", "unchecked"]);
+    expect(FLUX_ELEVEN_NOTE.on).toBeUndefined();
+    expect(FLUX_ELEVEN_NOTE.none).toBeUndefined();
+    for (const line of Object.values(FLUX_ELEVEN_NOTE)) {
+      expect(line).toMatch(/ElevenLabs/);
+      expect(line).not.toMatch(/—|\bsafe|\bunsafe|safety|\$|price|Composio/i);
+    }
   });
 });

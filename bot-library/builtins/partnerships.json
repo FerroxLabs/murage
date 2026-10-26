@@ -60,7 +60,8 @@
         "title": "Partnerships",
         "description": "Link prepares a ranked partner shortlist with fit evidence from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For individual deal strategy, use Sales. For channel strategy, use Channels.",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "circle"
         },
         "skills": [
           "sales-partnerships",

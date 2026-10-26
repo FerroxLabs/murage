@@ -80,6 +80,22 @@ const object = (value: unknown): Record<string, unknown> | undefined =>
 /** Rule 8: the namespaces a stamp may carry. Anything else is unproven until
  * a driver change adds it with its own reader. */
 export const STAMP_NAMESPACES: readonly string[] = ["mcp", "fuigo_build"];
+/** Rule 8, 1.0.4: the engine tools read in a namespace of their own, each by
+ * its exact name and the ACP kind it is filed under. Fuigo's (and Grok
+ * Build's) whole-file write is the OpenCode `write` tool their preset adds
+ * (fuigo-tools opencode/write: namespace `opencode`, sent as kind `edit` with
+ * `locations: [file_path]` and rawInput `{file_path, content}`), so it is
+ * judged like any edit: the edit contract, the stop line and the guards read
+ * its path and body. Fuigo's patch tool is Codex's apply_patch (fuigo-tools
+ * codex/apply_patch: namespace `codex`, sent as kind `edit` with rawInput
+ * `{patch}` and no locations); the ACP driver reads the patch with the one
+ * apply_patch reader (shared/apply-patch.ts) and files every place it writes
+ * or removes as the call's paths, or the call as unread (r#7, 1.0.7). Every
+ * other name in such a namespace stays unproven. */
+const STAMPED_TOOLS: ReadonlyMap<string, ReadonlyMap<string, string>> = new Map([
+  ["opencode", new Map([["write", "edit"]])],
+  ["codex", new Map([["apply_patch", "edit"]])],
+]);
 /** Rule 9: the ACP kinds that identify an unstamped ask by themselves. */
 export const ACP_IDENTIFYING_KINDS: readonly string[] = ["execute", "edit", "read", "delete", "move", "search", "fetch"];
 
@@ -171,6 +187,13 @@ export function resolveCall(call: GrantCall | undefined): ResolvedCall {
     const name = typeof identity.name === "string" ? identity.name.trim() : "";
     const namespace = typeof identity.namespace === "string" ? identity.namespace.trim() : "";
     if (!namespace || !name) return { kind: "unproven", why: "a stamp this cannot read" };
+    const tools = STAMPED_TOOLS.get(namespace);
+    if (tools) {
+      const filed = tools.get(name);
+      return filed !== undefined && call?.toolKind === filed
+        ? { kind: "engine", name, input: call?.toolCall?.input, wrapped: false }
+        : { kind: "unproven", why: `a ${namespace} tool Murage does not read` };
+    }
     if (!STAMP_NAMESPACES.includes(namespace)) return { kind: "unproven", why: "a stamp in a namespace Murage does not read" };
     if (namespace === "mcp") return mcpCall(name, call?.toolCall?.input, call?.mcpMounts);
     if (isGenericTool(name)) return unwrapped(call?.toolCall?.input, call?.mcpMounts);

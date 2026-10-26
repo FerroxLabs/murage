@@ -45,7 +45,9 @@ describe("free text is an answer at every turn", () => {
     // no chips at all (the second one is sometimes exactly that) would
     // otherwise have no way to be answered.
     expect(composer).toContain("openIntakeCard(visibleMessages(bot))");
-    expect(composer).toContain("replyToIntake(bot.id, question.id, t, api, { alongside: true })");
+    // U36 (68b9631b1, merged 63f62cb33) names the typed text requestText (const requestText = t), one value for the send and the answer
+    expect(composer).toContain("const requestText = t;");
+    expect(composer).toContain("replyToIntake(bot.id, question.id, requestText, api, { alongside: true })");
   });
 
   it("NEVER takes the turn off the engine, which is M1", () => {

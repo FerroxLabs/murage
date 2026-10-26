@@ -60,7 +60,8 @@
         "title": "Grant Writer",
         "description": "Gwen prepares a grant fit matrix with deadlines and evidence for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For general writing and editing, use Writer.",
         "appearance": {
-          "color": "blue"
+          "color": "blue",
+          "mascotBody": "drop"
         },
         "skills": [
           "grant-writer",

@@ -3,6 +3,7 @@ import { Crown, User, UserRound, Users } from "lucide-react";
 import { botRole, botRolePatch, BOT_ROLE_TITLE, type BotRole } from "@/lib/bot-role";
 import { useStore, type Bot } from "@/state/store";
 import { cn } from "@/lib/cn";
+import { formerChiefOutcome } from "../../shared/chief-handover";
 
 const ROLE_ICON = { chief: Crown, leader: Users, individual: UserRound, member: User } as const;
 
@@ -104,6 +105,17 @@ export function BotRoleControl({ bot, canCoordinate }: { bot: Bot; canCoordinate
   const section = bot.section?.trim() || "";
   const teamName = section || "General";
   const chiefHolder = currentHolder(state.bots, bot.id, "chief", section);
+  const holderEngine = chiefHolder
+    ? state.instances.find((instance) => instance.instanceId === chiefHolder.modelSelection.instanceId)
+    : undefined;
+  // The same rule the harness applies when the role changes hands, judged
+  // with this bot already in the Chief's chair.
+  const afterHandover = state.bots.map((candidate) =>
+    candidate.id === bot.id ? { ...candidate, chiefOfStaff: true, chiefScope: "workspace" as const } : candidate,
+  );
+  const holderStaysLeader = chiefHolder
+    ? formerChiefOutcome(chiefHolder, afterHandover, holderEngine?.capabilities?.agentsMcp === true) === "leader"
+    : false;
   const leadHolder = currentHolder(state.bots, bot.id, "leader", section);
 
   const select = (next: BotRole) => {
@@ -142,7 +154,10 @@ export function BotRoleControl({ bot, canCoordinate }: { bot: Bot; canCoordinate
         {option(
           "chief",
           "Runs the whole workspace. Hands each team's work to its leader and works with the individual assistants directly. One per workspace.",
-          chiefHolder && `${chiefHolder.name} is Chief of Staff today. Choosing this hands the role over; ${chiefHolder.name} stays on as a team leader.`,
+          chiefHolder &&
+            `${chiefHolder.name} is Chief of Staff today. Choosing this hands the role over; ${chiefHolder.name} ${
+              holderStaysLeader ? "stays on as a team leader" : "stays on as a team member"
+            }.`,
         )}
 
         {/* The rail IS the hierarchy: everything inside this border hangs off

@@ -18,10 +18,12 @@ import { unmatchedClaims } from "../../shared/chat-engine-notes";
 import { UNMATCHED_ACTION_EXPLANATION, unmatchedActionLabel } from "../../shared/reply-action-claims";
 import { desktopSurfaceHeaders, ensureDesktopSurfaceSecret, openLiveEvents } from "@/lib/live-events";
 import type { RuntimeEvent } from "../../server/contracts.ts";
+import { useWindowDrag } from "@/hooks/use-window-drag";
 
 type Lens = "events" | "raw";
 
 export function InspectorPanel({ bot }: { bot: Bot }) {
+  const windowDrag = useWindowDrag();
   const { dispatch } = useStore();
   const threadId = bot.threadId;
   const [lens, setLens] = useState<Lens>("events");
@@ -197,7 +199,7 @@ export function InspectorPanel({ bot }: { bot: Bot }) {
         "max-md:pt-[var(--inset-top)] max-md:pb-[var(--inset-bottom)]",
       )}
     >
-      <div className="flex items-center justify-between px-4 py-3">
+      <div {...windowDrag} className="flex items-center justify-between px-4 py-3">
         <span className="flex items-center gap-2 text-[15px] font-semibold text-ink">
           <Bug size={16} className="text-ink-secondary" /> Inspector
         </span>

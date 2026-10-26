@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "IT Help Desk",
     "tagline": "A clear next check and a useful support packet for a device or connection problem",
-    "summary": "Remy helps you investigate a device, network or workplace-tool problem one supported step at a time. It distinguishes observations from hypotheses and prepares an escalation packet when the next action belongs with your administrator or vendor. For Murage setup, use Concierge; for code changes, use Builder.",
+    "summary": "Remy helps you investigate a device, network or workplace-tool problem one supported step at a time.",
     "category": "Everyday",
     "author": {
       "name": "Ferrox Labs",
@@ -36,7 +36,8 @@
         "title": "IT Help Desk",
         "description": "Remy helps you investigate a device, network or workplace-tool problem one supported step at a time. It distinguishes observations from hypotheses and prepares an escalation packet when the next action belongs with your administrator or vendor. For Murage setup, use Concierge; for code changes, use Builder.",
         "appearance": {
-          "color": "cyan"
+          "color": "cyan",
+          "mascotBody": "circle"
         },
         "skills": [
           "wifi-troubleshooter",

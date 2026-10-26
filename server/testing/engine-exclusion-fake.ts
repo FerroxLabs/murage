@@ -30,9 +30,12 @@ export interface FakeExclusion {
    * an engine that is open before, open after, or launched between two checks. */
   processes: NativeProcess[];
   /** An engine (by name: claude, codex, fuigo, ...) starts running; the returned function ends it. */
-  openEngine(name: string): () => void;
+  /** An engine program on the list; `ppid` this process when it is Murage's own child (a turn, a one-shot, a warm session). */
+  openEngine(name: string, ppid?: number): () => void;
   /** a hook run on each processes() call (1, 2, ...): it may change `processes` or return a list to answer with instead */
   onProcesses?: (call: number) => NativeProcess[] | void;
+  /** The environment of a listed process, by pid (environment()): a process not here has one that cannot be read. */
+  environments: Map<number, Record<string, string>>;
   /** how many times processes() was asked */
   processCalls: number;
   /** processes() fails (the list could not be read) */
@@ -100,12 +103,13 @@ export function useFakeExclusion(mode: "posix" | "win32" = "posix"): FakeExclusi
   const fake: FakeExclusion = {
     calls: [],
     processes: [],
+    environments: new Map(),
     processCalls: 0,
     processesFail: false,
     markDeleteFails: false,
     refuse: new Set(),
-    openEngine(name) {
-      const running = proc(`/usr/local/bin/${name}`);
+    openEngine(name, ppid) {
+      const running = { ...proc(`/usr/local/bin/${name}`), ...(ppid === undefined ? {} : { ppid }) };
       fake.processes.push(running);
       return () => { const at = fake.processes.indexOf(running); if (at >= 0) fake.processes.splice(at, 1); };
     },
@@ -151,6 +155,11 @@ export function useFakeExclusion(mode: "posix" | "win32" = "posix"): FakeExclusi
       try { lstatSync(to); return "exists" as const; } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
       mutOps.rename(from, to);
       return "ok" as const;
+    },
+    // only the asked-for names, as the addon gives them
+    environment: (pid: number, names: readonly string[]) => {
+      const all = fake.environments.get(pid);
+      return all ? Object.fromEntries(names.filter((name) => name in all).map((name) => [name, all[name]!])) : null;
     },
     // the files another process has open for writing, by their identity now (wherever they were renamed to)
     writers: (paths: string[]) => {

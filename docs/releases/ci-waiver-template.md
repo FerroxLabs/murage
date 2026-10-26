@@ -14,7 +14,11 @@ the beginning of its line and appear exactly once. Everything else is free prose
   Critical:    must be 0; any other value refuses
   Reviewed failure classes:
                one "- " line per class of failure reviewed, directly below
-               the heading, at least one
+               the heading, at least one; each names the test files it
+               covers in backticks (`server/x.test.ts`). The gate reads the
+               failing CI run's job logs and refuses the waiver when any
+               blocking job failed on a test no class names, or failed with
+               no test named at all (build, setup, cancel, timeout)
   Approved-by: "<name> on YYYY-MM-DD"; only Sean can approve
 -->
 
@@ -23,7 +27,7 @@ CI run: 00000000000
 Critical: 0
 
 Reviewed failure classes:
-- <class>: <which jobs/tests, why it does not block the release, evidence link>
+- <class>: `<test file>` ... <which jobs, why it does not block the release, evidence link>
 
 Approved-by: Sean Donahoe on YYYY-MM-DD
 
