@@ -8,6 +8,10 @@ import type { ProviderInstance } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { BoxAgentDriver } from "./boxagent.ts";
 import { IntakeValve, installIntakeValve } from "../harness/intake.ts";
+import { _cloudComputerIdle, _cloudComputerTiming, _resetCloudComputerTurns, CLOUD_COMPUTER_TURNS_FILE } from "../cloud-computer-turns.ts";
+import { DATA_DIR } from "../config.ts";
+import { rmSync } from "node:fs";
+import { join } from "node:path";
 
 const BOX = "box-1";
 const PROMPT = "p1";
@@ -22,13 +26,16 @@ type Poll = { events: unknown[]; status?: { promptRun: { status: string; result?
 /** Stub fetch so each GET /events + /prompts pair advances one poll in `script`. */
 function installFakeBox(script: Poll[]) {
   let i = 0;
+  let posted = false;
   const previous = globalThis.fetch;
   globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
     const url = String(input);
     const method = String(init?.method ?? "GET").toUpperCase();
     if (url.endsWith("/me")) return json({ ok: true });
-    if (method === "POST" && /\/boxes\/[^/]+\/prompt$/.test(url)) return json({ promptRun: { id: PROMPT } });
+    if (method === "POST" && /\/boxes\/[^/]+\/prompt$/.test(url)) { posted = true; return json({ promptRun: { id: PROMPT } }); }
     if (method === "POST" && url.includes("/interrupt")) return json({ ok: true });
+    // the box lists nothing before the first prompt (the snapshot a send takes, CLOUD-COMPUTER-BOOT-105 C3)
+    if (url.includes("/events") && !posted) return json({ events: [] });
     if (url.includes("/events")) {
       const step = script[Math.min(i, script.length - 1)]!;
       i += 1;
@@ -65,11 +72,15 @@ describe("BoxAgentDriver turns (fake API)", () => {
 
   beforeEach(() => {
     ensureDirs();
+    rmSync(join(DATA_DIR, CLOUD_COMPUTER_TURNS_FILE), { force: true });
+    _resetCloudComputerTurns();
+    _cloudComputerTiming({ pauseMs: 0 });
   });
 
   afterEach(async () => {
     recorder?.stop();
     await instance?.dispose();
+    await _cloudComputerIdle();                                    // a Stop's confirmation reads the fake box, not the real one
     restoreFetch?.();
     restoreFetch = undefined;
   });
@@ -343,6 +354,7 @@ describe("BoxAgentDriver turns (fake API)", () => {
       restoreFetch = () => { globalThis.fetch = inner; restore(); };
       await create();
       await instance.adapter.sendTurn({ threadId: "t-valve", text: "go", integrations: { computer } });
+      polls = 0;                                                   // the events snapshot a send takes before its prompt is not a poll
       await new Promise((r) => setTimeout(r, 150));
       // the bus is full: the producer neither polled nor emitted anything beyond the turn's own start
       expect(polls).toBe(0);
@@ -364,6 +376,7 @@ describe("BoxAgentDriver turns (fake API)", () => {
       restoreFetch = () => { globalThis.fetch = inner; restore(); };
       await create();
       await instance.adapter.sendTurn({ threadId: "t-stop-closed", text: "go", integrations: { computer } });
+      polls = 0;                                                   // the events snapshot a send takes before its prompt is not a poll
       await new Promise((r) => setTimeout(r, 100));
       await instance.adapter.interruptTurn("t-stop-closed");
       const done = await recorder.until((e) => e.type === "turn.completed");

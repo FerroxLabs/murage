@@ -21,7 +21,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { downgradeMemorySchema, migrateMemorySchema, revocationRefsExpectedSql, validateMemorySchema } from "./schema.ts";
 import { RECORD_REVOCATION_SCAN_SQL, RECORD_REVOCATION_SQL, revocationIndexReady, revokeRecordDisclosures } from "./revocation.ts";
-import { runRevocationJobsNow } from "./memory-revocation.ts";
+import { INLINE_REVOCATION, runRevocationJobsNow } from "./memory-revocation.ts";
 import { BACKFILL_MAX_ROWS, BACKFILL_MIN_ROWS, buildRevocationIndexStep, finishRevocationIndexAtStartup, nextBackfillSliceRows, RECOVERY_DELETE_CHUNK, startRevocationIndexBackfill, type RevocationIndexEvent } from "./revocation-index.ts";
 import {
   applyMemoryTombstones, applyRecordTombstone, pauseRestoredMemory, RECORD_TOMBSTONE_AFFECTED, RECORD_TOMBSTONE_REVOCATION_SCAN_TAIL,
@@ -130,9 +130,9 @@ function same(db: DatabaseSync, reference: () => number, candidate: () => number
   return count;
 }
 
-it("record revocation through the index revokes exactly what the full scan revoked, across randomized histories", () => {
+function recordRevocationMatchesScan(seeds = 40): number {
   let revoked = 0;
-  for (let s = 1; s <= 40; s++) {
+  for (let s = 1; s <= seeds; s++) {
     const db = open(), r = rng(s);
     seed(db, r, { records: 30, sources: 20, receipts: 200 });
     validateMemorySchema(db); // the full sweep proves the index equals the JSON after every kind of write
@@ -150,7 +150,25 @@ it("record revocation through the index revokes exactly what the full scan revok
     }
     validateMemorySchema(db);
   }
-  expect(revoked).toBeGreaterThan(100); // the histories exercised real revocations, not only empty ones
+  return revoked;
+}
+
+it("record revocation through the index revokes exactly what the full scan revoked, across randomized histories", () => {
+  expect(recordRevocationMatchesScan()).toBeGreaterThan(100); // the histories exercised real revocations, not only empty ones
+});
+
+it("a records revocation whose inline slice stops part way counts each receipt once, inline or in the job", () => {
+  // CI 40193051242 (macOS): the 8 ms inline deadline expired inside the refs phase after some of its flips, the job row kept the
+  // inline count, and finishing the job counted those receipts again (44 for 22). Small row budgets stop the inline slice at every
+  // point of the phase (closure, evidence, the seeks between flips), deterministically, whatever the machine's speed.
+  const saved = { ...INLINE_REVOCATION };
+  let revoked = 0;
+  try {
+    // REVOKE_SWEEP=1: every budget from 1 to 64 rows over all 40 histories
+    const sweep = process.env.REVOKE_SWEEP === "1", budgets = sweep ? Array.from({ length: 64 }, (_, i) => i + 1) : [2, 3, 5, 8, 13, 21, 34];
+    for (const rows of budgets) { INLINE_REVOCATION.rows = rows; revoked += recordRevocationMatchesScan(sweep ? 40 : 8); }
+  } finally { Object.assign(INLINE_REVOCATION, saved); }
+  expect(revoked).toBeGreaterThan(100);
 });
 
 it("tombstone revocations (forget, one-record delete) through the index match the full scans", () => {

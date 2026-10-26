@@ -42,6 +42,35 @@ export interface CompanionPairingRoute {
   endpoints?: CompanionEndpoint[];
 }
 
+/** The address a person reads off the screen when they cannot scan: a hosted
+ * route is an https address with no port to type (the phone puts the https
+ * in front and 443 is implied), every other route is `host:port` because it
+ * is a direct connection on the local network or the tailnet. A hosted route
+ * whose endpoint cannot be parsed falls back to `host:port`. */
+export function companionPairingAddressText(
+  route: Pick<CompanionPairingRoute, "address" | "port" | "endpoints"> | null | undefined,
+): string | null {
+  if (!route) return null;
+  const first = route.endpoints?.[0];
+  if (first?.kind === "hosted") {
+    try {
+      const parsed = new URL(first.url);
+      if (parsed.protocol === "https:") return parsed.origin;
+    } catch {
+      // fall through to host:port
+    }
+  }
+  return `${route.address}:${route.port}`;
+}
+
+/** True when the route's first choice is Murage's hosted https route, so the
+ * typed code is the only thing a person needs. */
+export function companionPairingRouteIsHosted(
+  route: Pick<CompanionPairingRoute, "endpoints"> | null | undefined,
+): boolean {
+  return route?.endpoints?.[0]?.kind === "hosted";
+}
+
 export interface CompanionPairingRoutePin {
   route: CompanionPairingRoute;
   /** The exact protected transport selected when the QR was created. A

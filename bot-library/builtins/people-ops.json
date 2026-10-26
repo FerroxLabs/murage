@@ -116,7 +116,8 @@
         "role": "leader",
         "team": "People Ops",
         "appearance": {
-          "color": "teal"
+          "color": "coral",
+          "mascotBody": "shield"
         },
         "skills": [
           "hr-handbook",
@@ -137,7 +138,8 @@
         "role": "member",
         "team": "People Ops",
         "appearance": {
-          "color": "green"
+          "color": "green",
+          "mascotBody": "circle"
         },
         "skills": [
           "finance-payroll-prep",
@@ -157,7 +159,8 @@
         "role": "member",
         "team": "People Ops",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "capsule"
         },
         "skills": [
           "performance-review",
@@ -177,7 +180,8 @@
         "role": "member",
         "team": "People Ops",
         "appearance": {
-          "color": "cyan"
+          "color": "cyan",
+          "mascotBody": "squircle"
         },
         "skills": [
           "internal-comms-writer",
@@ -197,7 +201,8 @@
         "role": "member",
         "team": "People Ops",
         "appearance": {
-          "color": "blue"
+          "color": "teal",
+          "mascotBody": "hexagon"
         },
         "skills": [
           "legal-contractor",

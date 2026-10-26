@@ -13,6 +13,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 import { FLUX_COMPOSIO_BROKER_URL } from "../electron/composio-release-config.mjs";
+import { linuxDisablesGpu } from "../electron/linux-gpu.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const wayland = process.env.MURAGE_SMOKE_WAYLAND === "1";
@@ -336,8 +337,10 @@ try {
       }
     }
   }
-  if (result.hardwareAccelerationEnabled !== false) {
-    throw new Error("Linux package did not disable hardware acceleration before startup");
+  if (result.hardwareAccelerationEnabled !== !linuxDisablesGpu({ env: desktopEnv })) {
+    throw new Error(
+      "Linux package did not apply the GPU rule (off on NVIDIA, nouveau or MURAGE_LINUX_GPU=off) before startup",
+    );
   }
   if (displayMediaRequests !== 0) throw new Error("launch triggered display capture without user intent");
   if (fluxBrokerBuild) {

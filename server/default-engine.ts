@@ -12,7 +12,14 @@ export interface EngineReading {
   instanceId: string;
   driverKind?: string;
   snapshot: { state: string; authenticated?: boolean };
-  models: { default?: string };
+  models: { default?: string; options?: ReadonlyArray<{ id: string }> };
+}
+
+/** 1.0.4 (168): the model a new bot gets on an engine, the engine's own
+ * default or else the first model it lists. An engine that lists nothing has
+ * no model to give (the Fuigo-with-no-key case below). */
+export function defaultModel(instance: Pick<EngineReading, "models">): string {
+  return instance.models.default || instance.models.options?.[0]?.id || "";
 }
 
 export interface EngineChoice {
@@ -45,7 +52,7 @@ export function pickDefaultEngine(described: readonly EngineReading[]): EngineCh
   // with no explicit selection got NO engine at all, its turn never ran, and
   // the failure surfaced as "the delegated turn auto-approved". Bisected
   // against the pre-change commit rather than guessed at.
-  const usable = available.filter((d) => d.models.default);
+  const usable = available.filter((d) => defaultModel(d));
   // F2 — a new bot used to be handed `codex` on a machine where codex had
   // never been signed in, because this preference could not see the difference.
   // `authenticated` is still NOT a filter, for the reason spelled out above:
@@ -110,7 +117,7 @@ export function pickDefaultEngine(described: readonly EngineReading[]): EngineCh
     preferred.find((d) => d.driverKind === "fuigoAgent") ??
     preferred.find((d) => d.driverKind === "claudeAgent") ??
     preferred[0];
-  return { instanceId: pick?.instanceId ?? "", model: pick?.models.default ?? "" };
+  return { instanceId: pick?.instanceId ?? "", model: pick ? defaultModel(pick) : "" };
 }
 
 // The last engine choice, remembered between launches. Probing every engine

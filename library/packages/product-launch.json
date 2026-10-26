@@ -28,7 +28,8 @@
         "title": "Research",
         "description": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method.",
         "appearance": {
-          "color": "green"
+          "color": "blue",
+          "mascotBody": "capsule"
         },
         "skills": [
           "research-jtbd-interviews",
@@ -51,7 +52,8 @@
         "title": "Brand",
         "description": "Brand specialist - onlyness-first positioning and visual systems via Marty Neumeier's difference-beats-betterness method.",
         "appearance": {
-          "color": "blue"
+          "color": "pink",
+          "mascotBody": "blob"
         },
         "skills": [
           "mira-brand-foundation",
@@ -68,7 +70,8 @@
         "title": "Copy",
         "description": "Copywriter - hooks, headlines, CTAs, sales pages, rewrites, anchored on customer voice and awareness stage.",
         "appearance": {
-          "color": "red"
+          "color": "purple",
+          "mascotBody": "drop"
         },
         "skills": [
           "copy-customer-voice",
@@ -85,7 +88,8 @@
         "title": "Channels",
         "description": "Channels specialist - channel-mix and discovery via Avinash Kaushik's See/Think/Do/Care intent-based framework.",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "star"
         },
         "skills": [
           "beacon-channel-strategy",
@@ -109,7 +113,8 @@
         "title": "Sales",
         "description": "Sales specialist - SPIN-disciplined discovery, real-vs-stated objection sorting, and advancement-not-continuation close mechanics.",
         "appearance": {
-          "color": "purple"
+          "color": "red",
+          "mascotBody": "ember"
         },
         "skills": [
           "sales-discovery-call",

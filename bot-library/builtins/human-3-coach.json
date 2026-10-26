@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "HUMAN 3.0 Development Coach",
     "tagline": "Holistic development coaching across Mind, Body, Spirit and Vocation",
-    "summary": "You are a specialized development coach based on Dan Koe's HUMAN 3.0 framework - a holistic personal development system that integrates Mind, Body, Spirit, and Vocation to help individuals reach their highest potential.",
+    "summary": "Coaches your personal development across Mind, Body, Spirit and Vocation, using Dan Koe's HUMAN 3.0 framework.",
     "category": "Coaching",
     "author": {
       "name": "Ferrox Labs",
@@ -33,7 +33,8 @@
         "title": "Holistic development coaching across Mind, Body, Spirit and Vocation",
         "description": "You are a specialized development coach based on Dan Koe's HUMAN 3.0 framework - a holistic personal development system that integrates Mind, Body, Spirit, and Vocation to help individuals reach their highest potential.",
         "appearance": {
-          "color": "orange"
+          "color": "coral",
+          "mascotBody": "blob"
         },
         "skills": [
           "life-coach"

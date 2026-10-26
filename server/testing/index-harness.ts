@@ -74,6 +74,7 @@ export const FIXTURE_ENGINE_OVERRIDES = {
   qwen: { driver: "fixture-unavailable" },
   hermes: { driver: "fixture-unavailable" },
   pi: { driver: "fixture-unavailable" },
+  cline: { driver: "fixture-unavailable" },
 };
 
 /** Packaged-shape fixtures receive the renderer proof through their private
@@ -108,7 +109,7 @@ export const holdBoxSlowValidation = () => {
   return { entered: enteredPromise, release };
 };
 export let boxStubPort = 0;
-export let connectorAliasFixture: { accounts: { id: string; alias: string; status: string; toolkit: { slug: string } }[]; links: { toolkit: string; alias?: string }[]; calls: number } | undefined;
+export let connectorAliasFixture: { accounts: { id: string; alias: string; status: string; toolkit: { slug: string } }[]; links: { toolkit: string; alias?: string }[]; calls: number; refuseTakenLabels?: boolean; refuseAfterMs?: number; statusAfterMs?: number } | undefined;
 export let home: string;
 export let staticDir: string;
 export let fakeClaudeDump: string;
@@ -333,7 +334,7 @@ export const startInternalFixtureTurn = async (botId: string, groupId?: string, 
     // keep waiting for the one that names this bot.
     for (const deadline = Date.now() + 15_000; ; ) {
       dump = await readJsonFileWhenReady(fakeClaudeDump, Math.max(1_000, deadline - Date.now()));
-      if (dump.mcpConfig.mcpServers.agents?.env.MURAGE_BOT_ID === botId) break;
+      if (fixtureTurnBotId(dump) === botId) break;
       if (Date.now() >= deadline) break;
       rmSync(fakeClaudeDump, { force: true });
     }
@@ -343,13 +344,23 @@ export const startInternalFixtureTurn = async (botId: string, groupId?: string, 
     // diagnosable from the failure alone.
     throw new Error(`${fixtureTurnDiagnostics(botId, groupId ? undefined : selected.threadId)}\n\ncaused by: ${error instanceof Error ? error.message : String(error)}`);
   }
-  const env = dump.mcpConfig.mcpServers.agents!.env;
+  // A draft-only turn has no agents server (server/drivers/claude.ts: connected-app reads only), so its launch is named by
+  // the connectors bridge, which carries the same bot id and its own token for this turn (internalToken is per capability).
+  const servers = dump.mcpConfig.mcpServers;
+  const env = (servers.agents ?? servers.murage_connectors)!.env;
+  const token = servers.agents ? env.MURAGE_COMMS_TOKEN : env.MURAGE_CONNECTORS_TOKEN;
   expect(env.MURAGE_BOT_ID).toBe(botId);
-  expect(env.MURAGE_COMMS_TOKEN).toMatch(/^[a-f0-9]{48}$/);
+  expect(token).toMatch(/^[a-f0-9]{48}$/);
   return {
     dump, env,
-    headers: { authorization: `Bearer ${env.MURAGE_COMMS_TOKEN}`, "content-type": "application/json" },
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
   };
+};
+
+/** The bot a fixture launch dump belongs to: the agents server's bot id, or the connectors bridge's on a turn without one. */
+const fixtureTurnBotId = (dump: { mcpConfig?: { mcpServers?: Record<string, { env?: Record<string, string> }> } | null }): string | undefined => {
+  const servers = dump.mcpConfig?.mcpServers;
+  return servers?.agents?.env?.MURAGE_BOT_ID ?? servers?.murage_connectors?.env?.MURAGE_BOT_ID;
 };
 
 /** What the harness and its engine were doing when a fixture turn never

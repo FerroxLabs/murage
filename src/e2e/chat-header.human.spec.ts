@@ -227,6 +227,9 @@ const controls = (page: Page): Promise<Control[]> =>
     const header = document.querySelector("[data-chat-header]")!;
     const nodes = [...header.querySelectorAll<HTMLElement>("button, input, a[href], [tabindex]")];
     return nodes
+      // Not a trigger the header hides from people: the phone's model chip
+      // is not drawn (the ... menu opens that picker) and is aria-hidden.
+      .filter((node) => !node.closest("[aria-hidden=true]"))
       .filter((node) => node.offsetParent !== null || node.getClientRects().length > 0)
       .map((node) => {
         const { x, y, width, height } = node.getBoundingClientRect();
@@ -252,7 +255,8 @@ function intersection(a: Rect, b: Rect): number {
 const headerBox = (page: Page) =>
   page.evaluate(() => {
     const header = document.querySelector("[data-chat-header]") as HTMLElement;
-    const name = header.querySelector<HTMLElement>("[data-chat-header-name] :is(button, input)");
+    // A phone draws the name as plain text, a rename target (role=button), as measureHeader reads it.
+    const name = header.querySelector<HTMLElement>("[data-chat-header-name] :is(button, input, [role=button])");
     const style = getComputedStyle(header);
     const box = header.getBoundingClientRect();
     const left = box.left + parseFloat(style.paddingLeft || "0");
@@ -264,6 +268,8 @@ const headerBox = (page: Page) =>
     for (const node of header.querySelectorAll<HTMLElement>("button, input")) {
       // Not what floats above the row: an open menu, popover or dialog.
       if (node.closest("dialog, [role=menu], [role=dialog], [role=group]")) continue;
+      // Nor a trigger hidden from people (the phone's undrawn model chip).
+      if (node.closest("[aria-hidden=true]")) continue;
       const rect = node.getBoundingClientRect();
       if (rect.width === 0) continue;
       escape = Math.max(escape, left - rect.left, rect.right - right);
@@ -448,7 +454,7 @@ test("every control is reachable at every width — relocated, never removed", a
     "memory",
     "task's files",
     "stop this turn",
-    "all threads",
+    "chat list",
     "thread model",
   ];
   const counts: number[] = [];
@@ -805,7 +811,7 @@ test("a real phone viewport, where the drawer button is the row's first item", a
     };
     return {
       menu: mid(header.querySelector('[aria-label="Open bot list"]')),
-      name: mid(header.querySelector("[data-chat-header-name] :is(button, input)")),
+      name: mid(header.querySelector("[data-chat-header-name] :is(button, input, [role=button])")),
       more: mid(header.querySelector('[aria-label^="More actions"]')),
     };
   });

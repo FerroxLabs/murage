@@ -6,7 +6,7 @@
 // ArrowUp opens on the last; arrows, Home and End move; Escape and Tab close
 // and return focus to the trigger; an outside press closes it.
 import { useEffect, useId, useRef, useState, type ReactNode, type RefObject } from "react";
-import { Check, Ellipsis } from "lucide-react";
+import { Check, Ellipsis, Plus } from "lucide-react";
 
 import { cn } from "@/lib/cn";
 
@@ -22,18 +22,46 @@ export interface HeaderMenuItem {
   onSelect: () => void;
 }
 
+/** Where and how the trigger and its list are drawn. `header` is the chat
+ * header's small More button, opening below it. `phone-more` is the same menu
+ * as the round "..." of the phone header. `composer-plus` is the round + of
+ * the phone composer, opening ABOVE it because the composer sits at the foot
+ * of the screen. Behaviour (keys, roles, focus return) is identical. */
+export type HeaderMenuVariant = "header" | "phone-more" | "composer-plus";
+
+const VARIANT_STYLES: Record<HeaderMenuVariant, { trigger: string; menu: string; icon: ReactNode }> = {
+  header: {
+    trigger: "size-[30px] rounded-md text-ink-secondary hover:bg-raised hover:text-ink",
+    menu: "right-0 top-full mt-1",
+    icon: <Ellipsis size={18} aria-hidden="true" />,
+  },
+  "phone-more": {
+    trigger: "size-9 rounded-full border border-hairline bg-card text-ink",
+    menu: "right-0 top-full mt-1",
+    icon: <Ellipsis size={18} aria-hidden="true" />,
+  },
+  "composer-plus": {
+    trigger: "size-11 rounded-full bg-raised text-ink hover:bg-raised-hover",
+    menu: "bottom-full left-0 mb-2",
+    icon: <Plus size={22} aria-hidden="true" />,
+  },
+};
+
 export function ChatHeaderMenu({
   items,
   label,
   menuLabel,
   triggerRef,
+  variant = "header",
 }: {
   items: readonly HeaderMenuItem[];
   /** Accessible name of the trigger. */
   label: string;
   menuLabel: string;
   triggerRef: RefObject<HTMLButtonElement | null>;
+  variant?: HeaderMenuVariant;
 }) {
+  const styles = VARIANT_STYLES[variant];
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const root = useRef<HTMLDivElement>(null);
@@ -82,7 +110,8 @@ export function ChatHeaderMenu({
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
-        data-chat-header-more
+        data-chat-header-more={variant === "composer-plus" ? undefined : ""}
+        data-composer-plus={variant === "composer-plus" ? "" : undefined}
         onClick={() => (open ? close(false) : openAt(0))}
         onKeyDown={(event) => {
           if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -91,11 +120,12 @@ export function ChatHeaderMenu({
           }
         }}
         className={cn(
-          "flex size-[30px] items-center justify-center rounded-md text-ink-secondary hover:bg-raised hover:text-ink focus-visible:outline-2 focus-visible:outline-focus",
-          open && "bg-raised text-ink",
+          "flex items-center justify-center focus-visible:outline-2 focus-visible:outline-focus",
+          styles.trigger,
+          open && variant === "header" && "bg-raised text-ink",
         )}
       >
-        <Ellipsis size={18} aria-hidden="true" />
+        {styles.icon}
       </button>
       {open && (
         <div
@@ -104,7 +134,7 @@ export function ChatHeaderMenu({
           role="menu"
           aria-label={menuLabel}
           aria-orientation="vertical"
-          className="animate-pop-in absolute right-0 top-full z-40 mt-1 w-[min(300px,calc(100vw-16px))] overflow-hidden rounded-xl border border-hairline/50 bg-card py-1 text-ink shadow-2xl shadow-black/40"
+          className={cn("animate-pop-in absolute z-40 w-[min(300px,calc(100vw-16px))] overflow-hidden rounded-xl border border-hairline/50 bg-card py-1 text-ink shadow-2xl shadow-black/40", styles.menu)}
           onKeyDown={(event) => {
             if (event.key === "ArrowDown") move(1);
             else if (event.key === "ArrowUp") move(-1);

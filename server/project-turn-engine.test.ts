@@ -760,6 +760,34 @@ describe("the lead's next step when a card waits on it in goal mode", () => {
     expect(leadNextStep(db, roomRequest(db, run.id)!, { memberIds: members, viewer, name: (bot) => names.get(bot) ?? "a member" })).toMatchObject({ step: "reviewing", card: { id } });
   });
 
+  // CANCEL-TREE-104 H2 (Astra): one pass readdresses the review wake to the new lead, absorbing the card result into the new lead's queued wake that
+  // comes later in the same pass; the turn must be started with the stored row, so the absorbed result reaches it.
+  it("a card result absorbed into a later wake in the same dispatcher pass reaches that wake's turn", () => {
+    settings(); goal({ review: 1, criteria });
+    const id = card({ assignee_bot_id: "jax", state: "doing", generation: 1 });
+    const run = ownerCardRun(id);
+    completeRequest(db, run.id, { state: "done", now: 4, resultMessageId: "m-result" }, hooks);
+    const asker = insertRoomRequest(db, { groupId: "g", verb: "owner_send", fromKind: "owner", admissionKey: "r-h2-other", lineage, now: 5 }).request;
+    completeRequest(db, asker.id, { state: "done", now: 6 });
+    const later = insertRoomRequest(db, { groupId: "g", verb: "wake", fromKind: "murage", toBotId: "rev", targetThreadId: "room", parentId: asker.id, priority: "coordinator",
+      payloadText: JSON.stringify([{ requestId: "other-answer", botId: "jax", state: "done" }]), admissionKey: "wake:h2-later", now: 7 }).request;
+    db.exec("UPDATE project_settings SET lead_bot_id='rev'");
+    const startedWith: Array<{ id: string; payloadText: string | null }> = [];
+    const admission = createWorkAdmission(admissionDeps);
+    admission.setBudgetGate({ check: () => ({ ok: true }) });
+    const dispatcher = createRoomDispatcher({
+      db: () => db, admission, now: () => 10, open: () => true, roomUsable: () => true, roomBusy: () => false,
+      projectContext: (request) => projectContextFor(db, { groupId: request.groupId, goalId: request.projectGoalId, flags }),
+      audienceStillValid: () => true, ownerOrigin: () => true, startOwnerSend: () => {}, memberIds: () => members,
+      startMemberTurn: (request, claim) => { startedWith.push({ id: request.id, payloadText: request.payloadText }); claim.release(); },
+      onClosed: () => {}, onStillWaiting: () => {}, changed: () => {},
+    });
+    dispatcher.pump();
+    const turn = startedWith.find((started) => started.id === later.id);
+    expect(turn).toBeDefined();
+    expect(JSON.parse(turn!.payloadText!).map((result: { requestId: string }) => result.requestId)).toEqual(["other-answer", run.id]);
+  });
+
   // Round 13 (A6): a lead that is not a member of the room (a stale lead
   // setting) is not handed the review wake, as reviewWakeTarget refuses it:
   // the wake is held where it is.

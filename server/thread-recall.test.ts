@@ -726,3 +726,129 @@ describe("the lineage lifecycle of what a turn read (rule 23)", () => {
     expect((first.lineage.sources as ShownLine[]).length).toBe(0);
   });
 });
+
+describe("a line the owner forgot is never returned (106 recall-forgotten)", () => {
+  // forgotten is the one definition project-memory-tools.ts and All chats use: the stamp, an owner-forget tombstone, or a deleted source
+  type How = "tombstone" | "stamp" | "deleted";
+  const forgetAs = (how: How, thread: string, id: string) => {
+    if (how === "tombstone") forget(thread, id);
+    else if (how === "deleted") db().prepare("INSERT OR REPLACE INTO memory_sources(id,scope_id,thread_id,message_id,turn_id,revision,content_hash,kind,speaker,outcome,branch_id,state) VALUES(?,?,?,?,NULL,1,'h','message','owner','captured',NULL,'deleted')")
+      .run(`message:${thread}:${id}`, ensureScope("conversation", thread), thread, id);
+  };
+  /** Line lineage not live: no line lineage row anywhere (lineageLive is false). */
+  const notLive = () => db().prepare("DELETE FROM memory_line_lineage").run();
+  const cases: Array<[How, boolean, string, "user" | "bot"]> = [];
+  for (const how of ["tombstone", "stamp", "deleted"] as How[]) for (const live of [true, false]) for (const thread of ["t-main", "t-task"]) for (const role of ["user", "bot"] as const) cases.push([how, live, thread, role]);
+
+  /** k1 (kept, older), g1 (forgotten, newest), k2 (kept, oldest) in `thread`. */
+  const plant = (how: How, live: boolean, thread: string, role: "user" | "bot") => {
+    put(thread, "k2", "needle kept early", 1000, { role });
+    put(thread, "k1", "needle kept later", 2000, { role });
+    put(thread, "g1", "needle forgotten words", 3000, { role, ...(how === "stamp" ? { withheldFromBots: "forgotten" as const } : {}) });
+    forgetAs(how, thread, "g1");
+    if (!live) notLive();
+  };
+  // the words, the id, or the time of the forgotten line
+  const leaks = (body: Json) => ["forgotten words", "\"g1\"", new Date(3000).toISOString()].some(part => JSON.stringify(body).includes(part));
+
+  it.each(cases)("thread_search: %s, lineage live %s, thread %s, %s line", async (how, live, thread, role) => {
+    plant(how, live, thread, role);
+    const r = rig();
+    const { status, body } = await r.call("thread_search", { query: "needle" });
+    expect(status).toBe(200);
+    expect(leaks(body)).toBe(false);
+    expect(r.state.released.has("g1")).toBe(false);
+    expect(body.checking + body.unavailable).toBe(0);
+  });
+  it.each(cases)("thread_read: %s, lineage live %s, thread %s, %s line", async (how, live, thread, role) => {
+    plant(how, live, thread, role);
+    const r = rig();
+    // a kept anchor: the forgotten neighbour is not in the rows
+    r.state.released.set("k1", thread);
+    for (const direction of ["around", "after"] as const) {
+      const { body } = await r.call("thread_read", { message_id: "k1", direction, limit: 5 });
+      expect(leaks(body)).toBe(false);
+    }
+    // the forgotten line itself as the anchor (as if handed before it was forgotten): not-reachable, nothing around it
+    r.state.released.set("g1", thread);
+    expect((await r.call("thread_read", { message_id: "g1", direction: "around" })).body).toEqual({ rows: [], status: "not-reachable" });
+    expect(r.state.released.get("g1")).toBe(thread);
+  });
+  it.each(cases)("thread_list: %s, lineage live %s, thread %s, %s line", async (how, live, thread, role) => {
+    plant(how, live, thread, role);
+    const { body } = await rig().call("thread_list");
+    const listed = body.threads.find((entry: Json) => entry.threadId === thread);
+    // the forgotten line's time never shows: lastAt is the newest remembered line's
+    expect(listed.lastAt).toBe(new Date(2000).toISOString());
+    expect(JSON.stringify(body)).not.toContain(new Date(3000).toISOString());
+  });
+  it("thread_list leaves out a thread whose every line is forgotten", async () => {
+    put("t-task", "only", "needle only line", 5000, { role: "user" });
+    forget("t-task", "only");
+    notLive();
+    const { body } = await rig().call("thread_list");
+    expect(body.threads.map((entry: Json) => entry.threadId)).not.toContain("t-task");
+  });
+  it("a forgotten line stays out at release when it is forgotten after the search judged it (lineage not live)", async () => {
+    put("t-task", "late", "needle late forget", 4000, { role: "user" });
+    notLive();
+    const r = rig();
+    r.hooks.onYield = () => { forget("t-task", "late"); };
+    const { body } = await r.call("thread_search", { query: "needle" });
+    expect(JSON.stringify(body)).not.toContain("late forget");
+    expect(JSON.stringify(body)).not.toContain(new Date(4000).toISOString());
+    expect(r.state.released.has("late")).toBe(false);
+  });
+  it("when whether a line is forgotten cannot be told, it is left out (fail closed)", async () => {
+    put("t-main", "u9", "needle unknowable", 4000, { role: "user" });
+    notLive();
+    db().exec("ALTER TABLE memory_tombstones RENAME TO memory_tombstones_away");
+    try {
+      const { body } = await rig().call("thread_search", { query: "needle" });
+      expect(JSON.stringify(body)).not.toContain("unknowable");
+      expect(JSON.stringify(body)).not.toContain(new Date(4000).toISOString());
+      expect(body.unavailable).toBeGreaterThanOrEqual(1);
+    } finally { db().exec("ALTER TABLE memory_tombstones_away RENAME TO memory_tombstones"); }
+  });
+  it.each([true, false])("thread_search whose only match is forgotten gives no time of it (lineage live %s)", async live => {
+    for (const how of ["tombstone", "stamp", "deleted"] as How[]) {
+      lastRow.clear();
+      put("t-task", `o-${how}`, `solo ${how} needle`, 7000, { role: "user", ...(how === "stamp" ? { withheldFromBots: "forgotten" as const } : {}) });
+      forgetAs(how, "t-task", `o-${how}`);
+    }
+    if (!live) notLive();
+    const { body } = await rig().call("thread_search", { query: "needle" });
+    expect(body.hits).toEqual([]);
+    expect(body.oldest_at).toBeNull();
+    expect(JSON.stringify(body)).not.toContain(new Date(7000).toISOString());
+  });
+  it("thread_search: a hit forgotten during the yield gives neither its words nor its time", async () => {
+    put("t-task", "y1", "needle yield line", 8000, { role: "user" });
+    notLive();
+    const r = rig();
+    r.hooks.onYield = () => { forget("t-task", "y1"); };
+    const { body } = await r.call("thread_search", { query: "needle" });
+    expect(body.hits).toEqual([]);
+    expect(JSON.stringify(body)).not.toContain(new Date(8000).toISOString());
+  });
+  it("thread_list: a newest line forgotten during the yield gives no time, and a thread left with none is dropped", async () => {
+    put("t-main", "m1", "kept main", 1000, { role: "user" });
+    put("t-main", "m2", "newest main", 9000, { role: "user" });
+    put("t-task", "t1", "only task line", 9500, { role: "user" });
+    notLive();
+    const r = rig();
+    r.hooks.onYield = () => { forget("t-main", "m2"); forget("t-task", "t1"); };
+    const { body } = await r.call("thread_list");
+    expect(body.threads.map((entry: Json) => entry.threadId)).toEqual(["t-main"]);
+    expect(body.threads[0].lastAt).toBe(new Date(1000).toISOString());
+    for (const at of [9000, 9500]) expect(JSON.stringify(body)).not.toContain(new Date(at).toISOString());
+  });
+  it("a line nobody forgot is still found, read and listed with lineage not live", async () => {
+    put("t-task", "n1", "needle plain line", 4000, { role: "user" });
+    notLive();
+    const r = rig();
+    expect((await r.call("thread_search", { query: "needle" })).body.hits.map((hit: Json) => hit.messageId)).toEqual(["n1"]);
+    expect((await r.call("thread_read", { message_id: "n1", direction: "around" })).body.rows.map((row: Json) => row.messageId)).toEqual(["n1"]);
+    expect((await r.call("thread_list")).body.threads.find((entry: Json) => entry.threadId === "t-task").lastAt).toBe(new Date(4000).toISOString());
+  });
+});

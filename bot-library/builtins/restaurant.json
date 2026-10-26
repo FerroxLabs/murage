@@ -60,7 +60,8 @@
         "title": "Restaurant",
         "description": "Plate prepares a weekly specials copy pack from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. ",
         "appearance": {
-          "color": "green"
+          "color": "green",
+          "mascotBody": "circle"
         },
         "skills": [
           "restaurant-owner",

@@ -393,6 +393,8 @@ describe("CF-5 history is fixed (I-24)", () => {
       "boundary-ports.ts",
       "browser-extension-approvals.ts",
       "browser-extension-setup.ts",
+      // a bot widget's own row (QW Q4): an update or a settle rewrites that widget and its text form, never another row
+      "chat-widgets.ts",
       // a queued hand-off's Messaged row gains its room link when the room exists (S6 rule 6); never its words
       "comms-visibility.ts",
       "delegations.ts",

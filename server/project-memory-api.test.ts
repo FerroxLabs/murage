@@ -82,7 +82,7 @@ posixOnly("project memory and a member's working context", () => {
     // (a resumed session is not sent it twice: working-context.test.ts; a
     // turn whose memory context was refreshed starts over and gets it again)
     // Astra r1 #12: saving the notebook is a write the section can show at once
-    const saved = await api("PUT", `/api/bots/${reed.id}/memory`, { text: "# Memory\n- launch on the 14th\n" });
+    const saved = await api("PUT", `/api/bots/${reed.id}/memory`, { baseRevision: (await api("GET", `/api/bots/${reed.id}/memory`)).revision, text: "# Memory\n- launch on the 14th\n" });
     expect(typeof saved.lastWrittenAt).toBe("number");
     // a teammate who was never asked has nothing of Reed's
     const teammate = await prompted(text => api("POST", `/api/bots/${cole.id}/messages`, { threadId: cole.threadId, text }), "Anything new?");

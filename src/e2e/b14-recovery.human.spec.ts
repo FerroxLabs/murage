@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { existsSync, mkdirSync } from "node:fs";
 import { launchVerificationServer, type VerificationServer } from "../../scripts/control-murage.ts";
 import { openSidebar, SEND_KEY } from "./fixtures.ts";
+import { headerMoreButton, openThreadModel, phoneLayout } from "./chat-controls.ts";
 
 const BOT = "B14 visual fixture";
 const TASK = "B14 error and busy picker";
@@ -39,14 +40,14 @@ async function openTask(page: Page) {
   await (await openSidebar(page)).getByText(BOT, { exact: true }).click();
   const invitation = page.getByRole("complementary", { name: "Let your bots pick the right model", exact: true });
   if (await invitation.count()) await invitation.getByRole("button", { name: "Not now", exact: true }).last().click();
-  const picker = page.getByRole("button", { name: "All threads", exact: true });
+  const picker = page.getByRole("button", { name: "Chat list", exact: true });
   await picker.click();
   await page.getByRole("button", { name: new RegExp(`^${TASK}`) }).click();
   await expect(picker).toContainText(TASK);
   // Selecting a task deliberately leaves time for a rename double-click.
   // Close the menu as a user would before testing the unrelated banner.
   await page.keyboard.press("Escape");
-  await expect(page.getByRole("textbox", { name: "Search tasks", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("textbox", { name: "Search chats", exact: true })).toHaveCount(0);
 }
 async function prepareViewport(page: Page, width: number) {
   await page.setViewportSize({ width, height: 900 });
@@ -136,11 +137,13 @@ test("B14 busy picker stays on screen and inspect-only across viewport changes",
   await composer.press(SEND_KEY);
   expect((await sent).status()).toBe(202);
   await expect.poll(busy).toBe(true);
+  // The chip on a tablet or desktop. A phone draws no chip: the header's "..."
+  // menu has a Model entry that opens the same picker (openThreadModel).
   const modelTrigger = page.getByRole("button", { name: /^Thread model:/ });
   const dialog = page.getByRole("dialog", { name: "Choose model", exact: true });
   for (const width of [390, 820, 1440]) {
     await prepareViewport(page, width);
-    await modelTrigger.click();
+    await openThreadModel(page);
     await expectOnScreen(page, dialog);
     await expect(dialog.getByRole("status")).toContainText("You can inspect models");
     const choices = dialog.locator("[data-model-choice][aria-pressed]");
@@ -168,7 +171,9 @@ test("B14 busy picker stays on screen and inspect-only across viewport changes",
     await expect(search).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(dialog).toHaveCount(0);
-    await expect(modelTrigger).toBeFocused();
+    // Focus goes back to what opened the picker at the width the page has now:
+    // the chip, or on a phone the "..." button the Model entry lives in.
+    await expect(await phoneLayout(page) ? headerMoreButton(page) : modelTrigger).toBeFocused();
   }
   const stopped = page.waitForResponse((response) => response.url().endsWith(`/api/bots/${botId}/interrupt`) && response.request().method() === "POST");
   await page.getByTitle("Stop", { exact: true }).click();

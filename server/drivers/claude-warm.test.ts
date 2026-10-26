@@ -15,7 +15,7 @@ import type { ProviderInstance, SendTurnInput, SteerDelivery } from "../contract
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { removeTempDir } from "../testing/cleanup.ts";
 import { execFileSync } from "node:child_process";
-import { ClaudeDriver, claudeGitRoots, claudeSettingsRevision, managedClaudeSettingsPaths, type ClaudeConfig } from "./claude.ts";
+import { BROKER_LOST, BROKER_LOST_MESSAGE, ClaudeDriver, claudeGitRoots, claudeSettingsRevision, managedClaudeSettingsPaths, type ClaudeConfig } from "./claude.ts";
 import { credentialDigest, diffWarmKey, warmKey } from "./warm-key.ts";
 import { cacheEnvFromProcess, markMountIncomplete, markMountReady } from "../connector-cache.ts";
 import { warmPool } from "./warm-pool.ts";
@@ -1554,7 +1554,7 @@ describe("ClaudeDriver intent prewarm (fake CLI)", () => {
     }
   });
 
-  it("a proxy that cannot reach the broker still denies, opens no card, and the app log says why", async () => {
+  it("a proxy that cannot reach the broker still denies, opens no card, ends the turn with the reason, and the app log says why", async () => {
     const errors: string[] = [];
     const error = vi.spyOn(console, "error").mockImplementation((line: unknown) => { if (typeof line === "string") errors.push(line); });
     await create();
@@ -1563,10 +1563,16 @@ describe("ClaudeDriver intent prewarm (fake CLI)", () => {
     process.env.FAKE_CLAUDE_PERM_SOCKET = join(scratch, "brokerrsp-nothing-listens.sock");
     try {
       const sent = await instance.adapter.sendTurn({ threadId: "t-brokerrsp-down", text: "__fixture_permission_tool__", ...base });
-      await recorder.until((e) => e.type === "item.completed" && e.threadId === "t-brokerrsp-down" && e.itemType === "assistant_text" && /permission: denied/.test(e.text));
-      await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
+      const denied = await recorder.until((e) => e.type === "item.completed" && e.threadId === "t-brokerrsp-down" && e.itemType === "tool");
+      expect((denied as { ok?: boolean }).ok).toBe(false);
+      // U22: the proxy would deny every later ask the same way; the turn ends here instead of running on with denials
+      const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
+      expect(done).toMatchObject({ ok: false, stopReason: BROKER_LOST });
+      expect(recorder.events.some((e) => e.type === "runtime.error" && e.turnId === sent.turnId && e.message === BROKER_LOST_MESSAGE)).toBe(true);
       expect(recorder.events.some((e) => e.type === "request.opened" && e.threadId === "t-brokerrsp-down")).toBe(false);
       expect(errors.some((line) => line.startsWith("claude permission broker unreachable thread=t-brokerrsp-down"))).toBe(true);
+      // the process is recycled: the next turn gets a fresh engine with its own broker
+      await eventually(() => lines.some((l) => l.includes(`claude close thread=t-brokerrsp-down reason=${BROKER_LOST}`)));
     } finally {
       delete process.env.FAKE_CLAUDE_PERM_TOOL;
       delete process.env.FAKE_CLAUDE_PERM_INPUT;

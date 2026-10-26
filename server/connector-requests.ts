@@ -1,6 +1,7 @@
 import { connectionStatusFailureSentence, normalizeAccountAlias } from "./composio.ts";
 import { NEEDS_OWN_SIGN_IN, type CatalogApp } from "./app-catalog.ts";
 import { turnAudienceIsOwner, type TurnAudience } from "./owner-audience.ts";
+import type { ConnectorCardData } from "./store.ts";
 
 export interface ConnectorRequest {
   slug: string;
@@ -165,6 +166,29 @@ export function authorizeFailureSentence(error: unknown, label: string): string 
   return `Couldn't start the ${label} sign-in. Try again.`;
 }
 
+/** The card's line until the person confirms a label. */
+export const CONNECT_CARD_NEEDS_LABEL = "Enter a label for the account, such as work or personal.";
+
+/**
+ * The card under the label the person confirmed on it (#758).
+ *
+ * A bot may suggest a label when it asks for an app; that suggestion only
+ * fills in the card's label form. What is signed in, matched and named on the
+ * card from then on is the confirmed label, so the card's title follows it:
+ * "Gmail (work)" becomes "Gmail (home)" when the person chose "home".
+ */
+export function relabelConnector<T extends Pick<ConnectorCardData, "label" | "alias">>(connector: T, alias: string): T {
+  const suffix = connector.alias ? ` (${connector.alias})` : "";
+  const base = suffix && connector.label.endsWith(suffix) ? connector.label.slice(0, -suffix.length) : connector.label;
+  return { ...connector, alias, label: `${base} (${alias})` };
+}
+
+/** A sign-in the broker refused because another account holds the label. */
+export function connectorLabelTaken(error: unknown): boolean {
+  const status = typeof (error as { status?: unknown } | null)?.status === "number" ? (error as { status: number }).status : undefined;
+  return status === 409 && error instanceof Error && /^Account alias ".*" is already in use/i.test(error.message);
+}
+
 /** What a chat connect card says for one app. An app with no hosted sign-in
  * of its own says so first: the connect page asks for the person's own
  * details (0.1.61 long tail). */
@@ -175,6 +199,17 @@ export function connectorCardText(toolkit: Pick<CatalogApp, "label" | "blurb" | 
     return { label, description: blurb ? `${blurb}. ${NEEDS_OWN_SIGN_IN}` : NEEDS_OWN_SIGN_IN };
   }
   return { label, description: toolkit.blurb || `Connect ${toolkit.label} so the bot can continue` };
+}
+
+/** The one plain line a connection card also carries as its text, so a client that cannot draw the card (an older phone build, an
+ *  export, a backup) still shows something true. Fixed copy built from the card's own label: never model text, never a link. */
+export function connectorPlainLine(connector: Pick<ConnectorCardData, "label" | "status">): string {
+  return connector.status === "connected" ? `${connector.label} is connected.` : `Connect ${connector.label} to continue.`;
+}
+
+/** A patch that changes a card and keeps its plain line in step. */
+export function connectorCardPatch(connector: ConnectorCardData): { connector: ConnectorCardData; text: string } {
+  return { connector, text: connectorPlainLine(connector) };
 }
 
 /** The model reads this as the tool's answer in a turn that is not the owner's. */

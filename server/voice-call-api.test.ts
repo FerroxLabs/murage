@@ -11,10 +11,18 @@ let stub: Server;
 let stubUrl = "";
 let desktop: Record<string, string>;
 const seen: Array<{ path: string; body: any }> = [];
+/** Flux's GET /v1/audio/voices for the stub key, as flux-router master
+ *  answers it: filtered to the key, each row tagged with its entitlement. */
+const ELEVEN = ["Aria", "Roger", "Sarah", "Laura", "Charlie", "George", "Callum", "River", "Liam", "Alice", "Matilda", "Will", "Jessica", "Eric", "Chris", "Brian", "Daniel", "Lily", "Adam", "Bill"];
+const voiceList = (eleven: string[], entitlement = "open") => ({
+  object: "list",
+  data: [{ id: "marin", model: "flux-voice-speak" }, ...eleven.map((id) => ({ id, model: "flux-voice-speak-eleven" }))].map((row) => ({ ...row, name: row.id, entitlement })),
+});
+let fluxVoiceList: unknown = voiceList(ELEVEN);
 
 beforeAll(async () => {
   // Stands in for Flux: records every request, answers chat with two SSE
-  // sentences, and must never be asked for voices (those are local).
+  // sentences, and answers Flux's voice list from `fluxVoiceList`.
   stub = createServer((req, res) => {
     let raw = "";
     req.on("data", (chunk) => (raw += chunk));
@@ -30,6 +38,11 @@ beforeAll(async () => {
           res.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`);
         }
         res.end("data: [DONE]\n\n");
+        return;
+      }
+      if (req.method === "GET" && req.url?.endsWith("/audio/voices")) {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify(fluxVoiceList));
         return;
       }
       if (req.url?.endsWith("/audio/speech")) {
@@ -148,17 +161,52 @@ it("a call leaves one note in the thread, and an empty call leaves nothing", asy
   expect(await count()).toBe(before + 2);
 }, 60_000);
 
-it("with Flux as the voice engine all 41 Flux voices (OpenAI and Grok) are listed without asking Flux", async () => {
+it("with Flux as the voice engine the 41 Flux voices (OpenAI and Grok) are listed, plus ElevenLabs' when Flux's voice list offers them", async () => {
   const put = await api("PUT", "/api/config", { tts: { provider: "flux" } });
   expect(put.status).toBe(200);
   const requests = seen.length;
   const voices = await api("GET", "/api/tts/voices");
-  expect(voices.body.voices).toHaveLength(41);
+  expect(voices.body.voices).toHaveLength(61);
+  expect(voices.body.fluxEleven).toBe("on");
   // Grok voices lead the list, since they are what a bot starts with
   expect(voices.body.voices.slice(0, 28).every((v: { provider: string }) => v.provider === "grok")).toBe(true);
+  expect(voices.body.voices.slice(41).every((v: { provider: string }) => v.provider === "elevenlabs")).toBe(true);
   expect(voices.body.voices.find((v: { id: string }) => v.id === "marin")).toMatchObject({ label: "Nora", gender: "female", provider: "openai" });
   expect(voices.body.voices.find((v: { id: string }) => v.id === "ara")).toMatchObject({ gender: "female", provider: "grok" });
-  expect(seen.length).toBe(requests);
+  // the one request is Flux's free voice list; nothing is spoken to find out
+  expect(seen.slice(requests).map((s) => s.path)).toEqual(["/v1/audio/voices"]);
+  // kept: opening the list again does not ask Flux again
+  await api("GET", "/api/tts/voices");
+  expect(seen.length).toBe(requests + 1);
+});
+
+it("GET /api/tts/voices says why ElevenLabs' voices are missing (fluxEleven), and Check again reads Flux's list now", async () => {
+  await api("PUT", "/api/config", { tts: { provider: "flux" } });
+  try {
+    fluxVoiceList = voiceList(ELEVEN, "premium_locked");
+    // kept from the read before: unchanged until the owner checks again
+    expect((await api("GET", "/api/tts/voices")).body.fluxEleven).toBe("on");
+    const locked = await api("GET", "/api/tts/voices?recheck=1");
+    expect(locked.body.fluxEleven).toBe("locked");
+    expect(locked.body.voices).toHaveLength(41);
+
+    fluxVoiceList = voiceList([]);
+    const notOnKey = await api("GET", "/api/tts/voices?recheck=1");
+    expect(notOnKey.body.fluxEleven).toBe("notOnKey");
+    expect(notOnKey.body.voices.some((v: { provider: string }) => v.provider === "elevenlabs")).toBe(false);
+
+    fluxVoiceList = voiceList(["Aria"]);
+    const fixed = await api("GET", "/api/tts/voices?recheck=1");
+    expect(fixed.body.fluxEleven).toBe("on");
+    expect(fixed.body.voices.filter((v: { provider: string }) => v.provider === "elevenlabs").map((v: { id: string }) => v.id)).toEqual(["Aria"]);
+
+    // another service's list carries no fluxEleven field
+    const xai = await api("GET", "/api/tts/voices?provider=xai");
+    expect(xai.body).not.toHaveProperty("fluxEleven");
+  } finally {
+    fluxVoiceList = voiceList(ELEVEN);
+    await api("GET", "/api/tts/voices?recheck=1");
+  }
 });
 
 it("each agent speaks with its own voice service, chosen on the agent", async () => {

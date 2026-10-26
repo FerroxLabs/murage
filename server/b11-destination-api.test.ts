@@ -68,6 +68,15 @@ it("ordinary fresh and restarted resumed Claude requests consume the current des
   expect(initial.bots.find(item => item.id === bot.id)!.tasks[0]!.localOutputs).toBeUndefined();
   await api("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "Create HTML, MD and TXT files named b11-fresh" });
   const first = await checkFiles(bot, bot.threadId, 1);
+  // The session cursor reaches bots.json through the coalesced write (atomic.ts COALESCE_WINDOW_MS), which a graceful stop flushes.
+  // The fixture stops the server with SIGTERM, and on Windows that is TerminateProcess: no handler runs, so a restart inside that
+  // window drops the cursor and the next turn starts fresh. The desktop app closes the server with murage:close instead
+  // (electron/server-child-lifecycle.mjs). Wait for the cursor on disk so this restart matches a graceful one on every OS.
+  await expect.poll(() => {
+    const saved = (JSON.parse(readFileSync(join(fixture.info.dataDir, "bots.json"), "utf8")) as Array<{ id: string; tasks: Array<{ threadId: string; resumeCursors?: Record<string, unknown> }> }>)
+      .find(item => item.id === bot.id)?.tasks.find(task => task.threadId === bot.threadId);
+    return saved?.resumeCursors?.verification !== undefined;
+  }, { timeout: 5_000 }).toBe(true);
   await fixture.restart(); await identify();
   expect(await cards(bot.threadId)).toEqual(first);
   await api("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "Create HTML, MD and TXT files named b11-resumed" });

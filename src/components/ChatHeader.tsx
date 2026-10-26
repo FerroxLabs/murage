@@ -19,15 +19,18 @@
 // in a 1600px window with the sidebar and the computer panel open.
 import { preloadBotSettings } from "@/lib/preload-bot-settings";
 import { useMemo, useRef, useState } from "react";
-import { Bug, Folder, Monitor, Search, Square } from "lucide-react";
+import { Bug, Cpu, Folder, Monitor, Plus, Search, Square, UserRound } from "lucide-react";
 
 import { cn } from "@/lib/cn";
+import { browserIsThePlace } from "@/lib/browser-is-the-place";
 import { OpenBotListButton } from "./OpenBotListButton";
 import { COMPACT_BUBBLE, COMPACT_SQUARE } from "@/lib/compact-chip";
 import { t } from "@/lib/i18n";
 import { possessive } from "@/lib/possessive";
-import { stateForBot } from "@/lib/mascot";
+import { isMascotAnimated, stateForBot } from "@/lib/mascot";
 import { useDesktopSurface } from "@/lib/use-surface";
+import { useNarrowViewport } from "@/lib/media-query";
+import { OPEN_MODEL_PICKER_EVENT } from "@/lib/local-models-view";
 import { formatTokens, formatUsd, freshTokens, hasFiniteCost, usageChip, usageReport } from "@/lib/usage";
 import { HEADER_RELOCATION_ORDER, useChatHeaderLayout, type HeaderSlot } from "@/lib/chat-header-layout";
 import { useStore, type AppState, type Bot, type InstanceInfo, type Message } from "@/state/store";
@@ -45,6 +48,7 @@ import { TaskPicker } from "./TaskPicker";
 import { UsagePopover } from "./UsagePopover";
 import { findTask, taskCount } from "@/lib/task-window";
 import { WorkingDots } from "@/components/WorkingIndicator";
+import { useWindowDrag } from "@/hooks/use-window-drag";
 
 export interface EffectiveWorkspace {
   path?: string;
@@ -188,13 +192,25 @@ export function ChatHeader({
   onToggleFind: () => void;
 }) {
   const { state, dispatch } = useStore();
+  const windowDrag = useWindowDrag();
   const headerRef = useRef<HTMLDivElement>(null);
   const moreRef = useRef<HTMLButtonElement>(null);
   const [memoryOpen, setMemoryOpen] = useState(false);
   const desktop = useDesktopSurface();
+  // A phone: the header is a back circle, the bot's name pill and one round
+  // "..." menu. The model, the bot's computer and the bot's profile live in
+  // that menu, along with every control the row would otherwise fold. The
+  // tablet and desktop headers do not change.
+  const phone = useNarrowViewport();
   const workspace = effectiveWorkspace(bot);
   const usageText = usageMenuText(bot, state.instances);
   const task = findTask(bot, bot.threadId);
+
+  const computerLive = Boolean(bot.busy) && bot.browserMounted === true && browserIsThePlace(bot, state.config,
+    state.instances.find(instance => instance.instanceId === bot.modelSelection.instanceId));
+  const computerLabel = computerLive
+    ? t("chatHeader.computerInUse", { label: t("chatHeader.computer") })
+    : t("chatHeader.computer");
 
   // Anything that changes what the header has to fit restarts the ladder at
   // its richest layout, so a shorter name or a settled turn gives relocated
@@ -219,7 +235,10 @@ export function ChatHeader({
   ].join("\u0001");
   const { layout, slots } = useChatHeaderLayout(headerRef, contentKey);
   const twoRow = layout.twoRow;
-  const inHeader = (slot: HeaderSlot) => !slots.has(slot);
+  // On a phone every relocatable slot is in the menu, whatever the measured
+  // layout says; `roleLabel` still folds to its icon in place.
+  const menuSlots = useMemo<ReadonlySet<HeaderSlot>>(() => (phone ? new Set<HeaderSlot>(HEADER_RELOCATION_ORDER) : slots), [phone, slots]);
+  const inHeader = (slot: HeaderSlot) => !menuSlots.has(slot);
 
   const menuItems = useMemo<HeaderMenuItem[]>(() => {
     const byId: Partial<Record<HeaderSlot, HeaderMenuItem>> = {
@@ -243,7 +262,7 @@ export function ChatHeader({
       },
       computer: {
         id: "computer",
-        label: t("chatHeader.computer"),
+        label: computerLabel,
         icon: <Monitor size={16} />,
         checked: state.computerOpen,
         onSelect: () => dispatch({ type: "toggleComputer" }),
@@ -274,15 +293,40 @@ export function ChatHeader({
     };
     // Menu order follows the header's own priority order, so the control that
     // moved most recently is always last in the list.
-    return HEADER_RELOCATION_ORDER.filter((slot) => slots.has(slot))
+    const relocated = HEADER_RELOCATION_ORDER.filter((slot) => menuSlots.has(slot))
       .map((slot) => byId[slot])
       .filter((item): item is HeaderMenuItem => Boolean(item));
+    if (!phone) return relocated;
+    // The phone header drops the profile click target, the model chip and the
+    // computer button; each is an entry here instead. The computer entry is
+    // already in `relocated` (it is a slot), so it is not added twice.
+    const profile: HeaderMenuItem = {
+      id: "profile",
+      label: t("settings.bot.header.title"),
+      description: `Open ${possessive(bot.name)} profile`,
+      icon: <UserRound size={16} />,
+      onSelect: () => dispatch({ type: "toggleSettings", open: true }),
+    };
+    const model: HeaderMenuItem = {
+      id: "model",
+      label: t("settings.bot.model.title"),
+      description: bot.modelSelection.model,
+      icon: <Cpu size={16} />,
+      // The picker stays mounted (hidden chip) and opens on this event, so
+      // the model list, search and engine switch are the same ones as ever.
+      onSelect: () => window.dispatchEvent(new CustomEvent(OPEN_MODEL_PICKER_EVENT)),
+    };
+    return [profile, model, ...relocated];
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    slots,
+    menuSlots,
+    phone,
+    bot.name,
+    bot.modelSelection.model,
     usageText,
     state.inspectorOpen,
     state.computerOpen,
+    computerLabel,
     findOpen,
     onToggleFind,
     dispatch,
@@ -293,19 +337,34 @@ export function ChatHeader({
     bot.threadId,
   ]);
 
+  const avatar = (
+    <BotAvatar
+      bot={bot}
+      state={stateForBot({ ...bot, messages })}
+      size={28}
+      motion={mascotMotion?.kind ?? "none"}
+      motionKey={mascotMotion?.nonce ?? 0}
+      animated={isMascotAnimated({ busy: bot.busy }, mascotMotion?.kind)}
+    />
+  );
+
   return (
     <div
       ref={headerRef}
       data-chat-header
       data-chat-header-rows={twoRow ? "2" : "1"}
+      data-chat-header-phone={phone ? "" : undefined}
       // The stamp `chip-trim:`/`chip-trim:` utilities answer to
       // (src/styles.css): chips fold to icons when the LAYOUT says so, not at
       // a container breakpoint.
       data-chat-header-chips={layout.chips}
-      data-chat-header-relocated={slots.size}
+      data-chat-header-relocated={menuSlots.size}
+      {...windowDrag}
       className={cn(
         "flex items-center gap-2 px-5 py-3",
         twoRow ? "flex-wrap" : "flex-nowrap",
+        // The menu's ModelPicker anchors to the header's bottom edge.
+        phone && "relative",
         // Below md the drawer button is this row's first item, so the row
         // starts nearer the edge; the desktop keeps its px-5.
         "pl-3 md:pl-5",
@@ -321,8 +380,18 @@ export function ChatHeader({
           from meaning zero. */}
       {/* Phones only: the way into the bot list, on this row so it is centred
           with the avatar, the name and the ••• (OpenBotListButton.tsx). */}
-      <OpenBotListButton />
-      <div className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-1.5 py-1 chip-trim:gap-1.5 chip-trim:px-0">
+      <OpenBotListButton circle={phone} />
+      <div
+        data-chat-header-pill={phone ? "" : undefined}
+        className={cn(
+          "flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-1.5 py-1 chip-trim:gap-1.5 chip-trim:px-0",
+          // Phone: the identity is a pill, and it is a label, not a button.
+          phone && "h-9 gap-2 rounded-full border border-hairline bg-card px-2 py-0 chip-trim:gap-2 chip-trim:px-2",
+        )}
+      >
+        {phone ? (
+          <span className="flex size-7 shrink-0 items-center justify-center">{avatar}</span>
+        ) : (
         <button
           onClick={() => dispatch({ type: "toggleSettings", open: true })}
           onPointerEnter={preloadBotSettings} onFocus={preloadBotSettings} onPointerDown={preloadBotSettings}
@@ -335,14 +404,9 @@ export function ChatHeader({
           title="Bot settings"
           aria-label={`Open ${possessive(bot.name)} profile`}
         >
-          <BotAvatar
-            bot={bot}
-            state={stateForBot({ ...bot, messages })}
-            size={28}
-            motion={mascotMotion?.kind ?? "none"}
-            motionKey={mascotMotion?.nonce ?? 0}
-          />
+          {avatar}
         </button>
+        )}
         {/* min-w-0 but NOT flex-1: the cluster around it already takes the
             leftover width, so leaving the name at its natural size keeps the
             role badge and the working dots beside the name instead of pushing
@@ -351,9 +415,11 @@ export function ChatHeader({
           <RenameTitle
             value={bot.name}
             onCommit={(name) => dispatch({ type: "updateBot", botId: bot.id, patch: { name } })}
-            onActivate={() => dispatch({ type: "toggleSettings", open: true })}
-            showEditButton
-            className="truncate text-[15px] font-semibold text-ink"
+            // A phone opens the profile from the ... menu, so the name is not a second way in.
+            onActivate={phone ? undefined : () => dispatch({ type: "toggleSettings", open: true })}
+            showEditButton={!phone}
+            // block on a phone: with no profile button the name is a plain span, and only a block clips.
+            className={cn("truncate text-[15px] font-semibold text-ink", phone && "block")}
             inputClassName="max-w-[220px] rounded bg-inset px-1.5 py-0.5 text-[15px] font-semibold"
             // 40px of shrink-0 pencil beside a name that has no width left to
             // give. Rename is the Name field in the agent profile, which the
@@ -401,11 +467,34 @@ export function ChatHeader({
             pickers' own roots shrink to it so their labels truncate instead
             of holding their full width; the roots stay `relative` and keep
             their menus anchored exactly as before. */}
-        <div data-header-labelled="task" className="flex min-w-0 *:min-w-0">
+        {/* New chat beside the chip, in the chip's track: one tap to start fresh (chats design 2.6). On one row it
+            folds away once the chips trim (chip-trim), so its width never pushes a long name onto a second row that a
+            short name would not get (chat-header.human.spec, "a short name keeps the controls that a long one
+            costs"); the list's own New chat row and Mod+Shift+N remain. On two rows (a phone) the name has its own
+            row, so the button stays and the chip's label gives way instead. */}
+        <div data-header-labelled="task" className="flex min-w-0 items-center *:min-w-0">
           <TaskPicker bot={bot} />
+          <button type="button" aria-label="New chat" title={`New chat (${modShortcut("N", { shift: true })})`}
+            onClick={() => dispatch({ type: "newTask", botId: bot.id })}
+            className={cn("shrink-0 !min-w-fit rounded-md p-1 text-ink-secondary", !twoRow && "chip-trim:hidden",
+              "hover:bg-raised hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus")}>
+            <Plus size={16} aria-hidden="true" />
+          </button>
         </div>
-        <div data-header-labelled="model" className="flex min-w-0 *:min-w-0">
-          <ModelPicker key={`model-${bot.threadId}`} bot={bot} threadId={bot.threadId} />
+        {/* One picker at every width, in the same place in the tree, so a
+            phone turned past md (or a window dragged narrow) keeps an open
+            picker, its search and its focus. On a phone the chip is not
+            drawn: the ... menu's Model entry opens this picker, anchored
+            under the header, and focus comes back to the ... button. */}
+        <div data-header-labelled={phone ? undefined : "model"} className={phone ? "contents" : "flex min-w-0 *:min-w-0"}>
+          <ModelPicker
+            key={`model-${bot.threadId}`}
+            bot={bot}
+            threadId={bot.threadId}
+            hideTrigger={phone}
+            className={phone ? "absolute right-3 top-full" : undefined}
+            returnFocusRef={phone ? moreRef : undefined}
+          />
         </div>
         {inHeader("folder") && <WorkingFolderChip bot={bot} />}
         {inHeader("usage") && <UsageChip bot={bot} />}
@@ -431,15 +520,22 @@ export function ChatHeader({
         {inHeader("computer") && (
           <button
             onClick={() => dispatch({ type: "toggleComputer" })}
-            aria-label={t("chatHeader.computer")}
+            aria-label={computerLabel}
             aria-pressed={state.computerOpen}
             className={cn(
-              "shrink-0 rounded-md p-1.5 hover:bg-raised",
+              "relative shrink-0 rounded-md p-1.5 hover:bg-raised",
               state.computerOpen ? "text-accent" : "text-ink-secondary hover:text-ink",
             )}
             title={t("chatHeader.computerTip")}
           >
             <Monitor size={18} />
+            {computerLive && (
+              <span
+                data-testid="computer-button-live"
+                aria-hidden="true"
+                className="pointer-events-none absolute right-0.5 top-0.5 size-1.5 animate-pulse rounded-full bg-accent motion-reduce:animate-none"
+              />
+            )}
           </button>
         )}
         {inHeader("inspector") && (
@@ -500,6 +596,7 @@ export function ChatHeader({
             label={t("chatHeader.more")}
             menuLabel={t("chatHeader.moreMenu")}
             triggerRef={moreRef}
+            variant={phone ? "phone-more" : "header"}
           />
         )}
       </div>

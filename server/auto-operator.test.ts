@@ -52,14 +52,19 @@ const botState = async (botId: string) => (await api("GET", "/api/bots?messages=
 
 async function readJsonWhenReady<T>(file: string, timeout = 20_000): Promise<T> {
   let parsed: unknown;
-  await expect.poll(() => {
-    try {
-      parsed = withTurnSecrets(JSON.parse(readFileSync(file, "utf8")));
-      return true;
-    } catch {
-      return false;
-    }
-  }, { timeout }).toBe(true);
+  try {
+    await expect.poll(() => {
+      try {
+        parsed = withTurnSecrets(JSON.parse(readFileSync(file, "utf8")));
+        return true;
+      } catch {
+        return false;
+      }
+    }, { timeout }).toBe(true);
+  } catch (error) {
+    // the server's own log at the moment of failure rides along, so a turn that never started says why
+    throw new Error(`${file} never held a complete JSON dump within ${timeout} ms. server stderr (tail):\n${stderr.slice(-4_000)}`, { cause: error });
+  }
   return parsed as T;
 }
 
@@ -155,7 +160,9 @@ posixOnly("Auto operators created by the Chief still ask the person", () => {
       // The Chief's held turn is what gives create_bot its authority.
       rmSync(claudeDump, { force: true });
       expect((await desktopApi("POST", `/api/bots/${chief.id}/messages`, { text: "__fixture_hold_authority__", threadId: chief.threadId })).status).toBe(202);
-      const chiefTurn = await readJsonWhenReady<{ pid: number; mcpConfig: { mcpServers: { agents: { env: Record<string, string> } } } }>(claudeDump);
+      // The Chief's first turn is a cold start: the auth and version probes and the engine are each a fresh fixture
+      // process, so on a loaded CI shard (1.0.6 CI 40172017933) it can take longer than the 20 s default.
+      const chiefTurn = await readJsonWhenReady<{ pid: number; mcpConfig: { mcpServers: { agents: { env: Record<string, string> } } } }>(claudeDump, 45_000);
       const chiefEnv = chiefTurn.mcpConfig.mcpServers.agents.env;
       expect(chiefEnv.MURAGE_BOT_ID).toBe(chief.id);
 
@@ -219,6 +226,6 @@ posixOnly("Auto operators created by the Chief still ask the person", () => {
       expect((await api("POST", `/api/bots/${operator.id}/respond`, { requestId: card.card.requestId, behavior: "deny" })).status).toBe(200);
       await expect.poll(async () => (await botState(operator.id))?.busy, { timeout: 20_000 }).toBe(false);
     },
-    90_000,
+    150_000,
   );
 });

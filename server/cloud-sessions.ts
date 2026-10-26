@@ -4,18 +4,27 @@ import { createHash, createHmac, createPublicKey, randomBytes, randomUUID, timin
 import type { DatabaseSync } from "node:sqlite";
 import { isIP } from "node:net";
 import { isP256, validBrowserFactor, verifyBrowserAssertion, type BrowserFactor } from "./cloud-home/b1b-webauthn.ts";
-import { doorRefusal, type DoorOutcome } from "./cloud-home/door-log.ts";
+import { doorRefusal, logOwnerFactor, type DoorOutcome } from "./cloud-home/door-log.ts";
 import type { DoorTicketClaims } from "./cloud-home/b1b-identity.ts";
 export type CloudScope = "owner-desktop" | "owner-phone" | "browser" | "service";
 export interface CloudDevice { id: string; account: string; scope: CloudScope; publicKey: string; assertionKey: string; revoked: number;
-  /** True when the device has a saved passkey factor row (cloud_browser_factors). A door-enrolled browser never does. */
-  factor: boolean; addedAt?: number; lastSeenAt?: number }
+  /** The LIVE browser factor kind, or false. A door-enrolled browser without a factor row reads false; a remembered-owner
+   *  row that has expired, been revoked, or whose keyHash no longer matches this device's assertion key also reads false. */
+  factor: false | "passkey" | "remembered-owner"; addedAt?: number; lastSeenAt?: number }
+/** The remembered-owner factor's hard lifetime from the last proof-bearing door entry (R4), and the "strictly after the
+ *  last revoke" margin that keeps a revoke robust to CP/home clock drift (§4.4, §7.2). */
+export const REMEMBERED_OWNER_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+export const REVOKE_SKEW_MS = 5_000;
 export interface PairingInput { account: string; scope: CloudScope; publicKey: string; assertionKey: string; ttl?: number; browserFactor?: BrowserFactor; recovery?: boolean; recoveryId?: string; homeGeneration?: number | null }
 const hash = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
 /** An active device's `bind`: the same sha256 hex of the SPKI DER that a door ticket's `bind` carries. A record with no readable key carries none. */
 function deviceBind(publicKey: unknown): {bind?: string} {
   if (typeof publicKey !== "string" || !publicKey) return {};
   try { return {bind: hash(createPublicKey(publicKey).export({type:"spki",format:"der"}))}; } catch { return {}; }
+}
+/** sha256 hex of the SPKI DER of an assertion public key (the keyHash a remembered-owner factor row stores); undefined when unreadable. */
+function assertionKeyHash(assertionKey: string): string | undefined {
+  try { return hash(createPublicKey(assertionKey).export({type:"spki",format:"der"})); } catch { return undefined; }
 }
 const token = () => randomBytes(32).toString("base64url");
 /** An IPv4 address is one source; IPv6 privacy addresses share their /64. */
@@ -77,6 +86,17 @@ export class CloudSessions {
     const columns = (db.prepare("PRAGMA table_info(cloud_devices)").all() as unknown as {name:string}[]).map(c => c.name);
     if (!columns.includes("addedAt")) db.exec("ALTER TABLE cloud_devices ADD COLUMN addedAt INTEGER NOT NULL DEFAULT 0");
     if (!columns.includes("lastSeenAt")) db.exec("ALTER TABLE cloud_devices ADD COLUMN lastSeenAt INTEGER NOT NULL DEFAULT 0");
+    // The remembered-owner factor (CLOUD-DOOR-OWNER-FACTOR-DESIGN-r3 §3.2). Existing rows read as kind='passkey', expiresAt
+    // NULL: every passkey browser keeps working. In 1.0.5 the watermark table carries only the home-wide bind '*' (R10).
+    const factorColumns = (db.prepare("PRAGMA table_info(cloud_browser_factors)").all() as unknown as {name:string}[]).map(c => c.name);
+    if (!factorColumns.includes("kind")) db.exec("ALTER TABLE cloud_browser_factors ADD COLUMN kind TEXT NOT NULL DEFAULT 'passkey'");
+    if (!factorColumns.includes("issuedAt")) db.exec("ALTER TABLE cloud_browser_factors ADD COLUMN issuedAt INTEGER NOT NULL DEFAULT 0");
+    if (!factorColumns.includes("expiresAt")) db.exec("ALTER TABLE cloud_browser_factors ADD COLUMN expiresAt INTEGER");
+    if (!factorColumns.includes("keyHash")) db.exec("ALTER TABLE cloud_browser_factors ADD COLUMN keyHash TEXT");
+    if (!factorColumns.includes("stepUpAt")) db.exec("ALTER TABLE cloud_browser_factors ADD COLUMN stepUpAt INTEGER");
+    if (!factorColumns.includes("revokedAt")) db.exec("ALTER TABLE cloud_browser_factors ADD COLUMN revokedAt INTEGER");
+    db.exec(`CREATE TABLE IF NOT EXISTS cloud_owner_watermarks (bind TEXT PRIMARY KEY, revokedAt INTEGER NOT NULL);
+      CREATE INDEX IF NOT EXISTS cloud_browser_factors_live ON cloud_browser_factors (device, expiresAt, revokedAt);`);
     // The control plane reads devices/list before every desktop mint: each of its reads walks an index, never the whole table.
     db.exec(`CREATE INDEX IF NOT EXISTS cloud_devices_scope ON cloud_devices (scope);
       CREATE INDEX IF NOT EXISTS cloud_devices_live ON cloud_devices (revoked, account);
@@ -88,8 +108,17 @@ export class CloudSessions {
   activeAccount(): boolean { return !this.db.prepare("SELECT 1 FROM cloud_meta WHERE key='suspended'").get(); }
   device(id: string): CloudDevice | undefined {
     if (!this.activeAccount()) return;
-    const row = this.db.prepare("SELECT cloud_devices.*, EXISTS (SELECT 1 FROM cloud_browser_factors WHERE device=cloud_devices.id) AS factor FROM cloud_devices WHERE id=? AND revoked=0").get(id) as unknown as (Omit<CloudDevice,"factor"> & {factor:number}) | undefined;
-    return row && row.account === this.owner() ? {...row, factor: Boolean(row.factor)} : undefined;
+    const now = this.now();
+    const row = this.db.prepare(`SELECT cloud_devices.*, f.kind AS factorKind, f.keyHash AS factorKeyHash
+      FROM cloud_devices LEFT JOIN cloud_browser_factors f ON f.device=cloud_devices.id AND f.revokedAt IS NULL AND (f.expiresAt IS NULL OR f.expiresAt > ?)
+      WHERE id=? AND revoked=0`).get(now, id) as unknown as (Omit<CloudDevice,"factor"> & {factorKind: string|null; factorKeyHash: string|null}) | undefined;
+    if (!row || row.account !== this.owner()) return;
+    const {factorKind, factorKeyHash, ...device} = row;
+    // The LIVE factor only: a remembered-owner row whose keyHash no longer matches the device's assertion key reads false.
+    let factor: CloudDevice["factor"] = false;
+    if (factorKind === "passkey") factor = "passkey";
+    else if (factorKind === "remembered-owner" && factorKeyHash && factorKeyHash === assertionKeyHash(device.assertionKey)) factor = "remembered-owner";
+    return {...device, factor};
   }
   mint(input: PairingInput): string {
     if (!input.account || input.account.length > 256 || !["owner-desktop","owner-phone","browser","service"].includes(input.scope)) throw new Error("Invalid pairing request");
@@ -148,7 +177,7 @@ export class CloudSessions {
     this.db.prepare("DELETE FROM cloud_code_limits WHERE hash=?").run(codeHash);
     const id = randomUUID();
     this.db.prepare("INSERT INTO cloud_devices (id,account,scope,publicKey,assertionKey,revoked,addedAt,lastSeenAt) VALUES (?,?,?,?,?,0,?,?)").run(id,input.account,input.scope,input.publicKey,input.assertionKey,now,now);
-    if (input.browserFactor) this.db.prepare("INSERT INTO cloud_browser_factors VALUES (?,?)").run(id,JSON.stringify(input.browserFactor));
+    if (input.browserFactor) this.db.prepare("INSERT INTO cloud_browser_factors (device,payload) VALUES (?,?)").run(id,JSON.stringify(input.browserFactor));
     return this.issue(id);
   }
   private pairFactor(input: PairingInput, message: string, signature: string): boolean {
@@ -185,8 +214,11 @@ export class CloudSessions {
     } catch(error) { this.db.prepare("UPDATE cloud_recovery SET state='holding' WHERE id=? AND state='cleaning'").run(id); throw error; }
   }
   revokeAllDevices(): void {
-    this.db.prepare("UPDATE cloud_devices SET revoked=1").run();
-    this.db.exec("DELETE FROM cloud_access; DELETE FROM cloud_challenges; DELETE FROM cloud_codes;");
+    this.tx(() => {
+      this.db.prepare("UPDATE cloud_devices SET revoked=1").run();
+      this.db.exec("DELETE FROM cloud_access; DELETE FROM cloud_challenges; DELETE FROM cloud_codes;");
+      this.watermarkAll(this.now());
+    });
     for (const listener of this.invalidationListeners) listener();
   }
   resumeAccount(): void { this.db.prepare("DELETE FROM cloud_meta WHERE key='suspended'").run(); }
@@ -228,10 +260,11 @@ export class CloudSessions {
     const row = this.db.prepare("SELECT 1 FROM cloud_challenges WHERE id=? AND device=? AND purpose=? AND expires>?").get(challenge,id,purpose,this.now());
     if (!row) return false;
     const message=`murage:${this.environmentId}:${id}:${purpose}:${challenge}:${at}`;
-    const browser=this.db.prepare("SELECT payload FROM cloud_browser_factors WHERE device=?").get(id) as {payload:string}|undefined;
-    // A browser the door enrolled has no factor row, so it can never answer an assertion that needs one.
-    if (factor && d.scope === "browser" && !browser) return false;
-    if (factor && browser) {
+    const browser=this.db.prepare("SELECT payload, kind FROM cloud_browser_factors WHERE device=? AND revokedAt IS NULL").get(id) as {payload:string; kind:string}|undefined;
+    // A browser the door enrolled has no factor row, and a remembered-owner row answers NO factor assertion in 1.0.5 (§5.2,
+    // H1): only a passkey factor can answer one, so either absence refuses before any verify.
+    if (factor && d.scope === "browser" && (!browser || browser.kind !== "passkey")) return false;
+    if (factor && browser && browser.kind === "passkey") {
       try {
         const saved=JSON.parse(browser.payload) as BrowserFactor;
         const counter=verifyBrowserAssertion(d.assertionKey,saved,message,JSON.parse(signature));
@@ -245,10 +278,40 @@ export class CloudSessions {
     if (!this.consumeAssertion(id,challenge,"refresh",at,signature,false)) throw this.refused("Refresh refused", id);
     return this.issue(id);
   }
-  revoke(id: string): void { this.db.prepare("UPDATE cloud_devices SET revoked=1 WHERE id=?").run(id); for (const listener of this.invalidationListeners) listener(id); }
+  /** The home-wide revoke watermark: every revoke writes bind '*' (R10), so issuance and renewal are held until an emailed
+   *  stepUpAt strictly after it, even for a key the home never saw. device() never reads this; live factors run to TTL. */
+  private watermarkAll(now: number): void {
+    this.db.prepare("INSERT INTO cloud_owner_watermarks VALUES ('*',?) ON CONFLICT(bind) DO UPDATE SET revokedAt=max(revokedAt,excluded.revokedAt)").run(now);
+  }
+  /** max(revokedAt WHERE bind=?bind, revokedAt WHERE bind='*', 0). In 1.0.5 only '*' rows exist, so this is the home-wide mark. */
+  watermarkFor(bind: string): number {
+    const row = this.db.prepare("SELECT MAX(revokedAt) AS m FROM cloud_owner_watermarks WHERE bind IN (?, '*')").get(bind) as {m:number|null}|undefined;
+    return row?.m ?? 0;
+  }
+  /** One BEGIN IMMEDIATE: the revoke write AND the watermark upsert commit together, so no crash leaves a device revoked
+   *  with a stale mark (Medium-2). A device revoke (browser only) writes '*'; listeners fire after COMMIT, as today. */
+  revoke(id: string): void {
+    this.tx(() => {
+      const row = this.db.prepare("SELECT scope FROM cloud_devices WHERE id=?").get(id) as {scope:CloudScope}|undefined;
+      this.db.prepare("UPDATE cloud_devices SET revoked=1 WHERE id=?").run(id);
+      if (row?.scope === "browser") this.watermarkAll(this.now());
+    });
+    for (const listener of this.invalidationListeners) listener(id);
+  }
+  /** "Make this browser chat-only": revoke the remembered-owner factor row (the device stays for chat), and write '*'. */
+  revokeOwnerFactor(id: string): void {
+    this.tx(() => {
+      this.db.prepare("UPDATE cloud_browser_factors SET revokedAt=? WHERE device=? AND kind='remembered-owner' AND revokedAt IS NULL").run(this.now(), id);
+      this.watermarkAll(this.now());
+    });
+    for (const listener of this.invalidationListeners) listener(id);
+  }
   revokeAccount(): void {
-    this.db.prepare("INSERT OR REPLACE INTO cloud_meta VALUES ('suspended','1')").run();
-    this.db.exec("DELETE FROM cloud_codes; DELETE FROM cloud_access; DELETE FROM cloud_challenges;");
+    this.tx(() => {
+      this.db.prepare("INSERT OR REPLACE INTO cloud_meta VALUES ('suspended','1')").run();
+      this.db.exec("DELETE FROM cloud_codes; DELETE FROM cloud_access; DELETE FROM cloud_challenges;");
+      this.watermarkAll(this.now());
+    });
     for (const listener of this.invalidationListeners) listener();
   }
 
@@ -302,7 +365,7 @@ export class CloudSessions {
   }
   /** The one browser or computer enrollment: a verified ticket plus the key it was minted for, in one transaction. A refusal
    *  throws a DoorRefusal and changes nothing, so a refused ticket keeps its nonce for the client that holds the bound key. */
-  enterDoor(claims: Pick<DoorTicketClaims,"account"|"nonce"|"expiresAt"|"bind"|"kind"|"pairHold">, ticket: string, device: {deviceId?: string|null; publicKey: string; assertionKey: string; proof: string}): {accessToken: string; deviceId: string; expiresIn: number; scope: CloudScope; outcome: DoorOutcome; reason: "first-device"|"known-device"|"device-added"} {
+  enterDoor(claims: Pick<DoorTicketClaims,"account"|"nonce"|"expiresAt"|"bind"|"kind"|"pairHold"|"stepUpAt"|"proof">, ticket: string, device: {deviceId?: string|null; publicKey: string; assertionKey: string; proof: string; assertionProof?: string}): {accessToken: string; deviceId: string; expiresIn: number; scope: CloudScope; outcome: DoorOutcome; reason: "first-device"|"known-device"|"device-added"; owner: boolean; ownerUntil?: number} {
     return this.tx(() => {
       const now = this.now(), refused = "Door refused";
       if (!this.activeAccount()) throw doorRefusal("account_suspended", refused);
@@ -318,8 +381,14 @@ export class CloudSessions {
       } catch { throw doorRefusal("device_key_invalid", refused); }
       if (hash(publicDer) !== claims.bind) throw doorRefusal("device_bind_refused", refused);
       if (!signed(device.publicKey,`murage-door-v2:${ticket}`,device.proof)) throw doorRefusal("device_proof_refused", refused);
+      // §4.2: the assertion key is proved once, at enter. A browser body without it is body_malformed; a desktop body may omit
+      // it in 1.0.5 (R7) but it is verified when present. Any present proof must be signed by the posted assertion key.
+      if (browser && !device.assertionProof) throw doorRefusal("body_malformed", refused);
+      if (device.assertionProof && !signed(device.assertionKey,`murage-door-v2-assertion:${ticket}`,device.assertionProof)) throw doorRefusal("assertion_proof_refused", refused);
       const scope: CloudScope = browser ? "browser" : "owner-desktop";
-      const known = this.db.prepare("SELECT id FROM cloud_devices WHERE account=? AND publicKey=? AND scope=? AND revoked=0").get(claims.account,device.publicKey,scope) as {id:string}|undefined;
+      const known = this.db.prepare("SELECT id,assertionKey FROM cloud_devices WHERE account=? AND publicKey=? AND scope=? AND revoked=0").get(claims.account,device.publicKey,scope) as {id:string;assertionKey:string}|undefined;
+      // A known device must post the assertion key already on file (§4.2).
+      if (known && known.assertionKey !== device.assertionKey) throw doorRefusal("device_key_invalid", refused);
       let id: string, outcome: DoorOutcome, reason: "first-device"|"known-device"|"device-added";
       if (known) { id = known.id; outcome = "signed_in_known"; reason = "known-device"; }
       else {
@@ -338,13 +407,43 @@ export class CloudSessions {
       }
       this.db.prepare("DELETE FROM cloud_door_nonces WHERE expires<=?").run(now);
       try { this.db.prepare("INSERT INTO cloud_door_nonces VALUES (?,?)").run(claims.nonce,claims.expiresAt+60_000); } catch { throw doorRefusal("ticket_reused", refused); }
-      return {...this.issue(id), outcome, reason};
+      // §4.4: a browser ticket with CP proof, past the watermark test, issues or renews the remembered-owner factor. Compare
+      // stepUpAt, never issuedAt; after any revoke only an emailed code issues; a passkey row is never replaced; no path clears revokedAt.
+      if (browser && (claims.proof === "email" || claims.proof === "factor")) {
+        const mark = this.watermarkFor(claims.bind);
+        const fresh = claims.stepUpAt > mark + REVOKE_SKEW_MS;
+        const allowedKind = mark === 0 || claims.proof === "email";
+        const existingKind = (this.db.prepare("SELECT kind FROM cloud_browser_factors WHERE device=?").get(id) as {kind:string}|undefined)?.kind;
+        if (!fresh) logOwnerFactor("owner_factor_withheld", "stale_proof");
+        else if (!allowedKind) logOwnerFactor("owner_factor_withheld", "proof_kind_after_revoke");
+        else if (existingKind !== "passkey") {
+          const keyHash = assertionKeyHash(device.assertionKey);
+          const payload = JSON.stringify({kind:"remembered-owner", keyHash, proof:claims.proof, stepUpAt:claims.stepUpAt, ticketNonce:claims.nonce});
+          this.db.prepare("INSERT OR REPLACE INTO cloud_browser_factors (device,payload,kind,issuedAt,expiresAt,keyHash,stepUpAt,revokedAt) VALUES (?,?,?,?,?,?,?,NULL)")
+            .run(id, payload, "remembered-owner", now, now + REMEMBERED_OWNER_TTL_MS, keyHash ?? null, claims.stepUpAt);
+          logOwnerFactor(existingKind === "remembered-owner" ? "owner_factor_renewed" : "owner_factor_issued");
+        }
+      }
+      const factorRow = this.db.prepare("SELECT kind,expiresAt FROM cloud_browser_factors WHERE device=? AND revokedAt IS NULL AND (expiresAt IS NULL OR expiresAt > ?)").get(id, now) as {kind:string; expiresAt:number|null}|undefined;
+      const ownerBrowser = Boolean(factorRow && (factorRow.kind === "passkey" || factorRow.kind === "remembered-owner"));
+      const ownerUntil = typeof factorRow?.expiresAt === "number" ? factorRow.expiresAt : undefined;
+      return {...this.issue(id), outcome, reason, owner: ownerBrowser, ...(ownerUntil !== undefined ? {ownerUntil} : {})};
     });
   }
-  /** The unrevoked owner devices, for the home's device list. `keyHash` is the digest a ticket's `bind` carries. */
-  listDevices(): {id: string; scope: CloudScope; addedAt: number; lastSeenAt: number; keyHash: string; bind?: string}[] {
-    const rows = this.db.prepare("SELECT id,scope,publicKey,addedAt,lastSeenAt FROM cloud_devices WHERE revoked=0 AND account=? AND scope!='service' ORDER BY addedAt,id").all(this.owner() ?? "") as unknown as {id:string;scope:CloudScope;publicKey:string;addedAt:number;lastSeenAt:number}[];
-    return rows.map(r => ({id:r.id,scope:r.scope,addedAt:r.addedAt,lastSeenAt:r.lastSeenAt,keyHash:hash(createPublicKey(r.publicKey).export({type:"spki",format:"der"})),...deviceBind(r.publicKey)}));
+  /** The unrevoked owner devices, for the home's device list. `keyHash` is the digest a ticket's `bind` carries; `factor`
+   *  and `factorExpiresAt` drive the "Chat only" / "Owner until <date>" rows and the "Make chat-only" action (§7.4). */
+  listDevices(): {id: string; scope: CloudScope; addedAt: number; lastSeenAt: number; keyHash: string; bind?: string; factor: "passkey"|"remembered-owner"|null; factorExpiresAt?: number}[] {
+    const now = this.now();
+    const rows = this.db.prepare(`SELECT d.id,d.scope,d.publicKey,d.assertionKey,d.addedAt,d.lastSeenAt, f.kind AS factorKind, f.keyHash AS factorKeyHash, f.expiresAt AS factorExpiresAt
+      FROM cloud_devices d LEFT JOIN cloud_browser_factors f ON f.device=d.id AND f.revokedAt IS NULL AND (f.expiresAt IS NULL OR f.expiresAt > ?)
+      WHERE d.revoked=0 AND d.account=? AND d.scope!='service' ORDER BY d.addedAt,d.id`).all(now, this.owner() ?? "") as unknown as {id:string;scope:CloudScope;publicKey:string;assertionKey:string;addedAt:number;lastSeenAt:number;factorKind:string|null;factorKeyHash:string|null;factorExpiresAt:number|null}[];
+    return rows.map(r => {
+      let factor: "passkey"|"remembered-owner"|null = null;
+      if (r.factorKind === "passkey") factor = "passkey";
+      else if (r.factorKind === "remembered-owner" && r.factorKeyHash && r.factorKeyHash === assertionKeyHash(r.assertionKey)) factor = "remembered-owner";
+      return {id:r.id,scope:r.scope,addedAt:r.addedAt,lastSeenAt:r.lastSeenAt,keyHash:hash(createPublicKey(r.publicKey).export({type:"spki",format:"der"})),...deviceBind(r.publicKey),factor,
+        ...(factor === "remembered-owner" && typeof r.factorExpiresAt === "number" ? {factorExpiresAt:r.factorExpiresAt} : {})};
+    });
   }
   /** True once any full-scope device (desktop or phone) has ever enrolled on this home, revoked ones included: the control plane
    *  reads it from devices/list to answer a desktop Connect that needs a pair hold before it mints. */
