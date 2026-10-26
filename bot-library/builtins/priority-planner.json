@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Priority Planner",
     "tagline": "A realistic week with three outcomes and room to finish them",
-    "summary": "Focus prepares a weekly plan built around three outcomes. Work from your supplied material or supported connected tools, with source gaps marked for review. For a general decision discussion, use Advisor. For persistent project records, use Planning with Files. For broad operations coordination, use Ops.",
+    "summary": "Focus prepares a weekly plan built around three outcomes.",
     "category": "Front office",
     "author": {
       "name": "Ferrox Labs",
@@ -60,7 +60,8 @@
         "title": "Priority Planner",
         "description": "Focus prepares a weekly plan built around three outcomes. Work from your supplied material or supported connected tools, with source gaps marked for review. For a general decision discussion, use Advisor. For persistent project records, use Planning with Files. For broad operations coordination, use Ops.",
         "appearance": {
-          "color": "cyan"
+          "color": "cyan",
+          "mascotBody": "circle"
         },
         "skills": [
           "eisenhower-matrix",

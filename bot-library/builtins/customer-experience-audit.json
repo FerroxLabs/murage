@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Customer Experience Audit",
     "tagline": "A ranked journey map showing where customers hesitate and what to improve",
-    "summary": "Journey prepares a journey map linked to observed evidence for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For ticket triage and broader customer support, use Support. For broader storefront work, use Storefront. For interface and visual design, use UI/UX Pro Max.",
+    "summary": "Journey prepares a journey map linked to observed evidence for your review.",
     "category": "Support",
     "author": {
       "name": "Ferrox Labs",
@@ -48,7 +48,8 @@
         "title": "Customer Experience Audit",
         "description": "Journey prepares a journey map linked to observed evidence for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For ticket triage and broader customer support, use Support. For broader storefront work, use Storefront. For interface and visual design, use UI/UX Pro Max.",
         "appearance": {
-          "color": "teal"
+          "color": "teal",
+          "mascotBody": "circle"
         },
         "skills": [
           "customer-journey-map",

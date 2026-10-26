@@ -266,6 +266,8 @@ const DISPATCH: Record<string, Dispatch> = {
   // Runs on OpenClaw's own tools and approvals (no Murage mounts), but the framed
   // turn text still reaches the bridge as the ACP prompt, so it is observed here.
   openclawAgent: acp("openclawAgent"),
+  // Signed in by a key in the environment (the settings file is never opened then).
+  clineAgent: acp("clineAgent", {}, scratch => ({ HOME: scratch, CLINE_API_KEY: "cline-fixture-key" })),
   opencodeGo: { ...acp("opencodeGo", {}, scratch => ({ HOME: scratch, XDG_DATA_HOME: scratch, OPENCODE_API_KEY: "opencode-fixture-key", FAKE_ACP_MODELS: "opencode/fixture-model" })),
     turn: { model: "opencode/fixture-model" } },
   antigravityAgent: {

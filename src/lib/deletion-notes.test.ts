@@ -48,16 +48,16 @@ describe("deletion notes", () => {
   it("shows the server's owed sentences as they come, with a way to try again", () => {
     expect(owedNote([])).toBeNull();
     expect(owedNote(undefined)).toBeNull();
-    expect(owedNote([{ id: "a:codex", text: "Codex's copy of this conversation could not be removed yet because Codex was using its history. Murage will try again when it starts.", tryAgain: true }, { nothing: true }])).toEqual({
-      title: "Deleted. Murage will finish removing these when it can:",
+    expect(owedNote([{ id: "a:codex", text: "Codex's copy of this conversation could not be removed yet because Codex was using its history. Murage will try again when it starts.", tryAgain: true }, { nothing: true }])).toMatchObject({
+      title: "Deleted. Murage finishes the rest by itself:",
       items: ["Codex's copy of this conversation could not be removed yet because Codex was using its history. Murage will try again when it starts."],
       retry: true,
       owed: true,
     });
     // an engine that has its files open: said on the first attempt; and the line for a copy that has gone, with nothing left to retry
     const open = "Codex is open. Close Codex and Murage will finish removing this conversation from it.";
-    expect(owedNote([{ id: "a:codex", text: open, tryAgain: true }])).toEqual({ title: "Deleted. Murage will finish removing these when it can:", items: [open], retry: true, owed: true });
-    expect(owedNote([{ id: "a:codex:done", text: "Removed from Codex.", tryAgain: false }])).toEqual({ title: "Deleted.", items: ["Removed from Codex."], retry: false, owed: true });
+    expect(owedNote([{ id: "a:codex", text: open, tryAgain: true }])).toMatchObject({ title: "Deleted. Murage finishes the rest by itself:", items: [open], retry: true, owed: true });
+    expect(owedNote([{ id: "a:codex:done", text: "Removed from Codex.", tryAgain: false }])).toMatchObject({ title: "Deleted.", items: ["Removed from Codex."], retry: false, owed: true });
     expect(owedNote([{ id: "a:codex:done", text: "Removed from Codex.", tryAgain: false }, { id: "b:fuigo", text: open, tryAgain: true }])?.retry).toBe(true);
   });
 

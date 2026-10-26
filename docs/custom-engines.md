@@ -136,6 +136,17 @@ instance at it:
   asks, the request becomes a normal approval card in chat.
 - Multiple instances are fine, one per agent.
 
+### Cline
+
+Cline has its own engine (`"driver": "clineAgent"`), so you do not need a
+`customAcp` entry for it. Install `cline` so it is on your PATH, sign in once in
+a terminal with `cline auth`, then pick Cline for a bot. Murage always starts it
+as `cline --acp --auto-approve false`, so Murage's approval levels decide what
+it may do, and it runs on the provider and model you chose in `cline auth`.
+Murage reads only the selected provider from Cline's saved settings
+(`~/.cline/data/settings/providers.json`), hands a saved key to the Cline
+process alone, and never stores it.
+
 ## Notes
 
 - `config.json` is written with mode 0600; values in `environment` are stored

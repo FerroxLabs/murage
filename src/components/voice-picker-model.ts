@@ -5,7 +5,7 @@
 // the keyboard, and each row's preview. Kept pure so a node test can run it.
 //
 // The picker takes whatever list GET /api/tts/voices sends. Today that is
-// the static FLUX_VOICES/XAI_VOICES rows; if Flux ships its own voice list,
+// the static FLUX_VOICES/XAI_VOICES/FLUX_ELEVEN_VOICES rows; if Flux ships its own voice list,
 // the server can send that instead and nothing here changes. A row needs an
 // id and a label; description, gender and accent are used when present.
 
@@ -21,8 +21,24 @@ export interface PickerVoice {
   gender?: "female" | "male" | "neutral";
   /** Where a list says it outright; otherwise read from the description. */
   accent?: string;
-  provider?: "openai" | "grok";
+  provider?: "openai" | "grok" | "elevenlabs";
 }
+
+/** How each voice source is named where one list mixes them. */
+export const SOURCE_LABEL = { grok: "Grok", openai: "OpenAI", elevenlabs: "ElevenLabs (via Flux)" } as const;
+export type VoiceSource = keyof typeof SOURCE_LABEL;
+const SOURCES = ["grok", "openai", "elevenlabs"] as const;
+
+/** What GET /api/tts/voices says about Flux's ElevenLabs voices on this key
+ *  (server/tts/index.ts fluxElevenStatus). */
+export type FluxElevenStatus = "on" | "notOnKey" | "locked" | "unchecked" | "none";
+/** The line under the picker when the ElevenLabs voices are not in the list,
+ *  each saying what to do; "Check again" follows it. */
+export const FLUX_ELEVEN_NOTE: Partial<Record<FluxElevenStatus, string>> = {
+  notOnKey: "ElevenLabs voices aren't available on this Flux key, so they're not in this list. A Flux key that includes them adds them here.",
+  locked: "ElevenLabs voices are locked on this Flux account, so they're not in this list. Once Flux has voice switched on for the account, check again.",
+  unchecked: "Couldn't check which ElevenLabs voices this Flux key can use, so they're not in this list yet.",
+};
 
 export type GenderFilter = "all" | "female" | "male" | "neutral";
 export interface VoiceFilter {
@@ -30,6 +46,8 @@ export interface VoiceFilter {
   gender: GenderFilter;
   /** "all", or one of pickerFilters().accents */
   accent: string;
+  /** "all" (or left out), or one of pickerFilters().sources */
+  source?: "all" | VoiceSource;
 }
 
 const GENDERS = ["female", "male", "neutral"] as const;
@@ -37,10 +55,11 @@ const GENDERS = ["female", "male", "neutral"] as const;
  *  through `accent`. */
 const KNOWN_ACCENTS = new Set(["American", "British", "Australian", "Irish", "Scottish", "Indian", "Canadian", "South African", "New Zealand"]);
 
-/** Grok voices first (they are what a bot starts with), then the rest;
- *  alphabetical by the name Murage shows within each. */
+/** Grok voices first (they are what a bot starts with), then OpenAI's, then
+ *  ElevenLabs', each source kept together; alphabetical by the name Murage
+ *  shows within each. */
 export function sortVoices<T extends PickerVoice>(voices: T[]): T[] {
-  const rank = (v: PickerVoice) => (v.provider === "grok" ? 0 : 1);
+  const rank = (v: PickerVoice) => (v.provider === "grok" ? 0 : v.provider === "elevenlabs" ? 2 : 1);
   return [...voices].sort((a, b) => rank(a) - rank(b) || a.label.localeCompare(b.label));
 }
 
@@ -51,11 +70,13 @@ export function voiceAccent(voice: PickerVoice): string | undefined {
 }
 
 /** The filters worth showing for this list: a gender filter only when the
- *  list says genders, an accent filter only when there are two or more. */
-export function pickerFilters(voices: PickerVoice[]): { genders: Array<(typeof GENDERS)[number]>; accents: string[] } {
+ *  list says genders, an accent filter only when there are two or more, a
+ *  source filter only when the list mixes sources. */
+export function pickerFilters(voices: PickerVoice[]): { genders: Array<(typeof GENDERS)[number]>; accents: string[]; sources: VoiceSource[] } {
   const genders = GENDERS.filter((g) => voices.some((v) => v.gender === g));
   const accents = [...new Set(voices.map(voiceAccent).filter((a): a is string => Boolean(a)))].sort();
-  return { genders, accents: accents.length > 1 ? accents : [] };
+  const sources = SOURCES.filter((s) => voices.some((v) => v.provider === s));
+  return { genders, accents: accents.length > 1 ? accents : [], sources: sources.length > 1 ? sources : [] };
 }
 
 export function filterVoices<T extends PickerVoice>(voices: T[], filter: VoiceFilter): T[] {
@@ -63,6 +84,7 @@ export function filterVoices<T extends PickerVoice>(voices: T[], filter: VoiceFi
   return voices.filter((v) => {
     if (filter.gender !== "all" && v.gender !== filter.gender) return false;
     if (filter.accent !== "all" && voiceAccent(v) !== filter.accent) return false;
+    if (filter.source && filter.source !== "all" && v.provider !== filter.source) return false;
     if (!words.length) return true;
     const text = `${v.label} ${v.description ?? ""} ${v.id}`.toLowerCase();
     return words.every((w) => text.includes(w));

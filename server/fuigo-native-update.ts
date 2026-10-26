@@ -110,6 +110,8 @@ export const probeNativeFuigo: FuigoProbe = async (cli, expectedVersion, scratch
     // This random value belongs only to a synthetic local model, never a service.
     env.MURAGE_FUIGO_PROBE_KEY = randomUUID();
     env.FUIGO_TELEMETRY_ENABLED = "false";
+    // Fuigo 1.0.32 refreshes subscription model lists at startup unless this is set; the probe stays local.
+    env.FUIGO_DISABLE_MODEL_REFRESH = "1";
     await writeFile(join(env.FUIGO_HOME!, "config.toml"), `[features]\nremote_fetch = false\n\n[model_providers.murage_native_probe]\nbase_url = "http://127.0.0.1:9/v1"\ncontext_window = 8192\nenv_key = "MURAGE_FUIGO_PROBE_KEY"\napi_backend = "chat_completions"\n\n[model.murage_native_probe]\nmodel = "murage-native-probe"\nmodel_provider = "murage_native_probe"\n`, { mode: 0o600, flag: "wx" });
     isolation = await createFuigoIsolation(cli, home, env);
     const { command, prefix } = isolation;

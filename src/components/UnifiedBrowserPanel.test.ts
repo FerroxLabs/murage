@@ -3,13 +3,19 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { BROWSER_SANDBOX_ENABLE_CODE, BrowserNotRunningNotice, BrowserPanelAlerts, BrowserRestartNotice, BrowserSandboxEnable, browserChoicePatch, MY_CHROME, MyChromeConsent, ProtectedBrowserNotice } from "./UnifiedBrowserPanel";
+import { BROWSER_SANDBOX_ENABLE_CODE, BrowserNotRunningNotice, BrowserPanelAlerts, BrowserRestartNotice, BrowserSandboxEnable, browserChoicePatch, MY_BROWSER, MY_CHROME, MyChromeConsent, ProtectedBrowserNotice, USE_MY_CHROME_PATCH, UserChromeRetryNotice, WAITING_FOR_CHROME } from "./UnifiedBrowserPanel";
 import { LINUX_SANDBOX_ENABLE_CODE } from "../../server/browser-sandbox";
 
 describe("Use my Chrome choice", () => {
   it("asks before attaching, and changes nothing until confirmed", () => {
     expect(browserChoicePatch({}, MY_CHROME)).toBeNull();
     expect(browserChoicePatch({ useMyChrome: true }, MY_CHROME)).toEqual({});
+    // One choice since 1.0.7, whichever route the bot is on.
+    expect(browserChoicePatch({ useMyChrome: true, browserTransport: "extension" }, MY_CHROME)).toEqual({});
+    expect(browserChoicePatch({}, MY_BROWSER)).toBeNull();
+  });
+  it("lets the server pick Murage for Chrome or remote debugging", () => {
+    expect(USE_MY_CHROME_PATCH).toEqual({ useMyChrome: true, browserTransport: "auto" });
   });
   it("switching away from my Chrome turns the opt-in off along with the new profile", () => {
     expect(browserChoicePatch({ useMyChrome: true }, "")).toEqual({ useMyChrome: false, browserProfile: null });
@@ -18,10 +24,9 @@ describe("Use my Chrome choice", () => {
   });
   it("says what it means and what to do, in plain words, at the moment of choosing", () => {
     const html = renderToStaticMarkup(createElement(MyChromeConsent, { botName: "Moss", pending: false, onConfirm: () => {}, onCancel: () => {} }));
-    expect(html).toContain("Moss will act inside your own Chrome, signed in as you, and can see your open tabs.");
-    expect(html).toContain("chrome://inspect/#remote-debugging");
-    expect(html).toContain("Chrome does not restart and your windows stay open");
-    expect(html).toContain("Only one bot can use your Chrome at a time");
+    expect(html).toContain("Moss works in your Chrome, signed in as you, in a tab of its own.");
+    expect(html).toContain("Murage connects through Murage for Chrome when it is installed, and shows you one step if it is not.");
+    expect(html).not.toContain("—");
     expect(html).toContain(">Use my Chrome</button>");
     expect(html).toContain(">Cancel</button>");
   });
@@ -68,11 +73,23 @@ describe("a refused browser choice", () => {
     expect(refused).toContain("setConfirmMyChrome(false)");
     expect(refused).toContain("setRefusal(");
   });
-  it("closes the Use my browser consent too when that choice is refused", () => {
-    // A failed extension opt-in left the Set up my browser dialog stuck open.
+  it("never locks the picker while the owner holds control: it returns control, then switches", () => {
+    // 1.0.6: the Profile picker was disabled while held, and Return to bot could
+    // be refused as a stale generation, so the owner could not leave their Chrome.
     const source = readFileSync(fileURLToPath(new URL("./UnifiedBrowserPanel.tsx", import.meta.url)), "utf8");
+    const select = source.slice(source.indexOf('aria-label="Browser profile"'));
+    expect(select.slice(0, select.indexOf("className"))).not.toContain("status?.held");
     const choose = source.slice(source.indexOf("const chooseBrowser = "), source.indexOf("const action = "));
-    expect(choose.slice(choose.indexOf("catch"))).toContain("setConfirmMyBrowser(false)");
+    expect(choose.indexOf('action: "release"')).toBeGreaterThan(-1);
+    expect(choose.indexOf('action: "release"')).toBeLessThan(choose.indexOf('method: "PATCH"'));
+    expect(source).not.toContain("Use my Chrome (remote debugging)");
+  });
+  it("says what the owner's Chrome is waiting for, and offers one Try again", () => {
+    expect(WAITING_FOR_CHROME).toBe("Waiting for Chrome: click Allow in its remote debugging prompt.");
+    const html = renderToStaticMarkup(createElement(UserChromeRetryNotice, { botName: "Sable", pending: false, onRetry: () => {} }));
+    expect(html).toContain("Chrome did not connect.");
+    expect(html).toContain("Sable will also try again on its next step.");
+    expect(html).toContain("Try again");
   });
 });
 

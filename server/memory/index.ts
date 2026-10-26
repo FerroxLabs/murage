@@ -259,11 +259,14 @@ export class MemoryIndex {
   postingsOwed():boolean{return this.postingsBelow()!==null||Boolean(this.db.prepare("SELECT 1 FROM posting_todo LIMIT 1").get());}
   upsert(records: IndexedMemory[]) {
     const deletions=records.filter(row=>row.deleted).length;
+    // a record written again over its own key (an owner's edit, the 1.0.4 number scrub) leaves its old words in the FTS5 segments just as a
+    // deletion does: it owes the same merge (PASTE-CAPTURE-FIX r2.6)
+    let rewritten=0;
     this.db.exec("BEGIN IMMEDIATE");
     try {
       for(const row of records){
         const previous=this.db.prepare("SELECT fts_rowid FROM lexical_keys WHERE id=? AND version=?").get(row.id,row.version);
-        if(previous)this.db.prepare("DELETE FROM lexical WHERE rowid=?").run(previous.fts_rowid);
+        if(previous){this.db.prepare("DELETE FROM lexical WHERE rowid=?").run(previous.fts_rowid);if(!row.deleted)rewritten++;}
         this.db.prepare("DELETE FROM lexical_keys WHERE id=? AND version=?").run(row.id,row.version);
         if(this.ageTables){
           // the second word table (age-index.ts) is kept in step while the fill runs: one row per record there too, at its key
@@ -286,7 +289,7 @@ export class MemoryIndex {
         }
       }
       // The obligation to merge a deletion out of the word index is written in the same transaction as the deletion.
-      if(deletions)this.setMergeOwed(true);
+      if(deletions||rewritten)this.setMergeOwed(true);
       this.db.exec("COMMIT");
     }catch(error){this.rollback();throw error;}
     // A deletion (a forget, or a rolled checkpoint version) leaves the index with its words still in the FTS5 segments until a
@@ -294,7 +297,7 @@ export class MemoryIndex {
     // the stepped maintenance (purgeRolledCheckpoints) pays it in short steps while the helper is idle, and never later than
     // MAINTENANCE_MAX_DEFER_MS under sustained load. (1.0.3 rehearsal 2: a whole-index merge and log truncation per batch with a
     // forget wrote about 47 MB per 16 deletions on the owner's index, 240 MB/min for as long as a drain queued deletions.)
-    if(deletions){this.purge.merging=true;this.deletionGen++;}
+    if(deletions||rewritten){this.purge.merging=true;this.deletionGen++;}
     // The old pages stay in the write-ahead log until it is checkpointed.
     this.checkpointIfLarge();
   }
@@ -350,6 +353,15 @@ export class MemoryIndex {
     this.purge.merging=false;this.purge.since=0;this.mergeStarted=false;this.setMergeOwed(false);
     try{this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");}catch{/* the next checkpoint takes it */}
     return ran;
+  }
+  /** The end of a one-time rewrite of the stored text (the 1.0.4 number scrub, scrub-pass.ts settle): one whole-index merge takes the
+   * old words out of the FTS5 segments (secure_delete zeroes the pages it frees), the merge debt is paid, and the log is truncated. True
+   * when the log was truncated too; false when a reader held it (the caller asks again). Never per batch (the 1.0.3 rehearsal cost). */
+  finishRewrite():boolean{
+    this.db.exec("INSERT INTO lexical(lexical) VALUES('optimize')");
+    if(this.db.prepare("SELECT 1 FROM sqlite_schema WHERE name='lexical_age'").get())this.db.exec("INSERT INTO lexical_age(lexical_age) VALUES('optimize')");
+    this.purge.merging=false;this.purge.since=0;this.mergeStarted=false;this.setMergeOwed(false);
+    try{const result=this.db.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get();return Number(result?.busy??1)===0;}catch{return false;}
   }
   /** Whether the current merge run has opened its incremental merge (the first step is negative, the rest continue it). */
   private mergeStarted=false;
