@@ -16,6 +16,8 @@ export interface AppCard {
   noAuth?: boolean;
   domain: string | null;
   signIn?: SignIn;
+  /** Display names of the groups the app belongs to (Communication, Developer tools). Absent when the service did not say. */
+  categories?: string[];
 }
 
 export type CatalogFallbackReason =
@@ -132,3 +134,73 @@ export function matchesSearch(card: AppCard, query: string): boolean {
 
 /** The long tail's line in the panel. */
 export const NEEDS_OWN_SIGN_IN_SHORT = "Needs your own sign-in details";
+
+// ── categories (item 152) ───────────────────────────────────────────────
+// The catalog is large, so the panel can group it. These are pure helpers; the
+// groups only appear when the service reports categories, and nothing here
+// keeps a hand-written category list. The ranking and section ideas follow
+// OpenMausBot's src/lib/app-catalog.ts (Apache-2.0), see NOTICE.
+
+const categoryKey = (name: string): string => name.trim().toLowerCase();
+
+export interface RankedCategories {
+  /** The most used groups, as many as fit in a row of pills. */
+  inline: string[];
+  /** Everything else, under "More". */
+  more: string[];
+}
+
+/** Groups ranked by how many apps they hold (ties alphabetical), the first
+ *  `inline` as pills and the rest under More. An app counts once per group. */
+export function rankCategories(apps: readonly Pick<AppCard, "categories">[], inline = 5): RankedCategories {
+  const counts = new Map<string, { name: string; count: number }>();
+  for (const app of apps) {
+    const seen = new Set<string>();
+    for (const name of app.categories ?? []) {
+      const key = categoryKey(name);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      const entry = counts.get(key);
+      if (entry) entry.count += 1;
+      else counts.set(key, { name: name.trim(), count: 1 });
+    }
+  }
+  const ranked = [...counts.values()]
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "en"))
+    .map((entry) => entry.name);
+  return { inline: ranked.slice(0, inline), more: ranked.slice(inline) };
+}
+
+export function inCategory(app: Pick<AppCard, "categories">, category: string): boolean {
+  const key = categoryKey(category);
+  return key !== "" && (app.categories ?? []).some((name) => categoryKey(name) === key);
+}
+
+export interface CatalogSection {
+  id: "connected" | "all" | `category:${string}`;
+  /** Absent for the connected and everything sections, which the panel titles itself. */
+  title?: string;
+  apps: AppCard[];
+}
+
+/** Connected apps first, then a short preview of the busiest groups (apps you
+ *  already connected are not repeated there), then everything. Empty sections
+ *  are left out. With no categories at all this is connected + everything. */
+export function catalogSections(
+  apps: readonly AppCard[],
+  connected: ReadonlySet<string>,
+  options: { previews?: number; perPreview?: number } = {},
+): CatalogSection[] {
+  const previews = options.previews ?? 3;
+  const perPreview = options.perPreview ?? 4;
+  const sections: CatalogSection[] = [];
+  const mine = apps.filter((app) => connected.has(app.slug));
+  if (mine.length) sections.push({ id: "connected", apps: mine });
+  const rest = apps.filter((app) => !connected.has(app.slug));
+  for (const category of rankCategories(rest, previews).inline.slice(0, previews)) {
+    const inside = rest.filter((app) => inCategory(app, category)).slice(0, perPreview);
+    if (inside.length) sections.push({ id: `category:${category}`, title: category, apps: inside });
+  }
+  if (apps.length) sections.push({ id: "all", apps: [...apps] });
+  return sections;
+}

@@ -77,7 +77,20 @@ function protectFencedCode(text: string, protect: (value: string) => string): st
 // (?<!\\) keeps an escaped "\$$" out. "\[" and "\(" must not follow a
 // letter, digit or backslash: "C:\Apps\x\(1\).md" is a Windows path with
 // Markdown-escaped parentheses, not math, while "where \(x\) is" still is.
-const MATH = /(?<!\\)\$\$([\s\S]+?)(?<!\\)\$\$|(?<![\\\w])\\\[([\s\S]+?)\\\]|(?<![\\\w])\\\(([^\r\n]+?)\\\)/g;
+//
+// Every body is bounded. A body longer than MAX_TEX_LENGTH (plus the room for
+// padding around it) is never math, and without the bound an opener with no
+// closer made the lazy body walk the whole rest of the text, once per opener:
+// a long document of unclosed "\\[" froze the preview.
+const BODY = MAX_TEX_LENGTH + 64;
+const MATH = new RegExp(
+  `(?<!\\\\)\\$\\$([\\s\\S]{1,${BODY}}?)(?<!\\\\)\\$\\$|(?<![\\\\\\w])\\\\\\[([\\s\\S]{1,${BODY}}?)\\\\\\]|(?<![\\\\\\w])\\\\\\(([^\\r\\n]{1,${BODY}}?)\\\\\\)`,
+  "g",
+);
+/** Text with more openers than this is not scanned for math: the span cap
+ * already leaves everything past MAX_MATH_SPANS as text, and each unclosed
+ * opener costs a bounded scan, so the work stays linear in the text. */
+const MAX_MATH_OPENERS = 2000;
 
 /** True when [start, end) fills its own line(s): only indentation or block
  * quote markers before it, only spaces after it. */
@@ -96,6 +109,7 @@ function aloneOnLine(text: string, start: number, end: number): boolean {
  */
 export function extractMath(text: string): { text: string; spans: MathSpan[] } {
   if (!/\$\$|\\\[|\\\(/.test(text) || RESERVED.test(text)) return { text, spans: [] };
+  if ((text.match(/\$\$|\\\[|\\\(/g)?.length ?? 0) > MAX_MATH_OPENERS) return { text, spans: [] };
   const code: string[] = [];
   const protect = (value: string) => `${CODE_OPEN}${code.push(value) - 1}${CODE_CLOSE}`;
   // fenced blocks first, then inline code spans (a run of N backticks to the

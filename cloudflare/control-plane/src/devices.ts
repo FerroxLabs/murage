@@ -19,13 +19,15 @@ export const HOME_DEVICES_REVOKE = "/api/cloud/devices/revoke";
 
 const SCOPES = ["browser", "owner-desktop", "owner-phone"] as const;
 const homeDevice = z.object({ id: z.string().min(1).max(128), scope: z.enum(SCOPES), addedAt: z.number().int().nonnegative(),
-  lastSeenAt: z.number().int().nonnegative().nullable().optional() }).passthrough();
+  lastSeenAt: z.number().int().nonnegative().nullable().optional(),
+  factor: z.enum(["passkey", "remembered-owner"]).nullable().optional(),
+  factorExpiresAt: z.number().int().nonnegative().nullable().optional() }).passthrough();
 // fullScopeEver: true once any full-scope device ever enrolled at the home (revoked ones included). consumedHoldIds: the pair holds the home
 // spent through consumePairHold, most recent first, capped at 50 (MurageMain contract, 10-15). Both optional: an older image omits them, and
 // then the history (or the consumption) is UNKNOWN, never "none".
 const homeList = z.object({ devices: z.array(homeDevice).max(1000), fullScopeEver: z.boolean().optional(),
   consumedHoldIds: z.array(z.string().min(1).max(128)).max(1000).optional() }).passthrough();
-export type HomeDevices = { devices: { id: string; scope: typeof SCOPES[number]; addedAt: number; lastSeenAt: number | null }[]; fullScopeEver: boolean | null;
+export type HomeDevices = { devices: { id: string; scope: typeof SCOPES[number]; addedAt: number; lastSeenAt: number | null; factor: "passkey" | "remembered-owner" | null; factorExpiresAt: number | null }[]; fullScopeEver: boolean | null;
   consumedHoldIds: string[] | null };
 /** The most consumed hold ids the home reports (and the CP reconciles) per answer. */
 export const CONSUMED_HOLD_IDS_MAX = 50;
@@ -70,7 +72,8 @@ export async function listHomeDevices(env: Env, homeId: string, account: { id: s
   if (!parsed.success) throw new HTTPError(503, "home_unreachable");
   const consumedHoldIds = parsed.data.consumedHoldIds ? parsed.data.consumedHoldIds.slice(0, CONSUMED_HOLD_IDS_MAX) : null;
   if (consumedHoldIds) await reconcileConsumedHolds(env, homeId, consumedHoldIds, Date.now());
-  return { devices: parsed.data.devices.map((d) => ({ id: d.id, scope: d.scope, addedAt: d.addedAt, lastSeenAt: d.lastSeenAt ?? null })),
+  return { devices: parsed.data.devices.map((d) => ({ id: d.id, scope: d.scope, addedAt: d.addedAt, lastSeenAt: d.lastSeenAt ?? null,
+      factor: d.factor ?? null, factorExpiresAt: d.factorExpiresAt ?? null })),
     fullScopeEver: parsed.data.fullScopeEver ?? null, consumedHoldIds };
 }
 
@@ -86,8 +89,12 @@ export async function devicesRoute(request: Request, env: Env, identity: Identit
   if (!session) throw new HTTPError(401, "unauthorized");
   const homeId = (list ?? revoke)![1];
   const now = identity.now();
+  let factorOnly = false;
   if (revoke) {
-    if (!z.strictObject({}).safeParse(await readBoundedJSON(request)).success) throw new HTTPError(400, "invalid_request");
+    // "Make chat-only" sends {factorOnly:true}; a full sign-out sends {} (CLOUD-DOOR-OWNER-FACTOR-DESIGN-r3 §7.1).
+    const revokeBody = z.strictObject({ factorOnly: z.boolean().optional() }).safeParse(await readBoundedJSON(request));
+    if (!revokeBody.success) throw new HTTPError(400, "invalid_request");
+    factorOnly = revokeBody.data.factorOnly === true;
     // The worker's gate asked the step-up first (STEP_UP_PATTERNS); asked again here. The door's reuse is not a proof here.
     if (!(stepUpProof(request) && await stepUpProofValid(request)) && await identity.stepUpNeeded(request, env)) throw new HTTPError(403, "step_up_required");
   }
@@ -113,7 +120,7 @@ export async function devicesRoute(request: Request, env: Env, identity: Identit
   const deviceId = revoke![2];
   const log = (outcome: string) => console.log(JSON.stringify({ message: "home device revoked", homeId, deviceId, outcome, requestId }));
   let res: Response;
-  try { res = await homeManagementCall(env, homeId, account, HOME_DEVICES_REVOKE, { deviceId }, dependencies); }
+  try { res = await homeManagementCall(env, homeId, account, HOME_DEVICES_REVOKE, { deviceId, ...(factorOnly ? { factorOnly: true } : {}) }, dependencies); }
   catch (e) { log(e instanceof HTTPError ? e.code : "error"); throw e; }
   if (res.status === 404) { log("device_not_found"); throw new HTTPError(404, "device_not_found"); }
   if (res.status !== 200) { log("home_unreachable"); throw new HTTPError(503, "home_unreachable"); }

@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { readBrowserSetupCard, type BrowserSetupCardData } from "../shared/browser-setup-card.ts";
 import { isOwnerOrigin, type Store, type BotRecord } from "./store.ts";
 import { murageLine } from "./murage-line.ts";
+import { DRAFT_ONLY_BROWSER_REFUSAL } from "./draft-only.ts";
 type SetupStore = Pick<Store,"keyedCards"|"keyedCardsEverywhere"|"messageById"|"newestMatching"|"appendMessage"|"patchMessage"|"bots"|"groups">;
 export type BrowserSetupStatus = { profiles: {profileId:string;browser:string}[]; bindings: {bindingId?:string;botId:string;threadId:string;profileId:string;state:string}[] };
 type Options = {
@@ -25,6 +26,8 @@ export class BrowserExtensionSetup {
   constructor(options:Options){this.options=options;}
   request(botId:string,threadId:string,reason:string="") {
     const bot=this.options.owner(botId,threadId);if(!bot)refusal("This conversation cannot request browser setup.");
+    // a draft-only bot works without the owner's browser (server/draft-only.ts)
+    if(bot.draftOnly)refusal(DRAFT_ONLY_BROWSER_REFUSAL);
     // Only the owner's own words anchor a browser request: a message of unproven or other origin never does.
     // The newest such line is found from the end of the thread: the work is the rows written since it.
     const ownerMessage=this.options.store.newestMatching(threadId,message=>message.role==='user'&&message.kind==='text'&&Boolean(message.text?.trim())&&(message.origin===undefined||isOwnerOrigin(message.origin)),Number.POSITIVE_INFINITY);
@@ -45,6 +48,8 @@ export class BrowserExtensionSetup {
   private patch(threadId:string,messageId:string,patch:Partial<BrowserSetupCardData>){const {message,setup}=this.card(threadId,messageId);this.options.store.patchMessage(threadId,messageId,{card:{...message.card!,browserSetup:{...setup,...patch}}});}
   async answer(threadId:string,messageId:string,action:'accept'|'decline'|'continue',profileId?:string,browser?:'chrome'|'edge'|'brave') {
     const {message,setup}=this.card(threadId,messageId);if(setup.resumed)return {resumed:true};
+    // an older card for a bot that is draft-only now: nothing connects, before the helper starts
+    if(action!=='decline'&&this.options.owner(setup.botId,threadId)?.draftOnly)refusal(DRAFT_ONLY_BROWSER_REFUSAL);
     // Expired (a restore) or otherwise closed: never continue an old request.
     if(message.card?.answered)refusal("This browser setup request has expired. Ask again.");
     if(this.working.has(setup.requestKey))refusal("Browser setup is already updating.");

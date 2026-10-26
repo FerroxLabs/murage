@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import { isIP } from "node:net";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { CloudSessions, type PairingInput } from "./cloud-sessions.ts";
-import { isOwnerBrowser, setCloudIdentity } from "./cloud-request-identity.ts";
+import { isOwnerBrowser, ownerBrowserScope, setCloudIdentity } from "./cloud-request-identity.ts";
 import { cloudRouteDecision, cloudRouteNeedsBody, cloudSettingsRead } from "./route-policy.ts";
 import { trustedCloudSocket } from "./cloud-home/proxy-socket.ts";
 import { CloudResponseSessions, type CloudResponseBinding } from "./cloud-home/response-sessions.ts";
@@ -112,7 +112,7 @@ export function createCloudRequestAuth(options: CloudAuthOptions) {
         && Boolean(req.socket.localAddress && req.socket.remoteAddress)
         && [req.socket.localAddress!, req.socket.remoteAddress!].every(address =>
           address === "::1" || address === "::ffff:127.0.0.1" || (isIP(address) === 4 && address.startsWith("127.")));
-      const scope = isOwnerBrowser(device) ? "owner-browser" as const : device?.scope ?? (localService ? "service" : "anonymous");
+      const scope = (device ? ownerBrowserScope(device) : undefined) ?? (localService ? "service" : "anonymous");
       const management = method === "POST" && ["/api/cloud/stop","/api/cloud/drain","/api/cloud/revoke-sessions","/api/cloud/account/resume","/api/cloud/recovery/hold","/api/cloud/devices/list","/api/cloud/devices/revoke"].includes(path);
       const doorRoute = doorPath !== undefined;
       // A paired device lists and forgets itself; anonymous callers reach the handler only to be refused there.
@@ -127,6 +127,8 @@ export function createCloudRequestAuth(options: CloudAuthOptions) {
       if (cloudRouteNeedsBody(method,path)) {
         raw=await rawBody(req,path.startsWith("/api/cloud/") ? 1_048_576 : 12*1024*1024); body=raw.length ? JSON.parse(raw.toString("utf8")) : {};
         cloudBodies.set(req,{body,bytes:raw.length});
+        // The device was resolved before the body arrived: it must still be signed in once the body is complete.
+        if (device && sessions.resolve(access)?.id !== device.id) { reply(res,403,{error:cloudHomeCopy.signInRequestRefused}); return true; }
       }
       if(options.executionOpen && !options.executionOpen() && !["GET","HEAD","OPTIONS"].includes(method) && /^\/api\/(?:internal|model-gateway)(?:\/|$)/.test(path)) {reply(res,403,{error:cloudHomeCopy.homePaused});return true;}
       if (homeRememberedGrantWrite(method,path,body)) { reply(res,403,{error:cloudHomeCopy.alwaysAllowUnavailable}); return true; }
@@ -134,7 +136,7 @@ export function createCloudRequestAuth(options: CloudAuthOptions) {
       if (device) {
         const accessHash = createHash("sha256").update(access).digest("hex");
         setCloudIdentity(req.headers,{...device,accessHash,settingsRead:cloudSettingsRead(method,path)});
-        bindings.push({ id: device.id, account: device.account, scope: device.scope, accessHash });
+        bindings.push({ id: device.id, account: device.account, scope: device.scope, accessHash, owner: isOwnerBrowser(device) });
       }
       if (["GET", "HEAD"].includes(method) && path.startsWith(`${MEDIA_ROUTES.bytes}/`)) {
         const assetId = path.slice(MEDIA_ROUTES.bytes.length + 1), caps = url.searchParams.getAll(MEDIA_CAPABILITY_QUERY_PARAM);
@@ -143,7 +145,7 @@ export function createCloudRequestAuth(options: CloudAuthOptions) {
           if (cap.ok && cap.claims.cloudSession) {
             const bound = cap.claims.cloudSession, issuer = sessions.resolveHash(bound.accessHash);
             if (!issuer || issuer.id !== bound.deviceId) { reply(res,403,{error:cloudHomeCopy.signInRequestRefused}); return true; }
-            bindings.push({ id: issuer.id, account: issuer.account, scope: issuer.scope, accessHash: bound.accessHash });
+            bindings.push({ id: issuer.id, account: issuer.account, scope: issuer.scope, accessHash: bound.accessHash, owner: isOwnerBrowser(issuer) });
           }
         }
       }
@@ -167,7 +169,9 @@ export function createCloudRequestAuth(options: CloudAuthOptions) {
           if (typeof id !== "string" || !/^[a-f0-9-]{1,64}$/.test(id)) throw new Error(cloudHomeCopy.homeControlOperationRefused);
           // An id this home never had is 404, which the control plane reports as device_not_found.
           if (!sessions.knownDevice(id)) { reply(res,404,{error:cloudHomeCopy.homeControlOperationRefused}); return true; }
-          sessions.revoke(id); reply(res,200,{revoked:true}); return true;
+          // My Cloud's "Make chat-only" sends factorOnly:true: revoke just the remembered-owner factor, the device stays for chat.
+          if (input.factorOnly === true) sessions.revokeOwnerFactor(id); else sessions.revoke(id);
+          reply(res,200,{revoked:true}); return true;
         }
         if (!options.lifecycle) throw new Error(cloudHomeCopy.homeLifecycleUnavailable);
         const action=path.endsWith("/resume") ? "resume" : path.slice(path.lastIndexOf("/")+1) as "stop"|"drain"|"revoke-sessions";
@@ -210,6 +214,7 @@ export function createCloudRequestAuth(options: CloudAuthOptions) {
         // /api/cloud/enter
         const d=body.device as Record<string,unknown>|null|undefined;
         const deviceShaped=Boolean(d && typeof d === "object" && !Array.isArray(d) && bounded(d.publicKey,4096) && bounded(d.assertionKey,4096) && bounded(d.proof,4096)
+          && (d.assertionProof === undefined || d.assertionProof === null || bounded(d.assertionProof,4096))
           && (d.deviceId === undefined || d.deviceId === null || (typeof d.deviceId === "string" && d.deviceId.length <= 64)));
         // A locked source: cheap shape checks, then the home-wide cap on locked verifications, before any signature is checked. Every
         // refusal it gets is this same answer, whichever check refused, so being locked reveals nothing about the ticket it sent.
@@ -223,7 +228,7 @@ export function createCloudRequestAuth(options: CloudAuthOptions) {
         try {
           if (!claims) throw doorRefusal(refused,cloudHomeCopy.doorRequestRefused);
           if (!deviceShaped || !d) throw doorRefusal("body_malformed",cloudHomeCopy.doorRequestRefused);
-          const result=sessions.enterDoor(claims,body.ticket as string,{deviceId:d.deviceId as string|null|undefined,publicKey:d.publicKey as string,assertionKey:d.assertionKey as string,proof:d.proof as string});
+          const result=sessions.enterDoor(claims,body.ticket as string,{deviceId:d.deviceId as string|null|undefined,publicKey:d.publicKey as string,assertionKey:d.assertionKey as string,proof:d.proof as string,assertionProof:d.assertionProof as string|undefined});
           logDoorOutcome(route,result.outcome);
           const {accessToken,outcome:_outcome,...answer}=result;
           if (result.scope === "browser") { res.setHeader("set-cookie",sessionCookie(accessToken,900)); reply(res,200,{state:"signed-in",...answer}); }
@@ -303,11 +308,14 @@ export function createCloudRequestAuth(options: CloudAuthOptions) {
       }
       if (path.startsWith("/api/") || path === "/api") {
         let decision=cloudRouteDecision(method,path,scope,body);
-        if(decision === "step-up required" && device && assertion(device.id,stepPurpose(method,path+url.search,body))) decision=cloudRouteDecision(method,path,isOwnerBrowser(device) ? "owner-browser" : device.scope,body,true);
+        if(decision === "step-up required" && device && assertion(device.id,stepPurpose(method,path+url.search,body))) decision=cloudRouteDecision(method,path,ownerBrowserScope(device) ?? device.scope,body,true);
         if(decision!=="allow") { reply(res,403,{error:decision === "deny" ? device?.scope === "owner-phone" ? cloudHomeCopy.phoneCredential : cloudHomeCopy.pairedDeviceRequired : cloudHomeCopy.stepUpRequired}); return true; }
         if(path === "/api/cloud/account" && method === "DELETE") { if (device) await options.beforeAccountRevoke?.(device); sessions.revokeAccount(); reply(res,200,{revoked:true}); return true; }
         const revoke=/^\/api\/cloud\/devices\/([a-f0-9-]+)$/.exec(path);
         if(revoke && method === "DELETE") { sessions.revoke(revoke[1]!); reply(res,200,{revoked:true}); return true; }
+        // "Make this browser chat-only" from a paired owner surface: sensitive (devices/[^/]+), so it passed a step-up above.
+        const ownerRevoke=/^\/api\/cloud\/devices\/([a-f0-9-]+)\/owner\/revoke$/.exec(path);
+        if(ownerRevoke && method === "POST") { sessions.revokeOwnerFactor(ownerRevoke[1]!); reply(res,200,{revoked:true}); return true; }
       }
       responses.track(res,bindings);
       return false;

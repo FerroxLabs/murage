@@ -36,6 +36,16 @@ test("no sentence shows a code, tool jargon, an em dash or safe", () => {
   assert.match(sentence("AGE_PROCESS_FAILED"), /recovery key/);
 });
 
+// 1.0.6: the one name a restore refuses is its own record, never a damaged file,
+// and the sentence says what to choose instead.
+test("a backup holding Murage's own restore notes is named as that, not as damaged", () => {
+  const text = sentence("RESERVED_RESTORE_COMPONENT", { action: "restore-encrypted-new" });
+  assert.match(text, /restore notes/);
+  assert.match(text, /nothing was restored/);
+  assert.match(text, /Choose a backup file Murage made/);
+  assert.doesNotMatch(text, /damaged or incomplete/);
+});
+
 // 0.1.60 audit A-03: making a backup from the Backup mode page can stop with
 // codes the restore side uses too. It must never read as a failed restore.
 test("a failed backup on the Backup mode page is never described as a restore", async () => {
@@ -71,9 +81,16 @@ test("skipped items read the same on the Backup mode page and the Backups page",
     { count: 3, items: [{ path: "workspaces/mira/site/node_modules", reason: "rebuildable" }, { path: "workspaces/mira/notes 10:30.md", reason: "unreadable" }, { path: "attachments/x", reason: "special" }], bots: { mira: "Mira" } },
     { count: 1200, items: [{ path: "workspaces/b1/photos/a.jpg", reason: "file-limit" }], bots: {} },
     { count: 1, items: [{ path: "workspaces/b1/linked", reason: "linked-folder" }] },
+    { count: 2, items: [{ path: "config.json.bak-20260918-openaicompat", reason: "unrecognised" }, { path: "env copy", reason: "unrecognised" }] },
     null, { count: 0, items: [] },
   ];
   for (const sample of samples) assert.deepEqual([...context.murageRecoveryMessages.skippedLines(sample)], backupSkippedLines(sample));
+  // 1.0.4: a name Murage does not recognise is left out, and the line says only that, and where it is.
+  assert.deepEqual(backupSkippedLines(samples[3]), [
+    "Skipped 2 items in Murage's data folder: config.json.bak-20260918-openaicompat (not recognised by Murage, so the backup leaves it out; it stays where it is, so move it somewhere you keep your files if it matters), env copy (not recognised by Murage, so the backup leaves it out; it stays where it is, so move it somewhere you keep your files if it matters).",
+    "Everything else was backed up.",
+  ]);
+  for (const line of samples.flatMap(sample => backupSkippedLines(sample))) assert.doesNotMatch(line, /current file is backed up|[Kk]ept in the backup|\b(?:un)?safe(?:ty)?\b/);
   assert.deepEqual(backupSkippedLines(samples[0]), [
     "Skipped 2 items in Mira's folder: site/node_modules (installed packages or a cache, reinstall them after a restore), notes 10:30.md (couldn't be read).",
     "Skipped 1 item in Murage's data folder: attachments/x (not a regular file).",

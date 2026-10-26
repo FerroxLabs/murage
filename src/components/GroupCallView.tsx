@@ -21,7 +21,7 @@ import { cueMemberFor, routeSpokenGroupMessage } from "@/lib/group-call";
 import { HOST_OFF_FOR_CALL, hostTurn, plainFailure, warmHost, type CallHandDown } from "@/lib/voice-host";
 import { cancelWaitingHandDowns, expireFloorLine, FLOOR_MAX_MS, handDownMessage, interruptHandDowns, OwnerFloor, RoomHostMemory, roomHostMember, spokenToMember } from "@/lib/room-host";
 import { ACK_KEYS, AckGate, cueMayPlay, phaseAfterCue, roomOtherSpeech, type AckKey } from "@/lib/call-ack";
-import { localeCode, t } from "@/lib/i18n";
+import { languageCode, t } from "@/lib/i18n";
 import { CueCache } from "@/lib/tts/cue-cache";
 import { unheardMessages } from "@/lib/scrollback";
 import { normalizeState } from "@/lib/mascot";
@@ -365,7 +365,7 @@ export function GroupCall({
     if (!member) return;
     const firedAt = Date.now();
     const voiceId = member.voice;
-    const cached = cueCache.get({ botId: member.id, voiceId, locale: localeCode(), key });
+    const cached = cueCache.get({ botId: member.id, voiceId, locale: languageCode(), key });
     lastAck.current = key;
     console.warn(`[call-diag] group ack ${key} cached=${cached ? "yes" : "no"}`);
     const mayPlay = (inJob: boolean) =>
@@ -401,7 +401,7 @@ export function GroupCall({
     if (cached) play(cached);
     else
       void speaker.fetchClip(t(key), { botId: member.id, voiceId }).then((clip) => {
-        cueCache.put({ botId: member.id, voiceId, locale: localeCode(), key }, clip);
+        cueCache.put({ botId: member.id, voiceId, locale: languageCode(), key }, clip);
         play(clip);
       }, () => undefined);
   }, [enqueueJob, group.id, hush, move]);
@@ -869,7 +869,7 @@ export function GroupCall({
     for (const message of fresh) spokenIds.current.add(message.id);
 
     const replies = fresh.filter(
-      (message) => message.role === "bot" && message.kind === "text" && message.text?.trim(),
+      (message) => message.role === "bot" && message.kind === "text" && !message.widget && message.text?.trim(),
     );
     for (const reply of replies) {
       const member = members.find((candidate) => candidate.id === reply.from?.botId);

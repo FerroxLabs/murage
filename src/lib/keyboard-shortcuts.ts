@@ -9,6 +9,9 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
     { id: "new-bot", description: "Create a new bot", keys: ["Mod", "N"], context: "App-wide" },
     // 0.1.62: the gear's shortcut, as on every Mac app (App.tsx).
     { id: "settings", get description() { return t("shortcuts.settings"); }, keys: ["Mod", ","], context: "App-wide" },
+    { id: "all-chats", description: "Open All chats", keys: ["Mod", "Shift", "K"], context: "App-wide; again or Escape goes back" },
+    { id: "chat-list", description: "Open this bot's chats", keys: ["Mod", "J"], context: "Bot or channel" },
+    { id: "new-chat", description: "Start a new chat here", keys: ["Mod", "Shift", "N"], context: "Bot or channel" },
     { id: "jump-bot", description: "Jump to bot 1–9", keys: ["Mod", "1–9"], context: "Visible roster order" },
     { id: "find", description: "Find in the current conversation", keys: ["Mod", "F"], context: "Bot or channel" },
     { id: "close", description: "Close the focused dialog or search", keys: ["Escape"], context: "Dialog, palette or find bar" },

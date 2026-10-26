@@ -22,8 +22,8 @@ const FULL: Record<string, { args: string[]; render?: Record<string, unknown> }>
     "--append-system-prompt-file", CLOUD_RENDER_SYSTEM_PROMPT, "--strict-mcp-config", "--resume", SESSION],
     render: { mcp: { muragebox: { proxy: "permission", socket: "/data/broker/perm-abcd1234.sock" } }, systemPrompt: "You are a bot.\n" } },
   codex: { args: ["app-server", "-c", "model_context_window=129024", "-c", "features.browser_use=false", "-c", "features.browser_use_external=false", "-c", "features.computer_use=false",
-    "-c", plugins, "-c", "features.shell_tool=false", "-c", "features.apps=false", "-c", 'web_search="disabled"'] },
-  grokAgent: { args: ["--permission-mode", "bypassPermissions", "agent", "-m", "murage_0123456789abcdef01234567", "--reasoning-effort", "high", "stdio"] },
+    "-c", plugins, "-c", "features.memories=false", "-c", "features.shell_tool=false", "-c", "features.apps=false", "-c", 'web_search="disabled"'] },
+  grokAgent: { args: ["--permission-mode", "bypassPermissions", "--no-memory", "agent", "--no-leader", "-m", "murage_0123456789abcdef01234567", "--reasoning-effort", "high", "stdio"] },
   kimiAgent: { args: ["-m", "kimi-code/kimi-for-coding", "acp"] },
   opencodeGo: { args: ["acp"] },
   fuigoAgent: { args: ["--permission-mode", "default", "--trust", "--no-memory", "agent", "--no-leader", "-m", "murage_selected", "--reasoning-effort", "medium", "stdio"] },
@@ -75,10 +75,18 @@ it.each([
   ["codex", ["app-server", "-c", "model_providers.x.base_url=\"https://evil.example\""], "-c"],
   ["codex", ["app-server", "-c", "model_provider=\"x\""], "-c"],
   ["codex", ["app-server", "-c", "features.shell_tool=true"], "-c"],
+  // 1.0.4 audit 11-4: the memories override is accepted with its exact value only, and no other features.* key rides with it.
+  ["codex", ["app-server", "-c", "features.memories=true"], "-c"],
+  ["codex", ["app-server", "-c", "features.memories=false ", "-c", "features.memories=false"], "-c"],
+  ["codex", ["app-server", "-c", "features.memory=false"], "-c"],
+  ["codex", ["app-server", "-c", "features.telepathy=false"], "-c"],
+  ["codex", ["app-server", "-c", "features.memories"], "-c"],
+  ["grokAgent", ["--permission-mode", "default", "--no-memory=1", "agent", "--no-leader", "stdio"], "--no-memory"],
+  ["grokAgent", ["--permission-mode", "default", "--no-memory", "--memory", "agent", "--no-leader", "stdio"], "--memory"],
   ["codex", ["-c", "features.apps=false", "app-server"], "missing app-server"],
   ["codex", ["exec", "x"], "missing app-server"],
   ["grokAgent", ["--permission-mode", "default", "stdio", "agent"], "unexpected token"],
-  ["grokAgent", ["--permission-mode", "default", "agent", "stdio", "-m", "grok-4"], "missing stdio last"],
+  ["grokAgent", ["--permission-mode", "default", "--no-memory", "agent", "--no-leader", "stdio", "-m", "grok-4"], "missing stdio last"],
   ["grokAgent", ["agent", "stdio"], "missing --permission-mode"],
   ["kimiAgent", ["-m", "/fixture/model", "acp"], "-m"],
   ["kimiAgent", ["acp", "-m", "kimi"], "missing acp last"],
@@ -136,4 +144,11 @@ print(json.dumps({
   "model": [m.model_id(v) for v in ["/model", ":model", "../model", ".model", "a/../b", "claude-sonnet-5", "kimi-code/kimi-for-coding", "murage_0123", "qwen2.5-coder:7b"]],
 }))`));
   expect(out).toEqual({ path: true, twice: true, workspace: false, real: false, model: [false, false, false, false, false, true, true, true, true] });
+});
+
+it("accepts the Codex memories-off override and Grok's --no-memory exactly as the drivers emit them (1.0.4 audit 11-4)", () => {
+  const codex = ["app-server", "-c", "features.memories=false"];
+  expect(rig.plan(rig.request("codex", { args: codex })).ok?.args).toEqual(codex);
+  const grok = ["--permission-mode", "default", "--no-memory", "agent", "--no-leader", "stdio"];
+  expect(rig.plan(rig.request("grokAgent", { args: grok })).ok?.args).toEqual(grok);
 });

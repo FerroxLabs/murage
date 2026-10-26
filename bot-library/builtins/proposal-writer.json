@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Proposal Writer",
     "tagline": "A scoped proposal with three options and clear next steps",
-    "summary": "Bid prepares a client proposal with three scoped options. Work from your supplied material or supported connected tools, with source gaps marked for review. For a pitch presentation file, use Pitch Deck Creator. For individual deal strategy, use Sales. For a service business team, use Service Studio.",
+    "summary": "Bid prepares a client proposal with three scoped options.",
     "category": "Sales",
     "author": {
       "name": "Ferrox Labs",
@@ -60,7 +60,8 @@
         "title": "Proposal Writer",
         "description": "Bid prepares a client proposal with three scoped options. Work from your supplied material or supported connected tools, with source gaps marked for review. For a pitch presentation file, use Pitch Deck Creator. For individual deal strategy, use Sales. For a service business team, use Service Studio.",
         "appearance": {
-          "color": "teal"
+          "color": "teal",
+          "mascotBody": "star"
         },
         "skills": [
           "business-proposal",

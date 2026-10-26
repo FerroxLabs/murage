@@ -16,7 +16,7 @@ import { changeSharing } from "./shared-work.ts";
 import { sharingTeams, sharingTeamsRead } from "./shared-wire.ts";
 import { sharedLoadPrompt } from "./shared-bots-roster.ts";
 import { readMemoryFile, writeMemoryFile } from "./workspace.ts";
-import { installSkill, learnedSkillsForSharing, setSkillEnabled, setSkillEveryTeam, skillsForBotCopy } from "./skills.ts";
+import { currentSkillScan, installSkill, learnedSkillsForSharing, setSkillEnabled, setSkillEveryTeam, skillsForBotCopy } from "./skills.ts";
 import { BOT_PROFILE_LIMITS } from "../shared/bot-profile.ts";
 
 export const SHARING_LIMITS = { runningPerTeam: 1, runningTotal: 2, queuedPerTeam: 20, expiresHours: 24 } as const;
@@ -153,11 +153,17 @@ function copyForTeam(store: Store, bot: BotRecord, body: unknown): SharingReply 
     notifications: bot.notifications,
     ...(bot.persona ? { persona: bot.persona } : {}), ...(bot.avatarUrl ? { avatarUrl: bot.avatarUrl } : {}), ...(bot.avatarCrop ? { avatarCrop: structuredClone(bot.avatarCrop) } : {}),
   });
+  const skillsLeftOff: string[] = [];
   for (const skill of skillsForBotCopy(bot.id)) {
     const installed = installSkill(copy.id, skill.source, [{ path: "SKILL.md", content: skill.content }]);
-    if (!("error" in installed) && skill.enabled) setSkillEnabled(copy.id, installed.name, true);
+    if ("error" in installed) { if (skill.enabled) skillsLeftOff.push(skill.name); continue; }
+    if (!skill.enabled) continue;
+    // The owner already confirmed this skill on the source bot (it is on): the same bytes carry that yes to the copy.
+    const sourceScan = currentSkillScan(bot.id, skill.name), copyScan = currentSkillScan(copy.id, installed.name);
+    const acknowledged = sourceScan && copyScan && sourceScan.contentHash === copyScan.contentHash ? copyScan.contentHash : undefined;
+    if ("error" in setSkillEnabled(copy.id, installed.name, true, { acknowledged })) skillsLeftOff.push(skill.name);
   }
-  return { status: 201, body: { bot: store.bot(copy.id) } };
+  return { status: 201, body: { bot: store.bot(copy.id), ...(skillsLeftOff.length ? { skillsLeftOff } : {}) } };
 }
 
 /** Open the owner's work thread for a team, creating it on first use. A

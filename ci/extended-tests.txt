@@ -60,7 +60,6 @@ scripts/collect-gepa-build-evidence.test.mjs	extended
 scripts/compress-dist.test.mjs	extended
 scripts/control-murage-ready.test.mjs	delete (pending review; runs here until then)
 scripts/cua-mac-arches.test.mjs	extended
-scripts/dependency-floors.test.mjs	extended
 scripts/derive-profile-skills.test.mjs	extended
 scripts/dev-server.test.mjs	extended
 scripts/docs-workflow.test.mjs	delete (pending review; runs here until then)
@@ -148,7 +147,9 @@ server/browser-extension-round5.test.ts	delete (pending review; runs here until 
 server/browser-extension-setup.test.ts	extended
 server/browser-extension-snapshot.test.ts	extended
 server/browser-floor-recipients.test.ts	extended
+server/browser-is-the-place.test.ts	extended
 server/browser-native-relay.test.ts	extended
+server/browser-preview-capture.test.ts	extended
 server/browser-profile-precondition-api.test.ts	extended
 server/browser-profile-precondition.test.ts	extended
 server/browser-restore-real.test.ts	real agent-browser engine against a 120-origin saved session; timing, needs the bundled engine
@@ -215,13 +216,12 @@ server/composio-inventory-cache.test.ts	extended
 server/composio-recovery.test.ts	extended
 server/composio-tools-list.test.ts	extended
 server/computer-control.test.ts	extended
-server/computer-engine-gap.test.ts	extended
 server/computer-observation.test.ts	extended
 server/computer-wake.test.ts	extended
 server/connected-apps-status-copy.test.ts	extended
-server/connected-apps-vendor-name.test.ts	delete (pending review; runs here until then)
 server/connector-list-budgets.test.ts	extended
 server/connector-requests.test.ts	extended
+server/connector-scope-hint.test.ts	extended
 server/connector-time-to-ready.test.ts	extended
 server/container-mcp.test.ts	extended
 server/control-client.test.ts	extended
@@ -258,6 +258,7 @@ server/drivers/boxagent.test.ts	extended
 server/drivers/browser-proxy.test.ts	extended
 server/drivers/claude-accounts.test.ts	extended
 server/drivers/claude-auth.test.ts	extended
+server/drivers/claude-browser-mount.test.ts	extended
 server/drivers/claude-catalog.test.ts	extended
 server/drivers/claude-idle-map.test.ts	extended
 server/drivers/claude-mcp-ready.test.ts	extended
@@ -293,6 +294,7 @@ server/drivers/pi-mcp-extension.test.ts	extended
 server/drivers/process-tree-hook-identity.test.ts	extended
 server/drivers/process-tree-win32.test.ts	extended
 server/drivers/process-tree.test.ts	extended
+server/drivers/provider-error-body.test.ts	extended
 server/drivers/provider-idle-cut.test.ts	extended
 server/drivers/remote-mcp-proxy-core.test.ts	extended
 server/drivers/remote-mcp-proxy.test.ts	extended
@@ -321,7 +323,6 @@ server/error-diagnostic-persistence.test.ts	extended
 server/exactness.test.ts	extended
 server/flux-contract-endpoints.test.ts	extended
 server/flux-contract.live.test.ts	extended
-server/flux-memory-envelope.test.ts	extended
 server/flux-memory-first-token.test.ts	extended
 server/flux-memory-headers.lint.test.ts	extended
 server/flux-surface.test.ts	extended
@@ -331,6 +332,7 @@ server/full-access-steps.test.ts	extended
 server/generated-image.test.ts	extended
 server/gepa-bundle-admission.test.ts	extended
 server/gepa-worker.test.ts	extended
+server/git-remote-hosts.test.ts	extended
 server/goal-envelope-v2.test.ts	extended
 server/goal-wait.test.ts	extended
 server/group-goal-run.test.ts	extended
@@ -338,8 +340,10 @@ server/group-goal-wait-cap.e2e.test.ts	extended
 server/group-tasks.test.ts	extended
 server/handoff-dispatch.structure.test.ts	extended
 server/harness/bus-image-log.test.ts	extended
+server/harness/bus-sign-in.test.ts	extended
 server/harness/event-log-read-cost.test.ts	extended
 server/harness/memory-adapter.test.ts	extended
+server/harness/registry-platform.test.ts	extended
 server/harness/registry.test.ts	extended
 server/held-scan.test.ts	extended
 server/hermes-import-route.test.ts	extended
@@ -384,6 +388,7 @@ server/intake-turn.test.ts	extended
 server/io-budget.test.ts	extended
 server/launch-no-tty.structure.test.ts	extended
 server/leadership-admission.test.ts	extended
+server/library-art.test.ts	extended
 server/library-owner-copy.test.ts	extended
 server/library-template-skills.test.ts	extended
 server/link-removal.electron.test.ts	extended
@@ -392,7 +397,9 @@ server/local-models.test.ts	extended
 server/local-setup-failure.test.ts	extended
 server/local-tool-probe.test.ts	extended
 server/local-vm-idle.test.ts	extended
+server/local-vm-keepalive.test.ts	extended
 server/local-vm-lease.test.ts	extended
+server/loop-nudge.test.ts	extended
 server/mcp-bridge-cmd-shim.test.ts	extended
 server/mcp-probe.test.ts	extended
 server/mcp-rename-api.test.ts	extended
@@ -552,7 +559,10 @@ server/memory/revocation-log.test.ts	delete (pending review; runs here until the
 server/memory/revocation-phase-tolerance.test.ts	extended
 server/memory/revoke-budget.test.ts	extended
 server/memory/revoke-drain-bench.test.ts	extended
+server/memory/revoke-thread-drain-bench.test.ts	extended
 server/memory/revoke-fold-bench.test.ts	extended
+server/memory/revoke-deletion-cover-bench.test.ts	extended
+server/drivers/acp/fuigo-windows-real.test.ts	extended
 server/memory/root-set-bench.test.ts	extended
 server/memory/root-set-reclaim-owner.test.ts	extended
 server/memory/schema-assertion-marker.test.ts	extended
@@ -600,6 +610,7 @@ server/memory/worker-wasm-idle.test.ts	extended
 server/memory/worker-wasm-priority.test.ts	extended
 server/memory/worker-wasm-respawn.test.ts	extended
 server/memory/writetime-live-differential.test.ts	extended
+server/memory/xthread-judge-bounds.test.ts	extended
 server/message-search-bounded.test.ts	extended
 server/message-search-fill-scale.test.ts	extended
 server/message-search-index.test.ts	extended
@@ -615,6 +626,7 @@ server/murage-line.test.ts	extended
 server/murage-tool-surface.test.ts	extended
 server/new-bot-defaults.test.ts	extended
 server/new-bot-effort-api.test.ts	extended
+server/new-task-folder.test.ts	extended
 server/no-sync-fill.test.ts	extended
 server/notification-preferences.test.ts	extended
 server/notification-wiring.test.ts	extended
@@ -631,6 +643,7 @@ server/package-import-comparison.test.ts	extended
 server/path-resolution.structure.test.ts	extended
 server/permission-latency.test.ts	extended
 server/permission-proxy-encoding.test.ts	extended
+server/person-handoff-extended.test.ts	extended
 server/pid1-reaper-check.test.ts	extended
 server/pinned-shipped-skills.test.ts	extended
 server/platform-process-hooks.test.ts	extended
@@ -682,7 +695,6 @@ server/project-settings.test.ts	extended
 server/project-supervisor-runtime.test.ts	extended
 server/project-transitions.test.ts	extended
 server/project-turn-engine-api.test.ts	extended
-server/prompt-copy.test.ts	extended
 server/provider-bank-fence.test.ts	extended
 server/provider-picker.test.ts	extended
 server/provider-selection-errors.test.ts	extended
@@ -732,6 +744,7 @@ server/shell/parse.test.ts	extended
 server/sidebar-order-api.test.ts	extended
 server/sidebar-order.test.ts	extended
 server/skill-collection.test.ts	extended
+server/skill-command.test.ts	extended
 server/skill-guard/content-hash.test.ts	extended
 server/skill-guard/rules.test.ts	extended
 server/skill-guard/spector-patterns.test.ts	delete (pending review; runs here until then)
@@ -739,6 +752,10 @@ server/skill-learn.test.ts	extended
 server/skill-library-integrity.test.ts	extended
 server/skill-library.test.ts	extended
 server/skill-search.test.ts	extended
+server/sl-ik-api.test.ts	extended
+server/sl-ik-units.test.ts	extended
+server/sl-k-follow-model.test.ts	extended
+server/sl-ik-extended.test.ts	extended
 server/slice-budget.test.ts	extended
 server/sse-backpressure.e2e.test.ts	nightly (whole file: scale or perf; nightly.yml runs it, the extended job does not)
 server/sse-buffer.test.ts	extended
@@ -776,6 +793,8 @@ server/testing/wait-for-exit.test.ts	extended
 server/thread-events.test.ts	extended
 server/thread-export-api.test.ts	nightly (whole file: scale or perf; nightly.yml runs it, the extended job does not)
 server/thread-export-slices.test.ts	extended
+server/thread-link-api.test.ts	extended
+server/thread-link-store.test.ts	extended
 server/thread-paging-api.test.ts	extended
 server/thread-recall-lineage.test.ts	extended
 server/thread-since-api.test.ts	extended
@@ -860,12 +879,12 @@ shared/flux-desktop-signin-default.test.ts	delete (pending review; runs here unt
 shared/flux-stream-contract.test.ts	extended
 shared/help-capabilities.test.ts	extended
 shared/help-coverage.test.ts	extended
-shared/help-search.test.ts	extended
 shared/host-stop.test.ts	extended
 shared/image-capabilities.test.ts	extended
 shared/images-left-out.test.ts	extended
 shared/intake-matches.test.ts	extended
 shared/local-models.test.ts	extended
+shared/loop-notice.test.ts	extended
 shared/mascot-bodies.test.ts	delete (pending review; runs here until then)
 shared/memory-learning-contract.test.ts	extended
 shared/message-actor.test.ts	extended
@@ -879,8 +898,11 @@ shared/reply-markers.test.ts	extended
 shared/routine-run-marker.test.ts	extended
 shared/seed-workspace.test.ts	extended
 shared/send-notice.test.ts	extended
+shared/sidebar-line.test.ts	extended
 shared/sidebar-order.test.ts	extended
+shared/skill-command.test.ts	extended
 shared/system-voices.test.ts	extended
+shared/thread-link.test.ts	extended
 shared/todo-block.test.ts	extended
 shared/tool-activity.test.ts	extended
 shared/turn-error-code.test.ts	extended
@@ -1008,7 +1030,6 @@ src/components/OptionCard.test.ts	extended
 src/components/OutcomeMark.test.ts	extended
 src/components/PermissionModeMenu.test.ts	extended
 src/components/PhoneSetupFlow.test.ts	extended
-src/components/PluginsPanel.test.ts	extended
 src/components/PreviousVersionRow.test.ts	extended
 src/components/ProcedureEvaluationAdmissions.test.ts	extended
 src/components/ProcedureVersionHistory.test.ts	extended
@@ -1021,6 +1042,7 @@ src/components/ProjectWorkSettings.test.ts	extended
 src/components/ProviderIcons.test.ts	extended
 src/components/PublishCard.test.ts	extended
 src/components/PushToTalk.test.ts	extended
+src/components/QuestionCard.onetap.test.ts	extended
 src/components/RemoteConnectionBanner.test.ts	extended
 src/components/RemoteSignOut.test.ts	extended
 src/components/RemoteSurface.test.ts	extended
@@ -1044,6 +1066,7 @@ src/components/Sidebar.test.ts	extended
 src/components/SidebarLeadership.test.ts	extended
 src/components/SidebarNav.test.ts	extended
 src/components/SidebarNeedsYou.test.ts	extended
+src/components/SidebarNewChatPanel.test.ts	extended
 src/components/SidebarPhoneButton.test.ts	extended
 src/components/SidebarRows.test.ts	delete (pending review; runs here until then)
 src/components/SidebarSectionHeader.test.ts	extended
@@ -1059,10 +1082,12 @@ src/components/TaskPicker.test.ts	extended
 src/components/TeamLibraryPanel.test.ts	extended
 src/components/TeamMapPage.test.ts	extended
 src/components/TeamSettingsDialog.test.ts	extended
+src/components/ThreadFollowControls.test.ts	extended
 src/components/TranscriptRows.test.ts	extended
 src/components/TranscriptWidth.test.ts	delete (pending review; runs here until then)
 src/components/UnifiedBrowserPanel.test.ts	extended
 src/components/UpdateBanner.test.ts	extended
+src/components/UpdateDot.test.ts	extended
 src/components/UsagePopover.test.ts	extended
 src/components/UseAsReferenceButton.test.ts	extended
 src/components/VirtualRows.test.ts	extended
@@ -1073,6 +1098,7 @@ src/components/WhatsNewDialog.test.ts	extended
 src/components/WorkspaceFiles.test.ts	extended
 src/components/WorkspacePane.test.ts	extended
 src/components/action-feedback-highs.test.ts	extended
+src/components/approval-compact-170.test.ts	extended
 src/components/approval-queue-83a.test.ts	extended
 src/components/approval-queue-83d.test.ts	extended
 src/components/backup-error-sentences.test.ts	extended
@@ -1082,8 +1108,10 @@ src/components/backup-setup-real-host.test.ts	extended
 src/components/bot-settings-sections.test.ts	extended
 src/components/channel-responder-auto.test.ts	extended
 src/components/channels-projects-ui.test.ts	extended
+src/components/chat-dir-auto.test.ts	extended
 src/components/chat-timestamp-gap.test.ts	delete (pending review; runs here until then)
 src/components/cloud/cloud-components.test.ts	extended
+src/components/copy-failure-banner.test.ts	extended
 src/components/delegation-label.test.ts	extended
 src/components/editor/emittedValues.test.ts	extended
 src/components/editor/slashMenu.test.ts	extended
@@ -1113,8 +1141,12 @@ src/copy-rules.test.ts	extended
 src/e2e/evidence.test.ts	extended
 src/e2e/fake-llama-completion.test.ts	delete (pending review; runs here until then)
 src/first-paint.test.ts	extended
+src/font-smoothing.test.ts	extended
+src/hooks/use-dirty-baseline.test.ts	extended
+src/hooks/use-modal-dialog.test.ts	extended
 src/hooks/use-native-view-obscured.test.ts	extended
 src/hooks/use-warm-intent.test.ts	extended
+src/hooks/use-window-drag.test.ts	extended
 src/lib/about-version.test.ts	extended
 src/lib/account-localisation.test.ts	extended
 src/lib/activity-runs.test.ts	extended
@@ -1125,9 +1157,11 @@ src/lib/audio-level.test.ts	extended
 src/lib/aura-ticker.test.ts	extended
 src/lib/avatar-generation.test.ts	extended
 src/lib/avatar-ticker.test.ts	extended
+src/lib/bot-read.test.ts	extended
 src/lib/bot-role.test.ts	extended
 src/lib/bot-skill-count.test.ts	extended
 src/lib/bottom-follow.test.ts	extended
+src/lib/browser-is-the-place.test.ts	extended
 src/lib/browser-panel-operation.test.ts	extended
 src/lib/browser-profiles.test.ts	extended
 src/lib/call-ack.test.ts	extended
@@ -1145,10 +1179,12 @@ src/lib/channel-instructions.test.ts	extended
 src/lib/channel-waiting-run.test.ts	extended
 src/lib/chat-header-layout.test.ts	extended
 src/lib/chat-math.test.ts	extended
+src/lib/chrome-web-store.test.ts	extended
 src/lib/chunk-reload.test.ts	extended
 src/lib/cloud-settings.test.ts	extended
 src/lib/cloud-workspace.test.ts	extended
 src/lib/code-block.test.ts	extended
+src/lib/code-highlight.test.ts	extended
 src/lib/comm-chip-visibility.test.ts	extended
 src/lib/composer-attachments.test.ts	extended
 src/lib/composer-commands.test.ts	extended
@@ -1161,8 +1197,10 @@ src/lib/connected-apps-preload.test.ts	extended
 src/lib/connector-card-poll.test.ts	extended
 src/lib/conversation-cache-host.test.ts	extended
 src/lib/conversation-export.test.ts	extended
+src/lib/copy-text.test.ts	extended
 src/lib/custom-models.test.ts	extended
 src/lib/deep-link.test.ts	extended
+src/lib/deletion-notes-f16.test.ts	extended
 src/lib/deletion-notes.test.ts	extended
 src/lib/desktop-only-route-error.test.ts	extended
 src/lib/desktop-stop.test.ts	extended
@@ -1178,6 +1216,7 @@ src/lib/ember-colors-shared.test.ts	delete (pending review; runs here until then
 src/lib/emergency-stop.test.ts	extended
 src/lib/engine-commands-menu.test.ts	extended
 src/lib/engine-rail.test.ts	extended
+src/lib/engine-setup-check.test.ts	extended
 src/lib/feature-flags.test.ts	extended
 src/lib/file-drop-zone.test.ts	extended
 src/lib/files-view.test.ts	extended
@@ -1187,6 +1226,8 @@ src/lib/first-run-phone.test.ts	extended
 src/lib/first-run-surfaces.test.ts	delete (pending review; runs here until then)
 src/lib/flux-invite.test.ts	extended
 src/lib/focus-message.test.ts	extended
+src/lib/focus-wrap.test.ts	extended
+src/lib/github-refs.test.ts	extended
 src/lib/group-call-stream.test.ts	extended
 src/lib/group-call-wiring.test.ts	extended
 src/lib/host-stop.test.ts	delete (pending review; runs here until then)
@@ -1197,9 +1238,12 @@ src/lib/inbox-changed.test.ts	extended
 src/lib/inbox-learning-suggestions.test.ts	extended
 src/lib/inspector.test.ts	extended
 src/lib/install-prompt.test.ts	extended
+src/lib/instances-probe.test.ts	extended
 src/lib/intake-files.test.ts	extended
 src/lib/keep-awake.test.ts	extended
 src/lib/keyboard-shortcuts.test.ts	extended
+src/lib/last-bot-section.test.ts	extended
+src/lib/last-conversation.test.ts	extended
 src/lib/learned-chips.test.ts	extended
 src/lib/learning-counts.test.ts	extended
 src/lib/learning-screen.test.ts	extended
@@ -1215,6 +1259,7 @@ src/lib/memory-integrity-locale.test.ts	extended
 src/lib/memory-integrity-view.test.ts	extended
 src/lib/memory-learning-text.test.ts	extended
 src/lib/memory-review.test.ts	extended
+src/lib/mentions.test.ts	extended
 src/lib/menu-placement.test.ts	extended
 src/lib/model-metadata-failure.test.ts	extended
 src/lib/model-metadata-lazy.test.ts	extended
@@ -1225,6 +1270,7 @@ src/lib/native-route.test.ts	extended
 src/lib/native-routing.test.ts	delete (pending review; runs here until then)
 src/lib/native-shell.test.ts	extended
 src/lib/netlify-connect.test.ts	extended
+src/lib/new-chat-bots.test.ts	extended
 src/lib/new-team.test.ts	extended
 src/lib/no-document-scroll.test.ts	delete (pending review; runs here until then)
 src/lib/notebook-last-written.test.ts	extended
@@ -1243,6 +1289,7 @@ src/lib/picture-hint-vision.test.ts	extended
 src/lib/picture-hint.test.ts	extended
 src/lib/plain-approval-retry.test.ts	extended
 src/lib/plain-approval.test.ts	extended
+src/lib/plain-error.test.ts	extended
 src/lib/plain-text.test.ts	extended
 src/lib/possessive.test.ts	extended
 src/lib/presence.test.ts	extended
@@ -1268,6 +1315,7 @@ src/lib/read-aloud.test.ts	extended
 src/lib/record-numbers.test.ts	extended
 src/lib/register-sw.test.ts	extended
 src/lib/relative-now.test.ts	extended
+src/lib/release-highlights.test.ts	extended
 src/lib/remembered-grants.test.ts	extended
 src/lib/remembered-view.test.ts	extended
 src/lib/rename.test.ts	extended
@@ -1278,6 +1326,7 @@ src/lib/role-leaks.test.ts	delete (pending review; runs here until then)
 src/lib/room-author.test.ts	extended
 src/lib/room-chips.test.ts	extended
 src/lib/room-host.test.ts	extended
+src/lib/room-member-retry.test.ts	extended
 src/lib/room-members.test.ts	extended
 src/lib/room-speakers.test.ts	extended
 src/lib/room-transcript.test.ts	extended
@@ -1325,9 +1374,11 @@ src/lib/telegram-status.test.ts	extended
 src/lib/thread-attention.test.ts	extended
 src/lib/thread-snooze.test.ts	extended
 src/lib/tokens.test.ts	delete (pending review; runs here until then)
+src/lib/tool-step-label.test.ts	extended
 src/lib/transcript-chrome.test.ts	extended
 src/lib/transcript-rows.test.ts	extended
 src/lib/transcript-tail.test.ts	extended
+src/lib/transcript-viewport.test.ts	extended
 src/lib/transcript-window.test.ts	extended
 src/lib/tts/cue-cache.test.ts	extended
 src/lib/tts/desktop-proof.test.ts	extended
@@ -1337,6 +1388,8 @@ src/lib/tts/native-player.test.ts	extended
 src/lib/tts/voicefast.test.ts	extended
 src/lib/turn-tail.test.ts	extended
 src/lib/unloadable-routines.test.ts	extended
+src/lib/update-card.test.ts	extended
+src/lib/usage-card.test.ts	extended
 src/lib/usage.test.ts	extended
 src/lib/use-action.test.ts	extended
 src/lib/use-active-skin.test.ts	extended
@@ -1354,13 +1407,13 @@ src/lib/window-confirm.test.ts	extended
 src/lib/working-time.test.ts	extended
 src/lib/workspace-pane.test.ts	extended
 src/lib/zod-config.test.ts	delete (pending review; runs here until then)
-src/locales/locale-copy.test.ts	extended
 src/locales/terms-copy.test.ts	extended
 src/mermaid-frame/frame-page.test.ts	extended
 src/no-composio-in-user-text.test.ts	extended
 src/safe-area.test.ts	extended
 src/state/api-status.test.ts	extended
 src/state/card-persist.test.ts	extended
+src/state/chat-error.test.ts	extended
 src/state/deletion-owed.test.ts	extended
 src/state/open-cards.test.ts	extended
 src/state/phone-mode.test.ts	extended
@@ -1379,8 +1432,12 @@ tools/flux-stream-conformance/pack.test.ts	extended
 tools/flux-stream-conformance/wer.test.ts	delete (pending review; runs here until then)
 tools/flux-stream-sim/providers/assemblyai.test.ts	extended
 tools/flux-stream-sim/sim.test.ts	extended
+server/chat-widgets-fence-api.test.ts	extended
 server/drivers/win-process-table.test.ts	extended
 server/memory/pip-reaper-win32.test.ts	extended
 server/memory/record-keys-budget.test.ts	the record-keys backfill write budget (perf-shaped io-hotpath check)
 server/browser-engine-windows-signed-real.test.ts	real signed Windows browser images from a packaged installer (needs WIN_SIGNED_BROWSER_RESOURCES; skipped otherwise)
 server/lee-phantom-scenario.test.ts	extended
+src/components/LearnAboutMe.test.ts	extended
+server/memory/recall-realdata-bench.test.ts	extended
+server/memory/schema-v13-realdata-roundtrip.test.ts	extended

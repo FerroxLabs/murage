@@ -84,7 +84,7 @@ test("bound diagnostic tracking copies only its ID and rejects private or legacy
     await info.attach(`tracking-axe-${runtime?"runtime":"provider"}-${width}`,{body:JSON.stringify(audit),contentType:"application/json"});expect(audit.violations).toEqual([]);
     await page.screenshot({path:info.outputPath(`tracking-${runtime?"runtime":"provider"}-${width}.png`),fullPage:true});
   }
-  await page.evaluate(()=>{Object.defineProperty(navigator,"clipboard",{configurable:true,value:{writeText:async()=>{throw Error("PRIVATE_CLIPBOARD_CANARY");}}});});
+  await page.evaluate(()=>{Object.defineProperty(navigator,"clipboard",{configurable:true,value:{writeText:async()=>{throw Error("PRIVATE_CLIPBOARD_CANARY");}}});document.execCommand=()=>false;});
   await page.getByRole("button",{name:"Copy diagnostic ID",exact:true}).click();await expect(page.getByText("Could not copy. Select the diagnostic ID above and copy it manually.",{exact:true})).toBeVisible();await expect(page.getByText("PRIVATE_CLIPBOARD_CANARY",{exact:false})).toHaveCount(0);
   for(const runtime of [false,true])for(const tracking of ["private","mismatch",""]){
     await page.goto(origin+"/__provider?kind=payment&status=402"+(runtime?"&runtime=1":"")+(tracking?"&tracking="+tracking:""));await page.getByText("Technical details",{exact:true}).click();await expect(page.getByRole("button",{name:"Copy diagnostic ID",exact:true})).toHaveCount(0);await expect(page.getByText("PRIVATE_DIAGNOSTIC_CANARY",{exact:false})).toHaveCount(0);
