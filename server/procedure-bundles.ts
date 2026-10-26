@@ -5,7 +5,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { DATA_DIR } from "./config.ts";
 import { taskWorkspacePath } from "./workspace.ts";
 import { relinkDirectory, removeLinkWithRetry } from "./link-removal.ts";
-import { skillAvailableForAudience, listSkills, snapshotProceduralSkill, assertSkillProcedureEvidence, type SkillProcedureContext, type SkillProcedureEvidence, fitSkillIndex, skillIndexOmissionNotice, nativeLinkPointsToSkill } from "./skills.ts";
+import { skillAvailableForAudience, listSkills, snapshotProceduralSkill, assertSkillProcedureEvidence, type SkillProcedureContext, type SkillProcedureEvidence, fitSkillIndex, skillIndexOmissionNotice, nativeLinkPointsToSkill, onSkillsSwitchedOff, sweepBotSkills } from "./skills.ts";
 import { skillFileText, type BundledSkill } from "./skill-library.ts";
 import type { InstalledPlaybook } from "./store.ts";
 
@@ -71,6 +71,8 @@ function stateRoot(botId:string,threadId:string):string {
 /** Capture once, before native admission. Complete payloads remain in existing
  * app-owned skill state; all later selections use this catalogue. */
 export function createProcedurePin(botId:string,threadId:string,catalogue:BundledSkill[],playbooks:InstalledPlaybook[],routine?:{id:string;instructionRevision:string},context?:SkillProcedureContext):ProcedurePin {
+  // A skill the scanner now blocks is switched off before it can be pinned (a no-op once this bot was scanned).
+  sweepBotSkills(botId);
   context=partitionProcedureContext(botId,threadId,context);
   const files:Payload[]=[];
   const imported=listSkills(botId).filter(skill=>skill.enabled && skillAvailableForAudience(botId,skill.name,context)).map(skill=>{
@@ -261,3 +263,25 @@ function partitionProcedureContext(botId:string,threadId:string,context?:SkillPr
   const key=partitionScopeKey(botId,partition);
   return {audienceKey:key?`bot:${key.replace("#",":")}:owner`:`bot:${botId}:isolated:${threadId}:owner`,allowedScopeIds:[]};
 }
+
+/** A skill switched off (by the owner or by the scanner) stops being followed by tasks that pinned it:
+ * every pin of this bot that carries one of the names is dropped, and the task's next turn pins again
+ * from the skills that are on then. Earlier bundles stay on disk. */
+function releasePinsCarrying(botId:string,names:readonly string[]):void {
+  const store=executionStore();if(!store)return;
+  const carries=(pin:ProcedurePin|undefined,threadId:string)=>{
+    if(!pin)return false;
+    try{return readProcedureBundle(botId,threadId,pin).imported.some(skill=>names.includes(skill.name));}
+    catch{return true;}// an unreadable pin is not trusted to be free of it
+  };
+  for(const task of store.bot(botId)?.tasks??[]){
+    if(carries(task.procedurePin,task.threadId))store.releaseTaskProcedures(botId,task.threadId);
+  }
+  for(const group of store.groups){
+    if(!group.memberIds.includes(botId))continue;
+    for(const holder of [group,...(group.tasks??[])]){
+      if(holder.procedurePins?.[botId]&&carries(holder.procedurePins[botId],holder.threadId))store.releaseGroupProcedures(group.id,holder.threadId,botId);
+    }
+  }
+}
+onSkillsSwitchedOff(releasePinsCarrying);

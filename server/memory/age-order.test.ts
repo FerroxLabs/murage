@@ -497,6 +497,9 @@ describe("owner search and browse over the keyed streams", () => {
 
   it("EXPLAIN pins: no statement of any view, state or search uses a temporary B-tree or scans the records or key table", async () => {
     const { other } = seed(600, { pending: 100, pins: [5] });
+    // The 50 ms gate below reads this test's own statements: slowestMs is never reset in production code, so without this it
+    // held the slowest of every statement since the file began, not only the statements checked here.
+    ownerSearchWork.slowestMs = 0;
     ownerSearchTrace.on = true; ownerSearchTrace.statements = [];
     const inputs: OwnerListInput[] = [
       { botId: "a" }, { botId: "a", view: "recent" }, { botId: "a", view: "important" }, { botId: "a", view: "review" }, { botId: "a", state: "archived" },

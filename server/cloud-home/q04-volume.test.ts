@@ -122,7 +122,8 @@ it("unit graph unlocks before mount without cloud-final/startup cycles, preservi
   for (const name of ["murage-home.service","murage-proxy.service"]) expect(read(name)).toMatch(/^Requires=.*data.mount/m);
   // A rebooted home must come back unattended: the image enables the whole chain.
   const image = readFileSync(fileURLToPath(new URL("../../deploy/cloud-home/build-image.sh", import.meta.url)), "utf8");
-  expect(image).toMatch(/^systemctl enable murage-home\.service murage-proxy\.service murage-egress-proxy\.service$/m);
+  expect(image).toMatch(/^systemctl enable murage-home\.service murage-proxy\.service murage-egress-proxy\.service murage-egress-dns\.service$/m);
+  expect(read("murage-egress-dns.service")).toMatch(/^WantedBy=murage-home\.service$/m);
   for (const name of ["murage-home.service","murage-proxy.service","murage-egress-proxy.service"]) expect(read(name)).toMatch(/^WantedBy=multi-user\.target$/m);
   expect(read("start-home.sh")).not.toContain("--boot");
 });

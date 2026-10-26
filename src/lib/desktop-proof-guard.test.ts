@@ -170,7 +170,7 @@ const RESOURCE_ALLOW: ReadonlyArray<{ file: string; needle: string; why: string 
   { file: "components/MediaPlayer.tsx", needle: "src: source.url", why: "source.url is the signed /api/media/bytes capability the resolver returned (route class media), which carries its own proof in the URL" },
   { file: "components/MediaPlayer.tsx", needle: 'setAttribute("src", source.url)', why: "re-attaches that same signed /api/media/bytes capability after StrictMode's second effect run" },
   { file: "components/MediaPlayer.tsx", needle: "download={asset.name}", why: "url is the same signed /api/media/bytes capability, which carries its own proof in the URL" },
-  { file: "components/WhatsNewDialog.tsx", needle: "tile.img", why: "tile.img is a bundled static asset import, not served by the harness" },
+  { file: "components/WhatsNewDialog.tsx", needle: ".img} alt={", why: "tile.img and hero.img are bundled static asset imports (assets/whats-new/*.webp), not served by the harness" },
   { file: "components/FirstRunChrome.tsx", needle: "window.open(url", why: "openOutside opens a page in the person's real browser, never a harness path" },
   { file: "components/TeamLibraryPanel.tsx", needle: "window.open(url", why: "external link fallback when the desktop bridge is absent; opens another site in a new tab" },
   { file: "components/SkillRecorderPage.tsx", needle: "event.screenshot", why: "screenshot is a canvas toDataURL() string taken in this page, never a harness path" },

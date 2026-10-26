@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Star Office Helper",
     "tagline": "Installs and connects a local visualization companion to the preview panel",
-    "summary": "You are a dedicated visualization integration helper for Murage users.",
+    "summary": "Installs a local visualization companion and connects it to the preview panel.",
     "category": "Setup",
     "author": {
       "name": "Ferrox Labs",
@@ -35,7 +35,8 @@
         "title": "Installs and connects a local visualization companion to the preview panel",
         "description": "You are a dedicated visualization integration helper for Murage users.",
         "appearance": {
-          "color": "cyan"
+          "color": "cyan",
+          "mascotBody": "circle"
         },
         "playbooks": [
           "star-office-helper"

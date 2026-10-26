@@ -14,15 +14,15 @@
 //
 // The service (conversation-deletion.ts) runs the same stages as separate jobs so it can save the plan before the first step
 // runs and the step marks as they finish.
-import { engineState } from "./engine-closed.ts";
+import { anyProcessNames, configureScopes, engineState, foreignEngineHolders, holdersClearOf, inScopeFolder, privateScopeHome } from "./engine-closed.ts";
 import { executeEnginePlans, recoverAll } from "./engine-exec.ts";
-import { configureRedo } from "./engine-redo.ts";
+import { configureRedo, listRedo } from "./engine-redo.ts";
 import { realEngineFs } from "./engine-fs.ts";
 import type { DeletionEngineHome, DeletionLeftover } from "./conversation-deletion.ts";
 import type { EngineDiscovery, EngineHistoryJob, EngineHistoryResult } from "./engine-history-offthread.ts";
 import { planAcpEngineHistory } from "./engine-plan-acp.ts";
 import { planClaudeProjects, planCodexRollouts, planFuigoSessions } from "./engine-plan-files.ts";
-import { hasContentSteps, homeKey, Known, pathApiFor, PlanError, Planner, type EngineFs, type HomePlanData } from "./engine-plan-core.ts";
+import { ASIDE_SUFFIX, hasContentSteps, homeKey, OPEN_PASS_STEPS, Known, pathApiFor, PlanError, Planner, type EngineFs, type HomePlanData } from "./engine-plan-core.ts";
 
 /** Plan / execute / verify rounds per attempt before the home is reported failed and left to the retry schedule. */
 export const MAX_ENGINE_ROUNDS = 3;
@@ -48,7 +48,15 @@ export function planEngineHistory(job: EngineHistoryJob, fs: EngineFs = realEngi
   // whose journal cannot be finished now (its engine is open, or cannot be told, or the file is held) is not planned.
   const configured = new Map<string, string[]>();
   for (const home of job.homes) if (home.identities?.length) configured.set(homeKey(home.engine, home.home), [...new Set([...(configured.get(homeKey(home.engine, home.home)) ?? []), ...home.identities])]);
-  const recovery = recoverAll(Object.fromEntries(configured));
+  // Only the homes this plan is for: with `only` (an attempt names the homes it has held), a journal of another home is not touched here.
+  // A home inside an engine's scope folder that is not PRIVATE (it has login generations, or its marker does not hold) is never
+  // recovered or planned: nothing in it is touched, and the next attempt names it as a leftover (conversation-deletion.ts).
+  const only = job.only ? new Set(job.only) : undefined;
+  const excluded = (engine: string, home: string): boolean => inScopeFolder(engine, home) && !privateScopeHome(engine, home);
+  const recovery = recoverAll(Object.fromEntries(configured), [], (key) => {
+    const [engine = "", home = ""] = key.split("\0");
+    return (!only || only.has(key)) && !excluded(engine, home);
+  });
   const plans: Record<string, HomePlanData> = {};
   const failed: string[] = [];
   const failedHomes: string[] = [];
@@ -65,6 +73,12 @@ export function planEngineHistory(job: EngineHistoryJob, fs: EngineFs = realEngi
     if (seen.has(key) || (job.only && !job.only.includes(key))) continue;
     seen.add(key);
     const facts = new Known(job.known?.[key]);
+    if (excluded(home.engine, home.home)) {
+      failedHomes.push(key);
+      if (!failed.includes(home.home)) failed.push(home.home);
+      reasons[home.home] = homeReasons[key] = "held";
+      continue;
+    }
     const pl = new Planner(fs, facts);
     pl.synced = fs.syncedHome?.(home.home) === true;
     if (recovery.unreadable) {
@@ -87,14 +101,21 @@ export function planEngineHistory(job: EngineHistoryJob, fs: EngineFs = realEngi
     if (before.state !== "closed") {
       failedHomes.push(key);
       if (!failed.includes(home.home)) failed.push(home.home);
+      // Open only by Murage's own processes (a turn of another instance on the same home, a one-shot run the hold does not cover): it is
+      // Murage's own turn, which ends by itself. The home is not read, as before; it is tried again when Murage's turns end, and no
+      // `home not read` line is written for Murage's own work (the smoothness gate's ALL.home row).
+      if (before.state === "open" && before.via === "process" && foreignEngineHolders(home.engine, home.home, { identities }).ownOnly) {
+        reasons[home.home] = homeReasons[key] = "engine-running";
+        continue;
+      }
       reasons[home.home] = homeReasons[key] = before.state === "unknown" ? "engine-unchecked" : "engine-open";
-      console.warn(`engine history: ${home.engine} home not read: ${before.state} by ${before.via}${"unknownBy" in before && before.unknownBy ? ` ${JSON.stringify(before.unknownBy.slice(0, 5))}` : ""}${before.holders?.length ? ` holders ${JSON.stringify(before.holders)}` : ""}`);
+      if (!job.quiet?.includes(key)) console.warn(`engine history: ${home.engine} home not read: ${before.state} by ${before.via}${"unknownBy" in before && before.unknownBy ? ` ${JSON.stringify(before.unknownBy.slice(0, 5))}` : ""}${before.holders?.length ? ` holders ${JSON.stringify(before.holders)}` : ""}`);
       if (before.app) homeApps[key] = before.app;
       continue;
     }
-    try {
-      planHome(pl, home, job);
-    } catch (error) {
+    const thrown = attempt(() => planHome(pl, home, job));
+    if (thrown) {
+      const { error } = thrown;
       const path = error instanceof PlanError ? error.path : home.home;
       failedHomes.push(key);
       if (!failed.includes(path)) failed.push(path);
@@ -192,16 +213,118 @@ export function removeEngineHistoryFiles(homes: DeletionEngineHome[], folders: s
   return { removed, failed, leftovers, discovery, reasons, homeReasons, homeApps, failedHomes, syncedHomes: [...synced] };
 }
 
+/** The engines whose conversation-owned files an open-home pass removes (DELETION-WHILE-OPEN-107): Murage runs each conversation in
+ * its own thread folder, so Claude Code's project folder and session side files, and Fuigo's and Grok's session folder, are that
+ * conversation's alone. Any other engine waits for the closed pass, as before. */
+export const OPEN_PASS_ENGINES: ReadonlySet<string> = new Set(["claude", "fuigo", "grok"]);
+
+/** A database the open pass never opens: no SQLite read can touch the -wal or -shm of an engine that is running. */
+const noDatabases = (fs: EngineFs): EngineFs => ({ ...fs, withDb: () => null });
+
+/** The driver's one try: runs `fn` and gives back what it threw, or null when it finished (a home that cannot be read gets no plan). */
+function attempt(fn: () => void): { error: unknown } | null {
+  try { fn(); return null; } catch (error) { return { error }; }
+}
+
+/** DELETION-WHILE-OPEN-107: the homes in `only` that a program Murage did not start keeps open (the owner's own CLI). Run in two
+ * jobs, so the ids a plan finds are saved before anything they name is removed (a transcript removed first would take with it the only
+ * place the closed pass could learn a side file's session id from):
+ *   1. no `plans`: each home is planned as the closed pass plans it, with no database opened, and only its conversation-owned
+ *      removals are kept (OPEN_PASS_STEPS). Returns those plans and the ids found (`discovery`); nothing is changed.
+ *   2. with the saved `plans`: every check below is made again, and the plans of the homes that still pass run, each removal under the
+ *      per-file hold (engine-exec.ts openPassGate).
+ * Every shared file's rows and every database step stay for the closed pass, so the home stays owed until that pass has run. A home is
+ * left whole when it is synced or in a scope folder, when a crash journal names it, when the process list cannot be read, when any
+ * process's command line names one of the conversation's sessions or folders, and unless EVERY process on the home (and each one it
+ * started) is shown to have none of the files open and to work outside them (engine-closed.ts holdersClearOf, Grok design r1). */
+export function openHomePass(job: EngineHistoryJob, fs: EngineFs = realEngineFs(), onStep?: (key: string, index: number) => void): EngineHistoryResult {
+  const configured = new Map<string, string[]>();
+  for (const home of job.homes) if (home.identities?.length) configured.set(homeKey(home.engine, home.home), [...new Set([...(configured.get(homeKey(home.engine, home.home)) ?? []), ...home.identities])]);
+  let journals = new Set<string>();
+  if (attempt(() => { journals = new Set(listRedo().map((item) => homeKey(item.engine as DeletionEngineHome["engine"], item.home))); })) return { removed: [], failed: [], leftovers: [] };
+  /** The pids that must be proven for this home now, or null when the home is left whole. */
+  const holdersOf = (home: DeletionEngineHome, key: string): number[] | null => {
+    if (journals.has(key) || inScopeFolder(home.engine, home.home) || fs.syncedHome?.(home.home) === true) return null;
+    const held = foreignEngineHolders(home.engine, home.home, { identities: configured.get(key) ?? [] });
+    return held.state === "open" && held.pids?.length ? held.pids : null;
+  };
+  /** Whether nothing running names the conversation and every holder is proven clear of these steps' files. */
+  const clear = (pids: number[], sessions: readonly unknown[], steps: readonly HomePlanData["steps"][number][]): boolean => {
+    const ids = sessions.filter((id): id is string => typeof id === "string");
+    if (anyProcessNames([...new Set([...ids, ...job.folders])]) !== false) return false;
+    const targets = [...new Set([...steps.flatMap((step) => (step.k === "remove" || step.k === "rmdirIfEmpty" ? [step.target, `${step.target}${ASIDE_SUFFIX}`] : [])), ...job.folders])];
+    return holdersClearOf(pids, targets).proven;
+  };
+  const plans: Record<string, HomePlanData> = {};
+  const discovery: EngineDiscovery = {};
+  const seen = new Set<string>();
+  for (const home of job.homes) {
+    const key = homeKey(home.engine, home.home);
+    if (seen.has(key) || !job.only?.includes(key) || !OPEN_PASS_ENGINES.has(home.engine)) continue;
+    seen.add(key);
+    const pids = holdersOf(home, key);
+    if (!pids) continue;
+    if (job.plans) {
+      // 2. the saved plan, checked again now
+      const plan = job.plans[key];
+      if (!plan || plan.engine !== home.engine || plan.home !== home.home || !plan.steps.length) continue;
+      if (!clear(pids, [...(job.sessions[home.engine] ?? []), ...new Known(job.known?.[key]).get("sessionIds")], plan.steps)) continue;
+      plans[key] = plan;
+      continue;
+    }
+    // 1. plan only
+    const pl = new Planner(noDatabases(fs), new Known(job.known?.[key]));
+    if (attempt(() => planHome(pl, home, job))) continue;
+    const steps = pl.steps.filter((step) => OPEN_PASS_STEPS.has(step.k) && !step.needs?.length);
+    if (!steps.length) continue;
+    // the conversation's sessions as Murage recorded them and as this plan found them, and its folders
+    if (!clear(pids, [...(job.sessions[home.engine] ?? []), ...pl.facts.get("sessionIds")], steps)) continue;
+    plans[key] = { engine: home.engine, home: home.home, steps, ...(configured.get(key)?.length ? { identities: configured.get(key) } : {}) };
+    const saved = pl.facts.toJSON();
+    if (Object.keys(saved).length) discovery[key] = saved;
+  }
+  if (!job.plans) return { removed: [], failed: [], leftovers: [], plans, discovery };
+  if (!Object.keys(plans).length) return { removed: [], failed: [], leftovers: [] };
+  const ran = executeEnginePlans(plans, onStep, {}, { openHome: true });
+  return { removed: ran.removed, failed: [...ran.failed, ...ran.leftovers], leftovers: [], failedHomes: ran.failedHomes, reasons: ran.reasons, homeReasons: ran.homeReasons };
+}
+
+/** The homes a program Murage did not start has open right now (engine-closed.ts foreignEngineHolders), read before an attempt pauses
+ * background runs or holds Murage's own sessions. Reads the process list only: no engine file, journal or database is opened. A home
+ * inside a scope folder that is not PRIVATE is never planned anyway and is left to the attempt's own rule. */
+export function probeEngineHomes(job: Pick<EngineHistoryJob, "homes" | "only">): EngineHistoryResult {
+  const foreignHomes: NonNullable<EngineHistoryResult["foreignHomes"]> = {};
+  // the programs Murage is configured to run for each home, every entry of it merged, as planEngineHistory reads them
+  const identities = new Map<string, string[]>();
+  for (const home of job.homes) if (home.identities?.length) identities.set(homeKey(home.engine, home.home), [...new Set([...(identities.get(homeKey(home.engine, home.home)) ?? []), ...home.identities])]);
+  const seen = new Set<string>();
+  for (const home of job.homes) {
+    const key = homeKey(home.engine, home.home);
+    if (seen.has(key) || (job.only && !job.only.includes(key))) continue;
+    seen.add(key);
+    if (inScopeFolder(home.engine, home.home) && !privateScopeHome(home.engine, home.home)) continue;
+    const verdict = foreignEngineHolders(home.engine, home.home, { identities: identities.get(key) ?? [] });
+    if (verdict.state === "open") foreignHomes[key] = { ...(verdict.app ? { app: verdict.app } : {}), ...(verdict.holders ? { holders: verdict.holders } : {}), ...(verdict.kinds ? { kinds: verdict.kinds } : {}) };
+  }
+  return { removed: [], failed: [], leftovers: [], foreignHomes };
+}
+
 /** One engine-history job, as the worker runs it. `onStep` hears each plan step as it finishes. */
 export function runEngineHistoryJob(job: EngineHistoryJob, onStep?: (key: string, index: number) => void): EngineHistoryResult {
   configureRedo(job.redoDir);
+  configureScopes(job.nativeDir);
   if (job.kind === "recover") {
     const configured: Record<string, string[]> = {};
     for (const home of job.homes) if (home.identities?.length) configured[homeKey(home.engine, home.home)] = home.identities;
+    // Before any hold (the start-up pass): a journal of a home inside an engine's scope folder is finished only by an attempt, after
+    // Murage's own engine processes on it are held and while the scope is in that attempt's `only`.
+    const allow = job.skipScopes ? (key: string) => { const [engine = "", home = ""] = key.split("\0"); return !inScopeFolder(engine, home); } : undefined;
     // and the empty private lock folders a killed Murage left next to Claude Code's history (never Claude's own lock)
-    const done = recoverAll(configured, job.homes.filter((item) => item.engine === "claude").map((item) => pathApiFor(item.home).join(item.home, "history.jsonl")));
+    const done = recoverAll(configured, job.homes.filter((item) => item.engine === "claude").map((item) => pathApiFor(item.home).join(item.home, "history.jsonl")), allow);
     return { removed: [], failed: done.pending.map((item) => item.home), leftovers: [], failedHomes: done.pending.map((item) => homeKey(item.engine as DeletionEngineHome["engine"], item.home)) };
   }
+  if (job.kind === "probe") return probeEngineHomes(job);
+  if (job.kind === "openPass") return openHomePass(job);
   if (job.kind === "plan") return planEngineHistory(job);
   if (job.kind === "execute") {
     const ran = executeEnginePlans(job.plans ?? {}, onStep);

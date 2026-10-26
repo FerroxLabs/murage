@@ -6,11 +6,13 @@
 // Code's own updater, or the person copies the command and runs it. Retry
 // follows either path, because the update alone does not resend the message.
 // Loaded on first use.
-import { Check, Copy, Download, Loader2, RefreshCw } from "lucide-react";
+import { Check, Copy, Download, Loader2, RefreshCw, X } from "lucide-react";
 import { useState } from "react";
 
 import { claudeUpdateCommand } from "@/lib/claude-update";
 import { api, useStore, type InstanceInfo } from "@/state/store";
+import { useCopyFeedback } from "@/lib/copy-text";
+import { t } from "@/lib/i18n";
 
 
 type Phase = { kind: "ask" } | { kind: "updating" } | { kind: "updated"; version: string } | { kind: "manual" } | { kind: "failed"; error: string };
@@ -22,7 +24,7 @@ export default function ClaudeUpdatePrompt({ instance, onRetry }: { instance: In
   const updateCommand = claudeUpdateCommand(instance.cli);
   const { dispatch } = useStore();
   const [phase, setPhase] = useState<Phase>({ kind: "ask" });
-  const [copied, setCopied] = useState(false);
+  const { mark: copyMark, copy: copyCommand } = useCopyFeedback();
 
   const update = () => {
     if (phase.kind === "updating") return;
@@ -71,10 +73,11 @@ export default function ClaudeUpdatePrompt({ instance, onRetry }: { instance: In
           <p className="leading-relaxed text-ink-secondary">Run this in Terminal, then retry:</p>
           <div className="mt-1.5 flex items-center gap-1 rounded-md bg-inset px-2 py-1 font-mono text-[12px]">
             <span className="flex-1 select-all">{updateCommand}</span>
-            <button type="button" aria-label="Copy command" title="Copy command" className="rounded-md p-1 text-ink-secondary hover:bg-raised hover:text-ink"
-              onClick={() => { void navigator.clipboard?.writeText(updateCommand); setCopied(true); setTimeout(() => setCopied(false), 1200); }}>
-              {copied ? <Check size={13} /> : <Copy size={13} />}
+            <button type="button" aria-label={copyMark === "failed" ? t("copy.failed") : "Copy command"} title={copyMark === "failed" ? t("copy.failed") : "Copy command"} className={`rounded-md p-1 hover:bg-raised hover:text-ink ${copyMark === "failed" ? "text-danger" : "text-ink-secondary"}`}
+              onClick={() => void copyCommand(updateCommand)}>
+              {copyMark === "copied" ? <Check size={13} /> : copyMark === "failed" ? <X size={13} /> : <Copy size={13} />}
             </button>
+            {copyMark === "failed" && <span role="status" className="sr-only">{t("copy.failed")}</span>}
           </div>
           <div className="mt-2 flex flex-wrap gap-2">
             {retry}

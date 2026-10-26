@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Business Plan",
     "tagline": "A practical business plan with assumptions and company questions visible",
-    "summary": "Blueprint prepares a business plan with a concrete operating model for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For a full founder programme, use IGNITION. For general solo business planning, use Solo Business. For a new-business planning team, use Founder Setup.",
+    "summary": "Blueprint prepares a business plan with a concrete operating model for your review.",
     "category": "Founders",
     "author": {
       "name": "Ferrox Labs",
@@ -42,7 +42,8 @@
         "title": "Business Plan",
         "description": "Blueprint prepares a business plan with a concrete operating model for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For a full founder programme, use IGNITION. For general solo business planning, use Solo Business. For a new-business planning team, use Founder Setup.",
         "appearance": {
-          "color": "purple"
+          "color": "purple",
+          "mascotBody": "hexagon"
         },
         "skills": [
           "business-planner",

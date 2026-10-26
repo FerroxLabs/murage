@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { MemoryReview, candidateApproval, type MemoryCorrectionReview, type MemoryInspection } from "./MemoryReview";
+import { MemoryReview, candidateApproval, memoryRecordOriginLabel, type MemoryCorrectionReview, type MemoryInspection } from "./MemoryReview";
 
 const inspection: MemoryInspection = {
   record: { id: "record", version: 2, scopeId: "scope", kind: "fact", text: "<script>untrusted</script>", assertion: "unverified-import", state: "candidate", ownerPinned: false, validFrom: 1, validTo: null },
@@ -94,4 +94,10 @@ it("folds each source with a button, not a details element", () => {
   expect(html).not.toContain("<details");
   expect(html).toContain('aria-expanded="false"');
   expect(html).toContain("A conversation");
+});
+
+it("labels a verbatim piece of a chat line as a chat excerpt, with who said it (PASTE-CAPTURE-FIX 6, S6)", () => {
+  const html = render({ ...inspection, record: { ...inspection.record, kind: "source", assertion: "owner-statement", state: "active", text: "account ending ****" } });
+  expect(html).toContain("Chat excerpt · ");
+  expect(memoryRecordOriginLabel({ id: "r", kind: "fact", assertion: "owner-statement", validFrom: 1 })).not.toContain("Chat excerpt");
 });

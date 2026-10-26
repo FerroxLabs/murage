@@ -1,0 +1,51 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+[Unit]
+Description=Murage Cloud turn DNS forwarder (synthetic answers, no upstream)
+After=network-online.target murage-egress.service murage-egress-proxy.service
+Requires=murage-egress.service
+Wants=network-online.target
+BindsTo=murage-egress-proxy.service
+PartOf=murage-home.service
+Before=murage-home.service
+
+[Service]
+Type=simple
+User=murage-dns
+Group=murage-dns
+# Fail closed: a missing or malformed /etc/murage/egress-allow.json exits 78 and
+# turns then have no DNS at all (nft has no path to the host stub). Same file and parser
+# as the SNI proxy, so DNS and SNI cannot disagree. Stops and restarts with the proxy.
+ExecStart=/usr/bin/python3 -I /usr/local/libexec/murage-egress-proxy dns
+RestartPreventExitStatus=78
+Restart=always
+RestartSec=2
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+IPAddressDeny=any
+IPAddressAllow=localhost
+RestrictAddressFamilies=AF_INET
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
+MemoryMax=96M
+TasksMax=16
+LimitNOFILE=4096
+UMask=0077
+LimitCORE=0
+
+[Install]
+WantedBy=murage-home.service

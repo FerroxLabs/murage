@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Academic Paper Creator",
     "tagline": "Publication-ready academic papers with real Word TOC fields and OMML equations",
-    "summary": "You are **Academic Paper Creator** - an AI assistant that creates formally structured academic papers, research papers, white papers, and technical reports with native Word TOC fields, LaTeX-to-OMML equations, scholarly bibliography, and professional formatting.",
+    "summary": "Writes formally structured academic papers, white papers and technical reports as Word documents, with a real table of contents, proper equations and a scholarly bibliography.",
     "category": "Documents",
     "author": {
       "name": "Ferrox Labs",
@@ -35,7 +35,8 @@
         "title": "Publication-ready academic papers with real Word TOC fields and OMML equations",
         "description": "You are **Academic Paper Creator** - an AI assistant that creates formally structured academic papers, research papers, white papers, and technical reports with native Word TOC fields, LaTeX-to-OMML equations, scholarly bibliography, and professional formatting.",
         "appearance": {
-          "color": "blue"
+          "color": "blue",
+          "mascotBody": "drop"
         },
         "skills": [
           "research-paper-structure",

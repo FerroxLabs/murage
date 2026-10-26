@@ -29,6 +29,7 @@ import { scopeRow } from "./scope-id.ts";
 import { addTurnParents, writeRecordLineage } from "./lineage-write.ts";
 import type { LineageRef, TurnLineage } from "./lineage-types.ts";
 import { inheritEdge } from "./revoke-commit.ts";
+import { insertMemoryRecord } from "./record-write.ts";
 
 export const BRING_IN_MAX_CHARS = 1000;
 
@@ -179,7 +180,7 @@ export function bringInToProject(db: DatabaseSync, input: {
   db.prepare("INSERT INTO memory_jobs(id,source_id,source_revision,stage,stage_version,status,cursor,policy_revision,deletion_epoch) VALUES(?,?,1,'capture','1','complete',?,?,?)")
     .run(randomUUID(), newSource, Buffer.byteLength(text), meta.policy_revision, meta.deletion_epoch);
   const recordId = randomUUID();
-  db.prepare("INSERT INTO memory_records VALUES(?,1,?,?,?,'assistant-inference','active',0,?,NULL,NULL,?)").run(recordId, room, kind, text, input.now, input.now);
+  insertMemoryRecord(db, { id: recordId, version: 1, scopeId: room, kind, text, assertion: "assistant-inference", state: "active", validFrom: input.now, createdAt: input.now });
   db.prepare("INSERT INTO memory_evidence VALUES(?,1,?,1,0,?)").run(recordId, newSource, Buffer.byteLength(text));
   inheritEdge(db, { kind: "record", id: recordId, version: 1 }, { kind: "source", id: newSource });
   if (from.record) { db.prepare("INSERT INTO memory_derivations VALUES(?,?,?,1)").run(from.record.id, from.record.version, recordId); inheritEdge(db, { kind: "record", id: recordId, version: 1 }, { kind: "record", id: from.record.id, version: from.record.version }); }

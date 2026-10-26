@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Shift Planner",
     "tagline": "A staff rota with coverage, hours and unresolved conflicts shown clearly",
-    "summary": "Roster drafts a staff rota from your coverage requirements, availability and work rules. It checks qualifications, overlapping assignments and hours, and makes every unfilled shift visible. Work from a supplied table or a supported connected sheet. For individual appointments, use Scheduler; for leave policy questions, use HR Admin. I give guidance and drafts, not licensed legal or HR advice, and I promise no outcome.",
+    "summary": "Roster drafts a staff rota from your coverage requirements, availability and work rules.",
     "category": "People",
     "author": {
       "name": "Ferrox Labs",
@@ -43,7 +43,8 @@
         "title": "Shift Planner",
         "description": "Roster drafts a staff rota from your coverage requirements, availability and work rules. It checks qualifications, overlapping assignments and hours, and makes every unfilled shift visible. Work from a supplied table or a supported connected sheet. For individual appointments, use Scheduler; for leave policy questions, use HR Admin.",
         "appearance": {
-          "color": "teal"
+          "color": "teal",
+          "mascotBody": "circle"
         },
         "skills": [
           "shift-coverage-checklist",

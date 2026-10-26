@@ -133,7 +133,7 @@ export function createMcpServers(deps) {
 
   function validSecrets(input, entry) {
     if (!isRecord(input)) return null;
-    const keys = Object.keys(input);
+    const keys = Object.keys(input).filter((key) => key !== "rev");
     if (keys.length === 0 || keys.some((key) => !["headers", "url", "env"].includes(key))) return null;
     const out = {};
     if (entry.kind === "stdio") {
@@ -174,6 +174,9 @@ export function createMcpServers(deps) {
     const found = await listing(name);
     if (found.error) return fail(found.error, found.error === "not-found" ? MESSAGES.notFound : MESSAGES.unknown);
     const entry = found.entry;
+    // Item 118: a credential card names the revision of the entry it was made
+    // for. Another revision is stale and nothing is written.
+    if (isRecord(input) && input.rev !== undefined && (typeof input.rev !== "string" || input.rev !== entry.rev)) return fail("stale", MESSAGES.stale);
     const values = validSecrets(input, entry);
     if (!values) return fail("invalid", MESSAGES.invalid);
     const origin = entry.kind === "stdio" ? undefined : originOf(entry.url);
@@ -280,6 +283,10 @@ export function createMcpServers(deps) {
     const flow = flows.get(name);
     if (!flow) return false;
     flow.cancelled = true;
+    // The entry goes now, so pressing Sign in again at once opens a fresh
+    // window; the cancelled flow's late finally checks identity and leaves
+    // any newer flow alone.
+    flows.delete(name);
     flow.finish?.({ error: "cancelled" });
     return true;
   }

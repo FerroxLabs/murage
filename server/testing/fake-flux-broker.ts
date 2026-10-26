@@ -10,7 +10,18 @@ export const FAKE_FLUX_BROKER_TOKEN = "b".repeat(64);
 export const FAKE_FLUX_BROKER_PREFIX = "/composio";
 
 export interface FakeBrokerAccount { id: string; alias: string; status: string; toolkit: { slug: string } }
-export interface FakeBrokerFixture { accounts: FakeBrokerAccount[]; links: unknown[]; calls: number }
+export interface FakeBrokerFixture {
+  accounts: FakeBrokerAccount[];
+  links: unknown[];
+  calls: number;
+  /** Refuse a sign-in under a label a live account on that app holds, with
+   *  the broker's own 409 sentence. Off unless a test asks for it. */
+  refuseTakenLabels?: boolean;
+  /** How long the broker takes before it refuses a taken label. */
+  refuseAfterMs?: number;
+  /** How long a status read takes before it answers. */
+  statusAfterMs?: number;
+}
 
 function servicesFrom(accounts: FakeBrokerAccount[], only?: string[]) {
   const services: Record<string, unknown> = {};
@@ -54,12 +65,21 @@ export async function handleFakeFluxBroker(req: IncomingMessage, res: ServerResp
   const accounts = fixture?.accounts ?? [];
   if (path === "/v1/connectors/connected") return send(200, { services: servicesFrom(accounts) });
   if (path === "/v1/connectors") {
+    if (fixture?.statusAfterMs) await new Promise((resolve) => setTimeout(resolve, fixture.statusAfterMs));
     const only = (url.searchParams.get("services") ?? "").split(",").filter(Boolean).map((slug) => slug.toLowerCase());
     return send(200, { services: servicesFrom(accounts, only) });
   }
   const authorize = path.match(/^\/v1\/connectors\/([^/]+)\/authorize$/);
   if (authorize && req.method === "POST") {
     const slug = decodeURIComponent(authorize[1]);
+    const label = typeof body.alias === "string" ? body.alias.trim().toLowerCase() : "";
+    if (fixture?.refuseTakenLabels && label && accounts.some((account) =>
+      account.toolkit.slug.toLowerCase() === slug.toLowerCase()
+      && account.alias.trim().toLowerCase() === label
+      && !/^(failed|expired)$/i.test(account.status))) {
+      if (fixture.refuseAfterMs) await new Promise((resolve) => setTimeout(resolve, fixture.refuseAfterMs));
+      return send(409, { error: `Account alias "${body.alias}" is already in use for ${slug}` });
+    }
     fixture?.links.push({ toolkit: slug, ...(body.alias ? { alias: body.alias } : {}) });
     return send(200, { url: `https://connect.composio.dev/link/${encodeURIComponent(body.alias ?? slug)}` });
   }

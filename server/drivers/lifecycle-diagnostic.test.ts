@@ -16,6 +16,19 @@ function capture() {
 }
 const identity = { threadId: "thread-1", driver: "grokAgent", instanceId: "grok-main", turnId: "turn-1" };
 
+// U24 design R10 / T10: a Windows stop_requested record says how the tree was held.
+describe("lifecycle containment label (U24)", () => {
+  it("records containment job or none on stop_requested and refuses any other value", () => {
+    const { rows, sink } = capture();
+    const recorder = createLifecycleRecorder({ ...identity, sink });
+    recorder.record("stop_requested", { reason: "user_cancel", containment: "job" });
+    recorder.record("stop_requested", { reason: "user_cancel", containment: "none" });
+    recorder.record("stop_requested", { reason: "user_cancel", containment: "elsewhere" as never });
+    expect(rows.filter((row) => row.msg.event === "stop_requested").map((row) => row.msg.containment)).toEqual(["job", "none"]);
+    expect(JSON.stringify(rows)).not.toContain("elsewhere");
+  });
+});
+
 describe("engine lifecycle recorder", () => {
   it("keeps terminal and observed kinds distinct and refuses unknown diagnostic categories",()=>{
     const {rows,sink}=capture(),recorder=createLifecycleRecorder({...identity,sink});
