@@ -249,7 +249,7 @@ it("Astra r1 #7: the room turn renders the project layers again after its withho
   const index = readFileSync(fileURLToPath(new URL("./index.ts", import.meta.url)), "utf8");
   const sync = index.indexOf("if(roomTranscriptOwner)syncOwnerWithheldNotes(threadId,roomTranscript);");
   const again = index.indexOf("const projectNow=projectMember?roomProjectMember(group,bot.id,roomOwnerAudience,availableContextTokens):null;");
-  const rebuilt = index.indexOf("text=`${withProjectStatus(serializeRoomContext(threadId,userName,roomTranscript.messages,roomTranscript.withheld,projectTranscript),projectStatus)}");
+  const rebuilt = index.indexOf("text=`${withProjectStatus(serializeRoomContext(threadId,userName,roomTranscript.messages,roomTranscript.withheld,projectTranscript,emittedNow()),projectStatus)}");
   expect(sync).toBeGreaterThan(0);
   expect(again).toBeGreaterThan(sync);
   expect(rebuilt).toBeGreaterThan(again);

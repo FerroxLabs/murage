@@ -17,9 +17,9 @@ const owed = [{ id: "a:codex", text: sentence, tryAgain: true }];
 const withNote = (note: AppState["deletionNote"]): AppState => ({ ...initialState, deletionNote: note });
 
 describe("the owed-deletion notice follows the server's list", () => {
-  it("a list with a notice shows it, with the retry action", () => {
+  it("a list with a notice keeps it as the owed note (shown in Settings > Engines, with no retry action: 1.0.7)", () => {
     const next = reducer(initialState, { type: "deletionOwed", notices: owed });
-    expect(next.deletionNote).toEqual({ title: "Deleted. Murage finishes the rest by itself:", items: [sentence], retry: true, owed: true, ids: ["a:codex"], covers: [] });
+    expect(next.deletionNote).toEqual({ title: "Deleted. Murage finishes the rest by itself:", items: [sentence], retry: false, owed: true, ids: ["a:codex"], covers: [], lines: [{ text: sentence, tryAgain: true, covers: [] }] });
   });
 
   it("an empty list clears an owed notice (a retry that worked, or one settled while the window was away)", () => {
@@ -53,9 +53,9 @@ describe("the order of answers: an older list never undoes a newer one (r16b fin
 
   it("the inverse: the answer that is newer is applied, whichever way it arrived", () => {
     const afterGet = reducer(initialState, { type: "deletionOwed", notices: pending, rev: 11 });
-    expect(afterGet.deletionNote?.retry).toBe(true);
+    expect(afterGet.deletionNote?.lines?.some((line) => line.tryAgain)).toBe(true);
     const afterEvent = reducer(afterGet, { type: "deletionOwed", notices: done, rev: 12 });
-    expect(afterEvent.deletionNote).toEqual({ title: "Deleted.", items: ["Removed from Codex."], retry: false, owed: true, ids: ["a:codex:done"], covers: [] });
+    expect(afterEvent.deletionNote).toEqual({ title: "Deleted.", items: ["Removed from Codex."], retry: false, owed: true, ids: ["a:codex:done"], covers: [], lines: [{ text: "Removed from Codex.", tryAgain: false, covers: [] }] });
     expect(afterEvent.owedRev).toBe(12);
   });
 
@@ -65,7 +65,7 @@ describe("the order of answers: an older list never undoes a newer one (r16b fin
   });
 
   it("an answer with no revision (an older server) is still applied", () => {
-    expect(reducer(initialState, { type: "deletionOwed", notices: pending }).deletionNote?.retry).toBe(true);
+    expect(reducer(initialState, { type: "deletionOwed", notices: pending }).deletionNote?.lines?.some((line) => line.tryAgain)).toBe(true);
   });
 });
 
@@ -104,5 +104,18 @@ describe("a finished line is cleared by ownership, not by whether it offers a re
     expect(reducer(shown, { type: "deletionOwed", notices: [], rev: 29 })).toBe(shown);
     const justDeleted = withNote({ title: "Deleted.", items: ["Something, in somewhere."], retry: false });
     expect(reducer(justDeleted, { type: "deletionOwed", notices: [], rev: 40 }).deletionNote).toEqual(justDeleted.deletionNote);
+  });
+});
+
+describe("1.0.7: the owed list never replaces a note a Delete just showed", () => {
+  it("the Delete note stays on screen; the owed list reaches Settings by itself", () => {
+    const deleteNote = { title: "Deleted. Murage will finish removing these when it can:", items: ["Files this conversation made, in the folder you chose."] };
+    const notice = { id: "owed:claude", text: "Claude Code is open. Murage finishes removing this conversation from it by itself once Claude Code is closed. Nothing is needed from you.", tryAgain: true, byItself: true, label: "Claude Code", covers: ["d1:claude"] };
+    const next = reducer(withNote(deleteNote), { type: "deletionOwed", notices: [notice], rev: 5 });
+    expect(next.deletionNote).toBe(deleteNote);
+    expect(next.owedNote?.owed).toBe(true);
+    const cleared = reducer(next, { type: "deletionOwed", notices: [], rev: 6 });
+    expect(cleared.deletionNote).toBe(deleteNote);
+    expect(cleared.owedNote).toBeNull();
   });
 });

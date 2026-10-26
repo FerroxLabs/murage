@@ -449,7 +449,10 @@ function ownTree(processes: readonly NativeProcess[], ownPid: number): Set<numbe
  * home or scope gate), minus Murage's own process tree. "open" only when such a process was seen; anything else (closed, unknown, the list
  * could not be read) is "not-seen", and the attempt goes on to the full gate (engineState) as before. It only ever makes an attempt do
  * less: a home it calls open is left exactly as an engineState "open" leaves it. */
-export function foreignEngineHolders(engine: string, home: string, options: Pick<ClosedOptions, "identities"> = {}): { state: "open" | "not-seen"; app?: string; holders?: ProcessVerdict["holders"]; /** no process outside Murage's own tree counts: every one that holds the home (if any) is Murage's own */ ownOnly?: true; /** program|rule of every holder, sorted (holders keeps five) */ kinds?: string[] } {
+export function foreignEngineHolders(engine: string, home: string, options: Pick<ClosedOptions, "identities"> = {}): { state: "open" | "not-seen"; app?: string; holders?: ProcessVerdict["holders"]; /** no process outside Murage's own tree counts: every one that holds the home (if any) is Murage's own */ ownOnly?: true; /** program|rule of every holder, sorted (holders keeps five) */ kinds?: string[];
+  /** DELETION-WHILE-OPEN-107: EVERY process that is the engine on this home (Murage's own and others', uncapped, with each one whose home
+   * cannot be told), and every descendant of each (its shells and tool runs): what the open-home pass must prove has nothing of the
+   * conversation open (engine-closed.ts holdersClearOf) */ pids?: number[] } {
   let processes: NativeProcess[];
   try {
     processes = exclOps.processes();
@@ -457,11 +460,31 @@ export function foreignEngineHolders(engine: string, home: string, options: Pick
   } catch { return { state: "not-seen" }; }
   const own = ownTree(processes, exclOps.ownPid());
   const gate = privateScopeHome(engine, home) ? namesScope(scopeKeys(home)) : homeScope(engine, home, [], options.identities);
-  const counts = (proc: NativeProcess): boolean | null => (own.has(proc.pid) ? false : gate ? gate(proc) : true);
+  const engines = new Set<number>();
+  const counts = (proc: NativeProcess): boolean | null => {
+    const onHome = gate ? gate(proc) : true;
+    if (onHome !== false) engines.add(proc.pid);
+    return own.has(proc.pid) ? false : onHome;
+  };
   const seen = processVerdict(engine, processes, exclOps.ownPid(), options.identities, counts);
   if (seen.state !== "open") return seen.state === "closed" ? { state: "not-seen", ownOnly: true } : { state: "not-seen" };
   const kinds = (seen as { holderKinds?: string[] }).holderKinds;
-  return { state: "open", ...(seen.app ? { app: seen.app } : {}), ...(seen.holders?.length ? { holders: seen.holders } : {}), ...(kinds?.length ? { kinds } : {}) };
+  const pids = new Set<number>();
+  for (const pid of engines) for (const item of ownTree(processes, pid)) pids.add(item);
+  return { state: "open", ...(seen.app ? { app: seen.app } : {}), ...(seen.holders?.length ? { holders: seen.holders } : {}), ...(kinds?.length ? { kinds } : {}), pids: [...pids].sort((a, b) => a - b) };
+}
+
+/** DELETION-WHILE-OPEN-107: whether any running process's command line names one of `needles` (a deleted conversation's session id,
+ * its thread folder): `claude --resume <id>` is that very conversation being used. Null when the process list cannot be read. */
+export function anyProcessNames(needles: readonly string[]): boolean | null {
+  const wanted = needles.filter((needle) => needle.length >= 8);
+  if (!wanted.length) return false;
+  let processes: NativeProcess[];
+  try {
+    processes = exclOps.processes();
+    if (!Array.isArray(processes) || !sane(processes)) return null;
+  } catch { return null; }
+  return processes.some((proc) => (proc.argv ?? []).some((arg) => typeof arg === "string" && wanted.some((needle) => arg.includes(needle))));
 }
 
 /** Is `engine`, whose files are under `home`, closed right now? A PRIVATE scope (see above) has the private gate; any other home
@@ -513,4 +536,91 @@ export function engineState(engine: string, home: string, options: ClosedOptions
   if (fromLocks === "open") return { state: "open", via: "lock" };
   if (seen.state === "unknown" || fromLocks === "unknown") return { state: "unknown", via: seen.state === "unknown" ? "process" : "lock", ...(seen.unknownBy ? { unknownBy: seen.unknownBy } : {}) };
   return { state: "closed", via: "process" };
+}
+
+/** DELETION-WHILE-OPEN-107 (Grok design r1): what the proof found. `proven` only when every process was read and none has a target. */
+export type OpenProof = { proven: true } | { proven: false; why: "unsupported" | "unreadable" | "holds-target" | "cwd-inside" | "no-holders"; pid?: number };
+
+/** Proves that none of `pids` (every process on an open home, and each one it started: foreignEngineHolders `pids`) has any of
+ * `targets` open, for reading or writing, and that each one's working folder can be read and is outside every target. Claude Code
+ * appends to its transcript by open, write, close, so a look at current writers alone cannot tell a CLI working in the deleted
+ * conversation from one that is not; its working folder can. Linux reads /proc, macOS runs one lsof for all of them (each must show
+ * its `cwd`). Windows reads each one's working folder through the addon (cwdOf) and its real path; the open-file half there is the
+ * share-none handle each file is taken with before it is marked for removal (engine-exec.ts markDeleteEach), which Windows refuses
+ * while ANY process has the file open for reading or writing, so it covers every process, not only these. Fails closed: no pids, a
+ * process that cannot be read, an addon without cwdOf, a platform it cannot read. A target is compared as given and by its real path
+ * (macOS and Windows: case folded, which can only match more). */
+export function holdersClearOf(pids: readonly number[], targets: readonly string[]): OpenProof {
+  if (!pids.length) return { proven: false, why: "no-holders" };
+  const view = exclOps.procView === null || (exclOps.mode === "win32") !== (exclOps.procView === "win32") ? null : exclOps.procView;
+  if (view === null) return { proven: false, why: "unsupported" };
+  if (view === "win32") return windowsHoldersClearOf(pids, targets);
+  const fold = (path: string) => (view === "darwin" ? path.toLowerCase() : path);
+  // macOS and Linux paths, judged as such wherever this runs (the tests run it on Windows too)
+  const posix = nodePath.posix;
+  const clean = (path: string) => fold(posix.resolve(path.replace(/ \(deleted\)$/, "")).replace(/\/+$/, "") || "/");
+  const wanted = new Set<string>();
+  for (const target of targets) {
+    wanted.add(clean(target));
+    const real = exclOps.realpathOf(target) ?? (() => { const parent = exclOps.realpathOf(posix.dirname(target)); return parent === null ? null : posix.join(parent, posix.basename(target)); })();
+    if (real !== null) wanted.add(clean(real));
+  }
+  const inside = (path: string): boolean => { const at = clean(path); return [...wanted].some((target) => at === target || at.startsWith(target === "/" ? "/" : `${target}/`)); };
+  if (view === "linux") {
+    for (const pid of pids) {
+      const cwd = exclOps.procCwd(pid);
+      if (cwd === null || !cwd.startsWith("/")) return { proven: false, why: "unreadable", pid };
+      if (inside(cwd)) return { proven: false, why: "cwd-inside", pid };
+      const files = exclOps.procFiles(pid);
+      if (files === null) return { proven: false, why: "unreadable", pid };
+      if (files.some((file) => file.startsWith("/") && inside(file))) return { proven: false, why: "holds-target", pid };
+    }
+    return { proven: true };
+  }
+  const text = exclOps.lsofFiles(pids);
+  if (text === null) return { proven: false, why: "unreadable" };
+  const cwdOf = new Map<number, string>();
+  let pid: number | null = null, fd: string | null = null;
+  for (const line of text.split("\n")) {
+    const tag = line[0], value = line.slice(1);
+    if (tag === "p") { pid = Number(value); fd = null; }
+    else if (tag === "f") fd = value;
+    else if (tag === "n" && pid !== null) {
+      if (fd === "cwd") cwdOf.set(pid, value);
+      if (value.startsWith("/") && inside(value)) return { proven: false, why: fd === "cwd" ? "cwd-inside" : "holds-target", pid };
+    }
+  }
+  for (const item of pids) if (!cwdOf.get(item)?.startsWith("/")) return { proven: false, why: "unreadable", pid: item };
+  return { proven: true };
+}
+
+/** Windows half of holdersClearOf: every process's working folder must be read (cwdOf), be absolute, resolve to its real path (long
+ * names, the drive a subst or junction stands for) on a drive of this computer, and be outside every target, compared both ways and
+ * case folded both ways (NTFS compares names without case). The `\\?\` prefix is the same path. A share, a mapped drive (the same
+ * folder can be reached as \\host\C$\...) or a target whose real path cannot be resolved is no proof (Grok final r1). */
+function windowsHoldersClearOf(pids: readonly number[], targets: readonly string[]): OpenProof {
+  const win = nodePath.win32;
+  const plain = (path: string) => path.replace(/^\\\\\?\\UNC\\/i, "\\\\").replace(/^\\\\\?\\/, "");
+  const absolute = (path: string) => /^[a-z]:[\\/]/i.test(path) || /^\\\\[^\\/?]+[\\/][^\\/]+/.test(path);
+  const keys = (path: string): string[] => {
+    const resolved = win.resolve(plain(path));
+    const trimmed = resolved === win.parse(resolved).root ? resolved : resolved.replace(/[\\/]+$/, "");
+    return [trimmed.toLowerCase(), trimmed.toUpperCase()];
+  };
+  const local = (path: string) => /^[a-z]:[\\/]/i.test(plain(path)) && exclOps.winLocalVolume(plain(path)) === true;
+  const wanted = new Set<string>();
+  for (const target of targets) {
+    const real = exclOps.realpathOf(target) ?? (() => { const parent = exclOps.realpathOf(win.dirname(target)); return parent === null ? null : win.join(parent, win.basename(target)); })();
+    if (real === null || !local(real)) return { proven: false, why: "unreadable" };
+    for (const path of [target, real]) for (const key of keys(path)) wanted.add(key);
+  }
+  const inside = (path: string): boolean => keys(path).some((at) => [...wanted].some((target) => at === target || at.startsWith(target.endsWith("\\") ? target : `${target}\\`)));
+  for (const pid of pids) {
+    const cwd = exclOps.winCwd(pid);
+    if (cwd === null || !absolute(plain(cwd))) return { proven: false, why: "unreadable", pid };
+    const real = exclOps.realpathOf(plain(cwd));
+    if (real === null || !local(real)) return { proven: false, why: "unreadable", pid };
+    if (inside(cwd) || inside(real)) return { proven: false, why: "cwd-inside", pid };
+  }
+  return { proven: true };
 }

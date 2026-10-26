@@ -43,6 +43,7 @@ import { BackupSettings } from "./BackupSettings";
 import { StorageSettings } from "./StorageSettings";
 import { StartupSettings } from "./StartupSettings";
 import { AnnouncementsSettings } from "./AnnouncementsSettings";
+import { NewsSignupSettings } from "./NewsSignupSettings";
 import { TelegramSettings } from "./TelegramSettings";
 import { SlackSettings } from "./SlackSettings";
 import { WhatsAppSettings } from "./WhatsAppSettings";
@@ -1330,6 +1331,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
                 <Anchor id="about-version-heading"><AboutVersionCard /></Anchor>
                 {window.muragebox?.updater && !cloudCardHidden("updates-heading", cloud) && <Anchor id="updates-heading"><UpdatesRow /></Anchor>}
                 {desktop === true && <Anchor id="whats-new-heading"><WhatsNewRow /></Anchor>}
+                {desktop === true && <Anchor id="news-heading"><NewsSignupSettings /></Anchor>}
                 {desktop === true && !cloudCardHidden("setup-heading", cloud) && <Anchor id="setup-heading"><SetupAgainRow /></Anchor>}
                 <Anchor id="shortcuts-heading"><ShortcutsRow /></Anchor>
                 <Anchor id="previous-version-heading"><PreviousVersionRow /></Anchor>

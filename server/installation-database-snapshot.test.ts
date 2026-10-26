@@ -66,7 +66,7 @@ it.each([
   ["missing required column", "ALTER TABLE messages DROP COLUMN text", "DATABASE_SCHEMA_UNSUPPORTED"],
   ["unknown trigger", "CREATE TRIGGER hostile AFTER UPDATE ON messages BEGIN DELETE FROM thread_state; END", "DATABASE_SCHEMA_UNSUPPORTED"],
   ["column/JSON disagreement", "UPDATE messages SET role='user'", "INVALID_MESSAGE_IDENTITY"],
-  ["missing parent", `UPDATE messages SET json=json_set(json,'$.parentId','missing')`, "INVALID_MESSAGE_PARENT"],
+  ["malformed parent", `UPDATE messages SET json=json_set(json,'$.parentId','not a message id')`, "INVALID_MESSAGE_PARENT"],
   ["self cycle", `UPDATE messages SET json=json_set(json,'$.parentId','m')`, "CYCLIC_MESSAGE_BRANCH"],
 ])("refuses %s while preserving the source", async (_name, sql, code) => {
   const f = fixture(); f.db.exec(sql);
@@ -80,6 +80,13 @@ it("preserves valid forks whose parent was inserted after an existing child", as
   f.db.prepare("UPDATE messages SET json=json_set(json,'$.parentId','later')").run();
   f.db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES (?,?,?,?,?,?,?)").run("t", "later", 2, "bot", "text", "parent", JSON.stringify({ id: "later", at: 2, role: "bot", kind: "text", text: "parent", parentId: null }));
   expect(await snapshotInstallationDatabase(f.data, f.target)).toMatchObject({ status: "copied", messages: 2 });
+});
+
+it("copies a message whose parent the thread no longer holds, which the runtime reads as a root", async () => {
+  const f = fixture();
+  f.db.prepare("UPDATE messages SET json=json_set(json,'$.parentId','gone')").run();
+  expect(await snapshotInstallationDatabase(f.data, f.target)).toMatchObject({ status: "copied", messages: 1 });
+  expect(existsSync(f.target)).toBe(true);
 });
 
 it("accepts the inbox and saved-file tables the harness creates, and an older archive without the migrated columns", async () => {

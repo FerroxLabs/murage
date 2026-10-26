@@ -115,6 +115,14 @@ setSendFenceDeps({ db: database });
 /** The after-recall recheck is the same one function every later pre-submit check uses. */
 export const resumedSessionInvalidAfterRecall=resumedSessionInvalid;
 
+/** A frame check that could not finish (MEMORY_REPLAY_LIMIT: a record "checking", or the check's allowance spent) is not known to be
+ * allowed now: refused as a revoked context is, tagged `unproven` with the limit error as its cause, so every dispatch caller takes the
+ * rebuild path (the last rebuild carries no memory) and the limit error never fails a turn or a routine run (designs/SEND-FENCE-RECEIPT-RACE.md
+ * R2; 1.0.7 routine-replay-limit: the receipt's prepare and assertCurrent re-proofs map the same way as acceptance). */
+function revokedIfUnknown(run: () => void): void {
+  try { run(); }
+  catch(error) { if(isLineageLimit(error))throw Object.assign(new Error("MEMORY_CONTEXT_REVOKED"),{cause:error,unproven:"memory-frame-checking"}); throw error; }
+}
 /** One server-owned dispatch. Terminal events finalize while the turn capability is
  * still live; a later sendTurn resolution must not reuse that completed capability.
  */
@@ -134,7 +142,9 @@ export class MemoryDispatchReceipt {
   private failure: unknown;
   constructor(bundle: MemoryBundle, access: MemoryAccess, instanceId: string) {
     this.bundle=bundle; this.access=access; this.instanceId=instanceId;
-    prepareMemoryDisclosure(bundle,access,instanceId);
+    // 1.0.7 routine-replay-limit: preparing re-proves the frame (assertMemoryBundle, a tool read's 100 ms): a record not proven within it
+    // is "not known now", refused as a revoked context so the turn takes the rebuild path, never a raw MEMORY_REPLAY_LIMIT that fails it
+    revokedIfUnknown(()=>prepareMemoryDisclosure(bundle,access,instanceId));
     // write-time: the frame joins the running turn (its replies, notes and session carry it)
     try { receiptJoinsTurn(access.threadId,access.botId,bundle.bundleId); } catch { /* the line keeps its own receipt link (linkMemoryDisclosureOutput) */ }
   }
@@ -159,7 +169,7 @@ export class MemoryDispatchReceipt {
     if(resumedSessionInvalid(LineageAllowance.tool(),this.access.threadId,this.instanceId,this.resumedSession,this.access,this.sessionCheckedStamp,why))throw sessionCheckRefusal(why);
     this.sessionCheckedStamp=authorityStamp();
   }
-  assertCurrent() { if(this.failure)throw this.failure; assertMemoryBundle(this.bundle,this.access); this.assertSessionCurrent(); }
+  assertCurrent() { if(this.failure)throw this.failure; revokedIfUnknown(()=>assertMemoryBundle(this.bundle,this.access)); this.assertSessionCurrent(); }
   private boundSession?: string;
   sessionStarted(sessionId:string) { bindMemoryDisclosureSession(this.bundle.bundleId,sessionId); this.boundSession=sessionId; }
   /** Before a live steer joins this running session: the same full validation
@@ -184,10 +194,15 @@ export class MemoryDispatchReceipt {
     // A terminal event already settled the turn: no write can follow it, and
     // its capability may be gone; acceptance only confirms the bookkeeping.
     if(this.finished&&this.delivered)return;
-    assertMemoryDisclosureCurrent(this.bundle.bundleId,this.access);
+    // A record of the frame that reads "checking" here (a revoke still being walked: MEMORY_REPLAY_LIMIT) is not known to be allowed now: the
+    // write is refused as a revoked context is, so the turn takes the same rebuild path (the last rebuild carries no memory) instead of
+    // ending as "could not start" (designs/SEND-FENCE-RECEIPT-RACE.md, R2). Nothing is written either way.
+    // Both validations (this one and deliverMemoryDisclosure's own) map the same way (Astra design review M1); the cause keeps the limit for
+    // the refusal's diagnosis.
+    revokedIfUnknown(()=>assertMemoryDisclosureCurrent(this.bundle.bundleId,this.access));
     this.assertSessionCurrent();
     if(!this.delivered){
-      deliverMemoryDisclosure(this.bundle.bundleId,this.access);this.delivered=true;
+      revokedIfUnknown(()=>deliverMemoryDisclosure(this.bundle.bundleId,this.access));this.delivered=true;
       for(const listener of this.deliveredListeners){try{listener(this.bundle);}catch{/* a bookkeeping failure never fails the turn */}}
     }
   }

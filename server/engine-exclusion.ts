@@ -89,6 +89,9 @@ export interface ExclusionAddon {
   speechVoices?(): Promise<Array<{ name: string; culture: string; description: string }>>;
   /** One utterance (plain text) to a 22,050 Hz 16-bit mono WAV file; true when `voice` was found and used, false for the default voice. */
   speechToWave?(text: string, voice: string, path: string): Promise<boolean>;
+  /** Windows (DELETION-WHILE-OPEN-107): another process's working folder, from its PEB; null when it cannot be read. Absent in an older
+   * build: the open-home pass then does not run on Windows (engine-closed.ts holdersClearOf fails closed). */
+  cwdOf?(pid: number): string | null;
 }
 
 /** A running process as the addon reports it. `mine`: this user's (null: could not be told). `exe` "" is a process with no program

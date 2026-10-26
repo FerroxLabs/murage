@@ -244,6 +244,25 @@ describe("Speaker lifecycle", () => {
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:voice-test");
   });
 
+  it("marks a picker sample as a preview, so the harness speaks exactly that voice or says why", async () => {
+    const bodies: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        bodies.push(JSON.parse(String(init?.body)));
+        return String(input).endsWith("/prepare")
+          ? json({ ready: true, utterances: ["Sample."] })
+          : new Response(new Blob(["mp3"]), { status: 200 });
+      }),
+    );
+    const speaker = new Speaker();
+    const speaking = speaker.speak("Sample.", { voiceId: "Aria", botId: "b", messageId: "voice-preview:b:Aria" });
+    await vi.waitFor(() => expect(FakeAudio.latest).not.toBeNull());
+    FakeAudio.latest!.onended?.();
+    await speaking;
+    expect(bodies[1]).toEqual({ text: "Sample.", voiceId: "Aria", botId: "b", preview: true });
+  });
+
   it("streams pushed sentences in order and reports that all were heard", async () => {
     const spoken: string[] = [];
     vi.stubGlobal(

@@ -41,6 +41,8 @@ export const TOOL_SEARCH_BUDGET_MS=2500;
 /** With the words in hand a tool search still gives the meaning search this long: a healthy helper answers in 0.1-0.3 s. */
 export const TOOL_SEMANTIC_CUTOFF_MS=1000;
 const TOOL_HYDRATION_LIMIT_MS=3500;
+/** The hydration limit of a search for this caller: the time budget of the search's own lineage allowance (LineageAllowance.search). */
+export function recallHydrationLimitMs(caller:RecallCaller):number{return caller==="tool"?TOOL_HYDRATION_LIMIT_MS:HYDRATION_LIMIT_MS;}
 /** Of the hydration limit, what the keyword fallback leaves for checking the hits it found. */
 const KEYWORD_HYDRATION_RESERVE_MS=100;
 /** Every recall that comes back degraded says why, once a minute per caller and cause: codes and counts only, never memory text. */

@@ -104,7 +104,7 @@ describe("High: X on the connector card and the secret request card", () => {
 describe("High: Continue on the hello card", () => {
   const deps = (subscribe: () => Promise<unknown>): HelloAnswerDeps => ({
     api: vi.fn(async (path: string) => (path === "/api/subscribe" ? subscribe() : { profile: { name: "Sean", email: "sean@example.com" } })),
-    identify: vi.fn(), markGate: vi.fn(), answer: vi.fn(async () => {}), skip: vi.fn(async () => {}),
+    markGate: vi.fn(), answer: vi.fn(async () => {}), skip: vi.fn(async () => {}),
   });
   const typed = { name: "Sean", email: "sean@example.com" };
   it("does not hold the person up, and reports a refused signup", async () => {
@@ -117,7 +117,7 @@ describe("High: Continue on the hello card", () => {
     await expect((await saveHelloAnswer({ name: "Sean", email: "" }, deps(async () => ({})))).signup).resolves.toBe("none");
   });
   it("tells the person in plain words, without blocking entry", () => {
-    expect(SIGNUP_FAILED_NOTE).toContain("could not add your email");
+    expect(SIGNUP_FAILED_NOTE).toContain("could not add you to Murage news");
     const source = read("./FirstRunHelloCard.tsx");
     expect(source).toContain('data-testid="hello-signup-note"');
     noSwallow(source);

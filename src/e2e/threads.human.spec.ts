@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { launchVerificationServer,type VerificationServer } from "../../scripts/control-murage.ts";
 import { openSidebar, SEND_KEY } from "./fixtures.ts";
+import { expectApprovalLevel, openThreadModel, threadModelTrigger } from "./chat-controls.ts";
 
 let fixture:VerificationServer,vite:ViteDevServer,origin:string,headers:Record<string,string>={};
 let botId:string,first:string,second:string,labelOne:string,labelTwo:string;
@@ -66,7 +67,8 @@ test("New task follows the bot's model after click and reload, even from a chat 
   if(await invitation.count())await invitation.getByRole("button",{name:"Not now",exact:true}).last().click();
   await choose(page,"Second thread");
   await page.keyboard.press("Escape");
-  const model=page.getByRole("button",{name:/^Thread model:/});
+  // The chip on a wide screen; a phone's picker trigger is not drawn, and its label still names the thread's model.
+  const model=await threadModelTrigger(page);
   const expectedLabel=`Thread model: ${labelTwo} · high effort`;
   const followLabel=`Thread model: ${labelOne}`;
   await expect(model).toHaveAttribute("aria-label",expectedLabel);
@@ -122,16 +124,17 @@ test("thread controls, sends, Stop and read state follow the visible conversatio
   const invitation=page.getByRole("complementary",{name:"Let your bots pick the right model",exact:true});
   if(await invitation.count())await invitation.getByRole("button",{name:"Not now",exact:true}).last().click();
   await choose(page,"First thread");
-  const model=page.getByRole("button",{name:/^Thread model:/});
+  // The chip on a wide screen; a phone's picker trigger is not drawn, and its label still names the thread's model.
+  const model=await threadModelTrigger(page);
   await expect(model).toHaveAttribute("aria-label",`Thread model: ${labelOne}`);
-  await model.click();await page.getByRole("combobox",{name:"Thread effort",exact:true}).selectOption("high");await page.keyboard.press("Escape");
+  await openThreadModel(page);await page.getByRole("combobox",{name:"Thread effort",exact:true}).selectOption("high");await page.keyboard.press("Escape");
   await expect(model).toHaveAttribute("aria-label",`Thread model: ${labelOne} · high effort`);
-  await expect(page.getByRole("button",{name:"Ask for approval",exact:true})).toBeVisible();
+  await expectApprovalLevel(page,"Ask for approval","Ask");
   await send(page,"__fixture_hold_authority__ first UI conversation",first);
   await expect.poll(async()=>(await state()).tasks.find((task:any)=>task.threadId===first).busy).toBe(true);
   await choose(page,"Second thread");
   await expect(model).toHaveAttribute("aria-label",`Thread model: ${labelTwo}`);
-  await expect(page.getByRole("button",{name:"Auto mode",exact:true})).toBeVisible();
+  await expectApprovalLevel(page,"Auto mode","Auto");
   await send(page,"__fixture_hold_authority__ second UI conversation",second);
   await expect.poll(async()=>(await state()).tasks.filter((task:any)=>task.busy).length).toBe(2);
   // A busy-thread send may use native steering or the server queue. Its
@@ -150,7 +153,7 @@ test("thread controls, sends, Stop and read state follow the visible conversatio
   const snapshot=await state();expect(snapshot.tasks.find((task:any)=>task.threadId===second)).toMatchObject({busy:true,unread:true});
   await expect(model).toBeEnabled();await expect(page.getByRole("button",{name:"Stop this turn",exact:true})).toHaveCount(0);
   for(const skin of ["light","dark"]){await page.evaluate(skin=>{document.documentElement.dataset.skin=skin;},skin);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);await page.screenshot({path:info.outputPath(`independent-${skin}-${info.project.name}.png`)});}
-  await choose(page,"Second thread");await expect(model).toHaveAttribute("aria-label",`Thread model: ${labelTwo}`);await expect(page.getByRole("button",{name:"Auto mode",exact:true})).toBeVisible();
+  await choose(page,"Second thread");await expect(model).toHaveAttribute("aria-label",`Thread model: ${labelTwo}`);await expectApprovalLevel(page,"Auto mode","Auto");
   await headerStop(page).click();
   await expect.poll(async()=>(await state()).tasks.some((task:any)=>task.busy)).toBe(false);
 });

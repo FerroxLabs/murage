@@ -3,7 +3,7 @@
 // Two fields and a way past them. The signup behind it is not new and is not
 // reimplemented: it is the same three steps Onboarding.tsx has always taken
 // (PUT /api/config with the profile, CONFIRM the save came back, then
-// identify and subscribe), moved into a message so that the first thing a
+// subscribe), moved into a message so that the first thing a
 // person sees is their chief of staff talking to them rather than a form on
 // top of an app they have not met.
 //
@@ -13,7 +13,7 @@
 
 import { useState } from "react";
 
-import { identifyEmail, setEmailGateDone } from "@/lib/analytics";
+import { setEmailGateDone } from "@/lib/analytics";
 import { FIRST_RUN_COPY, greetingLine } from "@/lib/first-run-copy";
 import { api } from "@/state/store";
 import {
@@ -32,7 +32,7 @@ import {
 
 const copy = FIRST_RUN_COPY.hello.welcome;
 /** Said when the card was answered but the updates-list signup was refused. The person is in either way. */
-export const SIGNUP_FAILED_NOTE = "You are all set. We could not add your email to the updates list just now.";
+export const SIGNUP_FAILED_NOTE = "You are all set. We could not add you to Murage news just now. You can join any time from Settings, under About.";
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 /**
@@ -45,7 +45,7 @@ const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
  * and a person could send a profile carrying an address and nobody's name. The
  * approved flow is explicit: Continue stays disabled until BOTH validate. That
  * is not a wall, because the way past is a button rather than a valid form.
- * "Skip for now" sits beside it and passes the whole step over. What the flow
+ * "Skip" sits beside it and passes the whole step over. What the flow
  * does not have is a half answer, where the Chief has somewhere to write to
  * and nothing to call the person it is writing to.
  */
@@ -59,7 +59,6 @@ export function helloAnswerReady(name: string, email: string): boolean {
  *  its own and watches what the step actually calls. */
 export interface HelloAnswerDeps {
   api: (path: string, init?: RequestInit) => Promise<any>;
-  identify: (email: string) => void;
   markGate: (status: "submitted" | "skipped") => void;
   answer: (step: "hello", answer: string) => Promise<void>;
   skip?: (step: "hello") => Promise<void>;
@@ -67,7 +66,6 @@ export interface HelloAnswerDeps {
 
 const LIVE: HelloAnswerDeps = {
   api,
-  identify: identifyEmail,
   markGate: setEmailGateDone,
   answer: answerSetupStep,
   skip: skipSetupStep,
@@ -88,9 +86,15 @@ const LIVE: HelloAnswerDeps = {
  * the profile is saved, the save is CONFIRMED (a PUT that answered is not a
  * PUT that saved, which is the check worth keeping deliberately — a profile
  * that silently did not save has the Chief using a name it does not have, all
- * week), and only then is the address identified and put on the list. The
- * subscribe is fire and forget on purpose: entry to the app has never been
- * allowed to depend on a marketing list being reachable.
+ * week), and only then is the address put on the list. The subscribe is fire
+ * and forget on purpose: entry to the app has never been allowed to depend on
+ * a mailing list being reachable. The local server records it and posts it to
+ * murage.ai from its own process, retrying quietly (server/news-signup.ts);
+ * this file never makes a network call of its own.
+ *
+ * NO ANALYTICS WITH THE ADDRESS (1.0.7, Sean: "no analytics, no device id").
+ * This used to identify the person to analytics with their email first. The
+ * address now goes to one place, the news list, and nowhere else.
  */
 export async function saveHelloAnswer(
   typed: { name: string; email: string },
@@ -113,10 +117,9 @@ export async function saveHelloAnswer(
   if (result?.profile?.name !== profile.name || result?.profile?.email !== profile.email) {
     throw new Error(copy.failure);
   }
-  deps.identify(profile.email);
   // Not awaited: entry never waits on the list. The outcome is returned so the
   // card can tell the person if the signup did not go through. It never rejects.
-  const signup: Promise<"ok" | "failed"> = deps.api("/api/subscribe", { method: "POST", body: JSON.stringify(profile) }).then(() => "ok" as const, () => "failed" as const);
+  const signup: Promise<"ok" | "failed"> = deps.api("/api/subscribe", { method: "POST", body: JSON.stringify({ ...profile, from: "hello" }) }).then(() => "ok" as const, () => "failed" as const);
   try { deps.markGate("submitted"); } catch { /* a blocked store is not a failed signup */ }
   // Both halves, because both are what they just told the Chief and the
   // transcript is where a person checks what an assistant heard.
@@ -125,7 +128,7 @@ export async function saveHelloAnswer(
 }
 
 /**
- * "Skip for now" PASSES OVER THE EMAIL, NOT A NAME THEY ALREADY TYPED.
+ * "Skip" PASSES OVER THE EMAIL, NOT A NAME THEY ALREADY TYPED.
  *
  * It used to drop both, so somebody who typed their name and skipped the
  * address was called "there" from then on. A typed name is saved (and the

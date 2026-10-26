@@ -160,6 +160,10 @@ describe("Fuigo personal setup isolation", () => {
     homes.push(home);
     const { spawned, mounted } = await bootTurn(FuigoAgentDriver as unknown as ProviderDriver<AcpConfig>, home, { FUIGO_API_KEY: "sk-flux-fixture-only" });
     for (const name of FUIGO_EXTERNAL_MCP_GATES) expect(spawned.env[name]).toBe("0");
+    // every agent Fuigo starts on its own is off: subagents, workflows, scheduler loops, goal runs
+    for (const name of ["FUIGO_SUBAGENTS", "FUIGO_WORKFLOWS", "FUIGO_SCHEDULER_BACKGROUND_LOOPS", "FUIGO_GOAL"]) expect([name, spawned.env[name]]).toEqual([name, "0"]);
+    expect(spawned.env.FUIGO_AGENT).toBeUndefined();
+    expect(spawned.env.FUIGO_WORKSPACE_REWIND_GIT).toBeUndefined();
     expect(spawned.argv).toContain("--no-memory");
     expect(mounted.some((server) => server.args.includes("fixture-agents"))).toBe(true);
   }, 30000);

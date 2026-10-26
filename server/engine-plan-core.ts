@@ -651,3 +651,8 @@ export class Planner {
   /** Adds a step; every step waits for the ids in `needing`. */
   push(step: Step): void { this.steps.push(this.needing.length && !step.needs ? { ...step, needs: [...this.needing] } : step); }
 }
+
+/** DELETION-WHILE-OPEN-107 (engine-exec.ts executeEnginePlans, engine-history-run.ts openHomePass): the steps an open-home pass may run: a conversation's own files and folders, removed under the per-file hold. A shared file's rows,
+ * a pasted text another row may still use (it takes the engine's history lock), every link (a link is unlinked with no writer check,
+ * Grok design r1), any database step and anything that waits for a proof are left for the pass that runs while the engine is closed. */
+export const OPEN_PASS_STEPS: ReadonlySet<Step["k"]> = new Set<Step["k"]>(["remove", "rmdirIfEmpty"]);

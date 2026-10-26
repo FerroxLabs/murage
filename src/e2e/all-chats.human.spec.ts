@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openSidebar } from "./fixtures";
+import { phoneLayout } from "./chat-controls";
 
 let fixture: { info: { url: string; dataDir: string }; close(): Promise<void> };
 let vite: ViteDevServer;
@@ -105,7 +106,15 @@ test("shortcuts, Expand, and the header button use the current bot", async ({ pa
   await page.keyboard.press("Control+Shift+N");
   expect((await created).status()).toBe(201);
   await expect(page.getByRole("button", { name: "Chat list", exact: true })).toContainText("New chat");
-  await expect(page.locator("[data-chat-header-secondary]").getByRole("button", { name: "New chat", exact: true })).toBeVisible();
+  if (await phoneLayout(page)) {
+    // The phone header is one row, so the + beside the chip folds away
+    // (chip-trim); the chat list's own New chat row is the way in there.
+    await page.getByRole("button", { name: "Chat list", exact: true }).click();
+    await expect(page.getByRole("button", { name: /^New chat$/ })).toBeVisible();
+    await page.keyboard.press("Escape");
+  } else {
+    await expect(page.locator("[data-chat-header-secondary]").getByRole("button", { name: "New chat", exact: true })).toBeVisible();
+  }
 });
 
 test("with a phone keyboard up the chat pop-up scrolls above it: every row and every footer button stays reachable", async ({ page }) => {

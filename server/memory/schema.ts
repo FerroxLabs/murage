@@ -364,9 +364,32 @@ export const WRITETIME_TABLES = {
  * "checking" from its first output on until the marker commits it as a receipt root (receipt-outputs.ts drainReceiptFlips). memory_record_lsn_insert stamps each new
  * memory_records version with the lsn counter at its insert (S3, DESIGN-WRITETIME 1: "deny_pending_scope with since <= created lsn"): a
  * record whose created lsn is below a pending scope's since predates everything that revoke can have tainted. A version with no row (made
- * before v10) has an unknown created lsn and reads "checking" under any pending row of its scope. */
+ * before v10) is bounded by lineage_upgrade_lsn (deny-read.ts recordCreated, 1.0.7). */
 export const WRITETIME_TRIGGERS = ["memory_record_lsn_insert", "memory_watermark_bump", "memory_receipt_flip", "memory_flow_capture", "memory_flow_source_scope", "memory_flow_brought", "memory_flow_evidence",
   "memory_flow_derivation", "memory_flow_record_scope"] as const;
+/** v13 (1.0.7 memory-recall-hydration D2): the created lsn of each new memory_source_versions row, stamped at its insert with the lsn counter
+ * (the shape of memory_record_lsn_insert). A pending window holds a source version "checking" only when since <= that lsn (deny-read.ts
+ * sourceCreated); a version with no row was made before the migration (or before the last re-upgrade: a downgrade drops the table, the
+ * re-upgrade makes it empty) and is bounded by the first stamp. Created empty (constant time, no backfill). NOT in WRITETIME_TABLES /
+ * WRITETIME_TRIGGERS: those are the v10 objects the v10 -> v9 step drops; these are v13's own, dropped by the v13 -> v12 step.
+ * memory_thread_flow_last (murage#18 a, REVOKE-NARROW-18-107 r2): the lsn counter at the LAST flow over each memory_thread_flow edge, stamped
+ * by a BEFORE INSERT trigger (it runs for every row an INSERT OR IGNORE attempts, also one then ignored as a duplicate) from memory_lsn.next,
+ * never from the writer's own lsn (some pass an old line lsn, currentLsn-1 or a backfill sentinel). Two statements that cannot conflict (no
+ * UPSERT: an outer OR IGNORE would take over its conflict policy). No counter row: no stamp, so the edge stays unknown (followed). The flow
+ * phase (revoke-marker.ts flowStep) skips an edge only when its stamp is strictly below the walked node's since. */
+export const SOURCE_LSN_SCHEMA = `
+CREATE TABLE IF NOT EXISTS memory_source_lsn (source_id TEXT NOT NULL, revision INTEGER NOT NULL, created_lsn INTEGER NOT NULL, PRIMARY KEY(source_id,revision)) WITHOUT ROWID;
+CREATE TRIGGER IF NOT EXISTS memory_source_lsn_insert AFTER INSERT ON memory_source_versions BEGIN
+ INSERT OR IGNORE INTO memory_source_lsn(source_id,revision,created_lsn) SELECT NEW.source_id,NEW.revision,next FROM memory_lsn WHERE id=1;
+END;
+CREATE TABLE IF NOT EXISTS memory_thread_flow_last (from_thread TEXT NOT NULL, to_thread TEXT NOT NULL, last_lsn INTEGER NOT NULL, PRIMARY KEY(from_thread,to_thread)) WITHOUT ROWID;
+CREATE TRIGGER IF NOT EXISTS memory_thread_flow_last_insert BEFORE INSERT ON memory_thread_flow WHEN EXISTS (SELECT 1 FROM memory_lsn WHERE id=1) BEGIN
+ UPDATE memory_thread_flow_last SET last_lsn=max(last_lsn,(SELECT next FROM memory_lsn WHERE id=1)) WHERE from_thread=NEW.from_thread AND to_thread=NEW.to_thread;
+ INSERT INTO memory_thread_flow_last(from_thread,to_thread,last_lsn) SELECT NEW.from_thread,NEW.to_thread,next FROM memory_lsn WHERE id=1 AND NOT EXISTS (SELECT 1 FROM memory_thread_flow_last WHERE from_thread=NEW.from_thread AND to_thread=NEW.to_thread);
+END;
+`;
+/** v13 -> v12: each trigger, then its table. */
+const SOURCE_LSN_DROP = "DROP TRIGGER IF EXISTS memory_source_lsn_insert; DROP TABLE IF EXISTS memory_source_lsn; DROP TRIGGER IF EXISTS memory_thread_flow_last_insert; DROP TABLE IF EXISTS memory_thread_flow_last;";
 /** The keys of memory_lineage_lsn_meta (the design's memory_meta keys). */
 export const LINEAGE_META_KEYS = ["policy_bump_lsn", "epoch_bump_lsn", "deny_generation", "lineage_upgrade_lsn", "root_sets_dropped"] as const;
 /** v12 adds the door epoch key (rule 25); v10 and v11 files hold the five above. */
@@ -1482,7 +1505,7 @@ export function* repairOutputRootBackfillSteps(db: DatabaseSync, options: { onPr
   db.prepare("DELETE FROM transcript_index_state WHERE name LIKE ?").run(`${REPAIR_THREAD_PREFIX}%`);
   return done;
 }
-export const MEMORY_SCHEMA_VERSION = 12;
+export const MEMORY_SCHEMA_VERSION = 13;
 const SHAPE_MARKER = "memory-shape-check";
 /** The frozen v2 text (0.1.54 to 0.1.60), for validation and the v3 -> v2 inverse. */
 export const MEMORY_SCHEMA_V2 = MEMORY_SCHEMA_V1.replace("CHECK(schema_version=1)", "CHECK(schema_version=2)") + LEARNING_SCHEMA;
@@ -1503,9 +1526,11 @@ export const MEMORY_SCHEMA_V9 = MEMORY_SCHEMA_V1.replace("CHECK(schema_version=1
 export const MEMORY_SCHEMA_V10 = MEMORY_SCHEMA_V1.replace("CHECK(schema_version=1)", "CHECK(schema_version=10)") + LEARNING_SCHEMA + OUTPUT_INDEX_SCHEMA + LEDGER_SCHEMA + BOT_LEARNING_SCHEMA + LINEAGE_SCHEMA + REVOCATION_INDEX_SCHEMA + OPEN_TURNS_SCHEMA + WRITETIME_SCHEMA;
 /** v11 (1.0.3, int/1.0.3 efe026b90) changes no table: the learning settings move to v3 there. Frozen here for the v12 -> v11 inverse. */
 export const MEMORY_SCHEMA_V11 = MEMORY_SCHEMA_V10.replace("CHECK(schema_version=10)", "CHECK(schema_version=11)");
-/** v12 (1.0.3 lineage S6): the door epoch (rules 25, 27). */
-export const MEMORY_SCHEMA = MEMORY_SCHEMA_V1.replace("CHECK(schema_version=1)", "CHECK(schema_version=12)") + LEARNING_SCHEMA + OUTPUT_INDEX_SCHEMA + LEDGER_SCHEMA + BOT_LEARNING_SCHEMA + LINEAGE_SCHEMA + REVOCATION_INDEX_SCHEMA + OPEN_TURNS_SCHEMA + WRITETIME_SCHEMA_V12;
-const SCHEMA_TEXT: Record<number, string> = { 1: MEMORY_SCHEMA_V1, 2: MEMORY_SCHEMA_V2, 3: MEMORY_SCHEMA_V3, 4: MEMORY_SCHEMA_V4, 5: MEMORY_SCHEMA_V5, 6: MEMORY_SCHEMA_V6, 7: MEMORY_SCHEMA_V7, 8: MEMORY_SCHEMA_V8, 9: MEMORY_SCHEMA_V9, 10: MEMORY_SCHEMA_V10, 11: MEMORY_SCHEMA_V11, 12: MEMORY_SCHEMA };
+/** v12 (1.0.3 lineage S6): the door epoch (rules 25, 27). Frozen here (1.0.3 to 1.0.6) for the v13 -> v12 inverse. */
+export const MEMORY_SCHEMA_V12 = MEMORY_SCHEMA_V1.replace("CHECK(schema_version=1)", "CHECK(schema_version=12)") + LEARNING_SCHEMA + OUTPUT_INDEX_SCHEMA + LEDGER_SCHEMA + BOT_LEARNING_SCHEMA + LINEAGE_SCHEMA + REVOCATION_INDEX_SCHEMA + OPEN_TURNS_SCHEMA + WRITETIME_SCHEMA_V12;
+/** v13 (1.0.7 memory-recall-hydration): the source created-lsn stamps (SOURCE_LSN_SCHEMA). */
+export const MEMORY_SCHEMA = MEMORY_SCHEMA_V12.replace("CHECK(schema_version=12)", "CHECK(schema_version=13)") + SOURCE_LSN_SCHEMA;
+const SCHEMA_TEXT: Record<number, string> = { 1: MEMORY_SCHEMA_V1, 2: MEMORY_SCHEMA_V2, 3: MEMORY_SCHEMA_V3, 4: MEMORY_SCHEMA_V4, 5: MEMORY_SCHEMA_V5, 6: MEMORY_SCHEMA_V6, 7: MEMORY_SCHEMA_V7, 8: MEMORY_SCHEMA_V8, 9: MEMORY_SCHEMA_V9, 10: MEMORY_SCHEMA_V10, 11: MEMORY_SCHEMA_V11, 12: MEMORY_SCHEMA_V12, 13: MEMORY_SCHEMA };
 /** The kinds the search index never holds (the PIP kinds, pip-kinds.ts, frozen here because an index definition cannot follow a list
  * that changes: owner-tail.test.ts proves the two equal), and the checkpoint versions that are no longer the live one. */
 export const OWNER_TAIL_KIND_LIST = ["continuity-brief", "commitment", "self-trait", "relation", "pip-proposal", "pip-counter", "concern", "episode"] as const;
@@ -2010,7 +2035,7 @@ export function validateMemorySchema(db: DatabaseSync, options: { references?: b
   const memoryRows = allMemoryRows.filter(row => !late.includes(row) && !revokeLate.includes(row));
   // Recognize only an exact known meta table before reading its version field.
   const metaSchema = memoryRows.find(row => row.name === "memory_meta");
-  const version = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].find(value => metaSchema?.sql === expectedSchema(value).get("memory_meta")?.sql);
+  const version = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13].find(value => metaSchema?.sql === expectedSchema(value).get("memory_meta")?.sql);
   if (!version) {
     // A newer Murage wrote this file: say so, and name the way out, instead of
     // the bare unsupported-schema code an older build prints.
@@ -2707,8 +2732,8 @@ const DERIVED_TABLES_KEPT_FOR_102: ReadonlySet<string> = new Set(["browser_check
 /** The optional indexes 1.0.2 registers with this exact text (its schema.ts), kept by a downgrade to 10 or later. 1.0.3's own two
  * (messages_thread_seq, messages_id) leave first, in downgradeInstallationMemorySchema, and again below. */
 const OPTIONAL_INDEXES_KEPT_FOR_102: ReadonlySet<string> = new Set([DISCLOSURES_LIVE_INDEX, OWNER_PIN_INDEX, IDENTITY_CANON_INDEX, IDENTITY_PARTITION_INDEX, WAITING_REVIEW_INDEX]);
-export type MemoryDowngradeTarget = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11;
-export function downgradeMemorySchema(db: DatabaseSync, to: MemoryDowngradeTarget = 1): { status: "downgraded" | "already-v1" | "already-v2" | "already-v3" | "already-v4" | "already-v5" | "already-v6" | "already-v7" | "already-v8" | "already-v9" | "already-v10" | "already-v11"; from: number; to: MemoryDowngradeTarget } {
+export type MemoryDowngradeTarget = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12;
+export function downgradeMemorySchema(db: DatabaseSync, to: MemoryDowngradeTarget = 1): { status: "downgraded" | "already-v1" | "already-v2" | "already-v3" | "already-v4" | "already-v5" | "already-v6" | "already-v7" | "already-v8" | "already-v9" | "already-v10" | "already-v11" | "already-v12"; from: number; to: MemoryDowngradeTarget } {
   if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE name='memory_meta'").get()) throw new Error("MEMORY_SCHEMA_UNSUPPORTED");
   validateMemorySchema(db);
   const from = Number(db.prepare("SELECT schema_version FROM memory_meta WHERE id=1").get()?.schema_version);
@@ -2754,6 +2779,8 @@ export function downgradeMemorySchema(db: DatabaseSync, to: MemoryDowngradeTarge
     dropWriteRevisionTriggers(db); // this connection's counter triggers write to a table that is about to go
     for (const table of UPGRADE_DERIVED_TABLES) if (to < 10 || !DERIVED_TABLES_KEPT_FOR_102.has(table)) db.exec(`DROP TABLE IF EXISTS ${table};`);
     for (let version = from; version > to; version--) {
+      // v13 -> v12: the source stamps leave (the trigger first); a re-upgrade makes the table again empty (memory_source_lsn)
+      if (version === 13) db.exec(SOURCE_LSN_DROP);
       // v12 -> v11: the door epoch leaves (the key, the column, the allocator); every session row and its lsns stay (rule 25)
       if (version === 12) db.exec(DOOR_EPOCH_DOWN_PRE);
       // The revocation index is derived from the receipts' JSON; the next newer start backfills it again.

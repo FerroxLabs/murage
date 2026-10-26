@@ -29,8 +29,8 @@ const spend = (db: DatabaseSync, month: string) => { const row = db.prepare("SEL
 it("v10-v11-fresh-install: a new file is v11 with v3 settings and no ledger row", () => {
   const db = open();
   try {
-    expect(MEMORY_SCHEMA_VERSION).toBe(12);
-    expect(version(db)).toBe(12);
+    expect(MEMORY_SCHEMA_VERSION).toBe(13);
+    expect(version(db)).toBe(13);
     expect(memoryLearningV3Schema.parse(settings(db))).toMatchObject({ version: 3, ceiling: DEFAULT_LEARNING_CEILING, reviewMode: false });
     expect(Number(db.prepare("SELECT count(*) AS n FROM memory_scope_bindings WHERE subject_id='learning-spend'").get()!.n)).toBe(0);
     expect(MEMORY_SCHEMA_V11).toBe(MEMORY_SCHEMA_V10.replace("CHECK(schema_version=10)", "CHECK(schema_version=11)"));
@@ -42,12 +42,12 @@ it("v11 -> v10 -> v11 round trip keeps every settings field, and a zero ceiling 
   try {
     const custom = { ...settings(db), automaticFacts: false, reviewMode: true, callsPerMinute: 4, learnFrom: { chats: false, channels: true }, botsPaused: ["bot-a"], perCallOutputTokens: { extraction: 1500, grounding: 32, reflection: 4000 } };
     db.prepare("UPDATE memory_learning_config SET settings=?").run(JSON.stringify(custom));
-    expect(downgradeMemorySchema(db, 10)).toEqual({ status: "downgraded", from: 12, to: 10 });
+    expect(downgradeMemorySchema(db, 10)).toEqual({ status: "downgraded", from: 13, to: 10 });
     expect(version(db)).toBe(10);
     expect(memoryLearningV2Schema.parse(settings(db))).toMatchObject({ version: 2, reviewMode: true, botsPaused: ["bot-a"], dailyInputTokens: DEFAULT_MEMORY_LEARNING_V2.dailyInputTokens });
     expect(downgradeMemorySchema(db, 10)).toMatchObject({ status: "already-v10" });
     migrateMemorySchema(db);
-    expect(version(db)).toBe(12);
+    expect(version(db)).toBe(13);
     expect(settings(db)).toEqual(custom);
     db.prepare("UPDATE memory_learning_config SET settings=json_set(settings,'$.ceiling',json('{\"input\":0,\"output\":0}'))").run();
     downgradeMemorySchema(db, 10);
@@ -99,11 +99,11 @@ it("downgrade-strips-every-v11-field: an intent holding only parked or queueRevi
 it("v11 -> 6 chain steps through 10 and back up to 11", () => {
   const db = open();
   try {
-    expect(downgradeMemorySchema(db, 6)).toEqual({ status: "downgraded", from: 12, to: 6 });
+    expect(downgradeMemorySchema(db, 6)).toEqual({ status: "downgraded", from: 13, to: 6 });
     expect(version(db)).toBe(6);
     expect(memoryLearningV2Schema.safeParse(settings(db)).success).toBe(true);
     migrateMemorySchema(db);
-    expect(version(db)).toBe(12);
+    expect(version(db)).toBe(13);
     expect(settings(db)).toMatchObject({ version: 3, ceiling: DEFAULT_LEARNING_CEILING });
   } finally { db.close(); }
 });
@@ -121,7 +121,7 @@ it.each([
     put(db, "extract-budget:2026-10-01", "extract-budget", { input: 200, output: 20 });
     put(db, "extract-budget:2026-09-15", "extract-budget", { input: 999, output: 99 });
     migrateMemorySchema(db);
-    expect(version(db)).toBe(12);
+    expect(version(db)).toBe(13);
     expect(spend(db, "2026-10")).toEqual(seeded);
     // the day rows stay
     expect(Number(db.prepare("SELECT count(*) AS n FROM memory_scope_bindings WHERE subject_id='extract-budget'").get()!.n)).toBe(3);

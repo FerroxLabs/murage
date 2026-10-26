@@ -14,11 +14,11 @@ import { removeTempDir, removeTempDirSync } from "./testing/cleanup.ts";
 const cleanup: string[] = [];
 afterEach(async () => { for (const directory of cleanup.splice(0)) await removeTempDir(directory); });
 type Tab = { tabId: number; navigationEpoch: number; origin: string; url: string };
-async function fixture(profileIds: string[]) {
+async function fixture(profileIds: string[], browser: BrowserExtensionHello["browser"] = "chromium") {
   const { root: directoryRoot, directory } = await privateTestDirectory(path.resolve(".integration-")); cleanup.push(directoryRoot);
   let profiles = profileIds; let connected = true; let nextTab = 1;
   const bindings = new Map<string, { generation: number; state: string; tabs: Tab[] }>();
-  const hello = (profileId: string): BrowserExtensionHello => ({ version: 1, type: "hello", profileId, browser: "chromium", extensionVersion: "1.0", capabilities: ["scoped_cdp", "durable_stop", "explicit_share", "manual_pause", "engine_cdp_v1", "unexpected_input_pause", "ordered_requests_v1"] });
+  const hello = (profileId: string): BrowserExtensionHello => ({ version: 1, type: "hello", profileId, browser, extensionVersion: "1.0", capabilities: ["scoped_cdp", "durable_stop", "explicit_share", "manual_pause", "engine_cdp_v1", "unexpected_input_pause", "ordered_requests_v1"] });
   const broker = {
     profiles: () => connected ? profiles.map(hello) : [],
     async request(_profile: string, command: BrowserExtensionCommand): Promise<BrowserExtensionResponse> {
@@ -38,8 +38,13 @@ const bot = (fields: Partial<BotRecord> = {}) => ({ id: "bot", useMyChrome: true
 const PLAIN = /^[A-Z][^_]*\.$/;
 
 describe("which browser profile a bot uses", () => {
-  it("the only connected profile is used for this turn but not pinned without the owner choosing", async () => {
+  it("a sole \"chromium\" profile (Chrome, Edge or Brave) waits for the owner to choose it", async () => {
     const f = await fixture(["profile_a"]);
+    await expect(f.value.bind(bot(), "thread")).rejects.toThrow("Choose the browser profile");
+    await expect(f.value.bind(bot({ browserExtensionProfileId: "profile_a" }), "thread")).resolves.toMatchObject({ profileId: "profile_a" });
+  });
+  it("the only connected Google Chrome profile is used for this turn but not pinned without the owner choosing", async () => {
+    const f = await fixture(["profile_a"], "chrome");
     const record = bot();
     await expect(f.value.bind(record, "thread")).resolves.toMatchObject({ profileId: "profile_a" });
     expect(record.browserExtensionProfileId).toBeUndefined();
