@@ -88,7 +88,8 @@ const ROWS: Row[] = [
   { cmd: "R -e 'fs::dir_delete(\"~\")'", rule: "unreadable", why: "10.7 R through R itself" },
   { cmd: "echo 'file delete -force ~' | tclsh", rule: "unreadable", why: "10.7 Tcl bare word" },
   { cmd: "tclsh <<'EOF'\nfile delete -force \"/\"\nEOF", rule: "unreadable", why: "10.7 Tcl string" },
-  { cmd: "Rscript -e 'x <- c(1, 2); print(sum(x))'", rule: null, why: "10.7 R computes" },
+  { cmd: "Rscript -e 'x <- c(1, 2); print(sum(x))'", rule: "unreadable", why: "10.7 R computes, after the .Rprofile it reads first (1.0.5 r8)" },
+  { cmd: "Rscript --vanilla -e 'x <- c(1, 2); print(sum(x))'", rule: null, why: "10.7 R computes with no profile (1.0.5 r8)" },
   { cmd: "echo 'puts [expr 1+2]' | tclsh", rule: null, why: "10.7 Tcl computes" },
   { cmd: "osascript -e 'display notification \"done\"'", rule: null, why: "10.7 AppleScript notifies" },
 

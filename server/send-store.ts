@@ -37,6 +37,7 @@
 //   (none)        sending      accept(): HTTP send, bot path                   this row
 //   (none)        queued       accept(status queued): room/bot queue           this row
 //   (none)        refused      accept(status refused): a room-queue request    this row (chip)
+//   (none)        cancelled    acceptTypedStop(): a typed stop (TYPED-STOP-107) none (born finished)
 //                              the dispatcher could not start or closed
 //   sending       dispatched   markDispatched(): before the engine is asked    this row
 //   sending       queued       queue(): earlier send unresolved / bot busy     this row
@@ -115,7 +116,8 @@ export interface SendRow {
   prompt: string | null;
   replyToId: string | null;
   origin: string | null;
-  mode: "chat" | "goal" | null;
+  /** "typedStop": a bot row acceptTypedStop made (designs/TYPED-STOP-107.md); it reads as acknowledged, never as a dismissal. */
+  mode: "chat" | "goal" | "typedStop" | null;
   responderId: string | null;
   /** A line already in the transcript that this row will run from (a steer the engine later refused). */
   existingMessageId: string | null;
@@ -152,10 +154,11 @@ export interface AcceptInput {
   replyToId?: string;
   origin?: string;
   prompt?: string;
-  mode?: "chat" | "goal";
+  mode?: "chat" | "goal" | "typedStop";
   responderId?: string;
   /** Rooms with the in-memory fallback accept straight into the queue. */
-  status?: "sending" | "queued" | "refused";
+  /** "cancelled": only acceptTypedStop (a row born finished: never dispatched, never run). */
+  status?: "sending" | "queued" | "refused" | "cancelled";
   /** With status "refused": the notice the chip shows. */
   notice?: SendNoticeCode;
   /** A chip made from a waiting room request keeps that request's id, so it is the same item to every client. */
@@ -364,7 +367,7 @@ function toRow(r: Record<string, unknown>): SendRow {
     prompt: (r.prompt as string | null) ?? null,
     replyToId: (r.reply_to_id as string | null) ?? null,
     origin: (r.origin as string | null) ?? null,
-    mode: (r.mode as "chat" | "goal" | null) ?? null,
+    mode: (r.mode as "chat" | "goal" | "typedStop" | null) ?? null,
     responderId: (r.responder_id as string | null) ?? null,
     existingMessageId: (r.existing_message_id as string | null) ?? null,
     messageId: (r.message_id as string | null) ?? null,
@@ -564,6 +567,19 @@ export class SendStore {
     });
     if (result.kind === "new") this.notify(input.threadId);
     return result;
+  }
+
+  /**
+   * A typed stop (designs/TYPED-STOP-107.md): ONE transaction records the owner's "stop" already finished ("cancelled": no words kept,
+   * never dispatched, never run, never resent, and not a message that passed to the engine) and marks the conversation's waiting messages
+   * as a Stop does (markStopped). A crash leaves either nothing or both. A repeat of the send id gets its existing row back.
+   */
+  acceptTypedStop(input: Omit<AcceptInput, "status" | "text"> & { text: string }): AcceptResult {
+    return this.atomically((): AcceptResult => {
+      const accepted = this.accept({ ...input, text: "", status: "cancelled", mode: "typedStop" });
+      if (accepted.kind === "new") this.markStopped(input.threadId);
+      return accepted;
+    });
   }
 
   private update(seq: number, set: string, args: Array<string | number | null>, threadId?: string): void {
@@ -885,7 +901,7 @@ export function pendingItem(row: SendRow): {
       state: "refused",
       notice: row.notice ?? "refused",
       ...(row.replyToId ? { replyToId: row.replyToId } : {}),
-      ...(row.mode ? { mode: row.mode } : {}),
+      ...(row.mode === "chat" || row.mode === "goal" ? { mode: row.mode } : {}),
       ...(row.responderId ? { responderId: row.responderId } : {}),
       ...(row.restoreHeld && row.restoreGen ? { restoreGen: row.restoreGen } : {}),
       ...(row.stopped && row.stopGen ? { stopGen: row.stopGen } : {}),

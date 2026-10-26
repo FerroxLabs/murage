@@ -140,3 +140,16 @@ it.skipIf(process.platform === "win32")("refuses symlinked payload parents witho
   expect(() => commitPackageImportFiles(f.root, f.replacements, f.expected, f.options)).toThrow("UNSAFE_PACKAGE_IMPORT_PATH");
   expect(existsSync(join(external, f.botId))).toBe(false);
 });
+
+it("a transaction directory with no journal and no staged payload is cleared, not fatal at every start (A3)", () => {
+  const f = fixture();
+  mkdirSync(join(f.root, ".package-import-transaction"), { mode: 0o700 });
+  expect(recoverPackageImportTransaction(f.root, f.options)).toEqual({ status: "none" });
+  expect(existsSync(join(f.root, ".package-import-transaction"))).toBe(false);
+  expect(commitPackageImportFiles(f.root, f.replacements, f.expected, f.options).status).toBe("committed");
+});
+it("a journal-less directory that holds staged payloads still refuses recovery (A3)", () => {
+  const f = fixture();
+  mkdirSync(join(f.root, ".package-import-transaction", "new"), { recursive: true });
+  expect(() => recoverPackageImportTransaction(f.root, f.options)).toThrow();
+});

@@ -172,6 +172,51 @@ export function compareCheck(handed: HandedEnv, cwd: string, printed: string): C
   return { ok: true, env, absent, cwdKnown: dir === cwd, unknown: [...new Set(unknown)] };
 }
 
+/** The options a PowerShell shell form may carry before its `-Command` for the reader to know what it starts (r#7). */
+const POWERSHELL_FLAGS = new Set(["-noprofile", "-noninteractive", "-nologo"]);
+
+/** Names (folded) PowerShell reads or rewrites in its own process at start, so the command never sees them as handed (r#7). */
+const POWERSHELL_OWN_NAMES = new Set(["PSMODULEPATH", "PSEXECUTIONPOLICYPREFERENCE"]);
+
+/** r#7 (1.0.7), Rule 74d for a PowerShell shell form, read without starting PowerShell (murage-releases #1: Murage never
+ * starts it on its own). `powershell.exe|pwsh [-NoProfile|-NonInteractive|-NoLogo]... -Command`, with -NoProfile, runs no
+ * startup script, so the environment its command sees is the one it was handed, with two Windows facts applied: PowerShell
+ * rewrites PSModulePath in its own process at start (and reads PSExecutionPolicyPreference as its own policy), and environment names are case-insensitive, so of two handed names
+ * that differ only in case the command sees one and which is not Murage's to know. Both are removed (and, like the run of
+ * the POSIX form, the read only ever removes); an absence pin the hand holds under another case is no longer absent. Any
+ * other form, platform or name this cannot place is a check that failed: U20, as before. */
+export function readPowerShellForm(shell: readonly string[], handed: HandedEnv, platform: NodeJS.Platform = process.platform): CheckResult {
+  if (platform !== "win32") return { ok: false, why: "the shell form is PowerShell, which the environment check cannot read here" };
+  const [program, ...args] = shell;
+  if (!program || !isPowerShellProgram(program)) return { ok: false, why: "no shell form" };
+  if (args.length < 2 || args[args.length - 1]!.toLowerCase() !== "-command") return { ok: false, why: "the PowerShell form does not end in -Command" };
+  const flags = args.slice(0, -1).map((arg) => arg.toLowerCase());
+  const odd = flags.find((flag) => !POWERSHELL_FLAGS.has(flag));
+  if (odd !== undefined) return { ok: false, why: `the PowerShell form carries an option the environment check does not read (${odd.slice(0, 40)})` };
+  if (!flags.includes("-noprofile")) return { ok: false, why: "the PowerShell form runs the owner's profile" };
+  const byFold = new Map<string, string[]>();
+  for (const [name, value] of Object.entries(handed.env)) {
+    if (!name || name.includes("=") || name.includes("\0") || value.includes("\0")) return { ok: false, why: "the environment holds a name Windows cannot hand on as written" };
+    const fold = name.toUpperCase();
+    byFold.set(fold, [...(byFold.get(fold) ?? []), name]);
+  }
+  const env = { ...handed.env };
+  const unknown: string[] = [];
+  for (const [fold, names] of byFold) {
+    if (!POWERSHELL_OWN_NAMES.has(fold) && names.length === 1) continue;
+    for (const name of names) { delete env[name]; unknown.push(name); }
+  }
+  const absent = handed.absent.filter((name) => {
+    const twins = byFold.get(name.toUpperCase());
+    if (!twins) return true;
+    // the command sees this absence pin under another case: it is neither absent nor a name the record can vouch for
+    for (const twin of twins) { delete env[twin]; unknown.push(twin); }
+    unknown.push(name);
+    return false;
+  });
+  return { ok: true, env, absent, cwdKnown: true, unknown: [...new Set(unknown)] };
+}
+
 const checks = new Map<string, Promise<CheckResult>>();
 // an invalidation (env-path.ts invalidateEnvCapture) drops every cached check
 onEnvInvalidate(() => checks.clear());
@@ -191,10 +236,10 @@ function checkExecEnv(at: number, session: string, shell: readonly string[], han
     if (!program) return resolve({ ok: false, why: "no shell form" });
     // A Cloud home's launcher builds the engine's environment itself (pinned names win, others dropped) and runs only
     // manifest engines, so the server cannot run the pinned form there: the record is U20, never the hand read as checked.
-    // The check's script is a POSIX one (`env -0; printf; pwd`). PowerShell, the Windows shell form, cannot run it, so starting it only
-    // ever produced the same U20 after a hidden PowerShell start (murage-releases #1): the record is U20 without starting anything.
-    if (isPowerShellProgram(program)) return resolve({ ok: false, why: "the shell form is PowerShell, which the environment check cannot read" });
     if (process.env.MURAGE_CLOUD_ROLE === "home") return resolve({ ok: false, why: "a Cloud home's launcher sets the engine's environment" });
+    // The check's script is a POSIX one (`env -0; printf; pwd`), and Murage never starts PowerShell on its own (murage-releases
+    // #1): a PowerShell form is read from what it is, without starting anything (r#7), and U20 when it cannot be.
+    if (isPowerShellProgram(program)) return resolve(readPowerShellForm(shell, handed));
     // Through the shared launcher (Rule 74c): the engine's shell form runs with no controlling terminal.
     execCli(program, [...args, "env -0; printf '\\0'; pwd"], { env: handed.env, cwd, timeout: CHECK_MS, maxBuffer: CHECK_BYTES }, (error, stdout) => {
       if (error) return resolve({ ok: false, why: (error as { killed?: boolean }).killed ? "the check took too long" : "the check did not finish" });

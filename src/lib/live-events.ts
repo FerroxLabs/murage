@@ -332,6 +332,29 @@ function parseLiveFrame(data: string): LiveFrame | null {
   return candidate as LiveFrame;
 }
 
+/** Whether a page at `href` opens its live stream (a same-origin path) to a
+ * server on this machine: a loopback host. The desktop window loads its own
+ * harness at http://127.0.0.1:<port>; a phone, a paired browser and a Cloud
+ * window load a server elsewhere and keep the browser's network signal. */
+export function liveStreamIsLocal(href: string | null | undefined): boolean {
+  if (!href) return false;
+  let host: string;
+  try {
+    const url = new URL(href);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+    host = url.hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  if (host.endsWith(".")) host = host.slice(0, -1);
+  return (
+    host === "localhost" ||
+    host.endsWith(".localhost") ||
+    host === "[::1]" ||
+    /^127(?:\.\d{1,3}){3}$/.test(host)
+  );
+}
+
 function browserPlatform(overrides: Partial<LiveEventsPlatform>): LiveEventsPlatform | null {
   const NativeEventSource = globalThis.EventSource;
   const createEventSource =
@@ -393,7 +416,13 @@ function browserPlatform(overrides: Partial<LiveEventsPlatform>): LiveEventsPlat
         : undefined),
     isVisible:
       overrides.isVisible ?? (() => !browserDocument || browserDocument.visibilityState === "visible"),
-    isOnline: overrides.isOnline ?? (() => globalThis.navigator?.onLine !== false),
+    // Internet reachability says nothing about a stream on this machine: a
+    // desktop with no network (local models) still has its own harness on
+    // loopback. Only a stream that leaves the machine waits for the network;
+    // a local one counts real connection failures alone.
+    isOnline:
+      overrides.isOnline ??
+      (() => liveStreamIsLocal(globalThis.location?.href) || globalThis.navigator?.onLine !== false),
     now: overrides.now ?? Date.now,
     resumeSignal: overrides.resumeSignal ?? ((listener) => onNativeEvent("resume", listener)),
   };

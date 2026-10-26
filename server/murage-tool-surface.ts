@@ -1,6 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { randomUUID } from "node:crypto";
+import { TURN_ASK_RULES } from "../shared/ask-wording.ts";
 import type { SendTurnInput } from "./contracts.ts";
 
 export type McpToolSurface =
@@ -85,12 +86,15 @@ export function renderMurageTurn(turn: SendTurnInput, surface: McpToolSurface, m
   const hint = murageToolHowTo(surface, systemMounts);
   const binding = rotating && !turn.engineCommand
     ? `For this turn only, the memory server is mounted as "${rotating}". Wherever earlier instructions name "${stableMemory}", use "${rotating}" instead.` : "";
-  turn.onToolSurface?.(surface, systemMounts, { mounts, binding });
+  // QW 208: the ask rule line is part of the system text the engine receives, so the shapes view must see it too
+  const askRules = turn.engineCommand || turn.system?.includes(TURN_ASK_RULES) ? "" : TURN_ASK_RULES;
+  turn.onToolSurface?.(surface, systemMounts, { mounts, binding, askRules });
   const rendered = turn.engineCommand ? turn.text : renderMurageTools(turn.text, surface, mounts);
   const recall = turn.threadRecall === true && mounts.memory && !turn.engineCommand && surface.kind !== "none" ? THREAD_RECALL_LINE : "";
   const body = recall ? `${recall}\n\n${rendered}` : rendered;
+  // QW 208: the rule line for asking the owner, word for word the same on every engine (a tool engine and one with none)
   return { ...turn, text: binding ? `${binding}\n\n${body}` : body,
-    system: [turn.system && renderMurageTools(turn.system, surface, systemMounts), hint && !turn.system?.includes(hint) ? hint : ""].filter(Boolean).join("\n\n") || undefined };
+    system: [turn.system && renderMurageTools(turn.system, surface, systemMounts), hint && !turn.system?.includes(hint) ? hint : "", askRules].filter(Boolean).join("\n\n") || undefined };
 }
 
 /** Tool schemas and their own receipts do not know the client mount alias.

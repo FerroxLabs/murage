@@ -34,6 +34,7 @@ import { canonicalConnectedAppToolName } from "../shared/connected-app-names.ts"
 import { posix } from "node:path";
 import { EXACT_COMMAND_MAX_CHARS, normalizeCommand } from "../shared/exact-command.ts";
 import { WRAPPER_PREFIXES } from "../shared/arg-vocabulary.ts";
+import { parseApplyPatch, patchTextOf } from "../shared/apply-patch.ts";
 
 export type StopKind = "delete" | "pay" | "message";
 
@@ -795,10 +796,29 @@ function splitPowerShell(line: string): { commands: PsCommand[]; complex: boolea
       if (close === -1) { complex = true; word += line.slice(i); break; }
       dynamic = true; inWord = true; word += line.slice(i, close + 1); i = close; continue;
     }
-    if (ch === "=" && inWord && /^(\[[\w.]+\])?\$[\w:]+$/.test(word)) { endWord(); current.push({ text: "=", dynamic: false }); continue; }
+    if (ch === "=" && inWord && PS_TARGET_WORD.test(word)) { endWord(); current.push({ text: "=", dynamic: false }); continue; }
     // `$x+=…`, `$x??=…`: every PowerShell assignment operator splits off as `=` does (1.0.3 G-b3-1)
-    const compound = ch === "=" && inWord ? /^((?:\[[\w.]+\])?\$[\w:]+)([+\-*/%]|\?\?)$/.exec(word) : null;
+    const compound = ch === "=" && inWord ? PS_COMPOUND_WORD.exec(word) : null;
     if (compound) { word = compound[1]!; endWord(); current.push({ text: `${compound[2]}=`, dynamic: false }); continue; }
+    // `$x.($y) = …`: a member named by a variable or a literal stays in its target word (1.0.4 U21 r3). Any other
+    // group ends the statement as before, so a command inside it is still read as one
+    const memberShape = ch === "(" && inWord && !call && /^(?:\[[\w.]+\])?\$\S*\.$/.test(word);
+    const member = memberShape ? PS_MEMBER_GROUP.exec(line.slice(i)) : null;
+    if (member) { dynamic = true; word += member[0]; i += member[0].length - 1; continue; }
+    // `$x.(1+1) = git push …`, `$x.(Get-Date) = …`, `$x.(format) = 1`: any
+    // other member group is code that runs. It is read as a statement of its
+    // own, and the target keeps its place, so the right side of `=` is still
+    // read as a command (1.0.5 r4)
+    const close = memberShape ? psGroupEnd(line, i) : -1;
+    if (close !== -1) {
+      const inner = splitPowerShell(line.slice(i + 1, close));
+      commands.push(...inner.commands);
+      if (inner.complex) complex = true;
+      dynamic = true;
+      word += "(_)";
+      i = close;
+      continue;
+    }
     if (ch === "(") {
       if (call) { call += 1; opaqueCall = true; endWord(); continue; }
       if (inWord && /::\w+$/.test(word)) { endWord(); call = 1; continue; }
@@ -860,6 +880,29 @@ function expandPs(word: Word, vars: ReadonlyMap<string, string>, home: string, c
 
 /** PowerShell's assignment operators. */
 const PS_ASSIGN = /^([+\-*/%]|\?\?)?=$/;
+/** A word a glued `=` (or `+=`, `??=` …) ends: a variable or scope item, braced (`${env:X}`) or not, then members
+ * (`.y`, `.$y`, `.${y}`, `.($y)`) or elements (`[0]`), a type cast before it (1.0.4 U21 r2: a dynamic member too). */
+const PS_TARGET = String.raw`(?:\[[\w.]+\])?\$(?:\{[^}]+\}|[\w:]+)(?:\.(?:\$(?:\{[^}]+\}|\w+)|[A-Za-z_]\w*|\([^()]*\))|\[[^\]]*\])*`;
+const PS_TARGET_WORD = new RegExp(`^${PS_TARGET}$`);
+/** The `)` that closes the group opening at `at`, past quoted text, or -1. */
+function psGroupEnd(line: string, at: number): number {
+  let depth = 0;
+  let quote: string | undefined;
+  for (let j = at; j < line.length; j += 1) {
+    const ch = line[j]!;
+    if (quote) { if (ch === quote) quote = undefined; continue; }
+    if (ch === "'" || ch === '"') quote = ch;
+    else if (ch === "(") depth += 1;
+    else if (ch === ")" && --depth === 0) return j;
+  }
+  return -1;
+}
+
+/** A member group the stop line keeps in its word: one variable, quoted
+ * literal or number (`($y)`, `('k')`, `(1)`, `(0x10)`). A bare word is a
+ * command (`(format)`, `(rm)`) and ends the statement as before (1.0.5 r4). */
+const PS_MEMBER_GROUP = /^\(\s*(?:\$\{[^}]+\}|\$[\w:]+|'[^']*'|"[^"$`]*"|\d[\w.]*)\s*\)/;
+const PS_COMPOUND_WORD = new RegExp(`^(${PS_TARGET})([+\\-*/%]|\\?\\?)$`);
 const PS_DELETE = new Set(["remove-item", "rm", "del", "erase", "rd", "rmdir", "ri"]);
 const PS_PATH_PARAMS = /^-(path|literalpath|lp|pspath|p)$/i;
 /** Parameters that take a value that is not a place. */
@@ -1029,6 +1072,12 @@ function psHit(line: string, place: StopLinePlace, depth = 0): StopHit | null {
       // that way names no delete, so it changes nothing.
       if (!assigns || raw.length < 3) continue;
       raw = raw.slice(2);
+    } else if (first.startsWith("$") && PS_ASSIGN.test(raw[1]?.text ?? "")) {
+      // `$env:X += Remove-Item ~`, `$x.y = git push --force` (1.0.4 U21), and any other `$…` target (`$x.$y =`, r2):
+      // the right side runs, as for a variable
+      previous = undefined;
+      if (raw.length < 3) continue;
+      raw = raw.slice(2);
     }
     const cmd = expandAll(raw);
     let at = 0;
@@ -1057,8 +1106,8 @@ function psHit(line: string, place: StopLinePlace, depth = 0): StopHit | null {
       const to = psPaths(args)[0];
       cwd = !to ? cwd : to.dynamic ? undefined : resolveWord(to, cwd, place.home).path;
     } else if (name === "cmd") {
-      // `/c <text>`, or `/c<text>` glued as cmd also reads it (1.0.3 H3)
-      const c = args.findIndex((a) => /^\/[ck]/i.test(a.text));
+      // `/c <text>` (`/k`, and `/r`, which cmd takes as `/c`, as the reader does), or `/c<text>` glued as cmd also reads it (1.0.3 H3)
+      const c = args.findIndex((a) => /^\/[ckr]/i.test(a.text));
       if (c !== -1) {
         const glued = args[c]!.text.slice(2);
         const rest = glued ? [{ ...args[c]!, text: glued }, ...args.slice(c + 1)] : args.slice(c + 1);
@@ -1714,6 +1763,14 @@ export function classifyStopLine(tool: string, input: unknown, summary: string, 
   // a Windows engine's commands run in PowerShell, and so do a PowerShell tool's anywhere
   const powershell = POWERSHELL_TOOLS.has(tool.toLowerCase().replace(/^mcp__.+__/, "").split(/[./]/).pop()!);
   if (command !== undefined) return powershell || WIN_CANON.test(place.home) ? psHit(command, place) : shellHit(command, place);
+  // r#7: a patch (Fuigo's codex/apply_patch) removes the files it deletes and the source of each move: those are deletes,
+  // judged as any delete tool's; a patch this cannot read whole stops
+  if (tool === "apply_patch") {
+    const patch = parseApplyPatch(patchTextOf(input));
+    if (!patch) return { kind: "delete", what: "Murage could not read this patch whole, so it is waiting for you." };
+    if (!patch.deletes.length) return null;
+    return deleteHit({ deletes: patch.deletes.map((p) => resolveWord({ text: p, dynamic: false }, place.cwd, place.home)) }, place);
+  }
   const paths = deleteToolPaths(tool, input);
   if (paths) {
     const found: Collected = { deletes: [] };

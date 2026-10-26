@@ -164,10 +164,16 @@ it("forgetting an early line in a 200k-line thread: the commit is flat, every de
   void untouched;
   const forgotten = ids[10]!, a = lsnOf(db, "T", forgotten);
   db.exec("BEGIN IMMEDIATE");
-  const commit = measured(db, () => commitRevoke(db, { kind: "line", threadId: "T", messageIds: [forgotten], cause: "forget" }));
+  // measured without the inline marker (inline: false): markInline (revoke-commit.ts) runs marker slices until INLINE_REVOCATION.ms of wall
+  // clock has passed, so the statements it adds depend on the machine's speed, not on the thread (3.2k on the box that set the old bound,
+  // 5,064 on a faster macOS runner, nightly 40179756396). That marking is the same slice work drain() bounds per slice below. What is left
+  // is the commit's own writes for one forgotten line: a fixed few dozen statements (job row, line and range marks, one frontier node, the
+  // pending windows, one flow seed), none of them a loop over the thread's lines. 200 leaves room for that set to grow by a few rows and
+  // still fails on any per-line or per-capture work in the commit.
+  const commit = measured(db, () => commitRevoke(db, { kind: "line", threadId: "T", messageIds: [forgotten], cause: "forget" }, { inline: false }));
   const R = commit.out;
-  // the commit's own work is flat in the thread's length: measured at 3.2k statements for a 200k-line thread, with the copies' inline marking
-  expect(commit.statements).toBeLessThan(5_000);
+  // the commit's own work is flat in the thread's length
+  expect(commit.statements).toBeLessThan(200);
   db.exec("COMMIT");
   expect(R).toBeGreaterThan(0);
   // from the commit: every generated line after the forgotten one in T is withheld, every line written since reads checking at least
@@ -176,8 +182,13 @@ it("forgetting an early line in a 200k-line thread: the commit is flat, every de
   for (const id of copies) expect(verdict(db, "U", id)).toBe("checking");
   // turns during the window: after every slice, no copy is shown
   const run = drain(db, () => { for (const id of copies) expect(verdict(db, "U", id)).not.toBe("shown"); });
-  // a slice's work stays inside its row budget (256; measured at about 210 statements and 250 rows), whatever the machine's load
-  expect(run.maxRows).toBeLessThanOrEqual(320);
+  // a slice's work stays inside its row budget (256), whatever the machine's load. The rows counted here are every row a statement reads
+  // plus every row it writes, while the budget is spent on the rows read, so one slice can count up to about twice its budget. With the
+  // commit measured without the inline marker, drain() now also runs the job's first slice (it used to run inside markInline, unmeasured):
+  // that slice walks the range's 60 carried copies and two capture pages, 394 rows and 224 statements on every run (runner 4, 3 runs);
+  // later slices are about 210 statements and 250 rows. 512 is twice the row budget: it holds the first slice and still fails on any slice
+  // whose work grows with the thread's 200k lines.
+  expect(run.maxRows).toBeLessThanOrEqual(512);
   expect(run.maxStatements).toBeLessThanOrEqual(400);
   expect(run.slices).toBeGreaterThan(1);
   // each capture after the forgotten line was reached as a source (one deny_memory row each); the ones before were not
@@ -295,7 +306,7 @@ it("inheritance at write: a child of a marked line enters the revoke's frontier 
   const late = addLine(db, "Y", "y-1", true);
   const at51 = lsnOf(db, "T", ids[51]!);
   db.exec("BEGIN"); inheritMarks(db, { kind: "line", threadId: "Y", lsn: late }, [], [{ threadId: "T", from: at51, to: at51 }]); db.exec("COMMIT");
-  expect(verdict(db, "Y", "y-1")).toBe("checking");
+  expect(verdict(db, "Y", "y-1")).toBe("withheld"); // its own deny row at its write (DELETION-DRAIN-V2 2.3), not only held until the pop
   drain(db);
   expect(verdict(db, "Y", "y-1")).toBe("withheld");
   expect(count(db, "SELECT count(*) AS n FROM memory_deny_line WHERE thread_id='Y' AND revoke_id=?", R)).toBe(1);

@@ -23,8 +23,9 @@ export interface Voice {
   /** How the voice sounds, for grouping the picker. xAI publishes this;
    *  OpenAI does not, so theirs is the common reading of how each sounds. */
   gender?: "female" | "male" | "neutral";
-  /** Whose voice it is, where one list mixes two (Flux: OpenAI and Grok). */
-  provider?: "openai" | "grok";
+  /** Whose voice it is, where one list mixes them (Flux: OpenAI, Grok and
+   *  ElevenLabs). */
+  provider?: "openai" | "grok" | "elevenlabs";
 }
 
 /** How long the service took, for the voice diagnostics: the harness's own

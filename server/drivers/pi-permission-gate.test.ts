@@ -143,6 +143,18 @@ describe("Rule 14: three trusted sets, nothing else", () => {
     expect(gate.asked).toHaveLength(1);
   });
 
+  it("venue_read_messages is unasked only on Murage's own agents mount", async () => {
+    const table = holder[MCP_TABLE_KEY] as Map<string, McpToolEntry>;
+    table.set("agents_venue_read_messages", { piName: "agents_venue_read_messages", mount: "agents", mcpTool: "venue_read_messages", mountId: "own:agents" });
+    table.set("custom_venue_read_messages", { piName: "custom_venue_read_messages", mount: "custom", mcpTool: "venue_read_messages", mountId: "custom:custom" });
+    expect(OWN_UNASKED.some(row => row.mount === "own:agents" && row.tools.includes("venue_read_messages"))).toBe(true);
+    const gate = rig();
+    expect(await gate.call({ toolName: "agents_venue_read_messages", input: { venue_id: "venue" } })).toBeUndefined();
+    expect(gate.asked).toHaveLength(0);
+    await gate.call({ toolName: "custom_venue_read_messages", input: { venue_id: "venue" } });
+    expect(gate.asked).toHaveLength(1);
+  });
+
   it("removes the secret from the environment, so the commands pi runs never inherit it", () => {
     rig();
     expect(process.env.MURAGE_PI_GATE).toBeUndefined();

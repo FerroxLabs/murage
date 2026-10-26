@@ -102,7 +102,9 @@ if (process.exitCode === undefined) {
 
 if (process.exitCode === undefined) for (const lane of [
   { name: "x11-overlay-free-crash-retry", wayland: false, blocked: false },
-  { name: "wayland-safety-block", wayland: true, blocked: true },
+  // The forced-off override runs here so the packaged app proves both sides
+  // of the GPU rule: the lanes above take detection, this one MURAGE_LINUX_GPU.
+  { name: "wayland-safety-block", wayland: true, blocked: true, gpu: "off" },
 ]) {
   const runtimeDirectory = mkdtempSync(path.join(tmpdir(), prefixName));
   if (
@@ -123,6 +125,7 @@ if (process.exitCode === undefined) for (const lane of [
         XDG_RUNTIME_DIR: runtimeDirectory,
         MURAGE_SMOKE_WAYLAND: lane.wayland ? "1" : "0",
         MURAGE_SMOKE_LINUX_CUA_BLOCKED: lane.blocked ? "1" : "0",
+        ...(lane.gpu ? { MURAGE_LINUX_GPU: lane.gpu } : {}),
       },
       stdio: "inherit",
     },

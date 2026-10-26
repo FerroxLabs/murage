@@ -107,7 +107,7 @@ def cases(m, root):
         ("codex", "routed+mcp", ["app-server", "-c", "features.browser_use=false", "-c", "features.computer_use=false"],
          {"route": route, "mcp": {"agents": {"proxy": "agents", "env": {"MURAGE_HARNESS_URL": "http://127.0.0.1:9"}}}, "resume": RESUME_ID,
           "codexPolicy": {"approval": "on-request", "sandbox": "workspace-write"}}, None, workspace),
-        ("grokAgent", "unrouted", ["--permission-mode", "default", "agent", "stdio"], None, None, workspace),
+        ("grokAgent", "unrouted", ["--permission-mode", "default", "--no-memory", "agent", "--no-leader", "stdio"], None, None, workspace),
         ("kimiAgent", "unrouted", ["acp"], None, None, workspace),
         ("opencodeGo", "routed", ["acp"], {"route": {**route, "provider": "flux", "models": ["flux-auto"], "label": "Flux Router"}}, None, workspace),
         ("fuigoAgent", "unrouted", ["--permission-mode", "default", "--trust", "--no-memory", "agent", "--no-leader", "stdio"], None, None, None),

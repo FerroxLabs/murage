@@ -5,6 +5,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { admissibleSentenceRanges, claimsCompatible, parseAuthoredStatement } from "./pip-claims.ts";
 import { pipCounterId } from "./pip-kinds.ts";
 import { inheritEdge } from "./revoke-commit.ts";
+import { insertMemoryRecord } from "./record-write.ts";
 
 export interface StanceEvent { verdict: "reinforce" | "contradict" | "related"; handle: { sourceId: string; revision: number; start: number; end: number } }
 export interface StanceBinding { support: Record<string, string[]>; events?: Record<string, Record<string, StanceEvent>> }
@@ -66,7 +67,7 @@ export function reconcilePipStances(db: DatabaseSync, onlyBot?: string) {
       if (counter.state === "active" && JSON.stringify(old) !== JSON.stringify(entities)) {
         const version = Number(counter.version) + 1, now = Date.now();
         db.prepare("UPDATE memory_records SET state='superseded',valid_to=? WHERE id=? AND version=?").run(now, cid, Number(counter.version));
-        db.prepare("INSERT INTO memory_records VALUES(?,?,?,?,?,?,'active',0,?,NULL,?,?)").run(cid, version, String(counter.scope_id), "pip-counter", String(counter.text), "assistant-inference", now, cid, now);
+        insertMemoryRecord(db, { id: cid, version, scopeId: String(counter.scope_id), kind: "pip-counter", text: String(counter.text), assertion: "assistant-inference", state: "active", validFrom: now, supersedesId: cid, createdAt: now });
         db.prepare("UPDATE memory_record_details SET partition='identity',attention='current',confidence_basis=?,entities=? WHERE record_id=? AND record_version=?").run(String(counter.confidence_basis), JSON.stringify(entities), cid, version);
         for (const e of opposing.slice(0, 64)) { const h = e.handle; db.prepare("INSERT OR IGNORE INTO memory_evidence VALUES(?,?,?,?,?,?)").run(cid, version, h.sourceId, h.revision, h.start, h.end); inheritEdge(db, { kind: "record", id: cid, version }, { kind: "source", id: h.sourceId }); }
         changed = true;

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { channelReply } from "../reply-text.ts";
 
 export const slackId = z.string().regex(/^[A-Z][A-Z0-9]{1,79}$/);
 export const slackBindingSchema = z.object({
@@ -36,6 +37,6 @@ export function normalizeSlackMessage(raw: unknown, identity: SlackIdentity): Sl
 
 export function slackPrompt(text: string): { prompt: string; response?: string } {
   if (/^\/(?:approve|deny|allow|reject|pair)(?:\s|$)/i.test(text) || /^(?:approve|deny|allow|reject|yes|no)$/i.test(text.trim()))
-    return { prompt: "", response: "Review approvals in Murage. Slack messages cannot approve actions." };
+    return { prompt: "", response: channelReply("channelReply.approvalsInMurage", { channel: "Slack" }) };
   return { prompt: `[UNTRUSTED SLACK CHANNEL MESSAGE]\n${text}\n[/UNTRUSTED SLACK CHANNEL MESSAGE]` };
 }

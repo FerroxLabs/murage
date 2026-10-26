@@ -60,7 +60,8 @@
         "title": "Agency Ops",
         "description": "Retainer prepares a client-by-client retainer health sheet from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For broad operations coordination, use Ops. For a service business team, use Service Studio.",
         "appearance": {
-          "color": "orange"
+          "color": "teal",
+          "mascotBody": "hexagon"
         },
         "skills": [
           "creative-agency-runner",

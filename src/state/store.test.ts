@@ -620,6 +620,31 @@ describe("where a fresh sign-in lands", () => {
     } as never);
     expect(next.selectedId).toBe("real");
   });
+
+  // 183: a returning person lands on the conversation they left; the Chief stays the landing for everyone else.
+  describe("resuming the last conversation", () => {
+    const chief = { ...member("sable", "Sable"), chiefOfStaff: true, chiefScope: "workspace" } as unknown as Bot;
+    const land = (resumeId: string | undefined, bots: Bot[]) =>
+      reducer({ ...initialState, selectedId: "" }, { type: "hydrate", ...httpNow, bots, groups: [], computerControl: {}, ...(resumeId ? { resumeId } : {}) } as never).selectedId;
+    it("opens the remembered conversation when it is listed", () => {
+      expect(land("bruce", [chief, member("bruce", "Bruce")])).toBe("bruce");
+    });
+    it("opens the Chief when the remembered one was deleted", () => {
+      expect(land("gone", [chief, member("bruce", "Bruce")])).toBe("sable");
+    });
+    it("opens the Chief when the remembered one is hidden", () => {
+      const hidden = { ...member("bruce", "Bruce"), hidden: true } as unknown as Bot;
+      expect(land("bruce", [chief, hidden])).toBe("sable");
+    });
+    it("opens the Chief when the remembered channel is archived", () => {
+      const room = { id: "room", name: "Room", hidden: true, messages: [] } as never;
+      const next = reducer({ ...initialState, selectedId: "" }, { type: "hydrate", ...httpNow, bots: [chief], groups: [room], computerControl: {}, resumeId: "room" } as never);
+      expect(next.selectedId).toBe("sable");
+    });
+    it("opens the Chief when nothing is remembered (first run, or setup not finished)", () => {
+      expect(land(undefined, [chief, member("bruce", "Bruce")])).toBe("sable");
+    });
+  });
 });
 
   const bot = {
@@ -1097,6 +1122,46 @@ describe("section Chiefs", () => {
     expect(next.bots.find((candidate) => candidate.id === ember.id)?.chiefOfStaff).toBe(true);
   });
 
+  it("hands over in one change: the former Chief joins its team as a member when its engine cannot lead", () => {
+    const ember = { ...bot("ember", ""), chiefOfStaff: true, chiefScope: "workspace" as const };
+    const rex = { ...bot("rex", "Sales"), chiefOfStaff: false };
+    const state = {
+      ...initialState,
+      instances: [{ instanceId: "codex", capabilities: { agentsMcp: false } }] as unknown as typeof initialState.instances,
+      bots: [ember, rex].map((candidate) => ({ ...candidate, messages: [] })),
+    };
+
+    const next = reducer(state, {
+      type: "updateBot",
+      botId: rex.id,
+      patch: { chiefOfStaff: true, chiefTier: "workspace", individual: false },
+    });
+
+    expect(next.bots.find((candidate) => candidate.id === rex.id)?.chiefScope).toBe("workspace");
+    expect(next.bots.find((candidate) => candidate.id === ember.id)?.chiefScope).toBeUndefined();
+    expect(next.bots.find((candidate) => candidate.id === ember.id)?.chiefOfStaff).toBe(false);
+  });
+
+  it("makes the former Chief a member when its team already has a leader", () => {
+    const ember = { ...bot("ember", "Ops"), chiefOfStaff: true, chiefScope: "workspace" as const };
+    const lead = { ...bot("lead", "Ops"), chiefOfStaff: true };
+    const rex = { ...bot("rex", "Sales"), chiefOfStaff: false };
+    const state = {
+      ...initialState,
+      instances: [{ instanceId: "codex", capabilities: { agentsMcp: true } }] as unknown as typeof initialState.instances,
+      bots: [ember, lead, rex].map((candidate) => ({ ...candidate, messages: [] })),
+    };
+
+    const next = reducer(state, {
+      type: "updateBot",
+      botId: rex.id,
+      patch: { chiefOfStaff: true, chiefTier: "workspace", individual: false },
+    });
+
+    expect(next.bots.find((candidate) => candidate.id === ember.id)?.chiefOfStaff).toBe(false);
+    expect(next.bots.find((candidate) => candidate.id === lead.id)?.chiefOfStaff).toBe(true);
+  });
+
   it("never folds the wire-only tier word into a bot", () => {
     const rex = { ...bot("rex", "Sales"), chiefOfStaff: true, chiefScope: "workspace" as const };
     const state = { ...initialState, bots: [{ ...rex, messages: [] }] };
@@ -1170,7 +1235,10 @@ describe("pending queued chip", () => {
       expect(body, action).not.toMatch(/\.busy\b|busyBotId/);
     }
     const delivery = readFileSync(fileURLToPath(new URL("./send-delivery.ts", import.meta.url)), "utf8");
-    expect(delivery.indexOf("deps.outbox.add(entry)")).toBeLessThan(delivery.indexOf("deps.showSending(entry)"));
+    // inside begin(): the entry is durable in the outbox before its Sending line shows (U36 routes it through a showSending helper)
+    const begin = delivery.slice(delivery.indexOf("function begin("));
+    expect(begin.indexOf("deps.outbox.add(entry)")).toBeGreaterThanOrEqual(0);
+    expect(begin.indexOf("deps.outbox.add(entry)")).toBeLessThan(begin.indexOf("showSending(entry)"));
   });
 
   it("the server's pending list replaces the chips after a reload and keeps only the sends this device is still delivering", () => {
@@ -2063,5 +2131,74 @@ describe("api() and the desktop proof", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+// 183: launch never waits on /api/setup, and before setup is finished the question is throttled, not asked per selection.
+it("reads the saved conversation without waiting on the setup question, and throttles the write-side question", () => {
+  const source = readFileSync(fileURLToPath(new URL("./store.tsx", import.meta.url)), "utf8");
+  expect(source).not.toContain("setupAsk.then");
+  expect(source).not.toContain("const setupAsk =");
+  expect(source).toContain("readLastConversation(browserStorage(), workspaceKey(homeMeta(document).homeId))");
+  expect(source).toContain("SETUP_ASK_GAP_MS");
+  // N1 (1.0.6): the store only peeks. The full read seats a Chief of Staff and says the next setup card, so a background
+  // question must never make it (a bot settings surface with no setup screen made its bot Chief that way).
+  expect(source.match(/api\("\/api\/setup[^"]*"\)/g)).toEqual(['api("/api/setup?peek=1")']);
+});
+
+// N2 (1.0.6): an effort picked on a chat that follows its bot is a thread pin the server confirmed; the header shows it from
+// the answer's own row, with or without a live frame.
+describe("a saved thread setting lands on the held row", () => {
+  const follower = {
+    id: "fb", threadId: "fb-t1", name: "Follower", title: "", description: "", notifications: true, color: "green", unread: false,
+    modelSelection: { instanceId: "verification", model: "m1" }, messages: [],
+    tasks: [
+      { threadId: "fb-t1", title: "First thread", createdAt: 1, followsBotModel: true, autoApprove: false, alwaysAllow: [], unread: false },
+      { threadId: "fb-t2", title: "Second thread", createdAt: 2, followsBotModel: false, modelSelection: { instanceId: "second", model: "m2" }, autoApprove: true, alwaysAllow: [], unread: false },
+    ],
+  } as unknown as Bot;
+  const held = (state: AppState) => viewedTaskBot(state.bots.find((bot) => bot.id === "fb")!);
+
+  it("shows the effort picked on a chat that follows its bot", () => {
+    const state = reducer({ ...initialState, bots: [follower] }, {
+      type: "threadSettingsSaved", botId: "fb", threadId: "fb-t1", keys: ["modelSelection"], sentSeq: undefined,
+      task: { threadId: "fb-t1", title: "First thread", createdAt: 1, modelSelection: { instanceId: "verification", model: "m1", effort: "high" }, followsBotModel: false },
+    });
+    expect(held(state).modelSelection).toEqual({ instanceId: "verification", model: "m1", effort: "high" });
+    expect(state.bots[0].tasks!.find((task) => task.threadId === "fb-t1")!.followsBotModel).toBe(false);
+    // the other chat and the bot's own model are untouched
+    expect(state.bots[0].modelSelection).toEqual({ instanceId: "verification", model: "m1" });
+    expect(state.bots[0].tasks!.find((task) => task.threadId === "fb-t2")!.modelSelection).toEqual({ instanceId: "second", model: "m2" });
+  });
+
+  it("takes only the fields the save decided, and clears a pin the answer no longer has", () => {
+    const state = reducer({ ...initialState, bots: [{ ...follower, threadId: "fb-t2" } as Bot] }, {
+      type: "threadSettingsSaved", botId: "fb", threadId: "fb-t2", keys: ["modelSelection"], sentSeq: undefined,
+      task: { threadId: "fb-t2", title: "Renamed elsewhere", createdAt: 2, followsBotModel: true, autoApprove: false },
+    });
+    const row = state.bots[0].tasks!.find((task) => task.threadId === "fb-t2")!;
+    expect(row.modelSelection).toBeUndefined();
+    expect(row.followsBotModel).toBe(true);
+    expect(row.title).toBe("Second thread");
+    expect(row.autoApprove).toBe(true);
+    expect(held(state).modelSelection).toEqual({ instanceId: "verification", model: "m1" });
+  });
+
+  it("a reply that a frame overtook is not laid: the frame's row stands (another window's later save is never undone)", () => {
+    const numbered = { ...follower, tasksSeq: 7 } as Bot;
+    const saved = (sentSeq: number) => reducer({ ...initialState, bots: [numbered] }, {
+      type: "threadSettingsSaved", botId: "fb", threadId: "fb-t1", keys: ["modelSelection"], sentSeq,
+      task: { threadId: "fb-t1", title: "First thread", createdAt: 1, modelSelection: { instanceId: "verification", model: "m1", effort: "high" }, followsBotModel: false },
+    });
+    expect(held(saved(6)).modelSelection).toEqual({ instanceId: "verification", model: "m1" });
+    expect(held(saved(7)).modelSelection).toEqual({ instanceId: "verification", model: "m1", effort: "high" });
+  });
+
+  it("ignores an answer for another thread", () => {
+    const start = { ...initialState, bots: [follower] };
+    const state = reducer(start, {
+      type: "threadSettingsSaved", botId: "fb", threadId: "fb-t1", keys: ["modelSelection"], sentSeq: undefined,
+      task: { threadId: "fb-t2", title: "Second thread", createdAt: 2, modelSelection: { instanceId: "x", model: "y" } },
+    });
+    expect(state.bots[0]).toBe(follower);
   });
 });

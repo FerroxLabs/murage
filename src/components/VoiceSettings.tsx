@@ -3,7 +3,7 @@
 //
 // The voice list comes from the harness, which holds the key; the
 // renderer never talks to ElevenLabs itself.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Check, Loader2 } from "lucide-react";
 
 import { api, useStore, type Bot, type ConfigStatus } from "@/state/store";
@@ -14,7 +14,7 @@ import { cn } from "@/lib/cn";
 import { cleanupEnabled, setCleanupEnabled } from "@/lib/dictation-cleanup";
 import { Switch } from "./SettingsPrimitives";
 import { VoicePicker } from "./VoicePicker";
-import { isVoicePreview, previewMessageId, markAssigned, rowPreview, type PickerVoice } from "./voice-picker-model";
+import { FLUX_ELEVEN_NOTE, isVoicePreview, previewMessageId, markAssigned, rowPreview, type FluxElevenStatus, type PickerVoice } from "./voice-picker-model";
 import { useBotSettingsDraft } from "./bot-settings-drafts";
 import { systemVoiceOffer } from "../../shared/system-voices";
 import { opensPurchasePages } from "@/lib/native-shell";
@@ -41,6 +41,11 @@ export function VoiceSettings({
   // The list failing to load is said next to the picker, with a way to try again; an empty list would read as "no voices".
   const [voicesFailed, setVoicesFailed] = useState(false);
   const [voiceReload, setVoiceReload] = useState(0);
+  // Flux's ElevenLabs voices: "notOnKey" when Flux said this key may not use
+  // them; the list leaves them out and says so under the picker.
+  const [fluxEleven, setFluxEleven] = useState<FluxElevenStatus | undefined>(undefined);
+  // "Check again": the next list read asks Flux's voice list now
+  const recheckNext = useRef(false);
   useBotSettingsDraft("Voice settings", Boolean(key.trim()), saving || switching);
 
   const { capabilities } = useDesktopCapabilities();
@@ -80,10 +85,13 @@ export function VoiceSettings({
     let alive = true;
     setLoadingVoices(true);
     setVoicesFailed(false);
-    api(`/api/tts/voices?provider=${provider}`)
-      .then((r: { voices?: typeof voices; error?: string }) => {
+    const recheck = recheckNext.current;
+    recheckNext.current = false;
+    api(`/api/tts/voices?provider=${provider}${recheck ? "&recheck=1" : ""}`)
+      .then((r: { voices?: typeof voices; error?: string; fluxEleven?: FluxElevenStatus }) => {
         if (!alive) return;
         setVoices(r.voices ?? []);
+        setFluxEleven(r.fluxEleven);
         if (r.error) setError(r.error);
       })
       .catch(() => { if (alive) { setVoices([]); setVoicesFailed(true); } })
@@ -129,6 +137,13 @@ export function VoiceSettings({
     if (state === "loading" || state === "playing") return speaker.stop();
     void speaker.speak(SAMPLE, { voiceId: voiceId || undefined, botId: bot.id, messageId: previewMessageId(bot.id, voiceId) });
   };
+  // A sample of an ElevenLabs voice that Flux refused: the list is read
+  // again, so voices this key may not use leave it and the note says why.
+  const elevenPreviewFailed = Boolean(speech.error) && isVoicePreview(speech.messageId, bot.id)
+    && voices.some((v) => v.provider === "elevenlabs" && previewMessageId(bot.id, v.id) === speech.messageId);
+  useEffect(() => {
+    if (elevenPreviewFailed) setVoiceReload((n) => n + 1);
+  }, [elevenPreviewFailed]);
   // Leaving the settings ends a sample still playing.
   useEffect(() => () => {
     if (isVoicePreview(speaker.state.messageId, bot.id)) speaker.stop();
@@ -266,6 +281,22 @@ export function VoiceSettings({
             <div role="alert" className="mt-1.5 flex flex-wrap items-center gap-2 text-[12px] text-danger" data-testid="voices-load-failed">
               <span>Couldn't load the voice list.</span>
               <button type="button" className="underline hover:no-underline" onClick={() => setVoiceReload((n) => n + 1)}>Try again</button>
+            </div>
+          )}
+          {provider === "flux" && fluxEleven && FLUX_ELEVEN_NOTE[fluxEleven] && !loadingVoices && (
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-2 text-[11.5px] text-ink-secondary" data-testid={`flux-eleven-${fluxEleven}`}>
+              <span>{FLUX_ELEVEN_NOTE[fluxEleven]}</span>
+              <button
+                type="button"
+                className="underline hover:no-underline"
+                data-testid="flux-eleven-check-again"
+                onClick={() => {
+                  recheckNext.current = true;
+                  setVoiceReload((n) => n + 1);
+                }}
+              >
+                Check again
+              </button>
             </div>
           )}
           {voices.some((v) => v.gender) && (

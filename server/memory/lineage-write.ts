@@ -130,6 +130,12 @@ function warn(what: string, error: unknown) {
 // ---- running values: mem_lsn (oldest receipt in the ancestry) and footprint (interned scope set) ----
 interface Fold { memLsn: number | null; star: boolean; scopes: Set<string> }
 const emptyFold = (): Fold => ({ memLsn: null, star: false, scopes: new Set() });
+/** Whether a running mem_lsn is already below the install-wide watermark (the newest policy or deletion bump): deny-read.ts withholds such a line. */
+function belowWatermark(tx: DatabaseSync, memLsn: unknown): boolean {
+  if (memLsn === null || memLsn === undefined) return false;
+  const row = get(tx, "SELECT max(value) AS w FROM memory_lineage_lsn_meta WHERE key IN ('policy_bump_lsn','epoch_bump_lsn')");
+  return row !== undefined && row.w !== null && row.w !== undefined && Number(memLsn) < Number(row.w);
+}
 function foldMem(fold: Fold, memLsn: unknown) {
   if (memLsn === null || memLsn === undefined) return;
   const value = Number(memLsn);
@@ -330,7 +336,12 @@ function lineageRow(tx: DatabaseSync, line: LineInput, parents: LineageParents, 
     const lsn = existing ? Number(existing.lsn) : takeLsn(tx);
     const fold = emptyFold();
     if (existing) { foldMem(fold, existing.mem_lsn); foldSet(tx, fold, existing.footprint); }
-    else { const head = get(tx, SQL.head, no); if (head) { foldMem(fold, head.mem_lsn); foldSet(tx, fold, head.footprint); } }
+    else {
+      const head = get(tx, SQL.head, no);
+      // a head whose receipts are already older than the policy or deletion watermark is withheld on its own; the new line was built without
+      // it, so it does not inherit the stale value (else every later reply of the thread reads "watermark" for good)
+      if (head) { if (!belowWatermark(tx, head.mem_lsn)) foldMem(fold, head.mem_lsn); foldSet(tx, fold, head.footprint); }
+    }
     const before = { mem: fold.memLsn, star: fold.star, size: fold.scopes.size };
     // the turn a line is attached to is the one turn whose engine produced it (DESIGN-WRITETIME 2.3, 1.0.3 lifecycle card): a line already
     // written before the turn opened (a routine card, a notice patched now) is not that turn's output, and a merge over several open turns
@@ -353,7 +364,7 @@ function lineageRow(tx: DatabaseSync, line: LineInput, parents: LineageParents, 
       // the turn's carries: resolved once per turn, written idempotently by each of its lines (no new rows after the first)
       const resolved = turnResolved(tx, turn);
       const key = turnLsn ?? turn.turnLsn;
-      ownCarry(tx, turn, () => carryOnto(tx, { kind: "turn", ref: turnChildRef(key), thread: line.threadId, flowTo: line.threadId, flowLsn: lsn, inherit: { kind: "turn", threadId: line.threadId, lsn: key, ...(existing ? {} : { holdFrom: lsn }) } }, resolved));
+      ownCarry(tx, turn, () => carryOnto(tx, { kind: "turn", ref: turnChildRef(key), thread: line.threadId, flowTo: line.threadId, flowLsn: lsn, inherit: { kind: "turn", threadId: line.threadId, lsn: key, line: lsn, ...(existing ? {} : { holdFrom: lsn }) } }, resolved));
       mergeInto(fold, resolved.fold);
     }
     const own = generated ? dedupe([...(parents.refs ?? []), ...(merged ? offered!.parents : [])]) : [];

@@ -98,8 +98,12 @@ describe("Grok is the default voice through Flux", () => {
 
   it("the picker list leads with Grok voices when Flux serves them", async () => {
     useVoiceRoutes({ speech: () => [FLUX], describe: () => NONE });
+    // Flux's voice list for this key (a fixture), offering its ElevenLabs voices
+    vi.stubGlobal("fetch", async () =>
+      new Response(JSON.stringify({ object: "list", data: ["Aria", "Roger"].map((id) => ({ id, model: "flux-voice-speak-eleven", entitlement: "open" })) }), { status: 200 }));
     const voices = await listVoices(cfg(), undefined, "flux");
     expect(voices.slice(0, 28).every((v) => v.provider === "grok")).toBe(true);
-    expect(voices.slice(28).every((v) => v.provider === "openai")).toBe(true);
+    expect(voices.slice(28, 41).every((v) => v.provider === "openai")).toBe(true);
+    expect(voices.slice(41).map((v) => v.provider)).toEqual(["elevenlabs", "elevenlabs"]);
   });
 });
