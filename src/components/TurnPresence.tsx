@@ -4,6 +4,24 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
 import { WorkingTimer } from "@/components/WorkingIndicator";
+import { liveActivityPhrases, phraseAt, PHRASE_ROTATE_MS } from "@/lib/live-activity";
+import { prefersReducedMotion } from "@/lib/avatar-ticker";
+
+/** The working label, reworded every few seconds. A new label starts over at
+ * the plain wording, and a reader who asked for less motion keeps it. */
+function useRotatingLabel(label: string): string {
+  const phrases = liveActivityPhrases(label);
+  const [ticks, setTicks] = useState(0);
+  useEffect(() => {
+    setTicks(0);
+    if (phrases.length < 2 || prefersReducedMotion()) return;
+    const timer = setInterval(() => setTicks((n) => n + 1), PHRASE_ROTATE_MS);
+    return () => clearInterval(timer);
+    // phrases derive from label alone
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [label]);
+  return phraseAt(phrases, ticks);
+}
 
 export function TurnPresence({
   avatar,
@@ -28,6 +46,7 @@ export function TurnPresence({
   const [mounted, setMounted] = useState(visible);
   const [phase, setPhase] = useState<"think" | "answer" | "out">(answering ? "answer" : "think");
   const wasAnswering = useRef(answering);
+  const shownLabel = useRotatingLabel(label);
 
   useEffect(() => {
     if (visible) {
@@ -76,8 +95,10 @@ export function TurnPresence({
         {!showAnswer ? speaker : null}
         {showWorking ? (
           <span className="flex items-baseline gap-2 leading-none">
-            <span className="thinking-shimmer animate-shimmer text-[13px]" aria-live="polite">
-              {label}
+            {/* Screen readers hear the stable label; only the sighted wording rotates. */}
+            <span className="sr-only" aria-live="polite">{label}</span>
+            <span className="thinking-shimmer animate-shimmer text-[13px]" aria-hidden="true">
+              {shownLabel}
             </span>
             {since !== null && (
               <WorkingTimer since={since} className="text-[11.5px] text-ink-secondary/70" />

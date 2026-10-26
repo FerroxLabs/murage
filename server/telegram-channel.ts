@@ -3,6 +3,7 @@ import { lstatSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { z } from "zod";
 import { writeFileAtomic } from "./atomic.ts";
+import { channelReply, taskOutcomeReply } from "./channels/reply-text.ts";
 import { normalizeTelegramUpdate } from "./telegram-update.ts";
 import { TelegramTransportError, type TelegramTransport } from "./telegram-transport.ts";
 import { formatTelegramHtml } from "./telegram-format.ts";
@@ -10,7 +11,7 @@ import { TelegramApprovals, type TelegramApprovalActions } from "./telegram-appr
 
 const identity = z.string().regex(/^[1-9]\d{0,15}$/).refine(value => Number.isSafeInteger(Number(value)));
 const deliveryError = z.enum(["auth", "forbidden", "conflict", "rate-limit", "unavailable", "offline", "timeout", "invalid-request"]);
-const recordSchema = z.object({ updateId: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER - 1), deliveryId: z.string(), prompt: z.string().max(5000), runId: z.string().max(200).optional(), state: z.enum(["accepted", "queued", "sending", "sent", "uncertain", "rejected", "cancelled"]), response: z.string().max(4096).optional(), sendAttempts: z.number().int().nonnegative().max(3).optional(), retryAt: z.number().finite().optional(), deliveryError: deliveryError.optional() }).strict();
+const recordSchema = z.object({ updateId: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER - 1), deliveryId: z.string(), prompt: z.string().max(5000), runId: z.string().max(200).optional(), state: z.enum(["accepted", "queued", "sending", "sent", "uncertain", "rejected", "cancelled"]), response: z.string().max(4096).optional(), sendAttempts: z.number().int().nonnegative().max(3).optional(), retryAt: z.number().finite().optional(), deliveryError: deliveryError.optional(), noticeSent: z.boolean().optional() }).strict();
 const schema = z.object({ version: z.literal(1), botIdentityId: identity, targetBotId: z.string().min(1).max(180).optional(), enabled: z.boolean(), offset: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), binding: z.object({ senderId: identity, chatId: identity }).strict().nullable(), pairing: z.object({ hash: z.string().regex(/^[a-f0-9]{64}$/), expiresAt: z.number().finite() }).strict().nullable(), records: z.array(recordSchema).max(200) }).strict();
 type State = z.infer<typeof schema>;
 interface Options {
@@ -19,7 +20,7 @@ interface Options {
   isCurrentTarget?: () => boolean;
   onVerifiedSender?: (senderId:string,display?:{name?:string;username?:string})=>void;
   enqueue: (input: { deliveryId: string; prompt: string; senderId: string }) => { id: string };
-  runResult: (id: string) => { status: string; output?: string; error?: string } | null;
+  runResult: (id: string) => { status: string; output?: string; error?: string; notice?: string } | null;
   /** Voice notes the run made (server/voice/voice-notes.ts), each handed out
    *  once; sent after the text reply. */
   voiceNotes?: (runId: string) => ChannelVoiceNote[];
@@ -153,7 +154,7 @@ export class TelegramChannel {
         this.mutate(state => { state.offset = update.updateId + 1; });
         if (!this.expiryNoticeSent) {
           this.expiryNoticeSent = true;
-          await this.options.transport.sendMessage({ chatId: message.chatId, text: "This pairing code expired. In Murage, open Settings → Channels → Telegram and create a new pairing code. No messages have been sent to your bot.", signal });
+          await this.options.transport.sendMessage({ chatId: message.chatId, text: channelReply("channelReply.pairingExpired"), signal });
         }
         continue;
       }
@@ -163,7 +164,7 @@ export class TelegramChannel {
         this.mutate(state => {
           state.binding = { senderId: message.senderId, chatId: message.chatId }; state.pairing = null; state.offset = update.updateId + 1;
           state.records = records;
-          state.records.push({ updateId: update.updateId, deliveryId: this.deliveryId(update.updateId), prompt: "", state: "accepted", response: "Telegram is paired with Murage. Before chatting, link this channel account in Murage Settings → Memory. Then send your message again." });
+          state.records.push({ updateId: update.updateId, deliveryId: this.deliveryId(update.updateId), prompt: "", state: "accepted", response: channelReply("channelReply.paired", { channel: "Telegram" }) });
         });
         this.options.onVerifiedSender?.(message.senderId,{name:message.senderName,username:message.senderUsername});
         continue;
@@ -180,7 +181,7 @@ export class TelegramChannel {
         const records = this.state.records.filter(record => !["sent", "cancelled"].includes(record.state));
         if (records.length >= 200) { this.pollError = "pending-limit"; return false; }
         const approval = /^\/(?:approve|deny|allow|reject|pair)(?:\s|$)/i.test(message.text) || /^(?:approve|deny|allow|reject|yes|no)$/i.test(message.text.trim());
-        this.mutate(state => { state.records = records; state.records.push({ updateId: update.updateId, deliveryId: this.deliveryId(update.updateId), prompt: approval ? "" : `[UNTRUSTED TELEGRAM CHANNEL MESSAGE]\n${message.text}\n[/UNTRUSTED TELEGRAM CHANNEL MESSAGE]`, state: "accepted", ...(approval ? { response: "Review approvals in the Murage app. Telegram messages cannot approve actions." } : {}) }); });
+        this.mutate(state => { state.records = records; state.records.push({ updateId: update.updateId, deliveryId: this.deliveryId(update.updateId), prompt: approval ? "" : `[UNTRUSTED TELEGRAM CHANNEL MESSAGE]\n${message.text}\n[/UNTRUSTED TELEGRAM CHANNEL MESSAGE]`, state: "accepted", ...(approval ? { response: channelReply("channelReply.approvalsInApp", { channel: "Telegram" }) } : {}) }); });
       }
       this.mutate(state => { state.offset = update.updateId + 1; });
     }
@@ -208,7 +209,7 @@ export class TelegramChannel {
         try{run=this.options.enqueue({ deliveryId: record.deliveryId, prompt: record.prompt, senderId:this.state.binding.senderId });}
         catch(error){
           if(!(error instanceof Error)||!/^HUMAN_(?:LINK_REQUIRED|BINDING_REVOKED)/.test(error.message))throw error;
-          this.mutate(state=>{state.records.find(item=>item.updateId===record.updateId)!.response="Link this channel account to yourself or another person in Murage Memory settings, then send your message again.";});
+          this.mutate(state=>{state.records.find(item=>item.updateId===record.updateId)!.response=channelReply("channelReply.linkAccount");});
           continue;
         }
         if (!active()) return;
@@ -218,8 +219,14 @@ export class TelegramChannel {
       if (record.state === "queued" && !record.response) {
         const result = this.options.runResult(record.runId!);
         if (!active()) return;
+        if (result && !["completed", "failed", "cancelled", "blocked", "stopped"].includes(result.status) && result.notice && !record.noticeSent) {
+          try {
+            await this.options.transport.sendMessage({ chatId: this.state.binding.chatId, text: formatTelegramHtml(result.notice), parseMode: "HTML", signal });
+            if (active()) this.mutate(state => { state.records.find(item => item.updateId === record.updateId)!.noticeSent = true; });
+          } catch { /* best effort: the run is untouched and the next pass tries again */ }
+        }
         if (!result || !["completed", "failed", "cancelled", "blocked", "stopped"].includes(result.status)) continue;
-        const response = (result.output || (result.error ? "The task failed. Review details in Murage." : `Task ${result.status}.`)).slice(0, 4096);
+        const response = (result.output || (result.error ? channelReply("channelReply.taskFailed") : taskOutcomeReply(result.status))).slice(0, 4096);
         this.mutate(state => { state.records.find(item => item.updateId === record.updateId)!.response = response; });
         record = this.state.records.find(item => item.updateId === record.updateId)!;
       }

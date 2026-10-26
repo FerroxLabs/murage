@@ -251,7 +251,7 @@ it("gap 2: a copy owed to the asking bot's next turn is known withheld (external
   expect(capturedMessageWithheld(LineageAllowance.tool(1_000_000_000), "pair-chat", "m-copy")).toBe(true);
   // the delivery path reads it this way (server/index.ts, planExternalDelivery input)
   const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
-  expect(source).toContain("const verdict = memoryNotOwner ? { withheld: true, unproven: false } : capturedMessageVerdict(allowance, threadId, id);");
+  expect(source).toContain("const verdict = memoryNotOwner ? (personTurnReader ? personCopyHandOver(personCopyReaders, bot.id, threadId, message, personTurnScopes()) : { withheld: true, unproven: false }) : capturedMessageVerdict(allowance, threadId, id);");
   expect(source).toContain("if (verdict.withheld) { pendingWithheld.add(id); return { id, text: withheldRoomLine(message, false, verdict.unproven), source }; }");
 });
 
@@ -283,7 +283,9 @@ it("P1: pins left out do not count toward the pin limit", async () => {
       database().prepare("UPDATE memory_records SET state='active',owner_pinned=1 WHERE id=?").run(id);
     }
   });
-  await expect(buildMemoryBundle("", access("finch", "closing-chat"), nothing, {allowance: LineageAllowance.tool()})).rejects.toThrow("MEMORY_PIN_OVERFLOW");
+  // 1.0.4: more pins than handles leaves the trailing ones out; the turn runs.
+  const over = await buildMemoryBundle("", access("finch", "closing-chat"), nothing, {allowance: LineageAllowance.tool()});
+  expect(over.droppedPins?.length).toBeGreaterThanOrEqual(1);
   forget(record);
   const bundle = await buildMemoryBundle("", access("finch", "closing-chat"), nothing, {allowance: LineageAllowance.tool()});
   expect(bundle.text).toBe("");

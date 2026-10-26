@@ -25,6 +25,8 @@ import { botAccessPolicy, type AccessRole } from "./bot-access-role.ts";
 
 export const MCP_REMOTE_OWNER_ONLY = "Your own MCP servers belong to the owner, so this conversation cannot use them.";
 export const MCP_REMOTE_RESTRICTED_BOT = "This bot's access is restricted, so it cannot use your own MCP servers.";
+/** A draft-only bot (server/draft-only.ts): no owner MCP server is marked read-only, so none mounts for it. */
+export const MCP_REMOTE_DRAFT_ONLY_BOT = "This bot drafts replies for you to send, so it works without your own MCP servers.";
 export const TOKEN_WAIT_MS = 30_000;
 /** On `initialize` the wait is capped here. The proxy gives initialize 30 s
  * (LIMITS.initializeRelayMs) from the moment the engine asked; when the wait
@@ -51,7 +53,8 @@ export function mcpRemoteAudienceRefusal(threadId: string, isOwner: (threadId: s
 
 /** A bot the owner restricted to approved connected-app tools, or hid, does not
  * get the owner's own tool servers either. */
-export function mcpRemoteBotRefusal(bot: { hidden?: boolean }, accessMode: "restricted" | "unrestricted"): string | null {
+export function mcpRemoteBotRefusal(bot: { hidden?: boolean; draftOnly?: true }, accessMode: "restricted" | "unrestricted"): string | null {
+  if (bot.draftOnly === true) return MCP_REMOTE_DRAFT_ONLY_BOT;
   return bot.hidden === true || accessMode === "restricted" ? MCP_REMOTE_RESTRICTED_BOT : null;
 }
 

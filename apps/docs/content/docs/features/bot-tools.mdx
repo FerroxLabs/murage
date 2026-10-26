@@ -22,7 +22,11 @@ get_bot reads a bot's profile and role. update_bot changes the name, role, instr
 
 ## Allowing and asking
 
-allow_for_task records something you just told a bot it may do for the rest of the task, such as delete in a folder you named, message a person you named, or pay a payee you named. request_browser_connection asks if the bot may use your signed-in browser. request_credential asks you for a login or key it needs.
+allow_for_task records something you just told a bot it may do for the rest of the task, such as delete in a folder you named, message a person you named, or pay a payee you named. request_browser_connection asks if the bot may use your signed-in browser. request_credential asks you for a login or key it needs. add_mcp_server saves a connected tool server you asked for, switched off: you turn it on with one click and enter any key on a card of its own, which the bot never sees.
+
+## Asking you
+
+ask_user puts one to four questions on a card in the conversation, with options to pick and room for your own words, and your answer arrives as your next message. show_widget shows a form, a pick-one list, a confirmation or a short status in the conversation, such as a date and time picker. update_widget changes a widget the bot showed earlier, for example a progress bar moving, until you have answered it.
 
 ## Routines
 

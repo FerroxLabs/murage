@@ -38,7 +38,8 @@ describe("backup exclusions (Anthropic hosting terms: no engine credentials in b
   it.each(roots)("excludes every launcher credential path under %s", (root) => {
     for (const rel of credentialPaths) expect(excluded(`${root}/${rel}`), `${root}/${rel}`).toBe(true);
   });
-  it.each([".claude", ".claude.json", ".claude.json.backup", ".codex", ".grok", ".kimi-code", ".config/opencode", ".local/share/opencode"])(
+  // .gemini: Antigravity (agy 1.4.4) keeps its Google sign-in at .gemini/antigravity-cli/antigravity-oauth-token when no keyring exists.
+  it.each([".claude", ".claude.json", ".claude.json.backup", ".codex", ".grok", ".kimi-code", ".config/opencode", ".local/share/opencode", ".gemini"])(
     "excludes the whole %s location and anything below it", (dir) => {
       for (const root of roots) {
         expect(excluded(`${root}/${dir}`)).toBe(true);
@@ -76,7 +77,7 @@ describe("backup exclusions (Anthropic hosting terms: no engine credentials in b
     const script = read("murage-backup");
     const required = /REQUIRED_EXCLUDES = \(([^)]*)\)/.exec(script)![1].match(/"[^"]+"/g)!.map((s) => s.slice(1, -1));
     for (const r of required) expect(patterns).toContain(r);
-    expect(required).toEqual(expect.arrayContaining([".claude", ".claude.json", ".codex", ".grok", ".kimi-code"]));
+    expect(required).toEqual(expect.arrayContaining([".claude", ".claude.json", ".codex", ".grok", ".kimi-code", ".gemini", ".antigravity", ".config/opencode", ".local/share/opencode"]));
     // Every sign-in store of the launcher, whatever the engine, bot or generation: one pattern built from the launcher's own layout.
     expect(required).toContain(`${engineRoot}/**/${signinDir}`);
   });

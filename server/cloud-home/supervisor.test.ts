@@ -1,17 +1,23 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
+import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, mkdtempSync, readFileSync, lstatSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HOME_SERVER_ENV_KEYS, homeBootContract, homeServerEnvironment } from "./boot.ts";
 import { CLOUD_ENGINES } from "./turn-process.ts";
-import { parseHomeIdentity, prepareEngineHomes, prepareBrokerDir, assertImmutableCode, validateVolumeMarker, assertUnboundVolumeEmpty, bindHomeVolume, homeChildExit, superviseHome } from "./supervisor.ts";
+import { parseHomeIdentity, assertImmutableCode, assertUnprivileged, homeReleaseRoot, homeChildExit, superviseHome } from "./supervisor.ts";
+import { prepareEngineHomes, prepareBrokerDir, validateVolumeMarker, assertUnboundVolumeEmpty, bindHomeVolume } from "./home-volume-spec.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) removeTempDirSync(dir); });
 const contractEnv = { MURAGE_CLOUD_ROLE: "home", MURAGE_CLOUD_MACHINE_ID: "fixture-home", MURAGE_CLOUD_ADMIN_URL: "https://admin.example.test", MURAGE_PUBLIC_ORIGIN: "https://home.example.test", MURAGE_CLOUD_BOOTSTRAP_SECRET: "x".repeat(32) };
+const repo = (name: string) => fileURLToPath(new URL(`../../${name}`, import.meta.url));
+const launcher = repo("deploy/cloud-home/murage-home-launch.py");
+const root = process.getuid?.() === 0;
 
 describe("home boot and supervision", () => {
   it("is inert without the flag and rejects each partial boot contract", () => {
@@ -51,6 +57,24 @@ describe("home boot and supervision", () => {
     const dir = mkdtempSync(join(tmpdir(), "home-code-")); dirs.push(dir);
     chmodSync(dir, 0o777);
     expect(() => assertImmutableCode(dir)).toThrow(/not writable/u);
+  });
+  // T-P7 (LANE-G r3 sec. 1.2): the slot supervisor refuses uid 0 and runs only from a release slot's real path.
+  it("refuses to run as root and accepts only a release slot as its root (T-P7)", () => {
+    expect(() => assertUnprivileged(0)).toThrow(/not run as root/u);
+    // Fail closed: an unknown uid is refused whoever runs the test (root or not), since the function no longer defaults to the real uid.
+    expect(() => assertUnprivileged(undefined)).toThrow(/not run as root/u);
+    expect(() => assertUnprivileged(1001)).not.toThrow();
+    expect(homeReleaseRoot("/opt/murage-releases/A")).toBe("/opt/murage-releases/A");
+    expect(homeReleaseRoot("/opt/murage-releases/B")).toBe("/opt/murage-releases/B");
+    for (const bad of ["/opt/murage", "/opt/murage-releases/C", "/opt/murage-releases/current", "/opt/murage-releases/A/", "", undefined]) expect(() => homeReleaseRoot(bad)).toThrow(/release root/u);
+    const source = readFileSync(new URL("./supervisor.ts", import.meta.url), "utf8");
+    expect(source).not.toMatch(/setuid|setgid|initgroups|bindHomeVolume\(|prepareEngineHomes\(|prepareBrokerDir\(/u);
+    const privilegeCall = source.indexOf("assertUnprivileged(process.getuid?.())");
+    const immutableCall = source.indexOf("assertImmutableCode(releaseRoot)");
+    expect(privilegeCall).toBeGreaterThanOrEqual(0);
+    expect(immutableCall).toBeGreaterThanOrEqual(0);
+    expect(privilegeCall).toBeLessThan(immutableCall);
+    expect(source).toContain("serverArgs: [`${releaseRoot}/dist-server/index.js`]");
   });
   it("refuses a nonempty unbound volume before creating a marker and permits only lost+found", () => {
     const dir = mkdtempSync(join(tmpdir(), "home-unbound-")); dirs.push(dir);
@@ -122,21 +146,56 @@ describe("home boot and supervision", () => {
         expect(owners.get(path)).toEqual([0, engineGids[engine]]); expect(lstatSync(path).mode & 0o7777).toBe(0o2770);
       }
     });
-    it("repairs a hand-made broker directory with the wrong mode or group, and boot calls it after the volume binds and before privileges drop", () => {
+    it("repairs a hand-made broker directory with the wrong mode or group, and the root launcher calls it after the volume binds and before privileges drop", () => {
       const dir = mkdtempSync(join(tmpdir(), "broker-")); dirs.push(dir);
       const broker = join(dir, "broker"); mkdirSync(broker, { mode: 0o755 }); chmodSync(broker, 0o755);
       const owners = new Map<string, [number, number]>();
       prepareBrokerDir(identity, broker, (path, uid, gid) => { owners.set(path, [uid, gid]); });
-      expect(owners.get(broker)).toEqual([0, identity.turnGid]); expect(lstatSync(broker).mode & 0o7777).toBe(0o2770);
-      const source = readFileSync(new URL("./supervisor.ts", import.meta.url), "utf8");
-      const bind = source.indexOf("bindHomeVolume(\"/data\""), prepare = source.indexOf("prepareBrokerDir(identity);"), drop = source.indexOf("process.setuid!(identity.uid)");
-      expect(bind).toBeGreaterThan(-1); expect(prepare).toBeGreaterThan(bind); expect(drop).toBeGreaterThan(prepare);
+      expect(owners.get(broker)).toEqual([0, identity.turnGid]); expect(lstatSync(broker).mode & 0o7777).toBe(0o3770);
+      // The order of a home start is the launcher's now (LANE-G r3 sec. 1.4): bind, prepare, gate, drop, exec through the descriptor.
+      const source = readFileSync(launcher, "utf8");
+      const main = source.slice(source.indexOf("def main():"));
+      const bind = main.indexOf("bind_home_volume(DATA"), prepare = main.indexOf("prepare_broker_dir(identity)"), gate = main.indexOf("start_gate()"), drop = main.indexOf("drop_privileges(identity)"), exec = main.indexOf("exec_supervisor(dirfd, env)");
+      expect(bind).toBeGreaterThan(-1); expect(prepare).toBeGreaterThan(bind); expect(gate).toBeGreaterThan(prepare); expect(drop).toBeGreaterThan(gate); expect(exec).toBeGreaterThan(drop);
     });
-    it("creates the approval broker directory as root:murage-turn 2770, outside every engine home", () => {
+    it("creates the approval broker directory with the sticky bit (3770) so a group member cannot unlink a socket it does not own", () => {
+      const dir = mkdtempSync(join(tmpdir(), "broker-")); dirs.push(dir);
+      const broker = join(dir, "broker");
+      prepareBrokerDir(identity, broker, () => {});
+      expect(lstatSync(broker).mode & 0o7777).toBe(0o3770);
+      const repaired = join(dir, "repaired"); mkdirSync(repaired, { mode: 0o2770 }); chmodSync(repaired, 0o2770);
+      prepareBrokerDir(identity, repaired, () => {});
+      expect(lstatSync(repaired).mode & 0o7777).toBe(0o3770);
+    });
+    it("creates the approval broker directory as root:murage-turn 3770, outside every engine home", () => {
       const dir = mkdtempSync(join(tmpdir(), "broker-")); dirs.push(dir);
       const broker = join(dir, "broker"); const owners = new Map<string, [number, number]>();
       prepareBrokerDir(identity, broker, (path, uid, gid) => { owners.set(path, [uid, gid]); });
-      expect(owners.get(broker)).toEqual([0, identity.turnGid]); expect(lstatSync(broker).mode & 0o7777).toBe(0o2770);
+      expect(owners.get(broker)).toEqual([0, identity.turnGid]); expect(lstatSync(broker).mode & 0o7777).toBe(0o3770);
+    });
+    // T-P5 (LANE-G r3 sec. 7): the Python port in murage-home-launch.py and the TypeScript spec produce the same tree (paths, modes,
+    // owners, types), run against the same scratch volume. Owners need root; unprivileged runs check the TypeScript alone above.
+    it.skipIf(!root || process.platform !== "linux")("the launcher's Python port of bindHomeVolume/prepareEngineHomes/prepareBrokerDir yields the identical tree (T-P5)", () => {
+      const dir = mkdtempSync(join(tmpdir(), "home-port-")); dirs.push(dir);
+      const ts = join(dir, "ts"), py = join(dir, "py");
+      const ids = { uid: 60001, gid: 60001, turnGid: 60002, proxyUid: 60003, proxyGid: 60004, engineGids: Object.fromEntries(CLOUD_ENGINES.map((engine, index) => [engine, 60100 + index])) };
+      for (const base of [ts, py]) mkdirSync(join(base, "data"), { recursive: true });
+      bindHomeVolume(join(ts, "data"), "fixture-home", ids.uid, ids.gid, ids.proxyUid, ids.proxyGid);
+      prepareEngineHomes(ids, join(ts, "data", "engine-homes"));
+      prepareBrokerDir(ids, join(ts, "data", "broker"));
+      const code = `import importlib.machinery, importlib.util, json, sys
+loader = importlib.machinery.SourceFileLoader("launch", sys.argv[1]); spec = importlib.util.spec_from_loader(loader.name, loader)
+L = importlib.util.module_from_spec(spec); loader.exec_module(L)
+ids = json.loads(sys.argv[3]); base = sys.argv[2]
+L.bind_home_volume(base + "/data", "fixture-home", ids["uid"], ids["gid"], ids["proxyUid"], ids["proxyGid"])
+L.prepare_engine_homes(ids, base + "/data/engine-homes")
+L.prepare_broker_dir(ids, base + "/data/broker")`;
+      const run = spawnSync("python3", ["-I", "-c", code, launcher, py, JSON.stringify(ids)], { encoding: "utf8" });
+      expect(run.status, run.stderr).toBe(0);
+      const listing = (base: string) => execFileSync("find", [join(base, "data"), "-printf", "%P %m %u %g %y\n"], { encoding: "utf8" }).split("\n").filter(Boolean).sort();
+      expect(listing(py)).toEqual(listing(ts));
+      expect(listing(ts)).toContain(" 1771 root 60001 d");
+      expect(readFileSync(join(py, "data", ".murage-home-machine"), "utf8")).toBe("fixture-home\n");
     });
   });
 });

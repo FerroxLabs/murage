@@ -48,7 +48,8 @@
         "title": "Cleaning Business",
         "description": "Sparkle prepares an itemized cleaning quote draft from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. ",
         "appearance": {
-          "color": "green"
+          "color": "green",
+          "mascotBody": "drop"
         },
         "skills": [
           "cleaning-business",

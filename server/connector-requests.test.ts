@@ -4,7 +4,9 @@ import {
   authorizeFailureSentence,
   CONNECTOR_LINK_LIFETIME_MS,
   panelAuthorizeError,
+  connectorCardPatch,
   connectorFailure,
+  connectorPlainLine,
   connectorRequestKey,
   connectorRequestStatus,
   connectorTimedOutSentence,
@@ -186,5 +188,20 @@ describe("review round 1: what the panel's authorize route shows (F16)", () => {
   it("keeps the status so the route answers with it", () => {
     const shown = panelAuthorizeError(new DOMException("x", "TimeoutError"), "gmail");
     expect((shown as { status?: number }).status).toBe(504);
+  });
+});
+
+describe("the card also carries one plain line (item 140)", () => {
+  const card = { slug: "github", label: "GitHub", description: "d", status: "required" as const, resumeKey: "r" };
+  it("says which app is waiting, with the account alias when there is one", () => {
+    expect(connectorPlainLine(card)).toBe("Connect GitHub to continue.");
+    expect(connectorPlainLine({ ...card, label: "GitHub (work)" })).toBe("Connect GitHub (work) to continue.");
+  });
+  it("follows the card once it connects, and never carries a link", () => {
+    expect(connectorPlainLine({ ...card, status: "connected" })).toBe("GitHub is connected.");
+    expect(connectorPlainLine(card)).not.toMatch(/https?:/);
+  });
+  it("a patch keeps the line in step with the status", () => {
+    expect(connectorCardPatch({ ...card, status: "connected" })).toMatchObject({ text: "GitHub is connected." });
   });
 });

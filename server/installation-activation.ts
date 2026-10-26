@@ -186,19 +186,27 @@ function reviewWhileOwned(root: string) {
   const reviewHash = createHash("sha256").update(after.sha256).update(JSON.stringify(receipt)).digest("hex");
   return { marker, profile, reviewHash, files: after.files, bytes: after.bytes };
 }
+/** Plain words for a restore whose own review line says the deletion ledger of the replaced installation could not be read, else undefined. */
+export const DELETION_LEDGER_NOTICE = "Murage could not read the list of things you asked it to forget in the installation this copy replaces, so a memory you deleted after the backup may come back. Open the copy only if you accept that.";
+function deletionLedgerNotice(marker: Record<string, unknown>): string | undefined {
+  const lines = Array.isArray(marker.modifications) ? marker.modifications : [];
+  return lines.some(line => object(line) && line.component === "messages.db" && typeof line.action === "string" && line.action.includes("destination-ledger-unreadable")) ? DELETION_LEDGER_NOTICE : undefined;
+}
 export function reviewInstallation(dataDir: string) {
   const root = installationRoot(dataDir), lease = acquireDataDirLeaseForProcess(root);
   try {
     const reviewed = reviewWhileOwned(root);
-    return { status: "ready-for-review" as const, reviewHash: reviewed.reviewHash, snapshotId: reviewed.marker.snapshotId, connectionProfileId: reviewed.profile.id, files: reviewed.files, bytes: reviewed.bytes, engines: "disabled", schedules: "paused", pendingWork: "not-replayed", activationAvailable: true };
+    return { status: "ready-for-review" as const, reviewHash: reviewed.reviewHash, snapshotId: reviewed.marker.snapshotId, connectionProfileId: reviewed.profile.id, files: reviewed.files, bytes: reviewed.bytes, engines: "disabled", schedules: "paused", pendingWork: "not-replayed", activationAvailable: true, ...(deletionLedgerNotice(reviewed.marker) ? { notice: DELETION_LEDGER_NOTICE } : {}) };
   } finally { lease.release(); }
 }
-export function activateInstallation(dataDir: string, expectedReviewHash: string) {
+export function activateInstallation(dataDir: string, expectedReviewHash: string, options: { acknowledgedNotice?: boolean } = {}) {
   if (!hashPattern.test(expectedReviewHash)) fail("REVIEW_HASH_REQUIRED");
   const root = installationRoot(dataDir), lease = acquireDataDirLeaseForProcess(root);
   try {
     const reviewed = reviewWhileOwned(root);
     if (reviewed.reviewHash !== expectedReviewHash) fail("REVIEW_STATE_CHANGED");
+    // The page showed the notice and the owner confirmed it; a caller that did not say so does not open the copy.
+    if (deletionLedgerNotice(reviewed.marker) && options.acknowledgedNotice !== true) fail("RESTORE_NOTICE_UNACKNOWLEDGED");
     const marker = { ...reviewed.marker, snapshotId: reviewed.marker.snapshotId, status: "reviewed", policyVersion: 1, connectionProfileId: reviewed.profile.id, reviewedTreeHash: reviewed.reviewHash, activationId: randomUUID(), activatedAt: Date.now() };
     writeFileAtomic(join(root, RESTORE_REVIEW_FILE), JSON.stringify(marker) + "\n", { mode: 0o600 });
     if (process.platform !== "win32") { const fd = openSync(root, "r"); try { fsyncSync(fd); } finally { closeSync(fd); } }

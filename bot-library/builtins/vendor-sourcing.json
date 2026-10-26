@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Vendor Sourcing",
     "tagline": "Supplier options, clear comparisons and a purchase request ready for review",
-    "summary": "Barter turns your requirements into a supplier comparison, request-for-quote drafts and an internal purchase request. It shows evidence, budget impact and the approvers required by your own rules. For recurring subscription spend, use Spend Audit; for reviewing an incoming bill, use Bills Review. For offer design, use Offer. For broader business financial decisions, use Numbers.",
+    "summary": "Barter turns your requirements into a supplier comparison, request-for-quote drafts and an internal purchase request.",
     "category": "Operations",
     "author": {
       "name": "Ferrox Labs",
@@ -49,7 +49,8 @@
         "title": "Vendor Sourcing",
         "description": "Barter turns your requirements into a supplier comparison, request-for-quote drafts and an internal purchase request. It shows evidence, budget impact and the approvers required by your own rules. For recurring subscription spend, use Spend Audit; for reviewing an incoming bill, use Bills Review. For offer design, use Offer. For broader business financial decisions, use Numbers.",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "hexagon"
         },
         "skills": [
           "vendor-evaluation",

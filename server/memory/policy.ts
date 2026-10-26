@@ -9,11 +9,12 @@ import { memoryState } from "./repository.ts";
 import { threadMemoryRoom } from "./capture-scope.ts";
 import { scopeRow, scopeRows } from "./scope-id.ts";
 import { eligibilityAnswer, inEligibilityPass, passLookup } from "./eligibility-pass.ts";
-import { revokeAllDisclosures } from "./revocation.ts";
+import { revokeAllDisclosures, revokeThreadDisclosures } from "./revocation.ts";
+import { bumpAuthorityHard } from "./authority-epoch.ts";
 
 export interface MemoryRoster {
-  bots: Array<{name?: string; id: string; threadId: string; section?: string; tasks?: Array<{threadId: string; sharedWork?: {teamId: string; quarantined?: boolean}; channelProjectDesk?: {groupId: string; archivedAt?: number}}>}>;
-  groups: Array<{name?: string; id: string; threadId: string; section?: string; memberIds: string[]; tasks?: Array<{threadId: string}>; dm?: boolean; channelProject?: unknown}>;
+  bots: Array<{name?: string; id: string; threadId: string; section?: string; tasks?: Array<{threadId: string; sharedWork?: {teamId: string; quarantined?: boolean}; channelProjectDesk?: {groupId: string; archivedAt?: number}}>; partitionedAt?: number}>;
+  groups: Array<{name?: string; id: string; threadId: string; section?: string; memberIds: string[]; tasks?: Array<{threadId: string}>; dm?: boolean; channelProject?: unknown; partitionedFor?: Record<string, unknown>; dmAudience?: unknown}>;
 }
 export interface MemoryAccess {
   botId: string; threadId: string; generation: string; policyRevision: number; deletionEpoch: number;
@@ -33,15 +34,27 @@ export function ensureScope(kind: MemoryScopeKind, owner: string): string {
   return id;
 }
 
+/** The facts of a roster that decide who may read what (SCOPED-REVOKES.md section 1): every bot's id, section and threads, every room's id,
+ * section, members and threads, and (v2) the partition facts filterPartitionScopes and threadMemoryRoom read: a bot's partition mark, a
+ * task's project desk and shared-team work, a room's dm flag and audience, project flag and per-member partition marks. Active-task
+ * selection changes presentation, not the authorized thread set: the active thread usually also appears in tasks; duplicate counts must
+ * not revoke running background turns when the owner opens another task. */
 function rosterSnapshot(roster: MemoryRoster) {
-  // Active-task selection changes presentation, not the authorized thread set.
-  // The active thread usually also appears in tasks; duplicate counts must not
-  // revoke running background turns when the owner opens another task.
-  const bots = roster.bots.map(b => ({id:b.id, section:b.section?.trim() || "", threads:[...new Set([b.threadId,...(b.tasks??[]).map(t=>t.threadId)])].sort()})).sort((a,b)=>a.id.localeCompare(b.id));
-  const groups = roster.groups.map(g => ({id:g.id, section:g.section?.trim() || "", members:[...g.memberIds].sort(), threads:[...new Set([g.threadId,...(g.tasks??[]).map(t=>t.threadId)])].sort()})).sort((a,b)=>a.id.localeCompare(b.id));
-  return {bots,groups};
+  const taskMeta = (task: NonNullable<MemoryRoster["bots"][number]["tasks"]>[number]) => {
+    const desk = task.channelProjectDesk, team = task.sharedWork;
+    return desk || team ? `${desk ? `desk:${desk.groupId}:${desk.archivedAt === undefined ? 0 : 1}` : ""}|${team ? `team:${team.teamId}:${team.quarantined ? 1 : 0}` : ""}` : "";
+  };
+  const bots = roster.bots.map(b => {
+    const meta: Record<string, string> = {};
+    for (const task of b.tasks ?? []) { const m = taskMeta(task); if (m && !(task.threadId in meta)) meta[task.threadId] = m; }
+    return {id:b.id, section:b.section?.trim() || "", threads:[...new Set([b.threadId,...(b.tasks??[]).map(t=>t.threadId)])].sort(), partitioned: b.partitionedAt !== undefined ? 1 : 0, meta: Object.fromEntries(Object.entries(meta).sort(([a],[c]) => a.localeCompare(c)))};
+  }).sort((a,b)=>a.id.localeCompare(b.id));
+  const groups = roster.groups.map(g => ({id:g.id, section:g.section?.trim() || "", members:[...g.memberIds].sort(), threads:[...new Set([g.threadId,...(g.tasks??[]).map(t=>t.threadId)])].sort(),
+    dm: g.dm ? 1 : 0, project: g.channelProject ? 1 : 0, partitionedFor: Object.entries(g.partitionedFor ?? {}).sort(([a], [b]) => a.localeCompare(b)).map(([id, mark]) => [id, JSON.stringify(mark ?? null)]), audience: g.dmAudience === undefined ? null : JSON.stringify(g.dmAudience)})).sort((a,b)=>a.id.localeCompare(b.id));
+  return {v: 2 as const, bots, groups};
 }
-function snapshotHash(snapshot: ReturnType<typeof rosterSnapshot>) {
+type Snapshot = ReturnType<typeof rosterSnapshot>;
+function snapshotHash(snapshot: Snapshot) {
   return createHash("sha256").update(JSON.stringify(snapshot)).digest("hex");
 }
 function fingerprint(roster: MemoryRoster) { return snapshotHash(rosterSnapshot(roster)); }
@@ -49,69 +62,88 @@ function rosterIntent(roster: MemoryRoster) {
   const snapshot = rosterSnapshot(roster);
   return JSON.stringify({hash:snapshotHash(snapshot),snapshot});
 }
-/** New rooms or collision-free tasks with unchanged audiences cannot change
- * access on existing threads. Unknown legacy snapshots still fail closed. */
-function onlyAddsIndependentRoomThreads(intent: string, roster: MemoryRoster): boolean {
-  try {
-    const previous = JSON.parse(intent) as {hash: string; snapshot?: ReturnType<typeof rosterSnapshot>};
-    const old = previous.snapshot, next = rosterSnapshot(roster);
-    if (!old || !Array.isArray(old.bots) || !Array.isArray(old.groups)
-      || snapshotHash(old) !== previous.hash || JSON.stringify(old.bots) !== JSON.stringify(next.bots)) return false;
-    const oldGroups = new Map(old.groups.map(group => [group.id, group]));
-    const nextGroups = new Map(next.groups.map(group => [group.id, group]));
-    if (oldGroups.size !== old.groups.length || nextGroups.size !== next.groups.length
-      || nextGroups.size < oldGroups.size) return false;
-    for (const [id, group] of oldGroups) {
-      const candidate=nextGroups.get(id);
-      if (!candidate || candidate.section!==group.section || JSON.stringify(candidate.members)!==JSON.stringify(group.members)
-        || group.threads.some(thread=>!candidate.threads.includes(thread))) return false;
-    }
-    // New tasks must not alias private or other-room authority. Existing
-    // mappings and audiences above are immutable throughout this exemption.
-    const occupied = new Set([...old.bots, ...old.groups].flatMap(item => item.threads));
-    let added=false;
-    for (const group of next.groups) {
-      const previousThreads=new Set(oldGroups.get(group.id)?.threads??[]);
-      for (const thread of new Set(group.threads)) {
-        if(previousThreads.has(thread))continue;
-        if (occupied.has(thread)) return false;
-        occupied.add(thread);added=true;
-      }
-    }
-    return added;
-  } catch { return false; }
+/** What one roster save changes for readers (SCOPED-REVOKES.md section 3):
+ * - same: the granted binding already holds this exact snapshot (an active-task switch, a save that changed nothing memory reads);
+ * - audience: a fact that can move content between readers changed (a bot's section or partition mark, a room's section, members, dm,
+ *   audience or project flag, an existing thread under another owner or with another desk or team, a thread, bot or room with a past added
+ *   anywhere, an unreadable snapshot): every receipt ends under a new policy revision, as before;
+ * - scoped: only removals of threads, and additions of threads, bots and rooms that have no past. `removedThreads` are the threads nobody
+ *   holds any more: their receipts end; what other threads were shown from them is judged live on their next continuation
+ *   (disclosures.ts revokedReason hydrates every cited record and source under the live roster, after the hold is dropped). Nothing
+ *   else is withdrawn: a thread that cited nothing of a removed thread keeps its session. */
+type RosterDelta = { kind: "same" } | { kind: "audience" } | { kind: "scoped"; removedThreads: string[] };
+/** A v2 snapshot of the right shape. A binding written before v2 (ids, sections, members and threads only) cannot say whether a desk, a
+ * partition or a room's audience moved since, so it is not accepted: the first roster change after the upgrade is an audience change. */
+function validSnapshot(snapshot: unknown): snapshot is Snapshot {
+  const s = snapshot as Snapshot | undefined;
+  if (!s || s.v !== 2 || !Array.isArray(s.bots) || !Array.isArray(s.groups)) return false;
+  const threads = (item: { threads?: unknown }) => Array.isArray(item.threads) && item.threads.every(thread => typeof thread === "string");
+  return s.bots.every(bot => typeof bot?.id === "string" && typeof bot.section === "string" && threads(bot))
+    && s.groups.every(group => typeof group?.id === "string" && typeof group.section === "string" && Array.isArray(group.members) && threads(group));
 }
-/** A single fresh owner task on an existing bot adds no authority to any
- * existing thread. Do not exempt imports, bound-person contexts, aliases,
- * removals, or a combined roster/membership edit. */
-function onlyAddsIndependentOwnerTask(intent:string,roster:MemoryRoster):boolean {
+/** Every thread of a snapshot and what holds it (its entry, and its desk and team facts), or null when one thread sits under two entries
+ * (an alias). */
+function threadHolders(snapshot: Snapshot): Map<string, string> | null {
+  const holders = new Map<string, string>();
+  for (const bot of snapshot.bots) for (const thread of new Set(bot.threads)) {
+    if (holders.has(thread)) return null;
+    holders.set(thread, `bot:${bot.id}|${bot.meta?.[thread] ?? ""}`);
+  }
+  for (const group of snapshot.groups) for (const thread of new Set(group.threads)) {
+    if (holders.has(thread)) return null;
+    holders.set(thread, `group:${group.id}`);
+  }
+  return holders;
+}
+/** The audience facts of one entry beyond its threads (section, members, partition facts). */
+function entryFacts(entry: Snapshot["bots"][number] | Snapshot["groups"][number]): string {
+  const { id: _id, threads: _threads, meta: _meta, ...facts } = entry as Snapshot["bots"][number] & Snapshot["groups"][number];
+  return JSON.stringify(facts);
+}
+/** A thread nothing was ever shown from and nobody but the owner speaks in: no conversation scope (a fresh factory id cannot reuse a
+ * previously registered scope absent from the roster), no message, no captured source, and the workspace owner as its human. */
+function freshThread(db: ReturnType<typeof database>, thread: string): boolean {
+  const principal = threadHumanPrincipal(thread); assertHumanPrincipal(principal);
+  if (!isWorkspaceOwner(principal)) return false;
+  return !db.prepare("SELECT 1 FROM memory_scopes WHERE kind='conversation' AND owner_key=?").get(thread)
+    && !db.prepare("SELECT 1 FROM messages WHERE thread_id=? LIMIT 1").get(thread)
+    && !db.prepare("SELECT 1 FROM memory_sources WHERE thread_id=? LIMIT 1").get(thread);
+}
+/** A bot or room id with no scope of its kind and no grant naming it: a reused id (a deleted bot's or room's, a package's) is not fresh. */
+function freshEntry(db: ReturnType<typeof database>, kind: "bot" | "room", id: string): boolean {
+  return !db.prepare("SELECT 1 FROM memory_scopes WHERE kind=? AND owner_key=?").get(kind, id)
+    && !db.prepare("SELECT 1 FROM memory_scope_bindings WHERE subject_type=? AND subject_id=? LIMIT 1").get(kind, id);
+}
+function rosterDelta(intent: string, roster: MemoryRoster): RosterDelta {
+  const audience: RosterDelta = { kind: "audience" };
   try {
-    const previous=JSON.parse(intent) as {hash:string;snapshot?:ReturnType<typeof rosterSnapshot>};
-    const old=previous.snapshot,next=rosterSnapshot(roster);
-    if(!old||!Array.isArray(old.bots)||!Array.isArray(old.groups)||snapshotHash(old)!==previous.hash||JSON.stringify(old.groups)!==JSON.stringify(next.groups)||old.bots.length!==next.bots.length)return false;
-    const bots=new Map(next.bots.map(bot=>[bot.id,bot]));
-    if(bots.size!==next.bots.length||new Set(old.bots.map(bot=>bot.id)).size!==old.bots.length)return false;
-    const occupied=new Set([...old.bots,...old.groups].flatMap(item=>item.threads));
-    let additions=0;
-    for(const bot of old.bots){
-      const candidate=bots.get(bot.id);
-      if(!candidate||candidate.section!==bot.section||bot.threads.some(thread=>!candidate.threads.includes(thread)))return false;
-      for(const thread of candidate.threads){
-        if(bot.threads.includes(thread))continue;
-        if(occupied.has(thread)||++additions>1)return false;
-        const principal=threadHumanPrincipal(thread);assertHumanPrincipal(principal);
-        if(!isWorkspaceOwner(principal))return false;
-        // Fresh factory-generated IDs cannot reuse an orphaned transcript or
-        // previously registered scope that happens to be absent from roster.
-        const db=database();
-        if(db.prepare("SELECT 1 FROM memory_scopes WHERE kind='conversation' AND owner_key=?").get(thread)
-          ||db.prepare("SELECT 1 FROM messages WHERE thread_id=? LIMIT 1").get(thread)
-          ||db.prepare("SELECT 1 FROM memory_sources WHERE thread_id=? LIMIT 1").get(thread))return false;
-        occupied.add(thread);
-      }
-    }
-    return additions===1;
-  }catch{return false;}
+    const previous = JSON.parse(intent) as { hash: string; snapshot?: unknown };
+    const old = previous.snapshot, next = rosterSnapshot(roster);
+    // rule 1: an unreadable or legacy snapshot fails closed; rule 2: the same authorized set
+    if (!validSnapshot(old) || snapshotHash(old) !== previous.hash) return audience;
+    if (snapshotHash(next) === previous.hash) return { kind: "same" };
+    // rule 3: duplicate ids or a thread under two entries
+    const oldBots = new Map(old.bots.map(bot => [bot.id, bot])), nextBots = new Map(next.bots.map(bot => [bot.id, bot]));
+    const oldGroups = new Map(old.groups.map(group => [group.id, group])), nextGroups = new Map(next.groups.map(group => [group.id, group]));
+    if (oldBots.size !== old.bots.length || nextBots.size !== next.bots.length || oldGroups.size !== old.groups.length || nextGroups.size !== next.groups.length) return audience;
+    const oldHolders = threadHolders(old), nextHolders = threadHolders(next);
+    if (!oldHolders || !nextHolders) return audience;
+    // rule 4: a section, a membership or a partition fact of an existing bot or room moved
+    for (const [id, bot] of oldBots) { const candidate = nextBots.get(id); if (candidate && entryFacts(candidate) !== entryFacts(bot)) return audience; }
+    for (const [id, group] of oldGroups) { const candidate = nextGroups.get(id); if (candidate && entryFacts(candidate) !== entryFacts(group)) return audience; }
+    // rule 5: an existing thread under another holder, desk or team
+    for (const [thread, holder] of oldHolders) { const now = nextHolders.get(thread); if (now !== undefined && now !== holder) return audience; }
+    // rules 6 and 7: every addition has no past
+    const db = database();
+    for (const thread of nextHolders.keys()) if (!oldHolders.has(thread) && !freshThread(db, thread)) return audience;
+    for (const id of nextBots.keys()) if (!oldBots.has(id) && !freshEntry(db, "bot", id)) return audience;
+    // A room whose id an existing task's desk already names changes that thread's recall from every owner-only room to the desk's room
+    // (eligibleScopes :265-285): a narrowing by an addition, so it is an audience change, fresh or not.
+    const desked = new Set(old.bots.flatMap(bot => Object.values(bot.meta ?? {}).flatMap(meta => { const m = /^desk:(.*):[01]\|/.exec(meta); return m ? [m[1]] : []; })));
+    for (const id of nextGroups.keys()) if (!oldGroups.has(id) && (desked.has(id) || !freshEntry(db, "room", id))) return audience;
+    // rule 8: what nobody holds any more
+    return { kind: "scoped", removedThreads: [...oldHolders.keys()].filter(thread => !nextHolders.has(thread)) };
+  } catch { return audience; }
 }
 function policyRow() { return database().prepare("SELECT state,intent,scope_id FROM memory_scope_bindings WHERE id=?").get(POLICY_ID); }
 /** What a granted roster binding already ensured: reconcileMemoryRoster writes the binding in the same transaction, after every scope of its snapshot
@@ -133,22 +165,26 @@ function ensuredBy(intent: string): { bots: Set<string>; teams: Set<string>; roo
   } catch { return null; }
 }
 
-/** Restriction is durable BEFORE the roster file changes. Failure leaves it closed. */
+/** Restriction is durable BEFORE the roster file changes. Failure leaves it closed.
+ * What a save withdraws is what ends (SCOPED-REVOKES.md): an audience change ends every receipt under a new policy revision; a removal ends
+ * the removed threads' receipts and nothing else; additions without a past end nothing and take the additive path (the file, then the
+ * binding), so a failed additive write closes nothing. */
 export function persistMemoryRoster(roster: MemoryRoster, persist: () => void) {
-  const hash = fingerprint(roster);
   const previous = policyRow();
-  if (previous?.state === "granted" && JSON.parse(String(previous.intent)).hash === hash) { persist(); return; }
-  if (previous?.state === "granted" && (onlyAddsIndependentRoomThreads(String(previous.intent), roster)||onlyAddsIndependentOwnerTask(String(previous.intent),roster))) {
+  const delta: RosterDelta = previous?.state === "granted" ? rosterDelta(String(previous.intent), roster) : { kind: "audience" };
+  if (delta.kind === "same") { persist(); return; }
+  if (delta.kind === "scoped" && !delta.removedThreads.length) {
     persist();
     reconcileMemoryRoster(roster);
     return;
   }
   transaction(db => {
     const scopeId = ensureScope("workspace", memoryState().installationId);
-    db.exec("UPDATE memory_meta SET policy_revision=policy_revision+1 WHERE id=1");
+    if (delta.kind === "audience") db.exec("UPDATE memory_meta SET policy_revision=policy_revision+1 WHERE id=1");
     db.prepare("INSERT INTO memory_scope_bindings(id,scope_id,subject_type,subject_id,revision,state,intent) VALUES(?,?,'system','roster',?,'pending',?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,state='pending',intent=excluded.intent")
       .run(POLICY_ID,scopeId,memoryState().policyRevision,rosterIntent(roster));
-    revokeAllDisclosures(db,"roster");
+    if (delta.kind === "audience") revokeAllDisclosures(db,"roster");
+    else { for (const thread of delta.removedThreads) revokeThreadDisclosures(db,thread,"roster-removed"); bumpAuthorityHard(db); }
   });
   persist();
   reconcileMemoryRoster(roster);
@@ -164,11 +200,13 @@ export function reconcileMemoryRoster(roster: MemoryRoster, options: { unlessUnc
   if (options.unlessUnchanged && lastReconciled?.db === handle && lastReconciled.key === key) return;
   transaction(db => {
     const prior = policyRow();
-    if (prior && JSON.parse(String(prior.intent)).hash !== fingerprint(roster)
-      && !(prior.state === "granted" && (onlyAddsIndependentRoomThreads(String(prior.intent), roster)||onlyAddsIndependentOwnerTask(String(prior.intent),roster)))) {
+    // A pending binding (a crash between the save's transaction and this) holds the intent that transaction wrote: what the file now differs
+    // from it by is judged the same way, so an old file after a removal (its thread has a past) fails closed, a new file after one is settled.
+    const delta: RosterDelta = prior ? rosterDelta(String(prior.intent), roster) : { kind: "same" };
+    if (delta.kind === "audience") {
       db.exec("UPDATE memory_meta SET policy_revision=policy_revision+1 WHERE id=1");
       revokeAllDisclosures(db,"roster-reconcile");
-    }
+    } else if (delta.kind === "scoped" && delta.removedThreads.length) { for (const thread of delta.removedThreads) revokeThreadDisclosures(db,thread,"roster-reconcile-removed"); bumpAuthorityHard(db); }
     // Only what the last granted roster did not already ensure is looked up: a start over an unchanged roster (the first start after an upgrade among
     // them, before the scope-owner index exists) makes no search by owner, however many scopes the file holds. Its workspace scope is the binding's own,
     // confirmed by one primary-key read.
@@ -291,8 +329,26 @@ function eligibleScopes(botId: string, threadId: string, roster: MemoryRoster, n
   }
   if (notOwnerAudience && isWorkspaceOwner(principal)) return filterPartitionScopes(botId, threadId, scopes, owner);
   const subjectType = isWorkspaceOwner(principal) ? (group ? "room" : "bot") : "person", subjectId = isWorkspaceOwner(principal) ? (group?.id ?? botId) : principal.personId;
-  for (const row of db.prepare("SELECT scope_id FROM memory_scope_bindings WHERE subject_type=? AND subject_id=? AND state='granted'").all(subjectType,subjectId)) scopes.push(String(row.scope_id));
+  // A person's grant only ever reaches the audiences the people screen offers; an older grant to any other kind (the owner's preferences, a bot) is ignored (1.0.4 gap D).
+  for (const row of db.prepare(`SELECT b.scope_id FROM memory_scope_bindings b JOIN memory_scopes sc ON sc.id=b.scope_id WHERE b.subject_type=? AND b.subject_id=? AND b.state='granted'
+    AND (b.subject_type!='person' OR sc.kind IN ('room','project','team','workspace'))`).all(subjectType,subjectId)) scopes.push(String(row.scope_id));
   return filterPartitionScopes(botId, threadId, scopes, owner);
+}
+
+/** Every owner-audience reader's scope set: each bot's direct chat and each room member's room turn (their task threads recall
+ * the same scopes or fewer). Pin time (bundle.ts ownerPinUse) measures the owner pins each of these combines in one bundle; `room`
+ * marks a room turn, which never reads the identity partition. */
+export function ownerReaderScopeSets(roster: MemoryRoster): Array<{ scopeIds: readonly string[]; room: boolean }> {
+  const sets: Array<{ scopeIds: readonly string[]; room: boolean }> = [], seen = new Set<string>();
+  const reach = (botId: string, threadId: string, room: boolean) => {
+    const key = `${botId}\u0000${threadId}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    try { const scopeIds = eligibleScopes(botId, threadId, roster); if (scopeIds.length) sets.push({ scopeIds, room }); } catch { /* a thread with no readable audience reads no pins */ }
+  };
+  for (const bot of roster.bots) reach(bot.id, bot.threadId, false);
+  for (const group of roster.groups) for (const member of group.memberIds) reach(member, group.threadId, true);
+  return sets;
 }
 
 /** Final narrowing, after explicit grants; an owner grant cannot bridge a partition. */
@@ -456,3 +512,34 @@ export function assertMemoryAccess(access: MemoryAccess, scope?: string) {
   const current = eligibilityAnswer(database(), `assert\u0000${access.botId}\u0000${access.threadId}\u0000${notOwner}`, roster, () => eligibleScopes(access.botId,access.threadId,roster,notOwner));
   if (!current.length || scope && (!current.includes(scope) || !access.scopeIds.includes(scope))) throw new Error("MEMORY_SCOPE_DENIED");
 }
+
+/** SL-E r3.2 S(P) (lanes/release104/designs/SL-E.md sections 10 and 18 R1): the memory scopes a linked person may read, judged live now. A
+ * scope is in it only when it is (a) the conversation scope of a thread bound to this person (the 'human-thread' bindings), (b) this person's
+ * own preferences scope, or (c) a scope of a kind the share screen offers (room, project, team, workspace: human-principals.ts
+ * SHAREABLE_SCOPE_KINDS) that the owner granted to this
+ * person and has not withdrawn. A grant of any other kind never enters it: bot (identity records the person may not read; a footprint is
+ * scope-level), conversation or preferences (the owner's private conversations, which sharing never offers). "unknown" when any read
+ * throws: every caller reads that as an unknown. */
+export function personReadableScopes(db: ReturnType<typeof database>, principal: HumanPrincipal): ReadonlySet<string> | "unknown" {
+  try {
+    const scopes = new Set<string>();
+    for (const row of db.prepare("SELECT s.id FROM memory_scope_bindings b JOIN memory_scopes s ON s.kind='conversation' AND s.owner_key=b.subject_id WHERE b.subject_type='human-thread' AND json_extract(b.intent,'$.personId')=?").all(principal.personId)) scopes.add(String(row.id));
+    for (const row of db.prepare("SELECT id FROM memory_scopes WHERE kind='preferences' AND owner_key=?").all("person:" + principal.personId)) scopes.add(String(row.id));
+    for (const row of db.prepare("SELECT s.id FROM memory_scope_bindings b JOIN memory_scopes s ON s.id=b.scope_id AND s.kind IN ('room','project','team','workspace') WHERE b.subject_type='person' AND b.subject_id=? AND b.state='granted'").all(principal.personId)) scopes.add(String(row.id));
+    return scopes;
+  } catch { return "unknown"; }
+}
+
+/** SL-E r3.2 R1 (section 11 (A)): the scopes of the write-time lineage READER for a turn with this memory access, at the sites that judge
+ * "whose memory is this line made of" (the send fence, the session lookup, the replay reader). A linked person's turn reads
+ * `access.scopeIds` together with S(P), the person's own audience across every conversation bound to them, so a released hand-off result
+ * in the person's DM does not withhold the person's own next turn; never narrower than `access.scopeIds`, and S(P) unknown leaves it
+ * `access.scopeIds` alone. Every other audience (the owner, words nobody proved in the owner's thread) keeps `access.scopeIds`. What a turn
+ * may be SHOWN from memory is unchanged. A group's conversation keeps `access.scopeIds`. */
+export function lineageReaderScopes(access: Pick<MemoryAccess, "scopeIds" | "humanPrincipal">, db: ReturnType<typeof database> = database()): string[] {
+  // (a group's conversation is not one person's audience: it keeps today's thread-local set)
+  if (isWorkspaceOwner(access.humanPrincipal) || isGroupPrincipal(access.humanPrincipal)) return [...access.scopeIds];
+  const own = personReadableScopes(db, access.humanPrincipal);
+  return own === "unknown" ? [...access.scopeIds] : [...new Set([...access.scopeIds, ...own])];
+}
+

@@ -60,7 +60,8 @@
         "title": "Summarizer",
         "description": "Gist prepares a one-page summary for the intended reader. Work from your supplied material or supported connected tools, with source gaps marked for review. For general writing and editing, use Writer. For finding sources, use Researcher.",
         "appearance": {
-          "color": "blue"
+          "color": "cyan",
+          "mascotBody": "capsule"
         },
         "skills": [
           "executive-summary",
