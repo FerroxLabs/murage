@@ -106,7 +106,7 @@ export function resetIncarnatedSessionCursors(root: string, db: DatabaseSync): n
  * has no turn that reads it), the Claude sign-in card's remembered answers (claude-signin-answers.json: 1.0.2 has no such card, and the card simply asks again) and the frozen-replies recovery cursor (a later 1.0.3 start reads again from the start and
  * changes nothing a second time), and the cloud computer prompt record and its set-aside unreadable copy (cloud-computer-turns.ts: 1.0.2
  * has no such record, and a later 1.0.6 start begins a fresh one). The Cloud-only names are never on a desktop that reinstalls 1.0.2. */
-export const DATA_DIR_NAMES_AFTER_102 = ["claude-private", "claude-signin-answers.json", "draft-only-cwd", "env", "frozen-replies-recovery.json", "learning-paused-left.json", "memory-model-adopted.json", "memory-model-adopted.json.tmp", "memory-repairs.json", "memory-repairs.json.tmp", "pending-grants.json", "setup-backup.json", "cloud-computer-turns.json", "cloud-computer-turns.json.unreadable"] as const;
+export const DATA_DIR_NAMES_AFTER_102 = ["claude-private", "claude-signin-answers.json", "draft-only-cwd", "env", "frozen-replies-recovery.json", "learning-paused-left.json", "memory-model-adopted.json", "memory-model-adopted.json.tmp", "memory-repairs.json", "memory-repairs.json.tmp", "pending-grants.json", "setup-backup.json", "cloud-computer-turns.json", "cloud-computer-turns.json.unreadable", "news-signup.json"] as const;
 /** Owner-kept notes written after 1.0.2 (backed up, so they are not in the derived list above), that 1.0.2's backup does not classify
  * either. The follow-model marker (thread-follow-model.ts) only records that the one-time chat model cleanup ran; 1.0.2 never reads
  * it. Removing it lets 1.0.2 take a backup; a later upgrade runs the cleanup once more, which drops only pins proved equal to the
@@ -130,13 +130,13 @@ export function removeDataDirNamesAfter102(root: string): string[] {
  * later Murage already migrated to a newer memory schema. Takes the same
  * exclusive lease as the running app (so it refuses while Murage is open),
  * rewrites the memory objects to the frozen shape of `to` (1: 0.1.53 and
- * older; 2: 0.1.54 to 0.1.60; 3 and 4: development builds; 5: before the 1.0 lineage tables; 6: 1.0.0 and 1.0.1; 7: before the 1.0.2 revocation index; 8: before the 1.0.2 cold-lineage indexes; 9: the 1.0.2 RC; 10: 1.0.2, which refuses the derived objects 1.0.3 adds; 11: 1.0.3 before the lineage door epoch) and folds the WAL so the file stands alone.
+ * older; 2: 0.1.54 to 0.1.60; 3 and 4: development builds; 5: before the 1.0 lineage tables; 6: 1.0.0 and 1.0.1; 7: before the 1.0.2 revocation index; 8: before the 1.0.2 cold-lineage indexes; 9: the 1.0.2 RC; 10: 1.0.2, which refuses the derived objects 1.0.3 adds; 11: 1.0.3 before the lineage door epoch; 12: 1.0.3 to 1.0.6, before the 1.0.7 source stamps) and folds the WAL so the file stands alone.
  * Chat history and memory rows are kept; only derived or learning-only
  * objects are dropped. The pre-upgrade copies are left untouched. Routine
  * state lines are folded into routines.json first (foldRoutineStateForDowngrade),
  * also when there is no memory database yet. */
-/** The memory schema versions `memory-downgrade --to` accepts (10: 1.0.2; 11: 1.0.3 before the lineage door epoch). */
-export const MEMORY_DOWNGRADE_TARGETS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] as const satisfies readonly MemoryDowngradeTarget[];
+/** The memory schema versions `memory-downgrade --to` accepts (10: 1.0.2; 11: 1.0.3 before the lineage door epoch; 12: 1.0.3 to 1.0.6). */
+export const MEMORY_DOWNGRADE_TARGETS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] as const satisfies readonly MemoryDowngradeTarget[];
 export function downgradeInstallationMemorySchema(dataDir: string, to: MemoryDowngradeTarget = 1) {
   const root = dataDirLeasePaths(dataDir).canonicalDataDir;
   const file = join(root, "messages.db");

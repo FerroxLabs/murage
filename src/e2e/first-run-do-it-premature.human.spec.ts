@@ -115,7 +115,7 @@ test("the Chief waits at the question instead of answering it himself", async ({
   // one card is ever said. The transcript is then empty for ever and this
   // whole file would pass while measuring nothing.
   await expect(
-    app.getByText(/who am I working for/i),
+    app.getByText(/Where should I send your setup guide\?/i),
     "the Chief must have asked before the checklist is driven",
   ).toBeVisible();
 

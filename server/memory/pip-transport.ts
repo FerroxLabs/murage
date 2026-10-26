@@ -287,9 +287,27 @@ export function createTempRoot(base: string, runId: string, attempt: number, pro
   mkdirSync(root, { mode: 0o700 });
   const work = join(root, "work"), home = join(root, "home");
   mkdirSync(work, { mode: 0o700 }); mkdirSync(home, { mode: 0o700 });
+  markReflectionGitRoot(work);
   const promptFile = join(root, "prompt.txt");
   writeFileSync(promptFile, prompt, { mode: 0o600 });
   return { root, work, home, promptFile, debugFile: join(root, "debug.log") };
+}
+/**
+ * Fuigo finds the project by walking from its cwd up to the nearest git root, and the hooks project root has no
+ * home filter; no flag stops the walk and libgit2 ignores GIT_CEILING_DIRECTORIES. If the owner's home is a git
+ * repository, a walk from <root>/work would reach it and run ~/.fuigo/hooks. So work/ is made its own repository
+ * root: the minimal layout libgit2 and git both accept as a repo (HEAD, objects/, refs/), written directly so git
+ * need not be installed. Written before the inventory snapshot, so these files are never reported as new; the
+ * temp root's removal takes them with it.
+ */
+export const REFLECTION_GIT_HEAD = "ref: refs/heads/main\n";
+export function markReflectionGitRoot(work: string): void {
+  const git = join(work, ".git");
+  mkdirSync(join(git, "objects"), { recursive: true, mode: 0o700 });
+  mkdirSync(join(git, "refs", "heads"), { recursive: true, mode: 0o700 });
+  mkdirSync(join(git, "refs", "tags"), { mode: 0o700 });
+  writeFileSync(join(git, "HEAD"), REFLECTION_GIT_HEAD, { mode: 0o600 });
+  writeFileSync(join(git, "config"), "[core]\n\trepositoryformatversion = 0\n\tbare = false\n", { mode: 0o600 });
 }
 /** Only ever called after confirmed exit; refuses a path outside the base. */
 export function removeTempRoot(base: string, root: string): boolean {
@@ -301,7 +319,11 @@ export function removeTempRoot(base: string, root: string): boolean {
 
 export const FUIGO_OFF_SWITCHES = { FUIGO_TELEMETRY_ENABLED: "0", FUIGO_SUBAGENTS: "0", FUIGO_MEMORY: "0", FUIGO_MANAGED_CONFIG: "0", FUIGO_DISABLE_AUTOUPDATER: "1",
   // Fuigo 1.0.32: no daily ChatGPT/Grok subscription model refresh at startup (ignored by 1.0.31).
-  FUIGO_DISABLE_MODEL_REFRESH: "1" } as const;
+  FUIGO_DISABLE_MODEL_REFRESH: "1",
+  // Fuigo 1.0.32: workflow runs, background scheduler loops and goal runs each spawn `general-purpose`, which a
+  // workspace `.fuigo/agents/general-purpose.md` can redefine with its own permissionMode; FUIGO_SUBAGENTS=0 does
+  // not reach them (fuigo.ts FUIGO_AGENT_SPAWNS_OFF, not imported for the reason below).
+  FUIGO_WORKFLOWS: "0", FUIGO_SCHEDULER_BACKGROUND_LOOPS: "0", FUIGO_GOAL: "0" } as const;
 export const GROK_OFF_SWITCHES = { GROK_TELEMETRY_ENABLED: "0", GROK_SUBAGENTS: "0", GROK_MEMORY: "0", GROK_MANAGED_CONFIG: "0", GROK_DISABLE_AUTOUPDATER: "1" } as const;
 
 /**
@@ -328,6 +350,8 @@ export const GROK_REFLECTION_COMPAT_OFF = compatCellsOff("GROK");
  * (cloud-home/turn-process.ts). The off switches and compat cells are spread last, so no binding can reopen them.
  */
 export function buildReflectionEnv(engine: "fuigo" | "grok", pathValue: string, tempHome: string, tempRoot: string, bound: Record<string, string>): Record<string, string> {
+  // Fuigo never starts a reflection as a named agent, nor runs its own workspace-rewind git (fuigo.ts FUIGO_UNSET_ENV, not imported)
+  if (engine === "fuigo") bound = Object.fromEntries(Object.entries(bound).filter(([name]) => !["FUIGO_AGENT", "FUIGO_WORKSPACE_REWIND_GIT"].includes(name.toUpperCase())));
   return { PATH: pathValue, ...bound, HOME: tempRoot, USERPROFILE: tempRoot,
     ...(engine === "fuigo" ? { ...FUIGO_OFF_SWITCHES, ...FUIGO_REFLECTION_COMPAT_OFF } : { ...GROK_OFF_SWITCHES, ...GROK_REFLECTION_COMPAT_OFF }),
     ...(engine === "fuigo" ? { FUIGO_HOME: tempHome } : { GROK_HOME: tempHome }) };
@@ -336,16 +360,19 @@ export function buildReflectionEnv(engine: "fuigo" | "grok", pathValue: string, 
 /**
  * Claude Code plugins (~/.claude/plugins) sit outside every compat cell and FUIGO_CONFIG drops `plugins`, so the
  * only switch is `[plugins] auto_discover = false` in $FUIGO_HOME/config.toml (Cloud pins the same line,
- * deploy/cloud-home/murage-turn-launch.py FUIGO_PINS). Appended to the temp home's config after the route binding
- * wrote it; a config that already names a [plugins] table is refused rather than merged.
+ * deploy/cloud-home/murage-turn-launch.py FUIGO_PINS). Skill discovery has the same shape and the same switch,
+ * `[skills] auto_discover = false`. Both are appended to the temp home's config after the route binding wrote it;
+ * a config that already names a [plugins] or [skills] table is refused rather than merged.
  */
 export const REFLECTION_FUIGO_PLUGIN_PIN = "[plugins]\nauto_discover = false\n";
+export const REFLECTION_FUIGO_SKILLS_PIN = "[skills]\nauto_discover = false\n";
 export function pinReflectionFuigoConfig(tempHome: string): void {
   const path = join(tempHome, "config.toml");
   const current = existsSync(path) ? readFileSync(path, "utf8") : "";
   if (/^\s*\[\s*plugins\s*\]/m.test(current)) throw new Error("PIP_REFLECTION_PLUGINS_TABLE");
+  if (/^\s*\[\s*skills\s*\]/m.test(current)) throw new Error("PIP_REFLECTION_SKILLS_TABLE");
   const sep = current === "" || current.endsWith("\n") ? "" : "\n";
-  writeFileSync(path, `${sep}${REFLECTION_FUIGO_PLUGIN_PIN}`, { flag: "a", mode: 0o600 });
+  writeFileSync(path, `${sep}${REFLECTION_FUIGO_PLUGIN_PIN}${REFLECTION_FUIGO_SKILLS_PIN}`, { flag: "a", mode: 0o600 });
 }
 
 // ------------------------------------------------------------ route bind ----

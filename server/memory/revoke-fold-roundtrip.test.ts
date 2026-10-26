@@ -55,7 +55,7 @@ function prepareToReinstall(db: Db): Db {
   const path = pathOf(db);
   db.close();
   const own = new DatabaseSync(path);
-  try { expect(downgradeMemorySchema(own, 10)).toEqual({ status: "downgraded", from: 12, to: 10 }); } finally { own.close(); }
+  try { expect(downgradeMemorySchema(own, 10)).toEqual({ status: "downgraded", from: 13, to: 10 }); } finally { own.close(); }
   return new DatabaseSync(path);
 }
 /** What 1.0.2 writes when a line is carried from member M's denied parent (1.0.2 revoke-commit.ts inheritMarks, no map): a job row for M when

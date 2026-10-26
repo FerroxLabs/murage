@@ -70,6 +70,8 @@ describe("1.0.3 data-folder names after memory-downgrade --to 10", () => {
     // the cloud computer prompt record and its set-aside unreadable copy (1.0.6 cloud-computer-turns.ts; 1.0.2 has no such record)
     writeFileSync(join(DATA_DIR, "cloud-computer-turns.json"), JSON.stringify({ version: 1, entries: [] }));
     writeFileSync(join(DATA_DIR, "cloud-computer-turns.json.unreadable"), "{");
+    // the first-run news ask record (1.0.7 news-signup.ts; 1.0.2 never asks)
+    writeFileSync(join(DATA_DIR, "news-signup.json"), JSON.stringify({ status: "declined" }), { mode: 0o600 });
     expect(readdirSync(DATA_DIR).filter(name => !classifiedBy102(name)).sort()).toEqual([...DATA_DIR_NAMES_AFTER_102, ...DATA_DIR_OWNER_NOTES_AFTER_102].sort());
 
     expect(downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ status: "downgraded", to: 10 });

@@ -1,6 +1,6 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it } from "vitest";
 import { existsSync, mkdirSync, utimesSync, writeFileSync } from "node:fs";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database, transaction } from "../database.ts";
@@ -12,8 +12,11 @@ import { pauseRestoredMemory } from "./restore.ts";
 import { forgetBotLearningData, purgeForgottenLearning, sweepLearningRetention } from "./evolution-forgetting.ts";
 import { ensureLearningLocalDir, learningLocalPath } from "../bot-learning.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
+import { INLINE_REVOCATION, runRevocationJobsNow } from "./memory-revocation.ts";
 
 beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); reconcileMemoryRoster({ bots: [{ id: "bot", threadId: "thread" }], groups: [] }); });
+const inline = { ...INLINE_REVOCATION };
+afterEach(() => { Object.assign(INLINE_REVOCATION, inline); });
 const DAY = 86_400_000;
 function seed() {
   transaction(db => { for (const id of ["a", "b"]) captureSource(db, { id, threadId: "thread", messageId: `m-${id}`, kind: "text", speaker: "owner", outcome: "recorded", text: `words ${id}` }); });
@@ -26,9 +29,14 @@ function seed() {
   return db;
 }
 
-it("forgetting a source removes the learning derived from it, and only that", () => {
+// A forget does what fits its inline budget (INLINE_REVOCATION, 8 ms) and leaves the rest, the open learning runs included, to its
+// durable job: on a slow machine the runs step lands after the commit. The test drains that job before reading, and runs once with no
+// inline budget at all so the deferred path is exercised on every machine.
+it.each([["the inline budget", null], ["everything deferred to the job", { rows: 0, ms: 0 }]] as const)("forgetting a source removes the learning derived from it, and only that (%s)", (_label, budget) => {
   const db = seed();
+  if (budget) Object.assign(INLINE_REVOCATION, budget);
   forgetMemory(ownerMemoryTicket(), { kind: "source", id: "a" });
+  transaction(d => runRevocationJobsNow(d));
   const state = (id: string) => db.prepare("SELECT state,text FROM memory_lessons WHERE id=?").get(id)!;
   expect(state("applied")).toMatchObject({ state: "unsupported", text: "" });
   expect(state("pending")).toMatchObject({ state: "stale", text: "" });

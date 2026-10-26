@@ -245,6 +245,15 @@ it("pins Fuigo's own subagents off: a request FUIGO_SUBAGENTS=1 is ignored", () 
   expect(rig.plan(rig.request("fuigoAgent", { env: { FUIGO_SUBAGENTS: "1" } })).ok!.env.FUIGO_SUBAGENTS).toBe("0");
 });
 
+it("pins Fuigo's workflows, scheduler loops and goal runs off and never passes FUIGO_AGENT or FUIGO_WORKSPACE_REWIND_GIT", () => {
+  const env = rig.plan(rig.request("fuigoAgent", { env: { FUIGO_WORKFLOWS: "1", FUIGO_SCHEDULER_BACKGROUND_LOOPS: "1", FUIGO_GOAL: "1", FUIGO_AGENT: "general-purpose", FUIGO_WORKSPACE_REWIND_GIT: "1" } })).ok!.env;
+  expect(env.FUIGO_WORKFLOWS).toBe("0");
+  expect(env.FUIGO_SCHEDULER_BACKGROUND_LOOPS).toBe("0");
+  expect(env.FUIGO_GOAL).toBe("0");
+  expect(env.FUIGO_AGENT).toBeUndefined();
+  expect(env.FUIGO_WORKSPACE_REWIND_GIT).toBeUndefined();
+});
+
 // The owner's workspace: every mask is mounted whether or not the path exists (no check-then-mount), only
 // over directories, and no rendered file lands in the workspace, so bwrap can create at most an empty
 // dot-directory as a mount point.

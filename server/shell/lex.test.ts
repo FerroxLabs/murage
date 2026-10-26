@@ -256,3 +256,58 @@ describe("UPSEC 10.1 and 10.7: the backtick mode; continuations and carriage ret
     expect(reason("cat <<E\\\nOF\nx\nEOF")).toBe("heredoc");
   });
 });
+
+describe("an expansion in option position asks (bash expands it after the reader read it)", () => {
+  it.each([
+    "git diff --{output=../x,stat}",
+    "rg --{pre=./evil.sh,files} x",
+    "sort --{compress-program=sh,-o,x} f",
+    "rm -r{f,} ./inside",
+    "find . {-exec,sh,-c,evil,+}",
+    "find . {-exec,bash,-c,evil,\\;}",
+    "echo {a,'b'}",
+    "echo {$HOME,x}",
+    "echo {a,{b,c}}",
+    "rm -* ./inside",
+    "rm -[r]f ./inside",
+    "rm -?f ./inside",
+    "git diff --output=$(echo ../x)",
+    "git diff --output=`echo ../x`",
+    "cmd -$((1))",
+    "grep --include=*.ts$(echo ' --output=../x') x",
+    "git diff --output={a,b}$(echo ' --stat')",
+    "git diff {--output=../x,$(true)}",
+    "git diff {--output=../x,<(true)}",
+    "rm -[r=f] ./inside",
+    "rm -[r=]f ./inside",
+    "git diff ''--{output=../x,stat}",
+    "git diff \"\"{--output=../x,--stat}",
+    "rm -{a..c} ./inside",
+    "echo {1..9..2}",
+    // Grok round 2: a first `}` inside a quote, escape or substitution; a `[` in an option name however quoted
+    "git diff {--output=\"}\",--output=../x}",
+    "git diff {--output=$(echo }),--output=../x}",
+    "git diff {--output=../x\\},--stat}",
+    "git diff --['o']utput=../x",
+    "rm -['r']['f'] ./inside",
+  ])("%s", (text) => expect(reason(text)).toBe("expansion"));
+
+  it.each([
+    "cp file{,.bak}",
+    "mkdir -p src/{a,b}",
+    "grep -r --include=*.ts foo .",
+    "rg --glob={a,b}.ts foo",
+    "find . -name '*.ts' -exec grep -l x {} +",
+    "find . -exec rm {} \;",
+    "git log -n$N",
+    "git stash show stash@{0}",
+    "ls -la",
+    "sort -k2,2 f",
+    "{ echo a,b; }",
+    "echo -",
+    "git commit -m \"$(cat msg)\"",
+    "echo $'\\x2d\\x2drf'",
+    "echo {a..e}",
+    "touch file-{a..c}.txt",
+  ])("stays readable: %s", (text) => expect(reason(text)).toBeNull());
+});

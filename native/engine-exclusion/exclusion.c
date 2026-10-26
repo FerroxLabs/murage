@@ -48,6 +48,9 @@
 //                                  a file's owner SID and account-name lookups, and SAPI speech. Each is described where it is defined.
 //   domainSids                     Windows (version 9): this computer's account, joined and forest-root domain SIDs (LSA policy), for
 //                                  the SDDL domain aliases. Version 9 also ends a process jobAssign cannot open.
+//   cwdOf(pid)                     Windows (DELETION-WHILE-OPEN-107): another process's working folder, read from its PEB
+//                                  (ProcessParameters->CurrentDirectory.DosPath); null when it cannot be read. Optional: an older
+//                                  build without it only means the open-home pass does not run there (it fails closed).
 // Nothing here reads or writes a file on POSIX: Node does that through its own descriptor (writers() on Linux opens a file read only,
 // only to ask for a lease, and reads nothing). Only a process that is confirmed gone
 // (ESRCH/ENOENT on that process) is left out of processes(). Built per platform by scripts/build-engine-exclusion.mjs (N-API 9).
@@ -761,6 +764,53 @@ static napi_value environment_of(napi_env env, napi_callback_info info) {
   if (!ok) napi_get_null(env, &out);
   return out;
 }
+
+#ifdef _WIN32
+// ── cwdOf(pid): Windows ─────────────────────────────────────────────────
+//
+// DELETION-WHILE-OPEN-107: the working folder of another process, as Windows keeps it in the process's own memory:
+// RTL_USER_PROCESS_PARAMETERS.CurrentDirectory.DosPath. <winternl.h> declares that block only as Reserved2[10] before ImagePathName:
+// ConsoleHandle, ConsoleFlags, StandardInput, StandardOutput, StandardError, then CurrentDirectory (a UNICODE_STRING, the size of two
+// pointers on both 32- and 64-bit Windows), so DosPath is Reserved2[5]. null when it cannot be read: the process is gone, another
+// user's or protected, a 32-bit process on 64-bit Windows, or any read that fails. Murage asks it only of the processes on an engine
+// home whose conversation is being deleted (engine-closed.ts holdersClearOf); a null keeps that home for the closed-engine pass.
+static napi_value cwd_of(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value argv[1];
+  uint32_t pid = 0;
+  napi_get_cb_info(env, info, &argc, argv, NULL, NULL);
+  if (argc < 1 || napi_get_value_uint32(env, argv[0], &pid) != napi_ok || pid == 0) return fail(env, "cwdOf needs a pid");
+  napi_value out;
+  napi_get_null(env, &out);
+  HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, FALSE, pid);
+  NtQueryInformationProcessFn query = (NtQueryInformationProcessFn)(void *)GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtQueryInformationProcess");
+  BOOL wow = TRUE;
+  if (process && query && IsWow64Process(process, &wow) && !wow) {
+    PROCESS_BASIC_INFORMATION basic;
+    ULONG returned = 0;
+    PEB peb;
+    RTL_USER_PROCESS_PARAMETERS parameters;
+    SIZE_T read = 0;
+    if (query(process, 0, &basic, sizeof basic, &returned) == 0 && basic.PebBaseAddress &&
+        ReadProcessMemory(process, basic.PebBaseAddress, &peb, sizeof peb, &read) && read == sizeof peb && peb.ProcessParameters &&
+        ReadProcessMemory(process, peb.ProcessParameters, &parameters, sizeof parameters, &read) && read == sizeof parameters) {
+      UNICODE_STRING dos;
+      memcpy(&dos, &parameters.Reserved2[5], sizeof dos);
+      if (dos.Buffer && dos.Length > 0 && dos.Length % sizeof(wchar_t) == 0 && dos.Length <= dos.MaximumLength) {
+        wchar_t *path = malloc((size_t)dos.Length + sizeof(wchar_t));
+        if (path && ReadProcessMemory(process, dos.Buffer, path, dos.Length, &read) && read == dos.Length) {
+          char *text = wide_to_utf8(path, (int)(dos.Length / sizeof(wchar_t)));
+          if (text && text[0]) napi_create_string_utf8(env, text, NAPI_AUTO_LENGTH, &out);
+          free(text);
+        }
+        free(path);
+      }
+    }
+  }
+  if (process) CloseHandle(process);
+  return out;
+}
+#endif
 
 // ── renameNoReplace(from, to): all platforms ────────────────────────────
 
@@ -2357,6 +2407,7 @@ NAPI_MODULE_INIT() {
   add(env, exports, "domainSids", domain_sids);
   add(env, exports, "speechVoices", speech_voices);
   add(env, exports, "speechToWave", speech_to_wave);
+  add(env, exports, "cwdOf", cwd_of);
 #endif
   add(env, exports, "bootId", boot_id);
   add(env, exports, "version", version);

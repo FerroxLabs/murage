@@ -29,6 +29,7 @@
       "lines": {
         "a82a0188806e4666": "const COMMAND_TOOLS = new Set([\"bash\", \"shell\", \"execute\", \"exec_command\", \"run_command\", ",
         "f66ec09b84cdfaf5": "const POWERSHELL_TOOLS = new Set([\"powershell\", \"pwsh\"]);",
+        "e9d73fe0f652b644": "const dequoted = pinShell === \"pwsh\" || !commandGlobText.trim() ? undefined : (() => {",
         "476755901dcc1868": "function simpleProgram(summary: string, dialect: \"posix\" | \"pwsh\" = \"posix\"): string | und",
         "5945fbeb2c17e4c0": "if (dialect === \"pwsh\" && /[\\u2018-\\u201E\\u2013-\\u2015]/.test(summary)) return undefined;",
         "12e9f537632338f4": "if (dialect === \"pwsh\" && (words[0]?.assignment || words[0]?.quoted || words[0]?.value.toL",

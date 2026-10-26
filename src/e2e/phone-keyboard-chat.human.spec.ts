@@ -6,15 +6,15 @@
 // visualViewport height (and its pan, offsetTop) are overridden.
 import { FIXTURES } from "./rig";
 import { expect, openSidebar, SEND_KEY, test } from "./fixtures";
-import { possessive } from "../lib/possessive";
+import { chatHeaderFor, expectChatHeader } from "./chat-controls";
 
 test("phone chat: the shell follows the visual viewport when the keyboard opens", async ({ app }, info) => {
   test.skip(info.project.name !== "mobile", "phone layout only");
   const name = FIXTURES.titledNoSkills.name;
-  await expect(app.getByRole("button", { name: /^Open .+'s profile$/ }).first()).toBeVisible();
+  await expectChatHeader(app);
   const sidebar = await openSidebar(app);
   await sidebar.getByText(name, { exact: true }).click();
-  await expect(app.getByRole("button", { name: `Open ${possessive(name)} profile` }).last()).toBeVisible();
+  await expectChatHeader(app, name);
   const composer = app.getByPlaceholder(/^Message /).first();
   await composer.fill("Hello there");
   await composer.press(SEND_KEY);
@@ -32,7 +32,8 @@ test("phone chat: the shell follows the visual viewport when the keyboard opens"
   await expect.poll(async () => Math.round((await app.locator("#root").boundingBox())!.y)).toBe(PAN);
 
   const composerBox = (await composer.boundingBox())!;
-  const header = (await app.getByRole("button", { name: `Open ${possessive(name)} profile` }).first().boundingBox())!;
+  // The phone header's name pill: the header itself, staying in view.
+  const header = (await (await chatHeaderFor(app, name)).boundingBox())!;
   const bubbles = app.getByTestId("msg-bubble");
   const last = (await bubbles.last().boundingBox())!;
   const inset = await app.evaluate(() => parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--inset-top")) || 0);

@@ -101,7 +101,7 @@ import { delimiter, join } from "node:path";
 const argv = process.argv.slice(2);
 const kind = argv.includes("--version") ? "version" : argv[0] === "models" ? "models" : "agent";
 // Explicit fields only; credentials are fixture-dump.ts fingerprints, never values.
-const PLAIN = ["FUIGO_CONFIG", "FUIGO_ALLOW_UPSTREAM_HOSTS", "PATH", "HOME", "FUIGO_HOME", "FUIGO_MEMORY", "FUIGO_CLAUDE_SKILLS_ENABLED", "FUIGO_CLAUDE_RULES_ENABLED", "FUIGO_CLAUDE_AGENTS_ENABLED", "FUIGO_CLAUDE_MCPS_ENABLED", "FUIGO_CLAUDE_HOOKS_ENABLED", "FUIGO_CLAUDE_SESSIONS_ENABLED", "FUIGO_CURSOR_SKILLS_ENABLED", "FUIGO_CURSOR_RULES_ENABLED", "FUIGO_CURSOR_AGENTS_ENABLED", "FUIGO_CURSOR_MCPS_ENABLED", "FUIGO_CURSOR_HOOKS_ENABLED", "FUIGO_CURSOR_SESSIONS_ENABLED", "FUIGO_CODEX_SKILLS_ENABLED", "FUIGO_CODEX_RULES_ENABLED", "FUIGO_CODEX_AGENTS_ENABLED", "FUIGO_CODEX_MCPS_ENABLED", "FUIGO_CODEX_HOOKS_ENABLED", "FUIGO_CODEX_SESSIONS_ENABLED", "FUIGO_AGENTS_SKILLS_ENABLED", "OPENAI_BASE_URL", "OPENAI_MODEL"];
+const PLAIN = ["FUIGO_CONFIG", "FUIGO_ALLOW_UPSTREAM_HOSTS", "PATH", "HOME", "FUIGO_HOME", "FUIGO_MEMORY", "FUIGO_CLAUDE_SKILLS_ENABLED", "FUIGO_CLAUDE_RULES_ENABLED", "FUIGO_CLAUDE_AGENTS_ENABLED", "FUIGO_CLAUDE_MCPS_ENABLED", "FUIGO_CLAUDE_HOOKS_ENABLED", "FUIGO_CLAUDE_SESSIONS_ENABLED", "FUIGO_CURSOR_SKILLS_ENABLED", "FUIGO_CURSOR_RULES_ENABLED", "FUIGO_CURSOR_AGENTS_ENABLED", "FUIGO_CURSOR_MCPS_ENABLED", "FUIGO_CURSOR_HOOKS_ENABLED", "FUIGO_CURSOR_SESSIONS_ENABLED", "FUIGO_CODEX_SKILLS_ENABLED", "FUIGO_CODEX_RULES_ENABLED", "FUIGO_CODEX_AGENTS_ENABLED", "FUIGO_CODEX_MCPS_ENABLED", "FUIGO_CODEX_HOOKS_ENABLED", "FUIGO_CODEX_SESSIONS_ENABLED", "FUIGO_AGENTS_SKILLS_ENABLED", "OPENAI_BASE_URL", "OPENAI_MODEL", "FUIGO_SUBAGENTS", "FUIGO_WORKFLOWS", "FUIGO_SCHEDULER_BACKGROUND_LOOPS", "FUIGO_GOAL", "FUIGO_AGENT", "FUIGO_WORKSPACE_REWIND_GIT"];
 const CREDENTIALS = ["FUIGO_API_KEY", "FUIGO_CODE_API_KEY", "FLUX_API_KEY", "MURAGE_FLUX_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY",
   ...Object.keys(process.env).filter((key) => /^MURAGE_LOCAL_[A-Z0-9_]+_API_KEY$/.test(key))];
 const fingerprint = (value) => createHash("sha256").update(value).digest("hex");
@@ -774,6 +774,16 @@ describe("fuigo engine isolation from the owner's global MCP config", () => {
     const { env } = dump("agent");
     for (const gate of FUIGO_EXTERNAL_MCP_GATES) expect(env[gate], gate).toBe("0");
     expect(FUIGO_EXTERNAL_MCP_GATES).toHaveLength(19);
+  });
+
+  it("pins every agent Fuigo starts on its own off for the turn and the catalog spawn, and never hands down FUIGO_AGENT", async () => {
+    // FUIGO_SUBAGENTS=0 alone does not reach workflow, scheduler-loop or goal spawns of `general-purpose` (Fuigo 1.0.32).
+    await runTurn({ model: "flux-auto", environment: { FUIGO_WORKFLOWS: "1", FUIGO_SCHEDULER_BACKGROUND_LOOPS: "1", FUIGO_GOAL: "1", FUIGO_AGENT: "general-purpose", FUIGO_WORKSPACE_REWIND_GIT: "1" } });
+    for (const spawn of ["agent", "models"] as const) {
+      const { env } = dump(spawn);
+      for (const name of ["FUIGO_SUBAGENTS", "FUIGO_WORKFLOWS", "FUIGO_SCHEDULER_BACKGROUND_LOOPS", "FUIGO_GOAL"]) expect([spawn, name, env[name]]).toEqual([spawn, name, "0"]);
+      expect([spawn, env.FUIGO_AGENT, env.FUIGO_WORKSPACE_REWIND_GIT]).toEqual([spawn, undefined, undefined]);
+    }
   });
 
   it("applies the same isolation to the catalog spawn, which shares transformEnv", async () => {
