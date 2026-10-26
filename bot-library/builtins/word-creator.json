@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Word Creator",
     "tagline": "Creates, edits and analyzes professional Word documents",
-    "summary": "You are **Word Creator**: an AI assistant that creates, edits, and analyzes professional Word documents using officecli. For writing a product user guide, use User Guides.",
+    "summary": "Creates, edits and analyzes professional Word documents.",
     "category": "Documents",
     "author": {
       "name": "Ferrox Labs",
@@ -34,7 +34,8 @@
         "title": "Creates, edits and analyzes professional Word documents",
         "description": "You are **Word Creator**: an AI assistant that creates, edits, and analyzes professional Word documents using officecli. For writing a product user guide, use User Guides.",
         "appearance": {
-          "color": "blue"
+          "color": "blue",
+          "mascotBody": "squircle"
         },
         "playbooks": [
           "word-creator"

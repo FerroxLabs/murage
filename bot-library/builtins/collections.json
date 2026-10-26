@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Collections",
     "tagline": "Overdue balances, three priority chases and ready-to-review reminders",
-    "summary": "Penny prepares an aged receivables list with reconciled balances. Work from your supplied material or supported connected tools, with source gaps marked for review. For broader business financial decisions, use Numbers. For a store operations team, use Back-Office Crew. For existing sales conversation follow-ups, use Recover Unanswered Sales Emails. I give guidance and drafts, not licensed legal or accounting advice, and I promise no outcome.",
+    "summary": "Penny prepares an aged receivables list with reconciled balances.",
     "category": "Money",
     "author": {
       "name": "Ferrox Labs",
@@ -66,7 +66,8 @@
         "title": "Collections",
         "description": "Penny prepares an aged receivables list with reconciled balances. Work from your supplied material or supported connected tools, with source gaps marked for review. For broader business financial decisions, use Numbers. For a store operations team, use Back-Office Crew. For existing sales conversation follow-ups, use Recover Unanswered Sales Emails.",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "circle"
         },
         "skills": [
           "finance-receivables",

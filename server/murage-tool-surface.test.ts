@@ -13,6 +13,7 @@ import { CLAUDE_TOOL_SURFACE, CODEX_TOOL_SURFACE, FUIGO_TOOL_SURFACE, PI_TOOL_SU
 import { recordTurnShapes, lastTurnShapes, shapeLayer, TURN_PROMPTS, directTurnLayers, directPersona, joinShapeLayers, roomPersonaLines, roomMembersLine } from "./bot-shapes.ts";
 import { continuationResultsPrompt, goalWakePrompt } from "./project-prompt.ts";
 import { readFileSync } from "node:fs";
+import { ASK_RULE_LINE, ASK_USER_TOOL_DESCRIPTION, SHOW_WIDGET_TOOL_DESCRIPTION, TURN_ASK_RULES, UPDATE_WIDGET_TOOL_DESCRIPTION, WIDGET_FOLLOW_UP, WIDGET_RULE_LINE } from "../shared/ask-wording.ts";
 
 it.each([
   ["Claude", CLAUDE_TOOL_SURFACE, "mcp__agents__ask_bot"],
@@ -109,7 +110,33 @@ it("omits unavailable tool instructions", () => {
  expect(renderMurageTurn({threadId:"x",text:ROOM_TOOLS_LINE},NO_TOOL_SURFACE,{}).text).not.toMatch(/use |unavailable/);
 });
 it("does not assume Claude supports deferred discovery", () => {
- expect(renderMurageTurn({threadId:"x",text:"hello"},CLAUDE_TOOL_SURFACE,{agents:"agents"}).system).toBeUndefined();
+ // QW 208: the only system words with no discovery hint are the ask rule line every engine carries
+ expect(renderMurageTurn({threadId:"x",text:"hello"},CLAUDE_TOOL_SURFACE,{agents:"agents"}).system).toBe(TURN_ASK_RULES);
+});
+
+// QW 208: one source string for the tool descriptions and the per-turn rule line, word for word the same on every engine,
+// a tool engine and one with no tools alike; a command turn is left alone.
+it.each([
+  ["claude", CLAUDE_TOOL_SURFACE], ["codex", CODEX_TOOL_SURFACE], ["fuigo", FUIGO_TOOL_SURFACE], ["grok", FUIGO_TOOL_SURFACE], ["pi", PI_TOOL_SURFACE],
+  ...["kimi", "qwen", "hermes", "opencode-go", "cursor", "droid", "gemini", "custom", "antigravity"].map(engine => [engine, NEUTRAL_TOOL_SURFACE] as const),
+  ["openai-chat", NO_TOOL_SURFACE], ["openai-compat", NO_TOOL_SURFACE], ["boxagent", NO_TOOL_SURFACE],
+] as const)("the ask and widget rule line is the same on %s", (_engine, surface) => {
+ const mounts = surface === NO_TOOL_SURFACE ? {} : { agents: "agents", memory: "murage-memory" };
+ const system = renderMurageTurn({ threadId: "x", text: "hello", system: "House rules." }, surface, mounts).system ?? "";
+ expect(system.endsWith(`\n\n${TURN_ASK_RULES}`)).toBe(true);
+ expect(system.split(TURN_ASK_RULES)).toHaveLength(2);
+ expect(renderMurageTurn({ threadId: "x", text: "/help", engineCommand: { name: "help", args: "" }, system: "House rules." }, surface, mounts).system).not.toContain(TURN_ASK_RULES);
+});
+it("the rule line is built from the tool descriptions' own words, in plain words with no dash punctuation and no emoji", () => {
+ expect(TURN_ASK_RULES).toBe(`${ASK_RULE_LINE} ${WIDGET_RULE_LINE}`);
+ expect(WIDGET_RULE_LINE.startsWith(WIDGET_FOLLOW_UP)).toBe(true);
+ expect(SHOW_WIDGET_TOOL_DESCRIPTION).toContain(WIDGET_FOLLOW_UP);
+ expect(TURN_ASK_RULES).toContain("```murage-question");
+ expect(TURN_ASK_RULES).toContain("```murage-widget");
+ for (const words of [TURN_ASK_RULES, SHOW_WIDGET_TOOL_DESCRIPTION, UPDATE_WIDGET_TOOL_DESCRIPTION, ASK_USER_TOOL_DESCRIPTION]) {
+  expect(words).not.toMatch(/[\u2013\u2014]| - |\p{Extended_Pictographic}/u);
+  expect(words).not.toMatch(/\b(safe|unsafe|safety)\b/i);
+ }
 });
 
 it.each(["start", "change_plan"] as const)("%s without criteria retains approved-card and tool guidance",action=>{
@@ -224,5 +251,6 @@ it("rule 19: openai-chat and boxagent surfaces carry no tools and no sentence", 
   const out = renderMurageTurn({ threadId: "t", text: `${murageTool("thread_search")} here`, threadRecall: true }, NO_TOOL_SURFACE, {});
   expect(out.text).not.toContain("thread_search");
   expect(out.text).not.toContain(THREAD_RECALL_LINE);
-  expect(out.system).toBeUndefined();
+  // QW 208: no tool sentence; only the ask rule line every engine carries (it names the fence for an engine with no tools)
+  expect(out.system).toBe(TURN_ASK_RULES);
 });

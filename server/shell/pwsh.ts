@@ -18,7 +18,8 @@
 // that is not a recognized delete or disk command is ordinary.
 
 import { isPlain, literalText, MAX_TEXT_CHARS, Unreadable, type Part, type Quote, type Word } from "./lex.ts";
-import { attachedInlineCode, candidatesOf, expandWord, fork, fromFileWord, INLINE_CODE, interpreterKey, MAX_DEPTH, PHYSICAL_DRIVE, resolveName, resolveWritten, runsRemote, simpleCommand, takesValue, walkForeignExecutor, type Provenance, type Visitor, type WalkContext } from "./walk.ts";
+import { loadsCodeFirst, markLoaderRunner, markLoaderVariable, mentionsLoaderVariable, pythonModuleLoads, rReadsProfile } from "./loaders.ts";
+import { attachedInlineCode, candidatesOf, expandWord, fork, fromFileWord, INLINE_CODE, interpreterKey, MAX_DEPTH, PHYSICAL_DRIVE, resolveName, resolveWritten, runnerOption, runsRemote, simpleCommand, takesValue, walkForeignExecutor, type Provenance, type Visitor, type WalkContext } from "./walk.ts";
 
 export const POWERSHELLS = new Set(["powershell", "powershell.exe", "pwsh", "pwsh.exe"]);
 const CMDS = new Set(["cmd", "cmd.exe"]);
@@ -787,6 +788,7 @@ export function powershellRunner(name: string): PowerShellRunner | undefined {
 function interpreterRuns(base: string, args: Word[], stdin: Provenance | undefined): string | undefined {
   const key = interpreterOf(base)!;
   const inline = INLINE_CODE[key];
+  if (key === "rscript" && rReadsProfile(args.map(literalText))) return "a profile R reads first";
   for (let i = 0; i < args.length; i++) {
     const text = literalText(args[i]!);
     if (text === undefined) return "an interpreter given a value";
@@ -795,14 +797,35 @@ function interpreterRuns(base: string, args: Word[], stdin: Provenance | undefin
     // `node --eval=<code>`, `perl -e<code>` (1.0.3 A-b1-1)
     if (attachedInlineCode(key, args[i]!)) return "inline code";
     if (text === "-") return "code from its input";
-    if (key === "python" && text === "-m") return undefined;
+    if (key === "python" && pythonModuleLoads(text, args[i + 1] ? literalText(args[i + 1]!) : undefined)) return "a module the reader does not see";
+    if (key === "python" && /^-[bBdEhiIOqsSuvV]*m/.test(text)) return undefined;
     if (text === "--") return args[i + 1] ? "a script file" : undefined;
+    // code a deno/bun option loads first is a file the reader is not shown (1.0.5 r4, reader-gaps r3)
+    if ((key === "deno" || key === "bun") && runnerOption(key, text) === "preload") return "code loaded first";
+    // `node -r x`, `ruby -I dir`, `perl -MX`, `php -d auto_prepend_file=x`:
+    // the same list the POSIX reader reads (1.0.5 r8, server/shell/loaders.ts)
+    if (loadsCodeFirst(key, text, args[i + 1] ? literalText(args[i + 1]!) : undefined)) return "code loaded first";
     if (text.startsWith("-")) { if (takesValue(key, text)) i++; continue; }
     // deno and bun take a subcommand (`bun install`, `deno test`); `run`
     // names a package script, or a file when it has a folder or an extension
     if (key === "deno" || key === "bun") {
       if (text !== "run") return /[\\/.]/.test(text) ? "a script file" : undefined;
-      const target = args[i + 1] ? literalText(args[i + 1]!) : undefined;
+      // the run's options come before its script, as the POSIX reader reads
+      // them (walk.ts): one that loads code first, or one the reader does not
+      // know (it may take the next word), asks
+      let at = i + 1;
+      for (; at < args.length; at++) {
+        const option = literalText(args[at]!);
+        if (option === undefined) return "an interpreter given a value";
+        if (!option.startsWith("-")) break;
+        if (option === "--") { at++; break; }
+        const kind = runnerOption(key, option);
+        if (kind === "preload") return "code loaded first";
+        if (kind === "unknown") return "an option the reader does not know";
+        if (kind === "valued") at++;
+      }
+      const target = args[at] ? literalText(args[at]!) : undefined;
+      if (args[at] && target === undefined) return "an interpreter given a value";
       return target === undefined || /[\\/.]/.test(target) ? "a script file" : undefined;
     }
     return "a script file";
@@ -841,10 +864,12 @@ function scriptFile(spelled: string, name: string, dialect: "pwsh" | "cmd"): boo
 
 /** Throws when a program, as the reader resolved it, is one it does not
  * model: a launcher, an interpreter running code, a script file. */
-function unmodelled(name: string, spelled: string, args: Word[], stdin: Provenance | undefined, dialect: "pwsh" | "cmd"): void {
+function unmodelled(name: string, spelled: string, args: Word[], stdin: Provenance | undefined, dialect: "pwsh" | "cmd", ctx: WalkContext): void {
   const runner = powershellRunner(name);
   if (runner === "launcher") throw new Unreadable(dialect, `${name} runs something the reader does not see`);
   if (runner === "interpreter") {
+    // a loader variable this read set or named reaches it (1.0.5 r8)
+    markLoaderRunner(ctx.loaders, name);
     const why = interpreterRuns(programBase(name), args, stdin);
     if (why) throw new Unreadable(dialect, `${name}: ${why}`);
   }
@@ -866,6 +891,8 @@ const EXPRESSION_OPERATOR = /^(-[ci]?(eq|ne|gt|ge|lt|le|like|notlike|match|notma
 export function walkPwsh<H>(text: string, ctx: WalkContext, visitor: Visitor<H>): H | null {
   if (ctx.depth > MAX_DEPTH) throw new Unreadable("depth");
   if (text.length > MAX_TEXT_CHARS) throw new Unreadable("length");
+  const loader = mentionsLoaderVariable(text, "pwsh");
+  if (loader) markLoaderVariable(ctx.loaders, loader);
   const { statements, nested } = lexPwsh(text);
   for (const inner of nested) {
     const hit = walkPwsh(inner, fork(ctx, true), visitor);
@@ -998,7 +1025,7 @@ function pwshStatement<H>(words: Word[], stdin: Provenance | undefined, ctx: Wal
     return walkNestedInput(pwsh, run, stdin, ctx, visitor);
   }
   // a launcher, an interpreter's code, a script file: not modelled, so it asks
-  unmodelled(name, renderPwshWord(call[0]!), args, stdin, "pwsh");
+  unmodelled(name, renderPwshWord(call[0]!), args, stdin, "pwsh", ctx);
   if ((program === "foreach-object" || program === "%") && callsMember(args)) throw new Unreadable("pwsh", "ForEach-Object calls a member on every item");
   // `env …`, `sudo`-style wrappers: walked as the POSIX reader walks them,
   // reading what the pipe before them writes
@@ -1184,6 +1211,8 @@ const bareCmd = (token: CmdToken | undefined): string | undefined => (token?.kin
  * looked through. */
 export function walkCmd<H>(text: string, ctx: WalkContext, visitor: Visitor<H>): H | null {
   if (ctx.depth > MAX_DEPTH) throw new Unreadable("depth");
+  const loader = mentionsLoaderVariable(text, "pwsh");
+  if (loader) markLoaderVariable(ctx.loaders, loader);
   const tokens = lexCmd(text);
   let pos = 0;
   const separator = (token: CmdToken | undefined) => token?.kind === "op" && token.op !== "(" && token.op !== ")";
@@ -1332,7 +1361,7 @@ export function walkCmd<H>(text: string, ctx: WalkContext, visitor: Visitor<H>):
       }
       const program = name === "rmdir" ? "rd" : name === "erase" ? "del" : name;
       // a launcher, an interpreter's code, a script file: not modelled, so it asks
-      unmodelled(resolved, renderCmdWord(rest[0]!), args, stdin, "cmd");
+      unmodelled(resolved, renderCmdWord(rest[0]!), args, stdin, "cmd", state);
       // `cd /d C:\x`: `/d` also changes the drive; the folder is the operand after it
       const operands = CD_NAMES.has(program) ? args.filter((arg) => !/^\/d$/i.test(literalText(arg) ?? "")) : args;
       // `env …`, `sudo`-style wrappers: walked as the POSIX reader walks them

@@ -76,21 +76,22 @@ describe("tasks", () => {
     expect(store.activeTask(bot.id)?.resumeCursors.claude).toBeUndefined();
   });
 
-  it("inherits the visible task's exact selection with fresh sessions and existing permission defaults", async () => {
+  it("a new task follows the bot (1.0.4 K1), not the visible task's pick, with fresh sessions and existing permission defaults", async () => {
     const { store } = await freshStore();
     const bot = store.createBot();
     const selection = { instanceId: "selected-claude", model: "opus", connectionId: "account-two", effort: "high" as const };
     store.patchTask(bot.id, bot.threadId, { modelSelection: selection, autoApprove: true, alwaysAllow: ["Bash"] });
     store.setResumeCursor(bot.id, selection.instanceId, "old-session");
     const task = store.createTask(bot.id)!;
-    expect(task.modelSelection).toEqual(selection);
+    expect(task.modelSelection).toBeUndefined();
+    expect(store.projectBotForTask(bot.id, task.threadId)?.modelSelection).toEqual(bot.modelSelection);
     expect(task.resumeCursors).toEqual({});
     expect(task.autoApprove).toBe(bot.autoApprove === true);
     expect(task.alwaysAllow).toEqual(bot.alwaysAllow ?? []);
-    expect(task.modelSelection).not.toBe(store.tasks(bot.id)[1]!.modelSelection);
+    expect(store.tasks(bot.id)[1]!.modelSelection).toEqual(selection);
   });
 
-  it("inherits a reopened older task and persists the new selection independently", async () => {
+  it("a task opened from a reopened older task follows the bot and keeps the older pick independent", async () => {
     const { store } = await freshStore();
     const bot = store.createBot(), first = bot.threadId;
     const selection = { instanceId: "selected-claude", model: "opus", connectionId: "account-two", effort: "high" as const };
@@ -101,10 +102,11 @@ describe("tasks", () => {
     const { Store } = await import("./store.ts");
     const reopened = new Store(() => ({ instanceId: "fallback", model: "fallback" }));
     const task = reopened.createTask(bot.id)!;
-    expect(task.modelSelection).toEqual(selection);
+    expect(task.modelSelection).toBeUndefined();
     reopened.patchTask(bot.id, first, { modelSelection: { instanceId: "different", model: "different" } });
     const persisted = new Store(() => ({ instanceId: "fallback", model: "fallback" }));
-    expect(persisted.activeTask(bot.id)?.modelSelection).toEqual(selection);
+    expect(persisted.activeTask(bot.id)?.modelSelection).toBeUndefined();
+    expect(persisted.taskByThread(bot.id, first)?.modelSelection).toEqual({ instanceId: "different", model: "different" });
     expect(persisted.activeTask(bot.id)?.resumeCursors).toEqual({});
   });
 
@@ -113,7 +115,8 @@ describe("tasks", () => {
     const bot = store.createBot(), visible = bot.threadId;
     store.patchTask(bot.id, visible, { modelSelection: { instanceId: "selected-claude", model: "opus" } });
     const task = store.createTask(bot.id, "Routine", false)!;
-    expect(task.modelSelection).toEqual(bot.modelSelection);
+    expect(task.modelSelection).toBeUndefined();
+    expect(store.projectBotForTask(bot.id, task.threadId)?.modelSelection).toEqual(bot.modelSelection);
     expect(bot.threadId).toBe(visible);
     expect(task.resumeCursors).toEqual({});
   });

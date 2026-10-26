@@ -30,6 +30,9 @@ export const TURN_SECRET_ENV = [
   "MURAGE_CONTROL_TOKEN",
   "MURAGE_MCP_TOKEN",
   "MURAGE_BROWSER_TOKEN",
+  // U20: the computer proxy's box token. Not per turn, but a credential: it rides the owner-only file like the rest, never the
+  // stanza env Claude hands its shell prefix and the server (computer-proxy.ts reads it per call).
+  "MURAGEBOX_BOX_TOKEN",
   // Not a secret: the provider turn this credential file belongs to (BOTADDED-DESIGN-V3 r6 §5). Per turn, so never in the stable key.
   "MURAGE_TURN_ID",
 ] as const;

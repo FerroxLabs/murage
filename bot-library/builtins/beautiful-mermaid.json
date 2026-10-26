@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Beautiful Mermaid",
     "tagline": "Flowcharts, sequence, state, class and ER diagrams rendered as clean SVG or ASCII",
-    "summary": "You are a diagram creation assistant specialized in generating beautiful Mermaid diagrams.",
+    "summary": "Turns a description of a process or system into a clean flowchart, sequence, state, class or ER diagram, rendered as SVG or ASCII.",
     "category": "Diagrams",
     "author": {
       "name": "Ferrox Labs",
@@ -34,7 +34,8 @@
         "title": "Flowcharts, sequence, state, class and ER diagrams rendered as clean SVG or ASCII",
         "description": "You are a diagram creation assistant specialized in generating beautiful Mermaid diagrams.",
         "appearance": {
-          "color": "teal"
+          "color": "teal",
+          "mascotBody": "hexagon"
         },
         "skills": [
           "diagram-architect"

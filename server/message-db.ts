@@ -41,7 +41,8 @@ import {
   trigramQuery,
   syncMessageSearchRow,
 } from "./message-search-index.ts";
-import { captureMessage, captureBranchChange, captureThreadDeletion } from "./memory/capture.ts";
+import { captureMessage, captureBranchChange, captureThreadDeletion, exportPasteNoted } from "./memory/capture.ts";
+import { noteFluxCaptureHold } from "./flux-capture-hold.ts";
 import { threadKey as keyOfThread, LINE_TEXT } from "./branch-index.ts";
 import { lineClassesOf } from "./line-classes.ts";
 import { boundedBranchWalk, isPrepared as isThreadPrepared, branchRows, branchTester, childRowids, requirePrepared, afterInsert, afterSpliceAfter, afterSpliceBefore, afterUpdate, forgetThread } from "./branch-store.ts";
@@ -994,12 +995,20 @@ function recordLineage(threadId: string, message: Message, extra: readonly Linea
 function writeMessage(threadId: string, message: Message, lineage: LineageToken, reply?: ProviderReply, structure: "append" | "none" = "append"): void {
   if (lineage.threadId !== threadId || lineage.messageId !== message.id) throw new Error("LINEAGE_TOKEN_MISMATCH: the lineage token names another line");
   setupFactsCache(db()).touch(threadId);
+  // the chat's "left out of memory" line under an export paste: the server's mark, written with the row (capture.ts exportPasteNoted).
+  // The caller's object carries it, so the message the store sends out has it too; a mark that came in with the row is never kept.
+  if (message.role === "user" && structure === "append") {
+    if (exportPasteNoted(db(), threadId, message)) message.memoryNote = "export-paste";
+    else delete message.memoryNote;
+  }
   replaceRow(
     db().prepare("INSERT OR REPLACE INTO messages (thread_id, id, at, role, kind, text, json, seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"),
     threadId,
     message,
     structure,
   );
+  // the Flux Memory number hold, before capture and whatever the memory mode (flux-capture-hold.ts)
+  noteFluxCaptureHold(db(), threadId, message);
   captureMessage(db(), threadId, message);
   // the engine's reply to a hand-off's prompt is the evidence that the hand-off ran, recorded in this same transaction (server/handoff-evidence.ts)
   noteHandoffEvidence(db(), threadId, message, reply);
@@ -1119,6 +1128,7 @@ export function updateMessage(threadId: string, message: Message, within?: () =>
     if (prior) afterUpdate(database, threadId, message, prior.position, (prior.parent_type === null ? undefined : prior.parent) !== message.parentId, splicing);
     trackImages(database, threadId, message);
     trackAttachmentNames(database, threadId, message);
+    noteFluxCaptureHold(database,threadId,message);
     captureMessage(database,threadId,message);
     setupFactsCache(database).touch(threadId);
     bumpForMessage(message);
@@ -1429,9 +1439,9 @@ export function setActiveLeaf(threadId: string, leafId: string | null): void {
 
 export function deleteThread(threadId: string): void {
   transaction(database => {
+    // deleting the conversation is one revoke of the whole thread (its lineage rows stay: the marker walks out of them). The capture
+    // commits it (capture.ts captureThreadDeletion), whatever memory captured; a second commit here doubled every deletion's mark walk.
     captureThreadDeletion(database,threadId);
-    // deleting the conversation is one revoke of the whole thread (its lineage rows stay: the marker walks out of them)
-    commitRevoke(database, { kind: "thread", threadId, cause: "delete-conversation" });
     // the durable proof that the OWNER deleted this conversation, committed with its rows (owner-deletions.ts)
     recordOwnerDeletion(database, threadId);
     const indexed = dropThreadSearchRows(database, threadId); // before the rows it is keyed by go
@@ -1561,6 +1571,11 @@ export interface SearchAudience {
   /** "door": the caller applies the reader door's own verdict to every row, so the withheld-from-bots clause is dropped here and only text rows are
    * candidates. */
   judge?: "door";
+  /** All chats and the bot chat pop-up (CHATS-FINDABILITY-DESIGN 3.5): a line the owner forgot is never a hit there, the owner included. A
+   * forgotten line is one stamped `withheldFromBots: "forgotten"`, or one whose message source the owner forgot (an owner-forget or
+   * forgotten-supporting-source tombstone) or whose source is deleted. Checked inside the verify, so LIMIT counts rows this view may show.
+   * Every other caller leaves it unset and is answered as before. */
+  excludeForgotten?: boolean;
 }
 
 export function searchMessages(
@@ -1597,6 +1612,14 @@ export function searchMessagesWithMeta(
   // may get, and after the LIKE so only a matching row's JSON is read. A "checking" left on disk is no note (never a stored verdict).
   // Not the owner: a Murage-voice row is never a hit either (the reader door, bot-read.ts: a bot never reads Murage's own words).
   const withheld = audience.owner || audience.judge === "door" ? "" : ` AND COALESCE(NULLIF(json_extract(m.json, '$.withheldFromBots'), 'checking'), 0) = 0 AND NOT ${murageVoiceSql("m")}`;
+  // The forgotten-line exclusion (SearchAudience.excludeForgotten): after the LIKE, so only a matching row's JSON and its source are probed
+  // (one primary-key probe of memory_sources, one range seek of memory_tombstones' target index per verified row).
+  const forgotten = audience.excludeForgotten
+    ? " AND COALESCE(json_extract(m.json, '$.withheldFromBots'), '') IS NOT 'forgotten'" +
+      " AND NOT EXISTS (SELECT 1 FROM memory_tombstones t WHERE t.target_type = 'source' AND t.target_id = 'message:' || m.thread_id || ':' || m.id" +
+      " AND t.reason IN ('owner-forget', 'forgotten-supporting-source'))" +
+      " AND NOT EXISTS (SELECT 1 FROM memory_sources s WHERE s.id = 'message:' || m.thread_id || ':' || m.id AND s.state = 'deleted')"
+    : "";
   const doorOnly = audience.judge === "door";
   const verify = doorOnly
     ? "(m.kind = 'text' AND m.text IS NOT NULL AND m.text LIKE ? ESCAPE '\\')"
@@ -1622,7 +1645,7 @@ export function searchMessagesWithMeta(
     if (ids.length === 0) return [];
     const rows = handle.prepare(
       "SELECT m.thread_id, m.id, m.at, m.role, m.kind, m.text, json_extract(m.json, '$.tool.name') AS tool_name, json_extract(m.json, '$.from.name') AS from_name, m.rowid AS rid" +
-      `${audience.owner ? "" : ", m.json AS json"} FROM json_each(?) c CROSS JOIN messages m ON m.rowid = c.value WHERE ${scope}${verify}${withheld}${beforeSql}`,
+      `${audience.owner ? "" : ", m.json AS json"} FROM json_each(?) c CROSS JOIN messages m ON m.rowid = c.value WHERE ${scope}${verify}${withheld}${forgotten}${beforeSql}`,
     ).all(JSON.stringify(ids), ...scopeParams, ...verifyParams(), ...beforeParams) as unknown as Array<SearchRow & { json?: string }>;
     // a `judge: "door"` caller (thread recall) runs the same door over every hit itself, so it can count what it holds back (checking,
     // could not be judged, partial); judged here too, those rows would vanish uncounted

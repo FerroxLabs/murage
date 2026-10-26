@@ -38,6 +38,11 @@ export const OWN_UNASKED: readonly OwnUnaskedRow[] = [
     boundary: "the handler scopes every call by the bot id of the mount's own session; handle and handles[].handle are turn-local record handles; the effect is confined to that bot's memory",
   },
   {
+    mount: "own:memory",
+    tools: ["thread_search", "thread_list", "thread_read"],
+    boundary: "read-only thread recall (server/thread-recall.ts): the thread set is recallThreads of the mount's own session, recomputed from the live roster on every call; every row passes the reader door; 12 calls per turn",
+  },
+  {
     mount: "own:agents",
     tools: [
       "list_bots", "get_bot", "check_delegation", "wait_delegation", "get_permission_status", "list_routines", "skills_list",
@@ -63,8 +68,8 @@ export const OWN_UNASKED: readonly OwnUnaskedRow[] = [
   {
     mount: "own:agents",
     tools: [
-      "project_propose", "propose_outcome", "propose_routine", "propose_routine_action", "request_bot_access", "request_credential",
-      "request_browser_connection", "project_done",
+      "project_propose", "propose_outcome", "propose_routine", "propose_routine_action", "request_bot_access", "request_credential", "ask_user", "show_widget", "update_widget",
+      "request_browser_connection", "project_done", "add_mcp_server",
     ],
     boundary: "each files a proposal the owner accepts in the app; nothing is granted, created, connected or signed off until then",
   },
@@ -146,11 +151,11 @@ export function assertOwnAskTablesDisjoint(
 assertOwnAskTablesDisjoint();
 
 /** The OWN_UNASKED rows that only read Murage's own records: the roster
- * and its lookups, memory search and get, dweb status. These run with no
+ * and its lookups, memory search and get, thread recall, dweb status. These run with no
  * card at every level on every engine (Claude and Codex never ask for
  * them), Ask included. Every other own tool keeps its level's rules. */
 export const OWN_READS: readonly { mount: `own:${OwnBuiltin}`; tools: readonly string[] }[] = [
-  { mount: "own:memory", tools: ["memory_search", "memory_get"] },
+  { mount: "own:memory", tools: ["memory_search", "memory_get", "thread_search", "thread_list", "thread_read"] },
   { mount: "own:agents", tools: OWN_UNASKED.find((row) => row.mount === "own:agents")!.tools },
   { mount: "own:dweb", tools: ["dweb_status", "dweb_repo_status", "dweb_opencode_models"] },
 ];

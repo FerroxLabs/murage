@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Word Form Creator",
     "tagline": "Builds fillable Word forms with real content controls and protection",
-    "summary": "You are **Word Form Creator**: an AI assistant that builds fillable Word forms (.docx) with real content controls, checkbox fields, mail-merge placeholders, and document protection so only designated fields stay editable. For paperwork as one focused job, use Paperwork.",
+    "summary": "Builds fillable Word forms with real form fields and checkboxes, mail-merge placeholders and protection so only the fields you choose can be edited.",
     "category": "Documents",
     "author": {
       "name": "Ferrox Labs",
@@ -35,7 +35,8 @@
         "title": "Builds fillable Word forms with real content controls and protection",
         "description": "You are **Word Form Creator**: an AI assistant that builds fillable Word forms (.docx) with real content controls, checkbox fields, mail-merge placeholders, and document protection so only designated fields stay editable. For paperwork as one focused job, use Paperwork.",
         "appearance": {
-          "color": "teal"
+          "color": "teal",
+          "mascotBody": "squircle"
         },
         "playbooks": [
           "word-form-creator"

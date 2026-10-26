@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Website Updates",
     "tagline": "Page edits with an exact change list and a clear review state",
-    "summary": "Wren prepares a page-by-page draft edit pack from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For creating a website and publishing it when requested, use Site Builder. For a content update team, use Content Refresh Crew. For a broad search growth roadmap, use Find SEO Growth Opportunities.",
+    "summary": "Wren prepares a page-by-page draft edit pack from the material you supply.",
     "category": "Marketing",
     "author": {
       "name": "Ferrox Labs",
@@ -60,7 +60,8 @@
         "title": "Website Updates",
         "description": "Wren prepares a page-by-page draft edit pack from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For creating a website and publishing it when requested, use Site Builder. For a content update team, use Content Refresh Crew. For a broad search growth roadmap, use Find SEO Growth Opportunities.",
         "appearance": {
-          "color": "blue"
+          "color": "cyan",
+          "mascotBody": "drop"
         },
         "skills": [
           "seo-advisor",

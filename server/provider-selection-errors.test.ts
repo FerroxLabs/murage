@@ -3,7 +3,7 @@ import { expect, it, vi } from "vitest";
 
 function fixture(models: Record<string, unknown>[], extra = {}) {
   const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
-  const match = source.match(/function selectedProviderRoute\(selection: ModelSelection, driverKind: string, options: \{ admission\?: boolean \} = \{\}\): ProviderTurnRoute \| undefined \{([\s\S]*?)\n\}/);
+  const match = source.match(/function selectedProviderRoute\(selection: ModelSelection, driverKind: string, options: \{[^}]*\} = \{\}\): ProviderTurnRoute \| undefined \{([\s\S]*?)\n\}/);
   expect(match).not.toBeNull();
   const connection = { id: "fixture", enabled: true, preset: "flux", protocol: "openai", baseUrl: "https://fixture.invalid/v1", key: "FAKE_PRIVATE_ONLY", revision: "r1" };
   const getCatalog = vi.fn(() => ({ models, stale: false, ...extra }));

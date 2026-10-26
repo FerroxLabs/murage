@@ -115,6 +115,12 @@ test.beforeEach(() => {
 test.afterEach(() => { for (const finish of pendingUploads.splice(0)) finish(); });
 test.afterAll(async () => { await server?.close(); if (cache) safeWipeSync(cache); });
 
+/** Task A's draft record (U36: `murage-draft:<draftId>`, design U36-DRAFT-SEND-STATE-106). */
+const DRAFT_A = "murage-draft:bot:clipboard-bot:thread-a";
+async function savedAttachments(page: Page): Promise<Array<{ name: string; kind: string; text?: string }>> {
+  return page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? "null")?.att ?? [], DRAFT_A);
+}
+
 async function openComposer(page: Page) {
   await page.goto(`${origin}/__clipboard`);
   await expect(page.locator("output")).toHaveText("ready");
@@ -206,8 +212,10 @@ test("ordinary text preserves native selection replacement and long text replace
   expect(await pasteText(page, longText)).toBe(true);
   await expect(input).toHaveValue("before  after");
   await expect(page.getByRole("button", { name: "Display pasted text in chat box" })).toHaveCount(1);
-  const saved = await page.evaluate(() => JSON.parse(localStorage.getItem("murage-draft-attachments") ?? "{}"));
-  expect(saved["bot:clipboard-bot:thread-a"]).toEqual([expect.objectContaining({ kind: "paste", text: longText })]);
+  // U36 (design U36-DRAFT-SEND-STATE-106, 68b9631b1): a draft is one record, `murage-draft:<draftId>`, written
+  // under a Web Lock after the edit, so the stored copy is polled.
+  await expect.poll(async () => (await savedAttachments(page)).length).toBe(1);
+  expect(await savedAttachments(page)).toEqual([expect.objectContaining({ kind: "paste", text: longText })]);
   expect(uploads).toHaveLength(0);
 });
 
@@ -222,9 +230,7 @@ test("two delayed uploads remain in their original task draft after navigation",
   await expect(page.getByRole("textbox")).toHaveValue("");
   await page.getByRole("textbox").fill("Task B draft");
 
-  const savedForA = () => page.evaluate(() =>
-    JSON.parse(localStorage.getItem("murage-draft-attachments") ?? "{}")["bot:clipboard-bot:thread-a"] ?? [],
-  );
+  const savedForA = () => savedAttachments(page);
   pendingUploads.shift()!();
   await expect.poll(async () => (await savedForA()).length).toBe(1);
   pendingUploads.shift()!();
@@ -242,20 +248,21 @@ test("two delayed uploads remain in their original task draft after navigation",
 });
 
 test("denied attachment storage retains successive uploads and removal in the mounted draft", async ({ page }, testInfo) => {
-  await page.addInitScript(() => {
-    const key = "murage-draft-attachments";
+  await page.addInitScript((key) => {
     localStorage.setItem(key, JSON.stringify({
-      "bot:clipboard-bot:thread-a": [{
+      v: 3, n: 0, text: "", mode: "chat",
+      att: [{
         kind: "image", id: "saved-baseline", path: "/fixture/attachments/clipboard-99.png",
         name: "prior.png", size: 1, mime: "image/png",
       }],
     }));
     const original = Storage.prototype.setItem;
     Storage.prototype.setItem = function (name: string, value: string) {
-      if (name === key) throw new DOMException("Fixture attachment storage denied", "QuotaExceededError");
+      // Every draft record write is refused (U36: one record per draft): the mounted draft keeps the chips in the tab.
+      if (name.startsWith("murage-draft:")) throw new DOMException("Fixture attachment storage denied", "QuotaExceededError");
       return original.call(this, name, value);
     };
-  });
+  }, DRAFT_A);
   await openComposer(page);
   await expect(page.getByRole("button", { name: "Preview prior.png", exact: true })).toBeVisible();
   expect(await pasteImage(page, { source: "items", name: "first.png" })).toBe(true);
@@ -269,10 +276,7 @@ test("denied attachment storage retains successive uploads and removal in the mo
   await expect(page.getByRole("button", { name: "Preview second.png", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Preview prior.png", exact: true })).toBeVisible();
   expect(uploads).toHaveLength(2);
-  const savedNames = await page.evaluate(() =>
-    JSON.parse(localStorage.getItem("murage-draft-attachments") ?? "{}")["bot:clipboard-bot:thread-a"]
-      .map((attachment: { name: string }) => attachment.name),
-  );
+  const savedNames = (await savedAttachments(page)).map((attachment: { name: string }) => attachment.name);
   expect(savedNames).toEqual(["prior.png"]);
   await page.screenshot({ path: testInfo.outputPath("clipboard-storage-denied.png"), fullPage: true });
 });

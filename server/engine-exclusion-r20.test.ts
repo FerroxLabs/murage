@@ -169,11 +169,11 @@ describe("a renamed running engine is invisible to the process check and is stil
 
 describe("T12: each cause has its own words, and 'is open' is said only when it is open", () => {
   it("the lines", () => {
-    expect(ownerNoticeText("Claude Code", "engine-open")).toBe("Claude Code is open. Close Claude Code and Murage will finish removing this conversation from it.");
-    expect(ownerNoticeText("Claude Code", "engine-open", "Claude")).toBe("Claude Code or the Claude app is open. Close them and Murage will finish removing this conversation from Claude Code.");
-    expect(ownerNoticeText("Claude Code", "engine-unchecked")).toBe("Murage will check again within 10 minutes whether Claude Code is open.");
-    expect(ownerNoticeText("Codex", "held")).toBe("Another program is using Codex's files. Murage will try again in 10 minutes.");
-    expect(ownerNoticeText("Kimi", "aside")).toBe("Kimi started a new file while Murage had the old one set aside. Murage will join them and try again in 10 minutes.");
+    expect(ownerNoticeText("Claude Code", "engine-open")).toBe("Claude Code is open. Murage finishes removing this conversation from it by itself once Claude Code is closed. Nothing is needed from you.");
+    expect(ownerNoticeText("Claude Code", "engine-open", "Claude")).toBe("Claude Code or the Claude app is open. Murage finishes removing this conversation from Claude Code by itself once they are closed. Nothing is needed from you.");
+    expect(ownerNoticeText("Claude Code", "engine-unchecked")).toBe("Murage could not check whether Claude Code is open. It checks again within 10 minutes and finishes removing this conversation by itself.");
+    expect(ownerNoticeText("Codex", "held")).toBe("Another program is using Codex's files. Murage tries again in 10 minutes and finishes removing this conversation by itself.");
+    expect(ownerNoticeText("Kimi", "aside")).toBe("Kimi started a new file while Murage was removing this conversation. Murage joins them and finishes by itself.");
     for (const code of ["engine-open", "engine-unchecked", "held", "aside"] as const) expect(ownerNoticeText("X", code, "Y")).not.toMatch(/—|\bunsafe\b|\bsafe\b/);
   });
 
@@ -189,7 +189,7 @@ describe("T12: each cause has its own words, and 'is open' is said only when it 
       mkdirSync(data, { recursive: true });
       const db = new DatabaseSync(join(data, "messages.db"));
       openDatabases.push(db);
-      const deletions = new ConversationDeletions({ dataDir: data, database: () => db, retryDelaysMs: [] });
+      const deletions = new ConversationDeletions({ dataDir: data, database: () => db, retryDelaysMs: [], owedGraceMs: 0 });
       engineHistoryTestHooks.createWorker = () => new Scripted() as unknown as Worker;
       setup();
       await runConversationDeletion(deletions, { threadIds: ["2e9018ee-1f45-46be-8ed1-7a02fc022807"], engineHomes: fx.homes }, () => true);
@@ -197,9 +197,9 @@ describe("T12: each cause has its own words, and 'is open' is said only when it 
       deletions.dispose();
       return text;
     };
-    expect(await make(() => { fake.processesFail = true; })).toEqual(["Murage will check again within 10 minutes whether Claude Code is open."]);
+    expect(await make(() => { fake.processesFail = true; })).toEqual(["Murage could not check whether Claude Code is open. It checks again within 10 minutes and finishes removing this conversation by itself."]);
     fake.processesFail = false;
-    expect(await make(() => { fake.processes = [proc("/Applications/Claude.app/Contents/MacOS/Claude")]; })).toEqual(["Claude Code or the Claude app is open. Close them and Murage will finish removing this conversation from Claude Code."]);
+    expect(await make(() => { fake.processes = [proc("/Applications/Claude.app/Contents/MacOS/Claude")]; })).toEqual(["Claude Code or the Claude app is open. Murage finishes removing this conversation from Claude Code by itself once they are closed. Nothing is needed from you."]);
     fake.processes = [];
   });
 });
@@ -282,7 +282,7 @@ describe("T10: the packaging gate loads the real addon for the target and refuse
     expect(() => loadEngineExclusionResource("/p/x.node", "win32", "x64", 4, answer([4, "function", "function", "function", true, ["speechToWave"]]), "/App/Murage.exe", win)).toThrow(/FUNCTIONS/);
     expect(() => loadEngineExclusionResource("/p/x.node", "win32", "x64", 4, answer([4, "function", "function", "function", true]), "/App/Murage.exe", win)).toThrow(/FUNCTIONS/);
     expect(calls.at(-1)!.args[1]).toContain(JSON.stringify(WINDOWS_ADDON_FUNCTIONS));
-    expect([...WINDOWS_ADDON_FUNCTIONS].sort()).toEqual([...new Set(["openFile", "handleRead", "handleWrite", "handleSync", "handleLock", "handleMarkDelete", "handleId", "handleSize", "handleClose", "removeTree", ...WINDOWS_NATIVE_FUNCTIONS])].sort());
+    expect([...WINDOWS_ADDON_FUNCTIONS].sort()).toEqual([...new Set(["openFile", "handleRead", "handleWrite", "handleSync", "handleLock", "handleMarkDelete", "handleId", "handleSize", "handleClose", "removeTree", ...WINDOWS_NATIVE_FUNCTIONS, "environment", "cwdOf"])].sort());
     // for real: this machine's Node loads the built addon
     if (built && process.platform !== "win32") {
       const text = loadEngineExclusionResource(built, process.platform, process.arch, ADDON_VERSION, (command, args, env) => spawnSync(command, args, { env: { ...process.env, ...env }, encoding: "utf8" }).stdout, process.execPath);

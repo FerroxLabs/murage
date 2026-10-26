@@ -271,9 +271,9 @@ describe("an abandoned Claude Code lock is replaced only while Claude is seen cl
 
 describe("the owner is told what is open, by its own name", () => {
   it("the Claude app open: '<Engine> or the Claude app is open. Close them ...' (DESIGN-r20 section 7); the engine itself: its own name", () => {
-    expect(ownerNoticeText("Claude Code", "engine-open", "Claude")).toBe("Claude Code or the Claude app is open. Close them and Murage will finish removing this conversation from Claude Code.");
-    expect(ownerNoticeText("Cursor Agent", "engine-open", "Cursor")).toBe("Cursor Agent or the Cursor app is open. Close them and Murage will finish removing this conversation from Cursor Agent.");
-    expect(ownerNoticeText("Claude Code", "engine-open")).toBe("Claude Code is open. Close Claude Code and Murage will finish removing this conversation from it.");
+    expect(ownerNoticeText("Claude Code", "engine-open", "Claude")).toBe("Claude Code or the Claude app is open. Murage finishes removing this conversation from Claude Code by itself once they are closed. Nothing is needed from you.");
+    expect(ownerNoticeText("Cursor Agent", "engine-open", "Cursor")).toBe("Cursor Agent or the Cursor app is open. Murage finishes removing this conversation from Cursor Agent by itself once they are closed. Nothing is needed from you.");
+    expect(ownerNoticeText("Claude Code", "engine-open")).toBe("Claude Code is open. Murage finishes removing this conversation from it by itself once Claude Code is closed. Nothing is needed from you.");
     for (const app of ["Claude", undefined]) expect(ownerNoticeText("Claude Code", "engine-open", app)).not.toMatch(/—|–|\bsafe\b|\bunsafe\b/);
   });
 });
@@ -327,16 +327,41 @@ describe("planning never touches the -wal and -shm of an engine's database", () 
     expect(existsSync(index)).toBe(true);
     for (const suffix of ["-wal", "-shm"]) rmSync(`${index}${suffix}`, { force: true });
     const seen: string[] = [];
-    let heard = 0;
-    const watcher = watch(sessions, (_event, name) => { heard++; if (name && /session_search\.sqlite-(wal|shm)$/.test(String(name))) seen.push(String(name)); });
-    const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    // macOS reports a folder's changes through FSEvents: late, coalesced, and including what happened just before the watch
+    // began (the fixture's own database writes, the removal above). A quiet spell is no proof that those are all in, so each
+    // phase ends with a marker file written into the folder: the stream is ordered, so once the marker is heard, every change
+    // made before it has been heard too. Count only what arrives between the two markers. FSEvents also starts its stream a
+    // moment after watch() returns, and a change made before the stream is live is never reported at all, so the marker is
+    // written again every 250 ms until one write is heard: any write of it that is heard was made after everything before it.
+    let marker = "";
+    let markerHeard: (() => void) | undefined;
+    const watcher = watch(sessions, (_event, name) => {
+      const file = name ? String(name) : "";
+      if (marker && file === marker) { markerHeard?.(); return; }
+      if (/session_search\.sqlite-(wal|shm)$/.test(file)) seen.push(file);
+    });
+    const drain = async (tag: string): Promise<void> => {
+      marker = `.r22-marker-${tag}-${process.pid}`;
+      const path = join(sessions, marker);
+      let writes = 0;
+      const write = () => { writes += 1; writeFileSync(path, `${tag} ${writes}`); };
+      let again: ReturnType<typeof setInterval> | undefined;
+      const heard = new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => { clearInterval(again); reject(new Error(`the folder watch never reported ${marker} (written ${writes} times)`)); }, 15_000);
+        markerHeard = () => { clearTimeout(timer); clearInterval(again); resolve(); };
+      });
+      write();
+      again = setInterval(write, 250);
+      await heard;
+      rmSync(join(sessions, marker), { force: true });
+      marker = "";
+      markerHeard = undefined;
+    };
     try {
-      // macOS reports a folder's changes through FSEvents, late and including what happened just before the watch began (the
-      // fixture's own database writes, the removal above): wait until the folder is quiet, then count only from the plan on
-      for (let rounds = 0, before = -1; rounds < 20 && heard !== before; rounds++) { before = heard; await pause(300); }
+      await drain("before");
       seen.length = 0;
       plan();
-      await pause(1000);
+      await drain("after");
     } finally { watcher.close(); }
     return seen;
   };

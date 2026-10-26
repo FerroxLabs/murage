@@ -2,10 +2,13 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { enabledSlashSkills } from "./use-slash-skills";
 import {
   composerSlashTrigger,
   goalTextFromComposer,
   replaceComposerSlashTrigger,
+  skillSlashRows,
+  slashSkillMatches,
 } from "./composer-commands";
 
 describe("composer slash commands", () => {
@@ -81,5 +84,36 @@ describe("where the menu renders", () => {
   it("keeps the command menu ahead of the mention menu and both ahead of the bar", () => {
     expect(mentionsAt).toBeGreaterThan(commandsAt);
     expect(barWrapperAt).toBeGreaterThan(mentionsAt);
+  });
+
+  it("opens on a skill name with digits", () => {
+    expect(composerSlashTrigger("/weekly-2", 9)).toEqual({ query: "weekly-2", start: 0, end: 9 });
+  });
+
+  it("lists enabled skills as rows, never shadowing a built-in or an engine command", () => {
+    const rows = skillSlashRows([
+      { name: "standup", description: "Writes the weekly standup note." },
+      { name: "goal", description: "A skill that happens to be called goal." },
+      { name: "compact", description: "Same name as an engine command." },
+      { name: "release-notes", description: "Drafts release notes." },
+    ], new Set(["compact"]));
+    expect(rows.map((row) => row.name)).toEqual(["release-notes", "standup"]);
+    expect(slashSkillMatches(rows[1]!, "sta")).toBe(true);
+    expect(slashSkillMatches(rows[1]!, "WEEKLY")).toBe(true);
+    expect(slashSkillMatches(rows[1]!, "release")).toBe(false);
+    expect(replaceComposerSlashTrigger("/sta", { query: "sta", start: 0, end: 4 }, "/standup ")).toEqual({ text: "/standup ", caret: 9 });
+  });
+
+  it("reads only enabled, named skills from the skills listing", () => {
+    expect(enabledSlashSkills({ skills: [
+      { name: "standup", description: "Writes the note.", enabled: true },
+      { name: "draft", description: "Off for now.", enabled: false },
+      { name: 7, description: "broken", enabled: true },
+      { name: "bare", enabled: true },
+    ] })).toEqual([
+      { name: "standup", description: "Writes the note." },
+      { name: "bare", description: "" },
+    ]);
+    expect(enabledSlashSkills(null)).toEqual([]);
   });
 });

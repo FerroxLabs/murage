@@ -6,6 +6,7 @@
 import { MESSAGE_ID_103_OBJECTS } from "./message-id-index.ts"; // 1.0.3: removed by the downgrade's own step too
 import { SEQ_103_OBJECTS } from "./transcript-seq.ts"; // 1.0.3: removed by the downgrade's own step before this one (installation-memory-downgrade.ts)
 import { isInboxProjectionObject } from "./inbox.ts";
+import { UPGRADE_104_TABLES } from "./memory/upgrade-app-tables.ts"; // 1.0.4: dropped by the memory downgrade (schema.ts UPGRADE_DERIVED_TABLES)
 import { PUSH_RETENTION_103_INDEXES } from "./mobile-push-store.ts"; // 1.0.3: removed by the downgrade's own step before this one (installation-memory-downgrade.ts)
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -26,7 +27,7 @@ import { downgradeInstallationMemorySchema } from "./installation-memory-downgra
 import { delegationTurnKey, importLegacyDelegations, legacyImportSkipped, migrateOwnerHandoffRecords } from "./pending-delegations-schema.ts";
 import { initializeImageLibrary, initializeImageOperations } from "./image-operations-schema.ts";
 import { fenceRestoredSql } from "./restore-fence.ts";
-import { insertRoomRequest, markRequestDispatched, pruneTerminalRoomRequests, reconcileRoomRequestsAtBoot, roomRequest, roomRequestByKey } from "./room-requests.ts";
+import { insertRoomRequest, markRequestDispatched, pruneTerminalRoomRequests, reconcileRoomRequestsAtBoot, roomRequest, roomRequestByKey, cancelRoomRequest } from "./room-requests.ts";
 import { SCHEMA_1_0_1 } from "./schema-1.0.1.ts";
 import { recordOwnerDeletion } from "./owner-deletions.ts";
 import { Store } from "./store.ts";
@@ -61,6 +62,8 @@ function setup(origin: Origin = "owner") {
     insertRoomRequest(database(), { id: "root", groupId: "g", verb: "owner_send", fromKind: "owner", toBotId: from.id, targetThreadId: from.threadId, admissionKey: "root", now: 1,
       lineage: { rootThreadId: from.threadId, origin: "desktop", audienceFingerprint: "owner", notOwnerAudience: false, unattended: false } });
     markRequestDispatched(database(), "root", { now: 1 });
+    // a room hand-off starts once the turn that made it has settled: that turn waits on its asks (F3: a turn still running at boot ends its whole subtree)
+    database().prepare("UPDATE room_requests SET state='waiting_bot', waiting_since=1 WHERE id='root'").run();
     extra = { prepareDelegation: (fromBotId: string, to: string, source: string, _m: string, id: string) => {
       insertRoomRequest(database(), { id, groupId: "g", verb: "ask", fromKind: "bot", fromBotId, toBotId: to, parentId: "root", returnThreadId: source, returnBotId: fromBotId, admissionKey: `ask:delegation:${id}`, now: 2 });
       return "room" as const;
@@ -213,7 +216,8 @@ describe("2. a pruned or unknown request can no longer bring a hand-off back", (
     await until(() => starts === 1);
     _simulateRestart();
     reconcileStartedDelegations();                                       // before the room sweep: receipt, row gone
-    expect(reconcileRoomRequestsAtBoot(database(), 3)).toMatchObject({ unknown: 2 });   // the room turn and the hand-off's request
+    expect(reconcileRoomRequestsAtBoot(database(), 3)).toMatchObject({ unknown: 1 });     // the hand-off's request (the room turn waits on it and is woken)
+    cancelRoomRequest(database(), "root", { now: 3 });                   // the room turn is let go too, so nothing under the root is live at the prune
     pruneTerminalRoomRequests(database(), 3 + 31 * 24 * 60 * 60 * 1000);
     expect(roomRequestByKey(database(), `ask:delegation:${id}`)).toBeNull();   // pruned
     drainDelegations(s.b, s.approvalBus, s.from.threadId, () => { starts++; });
@@ -397,7 +401,7 @@ describe("5. the downgrade drops every 1.0.2 application object (frozen list) an
     const head = db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema").all() as Array<{ type: string; name: string; tbl_name: string; sql: string | null }>;
     const known = new Set(SCHEMA_1_0_1.map((object) => object.name));
     const listed = new Set<string>([...APP_SCHEMA_102_ADDITIONS.triggers, ...APP_SCHEMA_102_ADDITIONS.indexes, ...APP_SCHEMA_102_ADDITIONS.tables]);
-    const unlisted = head.filter((row) => row.sql !== null && !row.name.startsWith("memory_") && !row.tbl_name.startsWith("memory_") && !known.has(row.name) && !listed.has(row.name) && !SEQ_103_OBJECTS.includes(row.name) && !MESSAGE_ID_103_OBJECTS.includes(row.name) && !PUSH_RETENTION_103_INDEXES.some(([name]) => name === row.name) && !isInboxProjectionObject(row)).map((row) => row.name); // (the Inbox projection is derived data: a restore and the snapshot inspector treat it so)
+    const unlisted = head.filter((row) => row.sql !== null && !row.name.startsWith("memory_") && !row.tbl_name.startsWith("memory_") && !known.has(row.name) && !listed.has(row.name) && !SEQ_103_OBJECTS.includes(row.name) && !MESSAGE_ID_103_OBJECTS.includes(row.name) && !(UPGRADE_104_TABLES as readonly string[]).includes(row.name) && !PUSH_RETENTION_103_INDEXES.some(([name]) => name === row.name) && !isInboxProjectionObject(row)).map((row) => row.name); // (the Inbox projection is derived data: a restore and the snapshot inspector treat it so)
     expect(unlisted, "a 1.0.2 object that downgradeApplicationSchemaTo101 would leave behind").toEqual([]);
     for (const name of listed) expect(known.has(name), `${name} is in both lists`).toBe(false);
     if (!haveV101) return;
