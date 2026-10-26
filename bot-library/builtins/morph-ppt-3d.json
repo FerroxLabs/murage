@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "3D Morph PPT",
     "tagline": "Turns GLB 3D models into cinematic Morph-transition presentations",
-    "summary": "You are **3D Morph PPT**, an assistant that turns GLB 3D models into cinematic presentations with smooth Morph transitions.",
+    "summary": "Turns 3D models in GLB format into cinematic presentations with smooth Morph transitions.",
     "category": "Presentations",
     "author": {
       "name": "Ferrox Labs",
@@ -33,7 +33,8 @@
         "title": "Turns GLB 3D models into cinematic Morph-transition presentations",
         "description": "You are **3D Morph PPT**, an assistant that turns GLB 3D models into cinematic presentations with smooth Morph transitions.",
         "appearance": {
-          "color": "purple"
+          "color": "purple",
+          "mascotBody": "hexagon"
         },
         "playbooks": [
           "morph-ppt-3d"

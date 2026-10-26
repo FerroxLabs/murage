@@ -54,7 +54,8 @@
         "title": "Print on Demand",
         "description": "Merch prepares a product concept set with artwork briefs for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For broader storefront work, use Storefront. For visuals, video and general social content, use Creator.",
         "appearance": {
-          "color": "teal"
+          "color": "teal",
+          "mascotBody": "squircle"
         },
         "skills": [
           "print-on-demand-creator",

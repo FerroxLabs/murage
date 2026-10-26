@@ -14,6 +14,7 @@ import {
 import { Card, CommandLine } from "./SettingsPrimitives";
 import { cn } from "@/lib/cn";
 import { api } from "@/state/store";
+import { openLocalVmViewer, withoutViewerUrl } from "@/lib/local-vm-viewer";
 import { confirmInWindow, oneAtATime } from "@/lib/window-confirm";
 
 type Action = "pull" | "run" | "start" | "stop" | "remove" | "recreate";
@@ -39,7 +40,6 @@ interface Status {
   container_name: string;
   workspace_path: string;
   workspace_guest_path: string;
-  viewer_url: string;
   idle_timeout_ms: number;
   mode: "shared" | "per-bot";
   max_instances: number;
@@ -112,7 +112,7 @@ export function LocalComputerSection() {
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
     const body = await api("/api/local-computer", { signal });
-    setStatus(body as Status);
+    setStatus(withoutViewerUrl(body as Status) as Status);
     setError(null);
   }, []);
 
@@ -149,7 +149,21 @@ export function LocalComputerSection() {
       method: "POST",
       body: "{}",
     });
-    setStatus(body as Status);
+    setStatus(withoutViewerUrl(body as Status) as Status);
+  };
+
+  // Watch screen opens in Murage's own viewer window. The address (it carries the desktop password) is fetched for that one
+  // handoff and is never kept in this page's state or put in a link.
+  const watchScreen = async () => {
+    const viewer = window.muragebox?.desktopViewer;
+    if (!viewer) return;
+    setError(null);
+    try {
+      const opened = await openLocalVmViewer(() => api("/api/local-computer"), viewer, "Local VM", "local-vm");
+      if (!opened) setError("Murage could not open the Local VM screen.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
   };
 
   // A double click, or a click while the question is open, must not start
@@ -250,15 +264,14 @@ export function LocalComputerSection() {
           >
             <RefreshCw size={12} /> Re-check
           </button>
-          {ready && !perBot && (
-            <a
-              href={status?.viewer_url ?? c?.view}
-              target="_blank"
-              rel="noreferrer"
+          {ready && !perBot && window.muragebox?.desktopViewer && (
+            <button
+              type="button"
+              onClick={() => void watchScreen()}
               className="flex items-center gap-1.5 rounded-lg border border-hairline/40 px-2.5 py-1 text-[12.5px] text-ink hover:bg-control"
             >
               <ExternalLink size={12} /> Watch screen
-            </a>
+            </button>
           )}
         </div>
         {error && <div className="mt-3 rounded-lg bg-danger/10 px-3 py-2 text-[12px] text-danger">{error}</div>}

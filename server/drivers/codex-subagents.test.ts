@@ -5,7 +5,9 @@ import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ChildProcess } from "node:child_process";
+import * as procs from "../procs.ts";
 
 import type { ProviderInstance } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
@@ -102,6 +104,58 @@ describe("CodexDriver sub agents (fake app-server)", () => {
     const last = (recorder.events.filter((e) => e.type === "turn.subtask").at(-1) as any).subtasks;
     expect(last.every((s: any) => s.status === "failed")).toBe(true);
     expect(recorder.events.some((e) => e.type === "runtime.error")).toBe(false);
+  });
+
+  // STOP1: a Stop on a held turn (the parent ended, its helpers run) ends as that Stop whichever path then settles it. The kill
+  // is held so the app-server lives on after the Stop: it gets the deny of the helper's ask and its helpers (or the cap) end the
+  // turn afterwards, the order in which these paths used to report the stopped turn as finished.
+  const stopHeld = async (threadId: string) => {
+    const { turnId } = await send(threadId);
+    await recorder.until((e) => e.type === "request.opened" && e.threadId === threadId);
+    const held: ChildProcess[] = [];
+    const kill = vi.spyOn(procs, "killCliTree").mockImplementation((child) => { held.push(child); });
+    const confirm = vi.spyOn(procs, "awaitCliTreeStopped").mockResolvedValue(true);
+    try {
+      await instance.adapter.interruptTurn(threadId, turnId);
+      const done = (await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId)) as any;
+      expect(held.length).toBeGreaterThan(0);
+      return done;
+    } finally {
+      kill.mockRestore();
+      confirm.mockRestore();
+      for (const child of held) { procs.killCliTree(child); await procs.awaitCliTreeStopped(child); }
+    }
+  };
+
+  it("a Stop on a held turn stays cancelled when the helpers finish after it (STOP1 race)", async () => {
+    process.env.FAKE_CODEX_BG_ASKS = "1";
+    const done = await stopHeld("t-cx-stop-race");
+    expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
+    expect(readFileSync(log, "utf8")).toContain("finished");
+    expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+    expect(recorder.events.some((e) => e.type === "runtime.error")).toBe(false);
+  });
+
+  it("a Stop on a held turn stays cancelled when the parent answers its helpers after it (STOP1 race)", async () => {
+    process.env.FAKE_CODEX_BG_ASKS = "1";
+    process.env.FAKE_CODEX_BG_WAKE = "1";
+    // a grace far past the fake's 30 ms wake, so the parent's reply (not the grace) is what ends the held turn
+    process.env.MURAGE_CODEX_WAKE_GRACE_MS = "20000";
+    const done = await stopHeld("t-cx-stop-wake");
+    expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
+    const reply = recorder.events.findIndex((e) => e.type === "item.completed" && e.itemType === "assistant_text" && e.text === "All helpers reported.");
+    expect(reply).toBeGreaterThan(-1);
+    expect(reply).toBeLessThan(recorder.events.findIndex((e) => e.type === "turn.completed"));
+    expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+  });
+
+  it("a Stop on a held turn is not turned into the background cap (STOP1 race)", async () => {
+    process.env.FAKE_CODEX_BG_ASKS = "1";
+    process.env.FAKE_CODEX_BG_HOLD = "1";
+    process.env.MURAGE_BACKGROUND_CAP_MS = "1500";
+    const done = await stopHeld("t-cx-stop-cap");
+    expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
+    expect(recorder.events.some((e) => e.type === "item.completed" && e.itemType === "assistant_text" && e.text.includes("Stopped waiting"))).toBe(false);
   });
 
   it("ends at the cap with a plain note", async () => {

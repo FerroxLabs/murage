@@ -48,7 +48,8 @@
         "title": "Privacy",
         "description": "Veil prepares a data inventory with purposes and recipients for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For a broader legal exposure review, use Counsel.",
         "appearance": {
-          "color": "purple"
+          "color": "purple",
+          "mascotBody": "drop"
         },
         "skills": [
           "legal-gdpr",

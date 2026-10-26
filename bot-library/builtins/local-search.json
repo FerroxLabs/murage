@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Local Search",
     "tagline": "A local listing review, four profile posts and prioritized corrections",
-    "summary": "Pin prepares a monthly local listing report from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For channel strategy, use Channels. For a broad search growth roadmap, use Find SEO Growth Opportunities. For a combined local search and reviews team, use Local SEO & Reviews Desk.",
+    "summary": "Pin prepares a monthly local listing report from the material you supply.",
     "category": "Marketing",
     "author": {
       "name": "Ferrox Labs",
@@ -54,7 +54,8 @@
         "title": "Local Search",
         "description": "Pin prepares a monthly local listing report from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For channel strategy, use Channels. For a broad search growth roadmap, use Find SEO Growth Opportunities. For a combined local search and reviews team, use Local SEO & Reviews Desk.",
         "appearance": {
-          "color": "green"
+          "color": "red",
+          "mascotBody": "circle"
         },
         "skills": [
           "seo-advisor",

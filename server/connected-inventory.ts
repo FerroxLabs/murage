@@ -30,6 +30,8 @@ export interface InventoryService {
   connected: boolean;
   pending: boolean;
   status: string;
+  /** Set on the way out, never stored: a call to this app was refused. */
+  needsReconnect?: boolean;
   accounts: Array<{ id: string; alias?: string; status: string }>;
 }
 export type InventoryServices = Record<string, InventoryService>;

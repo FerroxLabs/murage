@@ -572,12 +572,13 @@ describe("Lee_J / Phantom: delegated team replies after permission, roster and s
       const binding = (await api("POST", "/api/memory/action", { action: "humans" })).body.bindings?.[0];
       expect(binding, "no human binding to link").toBeTruthy();
       expect((await api("POST", "/api/memory/action", { action: "human-link", bindingId: binding.id, expectedRevision: binding.revision, as: "person" })).status).toBe(200);
-      // measured, not required: with memory on, a delegated reply never reaches a linked person today, changed or not (the dres row carries
-      // "Delegation to @X did not finish: Result not shown: where it came from was not recorded", result-egress.ts origin_unconfirmed on the
-      // nested hand-off, not a revocation). What this flow guards is that no withheld, checking or no-answer line reaches the person either.
+      // SL-E (lanes/release104/designs/SL-E.md): with no change in flight, the teammate's words reach the linked person's conversation (the
+      // watch settle judges the reply as the person's own, both threads that person's unshared ones). The straddle cases below stay measured
+      // (EXTENDED); what they guard is that no withheld, checking or no-answer line reaches the person.
       const noBad = (o: { label: string; bad: string[]; wordsInRow: boolean }) => { measure({ kind: "person-verdict", label: o.label, words: o.wordsInRow }); expect({ label: o.label, bad: o.bad }).toEqual({ label: o.label, bad: [] }); };
       await waitWindowClosed("f-person: before");
-      noBad(await personOnce("f-person-base"));
+      const base = await personOnce("f-person-base");
+      expect({ label: base.label, words: base.wordsInRow, bad: base.bad }).toEqual({ label: base.label, words: true, bad: [] });
       const at = Date.now();
       await settings();
       measure({ kind: "change", label: "f-person-settings", stateRightAfter: windowState() });

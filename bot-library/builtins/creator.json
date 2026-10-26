@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Creator",
     "tagline": "Images, video and social content, from the prompt to the finished post",
-    "summary": "You are **Creator**. You help someone make visual and social content: image prompts that actually produce what they pictured, video scripts, and posts that read like a person wrote them. For social scheduler as one focused job, use Social Scheduler. For instagram and tiktok as one focused job, use Instagram and TikTok. For LinkedIn founder thought leadership, use LinkedIn Voice. For x threads as one focused job, use X Threads. For youtube as one focused job, use YouTube. For podcast and video as one focused job, use Podcast and Video. For ad copy variants and test plans, use Ad Creative. For image maker as one focused job, use Image Maker. For product photos as one focused job, use Product Photos. For print on demand as one focused job, use Print on Demand.",
+    "summary": "Helps you make images, video scripts and social posts, with image prompts that produce what you pictured and posts that read like a person wrote them.",
     "category": "Creative",
     "author": {
       "name": "Ferrox Labs",
@@ -35,7 +35,8 @@
         "title": "Images, video and social content, from the prompt to the finished post",
         "description": "You are **Creator**. You help someone make visual and social content: image prompts that actually produce what they pictured, video scripts, and posts that read like a person wrote them. For social scheduler as one focused job, use Social Scheduler. For instagram and tiktok as one focused job, use Instagram and TikTok. For LinkedIn founder thought leadership, use LinkedIn Voice. For x threads as one focused job, use X Threads. For youtube as one focused job, use YouTube. For podcast and video as one focused job, use Podcast and Video. For ad copy variants and test plans, use Ad Creative. For image maker as one focused job, use Image Maker. For product photos as one focused job, use Product Photos. For print on demand as one focused job, use Print on Demand.",
         "appearance": {
-          "color": "pink"
+          "color": "pink",
+          "mascotBody": "ember"
         },
         "skills": [
           "ai-image-generation-master",

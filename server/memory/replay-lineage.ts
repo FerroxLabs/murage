@@ -38,7 +38,7 @@ import { denyLookup, lineageLive, memoryLookup } from "./deny-read.ts";
 import { chainJudge } from "../bot-read.ts";
 import type { Message } from "../store.ts";
 import { readTimeRetired, withoutDroppedTableTriggers } from "./read-time-retired.ts";
-import { memoryRefKey } from "./lineage-types.ts";
+import { FOOTPRINT_STAR, memoryRefKey } from "./lineage-types.ts";
 type DatabaseLike = ReturnType<typeof database>;
 
 // One prepared statement per SQL text, kept for the life of the connection. The checks here run
@@ -2302,7 +2302,13 @@ function recordRestsOnWithheldMessageWork(allowance: LineageAllowance, recordId:
 
 /** A reply made under a memory receipt, built on one (its output roots),
  * or a copy of one: what a reader whose words were not proven may not be quoted. */
-export function messageMadeWithMemory(threadId: string, messageId: string): boolean {
+export function messageMadeWithMemory(threadId: string, messageId: string): boolean;
+/** SL-E r3 E3b (lanes/release104/designs/SL-E.md section 10, W1-W8): the same question for a proven person reader whose scopes are `scopeIds`
+ * (S(P)): "withheld" when the line rests on memory the person may not read, "checking" when whose memory it rests on cannot be proven, "shown"
+ * when it rests on none or only on the person's own. Only the result gate passes `scopeIds`, and only from a person proof. */
+export function messageMadeWithMemory(threadId: string, messageId: string, scopeIds: readonly string[]): "shown" | "withheld" | "checking";
+export function messageMadeWithMemory(threadId: string, messageId: string, scopeIds?: readonly string[]): boolean | "shown" | "withheld" | "checking" {
+  if (scopeIds !== undefined) return personMemoryVerdict(threadId, messageId, scopeIds);
   const db = database();
   if (ancestryWithheld(db, threadId) || Boolean(messageCopy(threadId, messageId)) || Boolean(stmt(db, "SELECT 1 FROM memory_disclosure_outputs WHERE thread_id=? AND message_id=? LIMIT 1").get(threadId, messageId))) return true;
   // retired (S6): the line's own lineage row says it (a receipt or memory in its ancestry); a generated line with no row is unknown, so made with memory
@@ -2311,6 +2317,34 @@ export function messageMadeWithMemory(threadId: string, messageId: string): bool
     return !row || row.mem !== null || row.foot !== null;
   }
   return Boolean(stmt(db, "SELECT 1 FROM memory_output_roots WHERE thread_id=? AND message_id=? LIMIT 1").get(threadId, messageId));
+}
+function personMemoryVerdict(threadId: string, messageId: string, scopeIds: readonly string[]): "shown" | "withheld" | "checking" {
+  try {
+    const db = database();
+    // W1 partition ancestry, W2 a copy (its originals are on the walk): withheld, as today
+    if (ancestryWithheld(db, threadId) || Boolean(messageCopy(threadId, messageId))) return "withheld";
+    // W3 the read-time judge still decides on this file (lineage not live): today's blind rule
+    if (!readTimeRetired(db)) return "withheld";
+    const row = stmt(db, "SELECT l.lsn AS lsn,l.mem_lsn AS mem,l.footprint AS foot,l.thread_no AS no FROM memory_line_lineage l JOIN memory_thread_no t ON t.no=l.thread_no WHERE t.thread_id=? AND l.message_id=?").get(threadId, messageId);
+    // W4 no lineage row: unknown
+    if (!row) return "checking";
+    if (row.mem === null && row.foot === null) {
+      // W5 an output record whose lineage says nothing: unknown whose memory; no output record: not made with memory
+      const output = Boolean(stmt(db, "SELECT 1 FROM memory_disclosure_outputs WHERE thread_id=? AND message_id=? LIMIT 1").get(threadId, messageId))
+        || Boolean(stmt(db, "SELECT 1 FROM memory_receipt_lines WHERE thread_no=? AND first_lsn<=? LIMIT 1").get(Number(row.no), Number(row.lsn)));
+      return output ? "checking" : "shown";
+    }
+    // W6 (r3.2 R2) a footprint too wide to name: unknown. mem_lsn set with no footprint is a receipt that disclosed no scope (both writers
+    // store an empty fold as NULL; every unknown is FOOTPRINT_STAR or no row): not made with memory at this reader. A stale receipt is
+    // withheld by the watermark at the write-time lookup (W9), which judges mem_lsn.
+    if (row.foot === null) return "shown";
+    if (Number(row.foot) === FOOTPRINT_STAR) return "checking";
+    // W8 every scope of the footprint must be the person's own
+    const members = stmt(db, "SELECT scope_id FROM memory_scope_sets WHERE set_id=? LIMIT 33").all(Number(row.foot)).map(member => String(member.scope_id));
+    if (!members.length || members.length > 32) return "checking";
+    const own = new Set(scopeIds);
+    return members.every(scope => own.has(scope)) ? "shown" : "withheld";
+  } catch { return "checking"; }
 }
 /** Whether the thread holds a reply that rests on memory by its lineage row (room-transcript.ts: a thread with none is read as it is). */
 export function threadHoldsMemoryLines(threadId: string): boolean {

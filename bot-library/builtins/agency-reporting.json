@@ -98,7 +98,8 @@
         "role": "leader",
         "team": "Agency Reporting",
         "appearance": {
-          "color": "orange"
+          "color": "blue",
+          "mascotBody": "squircle"
         },
         "skills": [
           "marketing-analytics-report",
@@ -118,7 +119,8 @@
         "role": "member",
         "team": "Agency Reporting",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "capsule"
         },
         "skills": [
           "lens-marketing-attribution",
@@ -138,7 +140,8 @@
         "role": "member",
         "team": "Agency Reporting",
         "appearance": {
-          "color": "orange"
+          "color": "teal",
+          "mascotBody": "hexagon"
         },
         "skills": [
           "creative-agency-runner",
@@ -158,7 +161,8 @@
         "role": "member",
         "team": "Agency Reporting",
         "appearance": {
-          "color": "purple",
+          "color": "pink",
+          "mascotBody": "blob",
           "mascotExpression": "writing"
         },
         "skills": [

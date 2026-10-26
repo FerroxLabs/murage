@@ -260,6 +260,8 @@ contextBridge.exposeInMainWorld("muragebox", {
   },
   /** Arms exactly one display-media request from the current renderer frame. */
   beginScreenPreviewIntent: () => ipcRenderer.sendSync("screen:preview-intent"),
+  /** Write text to the system clipboard from the desktop process (write-only; main caps it at 1 MB). */
+  copyText: (text) => ipcRenderer.invoke("clipboard:write", text),
   /** One frame of this computer's screen as a data: URL when supported. */
   screenFrame: () => ipcRenderer.invoke("screen:frame"),
   /** Physical USB Android devices. Network ADB is deliberately excluded. */

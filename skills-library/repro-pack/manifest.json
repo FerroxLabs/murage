@@ -1,0 +1,15 @@
+{
+  "id": "repro-pack",
+  "name": "Repro Pack",
+  "version": "1.0.0",
+  "description": "Turns a bug report, a playtest session or a QA pass into a repro pack: exact steps, environment, expected versus actual, evidence (screenshots, console and network notes), a severity call and a minimal reproduction a developer can run first time. Use when the user asks to reproduce a bug, confirm a report, playtest a build or page, run an exploratory QA pass, or write up an issue for developers. Do NOT use for writing automated test suites (use e2e-test-architect) or for fixing the code (use debug-production-issue).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "qa",
+    "bug-report",
+    "playtest",
+    "repro",
+    "testing"
+  ],
+  "requiredCapabilities": []
+}

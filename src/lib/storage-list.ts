@@ -102,3 +102,33 @@ export async function loadMore(get: (url: string) => Promise<StorageListAnswer>,
     return { phase: "failed", stale: (error as { status?: number })?.status === 409 };
   }
 }
+
+// Remove (1.0.4 SL-H): one file at a time from its row, after a confirm. The
+// server writes the file's removed record first, then deletes it; a removed
+// file is never shown or sent again. Not offered on a Cloud home, and not for
+// a bot's picture until the picture changes.
+export const REMOVE_ROUTE = "/api/storage/attachments/remove";
+export const PICTURE_IN_USE_LINE = "Change the bot's picture first";
+export const REMOVE_CONFIRM_LINE = "Remove this file from this computer for good? Messages that show it will say it is unavailable.";
+export const REMOVED_LINE = "File removed.";
+export const REMOVE_PENDING_LINE = "File removed. Murage finishes deleting it from the disk as soon as it can.";
+export const REMOVE_FAILED_LINE = "That file could not be removed. Try again.";
+
+/** Is this row a bot's picture (lookupUse's "Picture of <bot>")? */
+export function isBotPicture(usedIn: UsedIn): boolean {
+  return usedIn.state === "used" && usedIn.labels.some(label => label.startsWith("Picture of "));
+}
+
+type RemoveAnswer = { results?: Array<{ name: string; state: "removed" | "pending" | "refused" | "failed"; error?: string }> };
+
+/** Removes one file and says how it went in one line. `post` is the app's api() with a JSON body. */
+export async function removeFile(post: (url: string, body: unknown) => Promise<RemoveAnswer>, name: string): Promise<{ removed: boolean; line: string }> {
+  let answer: RemoveAnswer | undefined;
+  try { answer = await post(REMOVE_ROUTE, { names: [name] }); }
+  catch (error) { answer = (error as { body?: RemoveAnswer })?.body; }
+  const result = answer?.results?.find(item => item.name === name);
+  if (result?.state === "removed") return { removed: true, line: REMOVED_LINE };
+  if (result?.state === "pending") return { removed: true, line: REMOVE_PENDING_LINE };
+  if (result?.state === "refused") return { removed: false, line: result.error ?? PICTURE_IN_USE_LINE };
+  return { removed: false, line: REMOVE_FAILED_LINE };
+}

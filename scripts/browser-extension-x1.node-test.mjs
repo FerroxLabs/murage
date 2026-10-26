@@ -27,6 +27,7 @@ function fixture(stored = {}, options = {}) {
     if (method === 'Runtime.evaluate' && params.contextId === 8) return { result: { type: 'boolean', value: true } };
     return { value: 'owned' };
   };
+  const removedFiles = new Set();
   const api = {
     webNavigation: { onCompleted: { addListener: l => completion.add(l), removeListener: l => completion.delete(l) } },
     storage: { local: {
@@ -39,7 +40,8 @@ function fixture(stored = {}, options = {}) {
       get: async id => { if (!tabs.has(id)) throw Error('missing'); return tabs.get(id); },
       group: async () => 42, remove: async id => { tabs.delete(id); }, update: async () => ({}),
     },
-    downloads: { cancel: async id => { cancelled.push(id); }, erase: async q => { erased.push(q.id); } },
+    downloads: { cancel: async id => { cancelled.push(id); }, removeFile: async id => { removedFiles.add(id); }, erase: async q => { erased.push(q.id); },
+      search: async query => (Number.isSafeInteger(query?.id) ? [{ id: query.id, state: 'complete', exists: !removedFiles.has(query.id) }] : []) },
     tabGroups: { update: async () => {} }, action: { setBadgeText: async () => {} },
     debugger: { attach: async () => { attaches++; }, detach: async () => { detaches++; }, sendCommand },
   };
