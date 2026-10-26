@@ -42,7 +42,8 @@
         "title": "Strategy One-Pager",
         "description": "Chart prepares a one-page strategy assessment for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For a general decision discussion, use Advisor. For a team reviewing a major business decision, use War Room.",
         "appearance": {
-          "color": "purple"
+          "color": "purple",
+          "mascotBody": "hexagon"
         },
         "skills": [
           "swot-analysis",

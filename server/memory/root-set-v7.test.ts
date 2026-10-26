@@ -70,7 +70,7 @@ const replies = (index: number, count: number) => Array.from({ length: count }, 
 async function v6File(threads: number, count: number): Promise<string> {
   const file = await longThreadsV5(join(copyDir, "v5.db"), threads, count);
   const db = new DatabaseSync(file);
-  try { migrateMemorySchema(db); legacyFile(db); repairOutputRootBackfill(db); v10Again(db); expect(downgradeMemorySchema(db, 6)).toMatchObject({ status: "downgraded", from: 12, to: 6 }); validateMemorySchema(db); }
+  try { migrateMemorySchema(db); legacyFile(db); repairOutputRootBackfill(db); v10Again(db); expect(downgradeMemorySchema(db, 6)).toMatchObject({ status: "downgraded", from: 13, to: 6 }); validateMemorySchema(db); }
   finally { db.close(); }
   return file;
 }
@@ -330,7 +330,7 @@ it("the v7 to v6 downgrade of a 1,200-set chain writes each set in turn, leaves 
   expect(before.get(broken)).toBe("UNPROVABLE");
   const started = Date.now();
   v10Again(db);
-  expect(downgradeMemorySchema(db, 6)).toMatchObject({ status: "downgraded", from: 12, to: 6 });
+  expect(downgradeMemorySchema(db, 6)).toMatchObject({ status: "downgraded", from: 13, to: 6 });
   expect(Date.now() - started).toBeLessThan(120_000);
   validateMemorySchema(db);
   // every set that was provable is now stored whole with exactly the same members

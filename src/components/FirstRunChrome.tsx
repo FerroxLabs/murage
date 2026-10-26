@@ -9,6 +9,7 @@
 // eight card modal whose buttons dropped the person into a settings pane
 // they had never seen.
 
+import { announceSetupView } from "@/lib/app-events";
 import { useEffect, useState, type ReactNode } from "react";
 
 import { api } from "@/state/store";
@@ -17,7 +18,7 @@ import type { SetupStep, SetupView } from "../../shared/setup";
 /** The bot's own bubble. Wider than a text bubble because these carry rows
  *  and fields, but the same skin, because it is the same voice. */
 export const FIRST_RUN_BUBBLE =
-  "w-full max-w-[min(42rem,88%)] max-md:max-w-full rounded-2xl bg-card px-4 py-3 text-[15px] leading-relaxed text-ink";
+  "w-full max-w-[min(var(--chat-bubble-max),var(--chat-card-pct))] max-md:max-w-full rounded-2xl bg-card px-4 py-3 text-[15px] leading-relaxed text-ink";
 
 export const FIRST_RUN_CHIP =
   "min-h-11 rounded-full border border-hairline/50 bg-control px-3.5 text-[13.5px] text-ink hover:bg-raised-hover disabled:opacity-60";
@@ -207,6 +208,7 @@ function scheduleRetry(): void {
 }
 
 function publish(view: SetupView): void {
+  announceSetupView(typeof view.firstRun === "boolean" ? view.firstRun : undefined);
   // A poll that keeps hearing the same answer is a poll that is not earning
   // its request. `JSON.stringify` rather than a hand-picked set of fields:
   // a signature that named the fields it cared about would stop noticing the

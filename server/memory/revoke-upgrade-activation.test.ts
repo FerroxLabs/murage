@@ -97,7 +97,7 @@ it("T1 Astra's path through the real downgrade: a 1.0.2 copy folded under an act
   write102Copy(raw, "T", "copy", 4); // turn 30, line 31: after bulk 4's cap of 20
   raw.close();
   db = database();
-  expect(version(db)).toBe(12);
+  expect(version(db)).toBe(13);
   const S = cap(db, 4);
   expect(S).toBe(next(db) - 1);
   expect(highestStored(db)).toBeLessThanOrEqual(S);
@@ -123,7 +123,7 @@ it("T2 the same round trip moves an ordinary line revoke and an inherit job to t
   expect(page(db, "U", "u-copy")["u-copy"]).toBe("checking:pending");
 });
 
-it("T3 opens that run no step: a v12 file is left as it is; a v10 file with no active job takes no slot", () => {
+it("T3 opens that run no step: a current file is left as it is; a v10 file with no active job takes no slot", () => {
   const { db } = freshFile();
   // the shape 53d2336b0's repair rewrote: an active bulk whose own range row ends above its cap
   job(db, 4, "bulk", 20, "active", "flow", '{"kind":"bulk","cause":"u2"}');
@@ -140,7 +140,7 @@ it("T3 opens that run no step: a v12 file is left as it is; a v10 file with no a
   downgradeMemorySchema(other, 10);
   const g = generation(other);
   migrateMemorySchema(other, "active");
-  expect([version(other), next(other), generation(other), cap(other, 5)]).toEqual([12, 60, g, 20]);
+  expect([version(other), next(other), generation(other), cap(other, 5)]).toEqual([13, 60, g, 20]);
 });
 
 it("T4 a seeding bulk beside an active job: only the active job moves; the seeding bulk keeps its row", () => {
@@ -173,7 +173,7 @@ it("T5 a failure inside the step rolls the whole upgrade back; the next open run
   const again = new DatabaseSync(path); dbs.push(again);
   expect([version(again), next(again), generation(again), ...caps(again)]).toEqual(before);
   migrateMemorySchema(again, "active");
-  expect([version(again), cap(again, 6), next(again)]).toEqual([12, before[1], Number(before[1]) + 1]);
+  expect([version(again), cap(again, 6), next(again)]).toEqual([13, before[1], Number(before[1]) + 1]);
 });
 
 it("T6 after the step: a pre-step line of a later turn is held, and a card patched after the step keeps its uncapped flow row", () => {

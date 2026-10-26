@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Bookkeeper",
     "tagline": "A reconciled month-end pack with questions your accountant can resolve",
-    "summary": "Ledger prepares a month-end pack with supported reports and exceptions. Work from your supplied material or supported connected tools, with source gaps marked for review. For a forecast model from scratch, use Financial Model Creator. For a new checked workbook, use Excel Creator. For broader business financial decisions, use Numbers. For supplier bills matched to orders and receipts before payment review, use Bills Review. I give guidance and drafts, not licensed accounting advice, and I promise no outcome.",
+    "summary": "Ledger prepares a month-end pack with supported reports and exceptions.",
     "category": "Money",
     "author": {
       "name": "Ferrox Labs",
@@ -66,7 +66,8 @@
         "title": "Bookkeeper",
         "description": "Ledger prepares a month-end pack with supported reports and exceptions. Work from your supplied material or supported connected tools, with source gaps marked for review. For a forecast model from scratch, use Financial Model Creator. For a new checked workbook, use Excel Creator. For broader business financial decisions, use Numbers. For supplier bills matched to orders and receipts before payment review, use Bills Review.",
         "appearance": {
-          "color": "blue"
+          "color": "blue",
+          "mascotBody": "squircle"
         },
         "skills": [
           "finance-pl",

@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Contractors",
     "tagline": "A contractor brief and paperwork pack with deliverables and terms made clear",
-    "summary": "Gig prepares a scoped contractor brief and acceptance checklist for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For role design and evaluation strategy, use Talent. For a broader legal exposure review, use Counsel. I give guidance and drafts, not licensed legal, tax or HR advice, and I promise no outcome.",
+    "summary": "Gig prepares a scoped contractor brief and acceptance checklist for your review.",
     "category": "People",
     "author": {
       "name": "Ferrox Labs",
@@ -60,7 +60,8 @@
         "title": "Contractors",
         "description": "Gig prepares a scoped contractor brief and acceptance checklist for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For role design and evaluation strategy, use Talent. For a broader legal exposure review, use Counsel.",
         "appearance": {
-          "color": "blue"
+          "color": "teal",
+          "mascotBody": "hexagon"
         },
         "skills": [
           "legal-contractor",

@@ -50,7 +50,7 @@ export function BrowserExtensionPanelView({ botName, profileId, status, pending,
     <p role="status" aria-live="polite" className="text-ink-secondary">{!status ? (error ? "Browser connection unavailable" : "Checking browser connection…") : connected ? "Browser profile connected" : profileId && status.profiles.length ? "Your selected browser profile is not connected" : "Browser extension not connected"}</p>
     {error && <p role="alert" className="rounded-lg border border-danger/30 p-3 text-danger">{error}</p>}
     {!connected && <div className="flex flex-col gap-3 rounded-lg bg-card p-3">
-      {status?.extensionBuild === "development" && <p>Open Murage for Chrome in your browser to connect. No store listing is available yet. This build uses an unpacked development extension.</p>}
+      {status?.extensionBuild === "development" && <p>Open Murage for Chrome in your browser to connect. This build uses an unpacked development extension.</p>}
       <p className="text-ink-secondary">{status?.helper.reason || (status?.helper.running ? "Murage is waiting for the extension. Open its side panel, then check again." : "The browser helper needs to be connected before your tabs can be shared.")}</p>
       {status?.storeUrl && <a className={`${control} text-center`} href={status.storeUrl} target="_blank" rel="noopener noreferrer">Open Chrome Web Store</a>}
       {status?.helper.problem === "repair" && onRepair && <button className={control} disabled={pending} onClick={() => onRepair(connectBrowser)}>Repair connection</button>}

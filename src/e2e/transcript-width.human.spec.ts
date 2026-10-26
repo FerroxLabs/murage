@@ -312,9 +312,8 @@ function expectWidth(m: Measurement, project: string): void {
     expect(m.widestBubble!.box / m.viewport).toBeGreaterThan(0.92);
     expect(m.widestBubble!.content / m.viewport).toBeGreaterThan(0.85);
   } else {
-    // The desktop reading measure is the point of the 42rem cap: ~65-75
-    // characters. Losing it would be a regression, not a fix.
-    expect(m.widestBubble!.box).toBeLessThanOrEqual(672 + 0.5);
+    // The desktop cap is the shared --chat-bubble-max token (52rem = 832px); a bubble never runs past it.
+    expect(m.widestBubble!.box).toBeLessThanOrEqual(832 + 0.5);
     expect(m.widestBubble!.box).toBeGreaterThan(600);
   }
 }
@@ -365,3 +364,19 @@ test("nothing in the transcript runs off the right edge", async ({ app }, testIn
   // inside its own line box.
   expect(m.chip!.nameScroll).toBeLessThanOrEqual(m.chip!.nameClient + 1);
 });
+
+// 197: the shared width tokens at the sizes people actually use (a small laptop, a 13-inch laptop, a large monitor).
+for (const width of [768, 1120, 1600]) {
+  test(`bubbles keep to the width tokens at ${width}px`, async ({ app }, testInfo) => {
+    test.skip(testInfo.project.name === "mobile", "the phone width is covered above");
+    // Open the conversation at the project's own width (the sidebar folds to a rail below 1100px and hides names), then resize.
+    await openSeeded(app, "chat");
+    await app.setViewportSize({ width, height: 900 });
+    const m = await measure(app);
+    reportWidth(m, `${testInfo.project.name} ${width}`);
+    expect(m.widestBubble!.box).toBeLessThanOrEqual(832 + 0.5);
+    expect(m.widestBubble!.box).toBeLessThanOrEqual(m.scroller.contentWidth * 0.84 + 1);
+    expect(m.widestBubble!.box).toBeGreaterThan(300);
+    expect(m.bodyScrollWidth).toBeLessThanOrEqual(m.viewport);
+  });
+}

@@ -1,6 +1,7 @@
 // Connected apps run through the Flux Router broker (and, for installs that
 // still hold a Worker identity, the legacy broker until it is claimed). No key
 // a person typed in is ever read here: a stored own key stays on disk, unused.
+import { toolSlugsOf, withScopeHint, type ScopeRoute } from "./connector-scope-hint.ts";
 import { DATA_DIR, type AppConfig } from "./config.ts";
 import {
   CONNECTED_APP_ACTION_TIMEOUT_MS,
@@ -19,6 +20,8 @@ import {
   connectedAppPendingText,
   connectedAppRepeatNote,
   connectedAppToolId,
+  connectedAppRequirements,
+  isConnectedAppLookup,
   connectedAppUnknownText,
   connectedAppUnrecordedText,
   type ConnectedAppProvenance,
@@ -64,9 +67,19 @@ import {
   type InventoryReadOptions,
   type InventoryServices,
 } from "./connected-inventory.ts";
+import {
+  accountKeyOf,
+  clearAllHealth,
+  clearNeedsReconnect,
+  healthMark,
+  markNeedsReconnect,
+  needsReconnectSlugs,
+  readAppAnswer,
+  updateMark,
+} from "./connected-app-health.ts";
 import { handOverInitialTools } from "./connector-cache-harness.ts";
 import { INITIAL_GENERATION, INITIAL_TOOLS_ASK_HARNESS } from "./connector-cache.ts";
-import { catalogApp, loadCatalog, type CatalogApp, type CatalogBackend, type CatalogView } from "./app-catalog.ts";
+import { catalogApp, knownApps, loadCatalog, type CatalogApp, type CatalogBackend, type CatalogView } from "./app-catalog.ts";
 
 export interface ConnectedAccountSummary {
   id: string;
@@ -82,6 +95,9 @@ export interface ConnectorServiceState {
   connected: boolean;
   pending: boolean;
   status: string;
+  /** A call to this app came back as an authorization failure: the connection
+   * exists but needs signing in again. Cleared by a call that succeeds. */
+  needsReconnect?: boolean;
   statusReason?: string;
   createdAt?: string;
   accounts: ConnectedAccountSummary[];
@@ -279,6 +295,15 @@ function applyManagedBrokerMessageInner(message: unknown): boolean {
   return true;
 }
 
+/** The workspace Flux key changed: the held broker token belongs to the old
+ * account, so it stops being sent now rather than when the next mint lands. */
+export function dropFluxBrokerToken(): void {
+  if (!managedFluxAccess) return;
+  const before = managedCredentialMark();
+  managedFluxAccess = null;
+  if (managedCredentialMark() !== before) credentialsChanged();
+}
+
 /** The Flux broker as the desktop shell sent it: its URL whenever the broker
  * is turned on for this build, and the token once one has been minted. */
 export function setFluxBrokerAccess(access: unknown, url: string): void {
@@ -316,6 +341,9 @@ export function resetManagedBrokerState(): void {
   managedLegacyUntil = undefined;
   legacyMovedElsewhere = false;
   legacyRetiredObserved = false;
+  unreachableLoggedAt.clear();
+  lastProbeCause = null;
+  clearAllHealth();
   fluxReadiness = null;
   fluxReadinessProbe = null;
   fluxAccountStatus = null;
@@ -491,15 +519,57 @@ async function settleWithin(promise: Promise<void>, ms: number): Promise<void> {
 let fluxReadiness: { url: string; ready: boolean; at: number } | null = null;
 let fluxReadinessProbe: { url: string; promise: Promise<void> } | null = null;
 
+// Why connected apps read as unreachable. Every path that ends in "unreachable"
+// logs one line with the cause (an HTTP status or an error code, never a token,
+// header, URL or body), at most once per cause per 5 minutes.
+const UNREACHABLE_LOG_THROTTLE_MS = 5 * 60_000;
+type UnreachableRoute = "readiness probe" | "tool call" | "session" | "panel";
+const unreachableLoggedAt = new Map<string, number>();
+let lastProbeCause: string | null = null;
+
+function safeCause(raw: string): string {
+  return raw.replace(/[^A-Za-z0-9_ .:-]/g, "").slice(0, 120) || "unknown";
+}
+
+/** A cause for a failed fetch: its error code (ECONNRESET, ETIMEDOUT, ENOTFOUND)
+ * or, failing that, the error's name (TimeoutError). Never the message. */
+function errorCause(error: unknown): string {
+  const code = (e: unknown): string | undefined => {
+    const c = (e as { code?: unknown } | null)?.code;
+    return typeof c === "string" ? c : undefined;
+  };
+  const named = (e: unknown): string | undefined => {
+    const n = (e as { name?: unknown } | null)?.name;
+    return typeof n === "string" ? n : undefined;
+  };
+  const cause = (error as { cause?: unknown } | null)?.cause;
+  return safeCause(code(error) ?? code(cause) ?? (named(error) === "TypeError" ? named(cause) : undefined) ?? named(error) ?? "unknown");
+}
+
+function logUnreachable(route: UnreachableRoute, cause: string): void {
+  const safe = safeCause(cause);
+  const now = Date.now();
+  const last = unreachableLoggedAt.get(safe);
+  if (last !== undefined && now - last < UNREACHABLE_LOG_THROTTLE_MS) return;
+  unreachableLoggedAt.set(safe, now);
+  if (unreachableLoggedAt.size > 64) unreachableLoggedAt.delete(unreachableLoggedAt.keys().next().value!);
+  console.warn(`connected apps: unreachable (${route}): ${safe}`);
+}
+
 async function probeFluxReadiness(url: string): Promise<void> {
   let ready = false;
+  let cause: string | null = null;
   try {
     const response = await fetch(`${url}/health`, { redirect: "error", signal: AbortSignal.timeout(FLUX_PROBE_TIMEOUT_MS) });
     const body = response.status === 200 ? await response.json().catch(() => null) : null;
     ready = body !== null && typeof body === "object" && (body as { ready?: unknown }).ready === true;
-  } catch {
+    if (!ready) cause = response.status === 200 ? "HTTP 200 health not ready" : `HTTP ${response.status}`;
+  } catch (error) {
     ready = false;
+    cause = errorCause(error);
   }
+  lastProbeCause = cause;
+  if (cause !== null) logUnreachable("readiness probe", cause);
   if (fluxBrokerCandidate()?.url === url) fluxReadiness = { url, ready, at: Date.now() };
 }
 
@@ -624,7 +694,7 @@ export const BROKER_UNREACHABLE =
 export { LEGACY_BROKER_RETIRED, LEGACY_BROKER_RETIRED_FLUX_READY, LEGACY_DAILY_LIMIT };
 
 /** React to what a broker's answer says about the broker itself. */
-async function observeBrokerResponse(broker: BrokerAccess, response: Response, options: { sessionScoped?: boolean } = {}): Promise<void> {
+async function observeBrokerResponse(broker: BrokerAccess, response: Response, options: { sessionScoped?: boolean; route?: UnreachableRoute } = {}): Promise<void> {
   if (broker.kind === "flux") {
     if (response.status === 404 && options.sessionScoped) {
       // A 404 to a request that named an MCP session says that session is
@@ -633,8 +703,10 @@ async function observeBrokerResponse(broker: BrokerAccess, response: Response, o
     }
     if (response.status === 404 || response.status === 503) {
       // 404 is how the Flux broker answers while it is dark.
+      logUnreachable(options.route ?? "panel", `HTTP ${response.status}`);
       invalidateBrokerReadiness();
     } else if (response.status === 401) {
+      logUnreachable(options.route ?? "panel", "HTTP 401 token rejected");
       // EVERY 401 on a Flux data route says this token no longer works, whatever
       // Flux calls the reason: a revocation, an expiry, another device's mint
       // pushing it out. The desktop decides (one forced re-mint, then "another
@@ -970,7 +1042,11 @@ export function connectorAccess(input: {
 }): ConnectorAccess {
   if (input.mounted) return "mounted";
   if (input.botComposio === false) return input.installedFromPackage ? "package-off" : "bot-off";
-  if (!configured(input.cfg)) return fluxSignedInButUnreachable(input.cfg) ? "unreachable" : "unconfigured";
+  if (!configured(input.cfg)) {
+    if (!fluxSignedInButUnreachable(input.cfg)) return "unconfigured";
+    logUnreachable("session", lastProbeCause ?? "no readiness answer");
+    return "unreachable";
+  }
   if (!input.engineMountsConnectors) return "engine";
   // Every gate passed and nothing mounted. `mcpIntegration` only returns
   // null while unconfigured, so this is defensive rather than reachable —
@@ -1405,6 +1481,7 @@ async function relayMcpUpstream(
     identity = backendFingerprint("managed-mcp", url, broker.token);
   } else {
     if (fluxSignedInButUnreachable(cfg)) {
+      logUnreachable("tool call", lastProbeCause ?? "no readiness answer");
       // Say it as the tool's own answer, in plain words, so the model relays
       // "briefly unreachable" rather than an error.
       const answer = jsonRpcFailure(payload, BROKER_UNREACHABLE);
@@ -1447,6 +1524,7 @@ async function relayMcpUpstream(
     // A dropped connection reads as a plain sentence, and readiness is
     // re-checked one negative TTL later by whoever asks next.
     if (broker?.kind === "flux" && error instanceof TypeError) {
+      logUnreachable("tool call", errorCause(error));
       invalidateBrokerReadiness();
       const answer = jsonRpcFailure(payload, BROKER_UNREACHABLE);
       // Refused before anything left is "not sent"; a drop after the request
@@ -1462,7 +1540,7 @@ async function relayMcpUpstream(
   if (broker) {
     // The hot path learns what the broker says about itself exactly as the
     // panel routes do: a retired Worker must stop being chosen here too.
-    await observeBrokerResponse(broker, response, { sessionScoped: forwarded !== undefined });
+    await observeBrokerResponse(broker, response, { sessionScoped: forwarded !== undefined, route: forwarded !== undefined ? "session" : "tool call" });
     if (broker.kind === "flux" && response.status === 404 && forwarded !== undefined) {
       // The session is gone: forget it so nothing forwards it again, and let
       // the caller (the stdio bridge) open a new one and retry.
@@ -1488,6 +1566,7 @@ async function relayMcpUpstream(
   const bytes = new Uint8Array(await response.arrayBuffer());
   if (bytes.byteLength > 20 * 1024 * 1024) throw new Error("Connected-app response exceeded 20 MB");
   assertCurrent();
+  if (broker && response.ok) observeAppAnswer(cfg, payload, bytes);
   if (cacheKey && cachePolicy && response.status === 200) rememberToolResponse(cacheKey, cachePolicy.ttlMs, response.headers.get("content-type"), bytes);
   if (forwarded) rememberTransportSession(forwarded, identity);
   const nextSession = response.headers.get("mcp-session-id") ?? undefined;
@@ -1500,6 +1579,135 @@ async function relayMcpUpstream(
     transportSessionId: nextSession,
     ...(delivery ? { delivery } : {}),
   };
+}
+
+// ── Which app needs signing in again ────────────────────────────────────
+// A tool call that comes back as an authorization failure marks THAT app
+// (connected-app-health.ts); a call to it that succeeds clears the mark. The
+// broker being dark, its token being rejected and a dropped connection are
+// whole-broker cases above and never mark an app. A 403 (a missing permission
+// scope, a policy refusal, from the app or from the broker) is not a sign-in
+// failure: signing in again would not change it, so it never marks an app
+// either; only a 401, a rejected or expired grant, or an explicit reconnect
+// signal does.
+
+/** The tool slugs a request names, or none for a lookup or a non-call. */
+function toolsNamedBy(payload: JsonValue): string[] {
+  const message = payload && typeof payload === "object" && !Array.isArray(payload) ? payload as Record<string, JsonValue> : null;
+  const params = message?.method === "tools/call" && message.params && typeof message.params === "object" && !Array.isArray(message.params)
+    ? message.params as Record<string, JsonValue> : null;
+  if (!params) return [];
+  const name = String(params.name ?? "");
+  if (!name || isConnectedAppLookup(name) || isConnectedAppStatusTool(name)) return [];
+  const named = connectedAppRequirements(params.arguments, name).map((entry) => entry.tool);
+  if (named.length) return named;
+  const bare = connectedAppToolId(name);
+  return /^COMPOSIO_/.test(bare) ? [] : [bare];
+}
+
+function noteNeedsReconnect(cfg: AppConfig, slug: string, cause: string): void {
+  const owner = inventoryOwner(cfg);
+  if (!owner) return;
+  const held = peekInventory(owner);
+  const fresh = markNeedsReconnect(owner, slug, cause, held?.[slug] ? accountKeyOf(held[slug]!.accounts) : null);
+  if (fresh) console.warn(`connected apps: ${safeCause(slug)} needs reconnecting: ${safeCause(cause)}`);
+}
+
+function observeAppAnswer(cfg: AppConfig, payload: JsonValue, bytes: Uint8Array): void {
+  const tools = toolsNamedBy(payload);
+  if (!tools.length) return;
+  const requestId = (payload as { id?: unknown } | null)?.id;
+  const reading = readAppAnswer(tools, requestId, bytes);
+  const owner = inventoryOwner(cfg);
+  for (const [slug, cause] of reading.failed) noteNeedsReconnect(cfg, slug, cause);
+  if (owner) for (const slug of reading.ok) if (!reading.failed.has(slug)) clearNeedsReconnect(owner, slug);
+}
+
+/** The inventory with each app that needs signing in again marked so. A mark
+ * ends when the person signs in again (the set of active accounts changed).
+ * A mark made before any inventory was held takes the first active set seen,
+ * so a later sign-in still ends it. When a Reconnect named the account it
+ * replaces, that account is retired only now, once a NEW active account for
+ * the app exists: never before the new sign-in has finished. */
+function withAppHealth<T extends { connected: boolean; status?: string; needsReconnect?: boolean; accounts?: Array<{ id: string; status: string }> }>(
+  cfg: AppConfig,
+  owner: string | null,
+  services: Record<string, T>,
+): Record<string, T> {
+  if (!owner) return services;
+  const slugs = needsReconnectSlugs(owner);
+  if (!slugs.length) return services;
+  const out = { ...services };
+  for (const slug of slugs) {
+    const service = out[slug];
+    const mark = healthMark(owner, slug);
+    if (!service || !mark) continue;
+    if (!service.connected) { clearNeedsReconnect(owner, slug); continue; }
+    const key = accountKeyOf(service.accounts);
+    if (mark.accountKey === null) updateMark(owner, slug, { accountKey: key });
+    else if (key !== mark.accountKey) {
+      const before = new Set(mark.accountKey.split(",").filter(Boolean));
+      const gained = key.split(",").some((id) => id !== "" && !before.has(id));
+      const present = new Set((service.accounts ?? []).map((account) => account.id));
+      const retire = gained ? (mark.replaces ?? []).filter((id) => present.has(id)) : [];
+      clearNeedsReconnect(owner, slug);
+      if (retire.length) void retireReplacedAccounts(cfg, slug, retire);
+      continue;
+    }
+    out[slug] = { ...service, status: "NEEDS_RECONNECT", needsReconnect: true };
+  }
+  return out;
+}
+
+/** Remove the accounts a finished Reconnect replaced. Never throws. */
+async function retireReplacedAccounts(cfg: AppConfig, slug: string, ids: ReadonlyArray<string>): Promise<void> {
+  let removed = false;
+  for (const id of ids) {
+    if (!validAccountId(id)) continue;
+    try {
+      const response = await brokerRequest(cfg, `/v1/connectors/${encodeURIComponent(slug)}/accounts/${encodeURIComponent(id)}`, { method: "DELETE" });
+      if (response.ok) removed = true;
+    } catch { /* the old account stays; the person can remove it in Connected apps */ }
+  }
+  if (removed) { invalidateConnected(cfg, { drop: true }); connectionsRemoved(); }
+}
+
+/** The name the bot and the chat show for an app: the curated or monogram
+ * label (never one the broker supplied), letters, digits and spaces only. */
+function reconnectLabel(slug: string): string {
+  const clean = (text: string) => text.replace(/[^A-Za-z0-9 ]+/g, " ").replace(/ {2,}/g, " ").trim().slice(0, 40).trim();
+  return clean(knownApps(null, [slug])[slug]?.label ?? "") || clean(slug) || "A connected app";
+}
+
+/** The apps that need signing in again, with what the person needs to act:
+ * the label to show and the accounts to sign in again. */
+export function appsNeedingReconnect(cfg: AppConfig): Array<{ slug: string; label: string; accounts: Array<{ id: string; alias?: string }> }> {
+  const owner = inventoryOwner(cfg);
+  if (!owner || !needsReconnectSlugs(owner).length) return [];
+  const held = peekInventory(owner);
+  const services = held ? withAppHealth(cfg, owner, held as Record<string, InventoryServices[string] & { needsReconnect?: boolean }>) : {};
+  return Object.entries(services)
+    .filter(([, service]) => (service as { needsReconnect?: boolean }).needsReconnect)
+    .map(([slug, service]) => ({
+      slug,
+      label: reconnectLabel(slug),
+      accounts: (service.accounts ?? []).filter((account) => /^active$/i.test(account.status)).map((account) => ({ id: account.id, ...(account.alias ? { alias: account.alias } : {}) })),
+    }));
+}
+
+/** What a bot is told when an app's sign-in no longer works: that app needs
+ * reconnecting and the owner does it in Connected apps. It is not the
+ * brief-outage line, and it names only the apps in this state. */
+export function reconnectSystemPrompt(cfg: AppConfig): string {
+  return reconnectPromptFor(appsNeedingReconnect(cfg).map((app) => app.label));
+}
+
+export function reconnectPromptFor(labels: ReadonlyArray<string>): string {
+  if (!labels.length) return "";
+  const one = labels.length === 1;
+  const list = one ? labels[0]! : `${labels.slice(0, -1).join(", ")} and ${labels.at(-1)}`;
+  const verb = one ? "needs" : "need";
+  return ` ${list} ${verb} reconnecting: ${one ? "its" : "their"} sign-in has stopped working, so calls to ${one ? "it" : "them"} fail until the owner reconnects ${one ? "it" : "them"} in Connected apps, where there is a Reconnect button. If the user asks for work in ${one ? "that app" : "those apps"}, say plainly that ${list} ${verb} reconnecting and ask the owner to do it; do not say the service is briefly unreachable, and do not retry the call until it is reconnected. Other connected apps are unaffected.`;
 }
 
 const NEVER_CONNECTED = new Set(["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "EHOSTUNREACH", "ENETUNREACH", "CERT_HAS_EXPIRED", "DEPTH_ZERO_SELF_SIGNED_CERT", "UNABLE_TO_VERIFY_LEAF_SIGNATURE"]);
@@ -1609,12 +1817,27 @@ function keptReply(op: ConnectedAppOperation, reply: RelayReply, id: unknown, no
   return jsonReply({ ...message, id });
 }
 
+/** Which connection a call goes through, for the missing-permission note. Both brokers hold the connected-apps account for the person, so
+ *  reconnecting changes nothing there (managed); with no broker the account is the person's own, where reconnecting can grant the access. */
+export function scopeRouteFor(broker: BrokerKind | null): ScopeRoute {
+  return broker === null ? "own" : "managed";
+}
+
+/** The reply with the missing-permission note added when the app refused for that reason; the very same reply otherwise. */
+function withScopeRefusalNote(op: ConnectedAppOperation, reply: RelayReply): RelayReply {
+  const call = operationCalls.get(op);
+  const bytes = withScopeHint(reply.bytes, reply.contentType, toolSlugsOf(call?.name, call?.args), call?.route ?? "managed");
+  return bytes === reply.bytes ? reply : { ...reply, bytes };
+}
+
 /** What a request receives once an operation has an outcome. `first` is the
  * request that started it, which gets the broker's own bytes unchanged. */
 function outcomeReply(op: ConnectedAppOperation, outcome: OperationOutcome, id: unknown, first: boolean): RelayReply {
   if (outcome.kind === "answered") {
     connectedAppOperations.delivered(op);
-    return first ? outcome.reply : keptReply(op, outcome.reply, id, Date.now());
+    // The journal keeps the broker's raw answer; the note is added here, on the way to the bot, every time it is read.
+    const answer = withScopeRefusalNote(op, outcome.reply);
+    return first ? answer : keptReply(op, answer, id, Date.now());
   }
   if (outcome.kind === "unknown") return textReply(id, op.fresh ? connectedAppReadUnknownText(op.label) : connectedAppUnknownText(op.label, op.handle, outcome.cause), true);
   if (first) {
@@ -1629,7 +1852,7 @@ const provenanceOf = (op: ConnectedAppOperation): ConnectedAppProvenance => ({ r
 
 /** The call each operation in this process was started with, for the receipt
  * of what the app completed (server/connected-app-receipts.ts). Not journaled. */
-const operationCalls = new WeakMap<ConnectedAppOperation, { name: string; args: unknown; origin?: ConnectedAppOrigin }>();
+const operationCalls = new WeakMap<ConnectedAppOperation, { name: string; args: unknown; route: ScopeRoute; origin?: ConnectedAppOrigin }>();
 /** (above) the call and who made it; the operation itself names the receipt (handle) and when it was dispatched. */
 /** The turn whose bridge made the call that started an action. A status check or a repeat that collects the answer later
  * is another turn's call, but the action, and so its receipt, belongs to this one. */
@@ -1759,7 +1982,7 @@ export async function relayConnectedAppCall(
     const label = connectedAppActionLabel(action.args);
     return textReply(action.id, error.reason === "busy" ? connectedAppBusyText(label) : connectedAppUnrecordedText(label), true);
   }
-  operationCalls.set(op, { name: action.name, args: action.args, ...(options.origin ? { origin: options.origin } : {}) });
+  operationCalls.set(op, { name: action.name, args: action.args, route: scopeRouteFor(connectionBroker(cfg)), ...(options.origin ? { origin: options.origin } : {}) });
   // The receipt is kept when the app answers, not when someone collects: a slow action that finishes after the bot's wait
   // ran out, then a restart before any status check, still leaves its record (the same key is never kept twice).
   void op.done.then((settled) => reportAnswered(op, settled, options.onAnswered), () => undefined);
@@ -1803,7 +2026,8 @@ function loadInventory(cfg: AppConfig, owner: string): () => Promise<InventorySe
 export async function connectedInventory(cfg: AppConfig, options: InventoryReadOptions = {}): Promise<InventoryRead> {
   const owner = inventoryOwner(cfg);
   if (!owner) throw new Error(BROKER_UNAVAILABLE);
-  return readInventory(owner, loadInventory(cfg, owner), { waitMs: 3_000, ...options });
+  const read = await readInventory(owner, loadInventory(cfg, owner), { waitMs: 3_000, ...options });
+  return read.services ? { ...read, services: withAppHealth(cfg, owner, read.services) } : read;
 }
 
 export type PanelInventory =
@@ -1836,7 +2060,7 @@ export async function connectedServices(cfg: AppConfig, options: { fresh?: boole
   const owner = inventoryOwner(cfg);
   if (!owner) throw new Error(BROKER_UNAVAILABLE);
   const read = await readInventory(owner, loadInventory(cfg, owner), { fresh: options.fresh });
-  return read.services ?? {};
+  return withAppHealth(cfg, owner, read.services ?? {});
 }
 
 /** Something this app did may have changed the list: refetch it. `drop` for a
@@ -1901,7 +2125,7 @@ export async function connectionStatus(cfg: AppConfig, slugs: string[]) {
     // A poll that sees a sign-in finish, fail or expire changes the list:
     // refetch it rather than trusting a remembered "pending".
     if (owner && statesDiffer(owner, states)) invalidateInventory(owner);
-    return states;
+    return withAppHealth(cfg, owner, states);
   }).finally(() => { statusFlights.delete(key); });
   statusFlights.set(key, flight);
   return flight;
@@ -1963,6 +2187,8 @@ async function clearDeadAttempts(cfg: AppConfig, slug: string, alias: string): P
     const dead = (services[slug]?.accounts ?? []).filter((account) =>
       validAccountId(account.id)
       && account.alias?.trim().toLowerCase() === alias.toLowerCase()
+      // Never an active account, even one whose app refused its sign-in: it
+      // is the person's only working link until a new sign-in finishes.
       && DEAD_ATTEMPT.test(account.status));
     let removed = false;
     for (const account of dead) {
@@ -1976,20 +2202,40 @@ async function clearDeadAttempts(cfg: AppConfig, slug: string, alias: string): P
   }
 }
 
-/** Mint a browser auth link for one service. Returns { url } or throws. */
-export async function authorizeService(cfg: AppConfig, slug: string, requestedAlias?: string | null) {
+/** Mint a browser auth link for one service. Returns { url } or throws.
+ * `reconnect` names the active account a Reconnect replaces: the new sign-in
+ * is made next to it (under the same label, or the label with a number when
+ * the broker holds that label), and the old account is retired only once the
+ * new one is active (withAppHealth). Nothing is deleted here. */
+export async function authorizeService(cfg: AppConfig, slug: string, requestedAlias?: string | null, options: { reconnect?: string } = {}) {
   const alias = normalizeAccountAlias(requestedAlias);
-  const request: RequestInit = { method: "POST" };
-  if (alias) request.body = JSON.stringify({ alias });
-  let response = await brokerRequest(cfg, `/v1/connectors/${encodeURIComponent(slug)}/authorize`, request);
+  const owner = inventoryOwner(cfg);
+  let replaces: string[] = [];
+  if (owner && options.reconnect && validAccountId(options.reconnect) && healthMark(owner, slug)) {
+    const services = await connectedServices(cfg, { fresh: true }).catch(() => null);
+    const account = services?.[slug]?.accounts.find((entry) => entry.id === options.reconnect);
+    if (account && /^active$/i.test(account.status)) replaces = [account.id];
+  }
+  const post = (label: string | undefined) => {
+    const request: RequestInit = { method: "POST" };
+    if (label) request.body = JSON.stringify({ alias: label });
+    return brokerRequest(cfg, `/v1/connectors/${encodeURIComponent(slug)}/authorize`, request);
+  };
+  let response = await post(alias);
   if (response.status === 409 && alias && await clearDeadAttempts(cfg, slug, alias)) {
     // The broker counts a failed or expired attempt as a label in use. It
     // was dead, so it is gone now: try the same label once more.
-    response = await brokerRequest(cfg, `/v1/connectors/${encodeURIComponent(slug)}/authorize`, request);
+    response = await post(alias);
+  }
+  // A Reconnect under the label the active account still holds: sign in next
+  // to it under a numbered label rather than removing the account first.
+  for (let n = 2; response.status === 409 && alias && replaces.length && n <= 9; n++) {
+    response = await post(`${alias.slice(0, 60)} ${n}`);
   }
   if (!response.ok) await throwBrokerError(response, `Connected apps: HTTP ${response.status}`);
   const body = authUrlResponseSchema.parse(await response.json());
   const url = trustedAuthUrl(body.url, slug);
+  if (owner && replaces.length) updateMark(owner, slug, { replaces });
   invalidateConnected(cfg);
   return { url };
 }

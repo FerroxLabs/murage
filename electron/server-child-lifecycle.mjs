@@ -51,6 +51,12 @@ export function createServerChildLifecycle(child, { timeoutMs = OWNED_WORK_TIMEO
     get exitedRecord() { return exited && typeof pid === "number" ? Object.freeze({ pid, code: exitCode }) : null; },
     get failed() { return failed; },
     exit,
+    /** Send the child a message; false once it exited or its port is closed. */
+    post(message) {
+      if (exited) return false;
+      try { child.postMessage(message); return true; }
+      catch { return false; }
+    },
     stop({ graceful = gracefulClose } = {}) {
       stopRequested = true;
       if (exited) return Promise.resolve();

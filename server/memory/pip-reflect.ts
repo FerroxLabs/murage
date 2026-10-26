@@ -19,10 +19,11 @@ import { heldStep } from "../observe.ts";
 import { applyLivedResult, expireProposals, validOwnerNominations, LIVED_SCHEMA, validLivedResult, type LivedResult } from "./pip-lived.ts";
 import { EPISODE_MAX_HANDLES, writeEpisode, writeTraceEpisode, type TraceThread } from "./pip-episodes.ts";
 import { admissibleSentenceRanges } from "./pip-claims.ts";
-import { MAX_ATTEMPTS, deadlinePassed, ensureDeadline, reconcileAttempt, sweepOrphanTempDirs, type ReaperDeps } from "./pip-reaper.ts";
+import { MAX_ATTEMPTS, deadlinePassed, ensureDeadline, reconcileAttempt, sweepOrphanTempDirs, sweepStaleCredentialCopies, type ReaperDeps } from "./pip-reaper.ts";
 import { HELD_PLUGIN_COPY, LOGIN_ROUTE_COPY, MAX_OUTPUT_BYTES, emptyMissHistory, isReadMoved, recordMiss, runAdmissionFence, type AdmissionFenceAnswer, type AttemptTransport, type BootEpoch, type IsolationReport, type MissHistory, type TextOnlyTurnInput, type TextOnlyTurnResult, type TransportIntent, type Verdict } from "./pip-transport.ts";
 import type { ProviderTurnRoute } from "../provider-routing.ts";
 import type { ContinuityOptions } from "./pip-types.ts";
+import { maskFinancialIdentifiers } from "../../shared/financial-ids.ts";
 
 export { admissibleActionSources, admissibleOwnerSources } from "./pip-admission.ts";
 
@@ -283,7 +284,8 @@ interface CurrentRow { id: string; version: number; kind: string; text: string }
 export function currentLivedRows(db: DatabaseSync, botId: string, excluded: readonly string[] = []): CurrentRow[] {
   const scopeId = ensureScope("bot", botId);
   return db.prepare("SELECT id,version,kind,text FROM memory_records WHERE scope_id=? AND kind IN ('commitment','self-trait') AND state='active' ORDER BY created_at DESC,id LIMIT 24").all(scopeId)
-    .map(r => ({ id: String(r.id), version: Number(r.version), kind: String(r.kind), text: String(r.text) }))
+    // masked like every other read a model sees (bundle.ts hydrateInPass)
+    .map(r => ({ id: String(r.id), version: Number(r.version), kind: String(r.kind), text: maskFinancialIdentifiers(String(r.text)) }))
     .filter(r => livedRowAdmissible(db, botId, r.id, r.version, excluded));
 }
 
@@ -1311,6 +1313,8 @@ export async function maintainPip(deps: ReflectDeps, options: { startup?: boolea
   const persisted = persistedReflectStates();
   const bots = deps.bots().filter(bot => bot.continuity || persisted.has(bot.id));
   if (!bots.length && !persisted.size && !discoverOrphans) return;
+  // 1.0.3's text-only Claude runs copied the owner's login into their temp homes: removed before the orphan sweep, on every platform
+  if (discoverOrphans) sweepStaleCredentialCopies(deps.tmpBase, { platform: deps.reaper?.platform });
   await reconcilePipRuns(deps, { persisted, discoverOrphans, signal });
   if (signal?.aborted) return;
   for (const bot of bots) {

@@ -14,6 +14,8 @@ import { t } from "@/lib/i18n";
 
 export interface OutboxDraft {
   draftId: string;
+  /** This press of Send (lib/drafts.ts): a failure is about (sendId, attemptId), an ack about the sendId alone. */
+  attemptId: string;
   text: string;
   requestText: string;
   attachments: Attachment[];
@@ -41,11 +43,32 @@ export interface OutboxEntry {
   stopGen?: string;
   /** Minted fresh by the press; an automatic retry of this entry replays it, so it never runs anything the press did not. */
   actionId?: string;
+  /** A 1.0.4 entry whose `draft` this outbox stripped (lib/drafts.ts C1): the draft it was sent from, so its settle still
+   * clears those words (or their record) and a later migration still takes its pin. Never posted. */
+  legacyDraft?: { draftId: string; fp: string; replyToId?: string };
   at: number;
   attempts: number;
 }
 
 type OutboxStorage = Pick<Storage, "getItem" | "setItem"> & Partial<Pick<Storage, "removeItem">>;
+
+/** How a send ended, for its draft record (lib/drafts.ts section 4). */
+export type SendOutcome = "acked" | "refused" | "failed" | "cancelled";
+
+/** The draft records (lib/drafts.ts draftJournal): a drafted entry lives in its record, never in the outbox key. */
+export interface OutboxJournal {
+  entries(): OutboxEntry[];
+  classify(entry: { sendId: string; draft?: { draftId?: unknown } }): "record" | "undrafted";
+  holds(entry: OutboxEntry): boolean;
+  settle(entry: OutboxEntry, outcome: SendOutcome): Promise<boolean>;
+  bump(entry: OutboxEntry): Promise<void>;
+  /** Calls `settle` once, when attempt (sendId, attemptId) is no longer its record's send in flight (any tab). */
+  watch?(entry: OutboxEntry, settle: (outcome: SendOutcome | "gone") => void): () => void;
+  /** The draft a 1.0.4 entry carries, kept as `legacyDraft` when it is taken over undrafted. */
+  legacyOwner?(entry: OutboxEntry): OutboxEntry["legacyDraft"];
+  /** That entry settled: `done` runs once its draft has taken the outcome (on disk); until then the entry stays. */
+  settleLegacy?(entry: OutboxEntry, outcome: SendOutcome, done: () => void): Promise<boolean>;
+}
 
 const KEY = "murage-send-outbox";
 /** Unresolved sends the outbox holds. Every entry here is unresolved (a resolved one
@@ -66,14 +89,31 @@ function isEntry(value: unknown): value is OutboxEntry {
     && (e.kind === "bot" ? typeof e.botId === "string" : typeof e.groupId === "string");
 }
 
-export function createOutbox(storage: OutboxStorage | undefined) {
+export function createOutbox(storage: OutboxStorage | undefined, journal?: OutboxJournal) {
+  // Undrafted entries only (engine commands, calls, onboarding, the chip's Send again): kept exactly as before, with
+  // this memory cache standing in when storage refuses writes.
   let memory: OutboxEntry[] | null = null;
   const read = (): OutboxEntry[] => {
     if (memory) return memory;
     let parsed: unknown;
     try { parsed = storage ? JSON.parse(storage.getItem(KEY) ?? "[]") : []; } catch { parsed = []; }
-    memory = Array.isArray(parsed) ? parsed.filter(isEntry) : [];
+    const entries = Array.isArray(parsed) ? parsed.filter(isEntry) : [];
+    // A 1.0.4 entry that carried its draft: the record holds it (the duplicate loses), or it delivers once, undrafted.
+    memory = entries.flatMap((entry) => {
+      if (!entry.draft) return [entry];
+      if (!journal) return [entry];
+      if (journal.classify(entry) === "record") return [];
+      // Undrafted from here on, but the entry keeps which draft it came from (C1): its settle clears those words.
+      const { draft: _draft, ...rest } = entry;
+      const owner = journal.legacyOwner?.(entry);
+      return [{ ...rest, ...(owner ? { legacyDraft: owner } : {}) } as OutboxEntry];
+    });
     return memory;
+  };
+  const drafted = (): OutboxEntry[] => journal?.entries() ?? [];
+  const all = (): OutboxEntry[] => {
+    const records = drafted();
+    return [...read().filter((entry) => !records.some((record) => record.sendId === entry.sendId)), ...records];
   };
   /** True when the entries are on disk (or there is no disk to write to). */
   const write = (next: OutboxEntry[]): boolean => {
@@ -81,13 +121,15 @@ export function createOutbox(storage: OutboxStorage | undefined) {
     try { storage?.setItem(KEY, JSON.stringify(memory)); return true; } catch { return false; }
   };
   return {
-    list: (): OutboxEntry[] => [...read()],
-    has: (sendId: string): boolean => read().some((entry) => entry.sendId === sendId),
+    list: (): OutboxEntry[] => all(),
+    has: (sendId: string): boolean => all().some((entry) => entry.sendId === sendId),
     /** The outbox is a convenience for a reload, not the thing that makes a send safe: the composer
      * keeps the words until the server acknowledges, and the server records each sendId durably.
      * So a missing, blocked or full localStorage never stops a send; the entry is held in memory
      * for this page. Only "full" (too many unresolved sends) leaves the outbox as it was. */
-    add(entry: OutboxEntry): "ok" | "full" {
+    add(entry: OutboxEntry): "ok" | "full" | "gone" {
+      // A drafted entry was written by W1 (its record): it is only checked to still be that record's attempt.
+      if (entry.draft && journal) return journal.holds(entry) ? "ok" : "gone";
       const before = read();
       const others = before.filter((existing) => existing.sendId !== entry.sendId);
       if (others.length >= MAX_OUTBOX_ENTRIES) return "full";
@@ -98,8 +140,28 @@ export function createOutbox(storage: OutboxStorage | undefined) {
       const rest = read().filter((entry) => entry.sendId !== sendId);
       if (rest.length !== read().length) write(rest);
     },
-    bump(sendId: string): void {
-      write(read().map((entry) => (entry.sendId === sendId ? { ...entry, attempts: entry.attempts + 1 } : entry)));
+    /** True when this entry lives in its draft record (a drafted entry with draft records to hold it). Anything
+     * else is undrafted here and keeps today's outbox behaviour, recovery of its words included. */
+    inRecord: (entry: OutboxEntry): boolean => Boolean(entry.draft && journal),
+    /** Every exit of a send: a drafted entry settles on its record; an undrafted one is removed, as before. */
+    settle(entry: OutboxEntry, outcome: SendOutcome): void {
+      if (entry.draft && journal) { void journal.settle(entry, outcome); return; }
+      const remove = () => {
+        const rest = read().filter((existing) => existing.sendId !== entry.sendId);
+        if (rest.length !== read().length) write(rest);
+      };
+      // A 1.0.4 entry taken over undrafted (C1): it leaves only once its draft has taken the outcome, so an acked send's
+      // words never sit in the box with no pin, and its sendId -> draft ownership stays on disk until then.
+      if (entry.legacyDraft && journal?.settleLegacy) { void journal.settleLegacy(entry, outcome, remove).catch(() => undefined); return; }
+      remove();
+    },
+    /** A drafted attempt's record settled (here, in another tab, by a delete): `settle` runs once with how it ended. */
+    watch(entry: OutboxEntry, settle: (outcome: SendOutcome | "gone") => void): () => void {
+      return entry.draft && journal?.watch ? journal.watch(entry, settle) : () => {};
+    },
+    bump(entry: OutboxEntry): void {
+      if (entry.draft && journal) { void journal.bump(entry); return; }
+      write(read().map((existing) => (existing.sendId === entry.sendId ? { ...existing, attempts: existing.attempts + 1 } : existing)));
     },
   };
 }
@@ -185,6 +247,8 @@ export interface DeliveryHooks {
   onReceipt?: (entry: OutboxEntry, body: any) => void;
   /** A definitive refusal, or the give-up. Return true when handled; otherwise the default recovery runs. */
   onFailed?: (entry: OutboxEntry, error: unknown) => boolean | void;
+  /** The attempt was settled elsewhere before it started (another tab, a delete): nothing to show, nothing restored. */
+  onGone?: (entry: OutboxEntry) => void;
 }
 
 export interface DeliveryDeps {
@@ -196,12 +260,10 @@ export interface DeliveryDeps {
   /** The line shows as "Sending" until a receipt or a failure. */
   showSending: (entry: OutboxEntry) => void;
   settleSending: (entry: OutboxEntry) => void;
-  /** Gives the words back to the person after a definitive failure with nobody to tell. */
+  /** Tells the person about a definitive failure of an UNDRAFTED send with nobody to tell. A drafted send's words
+   * are still in its box (its record), so nothing is recovered for it. */
   recover: (entry: OutboxEntry, error: unknown) => void;
   receipt: (entry: OutboxEntry, body: any) => void;
-  /** The server already held a send this device still had in its outbox (a reload, with no composer
-   * waiting on it): lets the draft that sent it clear, as an acknowledgement would. */
-  acknowledgeDraft?: (entry: OutboxEntry) => void;
   /** The server shows this send as a refused chip: every local copy of its words (restored draft, retry
    * lists, frozen composer) gives way to the chip. Runs after the composer callback is settled. */
   releaseRefused?: (sendId: string, entry?: OutboxEntry) => void;
@@ -232,8 +294,35 @@ export function createSendDelivery(deps: DeliveryDeps) {
     return {
       onReceipt: (e, body) => { if (settled) return; settled = true; hooks.onReceipt?.(e, body); },
       onFailed: (e, err) => { if (settled) return true; settled = true; return hooks.onFailed?.(e, err); },
+      onGone: (e) => { if (settled) return; settled = true; hooks.onGone?.(e); },
     };
   };
+  /** The entry each in-flight POST was started with (its attempt id included). Every outcome of that POST settles
+   * this captured attempt, never whatever the outbox holds by then (a Send again may have installed a newer one). */
+  const posting = new Map<string, OutboxEntry>();
+  /** Every "Sending" line this delivery shows, until it settles (audit reads it, C4). */
+  const sending = new Map<string, OutboxEntry>();
+  const showSending = (entry: OutboxEntry) => { sending.set(entry.sendId, entry); deps.showSending(entry); };
+  const settleSending = (entry: OutboxEntry) => { sending.delete(entry.sendId); deps.settleSending(entry); };
+  /** Settlement watches of reconciled drafted attempts, by (sendId, attemptId) (C4). */
+  const reconciledWatches = new Map<string, () => void>();
+  /** A send reconcile (re)posts has no composer hooks, but its record can still be settled by another tab or a delete
+   * while this tab's POST is out or waiting to retry: its Sending line settles then, as a submitted one's does (A7). */
+  const watchReconciled = (entry: OutboxEntry) => {
+    if (!entry.draft) return;
+    const key = `${entry.sendId}\u0000${entry.draft.attemptId}`;
+    if (reconciledWatches.has(key)) return;
+    let settled = false;
+    const stop = deps.outbox.watch(entry, () => {
+      settled = true;
+      reconciledWatches.delete(key);
+      if (hooksFor.has(entry.sendId)) return; // a submit of this tab owns that line; its own watch settles it
+      settleSending(entry);
+    });
+    if (!settled) reconciledWatches.set(key, stop);
+  };
+  /** A 2xx receipt whose body says the send was cancelled is a cancel, never an ack. */
+  const receiptOutcome = (body: any): SendOutcome => (body && typeof body === "object" && body.cancelled === true ? "cancelled" : "acked");
 
   const retryLater = (entry: OutboxEntry, error?: unknown) => {
     const delay = isBusyRefusal(error) ? busyRetryDelayMs(error) : RETRY_DELAYS_MS[Math.min(entry.attempts, RETRY_DELAYS_MS.length - 1)]!;
@@ -241,12 +330,12 @@ export function createSendDelivery(deps: DeliveryDeps) {
   };
 
   const finishFailed = (entry: OutboxEntry, error: unknown) => {
-    deps.outbox.remove(entry.sendId);
-    deps.settleSending(entry);
+    deps.outbox.settle(entry, "failed");
+    settleSending(entry);
     const hooks = hooksFor.get(entry.sendId);
     hooksFor.delete(entry.sendId);
     const handled = hooks?.onFailed?.(entry, error);
-    if (handled !== true) deps.recover(entry, error);
+    if (handled !== true && !deps.outbox.inRecord(entry)) deps.recover(entry, error);
   };
 
   /** The ONE place a send id is resolved against a server refusal: outbox entry, "Sending" line, composer
@@ -258,8 +347,9 @@ export function createSendDelivery(deps: DeliveryDeps) {
     const hooks = hooksFor.get(sendId);
     hooksFor.delete(sendId);
     if (entry) {
-      deps.outbox.remove(sendId);
-      deps.settleSending(entry);
+      // The one path to refused(s): a refused chip the server confirmed.
+      deps.outbox.settle(entry, "refused");
+      settleSending(entry);
     }
     if (entry && hooks?.onFailed) {
       hooks.onFailed(entry, Object.assign(new Error("refused by server"), { status: 409 }));
@@ -269,13 +359,20 @@ export function createSendDelivery(deps: DeliveryDeps) {
 
   async function attempt(sendId: string): Promise<void> {
     const entry = deps.outbox.list().find((candidate) => candidate.sendId === sendId);
-    if (!entry || inFlight.has(sendId)) return;
+    if (inFlight.has(sendId)) return;
+    if (!entry) {
+      // Settled elsewhere while this retry waited (C4): a Sending line still shown for it settles now.
+      const shown = sending.get(sendId);
+      if (shown) settleSending(shown);
+      return;
+    }
     // The overall deadline holds whether or not an attempt ever fails cleanly.
     if (deps.now() - entry.at > OUTBOX_GIVE_UP_MS) {
       finishFailed(entry, Object.assign(new Error(attemptTimedOutSentence()), { status: 408 }));
       return;
     }
     inFlight.add(sendId);
+    posting.set(sendId, entry);
     const controller = new AbortController();
     let cancelTimer: () => void = () => {};
     try {
@@ -296,21 +393,23 @@ export function createSendDelivery(deps: DeliveryDeps) {
         return;
       }
       if (superseded.has(sendId)) {
-        // The original was already settled when it was replaced; the server has this id, so the waiting resend is acknowledged too.
-        deps.receipt(entry, body);
+        // The original was already settled when it was replaced; the server has this id, so the waiting resend is
+        // acknowledged too (an ack is about s, the server's row, so it settles the newer attempt's record as well).
         const waiting = queued.get(sendId);
+        const settled = deps.outbox.inRecord(entry) ? entry : waiting && deps.outbox.inRecord(waiting.entry) ? waiting.entry : undefined;
+        if (settled) deps.outbox.settle(settled, receiptOutcome(body));
+        deps.receipt(entry, body);
         queued.delete(sendId);
         if (waiting) { waiting.hooks.onReceipt?.(waiting.entry, body); waiting.resolve(); }
         return;
       }
-      deps.outbox.remove(sendId);
-      deps.settleSending(entry);
+      deps.outbox.settle(entry, receiptOutcome(body));
+      settleSending(entry);
       deps.receipt(entry, body);
       const hooks = hooksFor.get(sendId);
       hooksFor.delete(sendId);
-      // After a reload no composer hook is stored: the same guarded fallback as reconcile clears the draft that sent it.
-      if (hooks?.onReceipt) hooks.onReceipt(entry, body);
-      else deps.acknowledgeDraft?.(entry);
+      // After a reload no composer hook is stored: the record settle above is the cleanup.
+      hooks?.onReceipt?.(entry, body);
     } catch (error) {
       if (superseded.has(sendId)) {
         // Already settled when replaced; the queued resend (started below) is the one retry.
@@ -321,13 +420,13 @@ export function createSendDelivery(deps: DeliveryDeps) {
       } else if (isDefinitiveFailure(error) || deps.now() - entry.at > OUTBOX_GIVE_UP_MS) {
         finishFailed(entry, error);
       } else {
-        deps.outbox.bump(sendId);
-        const bumped = deps.outbox.list().find((candidate) => candidate.sendId === sendId) ?? entry;
-        retryLater(bumped, error);
+        deps.outbox.bump(entry);
+        retryLater({ ...entry, attempts: entry.attempts + 1 }, error);
       }
     } finally {
       cancelTimer();
       inFlight.delete(sendId);
+      posting.delete(sendId);
       superseded.delete(sendId);
       const next = queued.get(sendId);
       if (next) {
@@ -340,6 +439,11 @@ export function createSendDelivery(deps: DeliveryDeps) {
   function begin(entry: OutboxEntry, hooks: DeliveryHooks): Promise<void> {
     refusedByServer.delete(entry.sendId); // a fresh send (the chip's Send again) is a new attempt
     const held = deps.outbox.add(entry);
+    if (held === "gone") {
+      // A drafted attempt that is no longer its record's send in flight: settled elsewhere before Sending showed.
+      hooks.onGone?.(entry);
+      return Promise.resolve();
+    }
     if (held !== "ok") {
       // Not durable, so not sent and not shown as sent: the words stay with the person.
       const error = Object.assign(new Error(outboxFullSentence()), { status: 507, outbox: held });
@@ -347,7 +451,17 @@ export function createSendDelivery(deps: DeliveryDeps) {
       return Promise.resolve();
     }
     hooksFor.set(entry.sendId, hooks);
-    deps.showSending(entry);
+    showSending(entry);
+    // The record is the state (A7): when another tab (or a delete) settles THIS attempt while this tab's POST is still
+    // out or waiting to retry, its hooks and its Sending line settle here, keyed by (sendId, attemptId). If this tab
+    // settled them first, or a newer attempt of the same id now owns the hooks, this does nothing.
+    deps.outbox.watch(entry, (outcome) => {
+      if (hooksFor.get(entry.sendId) !== hooks) return;
+      hooksFor.delete(entry.sendId);
+      settleSending(entry);
+      if (outcome === "acked" || outcome === "cancelled") hooks.onReceipt?.(entry, { settledElsewhere: true, ...(outcome === "cancelled" ? { cancelled: true } : {}) });
+      else hooks.onGone?.(entry);
+    });
     return attempt(entry.sendId);
   }
 
@@ -359,13 +473,15 @@ export function createSendDelivery(deps: DeliveryDeps) {
       if (!inFlight.has(sendId)) return begin(entry, hooks);
       // A POST for this id is still out (the chip's Send again during it). Never overwrite the live entry or its hooks:
       // settle the original now (its composer thaws), then run this one after the in-flight POST ends.
-      const original = deps.outbox.list().find((candidate) => candidate.sendId === sendId);
+      // The captured attempt (a1), never the outbox's current occupant (a Send again's a2 is already in the record).
+      const original = posting.get(sendId);
       const originalHooks = hooksFor.get(sendId);
       hooksFor.delete(sendId);
       superseded.add(sendId);
       if (original) {
-        deps.outbox.remove(sendId);
-        deps.settleSending(original);
+        // fail(s, a1): a no-op on a record whose out is now a2; an undrafted entry is removed as before.
+        deps.outbox.settle(original, "failed");
+        settleSending(original);
         originalHooks?.onFailed?.(original, REFUSED());
       }
       const earlier = queued.get(sendId);
@@ -384,6 +500,7 @@ export function createSendDelivery(deps: DeliveryDeps) {
         seen.add(e.sendId);
       }
       for (const id of hooksFor.keys()) if (!seen.has(id)) problems.push(`hooks without an outbox entry ${id}`);
+      for (const id of sending.keys()) if (!seen.has(id) && !inFlight.has(id)) problems.push(`Sending without an outbox entry ${id}`);
       for (const id of queued.keys()) if (!inFlight.has(id)) problems.push(`queued resend without an in-flight POST ${id}`);
       return problems;
     },
@@ -394,15 +511,15 @@ export function createSendDelivery(deps: DeliveryDeps) {
         if (known.messageSendIds.has(entry.sendId) || known.pendingSendIds.has(entry.sendId)) {
           // The server accepted it while the acknowledgement was lost: this is that acknowledgement.
           // The same callback a receipt runs, so the composer clears its draft and stops waiting.
-          deps.outbox.remove(entry.sendId);
-          deps.settleSending(entry);
+          deps.outbox.settle(entry, "acked");
+          settleSending(entry);
           const hooks = hooksFor.get(entry.sendId);
           hooksFor.delete(entry.sendId);
-          if (hooks?.onReceipt) hooks.onReceipt(entry, { reconciled: true });
-          else deps.acknowledgeDraft?.(entry);
+          hooks?.onReceipt?.(entry, { reconciled: true });
           continue;
         }
-        deps.showSending(entry);
+        showSending(entry);
+        watchReconciled(entry);
         void attempt(entry.sendId);
       }
     },

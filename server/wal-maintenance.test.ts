@@ -391,10 +391,12 @@ it("r10 finding 2: with the checkpointer dead the server thread never checkpoint
 
 it("r10 finding 2: a checkpointer that keeps dying is restarted without an attempt limit", async () => {
   await ready();
-  walMaintenanceTestHooks.restartDelaysMs = [30];
+  // The pause before each restart is longer than the polling step, so the gone checkpointer is always seen before its
+  // replacement is ready (with a 30 ms pause and the 50 ms default step, a quick restart could be missed: CI 40172017933).
+  walMaintenanceTestHooks.restartDelaysMs = [300];
   for (let round = 0; round < 5; round++) {
     walMaintenanceTestHooks.terminate();
-    await vi.waitFor(() => expect(walMaintenanceReady()).toBe(false), { timeout: 5000 });
+    await vi.waitFor(() => expect(walMaintenanceReady()).toBe(false), { timeout: 5000, interval: 10 });
     await vi.waitFor(() => expect(walMaintenanceReady()).toBe(true), { timeout: 10_000 });
   }
 });

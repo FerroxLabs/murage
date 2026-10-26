@@ -214,3 +214,12 @@ export function stateForBot(bot: MascotBotProfile): EmberState {
 
   return "idle";
 }
+
+/** Motion means something is happening: a resting bot holds a resting pose.
+ * One rule for the sidebar rows and the chat header, so the two cannot drift. */
+export function isMascotAnimated(
+  signals: { busy?: boolean; unread?: boolean },
+  motionKind: string | undefined,
+): boolean {
+  return Boolean(signals.busy) || Boolean(signals.unread) || (motionKind ?? "none") !== "none";
+}

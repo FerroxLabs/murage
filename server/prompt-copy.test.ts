@@ -11,6 +11,7 @@
 // path. Those are listed in FUNCTIONAL_TOKENS below, one reason each, and
 // removed before the brand check. Anything else naming a vendor fails.
 import { renderWorkingContext, withWorkingContext } from "./working-context.ts";
+import { VENUE_BRING_LINE, VENUE_EMPTY_LINE, VENUE_READ_LINE, VENUE_UNAVAILABLE_LINE } from "./venue-awareness.ts";
 import { fitProjectTranscript, trimmedLine, withProjectStatus } from "./project-layers.ts";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,6 +33,7 @@ import {
 } from "./bot-shapes.ts";
 import { INTEGRATION_FACTS, capabilitiesPrimer, type ImageInput, type IntegrationKey, type MemoryMode, type PrimerFacts, type ToolAccess } from "./capabilities-primer.ts";
 import { connectorSystemPrompt, requiredAppsSystemPrompt, type ConnectorAccess } from "./composio.ts";
+import { TURN_ASK_RULES } from "../shared/ask-wording.ts";
 import { unifiedBrowserSystemPrompt } from "./browser-engine.ts";
 import { DEFAULT_HOUSE_RULES } from "./house-rules/default.ts";
 import { IMAGE_DELIVERY_PROMPT } from "./turn-image-dispatch.ts";
@@ -139,6 +141,7 @@ add("project-layers transcript", fitProjectTranscript(["Dax: hi"], 2, 1000, "[Pi
 
 // The bot's own recent work, riding the message (working-context.ts).
 add("working-context", withWorkingContext("", renderWorkingContext([`- Project "Launch", an hour ago: "Drafted the page."`], ["docs/page.md"], ["Daily digest"])));
+add("where-i-belong", ["Where you belong, as of this turn.", VENUE_EMPTY_LINE, VENUE_UNAVAILABLE_LINE, VENUE_READ_LINE, VENUE_BRING_LINE].join("\n"));
 
 // What it learned (memory/lessons.ts), riding the message: the owner's block, a customer's block, and every code-written style line.
 {
@@ -157,6 +160,8 @@ add("room persona", roomPersonaLines({ name: "Moss", title: "Researcher", descri
 add("room members", roomMembersLine("@Moss (Researcher), @Quill", "Sean"));
 add("room bulletin", roomBulletinLine("Ship on Thursdays."));
 add("speak-as", speakAsLine("Moss"));
+// The ask and widget rules every engine turn carries (murage-tool-surface.ts), shown as the "ask-rules" shape row.
+add("ask-rules", TURN_ASK_RULES);
 add("peer-task", peerTaskPrompt("[Delegated by @Moss, task 1] Tidy the notes.", true));
 add("computer-unavailable", COMPUTER_UNAVAILABLE);
 for (const status of ["active", "paused", "done"] as const) add(`project ${status}`, channelProjectSystemLine({ goal: "Launch the site", status, createdAt: 1, updatedAt: 1 } as never));
@@ -251,8 +256,8 @@ describe("prompt copy: every layer a bot can read", () => {
       "peer-task": "peer-task", "speak-as": "speak-as", credential: "turn", images: "images", "web-search": "direct", routines: "turn", learn: "turn",
       goal: "goal", "skills-index": "imported", "team-brief": "team-brief", memory: "memory", capabilities: "primer", skill: "skill",
       "chief-guide": "skill", "own-skill": "skill", playbooks: "playbooks", "output-folder": "output", automation: "automation",
-      tagged: "direct", now: "direct", "working-context": "working-context", "project-brief": "project-layers", "project-status": "project-layers",
-      learned: "learned",
+      tagged: "direct", now: "direct", "working-context": "working-context", "where-i-belong": "where-i-belong", "project-brief": "project-layers", "project-status": "project-layers",
+      learned: "learned", "ask-rules": "ask-rules",
     };
     expect(Object.keys(SHAPE_CATALOGUE).sort()).toEqual(Object.keys(byLabel).sort());
     for (const [id, prefix] of Object.entries(byLabel)) {

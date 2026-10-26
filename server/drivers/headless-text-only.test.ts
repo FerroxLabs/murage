@@ -11,9 +11,9 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { spawn } from "node:child_process";
 import { spawnCli } from "../procs.ts";
-import { CLAUDE_ALLOWED_HOME_NEW, claudeTextOnlyTurn, headlessTextOnlyTurn, type ClaudeTextOnlyConfig, type HeadlessEngineConfig } from "./headless-text-only.ts";
+import { CLAUDE_ALLOWED_HOME_NEW, claudeLoginNamespace, claudeTextOnlyTurn, headlessTextOnlyTurn, type ClaudeTextOnlyConfig, type HeadlessEngineConfig } from "./headless-text-only.ts";
 import {
-  FUIGO_OFF_SWITCHES, GROK_OFF_SWITCHES, emptyMissHistory, managedConfigIdentity, preflightRoute, preflightTargets, recordMiss,
+  FUIGO_OFF_SWITCHES, FUIGO_REFLECTION_COMPAT_OFF, GROK_OFF_SWITCHES, GROK_REFLECTION_COMPAT_OFF, emptyMissHistory, managedConfigIdentity, preflightRoute, preflightTargets, recordMiss,
   type AttemptTransport, type TextOnlyTurnInput, type TransportChild, type TransportIntent,
 } from "../memory/pip-transport.ts";
 import {
@@ -53,7 +53,7 @@ const input = (over: Partial<TextOnlyTurnInput> = {}): TextOnlyTurnInput => ({
   system: "SYS", text: "USER", model: "model-1", outputSchema: SCHEMA, signal: new AbortController().signal,
   maxOutputTokens: 2000, maxOutputBytes: 12 * 1024, context: { botId: "bot", runId: "run1", family: "lived", attempt: 1 }, ...over,
 });
-type Rec = { argv: string[]; env: Record<string, string>; cwd: string; prompt: string | null; pid: number; homeFiles: string[] | null; stdin?: string; settingsContent?: string | null };
+type Rec = { argv: string[]; env: Record<string, string>; cwd: string; prompt: string | null; pid: number; homeFiles: string[] | null; stdin?: string; settingsContent?: string | null; fuigoConfig?: string | null };
 const records = (): Rec[] => existsSync(out) ? readFileSync(out, "utf8").trim().split("\n").map((l) => JSON.parse(l)).filter((r) => r.argv && r.stdin === undefined) : [];
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code !== "ESRCH"; } };
 const route: ProviderTurnRoute = { connectionId: "conn-a", preset: "openai", protocol: "openai", baseUrl: "http://127.0.0.1:49999/v1", apiKey: "route-key-1", model: "route-model", revision: "r1" };
@@ -74,12 +74,13 @@ posix("headless text-only: stub binary (group 1)", () => {
       "--tools", "mcp__murage__none", "--disallowed-tools", "search_tool,use_tool,Agent", "--disable-web-search", "--no-memory", "--no-auto-update", "--verbatim",
       "--output-format", "streaming-messages-json", "--json-schema", JSON.stringify(SCHEMA), "--prompt-file", `${T}/prompt.txt`, "--debug-file", `${T}/debug.log`,
     ]);
-    expect(envKeys(r.env)).toEqual(["FUIGO_API_BASE_URL", "FUIGO_HOME", "FUIGO_MODELS_BASE_URL", "HOME", "MURAGE_PROVIDER_API_KEY", "PATH", ...Object.keys(FUIGO_OFF_SWITCHES)].sort());
+    expect(envKeys(r.env)).toEqual(["FUIGO_API_BASE_URL", "FUIGO_HOME", "FUIGO_MODELS_BASE_URL", "HOME", "MURAGE_PROVIDER_API_KEY", "PATH", "USERPROFILE", ...Object.keys(FUIGO_OFF_SWITCHES), ...Object.keys(FUIGO_REFLECTION_COMPAT_OFF)].sort());
     expect(r.env.FUIGO_HOME).toBe(`${T}/home`);
     expect(r.env.HOME).toBe(r.env.FUIGO_HOME.replace(/\/home$/, ""));
     // a child's cwd is reported canonical (macOS /var is /private/var)
     expect(r.cwd.replace(/^\/private(?=\/var\/)/, "")).toBe(`${T}/work`);
     expect(r.homeFiles).toContain("config.toml");
+    expect(r.fuigoConfig).toMatch(/\n\[plugins\]\nauto_discover = false\n$/); // Claude plugins off (1.0.6)
     expect(r.prompt).toBe("SYS\n\nUSER");
     expect(existsSync(T)).toBe(false); // temp root gone after confirmed exit
   });
@@ -101,7 +102,7 @@ posix("headless text-only: stub binary (group 1)", () => {
     expect(result.verdict.state).toBe("validated");
     const [r] = records();
     expect(r.homeFiles).toEqual(["auth.json"]);
-    expect(envKeys(r.env)).toEqual(["GROK_HOME", "HOME", "PATH", ...Object.keys(GROK_OFF_SWITCHES)].sort());
+    expect(envKeys(r.env)).toEqual(["GROK_HOME", "HOME", "PATH", "USERPROFILE", ...Object.keys(GROK_OFF_SWITCHES), ...Object.keys(GROK_REFLECTION_COMPAT_OFF)].sort());
     rmSync(out); rmSync(join(parent, "auth.json"));
     const missing = await headlessTextOnlyTurn(input(), cfg("ok", { engine: "grok", parentGrokHome: parent }));
     expect(missing.verdict).toEqual({ state: "unsupported", reason: "auth" });
@@ -192,12 +193,12 @@ posix("headless text-only: stub binary (group 1)", () => {
     expect(alive(records()[0].pid)).toBe(false);
   });
 
-  it("Claude: reduced env, stdin prompt, credentials copied, the A.1 Claude argv", async () => {
+  it("Claude: reduced env, stdin prompt, the login read in place (never copied), the A.1 Claude argv", async () => {
     const config = join(base, "claude-config"); mkdirSync(config); writeFileSync(join(config, ".credentials.json"), "{}");
-    const full = { PATH: "/usr/bin:/bin", ANTHROPIC_API_KEY: "ak", HOME: "/should/not/leak", XAI_API_KEY: "leak", OPENAI_API_KEY: "leak" };
+    const full = { PATH: "/usr/bin:/bin", ANTHROPIC_API_KEY: "ak", HOME: "/should/not/leak", XAI_API_KEY: "leak", OPENAI_API_KEY: "leak", CLAUDE_CONFIG_DIR: config };
     const result = await claudeTextOnlyTurn(input(), {
       cli: process.execPath, cliPrefixArgs: [STUB, "--stub=ok", `--stub-out=${out}`], tmpBase: join(base, "tmp"),
-      env: full, credentialsDir: config, preflight: preflight(),
+      env: full, preflight: preflight(), platform: "linux",
     });
     expect(result.verdict.state).toBe("validated");
     const [r] = records();
@@ -207,9 +208,16 @@ posix("headless text-only: stub binary (group 1)", () => {
     ]);
     // The settings ride in a per-attempt file whose path names the temp root (finding 4), carrying the same hook switch.
     expect(r.settingsContent).toBe('{"disableAllHooks":true}');
-    expect(envKeys(r.env)).toEqual(["ANTHROPIC_API_KEY", "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "CLAUDE_CONFIG_DIR", "DISABLE_AUTOUPDATER", "DISABLE_TELEMETRY", "HOME", "PATH"]);
+    expect(envKeys(r.env)).toEqual(["ANTHROPIC_API_KEY", "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "CLAUDE_CONFIG_DIR", "CLAUDE_SECURESTORAGE_CONFIG_DIR", "DISABLE_AUTOUPDATER", "DISABLE_TELEMETRY", "HOME", "PATH"]);
     expect(r.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe("2000");
-    expect(r.homeFiles).toEqual([".credentials.json"]);
+    // the account's own folder, verbatim: the CLI reads the login where it lives
+    expect(r.env.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe(claudeLoginNamespace(full, "linux"));
+    expect(r.env.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe(config);
+    expect(r.homeFiles).toEqual([]);
+    // the account's file is the only copy on disk
+    expect(existsSync(join(config, ".credentials.json"))).toBe(true);
+    const walk = (d: string): string[] => existsSync(d) ? readdirSync(d, { recursive: true }).map(String) : [];
+    expect(walk(join(base, "tmp")).filter((f) => f.endsWith(".credentials.json"))).toEqual([]);
     expect(readFileSync(out, "utf8")).toContain('"stdin":"USER"');
   });
 });
@@ -476,9 +484,8 @@ posix("audit finding 2: exceptions after spawn never remove the root under a liv
     expect(alive(r.pid)).toBe(false);
     expect(existsSync(r.env.HOME)).toBe(false);
   });
-  it("the same holds for Claude: the credential directory is removed only after the child is gone", async () => {
-    const config = join(base, "claude-config"); mkdirSync(config); writeFileSync(join(config, ".credentials.json"), "{}");
-    await expect(claudeTextOnlyTurn(input({ transport: { hooks: { onChild: async () => { await sleep(600); throw new Error("persist failed"); } } } }), claudeCfg("sleep", { credentialsDir: config }))).rejects.toThrow("persist failed");
+  it("the same holds for Claude: the temp root is removed only after the child is gone", async () => {
+    await expect(claudeTextOnlyTurn(input({ transport: { hooks: { onChild: async () => { await sleep(600); throw new Error("persist failed"); } } } }), claudeCfg("sleep"))).rejects.toThrow("persist failed");
     const [r] = records();
     expect(alive(r.pid)).toBe(false);
     expect(existsSync(r.env.HOME)).toBe(false);

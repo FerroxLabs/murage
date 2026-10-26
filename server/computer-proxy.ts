@@ -37,7 +37,7 @@ import {
   type CropRegion,
 } from "./computer-observation.ts";
 import { boxExecOptionsFromEnv, cleanupBoxJob, runBoxExec, type BoxExecDeps } from "./box-exec.ts";
-import { CONTROL_REFUSAL, createControlClient } from "./control-client.ts";
+import { CONTROL_REFUSAL, CONTROL_UNAVAILABLE_PLAIN, createControlClient } from "./control-client.ts";
 import {
   ensureRemoteCuaCommand,
   REMOTE_CUA_EXECUTABLE,
@@ -52,7 +52,9 @@ import { turnSecret, turnSecretWired } from "./turn-credential.ts";
 
 const BOX_API = process.env.MURAGEBOX_BOX_API ?? "https://ascii.dev/api/box/v1";
 const boxId = process.env.MURAGEBOX_BOX_ID ?? "";
-const token = process.env.MURAGEBOX_BOX_TOKEN ?? "";
+// U20: the box token rides the turn's owner-only credential file where the engine has one (Claude, Codex warm turns), never
+// this process's environment; read at each call, since the file changes per turn and is empty between turns.
+const token = (): string => turnSecret("MURAGEBOX_BOX_TOKEN");
 
 // Who-is-driving: while the person holds control in the app, every tool
 // below is refused (not queued — a queued click lands after they've moved
@@ -187,7 +189,7 @@ interface RunOut {
  * agent a cryptic failure it can only guess at. */
 const WAKE_BUDGET_MS = Math.max(Number(process.env.MURAGEBOX_WAKE_BUDGET_MS) || BOX_LAZY_WAKE_BUDGET_MS, 100);
 async function resumeBox(signal?: AbortSignal): Promise<boolean> {
-  const auth = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+  const auth = { authorization: `Bearer ${token()}`, "content-type": "application/json" };
   const bounded = () => (signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000));
   await fetch(`${BOX_API}/boxes/${boxId}/resume`, { method: "POST", headers: auth, signal: bounded() }).catch(() => null);
   const deadline = Date.now() + WAKE_BUDGET_MS;
@@ -221,7 +223,7 @@ async function runOnBox(command: string, timeoutMs = 60_000, allowWake = true, s
   ].join(" ");
   const res = await fetch(`${BOX_API}/boxes/${boxId}/commands`, {
     method: "POST",
-    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    headers: { authorization: `Bearer ${token()}`, "content-type": "application/json" },
     body: JSON.stringify({ command: isolatedCommand }),
     signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
   });
@@ -377,7 +379,7 @@ function wholeImage(bytes: Buffer, expectedBytes?: number): boolean {
  * envelope second. Both are validated — an error page served with a 200
  * must fall through, not reach the model as an "image". */
 async function fetchFrame(expectedBytes?: number): Promise<string | null> {
-  const auth = { authorization: `Bearer ${token}` };
+  const auth = { authorization: `Bearer ${token()}` };
   try {
     const res = await fetch(
       `${BOX_API}/boxes/${boxId}/artifacts?path=${encodeURIComponent(SHOT_PATH)}`,
@@ -863,6 +865,7 @@ async function actAndObserve(
     ? `${note}\n(${backend})`
     : `${note}\n(the action reported an error: ${out.stderr.slice(0, 160) || "no detail"}; ${backend})`;
   if (!observe) return text(id, full, !acted);
+  if (await frameWithheld(id, full)) return;
   return observed(id, full, await frameFrom(out));
 }
 
@@ -903,7 +906,26 @@ async function semanticActAndObserve(
       : `clicked ${ref} (trusted Chrome DevTools input)`
     : `${action} ${ref} failed: ${out.stderr.slice(0, 200) || `the page changed; take a new ${murageToolOnThisServer("browser_snapshot")}`}`;
   if (!observe) return text(id, note, !acted);
+  if (await frameWithheld(id, note)) return;
   return observed(id, note, await frameFrom(out));
+}
+
+/** A call that was already running when a person took control must not hand its
+ * captured screen to the model: the frame can show whatever they opened.
+ * True when the result was replaced by a text-only answer. */
+async function frameWithheld(id: unknown, note: string): Promise<boolean> {
+  if (!control.configured) return false;
+  const driving = await control.state(true);
+  if (!driving.held && driving.available) return false;
+  text(
+    id,
+    `${note}\n(${driving.held ? "A person took control of this computer while this call was running" : "Murage could not confirm whether a person is controlling this computer"}, ` +
+      "so the screen it captured is not shown to you. The action may already have happened: do not repeat it. " +
+      `Call ${murageToolOnThisServer("computer_request_help")} (no reason needed) to wait for them to finish, ` +
+      "then take a fresh screenshot before your next action.)",
+    true,
+  );
+  return true;
 }
 
 /** The only tools a bot may use while the person is driving: asking to be
@@ -911,8 +933,11 @@ async function semanticActAndObserve(
 const OPEN_WHILE_DRIVEN = new Set(["computer_request_help", "computer_status", "observation_metrics"]);
 
 async function call(id: unknown, name: string, args: any, signal: AbortSignal = new AbortController().signal) {
-  if (!OPEN_WHILE_DRIVEN.has(name) && (await control.state(true)).held) {
-    return text(id, CONTROL_REFUSAL, true);
+  if (!OPEN_WHILE_DRIVEN.has(name)) {
+    const driving = await control.state(true);
+    if (driving.held) return text(id, CONTROL_REFUSAL, true);
+    // Unknown is not free: a configured control endpoint that could not answer refuses the call.
+    if (control.configured && !driving.available) return text(id, CONTROL_UNAVAILABLE_PLAIN, true);
   }
   if (name === "computer_request_help") {
     if (!control.configured) {
@@ -1116,6 +1141,7 @@ async function call(id: unknown, name: string, args: any, signal: AbortSignal = 
     }
     const note = `exit ${outcome.exitCode}\n${body}`;
     if (args.observe !== true) return text(id, note);
+    if (await frameWithheld(id, note)) return;
     const shot = await runOnBox([ENV, GEOMETRY, ensureRemoteCuaCommand(), captureBlock()].join("; "), 60_000);
     return observed(id, note, await frameFrom(shot));
   }
@@ -1210,6 +1236,7 @@ async function call(id: unknown, name: string, args: any, signal: AbortSignal = 
       ? `opened and navigation verified: ${publicUrl}`
       : `opened ${publicUrl}, but the exact destination was not verified. Current structured state: ${current}`;
     if (!observe) return text(id, note);
+    if (await frameWithheld(id, note)) return;
     return observed(id, note, await frameFrom(out));
   }
   return text(id, `unknown tool ${name}`, true);
