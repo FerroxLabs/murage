@@ -1,0 +1,29 @@
+template_id,member,team_size,mascotBody,color,prop,repo_path
+beacon,beacon,1,star,orange,lighthouse,teams/beacon/beacon.emberteam.json
+coin,coin,1,diamond,cyan,coin stack,teams/coin/coin.emberteam.json
+copy,copy,1,drop,purple,pencil,teams/copy/copy.emberteam.json
+forge,forge,1,circle,coral,anvil,teams/forge/forge.emberteam.json
+helm,helm,1,hexagon,green,ship wheel,teams/helm/helm.emberteam.json
+humanizer,humanizer,1,blob,pink,feather quill,teams/humanizer/humanizer.emberteam.json
+lens,lens,1,hexagon,green,magnifying glass,teams/lens/lens.emberteam.json
+mend,mend,1,circle,coral,adhesive bandage,teams/mend/mend.emberteam.json
+mira,mira,1,blob,pink,paintbrush,teams/mira/mira.emberteam.json
+patch,patch,1,squircle,teal,screwdriver,teams/patch/patch.emberteam.json
+probe,probe,1,diamond,cyan,test tube,teams/probe/probe.emberteam.json
+quiet-money-career-strategist,quiet-money-career-strategist,1,star,blue,mountain peak,teams/quiet-money-career-strategist/quiet-money-career-strategist.emberteam.json
+quiet-money-generational-planner,quiet-money-generational-planner,1,squircle,purple,tree,teams/quiet-money-generational-planner/quiet-money-generational-planner.emberteam.json
+quiet-money-position-auditor,quiet-money-position-auditor,1,shield,green,spirit level,teams/quiet-money-position-auditor/quiet-money-position-auditor.emberteam.json
+quiet-money-spending-auditor,quiet-money-spending-auditor,1,circle,red,coin purse,teams/quiet-money-spending-auditor/quiet-money-spending-auditor.emberteam.json
+quiet-money-time-coach,quiet-money-time-coach,1,ember,pink,hourglass,teams/quiet-money-time-coach/quiet-money-time-coach.emberteam.json
+quiet-money-windfall-navigator,quiet-money-windfall-navigator,1,diamond,orange,compass,teams/quiet-money-windfall-navigator/quiet-money-windfall-navigator.emberteam.json
+quiet-money,quiet-money,1,blob,green,acorn,teams/quiet-money/quiet-money.emberteam.json
+research,research,1,capsule,blue,binoculars,teams/research/research.emberteam.json
+sales,sales,1,ember,red,handshake,teams/sales/sales.emberteam.json
+sentry,sentry,1,circle,yellow,plain shield crest with no markings,teams/sentry/sentry.emberteam.json
+slate,slate,1,hexagon,green,horseshoe magnet,teams/slate/slate.emberteam.json
+smith,smith,1,ember,orange,hammer,teams/smith/smith.emberteam.json
+spark,spark,1,squircle,yellow,toy blocks,teams/spark/spark.emberteam.json
+stage,stage,1,star,green,theatre curtain,teams/stage/stage.emberteam.json
+vault,vault,1,squircle,green,treasure chest,teams/vault/vault.emberteam.json
+verdict,verdict,1,shield,red,check mark badge,teams/verdict/verdict.emberteam.json
+voiceprint,voiceprint,1,drop,coral,tuning fork,teams/voiceprint/voiceprint.emberteam.json

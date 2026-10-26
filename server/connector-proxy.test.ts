@@ -718,20 +718,59 @@ describe("connector MCP bridge", () => {
       }
     }, 30_000);
 
+    /** An upstream that holds every tools/list reply until the test releases it, so a fetch is
+     * provably still in flight while the test changes something, however slow the machine is. */
+    const gatedUpstream = async (tools: unknown) => {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      const closed: Promise<unknown>[] = [];
+      const waiters: { count: number; resolve: () => void }[] = [];
+      let lists = 0;
+      const url = await listen((request, response) => {
+        let body = "";
+        request.on("data", (chunk) => { body += chunk; });
+        request.on("end", () => {
+          const message = JSON.parse(body);
+          if (message.method !== "tools/list") { response.writeHead(200, { "content-type": "application/json" }); response.end("{}"); return; }
+          closed.push(once(response, "close"));
+          lists += 1;
+          for (const waiter of waiters.splice(0)) { if (lists >= waiter.count) waiter.resolve(); else waiters.push(waiter); }
+          void gate.then(() => {
+            if (response.destroyed) return; // the bridge gave up on this one (its deadline passed)
+            response.writeHead(200, { "content-type": "application/json" });
+            response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { tools } }));
+          });
+        });
+      });
+      return {
+        url,
+        /** Resolves once the upstream holds `count` tools/list requests. */
+        holding: (count: number) => new Promise<void>((resolve) => { if (lists >= count) resolve(); else waiters.push({ count, resolve }); }),
+        /** Lets every held reply go and resolves once each has been delivered (or dropped by the bridge). */
+        releaseAll: async () => { release(); await Promise.all(closed); },
+      };
+    };
+
     it("does not publish a list fetched under an access revision that changed while it was in flight", async () => {
       const dir = cacheDir();
       const credDir = cacheDir();
       const credFile = join(credDir, "creds.json");
       const writeCreds = (revision: string) => writeFileSync(credFile, JSON.stringify({ composio: { MURAGE_CONNECTOR_IDENTITY: ID_A, MURAGE_CONNECTOR_REVISION: revision } }));
       writeCreds("rev-1");
-      const slow = await upstream(realTools("STALE"), 2_500);
-      const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: slow, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_CONNECTOR_TOOLS_LIST_MS: "1000", MURAGE_CRED_FILE: credFile, MURAGE_CRED_SERVER: "composio" });
+      const held = await gatedUpstream(realTools("STALE"));
+      const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: held.url, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_CONNECTOR_TOOLS_LIST_MS: "1000", MURAGE_CRED_FILE: credFile, MURAGE_CRED_SERVER: "composio" });
       child!.stdin.write(listReq(1));
-      expect(names(await nextJson(lines))).toContain("APPS_SEARCH_TOOLS"); // the initial list; the background fetch is now in flight
-      writeCreds("rev-2"); // the owner changed this bot's access while it ran
+      expect(names(await nextJson(lines))).toContain("APPS_SEARCH_TOOLS"); // the initial list
+      // The bridge reads the scope for its background refresh just AFTER it sends the initial list, so the
+      // reply alone does not prove the refresh began under rev-1 (on a slow box the change could land first,
+      // making it a legitimate rev-2 fetch: CI 40193051242). Once the upstream holds the refresh request
+      // (beside the held first-list fetch), its scope is fixed at rev-1.
+      await held.holding(2);
+      writeCreds("rev-2"); // the owner changed this bot's access while they were in flight
       let notified = false;
       lines.on("line", (line) => { if (JSON.parse(line).method === "notifications/tools/list_changed") notified = true; });
-      await new Promise((resolve) => setTimeout(resolve, 4_500));
+      await held.releaseAll(); // the rev-1 lists now reach the bridge
+      await new Promise((resolve) => setTimeout(resolve, 1_000)); // time for a (wrong) publish to land
       expect(readdirSync(dir).filter((name) => name.endsWith(".json") && !name.startsWith("incomplete-"))).toEqual([]);
       expect(notified).toBe(false);
     }, 30_000);

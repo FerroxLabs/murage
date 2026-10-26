@@ -15,11 +15,16 @@ it("accepts real branch insertion with a later parent and explicit root", () => 
   graph.add(message("child", "parent")); graph.add(message("parent", null));
   expect(() => graph.validate("child")).not.toThrow();
 });
-it("rejects multi-node cycles and missing parent links", () => {
+it("rejects multi-node cycles and malformed parent links", () => {
   const cycle = create(); cycle.add(message("a", "b")); cycle.add(message("b", "a"));
   expect(() => cycle.validate()).toThrow("CYCLIC_MESSAGE_BRANCH");
-  const missing = create(); missing.add(message("a", "foreign-thread-message"));
-  expect(() => missing.validate()).toThrow("INVALID_MESSAGE_PARENT");
+  expect(() => create().add(message("a", "not a message id"))).toThrow("INVALID_MESSAGE_PARENT");
+});
+it("reads a parent the thread does not hold as a root, as the runtime does", () => {
+  const missing = create(); missing.add(message("a", "foreign-thread-message")); missing.add(message("b", "a"));
+  expect(() => missing.validate("b")).not.toThrow();
+  const cycle = create(); cycle.add(message("a", "gone")); cycle.add(message("b", "c")); cycle.add(message("c", "b"));
+  expect(() => cycle.validate()).toThrow("CYCLIC_MESSAGE_BRANCH");
 });
 it("rejects duplicate identities, invalid message values and absent active heads", () => {
   const graph = create(); graph.add(message("a"));

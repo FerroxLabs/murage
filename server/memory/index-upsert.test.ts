@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -131,3 +131,27 @@ it("a batch with a forget writes its deletions only: the whole-index merge is ow
     expect(index.search("term20x3",[{id:"m-20",version:1}],null,"unused").hits.map(h=>h.id)).toEqual(["m-20"]);
   }finally{index.close();removeTempDirSync(root);}
 },60_000);
+
+it("a record written again over its key owes the merge a deletion owes, and finishRewrite pays it and truncates the log (PASTE-CAPTURE-FIX r2.6, D8)",()=>{
+  const root=mkdtempSync(join(tmpdir(),"memory-index-rewrite-")),path=join(root,"index.db"),index=new MemoryIndex(path);
+  try{
+    const row={id:"fact",version:1,scopeId:"scope",text:"routing 021000021 for payroll",deleted:false}; // secret-scan: fixture
+    index.upsert([row,{...row,id:"other",text:"plain words about payroll"}]);
+    expect(index.maintenanceOwed()).toBe(false);
+    // the scrub's rewrite: the same key, the masked text
+    index.upsert([{...row,text:"routing ********* for payroll"}]);
+    expect(index.maintenanceOwed()).toBe(true);
+    expect(index.search("021000021",[{id:"fact",version:1},{id:"other",version:1}],null,"unused").hits).toEqual([]);
+    expect(index.finishRewrite()).toBe(true);
+    expect(index.maintenanceOwed()).toBe(false);
+    expect(walBytes(path)).toBe(0);
+    const reader=new DatabaseSync(path);
+    try{
+      reader.exec("CREATE VIRTUAL TABLE temp.words USING fts5vocab(main,lexical,'row')");
+      expect(reader.prepare("SELECT term FROM temp.words WHERE term='021000021'").get()).toBeUndefined();
+      expect(reader.prepare("SELECT count(*) AS n FROM entries WHERE text LIKE '%021000021%'").get()!.n).toBe(0);
+    }finally{reader.close();}
+    // the old digits are nowhere in the file
+    expect(readFileSync(path).includes(Buffer.from("021000021"))).toBe(false);
+  }finally{index.close();removeTempDirSync(root);}
+});

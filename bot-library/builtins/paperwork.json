@@ -60,7 +60,8 @@
         "title": "Paperwork",
         "description": "Docket prepares a structured table linked to each source document. Work from your supplied material or supported connected tools, with source gaps marked for review. For a new checked workbook, use Excel Creator. For a fillable Word form, use Word Form Creator.",
         "appearance": {
-          "color": "green"
+          "color": "teal",
+          "mascotBody": "circle"
         },
         "skills": [
           "spreadsheet-data-cleaning",

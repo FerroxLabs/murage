@@ -11,14 +11,21 @@
 //               human's words come back verbatim.
 //
 // stdout is the MCP channel — never console.log here.
-import { connect } from "node:net";
+import { connect, Socket } from "node:net";
 import { randomUUID } from "node:crypto";
-import { BROKER_UNAVAILABLE_NOTE, brokerPathFromArgv } from "./permission-pipe.ts";
+import { BROKER_UNAVAILABLE_NOTE, brokerPathAccepted, brokerPathFromArgv } from "./permission-pipe.ts";
 
 const socketPath = brokerPathFromArgv(process.argv[2] ?? "");
 
 const waiting = new Map<string, (msg: any) => void>();
-const conn = connect(socketPath);
+// U22: only Murage's own permission pipe or socket is ever connected to. Anything else is a broker that is gone: every ask is
+// answered with the unavailable note, and the driver ends the turn with the reason in chat when it sees that note.
+const accepted = brokerPathAccepted(socketPath);
+const conn = accepted ? connect(socketPath) : new Socket();
+if (!accepted) {
+  process.stderr.write(`murage permission proxy: refusing the broker path ${JSON.stringify(socketPath)} (not a Murage permission socket); every ask is denied\n`);
+  conn.destroy();
+}
 
 interface AllowPermissionResult {
   behavior: "allow";
@@ -36,11 +43,11 @@ const dead = () => {
 // A connect that never completes ends this process with that error instead of leaving the CLI waiting on a server
 // that will never answer.
 const CONNECT_DEADLINE_MS = 10_000;
-const connectTimer = setTimeout(() => {
+const connectTimer = !accepted ? undefined : setTimeout(() => {
   process.stderr.write(`murage-permissions: the permission broker at ${socketPath || "(no socket path)"} did not accept a connection within ${CONNECT_DEADLINE_MS / 1000} s\n`);
   process.exit(1);
 }, CONNECT_DEADLINE_MS);
-connectTimer.unref();
+connectTimer?.unref();
 conn.once("connect", () => clearTimeout(connectTimer));
 conn.on("error", (error: Error & { code?: string }) => {
   clearTimeout(connectTimer);

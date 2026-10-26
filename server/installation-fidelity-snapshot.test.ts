@@ -22,10 +22,18 @@ it("keeps fidelity metadata under the same lease and detects later component cha
     expect(inventory.assertUnchanged).toThrow();
   });}finally{f.db.close();removeTempDirSync(f.parent);}
 });
-it("refuses incomplete selected coverage: an unknown top-level name, and names it",async()=>{
+it("leaves an unknown top-level file or folder out of selected coverage and lists it, without stopping",async()=>{
   const f=backupFixture();try{
     writeFileSync(join(f.data,"new-state.json"),"private unknown component");
-    await expect(withOfflineInstallation(f.data,async installation=>{const stage=await stageInstallationStateWhileOwned(installation,f.parent);return inventoryFidelity(installation,stage,selection);})).rejects.toMatchObject({code:"BACKUP_UNCLASSIFIED_COMPONENT",path:"new-state.json"});
+    mkdirSync(join(f.data,"new-state"));writeFileSync(join(f.data,"new-state","a.json"),"private unknown component");
+    await withOfflineInstallation(f.data,async installation=>{const stage=await stageInstallationStateWhileOwned(installation,f.parent);const inventory=await inventoryFidelity(installation,stage,selection);
+      for(const name of ["new-state.json","new-state"]){
+        expect(inventory.coverage.components).toContainEqual(expect.objectContaining({path:name,status:"excluded"}));
+        expect(inventory.sources.some(file=>file.path===name||file.path.startsWith(`${name}/`))).toBe(false);
+        expect(stage.manifest.files.some(file=>file.path===name||file.path.startsWith(`${name}/`))).toBe(false);
+        expect(stage.manifest.skipped).toContainEqual({path:name,reason:"unrecognised"});
+      }
+      inventory.assertUnchanged();});
   }finally{f.db.close();removeTempDirSync(f.parent);}
 });
 // 0.1.60 audit A-01: a shortcut in a bot's folder is stored as a shortcut,

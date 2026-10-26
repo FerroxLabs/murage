@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Cash Watch",
     "tagline": "Thirteen weeks of cash, with tight weeks and choices made clear",
-    "summary": "Tally prepares a thirteen-week cash forecast with visible assumptions. Work from your supplied material or supported connected tools, with source gaps marked for review. For broader business financial decisions, use Numbers. For a forecast model from scratch, use Financial Model Creator. For a team reviewing profitability, use Bootstrap Profit. I give guidance and drafts, not licensed financial advice, and I promise no outcome.",
+    "summary": "Tally prepares a thirteen-week cash forecast with visible assumptions.",
     "category": "Money",
     "author": {
       "name": "Ferrox Labs",
@@ -60,7 +60,8 @@
         "title": "Cash Watch",
         "description": "Tally prepares a thirteen-week cash forecast with visible assumptions. Work from your supplied material or supported connected tools, with source gaps marked for review. For broader business financial decisions, use Numbers. For a forecast model from scratch, use Financial Model Creator. For a team reviewing profitability, use Bootstrap Profit.",
         "appearance": {
-          "color": "green"
+          "color": "green",
+          "mascotBody": "capsule"
         },
         "skills": [
           "finance-cashflow",

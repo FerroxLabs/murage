@@ -61,18 +61,22 @@ it("starts only the isolated helper on consent, without claiming browser connect
   const started = await api("POST", `/api/bots/${one.id}/browser-extension`, { action: "connect" });
   expect(started.status, JSON.stringify(started.body)).toBe(200);
   expect(started.body.helper.running).toBe(true); expect(started.body.profiles).toEqual([]);
-  expect(started.body.helper.reason).toContain("not published");
+  expect(started.body.helper.reason).toContain("Install the development extension");
   expect(started.body.extensionBuild).toBe("development");
 });
 
-it("a release build says the listing is not available until the feed turns the link on", async () => {
+it("a release build links the live Chrome Web Store listing with no feed flag", async () => {
   const one = await bot("Release listing fixture");
   const id = "c".repeat(32);
   stageBuild({ version: 1, mode: "release", productionIds: [id], chromeWebStoreId: id });
   try {
     const status = await api("GET", `/api/bots/${one.id}/browser-extension`);
-    expect(status.body).toMatchObject({ extensionBuild: "release", storeUrl: null });
-    expect(status.body.helper.reason).toBe("Murage for Chrome is not in the Chrome Web Store yet. You can keep using the bot's own browser.");
+    expect(status.body).toMatchObject({ extensionBuild: "release", storeUrl: `https://chromewebstore.google.com/detail/${id}` });
+    expect(status.body.helper.reason).toBe("Add Murage for Chrome from the Chrome Web Store, then open its side panel and connect.");
+    stageBuild({ version: 1, mode: "release", productionIds: ["d".repeat(32)], chromeWebStoreId: id });
+    const untrusted = await api("GET", `/api/bots/${one.id}/browser-extension`);
+    expect(untrusted.body).toMatchObject({ extensionBuild: "release", storeUrl: null });
+    expect(untrusted.body.helper.reason).toBe("Open Murage for Chrome's side panel to connect. You can keep using the bot's own browser.");
     stageBuild({ version: 1, mode: "resources", productionIds: [] });
     expect((await api("GET", `/api/bots/${one.id}/browser-extension`)).body).toMatchObject({ extensionBuild: "none", storeUrl: null });
   } finally { stageBuild({ version: 1, mode: "development", developmentId: "b".repeat(32) }); }

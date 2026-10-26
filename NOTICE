@@ -495,6 +495,138 @@ reviewed at the exact upstream commits named. None is a wholesale import.
     commit 9298918ae44ee5d19efa57d9ac29122bc3ddac99
     Murage: src/components/ChatView.tsx
 
+  OpenMausBot PR #3073 (import a shared Grok Bot)
+    merge 1da83432c4b952da42225d97fcc623ba754673eb
+    The x.ai share-link reader (host locked, three redirects, 2 MiB, 20 s,
+    og tags only) and the pasted-export reader, rebuilt onto Murage's bot
+    package so the result is an ordinary bot on any engine. Grok Bot skills
+    arrive as playbooks. The Cursor sign-in and its private API are not taken.
+    grokbot-bundle/v1 field names follow pi-grokbot-import (MIT).
+    Murage: shared/grok-import.ts, server/grok-import.ts,
+    src/components/TeamLibraryPanel.tsx
+
+  OpenMausBot PR #2163 (modal dialog focus trap and Escape)
+    commit 033fd71fd
+    One hook for modal dialogs: focus moves in, Tab wraps, Escape closes,
+    focus returns to the opener. Murage adds: Escape inside a field leaves the
+    draft alone, and a form with unsaved edits asks before it closes.
+    Murage: src/hooks/use-modal-dialog.ts, src/components/RoutineCalendarPage.tsx
+
+  OpenMausBot PR #2435 and PR #2405 (one copyText with a desktop fallback)
+    commits a05be4c7b and ea82440b9
+    Web write with a timeout, then the desktop bridge, then select-and-copy;
+    one copy feedback hook. Murage adds the select-and-copy route, a
+    write-only main-process handler and its own sender check.
+    Murage: src/lib/copy-text.ts, electron/clipboard-write.mjs
+
+  OpenMausBot PR #2423 (Shiki core bundle)
+    commit 6ca5ee9d4
+    Highlighting from shiki/core with the JavaScript regex engine and an
+    explicit language map. Murage chooses its own grammar list.
+    Murage: src/lib/code-highlight.ts, src/components/ChatMarkdown.tsx
+
+  OpenMausBot PR #2540 (technical errors as one plain line)
+    commit 54749b20f
+    A narrow list of machine-shaped errors shown as one plain line with the
+    original under Details. Murage writes its own wording and patterns.
+    Murage: src/lib/plain-error.ts, src/components/ChatView.tsx
+
+  OpenMausBot PR #2461 (one error banner clear timer)
+    commit 92770de40
+    One effect clears the error banner, replacing per-dispatch timers.
+    Murage adds a hold while the pointer is on the banner.
+    Murage: src/state/chat-error.ts, src/state/store.tsx
+
+  OpenMausBot PR #2547 (drag the Mac window from every view header)
+    commit b3df9bdc4
+    A shared drag mark for view headers. Murage uses a data attribute and a
+    stylesheet rule that keeps every control clickable.
+    Murage: src/hooks/use-window-drag.ts, src/styles.css
+
+  OpenMausBot PR #2687 (assign a link to a thread)
+    merge b5f570198f0469c62c007ee8353a70e6a923725b
+    Murage: shared/thread-link.ts, shared/thread-link.test.ts
+
+  OpenMausBot PR #2572 (run a bot's skills from the slash menu)
+    commit 43ef74eaceed07070ea8383c487efbcbd9e82067
+    Murage: shared/skill-command.ts, shared/skill-command.test.ts,
+    src/lib/use-slash-skills.ts, src/lib/composer-commands.ts
+
+  OpenMausBot PR #2615 (choose the send key; IME confirm guard)
+    commit a6c28cdca
+    Murage: src/lib/composer-enter.ts, src/lib/send-key.ts, src/components/Composer.tsx
+
+  OpenMausBot PR #2463 (right-to-left text finds its own direction)
+    commit dbc8dfe66
+    Murage: src/components/ChatMarkdown.tsx, src/components/chat-dir-auto.test.ts
+
+  OpenMausBot PR #2266 (Claude picker lists the custom model option and tier models)
+    merge 53a17af58
+    Murage: server/drivers/claude-model-extras.ts, server/drivers/claude.ts
+
+  OpenMausBot PR #2668 (the provider's own error sentence)
+    commit a7af0f638
+    Murage: server/drivers/provider-error-body.ts, server/drivers/openai-chat.ts
+
+  OpenMausBot PR #2400 (a rejected key shows signed out)
+    commit 03035cd16
+    Murage: server/key-rejections.ts, server/harness/bus.ts, server/drivers/openai-chat.ts
+
+  OpenMausBot PR #2674 (engine setup: server install command, shared probe)
+    merge 8b53c0323
+    Murage: server/env-path.ts, server/harness/registry.ts, src/lib/instances-probe.ts,
+    src/components/EngineSetup.tsx
+
+  OpenMausBot PR #2568 (connected-apps catalog grouped by category, helpers only)
+    commit 0bbeef0b6
+    Murage: src/lib/app-catalog.ts, server/app-catalog.ts
+
+  OpenMausBot PR #2297 (note on a call refused for a missing permission)
+    commit 75398ae3c
+    Murage: server/connector-scope-hint.ts, server/composio.ts
+
+  OpenMausBot PRs #2820, #2902, #3002 (chat widgets, follow-up wording,
+  answering a choice in your own words)
+    merges 4b415cebe, c0fc55252, 988e15ceb
+    Murage: shared/widget.ts, shared/widget-chart.ts, src/components/widget/*
+
+  OpenMausBot PR #2278 (Grok Build and Cursor questions as cards)
+    merge 8ca05a615d9a17d2aca6a06fed5f601567952e84
+    Vendor question requests as table entries feeding Murage's one question
+    card. Murage: server/drivers/acp/question-methods.ts,
+    server/drivers/acp/core.ts
+
+  OpenMausBot PR #2276 (Codex request_user_input_async cards)
+    merge e9b8f24fda13607c310063e1b6328f7fc8c041b7
+    The async question shape, answered as the owner's next message.
+    Murage: server/question-normalize.ts, server/drivers/codex.ts,
+    server/testing/fake-codex-app-server.ts
+
+  OpenMausBot PR #3328 (Claude tool_progress heartbeat)
+    merge e1be06a9f4b72f7dbff0f40a2dea2bc5808237f8
+    A running tool's heartbeat counts as turn activity.
+    Murage: server/drivers/claude.ts, server/testing/fake-claude-cli.ts
+
+  OpenMausBot PR #3433 (a slow version probe is not "not installed")
+    merge 2da9ee21406cb7ece4daf0fb4351369040f79d27, commit
+    1a6f071b82f73ffe9e093fbe5d04e130e9859400
+    Murage: server/procs.ts, server/drivers/claude.ts, server/drivers/codex.ts,
+    server/drivers/pi.ts
+
+  OpenMausBot PR #3374 (mascot for the whole turn; turn-end tracking slice)
+    merge 3b94d6958ea3ae3ac3452079e63d42958c5170c2
+    Murage: src/state/turn-status.ts, src/lib/turn-tail.ts,
+    src/components/ChatView.tsx, src/components/GroupView.tsx,
+    src/components/use-reply-pop.ts
+
+  OpenMausBot PR #3173 ("Google Gemini (Antigravity)" engine name)
+    merge 1ba5829b4793acd0c16ae121ae5c971e6e8d0325
+    Murage: server/drivers/antigravity.ts
+
+  OpenMausBot PR #3181 (text-only MCP error results; guard only)
+    merge 1286a44ce84ac9545f3f989e25cc5555e47d1f27
+    Murage: server/mcp-error-result.ts, server/mcp-bridge.ts
+
 --------------------------------------------------------------------------
 
 Voice calls: designs and text adapted from LiveKit Agents and Pipecat

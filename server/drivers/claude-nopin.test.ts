@@ -7,7 +7,8 @@
 // every "" in the overlay reached apiKeyHelper / gcpAuthRefresh / aws* helper children: GOOGLE_APPLICATION_CREDENTIALS=""
 // breaks google-auth ADC, and CLOUDSDK_CONFIG, AWS_WEB_IDENTITY_TOKEN_FILE, AWS_CA_BUNDLE and
 // AWS_CONTAINER_CREDENTIALS_RELATIVE_URI break the same way. Each name is now the owner's non-empty value, Murage's non-empty
-// neutral value (BASH_ENV, ENV), or absent; MurageMain ruled "" for exactly six names (CLAUDE_OVERLAY_EMPTY_ALLOWED, frozen).
+// neutral value (BASH_ENV), or absent; MurageMain ruled "" for exactly six names (CLAUDE_OVERLAY_EMPTY_ALLOWED, frozen), and
+// 1.0.4 U19 added ENV as a seventh ("/dev/null" reached a repository's `$ENV` readers as a value).
 // Read loosely so a base without these exports fails rather than crashes.
 
 import { mkdtempSync, realpathSync, writeFileSync } from "node:fs";
@@ -27,7 +28,7 @@ const SHAPES = [["linux", EXEC], ["win32", WIN_EXEC], ["win32", INHERIT]] as con
 // Names Fable named: off the allowlist, read by google-auth / botocore helpers, "" differs from absent for each.
 const HELPER_NAMES = ["GOOGLE_APPLICATION_CREDENTIALS", "CLOUDSDK_CONFIG", "AWS_WEB_IDENTITY_TOKEN_FILE", "AWS_CA_BUNDLE", "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI"];
 // 14.6 ruled (frozen): enforcement-critical names with no non-empty neutral value, whose readers take "" as unset.
-const ALLOWED = ["CLAUDE_CODE_SHELL_PREFIX", "NODE_OPTIONS", "GIT_ASKPASS", "CLAUDE_ENV_FILE", "PYTHONINSPECT", "CLAUDE_CODE_PLUGIN_DIRS"];
+const ALLOWED = ["CLAUDE_CODE_SHELL_PREFIX", "NODE_OPTIONS", "GIT_ASKPASS", "CLAUDE_ENV_FILE", "PYTHONINSPECT", "CLAUDE_CODE_PLUGIN_DIRS", "ENV"];
 
 function hand(platform: "linux" | "win32", extra: Record<string, string> = {}): Record<string, string> {
   const env: Record<string, string> = { PATH: platform === "win32" ? "C:\\Windows\\system32" : "/usr/bin", ...extra };
@@ -112,16 +113,16 @@ describe("14.6 the overlay pins no name to \"\"", () => {
 });
 
 describe("14.6 enforcement-critical names: a non-empty neutral value, and the owner's user settings cannot defeat it", () => {
-  it("BASH_ENV and ENV are /dev/null in the overlay; an owner user-settings value loses (flag settings outrank user settings)", () => {
-    expect(mod.CLAUDE_OVERLAY_NEUTRAL).toEqual({ BASH_ENV: "/dev/null", ENV: "/dev/null" });
+  it("BASH_ENV is /dev/null and ENV is \"\" in the overlay; an owner user-settings value loses (flag settings outrank user settings)", () => {
+    expect(mod.CLAUDE_OVERLAY_NEUTRAL).toEqual({ BASH_ENV: "/dev/null" });
     const owner = { BASH_ENV: "/owner/startup.sh", ENV: "/owner/env.sh" };
     for (const [platform, shell] of SHAPES) {
       const user = file({ env: owner });
       const overlay = mod.claudeOverlayEnv(platform, shell, hand(platform), [{ path: user, source: "user" }]);
       const child = helperChildEnv(hand(platform), owner, overlay.env);
-      for (const name of ["BASH_ENV", "ENV"]) {
-        expect(overlay.env[name], `${platform} ${shell.kind} ${name}`).toBe("/dev/null");
-        expect(child[name], `${platform} ${shell.kind} ${name}: the overlay value wins`).toBe("/dev/null");
+      for (const [name, want] of [["BASH_ENV", "/dev/null"], ["ENV", ""]] as const) {
+        expect(overlay.env[name], `${platform} ${shell.kind} ${name}`).toBe(want);
+        expect(child[name], `${platform} ${shell.kind} ${name}: the overlay value wins`).toBe(want);
       }
     }
   });
@@ -139,7 +140,7 @@ describe("14.6 enforcement-critical names: a non-empty neutral value, and the ow
     }
   });
 
-  it("the six ruled names are pinned to \"\", and an owner user-settings value still loses", () => {
+  it("the ruled names are pinned to \"\", and an owner user-settings value still loses", () => {
     const owner = { NODE_OPTIONS: "--require /owner/x.js", GIT_ASKPASS: "/owner/askpass", PYTHONINSPECT: "1", CLAUDE_ENV_FILE: "/owner/env", CLAUDE_CODE_PLUGIN_DIRS: "/owner/plugins", CLAUDE_CODE_SHELL_PREFIX: "/owner/prefix" };
     const user = file({ env: owner });
     const overlay = mod.claudeOverlayEnv("win32", INHERIT, hand("win32"), [{ path: user, source: "user" }]);
