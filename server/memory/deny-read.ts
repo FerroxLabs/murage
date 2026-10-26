@@ -555,7 +555,7 @@ export function refsLookup(db: DatabaseSync, refs: readonly LineageRef[], reader
     const memory: MemoryRef[] = [];
     for (const ref of refs) {
       // a replayed line of the prompt's own thread is judged by content, as a prefix's shown lines are (below); every other line for the reader
-      if (ref.kind === "line" && ref.replay) { const set = shownLines.get(ref.threadId) ?? new Set<string>(); set.add(ref.messageId); shownLines.set(ref.threadId, set); }
+      if (ref.kind === "line" && (ref.replay || ref.copyOfShown)) { const set = shownLines.get(ref.threadId) ?? new Set<string>(); set.add(ref.messageId); shownLines.set(ref.threadId, set); }
       else if (ref.kind === "line") { const list = lines.get(ref.threadId) ?? []; list.push(ref.messageId); lines.set(ref.threadId, list); }
       else if (ref.kind === "memory") memory.push(ref.ref);
       else if (ref.kind === "prefix") {

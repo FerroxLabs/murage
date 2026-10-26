@@ -79,6 +79,7 @@ import { createFirstPageTopUp, createScrollback, MESSAGE_PAGE_SIZE, needsFirstPa
 import { sameSidebarLine, sidebarLineOf, type SidebarLine } from "../../shared/sidebar-line";
 import { ThreadSettingsWrites } from "./thread-settings-writes";
 import { persistCardPatch } from "./card-persist";
+import { noteTurnEvent } from "./turn-status";
 import { applyTranscriptInput, hydrateTranscript, legacyTranscriptInput, transcriptState, vouches, type InputKind, type SeqTranscript } from "./transcript-seq";
 import { skillRecorderEnabled } from "@/lib/feature-flags";
 import { desktopSurfaceHeaders, ensureDesktopSurfaceSecret, openLiveEvents } from "@/lib/live-events";
@@ -1888,7 +1889,8 @@ function prependOlder<T extends Bot | Group>(owner: T, older: Message[], hasMore
 export function sendLookupResult(status: unknown): DraftSendLookupResult {
   if (status === "refused") return "refused";
   if (status === "cancelled") return "cancelled";
-  if (status === "sending" || status === "queued" || status === "dispatched" || status === "started" || status === "delivered" || status === "unconfirmed") return "ack";
+  // "stopped": a typed stop (designs/TYPED-STOP-107.md), acknowledged and finished; its words are not kept as a draft
+  if (status === "sending" || status === "queued" || status === "dispatched" || status === "started" || status === "delivered" || status === "unconfirmed" || status === "stopped") return "ack";
   return "none";
 }
 
@@ -3284,7 +3286,7 @@ function reduceState(state: AppState, action: Action): AppState {
     case "closeAllChats":
       return state.activeView === "all-chats" ? { ...state, activeView: "chat", allChatsScope: undefined } : state;
     case "showSkillRecorder":
-      if (!skillRecorderEnabled(state.config)) return state;
+      if (isCloudOrigin() || !skillRecorderEnabled(state.config)) return state;
       return {
         ...state,
         activeView: "skill-recorder",
@@ -3396,7 +3398,7 @@ function reduceState(state: AppState, action: Action): AppState {
         ...state,
         config: action.config,
         activeView:
-          state.activeView === "skill-recorder" && !skillRecorderEnabled(action.config)
+          state.activeView === "skill-recorder" && (isCloudOrigin() || !skillRecorderEnabled(action.config))
             ? "chat"
             : state.activeView,
       };
@@ -6216,6 +6218,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           break;
         case "runtime": {
           const event = frame.event;
+          // Whether the thread's turn has ended keeps the mascot for the whole turn (turn-status.ts).
+          noteTurnEvent(event);
           if (event.type === "content.delta") {
             // Batch token deltas per animation frame (t3code-style): a fast
             // stream dispatches once per frame instead of once per token, so

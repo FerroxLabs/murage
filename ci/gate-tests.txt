@@ -1152,7 +1152,7 @@ server/send-state-r6.test.ts	all	Unsent words kept until owner dismisses
 server/send-steer-r7.test.ts	all	failed send without line becomes visible chip
 server/send-steer-r8.test.ts	all	deleted conversation words stay deleted
 server/send-store.test.ts	all	accepted send is one committed row
-server/sendlane.test.ts	all	Desktop holds no Sendlane credential
+server/news-signup.test.ts	all	News signup: asked once, queued from the server, retried quietly, address deleted once settled
 server/sends-lookup-api.test.ts	all	a reloaded draft can ask whether its send arrived (no duplicate, no lost words)
 server/server-child-crash.test.ts	all	server child records fatal cause
 server/session-audience.test.ts	all	cursor resumed only for its audience
@@ -1323,6 +1323,7 @@ src/components/ExportPasteNote.test.ts	all	says the paste was left out of memory
 src/components/FirstRunCard.test.ts	all	first run card flow dispatch
 src/components/FirstRunChrome.test.ts	all	setup poll stops and keeps asking correctly
 src/components/FirstRunHelloCard.test.ts	all	first run hello step profile save
+src/components/NewsSignupSettings.test.ts	all	Settings news signup posts only to the local server
 src/components/FluxKeyCard.test.ts	all	Flux key editor never holds or writes key
 src/components/GroupViewWithheld.test.ts	all	owner sees withheld and forgotten replies
 src/components/InboxRequest.test.ts	all	permission card title and command not from chat text
@@ -1463,3 +1464,19 @@ server/direct-rebuild-hold-late-api.test.ts	linux+mac	Protects Stop and replies:
 server/drivers/browser-extension-mcp-cancel.test.ts	all	a browser request the bot's engine cancelled still running, or one slow browser call holding every other request behind it
 scripts/browser-extension-late-download.test.mjs	all	a page download saved while the bot is told it was blocked (including after a kept file, or a removal no fresh look confirms); the owner's own download deleted on a late page announcement, or told to the bot when it was idle
 server/memory/excluded-thread-history.test.ts	all	a thread excluded from memory still read back through historical search
+server/database-open-wait.test.ts	all	Murage opens while another process holds the database: it waits instead of failing to start with 'database is locked'
+server/memory/dispatch-frame-checking.test.ts	all	a turn whose context is still being checked after a revoke is refused as revoked, never sent with that text
+server/memory/send-fence-room-copy.test.ts	all	a room copy of a forgotten or withheld line never reaches another bot's turn
+server/session-end-flush.test.ts	all	logging out or shutting down saves the chat in progress before Murage quits
+server/store-create-bot-atomic.test.ts	all	a bot that fails to create leaves no half-made bot in the roster or bots.json
+server/tts/flux-eleven.test.ts	all	the ElevenLabs voices Flux offers show up when Flux is connected, and not where only an own OpenAI key can speak
+server/typed-stop-api.test.ts	all	a typed 'stop' stops the running turn (steering and queueing engines) and a 'stop' sent as a reply stays an ordinary message
+server/typed-stop.test.ts	all	a typed 'stop' is told apart from ordinary messages that mention stopping
+server/venue-read-api.test.ts	all	the venue reader mounts only for the owner's turn; revoked or forged claims are refused
+server/venue-read.test.ts	all	a bot reading a project or group never sees another partition's rows, ids or sources; linked rows stay bare
+src/components/ChatHeader.phone.test.ts	all	on a phone the chat header keeps back, name, model, profile and the bot's computer reachable from the ... menu
+src/components/ComposerPlusMenu.test.ts	all	on a phone the composer + menu keeps Attach, Finish together and the approval level reachable
+server/routine-wake-approval.test.ts	all	at No limits, the owner's own routine answers a read-only command on its follow-through turn instead of stalling on an approval card
+server/mcp-error-result.test.ts	all	a text-only MCP tool error reaches the bot as a readable error, never a broken turn
+src/state/turn-status.test.ts	all	the working mascot stays for the whole turn and a late frame of an older turn never ends the newer one
+server/project-routine-approval-107.test.ts	all	the owner's own routine in a project room is approved at the lowest of its routine's and bot's levels, and webhook, channel or other-audience runs keep asking

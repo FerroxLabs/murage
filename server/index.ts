@@ -105,7 +105,7 @@ import { sharedRegistrationBrowsers } from "../scripts/browser-extension-host-re
 import type { SkillProcedureContext } from "./skills.ts";
 import { sweepBackupWork } from "./backup-local-work.ts";
 import { routineRunMarkerName, routineRunPromptNote } from "../shared/routine-run-marker.ts";
-import { procedurePinFitsAudience, createProcedurePin, preparePinnedProcedures } from "./procedure-bundles.ts";
+import { procedurePinFitsAudience, procedurePinServesTurn, createProcedurePin, preparePinnedProcedures } from "./procedure-bundles.ts";
 import { improvedMomentForEvent, reconcileOutstandingChangesPass, setImprovedListener } from "./memory/procedure-landing.ts";
 import { startRecoveryScheduler } from "./recovery-scheduler.ts";
 import { advanceRootSetProofs } from "./memory/replay-lineage.ts";
@@ -126,6 +126,7 @@ import { captureBrowserPreview } from "./browser-preview-capture.ts";
 import { withVenues, withWorkingContext, workingContextBlock, workingContextForTurn, workingContextSources } from "./working-context.ts";
 import { venueTurnContext } from "./venue-awareness.ts";
 import { deliveredProjectSuggestions, projectMessagePlaces, projectThreadDeletion, projectThreads, registerProjectMemoryTools, suggestionLines } from "./project-memory-tools.ts";
+import { recordVenueReadTurn, serveVenueRead, setVenueReadLive, venueReadMounts, VENUE_READ_UNAVAILABLE } from "./venue-read.ts";
 import { botCapabilityTags, projectBotFacts, projectBotNowAnywhere, projectMemberNow, projectRosterBlock, setProjectBotFacts, withProjectNow } from "./project-roster.ts";
 import { deliveredLeadPlanRefusals, leadPlanRefusalLines, recordLeadPlanRefusals } from "./project-plan-notes.ts";
 import { fitProjectTranscript, joiningBriefLayer, markProjectMemberJoined, projectBoardLayer, projectBriefLayer, projectLayerBudget, projectSummaryLayer, trimmedLine, withProjectStatus } from "./project-layers.ts";
@@ -252,7 +253,7 @@ import { startRecordKeysBuild } from "./memory/record-keys.ts";
 import { flipMemoryOnForUpgrade, listPastChatThreads, pastChatsOwed, startPastChatsBuild } from "./memory/past-chats-build.ts";
 import { runningAppVersion } from "./memory/app-version.ts";
 import type { DatabaseSync } from "node:sqlite";
-import { recordProjectRoutine, linkLegacyProjectRoutineRuns, projectMainThread } from "./project-routines.ts";
+import { recordProjectRoutine, linkLegacyProjectRoutineRuns, projectMainThread, projectRoutineCeiling, ProjectRoutineCeilings } from "./project-routines.ts";
 import { projectProposalFolderSignals, createProjectRows, projectProposalInput, proposeProject, PROPOSAL_REPLY_LIMIT, startCreatedProjectGoal } from "./project-new.ts";
 import { ChiefProposalTurns, newProposalServerAlias, PROJECT_PROPOSE_ROUTE, projectProposalToolRefusal, proposalAskAllowed, proposalAskContext, proposalAskRefusalLine, proposalEngine, proposalOwnToolLine, proposalSettings, proposalToolCall, proposalToolItemStops, type ProposalTurnOutcome, type ValidatedProposal } from "./project-proposal-engines.ts";
 import { omitNativeLog } from "./drivers/native.ts";
@@ -397,7 +398,7 @@ import { validateBotCwd } from "./bot-cwd.ts";
 import { FolderTrustStore, canonicalFolder, fuigoHomeFromEnv, scanFolderTrustSources, isUnrecordableTrustRoot } from "./folder-trust.ts";
 import { managedWorkspaceAutoTrust } from "./managed-workspace-trust.ts";
 import { folderTrustDecision } from "../shared/folder-trust.ts";
-import { announcementsStartupNotice, subscribe } from "./sendlane.ts";
+import { NewsSignup } from "./news-signup.ts";
 import {
   ATTACHMENTS_HOME,
   attachmentExists,
@@ -631,6 +632,7 @@ import { commitRefusal, createBotDeletionLedger, createPerKeySerialiser, type Ro
 import { afterCommit } from "./tx-scope.ts";
 import { isRestoreHeld, runnableContinuation, releaseHeldContinuation, heldCardDeliveries, releaseSharedResultAfterDelivery, checkHeldRelease, releaseRestoreHold, sqlRowRestoreHeld } from "./restore-fence.ts";
 import { describeHeldOutputs, describeHeldSharedResults, type HeldItemDeps } from "./restore-hold-list.ts";
+import { isTypedStop } from "./typed-stop.ts";
 import { sendStore, currentRestoreGeneration, restoreGenerationCurrent, stoppedResendRuns, ThreadGoneError, ThreadAdmission, pendingItem, sendNoticeError, sendNoticeLine, recoveredSteerLine, type RecoveryIo, type SendRow } from "./send-store.ts";
 import { reconcileLateSteer as reconcileLate, type LateSteerInput } from "./steer-late.ts";
 import { sendScreenshot } from "./screenshot-response.ts";
@@ -710,7 +712,7 @@ import { reclaimApplies, reclaimRootSetsWhenIdle, registerRetiredObjects, setRea
 import type { LineageRef, SessionKey } from "./memory/lineage-types.ts";
 import { allocateIncarnation, latestIncarnation, sessionKeyOf, startFreshSession } from "./memory/session-incarnation.ts";
 import { imageLibraryRef, shownPromptBlocks } from "./image-library-shown.ts";
-import { buildPrompt, memoryRefs, noneRef, ownReplayRefs, ownShownLineIds, promptPart, recordTurnObject, turnToolText } from "./memory/prompt-parts.ts";
+import { buildPrompt, crossThreadLineageRefs, memoryRefs, noneRef, ownReplayRefs, ownShownLineIds, promptPart, recordTurnObject, turnToolText } from "./memory/prompt-parts.ts";
 import { fencedTurnInput, sendBuiltTurn, type EngineFence } from "./drivers/engine-input.ts";
 import { createProjectCardExecutor, projectCardRefusalLine, cardSteeringMode, cardRequestIsReview, cardReviewRequestOf, isCardRequest, queueRoutineCardRun, projectRestartLine, STOPPED_BY_YOU, BUDGET_STOPPED } from "./project-card-executor.ts";
 import { authorizeProjectTool, handleProjectToolWithInterrupt, projectToolRoleForTurn, projectToolHandlers, turnRequestByGeneration } from "./project-tool-routing.ts";
@@ -958,7 +960,7 @@ import { listenWebhookIngress, webhookCredential, type WebhookIngress } from "./
 import { memberTurnSelection } from "./member-turn.ts";
 import { WebhookManager } from "./webhooks.ts";
 import { SPAWNED_PROXIES } from "./proxy-paths.ts";
-import { attachedSkillOn, attachedSkillsFor, CHIEF_GUIDE_ID, isChiefForAttached, loadBundledSkills, loadUserSkills, mergeSkills, renderSkillInstructions, selectBundledSkills, shippedSkillCheck, skillsWithMountedTools } from "./skill-library.ts";
+import { attachedSkillOn, attachedSkillsFor, CHIEF_GUIDE_ID, isChiefForAttached, loadBundledSkills, loadUserSkills, mergeSkills, renderSkillInstructions, selectBundledSkills, shippedSkillCheck, skillsForAudience, skillsWithMountedTools } from "./skill-library.ts";
 import { installedPlaybookInstructions } from "./installed-playbooks.ts";
 import { createBotPackageExport, getBotPackageExportSelectionCandidates } from "./package-export.ts";
 import { scanBotPackageContents } from "./bot-package-scan.ts";
@@ -1023,7 +1025,7 @@ import {
   TurnSubmissionBoundary,
   isTurnEventQuarantined,
 } from "./turn-dispatch-guard.ts";
-import { createGracefulShutdown, isAppCloseRequest } from "./graceful-shutdown.ts";
+import { APP_FLUSHED_TYPE, createGracefulShutdown, flushAckPath, isAppCloseRequest, isAppFlushRequest, writeFlushAck } from "./graceful-shutdown.ts";
 import { acquireDataDirLeaseForProcess } from "./data-dir-lease.ts";
 import { assertRestoreReviewed } from "../electron/restore-review.mjs";
 import { installServerChildCrashObserver } from "./server-child-crash.mjs";
@@ -1491,6 +1493,9 @@ type DesktopPrivateMessage = BrowserCleanupWireRequest | CloudModelSignInWireReq
   type: "murage:desktop-secret";
   secret: string;
 } | {
+  type: typeof APP_FLUSHED_TYPE;
+  ok: boolean;
+} | {
   // FluxRouter revoked the connected-apps broker token; main re-mints it from
   // the stored Flux key. Carries no credential.
   type: "murage:flux-composio-token-rejected";
@@ -1542,6 +1547,8 @@ const onUtilityParentMessage = (event: { data?: object }) => {
     // Quit: the desktop asks before it kills this process (G12). One listener
     // on the port, as main's port holds; closeRequested sits by the signals.
     if (isAppCloseRequest(message)) { closeRequested(); return; }
+    // The session is ending (Windows logoff or shutdown): the deferred writes reach disk now, before the OS ends this process.
+    if (isAppFlushRequest(message)) { postDesktopPrivateMessage(flushRequested(flushAckPath(message))); return; }
     // The WhatsApp auth key reply is matched by its own client (channels/whatsapp/auth-key.ts); nothing else reads it.
     if ((message as { type?: unknown } | undefined)?.type === AUTH_KEY_REPLY) return;
     if (modelSignIns.apply(message)) return;
@@ -1811,7 +1818,7 @@ const phoneProxyPath = SPAWNED_PROXIES.phone;
 // in the packaged app process.execPath is Electron — run the proxy as node
 const AGENTS_NODE_FLAG = { ELECTRON_RUN_AS_NODE: "1" };
 
-function agentsIntegration(botId: string, threadId: string, depth: number, skillAuthoring: boolean, generation: string, projectRole?: "lead" | "member" | "proposal") {
+function agentsIntegration(botId: string, threadId: string, depth: number, skillAuthoring: boolean, generation: string, projectRole?: "lead" | "member" | "proposal", venueRead = false) {
   return {
     command: process.execPath,
     args: [agentsProxyPath],
@@ -1828,6 +1835,7 @@ function agentsIntegration(botId: string, threadId: string, depth: number, skill
       ...(imageLibraryOwnerAudience({ threadId, notOwnerAudience: internalTurnOwners.get(threadId)?.notOwnerAudience }) ? {} : { [IMAGE_LIBRARY_ENV]: "0" }),
       // lane M's project tools are listed on a project turn with the owner's audience
       ...(projectRole ? { MURAGE_PROJECT_ROLE: projectRole } : {}),
+      ...(venueRead && !projectRole ? { MURAGE_VENUE_READ: "1" } : {}),
     },
   };
 }
@@ -3567,18 +3575,6 @@ const producingTurnOf = (threadId: string, botId: string): RunningTurnLineage | 
 /** The bot and conversation of the internal tool call each response answers: released words written to it join that bot's running turn's
  * sources (configureBotEgress below; server/steer-lineage.ts). */
 const internalCallers = new WeakMap<ServerResponse, { botId: string; threadId: string }>();
-/** Write-time lineage (DESIGN-WRITETIME 2.2): the lines of OTHER threads a turn's context showed in words, any role, as point carries for its
- * replies and session (same-thread context is positional). A line the renderer replaced by its withheld line carried no words, so it is no
- * parent (inheriting its mark would withhold a reply that never saw it); a quote rendered in full counts whatever a replay withheld. */
-function crossThreadLineageRefs(threadId: string, shown: ReadonlyArray<ShownLine>, withheldIds: ReadonlySet<string>): LineageRef[] {
-  const refs: LineageRef[] = [];
-  for (const line of shown) {
-    if (line.threadId === threadId && withheldIds.has(line.id) && !line.quoted) continue;
-    if (line.threadId !== threadId) refs.push({ kind: "line", threadId: line.threadId, messageId: line.id });
-    if (line.copyOf && line.copyOf.threadId !== threadId) for (const id of line.copyOf.messageIds) refs.push({ kind: "line", threadId: line.copyOf.threadId, messageId: id });
-  }
-  return refs;
-}
 const mergeRoots = mergeOutputRoots;
 /** The lines a transcript shows, with every line they quote (a reply target
  * is rendered as an excerpt inside the quoting entry, of any role). */
@@ -4379,6 +4375,7 @@ function driveSetupConversation(view: SetupView): void {
       store.patchMessage(threadId, existing.id, { card: { ...existing.card, setup: { ...existing.setup, settled: false } } });
     }
     for (const card of plan.append) {
+      if (card.step === "hello") newsSignup.markAsked();
       store.appendMessage(threadId, murageLine({
         role: "bot",
         kind: "options",
@@ -7042,6 +7039,11 @@ const TURN_STALL_MS = Math.max(60_000, Number(process.env.MURAGE_TURN_STALL_MS) 
 // being stuck. Waiting for a thread slot, another thread's computer, browser
 // or folder, or a person is not counted at all (turn-watchdog.ts).
 const TURN_SETUP_STALL_MS = Math.max(TURN_STALL_MS, Number(process.env.MURAGE_TURN_SETUP_STALL_MS) || 60 * 60_000);
+// Claude Code's 30 s tool heartbeat (upstream #3328) keeps a long build from
+// reading as a stall, but a hung tool or sub-agent heartbeats for as long as
+// it hangs. A running turn alive on heartbeats alone is stopped after this
+// long (never under the turn's own silence limit; turn-watchdog.ts).
+const TURN_HEARTBEAT_ONLY_MS = Math.max(TURN_STALL_MS, Number(process.env.MURAGE_TURN_HEARTBEAT_ONLY_MS) || 60 * 60_000);
 /** How long ask_bot waits synchronously before the ask is converted into a
  * delegation claim ticket (the peer's turn keeps running either way). */
 // Upstream #1589: four minutes held the asking bot's whole turn hostage to a
@@ -7066,6 +7068,7 @@ const pendingRoomStops = new Map<string, RoomPendingStop>();
 const watchdog = new TurnWatchdog({
   stallMs: TURN_STALL_MS,
   setupStallMs: TURN_SETUP_STALL_MS,
+  heartbeatOnlyMs: TURN_HEARTBEAT_ONLY_MS,
   checkMs: 60_000,
   onStall: (turn) => {
     // The room invocation owns its exact generation and provider identity.
@@ -7086,11 +7089,12 @@ const watchdog = new TurnWatchdog({
     const bot = store.bot(turn.botId);
     const instance = bot ? registry.get(bot.modelSelection.instanceId) : null;
     void instance?.adapter.interruptTurn(turn.threadId).catch(() => {});
-    const minutes = Math.round((turn.stallMs ?? TURN_STALL_MS) / 60_000);
+    const heartbeatOnly = turn.stalledBy === "heartbeat-only";
+    const minutes = Math.round((heartbeatOnly ? Math.max(turn.stallMs ?? TURN_STALL_MS, TURN_HEARTBEAT_ONLY_MS) : turn.stallMs ?? TURN_STALL_MS) / 60_000);
     store.appendMessage(turn.threadId, murageLine({
       role: "bot",
       kind: "activity",
-      tool: { name: `error: no activity for ${minutes} minutes: the turn was stopped`, ok: false },
+      tool: { name: heartbeatOnly ? `error: a tool ran for ${minutes} minutes with no progress: the turn was stopped` : `error: no activity for ${minutes} minutes: the turn was stopped`, ok: false },
     }));
     recordMemorySettlement(turn.threadId, `watchdog:${store.activeLeaf(turn.threadId)}`, "interrupted");
     finalizeDelegationWatch(turn.threadId, false, "", status("delegated_turn_stalled"));
@@ -7322,7 +7326,9 @@ bus.subscribe((event: RuntimeEvent) => {
     const directBotBusy = store.botByThread(event.threadId)?.busy === true;
     const roomBusy = Boolean(store.groupByThread(event.threadId)?.busyBotId);
     if (!directBotBusy && !roomBusy) void releaseBrowserCapabilityForThread(event.threadId);
-  } else watchdog.touch(event.threadId);
+    // A tool item.updated is only ever an engine heartbeat (Claude Code's
+    // tool_progress); it keeps the turn alive for TURN_HEARTBEAT_ONLY_MS.
+  } else watchdog.touch(event.threadId, { heartbeat: event.type === "item.updated" && event.itemType === "tool" });
 });
 
 presentedRequests.subscribe((event: RuntimeEvent) => {
@@ -7353,11 +7359,55 @@ const UNATTENDED_TTL_MS = 30 * 60_000;
 /** Whether the latest turn in each thread was owner audience (owner-audience.ts):
  *  a turn it asks for or delegates inherits a no. */
 const ownerSurfacesByThread = new Map<string, boolean>();
+setVenueReadLive({
+  ownerSurface: threadId => ownerSurfacesByThread.get(threadId),
+  notOwnerAudience: threadId => internalTurnOwners.get(threadId)?.notOwnerAudience === true,
+  roster: () => ({ bots: store.bots, groups: store.groups }),
+});
 
 /** Threads whose current turn is a scheduled or manual routine run's own
  * (or the card continuation of one): the routine carve-out follows the
  * turn's origin, never only the thread's live run. Any other turn clears it. */
 const routineOriginThreads = new Set<string>();
+
+/** NOLIMITS-ROUTINE-WAKE-107: the turns (by generation) that resume the owner's own scheduled or manual routine after a hand-off, with
+ * the routine ceiling admission applied to them. Such a turn stays marked unattended for everything else that mark drives; only its
+ * tool approvals read this, as the routine's own turn at that ceiling. Bound to the one turn, so no later turn inherits it. */
+const routineWakeByTurn = new Map<string, RoutinePeerSource>();
+/** Whether a turn asking now is the owner's own scheduled or manual routine run, or that run's own routine wake. */
+function askerOwnRoutine(botId: string, threadId: string, routineCeiling: boolean): boolean {
+  if (!routineCeiling || !routines?.activeBotRunForThread(botId, threadId)) return false;
+  const origin = routines.activeRunOrigin(threadId)?.triggerSource;
+  if (origin !== "schedule" && origin !== "manual") return false;
+  return !isUnattended(threadId) || routineWakeCeiling(threadId) !== undefined;
+}
+/** NOLIMITS-PROJECT-ROUTINE-107: the ceilings of the owner's own scheduled or manual routine runs this process delivered to a project
+ * room, by room request id (project-routines.ts). */
+const projectRoutineCeilings = new ProjectRoutineCeilings();
+/** A routine's level now (its own, capped by its bot's level now), or undefined when the routine or its bot is gone or draft-only. */
+function projectRoutineLevelNow(routineId: string): RoutinePermissionMode | undefined {
+  const routine = routines?.listRoutines().find((item) => item.id === routineId);
+  const owner = routine ? store.bot(routine.botId) : undefined;
+  return routine && owner && !owner.draftOnly ? effectiveRoutinePermissionMode(routine, owner) : undefined;
+}
+/** NOLIMITS-PROJECT-ROUTINE-107: the routine ceiling of the room turn `asker` is running in `threadId` right now, when that turn is
+ * the owner's own project routine run delivered by this process: the lowest of the level recorded at delivery, the routine's level
+ * now and the running bot's level now. Undefined for any other turn, which keeps the unattended judge. */
+function projectRoomRoutineCeiling(threadId: string, asker: BotRecord): RoutinePeerSource | undefined {
+  const requestId = roomTurnRequests.get(roomTurnRequestKey(threadId, asker.id));
+  const request = requestId ? roomRequest(database(), requestId) : null;
+  if (!request || request.toBotId !== asker.id || request.targetThreadId !== threadId || request.state !== "running") return undefined;
+  const ceiling = projectRoutineCeilings.turnOptions(request, projectRoutineLevelNow).routineAuthority;
+  const profile = store.bot(asker.id);
+  if (!ceiling || !profile || asker.draftOnly || profile.draftOnly) return undefined;
+  const mode = effectiveRoutinePermissionMode({ permissionMode: effectiveRoutinePermissionMode(ceiling, asker) }, profile);
+  return { ...ceiling, permissionMode: mode };
+}
+/** The routine ceiling a running wake of the owner's own routine carries, or undefined. */
+function routineWakeCeiling(threadId: string): RoutinePeerSource | undefined {
+  const direct = directRuns.get(threadId);
+  return direct ? routineWakeByTurn.get(direct.generation) : undefined;
+}
 
 function markUnattended(threadId: string) {
   unattendedBots.set(threadId, Date.now());
@@ -8011,6 +8061,11 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
         return;
       }
       const unattended = permission && asker && event.requestId ? isUnattended(event.threadId) : false;
+      // NOLIMITS-ROUTINE-WAKE-107: the follow-through of the owner's own routine run is unattended only because a routine has nobody at
+      // the keyboard, never because an outside event started it: its tool approvals are that routine's, at the ceiling it carries.
+      // NOLIMITS-PROJECT-ROUTINE-107: the same for the owner's own routine run in a project room (queued as an unattended room request)
+      const routineWake = unattended ? routineWakeCeiling(event.threadId) ?? (asker ? projectRoomRoutineCeiling(event.threadId, asker) : undefined) : undefined;
+      const toolUnattended = unattended && !routineWake;
       // A question tool filed as a permission (Claude's AskUserQuestion via
       // the permission host, Pi `select`, a Codex form elicitation) is still
       // a question: never auto-approved, never remembered, never reviewed.
@@ -8062,7 +8117,7 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
       // A reused task may retain older flags; the current bot and routine
       // already supplied the effective mode above.
       const judged = routineLevel && asker ? applyRoutinePermissionMode(asker, routineLevel.mode) : asker;
-      const inheritedRoutine = !unattended ? routinePeerSources.get(event.threadId) : undefined;
+      const inheritedRoutine = !unattended ? routinePeerSources.get(event.threadId) : routineWake;
       const approvalRun = routineLevel ? { permissionMode: routineLevel.mode, alwaysAllow: routineLevel.alwaysAllow } : inheritedRoutine;
       // "Always allow for this routine": the same scoped key the card already
       // offers (the stop-line place, or this exact command here), stored on
@@ -8136,7 +8191,7 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
               // "destructive" for Auto's guard (a process kill still is)
               ...(!questionAsk && stopHit === null && deletesInsideFor(asker.id, event.threadId, event) ? { deletesInside: true } : {}),
               stopAllowedForTask: stopHit ? taskAllowances.covering(asker.id, event.threadId, stopHit) : undefined,
-              unattended,
+              unattended: toolUnattended,
               scope: event.approvalScope,
               question: event.questionTool === true,
               // Full access covers turns the owner started; a routine's turn
@@ -8246,6 +8301,8 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
               decision: "auto-approved",
               source: verdict.source,
               rule: verdict.rule,
+              // a routine wake answered at its routine's level still records that nobody was at the keyboard (Grok final r1 Low)
+              unattended: unattended || undefined,
             });
           } catch {
             // couldn't answer it for them — hand it back to the human
@@ -9156,6 +9213,10 @@ const askerWakePort: AskerWakePort = {
   // own inherited ceiling (routinePeerSources), or the routine conversation's level an idle routine's owner turn took (conversationCeilings).
   register: (taskId, asker) => askerWakes.register(taskId, { ...asker,
     ...(!asker.routineAuthority ? (() => { const ceiling = routinePeerSources.get(asker.threadId) ?? conversationCeilings.get(asker.threadId); return ceiling ? { routineAuthority: { ...ceiling } } : {}; })() : {}),
+    // NOLIMITS-ROUTINE-WAKE-107: the asking turn is the owner's own scheduled or manual run (or its own routine wake), by the routine
+    // manager's record, and its ceiling is the routine's: the boundary's capture, or the wake's own ceiling, never a routine
+    // conversation's owner-turn level (conversationCeilings, which reads every level as "manual").
+    ...(askerOwnRoutine(asker.botId, asker.threadId, asker.routineAuthority !== undefined || routinePeerSources.has(asker.threadId)) ? { ownRoutine: true } : {}),
     // the level the asking turn is running at: its own copy of the bot (directRuns snapshot, every lowering admission applied to it,
     // a capped wake's included), not the task's flags as they stand now. Raised after the ask, the wake still runs at this level.
     askingMode: botPermissionMode(directRuns.get(asker.threadId)?.snapshot ?? store.projectBotForTask(asker.botId, asker.threadId) ?? store.bot(asker.botId)),
@@ -9300,6 +9361,43 @@ function retryDelegationsWaitingOn(botId: string): void {
 /** Stop on a conversation: the owner's messages still waiting there are not run by a restart (send-store.ts markStopped). Never fails the Stop. */
 function markSendsStopped(threadId: string): void {
   try { sendStore.markStopped(threadId); } catch (error) { console.error("[sends] could not mark the waiting messages of a stopped conversation", error); }
+}
+/** The Stop button's steps on one direct conversation, shared by the Stop route and a typed stop (designs/TYPED-STOP-107.md).
+ * An engine that does not confirm the stop throws provider_stop_unconfirmed, after its chip is written in the conversation. */
+async function stopDirectThreadForOwner(bot: BotRecord, threadId: string): Promise<void> {
+  dropAskerWakes(bot.id, threadId); // Stop pressed while the asker is idle still cancels its owed wake, wherever it waits
+  try { recordStopForThread(database(), bot, threadId); } catch { /* optional signal */ }
+  markSendsStopped(threadId);
+  const routine = routines!.activeBotRunForThread(bot.id, threadId);
+  if (routine) {
+    const stoppedGeneration = directRuns.get(threadId)?.generation;
+    cancelDirectTurnDispatch(bot.id, threadId);
+    await routines!.cancelRun(routine.id, stoppedGeneration);
+    return;
+  }
+  await interruptDirectThread(bot.id, threadId);
+}
+/** A typed stop (designs/TYPED-STOP-107.md, section 3): the owner's own plain "stop", from a proven device, with work running on this
+ * direct conversation. Read inside the conversation's admission. */
+function typedStopApplies(bot: BotRecord, threadId: string, text: string): boolean {
+  if (!isTypedStop(text) || !isWorkspaceOwner(threadHumanPrincipal(threadId))) return false;
+  return bot.busy === true || directTurnDispatchClaims.get(threadId)?.botId === bot.id || Boolean(routines?.activeBotRunForThread(bot.id, threadId));
+}
+/** A typed stop (designs/TYPED-STOP-107.md section 5). Its row is already finished ("cancelled", no words) and the conversation's waiting
+ * messages marked, in one transaction (sendStore.acceptTypedStop). The Stop button's steps follow in the same synchronous section; the
+ * conversation then shows the stopped turn as a button Stop does. The words leave no line, so nothing can show them to an engine. */
+async function typedStopNow(bot: BotRecord, threadId: string) {
+  const generation = directRuns.get(threadId)?.generation ?? internalTurnOwners.get(threadId)?.generation;
+  try { await stopDirectThreadForOwner(bot, threadId); }
+  catch (error) {
+    if ((error as { code?: unknown } | null)?.code !== "provider_stop_unconfirmed") {
+      // never a silent success: the same chip an unconfirmed stop shows (an unconfirmed one wrote it already)
+      console.error("typed stop: the Stop steps did not finish", error);
+      try { reportUnconfirmedDirectStop(threadId, generation); } catch { /* the conversation may be gone */ }
+    }
+  }
+  // an acknowledgement, not a dismissal: the client clears the composer and keeps no draft of the words
+  return { ok: true as const, stopped: true as const, threadId };
 }
 function retryParkedDelegations(): void {
   if (coordinationAdmissionClosed()) return;
@@ -10205,6 +10303,9 @@ async function startTurnAdmitting(
     askerWakeId?: string;
     /** Server-owned: the asking bot's own level when it asked; the wake runs at the lower of it and the level now. */
     askerWakeCeiling?: RoutinePermissionMode;
+    /** Server-owned (asker-wake.ts routineWakeOf): this wake resumes the owner's own scheduled or manual routine run. Its tool
+     *  approvals are judged as that routine's turn at the ceiling admission applied (NOLIMITS-ROUTINE-WAKE-107). */
+    routineWake?: boolean;
     continuationCardId?: string;
     continuationPermissionMode?: RoutinePermissionMode;
     /** Earlier text message this user turn is replying to. */
@@ -10803,6 +10904,14 @@ async function startTurnAdmitting(
     if (routineRunByTurn.size >= 1_000) routineRunByTurn.delete(routineRunByTurn.keys().next().value!);
     routineRunByTurn.set(run.generation, boundRunId);
   }
+  // NOLIMITS-ROUTINE-WAKE-107: a wake of the owner's own routine run, with the ceiling admission applied above (routinePeerSources)
+  const wakeCeiling = opts?.askerWake && opts.routineWake && inheritedRoutine && humanIsOwner ? routinePeerSources.get(threadId) : undefined;
+  if (wakeCeiling) {
+    if (routineWakeByTurn.size >= 1_000) routineWakeByTurn.delete(routineWakeByTurn.keys().next().value!);
+    // the lower of the routine's ceiling and the level this turn ended up at after every lowering above (the asking bot's level,
+    // a held replay's continuation level, draft-only): Grok design r1
+    routineWakeByTurn.set(run.generation, { ...wakeCeiling, permissionMode: effectiveRoutinePermissionMode(wakeCeiling, bot) });
+  }
   // SL-L L4: only the scheduler's own dispatch of this thread's live run, never a card continuation.
   if (opts?.seatWaitRunId && !opts.cardContinuation && liveRun && liveRun.botId === bot.id && liveRun.runId === opts.seatWaitRunId) {
     if (seatWaitRunByTurn.size >= 1_000) seatWaitRunByTurn.delete(seatWaitRunByTurn.keys().next().value!);
@@ -10914,9 +11023,14 @@ async function startTurnAdmitting(
       // Set when this bot is on the owner's browser and it is not ready: a short hint replaces the tools.
       let extensionBrowserHint: string | undefined;
       sweepBotSkills(bot.id); // a skill the scanner blocks is off, and its pins released, before this turn reuses or makes a pin
-      if (task.procedurePin && !procedurePinFitsAudience(bot.id,threadId,task.procedurePin,procedureContext(bot.id,threadId))) store.releaseTaskProcedures(bot.id,threadId);
-      const procedurePin = (task.procedurePin && procedurePinFitsAudience(bot.id,threadId,task.procedurePin,procedureContext(bot.id,threadId)) ? task.procedurePin : undefined) ?? store.pinTaskProcedures(bot.id, threadId,
-        createProcedurePin(bot.id, threadId, availableSkills(), bot.playbooks ?? [], procedureRoutineSnapshot(threadId), procedureContext(bot.id,threadId)));
+      // The owner's own skills ride, in the prompt and on disk, only a turn that answers the owner (skillsForAudience).
+      const pinAudience = { ownerTurn: directOwnerAudience && ownServersAllowedFor(bot), shipped: murageSkill };
+      const taskPinFits = (pin: typeof task.procedurePin) => Boolean(pin && procedurePinFitsAudience(bot.id,threadId,pin,procedureContext(bot.id,threadId)) && procedurePinServesTurn(bot.id,threadId,pin,pinAudience.ownerTurn));
+      // The owner's own skills are never projected onto this task's desk, only into app state for an owner
+      // turn's pin (OWNER-PIN-AUDIENCE-108.md): nothing has to leave the desk before a turn that does not answer the owner.
+      if (task.procedurePin && !taskPinFits(task.procedurePin)) store.releaseTaskProcedures(bot.id,threadId);
+      const procedurePin = (taskPinFits(task.procedurePin) ? task.procedurePin : undefined) ?? store.pinTaskProcedures(bot.id, threadId,
+        createProcedurePin(bot.id, threadId, availableSkills(), bot.playbooks ?? [], procedureRoutineSnapshot(threadId), procedureContext(bot.id,threadId), pinAudience));
       routines?.notePinnedBundle(threadId, procedurePin.bundleId);
       const pinnedProcedures = preparePinnedProcedures(bot.id, threadId, procedurePin, false, procedureContext(bot.id,threadId));
       // The Chief of Staff guide rides every turn of the workspace Chief
@@ -10930,7 +11044,8 @@ async function startTurnAdmitting(
           // tools are mounted, as the images line (imagePromptFor)
           ...(imageGenerationOn() && instance.adapter.capabilities.agentsMcp === true ? ["imageGeneration"] : []),
         ],
-        pinnedProcedures.catalogue,
+        // the owner's own recordings ride only the owner's turns (skillsForAudience)
+        skillsForAudience(pinnedProcedures.catalogue, directOwnerAudience && ownServersAllowedFor(bot), murageSkill),
       ), ...attachedSkillsFor(bot, pinnedProcedures.catalogue)];
       if (directOwnerAudience && selectedSkills.some((skill) => skill.manifest.requiredCapabilities.includes("phoneMcp"))) {
         integrations.phone = phoneIntegration();
@@ -11277,7 +11392,21 @@ async function startTurnAdmitting(
         const projectGroup = cardRequest ? store.group(cardRequest.groupId) : undefined;
         const projectRole = projectGroup && cardRequest
           ? roomProjectRole(projectGroup, bot.id, surfacesForOwner && !cardRequest.notOwnerAudience && roomRequestStillOwnerAudience(cardRequest)) : undefined;
-        integrations.agents = agentsIntegration(bot.id, threadId, commsDepth, skillAuthoring, dispatchClaimId, projectRole);
+        const venueMount = {
+          surfacesForOwner, directOwnerAudience, origin: opts?.origin,
+          notOwnerAudience: opts?.notOwnerAudience, chainNotOwner: opts?.chainNotOwner,
+          chainRootThreadId: opts?.chainRootThreadId,
+          rootOwnerSurface: opts?.chainRootThreadId ? ownerSurfacesByThread.get(opts.chainRootThreadId) : undefined,
+          automationSource: opts?.automationSource, projectCardRun: opts?.projectCardRun, sharedWorkRun: opts?.sharedWorkRun,
+          automationThread: isAutomationThread(bot.id, threadId), bot, threadId,
+          agentsMcp: instance.adapter.capabilities.agentsMcp === true,
+        };
+        const venueRead = venueReadMounts(venueMount);
+        if (venueRead) recordVenueReadTurn(dispatchClaimId, {
+          botId: bot.id, threadId, origin: venueMount.origin,
+          ...(opts?.chainRootThreadId ? { rootThreadId: opts.chainRootThreadId } : {}),
+        });
+        integrations.agents = agentsIntegration(bot.id, threadId, commsDepth, skillAuthoring, dispatchClaimId, projectRole, venueRead);
         trace.mark("mount.agents");
       }
       // @mentions in the user's message (the composer's tagging UI) become
@@ -11779,6 +11908,9 @@ async function startTurnAdmitting(
         ? [...new Set([store.bot(bot.id)?.cwd, store.taskByThread(bot.id, threadId)?.cwd].filter((dir): dir is string => typeof dir === "string" && dir.length > 0))]
           .filter(dir => dir !== cwd && dir !== privateWorkspace && isAbsolute(dir) && dir !== homedir() && dir !== parse(dir).root && !partitionFileRefusal(bot, threadId, [dir]))
         : [];
+      // The owner's own skills (a recording's frames) are in app state, not on the desk: the owner's turn may read
+      // them without an ask on the same terms. pinnedProcedures.ownerRoot is set only for an owner turn's pin.
+      if (bot.autoApprove === true && pinAudience.ownerTurn && !opts?.projectCardRun && !opts?.sharedWorkRun && opts?.runOn !== "cloud" && pinnedProcedures.ownerRoot) grantedDirs.push(pinnedProcedures.ownerRoot);
       // Output lineage, every mode (v6): what this turn shows the engine
       // (its replay, the owed lines, the quoted working context) and what its
       // resumed session already holds.
@@ -12550,8 +12682,14 @@ routines = new RoutineManager({
     // F2: a closed or ended project's routine run fails with this copy (the scheduler's guard), never falls through to a room task
     if (settings.endedAt !== null || settings.closedAt !== null) throw Object.assign(new Error(PROJECT_CLOSED_COPY), { code: "PROJECT_NOT_OPEN" });
     const threadId = projectMainThread(group);
+    // NOLIMITS-PROJECT-ROUTINE-107: the owner's own scheduled or manual run, at the routine's level and its bot's level now; a webhook
+    // or channel run gets none and keeps asking as an outside event
+    const routine = routines?.listRoutines().find((item) => item.id === run.routineId && item.botId === run.botId);
+    const owner = store.bot(run.botId);
+    const ceiling = owner && !owner.draftOnly ? projectRoutineCeiling(run, routine, owner) : undefined;
     transaction(db => {
       const delivery = recordProjectRoutine(db, { groupId: group.id, threadId, memberIds: group.memberIds, runId: run.id, botId: run.botId, name: run.routineName, prompt: run.prompt ?? "", now: Date.now() });
+      if (delivery.created && ceiling) projectRoutineCeilings.record(delivery.requestId, run.routineId, ceiling);
       if (delivery.created) store.appendMessage(threadId, { role: "user", kind: "text", text: `${run.routineName}: ${run.prompt ?? ""}`, automation:{kind:run.manual?"manual":"schedule",routineId:run.routineId}, routineRunPrompt: { trigger: run.manual ? "manual" : "schedule", routineName: run.routineName } });
     });
     projectFrames.strip(group.id);
@@ -13461,7 +13599,9 @@ function roomLine(source: BotRow, m: Message, render: (m: Message) => string, us
   // a withheld reply's line already names who said it and when
   return withheld?.has(source.id) ? m.text! : `${m.role === "user" ? userName : (m.from?.name ?? "Bot")}: ${render(m)}`;
 }
-function renderRoomContext(threadId: string, userName: string, permitted: Message[] | undefined, withheld: ReadonlySet<string> | undefined, project: { maxBytes: number } | undefined, botId: string): string {
+/** `emitted`, when given, receives the id of every room row the result shows whole as a line of its own (never one the window or the
+ * project budget left out or clipped): the rows whose words the prompt carries (crossThreadLineageRefs, designs/SEND-FENCE-RECEIPT-RACE.md A2). */
+function renderRoomContext(threadId: string, userName: string, permitted: Message[] | undefined, withheld: ReadonlySet<string> | undefined, project: { maxBytes: number } | undefined, botId: string, emitted?: Set<string>): string {
   const turnRows = permitted ? undefined : roomTurnRows(threadId);
   const available = permitted ?? turnRows!.rows;
   const hasTools = !botId || routeHasTools(registry.get(store.bot(botId)?.modelSelection.instanceId ?? "")?.adapter.capabilities);
@@ -13504,14 +13644,16 @@ function renderRoomContext(threadId: string, userName: string, permitted: Messag
   } };
   const window = roomContextMessages(messages, GROUP_CONTEXT_MESSAGES, pinnedMessageId);
   const viewer = botViewer(botId);
+  const lineIds: string[] = [];
   const lines = window.flatMap((m) => {
     // only a row the door returned to this bot becomes a line
     const source = botRowOf(m, viewer);
     if (!source) return [];
     const line = roomLine(source, m, row => transcriptText(row, messagesById, userName), userName, withheld);
+    lineIds.push(m.id);
     return [m.id === pinnedMessageId ? `[${ROOM_CONTEXT_PINNED_LABEL}] ${line}` : line];
   });
-  if (!project) return lines.join("\n");
+  if (!project) { if (emitted) for (const id of lineIds) emitted.add(id); return lines.join("\n"); }
   // A project member's transcript (plan 3.8): within its budget, oldest
   // lines out first (never the pin), and a pointer to the rest. Every reply
   // stays reachable through project_read_messages.
@@ -13520,7 +13662,7 @@ function renderRoomContext(threadId: string, userName: string, permitted: Messag
   // fetched by id are not counted).
   const read = turnRows ?? roomTurnRows(threadId);
   const earlier = Math.max(0, messages.filter((m) => m.kind === "text" && m.text).length + olderLines - window.filter((m) => m.id !== pinnedMessageId).length - read.extras);
-  return fitProjectTranscript(lines, earlier, project.maxBytes, `[${ROOM_CONTEXT_PINNED_LABEL}]`, read.more);
+  return fitProjectTranscript(lines, earlier, project.maxBytes, `[${ROOM_CONTEXT_PINNED_LABEL}]`, read.more, emitted ? index => emitted.add(lineIds[index]!) : undefined);
 }
 
 
@@ -13960,8 +14102,8 @@ function abandonSharedOwnerUsageTurn(threadId: string, generation: string): void
  * route and the limit failover's resend (1.0.4 SL-I I4, its own send id) both come through here, so a resend gets the same
  * exactly-once dedupe, queue and audience rules as any send. */
 async function acceptBotSend(input: { bot: BotRecord; threadId: string; text: string; sendId?: string; ownerResend: boolean; presentedGeneration?: string;
-  presentedStop?: string; actionId?: string; replyTo: ReturnType<typeof resolveReplyTarget>; origin: MessageOrigin; unprovenSend: boolean }) {
-  const { bot, threadId, text, sendId, ownerResend, presentedGeneration, presentedStop, actionId, replyTo, origin, unprovenSend } = input;
+  presentedStop?: string; actionId?: string; replyTo: ReturnType<typeof resolveReplyTarget>; origin: MessageOrigin; unprovenSend: boolean; typedStop?: boolean }) {
+  const { bot, threadId, text, sendId, ownerResend, presentedGeneration, presentedStop, actionId, replyTo, origin, unprovenSend, typedStop } = input;
   const fingerprint = sendFingerprint(text, replyTo?.id);
   return sendSequencer.run(
     sendId ? `bot:${bot.id}:${threadId}:${sendId}` : undefined,
@@ -13993,12 +14135,18 @@ async function acceptBotSend(input: { bot: BotRecord; threadId: string; text: st
       }
       // ONE transaction in the message database. Only after it commits is the send
       // acknowledged; if it cannot be written, nothing is submitted.
+      // Typed stop (designs/TYPED-STOP-107.md): decided before the row exists, never behind the thread's admission. From here to the start
+      // of the cancellation is one synchronous section: the work stopped is the work that was running.
+      const live = typedStop && !unprovenSend && !replyTo ? botForDirectThread(bot.id, threadId) : null;
+      const stopNow = Boolean(live && live.threadId === threadId && typedStopApplies(live, threadId, text));
+      const acceptance = {
+        kind: "bot" as const, ownerId: bot.id, threadId, ...(sendId ? { sendId } : {}), fingerprint, text,
+        ...(replyTo?.id ? { replyToId: replyTo.id } : {}), origin, ...(ownerResend ? { resend: true, ...(presentedGeneration ? { restoreGen: presentedGeneration } : {}), ...(presentedStop ? { stopGen: presentedStop } : {}), ...(actionId ? { actionId } : {}) } : {}),
+      };
       let admitted;
       try {
-        admitted = sendStore.accept({
-          kind: "bot", ownerId: bot.id, threadId, ...(sendId ? { sendId } : {}), fingerprint, text,
-          ...(replyTo?.id ? { replyToId: replyTo.id } : {}), origin, ...(ownerResend ? { resend: true, ...(presentedGeneration ? { restoreGen: presentedGeneration } : {}), ...(presentedStop ? { stopGen: presentedStop } : {}), ...(actionId ? { actionId } : {}) } : {}),
-        });
+        // a typed stop's row is born finished, with the conversation's waiting messages marked, in one transaction
+        admitted = stopNow ? sendStore.acceptTypedStop(acceptance) : sendStore.accept(acceptance);
       } catch {
         throw sendNoticeError("notRecorded", 503);
       }
@@ -14006,6 +14154,7 @@ async function acceptBotSend(input: { bot: BotRecord; threadId: string; text: st
         throw Object.assign(new Error("sendId already belongs to another message"), { status: 409 });
       }
       const row = admitted.row;
+      if (stopNow && admitted.kind === "new") return typedStopNow(store.bot(bot.id) ?? live!, threadId);
       // held for the owner (a restore neutralized it, or it was waiting when they pressed Stop and a restart followed): a retry gets the held chip back, never a run
       if (admitted.kind === "existing" && (row.restoreHeld || (row.stopped && row.status === "refused"))) return { ok: true as const, queued: true as const, held: true as const, queueId: row.queueId, threadId };
       if (admitted.kind === "existing" && row.status !== "sending") {
@@ -14013,7 +14162,8 @@ async function acceptBotSend(input: { bot: BotRecord; threadId: string; text: st
         // never dispatches the words again.
         const landed = row.messageId ? store.messageById(threadId, row.messageId) : undefined;
         if (row.status === "queued") return { ok: true as const, queued: true as const, queueId: row.queueId, threadId };
-        if (row.status === "cancelled") return { ok: true as const, cancelled: true as const, threadId };
+        // a typed stop's row is finished but was acknowledged, never dismissed (designs/TYPED-STOP-107.md): its retry is an ack too
+        if (row.status === "cancelled") return row.mode === "typedStop" ? { ok: true as const, stopped: true as const, threadId } : { ok: true as const, cancelled: true as const, threadId };
         if (row.status === "started") return { ok: true as const, threadId, ...(landed ? { message: landed } : {}) };
         return {
           ok: true as const,
@@ -16395,9 +16545,13 @@ async function runGroupMemberTurn(
   const procedureHolder = group.dm ? group : store.groupTaskByThread(group.id, threadId)!;
   sweepBotSkills(bot.id); // a blocked skill is off, and its pins released, before this turn reuses or makes a pin
   const oldProcedurePin = procedureHolder.procedurePins?.[bot.id];
-  if (oldProcedurePin && !procedurePinFitsAudience(bot.id,threadId,oldProcedurePin,procedureContext(bot.id,threadId))) store.releaseGroupProcedures(group.id,threadId,bot.id);
-  const procedurePin = (oldProcedurePin && procedurePinFitsAudience(bot.id,threadId,oldProcedurePin,procedureContext(bot.id,threadId)) ? oldProcedurePin : undefined) ?? store.pinGroupProcedures(group.id, threadId, bot.id,
-    {...createProcedurePin(bot.id, threadId, availableSkills(), bot.playbooks ?? [], procedureRoutineSnapshot(threadId), procedureContext(bot.id,threadId)),
+  // The owner's own skills ride, in the prompt and on disk, only a turn that answers the owner (skillsForAudience):
+  // a pin an owner turn wrote is not reused by a turn that does not, and its owner copy is never on the desk.
+  const pinAudience = { ownerTurn: roomOwnerAudience && ownServersAllowedFor(bot), shipped: murageSkill };
+  const oldPinFits = Boolean(oldProcedurePin && procedurePinFitsAudience(bot.id,threadId,oldProcedurePin,procedureContext(bot.id,threadId)) && procedurePinServesTurn(bot.id,threadId,oldProcedurePin,pinAudience.ownerTurn));
+  if (oldProcedurePin && !oldPinFits) store.releaseGroupProcedures(group.id,threadId,bot.id);
+  const procedurePin = (oldPinFits ? oldProcedurePin : undefined) ?? store.pinGroupProcedures(group.id, threadId, bot.id,
+    {...createProcedurePin(bot.id, threadId, availableSkills(), bot.playbooks ?? [], procedureRoutineSnapshot(threadId), procedureContext(bot.id,threadId), pinAudience),
       ...(procedureHolder.pinnedCwd !== undefined ? {legacyRoomWorkspace:true as const} : {})});
   const pinnedProcedures = preparePinnedProcedures(bot.id, threadId, procedurePin, false, procedureContext(bot.id,threadId));
   const skills = pinnedProcedures.catalogue;
@@ -16422,19 +16576,25 @@ async function runGroupMemberTurn(
   // partition, including room tasks whose thread differs from the group's.
   const roomProjectMember = (group: GroupRecord, botId: string, ownerAudience: boolean, contextWindow: number | undefined) =>
     renderRoomProjectMember(group, botId, ownerAudience, contextWindow, threadId);
-  const serializeRoomContext = (threadId: string, userName: string, permitted?: Message[], withheld?: ReadonlySet<string>, project?: { maxBytes: number }) =>
-    renderRoomContext(threadId, userName, permitted, withheld, project, bot.id);
-  const roomContextText = () => roomFloor ? serializeRoomContext(threadId, userName, roomFloor.messages, roomFloor.withheld, projectTranscript) : serializeRoomContext(threadId, userName, undefined, undefined, projectTranscript);
+  const serializeRoomContext = (threadId: string, userName: string, permitted?: Message[], withheld?: ReadonlySet<string>, project?: { maxBytes: number }, emitted?: Set<string>) =>
+    renderRoomContext(threadId, userName, permitted, withheld, project, bot.id, emitted);
+  const roomContextText = (emitted?: Set<string>) => roomFloor ? serializeRoomContext(threadId, userName, roomFloor.messages, roomFloor.withheld, projectTranscript, emitted) : serializeRoomContext(threadId, userName, undefined, undefined, projectTranscript, emitted);
+  // The room rows the prompt text last built (`text` below) shows in words, renewed with every build of it: only their copies' originals are
+  // judged by content at the send fence (crossThreadLineageRefs `emitted`, Astra design review A2).
+  let roomEmittedIds = new Set<string>();
+  const emittedNow = () => (roomEmittedIds = new Set<string>());
+  // The owner's own recordings ride only a turn that answers the owner (skillsForAudience).
+  const audienceSkills = skillsForAudience(skills, roomOwnerAudience && ownServersAllowedFor(bot), murageSkill);
   const selectedSkills = mergeSkills(
     selectBundledSkills(
       roomContextText(),
       instance.adapter.capabilities.phoneMcp === true ? ["phoneMcp"] : [],
-      skills,
+      audienceSkills,
     ),
     [...selectBundledSkills(
       latestUser?.text ?? "",
       [...(skillAuthoring ? ["skillAuthoring"] : []), ...(imageGenerationOn() && instance.adapter.capabilities.agentsMcp === true ? ["imageGeneration"] : [])],
-      skills,
+      audienceSkills,
     ), ...attachedSkillsFor(bot, skills)],
   );
   // The owner's own phone, for the owner's audience only, as in a 1:1 turn.
@@ -16649,7 +16809,7 @@ async function runGroupMemberTurn(
 
   const learnTurn = skillAuthoring && latestUser?.text ? expandLearnTurnText(latestUser.text) : "";
   const learnBlock = learnTurn && learnTurn !== latestUser?.text ? `\n\n${learnTurn}` : "";
-  let text = `${withProjectStatus(roomContextText(), projectStatus)}\n\n(Reply to the conversation above as ${bot.name}.)${learnBlock}${continuationPrompt ? `\n\n${continuationPrompt}` : ""
+  let text = `${withProjectStatus(roomContextText(emittedNow()), projectStatus)}\n\n(Reply to the conversation above as ${bot.name}.)${learnBlock}${continuationPrompt ? `\n\n${continuationPrompt}` : ""
   }`;
 
   // same workspace + memory as a 1:1 turn — the room is a different
@@ -16837,7 +16997,7 @@ async function runGroupMemberTurn(
       roomFloor=roomFloorNow(allowance);
       roomRenderedView=roomFloor;
       if(roomFloor&&roomOwnerAudience)syncOwnerWithheldNotes(threadId,roomFloor);
-      text=`${withProjectStatus(roomContextText(),projectStatus)}\n\n(Reply to the conversation above as ${bot.name}.)${learnBlock}${continuationPrompt?`\n\n${continuationPrompt}`:""}`;
+      text=`${withProjectStatus(roomContextText(emittedNow()),projectStatus)}\n\n(Reply to the conversation above as ${bot.name}.)${learnBlock}${continuationPrompt?`\n\n${continuationPrompt}`:""}`;
       if(!roomMemoryReset)roomContinuedSession=keptSession;
       fenceRoomContextWithoutReceipt(roomMemoryReset?undefined:retained?.roots,roomMemoryReset?undefined:keptSession);
       return;
@@ -16885,7 +17045,7 @@ async function runGroupMemberTurn(
     if(projectNow){const at=roomLayers.findIndex(layer=>layer.id==="project-brief");if(at>=0)roomLayers[at]=shapeLayer("project-brief",projectNow.brief?`\n${projectNow.brief}`:"");}
     projectStatus=projectNow?.status??projectStatus;
     if(bot.chiefOfStaff){const fresh=buildRoomSystem();const at=roomLayers.findIndex(layer=>layer.id==="persona");if(at>=0)roomLayers.splice(at,fresh.length,...fresh);}
-    text=`${withProjectStatus(serializeRoomContext(threadId,userName,roomTranscript.messages,roomTranscript.withheld,projectTranscript),projectStatus)}\n\n(Reply to the conversation above as ${bot.name}.)${learnBlock}${continuationPrompt?`\n\n${continuationPrompt}`:""}`;
+    text=`${withProjectStatus(serializeRoomContext(threadId,userName,roomTranscript.messages,roomTranscript.withheld,projectTranscript,emittedNow()),projectStatus)}\n\n(Reply to the conversation above as ${bot.name}.)${learnBlock}${continuationPrompt?`\n\n${continuationPrompt}`:""}`;
     noteWithheldPin(threadId,bundle);
     memoryReceipt=new MemoryDispatchReceipt(bundle,access,instance.instanceId);
     memoryDispatches.set(threadId,memoryReceipt);
@@ -17120,7 +17280,9 @@ async function runGroupMemberTurn(
         roomRetainedMemory.set(roomRetainedKey, { disclosed: Boolean(memoryReceipt) || Boolean(kept?.disclosed), roots: held, sources: lineage.sources, ranges: lineage.ranges ??= [],
           lineage, ...(kept ? { session: roomRetainedSession(kept, threadId, instance.instanceId) } : {}) });
         // write-time: what this member was shown from other threads joins its running turn (its replies carry it: message-db.ts)
-        roomShownRefs = crossThreadLineageRefs(threadId, shown, withheldIds);
+        // an owner-only room's own transcript is read by content (the room prefix, content: true): the originals of the copies its prompt shows in words are
+        // judged by the same reader (designs/SEND-FENCE-RECEIPT-RACE.md); without the rendered view none are
+        roomShownRefs = crossThreadLineageRefs(threadId, shown, withheldIds, roomOwnerAudience, view && inView ? roomEmittedIds : undefined);
         addTurnParents(roomTurnLineage, roomShownRefs);
         supersedeMemberTurns(roomTurnLineage);
         // a kept session carries this turn too, whether or not the engine reports it again: its lineage reaches this turn's lines, so a
@@ -21465,10 +21627,11 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       if (!internalOwner || internalOwner.generation !== internalClaim.generation) return json(res, 401, { error: "internal turn owner is unavailable" });
       requireActiveInternal();
       const routeRefusal = internalRouteRefusal({ path, kind: requiredKind, principal: threadHumanPrincipal(internalClaim.threadId) });
-      if (routeRefusal) return json(res, 403, { error: routeRefusal });
+      if (routeRefusal) return json(res, 403, { error: path === "/api/internal/venue/read-messages" ? VENUE_READ_UNAVAILABLE : routeRefusal });
       const executingRequestId = turnRequestByGeneration.get(internalClaim.generation);
       const closeRefusal = projectCloseToolRefusal(database(),executingRequestId,method,path);
-      if (closeRefusal) return json(res,409,closeRefusal);
+      if (closeRefusal) return path === "/api/internal/venue/read-messages"
+        ? json(res, 403, { error: VENUE_READ_UNAVAILABLE }) : json(res,409,closeRefusal);
       if(requiredKind==="memory") {
         if(method!=="POST")return json(res,405,{error:"memory routes require POST"});
         const access=memoryAccess(internalCapabilities,internalClaim,()=>({bots:store.bots,groups:store.groups}));
@@ -21932,6 +22095,18 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         if (path === "/api/internal/connectors/request") return { ...body, botId: internalClaim.botId, threadId: internalClaim.threadId };
         return body;
       };
+      if (method === "POST" && path === "/api/internal/venue/read-messages") {
+        try {
+          const raw = await readInternalBody() as Record<string, unknown>;
+          const { fromBotId: _fromBotId, fromThreadId: _fromThreadId, depth: _depth, ...body } = raw;
+          const result = serveVenueRead(database(), internalClaim, body);
+          return json(res, result.status, result.body);
+        } catch (error) {
+          // Expiration remains the existing capability boundary's 401.
+          if ((error as { status?: number })?.status === 401) throw error;
+          return json(res, 403, { error: VENUE_READ_UNAVAILABLE });
+        }
+      }
       // ── internal project tools (SPEC-P 11.3, lane E1 routing) ─────────
       // Authorised at the call from current state (project-tool-routing.ts); the
       // effect is lanes R and M's, registered by name.
@@ -23302,7 +23477,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       }
       const row = sendStore.bySendId(threadId, sendId);
       if (!row) return json(res, 404, { error: "no such send" });
-      return json(res, 200, { status: row.status });
+      // a typed stop reads as acknowledged ("stopped"), never as a dismissal that would keep its words as a draft
+      return json(res, 200, { status: row.mode === "typedStop" ? "stopped" : row.status });
     }
 
     m = path.match(/^\/api\/threads\/([\w-]+)\/messages$/);
@@ -27165,7 +27341,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       const origin = requestOrigin(req, url);
       const unprovenSend = origin === "unproven";
       if (unprovenSend && wouldRunEngineCommand(bot, text, replyTo)) return json(res, 403, { error: ENGINE_COMMAND_NEEDS_OWNER });
-      const receipt = await acceptBotSend({ bot, threadId, text, sendId, ownerResend, presentedGeneration, presentedStop, actionId, replyTo, origin, unprovenSend });
+      // typedStop: only this route may ask (designs/TYPED-STOP-107.md G1); the other gates decide
+      const receipt = await acceptBotSend({ bot, threadId, text, sendId, ownerResend, presentedGeneration, presentedStop, actionId, replyTo, origin, unprovenSend, typedStop: true });
       // the receipt's row (a fresh send, a redelivered sendId, the landed line of an earlier attempt) leaves through the gate (r8 R8)
       return json(res, 202, wireReceipt(receipt));
     }
@@ -27568,12 +27745,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       const busyChannel=activeGroupTurnForBot(bot.id);
       if(!busyChannel||(body.threadId!==undefined&&body.threadId!==busyChannel.threadId)){
         const selected=requestedDirectBot(bot.id,body.threadId),threadId=selected.threadId;
-        dropAskerWakes(bot.id, threadId); // Stop pressed while the asker is idle still cancels its owed wake, wherever it waits
-        try { recordStopForThread(database(), bot, threadId); } catch { /* optional signal */ }
-        markSendsStopped(threadId);
-        const routine=routines!.activeBotRunForThread(bot.id,threadId);
-        if(routine){const stoppedGeneration=directRuns.get(threadId)?.generation;cancelDirectTurnDispatch(bot.id,threadId);await routines!.cancelRun(routine.id,stoppedGeneration);return json(res,200,{ok:true});}
-        try{await interruptDirectThread(bot.id,threadId);}
+        try{await stopDirectThreadForOwner(bot,threadId);}
         catch(error){
           const stop=error as {code?:unknown;message?:string};
           if(stop.code!=="provider_stop_unconfirmed")throw error;
@@ -28564,6 +28736,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         const chiefThread = ((id) => (id ? store.bot(id)?.threadId : undefined))(setup.chiefBotId());
         if (chiefThread) await store.prepareThread(chiefThread);
         echoSetupAnswer(parsed.data.step, parsed.data.answer);
+        // A hello answered with a name and no address is a pass on the news.
+        if (parsed.data.step === "hello" && !/@/.test(parsed.data.answer)) newsSignup.markSkipped();
         const live = await setupLiveState();
         const view = setupView(setup.answer(parsed.data.step, parsed.data.answer, live), live);
         chiefConfirms(parsed.data.step, parsed.data.answer);
@@ -28573,6 +28747,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       const parsed = setupStepRequestSchema.safeParse(body);
       if (!parsed.success) return json(res, 400, { error: "Choose a setup step." });
       const live = await setupLiveState();
+      if (setupAction[1] === "skip" && parsed.data.step === "hello") newsSignup.markSkipped();
       const state = setupAction[1] === "skip" ? setup.skip(parsed.data.step, live) : setup.reopen(parsed.data.step, live);
       const view = setupView(state, live);
       await driveSetup(view);
@@ -29039,16 +29214,24 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
     }
 
     // ── app config (API keys — never echoed back, booleans only) ──
+    // The news signup is the desktop app's own (server/news-signup.ts). A Cloud
+    // home has nowhere to post it and must not hold an address it cannot send.
+    if (cloudHome && ((method === "POST" && path === "/api/subscribe") || (method === "GET" && path === "/api/news"))) return json(res, 404, { error: "no such route" });
     if (method === "POST" && path === "/api/subscribe") {
-      // Fire-and-report: the renderer does not wait on the signup, and a
-      // failure here must never stop someone entering the app.
-      const payload = (await readBody(req)) as { email?: string; name?: string } | null;
-      const result = await subscribe(String(payload?.email ?? ""), payload?.name);
-      if (!result.ok && result.reason === "upstream") {
-        console.error(`announcement signup failed (status ${result.status ?? "network"})`);
+      // Recorded and queued, then answered at once: the post to murage.ai
+      // happens in the background and retries quietly (server/news-signup.ts).
+      // A failure here must never stop someone entering the app.
+      const payload = (await readBody(req, 4 * 1024)) as { email?: unknown; name?: unknown; from?: unknown } | null;
+      let result: { ok: boolean; reason?: string };
+      try {
+        result = newsSignup.subscribe(payload?.email, payload?.name, payload?.from);
+      } catch {
+        result = { ok: false, reason: "not-saved" };
       }
       return json(res, 200, { ok: result.ok, reason: result.reason ?? null });
     }
+    // Whether the news signup was asked and how it ended. Never the address.
+    if (method === "GET" && path === "/api/news") return json(res, 200, newsSignup.view());
     if (method === "GET" && path === "/api/config") {
       // The one place the renderer can learn which door it came through.
       // Both surfaces are allowed this route (companion/src/routes.ts), and
@@ -29382,7 +29565,14 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         // ?provider= lists another service's voices, for an agent switching
         const asked = url.searchParams.get("provider");
         const provider = asked === "flux" || asked === "xai" || asked === "elevenlabs" || asked === "system" ? asked : botVoiceProvider(url.searchParams.get("botId"));
-        return json(res, 200, { voices: await tts.listVoices(cfg, undefined, provider) });
+        const onFlux = tts.effectiveProvider(cfg, provider) === "flux";
+        // ?recheck=1 is the picker's "Check again": Flux's voice list is read
+        // now, not after the ten minutes it is otherwise kept
+        if (onFlux && url.searchParams.get("recheck") === "1") await tts.recheckFluxEleven();
+        const voices = await tts.listVoices(cfg, undefined, provider);
+        // fluxEleven: whether Flux's voice list offers its ElevenLabs voices
+        // on this key; when it does not they are left out and the picker says why
+        return json(res, 200, { voices, ...(onFlux ? { fluxEleven: tts.fluxElevenStatus() } : {}) });
       } catch (e) {
         return json(res, 200, { voices: [], error: e instanceof Error ? e.message : String(e) });
       }
@@ -29400,7 +29590,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         // One wait and one more try on a 429 (60 requests per minute per
         // account); the client sends a turn's clips one after another.
         const audio = await retryOnRateLimit(
-          () => tts.speakStreamed(cfg, text, typeof body.voiceId === "string" ? body.voiceId : undefined, botVoiceProvider(body.botId)),
+          () => tts.speakStreamed(cfg, text, typeof body.voiceId === "string" ? body.voiceId : undefined, botVoiceProvider(body.botId), { preview: body.preview === true }),
           { onRetry: (ms) => console.warn(`[voice-diag] tts rate-limited, retrying once in ${ms}ms`) },
         );
         // Times next to each other, never the text: ours to the first bytes,
@@ -30226,6 +30416,10 @@ startupMark("skillSweep.done"); // the sweep is now per bot: in the background a
 // Notices from the Murage team (server/announcements.ts). With the key slots
 // still placeholders the source is null and nothing is ever fetched.
 const announcements = new Announcements({ source: announcementSource() });
+// The Murage news signup the hello card asks for (server/news-signup.ts): one
+// local record so it is asked once, and a quiet queue that posts the address
+// from this process, never the renderer.
+const newsSignup = new NewsSignup();
 // Own-server computer relay (vps-mcp-relay.ts): a Cloud turn's MCP stream, bridged to docker-over-ssh
 // that this server spawns. A binding counts only while its thread is still the bot's active VPS thread.
 const vpsRelayBindings = new Map<string, { threadId: string; alias: string; container: string }>();
@@ -30438,6 +30632,8 @@ void releasePreListenHealth().catch(() => undefined).then(() => { startLoopLagMo
     // Announcements: once now, then every six hours. Never on the path to the
     // port being open, and a failure keeps the cached copy silently.
     { name: "announcements", run: () => announcements.start() },
+    // A news signup an earlier run still owed: sent quietly, in the background.
+    { name: "news-signup", run: () => newsSignup.start() },
     // Warm the skill index while nobody is waiting.
     //
     // It is built lazily by whichever request needs it first, and all three of
@@ -30462,14 +30658,6 @@ void releasePreListenHealth().catch(() => undefined).then(() => { startLoopLagMo
   // Cloud home only: checks once now, then every 10 minutes, that its own UI renders. Never blocks /api/health. (Started in the same listen
   // tick as before, after the after-listen list is queued, so the memory worker stays among the callback's first lines: worker-boot-order.)
   startUiCanary(createCloudUiLauncher(process.env.MURAGE_TRUSTED_PROXY?.slice(5) ?? "/data/proxy/murage.sock"));
-  // SAY IT ONCE, OUT LOUD, WHEN THE SIGNUP CANNOT WORK.
-  //
-  // With nowhere to post `subscribe()` returns "disabled" and the route below
-  // logs only "upstream", so a build that collects nothing said nothing. This
-  // is the one line that makes that visible. It names an environment variable,
-  // never a value — and there is no longer a credential on this side to name.
-  const signupNotice = announcementsStartupNotice();
-  if (signupNotice) console.warn(signupNotice);
 }); });
 
 const dataWriterGate = createDataWriterGate(
@@ -30576,13 +30764,25 @@ function closeRequested(): void {
   try { flushCoalesced(); } catch (error) { console.warn("Could not flush deferred writes:", error instanceof Error ? error.message : String(error)); }
   gracefulShutdown();
 }
+/** The desktop's session-end request: the deferred store writes reach disk now; the server keeps running. The answer file (created
+ * only, never overwritten) is what the desktop's bounded wait looks for; the message answer is for a parent that can still listen. */
+function flushRequested(ack: string | null): { type: typeof APP_FLUSHED_TYPE; ok: boolean } {
+  let ok = true;
+  try { flushCoalesced(); }
+  catch (error) { ok = false; console.warn("Could not flush deferred writes:", error instanceof Error ? error.message : String(error)); }
+  if (ack) writeFlushAck(ack, ok);
+  return { type: APP_FLUSHED_TYPE, ok };
+}
 for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, closeRequested);
 // The desktop asks over its private port before it kills this process (the
 // port's one listener, above): on Windows the kill is TerminateProcess and no
 // signal handler runs (G12). A plain Node parent with an IPC channel (the
 // harness tests) asks the same way.
 if (!utilityParentPort && typeof process.send === "function") {
-  process.on("message", (message) => { if (isAppCloseRequest(message)) closeRequested(); });
+  process.on("message", (message) => {
+    if (isAppCloseRequest(message)) closeRequested();
+    else if (isAppFlushRequest(message)) process.send?.(flushRequested(flushAckPath(message)));
+  });
 }
 
 // The scheduler starts only once every piece of module state a turn reads exists. A run already due at boot dispatches

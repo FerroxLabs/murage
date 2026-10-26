@@ -85,7 +85,7 @@ it("R2.2 contact in a marked room cannot pin home learned skills", () => {
   installSkill(f.iris.id, "learn:conversation", [{ path: "SKILL.md", content: "---\nname: private-method\ndescription: HOME_SKILL_CANARY\n---\n\nHOME_SKILL_CANARY" }]); setSkillEnabled(f.iris.id, "private-method", true);
   const audience = backgroundMemoryAudience(f.iris.id, f.room.threadId, f.store)!;
   expect(audience.audienceKey).toBe(`room:${f.room.id}:bot:${f.iris.id}`);
-  const pin = createProcedurePin(f.iris.id, f.room.threadId, [], [], undefined, { audienceKey: audience.audienceKey, allowedScopeIds: audience.scopeIds });
+  const pin = createProcedurePin(f.iris.id, f.room.threadId, [], [], undefined, { audienceKey: audience.audienceKey, allowedScopeIds: audience.scopeIds },{ownerTurn:true,shipped:()=>true});
   expect(readProcedureBundle(f.iris.id, f.room.threadId, pin).imported).toEqual([]);
 });
 it.each([false, true])("R2.3 index coordination preserves Chief tools (shared=%s)", shared => {

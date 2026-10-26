@@ -279,6 +279,7 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: "*", path: "/api/folder-trust", class: "desktop", cloudWrite: "step-up", why: "per-folder trust for an engine that gates repo-local files" },
   { methods: ["GET"], path: "/api/diagnostics/incident", class: "desktop", why: "owner-selected incident export" },
   { methods: ["POST"], path: "/api/subscribe", class: "desktop", cloudWrite: "ordinary", why: "the owner's own newsletter sign-up" },
+  { methods: ["GET"], path: "/api/news", class: "desktop", why: "whether the owner's news sign-up was asked and how it ended (never the address)" },
   { methods: "*", path: /^\/api\/local-computer(?:\/|$)/, class: "desktop", cloudWrite: "step-up", why: "the shared host computer's status, lifecycle and capture" },
   { methods: ["POST"], path: "/api/routines", class: "desktop", cloudWrite: "body", why: "create a durable spawn schedule" },
   { methods: ["PATCH", "DELETE"], path: re(`/api/routines/${ID}`), class: "desktop", cloudWrite: "body", why: "change or delete a durable spawn schedule" },

@@ -265,6 +265,8 @@ export function saveSkillRecording(payload, options = {}) {
         defaultEnabled: true,
         triggerTerms: triggerTerms(name, description).length ? triggerTerms(name, description) : [target.id],
         requiredCapabilities: [],
+        // A recording is the owner's: it serves turns that answer the owner (skill-library.ts skillsForAudience).
+        audience: "owner",
       }, null, 2)}\n`,
       { mode: 0o600 },
     );

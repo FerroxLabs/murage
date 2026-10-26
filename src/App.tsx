@@ -13,7 +13,7 @@ import { ServerLifecycleBanner } from "@/components/ServerLifecycleBanner";
 import { MemoryIntegrityStrip } from "@/components/MemoryIntegrityStrip";
 import { CloudUnreachableBanner } from "@/components/cloud/CloudUnreachableBanner";
 import { WorkspaceSwitch } from "@/components/cloud/WorkspaceSwitch";
-import { notificationBridge } from "@/lib/cloud-workspace";
+import { isCloudOrigin, notificationBridge } from "@/lib/cloud-workspace";
 import { RemoteConnectionBanner } from "@/components/RemoteConnectionBanner";
 import { FluxKeyProblemBanner } from "@/components/FluxKeyProblemBanner";
 import { SignedOutCard } from "@/components/SignedOutCard";
@@ -28,7 +28,7 @@ import { firstRunOwnsMainView } from "@/lib/first-run";
 import { settleSendKeyForUpgrade } from "@/lib/send-key";
 import { BotListDrawerProvider, PhoneBotListBar, useBotListDrawer } from "@/components/OpenBotListButton";
 import { heldComputerControlBotIds } from "@/lib/computer-control";
-import { skillRecorderEnabled } from "@/lib/feature-flags";
+import { skillRecorderAvailable } from "@/lib/feature-flags";
 import { trackVisualViewport } from "@/lib/visual-viewport";
 import { localeVersion, rememberLanguage, setLocale, subscribeLocale } from "@/lib/i18n";
 import { useDesktopSurface } from "@/lib/use-surface";
@@ -326,12 +326,12 @@ function Shell() {
       dispatch({ type: "showTeamMap" });
       return;
     }
-    if (calendarOriginRef.current === "skill-recorder" && skillRecorderEnabled(state.config)) {
+    if (calendarOriginRef.current === "skill-recorder" && skillRecorderAvailable(state.config, desktop, isCloudOrigin())) {
       dispatch({ type: "showSkillRecorder" });
       return;
     }
     dispatch({ type: "select", id: state.selectedId });
-  }, [dispatch, state.config, state.selectedId]);
+  }, [desktop, dispatch, state.config, state.selectedId]);
   const openCalendarRoom = useCallback((id: string) => {
     dispatch({ type: "select", id });
   }, [dispatch]);
@@ -426,7 +426,7 @@ function Shell() {
         <LazyBoundary onRetry={TeamMapPageLazy.retry}><Suspense fallback={<LazyFallback />}><TeamMapPage /></Suspense></LazyBoundary>
       ) : state.activeView === "routines" ? (
         <LazyBoundary onRetry={RoutinesPageLazy.retry}><Suspense fallback={<LazyFallback />}><RoutinesPage onBack={closeCalendar} onOpenRoom={openCalendarRoom} /></Suspense></LazyBoundary>
-      ) : state.activeView === "skill-recorder" ? (
+      ) : state.activeView === "skill-recorder" && skillRecorderAvailable(state.config, desktop, isCloudOrigin()) ? (
         <LazyBoundary onRetry={SkillRecorderPageLazy.retry}><Suspense fallback={<LazyFallback />}><SkillRecorderPage /></Suspense></LazyBoundary>
       ) : browserWorkspaceBotId && bot && bot.id === browserWorkspaceBotId ? (
         <LazyBoundary onRetry={BrowserWorkspaceLazy.retry}><Suspense fallback={<LazyFallback />}><BrowserWorkspace bot={bot} onClose={closeBrowserWorkspace} /></Suspense></LazyBoundary>

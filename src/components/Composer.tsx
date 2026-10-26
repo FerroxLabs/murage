@@ -88,6 +88,7 @@ import { ComposerReplyStrip } from "./ReplyQuote";
 import { escapeCancelsReply } from "@/lib/replies";
 import { t } from "@/lib/i18n";
 import { ComposerInjectNow, composerCanInjectNow } from "./ComposerInjectNow";
+import { ComposerPlusMenu } from "./ComposerPlusMenu";
 import { PushToTalk, browserPushToTalkFacts } from "./PushToTalk";
 import {
   applyCleanupResult,
@@ -163,10 +164,7 @@ function PermissionModeSelector({ bot, onSetMode, routine }: {
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const current = routine?.mode ?? permissionModeOf(bot);
-  const desktop = useDesktopSurface();
   const currentEntry = PERMISSION_MODES.find((entry) => entry.mode === current)!;
-  const { state } = useStore();
-  const engine = state.instances.find((instance) => instance.instanceId === bot.modelSelection.instanceId);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -203,21 +201,45 @@ function PermissionModeSelector({ bot, onSetMode, routine }: {
       </button>
 
       {open && (
-        <PermissionModeMenu
-          botName={bot.name}
-          current={current}
-          desktop={desktop}
-          engineCannotAsk={engineCannotAsk(engine?.driverKind) ? engine!.displayName : undefined}
-          engineOwnApprovals={engine?.capabilities?.runsOnOwnTools === true ? engine.displayName : undefined}
-          scope={routine ? { routine: routine.name } : {}}
-          footer={!routine && desktop ? <RefreshPermissionsButton botId={bot.id} threadId={bot.threadId} onDone={() => setOpen(false)} /> : undefined}
+        <PermissionLevelMenu
+          bot={bot}
+          routine={routine}
           onPick={(mode) => {
             onSetMode(mode);
             setOpen(false);
           }}
+          onDone={() => setOpen(false)}
         />
       )}
     </div>
+  );
+}
+
+/** The approval-level menu for one conversation: the composer chip opens it
+ * below Auto on a desktop, and the phone composer's + menu opens the very
+ * same one, so the engine notes, the desktop-only levels and Refresh
+ * permissions read the same on both. */
+function PermissionLevelMenu({ bot, routine, onPick, onDone }: {
+  bot: Bot;
+  routine?: { name: string; mode: PermissionMode };
+  onPick: (mode: PermissionMode) => void;
+  onDone: () => void;
+}) {
+  const current = routine?.mode ?? permissionModeOf(bot);
+  const desktop = useDesktopSurface();
+  const { state } = useStore();
+  const engine = state.instances.find((instance) => instance.instanceId === bot.modelSelection.instanceId);
+  return (
+    <PermissionModeMenu
+      botName={bot.name}
+      current={current}
+      desktop={desktop}
+      engineCannotAsk={engineCannotAsk(engine?.driverKind) ? engine!.displayName : undefined}
+      engineOwnApprovals={engine?.capabilities?.runsOnOwnTools === true ? engine.displayName : undefined}
+      scope={routine ? { routine: routine.name } : {}}
+      footer={!routine && desktop ? <RefreshPermissionsButton botId={bot.id} threadId={bot.threadId} onDone={onDone} /> : undefined}
+      onPick={onPick}
+    />
   );
 }
 
@@ -293,6 +315,8 @@ export function Composer({
     ? (members?.find((b) => b.id === group.busyBotId)?.name ?? (group.working ? "The team" : "A bot"))
     : (bot?.name ?? "The bot");
   const narrowPlaceholder = useNarrowViewport();
+  // A phone: a round + beside one pill holding the field and the mic. Attach, Finish together and the approval level are entries of the + menu. Call stays in the header, its one home.
+  const phoneComposer = narrowPlaceholder;
   const coarsePointer = useCoarsePointer();
   const sendKey = useSyncExternalStore(subscribeSendKey, currentSendKey, currentSendKey);
   const sendKeyLabel = sendKeyName(sendKey, isMacPlatform());
@@ -1086,6 +1110,46 @@ export function Composer({
     }
   }, [recording]);
 
+  // Typed "/goal …" and pressed the lit chip: that reads as "no, not a goal", so un-type the command rather than
+  // leaving a lit chip the draft still contradicts. The chip and the phone + menu share it.
+  const toggleGoal = () => {
+    if (typedGoalText !== null) {
+      const nextCaret = Math.max(0, caret - (text.length - typedGoalText.length));
+      editText(typedGoalText);
+      setCaret(nextCaret);
+      setChannelMode("chat");
+      requestAnimationFrame(() => {
+        inputRef.current?.focus();
+        inputRef.current?.setSelectionRange(nextCaret, nextCaret);
+      });
+      return;
+    }
+    setChannelMode((current) => current === "goal" ? "chat" : "goal");
+  };
+
+  // The routine level the chip shows and sets, when this conversation is a routine's own.
+  const routineLevel = conversationRoutine && routineProfile
+    ? { name: conversationRoutine.name, mode: routineEffectiveMode(conversationRoutine, routineProfile) }
+    : undefined;
+  const phoneApproval = autoBot
+    ? {
+        current: PERMISSION_MODES.find((entry) => entry.mode === (routineLevel?.mode ?? permissionModeOf(autoBot)))!.chip,
+        icon: <PermissionModeIcon mode={routineLevel?.mode ?? permissionModeOf(autoBot)} size={16} className="" />,
+        disabled: Boolean(autoBot.busy),
+        renderMenu: (done: () => void) => (
+          <PermissionLevelMenu
+            bot={autoBot}
+            routine={routineLevel}
+            onPick={(mode) => {
+              setMode(mode);
+              done();
+            }}
+            onDone={done}
+          />
+        ),
+      }
+    : undefined;
+
   const toggleMic = () => {
     if (!capabilities.dictation.available || !window.muragebox) {
       setSpeechError("Dictation isn't available in this build.");
@@ -1308,11 +1372,21 @@ export function Composer({
             being `items-center`, floated at a different height again. Stacking
             them removes the dead space at every height and gives both clusters
             one baseline. */}
-        <div className="relative z-[1] flex flex-col gap-1.5 rounded-3xl bg-raised px-2 py-1.5">
+        <div className={phoneComposer ? "flex items-end gap-2" : "contents"}>
+        {phoneComposer && !locked && (
+          <ComposerPlusMenu
+            onAttach={() => fileInput.current?.click()}
+            attachDisabled={sendPending}
+            goal={group && !group.dm ? { on: effectiveChannelMode === "goal", disabled: sendPending, onToggle: toggleGoal } : undefined}
+            approval={phoneApproval}
+          />
+        )}
+        <div className={cn("relative z-[1] flex gap-1.5 bg-raised py-1.5", phoneComposer ? "min-w-0 flex-1 flex-row flex-wrap items-end gap-x-1 rounded-[26px] px-3" : "flex-col rounded-3xl px-2")}>
           {/* First child of the column, so a queued line sits directly above
               the textarea it came out of and above the controls row — not
               inside that row, and not at the far end of a transcript the
               user has scrolled away from. */}
+          <div className={phoneComposer ? "w-full" : "contents"}>
           <QueuedComposerMessages
             items={shownQueued}
             onCancel={(queueId) => {
@@ -1332,6 +1406,7 @@ export function Composer({
               else if (bot) dispatch({ type: "send", botId: bot.id, text: again.text, sendId, ...press, threadId, ...(again.refused.replyToId ? { replyToId: again.refused.replyToId } : {}) });
             }}
           />
+          </div>
           <input
             ref={fileInput}
             type="file"
@@ -1491,12 +1566,12 @@ export function Composer({
           aria-label={`Message ${group ? group.name : (bot?.name ?? "")}`}
           aria-invalid={sendNotice ? true : undefined}
           aria-describedby={sendNotice ? sendNoticeId : undefined}
-            className="max-h-[9rem] min-h-6 w-full resize-none overflow-y-auto bg-transparent px-2 pb-0.5 pt-1 text-[15px] leading-6 text-ink placeholder:text-ink-secondary focus:outline-none"
+            className={cn("max-h-[9rem] min-h-6 w-full resize-none overflow-y-auto bg-transparent px-2 pb-0.5 pt-1 text-[15px] leading-6 text-ink placeholder:text-ink-secondary focus:outline-none", phoneComposer && "w-auto min-w-0 flex-1 basis-[8rem]")}
           />
           {/* One controls row: chips on the left, send and dictation on the
               right, sharing a baseline at every composer height. */}
-          <div className="flex items-center gap-1">
-          {!locked && (
+          <div className={cn("flex items-center gap-1", phoneComposer && "contents")}>
+          {!locked && !phoneComposer && (
             <div className="flex items-center gap-1">
               <button
                 type="button"
@@ -1515,23 +1590,7 @@ export function Composer({
                   disabled={sendPending}
                   aria-label="Finish together"
                   title="Finish together: the team keeps working until the goal is complete"
-                  onClick={() => {
-                    // Typed "/goal …" and pressed the lit chip: that reads as
-                    // "no, not a goal", so un-type the command rather than
-                    // leaving a lit chip the draft still contradicts.
-                    if (typedGoalText !== null) {
-                      const nextCaret = Math.max(0, caret - (text.length - typedGoalText.length));
-                      editText(typedGoalText);
-                      setCaret(nextCaret);
-                      setChannelMode("chat");
-                      requestAnimationFrame(() => {
-                        inputRef.current?.focus();
-                        inputRef.current?.setSelectionRange(nextCaret, nextCaret);
-                      });
-                      return;
-                    }
-                    setChannelMode((current) => current === "goal" ? "chat" : "goal");
-                  }}
+                  onClick={toggleGoal}
                   className={cn(
                     "flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 text-[13px] transition-colors",
                     effectiveChannelMode === "goal"
@@ -1543,7 +1602,7 @@ export function Composer({
                   {effectiveChannelMode === "goal" ? "/goal" : "Goal"}
                 </button>
               )}
-              {autoBot && <PermissionModeSelector bot={autoBot} onSetMode={setMode} routine={conversationRoutine && routineProfile ? { name: conversationRoutine.name, mode: routineEffectiveMode(conversationRoutine, routineProfile) } : undefined} />}
+              {autoBot && <PermissionModeSelector bot={autoBot} onSetMode={setMode} routine={routineLevel} />}
             </div>
           )}
           <div className="ml-auto flex items-center gap-1">
@@ -1638,6 +1697,7 @@ export function Composer({
           )}
           </div>
           </div>
+        </div>
         </div>
         </div>
       </div>
