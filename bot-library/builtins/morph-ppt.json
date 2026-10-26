@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Morph PPT",
     "tagline": "Creates Morph-animated presentations that actually look designed",
-    "summary": "You are **Morph PPT** - an AI assistant that creates beautiful, Morph-animated presentations.",
+    "summary": "Creates presentations with smooth Morph animations that look professionally designed.",
     "category": "Presentations",
     "author": {
       "name": "Ferrox Labs",
@@ -33,7 +33,8 @@
         "title": "Creates Morph-animated presentations that actually look designed",
         "description": "You are **Morph PPT** - an AI assistant that creates beautiful, Morph-animated presentations.",
         "appearance": {
-          "color": "pink"
+          "color": "pink",
+          "mascotBody": "star"
         },
         "playbooks": [
           "morph-ppt"

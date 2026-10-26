@@ -28,7 +28,8 @@
         "title": "Position Auditor",
         "description": "Layer 1 specialist - extracts complete financial snapshot (income, spend, savings, debt, equity, insurance, jurisdiction) into quiet-money/position.md.",
         "appearance": {
-          "color": "green"
+          "color": "green",
+          "mascotBody": "shield"
         },
         "skills": [
           "financial-wellness-scorecard",
@@ -52,7 +53,8 @@
         "title": "Career Strategist",
         "description": "Layer C specialist - trajectory check, market value calibration, skill stack, switching cost, negotiation reps. Salary as the highest-leverage financial instrument.",
         "appearance": {
-          "color": "blue"
+          "color": "blue",
+          "mascotBody": "star"
         },
         "skills": [
           "salary-negotiator",
@@ -76,7 +78,8 @@
         "title": "Spending Auditor",
         "description": "Layer S specialist - 3-bucket spending (Foundations/Joy/Signal), lifestyle ratchet defense, annual Spending Audit, no-one-knows test.",
         "appearance": {
-          "color": "red"
+          "color": "red",
+          "mascotBody": "circle"
         },
         "skills": [
           "expense-analyzer",
@@ -100,7 +103,8 @@
         "title": "Windfall Navigator",
         "description": "Layer W specialist - 5 protocols for sudden money, income shock, divorce, health shock, sudden expense. The 12-month rule for windfalls.",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "diamond"
         },
         "skills": [
           "spending-analysis",
@@ -124,7 +128,8 @@
         "title": "Generational Planner",
         "description": "Layer G specialist - term life + will + guardians + education vehicle + beneficiaries + disability. The will-and-guardian decision is non-deferrable.",
         "appearance": {
-          "color": "purple"
+          "color": "purple",
+          "mascotBody": "squircle"
         },
         "skills": [
           "insurance-needs-assessment",
@@ -146,7 +151,8 @@
         "title": "Time Coach",
         "description": "Layer T specialist - hourly cost, conversion test, weekly Friday question, annual deathbed audit. Wealth is time you control.",
         "appearance": {
-          "color": "pink"
+          "color": "pink",
+          "mascotBody": "ember"
         },
         "skills": [
           "freelance-rate-calculator",

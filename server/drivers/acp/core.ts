@@ -35,6 +35,7 @@ import {
   type QuestionSpec,
 } from "../../question-normalize.ts";
 import { QUESTION_TIMEOUT_MS } from "../../../shared/questions.ts";
+import { CURSOR_ASK_QUESTION, GROK_ASK_USER_QUESTION, reservedQuestionText, type AcpQuestionMethod } from "./question-methods.ts";
 import {
   folderTrustDecision,
   folderTrustQuestion,
@@ -52,7 +53,9 @@ import { folderTrustKindNames } from "../../folder-trust.ts";
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, rmSync, unlinkSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { sep as pathSep } from "node:path";
+import { isAbsolute as isAbsolutePath, sep as pathSep } from "node:path";
+import { parseApplyPatch, patchTextOf } from "../../../shared/apply-patch.ts";
+import { PATH_KEYS } from "../../../shared/arg-vocabulary.ts";
 import { MCP_LISTED_FILE_ENV } from "../../mcp-listed.ts";
 import { stripVTControlCharacters } from "node:util";
 
@@ -61,10 +64,10 @@ import { decodeInjectId } from "../local-inject.ts";
 import { createFuigoFailureObservations, failureKind } from "./failure-diagnostics.ts";
 import { withCliMemoryLearning } from "../cli-memory-learning.ts";
 import { DIAGNOSTIC_RPC_METHODS, parseRuntimeErrorDiagnostic } from "../../../shared/error-diagnostic.ts";
-import { describeSpawnFailure, engineJob, execCli, killCliTree, spawnCli } from "../../procs.ts";
+import { cliContainment, describeSpawnFailure, engineJob, engineProcessPid, execCli, killCliTree, spawnCli } from "../../procs.ts";
 import { cachedCliVersion } from "../../cli-version-cache.ts";
 import { claudeExecutableIdentity } from "../claude-guards.ts";
-import { ProviderStopUnconfirmedError, providerCloseDeadlineMs, TurnTeardowns, type ChildTeardown, type TeardownWait } from "../child-teardown.ts";
+import { ProviderStopUnconfirmedError, stopBudget, TurnTeardowns, type ChildTeardown, type TeardownWait } from "../child-teardown.ts";
 import {
   createLifecycleRecorder,
   errnoCategory,
@@ -270,6 +273,30 @@ export function acpToolFilePaths(toolCall: { locations?: unknown; rawInput?: unk
     } else paths.push(...fromInput);
   }
   return paths.length ? paths : undefined;
+}
+
+/** r#7 (1.0.7): Fuigo's patch tool, stamped codex/apply_patch and filed as kind `edit` (shared/app-action-grant.ts
+ * STAMPED_TOOLS), names no path of its own: every place it writes or removes is read from the patch with the one
+ * apply_patch reader (shared/apply-patch.ts), each resolved from the session folder the engine joins it to (fuigo-tools
+ * apply_patch: `cwd.join(path)`). Undefined for any other call. Null when the patch cannot be read whole, or the call
+ * carries a path key of its own beside it, or a destination is drive-relative (`C:x`, placed from a folder this cannot
+ * see): the driver files that call as unread, and it holds at every level. */
+export function acpPatchPaths(toolCall: { kind?: unknown; rawInput?: unknown; _meta?: unknown }, cwd: string): string[] | null | undefined {
+  const identity = acpStampedIdentity(toolCall);
+  if (identity?.namespace.trim() !== "codex" || identity.name.trim() !== "apply_patch" || toolCall.kind !== "edit") return undefined;
+  const raw = toolCall.rawInput;
+  if (isPlainInput(raw) && [...PATH_KEYS, "locations"].some((key) => key in raw)) return null;
+  const parsed = parseApplyPatch(patchTextOf(raw));
+  if (!parsed) return null;
+  const paths: string[] = [];
+  for (const destination of [...parsed.destinations, ...parsed.deletes]) {
+    if (/^[A-Za-z]:(?![\\/])/.test(destination)) return null;
+    // joined as written, never collapsed (the engine's `cwd.join` keeps `..`, and the OS walks `link/..` from where the link
+    // points): the own-workspace check and the key guard place it part by part, links followed (shared/in-project.ts)
+    const placed = isAbsolutePath(destination) ? destination : `${cwd.replace(/[\\/]+$/, "")}${pathSep}${destination}`;
+    if (!paths.includes(placed)) paths.push(placed);
+  }
+  return paths;
 }
 
 /** Some ACP providers wrap actionable billing failures in "Internal error".
@@ -721,6 +748,21 @@ export function acpEngineErrorKind(data: unknown): string | undefined {
   return typeof kind === "string" && /^[a-z][a-z0-9_]{0,63}$/.test(kind) ? kind : undefined;
 }
 
+/** The engine's own upper-case error code (`QUOTA_EXCEEDED`), read from the RPC error's `code`. */
+export function acpEngineErrorCode(error: unknown): string | undefined {
+  const code = error && typeof error === "object" ? (error as { code?: unknown }).code : undefined;
+  return typeof code === "string" && /^[A-Z][A-Z0-9_]{2,63}$/.test(code) ? code : undefined;
+}
+
+/** A reset time the engine reported as data (`error.data.resets_at` / `resets_in_seconds`), as epoch ms. */
+export function acpEngineLimitResetsAt(data: unknown, now = Date.now()): number | undefined {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return undefined;
+  const { resets_at: at, resets_in_seconds: inSeconds } = data as { resets_at?: unknown; resets_in_seconds?: unknown };
+  if (typeof at === "number" && Number.isFinite(at) && at > 0) return at < 1e12 ? at * 1000 : at;
+  if (typeof inSeconds === "number" && Number.isFinite(inSeconds) && inSeconds >= 0) return now + inSeconds * 1000;
+  return undefined;
+}
+
 const ACP_DIAGNOSTIC_METHODS:ReadonlySet<string> = new Set(DIAGNOSTIC_RPC_METHODS);
 
 /** Preserve diagnostic facts without copying response bodies, requests or URLs. */
@@ -829,7 +871,7 @@ export interface AcpConfig {
    *  default resolved to on upgrade (owner decision O12). */
   profileOrigin?: "sticky";
   /** OpenClaw only: the isolated agent this instance runs
-   *  (`openclaw acp --session agent:<agent>:main`). Decoded by the support's
+   *  (`openclaw acp --session agent:<agent>:murage-...`). Decoded by the support's
    *  `decodeExtra`; see server/openclaw-profiles.ts. */
   agent?: string;
 }
@@ -870,6 +912,10 @@ export interface AcpSupport {
   /** PIP reflection (design 3.3): a text-only structured turn for this engine, spawned headless and
    * isolated. Only Fuigo and Grok provide one; other ACP engines stay unsupported. */
   textOnlyExecutable?(config: AcpConfig): string;
+  /** The exact file a turn launches and its `--version` probe runs, when the driver chose and checked one itself (Fuigo on
+   *  Windows: the fuigo.exe resolveFuigoCli version-checked, never a fuigo.com or .cmd that a PATHEXT lookup of the bare name
+   *  finds beside it). `env` is the driver's child env after transformEnv. Omit to run `config.cli` as configured. */
+  launchExecutable?(env: Record<string, string | undefined>, config: AcpConfig): string;
   textOnlyTurn?(turn: import("../../memory/pip-transport.ts").TextOnlyTurnInput, config: AcpConfig): Promise<import("../../memory/pip-transport.ts").TextOnlyTurnResult>;
   /** The folders this engine saves a cut tool result into for ONE session
    * (Fuigo/Grok: `<home>/sessions/<folder key>/<session>/mcp`). A read-only
@@ -919,6 +965,9 @@ export interface AcpSupport {
    *  the CLI-native id `resolveTurnModel` settled on; `ctx.requestedModel` is
    *  the id the picker asked for (a `host::model` local pick keeps its host
    *  only there), for a driver whose argv has to differ for a local turn. */
+  /** A turn that resets the session (edit, rewind, memory revocation) runs this before the spawn, for an engine whose
+   *  conversation lives outside the process and is keyed by something the engine reuses (OpenClaw's gateway key). */
+  onSessionReset?(turn: SendTurnInput): void;
   spawnArgs(config: AcpConfig, turn: SendTurnInput, ctx?: { requestedModel?: string; folderTrusted?: boolean; env?: Record<string, string | undefined>; cliVersion?: string; mcpServerNames?: string[] }): string[];
   /** spawnArgs needs `ctx.cliVersion` (a flag that only some versions accept):
    *  the core probes `--version` once before the first spawn when no snapshot
@@ -949,6 +998,10 @@ export interface AcpSupport {
   /** Mutate the child env in place: strip a key, inject a policy. Receives the
    *  instance config so a support can vary with fullAuto. */
   transformEnv?(env: Record<string, string | undefined>, config: AcpConfig): void;
+  /** The same hygiene for the owner's captured shell map the engine is handed
+   *  (Rule 74a), which can hold names this process never had. Mutates `map`
+   *  in place; `child` is the env `transformEnv` produced, read only. */
+  scrubHandedEnv?(map: Record<string, string | undefined>, child: Readonly<Record<string, string | undefined>>): void;
   /** Mutate the child env after the turn model is known. Catalog refresh and
    *  snapshot share `transformEnv` and must not see a per-turn overlay. */
   applyTurnEnv?(
@@ -975,13 +1028,39 @@ export interface AcpSupport {
     env: Record<string, string | undefined>,
     ctx: { decision: import("../../flux-memory-headers.ts").FluxMemoryDecision; providerRoute?: import("../../provider-routing.ts").ProviderTurnRoute; model?: string },
   ): void;
+  /** The engine sends this turn to Flux even though the pick is not a `flux-*` id (Fuigo hands its
+   *  Flux key to every cloud model). Such a turn carries the Flux Memory headers too. */
+  reachesFlux?(model: string | undefined, env: Record<string, string | undefined>): boolean;
   /** An engine whose header carrier is silently ignored by older builds names
    *  the lowest version that honours it. A turn whose headers say "off" is
    *  refused when the installed version is lower or unknown. */
-  fluxHeaderGate?(cliVersion: string, decision: import("../../flux-memory-headers.ts").FluxMemoryDecision): string | null;
+  fluxHeaderGate?(cliVersion: string, decision: import("../../flux-memory-headers.ts").FluxMemoryDecision, ctx?: { providerRoute?: boolean }): string | null;
+  /** Ask `fluxHeaderGate` on every Flux turn, not only one whose headers say off
+   *  (Hermes: the tier rides the same versioned channel as the headers). */
+  fluxGateEveryTurn?: boolean;
   /** Pick the ACP authenticate methodId from initialize's advertised
-   * authMethods; return null to skip the authenticate step. */
-  pickAuthMethod(authMethods: Array<{ id?: string }>): string | null;
+   * authMethods; return null to skip the authenticate step. `env` and `config`
+   * are the turn's (Cline picks by its saved provider); other drivers ignore
+   * them. With authFailure "fail", null is a skip only while isAuthenticated
+   * says yes; otherwise the turn fails with the sign-in note. */
+  pickAuthMethod(authMethods: Array<{ id?: string }>, env?: Record<string, string | undefined>, config?: AcpConfig): string | null;
+  /** Credentials handed to the CHILD only (MCP-118-175 175-3). Merged into the
+   * environment at exactly one site, the spawnCli call, into an object that is
+   * never stored: the retained hand (handedEngineEnv), the hands list and every
+   * exec-env digest are built from the environment without it. Never called for
+   * a snapshot or a version probe. */
+  secretEnv?(env: Record<string, string | undefined>, config: AcpConfig): Record<string, string>;
+  /** What decides the engine's process beyond argv and env, without secret
+   * bytes (Cline: its selected provider's non-secret fields and the settings
+   * file's mtime and size). A change starts a new process at the next turn. */
+  spawnFingerprint?(env: Record<string, string | undefined>, config: AcpConfig): string;
+  /** The engine reads its MCP servers only when it starts: a pooled process is
+   * not reused once the servers handed to the turn change. */
+  restartOnMcpChange?: boolean;
+  /** With authFailure "fail" and no auth method to call: skip the authenticate
+   * step while isAuthenticated says yes (Cline's saved key). Left unset, no
+   * method fails the turn with the sign-in note, as before (Grok). */
+  skipAuthWhenSignedIn?: boolean;
   /** "fail": abort the turn if auth is missing/errors (subscription CLIs).
    *  "continue": proceed anyway (CLIs that work off an ambient login). */
   authFailure: "fail" | "continue";
@@ -1190,6 +1269,30 @@ type AcpAskFinish = (behavior: string, source?: "user" | "timeout" | "system", a
  * prefixes extension methods with `_`; the leader gateway may nest the real
  * params as `{method, params}`, which fromFuigo tolerates. */
 const FUIGO_ASK_METHOD = "_fuigo/ask_user_question";
+/** Fuigo's ask (unchanged by the table): its own normaliser and accepted reply. */
+const FUIGO_ASK_USER_QUESTION: AcpQuestionMethod = {
+  tool: "ask_user_question",
+  cancelled: { outcome: "cancelled" },
+  parse(params) {
+    const normalized = fromFuigo(params);
+    if (!normalized.ok) return normalized;
+    const { questions } = normalized;
+    // answers are keyed by question text: a reserved key would be lost on the way back
+    if (reservedQuestionText(questions)) return { ok: false, error: "a question's text is a reserved word" };
+    return { ok: true, questions, reply: (answers) => toFuigoAnswers(questions, answers) };
+  },
+};
+/** Every vendor "ask the owner" request (QW Q3), by the engine's own method name. Own keys only, on a null-prototype
+ * table: `__proto__` or `constructor` names no method. */
+const QUESTION_METHODS: Readonly<Record<string, AcpQuestionMethod>> = Object.assign(Object.create(null) as Record<string, AcpQuestionMethod>, {
+  [FUIGO_ASK_METHOD]: FUIGO_ASK_USER_QUESTION,
+  "_x.ai/ask_user_question": GROK_ASK_USER_QUESTION,
+  "x.ai/ask_user_question": GROK_ASK_USER_QUESTION,
+  "cursor/ask_question": CURSOR_ASK_QUESTION,
+});
+export function questionMethodFor(method: unknown): AcpQuestionMethod | undefined {
+  return typeof method === "string" && Object.hasOwn(QUESTION_METHODS, method) ? QUESTION_METHODS[method] : undefined;
+}
 /** Fuigo forwards an MCP server's elicitation as its own extension request
  * (`fuigo-tools/src/mcp_elicitation/types.rs`): the ACP form/url fields plus
  * `serverName`, answered `{outcome: "accept", content}` / `decline` /
@@ -1350,10 +1453,7 @@ const ACP_CANCEL_GRACE_MS = 5_000;
 const ENGINE_STDERR_LINES = 100;
 /** A stop that starts with session/cancel reaches the kill only after the
  * grace period, so its close budget is measured from there. */
-const acpStopBudget = (): TeardownWait => {
-  const closeMs = providerCloseDeadlineMs();
-  return { closeMs, maxMs: ACP_CANCEL_GRACE_MS + closeMs };
-};
+const acpStopBudget = (): TeardownWait => stopBudget(ACP_CANCEL_GRACE_MS);
 
 function decodeAcpConfig(defaultCli: string, decodeExtra?: AcpSupport["decodeExtra"]) {
   return (raw: unknown): AcpConfig => {
@@ -1987,7 +2087,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
        *  baseline (a shell a tool left running) closes it and its whole tree; a
        *  probe that cannot answer means it is not proven idle, and it closes too. */
       const guardParkedTree = (threadId: string, proc: AcpProcess) => {
-        const pid = proc.child.pid;
+        const pid = engineProcessPid(proc.child); // the engine itself (behind the Windows job launcher), U24 design R2.4
         const pending = proc.turnBaseline;
         const gen = proc.parkGen;
         if (!pid || !pending) { closeProcess(threadId, proc, "process probe has no baseline"); return; }
@@ -2036,7 +2136,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
        *  admitted replacements: an exited MCP server's pid is dropped, so a
        *  process that later gets that pid is never exempt. */
       const reconcileReusedTree = async (proc: AcpProcess, servers: ReadonlyArray<{ command: string; args: string[] }>): Promise<{ baseline: ProcessIdentities; leftover: string | null }> => {
-        const pid = proc.child.pid;
+        const pid = engineProcessPid(proc.child); // a replacement MCP child's parent is the engine, never the job launcher
         const verified = proc.turnBaseline ? await proc.turnBaseline.catch(() => null) : null;
         if (!pid || !verified) return { baseline: new Map(), leftover: "process probe has no baseline" };
         const tree = await untrackedIdentified(pid, verified).catch(() => null);
@@ -2090,7 +2190,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         proc.idleTimer.unref?.();
         appendNative(threadId, { dir: "out", source: SOURCE, msg: { acpPool: "park" } });
         // An intent warm sends no prompt: its tree as it parks is its baseline.
-        if (hold || !proc.turnBaseline) proc.turnBaseline = proc.child.pid ? descendantIdentities(proc.child.pid).catch(() => null) : Promise.resolve(null);
+        if (hold || !proc.turnBaseline) proc.turnBaseline = engineProcessPid(proc.child) ? descendantIdentities(engineProcessPid(proc.child)!).catch(() => null) : Promise.resolve(null);
         guardParkedTree(threadId, proc);
       };
 
@@ -2219,15 +2319,17 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         if (!providerBinding) support.applyTurnEnv?.(env, { model: resolvedModel, requestedModel: turn.model, cwd });
         // Flux Memory headers: decided per thread audience, applied only when the
         // turn actually reaches Flux (a Flux connection, or a flux-* pick with a key).
-        const fluxRoutedTurn = turn.providerRoute ? turn.providerRoute.preset === "flux" : isFluxModel(turn.model) && fluxSurfaceFor(support.driverKind) !== null;
+        const fluxRoutedTurn = turn.providerRoute
+          ? turn.providerRoute.preset === "flux"
+          : (isFluxModel(turn.model) && fluxSurfaceFor(support.driverKind) !== null) || Boolean(support.reachesFlux?.(turn.model, env));
         if (fluxRoutedTurn) {
           const fluxMemory = fluxMemoryDecision(fluxMemoryContextForTurn(turn));
           const headerRefusal = fluxHeaderRefusal(support.driverKind, fluxMemory);
           if (headerRefusal) throw new Error(headerRefusal);
-          if (support.fluxHeaderGate && (fluxMemory.capture === "off" || fluxMemory.inject === "off")) {
+          if (support.fluxHeaderGate && (support.fluxGateEveryTurn || fluxMemory.capture === "off" || fluxMemory.inject === "off")) {
             forgetStaleCliVersion(env);
             if (!lastCliVersion) await probeCliVersionForTurn(env);
-            const gated = support.fluxHeaderGate(lastCliVersion, fluxMemory);
+            const gated = support.fluxHeaderGate(lastCliVersion, fluxMemory, { providerRoute: Boolean(turn.providerRoute) });
             if (gated) throw new Error(gated);
           }
           support.applyFluxMemory?.(env, { decision: fluxMemory, providerRoute: turn.providerRoute, model: turn.model });
@@ -2474,6 +2576,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             settled: state.settled,
             cancelRequested: state.cancelRequested,
             promptSent: state.promptSent,
+            ...(child && process.platform === "win32" ? { containment: cliContainment(child) } : {}),
           });
           teardown?.markStopRequested();
           // A process a turn stops is never pooled again; its hooks stay so
@@ -2661,28 +2764,30 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           forgetPrewarm();
         };
 
-        // A question for the owner (Fuigo's `_fuigo/ask_user_question`, an ACP
-        // `elicitation/create` form or URL) → canonical request.opened with
-        // `questions`. Never auto-answered in any mode; a skip, the 30-minute
-        // timeout or the turn ending sends the engine its own honest
-        // no-answer (Fuigo `cancelled`, elicitation `decline`/`cancel`).
-        const handleQuestionRequest = (msg: any, kind: "fuigo" | "elicitation" | "fuigo-elicit") => {
+        // A question for the owner (a vendor ask in QUESTION_METHODS: Fuigo's
+        // `_fuigo/ask_user_question`, Grok Build's `x.ai/ask_user_question`,
+        // Cursor's `cursor/ask_question`; an ACP `elicitation/create` form or
+        // URL) → canonical request.opened with `questions`. Never auto-answered
+        // in any mode; a skip, the 30-minute timeout or the turn ending sends
+        // the engine its own honest no-answer (the vendor's `cancelled`,
+        // elicitation `decline`/`cancel`). A request whose shape the entry
+        // cannot read fails closed: one line, and the vendor is told nobody answered.
+        const handleQuestionRequest = (msg: any, kind: AcpQuestionMethod | "elicitation" | "fuigo-elicit") => {
           const params = msg.params ?? {};
-          const urlMode = kind !== "fuigo" && params.mode === "url";
+          const vendor = typeof kind === "object" ? kind : null;
+          const urlMode = !vendor && params.mode === "url";
           const normalized =
-            kind === "fuigo"
-              ? fromFuigo(params)
+            vendor
+              ? vendor.parse(params)
               : urlMode
                 ? fromElicitationUrl(params.message, params.url)
                 : fromElicitationForm(params.message, params.requestedSchema);
-          // the three reply vocabularies: Fuigo's ask tool, ACP elicitation, Fuigo's MCP bridge
+          // the elicitation reply vocabularies: ACP elicitation, Fuigo's MCP bridge
           const reply = (action: "accept" | "decline" | "cancel", content?: unknown) =>
-            kind === "fuigo"
-              ? action === "accept" ? content : { outcome: "cancelled" }
-              : kind === "fuigo-elicit"
-                ? { outcome: action, ...(content !== undefined ? { content } : {}) }
-                : { action, ...(content !== undefined ? { content } : {}) };
-          const cancelled = reply("cancel");
+            kind === "fuigo-elicit"
+              ? { outcome: action, ...(content !== undefined ? { content } : {}) }
+              : { action, ...(content !== undefined ? { content } : {}) };
+          const cancelled = vendor ? vendor.cancelled : reply("cancel");
           if (!normalized.ok) {
             emit({
               ...base(threadId, turnId),
@@ -2693,21 +2798,25 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           }
           flushAssistantText();
           const questions: QuestionSpec[] = normalized.questions;
+          const vendorAnswer = "reply" in normalized ? (normalized.reply as (answers: readonly QuestionAnswer[]) => unknown) : undefined;
           const requestId = newId();
           const finish: AcpAskFinish = (behavior, source = "user", answers) => {
             if (!asks.delete(requestId)) return;
             traceClose("permission.wait", requestId, behavior);
             clearTimeout(timer);
-            const answered = behavior === "answer" && answers?.length ? answers : null;
+            const picks = behavior === "answer" && answers?.length ? answers : null;
+            // a vendor reply that maps to no answer is its cancelled reply, never a guessed one
+            const vendorReply = vendor && picks ? vendorAnswer?.(picks) : null;
+            const answered = vendor ? (vendorReply === null || vendorReply === undefined ? null : picks) : picks;
             let result: unknown;
             if (answered) {
               result =
-                kind === "fuigo"
-                  ? reply("accept", toFuigoAnswers(questions, answered))
+                vendor
+                  ? vendorReply
                   : urlMode
                     ? reply("accept")
                     : reply("accept", toElicitationContent(params.requestedSchema, questions, answered));
-            } else if (kind !== "fuigo" && source === "user") {
+            } else if (!vendor && source === "user") {
               result = reply("decline");
             } else {
               result = cancelled;
@@ -2730,7 +2839,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             type: "request.opened",
             requestId,
             requestType: "question",
-            tool: kind === "fuigo" ? "ask_user_question" : "elicitation",
+            tool: vendor ? vendor.tool : "elicitation",
             summary: questions[0]!.question.slice(0, 300),
             // the first question's labels keep voice and older clients working
             choices: questions[0]!.options.map((option) => option.label),
@@ -2851,7 +2960,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // server→client permission request → canonical request.opened
         const handleServerRequest = (msg: any) => {
           if (FUIGO_FOLDER_TRUST_METHODS.has(msg.method)) return handleFolderTrustRequest(msg);
-          if (msg.method === FUIGO_ASK_METHOD) return handleQuestionRequest(msg, "fuigo");
+          const vendorAsk = questionMethodFor(msg.method);
+          if (vendorAsk) return handleQuestionRequest(msg, vendorAsk);
           if (msg.method === FUIGO_ELICIT_METHOD) return handleQuestionRequest(msg, "fuigo-elicit");
           if (ELICITATION_METHODS.has(msg.method)) return handleQuestionRequest(msg, "elicitation");
           if (msg.method !== "session/request_permission") {
@@ -2914,7 +3024,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           // the paths the engine names. The tool's title is model-composed
           // text, so it only stands in when there is no structured target.
           const commandLine = commandText(toolCall.rawInput?.command);
-          const editPaths = !commandLine && (kind === "edit" || kind === "delete" || kind === "move") ? acpToolFilePaths(toolCall) : undefined;
+          // r#7: Fuigo's codex/apply_patch names its places only inside the patch (null: the patch cannot be read whole)
+          const patchPaths = acpPatchPaths(toolCall, cwd);
+          const filePaths = patchPaths ? [...new Set([...(acpToolFilePaths(toolCall) ?? []), ...patchPaths])] : acpToolFilePaths(toolCall);
+          const editPaths = !commandLine && (kind === "edit" || kind === "delete" || kind === "move") ? filePaths : undefined;
           const summary = approvalSummary(commandLine ?? (editPaths ? editPaths.join(", ") : String(toolCall.title ?? tool)));
           // The model's title is only a label when the engine named the real
           // target (paths); keep it, marked as the model's, so a move's
@@ -3007,10 +3120,11 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             ...(!questionTool && !kind ? { toolInputMissing: "kind" } : {}),
             // Rules 2, 55: a source that is present but malformed (a rawInput that is not an object, locations that are not a list) makes
             // the whole call unread; it is never dropped or replaced with an empty input.
+            ...(patchPaths === null ? { toolInputMissing: "patch" } : {}),
             ...(() => { const bad = !questionTool && kind ? acpMalformedSource(toolCall) : undefined; return bad ? { toolInputMissing: bad } : {}; })(),
             // Structured, off the wire — never parsed back out of `summary`,
             // which is composed from what the model wrote.
-            ...(() => { const filePaths = acpToolFilePaths(toolCall); return filePaths ? { filePaths } : {}; })(),
+            ...(filePaths ? { filePaths } : {}),
             // This session's own saved-result folders, from the home this
             // driver started and the session the engine named: never from
             // the request, and only for the session this turn owns.
@@ -3025,7 +3139,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             ...(questionTool || !kind ? {} : { toolCall: {
               name: kind === "execute" ? "shell" : kind === "delete" ? "delete" : kind,
               input: kind === "delete" || kind === "edit" || kind === "read" || kind === "move"
-                ? { ...(isPlainInput(toolCall.rawInput) ? toolCall.rawInput : {}), ...(toolCall.locations !== undefined ? { locations: toolCall.locations } : {}) }
+                ? { ...(isPlainInput(toolCall.rawInput) ? toolCall.rawInput : {}), ...(toolCall.locations !== undefined ? { locations: toolCall.locations } : {}), ...(patchPaths ? { paths: patchPaths } : {}) }
                 : toolCall.rawInput,
             } }),
           });
@@ -3620,7 +3734,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             send({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId } });
             if (helpers.holding || fallback.holding) { settle(true, "cancelled", "user_cancel"); return; }
           } else stop("unspecified");
-          if (interruptTimer) clearTimeout(interruptTimer);
+          // U24 design R4: the cancel grace is armed once, on the first Stop. A repeat re-sends session/cancel (above) and
+          // leaves the timer, so the kill goes out ACP_CANCEL_GRACE_MS after the first Stop whatever follows.
+          if (interruptTimer) return;
           interruptTimer = setTimeout(() => settle(true, "cancelled", "cancel_timeout"), ACP_CANCEL_GRACE_MS);
           interruptTimer.unref?.();
         };
@@ -3776,6 +3892,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // shell PATH) stays the child's own and could find another, older build first (1.0.3 gate; isolation-cache.ts
         // engineLaunchFile).
         const launchPath = { PATH: env.PATH };
+        // The file the version probe above ran (support.launchExecutable on this same driver env), fixed before the handed map
+        // replaces env.
+        const launchTarget = launchCliFor(env);
         {
           const processEnv: NodeJS.ProcessEnv = process.env;
           const driverNames: Record<string, string> = {};
@@ -3791,6 +3910,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               deleteEnvNames(out, [...PROVIDER_CREDENTIAL_ENV, ...WORKSPACE_CREDENTIAL_ENV].filter((key) => !allowedCredentials.has(key)));
               stripRoutingEnv(out);
               deleteEnvNames(out, [FUIGO_ALLOW_UPSTREAM_ENV]);
+              support.scrubHandedEnv?.(out, env);
               const kept: Record<string, string> = {};
               for (const [name, value] of Object.entries(out)) if (typeof value === "string") kept[name] = value;
               return kept;
@@ -3856,6 +3976,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
          * handshake. A synchronous spawn failure throws to the caller, as it
          * always did for a turn that needs no card. */
         const launch = (trusted: boolean) => {
+        if (turn.sessionReset === true) support.onSessionReset?.(turn);
         const argv = support.spawnArgs(turnConfig, cliTurn, { requestedModel: turn.model, folderTrusted: trusted, env, cliVersion: lastCliVersion, mcpServerNames: mcpServers.map(server => server.name) });
         // The spawn contract (see the pool notes): everything that decides
         // which process a turn gets. The model, effort, permission mode and
@@ -3879,7 +4000,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // decision, the sources the scan found, a grant added to or revoked
         // from the user's own trusted_folders.toml) must reach a new process.
         contractKey = poolable
-          ? digest([config.cli, argv, cwd, env, support.folderTrust ? turn.folderTrust ?? null : null])
+          ? digest([config.cli, launchTarget, argv, cwd, env, support.folderTrust ? turn.folderTrust ?? null : null,
+            ...(support.spawnFingerprint ? [support.spawnFingerprint(env, config)] : []),
+            ...(support.restartOnMcpChange ? [mcpServers.map((server) => server.name)] : [])])
           : null;
         // `sessionReset` outranks the cursor (contracts.ts, #1562): the
         // rebuilt history is already in the prompt, and resuming the old
@@ -3891,10 +4014,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           lifecycle.record("spawn_requested");
           const spawnedChild = (() => {
             try {
-              const launchCli = engineLaunchFile(config.cli, launchPath);
+              const launchCli = engineLaunchFile(launchTarget, launchPath);
               return spawnCli(launchCli, argv, {
                 cwd,
-                env,
+                // 175-3: the one merge site of a driver's spawn-only secrets. The
+                // object is built here and handed to the child; nothing keeps it.
+                env: support.secretEnv ? { ...env, ...support.secretEnv(env, config) } : env,
                 stdio: ["pipe", "pipe", "pipe"],
               }, engineJob());
             } catch (error) {
@@ -4180,7 +4305,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             recordProbedImages(imagesKey(), init);
             retryDiscard = acpRetryDiscard(init);
             const methods: Array<{ id?: string }> = Array.isArray(init?.authMethods) ? init.authMethods : [];
-            const methodId = support.pickAuthMethod(methods);
+            const methodId = support.pickAuthMethod(methods, env, config);
             if (!(support.driverKind === "grokAgent" && providerBinding) && !skipSubscriptionAuthForLocalInject(turn.model)) {
               if (methodId) {
                 try {
@@ -4189,7 +4314,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                   if (support.authFailure === "fail") throw new Error(support.loginNote);
                   // else: proceed on an ambient login
                 }
-              } else if (support.authFailure === "fail") {
+              } else if (support.authFailure === "fail" && !(support.skipAuthWhenSignedIn && await support.isAuthenticated(env, config))) {
+                // 175-4: no method to call is a skip while the engine is signed in
+                // (a saved key), and the sign-in note when nothing is usable.
                 throw new Error(support.loginNote);
               }
             }
@@ -4513,7 +4640,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             // one read after it can already hold the turn's own leftover child
             // and count it as baseline.
             if (proc && poolable && !reused) {
-              proc.turnBaseline = proc.child.pid ? descendantIdentities(proc.child.pid).catch(() => null) : Promise.resolve(null);
+              proc.turnBaseline = engineProcessPid(proc.child) ? descendantIdentities(engineProcessPid(proc.child)!).catch(() => null) : Promise.resolve(null);
               await proc.turnBaseline;
               if (state.settled) return;
               if (state.cancelRequested) { settle(true, "cancelled"); return; }
@@ -4701,6 +4828,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 type: "runtime.error",
                 message: engineText ?? acpEngineErrorText(message) ?? `${ENGINE} could not finish this turn.`,
                 ...(errorKind ? { errorKind } : {}),
+                ...(acpEngineErrorCode(e) ? { engineCode: acpEngineErrorCode(e) } : {}),
+                ...(acpEngineLimitResetsAt(rpc?.data) !== undefined ? { limitResetsAt: acpEngineLimitResetsAt(rpc?.data) } : {}),
                 diagnostic:acpErrorDiagnostic(eventBase,lifecycle.generation,e),
                 details: [acpRpcErrorDetails(e), e instanceof Error
                   ? (e as Error & { fuigoFailureObservation?: string }).fuigoFailureObservation : undefined]
@@ -4783,22 +4912,26 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
 
       /** Every child this instance spawned — turn-owned or pooled — closed. */
       const waitAllClosed = async () => {
-        const budget = { closeMs: providerCloseDeadlineMs(), maxMs: providerCloseDeadlineMs() };
+        // An immediate stop (engine switch, shutdown): no cancel grace, but on Windows the taskkill route's own cap (U24).
+        const budget = stopBudget(0);
         const [turns, pooled] = await Promise.all([teardowns.waitAll(budget), poolTeardowns.waitAll(budget)]);
         return turns.closeConfirmed ? pooled : turns;
       };
 
       let lastCliVersion = "";
+      /** The file this instance launches and probes (support.launchExecutable), on the driver's env. */
+      const launchCliFor = (env: Record<string, string | undefined>): string => support.launchExecutable?.(env, config) ?? config.cli;
       // The CLI file (path, mtime, size) the version above was read from: an update
       // that replaces it is re-probed on the next turn, and nothing else re-probes.
       let lastCliSigSeen = "";
       const forgetStaleCliVersion = (env: Record<string, string | undefined>) => {
-        if (lastCliVersion && cliSig(config.cli, env) !== lastCliSigSeen) lastCliVersion = "";
+        if (lastCliVersion && cliSig(launchCliFor(env), env) !== lastCliSigSeen) lastCliVersion = "";
       };
       const imagesKey = () => `${support.driverKind}|${config.cli}|${lastCliVersion}`;
       const probeCliVersion = async (env: Record<string, string | undefined>) => {
-        const sig = cliSig(config.cli, env);
-        const raw = await cachedCliVersion(config.cli, env as NodeJS.ProcessEnv, execCli);
+        const cli = launchCliFor(env);
+        const sig = cliSig(cli, env);
+        const raw = await cachedCliVersion(cli, env as NodeJS.ProcessEnv, execCli);
         const probe = { error: raw.error, version: versionFromProbe(raw.stdout, raw.stderr) };
         const ok = !probe.error && Boolean(probe.version);
         noteVersionProbe(`${support.driverKind}|${config.cli}`, sig, ok);
@@ -4809,7 +4942,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
        *  bounded backoff (isolation-cache.ts), so it does not add the probe's
        *  timeout to every turn. The version stays unknown meanwhile (fail open). */
       const probeCliVersionForTurn = async (env: Record<string, string | undefined>) => {
-        const sig = cliSig(config.cli, env);
+        const sig = cliSig(launchCliFor(env), env);
         const known = knownCliVersion(`${support.driverKind}|${config.cli}`, sig);
         if (known) { lastCliVersion = known; lastCliSigSeen = sig; return; }
         if (!versionProbeAllowed(`${support.driverKind}|${config.cli}`, sig)) return;
@@ -4824,7 +4957,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             ?? { reason: `\`${config.cli}\` ${detail}` }) };
         }
         lastCliVersion = probe.version;
-        lastCliSigSeen = cliSig(config.cli, env);
+        lastCliSigSeen = cliSig(launchCliFor(env), env);
         const versionNote = support.versionNote?.(probe.version);
         return { state: "available", version: probe.version, authenticated: await support.isAuthenticated(env, config), ...(versionNote ? { versionNote } : {}) };
       };

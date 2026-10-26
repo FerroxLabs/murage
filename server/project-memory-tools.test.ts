@@ -23,7 +23,7 @@ import { forgetMemory } from "./memory/forget.ts";
 import { ensureScope, memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "./memory/policy.ts";
 import { setMemoryMode } from "./memory/repository.ts";
 import { projectSummaryLayer } from "./project-layers.ts";
-import { deliveredProjectSuggestions, pendingProjectSuggestions, projectThreads, OWNER_PAGE, readProjectMessages, registerProjectMemoryTools, suggestionLines, suggestToLead, updateProjectSummary } from "./project-memory-tools.ts";
+import { deliveredProjectSuggestions, pendingProjectSuggestions, projectThreads, OWNER_PAGE, readProjectMessages, readProjectPage, registerProjectMemoryTools, suggestionLines, suggestToLead, updateProjectSummary } from "./project-memory-tools.ts";
 import { projectToolHandlers } from "./project-tool-routing.ts";
 import { channelToProjectRows } from "./project-settings.ts";
 import type { Message } from "./store.ts";
@@ -68,6 +68,21 @@ function access(botId: string, thread: string) {
   const token = registry.mint({ botId, threadId: thread, generation: "g", depth: 0, kind: "memory", skillAuthoring: false });
   return memoryAccess(registry, registry.resolve(`Bearer ${token}`)!, () => roster);
 }
+
+it("T30 project pages retain the exact legacy JSON, message-id cursor, marks and shown order", () => {
+  const first = say("launch-chat", "First line.", { role: "user", from: undefined });
+  const second = say("launch-chat", "Second line.", { to: ["finch"], replyToId: first.id });
+  const third = say("launch-chat", "Third line.");
+  const expected = { result: { status: 200, body: { ok: true, threadId: "launch-chat", messages: [
+    { id: second.id, speaker: "Dax", to: ["Finch"], re: first.id, at: second.at, text: second.text },
+    { id: third.id, speaker: "Dax", at: third.at, text: third.text },
+  ], before: second.id } }, threadId: "launch-chat", shown: [third.id, second.id] };
+  expect(JSON.stringify(readProjectPage(database(), roster, "launch", { limit: 2 }, OWNER_PAGE))).toBe(JSON.stringify(expected));
+  const older = readProjectPage(database(), roster, "launch", { before: second.id }, OWNER_PAGE);
+  expect(older.result.body).toEqual({ ok: true, threadId: "launch-chat", messages: [
+    { id: first.id, speaker: "Owner", at: first.at, text: first.text },
+  ] });
+});
 
 it("read-messages pages the project's chat and its desk threads with speaker, to and re marks, and nothing else", () => {
   const ask = say("launch-chat", "What is the price?", { role: "user", from: undefined });

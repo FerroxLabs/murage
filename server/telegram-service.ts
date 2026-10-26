@@ -12,7 +12,7 @@ interface TelegramServiceOptions {
   dataDir: string;
   onVerifiedSender?: (connectionId:string,senderId:string,display?:{name?:string;username?:string})=>void;
   enqueue: (connectionId: string, targetBotId: string, input: { deliveryId: string; prompt: string; senderId: string }) => { id: string };
-  runResult: (id: string) => { status: string; output?: string; error?: string } | null;
+  runResult: (id: string) => { status: string; output?: string; error?: string; notice?: string } | null;
   voiceNotes?: (runId: string) => import("./telegram-channel.ts").ChannelVoiceNote[];
   revokeRuns: (connectionId: string) => Promise<void>;
   transport?: (token: string) => TelegramTransport;

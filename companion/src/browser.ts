@@ -187,6 +187,7 @@ const STATIC_MIME: Readonly<Record<string, string>> = {
   ".css": "text/css; charset=utf-8",
   ".svg": "image/svg+xml",
   ".png": "image/png",
+  ".webp": "image/webp",
   ".ico": "image/x-icon",
   ".json": "application/json",
   ".woff2": "font/woff2",
@@ -1723,11 +1724,30 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
         }
         readJson(req).then(
           (body) => {
+           try {
+            // The credential is a string, or a number a typed code may arrive
+            // as. Anything else (`String()` of an object whose toString is not
+            // callable throws) is never a guess, and on this unauthenticated
+            // route it must never reach the process. Charged like a wrong
+            // guess, the fail-closed direction; the device door does the same.
+            const rawCredential = body.credential ?? "";
+            const presentedCredential =
+              typeof rawCredential === "number" && Number.isFinite(rawCredential) ? String(rawCredential) : rawCredential;
+            if (typeof presentedCredential !== "string") {
+              const payload: Record<string, unknown> = { error: "That sign-in request is not valid." };
+              const locked = signIn.fail(client);
+              if (locked) {
+                const seconds = Math.max(1, Math.ceil(locked.retryAfterMs / 1000));
+                res.setHeader("retry-after", String(seconds));
+                payload.retryAfter = seconds;
+              }
+              return sendJson(res, 400, payload);
+            }
             // The same redemption the native path uses. A second
             // implementation would be a second set of attempt counters and a
             // second place the five-attempt lockout can be forgotten.
             const result = options.devices.redeem(
-              normalizeCredential(body.credential),
+              normalizeCredential(presentedCredential),
               browserLabel(String(req.headers["user-agent"] ?? "")),
               // The page's request id: a repeat of the same request (a lost
               // response, a second tap) gets the first result back from the
@@ -1786,6 +1806,11 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
             const maxAge = Math.floor((session.session.expiresAt - Date.now()) / 1000);
             res.setHeader("set-cookie", sessionCookie(session.value, identity, maxAge));
             return sendJson(res, 201, { ok: true, device: { name: result.device.name } });
+           } catch {
+            // Whatever a request body makes sign-in throw, the answer is a
+            // refusal, never an unhandled rejection that ends the companion.
+            if (!res.headersSent) sendJson(res, 500, { error: "Sign-in could not be completed. Try again." });
+           }
           },
           (error: Error) => sendJson(res, 400, { error: error.message }),
         );

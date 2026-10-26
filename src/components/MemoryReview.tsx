@@ -1,9 +1,10 @@
 import { useState } from "react";
 import type { MemoryRecord } from "../../shared/memory";
 import { managedInContinuity } from "@/lib/continuity";
-import { t } from "../lib/i18n";
+import { localeCode, t } from "../lib/i18n";
 import type { LocaleKey } from "@/locales";
 import { Disclosure } from "./MemoryLearningControls";
+import { LAM_PROVIDER_NAMES, rememberedOrigin } from "../../shared/learn-about-me/origin";
 
 export interface MemoryAudience { id: string; kind: string; ownerKey: string; label: string }
 export type CorrectionPinChoice = "transfer" | "unpin";
@@ -25,6 +26,19 @@ export type MemoryAction = Record<string, unknown> & { action: string };
 export const memoryStateLabel = (state: string) => t(({ candidate: "memoryReview.stateWaiting", active: "memoryReview.stateCurrent", archived: "memoryReview.stateArchived", superseded: "memoryReview.stateReplaced", deleted: "memoryReview.stateForgotten" } as Record<string, LocaleKey>)[state] ?? "memoryReview.saved");
 /** Who or what a memory rests on. */
 export const memoryOriginLabel = (assertion: string) => t(({ "owner-statement": "memoryReview.originOwner", "tool-observation": "memoryReview.originTool", "assistant-inference": "memoryReview.originBot", "unverified-import": "memoryReview.originImport" } as Record<string, LocaleKey>)[assertion] ?? "memoryReview.saved");
+/** Who or what a memory rests on, naming the assistant and date for a line kept through Learn about me. */
+export function memoryRecordOriginLabel(record: Pick<MemoryRecord, "id" | "assertion" | "validFrom"> & { kind?: string }): string {
+  const origin = rememberedOrigin(record.id);
+  // a verbatim piece of a chat line (kind source) says so, beside who said it (PASTE-CAPTURE-FIX 6, S6)
+  if (!origin && record.kind === "source") return `${t("memoryReview.chatExcerpt")} · ${memoryOriginLabel(record.assertion)}`;
+  if (!origin) return memoryOriginLabel(record.assertion);
+  const provider = origin.provider === "other" ? t("learnAboutMe.provider.other") : LAM_PROVIDER_NAMES[origin.provider];
+  if (origin.precision === "u") return t("learnAboutMe.importedFromUndated", { provider });
+  const parts: Intl.DateTimeFormatOptions = origin.precision === "d" ? { day: "numeric", month: "short", year: "numeric" } : origin.precision === "m" ? { month: "short", year: "numeric" } : { year: "numeric" };
+  return t("learnAboutMe.importedFrom", { provider, date: new Date(record.validFrom).toLocaleDateString(localeCode(), parts) });
+}
+/** A forgotten memory keeps no words (memory-revocation.ts affect): say so instead of showing an empty line. */
+export const memoryRecordText = (record: Pick<MemoryRecord, "state" | "text">) => record.state === "deleted" && !record.text ? t("memoryReview.forgottenWords") : record.text;
 const speakerLabel = (speaker: string) => speaker === "owner" || speaker.startsWith("person:") ? t("memoryReview.speakerYou") : speaker === "tool" ? t("memoryReview.speakerTool") : t("memoryReview.speakerBot");
 
 /** The approve request for a candidate, or null while approval is not allowed.
@@ -58,9 +72,9 @@ export function MemoryReview({ inspection, audiences, busy = false, onAction, on
   const choosePin = proposal?.status === "current" && proposal.target?.ownerPinned === true;
   return <section aria-label={t("memoryReview.detailsTitle")} className="space-y-4 rounded-xl border border-hairline/50 bg-panel p-4" data-memory-detail-id={record.id}>
     <div className="flex items-center justify-between gap-3"><h3 className="text-[15px] font-medium">{t("memoryReview.detailsTitle")}</h3><button className={memoryButtonClass} onClick={onClose}>{t("memoryReview.closeDetails")}</button></div>
-    <p className="text-[12px] text-ink-secondary">{audience} · {memoryStateLabel(record.state)} · {memoryOriginLabel(record.assertion)} · <time dateTime={new Date(record.validFrom).toISOString()}>{new Date(record.validFrom).toLocaleString()}</time></p>
+    <p className="text-[12px] text-ink-secondary">{audience} · {memoryStateLabel(record.state)} · {memoryRecordOriginLabel(record)} · <time dateTime={new Date(record.validFrom).toISOString()}>{new Date(record.validFrom).toLocaleString()}</time></p>
     {record.assertion === "unverified-import" && <p className="text-[12px] text-ink-secondary">{t("memoryReview.importedNote")}</p>}
-    <p className="whitespace-pre-wrap break-words text-[13px]" data-testid="memory-record-text">{record.text}</p>
+    <p className="whitespace-pre-wrap break-words text-[13px]" data-testid="memory-record-text">{memoryRecordText(record)}</p>
     {record.state === "candidate" && record.reviewReason && <p className="text-[12px] text-ink-secondary">{record.reviewReason}</p>}
     <div className="space-y-2">
       <h4 className="text-[13px] font-medium">{t("memoryReview.sources")}</h4>

@@ -38,7 +38,8 @@
         "role": "leader",
         "team": "Rival Watch",
         "appearance": {
-          "color": "blue"
+          "color": "blue",
+          "mascotBody": "hexagon"
         },
         "skills": [
           "project-manager",
@@ -58,7 +59,8 @@
         "role": "member",
         "team": "Rival Watch",
         "appearance": {
-          "color": "teal"
+          "color": "teal",
+          "mascotBody": "circle"
         },
         "skills": [
           "competitive-intelligence",
@@ -78,7 +80,8 @@
         "role": "member",
         "team": "Rival Watch",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "capsule"
         },
         "skills": [
           "competitive-intelligence",
@@ -98,7 +101,8 @@
         "role": "member",
         "team": "Rival Watch",
         "appearance": {
-          "color": "purple"
+          "color": "pink",
+          "mascotBody": "drop"
         },
         "skills": [
           "competitive-intelligence",
@@ -118,7 +122,8 @@
         "role": "member",
         "team": "Rival Watch",
         "appearance": {
-          "color": "green"
+          "color": "green",
+          "mascotBody": "shield"
         },
         "skills": [
           "fact-check-framework",

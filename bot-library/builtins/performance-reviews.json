@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Performance Reviews",
     "tagline": "An evidence-based review with clear expectations and practical next steps",
-    "summary": "Rubric prepares a review draft linked to observed work for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For role design and evaluation strategy, use Talent. For founder decision coaching, use Coach. I give guidance and drafts, not licensed HR advice, and I promise no outcome.",
+    "summary": "Rubric prepares a review draft linked to observed work for your review.",
     "category": "People",
     "author": {
       "name": "Ferrox Labs",
@@ -54,7 +54,8 @@
         "title": "Performance Reviews",
         "description": "Rubric prepares a review draft linked to observed work for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For role design and evaluation strategy, use Talent. For founder decision coaching, use Coach.",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "capsule"
         },
         "skills": [
           "performance-review",

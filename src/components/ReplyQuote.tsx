@@ -1,6 +1,6 @@
 import { MessageSquareReply, X } from "lucide-react";
 
-import { replyAuthor, replySnippet } from "@/lib/replies";
+import { replyAuthor, replyExcerpt, replySnippet } from "@/lib/replies";
 import type { Message } from "@/state/store";
 
 export function ReplyQuote({
@@ -39,6 +39,22 @@ export function ReplyQuote({
           <X size={14} />
         </button>
       )}
+    </div>
+  );
+}
+
+/** The strip above the composer while a reply is pending: one quiet line. */
+export function ComposerReplyStrip({ message, fallbackName, onClear }: { message: Message; fallbackName?: string; onClear: () => void }) {
+  return (
+    <div className="flex min-w-0 items-center gap-2 border-l-2 border-accent/40 px-2.5 py-1 text-[12px] text-ink-secondary">
+      <MessageSquareReply size={12} className="shrink-0 text-ink-secondary" aria-hidden="true" />
+      <span className="min-w-0 flex-1 truncate">
+        <span className="font-medium">{replyAuthor(message, fallbackName)}</span>
+        <span className="opacity-70">{": "}{replyExcerpt(message.text ?? "")}</span>
+      </span>
+      <button type="button" onClick={onClear} aria-label="Cancel reply" className="shrink-0 rounded p-0.5 hover:bg-raised hover:text-ink">
+        <X size={13} />
+      </button>
     </div>
   );
 }
