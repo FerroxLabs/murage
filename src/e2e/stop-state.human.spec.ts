@@ -86,7 +86,7 @@ async function open(page: Page, name: string) {
  * the picker's label reads the same thread id, so once it shows the title
  * the composer on screen is the new thread's. */
 async function selectThread(page: Page, title: string) {
-  const picker = page.getByRole("button", { name: "All threads", exact: true });
+  const picker = page.getByRole("button", { name: "Chat list", exact: true });
   await picker.click();
   await page.getByRole("button", { name: new RegExp(`^${title}`) }).click();
   await expect(picker).toContainText(title);

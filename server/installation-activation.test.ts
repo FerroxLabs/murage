@@ -15,13 +15,14 @@ import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
-async function fixture() {
+async function fixture(options: { brokenLedger?: boolean } = {}) {
   const root = mkdtempSync(join(tmpdir(), "murage-activation-")); roots.push(root);
   const source = join(root, "source"), target = join(root, "target"); mkdirSync(source); mkdirSync(target);
   writeFileSync(join(source, "config.json"), "{}");
   writeFileSync(join(source, "bots.json"), JSON.stringify([{ id: "bot", threadId: "thread", name: "History bot", tasks: [{ threadId: "thread", autoApprove: true, alwaysAllow: ["Bash:sh"], resumeCursors: {} }] }]));
   writeFileSync(join(source, "groups.json"), "[]");
   writeFileSync(join(target, "original.txt"), "retained-original");
+  if (options.brokenLedger) writeFileSync(join(target, "messages.db"), "this is not a database");
   const archive = join(root, "backup.zip"), saved = await writeInstallationArchive(source, archive);
   await restoreInstallation(target, archive, saved.sha256);
   return { root, target };
@@ -160,4 +161,17 @@ it("an open room request refuses review", async () => {
     insertRoomRequest(db, { groupId: "g", verb: "owner_send", fromKind: "owner", admissionKey: "k", lineage: { rootThreadId: "t", origin: "desktop", audienceFingerprint: "owner", notOwnerAudience: false, unattended: false }, now: 1 });
   } finally { db.close(); }
   expect(() => reviewInstallation(f.target)).toThrowError(expect.objectContaining({ code: "RESTORE_WORK_NOT_PAUSED" }));
+});
+
+it("a restore over a deletion ledger that cannot be read says so in the review and opens only once that is confirmed (B2)", async () => {
+  const f = await fixture({ brokenLedger: true });
+  const review = reviewInstallation(f.target) as ReturnType<typeof reviewInstallation> & { notice?: string };
+  expect(review.notice).toMatch(/forget/);
+  expect(() => activateInstallation(f.target, review.reviewHash)).toThrowError(expect.objectContaining({ code: "RESTORE_NOTICE_UNACKNOWLEDGED" }));
+  expect(() => assertRestoreReviewed(f.target)).toThrow();
+  expect(activateInstallation(f.target, review.reviewHash, { acknowledgedNotice: true }).status).toBe("reviewed-engines-disabled");
+});
+it("a restore whose deletion ledger was read carries no notice and opens as before (B2)", async () => {
+  const f = await fixture();
+  expect(reviewInstallation(f.target)).not.toHaveProperty("notice");
 });

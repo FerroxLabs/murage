@@ -9,11 +9,12 @@
 // on real processes.
 import { stopWindowsJob, type JobHelperRunner } from "./pip-job.ts";
 import { execFile } from "node:child_process";
-import { readFileSync, readdirSync, unlinkSync } from "node:fs";
+import { lstatSync, readFileSync, readdirSync, realpathSync, unlinkSync, type Stats } from "node:fs";
 import { join } from "node:path";
 import { nativeProcessList } from "../drivers/win-process-table.ts";
 import type { NativeProcess } from "../engine-exclusion.ts";
-import { removeTempRoot, RUN_BOUND_MS, type AttemptTransport, type BootEpoch, type TransportChild } from "./pip-transport.ts";
+import { addonTreeRemove } from "../link-removal.ts";
+import { removeTempRoot, ROOT_NAME, RUN_BOUND_MS, type AttemptTransport, type BootEpoch, type TransportChild } from "./pip-transport.ts";
 
 export const REAPER_TERM_GRACE_MS = 3_000;
 export const REAPER_FORCE_WAIT_MS = 1_000;
@@ -303,6 +304,82 @@ export async function sweepOrphanTempDirs(base: string, known: ReadonlySet<strin
     // A failed process list is not an empty one: the directory stays.
     if ((deps.platform ?? process.platform) === "win32" || found === null || found.length) { kept.push(dir); continue; }
     removeTempRoot(base, dir); removed.push(dir);
+  }
+  return { removed, kept };
+}
+
+// ------------------------------------------------- 1.0.3 credential copies ----
+
+export interface CredentialSweepDeps {
+  platform?: NodeJS.Platform;
+  /** Removes one directory ENTRY, never what a link points at (tests). Default: win32 the addon's removeTree (the top opened as itself),
+   *  else, and where the addon is missing, unlinkSync (unlink never follows the last component). Never rmSync. */
+  removeEntry?: (path: string) => void;
+  log?: (line: string) => void;
+  /** The real path of a folder (tests). Default realpathSync.native. */
+  realpath?: (path: string) => string;
+}
+const credentialSweepLogged = new Set<string>();
+function logOnce(deps: CredentialSweepDeps, key: string, line: string): void {
+  if (credentialSweepLogged.has(key)) return;
+  credentialSweepLogged.add(key);
+  (deps.log ?? ((l: string) => console.warn(l)))(line);
+}
+const isRealDir = (s: Stats) => s.isDirectory() && !s.isSymbolicLink();
+const errCode = (e: unknown) => (e as NodeJS.ErrnoException).code;
+
+/** Removes the `.credentials.json` copies 1.0.3's text-only Claude runs left in `<base>/<root>/home/`, on every platform and independent of
+ *  any run record or process (CLAUDE-SCOPE.md Part B, B.1 step 5). Fail closed: a root or home that is a link (a junction is one on
+ *  Windows), or whose real path is not exactly the path walked, is skipped and its copy kept; only the file entry itself is ever removed.
+ *  Residual, stated in the design: a same-user process can swap `home` between the check and the unlink; that is detected and logged. */
+export function sweepStaleCredentialCopies(base: string, deps: CredentialSweepDeps = {}): { removed: string[]; kept: string[] } {
+  const removed: string[] = [], kept: string[] = [];
+  let realBase: string, names: string[];
+  const realpath = deps.realpath ?? ((path: string) => realpathSync.native(path));
+  try { realBase = realpath(base); names = readdirSync(realBase); } catch (error) {
+    if (errCode(error) !== "ENOENT") logOnce(deps, `base\0${base}`, `pip: stale credential sweep could not list ${base} (${errCode(error) ?? "error"}); retried next pass`);
+    return { removed, kept };
+  }
+  const platform = deps.platform ?? process.platform;
+  const removeEntry = deps.removeEntry ?? ((path: string) => {
+    const tree = platform === "win32" ? addonTreeRemove() : null;
+    if (tree) tree(path); else unlinkSync(path);
+  });
+  for (const name of names) {
+    if (!ROOT_NAME.test(name)) continue;
+    const root = join(realBase, name), home = join(root, "home"), file = join(home, ".credentials.json");
+    let homeBefore: Stats;
+    try {
+      const rootStat = lstatSync(root);
+      if (!isRealDir(rootStat)) { if (rootStat.isSymbolicLink()) { kept.push(file); logOnce(deps, `redirected\0${root}`, `pip: stale credential sweep skipped ${root}: redirected`); } continue; }
+      homeBefore = lstatSync(home);
+    } catch (error) {
+      if (errCode(error) === "ENOENT") continue;
+      kept.push(file); logOnce(deps, `stat\0${root}`, `pip: stale credential sweep skipped ${root} (${errCode(error) ?? "error"})`); continue;
+    }
+    if (!isRealDir(homeBefore)) {
+      if (homeBefore.isSymbolicLink()) { kept.push(file); logOnce(deps, `redirected\0${home}`, `pip: stale credential sweep skipped ${home}: redirected`); }
+      continue;
+    }
+    let real: string | null = null;
+    try { real = realpath(home); } catch { /* unresolvable: treated as redirected */ }
+    if (real !== home) { kept.push(file); logOnce(deps, `redirected\0${home}`, `pip: stale credential sweep skipped ${home}: redirected`); continue; }
+    let entry: Stats;
+    try { entry = lstatSync(file); } catch (error) {
+      if (errCode(error) === "ENOENT") continue;
+      kept.push(file); logOnce(deps, `stat\0${file}`, `pip: stale credential sweep kept ${file} (${errCode(error) ?? "error"}); retried next pass`); continue;
+    }
+    if (!entry.isFile() && !entry.isSymbolicLink()) { kept.push(file); logOnce(deps, `kind\0${file}`, `pip: stale credential sweep skipped ${file}: not a file`); continue; }
+    try { removeEntry(file); } catch (error) {
+      kept.push(file); logOnce(deps, `remove\0${file}`, `pip: stale credential sweep kept ${file} (${errCode(error) ?? "error"}); retried next pass`); continue;
+    }
+    removed.push(file);
+    // detection, not prevention: a home swapped under the walk is reported; nothing further is removed in that root this pass
+    let homeAfter: Stats | null = null;
+    try { homeAfter = lstatSync(home); } catch { /* gone: reported below */ }
+    if (!homeAfter || homeAfter.dev !== homeBefore.dev || homeAfter.ino !== homeBefore.ino || !isRealDir(homeAfter)) {
+      (deps.log ?? ((l: string) => console.warn(l)))(`pip: stale credential sweep: ${home} swapped during sweep`);
+    }
   }
   return { removed, kept };
 }

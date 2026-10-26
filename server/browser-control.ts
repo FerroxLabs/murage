@@ -13,7 +13,10 @@ export type BrowserStatus = { generation: number; held: boolean; owner: string |
   /** The bot's browser engine is not running or not answering. Its own state:
    * never a page lock. Restart browser (restart()) starts it again. */
   notRunning: boolean;
-  /** Why the live view is not connected, in the owner's words; absent when it is. */ problem?: string };
+  /** Why the live view is not connected, in the owner's words; absent when it is. */ problem?: string;
+  /** "Use my Chrome": the first connection is waiting for the owner's Allow in Chrome. */ waitingForChrome?: boolean;
+  /** Moves only when control or the page changes hands (take, release, reclaim, navigate, reopen,
+   * restart), never when the live view merely reconnects. Hand-back is checked against this. */ control?: number };
 /** Reopen blank page could not start a fresh browser. The page lock stays. */
 export const BROWSER_REOPEN_FAILED = "Murage could not restart this browser, so the page stays locked. Wait a moment, then choose Reopen blank page again. If it keeps failing, quit and reopen Murage.";
 /** The owner's line while the engine is not running. */
@@ -23,8 +26,13 @@ const BROWSER_NOT_ANSWERING = "Murage's browser is not answering.";
 // After a failed connect the panel's status reads do not start another one
 // for this long, so a browser that cannot start is not relaunched every poll.
 const RECONNECT_AFTER_MS = 3000;
-type Entry = BrowserStatus & { problem?: string; native?: NativeBrowser; spec?: AgentBrowserSpec; pending?: Promise<unknown>; frame?: BrowserFrame & { generation: number }; lastSeq: number; streamId?: string; connecting?: Promise<void>; retryAt?: number };
+type Entry = BrowserStatus & { controlEpoch?: number; problem?: string; native?: NativeBrowser; spec?: AgentBrowserSpec; pending?: Promise<unknown>; frame?: BrowserFrame & { generation: number }; lastSeq: number; streamId?: string; connecting?: Promise<void>; retryAt?: number };
 const refusal = () => browserRefusal("browser_control_changed");
+const attachedSpec = (e: Entry) => Boolean(e.spec?.env.AGENT_BROWSER_CDP);
+/** "Use my Chrome": Chrome is asking the owner to Allow. `chromeWaiting` is what
+ * Murage's one connection knows: true while Chrome shows its prompt (also when
+ * only a bot's step is waiting on it), false once allowed. */
+const userChromeAsking = (e: Entry, chromeWaiting: boolean | undefined) => chromeWaiting === true || (!!e.connecting && chromeWaiting !== false);
 // Conservative document barrier: never deliver any DOM/text/pixels from a page
 // containing a protected input. Human input taints the session until explicit
 // owner reopen; returning control alone cannot disclose a transformed secret.
@@ -44,8 +52,10 @@ export class UnifiedBrowserController {
   private entries = new Map<string, Entry>();
   private readonly stateFile: string;
   private readonly factory: (spec: AgentBrowserSpec) => NativeBrowser;
-  constructor(options: { stateFile: string; createNative?: (spec: AgentBrowserSpec) => NativeBrowser }) {
-    this.stateFile = options.stateFile; this.factory = options.createNative ?? createNativeBrowser;
+  /** "Use my Chrome": is Chrome showing its Allow prompt for this key right now? Unknown (undefined) counts as waiting. */
+  private readonly chromeWaiting: (key: string) => boolean | undefined;
+  constructor(options: { stateFile: string; createNative?: (spec: AgentBrowserSpec) => NativeBrowser; chromeWaiting?: (key: string) => boolean | undefined }) {
+    this.stateFile = options.stateFile; this.factory = options.createNative ?? createNativeBrowser; this.chromeWaiting = options.chromeWaiting ?? (() => undefined);
     if (existsSync(this.stateFile)) {
       const saved = JSON.parse(readFileSync(this.stateFile, "utf8"));
       if (!Array.isArray(saved) || saved.length > 1000) throw new Error("Invalid browser control state");
@@ -69,7 +79,7 @@ export class UnifiedBrowserController {
     e.spec = spec; this.entries.set(key, e); this.save();
   }
   private entry(key: string): Entry { const e = this.entries.get(key); if (!e?.spec) throw new Error("Browser profile is unavailable"); return e; }
-  status(key: string): BrowserStatus { const e = this.entry(key); return { generation: e.generation, held: e.held, owner: e.owner, connected: e.connected, protectedDocument: e.protectedDocument, protectedReason: e.protectedReason, url: e.url, notRunning: e.notRunning, ...(e.problem && !e.connected ? { problem: e.problem } : {}) }; }
+  status(key: string): BrowserStatus { const e = this.entry(key); return { generation: e.generation, held: e.held, owner: e.owner, connected: e.connected, protectedDocument: e.protectedDocument, protectedReason: e.protectedReason, url: e.url, notRunning: e.notRunning, control: e.controlEpoch ?? 0, ...(e.problem && !e.connected ? { problem: e.problem } : {}), ...(attachedSpec(e) && !e.connected && userChromeAsking(e, this.chromeWaiting(key)) ? { waitingForChrome: true } : {}) }; }
   /** The engine is down: its own state and copy, never a page lock. */
   private notRunning(e: Entry) { e.notRunning = true; e.problem = BROWSER_NOT_RUNNING; e.connected = false; e.frame = undefined; }
   /** The owner's view, answered at once from what is known. A live view that is
@@ -84,7 +94,10 @@ export class UnifiedBrowserController {
         if (e.connected) { e.problem = undefined; e.notRunning = false; e.retryAt = undefined; }
       }, (error: unknown) => {
         if (e.generation !== generation) return;
-        e.retryAt = Date.now() + RECONNECT_AFTER_MS;
+        // The owner's Chrome: every new attempt is a new "Allow remote debugging?"
+        // prompt, so a failed one waits for the owner's Try again (retry) or the
+        // bot's next step, never a timer.
+        e.retryAt = attachedSpec(e) ? Number.POSITIVE_INFINITY : Date.now() + RECONNECT_AFTER_MS;
         if (browserEngineDown(error)) this.notRunning(e);
         else e.problem = error instanceof Error && error.message ? error.message : BROWSER_NOT_ANSWERING;
       });
@@ -108,13 +121,13 @@ export class UnifiedBrowserController {
     }, () => {
       if (e.generation !== generation) return;
       e.connected = false; e.frame = undefined; e.generation++; this.save();
-    }).then((streamId) => { if (e.generation === generation) { if (e.streamId !== streamId) e.lastSeq = -1; e.streamId = streamId; e.connected = true; } });
+    }).then((streamId) => { if (e.generation === generation) { if (e.streamId !== streamId) e.lastSeq = -1; e.streamId = streamId; e.connected = true; e.retryAt = undefined; } });
     // A restart drops this attempt; its end must not clear the next one.
     const tracked: Promise<void> = attempt.finally(() => { if (e.connecting === tracked) e.connecting = undefined; });
     e.connecting = tracked;
     await tracked;
   }
-  private fence(e: Entry) { e.generation++; e.frame = undefined; e.connected = false; e.native?.resetStream(); this.save(); }
+  private fence(e: Entry) { e.controlEpoch = (e.controlEpoch ?? 0) + 1; e.generation++; e.frame = undefined; e.connected = false; e.native?.resetStream(); this.save(); }
   async take(key: string, owner: string) {
     const e = this.entry(key);
     if (!owner) throw refusal();
@@ -132,8 +145,16 @@ export class UnifiedBrowserController {
   private human(e: Entry, owner: string, generation: number) {
     if (!e.held || e.owner !== owner || e.generation !== generation || e.pending) throw refusal();
   }
-  async release(key: string, owner: string, generation: number) {
-    const e = this.entry(key); this.human(e, owner, generation);
+  /** Handing control back. With `control` (1.0.7 panels) it is checked against
+   * the control epoch, which a live-view reconnect never moves, so a reconnect
+   * between the panel's read and the click no longer refuses Return to bot (the
+   * 1.0.6 "stuck in Human control"). A take, navigate or reopen since then still
+   * refuses it, so a stale hand-back never gives the bot a page the owner opened
+   * after asking. Without `control`, the stream generation is checked as before. */
+  async release(key: string, owner: string, generation?: number, control?: number) {
+    const e = this.entry(key);
+    if (control !== undefined) { if (!e.held || e.owner !== owner || e.pending || control !== (e.controlEpoch ?? 0)) throw refusal(); }
+    else this.human(e, owner, generation ?? Number.NaN);
     e.held = false; e.owner = null; this.fence(e); return this.refresh(key);
   }
   frame(key: string, generation: number) {
@@ -189,6 +210,20 @@ export class UnifiedBrowserController {
     catch { this.human(e, owner, e.generation); e.problem = BROWSER_REOPEN_FAILED; throw Object.assign(new Error(BROWSER_REOPEN_FAILED), { status: 503 }); }
     this.human(e, owner, e.generation);
     e.protectedDocument = false; e.protectedReason = null; e.url = ""; e.notRunning = false; e.problem = undefined; this.save(); return this.refresh(key, true);
+  }
+  /** "Use my Chrome": the owner's Try again after a failed attach. One new attempt. */
+  async retry(key: string) {
+    const e = this.entry(key); e.retryAt = undefined; e.problem = undefined;
+    return this.refresh(key);
+  }
+  /** "Use my Chrome": the bot's own step reached the owner's Chrome, so the
+   * connection is allowed. A live view that failed earlier may reconnect on its
+   * next read (no new prompt: it shares the allowed connection) instead of
+   * still saying Chrome did not connect. */
+  noteChromeConnected(key: string) {
+    const e = this.entries.get(key);
+    if (!e || e.connected || !attachedSpec(e)) return;
+    e.retryAt = undefined; e.problem = undefined;
   }
   /** Restart browser: the recovery for an engine that is not running. It stops
    * this profile's engine if any of it is left, starts a fresh one and

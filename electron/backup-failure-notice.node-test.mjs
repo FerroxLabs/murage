@@ -2,11 +2,11 @@
 // (Inbox row every start while it needs review, one notification per failure).
 import assert from "node:assert/strict";
 import test from "node:test";
-import {mkdtempSync,readFileSync} from "node:fs";
+import {mkdtempSync,readFileSync,statSync} from "node:fs";
 import {tmpdir} from "node:os";
 import path from "node:path";
 import {safeWipeSync} from "../server/testing/safe-wipe.mjs";
-import {announceBackupFailure,backupFailureNotice} from "./backup-failure-notice.mjs";
+import {announceBackupFailure,announceBackupResult,backupFailureNotice,backupResultNotice} from "./backup-failure-notice.mjs";
 
 const failed={phase:"needs-review",job:{id:"job-1"},captureFailure:{stage:"capture",code:"ENCRYPTED_BACKUP_FAILED"}};
 
@@ -65,4 +65,43 @@ test("main.mjs hands the folder's name to the announcement",()=>{
  const main=readFileSync(new URL("./main.mjs",import.meta.url),"utf8");
  assert.match(main,/folderName=await backupScheduleHost\.destinationLabel\(\)/);
  assert.match(main,/announceBackupFailure\(\{status:backupScheduleHost\.internalStatus\(\),folderName,/);
+});
+
+// 1.0.7: a Back up now that worked says so once Murage reopens.
+const J="a".repeat(64);
+const done=(over={})=>({phase:"returned",job:{id:J,occurrence:"3:manual:x",phase:"returned"},lastVerified:{jobId:J},...over});
+
+test("a manual backup that returned is announced once, with the folder label and a count only",()=>{
+ assert.deepEqual(backupResultNotice(done(),null,"Backups"),{key:J,title:"Backup saved and checked",body:"Your workspace is backed up to Backups."});
+ const skipped=done({lastSkipped:{jobId:J,count:2,items:[{path:"config.json.bak-20260918-openaicompat",reason:"unrecognised"},{path:"config.json.bak-xxx",reason:"unrecognised"}],bots:{}}});
+ const notice=backupResultNotice(skipped,null,"Backups");
+ assert.equal(notice.body,"Your workspace is backed up to Backups. 2 items were left out. Settings → Backups lists them.");
+ assert.ok(!notice.body.includes("config.json"));
+ assert.equal(backupResultNotice(done({lastSkipped:{count:1}}),null,null).body,"Your workspace is backed up to your backup folder. 1 item was left out. Settings → Backups lists it.");
+ assert.equal(backupResultNotice(done(),J,"Backups"),null,"the same backup is never announced twice");
+});
+
+test("daily, update, unverified, failed and other-job states say nothing",()=>{
+ assert.equal(backupResultNotice(done({job:{id:J,occurrence:"3:daily:2026-10-26",phase:"returned"}}),null,"B"),null);
+ assert.equal(backupResultNotice(done({job:{id:J,occurrence:"3:upgrade:u:h",phase:"returned"}}),null,"B"),null);
+ assert.equal(backupResultNotice(done({lastVerified:{jobId:"b".repeat(64)}}),null,"B"),null);
+ assert.equal(backupResultNotice(done({lastVerified:undefined}),null,"B"),null);
+ assert.equal(backupResultNotice({...failed,job:{id:J,occurrence:"3:manual:x",phase:"needs-review"}},null,"B"),null);
+ assert.equal(backupResultNotice(null,null,"B"),null);
+ assert.equal(backupResultNotice(done(),null,"x".repeat(121)).body,"Your workspace is backed up to your backup folder.");
+});
+
+test("announceBackupResult shows once per backup and keeps only the job id, owner-only",()=>{
+ const dir=mkdtempSync(path.join(tmpdir(),"backup-result-"));
+ try{
+  const shown=[];
+  assert.ok(announceBackupResult({status:done(),folderName:"Backups",userData:dir,showNotice:n=>shown.push(n)}));
+  assert.equal(announceBackupResult({status:done(),folderName:"Backups",userData:dir,showNotice:n=>shown.push(n)}),null);
+  assert.equal(shown.length,1);
+  const file=path.join(dir,"backup-result-announced.json");
+  assert.deepEqual(JSON.parse(readFileSync(file,"utf8")),{version:1,key:J});
+  if(process.platform!=="win32")assert.equal(statSync(file).mode&0o777,0o600);
+  assert.equal(announceBackupResult({status:done({job:{id:"c".repeat(64),occurrence:"3:manual:y",phase:"returned"},lastVerified:{jobId:"c".repeat(64)}}),userData:dir,showNotice:()=>{throw Error("no notifications");}}).key,"c".repeat(64),"a failed notification never throws");
+  assert.equal(announceBackupResult({status:done(),userData:path.join(dir,"missing","deeper")}),null,"an unwritable profile never throws");
+ }finally{safeWipeSync(dir);}
 });

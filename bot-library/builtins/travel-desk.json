@@ -48,7 +48,8 @@
         "title": "Travel Desk",
         "description": "Jet prepares a day-by-day itinerary around your business commitments. Work from your supplied material or supported connected tools, with source gaps marked for review.",
         "appearance": {
-          "color": "purple"
+          "color": "purple",
+          "mascotBody": "drop"
         },
         "skills": [
           "trip-itinerary-builder",

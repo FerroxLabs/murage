@@ -123,12 +123,12 @@ export function headerFits(m: HeaderMeasurement): boolean {
 }
 
 /** Read the live header. The name is the first button (or the rename input)
- * inside `[data-chat-header-name]`. */
+ * inside `[data-chat-header-name]`, or the plain name a phone header shows. */
 export function measureHeader(header: HTMLElement): HeaderMeasurement {
   const style = getComputedStyle(header);
   const contentWidth =
     header.clientWidth - parseFloat(style.paddingLeft || "0") - parseFloat(style.paddingRight || "0");
-  const name = header.querySelector<HTMLElement>("[data-chat-header-name] :is(button, input)");
+  const name = header.querySelector<HTMLElement>("[data-chat-header-name] :is(button, input, [role=button])");
   const box = header.getBoundingClientRect();
   const left = box.left + parseFloat(style.borderLeftWidth || "0") + parseFloat(style.paddingLeft || "0");
   const right = box.right - parseFloat(style.borderRightWidth || "0") - parseFloat(style.paddingRight || "0");

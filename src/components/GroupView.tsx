@@ -1,4 +1,5 @@
 import { ProjectLifecycleBanner } from "./ProjectLifecycleBanner";
+import { loopNoticeLabel } from "@/lib/loop-notice";
 import { Suspense } from "react";
 import { LazyBoundary, retryableLazy } from "./LazyBoundary";
 import { LazyFallback } from "./LazyFallback";
@@ -14,6 +15,7 @@ const ChatFindBar = retryableLazy(() => import("./ChatFindBar").then((module) =>
 // default responder; @mentions override that routing.
 import { isErrorActivity } from "../../shared/message-visibility";
 import { MurageMessageRow } from "./MurageMessageRow";
+import { ExportPasteNote } from "./ExportPasteNote";
 import { messageActor, sameThreadReply, channelReadOnlyReason } from "@/lib/project-presentation";
 import { ProjectStrip } from "./ProjectStrip";
 import { ProjectTabs } from "./ProjectTabs";
@@ -22,6 +24,7 @@ import { projectSurfaceEnabled, projectWriteReason } from "@/lib/project-client"
 import { ProjectSinceYouLeftLazy } from "./ProjectSinceYouLeftLazy";
 import { useProject } from "@/lib/use-project";
 import { DeletionNoteBanner } from "./DeletionNoteBanner";
+import { dismissDeletionNote } from "@/lib/deletion-notes";
 import { ApprovedStepsRow, isApprovedStepsLine } from "./ApprovedStepsRow";
 import { settledHeldQueue } from "./EngineNotes";
 import { ImageRecordRow, isImageRecordLine } from "./ImageRecordRow";
@@ -29,7 +32,7 @@ import { DelegationWaitRow } from "./DelegationWaitRow";
 import { DelegationHeldRow, heldAction } from "./DelegationHeldRow";
 import { roomTranscript } from "@/lib/room-transcript";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { Archive, ArrowDown, Check, ChevronDown, Folder, FolderOpen, Info, Loader2, MessageSquareReply, MoreHorizontal, Pencil, Pin, PinOff, Plus, Search, Square, Target, Trash2, Volume2, X } from "lucide-react";
+import { Archive, Check, ChevronDown, Folder, FolderOpen, Info, Loader2, MessageSquareReply, MoreHorizontal, Pencil, Pin, PinOff, Plus, Search, Square, Target, Trash2, Volume2, X } from "lucide-react";
 import { SpeakButton } from "./SpeakButton";
 import { speaker } from "@/lib/tts";
 import { useSpeech } from "@/lib/tts/useSpeech";
@@ -61,7 +64,11 @@ import { normalizeState } from "@/lib/mascot";
 import { effectiveDefaultResponder, groupResponseHint } from "@/lib/group-routing";
 import { instructionsPreview } from "@/lib/channel-instructions";
 import { ChatMarkdown } from "./ChatMarkdown";
-import { ErrorBanner, MessageActionSheet, type MessageAction } from "./ChatView";
+import { JumpToLatestButton } from "./JumpToLatestButton";
+import { jumpScrollBehavior, jumpToLatestVisible, useCanScroll } from "@/lib/transcript-viewport";
+import { ErrorBanner, ErrorRow, MessageActionSheet, type MessageAction } from "./ChatView";
+import { claudeUpdateTarget } from "@/lib/claude-update";
+import { roomRetryTarget } from "@/lib/room-member-retry";
 import { Composer } from "./Composer";
 import { GroupTaskPicker } from "./TaskPicker";
 import { ReplyQuote } from "./ReplyQuote";
@@ -75,7 +82,7 @@ import { GroupCallButton, CallBarStrip } from "./CallControls";
 import { registerCallSlot } from "@/lib/call-slot";
 
 import { ApprovalCard } from "./ApprovalCard";
-import { McpSignInCard, PublishCard } from "./LazyChatCards";
+import { McpEnableCard, McpSignInCard, PublishCard } from "./LazyChatCards";
 import { QuestionCard } from "./QuestionCard";
 import { isQuestionCard } from "../../shared/questions";
 import { ManageMembersPanel } from "./ManageMembersPanel";
@@ -106,7 +113,8 @@ import { BrowserUnavailableRow } from "./BrowserUnavailableRow";
 import { ImagesNotSentRow } from "./ImagesNotSentRow";
 import { browserUnavailableReason } from "../../shared/browser-unavailable";
 import { imagesLeftOutCount } from "../../shared/images-left-out";
-import { plainEngineError } from "../../shared/plain-engine-error";
+import { plainEngineError, withoutProviderSentence } from "../../shared/plain-engine-error";
+import { inNativeShell } from "@/lib/native-shell";
 import { ImagesLeftOutRow } from "./ImagesLeftOutRow";
 import { imagesNotSent } from "../../shared/turn-image-note";
 import { FolderTrustNote } from "./FolderTrustNote";
@@ -123,6 +131,7 @@ import {
 } from "@/lib/transcript-chrome";
 import { useNarrowViewport } from "@/lib/media-query";
 import { showWorkingDots } from "@/lib/turn-tail";
+import { useTurnLive } from "@/state/turn-status";
 import { liveActivityLabel } from "@/lib/live-activity";
 import { splitTranscriptAttachments } from "@/lib/composer-attachments";
 import {
@@ -148,6 +157,7 @@ import { useMessageById } from "@/lib/held-message";
 import { findTask, isTruncated } from "@/lib/task-window";
 import { loadProjectTab, projectViewTab, saveProjectTab, type ProjectTab } from "@/lib/project-tab";
 import { fromAnswer } from "@/state/answer-tag";
+import { useWindowDrag } from "@/hooks/use-window-drag";
 
 function dayLabel(at: number): string {
   const d = new Date(at);
@@ -157,6 +167,41 @@ function dayLabel(at: number): string {
   if (diffDays === 0) return "Today";
   if (diffDays === 1) return "Yesterday";
   return d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+}
+
+/** A member's failed turn in a room: the same error card a direct chat shows,
+ * with Sign in when that member's engine needs it and a "Send again to NAME"
+ * button that sends the message to THAT member again (a new row, by design). */
+export function RoomErrorRow({ message, member, roomThreadId, onRetry }: {
+  message: Message;
+  member: Bot;
+  /** The room's own thread: a room row lives there, not in the member's direct thread. */
+  roomThreadId: string;
+  onRetry?: () => void;
+}) {
+  const { state, dispatch } = useStore();
+  const tool = message.tool!;
+  const engine = state.instances.find((instance) => instance.instanceId === member.modelSelection.instanceId);
+  return (
+    <ErrorRow
+      message={tool.name.slice(6).trim()}
+      botName={member.name}
+      onRetry={onRetry}
+      retryLabel={onRetry ? t("room.sendAgainTo", { name: member.name }) : undefined}
+      setupInstance={tool.setup ? engine : undefined}
+      authRequired={tool.authRequired}
+      claudeUpdateInstance={tool.claudeUpdate ? claudeUpdateTarget(engine) : undefined}
+      details={tool.errorDetails}
+      errorKind={tool.errorKind}
+      localFailure={tool.localFailure}
+      localFailureEngine={tool.localFailureEngine}
+      providerError={tool.providerError}
+      diagnostic={tool.diagnostic}
+      turnId={message.turnId}
+      incident={{ threadId: roomThreadId, messageId: message.id }}
+      onOpenProviderSettings={() => dispatch({ type: "toggleAppSettings", open: true, section: member.modelSelection.connectionId ? "models" : "engines" })}
+    />
+  );
 }
 
 /** One finished tool step in a room. Same pill the 1:1 chat uses, minus the
@@ -184,7 +229,7 @@ function RoomToolChip({ message, botName }: { message: Message; botName?: string
         data-testid="tool-chip"
         className={cn(CHIP, tool.ok === false ? "text-danger" : "text-ink-secondary")}
       >
-        <span data-testid="tool-chip-name" className={cn(CHIP_NAME, "font-mono")}>{tool.name}</span>
+        <span data-testid="tool-chip-name" className={cn(CHIP_NAME, "font-mono")}>{tool.name.startsWith("error:") && inNativeShell() ? withoutProviderSentence(tool.name) : (loopNoticeLabel(tool.name) ?? tool.name)}</span>
       </div>
     </div>
   );
@@ -252,6 +297,8 @@ const Transcript = memo(function Transcript({
   // is its member's own, so the mark is that member's; a delegated teammate
   // who is not a member has no mark here.
   const outcomes = useOutcomes();
+  // the room member that a row belongs to (a removed member or a delegate has no retry)
+  const memberFor = (m: Message) => (m.from?.botId ? members.find((member) => member.id === m.from!.botId) : undefined);
   const markOwner = (m: Message) => (m.from?.botId && members.some((member) => member.id === m.from!.botId) ? memberOf(m.from.botId) : undefined);
   // Several bots working at once turn a room into a wall of chips; fold the
   // finished ones the same way a 1:1 chat does.
@@ -384,6 +431,8 @@ const Transcript = memo(function Transcript({
             <ConnectorCard botId={m.from.botId} threadId={group.threadId} message={m} />
           ) : m.kind === "mcpSignIn" && m.mcpSignIn && m.from?.botId ? (
             <McpSignInCard botId={m.from.botId} threadId={group.threadId} message={m} />
+          ) : m.kind === "options" && m.card?.kind === "mcpEnable" && m.from?.botId ? (
+            <McpEnableCard botId={m.from.botId} threadId={group.threadId} message={m} />
           ) : m.kind === "options" && m.card?.kind === "publish" ? (
             <div className="flex justify-start"><PublishCard threadId={group.threadId} message={m} /></div>
           ) : m.kind === "options" && isQuestionCard(m.card) ? (
@@ -443,6 +492,18 @@ const Transcript = memo(function Transcript({
               <ImagesLeftOutRow botName={memberOf(m.from?.botId)?.name ?? m.from?.name ?? "This bot"} count={imagesLeftOutCount(m.tool.name)!} />
             ) : imagesNotSent(m.tool.name) ? (
               <ImagesNotSentRow counts={imagesNotSent(m.tool.name)!} />
+            ) : m.tool.name.startsWith("error:") && memberFor(m) ? (
+              <RoomErrorRow
+                message={m}
+                member={memberFor(m)!}
+                roomThreadId={group.threadId}
+                onRetry={(() => {
+                  const target = roomRetryTarget(transcript, m, { memberIds: members.map((member) => member.id), roomBusy: Boolean(group.busyBotId) });
+                  return target
+                    ? () => dispatch({ type: "sendGroup", groupId: group.id, text: target.text, sendId: crypto.randomUUID(), threadId: group.threadId, mode: "chat", responderId: target.responderId })
+                    : undefined;
+                })()}
+              />
             ) : m.tool.ok === false || m.tool.name.startsWith("error:") || showToolCalls ? (
               <RoomToolChip message={m} botName={memberOf(m.from?.botId)?.name ?? m.from?.name} />
             ) : null
@@ -492,7 +553,7 @@ const Transcript = memo(function Transcript({
                   tabIndex={narrow ? 0 : undefined}
                   aria-haspopup={narrow ? "dialog" : undefined}
                   className={cn(
-                    "w-fit max-w-[min(42rem,78%)] max-md:max-w-full rounded-2xl px-4 py-2.5 text-[15px] leading-relaxed",
+                    "w-fit max-w-[min(var(--chat-bubble-max),var(--chat-bubble-pct))] max-md:max-w-full rounded-2xl px-4 py-2.5 text-[15px] leading-relaxed",
                     BUBBLE_TAPPABLE,
                     user ? "whitespace-pre-wrap bg-bubble-user text-ink" : "bg-card text-ink",
                   )}
@@ -524,7 +585,7 @@ const Transcript = memo(function Transcript({
                           className={!attachments.display ? "mb-0" : undefined}
                         />
                       )}
-                      {attachments?.display ?? m.text}
+                      <div dir="auto">{attachments?.display ?? m.text}</div>
                     </>
                   ) : (
                     <>
@@ -573,6 +634,7 @@ const Transcript = memo(function Transcript({
                   {formatTime(m.at)}
                 </span>
               </div>
+              {user && m.memoryNote === "export-paste" && <ExportPasteNote message={m} room />}
               {!user && markOwner(m) && <MessageOutcome messageId={m.id} />}
               {!user && markOwner(m) && <MessageChip messageId={m.id} botName={markOwner(m)!.name} />}
               {/* The hover rail's two controls, as words, in the thumb zone.
@@ -1123,7 +1185,7 @@ function RoomSetup({ group, members }: { group: Group; members: Bot[] }) {
         <label className="block">
           <span className="text-[13px] font-semibold text-ink">Channel instructions</span>
           <span className="mt-1 block text-[12px] text-ink-secondary">A shared brief every member sees on each turn. You can edit it later.</span>
-          <textarea
+          <textarea dir="auto"
             value={instructions}
             onChange={(event) => setInstructions(event.target.value)}
             rows={5}
@@ -1265,7 +1327,7 @@ function RenameChannelDialog({ group, onClose }: { group: Group; onClose: () => 
         <div id="rename-channel-title" className="mb-3 text-[15px] font-semibold text-ink">
           Rename {channelNoun(group)}
         </div>
-        <input
+        <input dir="auto"
           autoFocus
           value={draft}
           maxLength={100}
@@ -1329,7 +1391,7 @@ function MakeProjectDialog({ group, onClose, onMade }: { group: Group; onClose: 
         <label htmlFor="make-project-goal" className="mt-3 block text-[13px] font-semibold text-ink">
           What are you trying to get done?
         </label>
-        <textarea
+        <textarea dir="auto"
           id="make-project-goal"
           autoFocus
           value={goal}
@@ -1361,6 +1423,7 @@ function MakeProjectDialog({ group, onClose, onMade }: { group: Group; onClose: 
 }
 
 export function GroupView({ group }: { group: Group }) {
+  const windowDrag = useWindowDrag();
   const { state, dispatch } = useStore();
   // Conversation order from parent links, not arrival order: hosted-tool
   // text saved in front of its row arrives after it (room-transcript.ts).
@@ -1479,10 +1542,18 @@ export function GroupView({ group }: { group: Group }) {
   const lastGroupMessage = roomMessages.at(-1);
   const toolInFlight = lastGroupMessage?.kind === "activity" && lastGroupMessage.tool?.ok === undefined;
   const activityLabel = liveActivityLabel(lastGroupMessage);
+  // The mascot stays for the speaker's whole turn; only its end hides it (upstream #3374).
+  const turnLiveState = useTurnLive(group.threadId);
+  const turnEnded = turnLiveState.ended;
   const waiting = Boolean(
-    speaker && showWorkingDots(true, roomMessages.at(-1), speaker.id),
+    speaker && showWorkingDots(true, roomMessages.at(-1), speaker.id, turnEnded),
   );
-  const popping = useReplyPop(`${group.id}:${group.threadId}`, lastGroupMessage, waiting);
+  const popping = useReplyPop(
+    `${group.id}:${group.threadId}`,
+    lastGroupMessage,
+    waiting,
+    `${speaker?.id ?? ""}:${turnLiveState.turnId ?? ""}`,
+  );
   // A team-goal routine waiting on the person: its card, not "Thinking".
   const waitingRun = channelWaitingRun(state.routineRuns, group);
   const presenceVisible = (waiting && !(waitingRun && waitingRun.botId === speaker?.id)) || popping !== null;
@@ -1548,6 +1619,7 @@ export function GroupView({ group }: { group: Group }) {
   // left the new transcript unobserved, so a Thinking row or a streaming
   // reply grew in under the composer.
   useBottomFollowResize(scrollRef, transcriptRef, followRef, setupPending || !showChat ? null : transcriptKey);
+  const scrollable = useCanScroll(scrollRef, transcriptRef, transcriptKey);
 
   const appliedFocus = useRef<number | null>(null);
   const revealedFocus = useRef<number | null>(null);
@@ -1735,6 +1807,7 @@ export function GroupView({ group }: { group: Group }) {
       )}
       {/* Header: static member embers; a ring + dot marks the working bot. */}
       <div
+        {...windowDrag}
         className={cn(
           "flex flex-wrap items-center justify-between gap-2 px-5 py-3",
           // Below md the drawer button is the title row's first item, so the
@@ -1893,13 +1966,13 @@ export function GroupView({ group }: { group: Group }) {
       {/* A channel never showed an error: a refused delete or rename in the
           conversation picker just did nothing. Same banner as a bot chat. */}
       {state.error && <ErrorBanner message={state.error} onDismiss={() => dispatch({ type: "error", message: null })} />}
-      {state.deletionNote && <DeletionNoteBanner note={state.deletionNote} onDismiss={() => dispatch({ type: "deletionNote", note: null })} onRetry={async () => { const again = state.deletionNote?.retryBotId; if (again) { dispatch({ type: "deletionNote", note: null }); dispatch({ type: "deleteBot", source: "local", botId: again, attempt: newDeleteAttempt() }); return; } const response = await api("/api/deletions/retry", { method: "POST" }); dispatch({ type: "deletionOwed", notices: response?.notices, rev: response?.rev }); }} />}
+      {state.deletionNote && <DeletionNoteBanner note={state.deletionNote} onDismiss={() => dismissDeletionNote(state.deletionNote, (covers) => api("/api/deletions/dismiss", { method: "POST", body: JSON.stringify({ covers }) }), dispatch)} onRetry={async () => { const again = state.deletionNote?.retryBotId; if (again) { dispatch({ type: "deletionNote", note: null }); dispatch({ type: "deleteBot", source: "local", botId: again, attempt: newDeleteAttempt() }); return; } const response = await api("/api/deletions/retry", { method: "POST" }); dispatch({ type: "deletionOwed", notices: response?.notices, rev: response?.rev }); return response?.result; }} />}
 
       {/* Instructions: one pinned line; click to edit */}
       {!setupPending && showChat && <div className="w-full px-5">
         {instructionsOpen ? (
           <div className="mb-1 rounded-lg border border-hairline/40 bg-panel p-2">
-            <textarea
+            <textarea dir="auto"
               autoFocus
               value={instructionsDraft}
               onChange={(e) => setInstructionsDraft(e.target.value)}
@@ -2134,7 +2207,7 @@ export function GroupView({ group }: { group: Group }) {
               name={presenceName}
             >
               {popping ? (
-                <div className="w-fit max-w-[min(42rem,78%)] max-md:max-w-full rounded-2xl bg-card px-4 py-2.5 text-[15px] leading-relaxed text-ink">
+                <div className="w-fit max-w-[min(var(--chat-bubble-max),var(--chat-bubble-pct))] max-md:max-w-full rounded-2xl bg-card px-4 py-2.5 text-[15px] leading-relaxed text-ink">
                   {poppingMessage?.attachments?.length ? (
                     <AttachedImageGallery
                       paths={poppingMessage.attachments.map((attachment) => attachment.path)}
@@ -2153,21 +2226,17 @@ export function GroupView({ group }: { group: Group }) {
         )}
       </div>
 
-      {!follow && (
-        <button
+      {jumpToLatestVisible(follow, scrollable, atLiveTail) && (
+        <JumpToLatestButton
+          bottom={composerDock.height}
           onClick={() => {
             setBottomFollow(true);
             setTranscriptWindow({ key: transcriptKey, start: tailWindowStart(roomMessages.length), end: null });
             requestAnimationFrame(() => {
-              scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+              scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: jumpScrollBehavior() });
             });
           }}
-          aria-label="Jump to latest messages"
-          className="animate-pop-in absolute left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-hairline/40 bg-raised px-3 py-1.5 text-[12.5px] text-ink shadow-lg hover:bg-raised-hover"
-          style={{ bottom: composerDock.height }}
-        >
-          <ArrowDown size={13} /> Jump to latest
-        </button>
+        />
       )}
 
       <div ref={composerDock.ref} className="dock-safe-bottom absolute inset-x-0 bottom-0 z-[2]">

@@ -30,6 +30,8 @@ export interface Knobs {
   beforeStamp: (() => void) | undefined;
   /** when set, the fake provider refuses to start the turn with this message (no such engine), before it is handed the prompt */
   failStart?: string;
+  /** the refusal code the failed start carries (Murage's own refusals do: not_reachable, archived, ...) */
+  failStartCode?: string;
 }
 
 export type Origin = "owner" | "room";
@@ -57,7 +59,7 @@ export function ownerWorld(origin: Origin = "owner") {
     ...fakeHost(bus, () => {}, { stamp: false }),
     destinationFor: ({ toBotId, sourceThreadId, executionAudience }) => knobs.destination ?? audienceTask(store, toBotId, threadHumanPrincipal(sourceThreadId), executionAudience ?? null)?.threadId,
     startTurn: async (_botId: string, text: string, turn: HandoffTurnOptions) => {
-      if (knobs.failStart) throw new Error(knobs.failStart);
+      if (knobs.failStart) throw Object.assign(new Error(knobs.failStart), knobs.failStartCode ? { code: knobs.failStartCode } : {});
       const run = turn.delegationRun;
       rememberRun(run);
       knobs.beforeStamp?.();

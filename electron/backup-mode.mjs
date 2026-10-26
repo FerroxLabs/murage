@@ -63,7 +63,7 @@ async function waitForTool(capability, isUsable, timeoutMs, unavailable) {
 }
 /** Desktop-owned availability, not a renderer grant. Windows actions reverify
  * the fixed packaged resources before reading a recovery identity. */
-export function createBackupToolCapability({ resourcesPath, currentExecutable, isUsable, macToolName = "age", verifyMacTool = trustedBackupAgeExecutableAsync, recheckOptions, actionRetryDelays = BACKUP_TOOL_ACTION_RETRY_DELAYS_MS, onFailure, onReady }) {
+export function createBackupToolCapability({ resourcesPath, currentExecutable, isUsable, macToolName = "age", verifyMacTool = trustedBackupAgeExecutableAsync, recheckOptions, actionRetryDelays = BACKUP_TOOL_ACTION_RETRY_DELAYS_MS, onFailure, onReady, settling, onPending }) {
   const windows = process.platform === "win32", mac = process.platform === "darwin", attested = windows || mac;
   let identity = null, controller = null;
   let state = "pending", tool = null, pending = null, generation = 0, failures = 0;
@@ -113,6 +113,12 @@ export function createBackupToolCapability({ resourcesPath, currentExecutable, i
       // Murage was still starting) left backups "Needs a supported desktop
       // app" until a quit and reopen (0.1.60 Windows final D1). Every
       // attested platform now checks again by itself, as macOS already did.
+      // Just after the server starts the host is still settling: a check that
+      // fails then is "not ready yet", not a failure. It stays pending, is not
+      // counted, and is tried again soon; once the settling window ends a real
+      // failure is reported as before (so a stuck tool still surfaces).
+      let early = false; try { early = Boolean(settling?.()); } catch { /* a settle probe never changes the check */ }
+      if (epoch === generation && early) { state = "pending"; tool = null; report(onPending, { error }); if (attested) recheck.schedule(true); throw error; }
       if (epoch === generation) { state = "failed"; tool = null; failures++; report(onFailure, { error, failures }); if (attested) recheck.schedule(); }
       throw error;
     });

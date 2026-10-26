@@ -202,11 +202,13 @@ describe("the link-followed key guard on win32 (1.0.4 F1)", () => {
     link("C:\\w\\proj\\cfg\\key", "C:\\Users\\Alice\\.aws\\credentials");
     const opts = { ...W, home: "C:\\Users\\Alice" };
     const creds = "C:\\Users\\Alice\\.aws\\credentials";
-    expect(realKeyPaths({ path: "awsdir\\credentials" }, undefined, "C:\\w\\proj", opts)).toEqual({ paths: [creds], cannot: null });
-    expect(realKeyPaths({ path: "awsdir/credentials" }, undefined, "C:\\w\\proj", opts)).toEqual({ paths: [creds], cannot: null });
-    expect(realKeyPaths({ file_path: "C:\\w\\proj\\cfg/key" }, undefined, undefined, opts)).toEqual({ paths: [creds], cannot: null });
-    expect(realKeyPaths({ path: "~\\.aws\\credentials" }, undefined, undefined, opts)).toEqual({ paths: [creds], cannot: null });
-    expect(realKeyPaths({ path: "awsdir\\new.txt" }, undefined, "C:\\w\\proj", opts)).toEqual({ paths: ["C:\\Users\\Alice\\.aws\\new.txt"], cannot: null });
+    // 0309 A3: each Windows spelling the guard reads is carried with its backslashes as `/` too
+    const both = (path: string) => [path, path.replace(/\\/g, "/")];
+    expect(realKeyPaths({ path: "awsdir\\credentials" }, undefined, "C:\\w\\proj", opts)).toEqual({ paths: both(creds), cannot: null });
+    expect(realKeyPaths({ path: "awsdir/credentials" }, undefined, "C:\\w\\proj", opts)).toEqual({ paths: both(creds), cannot: null });
+    expect(realKeyPaths({ file_path: "C:\\w\\proj\\cfg/key" }, undefined, undefined, opts)).toEqual({ paths: both(creds), cannot: null });
+    expect(realKeyPaths({ path: "~\\.aws\\credentials" }, undefined, undefined, opts)).toEqual({ paths: both(creds), cannot: null });
+    expect(realKeyPaths({ path: "awsdir\\new.txt" }, undefined, "C:\\w\\proj", opts)).toEqual({ paths: both("C:\\Users\\Alice\\.aws\\new.txt"), cannot: null });
     expect(realKeyPaths({ path: "C:awsdir\\credentials" }, undefined, "C:\\w\\proj", opts).cannot).toEqual(expect.any(String));
     expect(realKeyPaths({ path: "gone\\..\\x" }, undefined, "C:\\w\\proj", opts).cannot).toEqual(expect.any(String));
   });

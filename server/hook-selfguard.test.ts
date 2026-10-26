@@ -138,7 +138,8 @@ describe("Full access never answers a call that names a Murage hook", () => {
       ["write_to_file", "write_to_file /Users/jo/murage/server/drivers/antigravity-relay.ts", { TargetFile: "/Users/jo/murage/server/drivers/antigravity-relay.ts", CodeContent: "x" }],
       ["write_to_file", "write_to_file /Users/jo/murage/server/drivers/codex-scope-spec.ts", { TargetFile: "/Users/jo/murage/server/drivers/codex-scope-spec.ts", CodeContent: "x" }],
       ["run_command", "cp src/a.ts src/b.ts", { command: "cp src/a.ts src/b.ts" }],
-      ["run_command", "node scripts/hook.mjs > out.txt", { command: "node scripts/hook.mjs > out.txt" }],
+      // a file named like a hook is ordinary work (running a script on disk asks for its own reason, 1.0.4 U17)
+      ["run_command", "cat scripts/hook.mjs > out.txt", { command: "cat scripts/hook.mjs > out.txt" }],
       ["run_command", "npx vitest run server/drivers/antigravity-relay.test.ts", { command: "npx vitest run server/drivers/antigravity-relay.test.ts" }],
       ["write_to_file", "write_to_file /Users/jo/work/app/.agents/skills/lint/SKILL.md", { TargetFile: "/Users/jo/work/app/.agents/skills/lint/SKILL.md", CodeContent: "x" }],
       ["run_command", "cat src/agents/hooks.json", { command: "cat src/agents/hooks.json" }],

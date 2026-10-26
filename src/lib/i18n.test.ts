@@ -77,6 +77,14 @@ describe("t", () => {
     }
   });
 
+  it("names the computer's live use in every locale", async () => {
+    for (const [code, pack] of Object.entries(await allLocalePacks())) {
+      const value = pack["chatHeader.computerInUse"];
+      expect(value, code).toBeTruthy();
+      expect(value, code).toContain("{label}");
+    }
+  });
+
   it("ships exactly one JSON catalog for every picker language", () => {
     const files = Object.keys(import.meta.glob("../locales/*.json", { eager: true }))
       .map((path) => path.split("/").at(-1))

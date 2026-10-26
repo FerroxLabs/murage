@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import ts from "typescript";
 import { afterEach, describe, expect, it } from "vitest";
 import { startupMark } from "./startup-trace.ts";
 
@@ -15,7 +16,20 @@ describe("cold start ordering in server/index.ts", () => {
 
   it("scans a bot's skills in the background after the port opens and, at the latest, on that bot's first turn", () => {
     // the scan used to read every skill of every bot before the port opened (78 s on a heavy install)
-    expect(at("sweepBotSkills(bot.id)")).toBeGreaterThan(at("async function sweepSkillsInBackground"));
+    expect(at("sweepBotSkills(bot.id)", at("async function sweepSkillsInBackground"))).toBeGreaterThan(at("async function sweepSkillsInBackground"));
+    // and no sweep runs anywhere else: every call is in the background sweep or in a turn's own setup (1.0.4 06-A1/06-B1 3c8c08904: a turn
+    // sweeps its own bot before it reuses or makes a skill pin), never at module level before the port opens
+    const sweptIn = new Set<string>();
+    const visit = (node: ts.Node): void => {
+      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "sweepBotSkills") {
+        let owner: ts.Node | undefined = node.parent;
+        while (owner && !(ts.isFunctionDeclaration(owner) && owner.name)) owner = owner.parent;
+        sweptIn.add(owner && ts.isFunctionDeclaration(owner) && owner.name ? owner.name.text : "<module>");
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(ts.createSourceFile("index.ts", index, ts.ScriptTarget.Latest, true));
+    expect([...sweptIn].sort()).toEqual(["runGroupMemberTurn", "startTurnAdmitting", "sweepSkillsInBackground"]);
     // rc13: the sweep is an after-listen step of its own (STALLS-FINAL-DESIGN 3.4), started from inside the listen callback
     expect(at("startRecovery(() => sweepSkillsInBackground()", listen)).toBeGreaterThan(listen);
     expect(at("startRecovery(() => sweepSkillsInBackground()", listen)).toBeLessThan(callbackEnd);

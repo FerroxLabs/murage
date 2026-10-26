@@ -319,6 +319,8 @@ describe("d. a kill between the start of the peer's turn and the removal of the 
     insertRoomRequest(database(), { id: "root", groupId: "g", verb: "owner_send", fromKind: "owner", toBotId: from.id, targetThreadId: from.threadId, admissionKey: "root", now: 1,
       lineage: { rootThreadId: from.threadId, origin: "desktop", audienceFingerprint: "owner", notOwnerAudience: false, unattended: false } });
     markRequestDispatched(database(), "root", { now: 1 });
+    // a room hand-off starts once the turn that made it has settled: that turn waits on its asks (F3: a turn still running at boot ends its whole subtree)
+    database().prepare("UPDATE room_requests SET state='waiting_bot', waiting_since=1 WHERE id='root'").run();
     const b = { store, broadcast: () => {}, prepareDelegation: (fromBotId: string, to: string, source: string, _message: string, id: string) => {
       insertRoomRequest(database(), { id, groupId: "g", verb: "ask", fromKind: "bot", fromBotId, toBotId: to, parentId: "root", returnThreadId: source, returnBotId: fromBotId, admissionKey: `ask:delegation:${id}`, now: 2 });
       return "room" as const;
@@ -344,7 +346,7 @@ describe("d. a kill between the start of the peer's turn and the removal of the 
     // the restart: the previous process's memory is gone; boot settles the row first, then the room requests
     _simulateRestart();
     expect(reconcileStartedDelegations()).toMatchObject({ interrupted: 1 });
-    expect(reconcileRoomRequestsAtBoot(database(), 3)).toMatchObject({ unknown: 2 });     // the room turn and the hand-off's request
+    expect(reconcileRoomRequestsAtBoot(database(), 3)).toMatchObject({ unknown: 1 });     // the hand-off's request (the room turn waits on it and is woken)
     const again: string[] = [];
     drainDelegations(b, approvalBus, from.threadId, (_to, message) => { again.push(message); });
     await tick();

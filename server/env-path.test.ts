@@ -1,7 +1,7 @@
 // PATH augmentation contract (issues #8, #12): a CLI living in a
 // well-known install dir — or an nvm bin dir — must be findable even
 // when the process itself started with a bare GUI PATH.
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -13,12 +13,14 @@ import {
   bundledFuigoPath,
   cmdShimTargets,
   installScanDirsForTests,
+  windowsInstallDirsForTests,
   resetPathCache,
   resetPathCacheForTests,
   resolveFuigoCli,
   restrictInstallScanDirsForTests,
   splitCliString,
   captureOwnerEnv,
+  invalidateEnvCapture,
   setOwnerEnvStore,
 } from "./env-path.ts";
 import { resolveCli } from "./procs.ts";
@@ -791,4 +793,146 @@ describe("resolveFuigoCli", () => {
     resetPathCacheForTests();
     expect(() => resolveFuigoCli()).toThrow(/is not executable/);
   });
+});
+
+describe("Windows install locations (item 167)", () => {
+  it("scans the kimi-code installer directory", () => {
+    expect(windowsInstallDirsForTests()).toContain(join(homedir(), ".kimi-code", "bin"));
+  });
+});
+
+// LEASE-REAP-RELAUNCH-107 F1: the login capture never joins Murage's terminal job. It runs in a session of its own (no
+// controlling terminal, so a forced -i shell cannot take the terminal or SIGTTIN-stop Murage's group), and a hung profile
+// is SIGKILLed as a whole group at CAPTURE_MS without waiting for its pipes. Only processes these tests spawn are signalled.
+describe("login capture runs detached and its group dies on timeout (F1)", () => {
+  const dirs: string[] = [];
+  const spawned: number[] = [];
+  const gone = (pid: number): boolean => {
+    try { process.kill(pid, 0); } catch { return true; }
+    try { return /\)\s+[ZX]\s/.test(readFileSync(`/proc/${pid}/stat`, "latin1")); } catch { return false; }
+  };
+  const until = async (ok: () => boolean, ms: number): Promise<boolean> => {
+    const end = Date.now() + ms;
+    while (Date.now() < end) { if (ok()) return true; await new Promise((r) => setTimeout(r, 50)); }
+    return ok();
+  };
+  const readPids = (file: string): number[] => (existsSync(file) ? readFileSync(file, "utf8").trim().split(/\s+/).map(Number).filter((n) => n > 0) : []);
+  beforeEach(() => setOwnerEnvStore(null));
+  afterEach(() => {
+    invalidateEnvCapture("test cleanup");
+    resetPathCacheForTests();
+    for (const pid of spawned.splice(0)) { try { process.kill(pid, "SIGKILL"); } catch { /* gone */ } }
+    for (const d of dirs.splice(0)) removeTempDirSync(d);
+  });
+  // A profile that ignores SIGTERM like interactive bash, starts a grandchild in its group, and never finishes.
+  const hangingShell = (dir: string, name: string): { shell: string; pids: string } => {
+    const shell = join(dir, name);
+    const pids = join(dir, `${name}.pids`);
+    writeFileSync(shell, `#!/bin/sh\ntrap '' TERM HUP\nsleep 120 &\necho "$$ $!" > '${pids}'\nsleep 120\n`);
+    chmodSync(shell, 0o755);
+    return { shell, pids };
+  };
+
+  posixIt("a hung profile resolves as too slow within CAPTURE_MS and its whole group, grandchild included, is killed", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "murage-capture-hang-"));
+    dirs.push(dir);
+    const { shell, pids } = hangingShell(dir, "hang-shell");
+    resetPathCacheForTests();
+    const started = Date.now();
+    const owner = await captureOwnerEnv({ shell });
+    const took = Date.now() - started;
+    expect(owner.capture).toBe("fallback");
+    expect(owner.cause).toBe("it took too long");
+    expect(took).toBeLessThan(5_000 + 2_000);
+    const [leader, grandchild] = readPids(pids);
+    expect(leader).toBeGreaterThan(0);
+    expect(grandchild).toBeGreaterThan(0);
+    spawned.push(leader!, grandchild!);
+    expect(await until(() => gone(leader!) && gone(grandchild!), 3_000)).toBe(true);
+  }, 20_000);
+
+  posixIt("the capture shell leads its own session and group, apart from Murage's", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "murage-capture-sid-"));
+    dirs.push(dir);
+    const out = join(dir, "ids");
+    const shell = join(dir, "id-shell");
+    // pid, process group and session of the shell itself (ps is POSIX; sid via -o sid on Linux, sess elsewhere)
+    writeFileSync(shell, `#!/bin/sh\n(ps -o pid=,pgid=,sid= -p $$ 2>/dev/null || ps -o pid=,pgid=,sess= -p $$) > '${out}'\nprintf '%s' "$MURAGE_ENV_MARK"; printf 'PATH=/x/bin\\0HOME=/h\\0'; printf '%s' "$MURAGE_ENV_MARK"\n`);
+    chmodSync(shell, 0o755);
+    resetPathCacheForTests();
+    const owner = await captureOwnerEnv({ shell });
+    expect(owner.capture).toBe("session");
+    const [pid, pgid, sid] = readFileSync(out, "utf8").trim().split(/\s+/).map(Number);
+    expect(pgid).toBe(pid);
+    expect(pgid).not.toBe(process.pid);
+    if (process.platform === "linux") {
+      expect(sid).toBe(pid);
+      const mine = readFileSync("/proc/self/stat", "latin1");
+      const mySid = Number(mine.slice(mine.lastIndexOf(")") + 1).trim().split(/\s+/)[3]);
+      expect(sid).not.toBe(mySid);
+    }
+  }, 20_000);
+
+  posixIt("two overlapping captures each kill only their own group, never the caller's group", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "murage-capture-two-"));
+    dirs.push(dir);
+    // a sentinel in THIS process's group: a group kill aimed at Murage would take it too
+    const sentinel = spawn("sleep", ["60"], { stdio: "ignore" });
+    spawned.push(sentinel.pid!);
+    const a = hangingShell(dir, "hang-a");
+    const b = hangingShell(dir, "hang-b");
+    resetPathCacheForTests();
+    const first = captureOwnerEnv({ shell: a.shell });
+    await until(() => readPids(a.pids).length === 2, 3_000);
+    invalidateEnvCapture("a second capture starts while the first runs");
+    const second = captureOwnerEnv({ shell: b.shell });
+    const [ownerA, ownerB] = await Promise.all([first, second]);
+    expect(ownerA.cause).toBe("it took too long");
+    expect(ownerB.cause).toBe("it took too long");
+    const all = [...readPids(a.pids), ...readPids(b.pids)];
+    expect(all).toHaveLength(4);
+    spawned.push(...all);
+    expect(await until(() => all.every(gone), 3_000)).toBe(true);
+    expect(gone(sentinel.pid!)).toBe(false);
+    expect(sentinel.exitCode).toBeNull();
+  }, 30_000);
+
+  posixIt("a capture whose leader exited sends no group signal at the timeout (its pid may be reused) and still resolves", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "murage-capture-exited-"));
+    dirs.push(dir);
+    const pids = join(dir, "pids");
+    const shell = join(dir, "exit-shell");
+    // the leader exits at once; its background child keeps stdout open, so close never fires
+    writeFileSync(shell, `#!/bin/sh\nsleep 120 &\necho "$!" > '${pids}'\nexit 0\n`);
+    chmodSync(shell, 0o755);
+    resetPathCacheForTests();
+    const started = Date.now();
+    const owner = await captureOwnerEnv({ shell });
+    expect(owner.cause).toBe("it took too long");
+    expect(Date.now() - started).toBeLessThan(5_000 + 2_000);
+    const [grandchild] = readPids(pids);
+    expect(grandchild).toBeGreaterThan(0);
+    spawned.push(grandchild!);
+    expect(gone(grandchild!)).toBe(false);
+  }, 20_000);
+
+  posixIt("augmentedPath answers at once while a capture hangs, and boot's listen chain awaits no capture", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "murage-capture-boot-"));
+    dirs.push(dir);
+    const { shell } = hangingShell(dir, "hang-boot");
+    resetPathCacheForTests();
+    const pending = captureOwnerEnv({ shell });
+    const started = Date.now();
+    const path = augmentedPath();
+    expect(Date.now() - started).toBeLessThan(500);
+    expect(path.length).toBeGreaterThan(0);
+    await pending;
+    // server/index.ts: the listen chain (after the last top-level statement before it) waits only on the memory health gate
+    const index = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+    const at = index.indexOf("void releasePreListenHealth()");
+    expect(at).toBeGreaterThan(0);
+    const chain = index.slice(at, index.indexOf("server.listen(", at));
+    expect(chain).not.toMatch(/captureOwnerEnv|handedEngineEnv|ownerEnvAfterDiscovery/);
+    expect(index).not.toMatch(/await\s+captureOwnerEnv/);
+  }, 20_000);
 });
