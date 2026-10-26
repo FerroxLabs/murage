@@ -549,15 +549,21 @@ export function refsLookup(db: DatabaseSync, refs: readonly LineageRef[], reader
   try {
     const lines = new Map<string, string[]>();
     const shownLines = new Map<string, Set<string>>();
+    // lines a non-owner audience reader's prefix showed: judged again by that same audience reader (watermark and audience-only marks included),
+    // since they were rendered under it (1.0.4 audit 01-B2: a content recheck let a stale transcript through once the revoke's pending rows were tidied)
+    const audienceShown = new Map<string, Set<string>>();
     const memory: MemoryRef[] = [];
     for (const ref of refs) {
       // a replayed line of the prompt's own thread is judged by content, as a prefix's shown lines are (below); every other line for the reader
-      if (ref.kind === "line" && ref.replay) { const set = shownLines.get(ref.threadId) ?? new Set<string>(); set.add(ref.messageId); shownLines.set(ref.threadId, set); }
+      if (ref.kind === "line" && (ref.replay || ref.copyOfShown)) { const set = shownLines.get(ref.threadId) ?? new Set<string>(); set.add(ref.messageId); shownLines.set(ref.threadId, set); }
       else if (ref.kind === "line") { const list = lines.get(ref.threadId) ?? []; list.push(ref.messageId); lines.set(ref.threadId, list); }
       else if (ref.kind === "memory") memory.push(ref.ref);
       else if (ref.kind === "prefix") {
         worst = worstVerdict(worst, prefixVerdict(db, ref.threadId, ref.headLsn, reader.audience === null || ref.content === true));
-        if (ref.shown?.length) { const set = shownLines.get(ref.threadId) ?? new Set<string>(); for (const id of ref.shown) set.add(id); shownLines.set(ref.threadId, set); }
+        if (ref.shown?.length) {
+          const target = reader.audience === null || ref.content === true ? shownLines : audienceShown;
+          const set = target.get(ref.threadId) ?? new Set<string>(); for (const id of ref.shown) set.add(id); target.set(ref.threadId, set);
+        }
       }
       else if (ref.kind === "receipt") worst = worstVerdict(worst, receiptVerdict(db, ref, reader));
       if (worst.state === "withheld") return worst;
@@ -571,6 +577,10 @@ export function refsLookup(db: DatabaseSync, refs: readonly LineageRef[], reader
     // forgotten source or a deleted conversation.
     for (const [threadId, ids] of shownLines) {
       for (const verdict of lookupPage(db, threadId, [...ids].map(messageId => ({ messageId, author: "generated" as const })), contentReader(reader), true).values()) worst = worstVerdict(worst, verdict);
+      if (worst.state === "withheld") return worst;
+    }
+    for (const [threadId, ids] of audienceShown) {
+      for (const verdict of lookupPage(db, threadId, [...ids].map(messageId => ({ messageId, author: "generated" as const })), reader, true).values()) worst = worstVerdict(worst, verdict);
       if (worst.state === "withheld") return worst;
     }
     for (const verdict of memoryLookup(db, memory, reader).values()) worst = worstVerdict(worst, verdict);

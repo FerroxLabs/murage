@@ -16,7 +16,7 @@ import { plainConnectedAppText } from "../shared/connected-app-tools.ts";
 import { engineStamp } from "./engine-profile.ts";
 import { memberTurnProvenance, turnIsBackground } from "./message-automation.ts";
 import { isLiveRoutineRunStatus } from "./routines.ts";
-import { adoptStagedImages, memoryEchoDecision, retainSession } from "./fold-steps.ts";
+import { adoptStagedImages, replyForStagedImages, memoryEchoDecision, retainSession } from "./fold-steps.ts";
 import { providerReplyOf } from "./provider-reply.ts";
 import { murageLine } from "./murage-line.ts";
 import { isEngineOutput } from "./message-db.ts";
@@ -27,6 +27,10 @@ import { windowRuntimeEvent } from "./runtime-event-out.ts";
 import { isCommandTool } from "./auto-approve.ts";
 import { commandCwdFromToolInput, commandFromToolInput } from "../shared/exact-command.ts";
 import { grantRequestFor, routineCardFields } from "./approval-grant-request.ts";
+import { closedFences, WIDGET_FENCE } from "../shared/murage-fences.ts";
+import { QUESTION_FENCE } from "../shared/ask-wording.ts";
+import { fromQuestionFence } from "./question-normalize.ts";
+import { showWidget } from "./chat-widgets.ts";
 
 /** Every name index.ts imports (a value, not a type) that the fold reads, bound to the module index.ts imports it from: the fold runs
  * with the same helpers production hands it, so a new import in index.ts needs no edit here. The fixture's own scope entries below
@@ -87,6 +91,14 @@ function foldFixture() {
   const startsAt = source.indexOf("type SessionStart =");
   const startsEnd = source.indexOf("\n}\n", source.indexOf("function sessionStartOf", startsAt)) + 2;
   scope.sessionStartOf = runInNewContext(stripTypeScriptTypes(source.slice(startsAt, startsEnd)) + "\nsessionStartOf;", scope);
+  // QW Q2/Q4: the fold's fence step (index.ts), compiled from production with its real parsers; this fixture runs no internal turn,
+  // so a fence here is refused and stays the bot's text (the fence cards themselves are pinned in ask-user-answer-api.test.ts)
+  const fenceStart = source.indexOf("const fencedMessages = new Set<string>();");
+  const fenceEnd = source.indexOf("\n}\n", source.indexOf("function materialiseQuestionFences", fenceStart)) + 2;
+  scope.materialiseQuestionFences = runInNewContext(stripTypeScriptTypes(source.slice(fenceStart, fenceEnd)) + "\nmaterialiseQuestionFences;", {
+    store, closedFences, QUESTION_FENCE, WIDGET_FENCE, fromQuestionFence, showWidget, isUnattended: () => false,
+    internalTurnOwners: new Map(), turnAttribution: { attempt: () => undefined }, openAnswerAsSendCard: noop,
+  });
   const start = source.indexOf("const foldRuntimeEvent =");
   const end = source.indexOf("\nbus.subscribe(foldRuntimeEvent)", start);
   const code = stripTypeScriptTypes(source.slice(start, end)) + "\nfoldRuntimeEvent;";
@@ -247,7 +259,10 @@ it("F11 room continuation admission preserves the originating connection card", 
   const scope = { LineageAllowance, store, homeExecutionGate: undefined, memberTurnProvenance, turnIsBackground, isLiveRoutineRunStatus, backupRestartAdmission: { held: () => false }, routineRunLevel: () => null, roomRounds: new Map(), cfg: {},
     registry: { get: () => ({ adapter: { capabilities: {} } }) }, routeHasTools: () => false,
     threadHumanPrincipal: () => ({ kind: "owner" }), routines: { listRuns: () => [] },
-    botPermissionMode: () => "ask", routinePeerSource: () => undefined, turnSessionAudience: () => "audience", latestRoomUserMessage: () => undefined, noteHeldQueue: () => {}, heldScanYield, runnableContinuation, isRestoreHeld, releaseHeldContinuation, currentRestoreGeneration: () => null };
+    botPermissionMode: () => "ask", resolveTurnFor: (_task: unknown, profile: { modelSelection: unknown }) => ({ selection: profile.modelSelection }), routinePeerSource: () => undefined, turnSessionAudience: () => "audience", latestRoomUserMessage: () => undefined, noteHeldQueue: () => {}, heldScanYield, runnableContinuation, isRestoreHeld, releaseHeldContinuation, currentRestoreGeneration: () => null,
+    // CANCEL-TREE-104 R1: the setup reads its own room row before the claim; no room request is bound to this turn here
+    roomTurnRequestKey: (thread: string, botId: string) => `${thread}:${botId}`, roomTurnRequests: new Map(), pendingRoomTurnRequests: new Map(),
+    roomSetupRowEnded: () => { throw new Error("no room row is bound to this turn"); }, settleRoomTurnRequest: () => { throw new Error("no room row is bound to this turn"); } };
   const run = runInNewContext(stripTypeScriptTypes(source.slice(memberStart, memberEnd) + source.slice(start, end) + "\n}") + "\nrunGroupMemberTurn;", scope);
   // noMentionChain (mobile lane) precedes memoryRedispatch, heldContinuation and continuationCardId
   expect(await run(group.id, group.threadId, bot.id, 0, new Set(), "Continue", undefined, undefined, undefined, undefined, undefined, undefined, false, false, undefined, original.id)).toBe(false);
@@ -625,5 +640,15 @@ describe("a resume cursor is saved only once the session's lineage is committed"
       expect(fx.row("s-commit")).toBeFalsy();
       expect(fx.cursor()).toBeUndefined();
     } finally { spy.mockRestore(); closeTurnLineage(fx.turn); }
+  });
+});
+
+describe("replyForStagedImages (a widget row never takes the turn's images)", () => {
+  const row = (id: string, turnId: string, widget?: boolean) => ({ id, role: "bot", kind: "text", text: "x", turnId, ...(widget ? { widget: {} } : {}) }) as unknown as Message;
+  it("picks the turn's last text row, skipping a trailing widget", () => {
+    const text = row("a", "t1");
+    expect(replyForStagedImages([text, row("w", "t1", true)], "t1")).toBe(text);
+    expect(replyForStagedImages([row("w", "t1", true)], "t1")).toBeUndefined();
+    expect(replyForStagedImages([row("a", "t0"), row("w", "t1", true)], "t1")).toBeUndefined();
   });
 });

@@ -49,6 +49,26 @@ test("disabled selection never enables, exposes only labels/refs, and needs expl
     await assert.rejects(f.controller.configure(0,{...choices,...s.refs}),/CONSENT/);assert.equal(f.coordinator().status().enabled,false);
   }finally{f.cleanup();}
 });
+test("a backup run logs one outcome line per step: started, local written, verified with bytes and how, and no paths",async()=>{
+  const f=fixture();try{await f.arm();const lines=[];await f.create({reportOutcome:line=>lines.push(line)}).resumeOffline();
+    assert.equal(lines.length,3);assert.match(lines[0],/^backup started \{"job":"[^"]{1,8}","closed":false\}$/);assert.match(lines[1],/^backup local written \{"job":"[^"]{1,8}","bytes":\d+\}$/);assert.match(lines[2],/^backup local verified \{"job":"[^"]{1,8}","bytes":\d+,"how":"file re-read and its sha256 matched/);
+    for(const line of lines){assert.doesNotMatch(line,/[\\/]/);assert.doesNotMatch(line,/\/Users\/|\.age|recipient|identity/i);}
+  }finally{f.cleanup();}
+});
+test("a backup that left a stray file out completes verified and logs one skipped line naming it, never a path inside a folder",async()=>{
+  // Sean 2026-10-23: config.json.bak-20260918-openaicompat stopped his first backup, and the log was the only place it showed.
+  const f=fixture();try{await f.arm();const lines=[];
+    const skipped={count:3,items:[{path:"config.json.bak-20260918-openaicompat",reason:"unrecognised"},{path:"workspaces/bot/site/node_modules",reason:"rebuildable"},{path:"x",reason:"__proto__"}]};
+    const capture=async request=>({...await f.host.capture(request),skipped});
+    await f.create({capture,reportOutcome:line=>lines.push(line)}).resumeOffline();
+    assert.equal(f.coordinator().status().phase,"return-pending");
+    assert.equal(lines.length,4);assert.match(lines[2],/^backup local verified /);
+    assert.equal(lines.filter(line=>line.startsWith("backup skipped ")).length,1);
+    const logged=JSON.parse(lines[3].slice("backup skipped ".length));
+    assert.deepEqual(logged,{job:logged.job,count:3,reasons:{unrecognised:1,rebuildable:1},names:["config.json.bak-20260918-openaicompat"]});
+    assert.match(logged.job,/^[^"]{1,8}$/);assert.doesNotMatch(lines[3],/workspaces|node_modules|[\\]/);
+  }finally{f.cleanup();}
+});
 test("two owners complete armed restart, verified receipt then normal return without replay",async()=>{
   const f=fixture();try{await f.arm();assert.equal(f.coordinator().status().phase,"handoff-armed");assert.deepEqual(f.calls,["prepare","cleanup","backup"]);const next=f.create();await next.resumeOffline();assert.equal(f.coordinator().status().phase,"return-pending");assert.deepEqual(f.calls,["prepare","cleanup","backup","capture","normal"]);const last=f.create();last.completeReturn();await last.tick();assert.equal(f.coordinator().status().phase,"returned");assert.equal(f.calls.filter(x=>x==="capture").length,1);assert.equal(f.coordinator().status().lastVerified.destinationRef,(await last.status()).refs.destinationRef);
   }finally{f.cleanup();}

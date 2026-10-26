@@ -4,9 +4,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   assertSafeCliArgv,
+  cliVersionReader,
   confirmWindowsRootClose,
   describeSpawnFailure,
   estimatedWindowsCommandLineChars,
+  execCli,
   killCliTree,
   killCliTreeWith,
   type KillCliTreeDeps,
@@ -255,4 +257,30 @@ describe("confirmWindowsRootClose", () => {
       try { root.kill("SIGKILL"); } catch { /* gone */ }
     }
   });
+});
+
+// Upstream #3433 (2da9ee214) and 1a6f071b8: a slow --version probe never reads as "not installed".
+describe("CLI version probes", () => {
+  it("keeps the last version through a timed-out probe and names the timeout without one", async () => {
+    const timedOut = await new Promise<Error | null>((resolve) => {
+      execCli(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { timeout: 200 }, (error) => resolve(error));
+    });
+    expect(cliVersionReader("claude")(timedOut, "")).toEqual({ reason: expect.stringContaining("took longer than 8 seconds") });
+    const read = cliVersionReader("claude");
+    expect(read(null, " 2.1.302\n")).toEqual({ version: "2.1.302" });
+    expect(read(timedOut, "")).toEqual({ version: "2.1.302" });
+    // A CLI that traps SIGTERM exits with a number after the kill: still a timeout.
+    const trapped = await new Promise<Error | null>((resolve) => {
+      execCli(process.execPath, ["-e", "process.on('SIGTERM', () => process.exit(1)); setInterval(() => {}, 1000)"], { timeout: 200 }, (error) => resolve(error));
+    });
+    expect(read(trapped, "")).toEqual({ version: "2.1.302" });
+    expect(read(Object.assign(new Error("spawn claude ENOENT"), { code: "ENOENT" }), "")).toEqual({ reason: "`claude` CLI not found" });
+    // An output overflow is a failed answer, not a slow one.
+    expect(read(Object.assign(new Error("maxBuffer"), { killed: true, code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" }), "")).toEqual({ reason: "`claude` CLI not found" });
+    // The Cloud home and pi probes mark their own timeouts as killed runs.
+    expect(read(Object.assign(new Error("Cloud CLI probe timed out"), { killed: true }), "")).toEqual({ version: "2.1.302" });
+    // A newer answer replaces the held one.
+    expect(read(null, "2.1.400")).toEqual({ version: "2.1.400" });
+    expect(read(timedOut, "")).toEqual({ version: "2.1.400" });
+  }, 20_000);
 });

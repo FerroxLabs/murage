@@ -6,7 +6,8 @@ import { fixtureCredentialFingerprint } from "../testing/fixture-dump.ts";
 //
 // The fake is a shebang script — the same constraint codex.cmd itself
 // hits on Windows. resolveCliSpawn covers both, so these run everywhere.
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { TURN_ASK_RULES } from "../../shared/ask-wording.ts";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -356,7 +357,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(methods).toEqual(["initialize", "initialized", "thread/start", "skills/list", "turn/start"]);
     // persona rides in front of the prompt text — codex has no system slot
     const turnStart = seen.calls.at(-1);
-    expect(turnStart.params.input[0].text).toBe("You are Testy.\n\nlist files");
+    expect(turnStart.params.input[0].text).toBe(`You are Testy.\n\n${TURN_ASK_RULES}\n\nlist files`);
     const threadStart = seen.calls.find((c: { method: string }) => c.method === "thread/start");
     expect(threadStart.params).toMatchObject({ model: "gpt-5.6-sol", modelProvider: "openai" });
   });
@@ -660,6 +661,50 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(seen.env.MURAGE_COMMS_TOKEN).toBe(fixtureCredentialFingerprint("per-boot-token"));
   });
 
+  it("never hands one custom MCP server another server's value for the same variable (03-A1)", async () => {
+    await create();
+    const dump = join(scratch, "custom-mcp-clash.json");
+    process.env.FAKE_CODEX_DUMP = dump;
+    await instance.adapter.sendTurn({
+      threadId: "t-custom-mcp-clash",
+      text: "go",
+      integrations: {
+        custom: {
+          one: { command: "npx", args: ["-y", "@x/one"], env: { NOTES_TOKEN: "value-for-one" } },
+          two: { command: "npx", args: ["-y", "@x/two"], env: { NOTES_TOKEN: "value-for-two" } },
+        },
+      },
+    });
+    await recorder.until((event) => event.type === "turn.completed");
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    const argv: string[] = seen.argv;
+    const flag = (server: string, key: string) => {
+      const arg = argv.find((item) => item.startsWith(`mcp_servers.${server}.${key}=`));
+      return arg ? JSON.parse(arg.slice(`mcp_servers.${server}.${key}=`.length)) : undefined;
+    };
+    // No value of either server is ever on the argv (the argv is readable for the life of the process).
+    expect(argv.join("\n")).not.toContain("value-for-one");
+    expect(argv.join("\n")).not.toContain("value-for-two");
+    // Each server resolves its own value through the environment: the shared name, or a private alias the launcher restores
+    // under the server's own name for that one child only.
+    const resolve = async (server: string) => {
+      const command: string = flag(server, "command");
+      const args: string[] = flag(server, "args");
+      const forwarded: string[] = flag(server, "env_vars");
+      const childEnv: Record<string, string> = Object.fromEntries(forwarded.filter((n) => seen.env[n] !== undefined).map((n) => [n, seen.env[n]]));
+      if (command !== process.execPath) return childEnv.NOTES_TOKEN;
+      // run the real launcher with a probe in place of the server's command
+      const { spawnSync } = await import("node:child_process");
+      const at = args.indexOf("murage-env-launch");
+      const probe = spawnSync(command, ["-e", args[1], "murage-env-launch", args[at + 1], process.execPath, "-e", "process.stdout.write(JSON.stringify([process.env.NOTES_TOKEN, Object.keys(process.env).filter((k) => k.startsWith('MURAGE_MCPV_'))]))"], { env: { ...childEnv, ELECTRON_RUN_AS_NODE: "1" }, encoding: "utf8" });
+      const [token, leaked] = JSON.parse(probe.stdout);
+      expect(leaked).toEqual([]);
+      return token;
+    };
+    expect(await resolve("one")).toBe(fixtureCredentialFingerprint("value-for-one"));
+    expect(await resolve("two")).toBe(fixtureCredentialFingerprint("value-for-two"));
+  });
+
   it("skips custom MCP entries before copying reserved env or requesting a bearer, preserving built-ins and approval behavior", async () => {
     await create();
     const dump = join(scratch, "custom-mcp.json");
@@ -919,6 +964,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     await instance.adapter.sendTurn({
       threadId: "t-tool-surface",
       text: "go",
+      preloadBrowserTools: true,
       integrations: { browser: { command: process.execPath, args: ["/fake/browser-proxy.js"], env: {} } },
     });
     await recorder.until((event) => event.type === "turn.completed");
@@ -930,6 +976,8 @@ describe("CodexDriver turns (fake app-server)", () => {
     // native web search keeps whatever mode the owner configured
     expect(argv.some((arg) => arg.startsWith("web_search="))).toBe(false);
     expect(argv.join(" ")).toContain("mcp_servers.browser.command");
+    expect(argv.join(" ")).not.toContain("alwaysLoad");
+    expect(argv.join(" ")).not.toContain("preloadBrowserTools");
   });
 
   it("mounts dedicated memory without agents and rejects custom replacement without exposing its token in argv", async () => {
@@ -1123,7 +1171,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     });
     await recorder.until((e) => e.type === "turn.completed");
     const calls = JSON.parse(readFileSync(dump, "utf8")).calls as Array<{ method: string; params: any }>;
-    expect(calls.find((c) => c.method === "turn/start")!.params.input[0].text).toBe("again");
+    expect(calls.find((c) => c.method === "turn/start")!.params.input[0].text).toBe(`${TURN_ASK_RULES}\n\nagain`);
   });
 
   it("on a Cloud home names the bot, renders the resumed thread's policy and resumes under the start policy", async () => {
@@ -1173,6 +1221,52 @@ describe("CodexDriver turns (fake app-server)", () => {
       vi.unstubAllEnvs();
       spy.mockRestore();
     }
+  });
+
+  describe("Flux Memory headers on a Cloud home", () => {
+    const FLUX_KEY = "sk-flux-Mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm"; // secret-scan: fixture
+    // Capture the spawn as the launcher would get it (argv and render), then run it as a desktop spawn of the fake.
+    const captureHomeSpawn = async (turn: Record<string, unknown>) => {
+      await create();
+      const realSpawnCli = procs.spawnCli;
+      const spawned: Array<{ args: string[]; env: Record<string, string | undefined> }> = [];
+      const spy = vi.spyOn(procs, "spawnCli").mockImplementation((cli, args, opts, ...rest) => {
+        spawned.push({ args: [...args], env: { ...(opts.env as Record<string, string | undefined>) } });
+        vi.stubEnv("MURAGE_CLOUD_ROLE", "");
+        try { return realSpawnCli(cli, args, { ...opts, env: { ...process.env } }, ...rest); }
+        finally { vi.stubEnv("MURAGE_CLOUD_ROLE", "home"); }
+      });
+      vi.stubEnv("MURAGE_CLOUD_ROLE", "home");
+      vi.stubEnv("FLUX_API_KEY", FLUX_KEY);
+      try {
+        await instance.adapter.sendTurn({ text: "hi", cwd: scratch, ...turn } as never);
+        await recorder.until((e) => e.type === "turn.completed");
+        return spawned.at(-1)!;
+      } finally { vi.unstubAllEnvs(); spy.mockRestore(); }
+    };
+    const memoryOff = { "x-flux-memory-app": "murage", "x-flux-memory-capture": "off", "x-flux-memory-inject": "off" };
+
+    it("a saved Flux connection sends no model_providers argv and carries the headers on the render route", async () => {
+      const providerRoute = { connectionId: "c1", revision: "r1", preset: "flux", protocol: "responses", baseUrl: "https://api.fluxrouter.ai/v1", apiKey: FLUX_KEY, model: "flux-auto" };
+      const seen = await captureHomeSpawn({ threadId: "t-cloud-flux-conn", model: "flux-auto", providerRoute, warmIdentity: { botId: "bot-atlas", audience: "owner", decidedOwner: true } });
+      expect(seen.args.filter((arg) => arg.startsWith("model_providers."))).toEqual([]);
+      expect(JSON.parse(seen.env[TURN_RENDER]!).route.headers).toEqual({ "x-flux-memory-app": "murage" });
+    });
+
+    it("a non-owner native flux turn renders the flux-off table with the capture-off headers", async () => {
+      const seen = await captureHomeSpawn({ threadId: "t-cloud-flux-guest", model: "flux::flux-auto", warmIdentity: { botId: "bot-atlas", audience: "non-owner", decidedOwner: false } });
+      expect(seen.args.filter((arg) => arg.startsWith("model_providers."))).toEqual([]);
+      const route = JSON.parse(seen.env[TURN_RENDER]!).route;
+      expect(route.provider).toBe("flux-off");
+      expect(route.headers).toEqual(memoryOff);
+    });
+
+    it("an owner native flux turn renders the base flux table", async () => {
+      const seen = await captureHomeSpawn({ threadId: "t-cloud-flux-owner", model: "flux::flux-auto", warmIdentity: { botId: "bot-atlas", audience: "owner", decidedOwner: true } });
+      const route = JSON.parse(seen.env[TURN_RENDER]!).route;
+      expect(route.provider).toBe("flux");
+      expect(route.headers).toEqual({ "x-flux-memory-app": "murage" });
+    });
   });
 
   it("reports API billing on a Cloud home only when the launcher says Codex runs on an enrolled key", async () => {
@@ -1717,6 +1811,40 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
   });
 
+  it("a Stop still settles as cancelled when Codex reports a clean end after it (STOP1 race)", async () => {
+    await create({ mode: "approval" });
+    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-codex-stop-race", text: "go" });
+    await recorder.until((e) => e.type === "request.opened");
+    // Hold the kill: the app-server stays alive, gets the Stop's deny of its open ask and answers with a clean
+    // turn/completed, which therefore always reaches the driver after the Stop (the order that failed 3-4 of 5 runs).
+    const held: ChildProcess[] = [];
+    const kill = vi.spyOn(procs, "killCliTree").mockImplementation((child) => { held.push(child); });
+    const confirm = vi.spyOn(procs, "awaitCliTreeStopped").mockResolvedValue(true);
+    try {
+      await instance.adapter.interruptTurn("t-codex-stop-race");
+      const done = await recorder.until((e) => e.type === "turn.completed");
+      expect(done).toMatchObject({ turnId, ok: true, stopReason: "cancelled" });
+      expect(recorder.events.filter((e) => e.type === "runtime.error")).toEqual([]);
+      expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+      expect(held.length).toBeGreaterThan(0);
+    } finally {
+      kill.mockRestore();
+      confirm.mockRestore();
+      for (const child of held) { procs.killCliTree(child); await procs.awaitCliTreeStopped(child); }
+    }
+  });
+
+  it("a reply that finished before the Stop keeps its finished state (STOP1 race)", async () => {
+    await create({ mode: "approval" });
+    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-codex-done-then-stop", text: "go" });
+    const ask: any = await recorder.until((e) => e.type === "request.opened");
+    await instance.adapter.respondToRequest("t-codex-done-then-stop", String(ask.requestId), { behavior: "allow" });
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    await instance.adapter.interruptTurn("t-codex-done-then-stop");
+    expect(done).toMatchObject({ turnId, ok: true, stopReason: null });
+    expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+  });
+
   it("rejects a second turn while one is in flight", async () => {
     await create({ mode: "approval" }); // approval mode parks the turn open
     await instance.adapter.sendTurn({ threadId: "t-busy", text: "one" });
@@ -2084,6 +2212,117 @@ describe("CodexDriver turns (fake app-server)", () => {
     }, 20_000);
   });
 
+  // F4 design (lanes/release104/designs/F4.md) section 2a, G03-2: a turn/start that may have reached the engine is never sent again.
+  describe("F4: one turn is sent once", () => {
+    const callLog = () => join(scratch, "f4-calls.log");
+    const turnStarts = () => (existsSync(callLog()) ? readFileSync(callLog(), "utf8").split("\n").filter((l) => l.endsWith(" turn/start")).length : 0);
+    const errorsOf = () => recorder.events.filter((e) => e.type === "runtime.error").map((e) => (e as { message: string }).message);
+    beforeEach(() => {
+      process.env.FAKE_CODEX_CALL_LOG = callLog();
+      process.env.FAKE_CODEX_STATE = join(scratch, "f4-launches");
+      process.env.FAKE_CODEX_RETRY_SCALE = "0.001";
+      process.env.MURAGE_CODEX_RPC_TIMEOUT_MS = "400";
+    });
+    afterEach(() => {
+      for (const name of ["FAKE_CODEX_CALL_LOG", "FAKE_CODEX_TURNSTART_SILENT", "FAKE_CODEX_TURNSTART_LATE", "MURAGE_CODEX_RPC_TIMEOUT_MS"]) delete process.env[name];
+    });
+
+    it.each([["F1", "buffered"], ["F2", "plain"]])("%s: turn/start never answered (%s) => written once, no relaunch, settles failed on the timeout, process closed", async (_id, knob) => {
+      process.env.FAKE_CODEX_TURNSTART_SILENT = knob;
+      const dump = join(scratch, `f4-silent-${knob}.json`);
+      process.env.FAKE_CODEX_DUMP = dump;
+      await create();
+      const { turnId } = await instance.adapter.sendTurn({ threadId: `t-f4-silent-${knob}`, text: "hi" });
+      const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+      expect(done).toMatchObject({ ok: false, stopReason: "rpc_error" });
+      expect(turnStarts()).toBe(1);
+      expect(recorder.events.some((e) => e.type === "turn.retrying")).toBe(false);
+      expect(errorsOf()).toHaveLength(1);
+      expect(errorsOf()[0]).toContain("timed out while starting the turn");
+      const pid = JSON.parse(readFileSync(dump, "utf8")).pid as number;
+      const end = Date.now() + 5_000;
+      const gone = () => { try { process.kill(pid, 0); return false; } catch { return true; } };
+      while (!gone() && Date.now() < end) await new Promise((r) => setTimeout(r, 20));
+      expect(gone()).toBe(true);
+    }, 20_000);
+
+    it("F3: an error answer to turn/start after a buffered notification => no relaunch", async () => {
+      process.env.FAKE_CODEX_TURNSTART_SILENT = "notify-error";
+      await create();
+      const { turnId } = await instance.adapter.sendTurn({ threadId: "t-f4-notify-error", text: "hi" });
+      const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+      expect(done).toMatchObject({ ok: false });
+      expect(turnStarts()).toBe(1);
+      expect(recorder.events.some((e) => e.type === "turn.retrying")).toBe(false);
+    }, 20_000);
+
+    it("F5 (GUARD): Stop during the unanswered turn/start on an ungated process => cancelled once, no relaunch", async () => {
+      process.env.FAKE_CODEX_TURNSTART_SILENT = "plain";
+      process.env.MURAGE_CODEX_RPC_TIMEOUT_MS = "10000";
+      await create();
+      const { turnId } = await instance.adapter.sendTurn({ threadId: "t-f4-stop", text: "hi" });
+      const end = Date.now() + 5_000;
+      while (turnStarts() === 0 && Date.now() < end) await new Promise((r) => setTimeout(r, 20));
+      await instance.adapter.interruptTurn("t-f4-stop");
+      const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+      expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
+      await new Promise((r) => setTimeout(r, 300));
+      expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+      expect(recorder.events.some((e) => e.type === "turn.retrying")).toBe(false);
+      expect(turnStarts()).toBe(1);
+    }, 20_000);
+
+    it("F6: the ACK and a turn notification arrive after the timer fired, while the process holds its shutdown => one turn/start, no relaunch, one completion", async () => {
+      process.env.FAKE_CODEX_TURNSTART_LATE = "1";
+      await create();
+      const { turnId } = await instance.adapter.sendTurn({ threadId: "t-f4-late", text: "hi" });
+      const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+      expect(done).toMatchObject({ ok: false });
+      await new Promise((r) => setTimeout(r, 500));
+      expect(turnStarts()).toBe(1);
+      expect(recorder.events.some((e) => e.type === "turn.retrying")).toBe(false);
+      expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+    }, 30_000);
+  });
+
+  // F4 design section 2b, 03-2: the selected model rides every turn/start and every resume, and a resumed thread must prove it.
+  describe("F4: the chosen model answers", () => {
+    const callsOf = (dump: string, method: string) => JSON.parse(readFileSync(dump, "utf8")).calls.filter((c: { method: string }) => c.method === method).map((c: { params: any }) => c.params);
+
+    it("F9: turn/start carries the selected model", async () => {
+      await create();
+      const dump = join(scratch, "f4-model.json");
+      process.env.FAKE_CODEX_DUMP = dump;
+      const { turnId } = await instance.adapter.sendTurn({ threadId: "t-f4-model", text: "hi", model: "gpt-f4-chosen" });
+      await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+      expect(callsOf(dump, "turn/start")[0]).toMatchObject({ model: "gpt-f4-chosen" });
+    });
+
+    it("F10: a Flux resume names and verifies the Flux table; a named connection's resume names and verifies its provider", async () => {
+      process.env.FLUX_API_KEY = "sk-flux-test-key";
+      try {
+        await create({ mode: "resume" });
+        const dump = join(scratch, "f4-flux.json");
+        process.env.FAKE_CODEX_DUMP = dump;
+        const flux = await instance.adapter.sendTurn({ threadId: "t-f4-flux", text: "hi", model: "flux::flux-auto", resumeCursor: "thread-flux", warmIdentity: { botId: "b", audience: "owner", decidedOwner: true } });
+        await recorder.until((e) => e.type === "turn.completed" && e.turnId === flux.turnId);
+        expect(callsOf(dump, "thread/resume")[0]).toMatchObject({ threadId: "thread-flux", model: "flux-auto", modelProvider: "flux" });
+        expect(callsOf(dump, "thread/start")).toHaveLength(0);
+      } finally {
+        delete process.env.FLUX_API_KEY;
+      }
+      const dump2 = join(scratch, "f4-route.json");
+      process.env.FAKE_CODEX_DUMP = dump2;
+      const routed = await instance.adapter.sendTurn({ threadId: "t-f4-route", text: "hi", resumeCursor: "thread-route",
+        providerRoute: { connectionId: "fixture-provider", revision: "fixture-revision", preset: "openai", protocol: "responses", baseUrl: "https://provider.example/v1", apiKey: "fixture-only-not-real", model: "routed-model" } } as never);
+      await recorder.until((e) => e.type === "turn.completed" && e.turnId === routed.turnId);
+      const resume = callsOf(dump2, "thread/resume")[0];
+      expect(resume).toMatchObject({ threadId: "thread-route", model: "routed-model" });
+      expect(resume.modelProvider).toMatch(/^murage_[0-9a-f]{16}$/);
+      expect(callsOf(dump2, "thread/start")).toHaveLength(0);
+    });
+  });
+
   it("never retries after agent text already streamed (duplicate-text hazard)", async () => {
     process.env.FAKE_CODEX_TRANSIENTS = "1";
     process.env.FAKE_CODEX_PARTIAL_FAILS = "1";
@@ -2144,7 +2383,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     const turnStart = seen.calls.find((c: any) => c.method === "turn/start");
     expect(turnStart.params.input).toEqual([
-      { type: "text", text: "what is this" },
+      { type: "text", text: `${TURN_ASK_RULES}\n\nwhat is this` },
       { type: "image", url: `data:image/png;base64,${data}` },
     ]);
     expect(instance.adapter.capabilities.imagesInline).toBe(true);
@@ -2160,7 +2399,7 @@ describe("CodexDriver turns (fake app-server)", () => {
 
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     const turnStart = seen.calls.find((c: any) => c.method === "turn/start");
-    expect(turnStart.params.input).toEqual([{ type: "text", text: "hi" }]);
+    expect(turnStart.params.input).toEqual([{ type: "text", text: `${TURN_ASK_RULES}\n\nhi` }]);
   });
 
   it("sends no effort key when the turn has none", async () => {
@@ -2299,7 +2538,7 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
   afterEach(async () => {
     for (const name of ["FAKE_CODEX_MODE", "FAKE_CODEX_VERSION", "FAKE_CODEX_TOOLS", "FAKE_CODEX_HOOKS", "FAKE_CODEX_DUMP", "FAKE_CODEX_CALL_LOG", "FAKE_CODEX_SPAWN_LOG",
       "FAKE_CODEX_ESCALATION", "MURAGE_CODEX_HOOK_LIVENESS_MS", "FAKE_CODEX_SESSION_DELAY_MS", "FAKE_CODEX_SESSION_LOG", "FAKE_CODEX_INTERRUPT_DELAY_MS",
-      "FAKE_CODEX_EARLY_ITEM"]) delete process.env[name];
+      "FAKE_CODEX_EARLY_ITEM", "FAKE_CODEX_HOOKS_DELAY_MS", "FAKE_CODEX_HOOKS_DELAY_COUNT", "MURAGE_CODEX_HOOKS_LIST_MS", "FAKE_CODEX_RETRY_SCALE"]) delete process.env[name];
     setCodexFloorsForTests();
     recorder?.stop();
     await instance?.dispose();
@@ -2441,18 +2680,83 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
   it("refuses the turn before turn/start when hooks/list is missing or the trust does not take", async () => {
     const log = join(scratch, "calls.log");
     process.env.FAKE_CODEX_CALL_LOG = log;
-    for (const [mode, failure] of [["none", "engine-update-required"], ["untrusted-stays", "engine-folder-unavailable"]] as const) {
+    // B13: a reported current version without hooks/list is never "older than" (an unreadable version is refused before the spawn)
+    for (const [mode, version, failure] of [["none", "codex-cli 0.164.0", "engine-folder-unavailable"], ["untrusted-stays", undefined, "engine-folder-unavailable"]] as const) {
       process.env.FAKE_CODEX_HOOKS = mode;
       writeFileSync(log, "");
-      await recreate();
-      const r = await run(`t-refuse-${mode}`, [], () => null);
+      await recreate(version);
+      const r = await run(`t-refuse-${mode}-${version}`, [], () => null);
       expect(r.done).toMatchObject({ ok: false, stopReason: "scope_unavailable" });
-      expect(recorder.events.find((e) => e.type === "runtime.error")).toMatchObject({ localFailure: failure });
+      const error = recorder.events.find((e) => e.type === "runtime.error") as any;
+      expect(error).toMatchObject({ localFailure: failure });
+      expect(String(error.message)).not.toContain("older than");
       const methods = readFileSync(log, "utf8").split("\n").filter(Boolean).map((line) => line.split(" ")[1]);
       expect(methods).toContain("hooks/list");
       expect(methods).not.toContain("thread/start");
       expect(methods).not.toContain("turn/start");
     }
+  });
+
+  // B13 (REHEARSAL-2, Windows, Codex 0.164.0): hooks/list answered past its 15 s bound and the owner was told their Codex was older
+  // than 0.129.0. A slow answer is waited for once more, longer, and never read as a version. (The bound is scaled through
+  // MURAGE_CODEX_HOOKS_LIST_MS; without the fix the 15 s bound runs out first and the turn is refused as engine-update-required.)
+  it("B13: a current Codex that answers hooks/list slowly runs the turn and is never told to update", async () => {
+    process.env.MURAGE_CODEX_HOOKS_LIST_MS = "300";
+    process.env.FAKE_CODEX_HOOKS_DELAY_MS = "16000";
+    process.env.FAKE_CODEX_HOOKS_DELAY_COUNT = "1";
+    const log = join(scratch, "calls-b13.log");
+    process.env.FAKE_CODEX_CALL_LOG = log;
+    await recreate("codex-cli 0.164.0");
+    const r = await run("t-b13-slow-once", [], () => null);
+    expect(recorder.events.some((e: any) => e.localFailure === "engine-update-required")).toBe(false);
+    expect(r.done).toMatchObject({ ok: true });
+    // Fable r1 High: the wait explains itself. The line opens when the first bound runs out and closes when the list arrives,
+    // before anything of the turn itself.
+    const mine = recorder.events.filter((e: any) => e.turnId === r.sent.turnId) as any[];
+    const opened = mine.findIndex((e) => e.type === "item.started" && String(e.itemId).startsWith("hooks-"));
+    expect(opened).toBeGreaterThanOrEqual(0);
+    expect(mine[opened]).toMatchObject({ origin: "murage", itemType: "tool", title: expect.stringContaining("Codex Test is taking a moment to get ready") });
+    // Astra r2 High: the line reaches the mascot's working line too (Tool calls off hides the chip)
+    expect(mine[opened].spoken).toBe(mine[opened].title);
+    expect(String(mine[opened].title)).not.toMatch(/\u2014|\bsafe|unsafe|safety/i);
+    const closed = mine.findIndex((e) => e.type === "item.completed" && e.itemId === mine[opened].itemId);
+    expect(closed).toBeGreaterThan(opened);
+    expect(mine[closed]).toMatchObject({ ok: true });
+    const firstOther = mine.findIndex((e) => e.type === "item.started" && !String(e.itemId).startsWith("hooks-") && !String(e.itemId).startsWith("wake-"));
+    if (firstOther >= 0) expect(firstOther).toBeGreaterThan(closed);
+    const methods = readFileSync(log, "utf8").split("\n").filter(Boolean).map((line) => line.split(" ")[1]);
+    expect(methods.filter((m) => m === "hooks/list").length).toBeGreaterThanOrEqual(2);
+    expect(methods).toContain("turn/start");
+  }, 40_000);
+
+  it("B13: a current Codex that never answers hooks/list in time is retried as a slow start, refused without the gate, never told to update", async () => {
+    process.env.MURAGE_CODEX_HOOKS_LIST_MS = "200";
+    process.env.FAKE_CODEX_HOOKS_DELAY_MS = "20000";
+    process.env.FAKE_CODEX_RETRY_SCALE = "0.001";
+    const log = join(scratch, "calls-b13-dead.log");
+    process.env.FAKE_CODEX_CALL_LOG = log;
+    await recreate("codex-cli 0.164.0");
+    const r = await run("t-b13-slow-always", [], () => null);
+    expect(r.done).toMatchObject({ ok: false });
+    expect(recorder.events.some((e: any) => e.localFailure === "engine-update-required")).toBe(false);
+    // Fable r1 Medium: one relaunch for a slow handshake (two starts, ~2 minutes at real bounds), then a clear line
+    expect(recorder.events.filter((e: any) => e.type === "turn.retrying")).toHaveLength(1);
+    const errors = recorder.events.filter((e: any) => e.type === "runtime.error");
+    expect(errors.at(-1)).toMatchObject({ message: "Codex Test did not get its hooks ready in time, even after a fresh start; try again in a moment." });
+    expect(errors.some((e: any) => /older than|Update Codex/i.test(String(e.message)))).toBe(false);
+    const methods = readFileSync(log, "utf8").split("\n").filter(Boolean).map((line) => line.split(" ")[1]);
+    expect(methods).not.toContain("thread/start");
+    expect(methods).not.toContain("turn/start");
+  }, 40_000);
+
+  it("B13: a Codex really below the floor is still told to update, slow handshake or not", async () => {
+    process.env.MURAGE_CODEX_HOOKS_LIST_MS = "200";
+    process.env.FAKE_CODEX_HOOKS_DELAY_MS = "20000";
+    setCodexFloorsForTests({ retired: [0, 100, 0], gate: [0, 129, 0] });
+    await recreate("codex-cli 0.110.0");
+    const r = await run("t-b13-old", [], () => null);
+    expect(r.done).toMatchObject({ ok: false, stopReason: "scope_unavailable" });
+    expect(recorder.events.find((e) => e.type === "runtime.error")).toMatchObject({ localFailure: "engine-update-required", message: expect.stringContaining("0.110.0 is older than 0.129.0") });
   });
 
   // 1.0.3 RUN B (Windows): the hook started past 10 s and the turn was refused. On win32 the bound is HOOK_LIVENESS_WIN32_MS (45 s);
@@ -2659,7 +2963,8 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
   // T100 a..c
   it("writes the gate into the scoped home only, drops the owner's hooks, and trusts through hooks/list and config/batchWrite", async () => {
     await create();
-    const r = await run("t-files", [], () => null);
+    // a kept process keeps its env file (03-1: the file goes with the process)
+    const r = await run("t-files", [], () => null, { warmIdentity: { botId: "b-files", audience: "owner" } });
     const dump = r.dump();
     const home = dump.env.CODEX_HOME as string;
     expect(home).not.toBe(ownerHome);
@@ -2667,8 +2972,11 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
     const hooks = JSON.parse(readFileSync(join(home, "hooks.json"), "utf8"));
     expect(hooks.hooks.PreToolUse).toHaveLength(1);
     expect(hooks.hooks.SessionStart).toHaveLength(1);
-    expect(readFileSync(join(home, "hooks.json"), "utf8")).not.toContain(readFileSync(join(home, "murage-hook.env"), "utf8").split("TOKEN=")[1]!.trim());
-    if (process.platform !== "win32") expect(statSync(join(home, "murage-hook.env")).mode & 0o777).toBe(0o600);
+    // 03-1: the process's own env file, named in its environment, under the scope's hook-env/
+    const envFile = dump.env.MURAGE_CODEX_HOOK_ENV as string;
+    expect(dirname(envFile)).toBe(join(home, "hook-env"));
+    expect(readFileSync(join(home, "hooks.json"), "utf8")).not.toContain(readFileSync(envFile, "utf8").split("TOKEN=")[1]!.trim());
+    if (process.platform !== "win32") expect(statSync(envFile).mode & 0o777).toBe(0o600);
     const config = readFileSync(join(home, "config.toml"), "utf8");
     expect(config).toContain('model = "gpt-owner"');
     expect(config).not.toContain("owner = \"hook\"");
@@ -2779,18 +3087,127 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
     process.env.FAKE_CODEX_CALL_LOG = log;
     await create();
     const warm = { warmIdentity: { botId: "b-warm", audience: "owner" as const } };
-    const first = await run("t-warm", [{ kind: "shell", id: "w1", command: "ls", cwd: scratch }], () => ({ behavior: "allow" }), warm);
+    const tools = [{ kind: "shell", id: "w1", command: "ls", cwd: scratch }]; // the SAME tools both turns: the warm key's env must not change
+    const first = await run("t-warm", tools, () => ({ behavior: "allow" }), warm);
+    const firstPid = first.dump().pid;
     const home = first.dump().env.CODEX_HOME as string;
-    const tokenOne = readFileSync(join(home, "murage-hook.env"), "utf8");
-    const second = await run("t-warm", [{ kind: "shell", id: "w2", command: "ls -a", cwd: scratch }], () => ({ behavior: "deny" }), { ...warm, resumeCursor: "codex-thread-1" });
+    const envFile = first.dump().env.MURAGE_CODEX_HOOK_ENV as string;
+    expect(dirname(envFile)).toBe(join(home, "hook-env"));
+    const tokenOne = readFileSync(envFile, "utf8");
+    let tokenTwo = "";
+    // read while the second turn's card is open: the live process's file holds this turn's token (03-1: a closed process's file is gone)
+    const second = await run("t-warm", tools, () => {
+      tokenTwo = readdirSync(dirname(envFile)).map((name) => readFileSync(join(dirname(envFile), name), "utf8")).join("");
+      return { behavior: "deny" };
+    }, { ...warm, resumeCursor: "codex-thread-1" });
     expect(second.done).toMatchObject({ ok: true });
     expect(second.opened.map((e) => e.tool)).toEqual(["shell"]);
-    expect(second.dump().hookLog.at(-1)).toMatchObject({ id: "w2", verdict: "deny" });
-    expect(second.dump().pid).toBe(first.dump().pid);
-    expect(readFileSync(join(home, "murage-hook.env"), "utf8")).not.toBe(tokenOne);
+    expect(second.dump().hookLog.at(-1)).toMatchObject({ id: "w1", verdict: "deny" });
+    expect(second.dump().pid).toBe(firstPid); // real reuse, under the real settle probe
+    expect(tokenTwo).toMatch(/TOKEN=/);
+    expect(tokenTwo).not.toBe(tokenOne);
     const handshakes = readFileSync(log, "utf8").split("\n").filter((l) => l.startsWith(`${first.dump().pid} `) && l.endsWith(" initialize"));
     expect(handshakes).toHaveLength(1);
   });
+
+  // F4 design 2a (Astra r1 #2): a Stop before SessionStart is the user's Stop, never a refused turn
+  it("F5b: Stop during the unanswered turn/start on a gated process before SessionStart => cancelled at once, no error card", async () => {
+    process.env.FAKE_CODEX_HOOKS = "dead";
+    process.env.FAKE_CODEX_TURNSTART_SILENT = "plain";
+    process.env.MURAGE_CODEX_HOOK_LIVENESS_MS = "8000";
+    const log = join(scratch, "calls-f5b.log");
+    process.env.FAKE_CODEX_CALL_LOG = log;
+    try {
+      await create();
+      const sent = await instance.adapter.sendTurn({ threadId: "t-f5b", text: "go", cwd: scratch, integrations: { agents: AGENTS } } as never);
+      const end = Date.now() + 5_000;
+      while (!(existsSync(log) && readFileSync(log, "utf8").includes(" turn/start")) && Date.now() < end) await new Promise((r) => setTimeout(r, 20));
+      const stoppedAt = Date.now();
+      await instance.adapter.interruptTurn("t-f5b");
+      const done: any = await recorder.until((e: any) => e.type === "turn.completed" && e.turnId === sent.turnId);
+      expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
+      expect(Date.now() - stoppedAt).toBeLessThan(4_000);
+      expect(recorder.events.some((e: any) => e.type === "runtime.error" && e.turnId === sent.turnId)).toBe(false);
+    } finally {
+      delete process.env.FAKE_CODEX_TURNSTART_SILENT;
+    }
+  }, 20_000);
+
+  // B13 (Fable r1, Astra): a Stop during the wider hooks/list wait is the user's Stop: cancelled at once, no card, no relaunch
+  it("F5c: Stop during the long hooks/list wait => cancelled at once, no error card, no relaunch, no thread/start", async () => {
+    // a 2 s first bound and a 6 s wider one: a Stop that only landed at the bound would take ~6 s, not well under 2.5 s
+    process.env.MURAGE_CODEX_HOOKS_LIST_MS = "2000";
+    process.env.FAKE_CODEX_HOOKS_DELAY_MS = "30000";
+    const log = join(scratch, "calls-f5c.log");
+    process.env.FAKE_CODEX_CALL_LOG = log;
+    await recreate("codex-cli 0.164.0");
+    const sent = await instance.adapter.sendTurn({ threadId: "t-f5c", text: "go", cwd: scratch, integrations: { agents: AGENTS } } as never);
+    // the wait line opens when the first bound runs out: the driver is inside the wider wait now
+    const chip: any = await recorder.until((e: any) => e.turnId === sent.turnId && e.type === "item.started" && String(e.itemId).startsWith("hooks-"));
+    const stoppedAt = Date.now();
+    await instance.adapter.interruptTurn("t-f5c");
+    const done: any = await recorder.until((e: any) => e.type === "turn.completed" && e.turnId === sent.turnId);
+    expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
+    expect(Date.now() - stoppedAt).toBeLessThan(2_500);
+    // Astra r2: the wait line is closed on the Stop path too, so no working dots outlive the turn
+    await recorder.until((e: any) => e.type === "item.completed" && e.itemId === chip.itemId);
+    const mine = recorder.events.filter((e: any) => e.turnId === sent.turnId);
+    expect(mine.some((e: any) => e.type === "runtime.error")).toBe(false);
+    expect(mine.some((e: any) => e.type === "turn.retrying")).toBe(false);
+    const methods = readFileSync(log, "utf8").split("\n").filter(Boolean).map((line) => line.split(" ")[1]);
+    expect(methods).not.toContain("thread/start");
+    expect(methods).not.toContain("turn/start");
+  }, 20_000);
+
+  // F4 design 2c (03-1): two conversations of one bot, each with its own app-server, each hook reaching its own turn
+  it("F11: two concurrent conversations of one gated bot => each process's hook reads its own socket and token, and each approval lands on its own turn", async () => {
+    process.env.FAKE_CODEX_SESSION_DELAY_MS = "600";
+    await create();
+    process.env.FAKE_CODEX_TOOLS = JSON.stringify([{ kind: "shell", id: "c1", command: "ls", cwd: scratch }]);
+    const warm = { warmIdentity: { botId: "b-pair", audience: "owner" as const } };
+    const [a, b] = await Promise.all(["t-pair-a", "t-pair-b"].map((threadId) =>
+      instance.adapter.sendTurn({ threadId, text: "go", cwd: scratch, integrations: { agents: AGENTS }, ...warm } as never)));
+    const answered = new Set<string>();
+    const settled = new Map<string, any>();
+    const own = new Map<string, string>([[a!.turnId, "t-pair-a"], [b!.turnId, "t-pair-b"]]);
+    while (settled.size < 2) {
+      const e: any = await recorder.until((ev: any) => own.has(ev.turnId) && ((ev.type === "request.opened" && !answered.has(ev.requestId)) || (ev.type === "turn.completed" && !settled.has(ev.turnId))));
+      if (e.type === "turn.completed") { settled.set(e.turnId, e); continue; }
+      answered.add(e.requestId);
+      expect(await instance.adapter.respondToRequest(own.get(e.turnId)!, e.requestId, { behavior: "allow" })).toBe("allowed-once");
+    }
+    expect(settled.get(a!.turnId)).toMatchObject({ ok: true });
+    expect(settled.get(b!.turnId)).toMatchObject({ ok: true });
+    const opened = recorder.events.filter((e: any) => e.type === "request.opened" && own.has(e.turnId)) as any[];
+    expect(opened.map((e) => own.get(e.turnId)).sort()).toEqual(["t-pair-a", "t-pair-b"]);
+  }, 30_000);
+
+  // F4 design 2a (Astra r2 #1): Stop revokes the turn's authority before the kill is awaited
+  it("F20: Stop with a held kill while a PreToolUse decision is pending => the pending call is denied, a fresh delivery is refused, a late approval answer is ignored", async () => {
+    await create();
+    process.env.FAKE_CODEX_TOOLS = JSON.stringify([{ kind: "shell", id: "s1", command: "ls", cwd: scratch }, { kind: "shell", id: "s2", command: "pwd", cwd: scratch }]);
+    const dumpPath = join(scratch, "dump-f20.json");
+    process.env.FAKE_CODEX_DUMP = dumpPath;
+    const sent = await instance.adapter.sendTurn({ threadId: "t-f20", text: "go", cwd: scratch, integrations: { agents: AGENTS } } as never);
+    const opened: any = await recorder.until((e: any) => e.type === "request.opened" && e.turnId === sent.turnId);
+    const kill = vi.spyOn(procs, "killCliTree").mockImplementation(() => {});
+    const confirm = vi.spyOn(procs, "awaitCliTreeStopped").mockResolvedValue(false);
+    try {
+      await expect(instance.adapter.interruptTurn("t-f20")).rejects.toThrow(/still pending/);
+      expect(await instance.adapter.respondToRequest("t-f20", opened.requestId, { behavior: "allow" })).toBe("unavailable");
+      const end = Date.now() + 8_000;
+      const log = () => { try { return JSON.parse(readFileSync(dumpPath, "utf8")).hookLog as any[]; } catch { return []; } };
+      while (log().length < 2 && Date.now() < end) await new Promise((r) => setTimeout(r, 25));
+      expect(log().find((h) => h.id === "s1")).toMatchObject({ verdict: "deny" });
+      // the refused delivery is the script's printed deny with a clean exit (U18: the one form every Windows shell keeps)
+      expect(log().find((h) => h.id === "s2")).toMatchObject({ verdict: "deny", reason: expect.stringContaining("Murage blocked this call") });
+      expect(recorder.events.some((e: any) => e.type === "request.opened" && e.turnId === sent.turnId && e.requestId !== opened.requestId)).toBe(false);
+    } finally {
+      kill.mockRestore();
+      confirm.mockRestore();
+      await instance.adapter.interruptTurn("t-f20").catch(() => {});
+    }
+  }, 30_000);
 
   // Rule 67
   it("stops the turn when Codex starts a call the hook never reached, and carries the line to the next turn", async () => {

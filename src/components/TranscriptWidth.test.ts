@@ -33,8 +33,9 @@ describe("the message column is not capped at ~75% of a phone", () => {
     // is the 74.4% that was measured on screen.
     expect(source).not.toContain("max-md:max-w-[92%]");
     expect(source).toContain("max-md:max-w-full");
-    // The desktop reading measure survives: 42rem is ~65-75 characters.
-    expect(source).toContain("max-w-[min(42rem,78%)]");
+    // The desktop width comes from the shared tokens in styles.css, not a literal.
+    expect(source).toContain("max-w-[min(var(--chat-bubble-max),var(--chat-bubble-pct))]");
+    expect(source).not.toContain("min(42rem");
   });
 
   it.each(views)("%s trims the transcript's own gutter on a phone", (_name, source) => {
@@ -49,6 +50,15 @@ describe("the message column is not capped at ~75% of a phone", () => {
     expect(source).toContain("max-md:hidden md:contents");
     // …and the hover-revealed timestamp, which was the widest of them.
     expect(source).toMatch(/group-hover:opacity-100 max-md:hidden/);
+  });
+});
+
+describe("chat width tokens (197)", () => {
+  it("defines one wider default, with no setting", () => {
+    expect(styles).toMatch(/--chat-bubble-max:\s*52rem/);
+    expect(styles).toMatch(/--chat-bubble-pct:\s*84%/);
+    expect(styles).toMatch(/--chat-card-pct:\s*92%/);
+    expect(styles).not.toContain("data-chat-width");
   });
 });
 

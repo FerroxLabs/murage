@@ -86,6 +86,11 @@ export function fluxCatalogId(driverKind: DriverKind, model: string): string {
  *  flux-auto — not Flux Router — so only the `flux::` provider qualifies. */
 export function fluxModelId(id: string | null | undefined): string | null {
   if (!id) return null;
+  // OpenCode's own slug for a Flux tier: `flux/<flux-*>`.
+  if (id.startsWith(`${FLUX_PROVIDER_ID}/`)) {
+    const slug = id.slice(FLUX_PROVIDER_ID.length + 1);
+    return slug.startsWith(FLUX_MODEL_PREFIX) ? slug : null;
+  }
   const sep = id.indexOf(SEP);
   if (sep === -1) return id.startsWith(FLUX_MODEL_PREFIX) ? id : null;
   if (id.slice(0, sep) !== FLUX_PROVIDER_ID) return null;
@@ -101,7 +106,9 @@ export function isFluxModel(id: string | null | undefined): boolean {
  *  A bare `flux-auto` on codex is NOT routable — that is finding D itself. */
 export function fluxIdIsRoutable(id: string | null | undefined, driverKind: DriverKind): boolean {
   const model = fluxModelId(id);
-  return model !== null && id === fluxCatalogId(driverKind, model);
+  if (model === null) return false;
+  // OpenCode lists its own slug as the catalog id, and that is a routed id on that engine only.
+  return id === fluxCatalogId(driverKind, model) || (driverKind === "opencodeGo" && id === `${FLUX_PROVIDER_ID}/${model}`);
 }
 
 /**

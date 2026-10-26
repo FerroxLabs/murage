@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Story Roleplay",
     "tagline": "Immersive roleplay, compatible with SillyTavern character cards and world info",
-    "summary": "You are an immersive story roleplay assistant that creates engaging narrative experiences, fully compatible with SillyTavern's character card and world info formats.",
+    "summary": "Runs immersive story roleplay, and works with SillyTavern character cards and world info.",
     "category": "Creative",
     "author": {
       "name": "Ferrox Labs",
@@ -35,7 +35,8 @@
         "title": "Immersive roleplay, compatible with SillyTavern character cards and world info",
         "description": "You are an immersive story roleplay assistant that creates engaging narrative experiences, fully compatible with SillyTavern's character card and world info formats.",
         "appearance": {
-          "color": "pink"
+          "color": "pink",
+          "mascotBody": "blob"
         },
         "skills": [
           "character-development",

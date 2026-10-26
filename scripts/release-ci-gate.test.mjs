@@ -10,13 +10,13 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 
-import { ciVerdict, nativeAddonVerdict, nightlyPending, nightlyRetryable, nightlyVerdict, parseWaiver, waiverVerdict } from "./release-ci-gate.mjs";
+import { ciVerdict, failedTestsInLog, failuresVerdict, nativeAddonVerdict, nightlyPending, nightlyRetryable, nightlyVerdict, parseWaiver, waiverVerdict } from "./release-ci-gate.mjs";
 
 const SHA = "a".repeat(40);
 const OTHER = "b".repeat(40);
 const PATH = "docs/releases/ci-waivers/1.0.2.md";
 const run = (over = {}) => ({ id: 4242, head_sha: SHA, status: "completed", conclusion: "failure", run_attempt: 1, created_at: "2026-10-16T10:00:00Z", html_url: "https://github.com/o/r/actions/runs/4242", ...over });
-const waiver = ({ commit = SHA, runId = "4242", critical = "0", classes = ["Windows shard timeout: known flake, green on re-run"], approval = "Sean Donahoe on 2026-10-16" } = {}) => [
+const waiver = ({ commit = SHA, runId = "4242", critical = "0", classes = ["Windows shard timeout: `server/slow.test.ts`, known flake, green on re-run"], approval = "Sean Donahoe on 2026-10-16" } = {}) => [
   "# CI waiver: Murage 1.0.2",
   "",
   commit === null ? "" : `Commit: ${commit}`,
@@ -50,7 +50,8 @@ describe("a valid waiver", () => {
     const result = waiverVerdict(dispatch());
     expect(result.ok).toBe(true);
     expect(result.waiver).toMatchObject({ commit: SHA, runId: "4242", critical: "0", approver: "Sean Donahoe", date: "2026-10-16", path: PATH });
-    expect(result.waiver.classes).toEqual(["Windows shard timeout: known flake, green on re-run"]);
+    expect(result.waiver.classes).toEqual(["Windows shard timeout: `server/slow.test.ts`, known flake, green on re-run"]);
+    expect(result.waiver.tests).toEqual(["server/slow.test.ts"]);
     expect(result.waiver.sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(result.reason).toContain(PATH);
   });
@@ -217,6 +218,9 @@ describe("the nightly is rechecked after the CI wait", () => {
     expect(source.slice(pass, pass + 120)).toContain("recheckNightly();");
     const waived = source.indexOf("const result = waiverVerdict(");
     expect(source.slice(waived, waived + 400)).toContain("recheckNightly();");
+    // and the waived run's reds are checked against the classes before the waiver is recorded as used
+    const used = source.indexOf('"## CI waiver used"');
+    expect(source.slice(waived, used)).toContain("failuresVerdict({ waiver: result.waiver, jobs: listRunJobs(");
   });
 });
 
@@ -244,5 +248,47 @@ describe("the Windows ACL tests (native-addon-msvc) are required", () => {
   });
   it("refuses a run that is not on this history", () => {
     expect(nativeAddonVerdict([native({ head_sha: old })], sha, { ...ok, ancestor: () => false }).ok).toBe(false);
+  });
+});
+
+describe("a waiver covers only the tests its classes name", () => {
+  const LOG = [
+    "2026-10-23T13:01:02.1234567Z \x1b[41m\x1b[1m FAIL \x1b[22m\x1b[49m server/slow.test.ts\x1b[2m > \x1b[22mtimes out",
+    "2026-10-23T13:01:02.1234567Z  FAIL  server/slow.test.ts > another case",
+    "2026-10-23T13:01:03.0000000Z  ✓ server/fine.test.ts (3 tests) 20ms",
+  ].join("\n");
+  const parsed = () => parseWaiver(waiver({ classes: ["Windows timing: `server/slow.test.ts` and `scripts/other.test.mjs`"] }));
+  it("reads the failing test files from a job log", () => {
+    expect(failedTestsInLog(LOG)).toEqual(["server/slow.test.ts"]);
+    expect(parsed().tests).toEqual(["server/slow.test.ts", "scripts/other.test.mjs"]);
+  });
+  it("passes when every red is a named test, ignoring non-blocking and the aggregate job", () => {
+    const jobs = [
+      { name: "Vitest shard 4/12 (windows-latest)", conclusion: "failure", failedTests: failedTestsInLog(LOG) },
+      { name: "extended (non-blocking) 1/5 (Ubuntu)", conclusion: "failure", failedTests: ["server/flaky.test.ts"] },
+      { name: "required CI completion", conclusion: "failure", failedTests: [] },
+      { name: "Vitest shard 1/12 (windows-latest)", conclusion: "success", failedTests: [] },
+    ];
+    expect(failuresVerdict({ waiver: parsed(), jobs }).ok).toBe(true);
+  });
+  it("refuses a red outside the named classes (the 1.0.3.1 attempt-1 flakes)", () => {
+    const jobs = [
+      { name: "Vitest shard 4/12 (windows-latest)", conclusion: "failure", failedTests: ["server/slow.test.ts", "server/b11-destination-api.test.ts"] },
+    ];
+    const result = failuresVerdict({ waiver: parsed(), jobs });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain("server/b11-destination-api.test.ts (Vitest shard 4/12 (windows-latest))");
+  });
+  it("refuses a blocking job that failed, timed out or was cancelled without naming a test", () => {
+    for (const conclusion of ["failure", "cancelled", "timed_out"]) {
+      const result = failuresVerdict({ waiver: parsed(), jobs: [{ name: "Typecheck", conclusion, failedTests: [] }] });
+      expect(result.ok).toBe(false);
+      expect(result.reason).toContain('job "Typecheck"');
+    }
+  });
+  it("refuses a waiver whose class names no test file", () => {
+    const result = waiverVerdict(dispatch({ waiverText: waiver({ classes: ["Windows shard timeout: known flake"] }) }));
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain("names no test file");
   });
 });

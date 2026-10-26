@@ -4,7 +4,7 @@
 // PIP P2 code audit finding 5: a stop that cannot be confirmed must return uncertain-transport, retain the temp root
 // and its credentials, and never hang the adapter. The stop result is forced to "not confirmed" while a real stub
 // child is running; the test then kills that child itself.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -62,14 +62,15 @@ describe.skipIf(process.platform === "win32")("an unconfirmed stop settles uncer
     await waitRecord();
     expect(result).toMatchObject({ verdict: { state: "uncertain-transport", reason: "overflow-exit-not-confirmed" } });
   });
-  it("an exception after spawn with an unconfirmed stop keeps the root and the credentials and returns uncertain-transport", async () => {
+  it("an exception after spawn with an unconfirmed stop keeps the root, with no credential in it, and returns uncertain-transport", async () => {
     const config = join(base, "claude-config"); mkdirSync(config); writeFileSync(join(config, ".credentials.json"), "{}");
     const result = await claudeTextOnlyTurn(input({ transport: { hooks: { onChild: async () => { await sleep(600); throw new Error("persist failed"); } } } }), {
-      cli: process.execPath, cliPrefixArgs: [STUB, "--stub=sleep", `--stub-out=${out}`], tmpBase: join(base, "tmp"), env: { PATH: "/usr/bin:/bin" }, credentialsDir: config, preflight: preflight(),
+      cli: process.execPath, cliPrefixArgs: [STUB, "--stub=sleep", `--stub-out=${out}`], tmpBase: join(base, "tmp"), env: { PATH: "/usr/bin:/bin", CLAUDE_CONFIG_DIR: config }, preflight: preflight(), platform: "linux",
     });
     await waitRecord();
     expect(result).toMatchObject({ verdict: { state: "uncertain-transport", reason: "post-spawn-error-exit-not-confirmed" } });
     const home = records()[0].env.HOME;
-    expect(existsSync(join(home, "home", ".credentials.json"))).toBe(true);
+    expect(existsSync(home)).toBe(true);
+    expect(readdirSync(home, { recursive: true }).map(String).filter((f) => f.endsWith(".credentials.json"))).toEqual([]);
   });
 });

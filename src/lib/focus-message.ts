@@ -42,7 +42,14 @@ export async function landOnSearchHit(
       dispatch({ type: "threadActive", threadId: hit.threadId, activeLeafId: branch.activeLeafId });
     }
   }
-  dispatch({ type: "focusMessage", threadId: hit.threadId, messageId: hit.messageId });
+  const sentence = searchHitSentence(hit);
+  dispatch({ type: "focusMessage", threadId: hit.threadId, messageId: hit.messageId, ...(sentence ? { sentence } : {}) });
+}
+
+/** The matched text of a hit, so the landing highlights the phrase that was searched for. */
+export function searchHitSentence(hit: Pick<SearchHit, "snippet" | "matchStart" | "matchLength">): string {
+  if (!(hit.matchLength > 0) || hit.matchStart < 0) return "";
+  return hit.snippet.slice(hit.matchStart, hit.matchStart + hit.matchLength).trim();
 }
 
 export const FLASH_MS = 2400;

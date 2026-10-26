@@ -189,7 +189,7 @@ export function ProposedOutcomeCard({ bot }: { bot: BotLike }) {
   const button = "rounded-full border border-hairline/50 px-3 py-1 text-[13px] text-ink hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:opacity-50";
   return (
     <div className="flex justify-start" data-testid="proposed-outcome">
-      <div role="group" aria-label={t(oKey("proposal.label"))} className="flex max-w-[min(42rem,100%)] flex-col gap-1.5 rounded-2xl border border-hairline/40 bg-panel px-3.5 py-2.5">
+      <div role="group" aria-label={t(oKey("proposal.label"))} className="flex max-w-[min(var(--chat-bubble-max),100%)] flex-col gap-1.5 rounded-2xl border border-hairline/40 bg-panel px-3.5 py-2.5">
         <div className="text-[14px] text-ink">{sales ? t(oKey("proposal.sales")) : t(oKey("proposal.other"))}</div>
         {proposal.note && <div className="text-[12.5px] text-ink-secondary">{proposal.note}</div>}
         <div className="flex flex-wrap items-center gap-1.5">

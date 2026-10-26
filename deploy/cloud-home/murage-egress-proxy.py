@@ -26,6 +26,7 @@ import ipaddress
 import json
 import re
 import socket
+import struct
 import sys
 import time
 
@@ -34,6 +35,14 @@ import time
 ENGINES = ("antigravity", "claudeAgent", "codex", "cursorAgent", "customAcp", "droidAgent", "fuigoAgent", "geminiAgent", "grokAgent", "hermesAgent", "kimiAgent", "opencodeGo", "pi", "qwenAgent")
 BASE_PORT = 8810
 PORTS = {engine: BASE_PORT + index for index, engine in enumerate(ENGINES)}
+# DNS mode (A2): one UDP listener per engine, same sorted order; 5353 (mDNS) is avoided.
+# murage-egress.nft redirects a turn's DNS to the port of its engine gid.
+DNS_BASE_PORT = 5310
+DNS_PORTS = {engine: DNS_BASE_PORT + index for index, engine in enumerate(ENGINES)}
+# THE synthetic answer for every allowed name: ordinary global unicast (RIPE 5.0.0.0/8), in no
+# special-purpose range, accepted by is_global(). It is never connected to: nft redirects the
+# turn's tcp/443 to the engine proxy first. Fixed, never configurable at run time.
+DUMMY_ADDRESS = "5.255.0.1"
 ALLOWLIST_PATH = "/etc/murage/egress-allow.json"
 LISTEN_HOST = "127.0.0.1"
 UPSTREAM_PORT = 443
@@ -234,7 +243,8 @@ class RefusalLog:
     """One line per refusal (engine, host, reason), at most one per engine+host per
     window and a global per-minute cap, so a hostile turn cannot flood the journal."""
 
-    def __init__(self, emit=None, clock=time.monotonic, window=60.0, per_minute=30):
+    def __init__(self, emit=None, clock=time.monotonic, window=60.0, per_minute=30, prefix="egress"):
+        self.prefix = prefix
         self.emit = emit or (lambda line: print(line, file=sys.stderr, flush=True))
         self.clock = clock
         self.window = window
@@ -244,8 +254,8 @@ class RefusalLog:
 
     def refuse(self, engine, host, reason):
         now = self.clock()
-        safe = host if isinstance(host, str) and HOST_RE.match(host) else "-"
-        key = (engine, safe, reason)
+        shown = host if isinstance(host, str) and HOST_RE.match(host) else "-"
+        key = (engine, shown, reason)
         if now - self.seen.get(key, -1e18) < self.window:
             return False
         self.stamps = [stamp for stamp in self.stamps if now - stamp < 60.0]
@@ -255,7 +265,7 @@ class RefusalLog:
             self.seen.clear()
         self.seen[key] = now
         self.stamps.append(now)
-        self.emit("egress refused engine=%s host=%s reason=%s" % (engine, safe, reason))
+        self.emit("%s refused engine=%s host=%s reason=%s" % (self.prefix, engine, shown, reason))
         return True
 
 
@@ -390,17 +400,203 @@ async def run(allowlist, log=None, resolve=default_resolve, connect=default_conn
         servers.append(await asyncio.start_server(handler, host, port, limit=CHUNK, backlog=128))
     await asyncio.gather(*(server.serve_forever() for server in servers))
 
+# ---------------------------------------------------------------------------
+# DNS mode (A2). A turn's resolver is redirected by nft to the per-engine UDP port below. The
+# forwarder answers SYNTHETICALLY and forwards NOTHING upstream: an allowed name gets the fixed
+# DUMMY_ADDRESS (the turn's tcp/443 is redirected to the SNI proxy, which resolves the real
+# address itself), every other name gets NXDOMAIN. The verdict is dns_lookup(), which only calls
+# normalize_host() and Allowlist.allows(): the same objects the SNI path uses.
+# ---------------------------------------------------------------------------
+DNS_TTL = 30
+DNS_EDNS_SIZE = 1232
+DNS_MAX_QUERY = 1232
+DNS_RATE = 100.0           # queries per second per engine
+DNS_BURST = 200.0
+DNS_TOTAL_RATE = 600.0     # all engines together
+DNS_TOTAL_BURST = 1200.0
+RC_NOERROR, RC_FORMERR, RC_NXDOMAIN, RC_NOTIMP = 0, 1, 3, 4
+DNS_LABEL_RE = re.compile(rb"[A-Za-z0-9_-]+")
+
+
+class DnsFormat(Exception):
+    pass
+
+
+def dns_lookup(allowlist, engine, name):
+    """Return (allowed, normalized host or None) for a queried name."""
+    try:
+        host = normalize_host(name)
+    except Refused:
+        return False, None
+    return allowlist.allows(engine, host), host
+
+
+def dns_allows(allowlist, engine, name):
+    return dns_lookup(allowlist, engine, name)[0]
+
+
+def _dns_question(packet):
+    """Strict parse of exactly one plain question at offset 12: (labels, qtype, qclass, end)."""
+    pos = 12
+    total = 1
+    labels = []
+    while True:
+        if pos >= len(packet):
+            raise DnsFormat()
+        size = packet[pos]
+        if size == 0:
+            pos += 1
+            break
+        if size > 63:                      # compression pointer or extended label type
+            raise DnsFormat()
+        label = packet[pos + 1:pos + 1 + size]
+        total += size + 1
+        if len(label) != size or total > 255 or not DNS_LABEL_RE.fullmatch(label):
+            raise DnsFormat()
+        labels.append(label.decode("ascii"))
+        pos += 1 + size
+    if pos + 4 > len(packet):
+        raise DnsFormat()
+    qtype, qclass = struct.unpack(">HH", packet[pos:pos + 4])
+    return labels, qtype, qclass, pos + 4
+
+
+def _dns_opt(rest):
+    """Exactly one well-formed OPT RR (root owner, version 0) must fill `rest`."""
+    if len(rest) < 11 or rest[0] != 0 or int.from_bytes(rest[1:3], "big") != 41:
+        raise DnsFormat()
+    if rest[5] != 0 or rest[6] != 0:       # extended rcode, EDNS version
+        raise DnsFormat()
+    if len(rest) != 11 + int.from_bytes(rest[9:11], "big"):
+        raise DnsFormat()
+    options = rest[11:]
+    pos = 0
+    while pos < len(options):               # skipped, never interpreted; structure must hold
+        if pos + 4 > len(options):
+            raise DnsFormat()
+        pos += 4 + int.from_bytes(options[pos + 2:pos + 4], "big")
+        if pos > len(options):
+            raise DnsFormat()
+
+
+def _dns_reply(ident, rd, opcode, rcode, question, answer, opt):
+    flags = 0x8000 | (opcode << 11) | rd | 0x0080 | rcode
+    out = ident + struct.pack(">HHHHH", flags, 1 if question else 0, 1 if answer else 0, 0, 1 if opt else 0)
+    out += question or b""
+    if answer:
+        out += b"\xc0\x0c" + struct.pack(">HHIH", 1, 1, DNS_TTL, 4) + socket.inet_aton(DUMMY_ADDRESS)
+    if opt:
+        out += b"\x00" + struct.pack(">HHIH", 41, DNS_EDNS_SIZE, 0, 0)
+    return out
+
+
+def dns_respond(engine, allowlist, packet, log=None):
+    """Pure decision: query packet in, reply packet (or None to drop) out. No I/O, no upstream."""
+    if len(packet) < 12:
+        return None
+    ident = packet[:2]
+    flags = int.from_bytes(packet[2:4], "big")
+    if flags & 0x8000:                      # never answer a response
+        return None
+    opcode = (flags >> 11) & 15
+    rd = flags & 0x0100
+    qd, an, ns, ar = struct.unpack(">HHHH", packet[4:12])
+    try:
+        labels, qtype, qclass, end = _dns_question(packet)
+        question = packet[12:end]
+    except DnsFormat:
+        labels = question = None
+    echo = question if qd == 1 else None
+    if opcode != 0:
+        return _dns_reply(ident, rd, opcode, RC_NOTIMP, None, False, False)
+    if qd != 1 or an or ns or ar > 1 or question is None:
+        return _dns_reply(ident, rd, 0, RC_FORMERR, echo, False, False)
+    rest = packet[end:]
+    try:
+        if ar == 1:
+            _dns_opt(rest)
+        elif rest:
+            raise DnsFormat()
+    except DnsFormat:
+        return _dns_reply(ident, rd, 0, RC_FORMERR, echo, False, False)
+    opt = ar == 1
+    if qclass != 1:
+        return _dns_reply(ident, rd, 0, RC_NOTIMP, question, False, opt)
+    allowed, host = dns_lookup(allowlist, engine, ".".join(labels))
+    if not allowed:
+        if log is not None:
+            log.refuse(engine, host, "not-allowed" if host else "bad-host")
+        return _dns_reply(ident, rd, 0, RC_NXDOMAIN, question, False, opt)
+    return _dns_reply(ident, rd, 0, RC_NOERROR, question, qtype == 1, opt)
+
+
+class TokenBucket:
+    def __init__(self, rate, burst, clock=time.monotonic):
+        self.rate, self.burst, self.clock = rate, burst, clock
+        self.tokens, self.stamp = burst, clock()
+
+    def take(self):
+        now = self.clock()
+        self.tokens = min(self.burst, self.tokens + (now - self.stamp) * self.rate)
+        self.stamp = now
+        if self.tokens >= 1.0:
+            self.tokens -= 1.0
+            return True
+        return False
+
+
+class DnsProtocol(asyncio.DatagramProtocol):
+    def __init__(self, engine, allowlist, bucket, shared, log):
+        self.engine, self.allowlist, self.bucket, self.shared, self.log = engine, allowlist, bucket, shared, log
+        self.transport = None
+
+    def connection_made(self, transport):
+        self.transport = transport
+
+    def datagram_received(self, data, addr):
+        if len(data) > DNS_MAX_QUERY or not self.bucket.take() or not self.shared.take():
+            return                           # over the cap: drop, never forward
+        try:
+            reply = dns_respond(self.engine, self.allowlist, data, self.log)
+        except Exception:
+            return
+        if reply is not None:
+            self.transport.sendto(reply, addr)
+
+    def error_received(self, exc):
+        pass
+
+
+async def start_dns(allowlist, log=None, host=LISTEN_HOST, ports=None):
+    log = log or RefusalLog(prefix="dns")
+    shared = TokenBucket(DNS_TOTAL_RATE, DNS_TOTAL_BURST)
+    loop = asyncio.get_running_loop()
+    transports = []
+    for engine, port in (DNS_PORTS if ports is None else ports).items():
+        protocol = DnsProtocol(engine, allowlist, TokenBucket(DNS_RATE, DNS_BURST), shared, log)
+        transport, _ = await loop.create_datagram_endpoint(lambda: protocol, local_addr=(host, port), family=socket.AF_INET)
+        transports.append(transport)
+    return transports
+
+
+async def run_dns(allowlist, log=None, host=LISTEN_HOST):
+    await start_dns(allowlist, log, host)
+    await asyncio.get_running_loop().create_future()   # serve until the unit stops
+
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
+    mode = "sni"
+    if argv and argv[0] == "dns":
+        mode, argv = "dns", argv[1:]
     path = argv[0] if argv else ALLOWLIST_PATH
     try:
         allowlist = load_allowlist(path)
     except ConfigError as error:
-        print("egress proxy refuses to start: %s" % error, file=sys.stderr, flush=True)
+        print("egress %s refuses to start: %s" % ("dns" if mode == "dns" else "proxy", error), file=sys.stderr, flush=True)
         return EXIT_CONFIG
     try:
-        asyncio.run(run(allowlist))
+        asyncio.run(run_dns(allowlist) if mode == "dns" else run(allowlist))
     except KeyboardInterrupt:
         pass
     return 0

@@ -21,6 +21,12 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it, vi } from "vitest";
 
+// The address must reach analytics from NOWHERE in this step (1.0.7, Sean:
+// "no analytics, no device id"). A spy on the real export, so a call that
+// came back would be seen rather than inferred from source.
+const analytics = vi.hoisted(() => ({ identifyEmail: vi.fn(), setEmailGateDone: vi.fn() }));
+vi.mock("@/lib/analytics", async (importOriginal) => ({ ...(await importOriginal<object>()), ...analytics }));
+
 import { FIRST_RUN_COPY } from "@/lib/first-run-copy";
 import { sellsOnPrice } from "@/lib/first-run-copy-rules";
 import { saveHelloAnswer, skipHelloAnswer, type HelloAnswerDeps } from "./FirstRunHelloCard";
@@ -38,7 +44,6 @@ function harness(over: {
   subscribe?: () => Promise<unknown>;
 } = {}) {
   const calls: Call[] = [];
-  const identified: string[] = [];
   const gates: string[] = [];
   const answers: Array<[string, string]> = [];
   const deps: HelloAnswerDeps = {
@@ -51,11 +56,10 @@ function harness(over: {
       if (path === "/api/subscribe") return over.subscribe ? await over.subscribe() : { ok: true };
       return {};
     },
-    identify: (email) => identified.push(email),
     markGate: (status) => gates.push(status),
     answer: async (step, answer) => { answers.push([step, answer]); },
   };
-  return { calls, identified, gates, answers, deps };
+  return { calls, gates, answers, deps };
 }
 
 const TYPED = { name: "  Sean  ", email: "  Sean@Example.COM " };
@@ -70,7 +74,7 @@ describe("the hello step's answer", () => {
     expect(subscribe!.method).toBe("POST");
     // Trimmed and lower cased, because that is what the list is keyed by and
     // what the Chief will use.
-    expect(subscribe!.body).toEqual({ name: "Sean", email: "sean@example.com" });
+    expect(subscribe!.body).toEqual({ name: "Sean", email: "sean@example.com", from: "hello" });
     expect(profile).toEqual({ name: "Sean", email: "sean@example.com" });
     expect(greeting).toContain("Sean");
 
@@ -96,7 +100,7 @@ describe("the hello step's answer", () => {
     await saveHelloAnswer(TYPED, box.deps);
     expect(box.calls.map((call) => call.path)).toEqual(["/api/config", "/api/subscribe"]);
     expect(box.calls[0].method).toBe("PUT");
-    expect(box.identified).toEqual(["sean@example.com"]);
+    expect(analytics.identifyEmail).not.toHaveBeenCalled();
     expect(box.gates).toEqual(["submitted"]);
   });
 
@@ -113,7 +117,7 @@ describe("the hello step's answer", () => {
     const box = harness({ savedProfile: { name: "Somebody Else", email: "other@example.com" } });
     await expect(saveHelloAnswer(TYPED, box.deps)).rejects.toThrow();
     expect(box.calls.map((call) => call.path)).toEqual(["/api/config"]);
-    expect(box.identified).toEqual([]);
+    expect(analytics.identifyEmail).not.toHaveBeenCalled();
     expect(box.answers).toEqual([]);
   });
 
@@ -142,20 +146,24 @@ describe("the hello step's answer", () => {
       // this reached the network at all rather than a stub.
       expect(fetched).toHaveBeenCalled();
       expect(fetched.mock.calls.map((call) => String(call[0])).join(" ")).toMatch(/\/api\//);
+      // NO RENDERER NETWORK CALL to the list: everything it reached is its
+      // own server, never murage.ai. The post is the server's job.
+      for (const [target] of fetched.mock.calls) expect(String(target)).not.toMatch(/murage\.ai|news\/subscribe/);
+      expect(analytics.identifyEmail).not.toHaveBeenCalled();
     } finally {
       fetched.mockRestore();
     }
   });
 });
 
-// "Skip for now" passes over the email, not the name. The Windows customer
+// "Skip" passes over the email, not the name. The Windows customer
 // pass typed "Sam", pressed Skip, and was then called "there".
 describe("continuing with a name and no email (O16)", () => {
   it("saves the name, answers the step, and puts nobody on the list", async () => {
     const box = harness();
     const { profile, greeting } = await saveHelloAnswer({ name: "  Sean ", email: "  " }, box.deps);
     expect(box.calls).toEqual([{ path: "/api/config", method: "PUT", body: { profile: { name: "Sean" } } }]);
-    expect(box.identified).toEqual([]);
+    expect(analytics.identifyEmail).not.toHaveBeenCalled();
     expect(box.gates).toEqual(["skipped"]);
     expect(box.answers).toEqual([["hello", "Sean"]]);
     expect(profile).toEqual({ name: "Sean", email: "" });
@@ -180,7 +188,7 @@ describe("skipping the hello step", () => {
     const { skipped, deps } = skipDeps(box);
     const result = await skipHelloAnswer({ name: "  Sam ", email: "" }, deps);
     expect(box.calls).toEqual([{ path: "/api/config", method: "PUT", body: { profile: { name: "Sam" } } }]);
-    expect(box.identified).toEqual([]);
+    expect(analytics.identifyEmail).not.toHaveBeenCalled();
     expect(box.gates).toEqual(["skipped"]);
     expect(skipped).toEqual(["hello"]);
     expect(result.greeting).toContain("Sam");
@@ -223,5 +231,26 @@ describe("the learning line (bot learning, design 7 and 12a)", () => {
     const line = source.split("\n").find(text => text.includes("copy.learnLine"));
     expect(line).toBeDefined();
     expect(line).not.toMatch(/!done/);
+  });
+});
+
+// THE RENDERER NEVER POSTS THE SIGNUP ITSELF. The list endpoint is named in
+// server/news-signup.ts and nowhere in src/: the renderer only ever asks its
+// own server. A source scan, because the claim is an absence.
+describe("where the signup is posted from", () => {
+  it("names the list endpoint nowhere in the renderer", async () => {
+    const { readdirSync } = await import("node:fs");
+    const root = fileURLToPath(new URL("../", import.meta.url));
+    const hits: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = dir + entry.name;
+        if (entry.isDirectory()) { if (entry.name !== "locales" && entry.name !== "e2e") walk(full + "/"); continue; }
+        if (!/\.(ts|tsx)$/.test(entry.name) || entry.name.includes(".test.")) continue;
+        if (/news\/subscribe|murage\.ai\/api\/news/.test(readFileSync(full, "utf8"))) hits.push(full.slice(root.length));
+      }
+    };
+    walk(root);
+    expect(hits).toEqual([]);
   });
 });

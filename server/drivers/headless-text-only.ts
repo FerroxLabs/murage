@@ -9,17 +9,19 @@
 // miss map live in memory/pip-transport.ts.
 import { oneShots } from "../engine-one-shots.ts";
 import { fluxCallHeaders, fuigoConfigOverlay } from "../flux-memory-headers.ts";
-import { copyFileSync, existsSync, chmodSync, readFileSync, lstatSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, lstatSync, statSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { execFile } from "node:child_process";
+import { homedir, userInfo } from "node:os";
 import { PIP_JOB_REFUSAL, PipJobRefusedError } from "../memory/pip-job.ts";
-import { join } from "node:path";
+import { join, posix as posixPath, win32 as win32Path } from "node:path";
 import { reportMemoryUsage } from "../memory/extract.ts";
 import { augmentedPath } from "../env-path.ts";
 import { awaitCliTreeStopped, cliJobRefused, spawnCli } from "../procs.ts";
 import { cloudTurnBot } from "../cloud-home/turn-process.ts";
 import { registerChild } from "../memory/pip-reaper.ts";
 import {
-  FIRST_BYTE_MS, MAX_OUTPUT_BYTES, RUN_BOUND_MS, assertSupportedSchema, bindReflectionRoute, buildIsolationReport, buildReflectionEnv, createTempRoot,
+  FIRST_BYTE_MS, MAX_OUTPUT_BYTES, RUN_BOUND_MS, assertSupportedSchema, bindReflectionRoute, buildIsolationReport, buildReflectionEnv, createTempRoot, pinReflectionFuigoConfig,
   gateRun, isReportedOverLimit, listFiles, newFiles, parseHeadlessMessages, preflightRoute, removeTempRoot, runAdmissionFence,
   type AdmissionFenceAnswer, type BootEpoch, type JsonSchema, type MissHistory, type PipEngine, type PreflightOptions, type TempRoot, type TextOnlyTurnInput,
   type TextOnlyTurnResult, type TransportHooks, type Verdict,
@@ -263,6 +265,7 @@ export async function headlessTextOnlyTurn(input: TextOnlyTurnInput, cfg: Headle
     cleanup = bound.cleanup;
     model = bound.model;
     env = buildReflectionEnv(cfg.engine, cfg.pathValue ?? augmentedPath(), temp.home, temp.root, bound.env);
+    if (cfg.engine === "fuigo") pinReflectionFuigoConfig(temp.home);
     // Flux Memory: a reflection is background work, so a Flux-routed child carries off/off
     // (PROPOSAL-v2 5.4, same overlay the engine's turns use).
     if (input.providerRoute ? input.providerRoute.preset === "flux" : cfg.engine === "fuigo" && Boolean(cfg.fluxKey)) {
@@ -283,7 +286,7 @@ export async function headlessTextOnlyTurn(input: TextOnlyTurnInput, cfg: Headle
 // ----------------------------------------------------------------- Claude ----
 
 /** Variables a reflection Claude child may see; everything else is dropped. */
-export const CLAUDE_ENV_KEEP = ["ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL", "CLAUDE_CODE_OAUTH_TOKEN"] as const;
+export const CLAUDE_ENV_KEEP = ["ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL", "ANTHROPIC_CUSTOM_HEADERS", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_FORCE_WINDOWS_CREDMAN"] as const;
 
 /** Claude keeps a few caches in its config dir; the live check pins the real set. */
 export const CLAUDE_ALLOWED_HOME_NEW = [
@@ -293,13 +296,118 @@ export const CLAUDE_ALLOWED_HOME_NEW = [
   /^(statsig|todos|shell-snapshots|projects|sessions|logs|cache)\//,
 ];
 
-export function claudeAllowlistEnv(full: NodeJS.ProcessEnv, temp: TempRoot, maxOutputTokens: number): Record<string, string> {
+/** `loginNamespace` (a native-login run only; null for a routed one) is set as CLAUDE_SECURESTORAGE_CONFIG_DIR directly, outside the keep
+ *  loop that drops empty strings: `""` is a real answer (the owner's default Keychain item or Credential Manager name). */
+export function claudeAllowlistEnv(full: NodeJS.ProcessEnv, temp: TempRoot, maxOutputTokens: number, loginNamespace: string | null = null): Record<string, string> {
   const env: Record<string, string> = {
     PATH: full.PATH ?? augmentedPath(), HOME: temp.root, CLAUDE_CONFIG_DIR: temp.home,
     CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(maxOutputTokens), DISABLE_TELEMETRY: "1", DISABLE_AUTOUPDATER: "1",
   };
   for (const key of CLAUDE_ENV_KEEP) if (typeof full[key] === "string" && full[key]) env[key] = full[key] as string;
+  if (loginNamespace !== null) env.CLAUDE_SECURESTORAGE_CONFIG_DIR = loginNamespace;
   return env;
+}
+
+// The owner's Claude login, found where it lives instead of copied (CLAUDE-SCOPE.md Part B). The CLI's credential folder is cL():
+// a DEFINED CLAUDE_SECURESTORAGE_CONFIG_DIR wins (`""` = the default store), else CLAUDE_CONFIG_DIR, else ~/.claude; a non-empty value
+// is hashed verbatim (NFC) for the Keychain / Credential Manager name and used verbatim as the plaintext folder. The child's HOME is
+// the temp root, so a default-store owner on a plaintext file gets the absolute folder; `""` only where the store ignores HOME.
+
+/** What the platform probes found for the owner (resolveClaudeLoginProbes). */
+export interface ClaudeLoginProbes {
+  /** macOS, default store, plaintext file present: whether the default Keychain item exists (false: only the file holds the login). */
+  keychainItem?: boolean;
+  /** Windows: the owner's CLI uses Credential Manager (ownerCredmanFlag). */
+  credman?: boolean;
+}
+
+/** True when the owner's env names the CLI's default store: SECURESTORAGE `""`, or neither SECURESTORAGE nor CLAUDE_CONFIG_DIR set. */
+function claudeDefaultStore(full: NodeJS.ProcessEnv): boolean {
+  const secure = full.CLAUDE_SECURESTORAGE_CONFIG_DIR;
+  if (typeof secure === "string") return secure === "";
+  return !full.CLAUDE_CONFIG_DIR;
+}
+
+/** The owner's own `~/.claude`, from the OWNER's env (`full`), never the child's. */
+function ownerDefaultClaudeDir(full: NodeJS.ProcessEnv, platform: NodeJS.Platform): string {
+  return platform === "win32" ? win32Path.join(full.USERPROFILE || homedir(), ".claude") : posixPath.join(full.HOME || homedir(), ".claude");
+}
+
+/** The CLAUDE_SECURESTORAGE_CONFIG_DIR a text-only child gets so it reads the owner's login in place (B.1 step 2). */
+export function claudeLoginNamespace(full: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform, probes: ClaudeLoginProbes = {}): string {
+  const secure = full.CLAUDE_SECURESTORAGE_CONFIG_DIR;
+  if (typeof secure === "string" && secure) return secure;
+  if (secure === undefined && full.CLAUDE_CONFIG_DIR) return full.CLAUDE_CONFIG_DIR;
+  if (platform === "darwin") return probes.keychainItem === false ? ownerDefaultClaudeDir(full, platform) : "";
+  if (platform === "win32") return probes.credman === true ? "" : ownerDefaultClaudeDir(full, platform);
+  return ownerDefaultClaudeDir(full, platform);
+}
+
+/** `security` exit code for an attributes-only lookup; null when it errored or timed out (the caller treats both as "item exists"). */
+export type KeychainLookup = (args: string[]) => Promise<number | null>;
+const KEYCHAIN_SERVICE = "Claude Code-credentials";
+const KEYCHAIN_PROBE_MS = 2_000;
+const securityLookup: KeychainLookup = (args) => new Promise((done) => {
+  // stdout is discarded: without -w or -g nothing secret is printed, and nothing printed is kept
+  execFile("security", args, { timeout: KEYCHAIN_PROBE_MS, encoding: "utf8", windowsHide: true }, (error) => {
+    if (!error) return done(0);
+    const code = (error as NodeJS.ErrnoException & { code?: unknown }).code;
+    done(typeof code === "number" ? code : null);
+  });
+});
+/** Per (user, file mtime) for the process lifetime; cleared by forgetClaudeLoginProbes after a text-only run that did not validate. */
+const keychainMemo = new Map<string, boolean>();
+export function forgetClaudeLoginProbes(): void { keychainMemo.clear(); }
+
+/** macOS default store, owner's plaintext file present (existence only, never read): does the default Keychain item exist? Exit 0 yes,
+ *  44 no, anything else (an error, a timeout) yes: the default store. undefined when there is nothing to ask. */
+export async function claudeKeychainItemPresent(full: NodeJS.ProcessEnv, lookup: KeychainLookup = securityLookup): Promise<boolean | undefined> {
+  let mtime: number;
+  try {
+    const stat = statSync(join(ownerDefaultClaudeDir(full, "darwin"), ".credentials.json"), { throwIfNoEntry: false });
+    if (!stat) return undefined;
+    mtime = stat.mtimeMs;
+  } catch { return undefined; }
+  let user: string;
+  try { user = full.USER || userInfo().username; } catch { return undefined; }
+  const key = `${user}\0${mtime}`;
+  const memo = keychainMemo.get(key);
+  if (memo !== undefined) return memo;
+  const code = await lookup(["find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", user]).catch(() => null);
+  const present = code !== 44;
+  keychainMemo.set(key, present);
+  return present;
+}
+
+const CLAUDE_GLOBAL_CONFIG = ".claude.json";
+const CREDMAN_SEED = '{"cachedGrowthBookFeatures":{"tengu_windows_credman":true}}';
+
+/** Windows: the owner CLI's own Credential Manager switch (its M4o): CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1, else the cached GrowthBook flag
+ *  from `<Le()>/.config.json`, else `<CLAUDE_CONFIG_DIR || home>/.claude.json`, of the OWNER's dirs. An empty or missing file falls through;
+ *  an unreadable or non-JSON one is false (plaintext). Only the boolean leaves: the parsed object is dropped, nothing is logged or
+ *  written. This is the one place Murage parses an owner `.claude.json`. */
+export function ownerCredmanFlag(full: NodeJS.ProcessEnv): boolean {
+  if (full.CLAUDE_CODE_FORCE_WINDOWS_CREDMAN === "1") return true;
+  const home = full.USERPROFILE || homedir();
+  const configDir = full.CLAUDE_CONFIG_DIR || join(home, ".claude");
+  for (const file of [join(configDir, ".config.json"), join(full.CLAUDE_CONFIG_DIR || home, CLAUDE_GLOBAL_CONFIG)]) {
+    let text: string;
+    try { text = readFileSync(file, "utf8"); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      return false;
+    }
+    if (!text.trim()) continue;
+    try { return (JSON.parse(text) as { cachedGrowthBookFeatures?: { tengu_windows_credman?: unknown } } | null)?.cachedGrowthBookFeatures?.tengu_windows_credman === true; }
+    catch { return false; }
+  }
+  return false;
+}
+
+/** The probes for one native-login text-only run: macOS asks the Keychain only in the default-store case; Windows reads the owner's flag. */
+export async function resolveClaudeLoginProbes(full: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform, lookup?: KeychainLookup): Promise<ClaudeLoginProbes> {
+  if (platform === "darwin") return claudeDefaultStore(full) ? { keychainItem: await claudeKeychainItemPresent(full, lookup) } : {};
+  if (platform === "win32") return { credman: ownerCredmanFlag(full) };
+  return {};
 }
 
 /** The unique per-attempt settings file. Its path rides in argv so the registration-gap sweep can find a Claude child. */
@@ -317,8 +425,8 @@ export interface ClaudeTextOnlyConfig {
   cli: string; cliPrefixArgs?: string[]; tmpBase: string;
   /** The full environment claudeEnvironment() produced; reduced to the allowlist here. */
   env: NodeJS.ProcessEnv;
-  /** Account config dir whose .credentials.json is copied (mode 0600) for a native login. */
-  credentialsDir?: string;
+  /** Tests: the platform whose login rule applies, and the macOS Keychain lookup. */
+  platform?: NodeJS.Platform; keychainLookup?: KeychainLookup;
   preflight?: PreflightOptions; binaryIdentity?: string | null;
   firstByteMs?: number; postResultGraceMs?: number; allowedHomeNew?: RegExp[];
 }
@@ -330,21 +438,28 @@ export async function claudeTextOnlyTurn(input: TextOnlyTurnInput, cfg: ClaudeTe
   if (input.signal.aborted) throw cancelled();
   // A routed turn runs the route's model, exactly as an ordinary Claude turn does (the env selects the same one).
   const model = input.providerRoute?.model || input.model;
+  // A native login is read where it lives (never copied); a routed run gets no namespace, no seed and no flag read.
+  const platform = cfg.platform ?? process.platform;
+  const probes = input.providerRoute ? null : await resolveClaudeLoginProbes(cfg.env, platform, cfg.keychainLookup);
+  if (input.signal.aborted) throw cancelled();
   const temp = createTempRoot(cfg.tmpBase, input.context.runId, input.context.attempt, "");
   const settings = claudeSettingsPath(temp);
   try {
     writeFileSync(settings, '{"disableAllHooks":true}', { mode: 0o600 });
-    if (cfg.credentialsDir) {
-      const source = join(cfg.credentialsDir, ".credentials.json");
-      if (existsSync(source)) { const target = join(temp.home, ".credentials.json"); copyFileSync(source, target); try { chmodSync(target, 0o600); } catch { /* best effort */ } }
-    }
+    // the CLI picks Credential Manager from its config dir's own cache: the owner's choice is mirrored into the fresh temp home
+    if (probes?.credman) writeFileSync(join(temp.home, CLAUDE_GLOBAL_CONFIG), CREDMAN_SEED, { flag: "wx", mode: 0o600 });
   } catch (error) { removeTempRoot(cfg.tmpBase, temp.root); throw error; }
+  const loginNamespace = probes ? claudeLoginNamespace(cfg.env, platform, probes) : null;
   return runHeadlessCli({
     cli: cfg.cli, args: [...(cfg.cliPrefixArgs ?? []), ...claudeTextOnlyArgv(model, input.system, input.outputSchema, settings, temp.debugFile)], cwd: temp.work,
-    env: claudeAllowlistEnv(cfg.env, temp, input.maxOutputTokens), temp, tmpBase: cfg.tmpBase, engine: "claude",
+    env: claudeAllowlistEnv(cfg.env, temp, input.maxOutputTokens, loginNamespace), temp, tmpBase: cfg.tmpBase, engine: "claude",
     outputSchema: input.outputSchema, signal: input.signal, maxOutputBytes: input.maxOutputBytes, maxOutputTokens: input.maxOutputTokens,
     firstByteMs: cfg.firstByteMs, deadlineAt: input.transport?.deadlineAt, context: input.context, bootEpoch: input.transport?.bootEpoch,
     history: input.transport?.history, hooks: input.transport?.hooks, fence: input.transport?.fence, binaryIdentity: cfg.binaryIdentity,
     stdinText: input.text, allowedHomeNew: cfg.allowedHomeNew ?? CLAUDE_ALLOWED_HOME_NEW, postResultGraceMs: cfg.postResultGraceMs,
-  });
+  }).then((result) => {
+    // a run that did not validate may be a sign-in that moved: the Keychain answer is asked again next time
+    if (result.verdict.state !== "validated") forgetClaudeLoginProbes();
+    return result;
+  }, (error: unknown) => { forgetClaudeLoginProbes(); throw error; });
 }

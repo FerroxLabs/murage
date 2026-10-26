@@ -19,8 +19,8 @@ import { DATA_DIR } from "./config.ts";
 import { addOutstandingBytes, availableForNewBytes, diskSpaceError, freeDiskBytes, isNoSpaceError, outstandingBytes } from "./disk-space.ts";
 import { DISK_FULL_MESSAGE } from "../shared/attachment-storage.ts";
 import {
-  ATTACHMENT_READ_CEILING, attachmentsFolderForWriter, attachmentsHomeOf, probeAttachment, readAttachmentFile,
-  type AttachmentsHome, type ProbeResult, type Refusal,
+  ATTACHMENT_READ_CEILING, REMOVED_FOLDER, attachmentRemoved, attachmentsFolderForWriter, attachmentsHomeOf, isAttachmentName, probeAttachment,
+  readAttachmentFile, type AttachmentsHome, type ProbeResult, type Refusal,
 } from "./attachment-read.ts";
 
 /** The attachment folder as an opaque value (attachment-read.ts). Readers
@@ -29,6 +29,8 @@ export const ATTACHMENTS_HOME: AttachmentsHome = attachmentsHomeOf(DATA_DIR);
 /** The writer's own folder path. Not exported: every byte read goes through
  * attachment-read.ts, and the gate test holds this module to "wx" opens. */
 const ATTACHMENTS_DIR = attachmentsFolderForWriter(ATTACHMENTS_HOME);
+/** One empty marker file per removed name (SL-H): the record of a Remove. */
+const REMOVED_DIR = join(ATTACHMENTS_DIR, REMOVED_FOLDER);
 
 /** Free bytes on the disk that holds the attachment folder (Settings > Storage). */
 export function attachmentsFreeBytes(): number | null {
@@ -164,6 +166,7 @@ function scanAttachmentUsageAndCleanup(now = Date.now()): { bytes: number; remov
   ensureAttachmentsDir();
   let bytes = 0;
   let removed = 0;
+  finishPendingRemovals();
   for (const entry of readdirSync(ATTACHMENTS_DIR, { withFileTypes: true })) {
     if (!entry.isFile()) continue;
     const path = join(ATTACHMENTS_DIR, entry.name);
@@ -188,6 +191,28 @@ function scanAttachmentUsageAndCleanup(now = Date.now()): { bytes: number; remov
     }
   }
   return { bytes, removed };
+}
+
+/** SL-H H3: a marker whose file is still there (a crash between the marker
+ * and the unlink, or an unlink the system refused) has its file unlinked
+ * now. Bounded by the number of markers; a file that still cannot be
+ * unlinked stays for the next scan, and readers refuse it from its marker. */
+function finishPendingRemovals(): void {
+  let markers: string[];
+  try { markers = readdirSync(REMOVED_DIR); }
+  catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return;
+    throw error;
+  }
+  for (const name of markers) {
+    if (!isAttachmentName(name)) continue;
+    try { unlinkSync(join(ATTACHMENTS_DIR, name)); }
+    catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT") console.warn(`[attachments] a removed attachment could not be deleted yet; the next scan tries again (${code ?? "error"})`);
+    }
+  }
 }
 
 /** Return cached usage, initializing it from disk after cold start or
@@ -239,8 +264,9 @@ export function attachmentStorageUsage(): { attachmentBytes: number; reservedByt
  * outside this module that removes a file saveImage/saveFile created must
  * route through here instead of a raw unlink, or the cache will overcount
  * forever and eventually reject uploads that should fit. */
-export function deleteAttachment(path: string): void {
-  if (dirname(resolve(path)) !== resolve(ATTACHMENTS_DIR)) return;
+export type DeleteResult = { ok: true } | { ok: false; code: string };
+export function deleteAttachment(path: string): DeleteResult {
+  if (dirname(resolve(path)) !== resolve(ATTACHMENTS_DIR)) return { ok: false, code: "outside" };
   try {
     // Only bother sizing it if the cache is already warm — if it isn't, the
     // eventual first scan just won't see this file, which is correct.
@@ -249,12 +275,55 @@ export function deleteAttachment(path: string): void {
     if (committedAttachmentBytes !== null) {
       committedAttachmentBytes = Math.max(0, committedAttachmentBytes - size);
     }
+    return { ok: true };
   } catch (error) {
     // A previously counted entry may already have disappeared. Reconcile on
     // the next reservation instead of retaining its bytes indefinitely.
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") invalidateAttachmentAccounting();
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") { invalidateAttachmentAccounting(); return { ok: true }; }
+    return { ok: false, code: code ?? "error" };
   }
 }
+
+/** What Remove did with one name (SL-H H1). `pending`: the marker stands but
+ * the file could not be unlinked yet (Windows: a file open for a read); the
+ * next scan finishes it (H3). `failed`: no marker could be written, so
+ * nothing was unlinked. */
+export type RemoveResult = { state: "removed" } | { state: "pending"; code: string } | { state: "failed"; code: string };
+
+/** Remove one stored attachment for good (SL-H H1): first its marker, the
+ * record that it was removed, then its file. Marker first, so a process that
+ * stops between the two never leaves a file gone with no record; every
+ * reader refuses the name from its marker on (H2), and the next scan unlinks
+ * a file whose marker it finds (H3). A marker already there is fine: a second
+ * Remove goes on to the unlink, which then finds nothing. The caller has
+ * checked the name. */
+export function removeAttachment(name: string): RemoveResult {
+  if (!isAttachmentName(name)) return { state: "failed", code: "EINVAL" };
+  try {
+    ensureAttachmentsDir();
+    mkdirSync(REMOVED_DIR, { recursive: true, mode: 0o700 });
+    const markerPath = join(REMOVED_DIR, name);
+    try { writeFileSync(markerPath, "", { mode: 0o600, flag: "wx" }); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code ?? "error";
+    console.warn(`[attachments] Remove could not record ${name} as removed, so nothing was deleted (${code})`);
+    return { state: "failed", code };
+  }
+  const deleted = deleteAttachment(join(ATTACHMENTS_DIR, name));
+  if (deleted.ok) return { state: "removed" };
+  console.warn(`[attachments] ${name} is removed but its file could not be deleted yet; the next scan tries again (${deleted.code})`);
+  invalidateAttachmentAccounting();
+  return { state: "pending", code: deleted.code };
+}
+
+/** SL-H H5: a removed name is never written again. Asked as the last step
+ * before an upload links its file into place. */
+function refuseRemovedName(name: string): void {
+  if (attachmentRemoved(ATTACHMENTS_HOME, name)) throw statusError(409, REMOVED_UPLOAD_MESSAGE);
+}
+export const REMOVED_UPLOAD_MESSAGE = "That attachment was removed";
 
 /** Test-only: force the next quota check to rescan the directory instead of
  * trusting the cache. Needed because tests mutate ATTACHMENTS_DIR directly
@@ -549,6 +618,7 @@ export async function saveFile(
       closed = true;
       try {
         const accountingVersion = attachmentAccountingVersion;
+        refuseRemovedName(basename(path));
         await link(partialPath, path);
         addCommittedBytes(bytes, accountingVersion);
         await unlink(partialPath);
@@ -615,6 +685,7 @@ function writeImage(bytes: Buffer, mime: string, maxBytes: number, how: ImageMod
   try {
     writeFileSync(partialPath, bytes, { mode: 0o600, flag: "wx" });
     try {
+      if (how.mode !== "receipt") refuseRemovedName(name);
       linkSync(partialPath, path);
       addCommittedBytes(bytes.byteLength);
       createdHere = true;
