@@ -54,7 +54,7 @@ export function openInstallationRecoveryWindow({ BrowserWindow, ipcMain, dialog,
       const picked = await dialog.showSaveDialog(win, { title: "Save a .zip recovery file", defaultPath: "murage-installation-backup.zip", filters: [{ name: "Murage backup", extensions: ["zip"] }] });
       return picked.canceled ? null : picked.filePath ?? null;
     },
-    confirm: async (_event, action, name, destination, installation) => {
+    confirm: async (_event, action, name, destination, installation, notice) => {
       if(action==="backup-encrypted"||action==="restore-encrypted-new"){
         const restore=action==="restore-encrypted-new";
         const answer=await dialog.showMessageBox(win,{title:"Murage",type:"warning",buttons:["Cancel",restore?"Restore and restart":"Make backup"],defaultId:0,cancelId:0,noLink:true,
@@ -83,7 +83,7 @@ export function openInstallationRecoveryWindow({ BrowserWindow, ipcMain, dialog,
       const answer = await dialog.showMessageBox(win, { title: "Murage",
         type: "warning", buttons: ["Cancel", action === "activate" ? "Open restored copy" : action === "restore" ? "Restore backup" : "Undo restore"], defaultId: 0, cancelId: 0, noLink: true,
         message: action === "activate" ? "Open the restored copy?" : action === "restore" ? "Restore " + name + "?" : "Undo the restore and go back to your previous data?",
-        detail: action === "activate" ? "Murage restarts with the restored copy. AI engines and schedules stay off and no unfinished work restarts. Turn engines on and reconnect your phone and messaging apps in Settings when you're ready." : action === "restore"
+        detail: action === "activate" ? (notice ? notice + "\n\n" : "") + "Murage restarts with the restored copy. AI engines and schedules stay off and no unfinished work restarts. Turn engines on and reconnect your phone and messaging apps in Settings when you're ready." : action === "restore"
           ? "Your current data is kept separately. Restored bots and schedules stay paused until you review them, and you connect AI engines again."
           : "Your previous data is put back. The restored copy is kept separately; nothing is deleted.",
       });

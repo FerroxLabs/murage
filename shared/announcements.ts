@@ -44,8 +44,9 @@ export const ANNOUNCEMENT_ACTIONS = [
 ] as const;
 
 /** Release switches the signed feed can turn on without a desktop release.
- *  murage-for-chrome-listed: the Chrome Web Store listing is public, so the
- *  app may link it (plan 2.6). Off (absent) until then. */
+ *  murage-for-chrome-listed: the Chrome Web Store listing is public (plan 2.6).
+ *  Kept so feeds that carry it still parse; since 1.0.6 the listing is live
+ *  and a release build links it without this flag. */
 export const ANNOUNCEMENT_FLAGS = ["murage-for-chrome-listed"] as const;
 
 export type AnnouncementKind = (typeof ANNOUNCEMENT_KINDS)[number];

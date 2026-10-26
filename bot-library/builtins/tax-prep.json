@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Tax Prep",
     "tagline": "A quarterly tax pack with source totals and missing records marked",
-    "summary": "Levy prepares a quarterly tax preparation pack for adviser review. Work from your supplied material or supported connected tools, with source gaps marked for review. For broader business financial decisions, use Numbers. For a broader legal exposure review, use Counsel. I give guidance and drafts, not licensed tax advice, and I promise no outcome.",
+    "summary": "Levy prepares a quarterly tax preparation pack for adviser review.",
     "category": "Money",
     "author": {
       "name": "Ferrox Labs",
@@ -60,7 +60,8 @@
         "title": "Tax Prep",
         "description": "Levy prepares a quarterly tax preparation pack for adviser review. Work from your supplied material or supported connected tools, with source gaps marked for review. For broader business financial decisions, use Numbers. For a broader legal exposure review, use Counsel.",
         "appearance": {
-          "color": "blue"
+          "color": "green",
+          "mascotBody": "diamond"
         },
         "skills": [
           "finance-sales-tax",

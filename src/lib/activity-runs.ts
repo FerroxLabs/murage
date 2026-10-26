@@ -16,6 +16,7 @@ import { TURN_STOPPED_NOTE } from "../../server/turn-outcome";
 import type { Subtask } from "@/lib/subtasks";
 import { settledTurnHelpers } from "../../shared/turn-helpers";
 import { t } from "@/lib/i18n";
+import { toolStepLabel } from "@/lib/tool-step-label";
 import { routineRunMarker } from "../../shared/routine-run-marker";
 
 export type ActivityTranscriptItem =
@@ -80,6 +81,7 @@ function assistantTurnFolds(messages: Message[]): {
     if (
       terminal.role !== "bot" ||
       terminal.kind !== "text" ||
+      terminal.widget !== undefined ||
       !terminal.turnId ||
       !terminal.turnTerminal
     ) return;
@@ -87,6 +89,8 @@ function assistantTurnFolds(messages: Message[]): {
     const narration = messages.slice(0, terminalIndex).filter((message) =>
       message.role === "bot" &&
       message.kind === "text" &&
+      // a widget (QW Q4) is a card the owner answers, never narration folded away
+      !message.widget &&
       message.turnId === terminal.turnId &&
       !message.turnTerminal
     );
@@ -234,15 +238,25 @@ function storedHelpers(message: Message): Subtask[] {
 
 const MAX_NAMES = 3;
 
-/** The one line a folded run has to earn its place with: how much work it
- * was and which tools did it. Failed steps are never folded. */
-export function describeRun(messages: Message[]): string {
+/** The raw tool names of a run, counted, in order of first use. Kept for the
+ * hover text, so the exact names stay one pointer away. */
+export function describeRunRaw(messages: Message[]): string {
   const counts = new Map<string, number>();
   for (const message of messages) {
     const name = message.tool?.name ?? "";
     counts.set(name, (counts.get(name) ?? 0) + 1);
   }
-  const names = [...counts].map(([name, count]) => (count > 1 ? `${name} ×${count}` : name));
+  return [...counts].map(([name, count]) => (count > 1 ? `${name} ×${count}` : name)).join(", ");
+}
+
+/** The one line a folded run has to earn its place with: how much work it
+ * was and what it did, in plain words ("read files, edited files, ran
+ * commands"). Tool names no table knows are shown as they came. Failed steps
+ * are never folded. */
+export function describeRun(messages: Message[]): string {
+  const seen = new Set<string>();
+  for (const message of messages) seen.add(toolStepLabel(message.tool?.name));
+  const names = [...seen];
   const shown = names.slice(0, MAX_NAMES).join(", ");
   const rest = names.length > MAX_NAMES ? ` +${names.length - MAX_NAMES} more` : "";
   return `${messages.length} steps · ${shown}${rest}`;

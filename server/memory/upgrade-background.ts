@@ -21,12 +21,16 @@ import type { ExactCounts } from "./upgrade-counts.ts";
 import { UpgradeProgressTracker, UNKNOWN_OUTSIDE, idleUpgradeState, upgradeCounts, type LaunchWindow, type UpgradeOutside, type UpgradeProgress } from "./upgrade-progress.ts";
 import { memoryCaptures, memoryRecalls } from "./capture-gate.ts";
 import { memoryChecking } from "./integrity-flags.ts";
+import { stepScrubPass } from "./scrub-pass.ts";
+import { scrubPassPending } from "./scrub-state.ts";
+
+const SCRUB_WALKS = ["versions", "records", "details", "feedback"] as const;
 import type { StorageState, StoredMode, UpgradeState } from "../../shared/upgrade-contract.mjs";
 import { heldStep } from "../observe.ts";
 import { drainRevokeMarkerBounded } from "./memory-revocation.ts";
 import { upgradeMarkerWalked } from "./revoke-marker.ts";
 
-export type BackgroundJob = "integrity" | "lineage" | "writetime" | "storage" | "message-index" | "search-index";
+export type BackgroundJob = "integrity" | "scrub" | "lineage" | "writetime" | "storage" | "message-index" | "search-index";
 /** Longest a slice works before handing back. */
 /** 20 ms slices, each followed by a pause at least as long (the tick adds the slice's own time): a request waits behind at most ~20 ms of work and the
  * loop is at most half busy for the hours the write-time backfill runs. The slices stay on the main connection (they write the same file the owner's
@@ -99,6 +103,8 @@ export function backgroundJobsPending(db: DatabaseSync): BackgroundJob[] {
   // answer, the pending browser notes), so an approval is exact for every thread as early as possible. Then the proofs, the lineage, the sets.
   try { if (walkerPending(db).length) jobs.push("message-index"); } catch { /* absent */ }
   try { if (integrityRunning(readIntegrityPass(db))) jobs.push("integrity"); } catch { /* absent */ }
+  // The 1.0.4 scrub of bank, card, account and id numbers in earlier memory (scrub-pass.ts), after the proofs: it rewrites only rows they passed.
+  try { if (scrubPassPending(db)) jobs.push("scrub"); } catch { /* absent */ }
   try { if (lineageRepairPending(db)) jobs.push("lineage"); } catch { /* absent */ }
   // The write-time lineage of the history (lineage-backfill.ts, DESIGN-WRITETIME 4), after the repair it reads: until it is done every
   // generated line of an upgraded file reads "checking". The strip shows its rows walked of rows to walk (memory_lineage_cert).
@@ -109,8 +115,8 @@ export function backgroundJobsPending(db: DatabaseSync): BackgroundJob[] {
   return jobs;
 }
 
-const WEIGHTS: Record<string, number> = { "output-index": 3, references: 3, shapes: 2, learning: 0.5, lineage: 3, writetime: 3, marker: 1, storage: 2, "message-index": 3, "search-index": 1 };
-const phasesOf = (jobs: BackgroundJob[]) => jobs.flatMap(job => job === "integrity" ? ["output-index", "references", "shapes", "learning"] : job === "writetime" ? ["writetime", "marker"] : [job]).map(id => ({ id, weight: WEIGHTS[id] ?? 1, total: 0 }));
+const WEIGHTS: Record<string, number> = { masking: 2, settling: 0.5, "output-index": 3, references: 3, shapes: 2, learning: 0.5, lineage: 3, writetime: 3, marker: 1, storage: 2, "message-index": 3, "search-index": 1 };
+const phasesOf = (jobs: BackgroundJob[]) => jobs.flatMap(job => job === "integrity" ? ["output-index", "references", "shapes", "learning"] : job === "writetime" ? ["writetime", "marker"] : job === "scrub" ? ["masking", "settling"] : [job]).map(id => ({ id, weight: WEIGHTS[id] ?? 1, total: 0 }));
 
 export interface BackgroundStatus {
   pending: boolean;
@@ -184,6 +190,15 @@ function runners(db: DatabaseSync, hooks: BackgroundHooks): Map<BackgroundJob, J
     const edge = phase === "output-index" ? [0, OUTPUT_END] : phase === "references" ? [OUTPUT_END, REFERENCES_END] : phase === "shapes" ? [REFERENCES_END, SHAPES_END] : [SHAPES_END, INTEGRITY_TOTAL];
     const within = Math.max(0, Math.min(1, ((row?.done ?? 0) - edge[0]!) / (edge[1]! - edge[0]!)));
     return { more: step.more, done: Math.round(within * 1000), total: 1000, phase };
+  } });
+  out.set("scrub", { id: "scrub", slice() {
+    const step = stepScrubPass(db, { budgetMs: sliceMs, ...(hooks.now ? { now: hooks.now } : {}) });
+    // one bar for the four walks (each a quarter, by its rowid against the table's newest), and one for settling
+    const walk = SCRUB_WALKS.indexOf(step.phase as typeof SCRUB_WALKS[number]);
+    const phase = walk >= 0 ? "masking" : "settling";
+    const done = walk >= 0 ? Math.round(((walk + Math.min(1, step.done / Math.max(step.total, 1))) / SCRUB_WALKS.length) * 1000) : step.more ? 0 : 1000;
+    if (step.retryMs !== undefined && step.more) return { more: true, retryMs: step.retryMs, done, total: 1000, phase } as RetryLater;
+    return { more: step.more, done, total: 1000, phase };
   } });
   let lineage: ReturnType<typeof repairOutputRootBackfillSteps> | null = null, lineageProgress = { done: 0, total: 0 };
   out.set("lineage", { id: "lineage", slice() {

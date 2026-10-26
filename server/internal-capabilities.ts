@@ -1,5 +1,6 @@
 import { assertHumanPrincipal, type HumanPrincipal } from "./human-principals.ts";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { forgetAllVenueReadTurns, forgetVenueReadTurn } from "./venue-read-turns.ts";
 
 export type InternalCapabilityKind = "agents" | "connectors" | "computer" | "memory" | "mcp";
 export type InternalCapability = Readonly<{
@@ -102,6 +103,7 @@ export class InternalCapabilities {
   }
 
   isActive(claim: InternalCapability): boolean {
+    if (claim.expiresAt <= this.#now()) forgetVenueReadTurn(claim.generation);
     if(claim.humanPrincipal){try{assertHumanPrincipal(claim.humanPrincipal);}catch{return false;}}
     const owner = this.#generations.get(claim.threadId);
     return Boolean(owner && owner.id === claim.generation && owner.botId === claim.botId
@@ -134,6 +136,12 @@ export class InternalCapabilities {
     const existing = this.#providers.get(key);
     if (existing && existing.generation !== generation) return false;
     this.#providers.set(key, { threadId, generation });
+    // A later generation that re-binds an already bound turn id is named for that turn too (the dispatcher stays the first).
+    const acceptedKey = JSON.stringify([threadId, generation]);
+    if (!this.#turnOf.has(acceptedKey)) {
+      this.#turnOf.set(acceptedKey, turnId);
+      while (this.#turnOf.size > this.#tombstoneLimit) this.#turnOf.delete(this.#turnOf.keys().next().value!);
+    }
     return true;
   }
 
@@ -166,6 +174,8 @@ export class InternalCapabilities {
   }
 
   revokeGeneration(threadId: string, generation: string): void {
+    // the generation's venue-read record goes with its claims (BOT-VENUE-AWARENESS-106 4.2)
+    forgetVenueReadTurn(generation);
     for (const [token, claim] of this.#tokens) {
       if (claim.threadId === threadId && claim.generation === generation) this.#tokens.delete(token);
     }
@@ -185,6 +195,7 @@ export class InternalCapabilities {
   }
 
   revokeAll(): void {
+    forgetAllVenueReadTurns();
     this.#tokens.clear();
     this.#generations.clear();
     this.#providers.clear();

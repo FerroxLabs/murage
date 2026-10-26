@@ -40,7 +40,8 @@ function itemOf(row: SendRow): ChannelQueueItem {
     text: row.text,
     replyToId: row.replyToId ?? undefined,
     sendId: row.sendId ?? undefined,
-    mode: row.mode ?? "chat",
+    // a typed stop row is born finished and never queued; only "goal" changes how a queued item runs
+    mode: row.mode === "goal" ? "goal" : "chat",
     ...(row.origin ? { origin: row.origin as MessageOrigin } : {}),
     ...(row.responderId ? { responderBotId: row.responderId } : {}),
   };

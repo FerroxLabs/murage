@@ -388,7 +388,10 @@ for (const [index, call] of calls.entries()) {
     continue;
   }
   if (call.name === "run_command" && typeof call.args.CommandLine === "string") {
-    try { execSync(call.args.CommandLine, { cwd: process.cwd(), stdio: "ignore", shell: "/bin/sh" }); } catch { /* the step still ran */ }
+    // The platform's own command shell: there is no /bin/sh on Windows, so a run_command there must go through cmd.exe
+    // (ComSpec), or the step "ran" without running anything and a test's file never appears.
+    const shell = process.platform === "win32" ? process.env.ComSpec || "cmd.exe" : "/bin/sh";
+    try { execSync(call.args.CommandLine, { cwd: process.cwd(), stdio: "ignore", shell }); } catch { /* the step still ran */ }
   }
   step("DONE");
 }

@@ -21,6 +21,7 @@ import type { ChannelTranscript } from "../../voice/channel-transcribe.ts";
 import { ownedMediaFile, sweepMedia } from "./media.ts";
 import { CLOUD_API_MESSAGE, CLOUD_API_NOT_AVAILABLE } from "./cloud-transport.ts";
 import { checkedProvider, AuthKeyUnavailable, type AuthKeyProvider } from "./auth-key.ts";
+import { channelReply } from "../reply-text.ts";
 import { decide, newPairingCode, pairingReplyText, PAIRING_MAX_PENDING, PAIRING_TTL_MS, type AccessPolicy, type GroupsPolicy, type Principal, type WhatsAppMode } from "./core/access.ts";
 import type { LinkState } from "./core/close-decision.ts";
 import { createEchoLedger, parseOutboundJournal } from "./core/echo.ts";
@@ -139,11 +140,12 @@ const MEDIA_SWEEP_EVERY_MS = 6 * 60 * 60_000;
 const VOICE_HINT_EVERY_MS = 60 * 60_000;
 
 /** The sentences a voice note can earn instead of a task. Plain, no blame, no mention of money. */
+/** Read when sent, so each follows the owner's app language (reply-text.ts). */
 export const VOICE_REPLIES = {
-  unconfigured: "Voice notes need transcription turned on in Murage. Turn it on in Settings, or send this as text.",
-  busy: "Murage is still working on another voice note. Send this one again in a moment.",
-  unreadable: "I could not read that voice note. Voice notes work up to about two minutes. You can send it again or type it.",
-} as const;
+  get unconfigured() { return channelReply("channelReply.voiceUnconfigured"); },
+  get busy() { return channelReply("channelReply.voiceBusy"); },
+  get unreadable() { return channelReply("channelReply.voiceUnreadable"); },
+};
 
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 export const chatKeyOf = (jid: string): string => digest(canonicalJid(jid)).slice(0, 24);

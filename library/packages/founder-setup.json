@@ -28,7 +28,8 @@
         "title": "Counsel",
         "description": "Counsel - startup-stage legal framing on formation, contracts, IP, and compliance. Not your lawyer; flags when you need one.",
         "appearance": {
-          "color": "green"
+          "color": "yellow",
+          "mascotBody": "circle"
         },
         "skills": [
           "sentry-formation-and-structure",
@@ -45,7 +46,8 @@
         "title": "Numbers",
         "description": "Numbers specialist - runway, unit economics, pricing math via Greg Crabtree's Simple Numbers founder-friendly frame.",
         "appearance": {
-          "color": "blue"
+          "color": "cyan",
+          "mascotBody": "diamond"
         },
         "skills": [
           "coin-runway-and-burn",
@@ -62,7 +64,8 @@
         "title": "Brand",
         "description": "Brand specialist - onlyness-first positioning and visual systems via Marty Neumeier's difference-beats-betterness method.",
         "appearance": {
-          "color": "red"
+          "color": "pink",
+          "mascotBody": "blob"
         },
         "skills": [
           "mira-brand-foundation",
@@ -79,7 +82,8 @@
         "title": "Ops",
         "description": "Ops specialist - operating rhythms, CRM hygiene, and SOP design via Verne Harnish's Scaling Up cadence discipline.",
         "appearance": {
-          "color": "orange"
+          "color": "teal",
+          "mascotBody": "squircle"
         },
         "skills": [
           "patch-operating-rhythm",

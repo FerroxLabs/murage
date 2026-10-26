@@ -34,3 +34,13 @@ export function brokerPathFromArgv(path: string, platform: NodeJS.Platform = pro
   const match = /^(?:\/\/|\\\\|\\)([.?])[\\/]pipe[\\/](.+)$/i.exec(path);
   return match ? `\\\\${match[1]}\\pipe\\${match[2]!.replace(/\//g, "\\")}` : path;
 }
+
+/** U22: the only broker paths the proxy connects to. Windows: Murage's own permission pipe on this machine
+ * (`\\.\pipe\murage-perm-<pid>-<tag>[-<hex>]`, brokerSocketPath), never a remote `\\host\pipe\` or another program's pipe.
+ * Elsewhere: an absolute path to a `.sock` file (the data folder's perm-<tag>.sock or the temp murage-perm-<hex>.sock). A path
+ * outside these is refused: the proxy then connects to nothing and answers every ask as a broker that is gone. */
+export function brokerPathAccepted(path: string, platform: NodeJS.Platform = process.platform): boolean {
+  if (path.includes("\0")) return false;
+  if (platform === "win32") return /^\\\\\.\\pipe\\murage-perm-[\w-]+$/.test(path);
+  return path.startsWith("/") && path.endsWith(".sock") && path.length > "/.sock".length;
+}

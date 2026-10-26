@@ -646,3 +646,59 @@ it("the Release route answers 409 and leaves the hold when completion throws", (
   const route = source.slice(source.indexOf("restore-holds\\/(output_receipt|shared_result)"), source.indexOf("held-continuations"));
   expect(route).toMatch(/catch \{ return json\(res, 409, \{ error: "This output is still kept and was not published yet\. Release it again to retry\." \}\); \}/);
 });
+
+// 1.0.4 (rig, Flux): a hand-off bot writes into the project lead's outputs/, and two members share one conversation. Neither was
+// saved to Files: the delegate's snapshot covered only its own desk, and a second dispatch on a conversation dropped the first's.
+function projectFixture() {
+  const store = new Store(() => ({ instanceId: "fixture", model: "fixture" }));
+  const lead = store.createBot(), delegate = store.createBot();
+  const leadRoot = ensureTaskWorkspace(lead.id, lead.threadId), delegateRoot = ensureTaskWorkspace(delegate.id, delegate.threadId);
+  const scope = (bot: typeof lead, root: string, threadId = bot.threadId): ArtifactScope => ({ botId: bot.id, botName: bot.name, threadId, workspaceRoot: root });
+  const scopes = [scope(lead, leadRoot), scope(delegate, delegateRoot), scope(delegate, delegateRoot, lead.threadId)];
+  const turns = new Map<string, string>();
+  const publisher = createOutputPublisher({ dataDir: DATA_DIR, database, store, artifactScopes: () => scopes, turnOfRun: (_thread, run) => turns.get(run) });
+  const access = { owner: true, scopes };
+  const complete = (threadId: string, turnId: string) => publisher.publishTerminalOutputs({ type: "turn.completed", turnId, ok: true, threadId, eventId: randomUUID() } as never);
+  const write = (root: string, relativePath: string, content: string) => { const path = join(root, ...relativePath.split("/")); mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, content); };
+  return { store, lead, delegate, leadRoot, delegateRoot, publisher, access, turns, complete, write };
+}
+
+it("saves a hand-off bot's file written into the lead's outputs/ and shows it in Files", async () => {
+  const f = projectFixture();
+  const run = randomUUID(); f.turns.set(run, "delegate-turn");
+  f.publisher.beforeDispatch({ botId: f.delegate.id, threadId: f.delegate.threadId, runId: run, workspaceRoot: realpathSync(f.delegateRoot), managed: true,
+    siblings: [{ botId: f.lead.id, threadId: f.lead.threadId, workspaceRoot: realpathSync(f.leadRoot) }] });
+  f.write(f.leadRoot, "outputs/delgado-plan.md", "# Plan\nFive pages.");
+  await f.complete(f.delegate.threadId, "delegate-turn");
+  const items = listArtifacts(database(), storage(), {}, f.access).items;
+  expect(items.map(item => [item.botId, item.relativePath])).toEqual([[f.lead.id, "outputs/delgado-plan.md"]]);
+  expect(f.store.messagesFor(f.lead.threadId).filter(message => message.artifactIds?.length).map(message => message.text)).toEqual(["Saved file: delgado-plan.md"]);
+});
+
+it("keeps a new saved copy when a hand-off bot overwrites a file the lead already saved", async () => {
+  const f = projectFixture();
+  const first = randomUUID(); f.turns.set(first, "lead-turn");
+  f.publisher.beforeDispatch({ botId: f.lead.id, threadId: f.lead.threadId, runId: first, workspaceRoot: realpathSync(f.leadRoot), managed: true });
+  f.write(f.leadRoot, "outputs/plan.md", "version one");
+  await f.complete(f.lead.threadId, "lead-turn");
+  const second = randomUUID(); f.turns.set(second, "delegate-turn");
+  f.publisher.beforeDispatch({ botId: f.delegate.id, threadId: f.delegate.threadId, runId: second, workspaceRoot: realpathSync(f.delegateRoot), managed: true,
+    siblings: [{ botId: f.lead.id, threadId: f.lead.threadId, workspaceRoot: realpathSync(f.leadRoot) }] });
+  f.write(f.leadRoot, "outputs/plan.md", "version two, longer");
+  await f.complete(f.delegate.threadId, "delegate-turn");
+  const items = listArtifacts(database(), storage(), {}, f.access).items;
+  expect(items).toHaveLength(2);
+  expect(new Set(items.map(item => item.sha256))).toEqual(new Set([sha("version one"), sha("version two, longer")]));
+});
+
+it("keeps each member's snapshot when two bots dispatch on one conversation", async () => {
+  const f = projectFixture();
+  const a = randomUUID(), b = randomUUID(); f.turns.set(a, "turn-a"); f.turns.set(b, "turn-b");
+  f.publisher.beforeDispatch({ botId: f.lead.id, threadId: f.lead.threadId, runId: a, workspaceRoot: realpathSync(f.leadRoot), managed: true });
+  f.publisher.beforeDispatch({ botId: f.delegate.id, threadId: f.lead.threadId, runId: b, workspaceRoot: realpathSync(f.delegateRoot), managed: true });
+  f.write(f.leadRoot, "outputs/lead.md", "from the lead");
+  f.write(f.delegateRoot, "outputs/delegate.md", "from the delegate");
+  await f.complete(f.lead.threadId, "turn-a");
+  await f.complete(f.lead.threadId, "turn-b");
+  expect(listArtifacts(database(), storage(), {}, f.access).items.map(item => item.relativePath).sort()).toEqual(["outputs/delegate.md", "outputs/lead.md"]);
+});
