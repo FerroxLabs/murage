@@ -53,7 +53,7 @@ describe("the chat column's own controls", () => {
     for (const file of ["components/ChatHeader.tsx", "components/GroupView.tsx"]) {
       const source = read(file);
       expect(source, file).toContain('"pt-[calc(0.75rem+env(safe-area-inset-top))]"');
-      expect(source, file).toContain("<OpenBotListButton />");
+      expect(source, file).toMatch(/<OpenBotListButton( circle=\{phone\})? \/>/);
       // No corner reserved for an overlay any more.
       expect(source, file).not.toContain("pl-11");
       expect(source, file).toContain('"pl-3 md:pl-5"');
@@ -86,8 +86,8 @@ describe("the chat column's own controls", () => {
     expect(read("components/Sidebar.tsx")).toContain('"pb-3 pt-2 max-md:pb-[calc(0.75rem+var(--inset-bottom))]"');
   });
 
-  it("keeps the update notice above the home indicator", () => {
-    expect(read("components/UpdateBanner.tsx")).toContain("fixed bottom-[calc(1rem+var(--inset-bottom))] left-4");
+  it("keeps the centred update card inside the safe area", () => {
+    expect(read("components/UpdateBanner.tsx")).toContain("overlay-inset fixed inset-0");
   });
 });
 

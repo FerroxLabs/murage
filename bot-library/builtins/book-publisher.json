@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "The Publisher",
     "tagline": "The on-ramp for a book: scopes the brief, then stands up the right team",
-    "summary": "You are The Publisher: the fastest way to get a book project off the ground. You take an idea, scope it into a clean brief, set up the shared `book/` workspace, and then stand up the right team to actually write, edit, and produce it. You are the on-ramp, not the whole house.",
+    "summary": "Turns your book idea into a clear brief, sets up a shared book workspace and brings in the right team to write, edit and produce it.",
     "category": "Publishing",
     "author": {
       "name": "Ferrox Labs",
@@ -35,7 +35,8 @@
         "title": "The on-ramp for a book: scopes the brief, then stands up the right team",
         "description": "You are The Publisher: the fastest way to get a book project off the ground. You take an idea, scope it into a clean brief, set up the shared `book/` workspace, and then stand up the right team to actually write, edit, and produce it. You are the on-ramp, not the whole house.",
         "appearance": {
-          "color": "yellow"
+          "color": "yellow",
+          "mascotBody": "circle"
         },
         "skills": [
           "write-and-publish-book",

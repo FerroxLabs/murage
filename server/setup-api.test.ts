@@ -66,6 +66,19 @@ beforeAll(async () => {
 afterAll(async () => { await fixture?.close(); });
 
 describe("the first run on a real server whose engine never answers", () => {
+  it("answers a peek at whether setup is finished without giving any bot the Chief role or saying a card", async () => {
+    // The renderer's store asks `?peek=1` in the background to decide whether
+    // to remember the open conversation (N1: on a surface where that was the
+    // first setup read, it made the bot in the settings dialog Chief).
+    const peek = await api("GET", "/api/setup?peek=1", undefined, desktop);
+    expect(peek.status).toBe(200);
+    expect(peek.body.firstRun).toBe(true);
+    const bots = await api("GET", "/api/bots", undefined, desktop);
+    expect(bots.body.bots).toHaveLength(1);
+    expect(bots.body.bots[0].chiefOfStaff).toBeFalsy();
+    expect((bots.body.bots[0].messages ?? []).filter((message: { card?: { setup?: unknown } }) => message.card?.setup)).toEqual([]);
+  });
+
   it("seats the bot of a fresh install as the Chief when the checklist is opened", async () => {
     // Before setup is opened, nothing has been rewired: the seeded bot holds
     // no role, because an installation nobody has run setup on must not be
@@ -116,6 +129,12 @@ describe("the first run on a real server whose engine never answers", () => {
     // The opening card is a real bot-authored message, so it reads correctly
     // in an exported transcript with no renderer at all.
     expect(cards.find((card) => card.key === setupCardKey("hello", "welcome"))?.title).toBeTruthy();
+    // Putting the hello card in front of them is the news ask, recorded once
+    // so it is never asked again (1.0.7). The record holds no address.
+    const news = await api("GET", "/api/news", undefined, desktop);
+    expect(news.status).toBe(200);
+    expect(news.body.status).toBe("asked");
+    expect(Object.keys(news.body).sort()).toEqual(["at", "onList", "status"]);
   });
 
   it("does not collect a second copy of a card on every poll", async () => {
@@ -135,6 +154,8 @@ describe("the first run on a real server whose engine never answers", () => {
     expect(await api("POST", "/api/setup/skip", { step: "flow" }, remote)).toMatchObject({ status: 404 });
     expect(await api("POST", "/api/setup/routine", { template: "brief" }, remote))
       .toMatchObject({ status: 404, body: { error: "no such route" } });
+    expect((await api("GET", "/api/news", undefined, remote)).status).not.toBe(200);
+    expect((await api("POST", "/api/subscribe", { email: "phone@example.com" }, remote)).status).not.toBe(200);
   });
 
   it("refuses an unknown step and an empty answer", async () => {
@@ -178,6 +199,8 @@ describe("the first run on a real server whose engine never answers", () => {
     // records, the next read notices and settles the card that asked.
     await checklist();
     expect((await setupCards()).find((card) => card.key === setupCardKey("hello", "welcome"))?.settled).toBe(true);
+    // A name and no address is a pass on the news, recorded so it is not asked again.
+    expect((await api("GET", "/api/news", undefined, desktop)).body.status).toBe("skipped");
   });
 
   // Linux customer pass, 0.1.60: a new conversation opened on the Chief
@@ -370,18 +393,28 @@ describe("the rest of the walk", () => {
   // This fixture has no Sendlane credentials and must not: a test that posted
   // to a real list would be a test that mailed real people. Disabled is the
   // interesting case anyway, because it is the one that used to be silent.
-  it("takes a signup without a credential in sight and without ever blocking", async () => {
-    const answered = await api("POST", "/api/subscribe", { email: "someone@example.com", name: "Someone" }, desktop);
-    // 200 whatever happened downstream. Entry to the app has never been
-    // allowed to depend on a marketing list being reachable.
+  it("takes a signup at once, records it, and never blocks on the list", async () => {
+    // This fixture is not the packaged app and sets no MURAGE_NEWS_URL, so the
+    // queue has nowhere to post: no test address ever reaches the real list.
+    // server/news-signup.test.ts drives the delivery itself with a fake fetch.
+    const answered = await api("POST", "/api/subscribe", { email: "Someone@Example.com ", name: "Someone" }, desktop);
     expect(answered.status, JSON.stringify(answered.body)).toBe(200);
-    expect(answered.body).toEqual({ ok: false, reason: "disabled" });
+    expect(answered.body).toEqual({ ok: true, reason: null });
+    const news = await api("GET", "/api/news", undefined, desktop);
+    // Recorded as given. This build has nowhere to post, so the queue drops
+    // the address rather than holding it (news-signup.test.ts covers both).
+    expect(news.body.status).toBe("subscribed");
+    expect(JSON.stringify(news.body)).not.toContain("someone@example.com");
 
-    // And an address that is not an address is refused before anything leaves
-    // the machine, which is also a 200: it is not the person's problem.
+    // A later name-only hello or a skip never undoes a subscription.
+    await api("POST", "/api/setup/answer", { step: "hello", answer: "Sean" }, desktop);
+    expect((await api("GET", "/api/news", undefined, desktop)).body.status).toBe("subscribed");
+
+    // An address that is not an address is refused before anything is
+    // queued, which is also a 200: it is not the person's problem.
     const rubbish = await api("POST", "/api/subscribe", { email: "not-an-address" }, desktop);
     expect(rubbish.status).toBe(200);
-    expect(rubbish.body.ok).toBe(false);
+    expect(rubbish.body).toEqual({ ok: false, reason: "invalid-email" });
   });
 
   // THE GREP THAT USED TO SIT HERE PROVED NOTHING, AND IS GONE.

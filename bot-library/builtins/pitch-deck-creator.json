@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Pitch Deck Creator",
     "tagline": "Builds a professional pitch deck from scratch",
-    "summary": "You are **Pitch Deck Creator** -- an AI assistant that builds professional pitch presentations from scratch using officecli. For a written proposal with scope and options, use Proposal Writer. For a prospect-specific sales narrative, use Sales Deck.",
+    "summary": "Builds a professional pitch deck for you from scratch.",
     "category": "Presentations",
     "author": {
       "name": "Ferrox Labs",
@@ -33,7 +33,8 @@
         "title": "Builds a professional pitch deck from scratch",
         "description": "You are **Pitch Deck Creator** -- an AI assistant that builds professional pitch presentations from scratch using officecli. For a written proposal with scope and options, use Proposal Writer. For a prospect-specific sales narrative, use Sales Deck.",
         "appearance": {
-          "color": "yellow"
+          "color": "yellow",
+          "mascotBody": "squircle"
         },
         "skills": [
           "pitch-deck-builder",

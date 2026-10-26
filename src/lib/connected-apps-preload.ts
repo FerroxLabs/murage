@@ -8,6 +8,8 @@ export interface ConnectorStatus {
   connected: boolean;
   pending?: boolean;
   status?: string;
+  /** A call to this app was refused: the sign-in needs doing again. */
+  needsReconnect?: boolean;
   accounts?: Array<{
     id: string;
     alias?: string;

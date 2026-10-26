@@ -21,8 +21,10 @@ import {
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import {
+  companionPairingAddressText,
   companionPairingLink,
   companionPairingRoute,
+  companionPairingRouteIsHosted,
   companionPairingRoutePin,
   companionPairingRoutePinAvailable,
   type CompanionEndpoint,
@@ -55,6 +57,7 @@ import {
   type PhonePairingAttemptLock,
   type PhonePairingAttemptQueue,
 } from "../lib/phone-setup";
+import { t } from "../lib/i18n";
 import { tailnetHttpsHelp } from "../lib/tailnet-https";
 import { useDesktopSurface } from "../lib/use-surface";
 import type { CompanionAccountState } from "../types/muragebox";
@@ -373,6 +376,10 @@ export interface PhoneSetupController {
   pairingLink: string | null;
   secondsLeft: number;
   address: string | undefined;
+  /** What to read out: https://host for a hosted route, host:port otherwise. */
+  addressText: string | null;
+  /** The hosted route needs only the typed code, no direct address. */
+  routeHosted: boolean;
   pairingPort: number;
   hostedReady: boolean;
   localFallback: boolean;
@@ -1068,6 +1075,8 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
       ? Math.max(0, Math.round((state.pairing.expiresAt - now) / 1000))
       : 0,
     address: pairingRoute?.address,
+    addressText: companionPairingAddressText(pairingRoute),
+    routeHosted: companionPairingRouteIsHosted(pairingRoute),
     pairingPort: pairingRoute?.port ?? state?.port ?? 8810,
     hostedReady: Boolean(state?.endpoints?.some((endpoint) => endpoint.kind === "hosted")),
     localFallback: flow.localFallback,
@@ -1682,7 +1691,7 @@ export function PhoneSetupFlowView({
           Create a new code
         </button>
       )}
-      {!c.pairingExpired && c.state?.pairing && c.address && (
+      {!c.pairingExpired && c.state?.pairing && c.address && c.addressText && !c.routeHosted && (
         <details className="mt-4 w-full max-w-[390px] rounded-lg border border-hairline/40 px-3 py-2 text-left">
           <summary className="cursor-pointer text-[12px] text-ink-secondary">Having trouble?</summary>
           <div className="mt-3 text-[12px] text-ink-secondary">
@@ -1690,7 +1699,7 @@ export function PhoneSetupFlowView({
               * pairing address, which only the local-network route uses — and
               * with nothing else in the block, an empty "Having trouble?" is
               * worse than none, so the whole disclosure waits on it. */}
-            <ConnectionDetail label="Pairing address" value={`${c.address}:${c.pairingPort}`} />
+            <ConnectionDetail label={t("phoneSetup.pairingAddress")} value={c.addressText} />
           </div>
         </details>
       )}

@@ -7,9 +7,28 @@
 import { rm } from "node:fs/promises";
 import { isUpdateVerificationError, updateErrorMessage, updateVerificationError } from "./update-errors.mjs";
 import { assertCandidateManifest, captureUpdateCandidate, validateUpdateCandidate } from "./updater-candidate.mjs";
+import { releaseNotesText } from "./release-notes-text.mjs";
+import { createCheckHealth, describeCheckFailure, isNoPublishedVersions } from "./updater-health.mjs";
 
-export function createUpdaterCoordinator(updater, setState, { handOffInstall = null, nativeUpdater = null, beforeInstall = null, verifyDownload = null } = {}) {
+// The notes ride in the state only when the feed has some (electron/updater.mjs setState drops an older update's notes when a
+// newer "available" arrives without any).
+function notesPatch(info) {
+  const text = releaseNotesText(info?.releaseNotes);
+  return text === undefined ? {} : { releaseNotesText: text };
+}
+
+export function createUpdaterCoordinator(updater, setState, { handOffInstall = null, nativeUpdater = null, beforeInstall = null, verifyDownload = null, fallbackFeed = null, now = Date.now, staleAfterMs } = {}) {
   let checkOperation = null;
+  const logCheckFailure = (error, stage) => {
+    try { updater.logger?.warn?.(describeCheckFailure(error, stage)); } catch { /* logging never blocks updating */ }
+  };
+  // A day of failed checks becomes one quiet notice; the first good check withdraws it.
+  const health = createCheckHealth({
+    now,
+    ...(staleAfterMs === undefined ? {} : { thresholdMs: staleAfterMs }),
+    onStale: (since) => setState({ staleCheckSince: since }),
+    onRecovered: () => setState({ staleCheckSince: undefined }),
+  });
   let retryAction = "check";
   // Set from downloadUpdate's resolution: the paths electron-updater staged.
   // Only the hand-off needs them; quitAndInstall reads its own copy.
@@ -88,7 +107,7 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
   });
   updater.on("update-available", (info) => {
     if (checkOwnsState()) {
-      setState({ status: "available", version: info?.version, message: undefined });
+      setState({ status: "available", version: info?.version, message: undefined, ...notesPatch(info) });
     }
   });
   updater.on("update-not-available", () => {
@@ -103,6 +122,8 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
     // work, their promises attribute failures; native installation errors
     // remain event-driven and must still escape the restarting spinner.
     if (checkOperation?.supersededByDownload && !installOperation) return;
+    // The fallback lookup answers this one; check() reports it only if the lookup cannot.
+    if (fallbackFeed && checkOperation && !checkOperation.fallbackTried && !installOperation && !downloadOperation && isNoPublishedVersions(error)) return;
     // A late old-check event can arrive after its promise's finally cleared
     // checkOperation. Do not let that unattributed event erase a completed
     // action. Errors during a fresh user operation are still reported below.
@@ -127,6 +148,35 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
     // a ready state without its matching validated download result.
   });
 
+  async function runCheck(operation) {
+    try { fallbackFeed?.reset(); } catch (error) { logCheckFailure(error, "feed-reset"); }
+    try {
+      const result = await updater.checkForUpdates();
+      health.succeeded();
+      return result;
+    } catch (error) {
+      logCheckFailure(error, "provider");
+      if (fallbackFeed && isNoPublishedVersions(error) && !operation.supersededByDownload) {
+        operation.fallbackTried = true;
+        let switched = false;
+        try { switched = await fallbackFeed.activate(); } catch (lookupError) { logCheckFailure(lookupError, "fallback-lookup"); }
+        if (switched) {
+          try {
+            const result = await updater.checkForUpdates();
+            health.succeeded();
+            return result;
+          } catch (retryError) {
+            logCheckFailure(retryError, "fallback-check");
+            health.failed();
+            throw retryError;
+          }
+        }
+      }
+      health.failed();
+      throw error;
+    }
+  }
+
   function check(manual = false) {
     if (installOperation || (!manual && actionOwnsState)) return Promise.resolve();
     if (manual) retryAction = "check";
@@ -140,7 +190,7 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
     const operation = { manual, supersededByDownload: Boolean(downloadOperation), failed: false, promise: null };
     checkOperation = operation;
     try {
-      operation.promise = Promise.resolve(updater.checkForUpdates())
+      operation.promise = runCheck(operation)
         .catch((error) => {
           if (!operation.supersededByDownload) handleRejectedOperation(operation.manual, error);
         })

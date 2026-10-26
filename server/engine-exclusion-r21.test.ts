@@ -235,13 +235,13 @@ describe("the owner hears 'is open' only when an engine or its lock was seen", (
       if (message.kind === "plan" && executed) fake.processesFail = true; // the list cannot be read while the result is checked
       worker.emit("message", { type: "result", result: runEngineHistoryJob(message) });
     }) as unknown as Worker;
-    const deletions = new ConversationDeletions({ dataDir: data, database: () => db, retryDelaysMs: [] });
+    const deletions = new ConversationDeletions({ dataDir: data, database: () => db, retryDelaysMs: [], owedGraceMs: 0 });
     await runConversationDeletion(deletions, { threadIds: ["2e9018ee-1f45-46be-8ed1-7a02fc022807"], engineHomes: fx.homes }, () => true);
     expect(executed).toBe(true);
-    expect(deletions.pending()[0]!.owed?.homes).toEqual([{ engine: "claude", code: "engine-unchecked" }]);
+    expect(deletions.pending()[0]!.owed?.items.map((item) => [item.engine, item.code])).toEqual([["claude", "engine-unchecked"]]);
     const said = deletions.notices().map((item) => item.text).join(" ");
-    expect(said).toContain("Murage will check again within 10 minutes whether");
-    expect(said).not.toMatch(/is open\. Close/);
+    expect(said).toContain("Murage could not check whether Claude Code is open. It checks again within 10 minutes");
+    expect(said).not.toMatch(/^Claude Code is open\./);
     deletions.dispose();
   });
 });

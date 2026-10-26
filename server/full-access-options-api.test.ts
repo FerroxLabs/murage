@@ -37,6 +37,7 @@ const TELEGRAM_PRELOAD = pathToFileURL(join(SERVER_DIR, "testing", "telegram-fet
  * holds under Full access too. */
 const PROTECTED_READ = "rm -rf build";
 const TELEGRAM_OWNER = 777;
+const REFUSED = "Routines and webhooks can only be set up in the owner's own conversation with this bot, not from a routine or webhook run, a channel message, a room or a conversation for someone else.";
 const TELEGRAM_TOKEN = "123:abcdefghijklmnopqrstuvwxyz123456";
 
 let base: string;
@@ -301,7 +302,7 @@ describe.skipIf(process.platform === "win32")("Full access default and its optio
   });
 
   it(
-    "setup requests keep asking under Full access unless the option is on, and never from a webhook turn",
+    "setup requests keep asking under Full access unless the option is on, and a routine or webhook turn cannot propose one",
     async () => {
       const bot = await makeBot("Setup", "holder");
       // one conversation: the level lands on it and on the default
@@ -362,10 +363,11 @@ describe.skipIf(process.platform === "win32")("Full access default and its optio
         }
       }, 20_000);
       expect(routineDump).not.toBeNull();
+      // SL-J J1: a routine run never proposes a routine (or a webhook): refused, no card, nothing applied
       const fromRoutine = await proposeRoutine(bot, routineThread!, { authorization: `Bearer ${routineDump.mcpConfig.mcpServers.agents.env.MURAGE_COMMS_TOKEN}` }, "Routine brief");
-      expect(fromRoutine.status, JSON.stringify(fromRoutine.body)).toBe(201);
-      expect(fromRoutine.body.autoApproved).not.toBe(true);
-      expect((await cardFor(routineThread!, "routineRequest", "Routine brief"))?.answered).toBeUndefined();
+      expect(fromRoutine.status, JSON.stringify(fromRoutine.body)).toBe(403);
+      expect(fromRoutine.body.error).toBe(REFUSED);
+      expect(await cardFor(routineThread!, "routineRequest", "Routine brief")).toBeNull();
       await stopTurn(bot.id, routineThread!);
 
       // a webhook turn keeps asking whatever the options say
@@ -388,10 +390,11 @@ describe.skipIf(process.platform === "win32")("Full access default and its optio
       }, 20_000);
       expect(dump).not.toBeNull();
       const hookAuth = { authorization: `Bearer ${dump.mcpConfig.mcpServers.agents.env.MURAGE_COMMS_TOKEN}` };
+      // SL-J J1: nor does a webhook turn, whatever the options say
       const fromHook = await proposeRoutine(hooked, threadId!, hookAuth, "Hook brief");
-      expect(fromHook.status, JSON.stringify(fromHook.body)).toBe(201);
-      expect(fromHook.body.autoApproved).not.toBe(true);
-      expect((await cardFor(threadId!, "routineRequest", "Hook brief"))?.answered).toBeUndefined();
+      expect(fromHook.status, JSON.stringify(fromHook.body)).toBe(403);
+      expect(fromHook.body.error).toBe(REFUSED);
+      expect(await cardFor(threadId!, "routineRequest", "Hook brief")).toBeNull();
       await stopTurn(hooked.id, threadId!);
     },
     120_000,

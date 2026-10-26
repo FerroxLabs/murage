@@ -49,3 +49,44 @@ export async function announceBackupFailure({status,folderName,userData,post,sho
   return body;
  }catch{return null;}
 }
+
+// 1.0.7: a Back up now that worked said nothing once Murage reopened; only
+// Settings > Backups showed it. One notification per such backup, after the
+// reopen. Only a manual backup (the person pressed Back up now and watched
+// Murage close): daily backups stay quiet, and their page already lists what
+// was left out. The words carry the backup folder's label and a count, never a
+// file name or a path inside the data folder.
+const RESULT_FILE="backup-result-announced.json";
+const MANUAL=/^\d+:manual:/;
+
+/** The sentence to show for the backup that just finished, or null. */
+export function backupResultNotice(status,announcedKey,folderName){
+ const job=status?.job,receipt=status?.lastVerified;
+ if(!job||job.phase!=="returned"||typeof job.id!=="string"||typeof job.occurrence!=="string"||!MANUAL.test(job.occurrence))return null;
+ if(!receipt||receipt.jobId!==job.id)return null;
+ const key=job.id.slice(0,200);
+ if(key===announcedKey)return null;
+ const folder=typeof folderName==="string"&&folderName.length>0&&folderName.length<=120?folderName:"your backup folder";
+ const count=Number.isSafeInteger(status.lastSkipped?.count)&&status.lastSkipped.count>0?status.lastSkipped.count:0;
+ const left=count?` ${count} ${count===1?"item was":"items were"} left out. Settings → Backups lists ${count===1?"it":"them"}.`:"";
+ return{key,title:"Backup saved and checked",body:`Your workspace is backed up to ${folder}.${left}`};
+}
+
+function readKey(userData,file){
+ try{const value=JSON.parse(readFileSync(path.join(userData,file),"utf8"));return typeof value?.key==="string"&&value.key.length<=400?value.key:null;}catch{return null;}
+}
+function writeKey(userData,file,key){
+ const target=path.join(userData,file),temporary=`${target}.${process.pid}.tmp`;
+ writeFileSync(temporary,JSON.stringify({version:1,key}),{mode:0o600});renameSync(temporary,target);
+}
+
+/** Show the result once. Never throws: a notification is never worth a failed start. */
+export function announceBackupResult({status,folderName,userData,showNotice=()=>{}}){
+ try{
+  const notice=backupResultNotice(status,readKey(userData,RESULT_FILE),folderName);
+  if(!notice)return null;
+  writeKey(userData,RESULT_FILE,notice.key);
+  try{showNotice(notice);}catch{/* the Backups page still says it */}
+  return notice;
+ }catch{return null;}
+}

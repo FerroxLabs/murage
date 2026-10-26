@@ -7,7 +7,7 @@
 // REAL wrapper the way the CLI does.
 
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -51,7 +51,7 @@ const PATH_SEP = WIN ? ";" : ":";
 const hostPath = (): string => [GIT_USR_BIN, process.env.PATH ?? (WIN ? "" : "/usr/bin:/bin")].filter(Boolean).join(PATH_SEP);
 /** Names a Windows process (the Git Bash launcher, node) needs to start at all. */
 const winBase = (): Record<string, string> => (WIN ? Object.fromEntries(["SystemRoot", "windir", "TEMP", "TMP", "COMSPEC"].flatMap((name) => (process.env[name] ? [[name, process.env[name]!]] : []))) : {});
-/** A real turn's map always carries HOME. On a macOS runner a Homebrew shim on PATH prints "$HOME must be set to run brew" to stderr when it runs under `env -i` without one. */
+/** A real turn's map always carries HOME, and so does the Claude Code process that runs the wrapper (the outer env). On a macOS runner a Homebrew shim on PATH prints "$HOME must be set to run brew" to stderr when it runs under `env -i` without one. */
 const homeBase = (): Record<string, string> => (!WIN && process.env.HOME ? { HOME: process.env.HOME } : {});
 const sameDir = (a: string, b: string): boolean => realpathSync.native(a).toLowerCase() === realpathSync.native(b).toLowerCase();
 
@@ -66,7 +66,7 @@ describe.skipIf(!BASH)(`murage-exec in front of MCP servers${BASH ? "" : " (skip
   });
   afterEach(() => removeTempDirSync(proj));
   // Run the wrapper as Claude's shell does (through bash: a Windows file has no shebang to execute).
-  const runWrapper = (command: string, env: Record<string, string>, script = wrapper) => spawnSync(BASH!, [WIN ? script.replace(/\\/g, "/") : script, command], { env: { ...winBase(), PATH: hostPath(), MURAGE_EXEC_ENV_FILE: envFile, ...env }, encoding: "utf8" });
+  const runWrapper = (command: string, env: Record<string, string>, script = wrapper) => spawnSync(BASH!, [WIN ? script.replace(/\\/g, "/") : script, command], { env: { ...winBase(), ...homeBase(), PATH: hostPath(), MURAGE_EXEC_ENV_FILE: envFile, ...env }, encoding: "utf8" });
 
   const hostile = `it's "here" $(touch /nonexistent) \`x\`\nsecond line`;
 
@@ -87,7 +87,7 @@ describe.skipIf(!BASH)(`murage-exec in front of MCP servers${BASH ? "" : " (skip
     const launch = claudeMcpLaunch({ command: asBash(servers.probe!.command), args: servers.probe!.args.map(asBash), env: servers.probe!.env! }, { CLAUDE_CODE_SHELL_PREFIX: murageExecPrefix(), CLAUDE_CODE_SHELL: BASH! });
     expect(launch.command).toBe(BASH);
     const out = spawnSync(launch.command, launch.args, {
-      env: { ...winBase(), PATH: hostPath(), MURAGE_EXEC_ENV_FILE: envFile, FROM_CLAUDE: "claude's own", ...launch.env },
+      env: { ...winBase(), ...homeBase(), PATH: hostPath(), MURAGE_EXEC_ENV_FILE: envFile, FROM_CLAUDE: "claude's own", ...launch.env },
       input: `${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })}\n`,
       encoding: "utf8",
     });
@@ -102,6 +102,25 @@ describe.skipIf(!BASH)(`murage-exec in front of MCP servers${BASH ? "" : " (skip
     });
     expect(reply.result.hasPath).toBe(true);
     expect(sameDir(reply.result.cwd, proj)).toBe(true);
+  });
+
+  // Bash reads ~/.bashrc when it starts with no SHLVL and a socket on stdin (how Node hands pipes). Neither the Bash the
+  // wrapper starts nor a Bash shell after it may: the startup file would run after the server's kept values are
+  // exported, and its exports would reach the server beyond its map. The turn's map here carries no SHLVL.
+  it.skipIf(WIN)("an MCP server's shell reads no startup file, even from a map without SHLVL", () => {
+    const home = join(proj, "home");
+    mkdirSync(home);
+    writeFileSync(join(home, ".bashrc"), 'export RC_LEAK=ran\necho "bashrc ran" >&2\n');
+    const script = join(proj, "rc-server.cjs");
+    writeFileSync(script, 'process.stdout.write(JSON.stringify({ leak: process.env.RC_LEAK ?? null, needed: process.env.NEEDED ?? null }) + "\\n");\n');
+    const mapFile = writeExecEnvFile(`t-mcp-rc-${process.pid}`, { HOME: home, PATH: hostPath(), SHARED: "turn" }, proj, BASH!);
+    const servers = withExecKeep({ probe: { command: process.execPath, args: [script], env: { NEEDED: "server" } } }) as Record<string, { command: string; args: string[]; env: Record<string, string> }>;
+    const launch = claudeMcpLaunch(servers.probe!, { CLAUDE_CODE_SHELL_PREFIX: murageExecPrefix(), CLAUDE_CODE_SHELL: BASH! });
+    // Claude Code's own environment has a SHLVL, so the shell it starts the prefix with reads nothing either.
+    const out = spawnSync(launch.command, launch.args, { env: { HOME: home, SHLVL: "1", PATH: hostPath(), MURAGE_EXEC_ENV_FILE: mapFile, ...launch.env }, input: "\n", encoding: "utf8" });
+    expect(out.stderr).toBe("");
+    expect(out.status).toBe(0);
+    expect(JSON.parse(out.stdout.trim())).toEqual({ leak: null, needed: "server" });
   });
 
   it("a Bash command gains no server variable (MURAGE_EXEC_KEEP is never in Claude's own environment)", () => {
@@ -138,7 +157,7 @@ describe.skipIf(!BASH)(`murage-exec in front of MCP servers${BASH ? "" : " (skip
     }
     const secret = "dummy-secret-4f1c9a";
     const out = spawnSync(BASH!, [fwd(script), 'printf "%s|%s|%s" "${NOTES_TOKEN-gone}" "${SHARED-gone}" "${ELECTRON_RUN_AS_NODE-gone}"'],
-      { env: { ...winBase(), PATH: WIN ? hostPath() : `${bin}:${hostPath()}`, MURAGE_EXEC_ENV_FILE: envFile, NOTES_TOKEN: secret, SHARED: `server-${secret}`, ELECTRON_RUN_AS_NODE: "1", [EXEC_KEEP]: "NOTES_TOKEN,SHARED,ELECTRON_RUN_AS_NODE" }, encoding: "utf8" });
+      { env: { ...winBase(), ...homeBase(), PATH: WIN ? hostPath() : `${bin}:${hostPath()}`, MURAGE_EXEC_ENV_FILE: envFile, NOTES_TOKEN: secret, SHARED: `server-${secret}`, ELECTRON_RUN_AS_NODE: "1", [EXEC_KEEP]: "NOTES_TOKEN,SHARED,ELECTRON_RUN_AS_NODE" }, encoding: "utf8" });
     expect(out.stderr).toBe("");
     expect(out.status).toBe(0);
     expect(out.stdout).toBe(`${secret}|server-${secret}|1`);
@@ -193,5 +212,59 @@ describe("Claude Code session names never reach an engine", () => {
     stripClaudeOwnedEnv(map);
     for (const name of Object.keys(session)) expect(map[name], name).toBeUndefined();
     expect(map).toMatchObject(kept);
+  });
+});
+
+// U20 (1.0.4): the wrapper's Windows (Git Bash) branch, where the turn file holds Windows spellings that cygpath turns into
+// MSYS ones, run on every OS: `uname` and `cygpath` are stand-ins first on the wrapper's PATH (spelling "W:<posix path>" for a
+// Windows path, ";" between search-path entries). The real Git Bash run is the suite above on a Windows runner.
+describe.skipIf(WIN)("murage-exec Git Bash branch (MSYS spellings, simulated)", () => {
+  let proj: string;
+  let bin: string;
+  beforeEach(() => {
+    proj = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-exec-msys-")));
+    bin = join(proj, "fakebin");
+    mkdirSync(bin);
+    writeFileSync(join(bin, "uname"), "#!/bin/sh\necho MINGW64_NT-10.0-20348\n");
+    // cygpath -u X | cygpath -u -p LIST: drop the W: marker; a list's ";" becomes ":"
+    writeFileSync(join(bin, "cygpath"), `#!/bin/sh\nlast=""; list=0\nfor a in "$@"; do case "$a" in -p) list=1 ;; -*) ;; *) last="$a" ;; esac; done\nif [ $list = 1 ]; then printf '%s\\n' "$last" | sed 's/;/:/g; s/W://g'; else printf '%s\\n' "$last" | sed 's/^W://'; fi\n`);
+    chmodSync(join(bin, "uname"), 0o755);
+    chmodSync(join(bin, "cygpath"), 0o755);
+  });
+  afterEach(() => removeTempDirSync(proj));
+
+  it("an MCP server started through the prefix gets its own env, the MSYS directory and the MSYS search path", () => {
+    const script = join(proj, "server.cjs");
+    writeFileSync(script, SERVER);
+    const hostDirs = (process.env.PATH ?? "/usr/bin:/bin").split(":").filter(Boolean);
+    const winPath = [bin, ...hostDirs].map((dir) => `W:${dir}`).join(";");
+    const envFile = writeExecEnvFile(`t-msys-${process.pid}`, { ...homeBase(), PATH: winPath, SHARED: "turn" }, `W:${proj}`, "W:/bin/bash");
+    const servers = withExecKeep({ probe: { command: process.execPath, args: [script], env: { ELECTRON_RUN_AS_NODE: "1", NEEDED: "msys", SHARED: "server" } } }) as Record<string, { command: string; args: string[]; env: Record<string, string> }>;
+    const launch = claudeMcpLaunch(servers.probe!, { CLAUDE_CODE_SHELL_PREFIX: murageExecPrefix(), CLAUDE_CODE_SHELL: "/bin/bash" });
+    const out = spawnSync(launch.command, launch.args, {
+      // Claude Code's own environment always carries HOME (homeBase above), so the shell it starts the prefix with has one too.
+      env: { ...homeBase(), PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}`, MURAGE_EXEC_ENV_FILE: envFile, ...launch.env },
+      input: `${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })}\n`,
+      encoding: "utf8",
+    });
+    expect(out.stderr).toBe("");
+    expect(out.status).toBe(0);
+    const reply = JSON.parse(out.stdout.trim()) as { result: { env: Record<string, string | null>; cwd: string; hasPath: boolean } };
+    expect(reply.result.env).toMatchObject({ NEEDED: "msys", ELECTRON_RUN_AS_NODE: "1", SHARED: "server", MURAGE_EXEC_KEEP: null, MURAGE_EXEC_ENV_FILE: null });
+    expect(sameDir(reply.result.cwd, proj)).toBe(true);
+    // a Bash command through the same file sees the converted search path, in MSYS form
+    const bash = spawnSync("/bin/bash", [installMurageExec(), 'printf "%s|%s" "$PATH" "$PWD"'], { env: { PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}`, MURAGE_EXEC_ENV_FILE: envFile }, encoding: "utf8" });
+    expect(bash.stderr).toBe("");
+    expect(bash.stdout).toBe(`${[bin, ...hostDirs].join(":")}|${proj}`);
+  });
+
+  it("a Windows file with no cygpath on the wrapper's PATH stops with the reason, running nothing", () => {
+    writeFileSync(join(bin, "cygpath"), "");
+    rmSync(join(bin, "cygpath"));
+    const envFile = writeExecEnvFile(`t-msys-nocyg-${process.pid}`, { PATH: "W:/usr/bin" }, `W:${proj}`, "W:/bin/bash");
+    const out = spawnSync("/bin/bash", [installMurageExec(), "touch ran"], { env: { PATH: `${bin}:/usr/bin:/bin`, MURAGE_EXEC_ENV_FILE: envFile }, encoding: "utf8", cwd: proj });
+    expect(out.status).toBe(126);
+    expect(out.stderr).toContain("cygpath is not available");
+    expect(existsSync(join(proj, "ran"))).toBe(false);
   });
 });

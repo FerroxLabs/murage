@@ -46,6 +46,8 @@ import { FirstRunDoItCard, FirstRunJobsCard } from "./FirstRunJobsCard";
 import { FirstRunNextCard } from "./FirstRunNextCard";
 import { FirstRunPhoneCard } from "./FirstRunPhoneCard";
 import { SandboxedFrame } from "./SandboxedFrame";
+import { copyText } from "@/lib/copy-text";
+import { t } from "@/lib/i18n";
 
 export function FirstRunCard({ bot, message }: { bot: Bot; message: Message }) {
   const desktop = useDesktopSurface();
@@ -537,15 +539,11 @@ function FirstRunSignedOutAgentsCard({ settled }: { settled: boolean }) {
                   type="button"
                   className={`${FIRST_RUN_CHIP} ${FIRST_RUN_FOCUS} shrink-0`}
                   onClick={() => {
-                    void navigator.clipboard
-                      .writeText(row.command)
-                      .then(() => setCopied(row.name))
-                      // A clipboard the browser refused is not a failure worth
-                      // a red box: the command is on screen and selectable.
-                      .catch(() => setCopied(""));
+                    // "!name" marks a copy that did not work; the chip then says so.
+                    void copyText(row.command).then((ok) => setCopied(ok ? row.name : `!${row.name}`));
                   }}
                 >
-                  {copied === row.name ? copy.copied : copy.copy}
+                  {copied === row.name ? copy.copied : copied === `!${row.name}` ? t("copy.failed") : copy.copy}
                 </button>
               </div>
             </div>

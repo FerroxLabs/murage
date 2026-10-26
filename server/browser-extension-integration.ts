@@ -276,7 +276,11 @@ export class BrowserExtensionIntegration {
   async bind(bot: BotRecord, threadId: string) {
     const service = await this.start();
     const profiles = service.status().profiles;
-    const profileId = bot.browserExtensionProfileId ?? (profiles.length === 1 ? profiles[0].profileId : undefined);
+    // The sole profile stands in only when its hello says Google Chrome. Murage
+    // for Chrome says "chromium" in Chrome, Edge and Brave alike, so such a
+    // profile waits for the owner to choose it (1.0.7).
+    const sole = profiles.length === 1 && (profiles[0].browser ?? "").toLowerCase() === "chrome" ? profiles[0].profileId : undefined;
+    const profileId = bot.browserExtensionProfileId ?? sole;
     if (!profileId) throw Object.assign(new Error(profiles.length ? "Choose the browser profile to connect." : "Connect Murage for Chrome to use your browser. Your request stays in this conversation."), { code: "browser_extension_setup_required" });
     // The only profile online is used for this turn but never pinned here: a
     // profile is remembered only when the owner chooses it (setup Continue or
