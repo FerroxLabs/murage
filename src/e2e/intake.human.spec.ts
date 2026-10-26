@@ -13,8 +13,8 @@
 //      the second without a reload.
 import { desktopHeaders, FIXTURES, HARNESS_URL } from "./rig";
 import { expect, openSidebar, test } from "./fixtures";
+import { expectChatHeader, openBotProfile } from "./chat-controls";
 import type { Page } from "@playwright/test";
-import { possessive } from "../lib/possessive";
 
 const api = async (method: string, path: string, body?: unknown) => {
   const res = await fetch(`${HARNESS_URL}${path}`, {
@@ -33,7 +33,7 @@ const QUESTION = "What do you mostly want help with?";
 // and the library door are gone); a template's summary is on its row and its
 // description on the preview.
 test("team descriptions explain the customer outcome in cards and previews", async ({ app }, testInfo) => {
-  await expect(app.getByRole("button", { name: /^Open .+'s profile$/ }).first()).toBeVisible();
+  await expectChatHeader(app);
   await openSidebar(app);
   await app.getByRole("button", { name: "New or share", exact: true }).click();
   await app.getByRole("button", { name: "New Team", exact: true }).click();
@@ -53,7 +53,7 @@ test("team descriptions explain the customer outcome in cards and previews", asy
 });
 
 test("plus menu separates blank bots from specialist templates", async ({ app }, testInfo) => {
-  await expect(app.getByRole("button", { name: /^Open .+'s profile$/ }).first()).toBeVisible();
+  await expectChatHeader(app);
   const before = (await api("GET", "/api/bots")).bots.length;
   await openSidebar(app);
   const trigger = app.getByRole("button", { name: "New or share", exact: true });
@@ -77,7 +77,7 @@ test("plus menu separates blank bots from specialist templates", async ({ app },
 });
 
 test("New Team files the chosen bots under a new heading with its instructions", async ({ app }, testInfo) => {
-  await expect(app.getByRole("button", { name: /^Open .+'s profile$/ }).first()).toBeVisible();
+  await expectChatHeader(app);
   const first = (await api("POST", "/api/bots", { name: "Team Scout" })).bot;
   const second = (await api("POST", "/api/bots", { name: "Team Writer" })).bot;
   const team = `Research ${testInfo.project.name}`;
@@ -90,9 +90,9 @@ test("New Team files the chosen bots under a new heading with its instructions",
     const menuBox = (await app.locator("#sidebar-create-options").boundingBox())!;
     expect(menuBox.x).toBeGreaterThanOrEqual(0);
     expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(app.viewportSize()!.width);
-    // The template library sits between the things you create and Export.
-    expect((await app.locator("#sidebar-create-options button").allTextContents()).slice(0, 6)).toEqual(
-      ["New Bot", "New Team", "New ChannelA chat with some bots.", "New ProjectA place for work, files and chat. A goal is optional.", "Browse templates…", "Export bots…"],
+    // New chat leads; the template library sits between the things you create and Export.
+    expect((await app.locator("#sidebar-create-options button").allTextContents()).slice(0, 7)).toEqual(
+      ["New chat", "New Bot", "New Team", "New ChannelA chat with some bots.", "New ProjectA place for work, files and chat. A goal is optional.", "Browse templates…", "Export bots…"],
     );
     for (const skin of ["light", "dark"] as const) {
       await app.evaluate((value) => { document.documentElement.dataset.skin = value; }, skin);
@@ -142,10 +142,10 @@ test("New Team files the chosen bots under a new heading with its instructions",
 const openBot = async (page: Page, name: string) => {
   // Wait for hydration to establish a selected conversation before opening
   // the drawer; its normal selection effect closes the drawer on hydration.
-  await expect(page.getByRole("button", { name: /^Open .+'s profile$/ }).first()).toBeVisible();
+  await expectChatHeader(page);
   const sidebar = await openSidebar(page);
   await sidebar.getByText(name, { exact: true }).click();
-  await expect(page.getByRole("button", { name: `Open ${possessive(name)} profile` }).last()).toBeVisible();
+  await expectChatHeader(page, name);
   const menu = page.getByRole("button", { name: "Open bot list" });
   if (await menu.isVisible()) await expect(menu).toHaveAttribute("aria-expanded", "false");
 };
@@ -156,7 +156,7 @@ const card = (page: Page) => page.getByTestId("bot-intake-card");
  * input in the chat composer. These tests exercise that approved entry point. */
 const openSetup = async (page: Page, name: string) => {
   await openBot(page, name);
-  await page.getByRole("button", { name: `Open ${possessive(name)} profile` }).first().click();
+  await openBotProfile(page, name);
   await page.getByRole("button", { name: "Set up", exact: true }).click();
   await expect(card(page)).toBeVisible();
 };
@@ -294,7 +294,7 @@ test.describe("setup is somewhere you go and ask for it", () => {
     await expect(menu).toHaveAttribute("aria-expanded", "true");
     await app.keyboard.press("Escape");
     await expect(menu).toHaveAttribute("aria-expanded", "false");
-    await app.getByRole("button", { name: `Open ${FIXTURES.blank.name}'s profile` }).first().click();
+    await openBotProfile(app, FIXTURES.blank.name);
     await expect(app.getByRole("button", { name: "Set up", exact: true })).toBeVisible();
   });
 
@@ -323,7 +323,7 @@ test.describe("setup is somewhere you go and ask for it", () => {
     });
     try {
       await openBot(app, "E2E Loading Setup");
-      await app.getByRole("button", { name: "Open E2E Loading Setup's profile" }).first().click();
+      await openBotProfile(app, "E2E Loading Setup");
       await expect(app.getByRole("button", { name: "Checking setup…", exact: true })).toBeDisabled();
       await expect(app.getByText("E2E Loading Setup is already set up", { exact: true })).toHaveCount(0);
       release();
@@ -343,7 +343,7 @@ test.describe("setup is somewhere you go and ask for it", () => {
     ));
     try {
       await openBot(app, "E2E Retry Setup");
-      await app.getByRole("button", { name: "Open E2E Retry Setup's profile" }).first().click();
+      await openBotProfile(app, "E2E Retry Setup");
       await expect(app.getByRole("button", { name: "Retry skill check" })).toBeVisible();
       await expect(app.getByText("E2E Retry Setup is already set up", { exact: true })).toHaveCount(0);
       fail = false;
@@ -359,7 +359,7 @@ test.describe("setup is somewhere you go and ask for it", () => {
     // If it were not here, removing the chip would have rebuilt the one-way
     // door the whole feature exists to remove.
     await openBot(app, FIXTURES.titledNoSkills.name);
-    await app.getByRole("button", { name: `Open ${FIXTURES.titledNoSkills.name}'s profile` }).first().click();
+    await openBotProfile(app, FIXTURES.titledNoSkills.name);
     await expect(app.getByText("What is this bot for?")).toBeVisible();
     await app.getByRole("button", { name: "Set up", exact: true }).click();
     // It has a title and a description, so it must say so before anything.
@@ -391,7 +391,7 @@ test.describe("setup is somewhere you go and ask for it", () => {
       // Removed through the UI on purpose. That is the moment that has to
       // invalidate the renderer's cached count (M1); doing it over HTTP would
       // leave the cache untouched and prove nothing.
-      await app.getByRole("button", { name: "Open E2E Intake Returns' profile" }).first().click();
+      await openBotProfile(app, "E2E Intake Returns");
       await app.getByRole("button", { name: "Set up", exact: true }).click();
       await expect(app.getByText(/1 skill it already has/)).toBeVisible();
       await app.getByRole("button", { name: "Cancel", exact: true }).click();

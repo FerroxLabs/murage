@@ -10,6 +10,7 @@
 // twin of a LID sender (Hermes 3926c4209c); device suffixes are stripped before every
 // comparison so mention and reply gating match (Hermes 6bf1032609).
 import { classifyOwnerGate, type EchoLedger } from "./echo.ts";
+import { channelReply } from "../../reply-text.ts";
 import {
   canonicalJid, displayPn, humanUserId, isSelfChat, jidKind, matchesAllowListWithAlt, NO_MAPPING, parseAllowList, sameJid, stripDevice,
   type LidMapping, type SelfIdentity,
@@ -237,5 +238,4 @@ export function approvePairing(requests: readonly PairingRequest[], code: string
   return { request, requests: live.filter((entry) => entry !== request) };
 }
 
-export const pairingReplyText = (code: string): string =>
-  `This number is linked to a Murage assistant. Ask its owner to approve code ${code} in Murage to start.`;
+export const pairingReplyText = (code: string): string => channelReply("channelReply.pairingCode", { code });

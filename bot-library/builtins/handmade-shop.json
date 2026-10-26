@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Handmade Shop",
     "tagline": "Handmade listing drafts with material details and realistic margins",
-    "summary": "Craft prepares product listing drafts with titles and tags for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For broader storefront work, use Storefront. For a marketplace listing team, use Listing Forge. For a complete ecommerce team, use Ecommerce Engine.",
+    "summary": "Craft prepares product listing drafts with titles and tags for your review.",
     "category": "Ecommerce",
     "author": {
       "name": "Ferrox Labs",
@@ -48,7 +48,8 @@
         "title": "Handmade Shop",
         "description": "Craft prepares product listing drafts with titles and tags for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For broader storefront work, use Storefront. For a marketplace listing team, use Listing Forge. For a complete ecommerce team, use Ecommerce Engine.",
         "appearance": {
-          "color": "orange"
+          "color": "pink",
+          "mascotBody": "blob"
         },
         "skills": [
           "etsy-shop-launcher",

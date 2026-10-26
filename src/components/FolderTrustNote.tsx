@@ -5,6 +5,8 @@ import { api } from "@/state/store";
 import { t } from "@/lib/i18n";
 
 export interface FolderTrustStatus {
+  /** The folder the server looked at (for a conversation, its actual folder). */
+  folder?: string;
   gated: boolean;
   sources: string[];
   record: { decision: "trust" | "reject"; decidedAt: number; source: "picker" | "card" | "upgrade" } | null;
@@ -101,23 +103,46 @@ function StatusLine({ status, name }: { status: FolderTrustStatus; name?: string
 
 /** The note, rendered from what the server said (no fetching): a bot's
  * picker has one subject, a room's has its Fuigo members. */
-export function FolderTrustNoteView({ folder, results, error, busy, onForget }: {
+export function FolderTrustNoteView({ folder, results, error, busy, onForget, onTrust, conversation }: {
   folder: string | undefined;
   results: FolderTrustResult[] | null;
   error: string | null;
   busy: boolean;
   onForget: () => void;
+  /** Present for a conversation's own folder: records Trust for that exact folder. */
+  onTrust?: () => void;
+  /** The note describes the conversation's actual folder, not a picked one. */
+  conversation?: boolean;
 }) {
   const { shared, perMember } = folderTrustVerdicts(results ?? []);
   const sources = results?.[0]?.status.sources ?? [];
   const anyRecord = Boolean(results?.some((result) => result.status.record));
+  const first = results?.[0]?.status;
+  const canTrust = Boolean(onTrust && first && first.gated && first.sources.length && !first.upstreamTrusted && first.engineGates !== false && !first.refused && first.record?.decision !== "trust");
+  const trustButton = canTrust ? (
+    <button
+      type="button"
+      onClick={onTrust}
+      disabled={busy}
+      data-testid="folder-trust-trust"
+      className="rounded-md px-1.5 py-0.5 text-[12px] text-ink underline-offset-2 hover:underline disabled:opacity-50"
+    >
+      {t("folderTrust.trust")}
+    </button>
+  ) : null;
   return (
     <div className="mt-2 text-[12px] text-ink-secondary" data-testid="folder-trust-note">
-      <div>{t("folderTrust.pickerNote")}</div>
-      {folder && shared && folderTrustStatusLabel(shared.status) && (
+      <div>{conversation ? t("folderTrust.conversationNote") : t("folderTrust.pickerNote")}</div>
+      {conversation && first?.folder && (
+        <div className="mt-1 break-all" data-testid="folder-trust-folder">
+          {t("folderTrust.conversationFolder")} <span className="font-mono text-[11.5px]">{first.folder}</span>
+        </div>
+      )}
+      {(folder || conversation) && shared && folderTrustStatusLabel(shared.status) && (
         <div className="mt-1 flex flex-wrap items-center gap-1.5">
           <StatusLine status={shared.status} />
           {sources.length ? <span className="font-mono text-[11.5px]">{sources.join(", ")}</span> : null}
+          {trustButton}
           {anyRecord && (
             <button
               type="button"
@@ -130,7 +155,7 @@ export function FolderTrustNoteView({ folder, results, error, busy, onForget }: 
           )}
         </div>
       )}
-      {folder && perMember.length > 0 && (
+      {(folder || conversation) && perMember.length > 0 && (
         <div className="mt-1" data-folder-trust-status="per-member">
           <div>{t("folderTrust.perMember")}</div>
           <ul className="mt-0.5 flex flex-col gap-0.5">
@@ -166,7 +191,7 @@ export function FolderTrustNoteView({ folder, results, error, busy, onForget }: 
  * `botId` names the bot whose turn the note describes (its instance's
  * store, its route — FUIGOTRUST3 (4)); `members` names a room's Fuigo
  * members, each described as its own turn would be (FUIGOTRUST4 (3)). */
-export function FolderTrustNote({ folder, botId, members }: { folder: string | undefined; botId?: string; members?: FolderTrustSubject[] }) {
+export function FolderTrustNote({ folder, botId, members, threadId }: { folder: string | undefined; botId?: string; members?: FolderTrustSubject[]; threadId?: string }) {
   const [results, setResults] = useState<FolderTrustResult[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -177,9 +202,9 @@ export function FolderTrustNote({ folder, botId, members }: { folder: string | u
     let cancelled = false;
     setResults(null);
     setError(null);
-    if (!folder) return;
+    if (!folder && !threadId) return;
     const query = (subject: FolderTrustSubject | null) =>
-      api(`/api/folder-trust?folder=${encodeURIComponent(folder)}${subject ? `&bot=${encodeURIComponent(subject.id)}` : ""}`).then(
+      api(`/api/folder-trust?${threadId ? `thread=${encodeURIComponent(threadId)}` : `folder=${encodeURIComponent(folder ?? "")}`}${subject ? `&bot=${encodeURIComponent(subject.id)}` : ""}`).then(
         (status: FolderTrustStatus): FolderTrustResult => ({ subject, status }),
       );
     Promise.all(subjects.map(query))
@@ -193,18 +218,34 @@ export function FolderTrustNote({ folder, botId, members }: { folder: string | u
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- subjects is derived from subjectKey
-  }, [folder, subjectKey]);
+  }, [folder, threadId, subjectKey]);
+
+  const target = (id: string | undefined) => (threadId ? `thread=${encodeURIComponent(threadId)}` : `folder=${encodeURIComponent(folder ?? "")}`) + (id ? `&bot=${encodeURIComponent(id)}` : "");
+
+  const trust = async () => {
+    if (!threadId || !botId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const status: FolderTrustStatus = await api("/api/folder-trust", { method: "POST", body: JSON.stringify({ bot: botId, thread: threadId }) });
+      setResults([{ subject: subjects[0], status }]);
+    } catch {
+      setError(t("folderTrust.trustError"));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const forget = async () => {
-    if (!folder) return;
+    if (!folder && !threadId) return;
     setBusy(true);
     setError(null);
     try {
       // one Forget per subject: a card's record lives under that bot's
       // engine key (FUIGOTRUST4), which only its own picker route knows
       const ids = [...new Set(subjects.map((subject) => subject?.id).filter((id): id is string => Boolean(id)))];
-      if (!ids.length) await api(`/api/folder-trust?folder=${encodeURIComponent(folder)}`, { method: "DELETE" });
-      for (const id of ids) await api(`/api/folder-trust?folder=${encodeURIComponent(folder)}&bot=${encodeURIComponent(id)}`, { method: "DELETE" });
+      if (!ids.length) await api(`/api/folder-trust?${target(undefined)}`, { method: "DELETE" });
+      for (const id of ids) await api(`/api/folder-trust?${target(id)}`, { method: "DELETE" });
       setResults((current) => (current ? current.map((result) => ({ ...result, status: { ...result.status, record: null } })) : current));
     } catch {
       setError(t("folderTrust.forgetError"));
@@ -213,5 +254,14 @@ export function FolderTrustNote({ folder, botId, members }: { folder: string | u
     }
   };
 
-  return <FolderTrustNoteView folder={folder} results={results} error={error} busy={busy} onForget={() => void forget()} />;
+  return (
+    <FolderTrustNoteView
+      folder={folder}
+      results={results}
+      error={error}
+      busy={busy}
+      onForget={() => void forget()}
+      {...(threadId && botId ? { onTrust: () => void trust(), conversation: true } : {})}
+    />
+  );
 }

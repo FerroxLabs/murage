@@ -95,6 +95,15 @@ const DRIVERS: Record<string, (f: Fixture) => unknown> = {
   forgetRoutineRequestReceipt: f => expect(f.m.forgetRoutineRequestReceipt(request("req-create", "create") as never)).toBe(true),
   forgetRoutineRequestReceiptsForThread: f => expect(f.m.forgetRoutineRequestReceiptsForThread("chat-1")).toBe(1),
   reconcileRoutineRequestReceipts: f => f.m.reconcileRoutineRequestReceipts([]),
+  // SL-J (6f617d1a9): Undo as the receipt. The receipt with `before` is written before the change, a webhook's result in a second write,
+  // and an undo restores `before` and stamps the receipt in one write
+  beginRoutineRequest: f => expect(f.m.beginRoutineRequest(request("req-begin", "update") as never, { before: null }).requestId).toBe("req-begin"),
+  completeRoutineRequest: f => { f.m.beginRoutineRequest(request("req-hook", "create") as never, { kind: "webhook", before: null }); f.m.completeRoutineRequest(request("req-hook", "create") as never, "hook-9", START); },
+  markRoutineRequestUndone: f => f.m.markRoutineRequestUndone("req-create", START + 1),
+  undoRoutineRequest: f => {
+    const routine = f.m.listRoutines().find(item => item.id === f.a.id)!;
+    expect(f.m.undoRoutineRequest("req-create", f.a.id, routine.updatedAt, { patch: { name: "Undone" } })).toBe("undone");
+  },
   isActiveThread: f => f.m.isActiveThread(f.thread),
   activeRunOrigin: f => f.m.activeRunOrigin(f.thread),
   liveRunThreadIds: f => { expect(f.m.liveRunThreadIds("bot-a")).toBeInstanceOf(Set); },
@@ -151,6 +160,7 @@ const DRIVERS: Record<string, (f: Fixture) => unknown> = {
   handleRuntimeEvent: f => f.m.handleRuntimeEvent({ eventId: "done-1", provider: "fake", threadId: f.thread, createdAt: new Date(START).toISOString(), type: "turn.completed", ok: true } as never),
   failThread: f => f.m.failThread(f.thread, "Stopped"),
   finishGoalRun: f => f.m.finishGoalRun(f.goal.id, "completed", "Done"),
+  runSeatWait: f => { f.m.runSeatWait(f.running.id, "working-folder"); f.m.runSeatWait(f.running.id, null); },
   notePinnedBundle: f => f.m.notePinnedBundle(f.thread, "bundle-1"),
   preparePackageAddition: f => {
     const routine = { ...f.m.listRoutines().find(item => item.id === f.b.id)!, id: "imported-1", name: "Imported", enabled: false, nextRunAt: null };

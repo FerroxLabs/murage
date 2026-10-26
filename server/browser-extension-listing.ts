@@ -2,15 +2,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // Where the owner gets Murage for Chrome. The link comes only from trusted
-// build metadata (the release build.json written by
-// scripts/prepare-browser-extension.mjs from the owner's release config) AND
-// the signed announcements feed's "murage-for-chrome-listed" flag, which is
-// turned on the day the listing is public. Either missing: no link, and the
-// setup text says the listing is not available yet. Never a guessed URL.
+// build metadata: the release build.json written by
+// scripts/prepare-browser-extension.mjs from the owner's release config, whose
+// chromeWebStoreId must be one of the helper's productionIds. The listing is
+// public, so a release build with that ID links it. Development and
+// resources-only builds never link a listing. Never a guessed URL.
+// (The announcements feed's "murage-for-chrome-listed" flag still parses for
+// old feeds, but no longer gates the link.)
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AnnouncementFlag } from "../shared/announcements.ts";
 
 export type BrowserExtensionBuild = { mode: "release"; chromeWebStoreId: string | null } | { mode: "development" } | { mode: "none" };
 export type BrowserExtensionListing = { build: "release" | "development" | "none"; storeUrl: string | null };
@@ -35,10 +36,9 @@ export function readBrowserExtensionBuild(resourcesPath: string): BrowserExtensi
   } catch { return { mode: "none" }; }
 }
 
-export function browserExtensionListing(build: BrowserExtensionBuild, flags: readonly AnnouncementFlag[] | undefined): BrowserExtensionListing {
+export function browserExtensionListing(build: BrowserExtensionBuild): BrowserExtensionListing {
   if (build.mode !== "release") return { build: build.mode, storeUrl: null };
-  const listed = build.chromeWebStoreId && flags?.includes("murage-for-chrome-listed");
-  return { build: "release", storeUrl: listed ? `https://chromewebstore.google.com/detail/${build.chromeWebStoreId}` : null };
+  return { build: "release", storeUrl: build.chromeWebStoreId ? `https://chromewebstore.google.com/detail/${build.chromeWebStoreId}` : null };
 }
 
 /** What the setup card and Browser panel receive. */
@@ -49,8 +49,10 @@ export function browserExtensionListingStatus(listing: BrowserExtensionListing) 
 /** The truthful next step while no browser profile is connected. */
 export function browserExtensionSetupReason(listing: BrowserExtensionListing): string {
   if (listing.storeUrl) return "Add Murage for Chrome from the Chrome Web Store, then open its side panel and connect.";
-  if (listing.build === "release") return "Murage for Chrome is not in the Chrome Web Store yet. You can keep using the bot's own browser.";
-  if (listing.build === "development") return "Install the development extension and register its helper to connect. The store listing is not published.";
+  // A release build without a trusted store item still connects an extension
+  // that is already installed; it just has no link to offer.
+  if (listing.build === "release") return "Open Murage for Chrome's side panel to connect. You can keep using the bot's own browser.";
+  if (listing.build === "development") return "Install the development extension and register its helper to connect.";
   // Resources-only builds (qualification before the store item exists) ship
   // the helper but no extension identity, so nothing can connect yet.
   return "This copy of Murage is not set up for Murage for Chrome yet. You can keep using the bot's own browser.";

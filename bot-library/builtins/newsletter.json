@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Newsletter",
     "tagline": "A complete newsletter draft with three honest subject lines",
-    "summary": "Letty prepares a complete newsletter issue draft from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For general writing and editing, use Writer. For channel strategy, use Channels. For a customer email journey team, use Email & Lifecycle Crew.",
+    "summary": "Letty prepares a complete newsletter issue draft from the material you supply.",
     "category": "Marketing",
     "author": {
       "name": "Ferrox Labs",
@@ -60,7 +60,8 @@
         "title": "Newsletter",
         "description": "Letty prepares a complete newsletter issue draft from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For general writing and editing, use Writer. For channel strategy, use Channels. For a customer email journey team, use Email & Lifecycle Crew.",
         "appearance": {
-          "color": "green"
+          "color": "yellow",
+          "mascotBody": "squircle"
         },
         "skills": [
           "beacon-newsletter",

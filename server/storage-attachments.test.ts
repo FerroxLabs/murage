@@ -128,6 +128,18 @@ describe("the inventory walk (R1.2, R1.3)", () => {
     expect(page.totals).toMatchObject({ count: 1, bytes: 4, other: { count: 4 } });
   });
 
+  // 1.0.4 SL-H H3: Remove's marker folder is not a file Murage keeps.
+  it("skips the .removed marker folder: never listed, never counted as other", async () => {
+    const dir = freshDir();
+    const managed = `${uuid(1)}.pdf`;
+    writeFileSync(join(dir, managed), "pdf!");
+    mkdirSync(join(dir, ".removed"));
+    writeFileSync(join(dir, ".removed", `${uuid(2)}.png`), "");
+    const page = ok(await makeList(dir).list({}));
+    expect(page.items.map(item => item.name)).toEqual([managed]);
+    expect(page.totals).toMatchObject({ count: 1, bytes: 4, other: { count: 0, bytes: 0 } });
+  });
+
   it("L3: the walk reads no file bytes and opens nothing but the folder", async () => {
     const dir = freshDir();
     for (let i = 0; i < 5; i++) writeFileSync(join(dir, `${uuid(i)}.png`), "bytes");
@@ -202,6 +214,13 @@ describe("snapshots and paging (R1.3, R1.4)", () => {
     expect((await list.list({ snapshot: first.snapshot })).status).toBe(409);
     now = SNAPSHOT_TTL_MS + 1;
     expect((await list.list({ snapshot: second.snapshot })).status).toBe(409);
+  });
+  it("after a Remove the old snapshot's next page answers 409", async () => {
+    const { fs } = fakeFs([{ name: `${uuid(1)}.png` }, { name: `${uuid(2)}.png` }]);
+    const list = makeList("/x", undefined, { fs });
+    const first = ok(await list.list({ limit: "1" }));
+    list.forget();
+    expect(await list.list({ limit: "1", snapshot: first.snapshot, cursor: "1" })).toEqual({ status: 409, body: { error: STALE_SNAPSHOT_MESSAGE } });
   });
   it("a snapshot is dropped after five minutes even when nobody asks again", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });

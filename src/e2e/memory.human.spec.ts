@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { launchVerificationServer, runControlMurage, type VerificationServer } from "../../scripts/control-murage.ts";
 import { openSidebar } from "./fixtures.ts";
+import { chooseFromHeaderMenu, expectChatHeader, openBotProfile, phoneLayout } from "./chat-controls.ts";
 import { openSidebarPlace } from "./sidebar-nav";
 import { storeAnchorMessage } from "../../server/memory/testing/anchor-message.ts";
 
@@ -145,7 +146,7 @@ test("reviewed memory survives sharing and correction, then forgetting excludes 
   };
   await page.addInitScript(()=>localStorage.setItem("murage-email-gate","skipped"));
   await page.goto(origin);
-  await expect(page.getByRole("button",{name:/^Open .+'s profile$/}).first()).toBeVisible();
+  await expectChatHeader(page);
   // The Flux key banner that used to sit here went with the 0.1.58 first run
   // (311387b1): the key is offered in the Chief's conversation now.
   await expect(page.getByRole("complementary",{name:"Let your bots pick the right model",exact:true})).toHaveCount(0);
@@ -219,7 +220,7 @@ test("bot memory keeps workspace settings out of the narrow profile panel", asyn
   if(await invitation.count())await invitation.getByRole("button",{name:"Not now",exact:true}).last().click();
   const sidebar=await openSidebar(page);
   await sidebar.getByText("Memory browser fixture",{exact:true}).click();
-  await page.getByRole("button",{name:"Open Memory browser fixture's profile",exact:true}).first().click();
+  await openBotProfile(page,"Memory browser fixture");
   // The profile is Bot settings now (51786fe3); its Memory section holds the launcher.
   const settings=page.getByRole("dialog",{name:"Bot settings"});
   const sectionSelect=settings.getByRole("combobox",{name:"Section",exact:true});
@@ -263,7 +264,7 @@ test("owner imports full notebooks, tracks changes, and selects existing Flux ex
   expect(defaults.learning.connection).toMatchObject({instanceId:"@murage/flux-fast",source:"default"});
   await page.addInitScript(()=>localStorage.setItem("murage-email-gate","skipped"));
   await page.goto(origin);
-  await expect(page.getByRole("button",{name:/^Open .+'s profile$/}).first()).toBeVisible();
+  await expectChatHeader(page);
   const sidebar=await openSidebar(page);
   // Connection selection moved to the visible Learning card in Settings > Memory.
   await sidebar.getByRole("button",{name:"App settings",exact:true}).click();
@@ -318,7 +319,9 @@ test("paged bot memory handles 3000 records in both skins without accumulating c
   if(await invitation.count())await invitation.getByRole("button",{name:"Not now",exact:true}).last().click();
   const sidebar=await openSidebar(page);
   await sidebar.getByText("Memory browser fixture",{exact:true}).click();
-  await page.getByRole("button",{name:"Open memory for Memory browser fixture",exact:true}).first().click();
+  // The header's memory button; a phone keeps it in the "..." menu.
+  if(await phoneLayout(page))await chooseFromHeaderMenu(page,"Memory");
+  else await page.getByRole("button",{name:"Open memory for Memory browser fixture",exact:true}).first().click();
   const panel=page.getByRole("region",{name:"Bot memory",exact:true});
   await panel.getByRole("textbox",{name:"Search memory",exact:true}).fill("PAGEDMEMORY");
   await panel.getByRole("button",{name:"Search",exact:true}).click();

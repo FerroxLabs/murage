@@ -18,7 +18,7 @@ const holdId=()=>"hold-"+randomUUID();
 let fixture:VerificationServer,environmentId:string;
 const keys=()=>{const key=generateKeyPairSync("ed25519"),factor=generateKeyPairSync("ed25519");return {key,factor};};
 type Device=ReturnType<typeof keys> & {deviceId:string;accessToken:string;cookie?:string};
-let owner:Device,phone:Device,browser:Device;
+let owner:Device,phone:Device,browser:Device,chatBrowser:Device;
 async function api(method:string,path:string,body?:unknown,device?:Device,extra:Record<string,string>={}) {
  const encoded=body===undefined?undefined:Buffer.isBuffer(body)?body:Buffer.from(JSON.stringify(body));
  return new Promise<{status:number;body:any;cookie:string|null;connection?:string}>((resolve,reject)=>{
@@ -45,17 +45,19 @@ async function pair(scope:CloudScope,approver?:Device):Promise<Device> {
  return {...pairKeys,...redeemed.body,cookie:redeemed.cookie?.split(";")[0]};
 }
 // A browser is enrolled only by the door now: a CP-signed v2 ticket bound to the browser's session key, and a proof by that key.
-async function enterBrowser():Promise<Device> {
+// `proof:"email"` is the CP-signed claim that this sign-in carried an emailed code: it is what earns the remembered-owner factor. Without it the door enrols a chat-only browser.
+async function enterBrowser(codeProof?:"email"):Promise<Device> {
  const key=generateKeyPairSync("ec",{namedCurve:"prime256v1"}),factor=generateKeyPairSync("ec",{namedCurve:"prime256v1"}),now=Date.now();
  const bind=createHash("sha256").update(key.publicKey.export({type:"spki",format:"der"})).digest("hex");
- const payload=Buffer.from(JSON.stringify({type:"murage-door-v2",homeId:"fixture-home",generation:1,publicOrigin:origin,account:"fixture-owner",nonce:randomBytes(16).toString("base64url"),stepUpAt:now-1000,issuedAt:now-500,expiresAt:now+59_000,bind,kind:"browser"})).toString("base64url");
+ const payload=Buffer.from(JSON.stringify({type:"murage-door-v2",homeId:"fixture-home",generation:1,publicOrigin:origin,account:"fixture-owner",nonce:randomBytes(16).toString("base64url"),stepUpAt:now-1000,issuedAt:now-500,expiresAt:now+59_000,bind,kind:"browser",...(codeProof?{proof:codeProof}:{})})).toString("base64url");
  const ticket=`${payload}.${sign("sha256",Buffer.from(payload),{key:cpKey.privateKey,dsaEncoding:"ieee-p1363"}).toString("base64url")}`;
  const proof=sign("sha256",Buffer.from(`murage-door-v2:${ticket}`),{key:key.privateKey,dsaEncoding:"ieee-p1363"}).toString("base64url");
- const entered=await api("POST","/api/cloud/enter",{ticket,device:{deviceId:null,publicKey:key.publicKey.export({type:"spki",format:"pem"}).toString(),assertionKey:factor.publicKey.export({type:"spki",format:"pem"}).toString(),proof}});
+ const assertionProof=sign("sha256",Buffer.from(`murage-door-v2-assertion:${ticket}`),{key:factor.privateKey,dsaEncoding:"ieee-p1363"}).toString("base64url");
+ const entered=await api("POST","/api/cloud/enter",{ticket,device:{deviceId:null,publicKey:key.publicKey.export({type:"spki",format:"pem"}).toString(),assertionKey:factor.publicKey.export({type:"spki",format:"pem"}).toString(),proof,assertionProof}});
  expect(entered.status).toBe(200);expect(entered.body.accessToken).toBeUndefined();expect(entered.cookie).toContain("Secure; HttpOnly; SameSite=Strict");
  return {key,factor,...entered.body,cookie:entered.cookie?.split(";")[0]} as unknown as Device;
 }
-beforeAll(async()=>{const instrumentationSource="const path=await import('node:path'),url=await import('node:url');const controlFixture=await import(url.pathToFileURL(path.join(process.cwd(),'server/cloud-home/control-state-verification.fixture.mjs')).href);controlFixture.installVerificationControl("+JSON.stringify(origin)+","+JSON.stringify(cpKeyPem)+");";fixture=await launchVerificationServer({},undefined,{cloud:{publicOrigin:origin,bootstrapSecret:secret},instrumentationSource,readyTimeoutMs:60_000});environmentId=(await api("GET","/.well-known/murage/environment")).body.environmentId;owner=await pair("owner-desktop");phone=await pair("owner-phone",owner);browser=await enterBrowser();},90_000);
+beforeAll(async()=>{const instrumentationSource="const path=await import('node:path'),url=await import('node:url');const controlFixture=await import(url.pathToFileURL(path.join(process.cwd(),'server/cloud-home/control-state-verification.fixture.mjs')).href);controlFixture.installVerificationControl("+JSON.stringify(origin)+","+JSON.stringify(cpKeyPem)+");";fixture=await launchVerificationServer({},undefined,{cloud:{publicOrigin:origin,bootstrapSecret:secret},instrumentationSource,readyTimeoutMs:60_000});environmentId=(await api("GET","/.well-known/murage/environment")).body.environmentId;owner=await pair("owner-desktop");phone=await pair("owner-phone",owner);browser=await enterBrowser("email");chatBrowser=await enterBrowser();},90_000);
 afterAll(async()=>{await fixture?.close();});
 describe("cloud sign-in at the actual HTTP dispatcher",()=>{
  it.each([["PATCH","/api/bots/fixture",{alwaysAllow:[]}],["POST","/api/bots/fixture/always-allow",{allowKey:"Bash(*)"}],["POST","/api/routines/fixture/always-allow",{allowKey:"Bash(*)"}],["POST","/api/teams/import",{team:{members:[{alwaysAllow:["Bash(*)"]}]}}],["POST","/api/packages/import",{action:"commit",agents:[{alwaysAllow:["Bash(*)"]}]}]] as const)("real dispatcher denies home grant writer %s %s",async(method,path,body)=>{
@@ -69,7 +71,21 @@ describe("cloud sign-in at the actual HTTP dispatcher",()=>{
   expect((await api("POST",path,body,owner,signed)).status).toBe(201);
   expect((await api("POST",path,body,owner,signed)).status).toBe(403);
  });
- it("browser gets conversation, companion and Settings reads but phone and browser cannot write credentials",async()=>{for(const path of ["/api/config","/api/bots","/api/inbox","/api/about-me","/api/house-rules"])expect((await api("GET",path,undefined,browser)).status,path).toBe(200);for(const d of [phone,browser])expect((await api("POST","/api/provider-connections",{},d)).status).toBe(403);});
+ it("an owner-factor browser gets the owner's conversation, companion, Inbox and Settings reads; a bare door browser gets no Inbox; phone and browser cannot write credentials",async()=>{
+  for(const path of ["/api/config","/api/bots","/api/inbox","/api/decisions","/api/about-me","/api/house-rules"])expect((await api("GET",path,undefined,browser)).status,path).toBe(200);
+  expect((await api("GET","/api/inbox",undefined,phone)).status).toBe(200);
+  // No owner factor: the door browser is chat-level and the Inbox stays unavailable, by status and by body.
+  expect(await api("GET","/api/inbox",undefined,chatBrowser)).toMatchObject({status:404,body:{error:"Inbox is unavailable."}});
+  for(const d of [phone,browser])expect((await api("POST","/api/provider-connections",{},d)).status).toBe(403);
+ });
+ it("a phone's unsent image upload is shown to the phone but not to a remembered-owner browser",async()=>{
+  const png=Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==","base64");
+  const up=await api("POST","/api/attachments",png,phone,{"content-type":"image/png"});expect(up.status).toBe(201);
+  const name=String(up.body.path ?? up.body.url ?? "").split("/").pop()!;expect(name).toMatch(/\.png$/);
+  const get=(d:Device)=>new Promise<number>((resolve,reject)=>{request(fixture.info.url+`/api/attachments/${name}`,{method:"GET",headers:{host:"home.example.test",origin,...(d.cookie?{cookie:d.cookie}:{authorization:`Bearer ${d.accessToken}`})}},res=>{res.resume();res.on("end",()=>resolve(res.statusCode!));}).on("error",reject).end();});
+  expect(await get(phone)).toBe(200);
+  expect([403,404]).toContain(await get(browser));
+ });
  it("the actual local computer request needs desktop confirmation and is refused to the phone",async()=>{
   const created=await api("POST","/api/bots",{name:"Host authority fixture"},owner);expect(created.status).toBe(201);
   const path=`/api/bots/${created.body.bot.id}`,body={computer:"local"};

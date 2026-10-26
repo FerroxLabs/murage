@@ -21,7 +21,7 @@ const SAMPLES = [
   ["PATCH", "/api/bots/b1/sharing"], ["POST", "/api/bots/b1/sharing/skills"], ["POST", "/api/bots/b1/sharing/copy"],
   ["POST", "/api/flux-connection"], ["POST", "/api/provider-connections"], ["POST", "/api/local-models"], ["POST", "/api/claude-accounts"],
   ["POST", "/api/memory/x"], ["PATCH", "/api/config"], ["PUT", "/api/config"], ["POST", "/api/skills/import"],
-  ["POST", "/api/teams/import"], ["POST", "/api/team-library/github"], ["POST", "/api/packages/import"], ["POST", "/api/starter-profiles"],
+  ["POST", "/api/teams/import"], ["POST", "/api/team-library/github"], ["POST", "/api/team-library/grok"], ["POST", "/api/packages/import"], ["POST", "/api/starter-profiles"],
   ["POST", "/api/telegram/pair"], ["POST", "/api/slack/revoke"], ["POST", "/api/whatsapp/link"], ["POST", "/api/cli-test"],
   ["POST", "/api/engine-management/codex"], ["PATCH", "/api/instances/i1"], ["POST", "/api/instances/i1/claude-update"], ["POST", "/api/hermes/profiles/import"],
   ["POST", "/api/mcp/servers"], ["POST", "/api/mcp/inspect"], ["POST", "/api/folder-trust"], ["POST", "/api/local-computer"],
@@ -36,6 +36,9 @@ const SAMPLES = [
   ["GET", "/api/engine-login/codex"],
   ["DELETE", "/api/bots/b1"], ["DELETE", "/api/groups/g1"], ["PATCH", "/api/groups/g1"], ["PATCH", "/api/bots/b1"], ["POST", "/api/bots"], ["PATCH", "/api/bots/b1/profile"],
   ["POST", "/api/move/commit"], ["POST", "/api/lend/scopes"],
+  // 1.0.4 step-up routes (SL-K/SL-I chat permissions and limit backup, MCP-118-175 enable cards, SL-H attachment remove).
+  ["POST", "/api/bots/b1/tasks/t1/permissions/refresh"], ["PUT", "/api/bots/b1/limit-backup"], ["DELETE", "/api/bots/b1/limit-backup"],
+  ["POST", "/api/bots/b1/mcp-enable-cards/c1/enable"], ["POST", "/api/storage/attachments/remove"],
 ];
 
 describe("every step-up route has a human label", () => {
@@ -55,6 +58,11 @@ describe("every step-up route has a human label", () => {
   it("the gate really asks for step-up on the sampled step-up and credential routes, so the labels are for requests that happen", () => {
     for (const [method, path] of SAMPLES) {
       const cloudWrite = routePolicy(method, path)?.cloudWrite;
+      // 1.0.4 SL-H: attachment remove is refused on every Cloud home before step-up is considered (route-policy.ts).
+      if (path === "/api/storage/attachments/remove") {
+        expect(cloudRouteDecision(method, path, "owner-desktop", {}, false), `${method} ${path}`).toBe("deny");
+        continue;
+      }
       if (method !== "GET" && (cloudWrite === "step-up" || cloudWrite === "credential")) {
         expect(cloudRouteDecision(method, path, "owner-desktop", {}, false), `${method} ${path}`).toBe("step-up required");
       }

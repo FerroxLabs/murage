@@ -10,6 +10,7 @@
 import { memo, useEffect, useState } from "react";
 import { useStore, useStoreIfAny, type Bot, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
+import { t } from "@/lib/i18n";
 import { SkillRequestPreview } from "@/components/SkillRequestPreview";
 import { ApprovalDetailBody } from "@/components/ApprovalDetailBody";
 import { CollapsibleText } from "@/components/CollapsibleText";
@@ -77,7 +78,8 @@ function needsRoutineReview(pending: Pending): boolean {
 export function pendingApprovals(messages: Message[]): Pending[] {
   return messages
     // a publish card carries its own Publish / Not now buttons and is never answered by voice or from the composer
-    .filter((m) => m.kind === "options" && m.card?.kind !== "publish" && m.card?.requestId && m.card.tool && !m.card.answered && !m.card.dismissed)
+    // a limit offer card is a choice of engine, never a permission (1.0.4 SL-I I5)
+    .filter((m) => m.kind === "options" && m.card?.kind !== "publish" && m.card?.tool !== "murage_limit_offer" && m.card?.requestId && m.card.tool && !m.card.answered && !m.card.dismissed)
     .map((m) => ({
       message: m,
       requestId: m.card!.requestId!,
@@ -214,7 +216,9 @@ export function approvalLabel(pending: Pending): string {
       : "Enable this learned skill";
   }
   if (isRoutineApproval(pending)) {
-    return pending.message.card?.routineRequest?.operation.action === "create"
+    const request = pending.message.card?.routineRequest;
+    if (request?.kind === "webhook") return t(request.operation.action === "create" ? "automations.confirmWebhook" : "automations.confirmWebhookChange");
+    return request?.operation.action === "create"
       ? "Confirm this routine"
       : "Confirm this routine change";
   }
@@ -247,7 +251,7 @@ export const PendingApprovalPanel = memo(function PendingApprovalPanel({
     <div
       role="region"
       aria-label={isSkillApproval(pending) ? "Pending skill confirmation" : isRoutineApproval(pending) ? "Pending routine confirmation" : "Pending approval"}
-      className="min-h-0 flex-1 overflow-y-auto overscroll-contain rounded-t-2xl border-b border-hairline/50 bg-control/40 px-4 py-3"
+      className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-1 pt-3"
     >
       <div className="flex flex-wrap items-center gap-2" aria-live="polite">
         <span className="text-[11px] uppercase tracking-[0.18em] text-ink-secondary">Pending approval</span>
@@ -261,7 +265,9 @@ export const PendingApprovalPanel = memo(function PendingApprovalPanel({
           {isSkillApproval(pending)
             ? pending.message.card?.skillRequest?.action === "update" ? "update_skill" : "stage_skill"
             : isRoutineApproval(pending)
-            ? pending.message.card?.routineRequest?.operation.action === "create"
+            ? pending.message.card?.routineRequest?.kind === "webhook"
+              ? pending.message.card.routineRequest.operation.action === "create" ? "create_webhook" : "manage_webhook"
+              : pending.message.card?.routineRequest?.operation.action === "create"
               ? "schedule_routine"
               : "manage_routine"
             : pending.tool}
@@ -425,12 +431,49 @@ export function PendingApprovalActions({
   };
 
   const base = "inline-flex items-center justify-center rounded-full px-3.5 py-1.5 text-[13.5px]";
+  // The wider remembered grants sit behind "More" so the card reads as one
+  // compact decision: Deny and Allow once (and the narrow grant, when there is one).
+  const moreProgram = Boolean(grants.always && bot && (pending.allowKey || pending.message.card?.allowKeys?.length));
+  const hasMore = !computerOnly && (moreProgram || grants.forTask);
+  const [moreOpen, setMoreOpen] = useState(false);
   return (
-    <div role="group" aria-label="Approval" className="flex shrink-0 flex-wrap items-center justify-end gap-2 px-2 py-2" aria-busy={feedback.busy !== null}>
+    <div role="group" aria-label="Approval" className="flex shrink-0 flex-wrap items-center justify-end gap-2 px-4 pb-3 pt-1" aria-busy={feedback.busy !== null}>
       {!durableRequest && (
         <button onClick={onCancelTurn} className={cn(base, PRESSED, "text-ink-secondary hover:bg-control hover:text-ink")}>
           Cancel turn
         </button>
+      )}
+      {hasMore && (
+        <button
+          type="button"
+          onClick={() => setMoreOpen((open) => !open)}
+          aria-expanded={moreOpen}
+          className={cn(base, PRESSED, "mr-auto text-ink-secondary hover:bg-control hover:text-ink")}
+        >
+          More ways to allow
+        </button>
+      )}
+      {hasMore && moreOpen && (
+        <div role="group" aria-label="More ways to allow" data-approval-more className="flex w-full flex-wrap items-center justify-end gap-2">
+          {moreProgram && bot && (
+            <button
+              onClick={() => decide("program", "allow", "program")}
+              title={`Stop asking ${bot.name} about ${pending.message.card?.allowKeys && pending.message.card.allowKeys.length > 1 ? "all of these actions" : actionGrantWords(pending.allowKey ?? "") ?? pending.allowKey}`}
+              {...btn("program", cn(base, "border border-hairline/50 text-ink hover:bg-control"))}
+            >
+              <ApprovalBusyLabel busy={feedback.busy === "program"}>{alwaysAllowLabel(pending)}</ApprovalBusyLabel>
+            </button>
+          )}
+          {grants.forTask && (
+            <button
+              onClick={() => decide("task", "allow", false, true)}
+              title="Allow the same kind of action in the same place until this task ends"
+              {...btn("task", cn(base, "border border-hairline/50 text-ink hover:bg-control"))}
+            >
+              <ApprovalBusyLabel busy={feedback.busy === "task"}>Allow for this task</ApprovalBusyLabel>
+            </button>
+          )}
+        </div>
       )}
       {offer && !computerOnly && (grants.forRoutine || !offer.eligible) && (
         <RoutineGrantChoice
@@ -454,24 +497,6 @@ export function PendingApprovalActions({
       </button>
       {!computerOnly && (
         <>
-      {grants.always && bot && (pending.allowKey || pending.message.card?.allowKeys?.length) && (
-        <button
-          onClick={() => decide("program", "allow", "program")}
-          title={`Stop asking ${bot.name} about ${pending.message.card?.allowKeys && pending.message.card.allowKeys.length > 1 ? "all of these actions" : actionGrantWords(pending.allowKey ?? "") ?? pending.allowKey}`}
-          {...btn("program", cn(base, "border border-hairline/50 text-ink hover:bg-control"))}
-        >
-          <ApprovalBusyLabel busy={feedback.busy === "program"}>{alwaysAllowLabel(pending)}</ApprovalBusyLabel>
-        </button>
-      )}
-      {grants.forTask && (
-        <button
-          onClick={() => decide("task", "allow", false, true)}
-          title="Allow the same kind of action in the same place until this task ends"
-          {...btn("task", cn(base, "border border-hairline/50 text-ink hover:bg-control"))}
-        >
-          <ApprovalBusyLabel busy={feedback.busy === "task"}>Allow for this task</ApprovalBusyLabel>
-        </button>
-      )}
       {grants.forRoutine && (
         <button
           onClick={() => decide("routine", "allow", "routine")}
