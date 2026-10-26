@@ -84,6 +84,20 @@ describe("routes (test 3, r2 R1)", () => {
     expect(plan.env.FUIGO_HOME).toBe(state);
     expect(JSON.stringify(plan.files)).not.toContain(route.apiKey);
   });
+  it("Fuigo's shell commands ask Murage on every spawn but Full access: [permission] ask = [\"Bash\"], one table with the memory rules", () => {
+    const h = rig.home("fuigoAgent"), scratch = "native/provider-turns/fuigoAgent-0123456789ab", state = `${h}/${scratch}`;
+    const base = ["--no-memory", "agent", "--no-leader", "stdio"];
+    const asking = ok(rig.request("fuigoAgent", { args: ["--permission-mode", "default", ...base] })).files[`${h}/.fuigo/config.toml`];
+    expect(asking).toContain('\n[permission]\nask = ["Bash"]\n');
+    const withMemory = ok(rig.request("fuigoAgent", { scratch: [scratch], render: { route: { ...route, protocol: "openai" }, memoryTools: true } })).files[`${state}/config.toml`];
+    expect(withMemory.split("[permission]")).toHaveLength(2);
+    expect(withMemory).toContain('[permission]\nask = ["Bash"]\nrules = [\n');
+    expect(withMemory).toContain('pattern = "murage-memory__memory_search"');
+    // Full access is the owner's own choice: no ask rule, and no bypass lock anywhere
+    const full = ok(rig.request("fuigoAgent", { args: ["--permission-mode", "bypassPermissions", ...base] })).files;
+    expect(full[`${h}/.fuigo/config.toml`]).not.toContain("[permission]");
+    expect(JSON.stringify(full)).not.toContain("disable_bypass_permissions_mode");
+  });
   it("renders OpenCode's provider without options.apiKey; the key reaches it only in OPENCODE_AUTH_CONTENT", () => {
     const plan = ok(rig.request("opencodeGo", { render: { route: { ...route, provider: "flux", models: ["flux-auto", "flux-fast"], label: "Flux Router" } } }));
     const config = JSON.parse(plan.files[`${rig.home("opencodeGo")}/.config/opencode/opencode.json`]);

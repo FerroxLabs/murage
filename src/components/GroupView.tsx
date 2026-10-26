@@ -24,7 +24,7 @@ import { projectSurfaceEnabled, projectWriteReason } from "@/lib/project-client"
 import { ProjectSinceYouLeftLazy } from "./ProjectSinceYouLeftLazy";
 import { useProject } from "@/lib/use-project";
 import { DeletionNoteBanner } from "./DeletionNoteBanner";
-import { dismissDeletionNote } from "@/lib/deletion-notes";
+import { chatDeletionNote, dismissDeletionNote } from "@/lib/deletion-notes";
 import { ApprovedStepsRow, isApprovedStepsLine } from "./ApprovedStepsRow";
 import { settledHeldQueue } from "./EngineNotes";
 import { ImageRecordRow, isImageRecordLine } from "./ImageRecordRow";
@@ -131,6 +131,7 @@ import {
 } from "@/lib/transcript-chrome";
 import { useNarrowViewport } from "@/lib/media-query";
 import { showWorkingDots } from "@/lib/turn-tail";
+import { useTurnLive } from "@/state/turn-status";
 import { liveActivityLabel } from "@/lib/live-activity";
 import { splitTranscriptAttachments } from "@/lib/composer-attachments";
 import {
@@ -1541,10 +1542,18 @@ export function GroupView({ group }: { group: Group }) {
   const lastGroupMessage = roomMessages.at(-1);
   const toolInFlight = lastGroupMessage?.kind === "activity" && lastGroupMessage.tool?.ok === undefined;
   const activityLabel = liveActivityLabel(lastGroupMessage);
+  // The mascot stays for the speaker's whole turn; only its end hides it (upstream #3374).
+  const turnLiveState = useTurnLive(group.threadId);
+  const turnEnded = turnLiveState.ended;
   const waiting = Boolean(
-    speaker && showWorkingDots(true, roomMessages.at(-1), speaker.id),
+    speaker && showWorkingDots(true, roomMessages.at(-1), speaker.id, turnEnded),
   );
-  const popping = useReplyPop(`${group.id}:${group.threadId}`, lastGroupMessage, waiting);
+  const popping = useReplyPop(
+    `${group.id}:${group.threadId}`,
+    lastGroupMessage,
+    waiting,
+    `${speaker?.id ?? ""}:${turnLiveState.turnId ?? ""}`,
+  );
   // A team-goal routine waiting on the person: its card, not "Thinking".
   const waitingRun = channelWaitingRun(state.routineRuns, group);
   const presenceVisible = (waiting && !(waitingRun && waitingRun.botId === speaker?.id)) || popping !== null;
@@ -1757,6 +1766,8 @@ export function GroupView({ group }: { group: Group }) {
     </span>
   ));
 
+  // Only the note a Delete just made shows here; engine copies still owed are a quiet line in Settings > Engines, never a banner.
+  const placeDeletionNote = chatDeletionNote(state.deletionNote);
   return (
     <OutcomesProvider value={outcomes}>
     <ChipsProvider value={chips}>
@@ -1957,7 +1968,7 @@ export function GroupView({ group }: { group: Group }) {
       {/* A channel never showed an error: a refused delete or rename in the
           conversation picker just did nothing. Same banner as a bot chat. */}
       {state.error && <ErrorBanner message={state.error} onDismiss={() => dispatch({ type: "error", message: null })} />}
-      {state.deletionNote && <DeletionNoteBanner note={state.deletionNote} onDismiss={() => dismissDeletionNote(state.deletionNote, (covers) => api("/api/deletions/dismiss", { method: "POST", body: JSON.stringify({ covers }) }), dispatch)} onRetry={async () => { const again = state.deletionNote?.retryBotId; if (again) { dispatch({ type: "deletionNote", note: null }); dispatch({ type: "deleteBot", source: "local", botId: again, attempt: newDeleteAttempt() }); return; } const response = await api("/api/deletions/retry", { method: "POST" }); dispatch({ type: "deletionOwed", notices: response?.notices, rev: response?.rev }); return response?.result; }} />}
+      {placeDeletionNote && <DeletionNoteBanner note={placeDeletionNote} onDismiss={() => dismissDeletionNote(placeDeletionNote, (covers) => api("/api/deletions/dismiss", { method: "POST", body: JSON.stringify({ covers }) }), dispatch)} onRetry={async () => { const again = state.deletionNote?.retryBotId; if (again) { dispatch({ type: "deletionNote", note: null }); dispatch({ type: "deleteBot", source: "local", botId: again, attempt: newDeleteAttempt() }); return; } const response = await api("/api/deletions/retry", { method: "POST" }); dispatch({ type: "deletionOwed", notices: response?.notices, rev: response?.rev }); return response?.result; }} />}
 
       {/* Instructions: one pinned line; click to edit */}
       {!setupPending && showChat && <div className="w-full px-5">

@@ -6,6 +6,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
+import { expectFinishTogether, toggleFinishTogether } from "./chat-controls";
 
 // A real insecure origin, mapped only inside this Chromium process. No OS
 // DNS, tailnet, live harness, engine, or user data is involved. Unlike deleting
@@ -115,27 +116,27 @@ test.beforeEach(() => { requests.length = 0; rejectFirst = false; });
 test("room goal intent follows its draft through task switching and reload", async ({ page }) => {
   await page.goto(`${origin}/__send?target=room`);
   await expect(page.locator("output")).toHaveText("ready");
-  const goal = page.getByRole("button", { name: "Finish together", exact: true });
+  // Finish together is the composer's chip, or on a phone an entry of its + menu (chat-controls.ts).
   await page.getByRole("textbox").fill("Goal for task A");
-  await goal.click();
-  await expect(goal).toHaveAttribute("aria-pressed", "true");
+  await toggleFinishTogether(page);
+  await expectFinishTogether(page, true);
   await page.getByRole("button", { name: "Task B", exact: true }).click();
   await expect(page.getByRole("textbox")).toHaveValue("");
-  await expect(goal).toHaveAttribute("aria-pressed", "false");
+  await expectFinishTogether(page, false);
   await page.getByRole("textbox").fill("Chat for task B");
   await page.getByRole("button", { name: "Task A", exact: true }).click();
   await expect(page.getByRole("textbox")).toHaveValue("Goal for task A");
-  await expect(goal).toHaveAttribute("aria-pressed", "true");
+  await expectFinishTogether(page, true);
   await page.reload();
   await expect(page.getByRole("textbox")).toHaveValue("Goal for task A");
-  await expect(goal).toHaveAttribute("aria-pressed", "true");
+  await expectFinishTogether(page, true);
   await page.getByRole("button", { name: "Send message", exact: true }).click();
   await expect.poll(() => requests.length).toBe(1);
   expect(requests[0]).toMatchObject({ text: "Goal for task A", mode: "goal", threadId: "thread-room" });
-  await expect(goal).toHaveAttribute("aria-pressed", "false");
+  await expectFinishTogether(page, false);
   await page.getByRole("button", { name: "Task B", exact: true }).click();
   await expect(page.getByRole("textbox")).toHaveValue("Chat for task B");
-  await expect(goal).toHaveAttribute("aria-pressed", "false");
+  await expectFinishTogether(page, false);
 });
 
 // Bot read state is per task since threads were bound to the selected task,
@@ -182,19 +183,19 @@ for (const target of ["bot", "room"]) {
     await expect(page.locator("output")).toHaveText("ready");
     const input = page.getByRole("textbox");
     await input.fill("Keep this message");
-    if (target === "room") await page.getByRole("button", { name: "Finish together", exact: true }).click();
+    if (target === "room") await toggleFinishTogether(page);
     await page.getByRole("button", { name: "Send message", exact: true }).click();
     await expect.poll(() => requests.length).toBe(1);
     await expect(input).toHaveValue("Keep this message");
     if (target === "room") {
       expect(requests[0].mode).toBe("goal");
-      await expect(page.getByRole("button", { name: "Finish together", exact: true })).toHaveAttribute("aria-pressed", "true");
+      await expectFinishTogether(page, true);
     }
     await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeDisabled();
     await expect.poll(() => requests.length, { timeout: 15_000 }).toBe(2);
     expect(requests[0].sendId).toMatch(UUID_V4);
     expect(requests[1]).toEqual(requests[0]);
     await expect(input).toHaveValue("");
-    if (target === "room") await expect(page.getByRole("button", { name: "Finish together", exact: true })).toHaveAttribute("aria-pressed", "false");
+    if (target === "room") await expectFinishTogether(page, false);
   });
 }

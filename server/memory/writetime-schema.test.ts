@@ -30,8 +30,8 @@ const version = (db: DatabaseSync) => Number(db.prepare("SELECT schema_version F
 const tables = (db: DatabaseSync) => new Set((db.prepare("SELECT name FROM sqlite_schema WHERE type='table'").all() as Array<{ name: string }>).map(row => row.name));
 const count = (db: DatabaseSync, table: string) => Number(db.prepare(`SELECT count(*) AS n FROM ${table}`).get()?.n);
 function expectV10(db: DatabaseSync, cert: { phase: string; ready: boolean }) {
-  expect(version(db)).toBe(12);
-  expect(MEMORY_SCHEMA_VERSION).toBe(12);
+  expect(version(db)).toBe(13);
+  expect(MEMORY_SCHEMA_VERSION).toBe(13);
   const names = tables(db);
   for (const table of Object.values(WRITETIME_TABLES)) expect(names.has(table), table).toBe(true);
   expect(currentLsn(db)).toBe(1);
@@ -60,7 +60,7 @@ it("v10 opens on an empty database: every table empty, lsn 1, certificate ready"
 it("v10 opens on a v9 RC database: rows kept, lineage tables empty, certificate not ready; v10 -> v9 inverts it while nothing is written", () => {
   const db = file();
   migrateMemorySchema(db, "active");
-  expect(downgradeMemorySchema(db, 9)).toMatchObject({ status: "downgraded", from: 12, to: 9 });
+  expect(downgradeMemorySchema(db, 9)).toMatchObject({ status: "downgraded", from: 13, to: 9 });
   expect(version(db)).toBe(9);
   for (const table of Object.values(WRITETIME_TABLES)) expect(tables(db).has(table), table).toBe(false);
   validateMemorySchema(db);
@@ -88,7 +88,7 @@ it("a v10 -> v9 downgrade with a lineage row or mark runs S5's marking first, th
   const db = file();
   migrateMemorySchema(db);
   db.exec("INSERT INTO memory_deny_line(thread_id,lsn,revoke_id,mark_lsn,reason) VALUES('t',1,1,1,'forget')");
-  expect(downgradeMemorySchema(db, 9)).toMatchObject({ status: "downgraded", from: 12, to: 9 });
+  expect(downgradeMemorySchema(db, 9)).toMatchObject({ status: "downgraded", from: 13, to: 9 });
   expect(version(db)).toBe(9);
   expect(db.prepare("SELECT 1 AS x FROM sqlite_schema WHERE name='memory_deny_line'").get()).toBeUndefined();
 });
@@ -172,7 +172,7 @@ it("P3-11: v10 -> v9 leaves no optional index (the RC's known-object list does n
   expect(index()).toBeUndefined(); // optional: open builds none of them
   for (const item of OPTIONAL_INDEXES) expect(await buildOptionalIndexOffThread(db, item, { inline: true })).toBe(true);
   expect(index()).toBeTruthy();
-  expect(downgradeMemorySchema(db, 9)).toMatchObject({ status: "downgraded", from: 12, to: 9 });
+  expect(downgradeMemorySchema(db, 9)).toMatchObject({ status: "downgraded", from: 13, to: 9 });
   for (const item of OPTIONAL_INDEXES) expect(optionalIndexReady(db, item.name)).toBe(false);
   expect(index()).toBeUndefined();
   expect(() => validateMemorySchema(db)).not.toThrow();

@@ -7,7 +7,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { denyGeneration, denyLookup, fenceVerdict, lineageLive, memoryLookup, refsLookup, sessionLookup } from "./deny-read.ts";
 import { buildPrompt, promptPart } from "./prompt-parts.ts";
-import { FOOTPRINT_STAR, memoryRefKey, type LineageReader, type LineageVerdict, type PageLine, type TurnLineage } from "./lineage-types.ts";
+import { FOOTPRINT_STAR, memoryRefKey, type LineageReader, type MemoryRef, type LineageVerdict, type PageLine, type TurnLineage } from "./lineage-types.ts";
 import { CONTENT, MEMBER, OWNER, WritetimeFixture } from "./testing/writetime-fixture.ts";
 import { activateRevokesAtUpgrade } from "./schema.ts";
 
@@ -260,9 +260,12 @@ describe("memory objects (memoryLookup)", () => {
     expect(lookup(f, [{ kind: "lesson", id: "l1", version: 3 }, { kind: "claim", id: "c1", version: 1 }])).toEqual({ "lesson:l1:3": W("deny-memory"), "claim:c1:1": W("deny-memory") });
   });
 
-  it("(l, F1) the pending scope window: an object of a pending scope reads checking (created lsn unknown), as does every object under `*`", () => {
-    // Fable P1-1: a promoted copy C (owner statement, no evidence, one derivation edge) of R; forget S under R: C is checking from the commit
-    const f = make().source("S", "s-room").record("R", 1, "s-room", ["S"]).record("Cp", 1, "s-project", [], { assertion: "owner-statement" }).derive("R", 1, "Cp", 1)
+  it("(l, F1) the pending scope window: an object of a pending scope made at or after its since reads checking, as does every object under `*`", () => {
+    // Fable P1-1: a promoted copy C (owner statement, no evidence, one derivation edge) of R; forget S under R: C is checking from the commit.
+    // Nothing derived is older than its root (revoke-commit.ts scopeSince), so the root and all of it are stamped at or after the since (1.0.7 D1).
+    const f = make();
+    f.db.exec("UPDATE memory_lsn SET next=4 WHERE id=1");
+    f.source("S", "s-room").record("R", 1, "s-room", ["S"]).record("Cp", 1, "s-project", [], { assertion: "owner-statement" }).derive("R", 1, "Cp", 1)
       .record("Q", 1, "s-other", ["S"]);
     expect(lookup(f, [{ kind: "record", id: "Cp", version: 1 }])).toEqual({ "record:Cp:1": SHOWN });
     f.pendingScope("s-project", 4);
@@ -275,13 +278,17 @@ describe("memory objects (memoryLookup)", () => {
     expect(lookup(f, [{ kind: "record", id: "Cp", version: 1 }, { kind: "record", id: "Q", version: 1 }])).toEqual({ "record:Cp:1": W("deny-memory"), "record:Q:1": SHOWN });
   });
 
-  it("a created_lsn column, when S3 adds it, decides the pending window: older objects are shown, newer and unknown ones checking", () => {
+  it("the version's created lsn (memory_record_lsn) decides the pending window: older objects are shown, newer ones checking; an unstamped one is bounded by lineage_upgrade_lsn, unknown with no key", () => {
     const f = make();
-    f.db.exec("ALTER TABLE memory_records ADD COLUMN created_lsn INTEGER");
     f.record("old", 1, "s-room").record("new", 1, "s-room").record("unknown", 1, "s-room").pendingScope("s-room", 50);
-    f.db.exec("UPDATE memory_records SET created_lsn=10 WHERE id='old'; UPDATE memory_records SET created_lsn=60 WHERE id='new'");
-    expect(lookup(f, [{ kind: "record", id: "old", version: 1 }, { kind: "record", id: "new", version: 1 }, { kind: "record", id: "unknown", version: 1 }]))
-      .toEqual({ "record:old:1": SHOWN, "record:new:1": C("pending"), "record:unknown:1": C("pending") });
+    f.db.exec("UPDATE memory_record_lsn SET created_lsn=10 WHERE id='old'; UPDATE memory_record_lsn SET created_lsn=60 WHERE id='new'; DELETE FROM memory_record_lsn WHERE id='unknown'");
+    f.meta("lineage_upgrade_lsn", 50);
+    const refs: MemoryRef[] = [{ kind: "record", id: "old", version: 1 }, { kind: "record", id: "new", version: 1 }, { kind: "record", id: "unknown", version: 1 }];
+    expect(lookup(f, refs)).toEqual({ "record:old:1": SHOWN, "record:new:1": C("pending"), "record:unknown:1": C("pending") });
+    f.meta("lineage_upgrade_lsn", 49);
+    expect(lookup(f, refs)).toEqual({ "record:old:1": SHOWN, "record:new:1": C("pending"), "record:unknown:1": SHOWN });
+    f.db.exec("DELETE FROM memory_lineage_lsn_meta WHERE key='lineage_upgrade_lsn'");
+    expect(lookup(f, refs)).toEqual({ "record:old:1": SHOWN, "record:new:1": C("pending"), "record:unknown:1": C("pending") });
   });
 
   it("an object whose scope is unknown (a lesson, a claim) reads checking while any scope is pending", () => {

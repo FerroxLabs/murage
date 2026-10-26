@@ -208,6 +208,8 @@ class Lexer {
    * substitution makes its pattern `)` close nothing, and only a `case`
    * where a command name stands opens one. */
   private pushWord(word: Word): void {
+    const option = optionExpansion(word);
+    if (option) throw new Unreadable("expansion", option);
     this.tokens.push({ kind: "word", word });
     if (this.redirectTarget) { this.redirectTarget = false; return; }
     const bare = word.parts.length === 1 && word.parts[0]!.kind === "lit" && word.parts[0]!.quote === "none" ? word.parts[0]!.text : undefined;
@@ -667,7 +669,20 @@ class Lexer {
     const close = s.indexOf("}", this.i + 1);
     if (close < 0) return undefined;
     const inner = s.slice(this.i + 1, close);
-    if (inner === "" || /[\s'"`$\\{()<>|&;]/.test(inner)) return undefined;
+    // 1.0.7 (Grok r2): the first `}` may sit inside a quote, an escape or a substitution (`{--output="}",x}`,
+    // `{a,$(echo })}`), where bash reads on to a later one: a brace with any of those in its first span asks. A `{`
+    // followed by a blank is a command group (`{ echo "a"; }`), never a brace.
+    if (inner !== "" && !/^\s/.test(inner) && /['"`\\]|[$<>]\(/.test(inner)) throw new Unreadable("expansion", `{${inner}}`);
+    if (inner === "" || /\s/.test(inner)) return undefined;
+    if (/['"`$\\{()<>|&;]/.test(inner)) {
+      // Not modeled, but bash still expands it when nothing ends the word first: `{-exec,sh,-c,x,\;}` is five
+      // words, `{a,'b'}` and `{$X,y}` are two, `{a,{b,c}}` is three. Only an unescaped, unquoted `;|&<>()` ends the
+      // word inside (`{a;b}` is no brace), and only outside a quote, `$(`, `<(`, `>(` or backtick; anything else with a `,`
+      // or `..` asks: a quote, a `$`, a backtick, a `\`, a nested `{`, a `(` or a redirection sign.
+      const endsWord = !/['"`]|[$<>]\(/.test(inner) && /(^|[^\\])[;|&]/.test(inner);
+      if (!endsWord && (inner.includes(",") || inner.includes(".."))) throw new Unreadable("expansion", `{${inner}}`);
+      return undefined;
+    }
     let alts: string[] | undefined;
     const range = /^(-?\d+)\.\.(-?\d+)$/.exec(inner);
     if (range) {
@@ -675,6 +690,13 @@ class Lexer {
       if (Math.abs(hi - lo) + 1 > MAX_BRACE_ALTS) throw new Unreadable("expansion", `{${inner}}`);
       alts = [];
       for (let n = lo; lo <= hi ? n <= hi : n >= hi; n += lo <= hi ? 1 : -1) alts.push(String(n));
+    } else if (/^[A-Za-z]\.\.[A-Za-z]$/.test(inner)) {
+      // `{a..c}` is `a b c` to bash (a range between letters, ASCII order)
+      const [lo, hi] = [inner.charCodeAt(0), inner.charCodeAt(3)];
+      alts = [];
+      for (let n = lo; lo <= hi ? n <= hi : n >= hi; n += lo <= hi ? 1 : -1) alts.push(String.fromCharCode(n));
+    } else if (/^(?:-?\d+|[A-Za-z])\.\.(?:-?\d+|[A-Za-z])\.\.-?\d+$/.test(inner)) {
+      throw new Unreadable("expansion", `{${inner}}`);
     } else if (inner.includes(",")) {
       alts = inner.split(",");
     } else {
@@ -684,6 +706,50 @@ class Lexer {
     // each alternative is an unquoted word of its own: `{~,./x}` holds a `~`
     return { kind: "brace", alts: alts.map((alt) => (alt === "" ? { parts: [] } : new Lexer(alt, 0, this.depth + 1).word())) };
   }
+}
+
+/**
+ * A word in option position that bash expands after this reader has read it: the rules read an option by its
+ * spelling, and an expansion there decides which options the program gets. Asks (Fuigo 1.0.32 sends every shell
+ * command here, and Auto answers what the readers pass):
+ *   - a brace that puts an option on the command line: `--{output=../x,stat}`, `-r{f,}`, `{-exec,sh,-c,x,+}`;
+ *   - a glob, substitution, arithmetic or process substitution in a word that starts with `-`: `-*`, `-[r]f`,
+ *     `--output=$(…)`, `-$((1))`.
+ * After an `=` in the option's own literal prefix a brace or glob only fills the option's value, every
+ * expansion keeping the prefix (`--include=*.ts`, `--include={a,b}.ts`), so those stay ordinary. A variable is
+ * read by the rules as a value and stays as it was. Returns why, or undefined.
+ */
+function optionExpansion(word: Word): string | undefined {
+  const parts = word.parts;
+  // the word's leading literal text, whatever its quoting (`''--{a,b}` starts with `--` too)
+  const leadOf = (list: readonly Part[]): string => {
+    let text = "";
+    for (const part of list) { if (part.kind !== "lit") break; text += part.text; }
+    return text;
+  };
+  const lead = leadOf(parts);
+  const after = parts.find((part) => part.kind !== "lit");
+  if (lead === "" && after?.kind === "brace" && after.alts.some((alt) => leadOf(alt.parts).startsWith("-"))) {
+    return "a brace that expands to an option";
+  }
+  if (!lead.startsWith("-") || (lead.length < 2 && !after)) return undefined;
+  let prefix = "";
+  for (const part of parts) {
+    if (part.kind === "lit") {
+      // an unquoted `[…]` is a glob to bash (walk.ts reads it as one); this lexer keeps it literal. Any `[` in the
+      // option's name, however quoted (`--['o']utput=`, `-['r']['f']`), asks: no split spelling is told apart
+      if (!prefix.includes("=")) {
+        const open = part.text.indexOf("["), eq = part.text.indexOf("=");
+        if (open >= 0 && (eq < 0 || open < eq)) return "a glob in an option";
+      }
+      prefix += part.text;
+      continue;
+    }
+    if (part.kind === "var" || part.kind === "tilde") continue;
+    if ((part.kind === "brace" || part.kind === "glob") && prefix.includes("=")) continue;
+    return part.kind === "brace" ? "a brace in an option" : part.kind === "glob" ? "a glob in an option" : "a substitution in an option";
+  }
+  return undefined;
 }
 
 const ANSI_SIMPLE: Record<string, string> = {

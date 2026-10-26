@@ -79,6 +79,7 @@ import { createFirstPageTopUp, createScrollback, MESSAGE_PAGE_SIZE, needsFirstPa
 import { sameSidebarLine, sidebarLineOf, type SidebarLine } from "../../shared/sidebar-line";
 import { ThreadSettingsWrites } from "./thread-settings-writes";
 import { persistCardPatch } from "./card-persist";
+import { noteTurnEvent } from "./turn-status";
 import { applyTranscriptInput, hydrateTranscript, legacyTranscriptInput, transcriptState, vouches, type InputKind, type SeqTranscript } from "./transcript-seq";
 import { skillRecorderEnabled } from "@/lib/feature-flags";
 import { desktopSurfaceHeaders, ensureDesktopSurfaceSecret, openLiveEvents } from "@/lib/live-events";
@@ -92,7 +93,7 @@ import { isPhoneClient } from "@/lib/phone-client";
 import { isCloudOrigin, notificationBridge } from "@/lib/cloud-workspace";
 import { applyThreadDelta, conversationCache, loadConversationCache } from "@/lib/conversation-cache-host";
 import type { CachedConversation } from "@/lib/conversation-cache";
-import { deletionErrorSentence, deletionNote, owedNote } from "@/lib/deletion-notes";
+import { deletionErrorSentence, deletionNote, owedNote, type OwedLine } from "@/lib/deletion-notes";
 import { ANSWER_TTL_MS, answerClock, carryAnswerTag, fromAnswer, sentAtOf, tagAnswer, type HttpOrigin, type RoomOrigin } from "./answer-tag";
 export { asAnswer, freshAnswer, fromAnswer } from "./answer-tag";
 import { hiddenPatchFrom } from "@/lib/record-numbers";
@@ -1090,7 +1091,10 @@ export interface AppState {
   hydrated?: boolean;
   error: string | null;
   /** After a Delete: what could not be removed, in plain words (deletion-notes.ts). */
-  deletionNote: { title: string; items: string[]; retry?: boolean; owed?: boolean; retryBotId?: string; ids?: string[]; covers?: string[] } | null;
+  deletionNote: { title: string; items: string[]; retry?: boolean; owed?: boolean; retryBotId?: string; ids?: string[]; covers?: string[]; lines?: OwedLine[] } | null;
+  /** The server's owed list as one note (deletion-owed): what Settings > Engines sums up. Kept apart from `deletionNote`, so a note a
+   * Delete just showed (files left in a folder you chose) is never replaced by the owed list. */
+  owedNote: { title: string; items: string[]; retry?: boolean; owed?: boolean; ids?: string[]; covers?: string[]; lines?: OwedLine[] } | null;
   /** the newest revision of the owed-deletion list seen (server/conversation-deletion.ts); older answers are dropped */
   owedRev: number;
   mascotMotion: {
@@ -1658,7 +1662,7 @@ export type Action =
   | { type: "signedOut" }
   | { type: "error"; message: string | null }
   /** `retryBotId`: a bot Delete that got no answer; "Try again" sends it again. */
-  | { type: "deletionNote"; note: { title: string; items: string[]; retry?: boolean; owed?: boolean; retryBotId?: string; ids?: string[]; covers?: string[] } | null }
+  | { type: "deletionNote"; note: { title: string; items: string[]; retry?: boolean; owed?: boolean; retryBotId?: string; ids?: string[]; covers?: string[]; lines?: OwedLine[] } | null }
   /** What the server says is still owed for deleted conversations (the whole list, possibly empty). A list shows the notice; an
    * empty one clears a notice of this kind and leaves any other note alone. Anything that is not a list is ignored. */
   | { type: "deletionOwed"; notices: unknown; /** the server's revision of the list: an answer older than the newest one seen is dropped */ rev?: unknown;
@@ -1888,7 +1892,8 @@ function prependOlder<T extends Bot | Group>(owner: T, older: Message[], hasMore
 export function sendLookupResult(status: unknown): DraftSendLookupResult {
   if (status === "refused") return "refused";
   if (status === "cancelled") return "cancelled";
-  if (status === "sending" || status === "queued" || status === "dispatched" || status === "started" || status === "delivered" || status === "unconfirmed") return "ack";
+  // "stopped": a typed stop (designs/TYPED-STOP-107.md), acknowledged and finished; its words are not kept as a draft
+  if (status === "sending" || status === "queued" || status === "dispatched" || status === "started" || status === "delivered" || status === "unconfirmed" || status === "stopped") return "ack";
   return "none";
 }
 
@@ -3781,10 +3786,12 @@ function reduceState(state: AppState, action: Action): AppState {
       if (rev !== undefined && (action.answer ? rev < state.owedRev : rev <= state.owedRev)) return state;
       const owedRev = rev ?? state.owedRev;
       const note = owedNote(action.notices);
-      if (note) return { ...state, owedRev, deletionNote: note };
+      // a note a Delete just showed stays where it is; the owed list always reaches Settings (owedNote)
+      if (note) return { ...state, owedRev, owedNote: note, deletionNote: state.deletionNote && !state.deletionNote.owed ? state.deletionNote : note };
       // The note that came from the server's owed list goes when that list is empty, whether or not it still offers "Try again" (a
       // finished line has none). A note a Delete just showed is not one of them and stays.
-      if (state.deletionNote?.owed) return { ...state, owedRev, deletionNote: null };
+      if (state.deletionNote?.owed) return { ...state, owedRev, owedNote: null, deletionNote: null };
+      if (state.owedNote) return { ...state, owedRev, owedNote: null };
       return owedRev === state.owedRev ? state : { ...state, owedRev };
     }
     case "error":
@@ -4258,6 +4265,7 @@ export const initialState: AppState = {
   hydrated: false,
   error: null,
   deletionNote: null,
+  owedNote: null,
   owedRev: 0,
   mascotMotion: null,
   pendingQueued: {},
@@ -6160,8 +6168,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           rawDispatch({ type: "groupPatched", origin: { source: "stream" }, group });
           break;
         }
-        // engine copies of deleted conversations that are still owed (fixed sentences from the server, no paths): shown in the
-        // same note a Delete uses, with "Try again now"
+        // engine copies of deleted conversations that are still owed (fixed sentences from the server, no paths): summed up in one
+        // quiet line in Settings > Engines (owedNote), never on a chat; Murage finishes them by itself
         case "deletion-owed": {
           rawDispatch({ type: "deletionOwed", notices: frame.notices, rev: frame.rev });
           break;
@@ -6216,6 +6224,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           break;
         case "runtime": {
           const event = frame.event;
+          // Whether the thread's turn has ended keeps the mascot for the whole turn (turn-status.ts).
+          noteTurnEvent(event);
           if (event.type === "content.delta") {
             // Batch token deltas per animation frame (t3code-style): a fast
             // stream dispatches once per frame instead of once per token, so

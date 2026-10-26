@@ -33,7 +33,6 @@ const DECIDES = /flux-memory-(headers|wire)/;
 const NO_REQUEST_OF_THEIR_OWN: Record<string, string> = {
   "flux-config.ts": "reads the key",
   "opencode-config.ts": "connector plan for opencode.json; the headers ride the per-turn OPENCODE_CONFIG_CONTENT (drivers/acp/opencode-go.ts)",
-  "sendlane.ts": "a comment about key precedence",
   "announcements.ts": "a comment; announcements are fetched from Ferrox, not Flux",
   "model-gateway.ts": "a comment; the local gateway never falls back to Flux",
   "drivers/agents-proxy.ts": "a tool description",

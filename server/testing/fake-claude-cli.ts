@@ -1063,6 +1063,11 @@ const playTurn = (prompt: JsonValue) => {
       },
     });
   });
+  if (mode === "tool-heartbeat") {
+    // Upstream #3328: Claude Code sends this every 30 s while a tool runs.
+    out({ type: "tool_progress", tool_use_id: "tu-1-heartbeat-0", tool_name: "Bash",
+      parent_tool_use_id: "tu-1", elapsed_time_seconds: 30, heartbeat: true });
+  }
   out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tu-1", is_error: false }] } });
 
   const finish = () => {
@@ -1081,6 +1086,12 @@ const playTurn = (prompt: JsonValue) => {
       usage: { input_tokens: 10, cache_read_input_tokens: 2, output_tokens: 5 },
       modelUsage: runningCost.modelUsage,
     });
+    // A background task's heartbeat after the turn settled: nothing is open
+    // for it to keep alive.
+    if (mode === "tool-heartbeat-late") {
+      out({ type: "tool_progress", tool_use_id: "tu-bg-heartbeat-0", tool_name: "Bash",
+        parent_tool_use_id: "tu-bg", elapsed_time_seconds: 30, heartbeat: true });
+    }
     turnRunning = false;
     finishIfDone();
   };
