@@ -137,13 +137,34 @@ export const FUIGO_MODEL_REFRESH_OFF = { FUIGO_DISABLE_MODEL_REFRESH: "1" } as c
  */
 export const FUIGO_SUBAGENTS_OFF = { FUIGO_SUBAGENTS: "0" } as const;
 
-/** Every name Murage pins on a Fuigo bot turn's env, last, over any inherited value. */
-export const FUIGO_TURN_PINS = { ...FUIGO_MODEL_REFRESH_OFF, ...FUIGO_SUBAGENTS_OFF } as const;
+/**
+ * The other ways 1.0.32 starts an agent of its own, which FUIGO_SUBAGENTS=0
+ * does not reach (traced by Fuigo's maintainers in 1.0.32): a workflow run, a
+ * background scheduler loop and a goal run each spawn `general-purpose`, and a
+ * workspace `.fuigo/agents/general-purpose.md` in a trusted folder replaces
+ * that definition, `permissionMode: bypassPermissions` included. All three
+ * stay off for every bot turn, so no agent runs outside Murage's approvals.
+ */
+export const FUIGO_AGENT_SPAWNS_OFF = { FUIGO_WORKFLOWS: "0", FUIGO_SCHEDULER_BACKGROUND_LOOPS: "0", FUIGO_GOAL: "0" } as const;
 
-/** Withhold every other provider's key, switch the startup model refresh and
- *  Fuigo's own subagents off (in place). */
+/** Every name Murage pins on a Fuigo bot turn's env, last, over any inherited value. */
+export const FUIGO_TURN_PINS = { ...FUIGO_MODEL_REFRESH_OFF, ...FUIGO_SUBAGENTS_OFF, ...FUIGO_AGENT_SPAWNS_OFF } as const;
+
+/**
+ * Names a Fuigo bot turn never inherits, in any casing. `FUIGO_AGENT` starts
+ * the session as a named agent, which a workspace `.fuigo/agents/<name>.md`
+ * defines with its own permissionMode. `FUIGO_WORKSPACE_REWIND_GIT` turns on
+ * Fuigo's own git calls for workspace rewind, which run unhardened in the
+ * owner's folder. Murage sets neither; an owner's shell value is dropped
+ * rather than pinned empty, so no reading of "" can turn either on.
+ */
+export const FUIGO_UNSET_ENV = ["FUIGO_AGENT", "FUIGO_WORKSPACE_REWIND_GIT"] as const;
+
+/** Withhold every other provider's key and the names above, switch the startup
+ *  model refresh and every agent Fuigo starts on its own off (in place). */
 export function withholdFuigoProviderEnv(env: Record<string, string | undefined>, platform: NodeJS.Platform = process.platform): void {
   deleteEnvNames(env, FUIGO_WITHHELD_PROVIDER_ENV, platform);
+  deleteEnvNames(env, FUIGO_UNSET_ENV, platform);
   deleteEnvNames(env, Object.keys(FUIGO_TURN_PINS), platform);
   Object.assign(env, FUIGO_TURN_PINS);
 }
@@ -800,7 +821,7 @@ const support: AcpSupport = {
     // and keeps this correct if a caller ever lands before the strip.
     // `fluxKey()` is null for anything not shaped like a Flux key.
     scrubFuigoCredentialEnv(env, fluxKey());
-    // 1.0.32: no other provider's key, no startup model refresh, no Fuigo subagents.
+    // 1.0.32: no other provider's key, no startup model refresh, no agent Fuigo starts on its own.
     withholdFuigoProviderEnv(env);
   },
   scrubHandedEnv: (map, child) => scrubFuigoHandedEnv(map, child),
@@ -882,6 +903,11 @@ const support: AcpSupport = {
    *  and a No limits bot went reading session files to find the rest
    *  (0.1.60 Windows pass D6). `verbatim` sends Murage's bytes as they are. */
   promptMeta: { verbatim: true },
+  // Fuigo 1.0.32: set_mode resolves any mode id through the workspace's .fuigo/agents/<id>.md first
+  // (session_mode.rs, discovery.rs), and an allow-always answer leaves a Bash grant in the engine
+  // that answers later requests without Murage (manager mod.rs). Neither is ever sent.
+  noSessionModes: true,
+  allowOnceOnly: true,
   // PIP reflection: a dedicated headless spawn (never the ACP stdio path), credential = the Flux key.
   textOnlyExecutable: config => config.cli === "fuigo" ? resolveFuigoCli(process.env).command : config.cli,
   textOnlyTurn: (turn, config) => {

@@ -1,5 +1,6 @@
 import { partitionSourcesAllowed } from "./partition-sources.ts";
 import { botRows, botViewer, type BotRow, type Viewer } from "./bot-read.ts";
+import type { LineVerdictState } from "./result-egress.ts";
 import type { Message } from "./store.ts";
 import { executionStore, sameThreadPartition } from "./execution-audience.ts";
 // Copyright 2026 Ferrox Labs
@@ -23,6 +24,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { bringInToProject } from "./memory/bring-in.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { roomReplayWithheld } from "./memory/disclosures.ts";
+import { isMurageVoice } from "./murage-voice.ts";
 import { capturedMessageWithheld, LineageAllowance, messageSourceForgotten } from "./memory/replay-lineage.ts";
 import { copiedFromOwner } from "./memory/bring-in.ts";
 import { isWorkspaceOwner, threadHumanPrincipal } from "./human-principals.ts";
@@ -185,32 +187,41 @@ export function readProjectMessages(db: DatabaseSync, roster: NamedRoster, group
 /** One page of a project conversation, with the lines whose words it shows (the withheld lines show only their withheld line). The
  * lines it shows are what a reply built from the page rests on: write-time hole 1 (DESIGN-WRITETIME 2.2), see the read-messages handler. */
 export function readProjectPage(db: DatabaseSync, roster: NamedRoster, groupId: string, body: Record<string, unknown>, caller: ProjectPageReader): { result: Result; threadId?: string; shown: string[] } {
-  const shown: string[] = [];
-  const result = readProjectPageWork(db, roster, groupId, body, caller, shown);
-  const threadId = (result.body as { threadId?: unknown } | null)?.threadId;
-  return { result, ...(result.status === 200 && typeof threadId === "string" ? { threadId, shown } : { shown: [] }) };
+  const { result, threadId, shown } = readVenuePage(db, roster, groupId, body, caller, {
+    venue: false, threads: projectThreads(roster, groupId), members: new Set(),
+  });
+  return { result, ...(threadId ? { threadId } : {}), shown };
 }
 
-function readProjectPageWork(db: DatabaseSync, roster: NamedRoster, groupId: string, body: Record<string, unknown>, caller: ProjectPageReader, shown: string[]): Result {
+function readProjectPageWork(db: DatabaseSync, roster: NamedRoster, groupId: string, body: Record<string, unknown>, caller: ProjectPageReader, shown: string[], substantive: Array<{ id: string; role: "user" | "bot" }>, options: VenuePageOptions): Result {
+  const unavailable = (): Result => ({ status: 403, body: { error: "That conversation is not available from here." } });
   const refused = strict(body, ["threadId", "before", "limit"]);
-  if (refused) return refused;
+  if (refused) return options.venue ? unavailable() : refused;
   const group = roster.groups.find(entry => entry.id === groupId);
-  if (!group) return { status: 404, body: { error: "no such project" } };
-  const threadId = body.threadId === undefined ? group.threadId : body.threadId;
-  if (typeof threadId !== "string" || !projectThreads(roster, groupId).has(threadId)) return { status: 403, body: { error: "That conversation is not part of this project." } };
+  if (!group && !options.venue) return { status: 404, body: { error: "no such project" } };
+  const threadId = body.threadId === undefined ? group?.threadId : body.threadId;
+  if (typeof threadId !== "string" || !options.threads.has(threadId)) return options.venue ? unavailable() : { status: 403, body: { error: "That conversation is not part of this project." } };
   // fail closed: a bot reads only as a bot on the roster now; with no record (removed, or no store) it reads no line
   const bot = "owner" in caller ? undefined : caller;
   const reader = bot && executionStore()?.bot(bot.botId);
-  if (bot && !reader) return { status: 403, body: { error: "That reader is not on the team." } };
-  if (bot && reader && !sameThreadPartition(reader, bot.threadId, threadId)) return { status: 403, body: { error: "That conversation belongs to another team." } };
+  if (options.venue && !bot) return unavailable();
+  if (bot && !reader) return options.venue ? unavailable() : { status: 403, body: { error: "That reader is not on the team." } };
+  if (bot && reader && !sameThreadPartition(reader, bot.threadId, threadId)) return options.venue ? unavailable() : { status: 403, body: { error: "That conversation belongs to another team." } };
   const limit = body.limit === undefined ? 20 : body.limit;
+  // a malformed limit or cursor is 400 on both paths: the venue was already authorised above, so the neutral line confirms nothing new (design 4.4)
   if (!Number.isSafeInteger(limit) || (limit as number) < 1 || (limit as number) > READ_MESSAGES_MAX) return bad(`limit is 1 to ${READ_MESSAGES_MAX}`);
   let beforeRowid = Number.MAX_SAFE_INTEGER;
   if (body.before !== undefined) {
-    if (typeof body.before !== "string") return bad("before is a message id");
-    const anchor = db.prepare("SELECT rowid FROM messages WHERE thread_id=? AND id=?").get(threadId, body.before) as { rowid: number } | undefined;
-    if (!anchor) return bad("before names no message of that conversation");
-    beforeRowid = Number(anchor.rowid);
+    if (options.venue) {
+      const match = typeof body.before === "string" ? VENUE_BEFORE.exec(body.before) : null;
+      if (!match) return bad("before is not a page cursor");
+      beforeRowid = Number(match[1]);
+    } else {
+      if (typeof body.before !== "string") return bad("before is a message id");
+      const anchor = db.prepare("SELECT rowid FROM messages WHERE thread_id=? AND id=?").get(threadId, body.before) as { rowid: number } | undefined;
+      if (!anchor) return bad("before names no message of that conversation");
+      beforeRowid = Number(anchor.rowid);
+    }
   }
   const rows = db.prepare(`SELECT rowid, id, at, role, kind, text, json FROM messages WHERE thread_id=? AND rowid<?
     AND kind='text' ORDER BY rowid DESC LIMIT ?`).all(threadId, beforeRowid, (limit as number) + 1) as Row[];
@@ -223,23 +234,29 @@ function readProjectPageWork(db: DatabaseSync, roster: NamedRoster, groupId: str
   // with each copy's link, so a copy of a forgotten original is withheld too (Astra r2 #13)
   const copyOf = (row: Row) => { try { const copy = JSON.parse(row.json).copyOf; return copy && typeof copy.threadId === "string" && Array.isArray(copy.messageIds) ? { copyOf: { threadId: copy.threadId as string, messageIds: (copy.messageIds as unknown[]).filter((id): id is string => typeof id === "string") } } : {}; } catch { return {}; } };
   try { withheld = roomReplayWithheld(LineageAllowance.tool(), threadId, page.map(row => ({ id: row.id, role: row.role, ...copyOf(row) })), checking); }
-  catch { return { status: 403, body: { error: "That conversation is not part of this project." } }; }
+  catch { if (options.venue) throw new Error("venue lineage unavailable"); return { status: 403, body: { error: "That conversation is not part of this project." } }; }
   const names = new Map(roster.bots.map(bot => [bot.id, bot.name ?? "a member"]));
   // A bot reads the page through the reader door (bot-read.ts): a Murage-voice row never, a line the lineage withholds never. Every row is
   // judged there, a hidden one included (no stand-in passes unjudged): a hidden row the door admits shows only Murage's fixed withheld copy.
   const asMessage = (row: Row): Message => { let stored: Partial<Message> = {}; try { stored = JSON.parse(row.json); } catch { /* columns only */ } return { ...stored, id: row.id, role: row.role, kind: row.kind, text: row.text ?? undefined, at: Number(row.at) } as Message; };
   // every line below is built from the door's BotRow for this viewer (rule 18b): its words, its speaker; a row the door left out is not shown
   const viewer = bot && reader ? botViewer(reader.id) : ownerPageViewer();
-  const lines = new Map<string, BotRow>(botRows(db, viewer, threadId, page.map(asMessage)).map(line => [line.id, line]));
-  let bytes = 0;
-  const messages: Array<{ id: string; speaker: string; to?: string[]; re?: string; at: number; text: string }> = [];
+  const states = new Map<string, LineVerdictState>();
+  const lines = new Map<string, BotRow>(botRows(db, viewer, threadId, page.map(asMessage), options.venue ? { states, audience: { owner: true, scopeIds: [] } } : undefined).map(line => [line.id, line]));
+  const named = (id: string | undefined) => id !== undefined && options.members.has(id) ? names.get(id) ?? "a member" : "a member";
+  let bytes = options.venue ? VENUE_ENVELOPE : 0;
+  let oldestConsumed: number | undefined;
+  let stopped = false;
+  const messages: VenueLine[] = [];
   for (const row of page.reverse()) {
-    if (bot && reader && !partitionSourcesAllowed(db, reader.id, bot.threadId, [row.id], { threads: [threadId], only: true })) continue;
+    if (bot && reader && !partitionSourcesAllowed(db, reader.id, bot.threadId, [row.id], { threads: [threadId], only: true })) { oldestConsumed = Number(row.rowid); continue; }
     const line = lines.get(row.id);
-    if (!line) continue;
-    let message: { to?: string[]; replyToId?: string; withheldFromBots?: unknown } = {};
-    try { message = JSON.parse(row.json); } catch { /* the row's own columns still say who and what */ }
-    const speaker = line.role === "user" ? "Owner" : line.speaker?.name ?? (line.speaker ? names.get(line.speaker.id) : undefined) ?? "a member";
+    if (!line) { oldestConsumed = Number(row.rowid); continue; }
+    let message: { to?: string[]; replyToId?: string; withheldFromBots?: unknown; copyOf?: unknown; handoffOf?: unknown; handoffFrom?: unknown } = {};
+    let parsed = true;
+    try { const stored: unknown = JSON.parse(row.json); if (stored && typeof stored === "object" && !Array.isArray(stored)) message = stored as typeof message; else parsed = false; }
+    catch { parsed = false; /* the row's own columns still say who and what */ }
+    const speaker = line.role === "user" ? "Owner" : options.venue ? named(line.speaker?.id) : line.speaker?.name ?? (line.speaker ? names.get(line.speaker.id) : undefined) ?? "a member";
     // for a bot every role: an owner line the owner forgot reads as its withheld line too, never its words; the owner's own page keeps
     // showing the owner's lines as written
     // (a "checking" left on disk is no note: the live verdicts above decide, never a stored "checking")
@@ -247,17 +264,82 @@ function readProjectPageWork(db: DatabaseSync, roster: NamedRoster, groupId: str
     const hidden = (bot !== undefined || line.role !== "user") && (withheld.has(row.id) || noted);
     const forgotten = hidden && (message.withheldFromBots === "forgotten" || messageSourceForgotten(threadId, row.id));
     // a hidden line reads as Murage's fixed withheld copy (it is a stand-in); any other line reads as the BotRow's words
-    const raw = hidden ? (forgotten ? ROOM_REPLY_FORGOTTEN : checking.has(row.id) ? ROOM_REPLY_CHECKING : ROOM_REPLY_WITHHELD) : line.text;
+    // venue rule (1.0.7): a row that came from another conversation (a copy or a hand-off, by any link) is a stand-in, words and id never
+    // shown, so no chain is walked; a row whose stored record cannot be read, or whose link is present but null or malformed, counts as
+    // linked. Rows another partition holds (by themselves or by any link) were left out above and never reach here.
+    const linked = options.venue && (!parsed || [message.copyOf, message.handoffOf, message.handoffFrom].some(link => link !== undefined));
+    const standIn = options.venue && (hidden || states.get(row.id) !== "shown" || linked);
+    const doorStandIn = options.venue && states.get(row.id) !== "shown" && !isMurageVoice(asMessage(row));
+    const raw = hidden ? (forgotten ? ROOM_REPLY_FORGOTTEN : checking.has(row.id) ? ROOM_REPLY_CHECKING : ROOM_REPLY_WITHHELD)
+      : linked ? VENUE_LINKED_LINE
+      : doorStandIn ? (states.get(row.id) === "checking" ? ROOM_REPLY_CHECKING : ROOM_REPLY_WITHHELD) : line.text;
     const text = raw.length > MESSAGE_CHARS ? `${raw.slice(0, MESSAGE_CHARS)} [cut]` : raw;
+    if (options.venue) {
+      const entry: VenueLine = standIn ? { at: Number(row.at), text }
+        : { id: row.id, speaker, ...(message.to?.length ? { to: message.to.map(named) } : {}), ...(message.replyToId ? { re: message.replyToId } : {}), at: Number(row.at), text };
+      const size = Buffer.byteLength(JSON.stringify(entry)) + 1;
+      if (bytes + size > PAGE_BYTES) {
+        // A single oversized metadata field must not bypass the byte bound or trap the cursor.
+        if (!messages.length) return unavailable();
+        stopped = true; break;
+      }
+      bytes += size;
+      oldestConsumed = Number(row.rowid);
+      messages.push(entry);
+      if (!standIn) { shown.push(row.id); substantive.push({ id: row.id, role: line.role === "user" ? "user" : "bot" }); }
+      continue;
+    }
     bytes += Buffer.byteLength(text) + 200;
     if (bytes > PAGE_BYTES && messages.length) break;
     if (!hidden) shown.push(row.id);
     messages.push({ id: row.id, speaker, ...(message.to?.length ? { to: message.to.map(id => names.get(id) ?? "a member") } : {}), ...(message.replyToId && !hidden && (!bot || !reader || partitionSourcesAllowed(db, reader.id, bot.threadId, [message.replyToId], { threads: [threadId], only: true })) ? { re: message.replyToId } : {}), at: Number(row.at), text });
   }
   messages.reverse();
+  if (options.venue) {
+    substantive.reverse();
+    // a reply names its target only when that target is a substantive line on this page (never the id of a hidden or stood-in line)
+    const onPage = new Set(substantive.map(line => line.id));
+    for (const entry of messages) if ("re" in entry && entry.re !== undefined && !onPage.has(entry.re)) delete entry.re;
+    const before = oldestConsumed !== undefined && (more || stopped) ? { before: `r${oldestConsumed}` } : {};
+    const body = { threadId, messages, ...before };
+    if (Buffer.byteLength(JSON.stringify(body)) > PAGE_BYTES) return unavailable();
+    return { status: 200, body };
+  }
   const oldest = messages[0];
-  return { status: 200, body: { ok: true, threadId, messages, ...(oldest && (more || messages.length < page.length) ? { before: oldest.id } : {}) } };
+  return { status: 200, body: { ok: true, threadId, messages, ...(oldest && "id" in oldest && (more || messages.length < page.length) ? { before: oldest.id } : {}) } };
 }
+
+// ── bot venue awareness (lane 106, part 2): the page venue_read_messages reads ──
+
+/** What the venue route hands the page, once server/venue-read.ts authorised the call from current state: the venue's threads and its
+ * members now. */
+export type VenuePageOptions = { readonly venue: boolean; readonly threads: ReadonlySet<string>; readonly members: ReadonlySet<string> };
+/** The page's reader input: the target thread, never the wire body. */
+export type VenuePageInput = { readonly threadId: string; readonly before?: unknown; readonly limit?: unknown };
+/** A substantive line: shown by the door as stored, and carrying no copy or hand-off link. A stand-in carries only when and a fixed line. */
+export type VenueLine = { id: string; speaker: string; to?: string[]; re?: string; at: number; text: string } | { at: number; text: string };
+const VENUE_BEFORE = /^r(\d{1,15})$/;
+const VENUE_ENVELOPE = 400;
+/** A venue page's stand-in for a line that came from another conversation (a copy or a hand-off): never its words or id. */
+export const VENUE_LINKED_LINE = "A line passed on from another conversation.";
+
+/** One page of a project or channel for a bot's owner direct turn (BOT-VENUE-AWARENESS-106 4.4): today's project page with the venue rules.
+ * Every row passes the partition check (a row another partition holds, by itself or by its copy or hand-off link, is left out entirely), the
+ * reader door for this bot and the withheld and forgotten checks; a row the door did not show as stored, a hidden one, or one carrying any
+ * copyOf, handoffOf or handoffFrom link is a stand-in ({ at, text } only, a fixed line) and joins no sources. Names come from current members only. The cursor is `r<rowid>` of the oldest row consumed. */
+export function readVenuePage(db: DatabaseSync, roster: NamedRoster, venueId: string, input: Record<string, unknown>, caller: ProjectPageReader, options: VenuePageOptions):
+  { result: Result; threadId?: string; shown: string[]; substantive: Array<{ id: string; role: "user" | "bot" }> } {
+  const shown: string[] = [];
+  const substantive: Array<{ id: string; role: "user" | "bot" }> = [];
+  const result = readProjectPageWork(db, roster, venueId, input, caller, shown, substantive, options);
+  const threadId = (result.body as { threadId?: unknown } | null)?.threadId;
+  return { result, ...(result.status === 200 && typeof threadId === "string" ? { threadId, shown, substantive } : { shown: [], substantive: [] }) };
+}
+
+/** A venue tool call, authorised by server/venue-read.ts: `charge` adds the page's lines to the turn's budget (false: over it). */
+export type VenueToolCall = { db: DatabaseSync; venueId: string; botId: string; consumingThreadId: string; input: VenuePageInput; options: VenuePageOptions; charge(lines: number): boolean };
+/** The venue tools' effects by name (server/venue-read.ts routes to them after authorising). A 409 means the turn's read budget is spent. */
+export const venueToolHandlers = new Map<string, (call: VenueToolCall) => Result>();
 
 export function updateProjectSummary(db: DatabaseSync, roster: MemoryRoster, context: Pick<ProjectToolCallContext, "groupId" | "botId" | "now"> & { request?: Pick<ProjectToolCallContext["request"], "targetThreadId" | "rootThreadId"> }, body: Record<string, unknown>): Result {
   const refused = strict(body, ["text", "sourceMessageIds"]);
@@ -367,6 +449,21 @@ export function registerProjectMemoryTools(dependencies: ProjectMemoryToolDeps):
     if (result.status === 200 && page.threadId && lines.length) deps!.read?.(consuming, call.botId, lines.map(message => ({ threadId: page.threadId!, id: message.id, role: message.speaker === "Owner" ? "user" as const : "bot" as const })));
     // write-time hole 1: the lines whose words the page shows join the running turn as point carries (a withheld line shows no words)
     return toolResult(result, readMessagesToolText(consuming, read));
+  });
+  venueToolHandlers.set("read-messages", call => {
+    const read = readVenuePage(call.db, deps!.roster(), call.venueId, call.input, { botId: call.botId, threadId: call.consumingThreadId }, call.options);
+    if (read.result.status !== 200) return read.result;
+    const page = read.result.body as { threadId: string; messages: VenueLine[] };
+    // R10: every line the page hands the turn counts, stand-ins included; past the budget no line is returned
+    if (!call.charge(page.messages.length)) return { status: 409, body: { error: "budget" } };
+    // only substantive lines are what a reply rests on (the receipt) and join the turn's sources; a full receipt returns no lines
+    try { if (read.substantive.length) deps!.shown?.(call.consumingThreadId, read.substantive.map(line => ({ threadId: page.threadId, messageId: line.id }))); }
+    catch (error) {
+      if ((error as { status?: number })?.status === 409) return { status: 409, body: { error: "receipt" } };
+      throw error;
+    }
+    if (read.substantive.length) deps!.read?.(call.consumingThreadId, call.botId, read.substantive.map(line => ({ threadId: page.threadId, id: line.id, role: line.role })));
+    return toolResult(read.result, readMessagesToolText(call.consumingThreadId, read));
   });
   projectToolHandlers.set("summary-update", (call, body) => updateProjectSummary(call.db, deps!.roster(), call, body));
   projectToolHandlers.set("suggest", (call, body) => suggestToLead(call.db, { ...call, consumingThreadId: call.request.targetThreadId ?? call.request.rootThreadId }, body));

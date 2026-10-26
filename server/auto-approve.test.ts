@@ -781,3 +781,95 @@ describe("always-ask reads the whole command, and asks on a cut copy", () => {
     }
   });
 });
+
+describe("Fuigo 1.0.32 protected config: Auto never answers a request Fuigo itself holds for a person", () => {
+  // Fuigo asks for every write to its own config files and permission grant stores, at every mode but its own
+  // always-approve. Murage's Auto answers Fuigo's permission requests itself, so these must reach the owner's card.
+  const targets = [
+    "/Users/me/.fuigo/config.toml", "/Users/me/.fuigo/requirements.toml", "/Users/me/.fuigo/managed_config.toml",
+    "/Users/me/.fuigo/sessions/0f3c/permission_grants.toml", "C:\\Users\\me\\.fuigo\\config.toml", "/w/proj/.fuigo/config.toml",
+    "/Users/me/.zshrc",
+    "/Users/me/.fuigo/./config.toml", "/Users/me/.fuigo/x/../config.toml", "C:\\Users\\me\\.fuigo.\\config.toml",
+  ];
+  for (const path of targets) {
+    it(`an edit of ${path} holds at Auto and at Ask`, () => {
+      const context = { call: { toolCall: { input: { file_path: path } } } } as AutoContext;
+      const auto = autoVerdict({ autoApprove: true }, "edit", path, context);
+      expect(auto.approve).toBeNull();
+      expect(auto.source).toBe("sensitive-guard");
+      expect(autoVerdict({}, "edit", path, context).approve).toBeNull();
+    });
+    it(`a shell write to ${path} holds at Auto`, () => {
+      const command = `printf '[permission]\\nallow = ["Bash"]\\n' >> ${JSON.stringify(path)}`;
+      const verdict = autoVerdict({ autoApprove: true }, "shell", command, { exactCommand: { command, cwd: "/w/proj" } } as AutoContext);
+      expect(verdict.approve).toBeNull();
+    });
+  }
+  it("a shell write that reaches the file by cd or through $FUIGO_HOME holds at Auto", () => {
+    for (const command of ["cd ~/.fuigo && printf 'x' >> config.toml", "printf 'x' >> \"$FUIGO_HOME/config.toml\"", "cd ~/.fuigo/sessions/0f3c && echo x > permission_grants.toml"]) {
+      expect(autoVerdict({ autoApprove: true }, "shell", command, { exactCommand: { command, cwd: "/w/proj" } } as AutoContext).approve, command).toBeNull();
+    }
+  });
+  it("an ordinary workspace edit is still Auto's to answer", () => {
+    const context = { call: { toolCall: { input: { file_path: "/w/proj/src/app.ts" } } } } as AutoContext;
+    expect(autoVerdict({ autoApprove: true }, "edit", "/w/proj/src/app.ts", context).source).toBe("auto-mode");
+    expect(looksSensitive("cat /w/proj/.fuigo/agents-notes.md")).toBe(false);
+  });
+});
+
+describe("Auto never answers a command whose options bash fills in after the reader", () => {
+  for (const command of [
+    "git diff --{output=../x,stat}",
+    "rg --{pre=./evil.sh,files} x",
+    "sort --{compress-program=sh,-o,x} f",
+    "find . {-exec,bash,-c,evil,\\;}",
+    "rm -r{f,} ./inside",
+    "rm -* ./inside",
+    "git diff --output=$(echo ../x)",
+  ]) {
+    it(`holds: ${command}`, () => {
+      const verdict = autoVerdict({ autoApprove: true }, "shell", command, { exactCommand: { command, cwd: "/w/proj" } } as AutoContext);
+      expect(verdict).toMatchObject({ approve: null, source: "always-ask", rule: "unreadable" });
+    });
+  }
+  it("a plain brace and an option value glob are still Auto's", () => {
+    for (const command of ["cp app.ts app.ts{,.bak}", "grep -rn --include=*.ts TODO src"]) {
+      expect(autoVerdict({ autoApprove: true }, "shell", command, { exactCommand: { command, cwd: "/w/proj" } } as AutoContext).source, command).toBe("auto-mode");
+    }
+  });
+});
+
+describe("the key guard reads a command as bash hands it on: quotes removed, braces multiplied out", () => {
+  const auto = (command: string) => autoVerdict({ autoApprove: true }, "shell", command, { exactCommand: { command, cwd: "/w/proj" } } as AutoContext);
+  for (const command of [
+    "cat ~/.fu''igo/config.toml",
+    "printf 'x' >> ~/.fu\"igo\"/config.toml",
+    "cat ~/.ss\"h\"/id_rsa",
+    "cat ~/.{ssh,x}/id_rsa",
+    "cat ~/.z''shrc",
+    "echo $(cat ~/.z''shrc)",
+    "cat ~/.*rc",
+    "cat $HOME/.fu*o/config.toml",
+    "cat ~/*/config.toml",
+    "cat /Users/me/.co?ex/auth.json",
+    // Grok round 2: a `${NAME:+word}` operand, five nested substitutions, an unquoted heredoc's substitution
+    "cat ${PATH:+~/.fu''igo/config.toml}",
+    "cat ${PATH:+~/.z''shrc}",
+    "cat ${PATH:+~/.*rc}",
+    "echo $(echo $(echo $(echo $(echo $(echo $(cat ~/.z''shrc))))))",
+    "cat <<EOF\n$(cat ~/.fu''igo/config.toml)\nEOF",
+  ]) {
+    it(`holds: ${command}`, () => {
+      const verdict = auto(command);
+      expect(verdict.approve, JSON.stringify(verdict)).toBeNull();
+      expect(["sensitive-guard", "always-ask", "unread-call"]).toContain(verdict.source);
+    });
+  }
+  it("everyday commands stay Auto's", () => {
+    for (const command of ["ls ~/Downloads/*.pdf", "mkdir -p tmp/out", "ls -la", "cat package.json", "echo hi >> notes.txt", "node -e 1", "git status",
+      "grep -rn TODO src", "cp ~/Documents/report{,.bak}.md", "mkdir -p a/{b,c}", "ls *.ts", "git log --format='%h %s' -n 5",
+      "echo $'\\?' '*'", "cat <<EOF\nhello $(date)\nEOF", "echo ${HOME:-/tmp}/x"]) {
+      expect(auto(command).source, command).toBe("auto-mode");
+    }
+  });
+});

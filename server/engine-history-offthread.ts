@@ -30,7 +30,7 @@ export interface EngineHistoryJob {
    * `plans` that are not done and reports each finished step as it goes. No kind runs the whole plan / execute / verify loop
    * inline (the facade removeEngineHistoryFiles). "probe" only reads the process list: which homes a program Murage did not start has
    * open (engine-closed.ts foreignEngineHolders), so an attempt leaves them alone before it pauses or holds anything. */
-  kind?: "plan" | "execute" | "recover" | "probe";
+  kind?: "plan" | "execute" | "recover" | "probe" | "openPass";
   homes: DeletionEngineHome[]; folders: string[]; memoryFolders: string[]; sessions: Partial<Record<DeletionEngine, string[]>>;
   /** ids saved by an earlier plan; a plan works from these as well as from what it can still see */
   known?: EngineDiscovery;

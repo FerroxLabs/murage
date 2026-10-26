@@ -33,6 +33,8 @@
 //                     shell command in its arguments, answering with a frame
 //                   | wrapped-tool-image  a custom MCP server's screenshot made
 //                     through a "use a tool" wrapper, answering with an image
+//                   | permission-always-only (same ask, offering only
+//                     allow_always and reject_once)
 //                   | permission-session-first (same ask, but the options are
 //                     ordered the way Fuigo's edit prompt really orders them:
 //                     `allow_always` "allow all edits this session" BEFORE
@@ -345,6 +347,11 @@ const dumpEnv = Object.fromEntries(
     "FUIGO_HOME",
     "FUIGO_DISABLE_MODEL_REFRESH",
     "FUIGO_SUBAGENTS",
+    "FUIGO_WORKFLOWS",
+    "FUIGO_SCHEDULER_BACKGROUND_LOOPS",
+    "FUIGO_GOAL",
+    "FUIGO_AGENT",
+    "FUIGO_WORKSPACE_REWIND_GIT",
     "HERMES_HOME",
     "OPENCODE_DISABLE_PROJECT_CONFIG",
     // Flux Memory headers: config overlays and settings paths, no secret
@@ -1000,6 +1007,8 @@ function handle(msg: any) {
   }
   if (!msg.method) return;
   recordMethod(msg.method);
+  // FAKE_ACP_RPC_FULL_LOG: every client request and notification, whole (method and params), one JSON line each
+  if (process.env.FAKE_ACP_RPC_FULL_LOG) appendFileSync(process.env.FAKE_ACP_RPC_FULL_LOG, JSON.stringify({ method: msg.method, params: msg.params ?? null }) + "\n");
   if (process.env.FAKE_ACP_RPC_LOG) {
     const agentsToken = agentsTokenOf(msg.params?.mcpServers);
     appendFileSync(process.env.FAKE_ACP_RPC_LOG, JSON.stringify({
@@ -2166,7 +2175,7 @@ function handle(msg: any) {
         });
         return;
       }
-      if (mode === "permission" || mode === "question-tool" || mode === "permission-session-first" || mode === "permission-edit-file") {
+      if (mode === "permission" || mode === "question-tool" || mode === "permission-session-first" || mode === "permission-edit-file" || mode === "permission-always-only") {
         // ask the client to approve a tool, then complete once answered.
         // question-tool: the agent routes its AskUserQuestion tool through
         // request_permission (named in the tool call), exactly the shape a
@@ -2215,6 +2224,12 @@ function handle(msg: any) {
                   { optionId: "allow-edits-session", kind: "allow_always", name: "Yes, allow all edits during this session" },
                   { optionId: "allow-once", kind: "allow_once", name: "Yes" },
                   { optionId: "reject-once", kind: "reject_once", name: "No, and tell Fuigo what to do differently" },
+                ]
+              : mode === "permission-always-only"
+              // no one-time allow on offer: only a standing grant (an engine that remembers it)
+              ? [
+                  { optionId: "allow-always", kind: "allow_always", name: "Yes, and don't ask again for this command" },
+                  { optionId: "reject-once", kind: "reject_once", name: "No" },
                 ]
               : [
                   { optionId: "allow-once", kind: "allow_once" },

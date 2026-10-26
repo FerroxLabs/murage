@@ -18,7 +18,7 @@ import { ConversationDeletions, runConversationDeletion } from "./conversation-d
 import { engineState } from "./engine-closed.ts";
 import { engineHistoryTestHooks, type EngineHistoryJob } from "./engine-history-offthread.ts";
 import { runEngineHistoryJob } from "./engine-history-run.ts";
-import { buildFixture, canaryHits, THREAD } from "./testing/engine-history-fixtures.ts";
+import { BOT, buildFixture, canaryHits, THREAD } from "./testing/engine-history-fixtures.ts";
 import { proc, useFakeExclusion, type FakeExclusion } from "./testing/engine-exclusion-fake.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
@@ -54,7 +54,7 @@ function running(exe: string, environment: Record<string, string>, argv: string[
   return () => { fake.processes.splice(fake.processes.indexOf(item), 1); fake.environments.delete(item.pid); };
 }
 
-function world() {
+function world(foreignRelogMs?: number, owedGraceMs?: number) {
   const fx = buildFixture("claude", scratch);
   const home = fx.homes[0]!.home;
   engineHistoryTestHooks.createWorker = () => new InlineWorker() as unknown as Worker;
@@ -65,7 +65,7 @@ function world() {
   const events: string[] = [];
   let onHold: (() => void) | undefined;
   const deletions = new ConversationDeletions({
-    dataDir: data, database: () => db, retryDelaysMs: [],
+    dataDir: data, database: () => db, retryDelaysMs: [], ...(foreignRelogMs !== undefined ? { foreignRelogMs } : {}), ...(owedGraceMs !== undefined ? { owedGraceMs } : {}),
     pauseBackgroundRuns: async (engines) => { events.push(`pause ${engines.join(",")}`); return () => events.push("unpause"); },
     holdHomes: async (homes) => { events.push(`hold ${homes.length}`); onHold?.(); onHold = undefined; return { release: () => events.push("release"), skipped: [] }; },
   });
@@ -91,8 +91,8 @@ it("another program on the home: no pause, no hold, one log line over many tries
   expect(owed.map((item) => [item.engine, item.code])).toEqual([["claude", "engine-open"]]);
 });
 
-it("a new holder logs again; one whole attempt is still made every sixth try", async () => {
-  const w = world();
+it("a new holder logs again once the hour since the last line has passed; one whole attempt is still made every sixth try", async () => {
+  const w = world(0);
   running("/Users/x/.local/share/claude/versions/2.1.308", { HOME: scratch, CLAUDE_CONFIG_DIR: w.home }, ["claude"]);
   await runConversationDeletion(w.deletions, { threadIds: [THREAD], engineHomes: w.fx.homes }, () => true);
   for (let n = 0; n < 4; n++) await w.deletions.retryNow();
@@ -106,6 +106,24 @@ it("a new holder logs again; one whole attempt is still made every sixth try", a
   running("/opt/homebrew/bin/claude", { HOME: scratch, CLAUDE_CONFIG_DIR: w.home }, ["claude", "-p", "x"]);
   await w.deletions.retryNow();
   expect(lines.length).toBe(before + 1); // a different holder is a new line
+});
+
+it("1.0.7: the owner's Claude Code starting a shell or a search on every tool call writes no new line within the hour", async () => {
+  const w = world(undefined, 0);
+  running("/Users/x/.local/share/claude/versions/2.1.308", { HOME: scratch, CLAUDE_CONFIG_DIR: w.home }, ["claude", "--resume"]);
+  await runConversationDeletion(w.deletions, { threadIds: [THREAD], engineHomes: w.fx.homes }, () => true);
+  expect(lines).toHaveLength(1);
+  for (let n = 0; n < 3; n++) {
+    const gone = running(`/Users/x/.local/share/claude/versions/2.1.31${n}`, { HOME: scratch, CLAUDE_CONFIG_DIR: w.home }, ["ugrep", "-G"]);
+    await w.deletions.retryNow();
+    gone();
+    await w.deletions.retryNow();
+  }
+  expect(lines).toHaveLength(1);
+  expect(w.deletions.pending()).toHaveLength(1);
+  // the line it owes is about this bot's conversation (its chats show it, not every chat), and an open engine offers no Try again
+  // now (Murage finishes by itself once it closes)
+  expect(w.deletions.notices().map((notice) => [notice.id, notice.tryAgain, notice.byItself, notice.botIds])).toEqual([["owed:claude", true, true, [BOT]]]);
 });
 
 it("Murage's own warm engine on the home (its child) is not another program: the hold closes it and the deletion completes", async () => {

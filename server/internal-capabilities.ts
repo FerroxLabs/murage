@@ -1,5 +1,6 @@
 import { assertHumanPrincipal, type HumanPrincipal } from "./human-principals.ts";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { forgetAllVenueReadTurns, forgetVenueReadTurn } from "./venue-read-turns.ts";
 
 export type InternalCapabilityKind = "agents" | "connectors" | "computer" | "memory" | "mcp";
 export type InternalCapability = Readonly<{
@@ -102,6 +103,7 @@ export class InternalCapabilities {
   }
 
   isActive(claim: InternalCapability): boolean {
+    if (claim.expiresAt <= this.#now()) forgetVenueReadTurn(claim.generation);
     if(claim.humanPrincipal){try{assertHumanPrincipal(claim.humanPrincipal);}catch{return false;}}
     const owner = this.#generations.get(claim.threadId);
     return Boolean(owner && owner.id === claim.generation && owner.botId === claim.botId
@@ -172,6 +174,8 @@ export class InternalCapabilities {
   }
 
   revokeGeneration(threadId: string, generation: string): void {
+    // the generation's venue-read record goes with its claims (BOT-VENUE-AWARENESS-106 4.2)
+    forgetVenueReadTurn(generation);
     for (const [token, claim] of this.#tokens) {
       if (claim.threadId === threadId && claim.generation === generation) this.#tokens.delete(token);
     }
@@ -191,6 +195,7 @@ export class InternalCapabilities {
   }
 
   revokeAll(): void {
+    forgetAllVenueReadTurns();
     this.#tokens.clear();
     this.#generations.clear();
     this.#providers.clear();

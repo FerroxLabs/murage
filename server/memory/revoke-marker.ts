@@ -248,6 +248,14 @@ const lateReady = (db: DatabaseSync, name: "evidence" | "origins") => {
 };
 
 // ---- flow
+const flowLast = new WeakMap<DatabaseSync, boolean>();
+/** Whether this file holds memory_thread_flow_last (v13): kept per handle once seen (a migration may add it later on this connection). */
+function hasFlowLast(db: DatabaseSync): boolean {
+  if (flowLast.get(db)) return true;
+  const has = hasTable(db, "memory_thread_flow_last");
+  if (has) flowLast.set(db, true);
+  return has;
+}
 function flowStep(db: DatabaseSync, job: JobRow, c: Cursor, budget: Budget): boolean {
   const head = st(db, "SELECT seq,node FROM memory_revoke_frontier WHERE revoke_id=? AND seq<0 ORDER BY seq DESC LIMIT 1").get(job.revoke_id);
   spend(budget, 1);
@@ -257,8 +265,16 @@ function flowStep(db: DatabaseSync, job: JobRow, c: Cursor, budget: Budget): boo
   if (typeof item?.node !== "string" || !Number.isSafeInteger(item.since)) throw new Error("MEMORY_REVOKE_NODE_UNREADABLE");
   const n = page(budget);
   const after = c.f === Number(head.seq) ? String(c.after ?? "") : "";
-  const edges = st(db, "SELECT to_thread,first_lsn FROM memory_thread_flow WHERE from_thread=? AND to_thread>? ORDER BY to_thread LIMIT ?").all(item.node, after, n);
-  for (const edge of edges) seedFlow(db, job.revoke_id, String(edge.to_thread), Math.max(Number(edge.first_lsn), item.since));
+  const edges = hasFlowLast(db)
+    ? st(db, "SELECT f.to_thread,f.first_lsn,l.last_lsn FROM memory_thread_flow f LEFT JOIN memory_thread_flow_last l ON l.from_thread=f.from_thread AND l.to_thread=f.to_thread WHERE f.from_thread=? AND f.to_thread>? ORDER BY f.to_thread LIMIT ?").all(item.node, after, n)
+    : st(db, "SELECT to_thread,first_lsn,NULL AS last_lsn FROM memory_thread_flow WHERE from_thread=? AND to_thread>? ORDER BY to_thread LIMIT ?").all(item.node, after, n);
+  for (const edge of edges) {
+    // murage#18 a (REVOKE-NARROW-18-107 r2): an edge whose last flow was stamped strictly below since(X) never carried anything X holds
+    // from since on (that content flows only at a counter above its own lsn); a later flow over it holds its child at write (inheritMarks /
+    // inheritEdge). No stamp = unknown = followed; scope -> scope edges (scope moves, U1m) have no inherit site and are always followed.
+    if (edge.last_lsn !== null && edge.last_lsn !== undefined && Number(edge.last_lsn) < item.since && !(item.node.startsWith("scope:") && String(edge.to_thread).startsWith("scope:"))) continue;
+    seedFlow(db, job.revoke_id, String(edge.to_thread), Math.max(Number(edge.first_lsn), item.since));
+  }
   spend(budget, edges.length);
   if (edges.length === n) { c.f = Number(head.seq); c.after = String(edges[edges.length - 1]!.to_thread); return false; }
   st(db, "DELETE FROM memory_revoke_frontier WHERE revoke_id=? AND seq=?").run(job.revoke_id, Number(head.seq));

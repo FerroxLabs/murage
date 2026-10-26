@@ -70,7 +70,11 @@ export type LineageRef =
        * ownReplayRefs). The send fence judges it by content, as it judges a prefix's shown lines, whatever the reader: an audience-only mark
        * (a receipt flipped by an install-wide revoke) never refuses the owner's own replay (Astra 1.0.3 room High). Lines of other threads
        * never carry it and stay judged for the reader's audience. */
-      readonly replay?: true }
+      readonly replay?: true;
+      /** An original of a copy (copyOf) that a row of the prompt's OWN thread carries, when that thread is read by content (an owner-only
+       * room, roomOwnerAudience): the copy's words are shown by content through the prefix, so its originals are judged by the same reader,
+       * never stricter (designs/SEND-FENCE-RECEIPT-RACE.md). Content marks still refuse. Quoted lines of other threads never carry it. */
+      readonly copyOfShown?: true }
   /** A thread read wholesale up to headLsn (taken at write when absent): a `prefix` carry (project read_messages, conversation reads). */
   | { readonly kind: "prefix"; readonly threadId: string; readonly headLsn?: number;
       /** The lines of the thread a prompt showed in words (a replay): the send fence asks the marks of these again, so a line the owner

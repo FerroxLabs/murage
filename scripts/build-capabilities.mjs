@@ -101,6 +101,8 @@ const ROUTE_TERMS = {
   "mcp-grants": "script access",
   memory: "memory",
   mobile: "phone",
+  // /api/news: Settings > About > Get Murage news, and the first-run sign-up's status (1.0.7 first-run news, 4741f41c1)
+  news: "Murage news",
   owner: "time zone",
   packages: "templates",
   projects: "projects",

@@ -27,6 +27,20 @@ const BASE: PrimerFacts = {
 
 const primer = (overrides: Partial<PrimerFacts> = {}) => capabilitiesPrimer({ ...BASE, ...overrides });
 
+it("venue primer follows the mounted env and only names the tool to the owner", () => {
+  const input: Parameters<typeof turnCapabilityFacts>[0] = {
+    instance: { driverKind: "claude", models: { default: "model", options: [] }, adapter: { capabilities: {} } },
+    integrations: { agents: { env: { MURAGE_VENUE_READ: "1" } } }, ownerAudience: true,
+    peers: 0, memory: "off", imageProvider: false, canAskOwner: true,
+  };
+  const facts = turnCapabilityFacts(input);
+  expect(facts.venueRead).toBe(true); expect(capabilitiesPrimer(facts)).toContain("venue_read_messages");
+  expect(capabilitiesPrimer({ ...facts, ownerAudience: false })).not.toContain("venue_read_messages");
+  expect(capabilitiesPrimer({ ...facts, mounted: {} })).not.toContain("venue_read_messages");
+  expect(turnCapabilityFacts({ ...input, integrations: {} }).venueRead).toBeUndefined();
+  expect(turnCapabilityFacts({ ...input, integrations: { agents: { env: { MURAGE_VENUE_READ: "1", MURAGE_PROJECT_ROLE: "member" } } } }).venueRead).toBeUndefined();
+});
+
 describe("capabilities primer", () => {
   it("is byte-identical for the same configuration, which is what the prompt cache needs", () => {
     expect(primer()).toBe(primer());
