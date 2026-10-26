@@ -237,6 +237,14 @@ it("pins OpenCode's model catalog to the binary's own snapshot: no catalog fetch
   expect(rig.plan(rig.request("opencodeGo")).ok!.env.OPENCODE_DISABLE_MODELS_FETCH).toBe("1");
 });
 
+it("pins Fuigo's startup model refresh off, whatever the request says (Fuigo 1.0.32)", () => {
+  expect(rig.plan(rig.request("fuigoAgent")).ok!.env.FUIGO_DISABLE_MODEL_REFRESH).toBe("1");
+});
+
+it("pins Fuigo's own subagents off: a request FUIGO_SUBAGENTS=1 is ignored", () => {
+  expect(rig.plan(rig.request("fuigoAgent", { env: { FUIGO_SUBAGENTS: "1" } })).ok!.env.FUIGO_SUBAGENTS).toBe("0");
+});
+
 // The owner's workspace: every mask is mounted whether or not the path exists (no check-then-mount), only
 // over directories, and no rendered file lands in the workspace, so bwrap can create at most an empty
 // dot-directory as a mount point.

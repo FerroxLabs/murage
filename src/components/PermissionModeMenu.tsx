@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Check, Hand, ShieldCheck, ShieldOff, Zap } from "lucide-react";
 import { t } from "@/lib/i18n";
 import { FULL_ACCESS_DESKTOP_ONLY, NO_LIMITS_DESKTOP_ONLY, isDesktopOnlyMode, type PermissionMode } from "@/lib/permission-mode";
@@ -25,9 +26,11 @@ export const PERMISSION_MODES: ReadonlyArray<{ mode: PermissionMode; label: stri
  *  connected apps, rather than let them act with nobody asked. */
 const ENGINES_THAT_CANNOT_ASK = new Set(["antigravityAgent"]);
 export const engineCannotAsk = (driverKind: string | undefined): boolean => Boolean(driverKind && ENGINES_THAT_CANNOT_ASK.has(driverKind));
-/** An engine that brings its own tools and approvals (OpenClaw): Murage's
- *  levels are not what decide what it runs. Said as what it is. */
-const ownApprovalsNote = (engine: string) => `${engine} runs on its own tools and approvals, so these levels do not change what it does. Set its approvals in ${engine} itself.`;
+/** An engine that brings its own tools (OpenClaw, the one driver with
+ *  `ownTools`). At Ask its turn runs read-only with commands denied
+ *  (server/drivers/acp/openclaw.ts); at the other levels Murage sends no
+ *  directive, so the owner's own OpenClaw command settings apply. */
+export const ownApprovalsNote = (engine: string) => t("permissionMenu.ownTools", { engine });
 const cannotAskNote = (engine: string) => t("permissionMenu.cannotAsk", { engine });
 
 export const PermissionModeIcon = ({ mode, size, className }: { mode: PermissionMode; size: number; className: string }) =>
@@ -44,8 +47,11 @@ export function PermissionModeMenu({
   engineCannotAsk: cannotAskEngine,
   engineOwnApprovals,
   scope,
+  footer,
 }: {
   botName: string;
+  /** Below the levels: this chat's Refresh permissions (1.0.4 SL-K K3), desktop only. */
+  footer?: ReactNode;
   /** The composer's menu: in a routine's own conversation it sets that
    * routine's level; anywhere else, only this conversation's. Absent says
    * nothing about it. */
@@ -104,6 +110,7 @@ export function PermissionModeMenu({
           );
         })}
       </div>
+      {footer}
     </div>
   );
 }

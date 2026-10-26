@@ -5,7 +5,7 @@ import { EventEmitter } from "node:events";
 import type { ChildProcess } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
-import { ChildTeardown, PROVIDER_CLOSE_DEADLINE_MS, providerCloseDeadlineMs, TurnTeardowns } from "./child-teardown.ts";
+import { ChildTeardown, PROVIDER_CLOSE_DEADLINE_MS, providerCloseDeadlineMs, ROOT_CLOSE_GRACE_MS, TurnTeardowns } from "./child-teardown.ts";
 import type { StopDelivery } from "../procs.ts";
 
 const closedFakes = new WeakSet<ChildProcess>();
@@ -20,6 +20,47 @@ const confirmFake = (child: ChildProcess): Promise<boolean> => closedFakes.has(c
 const budget = { closeMs: 40, maxMs: 400 };
 
 describe("ChildTeardown", () => {
+  // U24 design R5: the Windows job route answers every caller at JOB_STOP_CAP_MS while its attempt continues; a late empty-job
+  // answer must release the teardown without another Stop.
+  it("a confirmation that read false at a caller cap is released by the tree's stopped signal, without another wait", async () => {
+    const child = fakeChild();
+    let release!: () => void;
+    const signal = new Promise<true>((resolve) => { release = () => resolve(true); });
+    const teardown = new ChildTeardown(child, async () => false, undefined, () => signal);
+    const closed: string[] = [];
+    teardown.onClosed(() => closed.push("closed"));
+    teardown.markStopRequested();
+    await expect(teardown.wait(budget)).resolves.toEqual({ closeConfirmed: false, reason: "timeout" });
+    expect(teardown.closed).toBe(false);
+    child.emit("close", null, "SIGKILL"); // the root's close alone does not confirm (the confirmation read false)
+    expect(teardown.closed).toBe(false);
+    release();
+    await Promise.resolve(); await Promise.resolve();
+    expect(closed).toEqual(["closed"]);
+    expect(teardown.closed).toBe(true);
+    await expect(teardown.wait(budget)).resolves.toEqual({ closeConfirmed: true });
+  });
+
+  // The Windows job route confirms on the empty job alone, which can answer before Node reports the root's close; the
+  // driver's close handling runs on that close, so the teardown waits for it (bounded by ROOT_CLOSE_GRACE_MS).
+  it("a tree confirmed stopped before the root's close counts as closed at that close, and the grace bounds a close never seen", async () => {
+    const child = fakeChild();
+    const teardown = new ChildTeardown(child, async () => true, undefined, () => new Promise<true>(() => {}));
+    teardown.markStopRequested();
+    const waiting = teardown.wait({ closeMs: 2_000, maxMs: 4_000 });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(teardown.closed).toBe(false);
+    child.emit("close", null, "SIGKILL");
+    expect(teardown.closed).toBe(true);
+    await expect(waiting).resolves.toEqual({ closeConfirmed: true });
+
+    const silent = new ChildTeardown(fakeChild(), async () => true, undefined, () => new Promise<true>(() => {}));
+    silent.markStopRequested();
+    const started = Date.now();
+    await expect(silent.wait({ closeMs: 3_000, maxMs: 3_000 })).resolves.toEqual({ closeConfirmed: true });
+    expect(Date.now() - started).toBeGreaterThanOrEqual(ROOT_CLOSE_GRACE_MS - 50);
+  });
+
   it("retains root-close ownership after uncertain group proof and retries on a later wait", async () => {
     const child = fakeChild();
     let confirmed = false;

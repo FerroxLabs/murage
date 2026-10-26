@@ -98,7 +98,8 @@
         "role": "leader",
         "team": "Nonprofit Desk",
         "appearance": {
-          "color": "blue"
+          "color": "blue",
+          "mascotBody": "drop"
         },
         "skills": [
           "grant-writer",
@@ -118,7 +119,8 @@
         "role": "member",
         "team": "Nonprofit Desk",
         "appearance": {
-          "color": "teal"
+          "color": "teal",
+          "mascotBody": "blob"
         },
         "skills": [
           "fundraising-strategist",
@@ -138,7 +140,8 @@
         "role": "member",
         "team": "Nonprofit Desk",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "star"
         },
         "skills": [
           "volunteer-coordinator",
@@ -158,7 +161,8 @@
         "role": "member",
         "team": "Nonprofit Desk",
         "appearance": {
-          "color": "cyan"
+          "color": "cyan",
+          "mascotBody": "squircle"
         },
         "skills": [
           "compliance-checklist-builder",

@@ -207,6 +207,8 @@ export const exclOps = {
   /** is this path inside a folder a sync client mirrors? The same with the platform, home, environment and disk given (tests). */
   syncedHomeIn: (path: string, given: Partial<SyncedHomeEnv>): boolean => isSyncedHome(path, given),
   realpathOf: (path: string): string | null => { try { return realpathSync.native(path); } catch { return null; } },
+  /** Murage's private engine scopes (engine-closed.ts): is this path a real folder, not a link or a junction? */
+  isRealDir: (path: string): boolean => { try { const stat = lstatSync(path); return stat.isDirectory() && !stat.isSymbolicLink(); } catch { return false; } },
   /** Every running process, for deciding whether an engine is open (engine-closed.ts). */
   processes: (): NativeProcess[] => loadExclusionAddon()!.processes(),
   /** macOS, Linux: the other processes that have one of `paths` open for writing, and those whose open files could not be read. */
@@ -224,6 +226,40 @@ export const exclOps = {
     const addon = loadExclusionAddon()!;
     const native = addon.openFile!(longPath(path), kind === "exclusive" ? 0 : kind === "delete" ? 1 : kind === "shared" ? 2 : 3);
     return native ? heldFileOf(addon, native) : null;
+  },
+  /** DELETION-WHILE-OPEN-107 (engine-closed.ts holdersClearOf): how another process's working folder and open files are read here.
+   * "linux" /proc, "darwin" lsof, "win32" the addon's cwdOf (each file's open handles are refused by the share-none hold instead). */
+  procView: (process.platform === "linux" ? "linux" : process.platform === "darwin" ? "darwin" : process.platform === "win32" ? "win32" : null) as "linux" | "darwin" | "win32" | null,
+  /** Windows: a process's working folder (exclusion.c cwdOf, read from its PEB); null when it cannot be read, or the addon is older. */
+  winCwd: (pid: number): string | null => {
+    const addon = loadExclusionAddon();
+    if (typeof addon?.cwdOf !== "function") return null;
+    try { const got = addon.cwdOf(pid); return typeof got === "string" && got ? got : null; } catch { return null; }
+  },
+  /** Linux: a process's working folder (/proc/<pid>/cwd); null when it cannot be read. */
+  procCwd: (pid: number): string | null => { try { return readlinkSync(`/proc/${pid}/cwd`); } catch { return null; } },
+  /** Linux: the paths of a process's open files (/proc/<pid>/fd/*; a file closed while it is listed is skipped); null when the list
+   * or any entry cannot be read. */
+  procFiles: (pid: number): string[] | null => {
+    let fds: string[];
+    try { fds = readdirSync(`/proc/${pid}/fd`); } catch { return null; }
+    const out: string[] = [];
+    for (const fd of fds) {
+      try { out.push(readlinkSync(`/proc/${pid}/fd/${fd}`)); } catch (error) { if (!isAbsent(error)) return null; }
+    }
+    return out;
+  },
+  /** macOS: lsof's field output (p, f, n) for these processes; null when lsof fails, is missing, or one of them is not found. */
+  lsofFiles: (pids: readonly number[]): string | null => {
+    try { return execFileSync("/usr/sbin/lsof", ["-n", "-P", "-w", "-F", "pfn", "-p", pids.join(",")], { encoding: "utf8", timeout: 10_000, maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] }); } catch { return null; }
+  },
+  /** The values of `names` in another process's environment (only those it has), for telling whose home an engine process uses
+   * (engine-closed.ts homeScope). null when they cannot be read: another user's or a protected process, one that is gone, an older addon. */
+  environment: (pid: number, names: readonly string[]): Record<string, string> | null => {
+    const addon = loadExclusionAddon();
+    if (typeof addon?.environment !== "function") return null;
+    const got = addon.environment(pid, [...names]);
+    return got !== null && typeof got === "object" ? got : null;
   },
 };
 

@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Budget",
     "tagline": "A budget and monthly variance sheet with three lines to watch",
-    "summary": "Gauge prepares an annual budget with monthly assumptions. Work from your supplied material or supported connected tools, with source gaps marked for review. For broader business financial decisions, use Numbers. For a forecast model from scratch, use Financial Model Creator. I give guidance and drafts, not licensed financial advice, and I promise no outcome.",
+    "summary": "Gauge prepares an annual budget with monthly assumptions.",
     "category": "Money",
     "author": {
       "name": "Ferrox Labs",
@@ -54,7 +54,8 @@
         "title": "Budget",
         "description": "Gauge prepares an annual budget with monthly assumptions. Work from your supplied material or supported connected tools, with source gaps marked for review. For broader business financial decisions, use Numbers. For a forecast model from scratch, use Financial Model Creator.",
         "appearance": {
-          "color": "teal"
+          "color": "teal",
+          "mascotBody": "circle"
         },
         "skills": [
           "business-budget",

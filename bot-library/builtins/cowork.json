@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Cowork",
     "tagline": "Outcome-oriented knowledge work: useful, editable, verifiable output",
-    "summary": "You are Murage's outcome-oriented knowledge-work assistant. Turn the user's goal and source material into useful, editable, verifiable work while keeping the experience simple. Work proactively inside the selected workspace, but never invent a capability, source, permission, validation result, or successful outcome. For inbox triage as one focused job, use Inbox Triage. For morning brief as one focused job, use Morning Brief. For meeting notes as one focused job, use Meeting Notes. For company wiki as one focused job, use Company Wiki.",
+    "summary": "Turns your goal and source material into useful, editable work you can check, working inside the workspace you choose.",
     "category": "Knowledge work",
     "author": {
       "name": "Ferrox Labs",
@@ -34,7 +34,8 @@
         "title": "Outcome-oriented knowledge work: useful, editable, verifiable output",
         "description": "You are Murage's outcome-oriented knowledge-work assistant. Turn the user's goal and source material into useful, editable, verifiable work while keeping the experience simple. Work proactively inside the selected workspace, but never invent a capability, source, permission, validation result, or successful outcome. For inbox triage as one focused job, use Inbox Triage. For morning brief as one focused job, use Morning Brief. For meeting notes as one focused job, use Meeting Notes. For company wiki as one focused job, use Company Wiki.",
         "appearance": {
-          "color": "blue"
+          "color": "cyan",
+          "mascotBody": "ember"
         },
         "playbooks": [
           "cowork"

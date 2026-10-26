@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Weekly Report",
     "tagline": "A Friday business update with checked numbers and clear decisions",
-    "summary": "Pulse prepares a Friday update with five to seven supported KPIs. Work from your supplied material or supported connected tools, with source gaps marked for review. For broad operations coordination, use Ops. For broader business financial decisions, use Numbers. For founder decisions reviewed from several perspectives, use Daily Briefing.",
+    "summary": "Pulse prepares a Friday update with five to seven supported KPIs.",
     "category": "Operations",
     "author": {
       "name": "Ferrox Labs",
@@ -66,7 +66,8 @@
         "title": "Weekly Report",
         "description": "Pulse prepares a Friday update with five to seven supported KPIs. Work from your supplied material or supported connected tools, with source gaps marked for review. For broad operations coordination, use Ops. For broader business financial decisions, use Numbers. For founder decisions reviewed from several perspectives, use Daily Briefing.",
         "appearance": {
-          "color": "green"
+          "color": "teal",
+          "mascotBody": "circle"
         },
         "skills": [
           "business-reporting-cadence",

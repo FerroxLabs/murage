@@ -13,9 +13,10 @@
 // closes: X (card 1, as in the mockups), Escape, Got it, Let's go, or any
 // shortcut.
 //
-// 1.0.2 has its own hero, six tiles and list (whats-new-art-0102); every other
-// version with a page keeps the 0.1.61 content. The pictures all load with this
-// lazy chunk, never with the first paint.
+// 1.0.2 has its own hero, six tiles and list (whats-new-art-0102). 1.0.6 leads
+// with Murage for Chrome in the Chrome Web Store and reuses that art, no new
+// pictures. Every other version with a page keeps the 0.1.61 content. The
+// pictures all load with this lazy chunk, never with the first paint.
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
 import teamHero from "@/assets/whats-new/team-hero.webp";
@@ -35,7 +36,8 @@ import tileLabs from "@/assets/whats-new/tile-labs.webp";
 
 export type WhatsNewAction =
   | "teams" | "rooms" | "blocks" | "packs" | "shapes" | "gemini" | "longwork"
-  | "memory" | "routing" | "engines" | "chrome" | "speed" | "desktops" | "library";
+  | "memory" | "routing" | "engines" | "chrome" | "speed" | "desktops" | "library"
+  | "allChats" | "draftOnly" | "venues" | "ownWords" | "fuigo" | "backups";
 
 type Tile = { action: Exclude<WhatsNewAction, "teams" | "memory">; img: string; alt: string; dot: string; title: string; body: string };
 
@@ -90,10 +92,59 @@ export const WHATS_NEW_MORE_102: string[] = [
   "Every release is checked on an Intel Mac",
 ];
 
-/** Which content a page shows: 1.0.2 has its own; every other version with a page keeps 0.1.61's. */
-export function whatsNewContentFor(version: string | undefined): "0.1.61" | "1.0.2" {
-  return version === "1.0.2" ? "1.0.2" : "0.1.61";
+/** The 1.0.6 tiles, from the 1.0.6 changelog, on art already in the app. Each opens a real place in the app. */
+export const WHATS_NEW_TILES_106: Tile[] = [
+  { action: "allChats", img: tileBlocks, alt: "A stack of gold glass slabs with one slid forward", dot: "bg-[var(--wn-dot-gold)]", title: "Every chat in one list", body: "Find any conversation in one searchable list, opened from a wider chat pop-up." },
+  { action: "draftOnly", img: tilePacks, alt: "A fan of blank violet glass panes", dot: "bg-[var(--wn-dot-violet)]", title: "Bots that draft, you send", body: "A draft-only bot prepares replies for you to review and send, on every engine and channel. Ticket Triage in the library works this way." },
+  { action: "venues", img: tileRooms, alt: "Three glowing orange glass pebbles sharing one pool of light", dot: "bg-[var(--wn-accent)]", title: "Bots know where they belong", body: "Each bot knows which projects and groups it is part of." },
+  { action: "ownWords", img: tileGemini, alt: "Two mint spheres joined by a looping ribbon of light", dot: "bg-[var(--wn-dot-mint)]", title: "Memories in your own words", body: "What your bots learn from you is anchored to what you said, and Forget clears it the moment you click." },
+  { action: "fuigo", img: tileSpeed, alt: "One calm ribbon of mint light running smoothly across a dark plane", dot: "bg-[var(--wn-dot-blue)]", title: "Fuigo starts fast on Windows", body: "Fuigo starts quickly and steadily on Windows, however Murage was installed." },
+  { action: "backups", img: tileLongwork, alt: "One unbroken line of white light crossing a dark plain", dot: "bg-[var(--wn-ink)]", title: "Backups that cover it all", body: "Every backup includes every folder Murage keeps." },
+];
+
+export const WHATS_NEW_MORE_106: string[] = [
+  "At Full access, your own scripts on disk run straight through",
+  "Bots look through your past chats without stopping to ask",
+  "A new chat follows its bot's model, and the chip shows it",
+  "Chats keep their live updates on a desktop with no internet",
+  "Hand-offs wait for their check, then land in the right chat",
+  "A Codex that needs a moment to start says so",
+  "Stop on a Codex turn ends it as stopped by you",
+  "Stop on a shared cloud computer ends just your turn",
+  "Deleting conversations on long histories finishes faster",
+  "Account and card numbers are masked in more formats, IBANs included",
+  "An app connects under the label you confirm",
+  "Library cards say plainly what each template does for you",
+];
+
+export type WhatsNewContentId = "0.1.61" | "1.0.2" | "1.0.6";
+
+/** Which content a page shows: 1.0.2 and 1.0.6 have their own; every other version with a page keeps 0.1.61's. */
+export function whatsNewContentFor(version: string | undefined): WhatsNewContentId {
+  return version === "1.0.2" || version === "1.0.6" ? version : "0.1.61";
 }
+
+type Hero = { img: string; alt: string; fit: string; title: string; body: string; action: "teams" | "memory" | "chrome"; button: string };
+
+/** Each content set: the hero, the six tiles and the list of small wins. */
+export const WHATS_NEW_CONTENT: Readonly<Record<WhatsNewContentId, { hero: Hero; tiles: Tile[]; more: string[] }>> = {
+  "0.1.61": {
+    hero: { img: teamHero, alt: "A constellation of orange orbs of light, each joined to every other by fine threads", fit: "object-cover", title: "Your team, in step.", body: "Every bot in a room sees what its teammates said, on every engine. Images get saved looks and reference packs, and long work runs until it is done.", action: "teams", button: "Open Teams" },
+    tiles: WHATS_NEW_TILES,
+    more: WHATS_NEW_MORE,
+  },
+  "1.0.2": {
+    hero: { img: memoryHero, alt: "A slim glowing column of fine glass layers with one small orange orb leaning toward you", fit: "object-cover", title: "Bots that remember what matters", body: "Your bots now check with you before they keep something about you. Keep it, edit it or let it go from one Needs you list.", action: "memory", button: "Open Memory" },
+    tiles: WHATS_NEW_TILES_102,
+    more: WHATS_NEW_MORE_102,
+  },
+  // The Chrome art is square: shown whole at the right, so the rings stay clear of the title.
+  "1.0.6": {
+    hero: { img: tileChrome, alt: "Two matching gold glass rings, one set inside the other", fit: "object-contain object-right", title: "Murage for Chrome is here", body: "Add it from the Chrome Web Store and your bot works beside you in your own browser, on the sites you choose.", action: "chrome", button: "Open Chrome Web Store" },
+    tiles: WHATS_NEW_TILES_106,
+    more: WHATS_NEW_MORE_106,
+  },
+};
 
 // Shared control styles. 44px targets everywhere; a visible focus ring that
 // reads on the dark panels.
@@ -151,24 +202,22 @@ export interface WhatsNewCardProps {
 /** One card, by index. Rendered alone by the tests; the dialog wraps it. */
 export function WhatsNewCard({ index, version, releaseNotesUrl, onNext, onBack, onGo, onClose, onAction, headingRef }: WhatsNewCardProps): ReactNode {
   const titleId = `whats-new-title-${index + 1}`;
-  const fresh = whatsNewContentFor(version) === "1.0.2";
-  const tiles = fresh ? WHATS_NEW_TILES_102 : WHATS_NEW_TILES;
-  const more = fresh ? WHATS_NEW_MORE_102 : WHATS_NEW_MORE;
+  const { hero, tiles, more } = WHATS_NEW_CONTENT[whatsNewContentFor(version)];
   if (index === 0) {
     return (
       <section aria-labelledby={titleId} data-whats-new-card="hero" className="whats-new-card max-h-[calc(100dvh-32px-2*max(var(--inset-top),var(--inset-bottom)))] w-[min(820px,calc(100vw-32px))] overflow-y-auto overflow-x-hidden rounded-[22px] border border-[var(--wn-edge)] bg-[var(--wn-panel)] text-[var(--wn-ink)] shadow-[0_30px_90px_rgba(0,0,0,0.6)]">
         <div className="relative h-[342px] bg-[var(--wn-ground)] max-md:h-[260px] [@media(max-height:720px)]:h-[250px]">
-          <img src={fresh ? memoryHero : teamHero} alt={fresh ? "A slim glowing column of fine glass layers with one small orange orb leaning toward you" : "A constellation of orange orbs of light, each joined to every other by fine threads"} width={820} height={342} className="block h-full w-full object-cover" />
+          <img src={hero.img} alt={hero.alt} width={820} height={342} className={cn("block h-full w-full", hero.fit)} />
           <div className="absolute left-[34px] top-[26px] flex gap-2">
             <span className="rounded-full border border-[var(--wn-chip-edge)] bg-[var(--wn-chip-ground)] px-[11px] py-1.5 text-[12px] font-semibold tracking-[0.06em] text-[var(--wn-accent-ink)]">NEW IN MURAGE</span>
           </div>
           <button type="button" aria-label="Close" onClick={onClose} className={cn("absolute right-3.5 top-3.5 flex size-11 cursor-pointer items-center justify-center rounded-xl border-0 bg-[var(--wn-close-ground)] text-[var(--wn-close-ink)] hover:text-[var(--wn-ink-strong)]", focusRing)}><CloseIcon /></button>
-          <h2 id={titleId} ref={headingRef} tabIndex={-1} className={cn("whats-new-display absolute bottom-[30px] left-[34px] right-[34px] m-0 text-[58px] leading-none tracking-[-0.01em] text-[var(--wn-ink-strong)] max-sm:text-[44px]", headingFocus)}>{fresh ? <>Bots that remember what matters</> : <>Your team, in step.</>}</h2>
+          <h2 id={titleId} ref={headingRef} tabIndex={-1} className={cn("whats-new-display absolute bottom-[30px] left-[34px] right-[34px] m-0 text-[58px] leading-none tracking-[-0.01em] text-[var(--wn-ink-strong)] max-sm:text-[44px]", headingFocus)}>{hero.title}</h2>
         </div>
         <div className="flex flex-col gap-3.5 px-[34px] pb-[26px] pt-6 max-sm:px-5">
-          <p className="m-0 text-[15.5px] leading-[1.55] text-[var(--wn-ink-body)]">{fresh ? "Your bots now check with you before they keep something about you. Keep it, edit it or let it go from one Needs you list." : "Every bot in a room sees what its teammates said, on every engine. Images get saved looks and reference packs, and long work runs until it is done."}</p>
+          <p className="m-0 text-[15.5px] leading-[1.55] text-[var(--wn-ink-body)]">{hero.body}</p>
           <div className="mt-1.5 flex items-center gap-2.5">
-            <button type="button" className={primaryDark} onClick={() => onAction(fresh ? "memory" : "teams")}>{fresh ? <>Open Memory</> : <>Open Teams</>}</button>
+            <button type="button" className={primaryDark} onClick={() => onAction(hero.action)}>{hero.button}</button>
             <button type="button" className={ghostDark} onClick={onNext}>Next</button>
             <span className="grow" />
             <Pager index={0} onGo={onGo} />

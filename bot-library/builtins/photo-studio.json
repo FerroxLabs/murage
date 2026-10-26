@@ -54,7 +54,8 @@
         "title": "Photo Studio",
         "description": "Shutter prepares a client enquiry reply draft from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For a service business team, use Service Studio.",
         "appearance": {
-          "color": "green"
+          "color": "green",
+          "mascotBody": "star"
         },
         "skills": [
           "photography-business",

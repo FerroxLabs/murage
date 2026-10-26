@@ -32,7 +32,7 @@ const REASON = { "fixed-team": "canTalk.fixedTeam", "fixed-theirs": "canTalk.fix
  * Two-way choice per picked bot. One control, no modal. Widening is a desktop
  * action; any surface may narrow back to My team. */
 export function CanTalkToControl({ bot }: { bot: Bot }) {
-  const { state } = useStore();
+  const { state, dispatch } = useStore();
   const desktop = useDesktopSurface();
   const [error, setError] = useState<string | null>(null);
   const mode = canTalkMode(bot);
@@ -42,7 +42,9 @@ export function CanTalkToControl({ bot }: { bot: Bot }) {
   const save = async (body: Record<string, unknown>) => {
     setError(null);
     try {
-      await api(`/api/bots/${bot.id}/message-allow`, { method: "PATCH", body: JSON.stringify(body) });
+      const answer = await api(`/api/bots/${bot.id}/message-allow`, { method: "PATCH", body: JSON.stringify(body) }) as { messageAllow?: Bot["messageAllow"] };
+      // My team is stored as nothing; the answer is what the bot holds now, shown without waiting for the roster frame.
+      if (answer?.messageAllow) dispatch({ type: "messageAllowSet", botId: bot.id, messageAllow: answer.messageAllow.mode === "team" ? undefined : answer.messageAllow });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }

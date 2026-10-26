@@ -6,7 +6,7 @@
     "release": "1.1.0",
     "name": "SEO Content Engine Room",
     "tagline": "A search growth plan with page briefs, practical edits and a dated ranking report",
-    "summary": "Grow a site through keyword research, page briefs, on-page improvements, internal links and ranking reports. Fern runs the project for you and Ember; the team prepares every live-page change for your approval. For local profiles and reviews, use Local SEO & Reviews Desk (local-seo-reviews). For refreshing an existing content library, use Content Refresh Crew (content-refresh-crew).",
+    "summary": "Grow a site through keyword research, page briefs, on-page improvements, internal links and ranking reports.",
     "category": "Write",
     "author": {
       "name": "Ferrox Labs",
@@ -28,11 +28,12 @@
         "key": "fern",
         "name": "Fern",
         "title": "Search growth lead",
-        "description": "Runs the search project, balances new pages with improvements to existing ones and brings live-page drafts to the owner. Suggests Fuigo first during setup.",
+        "description": "Runs the search project, balances new pages with improvements to existing ones and brings live-page drafts to the owner. Suggests Fuigo first during setup. For local profiles and reviews, use Local SEO & Reviews Desk (local-seo-reviews). For refreshing an existing content library, use Content Refresh Crew (content-refresh-crew).",
         "role": "leader",
         "team": "SEO Content Engine Room",
         "appearance": {
-          "color": "teal"
+          "color": "teal",
+          "mascotBody": "drop"
         },
         "skills": [
           "seo-content-strategy",
@@ -52,7 +53,8 @@
         "role": "member",
         "team": "SEO Content Engine Room",
         "appearance": {
-          "color": "green"
+          "color": "blue",
+          "mascotBody": "capsule"
         },
         "skills": [
           "seo-content-strategy",
@@ -72,7 +74,8 @@
         "role": "member",
         "team": "SEO Content Engine Room",
         "appearance": {
-          "color": "orange"
+          "color": "yellow",
+          "mascotBody": "squircle"
         },
         "skills": [
           "content-brief",
@@ -92,7 +95,8 @@
         "role": "member",
         "team": "SEO Content Engine Room",
         "appearance": {
-          "color": "blue"
+          "color": "green",
+          "mascotBody": "hexagon"
         },
         "skills": [
           "seo-optimizer",
@@ -112,7 +116,8 @@
         "role": "member",
         "team": "SEO Content Engine Room",
         "appearance": {
-          "color": "red"
+          "color": "red",
+          "mascotBody": "shield"
         },
         "skills": [
           "proofreading",
@@ -132,7 +137,8 @@
         "role": "member",
         "team": "SEO Content Engine Room",
         "appearance": {
-          "color": "cyan"
+          "color": "cyan",
+          "mascotBody": "diamond"
         },
         "skills": [
           "seo-optimizer",

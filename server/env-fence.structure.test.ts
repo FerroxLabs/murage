@@ -134,7 +134,19 @@ describe("every engine turn spawn is handed the pinned environment (Rule 74)", (
       const text = read(file);
       const bound = [...text.matchAll(/\bconst launchCli = ([^;]+);/g)].map((m) => m[1]);
       expect(bound.length, `${file} binds launchCli`).toBeGreaterThan(0);
-      for (const rhs of bound) expect(rhs, file).toMatch(/^engineLaunchFile\(config\.cli, /);
+      // acp/core.ts (1.0.5 Fuigo on Windows, 9094d77a8, merged 58f2f9c46): the file is launchTarget, the driver's own choice of
+      // config.cli (support.launchExecutable, e.g. the fuigo.exe resolveFuigoCli version-checked) read on the DRIVER env before the
+      // handed map replaces it, and the version probe reads the same launchCliFor. Still never a lookup on the handed PATH.
+      const viaTarget = /^engineLaunchFile\(launchTarget, /;
+      for (const rhs of bound) expect(rhs, file).toMatch(file === "drivers/acp/core.ts" ? viaTarget : /^engineLaunchFile\(config\.cli, /);
+      if (file === "drivers/acp/core.ts") {
+        expect(text).toContain("const launchCliFor = (env: Record<string, string | undefined>): string => support.launchExecutable?.(env, config) ?? config.cli;");
+        expect([...text.matchAll(/\bconst launchTarget = ([^;]+);/g)].map((m) => m[1]), file).toEqual(["launchCliFor(env)"]);
+        // fixed before the handed map is merged into env (Object.assign(env, handed.env)), and the probe runs that same file
+        expect(text.indexOf("const launchTarget = launchCliFor(env);")).toBeLessThan(text.indexOf("Object.assign(env, handed.env);"));
+        expect(text.indexOf("const launchTarget = launchCliFor(env);")).toBeGreaterThan(-1);
+        expect(text).toContain("const cli = launchCliFor(env);\n        const sig = cliSig(cli, env);\n        const raw = await cachedCliVersion(cli,");
+      }
       expect(text, `${file} spawns a bare config.cli turn`).not.toMatch(/\bspawnCli\(\s*config\.cli,(?!\s*\["--version"\])/);
     }
   });

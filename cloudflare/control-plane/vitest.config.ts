@@ -53,5 +53,9 @@ export default defineConfig({
   test: {
     include: ["test/**/*.test.ts"],
     setupFiles: ["./test/setup.ts"],
+    // Many tests here drive whole billing sweeps against workerd D1 (real work, no wall-clock waits). Measured on a 16 vCPU runner under
+    // full CPU load: every test completes, the slowest one without its own timeout in 9.3 s (idle 0.5 to 4.5 s). The 5 s default failed
+    // 3 to 7 of them per loaded run (CI 40193051242). 30 s matches the per-test timeout the heavy tests already use.
+    testTimeout: 30_000,
   },
 });

@@ -12,6 +12,16 @@ export interface EventRecorder {
   stop(): void;
 }
 
+/** What a failed tool call or a runtime error said (bounded), so a timeout shows why a turn went another way. */
+function failureDetail(events: RuntimeEvent[]): string {
+  const notes: string[] = [];
+  for (const e of events as unknown as Array<Record<string, unknown>>) {
+    const said = e.type === "runtime.error" ? e.message : e.type === "item.completed" && e.itemType === "tool" && e.ok === false ? (e.detail ?? e.result) : undefined;
+    if (said !== undefined) notes.push(`${String(e.type)}: ${(typeof said === "string" ? said : JSON.stringify(said) ?? "").slice(0, 200)}`);
+  }
+  return notes.length ? `; details: ${notes.slice(0, 4).join(" | ")}` : "";
+}
+
 export function recordEvents(adapter: ProviderAdapter): EventRecorder {
   const events: RuntimeEvent[] = [];
   const waiters: Array<{ pred: (e: RuntimeEvent) => boolean; resolve: (e: RuntimeEvent) => void }> = [];
@@ -36,7 +46,7 @@ export function recordEvents(adapter: ProviderAdapter): EventRecorder {
           if (idx !== -1) waiters.splice(idx, 1);
           reject(
             new Error(
-              `no matching event within ${timeoutMs}ms; saw: ${events.map((e) => e.type).join(", ") || "(none)"}`,
+              `no matching event within ${timeoutMs}ms; saw: ${events.map((e) => e.type).join(", ") || "(none)"}${failureDetail(events)}`,
             ),
           );
         }, timeoutMs);

@@ -58,6 +58,8 @@ export function initializeMessageTables(db: DatabaseSync, indexHooks: EnsureInde
       CREATE INDEX IF NOT EXISTS keyed_card_id ON keyed_card(thread_id, id);
       CREATE INDEX IF NOT EXISTS keyed_card_family ON keyed_card(family, thread_id);
       DROP TABLE IF EXISTS card_branch; DROP TABLE IF EXISTS branch_walk; DROP TABLE IF EXISTS branch_jump;`);
+  // The Flux Memory number hold of a thread (flux-capture-hold.ts): one row per thread that holds a bank, card or id number.
+  db.exec("CREATE TABLE IF NOT EXISTS flux_capture_hold(thread_id TEXT PRIMARY KEY, message_id TEXT NOT NULL, at INTEGER NOT NULL) WITHOUT ROWID");
   // The branch index and the line index (branch-index.ts): small integer-keyed tables the writers keep, filled for older threads per thread (branch-store.ts).
   db.exec(BRANCH_TABLES_SQL);
   // The threads whose visible end is the person's own message (a direct turn that was admitted and has not settled), kept by the writers (message-db.ts

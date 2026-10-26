@@ -38,7 +38,8 @@
         "role": "leader",
         "team": "Community Lead Finder",
         "appearance": {
-          "color": "blue"
+          "color": "blue",
+          "mascotBody": "capsule"
         },
         "skills": [
           "project-manager",
@@ -58,7 +59,8 @@
         "role": "member",
         "team": "Community Lead Finder",
         "appearance": {
-          "color": "teal"
+          "color": "teal",
+          "mascotBody": "shield"
         },
         "skills": [
           "community-builder",
@@ -78,7 +80,8 @@
         "role": "member",
         "team": "Community Lead Finder",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "hexagon"
         },
         "skills": [
           "research-audience-discovery",
@@ -98,7 +101,8 @@
         "role": "member",
         "team": "Community Lead Finder",
         "appearance": {
-          "color": "purple"
+          "color": "cyan",
+          "mascotBody": "drop"
         },
         "skills": [
           "copy-customer-voice",
@@ -118,7 +122,8 @@
         "role": "member",
         "team": "Community Lead Finder",
         "appearance": {
-          "color": "green"
+          "color": "green",
+          "mascotBody": "squircle"
         },
         "skills": [
           "data-quality-rules",
