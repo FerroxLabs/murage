@@ -1,7 +1,7 @@
 // Harness-owned transport for pinned agent-browser 0.36.0. Its raw localhost
 // stream has NO authentication: this relay protects network clients, not other
 // processes running with the same OS identity. Never disclose its port in APIs.
-import { USER_CHROME_ALLOW_WAIT_MS } from "./user-chrome.ts";
+import { USER_CHROME_ALLOW_WAIT_MS, userChromeAttachLog } from "./user-chrome.ts";
 import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { connect as connectSocket } from "node:net";
 import { join } from "node:path";
@@ -103,7 +103,9 @@ export function engineReason(stdout: string, stderr: string): string {
 }
 function logBrowserEngineFailure(args: string[], how: string, reason: string) {
   const verbs = args.slice(0, 2).map(arg => LOGGED_VERBS.has(arg) ? arg : "…").join(" ");
-  console.error(`[browser] engine command "${verbs}" failed (${how})${reason ? `: ${reason}` : ""}`);
+  // A DevTools address can carry the token of Murage's connection to the owner's Chrome: never logged.
+  const said = reason.replace(/\bwss?:\/\/\S+/giu, "ws://…");
+  console.error(`[browser] engine command "${verbs}" failed (${how})${said ? `: ${said}` : ""}`);
 }
 /** Windows: the daemon's start time as the stop checks it. Recorded once a command proved
  * the pid is this session's; until then, the pid file's own write time stands in, because
@@ -341,7 +343,31 @@ export function createNativeBrowser(spec: AgentBrowserSpec, options: NativeBrows
     if (origin && restore?.pending(origin)) restore.abandoned(origin);
     return reply;
   };
-  const guard = new BrowserDocumentGuard(command, { ...(attached ? { connectTimeoutMs: USER_CHROME_ALLOW_WAIT_MS } : {}), connection: cloudRelayConnection("cdp", spec.env) });
+  // The owner's own Chrome: the live view's `stream status` never starts the
+  // engine's browser, so nothing reached Chrome and the panel showed an empty
+  // "Live" page. One command that needs the browser attaches it, once per engine
+  // session, and every later step reuses that one approved connection.
+  let attachedReady = false;
+  let attaching: Promise<void> | undefined;
+  const attach = (): Promise<void> => {
+    if (!attached || attachedReady) return Promise.resolve();
+    return attaching ??= (async () => {
+      const started = Date.now();
+      console.log(userChromeAttachLog("start"));
+      const waiting = setTimeout(() => console.log(userChromeAttachLog("waiting-allow", Date.now() - started)), 3000);
+      try {
+        await command(["get", "url"]);
+        // Murage's page check keeps a connection of its own, and Chrome asks for
+        // that one too. Opened now, both prompts come while the owner is already
+        // looking, instead of a second one at the bot's first step.
+        await guard.warm().catch(() => console.error(userChromeAttachLog("failed", Date.now() - started, "guard")));
+        attachedReady = true; console.log(userChromeAttachLog("connected", Date.now() - started));
+      }
+      catch (error) { console.error(userChromeAttachLog("failed", Date.now() - started, error instanceof BrowserEngineError && error.kind === "timeout" ? "timeout" : "engine")); throw error; }
+      finally { clearTimeout(waiting); attaching = undefined; }
+    })();
+  };
+  const guard = new BrowserDocumentGuard(command, { ...(attached ? { connectTimeoutMs: USER_CHROME_ALLOW_WAIT_MS } : {}), ...(spec.guardCdpUrl ? { endpoint: spec.guardCdpUrl } : {}), ...(spec.guardScope ? { scope: spec.guardScope } : {}), connection: cloudRelayConnection("cdp", spec.env) });
   return {
     command,
     protected: (armed = true) => guard.protected(armed),
@@ -363,6 +389,7 @@ export function createNativeBrowser(spec: AgentBrowserSpec, options: NativeBrows
     async connect(onFrame, onUrl, onDisconnect) {
       closing = false;
       if (socket?.readyState === WebSocket.OPEN) return streamId;
+      await attach();
       const result = await command(["stream", "status"]) as { port?: number; streamPort?: number };
       const port = result.port ?? result.streamPort;
       if (!Number.isInteger(port) || port! < 1 || port! > 65535) throw new Error("Browser returned an invalid stream port");
@@ -395,7 +422,7 @@ export function createNativeBrowser(spec: AgentBrowserSpec, options: NativeBrows
     // See browser-socket-teardown.ts for the crash and why the order matters.
     resetStream() { const old = socket; socket = undefined; closeSocketQuietly(old); },
     async close() {
-      closing = true;
+      closing = true; attachedReady = false;
       guard.close();
       socket?.close(); socket = undefined;
       await client?.close();

@@ -881,16 +881,16 @@ describe("ACP turns (fake CLI)", () => {
       await instance.adapter.sendTurn({ threadId: "t-gen-acp", text: "go" });
       const first = (await recorder.until((e) => e.type === "request.opened")) as any;
       expect(first.execEnv).toMatchObject({ shell: expect.any(Array) });
-      // The check's script is POSIX; a PowerShell shell form (Windows) is never started for it and reads U20 (engine-env.ts).
+      // The check's script is POSIX; a PowerShell shell form (Windows) is never started for it: it is read as written (r#7, engine-env.ts readPowerShellForm).
       const checked = !isPowerShellProgram(first.execEnv.shell[0]);
       expect(execChecks.runs).toBe(checked ? 1 : 0);
-      if (!checked) expect(first.execEnv).toMatchObject({ env: {}, unread: { code: "U20" } });
+      if (!checked) { expect(first.execEnv.unread).toBeUndefined(); expect(first.execEnv.env).toMatchObject({ PAGER: "cat" }); }
       expect(approveStartupWrite()).toBe(true);
       await instance.adapter.respondToRequest("t-gen-acp", first.requestId, { behavior: "allow" });
       const second = (await recorder.until((e) => e.type === "request.opened" && (e as any).requestId !== first.requestId)) as any;
       expect(execChecks.runs).toBe(checked ? 2 : 0);
       expect(second.execEnv).toMatchObject({ shell: expect.any(Array) });
-      if (!checked) expect(second.execEnv).toMatchObject({ env: {}, unread: { code: "U20" } });
+      if (!checked) { expect(second.execEnv.unread).toBeUndefined(); expect(second.execEnv.env).toMatchObject({ PAGER: "cat" }); }
       await instance.adapter.respondToRequest("t-gen-acp", second.requestId, { behavior: "deny" });
       await recorder.until((e) => e.type === "turn.completed");
     } finally { delete process.env.FAKE_ACP_PERMISSION_TWICE; }

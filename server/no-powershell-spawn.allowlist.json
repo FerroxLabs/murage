@@ -57,7 +57,7 @@
       }
     },
     "server/drivers/claude.ts": {
-      "reason": "recognizer and label: the Claude Code tool name 'PowerShell' in the ask list, in an ask's tool field, in the mode's --disallowedTools entry and its tool type; and CLAUDE_POWERSHELL_FORM, the F12 shell form a PowerShell tool command is recorded with (the CLI runs its own PowerShell tool on the inherit path; server/engine-env.ts checkExecEnv refuses a PowerShell shell form as U20 without starting it); starts nothing",
+      "reason": "recognizer and label: the Claude Code tool name 'PowerShell' in the ask list, in an ask's tool field, in the mode's --disallowedTools entry and its tool type; and CLAUDE_POWERSHELL_FORM, the F12 shell form a PowerShell tool command is recorded with (the CLI runs its own PowerShell tool on the inherit path; server/engine-env.ts checkExecEnv reads a PowerShell shell form with readPowerShellForm, without starting it); starts nothing",
       "lines": {
         "2101e5911314cb27": "ask: [...CLAUDE_BARE_ASK_TOOLS, ...(platform === \"win32\" ? [\"PowerShell\"] : []), ...claude",
         "353828da41736378": "export const CLAUDE_POWERSHELL_FORM: readonly string[] = [\"powershell.exe\", \"-NoProfile\", ",
@@ -68,7 +68,7 @@
       }
     },
     "server/drivers/codex.ts": {
-      "reason": "label: names the owner's Windows shell form for the F12 environment record; the environment check no longer starts it on Windows (server/engine-env.ts resolves U20 without a spawn)",
+      "reason": "label: names the owner's Windows shell form for the F12 environment record; the environment check never starts it on Windows (server/engine-env.ts readPowerShellForm reads the form without a spawn)",
       "lines": {
         "1bec92323babde07": "const shellForm: readonly string[] = process.platform === \"win32\" ? [\"powershell.exe\", \"-N"
       }

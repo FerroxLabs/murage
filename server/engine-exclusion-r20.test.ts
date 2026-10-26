@@ -282,7 +282,7 @@ describe("T10: the packaging gate loads the real addon for the target and refuse
     expect(() => loadEngineExclusionResource("/p/x.node", "win32", "x64", 4, answer([4, "function", "function", "function", true, ["speechToWave"]]), "/App/Murage.exe", win)).toThrow(/FUNCTIONS/);
     expect(() => loadEngineExclusionResource("/p/x.node", "win32", "x64", 4, answer([4, "function", "function", "function", true]), "/App/Murage.exe", win)).toThrow(/FUNCTIONS/);
     expect(calls.at(-1)!.args[1]).toContain(JSON.stringify(WINDOWS_ADDON_FUNCTIONS));
-    expect([...WINDOWS_ADDON_FUNCTIONS].sort()).toEqual([...new Set(["openFile", "handleRead", "handleWrite", "handleSync", "handleLock", "handleMarkDelete", "handleId", "handleSize", "handleClose", "removeTree", ...WINDOWS_NATIVE_FUNCTIONS, "environment"])].sort());
+    expect([...WINDOWS_ADDON_FUNCTIONS].sort()).toEqual([...new Set(["openFile", "handleRead", "handleWrite", "handleSync", "handleLock", "handleMarkDelete", "handleId", "handleSize", "handleClose", "removeTree", ...WINDOWS_NATIVE_FUNCTIONS, "environment", "cwdOf"])].sort());
     // for real: this machine's Node loads the built addon
     if (built && process.platform !== "win32") {
       const text = loadEngineExclusionResource(built, process.platform, process.arch, ADDON_VERSION, (command, args, env) => spawnSync(command, args, { env: { ...process.env, ...env }, encoding: "utf8" }).stdout, process.execPath);

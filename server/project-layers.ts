@@ -275,18 +275,20 @@ export function withProjectStatus(transcript: string, status: string): string {
  * (Astra r1 #11): the oldest lines go first (never the owner's pin while
  * anything else can go), then what is left is clipped line by line, and the
  * pointer to project_read_messages is paid for inside the budget. `earlier`
- * is how many messages were already outside the window. */
-export function fitProjectTranscript(lines: readonly string[], earlier: number, maxBytes: number, pinnedPrefix: string, atLeast = false): string {
+ * is how many messages were already outside the window. `onKept`, when given, hears the index (into `lines`) of every line that stays in
+ * the result WHOLE: a clipped line may keep no words of its own (only its label or the cut marker), so it is never reported (fail closed). */
+export function fitProjectTranscript(lines: readonly string[], earlier: number, maxBytes: number, pinnedPrefix: string, atLeast = false, onKept?: (index: number) => void): string {
   const pointer = (hidden: number) => atLeast
     ? `[At least ${hidden} earlier ${hidden === 1 ? "message is" : "messages are"} not shown here: use ${murageTool("project_read_messages")} to read them.]`
     : `[${hidden} earlier ${hidden === 1 ? "message is" : "messages are"} not shown here: use ${murageTool("project_read_messages")} to read them.]`;
   const size = (kept: readonly string[], hidden: number) => Buffer.byteLength([...(hidden > 0 ? [pointer(hidden)] : []), ...kept].join("\n"));
-  const kept = [...lines];
+  const kept = [...lines], keptAt = lines.map((_, index) => index), clipped = new Set<number>();
   let hidden = Math.max(atLeast ? 1 : 0, earlier);
   while (kept.length > 1 && size(kept, hidden) > maxBytes) {
     const drop = kept[0]!.startsWith(pinnedPrefix) ? 1 : 0;
     if (drop >= kept.length) break;
     kept.splice(drop, 1);
+    keptAt.splice(drop, 1);
     hidden += 1;
   }
   if (size(kept, hidden) > maxBytes) {
@@ -299,8 +301,10 @@ export function fitProjectTranscript(lines: readonly string[], earlier: number, 
       const line = kept[index]!;
       if (Buffer.byteLength(line) <= share) continue;
       kept[index] = Buffer.from(line).subarray(0, Math.max(0, share - Buffer.byteLength(cut))).toString("utf8").replace(/\uFFFD+$/, "") + cut;
+      clipped.add(keptAt[index]!);
     }
   }
+  if (onKept) for (const index of keptAt) if (!clipped.has(index)) onKept(index);
   if (hidden > 0) kept.unshift(pointer(hidden));
   return kept.join("\n");
 }

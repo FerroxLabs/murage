@@ -534,6 +534,29 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect((settled[0] as any).text).toBe("hello from fake claude");
   });
 
+  it("passes on a running tool's heartbeat as tool activity, so a long tool is not taken for a stall", async () => {
+    // Upstream #3328.
+    await create("tool-heartbeat");
+    await instance.adapter.sendTurn({ threadId: "t-heartbeat", text: "hi" });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const types = recorder.events.map((e) => e.type);
+    const beat = types.indexOf("item.updated");
+    expect(beat).toBeGreaterThan(-1);
+    expect(recorder.events[beat]).toMatchObject({ itemType: "tool", threadId: "t-heartbeat" });
+    expect(beat).toBeGreaterThan(types.indexOf("item.started"));
+    expect(beat).toBeLessThan(types.lastIndexOf("item.completed"));
+  });
+
+  it("drops a heartbeat that lands after the turn settled, so it cannot keep a newer turn alive", async () => {
+    await create("tool-heartbeat-late");
+    await instance.adapter.sendTurn({ threadId: "t-heartbeat-late", text: "hi" });
+    await recorder.until((e) => e.type === "turn.completed");
+    // the late line follows the result on the same stream
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(recorder.events.filter((e: any) => e.type === "item.updated" && e.itemType === "tool")).toEqual([]);
+  });
+
   it.each(["not-logged-in", "not-logged-in-success-result"])("routes signed-out CLI mode %s to setup and one failed auth terminal", async mode => {
     await create(mode);
     await instance.adapter.sendTurn({ threadId: "t-auth", text: "hi" });

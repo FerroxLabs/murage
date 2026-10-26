@@ -53,7 +53,9 @@ import { folderTrustKindNames } from "../../folder-trust.ts";
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, rmSync, unlinkSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { sep as pathSep } from "node:path";
+import { isAbsolute as isAbsolutePath, sep as pathSep } from "node:path";
+import { parseApplyPatch, patchTextOf } from "../../../shared/apply-patch.ts";
+import { PATH_KEYS } from "../../../shared/arg-vocabulary.ts";
 import { MCP_LISTED_FILE_ENV } from "../../mcp-listed.ts";
 import { stripVTControlCharacters } from "node:util";
 
@@ -271,6 +273,39 @@ export function acpToolFilePaths(toolCall: { locations?: unknown; rawInput?: unk
     } else paths.push(...fromInput);
   }
   return paths.length ? paths : undefined;
+}
+
+/** r#7 (1.0.7): Fuigo's patch tool, stamped codex/apply_patch and filed as kind `edit` (shared/app-action-grant.ts
+ * STAMPED_TOOLS), names no path of its own: every place it writes or removes is read from the patch with the one
+ * apply_patch reader (shared/apply-patch.ts), each resolved from the session folder the engine joins it to (fuigo-tools
+ * apply_patch: `cwd.join(path)`). Undefined for any other call. Null when the patch cannot be read whole, or the call
+ * carries a path key of its own beside it, or a destination is drive-relative (`C:x`, placed from a folder this cannot
+ * see): the driver files that call as unread, and it holds at every level. */
+export function acpPatchPaths(toolCall: { kind?: unknown; rawInput?: unknown; _meta?: unknown }, cwd: string): string[] | null | undefined {
+  const identity = acpStampedIdentity(toolCall);
+  if (identity?.namespace.trim() !== "codex" || identity.name.trim() !== "apply_patch" || toolCall.kind !== "edit") return undefined;
+  const raw = toolCall.rawInput;
+  if (isPlainInput(raw) && [...PATH_KEYS, "locations"].some((key) => key in raw)) return null;
+  const parsed = parseApplyPatch(patchTextOf(raw));
+  if (!parsed) return null;
+  const paths: string[] = [];
+  for (const destination of [...parsed.destinations, ...parsed.deletes]) {
+    if (/^[A-Za-z]:(?![\\/])/.test(destination)) return null;
+    // joined as written, never collapsed (the engine's `cwd.join` keeps `..`, and the OS walks `link/..` from where the link
+    // points): the own-workspace check and the key guard place it part by part, links followed (shared/in-project.ts)
+    // On Windows `/` and `\` both separate a relative path's parts, so it is written in the platform's own (the card reads one
+    // spelling); an absolute path (a drive, UNC, or `\\?\` path, where `/` is a plain character) is kept byte for byte; a
+    // root-relative `\x` or `/x` is on the session folder's drive, as the engine's join places it
+    let placed: string;
+    if (pathSep === "\\" && /^[\\/](?![\\/])/.test(destination)) {
+      const drive = /^[A-Za-z]:/.exec(cwd)?.[0];
+      if (!drive) return null;
+      placed = `${drive}${destination}`;
+    } else if (isAbsolutePath(destination)) placed = destination;
+    else placed = `${cwd.replace(/[\\/]+$/, "")}${pathSep}${pathSep === "\\" ? destination.replace(/\//g, "\\") : destination}`;
+    if (!paths.includes(placed)) paths.push(placed);
+  }
+  return paths;
 }
 
 /** Some ACP providers wrap actionable billing failures in "Internal error".
@@ -2998,7 +3033,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           // the paths the engine names. The tool's title is model-composed
           // text, so it only stands in when there is no structured target.
           const commandLine = commandText(toolCall.rawInput?.command);
-          const editPaths = !commandLine && (kind === "edit" || kind === "delete" || kind === "move") ? acpToolFilePaths(toolCall) : undefined;
+          // r#7: Fuigo's codex/apply_patch names its places only inside the patch (null: the patch cannot be read whole)
+          const patchPaths = acpPatchPaths(toolCall, cwd);
+          const filePaths = patchPaths ? [...new Set([...(acpToolFilePaths(toolCall) ?? []), ...patchPaths])] : acpToolFilePaths(toolCall);
+          const editPaths = !commandLine && (kind === "edit" || kind === "delete" || kind === "move") ? filePaths : undefined;
           const summary = approvalSummary(commandLine ?? (editPaths ? editPaths.join(", ") : String(toolCall.title ?? tool)));
           // The model's title is only a label when the engine named the real
           // target (paths); keep it, marked as the model's, so a move's
@@ -3091,10 +3129,11 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             ...(!questionTool && !kind ? { toolInputMissing: "kind" } : {}),
             // Rules 2, 55: a source that is present but malformed (a rawInput that is not an object, locations that are not a list) makes
             // the whole call unread; it is never dropped or replaced with an empty input.
+            ...(patchPaths === null ? { toolInputMissing: "patch" } : {}),
             ...(() => { const bad = !questionTool && kind ? acpMalformedSource(toolCall) : undefined; return bad ? { toolInputMissing: bad } : {}; })(),
             // Structured, off the wire — never parsed back out of `summary`,
             // which is composed from what the model wrote.
-            ...(() => { const filePaths = acpToolFilePaths(toolCall); return filePaths ? { filePaths } : {}; })(),
+            ...(filePaths ? { filePaths } : {}),
             // This session's own saved-result folders, from the home this
             // driver started and the session the engine named: never from
             // the request, and only for the session this turn owns.
@@ -3109,7 +3148,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             ...(questionTool || !kind ? {} : { toolCall: {
               name: kind === "execute" ? "shell" : kind === "delete" ? "delete" : kind,
               input: kind === "delete" || kind === "edit" || kind === "read" || kind === "move"
-                ? { ...(isPlainInput(toolCall.rawInput) ? toolCall.rawInput : {}), ...(toolCall.locations !== undefined ? { locations: toolCall.locations } : {}) }
+                ? { ...(isPlainInput(toolCall.rawInput) ? toolCall.rawInput : {}), ...(toolCall.locations !== undefined ? { locations: toolCall.locations } : {}), ...(patchPaths ? { paths: patchPaths } : {}) }
                 : toolCall.rawInput,
             } }),
           });

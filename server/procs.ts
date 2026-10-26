@@ -397,7 +397,7 @@ export function execCli(
     catch (error) { queueMicrotask(() => cb(error instanceof Error ? error : new Error(String(error)), "", "")); return; }
     let stdout = "", stderr = "", done = false;
     const finish = (error: Error | null) => { if (done) return; done = true; clearTimeout(timer); cb(error, stdout, stderr); };
-    const timer = setTimeout(() => { killCliTree(child); finish(new Error("Cloud CLI probe timed out")); }, opts.timeout || 8000);
+    const timer = setTimeout(() => { killCliTree(child); finish(Object.assign(new Error("Cloud CLI probe timed out"), { killed: true })); }, opts.timeout || 8000);
     const receive = (stream: "out" | "err", data: Buffer) => {
       if (stream === "out") stdout += data.toString(); else stderr += data.toString();
       if (Buffer.byteLength(stdout) + Buffer.byteLength(stderr) > (opts.maxBuffer ?? 1024 * 1024)) {
@@ -478,6 +478,24 @@ export function execCli(
     );
     finish(error);
   });
+}
+
+/** Concurrent probes on a busy machine can outlast the timeout, so a CLI that
+ * answered before keeps its last version instead of reading as "not installed".
+ * A timeout is a killed run with no string error code (a CLI that traps SIGTERM
+ * exits with a number; a missing CLI is ENOENT; an overflow is
+ * ERR_CHILD_PROCESS_STDIO_MAXBUFFER). Ported from OpenMausBot upstream PR #3433
+ * (2da9ee214) and its follow-up 1a6f071b8, Apache-2.0. */
+export function cliVersionReader(cli: string): (err: Error | null, stdout: string) => { version: string } | { reason: string } {
+  let last: string | null = null;
+  return (err, stdout) => {
+    const version = err ? "" : String(stdout ?? "").trim();
+    if (version) return { version: (last = version) };
+    const failure = err as (NodeJS.ErrnoException & { killed?: boolean }) | null;
+    const timedOut = failure?.killed === true && typeof failure.code !== "string";
+    if (timedOut && last) return { version: last };
+    return { reason: timedOut ? `\`${cli}\` took longer than 8 seconds to answer --version. The machine may be busy; check again.` : `\`${cli}\` CLI not found` };
+  };
 }
 
 /** The stdio an engine process gets (Rule 74c): stdin is always a pipe, never

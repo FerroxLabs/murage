@@ -305,7 +305,7 @@ describe("the chat header answers to its container, not the window", () => {
   it("gives the identity cluster the space the controls leave", () => {
     // ROOT CAUSE of the shipped overlap: the identity cluster was the only
     // thing without `shrink-0`, and had no `flex-1` to claim what was left.
-    expect(header).toContain('className="flex min-w-0 flex-1 items-center gap-2.5');
+    expect(header).toContain('"flex min-w-0 flex-1 items-center gap-2.5');
     expect(header).toContain("data-chat-header-name");
   });
 

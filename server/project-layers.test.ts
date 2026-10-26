@@ -147,6 +147,26 @@ it("a project transcript keeps within its budget, newest lines and the pin kept,
   expect(rendered(fitProjectTranscript(["Dax: hi"], 1, 1000, "[Pinned by the owner]"))).toBe("[1 earlier message is not shown here: use mcp__agents__project_read_messages to read them.]\nDax: hi");
 });
 
+it("onKept names exactly the lines that stay (send-fence A2: only rows the prompt shows in words)", () => {
+  const lines = ["[Pinned by the owner] Sean: the rule", ...Array.from({ length: 10 }, (_, index) => `Dax: line ${index} ${"x".repeat(40)}`)];
+  const kept: number[] = [];
+  const fitted = fitProjectTranscript(lines, 42, 250, "[Pinned by the owner]", false, index => kept.push(index));
+  expect(kept[0]).toBe(0);
+  expect(kept.at(-1)).toBe(10);
+  for (const index of kept) expect(fitted).toContain(lines[index]!.slice(0, 20));
+  for (const index of lines.keys()) if (!kept.includes(index)) expect(fitted).not.toContain(lines[index]!);
+  const none: number[] = [];
+  expect(fitProjectTranscript([`Dax: ${"y".repeat(5000)}`], 3, 60, "[Pinned by the owner]", false, index => none.push(index))).not.toContain("yyyy");
+  expect(none).toEqual([]);
+  // a clipped line may keep only its label or the cut marker (Astra/Fable r1 Low/Medium): never reported, whatever survives of it
+  for (const budget of [180, 200, 220, 400, 1000]) {
+    const clippedKept: number[] = [];
+    const out = fitProjectTranscript([`Dax: ${"y".repeat(5000)}`], 3, budget, "[Pinned by the owner]", false, index => clippedKept.push(index));
+    expect(out).not.toContain("y".repeat(5000));
+    expect(clippedKept).toEqual([]);
+  }
+});
+
 it("Astra r1 #11: the transcript budget is a hard bound, one long line and a pin included", () => {
   const long = `Dax: ${"y".repeat(5000)}`;
   for (const budget of [0, 60, 300, 1000]) {
