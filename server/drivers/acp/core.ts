@@ -880,6 +880,14 @@ export interface AcpSupport {
      *  back whatever an earlier Ask turn replaced. */
     apply?(ctx: { env: Record<string, string | undefined>; config: AcpConfig; turn: SendTurnInput; askLevel: boolean }): Promise<void>;
   };
+  /** Never send `session/set_mode` (Fuigo 1.0.32: it advertises no modes, and set_mode resolves any id, "default"
+   *  included, through the workspace's `.fuigo/agents/<id>.md` first, so a repo file could replace the bot's
+   *  system prompt and permission mode). No mode is set, so the turn stays in the engine's default. */
+  noSessionModes?: true;
+  /** Answer a permission request only with a one-time allow, at every level, Full access included: an
+   *  allow-always option would leave a grant in the engine that answers later requests without Murage
+   *  (Fuigo 1.0.32 remembered Bash grants). With no one-time allow on offer, Murage cancels the request. */
+  allowOnceOnly?: true;
   /** Extra `_meta` on every session/prompt (Fuigo: `verbatim`, so the
    * engine does not cut a long prompt and offload the rest to a file). */
   promptMeta?: Record<string, unknown>;
@@ -2984,7 +2992,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             return send({ jsonrpc: "2.0", id: msg.id, result: reject ? { outcome: { outcome: "selected", optionId: reject } } : cancelled });
           }
           if (turnConfig.fullAuto && !questionTool) {
-            const allow = optionFor("allow", true);
+            const allow = optionFor("allow", !support.allowOnceOnly);
             if (!allow) missing("allow");
             return send({
               jsonrpc: "2.0",
@@ -4438,7 +4446,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               }
               // The Ask hard stop (ask-stop.ts): the engine's own read-only switch, set before anything is prompted.
               // At Ask a switch that cannot be set refuses the turn; otherwise what an earlier Ask turn set is put back.
-              const readOnlyMode = support.askStop?.sessionMode;
+              const readOnlyMode = support.noSessionModes ? undefined : support.askStop?.sessionMode;
               if (readOnlyMode && sessionId) {
                 const modes = sessionResult?.modes as { currentModeId?: unknown; availableModes?: Array<{ id?: unknown }> } | undefined;
                 if (askStop) {

@@ -309,12 +309,16 @@ export function createBackupScheduleHost(host) {
     }finally{running=false;}
     return publicStatus();
   }
+  // The backup-mode capture under way, so a run past its ceiling can be
+  // recorded as failed while the capture itself is still stuck (abandonOffline).
+  let offline=null,offlineGivenUp=false;
   async function captureArmed(closed=false){
     const s=coordinator.status(),intent=s.job?.handoff;let claimed=false,captureStage="precondition";
+    const run={stage:"precondition",abandoned:false};if(!closed)offline=run;
     try{
       if(!intent||s.phase!=="handoff-armed")throw Error("BACKUP_HANDOFF_REJECTED");
       const note=line=>{try{host.reportOutcome?.(line);}catch{/* Logging never changes the backup. */}};
-      const stage=name=>{try{host.reportProgress?.(name);}catch{/* A progress screen never changes the backup. */}};
+      const stage=name=>{run.stage=name;try{host.reportProgress?.(name);}catch{/* A progress screen never changes the backup. */}};
       note(`backup started ${JSON.stringify({job:String(s.job?.id??"").slice(0,8),closed})}`);
       stage("references");captureStage="references";const b=await checked();if(!host.supported())throw Error("BACKUP_UNAVAILABLE");
       captureStage="claim";coordinator.claimHandoff(intent.id,hash(b),installationIdentity(host.installation()));
@@ -332,6 +336,8 @@ export function createBackupScheduleHost(host) {
       if(sha256!==result.sha256)throw Error("BACKUP_RECEIPT_MISMATCH");
       note(`backup local verified ${JSON.stringify({job:s.job.id.slice(0,8),bytes,how:"file re-read and its sha256 matched the encrypting worker's"})}`);
       {let line=null;try{line=skippedOutcomeLine(s.job.id.slice(0,8),result.skipped);}catch{/* Logging never changes the backup. */}if(line)note(line);}
+      // Given up at the ceiling while the worker finished: the timeout stands.
+      if(run.abandoned)throw Error("BACKUP_HANDOFF_REJECTED");
       captureStage="receipt-commit";coordinator.clearCaptureFailure?.();coordinator.recordSkipped?.(s.job.id,result.skipped);coordinator.completeHandoff(intent.id,{jobId:s.job.id,installationRef:b.installationRef,destinationRef:b.destinationRef,selectionHash:hash(s.schedule.selection),snapshotId:result.snapshotId,artifactRef:s.job.id,sha256,bytes,verifiedAt:now(),...(intent.upgrade?{candidateId:intent.upgrade.candidateId}:{})});
       // Durable receipt precedes relaunch. A failed return never recaptures.
       stage("return");captureStage="return";if(closed)coordinator.completeReturn(intent.id);
@@ -342,11 +348,15 @@ export function createBackupScheduleHost(host) {
       // The log alone also gets the redacted cause behind the code; the
       // durable record below (and so the window) keeps only stage and code.
       let cause=null;try{cause=normalizeCaptureCause(error?.captureCause);}catch{/* Diagnostic properties are not trusted. */}
-      try{host.reportOutcome?.(`backup local failed ${JSON.stringify({stage:diagnostic.stage,code:diagnostic.code})}`);}catch{/* Logging never changes the result. */}
-      try{host.reportCaptureFailure?.(cause?{...diagnostic,cause}:diagnostic);}catch{/* Diagnostic failure never changes the handoff result. */}
-      // Durable, so the reason survives the return to the workspace and the
-      // Backups page can say what happened instead of only that it failed.
-      try{coordinator.recordCaptureFailure?.(diagnostic);}catch{/* A note is never worth losing the authoritative state over. */}
+      // A run already given up at its ceiling keeps that reason: what the
+      // stuck capture throws once the workspace closes is only the shutdown.
+      if(!run.abandoned){
+        try{host.reportOutcome?.(`backup local failed ${JSON.stringify({stage:diagnostic.stage,code:diagnostic.code})}`);}catch{/* Logging never changes the result. */}
+        try{host.reportCaptureFailure?.(cause?{...diagnostic,cause}:diagnostic);}catch{/* Diagnostic failure never changes the handoff result. */}
+        // Durable, so the reason survives the return to the workspace and the
+        // Backups page can say what happened instead of only that it failed.
+        try{coordinator.recordCaptureFailure?.(diagnostic);}catch{/* A note is never worth losing the authoritative state over. */}
+      }
       if(intent&&coordinator.status().phase!=="return-pending"&&(claimed||(s.phase==="handoff-armed"&&coordinator.status().phase==="handoff-armed")))try{coordinator.failHandoff(intent.id);}catch{/* Preserve evidence. */}
       lastError="BACKUP_SCHEDULE_REVIEW_REQUIRED";
       // Only the SUCCESS path used to reopen the workspace, so a failed
@@ -359,8 +369,27 @@ export function createBackupScheduleHost(host) {
     }
   }
   async function resumeOffline(){
-    if(running)throw Error("BACKUP_BUSY");running=true;
+    if(running)throw Error("BACKUP_BUSY");
+    // Given up before it started (a tool check that never settled): never start it after all.
+    if(offlineGivenUp)throw Error("BACKUP_SCHEDULE_REVIEW_REQUIRED");
+    running=true;
     try{return await captureArmed();}finally{running=false;}
+  }
+  /** 1.0.7 RC6: the backup-mode run passed its ceiling (backup-offline-return.mjs).
+   * Record it as a failed backup that took too long, so the reopened workspace
+   * says so and the next start does not arm the same backup again. A receipt
+   * already written (return-pending) is a finished backup and is left alone.
+   * Throws when the job could not be marked for review. */
+  function abandonOffline(){
+    const s=coordinator.status(),intent=s.job?.handoff;
+    if(!intent||["return-pending","returned","needs-review"].includes(s.phase))return false;
+    const stage=offline?.stage??"precondition";offlineGivenUp=true;if(offline)offline.abandoned=true;
+    try{host.reportOutcome?.(`backup local failed ${JSON.stringify({stage,code:"RECOVERY_WORKER_TIMEOUT",ceiling:true})}`);}catch{/* Logging never changes the result. */}
+    try{coordinator.recordCaptureFailure?.({stage,code:"RECOVERY_WORKER_TIMEOUT"});}catch{/* The phase below still stops a re-run. */}
+    // Thrown when the job could not be set aside: reopening would arm the
+    // same backup again, so the caller shows the Backup mode page instead.
+    coordinator.failHandoff(intent.id);
+    lastError="BACKUP_SCHEDULE_REVIEW_REQUIRED";return true;
   }
   const closedResult=(status,reason)=>{
     try{return coordinator.recordClosedResult({status,...(reason?{reason}:{})});}
@@ -409,7 +438,7 @@ export function createBackupScheduleHost(host) {
       return{archivePath,receipt};
   }
   return {
-    status:publicStatus,internalStatus:()=>coordinator.status(),isPreparing:()=>running,start,stopPolling,tick,runNow,clearReview,resumeOffline,runClosedDue,requestUpgrade,pendingUpgrade,verifyUpgrade,
+    status:publicStatus,internalStatus:()=>coordinator.status(),isPreparing:()=>running,start,stopPolling,tick,runNow,clearReview,resumeOffline,abandonOffline,runClosedDue,requestUpgrade,pendingUpgrade,verifyUpgrade,
     /** Folder the saved references back up into, for recovery-key placement checks. */
     async selectedDestination(){const b=await read();return b?b.destination:null;},
     /** The recovery key file the saved references read, or null. */

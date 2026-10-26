@@ -954,3 +954,47 @@ test("an unsupported computer keeps the way out: owed is reported and off can be
     assert.deepEqual(firstRunWithoutHost(root), { eligible: false, completed: null, owed: false });
   } finally { safeWipeSync(root); }
 });
+test("1.0.7 RC6: a backup-mode run past its ceiling is recorded as a timeout, reopens normally once, and keeps that reason",async()=>{
+  const f=fixture();let finish,running;try{
+    await f.arm();
+    const host=f.create({capture:async()=>{f.calls.push("capture");await new Promise((_resolve,reject)=>{finish=reject;});}});
+    running=host.resumeOffline();void running.catch(()=>{});
+    for(let attempt=0;attempt<100&&!finish;attempt++)await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(typeof finish,"function","capture must be under way");assert.equal(f.coordinator().status().phase,"capturing");
+    assert.equal(host.abandonOffline(),true);
+    let s=f.coordinator().status();assert.equal(s.phase,"needs-review");assert.deepEqual({stage:s.captureFailure.stage,code:s.captureFailure.code},{stage:"capture",code:"RECOVERY_WORKER_TIMEOUT"});
+    // The stuck worker is stopped by the shutdown; its own error never replaces the timeout.
+    finish(Object.assign(Error("stopped"),{code:"RECOVERY_OPERATION_FAILED"}));await assert.rejects(running,/REVIEW_REQUIRED/);
+    s=f.coordinator().status();assert.equal(s.captureFailure.code,"RECOVERY_WORKER_TIMEOUT");assert.equal(s.phase,"needs-review");
+    assert.equal(f.calls.filter(x=>x==="normal").length,1);
+    // A later attempt in the same process never starts it after all, and a second give-up is a no-op.
+    await assert.rejects(host.resumeOffline(),/REVIEW_REQUIRED/);assert.equal(host.abandonOffline(),false);assert.equal(f.calls.filter(x=>x==="capture").length,1);
+  }finally{finish?.(Error("done"));await running?.catch(()=>{});f.cleanup();}
+});
+test("1.0.7 RC6: giving up before the capture starts stops the run, and a finished backup is never given up",async()=>{
+  const f=fixture();try{
+    await f.arm();const host=f.create();
+    assert.equal(host.abandonOffline(),true);assert.equal(f.coordinator().status().phase,"needs-review");assert.equal(f.coordinator().status().captureFailure.stage,"precondition");
+    await assert.rejects(host.resumeOffline(),/REVIEW_REQUIRED/);assert.equal(f.calls.includes("capture"),false);
+  }finally{f.cleanup();}
+  const g=fixture();try{
+    await g.arm();const host=g.create();await host.resumeOffline();assert.equal(g.coordinator().status().phase,"return-pending");
+    assert.equal(host.abandonOffline(),false);assert.equal(g.coordinator().status().phase,"return-pending");
+  }finally{g.cleanup();}
+});
+test("1.0.7 RC6: a capture that finishes after its run was given up never replaces the timeout with a receipt",async()=>{
+  const f=fixture();let finish,running;try{
+    await f.arm();
+    const host=f.create({capture:async request=>{await new Promise(resolve=>{finish=resolve;});return f.host.capture(request);}});
+    running=host.resumeOffline();void running.catch(()=>{});
+    for(let attempt=0;attempt<100&&!finish;attempt++)await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(host.abandonOffline(),true);finish();await assert.rejects(running,/REVIEW_REQUIRED/);
+    const s=f.coordinator().status();assert.equal(s.phase,"needs-review");assert.equal(s.captureFailure.code,"RECOVERY_WORKER_TIMEOUT");assert.equal(s.lastVerified,undefined);
+  }finally{finish?.();await running?.catch(()=>{});f.cleanup();}
+});
+test("1.0.7 RC6: a give-up that cannot set the job aside throws, so the app does not reopen into the same backup",async()=>{
+  const f=fixture();try{
+    await f.arm();const coordinator=f.coordinator();coordinator.failHandoff=()=>{throw Error("BACKUP_STATE_UNWRITABLE");};
+    const host=f.create({coordinator});assert.throws(()=>host.abandonOffline(),/BACKUP_STATE_UNWRITABLE/);
+  }finally{f.cleanup();}
+});

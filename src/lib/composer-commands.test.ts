@@ -71,7 +71,7 @@ describe("where the menu renders", () => {
   const commandsAt = source.indexOf('aria-label="Composer commands"');
   const mentionsAt = source.indexOf('aria-label="Tag a bot"');
   const barWrapperAt = source.indexOf(
-    'className="relative z-[1] flex flex-col gap-1.5 rounded-3xl bg-raised',
+    'className={cn("relative z-[1] flex gap-1.5 bg-raised',
   );
 
   it("floats both pickers above the bar rather than inside a row", () => {

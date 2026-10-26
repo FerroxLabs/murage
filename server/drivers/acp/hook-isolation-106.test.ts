@@ -7,10 +7,10 @@
 // every hook gate to "0" over an owner "1" in any casing, and leave USERPROFILE and the non-hook opt-ins alone.
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { removeTempDirSync } from "../../testing/cleanup.ts";
-import { buildReflectionEnv, FUIGO_REFLECTION_COMPAT_OFF, GROK_REFLECTION_COMPAT_OFF, pinReflectionFuigoConfig } from "../../memory/pip-transport.ts";
+import { buildReflectionEnv, createTempRoot, FUIGO_REFLECTION_COMPAT_OFF, GROK_REFLECTION_COMPAT_OFF, pinReflectionFuigoConfig } from "../../memory/pip-transport.ts";
 import { FUIGO_EXTERNAL_MCP_GATES, isolateFuigoFromExternalMcp } from "./fuigo.ts";
 import { GROK_EXTERNAL_COMPAT_GATES, isolateGrokFromPersonalSetup } from "./grok.ts";
 import { FUIGO_HOOK_GATES, GROK_HOOK_GATES } from "./hook-gates.ts";
@@ -73,19 +73,42 @@ describe("bot turns force every hook gate off over the owner's opt-in (Windows-s
   });
 });
 
-describe("reflection turns Claude plugin discovery off in the temp FUIGO_HOME", () => {
+describe("reflection turns Claude plugin and skill discovery off in the temp FUIGO_HOME", () => {
   const dirs: string[] = [];
   afterEach(() => { for (const dir of dirs.splice(0)) removeTempDirSync(dir); });
   const fresh = () => { const dir = mkdtempSync(join(tmpdir(), "murage-hook106-")); dirs.push(dir); return dir; };
 
-  it("appends [plugins] auto_discover = false after the route's config, or writes it alone", () => {
+  it("appends [plugins] and [skills] auto_discover = false after the route's config, or writes them alone", () => {
     const routed = fresh();
     writeFileSync(join(routed, "config.toml"), '[cli]\nuse_leader = false\n[models]\ndefault = "murage_selected"');
     pinReflectionFuigoConfig(routed);
-    expect(readFileSync(join(routed, "config.toml"), "utf8")).toBe('[cli]\nuse_leader = false\n[models]\ndefault = "murage_selected"\n[plugins]\nauto_discover = false\n');
+    expect(readFileSync(join(routed, "config.toml"), "utf8")).toBe('[cli]\nuse_leader = false\n[models]\ndefault = "murage_selected"\n[plugins]\nauto_discover = false\n[skills]\nauto_discover = false\n');
     const native = fresh();
     pinReflectionFuigoConfig(native);
-    expect(readFileSync(join(native, "config.toml"), "utf8")).toBe("[plugins]\nauto_discover = false\n");
+    expect(readFileSync(join(native, "config.toml"), "utf8")).toBe("[plugins]\nauto_discover = false\n[skills]\nauto_discover = false\n");
+  });
+
+  it("refuses a config that already has a [skills] table instead of writing a duplicate", () => {
+    const dir = fresh();
+    writeFileSync(join(dir, "config.toml"), "[skills]\nauto_discover = true\n");
+    expect(() => pinReflectionFuigoConfig(dir)).toThrow("PIP_REFLECTION_SKILLS_TABLE");
+    expect(readFileSync(join(dir, "config.toml"), "utf8")).toBe("[skills]\nauto_discover = true\n");
+  });
+
+  it("HOME, USERPROFILE and FUIGO_HOME all resolve inside the temp root, and the temp config carries both pins", () => {
+    const t = createTempRoot(join(fresh(), "pip-tmp"), "runenv", 1, "p");
+    const env = buildReflectionEnv("fuigo", "/usr/bin", t.home, t.root, { HOME: "/owner", USERPROFILE: "/owner", FUIGO_HOME: "/owner/.fuigo" });
+    expect(env.HOME).toBe(t.root);
+    expect(env.USERPROFILE).toBe(t.root);
+    for (const key of ["HOME", "USERPROFILE", "FUIGO_HOME"]) {
+      const rel = relative(t.root, env[key]!);
+      expect(rel.startsWith("..") || isAbsolute(rel), `${key}=${env[key]}`).toBe(false);
+    }
+    expect(env.FUIGO_HOME).toBe(t.home);
+    pinReflectionFuigoConfig(env.FUIGO_HOME!);
+    const config = readFileSync(join(env.FUIGO_HOME!, "config.toml"), "utf8");
+    expect(config).toContain("[plugins]\nauto_discover = false\n");
+    expect(config).toContain("[skills]\nauto_discover = false\n");
   });
 
   it("refuses a config that already has a [plugins] table instead of writing a duplicate", () => {

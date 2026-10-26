@@ -28,8 +28,9 @@ describe("deletion notes", () => {
     })!;
     expect(note.items).toEqual([
       "Files this conversation made, in the folder \"Taxes\" you chose.",
-      "A few files could not be removed yet. Murage tries again the next time it starts.",
     ]);
+    // files Murage finishes by itself are not a line over the chat (1.0.7)
+    expect(deletionNote({ leftovers: [], failed: ["/home/someone/.claude"] })).toBeNull();
     for (const line of [note.title, ...note.items, ...deletionConsequenceLines(2)]) {
       expect(line).not.toMatch(/—|\bsafe(ly)?\b|Composio|\/Users\//i);
     }
@@ -45,20 +46,12 @@ describe("deletion notes", () => {
     expect(ENGINE_FILES_LINE).not.toMatch(/—|\bsafe(ly|ty)?\b|\bunsafe\b/i);
   });
 
-  it("shows the server's owed sentences as they come, with a way to try again", () => {
+  it("keeps the server's owed sentences, and never offers Try again now for them (Murage retries by itself)", () => {
     expect(owedNote([])).toBeNull();
     expect(owedNote(undefined)).toBeNull();
-    expect(owedNote([{ id: "a:codex", text: "Codex's copy of this conversation could not be removed yet because Codex was using its history. Murage will try again when it starts.", tryAgain: true }, { nothing: true }])).toMatchObject({
-      title: "Deleted. Murage finishes the rest by itself:",
-      items: ["Codex's copy of this conversation could not be removed yet because Codex was using its history. Murage will try again when it starts."],
-      retry: true,
-      owed: true,
-    });
-    // an engine that has its files open: said on the first attempt; and the line for a copy that has gone, with nothing left to retry
-    const open = "Codex is open. Close Codex and Murage will finish removing this conversation from it.";
-    expect(owedNote([{ id: "a:codex", text: open, tryAgain: true }])).toMatchObject({ title: "Deleted. Murage finishes the rest by itself:", items: [open], retry: true, owed: true });
+    const held = "Another program is using Codex's files. Murage tries again in 10 minutes and finishes removing this conversation by itself.";
+    expect(owedNote([{ id: "a:codex", text: held, tryAgain: true }, { nothing: true }])).toMatchObject({ title: "Deleted. Murage finishes the rest by itself:", items: [held], retry: false, owed: true });
     expect(owedNote([{ id: "a:codex:done", text: "Removed from Codex.", tryAgain: false }])).toMatchObject({ title: "Deleted.", items: ["Removed from Codex."], retry: false, owed: true });
-    expect(owedNote([{ id: "a:codex:done", text: "Removed from Codex.", tryAgain: false }, { id: "b:fuigo", text: open, tryAgain: true }])?.retry).toBe(true);
   });
 
   it("never passes the server's own text through when a Delete fails", () => {

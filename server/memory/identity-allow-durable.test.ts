@@ -107,7 +107,7 @@ it("the small-store read keeps its set in the file, and the downgrade step drops
   expect([...identityForAllow(db)!]).toEqual([`${a.id}:1`]);
   expect(db.prepare(`SELECT stamp FROM ${IDENTITY_ALLOW_TABLE} WHERE id=1`).get()?.stamp).toBe(n);
   expect(() => validateMemorySchema(db)).not.toThrow();
-  expect(downgradeMemorySchema(db, 10)).toMatchObject({ status: "downgraded", from: 12, to: 10 }); // 1.0.3: the file is v12, 1.0.2 reads v10
+  expect(downgradeMemorySchema(db, 10)).toMatchObject({ status: "downgraded", from: 13, to: 10 }); // 1.0.3: the file is v13, 1.0.2 reads v10
   expect(objects(db)).toEqual([]);
   expect(durableIdentityStamp(db)).toBeNull();
   expect(() => validateMemorySchema(db)).not.toThrow();

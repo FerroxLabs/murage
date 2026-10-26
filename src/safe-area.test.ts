@@ -53,7 +53,7 @@ describe("the chat column's own controls", () => {
     for (const file of ["components/ChatHeader.tsx", "components/GroupView.tsx"]) {
       const source = read(file);
       expect(source, file).toContain('"pt-[calc(0.75rem+env(safe-area-inset-top))]"');
-      expect(source, file).toContain("<OpenBotListButton />");
+      expect(source, file).toMatch(/<OpenBotListButton( circle=\{phone\})? \/>/);
       // No corner reserved for an overlay any more.
       expect(source, file).not.toContain("pl-11");
       expect(source, file).toContain('"pl-3 md:pl-5"');

@@ -15,6 +15,7 @@ import { setMemoryMode } from "./memory/repository.ts";
 import { bindHumanThread, linkHumanBinding, observeVerifiedHuman, resolveHumanBinding } from "./human-principals.ts";
 import { setExecutionStore } from "./execution-audience.ts";
 import { commitRevoke } from "./memory/revoke-commit.ts";
+import { drainRevokeMarker } from "./memory/memory-revocation.ts";
 import { closeTurnLineage, currentTurnLineage, isTurnOpen, memberTurnId, openTurnLineage, supersedeMemberTurns, writeSessionLineage } from "./memory/lineage-write.ts";
 import { sessionChildRef } from "./memory/lineage-types.ts";
 import { beginTurnLineage, runningTurnSources, type RunningTurnLineage, type ShownLine } from "./steer-lineage.ts";
@@ -380,6 +381,10 @@ describe("thread_read (rule 8)", () => {
     for (let i = 0; i < 4; i++) put("t-task", `f${i}`, `fork ${i} needle`, 2000 + i);
     // a regeneration from f1: the active branch is now f0, f1, alt
     appendMessage("t-task", msg("alt", "other branch needle", 2010, { parentId: "f1" }));
+    // the regeneration commits a write-time revoke of the replaced reply; until its marker drains, its pending window holds "alt" (lsn
+    // above since) as "checking" (fail closed). The background runner drains it in a few ms, but on a loaded runner not before the read:
+    // drain it here, so the read below sees the settled branch.
+    drainRevokeMarker(db());
     const r = rig();
     r.state.released.set("f2", "t-task"); r.state.released.set("f1", "t-task");
     for (const direction of ["around", "before", "after"] as const) {
@@ -387,6 +392,7 @@ describe("thread_read (rule 8)", () => {
     }
     const on = (await r.call("thread_read", { message_id: "f1", direction: "around", limit: 5 })).body;
     expect(on.rows.map((row: Json) => row.messageId)).toEqual(["f0", "f1", "alt"]);
+    expect(on.checking).toBe(0);
   });
   it("cuts a long line at 2,000 characters", async () => {
     put("t-task", "long", "n".repeat(5000) + " needle", 5);
@@ -652,6 +658,10 @@ describe("the lineage lifecycle of what a turn read (rule 23)", () => {
     appendMessage("t-main", { ...reply("rep2", 9000), parentId: lastRow.get("t-main") ?? null });
     expect(doorSays("rep2")).toBe("shown");
     revoke("t-task", "in1");
+    // rep2 rests on in1 through b2: the commit holds it at once (never shown), the marker's walk makes it withheld. On a loaded runner the
+    // background runner has not walked yet ("undecided"), so the walk is drained before the final verdict.
+    expect(doorSays("rep2")).not.toBe("shown");
+    drainRevokeMarker(db());
     expect(doorSays("rep2")).toBe("withheld");
   });
   it("a session that starts after the release is carried by the session.started path", async () => {

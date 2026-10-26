@@ -20,7 +20,7 @@ import type { ProviderDriver } from "../../contracts.ts";
 import { recordEvents } from "../../testing/events.ts";
 import { removeTempDirSync } from "../../testing/cleanup.ts";
 import type { AcpConfig } from "./core.ts";
-import { FUIGO_WITHHELD_PROVIDER_ENV, FuigoAgentDriver, scrubFuigoHandedEnv, withholdFuigoProviderEnv } from "./fuigo.ts";
+import { FUIGO_AGENT_SPAWNS_OFF, FUIGO_UNSET_ENV, FUIGO_WITHHELD_PROVIDER_ENV, FuigoAgentDriver, scrubFuigoHandedEnv, withholdFuigoProviderEnv } from "./fuigo.ts";
 
 // Names a provider switcher or a developer exports in the owner's shell; a Finder-launched Murage never had them.
 const SHELL_ONLY = {
@@ -32,6 +32,11 @@ const SHELL_ONLY = {
   FUIGO_CODE_API_KEY: "fake-shell-not-a-flux-key",
   FUIGO_DISABLE_MODEL_REFRESH: "0",
   FUIGO_SUBAGENTS: "1",
+  FUIGO_WORKFLOWS: "1",
+  FUIGO_SCHEDULER_BACKGROUND_LOOPS: "1",
+  FUIGO_GOAL: "1",
+  FUIGO_AGENT: "general-purpose",
+  FUIGO_WORKSPACE_REWIND_GIT: "1",
 } as const;
 
 vi.mock("../../env-path.ts", async (original) => {
@@ -111,11 +116,75 @@ describe("Fuigo subagents are off on every bot turn: a subagent definition canno
     expect(env.FUIGO_SUBAGENTS).toBe("0");
   }, 30000);
 
-  it("the handed shell map is pinned too", () => {
-    const map: Record<string, string | undefined> = { fuigo_subagents: "1", LANG: "C" };
-    scrubFuigoHandedEnv(map, {}, "win32");
-    expect(map).toEqual({ LANG: "C", FUIGO_DISABLE_MODEL_REFRESH: "1", FUIGO_SUBAGENTS: "0" });
+  it.each([
+    ["Ask level", { fullAuto: false, enforced: { routeAsks: true as const, askLevel: true as const } }],
+    ["Auto with Murage's stop line", { fullAuto: true, enforced: { stopLine: true as const } }],
+    ["Full access", { fullAuto: true }],
+  ])("%s: workflows, scheduler loops and goal runs pinned to 0, FUIGO_AGENT and FUIGO_WORKSPACE_REWIND_GIT never reach the engine", async (_label, options) => {
+    const { env } = await turn({ ...options, environment: { FUIGO_WORKFLOWS: "1", FUIGO_SCHEDULER_BACKGROUND_LOOPS: "1", FUIGO_GOAL: "1", FUIGO_AGENT: "general-purpose", FUIGO_WORKSPACE_REWIND_GIT: "1" } });
+    expect(env.FUIGO_WORKFLOWS).toBe("0");
+    expect(env.FUIGO_SCHEDULER_BACKGROUND_LOOPS).toBe("0");
+    expect(env.FUIGO_GOAL).toBe("0");
+    for (const name of FUIGO_UNSET_ENV) expect([name, env[name]]).toEqual([name, undefined]);
+  }, 30000);
+
+  it("the three spawn pins are exactly the ones Fuigo's maintainers named, each \"0\"", () => {
+    expect(FUIGO_AGENT_SPAWNS_OFF).toEqual({ FUIGO_WORKFLOWS: "0", FUIGO_SCHEDULER_BACKGROUND_LOOPS: "0", FUIGO_GOAL: "0" });
   });
+
+  it("strips FUIGO_AGENT and FUIGO_WORKSPACE_REWIND_GIT in any casing on Windows, from the child env and the handed map", () => {
+    const env: Record<string, string | undefined> = { Fuigo_Agent: "general-purpose", fuigo_workspace_rewind_git: "1", FUIGO_AGENT: "", LANG: "C" };
+    withholdFuigoProviderEnv(env, "win32");
+    expect(env).toEqual({ LANG: "C", FUIGO_DISABLE_MODEL_REFRESH: "1", FUIGO_SUBAGENTS: "0", FUIGO_WORKFLOWS: "0", FUIGO_SCHEDULER_BACKGROUND_LOOPS: "0", FUIGO_GOAL: "0" });
+    const map: Record<string, string | undefined> = { FUIGO_AGENT: "general-purpose", FUIGO_WORKSPACE_REWIND_GIT: "1", LANG: "C" };
+    scrubFuigoHandedEnv(map, {}, "linux");
+    expect(map).toEqual({ LANG: "C", FUIGO_DISABLE_MODEL_REFRESH: "1", FUIGO_SUBAGENTS: "0", FUIGO_WORKFLOWS: "0", FUIGO_SCHEDULER_BACKGROUND_LOOPS: "0", FUIGO_GOAL: "0" });
+  });
+
+  it("the handed shell map is pinned too", () => {
+    const map: Record<string, string | undefined> = { fuigo_subagents: "1", Fuigo_Workflows: "1", fuigo_goal: "1", LANG: "C" };
+    scrubFuigoHandedEnv(map, {}, "win32");
+    expect(map).toEqual({ LANG: "C", FUIGO_DISABLE_MODEL_REFRESH: "1", FUIGO_SUBAGENTS: "0", FUIGO_WORKFLOWS: "0", FUIGO_SCHEDULER_BACKGROUND_LOOPS: "0", FUIGO_GOAL: "0" });
+  });
+});
+
+describe("Fuigo 1.0.32: the bypass is client-side only, and Murage never sends it below Full access", () => {
+  // set_mode resolves any id, "default" included, through the workspace's .fuigo/agents/<id>.md first (session_mode.rs,
+  // discovery.rs), so even an advertised mode is never switched to. The other client-side bypasses: --always-approve,
+  // --permission-mode bypassPermissions, and _meta.startupHints.permissionMode = alwaysAllow (resolution.rs).
+  const MODES = JSON.stringify({ currentModeId: "default", availableModes: [{ id: "default" }, { id: "ask" }, { id: "agent" }, { id: "general-purpose" }, { id: "bypassPermissions" }] });
+  it.each([
+    ["Ask level", { fullAuto: false, enforced: { routeAsks: true as const, askLevel: true as const } }],
+    ["Auto with Murage's stop line", { fullAuto: true, enforced: { stopLine: true as const } }],
+    ["Auto routing asks to Murage", { fullAuto: true, enforced: { routeAsks: true as const } }],
+    ["an asking instance", { fullAuto: false }],
+  ])("%s: no set_mode, no always-approve flag, no bypass mode, no startupHints", async (_label, options) => {
+    const logs = mkdtempSync(join(tmpdir(), "murage-fuigo-rpc-"));
+    homes.push(logs);
+    const log = join(logs, "rpc.jsonl");
+    const { argv } = await turn({ ...options, environment: { FAKE_ACP_SESSION_MODES: MODES, FAKE_ACP_RPC_FULL_LOG: log } });
+    expect(argv).not.toContain("--always-approve");
+    expect(argv).not.toContain("--yolo");
+    expect(argv).not.toContain("bypassPermissions");
+    const sent = readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { method: string; params: unknown });
+    expect(sent.map((message) => message.method)).toContain("session/prompt");
+    expect(sent.map((message) => message.method)).not.toContain("session/set_mode");
+    const wire = JSON.stringify(sent);
+    expect(wire).not.toContain("startupHints");
+    expect(wire).not.toContain("alwaysAllow");
+    expect(wire).not.toContain("agentProfile");
+    expect(wire).not.toMatch(/"fuigo\/git|"_fuigo\/git|hunkTracker/);
+  }, 30000);
+
+  it("Full access answers only with a one-time allow: offered only allow_always, Murage cancels", async () => {
+    const spawned = await turn({ fullAuto: true, environment: { FAKE_ACP_MODE: "permission-always-only" } }) as Spawned & { decision?: unknown };
+    expect(spawned.decision).toEqual({ outcome: { outcome: "cancelled" } });
+  }, 30000);
+
+  it("Full access picks allow_once even when Fuigo lists allow_always first", async () => {
+    const spawned = await turn({ fullAuto: true, environment: { FAKE_ACP_MODE: "permission-session-first" } }) as Spawned & { decision?: unknown };
+    expect(spawned.decision).toEqual({ outcome: { outcome: "selected", optionId: "allow-once" } });
+  }, 30000);
 });
 
 describe("Fuigo 1.0.32: only the turn's own credential reaches the engine", () => {
@@ -123,13 +192,13 @@ describe("Fuigo 1.0.32: only the turn's own credential reaches the engine", () =
     const env: Record<string, string | undefined> = { Groq_Api_Key: "x", openrouter_api_key: "y", FUIGO_DISABLE_MODEL_REFRESH: "0", MURAGE_PROVIDER_API_KEY: "route", FUIGO_API_KEY: FLUX };
     for (const name of FUIGO_WITHHELD_PROVIDER_ENV) env[name] = "fake";
     withholdFuigoProviderEnv(env, "win32");
-    expect(env).toEqual({ FUIGO_DISABLE_MODEL_REFRESH: "1", FUIGO_SUBAGENTS: "0", MURAGE_PROVIDER_API_KEY: "route", FUIGO_API_KEY: FLUX });
+    expect(env).toEqual({ FUIGO_DISABLE_MODEL_REFRESH: "1", FUIGO_SUBAGENTS: "0", FUIGO_WORKFLOWS: "0", FUIGO_SCHEDULER_BACKGROUND_LOOPS: "0", FUIGO_GOAL: "0", MURAGE_PROVIDER_API_KEY: "route", FUIGO_API_KEY: FLUX });
   });
 
   it("keeps a Fuigo key in the handed map only with the value the child env kept", () => {
     const map: Record<string, string | undefined> = { FUIGO_API_KEY: "shell-value", FUIGO_CODE_API_KEY: "shell-other", GROQ_API_KEY: "g", LANG: "C" };
     scrubFuigoHandedEnv(map, { FUIGO_API_KEY: FLUX }, "linux");
-    expect(map).toEqual({ LANG: "C", FUIGO_DISABLE_MODEL_REFRESH: "1", FUIGO_SUBAGENTS: "0" });
+    expect(map).toEqual({ LANG: "C", FUIGO_DISABLE_MODEL_REFRESH: "1", FUIGO_SUBAGENTS: "0", FUIGO_WORKFLOWS: "0", FUIGO_SCHEDULER_BACKGROUND_LOOPS: "0", FUIGO_GOAL: "0" });
     const same: Record<string, string | undefined> = { FUIGO_API_KEY: FLUX };
     scrubFuigoHandedEnv(same, { FUIGO_API_KEY: FLUX }, "linux");
     expect(same.FUIGO_API_KEY).toBe(FLUX);

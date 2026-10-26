@@ -6,7 +6,7 @@ import { readPublishCard } from "../../shared/publish-card";
 import { readBrowserSetupCard } from "../../shared/browser-setup-card";
 import { Component, Suspense, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
 import { DeletionNoteBanner } from "./DeletionNoteBanner";
-import { dismissDeletionNote } from "@/lib/deletion-notes";
+import { chatDeletionNote, dismissDeletionNote } from "@/lib/deletion-notes";
 import { createPortal } from "react-dom";
 import {
   Check,
@@ -70,6 +70,7 @@ import { ApprovedStepsRow, isApprovedStepsLine } from "./ApprovedStepsRow";
 import { ImageRecordRow, isImageRecordLine } from "./ImageRecordRow";
 import { anchoredScrollTop, useKeyboardInset } from "@/lib/visual-viewport";
 import { showWorkingDots } from "@/lib/turn-tail";
+import { useTurnLive } from "@/state/turn-status";
 import { toolFailureSummary } from "../../shared/tool-activity";
 import { resourceWaitLabel } from "@/lib/resource-wait";
 import { liveActivityLabel, modelStillThinking, turnStatusLabel } from "@/lib/live-activity";
@@ -1615,10 +1616,12 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
   // what it is waiting for instead of "Thinking".
   const resourceWait = findTask(profile, bot.threadId)?.waitingFor;
   const activityLabel = (bot.busy ? resourceWaitLabel(resourceWait) : undefined) ?? liveActivityLabel(lastMessage);
+  // The mascot and its timer stay for the whole turn; only its end hides them (upstream #3374).
+  const turnEnded = useTurnLive(bot.threadId).ended;
   const waiting = Boolean(
     bot.busy &&
       bot.activity !== "waiting-on-you" &&
-      showWorkingDots(bot.busy, lastMessage),
+      showWorkingDots(bot.busy, lastMessage, undefined, turnEnded),
   );
   const wasWaiting = useRef(false);
   const [popping, setPopping] = useState<{ id: string; text: string } | null>(null);
@@ -1626,9 +1629,12 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
     wasWaiting.current = false;
     setPopping(null);
   }, [bot.id, bot.threadId]);
+  // Armed while the turn runs; a new row other than the bot's own text re-arms
+  // it, because the mascot now stays through a mid-turn sentence and `waiting`
+  // alone no longer turns over between the steps of one turn.
   useEffect(() => {
-    if (waiting) wasWaiting.current = true;
-  }, [waiting]);
+    if (waiting && !(lastMessage?.role === "bot" && lastMessage.kind === "text")) wasWaiting.current = true;
+  }, [waiting, lastMessage?.id, lastMessage?.role, lastMessage?.kind]);
   // A reply that streamed in view is already on screen: it is replaced in
   // place by the stored message, so it does not pop in a second time.
   useEffect(() => {
@@ -1865,6 +1871,8 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
   // draft and any in-flight turn survive the round trip.
   const workspaceExpanded = state.workspacePane.open && state.workspacePane.expanded;
   const workspaceCompact = state.workspacePane.open && state.workspacePane.compact && state.workspacePane.compactView === "workspace";
+  // Only the note a Delete just made shows here; engine copies still owed are a quiet line in Settings > Engines, never a banner.
+  const placeDeletionNote = chatDeletionNote(state.deletionNote);
   return (
     <OutcomesProvider value={outcomes}>
     <ChipsProvider value={chips}><AccessLinkProvider open={() => dispatch({ type: "toggleSettings", open: true, intent: { section: "permissions" } })}>
@@ -1905,7 +1913,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
 
       {/* Error banner */}
       {state.error && <ErrorBanner message={state.error} onDismiss={() => dispatch({ type: "error", message: null })}/>}
-      {state.deletionNote && <DeletionNoteBanner note={state.deletionNote} onDismiss={() => dismissDeletionNote(state.deletionNote, (covers) => api("/api/deletions/dismiss", { method: "POST", body: JSON.stringify({ covers }) }), dispatch)} onRetry={async () => { const again = state.deletionNote?.retryBotId; if (again) { dispatch({ type: "deletionNote", note: null }); dispatch({ type: "deleteBot", source: "local", botId: again, attempt: newDeleteAttempt() }); return; } const response = await api("/api/deletions/retry", { method: "POST" }); dispatch({ type: "deletionOwed", notices: response?.notices, rev: response?.rev }); return response?.result; }} />}
+      {placeDeletionNote && <DeletionNoteBanner note={placeDeletionNote} onDismiss={() => dismissDeletionNote(placeDeletionNote, (covers) => api("/api/deletions/dismiss", { method: "POST", body: JSON.stringify({ covers }) }), dispatch)} onRetry={async () => { const again = state.deletionNote?.retryBotId; if (again) { dispatch({ type: "deletionNote", note: null }); dispatch({ type: "deleteBot", source: "local", botId: again, attempt: newDeleteAttempt() }); return; } const response = await api("/api/deletions/retry", { method: "POST" }); dispatch({ type: "deletionOwed", notices: response?.notices, rev: response?.rev }); return response?.result; }} />}
 
       {/* Pinned message banner */}
       <PinnedBanner

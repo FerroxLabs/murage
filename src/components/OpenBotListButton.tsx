@@ -13,7 +13,7 @@
 // renders nothing. `md:hidden` keeps it off the desktop, where the sidebar is
 // always on screen.
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
-import { Menu } from "lucide-react";
+import { ChevronLeft, Menu } from "lucide-react";
 
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
@@ -120,7 +120,7 @@ export function BotListDrawerProvider({ value, children }: { value: BotListDrawe
 }
 
 /** The button itself, without the context: what the tests click. */
-export function BotListButton({ control, className }: { control: BotListDrawerControl; className?: string }) {
+export function BotListButton({ control, className, circle = false }: { control: BotListDrawerControl; className?: string; circle?: boolean }) {
   return (
     <button
       type="button"
@@ -133,9 +133,16 @@ export function BotListButton({ control, className }: { control: BotListDrawerCo
       // What an overlay opened from the closed, inert drawer gives focus to
       // (return-focus.ts): one main view is mounted, so one button.
       data-focus-fallback=""
-      className={cn("relative shrink-0 rounded-md p-1.5 text-ink-secondary hover:bg-raised hover:text-ink md:hidden", className)}
+      data-bot-list-circle={circle ? "" : undefined}
+      className={cn(
+        "relative shrink-0 text-ink-secondary hover:bg-raised hover:text-ink md:hidden",
+        // The phone chat header's back circle: same button, same drawer and
+        // focus-return wiring, drawn as a round chevron.
+        circle ? "flex size-9 items-center justify-center rounded-full border border-hairline bg-card p-0 text-ink" : "rounded-md p-1.5",
+        className,
+      )}
     >
-      <Menu size={18} />
+      {circle ? <ChevronLeft size={20} aria-hidden="true" /> : <Menu size={18} />}
       <UpdateDot />
     </button>
   );
@@ -144,18 +151,18 @@ export function BotListButton({ control, className }: { control: BotListDrawerCo
 /** The button as a view mounts it: it takes focus when it arrives right
  * after the drawer closed (useBotListDrawer). The ref is attached before this
  * layout effect runs, so it names this very button. */
-function MountedBotListButton({ control, className }: { control: BotListDrawerControl; className?: string }) {
+function MountedBotListButton({ control, className, circle }: { control: BotListDrawerControl; className?: string; circle?: boolean }) {
   const { buttonRef, takeFocusReturn } = control;
   useLayoutEffect(() => {
     if (takeFocusReturn()) buttonRef.current?.focus();
   }, [buttonRef, takeFocusReturn]);
-  return <BotListButton control={control} className={className} />;
+  return <BotListButton control={control} className={className} circle={circle} />;
 }
 
-export function OpenBotListButton({ className }: { className?: string }) {
+export function OpenBotListButton({ className, circle }: { className?: string; circle?: boolean }) {
   const control = useContext(BotListDrawerContext);
   if (!control) return null;
-  return <MountedBotListButton control={control} className={className} />;
+  return <MountedBotListButton control={control} className={className} circle={circle} />;
 }
 
 /** For a main view with no header row of its own (the no-engines screen, the

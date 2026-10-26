@@ -12,6 +12,7 @@ import { mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { openSidebar } from "./fixtures.ts";
+import { openBotProfile } from "./chat-controls.ts";
 
 interface VerificationServer { info: { url: string; dataDir: string }; close(): Promise<void> }
 type LaunchVerificationServer = (environment: NodeJS.ProcessEnv, signal?: AbortSignal, options?: { instrumentationSource?: string }) => Promise<VerificationServer>;
@@ -79,7 +80,7 @@ for (const [width, height] of [[1440, 900], [390, 844]] as const) {
     await expect(row.getByRole("button", { name: "Show less" })).toBeVisible();
 
     // the setting, in Bot settings, Permissions
-    await page.getByTitle("Bot settings", { exact: true }).first().click();
+    await openBotProfile(page, "Dax");
     const dialog = page.getByRole("dialog", { name: "Bot settings", exact: true });
     await expect(dialog).toBeVisible();
     if (width < 640) await dialog.locator("select").first().selectOption("permissions");

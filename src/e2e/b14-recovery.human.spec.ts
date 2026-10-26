@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { existsSync, mkdirSync } from "node:fs";
 import { launchVerificationServer, type VerificationServer } from "../../scripts/control-murage.ts";
 import { openSidebar, SEND_KEY } from "./fixtures.ts";
+import { headerMoreButton, openThreadModel, phoneLayout } from "./chat-controls.ts";
 
 const BOT = "B14 visual fixture";
 const TASK = "B14 error and busy picker";
@@ -136,11 +137,13 @@ test("B14 busy picker stays on screen and inspect-only across viewport changes",
   await composer.press(SEND_KEY);
   expect((await sent).status()).toBe(202);
   await expect.poll(busy).toBe(true);
+  // The chip on a tablet or desktop. A phone draws no chip: the header's "..."
+  // menu has a Model entry that opens the same picker (openThreadModel).
   const modelTrigger = page.getByRole("button", { name: /^Thread model:/ });
   const dialog = page.getByRole("dialog", { name: "Choose model", exact: true });
   for (const width of [390, 820, 1440]) {
     await prepareViewport(page, width);
-    await modelTrigger.click();
+    await openThreadModel(page);
     await expectOnScreen(page, dialog);
     await expect(dialog.getByRole("status")).toContainText("You can inspect models");
     const choices = dialog.locator("[data-model-choice][aria-pressed]");
@@ -168,7 +171,9 @@ test("B14 busy picker stays on screen and inspect-only across viewport changes",
     await expect(search).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(dialog).toHaveCount(0);
-    await expect(modelTrigger).toBeFocused();
+    // Focus goes back to what opened the picker at the width the page has now:
+    // the chip, or on a phone the "..." button the Model entry lives in.
+    await expect(await phoneLayout(page) ? headerMoreButton(page) : modelTrigger).toBeFocused();
   }
   const stopped = page.waitForResponse((response) => response.url().endsWith(`/api/bots/${botId}/interrupt`) && response.request().method() === "POST");
   await page.getByTitle("Stop", { exact: true }).click();
