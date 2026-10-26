@@ -17,6 +17,7 @@ import { listDir, memoDeps, pathExists, readText } from "../isolation-cache.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 import { fuigoToolResultDirs, sessionFolders } from "../../own-tool-results.ts";
 import { scopeGrokHome } from "./grok-scope.ts";
+import { forceHookGatesOff } from "./hook-gates.ts";
 import { engineFolderUnavailable } from "../scoped-cli-home.ts";
 import { AskStopRefusal, ASK_STOP_GROK_OLD_NOTE } from "../ask-stop.ts";
 
@@ -273,6 +274,8 @@ export const GROK_EXTERNAL_COMPAT_GATES = [
 export function isolateGrokFromPersonalSetup(env: Record<string, string | undefined>): void {
   const present = new Set(Object.keys(env).map((name) => name.toUpperCase()));
   for (const name of GROK_EXTERNAL_COMPAT_GATES) if (!present.has(name)) env[name] = "0";
+  // Hooks never follow the owner's opt-in: personal hooks must not run in a bot turn (hook-gates.ts).
+  forceHookGatesOff(env, "GROK");
   // Murage owns memory. --no-memory on argv already outranks GROK_MEMORY
   // (docs 13-memory.md); the env default covers a build that drops the flag.
   if (!present.has("GROK_MEMORY")) env.GROK_MEMORY = "0";
@@ -398,6 +401,11 @@ export function grokIsolationArgs(env: Record<string, string | undefined>, cliVe
   }
 }
 
+/** The GROK_CONFIG half of applyFluxMemory, exported so the Cloud launcher's drift test runs the real code. */
+export function applyGrokFluxMemory(env: Record<string, string | undefined>, headers: Record<string, string>): void {
+  env.GROK_CONFIG = fuigoConfigOverlay(headers, env.GROK_CONFIG);
+}
+
 const support: AcpSupport = {
   driverKind: "grokAgent",
   displayName: "Grok",
@@ -489,9 +497,7 @@ const support: AcpSupport = {
 
   /** Flux Memory headers: Grok Build shares Fuigo's shell, so the inline `GROK_CONFIG` overlay
    *  (xai-grok-shell config GROK_CONFIG_ENV) carries `[models].extra_headers` the same way. */
-  applyFluxMemory: (env, { decision }) => {
-    env.GROK_CONFIG = fuigoConfigOverlay(decision.headers, env.GROK_CONFIG);
-  },
+  applyFluxMemory: (env, { decision }) => applyGrokFluxMemory(env, decision.headers),
   // The CLI owns its own grok.com login; a leaked API key silently flips
   // billing from the subscription to pay-as-you-go.
   // grok's native personal config (~/.grok MCP servers, hooks, skills, rules,

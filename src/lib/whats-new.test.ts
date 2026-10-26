@@ -31,6 +31,10 @@ describe("what's new pages", () => {
     expect(whatsNewPage("0.1.61")).toEqual({ kind: "page", releaseNotesUrl: "https://github.com/FerroxLabs/murage-releases/releases/tag/v0.1.61" });
   });
 
+  it("has a page for 1.0.6", () => {
+    expect(whatsNewPage("1.0.6")).toEqual({ kind: "page", releaseNotesUrl: "https://github.com/FerroxLabs/murage-releases/releases/tag/v1.0.6" });
+  });
+
   it("has a page for 1.0.2", () => {
     expect(whatsNewPage("1.0.2")).toEqual({ kind: "page", releaseNotesUrl: "https://github.com/FerroxLabs/murage-releases/releases/tag/v1.0.2" });
   });
@@ -44,7 +48,9 @@ describe("what the menu item opens", () => {
 
   it("opens the newest page of the same major line for a version with none", () => {
     expect(whatsNewTarget("1.0.3")).toMatchObject({ kind: "page", version: "1.0.2" });
-    expect(whatsNewTarget("1.1.0")).toMatchObject({ kind: "page", version: "1.0.2" });
+    expect(whatsNewTarget("1.0.5")).toMatchObject({ kind: "page", version: "1.0.2" });
+    expect(whatsNewTarget("1.0.7")).toMatchObject({ kind: "page", version: "1.0.6" });
+    expect(whatsNewTarget("1.1.0")).toMatchObject({ kind: "page", version: "1.0.6" });
     expect(whatsNewTarget("0.1.62")).toMatchObject({ kind: "page", version: "0.1.61" });
   });
 

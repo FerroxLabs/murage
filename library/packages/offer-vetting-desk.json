@@ -28,7 +28,8 @@
         "title": "Research",
         "description": "Switch-interview specialist - finds who'll buy and why now, using Bob Moesta's Jobs-to-be-Done method.",
         "appearance": {
-          "color": "green"
+          "color": "blue",
+          "mascotBody": "capsule"
         },
         "skills": [
           "research-jtbd-interviews",
@@ -51,7 +52,8 @@
         "title": "Numbers",
         "description": "Numbers specialist - runway, unit economics, pricing math via Greg Crabtree's Simple Numbers founder-friendly frame.",
         "appearance": {
-          "color": "blue"
+          "color": "cyan",
+          "mascotBody": "diamond"
         },
         "skills": [
           "coin-runway-and-burn",
@@ -68,7 +70,8 @@
         "title": "Offer",
         "description": "Offer specialist - value-based pricing, willingness-to-pay research, and offer-construction grounded in Madhavan Ramanujam.",
         "appearance": {
-          "color": "red"
+          "color": "coral",
+          "mascotBody": "circle"
         },
         "skills": [
           "forge-value-pricing",
@@ -89,7 +92,8 @@
         "title": "Quality Gate",
         "description": "Quality gate - scores content on 8 dimensions, flags issues, names the one specific edit. Scores, doesn't rewrite.",
         "appearance": {
-          "color": "orange"
+          "color": "red",
+          "mascotBody": "shield"
         },
         "skills": [
           "verdict-score-and-rank",

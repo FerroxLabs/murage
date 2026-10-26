@@ -79,17 +79,349 @@ class CP:
         if operation == "export-ready":
             self.pending = [c for c in self.pending if c["id"] != body["commandId"]]
             return {"accepted": True, "availableUntil": 5}
+        if operation == "update-state":
+            return {"recorded": True}
         raise AssertionError(operation)
     def of(self, operation):
         return [r["body"] for r in self.requests if r["operation"] == operation]
+
+launch = load("murage_home_launch_fixture", os.path.join(os.path.dirname(program), "murage-home-launch.py"))
+installer = load("murage_install_launchers_fixture", os.path.join(os.path.dirname(program), "install-launchers.py"))
+IMAGE_REVISION, IMAGE_SEQUENCE, ABI = "0" * 40, 1, "murage-launchers-1"
+LAUNCHERS = ("murage-turn-launch", "murage-browser-namespace", "murage-browser-network")
+LAUNCHER_SOURCES = {"murage-turn-launch": "murage-turn-launch.py", "murage-browser-namespace": "murage-browser-namespace.py",
+                    "murage-browser-network": "murage-browser-network.py"}
+IMMUTABLE_FL, GETFLAGS, SETFLAGS = 0x10, 0x80086601, 0x40086602
+
+
+class Immutability:
+    """FS_IMMUTABLE_FL on files and directories, as the image seals the release slots, the trust root and the update journal and as
+    the launcher freezes workspace placeholders. Real when this process may set it (root with CAP_LINUX_IMMUTABLE, on a filesystem with
+    inode flags); otherwise emulated at the syscall boundary with the kernel's rules: an immutable directory cannot be renamed or removed,
+    and nothing in it can be renamed, removed or added, by anyone; only FS_IOC_SETFLAGS changes the flag."""
+    def __init__(self, root):
+        import fcntl
+        self.fcntl, self.real_ioctl, self.frozen, self.patched = fcntl, fcntl.ioctl, set(), {}
+        probe = os.path.join(root, "probe")
+        os.mkdir(probe)
+        try:
+            self._set(probe, True)
+            self._set(probe, False)
+            self.mode = "real"
+        except OSError:
+            self.mode = "emulated"
+        os.rmdir(probe)
+        if self.mode == "emulated":
+            self._emulate()
+    def _flags(self, fd):
+        buf = bytearray(8)
+        self.fcntl.ioctl(fd, GETFLAGS, buf)
+        return int.from_bytes(buf[:4], sys.byteorder)
+    def _open(self, path):
+        return os.open(path, os.O_RDONLY | os.O_NOFOLLOW | (os.O_DIRECTORY if os.path.isdir(path) else 0))
+    def _set(self, path, frozen):
+        fd = self._open(path)
+        try:
+            value = self._flags(fd)
+            self.fcntl.ioctl(fd, SETFLAGS, ((value | IMMUTABLE_FL) if frozen else (value & ~IMMUTABLE_FL)).to_bytes(4, sys.byteorder) + bytes(4))
+        finally:
+            os.close(fd)
+    def freeze(self, path):
+        self._set(path, True)
+    def is_frozen(self, path):
+        fd = self._open(path)
+        try:
+            return bool(self._flags(fd) & IMMUTABLE_FL)
+        finally:
+            os.close(fd)
+    def thaw_all(self, root):
+        """Every flag under root (files and directories) cleared, so the fixture's temporary tree can be removed."""
+        for current, dirs, files in os.walk(root, followlinks=False):
+            for name in dirs + files:
+                full = os.path.join(current, name)
+                if not os.path.islink(full):
+                    try:
+                        if self.is_frozen(full):
+                            self._set(full, False)
+                    except OSError:
+                        pass
+        try:
+            if self.is_frozen(root):
+                self._set(root, False)
+        except OSError:
+            pass
+    def _emulate(self):
+        frozen, real = self.frozen, {n: getattr(os, n) for n in ("rename", "rmdir", "unlink", "remove")}
+        key = lambda st: (st.st_dev, st.st_ino)
+        def denied(path):
+            raise PermissionError(errno.EPERM, "Operation not permitted", path)
+        def inode(path, dir_fd=None):
+            try:
+                return key(os.stat(path, dir_fd=dir_fd, follow_symlinks=False))
+            except OSError:
+                return None
+        def parent(path, dir_fd=None):
+            if dir_fd is not None and os.sep not in str(path):
+                return key(os.fstat(dir_fd))
+            return inode(os.path.dirname(os.path.abspath(path)) if dir_fd is None else os.path.dirname(path), dir_fd)
+        def ioctl(fd, request, arg=0, mutate_flag=True):
+            if request == GETFLAGS:
+                arg[:4] = (IMMUTABLE_FL if key(os.fstat(fd)) in frozen else 0).to_bytes(4, sys.byteorder)
+                return 0
+            if request == SETFLAGS:
+                (frozen.add if int.from_bytes(bytes(arg[:4]), sys.byteorder) & IMMUTABLE_FL else frozen.discard)(key(os.fstat(fd)))
+                return 0
+            return self.real_ioctl(fd, request, arg, mutate_flag)
+        def rename(src, dst, *, src_dir_fd=None, dst_dir_fd=None):
+            if {inode(src, src_dir_fd), parent(src, src_dir_fd), parent(dst, dst_dir_fd)} & frozen:
+                denied(src)
+            return real["rename"](src, dst, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
+        def rmdir(path, *, dir_fd=None):
+            if {inode(path, dir_fd), parent(path, dir_fd)} & frozen:
+                denied(path)
+            return real["rmdir"](path, dir_fd=dir_fd)
+        def unlink(path, *, dir_fd=None):
+            if {inode(path, dir_fd), parent(path, dir_fd)} & frozen:
+                denied(path)
+            return real["unlink"](path, dir_fd=dir_fd)
+        self.patched = dict(real, ioctl=self.real_ioctl)
+        os.rename, os.rmdir, os.unlink, os.remove, self.fcntl.ioctl = rename, rmdir, unlink, unlink, ioctl
+    def close(self, root):
+        self.thaw_all(root)
+        if self.patched:
+            os.rename, os.rmdir, os.unlink, os.remove = (self.patched[n] for n in ("rename", "rmdir", "unlink", "remove"))
+            self.fcntl.ioctl = self.patched["ioctl"]
+
+
+_probe_root = tempfile.mkdtemp(prefix="murage-immutable-")
+IMMUTABLE = Immutability(_probe_root)
+os.rmdir(_probe_root)
+results["immutable"] = IMMUTABLE.mode
+if os.geteuid() != 0:
+    # The seal (every slot inode uid 0) is modeled at the ownership boundary for an unprivileged run, as supervisor.test.ts models root
+    # ownership: the files are the test user's. As root (the box, a privileged container) the real rule applies.
+    m.SEAL_OWNER = launch.SEAL_OWNER = os.geteuid()
+
+
+def openssl3(binary):
+    try:
+        out = subprocess.run([binary, "version"], capture_output=True, text=True, timeout=20).stdout
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return bool(re.match(r"OpenSSL [3-9]\.", out or ""))
+
+
+class Signer:
+    """Ed25519 release signatures: real (openssl 3, the image's) when both the PATH's and /usr/bin's openssl have it; otherwise a fixture
+    keyed-digest model behind the same verify seam (ctx["verify"]), so scenarios that never sign a release still boot a home."""
+    def __init__(self, root):
+        self.real = sys.platform == "linux" and openssl3("openssl") and openssl3("/usr/bin/openssl")
+        self.key = os.path.join(root, "release.key")
+        self.public = os.path.join(root, "release.pub")
+        if self.real:
+            subprocess.run(["openssl", "genpkey", "-algorithm", "ed25519", "-out", self.key], check=True, capture_output=True)
+            subprocess.run(["openssl", "pkey", "-in", self.key, "-pubout", "-out", self.public], check=True, capture_output=True)
+        else:
+            self.secret = os.urandom(32)
+            with open(self.public, "wb") as handle:
+                handle.write(b"FIXTURE-PUBLIC-KEY " + hashlib.sha256(self.secret).hexdigest().encode() + b"\n")
+    def sign(self, raw, key=None):
+        if self.real:
+            with tempfile.NamedTemporaryFile(delete=False) as handle:
+                handle.write(raw)
+            try:
+                return subprocess.run(["openssl", "pkeyutl", "-sign", "-inkey", key or self.key, "-rawin", "-in", handle.name], check=True, capture_output=True).stdout
+            finally:
+                os.unlink(handle.name)
+        secret = self.secret if key is None else hashlib.sha256(key.encode()).digest()
+        return hashlib.sha256(secret + raw).digest() + hashlib.sha256(raw + secret).digest()
+    def verify(self, raw, signature, key_path):
+        if self.real:
+            return m.verify_signature(raw, signature, key_path)
+        with open(key_path, "rb") as handle:
+            published = handle.read()
+        return published == b"FIXTURE-PUBLIC-KEY " + hashlib.sha256(self.secret).hexdigest().encode() + b"\n" and signature == self.sign(raw)
+    def other_key(self, root):
+        """A second key the home does not trust."""
+        if self.real:
+            other = os.path.join(root, "other.key")
+            subprocess.run(["openssl", "genpkey", "-algorithm", "ed25519", "-out", other], check=True, capture_output=True)
+            return other
+        return "other"
+
+
+def launcher_members(revision, omit=(), manifest=True, abi=ABI):
+    """What build-image.sh's tree carries for Lane G: deploy/cloud-home/launchers.txt and the launcher sources it names."""
+    members = {"deploy/cloud-home/" + LAUNCHER_SOURCES[n]: ("LAUNCHER %s %s\n" % (n, revision)).encode() for n in LAUNCHERS if n not in omit}
+    if manifest:
+        members["deploy/cloud-home/launchers.txt"] = ("abi %s\n" % abi).encode() + "".join("%s %s 0755\n" % (LAUNCHER_SOURCES[n], n) for n in LAUNCHERS).encode()
+    return members
+
+
+def tree_members(revision, extra=None, launchers=None):
+    members = {"dist-server/cloud-home-supervisor.js": b"// supervisor " + revision.encode(), "dist-server/index.js": b"// server " + revision.encode(),
+               "bin/fuigo": b"#!/bin/true\n"}
+    members.update(launcher_members(revision) if launchers is None else launchers)
+    members.update(extra or {})
+    return members
+
+
+def write_tree(target, members):
+    for name, body in members.items():
+        full = os.path.join(target, name)
+        os.makedirs(os.path.dirname(full), mode=0o755, exist_ok=True)
+        with open(full, "wb") as handle:
+            handle.write(body)
+        os.chmod(full, 0o755 if name.startswith("bin/") else 0o644)
+    for current, dirs, files in os.walk(target):
+        os.chmod(current, 0o755)
+
+
+def tree_digest(target):
+    fd = os.open(target, m.SLOT_OPEN)
+    try:
+        return m.seal_walk_digest(fd, False)
+    finally:
+        os.close(fd)
+
+
+def manifest_for(revision, sequence, tree_sha256, archive_name, archive_bytes, archive_sha256, abi=ABI, fmt="murage-cloud-home-release-v3"):
+    return json.dumps({"format": fmt, "sequence": sequence, "revision": revision, "arch": os.uname().machine, "archive": archive_name,
+                       "bytes": archive_bytes, "sha256": archive_sha256, "treeSha256": tree_sha256, "launcherAbi": abi}).encode()
+
+
+# The sequence of the release most recently published to the fixture channel: an update command names it, as the control plane does.
+LAST_RELEASE = {"sequence": 1}
+
+def make_release(root, revision, sequence, signer, extra=None, bad_member=False, launchers=None, key=None, abi=ABI, fmt="murage-cloud-home-release-v3",
+                 tree_sha256=None):
+    """What scripts/cloud-home-release.sh publishes: the archive, the v3 manifest (archive digest, tree digest, launcher ABI), the signature."""
+    LAST_RELEASE["sequence"] = sequence
+    members = tree_members(revision, extra, launchers)
+    stage = io.BytesIO()
+    with tarfile.open(fileobj=stage, mode="w:gz") as tar:
+        for name, body in members.items():
+            info = tarfile.TarInfo(name)
+            info.size, info.mode = len(body), 0o4777 if name == "bin/fuigo" else 0o777 if name.startswith("deploy/cloud-home/murage-") else 0o666
+            tar.addfile(info, io.BytesIO(body))
+        if bad_member:
+            info = tarfile.TarInfo("../escape")
+            info.size = 1
+            tar.addfile(info, io.BytesIO(b"x"))
+    archive = stage.getvalue()
+    if tree_sha256 is None:
+        scratch = tempfile.mkdtemp(dir=root)
+        shutil.rmtree(scratch)
+        with tempfile.NamedTemporaryFile(dir=root, delete=False, suffix=".tar.gz") as handle:
+            handle.write(archive)
+        try:
+            m.safe_extract(handle.name, scratch)
+            try:
+                installer.apply_modes(scratch, installer.plan(os.path.join(scratch, "deploy", "cloud-home")))  # as the updater does before digesting
+            except installer.LauncherError:
+                pass  # refused by the updater before any digest
+            tree_sha256 = tree_digest(scratch)
+        except ValueError:
+            tree_sha256 = "0" * 64  # an archive the home refuses before any digest
+        finally:
+            os.unlink(handle.name)
+            shutil.rmtree(scratch, ignore_errors=True)
+    name = "murage-cloud-home-%d.tar.gz" % sequence
+    manifest = manifest_for(revision, sequence, tree_sha256, name, len(archive), hashlib.sha256(archive).hexdigest(), abi=abi, fmt=fmt)
+    return {"manifest.json": manifest, "manifest.json.sig": signer.sign(manifest, key), name: archive}
+
+
+def install_slot(paths, slot, members, signer, sequence, revision, seal=True):
+    """A release tree in a slot as the image build (A) or the updater (B) leaves it: written, digested, its signed manifest stored under
+    the journal directory, every inode sealed."""
+    target = os.path.join(paths["releases"], slot)
+    write_tree(target, members)
+    digest = tree_digest(target)
+    manifest = manifest_for(revision, sequence, digest, "murage-cloud-home-%d.tar.gz" % sequence, 1, "0" * 64)
+    signature = signer.sign(manifest)
+    directory = os.path.join(paths["update_state"], "manifests")
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    for name, data in ((slot + ".json", manifest), (slot + ".sig", signature)):
+        with open(os.path.join(directory, name), "wb") as handle:
+            handle.write(data)
+        os.chmod(os.path.join(directory, name), 0o600)
+    if seal:
+        fd = os.open(target, m.SLOT_OPEN)
+        try:
+            m.seal_tree(fd, True)
+        finally:
+            os.close(fd)
+    return manifest, signature
+
+
+def write_trust(paths, signer, manifest, signature, sequence=IMAGE_SEQUENCE, abi=ABI, revision=IMAGE_REVISION, freeze=True):
+    trust = paths["trust"]
+    os.makedirs(os.path.join(trust, "manifests"), mode=0o700, exist_ok=True)
+    os.chmod(trust, 0o700)
+    shutil.copy(signer.public, os.path.join(trust, "release-public-key.pem"))
+    with open(os.path.join(trust, "release.json"), "w") as handle:
+        json.dump({"channelUrl": "https://releases.murage.test/cloud-home", "minimumSequence": sequence, "imageRevision": revision, "launcherAbi": abi}, handle)
+    with open(os.path.join(trust, "launcher-abi"), "w") as handle:
+        handle.write(abi + "\n")
+    for name, data in (("manifests/A.json", manifest), ("manifests/A.sig", signature)):
+        with open(os.path.join(trust, name), "wb") as handle:
+            handle.write(data)
+    for current, dirs, files in os.walk(trust):
+        for name in files:
+            os.chmod(os.path.join(current, name), 0o600)
+    if freeze:
+        for current, dirs, files in os.walk(trust, topdown=False):
+            for name in files + dirs:
+                IMMUTABLE.freeze(os.path.join(current, name))
+        IMMUTABLE.freeze(trust)
+
+
+def write_state(ctx, installed=None, inflight=None, last=None, sequence=IMAGE_SEQUENCE, revision=IMAGE_REVISION, slot="A"):
+    state = {"format": m.UPDATE_STATE_FORMAT, "installed": installed or {"slot": slot, "sequence": sequence, "revision": revision},
+             "inflight": inflight, "lastResult": last}
+    m.write_update_state(ctx, state)
+    return state
+
+
+def inflight_record(slot="B", phase="verify", sequence=2, revision="b" * 40, cid=None, verify_attempts=0, rollback_attempts=0, restored=False, reason=None):
+    return {"commandId": cid or str(uuid.uuid4()), "slot": slot, "sequence": sequence, "revision": revision, "phase": phase,
+            "verifyAttempts": verify_attempts, "rollbackAttempts": rollback_attempts, "restored": restored, "startedAt": NOW, "deadline": DEADLINE,
+            "driveId": "0" * 32, "reason": reason}
+
+
+def image(ctx, paths, signer):
+    """What build-image.sh leaves behind (LANE-G r3 sec. 2): slot A sealed, current -> A, the trust root, slot A's signed manifest in
+    both places, state.json v3 naming A."""
+    os.makedirs(paths["releases"], mode=0o755, exist_ok=True)
+    manifest, signature = install_slot(paths, "A", tree_members(IMAGE_REVISION), signer, IMAGE_SEQUENCE, IMAGE_REVISION)
+    os.symlink("A", os.path.join(paths["releases"], "current"))
+    write_trust(paths, signer, manifest, signature)
+    write_state(ctx)
+    IMMUTABLE.freeze(paths["releases"])
+    for name in ("manifests/A.json", "manifests/A.sig", "manifests"):
+        IMMUTABLE.freeze(os.path.join(paths["update_state"], name))
+
+
+def launcher_paths(paths):
+    return {"releases": paths["releases"], "trust": paths["trust"], "update_state": paths["update_state"],
+            "inhibit": os.path.join(paths["state"], "recovery-inhibit"), "gate": os.path.join(paths["gate"], "gate.sock")}
+
 
 def setup(root, data=None):
     binding = {"homeId": "home-test", "generation": 3, "adminUrl": "https://admin.murage.test", "publicOrigin": "https://home.murage.test",
                "credential": CREDENTIAL}
     paths = {"data": data or os.path.join(root, "data"), "state": os.path.join(root, "state"), "config": os.path.join(root, "config"),
-             "opt": os.path.join(root, "opt", "murage"), "run": os.path.join(root, "run")}
+             "run": os.path.join(root, "run"), "libexec": os.path.join(root, "libexec"), "releases": os.path.join(root, "opt", "murage-releases"),
+             "update_state": os.path.join(root, "var", "murage-update"), "trust": os.path.join(root, "trust"), "gate": os.path.join(root, "run", "murage-update")}
     for p in paths.values():
         os.makedirs(p, exist_ok=True)
+    # The image's own launcher list step (build-image.sh puts it in libexec); the update imports it from there.
+    shutil.copy(os.path.join(os.path.dirname(program), "install-launchers.py"), os.path.join(paths["libexec"], "murage-install-launchers"))
+    os.chmod(os.path.join(paths["libexec"], "murage-install-launchers"), 0o755)
+    for name in LAUNCHERS:
+        with open(os.path.join(paths["libexec"], name), "w") as handle:
+            handle.write("IMAGE %s\n" % name)
+        os.chmod(os.path.join(paths["libexec"], name), 0o755)
     shutil.copy(excludes_file, os.path.join(paths["config"], "backup-excludes.txt"))
     with open(os.path.join(root, "backup.pass"), "w") as handle:
         handle.write(BACKUP_PASSWORD + "\n")
@@ -98,9 +430,24 @@ def setup(root, data=None):
     ctx = m.default_context(binding, backup)
     cp = CP(binding)
     calls = []
+    signer = Signer(root)
     # active: the home comes up (and its app answers) when started; app: the app answers (None: same as active); stuck: units that
-    # never stop; running: what systemd has active now.
-    active = {"value": True, "app": None, "stuck": set(), "running": {m.HOME_UNIT}}
+    # never stop; running: what systemd has active now; launches: every ExecStart of the home unit, as murage-home-launch answered it
+    # (exit code, refusal reason, the slot it started); peers: what the gate and its client see of each other (SO_PEERCRED + cgroup).
+    # bad_slot: a release whose process dies at once when started; unhealthy_slot: one whose unit stays up but whose app never answers;
+    # slot: the slot the last successful start ran.
+    active = {"value": True, "app": None, "stuck": set(), "running": {m.HOME_UNIT}, "launches": [], "probes": 0, "signer": signer,
+              "bad_slot": None, "unhealthy_slot": None, "slot": "A",
+              "server_peer": {"uid": 0, "cgroup": m.HOME_CGROUP, "exe": "/usr/bin/python3"}, "client_peer": {"uid": 0, "cgroup": launch.COMMANDS_CGROUP}}
+    lpaths = launcher_paths(paths)
+    def launcher():
+        """murage-home.service's ExecStart under systemd: the real murage-home-launch start gate against this fixture's paths."""
+        try:
+            slot, dirfd, _state = launch.start_gate(lpaths, verify=signer.verify, peer=lambda pid, uid: dict(active["client_peer"]), ancestors=False)
+            os.close(dirfd)
+            return 0, None, slot
+        except launch.Refused as refused:
+            return 79, refused.reason, None
     def systemctl(*args):
         calls.append(list(args))
         units = [a for a in args[1:] if not a.startswith("-")]
@@ -110,25 +457,77 @@ def setup(root, data=None):
             active["running"] -= set(units) - active["stuck"]
             return 0 if not set(units) & active["stuck"] else 1
         if args[0] in ("start", "restart"):
-            # murage-home.service: ConditionPathExists=!/var/lib/murage-home/recovery-inhibit (a skipped start still exits 0).
-            if os.path.exists(os.path.join(paths["state"], "recovery-inhibit")):
-                units = [u for u in units if u != m.HOME_UNIT]
+            if m.HOME_UNIT in units and args[0] == "start" and m.HOME_UNIT in active["running"]:
+                units = [u for u in units if u != m.HOME_UNIT]  # already active: systemd runs no ExecStart
+            if m.HOME_UNIT in units:
+                if args[0] == "restart":
+                    active["running"].discard(m.HOME_UNIT)
+                code, reason, slot = launcher()
+                active["launches"].append((code, reason, slot))
+                if code != 0:
+                    units = [u for u in units if u != m.HOME_UNIT]  # exit 79: RestartPreventExitStatus, the unit stays stopped
+                else:
+                    active["slot"] = slot
             if active["value"]:
                 active["running"] |= set(units)
             else:
                 active["running"] -= set(units)  # it starts and dies at once
+            if m.HOME_UNIT in units and active["bad_slot"] == active["slot"]:
+                active["running"].discard(m.HOME_UNIT)  # this release's process dies at once
             return 0
         return 0
     def unit_state(unit):
         return "active" if unit in active["running"] else "inactive"
     def app_healthy():
+        active["probes"] += 1
         up = m.HOME_UNIT in active["running"]
-        return up and (active["value"] if active["app"] is None else active["app"])
+        return up and active["unhealthy_slot"] != active["slot"] and (active["value"] if active["app"] is None else active["app"])
     ctx.update(request=cp, systemctl=systemctl, sleep=lambda _s: None, now=lambda: NOW, paths=paths, unit_state=unit_state,
-               app_healthy=app_healthy, disk_free=lambda _p: 1 << 50,
+               app_healthy=app_healthy, disk_free=lambda _p: 1 << 50, verify=signer.verify, peer=lambda pid, uid: dict(active["server_peer"]),
                environs=lambda _ctx: [dict(os.environ), {"PATH": "/usr/bin", "ANTHROPIC_API_KEY": SERVER_ENV_SECRET}])
+    image(ctx, paths, signer)
+    m.gate_server(ctx)
     return ctx, cp, calls, active
 
+STOP = ["stop", "murage-home.service", "murage-turns.slice", "murage-browsers.slice"]
+START = ["start", "murage-home.service"]
+
+def launches(active, code=None):
+    return [l for l in active["launches"] if code is None or l[0] == code]
+
+def served(ctx, root, releases):
+    """The release channel: one dict of served files behind ctx["fetch"]."""
+    files = {}
+    def fetch(url, destination=None, limit=65536):
+        prefix = "https://releases.murage.test/cloud-home/" + os.uname().machine + "/"
+        assert url.startswith(prefix), url
+        name = url[len(prefix):]
+        if name not in files:
+            raise OSError(errno.ENOENT, "not served", name)
+        body = files[name]
+        if destination is None:
+            return body
+        with open(destination, "wb") as out:
+            out.write(body)
+        return hashlib.sha256(body).hexdigest(), len(body)
+    ctx["fetch"] = fetch
+    return files
+
+def update_command(cp, **extra):
+    return cp.add("update_software", {"keep": ["files", "settings", "logins"], "reason": "customer", "sequence": LAST_RELEASE["sequence"], **extra})
+
+def slot_file(ctx, slot, rel="dist-server/cloud-home-supervisor.js"):
+    with open(os.path.join(ctx["paths"]["releases"], slot, rel)) as handle:
+        return handle.read()
+
+def slot_sealed(ctx, slot):
+    """Every regular file and directory of the slot carries FS_IMMUTABLE_FL."""
+    target = os.path.join(ctx["paths"]["releases"], slot)
+    for current, dirs, files in os.walk(target):
+        for name in [""] + dirs + files:
+            if not IMMUTABLE.is_frozen(os.path.join(current, name) if name else current):
+                return False
+    return True
 STOP = ["stop", "murage-home.service", "murage-turns.slice", "murage-browsers.slice"]
 
 class FakeRestic:
@@ -226,7 +625,7 @@ def tree(data):
 def restart(root):
     ctx, cp, calls, _ = setup(root)
     cid = cp.add("restart_service", {"reason": "fix_it:watchdog"})
-    check(m.poll_once(ctx) == [("restart_service", "done")], "restart ran")
+    check(m.poll_once(ctx) == [("restart_service", "done")], "restart ran: %r" % calls)
     check(calls[0] == ["restart", "murage-home.service"], "systemctl restart of the home unit")
     check(cp.of("commands/ack") == [{"generation": 3, "commandId": cid, "outcome": "done"}], "acknowledged done")
     # The same id again (a lost ack, a replay): never runs twice, never re-acked once acknowledged.
@@ -300,140 +699,1068 @@ def interrupted(root):
     check(len([c for c in calls2 if c[0] == "restart"]) == 1, "ran once across a failed ack")
     check([a["outcome"] for a in cp2.of("commands/ack")] == ["done", "done"] and cp2.pending == [], "re-acknowledged done")
 
-def make_release(root, revision, sequence, key, extra=None, bad_member=False):
-    stage = io.BytesIO()
-    with tarfile.open(fileobj=stage, mode="w:gz") as tar:
-        members = {"dist-server/cloud-home-supervisor.js": b"// supervisor " + revision.encode(), "dist-server/index.js": b"// server",
-                   "bin/fuigo": b"#!/bin/true\n"}
-        members.update(extra or {})
-        for name, body in members.items():
-            info = tarfile.TarInfo(name)
-            info.size, info.mode = len(body), 0o4777 if name == "bin/fuigo" else 0o666
-            tar.addfile(info, io.BytesIO(body))
-        if bad_member:
-            info = tarfile.TarInfo("../escape")
-            info.size = 1
-            tar.addfile(info, io.BytesIO(b"x"))
-    archive = stage.getvalue()
-    name = "murage-cloud-home-%d.tar.gz" % sequence
-    manifest = json.dumps({"format": "murage-cloud-home-release-v1", "sequence": sequence, "revision": revision, "arch": os.uname().machine,
-                           "archive": name, "bytes": len(archive), "sha256": hashlib.sha256(archive).hexdigest()}).encode()
-    with tempfile.NamedTemporaryFile(dir=root, delete=False) as handle:
-        handle.write(manifest)
-    signature = subprocess.run(["openssl", "pkeyutl", "-sign", "-inkey", key, "-rawin", "-in", handle.name], check=True, capture_output=True).stdout
-    return {"manifest.json": manifest, "manifest.json.sig": signature, name: archive}
+class Trace:
+    """The order of what the design pins: journal writes (with the inhibit's presence at that instant), health verdicts, every rename
+    of the `current` link, the launcher's answers and systemctl calls, in one log. Restored by close()."""
+    def __init__(self, ctx, calls):
+        self.ctx, self.calls, self.log = ctx, calls, []
+        self.real = {"write": m.write_update_state, "wait": m.wait_healthy, "rename": os.rename, "start_home": m.start_home}
+        trace = self
+        def write(ctx_, state):
+            trace.real["write"](ctx_, state)
+            inflight = state["inflight"]
+            trace.log.append(("write", state["installed"]["slot"], inflight["phase"] if inflight else None, inflight["restored"] if inflight else None,
+                              os.path.exists(m.inhibit_path(ctx_))))
+        def wait(ctx_, *a, **kw):
+            verdict = trace.real["wait"](ctx_, *a, **kw)
+            trace.log.append(("healthy", verdict))
+            return verdict
+        def rename(src, dst, *a, **kw):
+            if os.path.basename(dst) == "current":
+                trace.log.append(("rename", os.readlink(src)))
+            return trace.real["rename"](src, dst, *a, **kw)
+        def start_home(ctx_):
+            trace.log.append(("lift", os.path.exists(m.inhibit_path(ctx_))))
+            return trace.real["start_home"](ctx_)
+        self.real["systemctl"] = ctx["systemctl"]
+        def systemctl(*args):
+            trace.log.append(("systemctl",) + tuple(args[:2]))
+            return trace.real["systemctl"](*args)
+        m.write_update_state, m.wait_healthy, os.rename, m.start_home = write, wait, rename, start_home
+        ctx["systemctl"] = systemctl
+    def close(self):
+        m.write_update_state, m.wait_healthy, os.rename, m.start_home = self.real["write"], self.real["wait"], self.real["rename"], self.real["start_home"]
+        self.ctx["systemctl"] = self.real["systemctl"]
+    def events(self, *kinds):
+        return [e for e in self.log if e[0] in kinds]
+
+
+def thaw(path):
+    if IMMUTABLE.is_frozen(path):
+        IMMUTABLE._set(path, False)
+
+
+def raw_state(ctx, data):
+    """state.json replaced by hand (an operator or a forged write), flags lifted and set again around it."""
+    target = m.update_state_file(ctx)
+    directory = os.path.dirname(target)
+    thaw(directory)
+    if os.path.exists(target):
+        thaw(target)
+    if data is None:
+        os.unlink(target)
+    else:
+        with open(target, "wb") as handle:
+            handle.write(data)
+        IMMUTABLE.freeze(target)
+    IMMUTABLE.freeze(directory)
+
+
+def set_current(ctx, target):
+    releases = ctx["paths"]["releases"]
+    thaw(releases)
+    current = os.path.join(releases, "current")
+    if os.path.lexists(current):
+        os.unlink(current)
+    if target is not None:
+        os.symlink(target, current)
+    IMMUTABLE.freeze(releases)
+
+
+def stage_candidate(ctx, active, revision="b" * 40, sequence=2, slot="B"):
+    """A candidate the updater has installed and sealed in the idle slot with its signed manifest (the end of `installing`)."""
+    paths = ctx["paths"]
+    thaw(paths["releases"])
+    thaw(os.path.join(paths["update_state"], "manifests"))
+    thaw(paths["update_state"])
+    manifest, signature = install_slot(paths, slot, tree_members(revision), active["signer"], sequence, revision)
+    IMMUTABLE.freeze(os.path.join(paths["update_state"], "manifests"))
+    IMMUTABLE.freeze(paths["update_state"])
+    IMMUTABLE.freeze(paths["releases"])
+    return manifest, signature
+
+
+def stderr_of(work):
+    held, sys.stderr = sys.stderr, io.StringIO()
+    try:
+        return work(), sys.stderr.getvalue()
+    finally:
+        sys.stderr = held
+
 
 def update(root):
+    """r2/r3/A1 happy path and the idle refusals: two slots, one flip, the previous slot kept, the journal the only truth, the inhibit
+    held to the commit (T-G3), every inode sealed (T-D2), the libexec launchers untouched (image-pinned), a failed candidate rolled back
+    to signed bytes, a release with another launcher ABI refused before any download (T-L2')."""
     ctx, cp, calls, active = setup(root)
-    cp.add("update_software", {"keep": ["files", "settings", "logins"], "reason": "customer"})
-    check(m.poll_once(ctx) == [("update_software", "unsupported")], "no release channel in this image: unsupported")
-    key = os.path.join(root, "release.key")
-    subprocess.run(["openssl", "genpkey", "-algorithm", "ed25519", "-out", key], check=True, capture_output=True)
-    subprocess.run(["openssl", "pkey", "-in", key, "-pubout", "-out", os.path.join(ctx["paths"]["config"], "release-public-key.pem")], check=True)
-    with open(os.path.join(ctx["paths"]["config"], "release.json"), "w") as handle:
-        json.dump({"channelUrl": "https://releases.murage.test/cloud-home"}, handle)
-    opt = ctx["paths"]["opt"]
-    os.makedirs(opt + "/dist-server")
-    with open(opt + "/dist-server/index.js", "w") as handle:
-        handle.write("// old")
-    served = {}
-    def fetch(url, destination=None, limit=65536):
-        prefix = "https://releases.murage.test/cloud-home/" + os.uname().machine + "/"
-        assert url.startswith(prefix), url
-        body = served[url[len(prefix):]]
-        if destination is None:
-            return body
-        with open(destination, "wb") as out:
-            out.write(body)
-        return hashlib.sha256(body).hexdigest(), len(body)
-    ctx["fetch"] = fetch
-    with open(os.path.join(ctx["paths"]["data"], "keep.txt"), "w") as handle:
+    signer, paths = active["signer"], ctx["paths"]
+    releases, libexec, data = paths["releases"], paths["libexec"], paths["data"]
+    channel = served(ctx, root, releases)
+    inodes = {n: os.lstat(os.path.join(libexec, n)).st_ino for n in LAUNCHERS}
+    with open(os.path.join(data, "keep.txt"), "w") as handle:
         handle.write("customer file")
-    served.update(make_release(root, "a" * 40, 5, key))
-    cp.add("update_software", {"keep": ["files", "settings", "logins"], "reason": "customer"})
-    check(m.poll_once(ctx) == [("update_software", "done")], "signed release installed")
-    with open(opt + "/dist-server/cloud-home-supervisor.js") as handle:
-        check(handle.read().endswith("a" * 40), "new code in place")
-    check(os.path.isfile(opt + ".prev/dist-server/index.js"), "previous release kept for rollback")
-    check(oct(os.stat(opt + "/bin/fuigo").st_mode & 0o7777) == "0o755", "no set-id or world-writable bits from the archive")
-    check(open(os.path.join(ctx["paths"]["data"], "keep.txt")).read() == "customer file", "files untouched")
-    check(STOP in calls and ["start", "murage-home.service"] in calls, "stopped (home and its slices, confirmed) and started")
-    # Same release again: done, nothing swapped.
-    calls.clear()
-    cp.add("update_software", {"keep": ["files", "settings", "logins"], "reason": "customer"})
-    check(m.poll_once(ctx) == [("update_software", "done")] and STOP not in calls, "already current")
-    # A signed but older sequence: refused.
-    served.clear(); served.update(make_release(root, "b" * 40, 4, key))
-    cp.add("update_software", {"keep": ["files", "settings", "logins"], "reason": "customer"})
-    check(m.poll_once(ctx) == [("update_software", "failed")], "downgrade refused")
-    # A tampered manifest (signature from another key): refused, code untouched.
-    other = os.path.join(root, "other.key")
-    subprocess.run(["openssl", "genpkey", "-algorithm", "ed25519", "-out", other], check=True, capture_output=True)
-    served.clear(); served.update(make_release(root, "c" * 40, 9, other))
-    cp.add("update_software", {"keep": ["files", "settings", "logins"], "reason": "customer"})
-    check(m.poll_once(ctx) == [("update_software", "failed")], "bad signature refused")
-    # A path-escaping archive: refused.
-    served.clear(); served.update(make_release(root, "d" * 40, 10, key, bad_member=True))
-    cp.add("update_software", {"keep": ["files", "settings", "logins"], "reason": "customer"})
-    check(m.poll_once(ctx) == [("update_software", "failed")], "escaping archive refused")
-    check(not os.path.exists(os.path.join(os.path.dirname(opt), "escape")) and not os.path.exists(opt + ".next"), "nothing written outside")
-    # A release that does not start: rolled back.
-    served.clear(); served.update(make_release(root, "e" * 40, 11, key))
-    active["value"] = False
-    cp.add("update_software", {"keep": ["files", "settings", "logins"], "reason": "customer"})
-    check(m.poll_once(ctx) == [("update_software", "failed")], "failed start reported")
-    with open(opt + "/dist-server/cloud-home-supervisor.js") as handle:
-        check(handle.read().endswith("a" * 40), "rolled back to the running release")
-    with open(os.path.join(ctx["paths"]["state"], "release.json")) as handle:
-        check(json.load(handle)["sequence"] == 5, "installed sequence unchanged")
-    active["value"] = True
-    # Astra SELFSERVICE2 #5: the unit is active (Type=simple) but the app never answers its health check: not committed, rolled back.
-    served.clear(); served.update(make_release(root, "f" * 40, 12, key))
-    active["app"] = False
-    cp.add("update_software", {"keep": ["files", "settings", "logins"], "reason": "customer"})
-    check(m.poll_once(ctx) == [("update_software", "failed")], "premature liveness is not health: failed")
-    with open(opt + "/dist-server/cloud-home-supervisor.js") as handle:
-        check(handle.read().endswith("a" * 40), "rolled back after the bounded app-health check")
-    check(not os.path.exists(m.update_journal_file(ctx)), "journal cleared after the rollback")
-    active["app"] = None
-    # Astra SELFSERVICE2 #5: interrupted between the two renames (/opt/murage absent, .prev intact): recovered before any command runs.
-    served.clear(); served.update(make_release(root, "1" * 40, 13, key))
-    real_rename = os.rename
-    def failing(a, b):
-        if a == opt + ".next":
-            raise PowerLoss()
-        return real_rename(a, b)
-    m.os.rename = failing
-    cid = cp.add("update_software", {"keep": ["files", "settings", "logins"], "reason": "customer"})
+    digest_a = tree_digest(os.path.join(releases, "A"))
+    channel.update(make_release(root, "b" * 40, 2, signer))
+    cid = update_command(cp)
+    trace = Trace(ctx, calls)
     try:
-        m.poll_once(ctx)
-        check(False, "the power loss stopped the runner")
+        check(m.poll_once(ctx) == [("update_software", "done")], "signed release installed into the idle slot and committed")
+    finally:
+        trace.close()
+    state = m.read_update_state(ctx)
+    check(state["installed"] == {"slot": "B", "sequence": 2, "revision": "b" * 40} and state["inflight"] is None
+          and state["lastResult"] == {"commandId": cid, "outcome": "done", "reason": None}, "journal: installed B, nothing in flight, done recorded: %r" % state)
+    check(m.current_target(ctx) == "B" and slot_file(ctx, "B").endswith("b" * 40), "current -> B, the new code in place")
+    check(tree_digest(os.path.join(releases, "A")) == digest_a and IMMUTABLE.is_frozen(os.path.join(releases, "A")), "the previous slot is kept byte for byte and sealed (no cleanup after commit)")
+    check(slot_sealed(ctx, "B") and IMMUTABLE.is_frozen(releases), "every inode of the new slot and the releases directory carry +i (T-D2)")
+    check(oct(os.stat(os.path.join(releases, "B", "bin", "fuigo")).st_mode & 0o7777) == "0o755", "no set-id or world-writable bits from the archive")
+    check(open(os.path.join(data, "keep.txt")).read() == "customer file", "files untouched")
+    check(STOP in calls and START in calls and calls.index(STOP) < calls.index(START), "stopped (home and slices, confirmed) then started")
+    check(launches(active, 0)[-1][2] == "B" and m.HOME_UNIT in active["running"] and active["slot"] == "B", "the verify start ran slot B through a grant; the home is up on it")
+    check(not os.path.exists(m.inhibit_path(ctx)) and ctx["gate"]["grant"] is None, "inhibit lifted after the commit; the grant was consumed")
+    check({n: os.lstat(os.path.join(libexec, n)).st_ino for n in LAUNCHERS} == inodes and all(open(os.path.join(libexec, n)).read() == "IMAGE %s\n" % n for n in LAUNCHERS)
+          and not [f for f in os.listdir(libexec) if f.startswith(".")], "libexec untouched: the launchers are image-pinned (same inodes and bytes, no strays)")
+    # T-G3: the inhibit exists at every journal write from `installed` on, through the healthy verdict, up to the commit write; it is lifted only after.
+    writes = trace.events("write")
+    phases = [w[2] for w in writes]
+    check(phases == ["installing", "installed", "flip", "verify", "verify", None], "one write per phase (verify: the flip's verify/0, then the counter 1), then the commit: %r" % phases)
+    check(not writes[1][4] and all(w[4] for w in writes[2:]), "the inhibit is set by stop_writers after the `installed` write and present at every write from `flip` to the commit: %r" % writes)
+    order = [e[0] for e in trace.log if e[0] in ("healthy", "lift")] + [e[0] + ":" + str(e[2]) for e in trace.log if e[0] == "write" and e[2] is None]
+    check(trace.log.index(("healthy", True)) < [i for i, e in enumerate(trace.log) if e[0] == "write" and e[2] is None][0] < trace.log.index(("lift", True)),
+          "healthy observed, then the commit written (installed := new), then the inhibit lifted: %r" % trace.log)
+    check(writes[-1][1] == "B", "the commit names the new slot")
+    # Same release again: done, nothing stopped.
+    calls.clear()
+    update_command(cp)
+    check(m.poll_once(ctx) == [("update_software", "done")] and STOP not in calls, "already current: done without a stop")
+    # A second update (T-H2c, T-D2): the idle slot (A, the previous release) is wiped only now, its flags lifted, then replaced.
+    channel.clear(); channel.update(make_release(root, "c" * 40, 3, signer))
+    update_command(cp)
+    check(m.poll_once(ctx) == [("update_software", "done")], "second update done")
+    check(m.read_update_state(ctx)["installed"]["slot"] == "A" and slot_file(ctx, "A").endswith("c" * 40) and slot_sealed(ctx, "A"), "the previous slot was wiped and now holds release c, sealed")
+    check(m.current_target(ctx) == "A" and slot_file(ctx, "B").endswith("b" * 40), "current -> A; the release before it stays in B")
+    def refused(why, journal_unchanged=True, sequence=20, **release):
+        before = m.read_update_state(ctx)
+        channel.clear(); channel.update(make_release(root, "9" * 40, sequence, signer, **release))
+        calls.clear(); active["launches"].clear()
+        update_command(cp)
+        check(m.poll_once(ctx) == [("update_software", "failed")], why + ": refused")
+        check(not any(c[0] == "stop" for c in calls) and active["launches"] == [], why + ": the home was never stopped or restarted")
+        check(m.current_target(ctx) == "A" and slot_file(ctx, "A").endswith("c" * 40), why + ": the live slot untouched")
+        after = m.read_update_state(ctx)
+        check(after["installed"] == before["installed"] and after["inflight"] is None, why + ": nothing installed, nothing in flight")
+        check(not os.path.exists(os.path.join(releases, "B")) or journal_unchanged is False or slot_file(ctx, "B").endswith("b" * 40), why + ": the idle slot is as it was or wiped, never half-installed")
+        check(not os.path.exists(os.path.join(paths["update_state"], "download.tar.gz")), why + ": no download left")
+        return after
+    # Signed but at or below the floor (installed sequence 3): refused.
+    refused("downgrade (sequence 2 <= floor 3)", sequence=2)
+    channel.clear(); channel.update(make_release(root, "8" * 40, 3, signer))
+    calls.clear(); update_command(cp)
+    check(m.poll_once(ctx) == [("update_software", "done")] and STOP not in calls and m.read_update_state(ctx)["installed"]["sequence"] == 3,
+          "same sequence as installed: nothing to install, nothing restarted")
+    # A manifest signed by another key: refused.
+    channel.clear(); channel.update(make_release(root, "d" * 40, 9, signer, key=signer.other_key(root)))
+    calls.clear(); update_command(cp)
+    check(m.poll_once(ctx) == [("update_software", "failed")] and STOP not in calls, "bad signature refused")
+    # A manifest of the previous format (v1/v2): refused with the fixed reason, before any download.
+    fetched = []
+    real_fetch = ctx["fetch"]
+    ctx["fetch"] = lambda url, *a, **kw: (fetched.append(url.rsplit("/", 1)[1]), real_fetch(url, *a, **kw))[1]
+    channel.clear(); channel.update(make_release(root, "e" * 40, 9, signer, fmt="murage-cloud-home-release-v2"))
+    calls.clear(); update_command(cp)
+    _, err = stderr_of(lambda: m.poll_once(ctx))
+    check("Self-service update refused: release_format" in err and STOP not in calls and fetched == ["manifest.json", "manifest.json.sig"], "a v2 manifest is refused with its fixed reason, nothing downloaded: %r %r" % (err, fetched))
+    # Another launcher ABI: refused at idle with launcher_abi_mismatch, no download (T-L2').
+    fetched.clear()
+    channel.clear(); channel.update(make_release(root, "e" * 40, 9, signer, abi="murage-launchers-2"))
+    update_command(cp)
+    _, err = stderr_of(lambda: m.poll_once(ctx))
+    check("Self-service update refused: launcher_abi_mismatch" in err and fetched == ["manifest.json", "manifest.json.sig"], "launcher ABI mismatch: refused before the archive is fetched: %r" % err)
+    ctx["fetch"] = real_fetch
+    # A path-escaping archive: refused, nothing written outside, the idle slot wiped.
+    after = refused("escaping archive", bad_member=True)
+    check(not os.path.exists(os.path.join(os.path.dirname(releases), "escape")) and not os.path.exists(os.path.join(releases, "B")), "nothing written outside the slot; the half-extracted slot wiped")
+    check(after["lastResult"]["outcome"] == "failed" and after["lastResult"]["reason"] in ("install_failed", "release_incomplete"), "the journal records the failed install: %r" % after["lastResult"])
+    # A tree whose digest is not the signed treeSha256: refused after extraction, wiped.
+    after = refused("tree digest mismatch", tree_sha256="f" * 64)
+    check(after["lastResult"]["reason"] == "tree_digest", "fixed reason tree_digest: %r" % after["lastResult"])
+    # Lane G: a release that cannot carry its launcher list is refused; the idle slot is wiped, the live slot untouched.
+    refused("missing launcher", launchers=launcher_members("9" * 40, omit=("murage-browser-network",)))
+    refused("missing launcher manifest", launchers=launcher_members("9" * 40, manifest=False))
+    bad = launcher_members("9" * 40); bad["deploy/cloud-home/launchers.txt"] = b"abi murage-launchers-1\n../../etc/passwd murage-turn-launch 4755\n"
+    refused("invalid launcher manifest", launchers=bad)
+    short = launcher_members("9" * 40); short["deploy/cloud-home/launchers.txt"] = b"abi murage-launchers-1\nmurage-turn-launch.py murage-turn-launch 0755\n"
+    refused("manifest below the required floor", launchers=short)
+    extra = launcher_members("9" * 40); extra["deploy/cloud-home/launchers.txt"] += b"murage-turn-launch.py murage-install-launchers 0755\n"
+    refused("a launcher name outside the allowlist", launchers=extra)
+    installer = os.path.join(libexec, "murage-install-launchers")
+    os.rename(installer, installer + ".hold")
+    try:
+        refused("no launcher installer on the image")
+    finally:
+        os.rename(installer + ".hold", installer)
+    check({n: os.lstat(os.path.join(libexec, n)).st_ino for n in LAUNCHERS} == inodes, "libexec still untouched after every refusal")
+    # A release that does not start: counted verify start, rollback to the signed previous slot, counted start of it, failed/unhealthy.
+    channel.clear(); channel.update(make_release(root, "f" * 40, 11, signer))
+    active["bad_slot"] = "B"
+    calls.clear(); active["launches"].clear()
+    trace = Trace(ctx, calls)
+    try:
+        cid = update_command(cp)
+        check(m.poll_once(ctx) == [("update_software", "failed")], "failed start reported")
+    finally:
+        trace.close()
+    state = m.read_update_state(ctx)
+    check(state["installed"]["slot"] == "A" and state["installed"]["sequence"] == 3 and state["inflight"] is None
+          and state["lastResult"] == {"commandId": cid, "outcome": "failed", "reason": "unhealthy"}, "rolled back: installed unchanged, failed/unhealthy recorded: %r" % state)
+    check(m.current_target(ctx) == "A" and active["slot"] == "A" and m.HOME_UNIT in active["running"] and not os.path.exists(m.inhibit_path(ctx)), "current back on A, the home up on A, inhibit lifted")
+    check([l[2] for l in launches(active, 0)] == ["B", "A"], "exactly one counted start of the candidate and one of the restored slot: %r" % active["launches"])
+    renames = [e for e in trace.log if e[0] == "rename"]
+    stops = [i for i, e in enumerate(trace.log) if e[0] == "write" and e[2] == "rollback"]
+    check([r[1] for r in renames] == ["B", "A"], "the link moved to B and back to A: %r" % renames)
+    check(trace.log.index(("rename", "A")) > stops[0], "the flip back happens only after phase := rollback was written")
+    check(slot_file(ctx, "B").endswith("f" * 40) and slot_sealed(ctx, "B"), "the failed candidate stays in its slot (wiped by the next install), sealed")
+    active["bad_slot"] = None
+    # The unit is active but the app never answers: not committed, rolled back.
+    channel.clear(); channel.update(make_release(root, "1" * 40, 12, signer))
+    active["unhealthy_slot"] = "B"
+    update_command(cp)
+    check(m.poll_once(ctx) == [("update_software", "failed")], "premature liveness is not health: failed")
+    check(m.read_update_state(ctx)["installed"]["slot"] == "A" and m.current_target(ctx) == "A" and active["slot"] == "A", "rolled back after the bounded app-health check")
+    active["unhealthy_slot"] = None
+    results["update"] = {"launches": active["launches"][-4:]}
+
+
+def update_cuts(root):
+    """T-I5 / T-H2b / T-S2: power lost at each step of the machine. The installed slot's bytes never change until a later install; the boot
+    after the cut runs no unverified slot code without a grant; start-up re-drives the same state machine to done or failed."""
+    expected = {"installing": ("failed", "A", "install_interrupted", 0), "installed": ("done", "B", None, 79), "flip": ("done", "B", None, 79),
+                "verify": ("done", "B", None, 79), "granted": ("done", "B", None, 79)}
+    for cut, (outcome, slot, reason, boot_code) in expected.items():
+        ctx, cp, calls, active = setup(os.path.join(root, cut))
+        paths = ctx["paths"]
+        channel = served(ctx, root, paths["releases"])
+        channel.update(make_release(root, "b" * 40, 2, active["signer"]))
+        digest_a = tree_digest(os.path.join(paths["releases"], "A"))
+        real_write, real_wait = m.write_update_state, m.wait_healthy
+        def cutting_write(ctx_, state):
+            real_write(ctx_, state)
+            if state["inflight"] and state["inflight"]["phase"] == cut:
+                raise PowerLoss()
+        def cutting_wait(ctx_, *a, **kw):
+            raise PowerLoss()
+        if cut == "granted":
+            m.wait_healthy = cutting_wait
+        else:
+            m.write_update_state = cutting_write
+        cid = update_command(cp)
+        try:
+            m.poll_once(ctx)
+            check(False, cut + ": the power loss stopped the runner")
+        except PowerLoss:
+            pass
+        finally:
+            m.write_update_state, m.wait_healthy = real_write, real_wait
+        check(tree_digest(os.path.join(paths["releases"], "A")) == digest_a, cut + ": the installed slot's bytes are unchanged")
+        check(m.journal_read(ctx, cid)["state"] == "running" and cp.of("commands/ack") == [], cut + ": the command stays running, nothing acked")
+        # The machine reboots: systemd's start of the home and the recovery timer's.
+        active["running"] = set(); active["launches"].clear()
+        ctx["systemctl"]("start", m.HOME_UNIT); ctx["systemctl"]("start", m.HOME_UNIT)
+        codes = {l[0] for l in active["launches"]}
+        check(codes == {boot_code}, cut + ": boot starts answered %r (expected %d)" % (active["launches"], boot_code))
+        if boot_code == 0:
+            check(all(l[2] == "A" for l in active["launches"]), cut + ": a start during installing runs the untouched live slot")
+        else:
+            reasons = {l[1] for l in active["launches"]}
+            check(reasons <= {"gate_phase", "gate_denied"}, cut + ": refused by the gate, never as a layout mismatch: %r" % reasons)
+        # The health wait sleeps 3 s between probes; only the poll loop's sleep ends the run.
+        ctx["sleep"] = lambda seconds: (_ for _ in ()).throw(KeyboardInterrupt()) if seconds == m.POLL_SECONDS else None
+        try:
+            m.run(ctx, monotonic=lambda: 0)
+        except KeyboardInterrupt:
+            pass
+        state = m.read_update_state(ctx)
+        check(state["inflight"] is None and state["installed"]["slot"] == slot and state["lastResult"]["commandId"] == cid
+              and state["lastResult"]["outcome"] == outcome and state["lastResult"]["reason"] == reason, cut + ": re-driven to %s: %r" % (outcome, state))
+        check([a["outcome"] for a in cp.of("commands/ack") if a["commandId"] == cid] == [outcome], cut + ": the interrupted command is reported once")
+        check(m.current_target(ctx) == slot and active["slot"] == slot and m.HOME_UNIT in active["running"] and not os.path.exists(m.inhibit_path(ctx)),
+              cut + ": the home runs the installed slot, inhibit lifted")
+        check(tree_digest(os.path.join(paths["releases"], "A")) == digest_a, cut + ": the previously installed slot's bytes are still unchanged")
+        results.setdefault("cuts", []).append(cut)
+
+
+def update_phases(root):
+    """T-I1, T-I2a, T-S1, T-I4 (A1): the journal alone decides; every blocked kind is refused in every phase; a layout the phase does not
+    allow, or a journal that cannot be read, is Stuck (with the explicit stop) for the updater and 79 for the launcher."""
+    ctx, cp, calls, active = setup(root)
+    paths = ctx["paths"]
+    ctx["run"] = lambda argv, **kw: (0, b"") if argv[0] == "journalctl" else m.run_process(argv, **kw)
+    # T-I1: an in-flight record with no per-command journal is owed; a running journal with nothing in flight answers from lastResult.
+    cid = str(uuid.uuid4())
+    write_state(ctx, inflight=inflight_record(phase="installing", cid=cid))
+    check(m.recovery_pending(ctx), "inflight present, no command journal: pending")
+    write_state(ctx, last={"commandId": cid, "outcome": "done", "reason": None})
+    check(not m.recovery_pending(ctx), "nothing in flight, layout sane: not pending")
+    record = {"kind": "update_software", "state": "running"}
+    check(m.recover(ctx, record, None, cid) == "done" and m.recover(ctx, record, None, cid) == "done", "the recorded outcome, idempotently")
+    check(m.recover(ctx, record, None, str(uuid.uuid4())) == "failed", "another command's interrupted update is not mistaken for this one")
+    # T-I2a: in each of the five phases, every blocked kind is refused and acked failed; collect_logs runs.
+    stage_candidate(ctx, active)
+    layouts = {"installing": "A", "installed": "A", "flip": "B", "verify": "B", "rollback": "A"}
+    for phase, current in layouts.items():
+        write_state(ctx, inflight=inflight_record(phase=phase, restored=(phase == "rollback")))
+        set_current(ctx, current)
+        calls.clear()
+        ids = {kind: cp.add(kind, CONTRACT["commands"][kind]) for kind in m.BLOCKED_BY_RECOVERY}
+        ids["collect_logs"] = cp.add("collect_logs", {"maxLines": 10, "redact": True, "chatContent": False})
+        outcomes = dict(m.poll_once(ctx))
+        check(all(outcomes[k] == "failed" for k in m.BLOCKED_BY_RECOVERY) and outcomes["collect_logs"] == "done", phase + ": blocked kinds refused, logs run: %r" % outcomes)
+        acks = {a["commandId"]: a["outcome"] for a in cp.of("commands/ack")}
+        check(all(acks.get(ids[k]) == "failed" for k in m.BLOCKED_BY_RECOVERY), phase + ": each blocked command acked failed")
+        check(not any(c[0] in ("start", "restart") for c in calls), phase + ": nothing started by a blocked command")
+        cp.requests.clear()
+    # T-S1: `current -> B` with `installed.slot == A` and nothing in flight (or a pre-flip phase) is a mismatch: Stuck, the home stopped.
+    for phase in (None, "installing", "installed"):
+        write_state(ctx, inflight=inflight_record(phase=phase) if phase else None)
+        set_current(ctx, "B")
+        active["running"] = {m.HOME_UNIT}
+        calls.clear(); active["launches"].clear()
+        check(m.recovery_pending(ctx), "%s: current -> B while installed is A: pending" % phase)
+        for kind in m.BLOCKED_BY_RECOVERY:
+            cp.add(kind, CONTRACT["commands"][kind])
+        check(all(o == "failed" for _k, o in m.poll_once(ctx)), "%s: every blocked kind refused" % phase)
+        try:
+            m.drive_update(ctx)
+            check(False, "%s: drive_update raised" % phase)
+        except m.Stuck as stuck:
+            check(stuck.code == "home_layout_mismatch", "%s: Stuck(home_layout_mismatch), got %s" % (phase, stuck.code))
+        check(STOP in calls and m.HOME_UNIT not in active["running"], "%s: the updater issued the explicit stop and the unit is inactive: %r" % (phase, calls))
+        check(not any(c == START for c in calls), "%s: no start" % phase)
+        ctx["systemctl"]("start", m.HOME_UNIT)
+        check(active["launches"][-1][:2] == (79, "home_layout_mismatch") and m.HOME_UNIT not in active["running"], "%s: the launcher refuses 79 home_layout_mismatch: %r" % (phase, active["launches"][-1]))
+    set_current(ctx, "A")
+    write_state(ctx)
+    active["running"] = {m.HOME_UNIT}
+    check(not m.recovery_pending(ctx), "layout restored: not pending")
+    # T-I4: every unreadable or implausible journal is owed: refused, Stuck, the launcher 79; no start, no rename of `current`.
+    good = json.dumps({"format": m.UPDATE_STATE_FORMAT, "installed": {"slot": "A", "sequence": 1, "revision": IMAGE_REVISION}, "inflight": None, "lastResult": None}).encode()
+    shapes = {"missing": None, "empty": b"", "non-json": b"{", "wrong-format": good.replace(b"-v3", b"-v2"),
+              "unknown-phase": json.dumps({"format": m.UPDATE_STATE_FORMAT, "installed": {"slot": "A", "sequence": 1, "revision": IMAGE_REVISION},
+                                           "inflight": dict(inflight_record(), phase="committed"), "lastResult": None}).encode(),
+              "candidate-is-installed": json.dumps({"format": m.UPDATE_STATE_FORMAT, "installed": {"slot": "A", "sequence": 1, "revision": IMAGE_REVISION},
+                                                    "inflight": inflight_record(slot="A", phase="verify"), "lastResult": None}).encode()}
+    for name, data in shapes.items():
+        raw_state(ctx, data)
+        calls.clear(); active["launches"].clear(); active["running"] = {m.HOME_UNIT}
+        check(m.recovery_pending(ctx), name + ": pending")
+        update_command(cp)
+        check(m.poll_once(ctx) == [("update_software", "failed")], name + ": update refused")
+        try:
+            m.drive_update(ctx)
+            check(False, name + ": drive raised")
+        except m.Stuck as stuck:
+            check(stuck.code in ("update_state_invalid", "home_layout_mismatch"), name + ": Stuck %s" % stuck.code)
+        check(STOP in calls and START not in calls and m.current_target(ctx) == "A", name + ": stopped, nothing started, the link untouched")
+        ctx["systemctl"]("start", m.HOME_UNIT)
+        check(active["launches"][-1][0] == 79 and active["launches"][-1][1] == "home_layout_mismatch", name + ": launcher 79 home_layout_mismatch: %r" % (active["launches"][-1],))
+    raw_state(ctx, good)
+    for name, link in (("dangling", "C"), ("outside", "/opt/evil")):
+        set_current(ctx, link)
+        calls.clear(); active["launches"].clear(); active["running"] = {m.HOME_UNIT}
+        check(m.recovery_pending(ctx), name + ": pending")
+        try:
+            m.drive_update(ctx)
+            check(False, name + ": drive raised")
+        except m.Stuck as stuck:
+            check(stuck.code == "home_layout_mismatch", name + ": Stuck home_layout_mismatch")
+        check(STOP in calls and START not in calls, name + ": stopped, nothing started")
+        ctx["systemctl"]("start", m.HOME_UNIT)
+        check(active["launches"][-1][:2] == (79, "home_layout_mismatch"), name + ": launcher 79: %r" % (active["launches"][-1],))
+    set_current(ctx, "A")
+    swaps = os.path.join(paths["state"], "swaps")
+    os.makedirs(swaps, exist_ok=True)
+    with open(os.path.join(swaps, "x"), "w") as handle:
+        handle.write("not json")
+    check(m.recovery_pending(ctx), "an unreadable swap record is pending (the existing branch is kept)")
+    os.unlink(os.path.join(swaps, "x"))
+    check(not m.recovery_pending(ctx), "clean again")
+
+
+def update_pending(root):
+    """T-H2a, T-H2b, Q3: an update whose candidate dies and whose restored release never answers stays pending (never acked), is re-driven
+    every loop and at start, and after three counted rollback starts is Stuck: still blocking, the fixed reason surfaced, the home stopped,
+    no auto-clear even when the restored release would answer again."""
+    ctx, cp, calls, active = setup(root)
+    paths = ctx["paths"]
+    channel = served(ctx, root, paths["releases"])
+    channel.update(make_release(root, "b" * 40, 2, active["signer"]))
+    active["bad_slot"], active["unhealthy_slot"] = "B", "A"
+    drives = []
+    real_drive = m.drive_update
+    m.drive_update = lambda ctx_, release=None: (drives.append(1), real_drive(ctx_, release))[1]
+    try:
+        cid = update_command(cp)
+        check(m.poll_once(ctx) == [("update_software", "pending")], "candidate dead, restored release unhealthy: pending")
+        check(cp.of("commands/ack") == [] and m.journal_read(ctx, cid)["state"] == "running", "nothing acked, the command stays running")
+        state = m.read_update_state(ctx)
+        check(state["inflight"]["phase"] == "rollback" and state["inflight"]["restored"] and state["inflight"]["rollbackAttempts"] == 1
+              and state["installed"]["slot"] == "A" and m.current_target(ctx) == "A", "rolled back to A, one counted start: %r" % state["inflight"])
+        check(m.HOME_UNIT not in active["running"] and os.path.exists(m.inhibit_path(ctx)), "the unanswering restored release is taken down; the inhibit stays")
+        for attempt in (2, 3):
+            drives.clear(); calls.clear()
+            stderr_of(lambda: (m.drive_pending_update(ctx), m.recover_interrupted(ctx)))  # one poll loop's recovery steps
+            check(len(drives) >= 1, "re-driven on the next loop (%d)" % attempt)
+            state = m.read_update_state(ctx)
+            check(state["inflight"]["rollbackAttempts"] == attempt, "attempt %d counted before its start: %r" % (attempt, state["inflight"]))
+            check(STOP in calls, "attempt %d: the unanswering release is stopped again" % attempt)
+        calls.clear()
+        _, err = stderr_of(lambda: (m.drive_pending_update(ctx), m.recover_interrupted(ctx)))
+        check("Self-service update stuck: rollback_unhealthy" in err, "three unhealthy rollback starts: Stuck, the fixed reason surfaced: %r" % err)
+        state = m.read_update_state(ctx)
+        check(state["inflight"]["rollbackAttempts"] == 3 and state["inflight"]["phase"] == "rollback", "nothing cleared: %r" % state["inflight"])
+        check(STOP in calls and START not in calls and m.HOME_UNIT not in active["running"], "Stuck stops the home and starts nothing")
+        check(cp.of("commands/ack") == [], "still not acked")
+        # Q3: Stuck keeps blocking and keeps surfacing, with no auto-clear, even once the restored release would answer.
+        active["unhealthy_slot"] = None
+        for _ in range(2):
+            calls.clear()
+            _, err = stderr_of(lambda: (m.drive_pending_update(ctx), m.recover_interrupted(ctx)))
+            check("rollback_unhealthy" in err and STOP in calls and START not in calls, "Stuck repeats on every poll: blocking, stopping, surfacing")
+        for kind in m.BLOCKED_BY_RECOVERY:
+            cp.add(kind, CONTRACT["commands"][kind])
+        outcomes = dict(m.poll_once(ctx))
+        check(all(o == "failed" for k, o in outcomes.items() if k != "update_software") and outcomes.get("update_software") in ("failed", "pending"), "every blocked kind refused while Stuck: %r" % outcomes)
+        check(m.read_update_state(ctx)["inflight"]["phase"] == "rollback", "still Stuck in rollback")
+        # T-H2b: run() start-up drives first, and re-drives every loop.
+        drives.clear()
+        ctx["sleep"] = lambda _s: (_ for _ in ()).throw(KeyboardInterrupt())
+        try:
+            m.run(ctx, monotonic=lambda: 0)
+        except KeyboardInterrupt:
+            pass
+        check(len(drives) >= 2, "run(): driven at start-up and again in the loop: %d" % len(drives))
+    finally:
+        m.drive_update = real_drive
+
+
+def gate(root):
+    """T-G1, T-G2, T-G4: the start gate. No journal field produces a start; one counter write, one grant, one start; every ungranted start
+    (boot, Restart=) exits 79 gate_denied; the launcher's decision table, cell by cell, under every `current` its phase allows."""
+    ctx, cp, calls, active = setup(root)
+    paths = ctx["paths"]
+    lpaths = launcher_paths(paths)
+    gate_sock = lpaths["gate"]
+    def ask(slot, peer=None):
+        try:
+            launch.ask_gate(gate_sock, slot, peer or (lambda pid, uid: dict(active["client_peer"])))
+            return "grant"
+        except launch.Refused as refused:
+            return refused.reason
+    # T-G1
+    check(ask("B") == "gate_denied", "no drive in verify: deny")
+    ctx["gate"]["grant"] = {"driveId": "x", "slot": "B"}
+    active["server_peer"] = {"uid": 1000, "cgroup": m.HOME_CGROUP, "exe": "/usr/bin/python3"}
+    check(ask("B") == "gate_denied" and ctx["gate"]["grant"] is not None, "a peer that is not uid 0: deny, the grant kept")
+    active["server_peer"] = {"uid": 0, "cgroup": "0::/system.slice/evil.service", "exe": "/usr/bin/python3"}
+    check(ask("B") == "gate_denied" and ctx["gate"]["grant"] is not None, "a peer outside murage-home.service's cgroup: deny")
+    active["server_peer"] = {"uid": 0, "cgroup": m.HOME_CGROUP, "exe": "/usr/bin/node"}
+    check(ask("B") == "gate_denied" and ctx["gate"]["grant"] is not None, "a peer that is not the image's python3: deny")
+    active["server_peer"] = {"uid": 0, "cgroup": m.HOME_CGROUP, "exe": "/usr/bin/python3"}
+    check(ask("A") == "gate_denied" and ctx["gate"]["grant"] is not None, "the wrong slot: deny, the grant kept")
+    check(ask("B") == "grant" and ctx["gate"]["grant"] is None, "the correct peer and slot: exactly one grant, consumed")
+    check(ask("B") == "gate_denied", "the second request: deny")
+    ctx["gate"]["grant"] = {"driveId": "x", "slot": "B"}
+    active["client_peer"] = {"uid": 0, "cgroup": "0::/system.slice/evil.service"}
+    check(ask("B") == "gate_denied" and ctx["gate"]["grant"] is not None, "the client refuses a gate that is not murage-commands.service (checked both ways)")
+    active["client_peer"] = {"uid": 0, "cgroup": launch.COMMANDS_CGROUP}
+    ctx["gate"]["grant"] = None
+    # Forged inflight.commandId (a pending reset's id): no grant and no start.
+    stage_candidate(ctx, active)
+    reset_cid = str(uuid.uuid4())
+    m.journal_claim(ctx, reset_cid, {"kind": "reset_from_backup", "state": "running", "startedAt": NOW, "acked": False, "deadline": DEADLINE, "resetId": str(uuid.uuid4())})
+    write_state(ctx, inflight=inflight_record(phase="verify", cid=reset_cid))
+    set_current(ctx, "B")
+    m.inhibit_starts(ctx)
+    calls.clear(); active["launches"].clear(); active["running"] = set()
+    check(m.start_home(ctx) == 0 and START not in calls, "a forged commandId produces no start from start_home (count of systemctl start: 0)")
+    ctx["systemctl"]("start", m.HOME_UNIT)
+    check(active["launches"][-1][:2] == (79, "gate_denied") and m.HOME_UNIT not in active["running"], "the launcher asks the gate and is denied: %r" % (active["launches"][-1],))
+    os.unlink(m.journal_file(ctx, reset_cid))
+    # T-G2 (A1): post-flip layout, boot during verify, then systemd restarts: the counter bounds every start of slot code.
+    cid = str(uuid.uuid4())
+    write_state(ctx, inflight=inflight_record(phase="verify", cid=cid, verify_attempts=0))
+    m.journal_claim(ctx, cid, {"kind": "update_software", "state": "running", "startedAt": NOW, "acked": False, "deadline": DEADLINE})
+    active["bad_slot"] = "B"
+    active["running"] = set(); active["launches"].clear(); calls.clear(); active["probes"] = 0
+    for _ in range(3):
+        ctx["systemctl"]("start", m.HOME_UNIT)
+    check([l[:2] for l in active["launches"]] == [(79, "gate_denied")] * 3, "boot and restarts without a grant: 79 gate_denied each, never a layout mismatch: %r" % active["launches"])
+    # The updater drives: counter, grant, start; the candidate dies; the updater crashes after granting (power loss during wait_healthy).
+    real_wait = m.wait_healthy
+    m.wait_healthy = lambda ctx_, *a, **kw: (_ for _ in ()).throw(PowerLoss())
+    try:
+        m.drive_update(ctx)
+        check(False, "power loss")
     except PowerLoss:
         pass
     finally:
-        m.os.rename = real_rename
-    check(not os.path.exists(opt) and os.path.isdir(opt + ".prev"), "interrupted mid-swap: /opt/murage absent")
-    # The machine reboots here: systemd starts the home at boot, but the start inhibition holds it until the runner has recovered.
+        m.wait_healthy = real_wait
+    state = m.read_update_state(ctx)
+    check(state["inflight"]["verifyAttempts"] == 1 and [l[2] for l in launches(active, 0)] == ["B"] and active["probes"] == 0, "one counted, granted start of B: %r" % state["inflight"])
     active["running"] = set()
+    for _ in range(2):
+        ctx["systemctl"]("start", m.HOME_UNIT)
+    check([l[:2] for l in active["launches"][-2:]] == [(79, "gate_denied")] * 2, "restarts after the crash: denied (the grant was consumed)")
+    trace = Trace(ctx, calls)
+    try:
+        check(m.drive_update(ctx) == "failed", "second counted start, unhealthy, rollback, the restored slot answers: failed")
+    finally:
+        trace.close()
+    state = m.read_update_state(ctx)
+    verify_writes = [e for e in trace.log if e[0] == "write" and e[2] == "verify"]
+    check(len(verify_writes) == 1 and state["inflight"] is None and state["lastResult"]["reason"] == "unhealthy" and state["installed"]["slot"] == "A",
+          "verifyAttempts 1 -> 2 (one counter write), then rollback to A: %r %r" % (state, verify_writes))
+    check([l[2] for l in launches(active, 0)] == ["B", "B", "A"], "total starts of slot code == the counters (2 of B, then the rollback's 1 of A): %r" % launches(active, 0))
+    check(active["probes"] > 0, "the candidate was probed (app health) under its grant")
+    rollback_write = [i for i, e in enumerate(trace.log) if e[0] == "write" and e[2] == "rollback"][0]
+    stop_after = [i for i, e in enumerate(trace.log) if e[:3] == ("systemctl", "stop", m.HOME_UNIT) and i > rollback_write]
+    rename_index = trace.log.index(("rename", "A"))
+    check(stop_after and stop_after[0] < rename_index, "phase := rollback written, the stop issued, then the rename of `current` back: %r" % trace.log)
+    check(STOP in calls and calls.index(STOP) < len(calls) - 1 - calls[::-1].index(START), "systemctl stop logged before the restored slot's start")
+    active["bad_slot"] = None
+    # T-G4: the decision table, every `current` its phase allows, the reason token, and two seal walks in a transition cell.
+    write_state(ctx)
+    set_current(ctx, "A")
+    walks = []
+    real_walk = launch.seal_walk_digest
+    launch.seal_walk_digest = lambda fd, sealed: (walks.append(sealed), real_walk(fd, sealed))[1]
+    asked = []
+    real_ask = launch.ask_gate
+    launch.ask_gate = lambda sock, slot, peer=None: (asked.append(slot), real_ask(sock, slot, peer))[1]
+    try:
+        def cell(phase, inhibit, current, grant=None, restored=False):
+            if phase is None:
+                write_state(ctx)
+            else:
+                write_state(ctx, inflight=inflight_record(phase=phase, restored=restored))
+            set_current(ctx, current)
+            if inhibit:
+                m.inhibit_starts(ctx)
+            else:
+                try:
+                    os.unlink(m.inhibit_path(ctx))
+                except FileNotFoundError:
+                    pass
+            ctx["gate"]["grant"] = {"driveId": "x", "slot": grant} if grant else None
+            walks.clear(); asked.clear(); active["launches"].clear(); active["running"] = set()
+            ctx["systemctl"]("start", m.HOME_UNIT)
+            code, reason, slot = active["launches"][-1]
+            return code, reason, len(walks), len(asked), slot
+        table = [
+            ((None, False, "A"), (0, None, 1, 0, "A")),
+            ((None, True, "A"), (79, "gate_phase", 1, 0, None)),
+            (("installing", False, "A"), (0, None, 1, 0, "A")),
+            (("installing", True, "A"), (79, "gate_phase", 1, 0, None)),
+            (("installed", False, "A"), (79, "gate_phase", 1, 0, None)),
+            (("installed", True, "A"), (79, "gate_phase", 1, 0, None)),
+            (("flip", True, "A"), (79, "gate_phase", 2, 0, None)),
+            (("flip", True, "B"), (79, "gate_phase", 2, 0, None)),
+            (("verify", True, "B"), (79, "gate_denied", 2, 1, None)),
+            (("verify", False, "B"), (79, "gate_denied", 2, 1, None)),
+            (("verify", True, "A"), (79, "home_layout_mismatch", 0, 0, None)),  # outside the phase's set: refused before any walk
+            (("rollback", True, "A"), (79, "gate_phase", 2, 0, None)),
+            (("rollback", True, "B"), (79, "gate_phase", 2, 0, None)),
+        ]
+        for (phase, inhibit, current), want in table:
+            got = cell(phase, inhibit, current)
+            check(got == want, "cell %r: got %r, want %r" % ((phase, inhibit, current), got, want))
+        check(cell("verify", True, "B", grant="B") == (0, None, 2, 1, "B"), "verify with a live grant for the candidate: start")
+        check(cell("verify", True, "B", grant="A") == (79, "gate_denied", 2, 1, None), "verify with a grant for the other slot: denied")
+        check(cell("rollback", True, "A", grant="A", restored=True) == (0, None, 2, 1, "A"), "rollback(restored) with a grant for the restored slot: start")
+        check(cell("rollback", True, "A", restored=True) == (79, "gate_denied", 2, 1, None), "rollback(restored) without a grant: denied")
+        check(cell("rollback", True, "B", restored=True) == (79, "home_layout_mismatch", 0, 0, None), "rollback(restored) with current still on the candidate: mismatch before any walk")
+    finally:
+        launch.seal_walk_digest, launch.ask_gate = real_walk, real_ask
+    write_state(ctx); set_current(ctx, "A"); ctx["gate"]["grant"] = None
+    try:
+        os.unlink(m.inhibit_path(ctx))
+    except FileNotFoundError:
+        pass
+
+
+def transition(root):
+    """T-S2, T-S3, T-W1, T-G5 (A1): a boot inside the flip -> verify -> rollback span reaches the counted verify (never a false Stuck);
+    genuine corruption inside the span is still Stuck with the explicit stop and no start, rename or grant; the stop precedes every flip
+    back and repeats on resume; an idle home is never touched by an updater restart."""
+    # T-S2: boot during verify, post-flip.
+    ctx, cp, calls, active = setup(os.path.join(root, "verify"))
+    stage_candidate(ctx, active)
+    cid = str(uuid.uuid4())
+    write_state(ctx, inflight=inflight_record(phase="verify", cid=cid))
+    set_current(ctx, "B")
+    m.inhibit_starts(ctx)
+    m.journal_claim(ctx, cid, {"kind": "update_software", "state": "running", "startedAt": NOW, "acked": False, "deadline": DEADLINE})
+    active["running"] = set(); active["launches"].clear(); calls.clear(); active["probes"] = 0
+    walks = []
+    real_walk = launch.seal_walk_digest
+    launch.seal_walk_digest = lambda fd, sealed: (walks.append(1), real_walk(fd, sealed))[1]
+    try:
+        ctx["systemctl"]("start", m.HOME_UNIT)
+    finally:
+        launch.seal_walk_digest = real_walk
+    check(active["launches"][-1][:2] == (79, "gate_denied") and len(walks) == 2, "boot in verify: both slots walked, the gate contacted, 79 gate_denied: %r" % active["launches"])
+    trace = Trace(ctx, calls)
+    try:
+        check(m.drive_update(ctx) == "done", "the updater reaches its verify handler: no Stuck")
+    finally:
+        trace.close()
+    state = m.read_update_state(ctx)
+    check(state["installed"] == {"slot": "B", "sequence": 2, "revision": "b" * 40} and state["inflight"] is None and state["lastResult"]["commandId"] == cid, "committed: %r" % state)
+    check([l[2] for l in launches(active, 0)] == ["B"] and active["probes"] > 0, "verifyAttempts 0 -> 1, a grant for B, the candidate started and probed")
+    commit = [i for i, e in enumerate(trace.log) if e[0] == "write" and e[2] is None][0]
+    check(trace.log[commit][4] is True and trace.log.index(("lift", True)) > commit, "the inhibit is lifted only after the commit write")
+    check(not os.path.exists(m.inhibit_path(ctx)) and m.HOME_UNIT in active["running"], "home up on B, inhibit lifted")
+    # Variant flip: the rename has not landed (current -> A) when the updater restarts.
+    ctx, cp, calls, active = setup(os.path.join(root, "flip"))
+    stage_candidate(ctx, active)
+    write_state(ctx, inflight=inflight_record(phase="flip"))
+    m.inhibit_starts(ctx)
+    active["running"] = set(); active["launches"].clear()
     ctx["systemctl"]("start", m.HOME_UNIT)
-    check(m.HOME_UNIT not in active["running"], "a boot does not start the home over an interrupted code swap")
-    check(m.journal_read(ctx, cid)["state"] == "running", "the command was interrupted while running")
-    cp.pending = []
+    check(active["launches"][-1][:2] == (79, "gate_phase"), "boot in flip: 79 gate_phase")
+    check(m.drive_update(ctx) == "done" and m.current_target(ctx) == "B" and m.read_update_state(ctx)["installed"]["slot"] == "B", "flip completes the rename, then verify, then commit")
+    # Variant unhealthy: the candidate dies; rollback with the stop logged before the flip back; a counted start of A.
+    ctx, cp, calls, active = setup(os.path.join(root, "unhealthy"))
+    stage_candidate(ctx, active)
+    write_state(ctx, inflight=inflight_record(phase="verify"))
+    set_current(ctx, "B")
+    m.inhibit_starts(ctx)
+    active["bad_slot"] = "B"; active["running"] = set(); active["launches"].clear(); calls.clear()
+    trace = Trace(ctx, calls)
+    try:
+        check(m.drive_update(ctx) == "failed", "unhealthy candidate: rolled back, failed")
+    finally:
+        trace.close()
+    state = m.read_update_state(ctx)
+    check(state["installed"]["slot"] == "A" and state["inflight"] is None and state["lastResult"]["reason"] == "unhealthy" and m.current_target(ctx) == "A", "back on A: %r" % state)
+    check([l[2] for l in launches(active, 0)] == ["B", "A"], "one counted start of B, one of A")
+    rollback_write = [i for i, e in enumerate(trace.log) if e[0] == "write" and e[2] == "rollback"][0]
+    check(rollback_write < trace.log.index(("rename", "A")) and STOP in calls, "phase := rollback and the stop precede the flip back")
+    # T-S3: six corruption shapes inside verify, each Stuck with the stop, no start, no rename, no grant.
+    def corrupt(name, prepare, want):
+        ctx, cp, calls, active = setup(os.path.join(root, "corrupt-" + name))
+        stage_candidate(ctx, active)
+        write_state(ctx, inflight=inflight_record(phase="verify"))
+        set_current(ctx, "B")
+        m.inhibit_starts(ctx)
+        prepare(ctx, active)
+        link_before = os.readlink(os.path.join(ctx["paths"]["releases"], "current")) if os.path.lexists(os.path.join(ctx["paths"]["releases"], "current")) else None
+        active["running"] = set(); active["launches"].clear(); calls.clear()
+        ctx["systemctl"]("start", m.HOME_UNIT)
+        check(active["launches"][-1][:2] == (79, want), name + ": launcher 79 %s: %r" % (want, active["launches"][-1]))
+        active["running"] = {m.HOME_UNIT}; calls.clear()  # the home happens to be up when the updater drives
+        try:
+            m.drive_update(ctx)
+            check(False, name + ": drive raised")
+        except m.Stuck as stuck:
+            check(stuck.code in (want, "update_state_invalid"), name + ": Stuck %s" % stuck.code)
+        check(STOP in calls and START not in calls, name + ": the explicit stop, no start")
+        check((os.readlink(os.path.join(ctx["paths"]["releases"], "current")) if link_before else None) == link_before, name + ": no rename of current")
+        check(ctx["gate"]["grant"] is None, name + ": no grant issued")
+    def a(ctx, active):
+        write_state(ctx, inflight=inflight_record(slot="A", phase="verify"))
+    def b(ctx, active):
+        set_current(ctx, "A")
+    def c(ctx, active):
+        sig = os.path.join(ctx["paths"]["update_state"], "manifests", "B.sig")
+        thaw(os.path.dirname(sig)); thaw(sig)
+        with open(sig, "r+b") as handle:
+            handle.seek(0); handle.write(bytes([handle.read(1)[0] ^ 0xFF]))
+        IMMUTABLE.freeze(sig); IMMUTABLE.freeze(os.path.dirname(sig))
+    def d(ctx, active):
+        thaw(os.path.join(ctx["paths"]["releases"], "A", "dist-server", "index.js"))
+    def e(ctx, active):
+        write_state(ctx, installed={"slot": "A", "sequence": 5, "revision": IMAGE_REVISION}, inflight=inflight_record(phase="verify", sequence=6))
+    def f(ctx, active):
+        set_current(ctx, "C")
+    corrupt("candidate-is-installed", a, "home_layout_mismatch")
+    corrupt("current-not-candidate", b, "home_layout_mismatch")
+    corrupt("candidate-signature", c, "home_layout_mismatch")
+    corrupt("committed-not-sealed", d, "slot_seal_failed")
+    corrupt("installed-sequence", e, "home_layout_mismatch")
+    corrupt("dangling", f, "home_layout_mismatch")
+    # T-W1: the explicit stop at rollback entry, on resume, and at rollbackAttempts == 3; T-G5: an idle home is left alone.
+    ctx, cp, calls, active = setup(os.path.join(root, "w1"))
+    stage_candidate(ctx, active)
+    write_state(ctx, inflight=inflight_record(phase="rollback", restored=False, reason="unhealthy"))
+    set_current(ctx, "B")
+    m.inhibit_starts(ctx)
+    active["running"] = {m.HOME_UNIT}; calls.clear(); active["launches"].clear()
+    trace = Trace(ctx, calls)
+    try:
+        check(m.drive_update(ctx) == "failed", "resume at rollback(restored=false): completes")
+    finally:
+        trace.close()
+    check(calls[0] == STOP and trace.log.index(("systemctl", "stop", "murage-home.service")) < trace.log.index(("rename", "A")) if ("systemctl", "stop", "murage-home.service") in trace.log else calls[0] == STOP,
+          "the stop is the first thing on resume, before the flip back: %r" % calls[:3])
+    check(m.current_target(ctx) == "A" and m.read_update_state(ctx)["inflight"] is None and active["slot"] == "A", "flipped back and the restored slot started")
+    # rollbackAttempts == 3 and unhealthy: Stuck, the stop logged.
+    write_state(ctx, inflight=inflight_record(phase="rollback", restored=True, rollback_attempts=3, reason="unhealthy"))
+    m.inhibit_starts(ctx)
+    active["running"] = set(); calls.clear()
+    try:
+        m.drive_update(ctx)
+        check(False, "Stuck expected")
+    except m.Stuck as stuck:
+        check(stuck.code == "rollback_unhealthy" and STOP in calls and START not in calls, "rollbackAttempts == 3: Stuck(rollback_unhealthy) with the stop")
+    # T-G5: an updater restart with an idle home: no stop, no restart of the home.
+    write_state(ctx)
+    os.unlink(m.inhibit_path(ctx))
+    active["running"] = {m.HOME_UNIT}; calls.clear()
     ctx["sleep"] = lambda _s: (_ for _ in ()).throw(KeyboardInterrupt())
     try:
         m.run(ctx, monotonic=lambda: 0)
     except KeyboardInterrupt:
         pass
-    ctx["sleep"] = lambda _s: None
-    with open(opt + "/dist-server/cloud-home-supervisor.js") as handle:
-        check(handle.read().endswith("a" * 40), "previous release back in place at start")
-    check(not os.path.exists(opt + ".next") and not os.path.exists(m.update_journal_file(ctx)), "staging and journal cleared")
-    check(m.journal_read(ctx, cid)["outcome"] == "failed", "the interrupted update is reported failed")
-    # Interrupted after commit, before release.json: finished at start.
-    m.update_journal(ctx, {"phase": "committed", "sequence": 14, "revision": "2" * 40})
-    check(m.recover_update(ctx) == "done", "a committed update is finished")
-    with open(os.path.join(ctx["paths"]["state"], "release.json")) as handle:
-        check(json.load(handle) == {"sequence": 14, "revision": "2" * 40}, "release recorded")
+    check(not any(c[0] in ("stop", "start", "restart") for c in calls) and m.HOME_UNIT in active["running"], "idle home, updater restart: never stopped or restarted: %r" % calls)
+    # T-W2 (Grok HIGH, rollback entry): a candidate that will not stop. stop_writers reports a unit still up at rollback entry, so the
+    # flip back is Stuck(rollback_stop) before it runs; `current` is never moved under a running candidate and nothing is granted.
+    ctx, cp, calls, active = setup(os.path.join(root, "rollback-stop"))
+    stage_candidate(ctx, active)
+    write_state(ctx, inflight=inflight_record(phase="rollback", restored=False, reason="unhealthy"))
+    set_current(ctx, "B")
+    m.inhibit_starts(ctx)
+    active["running"] = {m.HOME_UNIT}; active["stuck"] = {m.HOME_UNIT}; calls.clear(); active["launches"].clear()
+    try:
+        m.drive_update(ctx)
+        check(False, "Stuck(rollback_stop) expected")
+    except m.Stuck as stuck:
+        check(stuck.code == "rollback_stop", "a candidate that will not stop: Stuck(rollback_stop): %s" % stuck.code)
+    check(m.current_target(ctx) == "B" and START not in calls and ctx["gate"]["grant"] is None,
+          "no flip back under a running candidate, nothing granted or started")
+    check(m.read_update_state(ctx)["inflight"]["restored"] is False, "restored stays false; the flip never ran")
+    # T-W3 (Grok HIGH, rollback progress): rollbackAttempts and Stuck(rollback_unhealthy) progress even while the home unit stays active.
+    # At rollbackAttempts == ROLLBACK_ATTEMPTS with the home still up and its app not answering, the drive is Stuck(rollback_unhealthy)
+    # and never records the candidate. The pre-fix code gated the counter behind "unit not active" and looped pending forever.
+    ctx, cp, calls, active = setup(os.path.join(root, "rollback-active"))
+    stage_candidate(ctx, active)
+    write_state(ctx, inflight=inflight_record(phase="rollback", restored=True, rollback_attempts=m.ROLLBACK_ATTEMPTS, reason="unhealthy"))
+    set_current(ctx, "A")
+    m.inhibit_starts(ctx)
+    active["running"] = {m.HOME_UNIT}; active["unhealthy_slot"] = "A"; calls.clear(); active["launches"].clear()
+    try:
+        m.drive_update(ctx)
+        check(False, "Stuck(rollback_unhealthy) expected")
+    except m.Stuck as stuck:
+        check(stuck.code == "rollback_unhealthy", "home active at rollbackAttempts == max: Stuck(rollback_unhealthy), not pending: %s" % stuck.code)
+    state = m.read_update_state(ctx)
+    check(state["inflight"] is not None and state["inflight"]["phase"] == "rollback" and state["installed"]["slot"] == "A",
+          "the candidate is never recorded by finish_update; the record stays in rollback")
+    check(STOP in calls and START not in calls, "the home is stopped and nothing is started once Stuck")
+    # T-W5 (Grok HIGH, stale health): the home is up and answering from BEFORE this drive (the candidate kept serving). Health is accepted
+    # only after THIS drive's own stop and grant_and_start of the previous slot, so the stale answer is never taken as the rollback's.
+    ctx, cp, calls, active = setup(os.path.join(root, "rollback-stale-health"))
+    stage_candidate(ctx, active)
+    write_state(ctx, inflight=inflight_record(phase="rollback", restored=True, rollback_attempts=0, reason="unhealthy"))
+    set_current(ctx, "A")
+    m.inhibit_starts(ctx)
+    active["slot"] = "B"; active["running"] = {m.HOME_UNIT}; calls.clear(); active["launches"].clear()
+    outcome = m.drive_update(ctx)
+    check(outcome == "failed", "the rollback completes as failed/unhealthy: %r" % (outcome,))
+    check(STOP in calls and START in calls and calls.index(STOP) < calls.index(START),
+          "the stale-healthy home is stopped first, then the previous slot is started by this drive: %r" % (calls,))
+    check(ctx["gate"]["grant"] is not None or any(l[2] == "A" for l in active["launches"]) or START in calls,
+          "the previous slot was granted and started by this drive")
+    # T-W4 (Grok MEDIUM): abort_install must not swallow an OSError from wipe_slot. A wipe that fails with OSError (a partial or symlink
+    # idle slot) keeps inflight and is Stuck(wipe_target), never cleared, so the slot is retried instead of left behind.
+    ctx, cp, calls, active = setup(os.path.join(root, "wipe-oserror"))
+    stage_candidate(ctx, active)
+    state = write_state(ctx, inflight=inflight_record(phase="installing"))
+    set_current(ctx, "A")
+    real_rmtree = m.shutil.rmtree
+    m.shutil.rmtree = lambda *a, **kw: (_ for _ in ()).throw(OSError("idle slot wipe did not complete"))
+    try:
+        try:
+            m.abort_install(ctx, state, "install_failed")
+            check(False, "Stuck(wipe_target) expected from abort_install")
+        except m.Stuck as stuck:
+            check(stuck.code == "wipe_target", "abort_install surfaces the wipe OSError as Stuck(wipe_target): %s" % stuck.code)
+    finally:
+        m.shutil.rmtree = real_rmtree
+    kept = m.read_update_state(ctx)["inflight"]
+    check(kept is not None and kept["phase"] == "installing", "the record is kept (inflight not cleared) when the wipe did not complete")
+
+
+def trust(root):
+    """T-T1, T-T2, T-T3, T-D1: the trust root is read only from /usr/lib/murage-home/trust and must be intact; the floor is the signed live
+    sequence, never the journal's number; every slot in every gate is signature-gated; the idle-slot wipe re-derives its target."""
+    ctx, cp, calls, active = setup(root)
+    paths = ctx["paths"]
+    fetched = []
+    channel = served(ctx, root, paths["releases"])
+    real_fetch = ctx["fetch"]
+    ctx["fetch"] = lambda url, *a, **kw: (fetched.append(url), real_fetch(url, *a, **kw))[1]
+    channel.update(make_release(root, "b" * 40, 2, active["signer"]))
+    # T-T1: the old /etc/murage-home files are not a trust root.
+    with open(os.path.join(paths["config"], "release.json"), "w") as handle:
+        json.dump({"channelUrl": "https://releases.murage.test/cloud-home"}, handle)
+    shutil.copy(active["signer"].public, os.path.join(paths["config"], "release-public-key.pem"))
+    trust_dir = paths["trust"]
+    held = trust_dir + ".held"
+    IMMUTABLE.thaw_all(trust_dir); thaw(trust_dir)
+    os.rename(trust_dir, held)
+    try:
+        calls.clear()
+        check(m.recovery_pending(ctx), "no trust root: pending")
+        update_command(cp)
+        check(m.poll_once(ctx) == [("update_software", "failed")] and fetched == [], "no trust root: refused, no fetch")
+        try:
+            m.drive_update(ctx)
+            check(False, "Stuck expected")
+        except m.Stuck as stuck:
+            check(stuck.code == "trust_root_invalid", "Stuck(trust_root_invalid), got %s" % stuck.code)
+    finally:
+        os.rename(held, trust_dir)
+    for name, prepare, restore in (("0755", lambda: os.chmod(trust_dir, 0o755), lambda: os.chmod(trust_dir, 0o700)),
+                                   ("no +i", lambda: None, lambda: None)):
+        prepare()
+        try:
+            check(m.recovery_pending(ctx), "trust dir %s: pending" % name)
+            try:
+                m.drive_update(ctx)
+                check(False, "Stuck expected")
+            except m.Stuck as stuck:
+                check(stuck.code == "trust_root_invalid", "trust dir %s: Stuck(trust_root_invalid)" % name)
+        finally:
+            restore()
+    for current, dirs, files in os.walk(trust_dir, topdown=False):
+        for name in files + dirs:
+            IMMUTABLE.freeze(os.path.join(current, name))
+    IMMUTABLE.freeze(trust_dir)
+    check(not m.recovery_pending(ctx) and fetched == [], "trust root back: not pending; nothing was ever fetched while it was invalid")
+    # T-T2: the floor comes from the signed live manifest. Slot A re-signed at sequence 7; the journal forged to 1.
+    thaw(paths["releases"]); IMMUTABLE.thaw_all(os.path.join(paths["releases"], "A"))
+    thaw(paths["update_state"]); thaw(os.path.join(paths["update_state"], "manifests"))
+    for name in ("A.json", "A.sig"):
+        thaw(os.path.join(paths["update_state"], "manifests", name))
+    manifest, signature = install_slot(paths, "A", tree_members(IMAGE_REVISION), active["signer"], 7, IMAGE_REVISION)
+    IMMUTABLE.freeze(os.path.join(paths["update_state"], "manifests")); IMMUTABLE.freeze(paths["update_state"]); IMMUTABLE.freeze(paths["releases"])
+    write_state(ctx, installed={"slot": "A", "sequence": 1, "revision": IMAGE_REVISION})
+    channel.clear(); channel.update(make_release(root, "b" * 40, 5, active["signer"]))
+    calls.clear(); fetched.clear()
+    update_command(cp)
+    check(m.poll_once(ctx) == [("update_software", "failed")] and fetched == [], "installed.sequence forged below the signed live sequence: refused before any fetch")
+    try:
+        m.drive_update(ctx)
+        check(False, "Stuck expected")
+    except m.Stuck as stuck:
+        check(stuck.code == "home_layout_mismatch" and STOP in calls, "drive entry Stuck on the cross-check, home stopped")
+    write_state(ctx, installed={"slot": "A", "sequence": 7, "revision": IMAGE_REVISION})
+    active["running"] = {m.HOME_UNIT}
+    update_command(cp)
+    _, err = stderr_of(lambda: m.poll_once(ctx))
+    check("Self-service update refused: downgrade" in err, "sequence 5 against the signed floor 7: downgrade: %r" % err)
+    channel.clear(); channel.update(make_release(root, "b" * 40, 8, active["signer"]))
+    update_command(cp)
+    check(m.poll_once(ctx) == [("update_software", "done")] and m.read_update_state(ctx)["installed"]["sequence"] == 8, "sequence 8 above the floor: installed")
+    # T-T3: a corrupted stored signature of the slot a rollback would restore: Stuck, never a start.
+    ctx, cp, calls, active = setup(os.path.join(root, "t3"))
+    paths = ctx["paths"]
+    stage_candidate(ctx, active)
+    write_state(ctx, inflight=inflight_record(phase="rollback", restored=False, reason="unhealthy"))
+    set_current(ctx, "B")
+    m.inhibit_starts(ctx)
+    sig = os.path.join(paths["update_state"], "manifests", "A.sig")
+    thaw(os.path.dirname(sig)); thaw(sig)
+    with open(sig, "r+b") as handle:
+        handle.write(bytes([handle.read(1)[0] ^ 0xFF]))
+    active["running"] = set(); calls.clear()
+    for _ in range(3):
+        try:
+            m.drive_update(ctx)
+            check(False, "Stuck expected")
+        except m.Stuck as stuck:
+            check(stuck.code in ("home_layout_mismatch", "rollback_gate"), "rollback to a slot whose signature does not verify: Stuck (%s)" % stuck.code)
+    check(START not in calls and m.read_update_state(ctx)["inflight"]["phase"] == "rollback" and os.path.exists(m.inhibit_path(ctx)) and m.current_target(ctx) == "B",
+          "never started, never cleared, inhibit kept, link untouched; repeats on every poll")
+    # T-D1: a stale drive whose record names B while `current` was moved to B underneath: the wipe is Stuck, rmtree never runs, +i stays.
+    ctx, cp, calls, active = setup(os.path.join(root, "d1"))
+    paths = ctx["paths"]
+    stage_candidate(ctx, active)
+    state = write_state(ctx, inflight=inflight_record(phase="installing"))
+    set_current(ctx, "B")
+    removed = []
+    real_rmtree = m.shutil.rmtree
+    m.shutil.rmtree = lambda *a, **kw: (removed.append(a), real_rmtree(*a, **kw))[1]
+    try:
+        try:
+            m.wipe_slot(ctx, state, "B")
+            check(False, "Stuck expected")
+        except m.Stuck as stuck:
+            check(stuck.code == "wipe_target", "wipe target re-derived at wipe time: Stuck(wipe_target)")
+        try:
+            m.drive_update(ctx)
+            check(False, "Stuck expected")
+        except m.Stuck:
+            pass
+        set_current(ctx, "A")
+        try:
+            m.wipe_slot(ctx, dict(state, installed={"slot": "B", "sequence": 1, "revision": IMAGE_REVISION}), "B")
+            check(False, "Stuck expected")
+        except m.Stuck:
+            pass
+    finally:
+        m.shutil.rmtree = real_rmtree
+    check(removed == [] and IMMUTABLE.is_frozen(paths["releases"]) and os.path.isdir(os.path.join(paths["releases"], "B")), "rmtree never called; +i on the releases directory never lifted")
+    # Two drivers (the poll and --recover-update): the second holder gets Pending.
+    import fcntl
+    holder = open(os.path.join(paths["gate"], "lock"), "a")
+    fcntl.flock(holder.fileno(), fcntl.LOCK_EX)
+    try:
+        try:
+            m.drive_update(ctx)
+            check(False, "Pending expected")
+        except m.Pending:
+            pass
+    finally:
+        holder.close()
+
+
+def forged(root):
+    """T-H4a: a forged state.json written during verify changes nothing the updater decides: its own health observation wins, and the
+    commit it writes comes from its in-memory record, never from the forged file."""
+    for verdict in (False, True):
+        ctx, cp, calls, active = setup(os.path.join(root, "healthy" if verdict else "unhealthy"))
+        stage_candidate(ctx, active)
+        cid = str(uuid.uuid4())
+        write_state(ctx, inflight=inflight_record(phase="verify", cid=cid))
+        set_current(ctx, "B")
+        m.inhibit_starts(ctx)
+        active["running"] = set()
+        real_wait = m.wait_healthy
+        forged_once = []
+        def forging_wait(ctx_, *a, **kw):
+            if forged_once:
+                return real_wait(ctx_, *a, **kw)
+            forged_once.append(1)
+            raw_state(ctx_, json.dumps({"format": m.UPDATE_STATE_FORMAT, "installed": {"slot": "B", "sequence": 99, "revision": "f" * 40}, "inflight": None,
+                                        "lastResult": {"commandId": cid, "outcome": "done", "reason": None}}).encode())
+            real_wait(ctx_, *a, **kw)
+            return verdict
+        m.wait_healthy = forging_wait
+        try:
+            _, err = stderr_of(lambda: m.drive_update(ctx))
+        finally:
+            m.wait_healthy = real_wait
+        check("update_state_tampered" in err, "the rewritten file is noticed: %r" % err)
+        state = m.read_update_state(ctx)
+        if verdict:
+            check(state["installed"] == {"slot": "B", "sequence": 2, "revision": "b" * 40} and state["inflight"] is None, "the commit is the in-flight record's, not the forged installed: %r" % state)
+        else:
+            check(state["installed"]["slot"] == "A" and state["inflight"] is None and state["lastResult"]["outcome"] == "failed" and m.current_target(ctx) == "A",
+                  "the updater's own observation wins: rolled back: %r" % state)
+
+
+def launcher(root):
+    """T-P6, T-P2 (unit part): the seal walk refuses one file without +i, one group/world-writable directory, one foreign-owned inode, one
+    escaping link; accepts the sealed fixture with the digest murage-commands computes; exec_slot with euid 0 exits 1 without exec'ing; the
+    exec'd script path begins with /proc/self/fd/."""
+    ctx, cp, calls, active = setup(root)
+    paths = ctx["paths"]
+    slot = os.path.join(paths["releases"], "A")
+    fd = os.open(slot, m.SLOT_OPEN)
+    try:
+        check(launch.seal_walk_digest(fd, True) == m.seal_walk_digest(fd, True) == tree_digest(slot), "the launcher's seal walk digest equals murage-commands.tree digest")
+    finally:
+        os.close(fd)
+    def refuses(name, prepare, restore):
+        prepare()
+        fd = os.open(slot, m.SLOT_OPEN)
+        try:
+            launch.seal_walk_digest(fd, True)
+            check(False, name + ": refused")
+        except launch.LayoutRefused as refused:
+            check(refused.code == "slot_seal_failed", name + ": slot_seal_failed")
+        finally:
+            os.close(fd)
+            restore()
+    index = os.path.join(slot, "dist-server", "index.js")
+    refuses("a file without +i", lambda: thaw(index), lambda: IMMUTABLE.freeze(index))
+    bindir = os.path.join(slot, "bin")
+    def writable():
+        thaw(bindir); os.chmod(bindir, 0o775)
+    def unwritable():
+        os.chmod(bindir, 0o755); IMMUTABLE.freeze(bindir)
+    refuses("a group-writable directory", writable, unwritable)
+    def escaping():
+        thaw(slot); os.symlink("../../etc/passwd", os.path.join(slot, "escape")); IMMUTABLE.freeze(slot)
+    def unescaped():
+        thaw(slot); os.unlink(os.path.join(slot, "escape")); IMMUTABLE.freeze(slot)
+    refuses("a link escaping the slot", escaping, unescaped)
+    # A symlink is never flagged (chattr cannot flag one; seal_tree skips links): an in-tree link without +i is accepted by both walks,
+    # and one that escapes only by climbing through another link (bin/up -> .., top -> bin/up/..) is refused by both.
+    def with_links():
+        thaw(slot); thaw(bindir)
+        os.symlink("../dist-server/index.js", os.path.join(bindir, "inside"))
+        IMMUTABLE.freeze(bindir); IMMUTABLE.freeze(slot)
+    def without_links():
+        thaw(slot); thaw(bindir)
+        os.unlink(os.path.join(bindir, "inside"))
+        IMMUTABLE.freeze(bindir); IMMUTABLE.freeze(slot)
+    with_links()
+    fd = os.open(slot, m.SLOT_OPEN)
+    try:
+        check(launch.seal_walk_digest(fd, True) == m.seal_walk_digest(fd, True) == tree_digest(slot), "an in-tree symlink without +i is accepted by both seal walks")
+    finally:
+        os.close(fd)
+    def chain_escape():
+        thaw(slot); thaw(bindir)
+        os.symlink("..", os.path.join(bindir, "up"))
+        os.symlink("bin/up/..", os.path.join(slot, "top"))
+        IMMUTABLE.freeze(bindir); IMMUTABLE.freeze(slot)
+    def chain_unescaped():
+        thaw(slot); thaw(bindir)
+        os.unlink(os.path.join(bindir, "up")); os.unlink(os.path.join(slot, "top"))
+        IMMUTABLE.freeze(bindir); IMMUTABLE.freeze(slot)
+    refuses("a link escaping through another link", chain_escape, chain_unescaped)
+    without_links()
+    if os.geteuid() == 0:
+        import pwd
+        nobody = pwd.getpwnam("nobody")
+        def foreign():
+            thaw(index); os.chown(index, nobody.pw_uid, nobody.pw_gid); IMMUTABLE.freeze(index)
+        def owned():
+            thaw(index); os.chown(index, 0, 0); IMMUTABLE.freeze(index)
+        refuses("an inode not owned by root", foreign, owned)
+    fd = os.open(slot, m.SLOT_OPEN)
+    try:
+        check(launch.seal_walk_digest(fd, True) == tree_digest(slot), "the sealed fixture is accepted again")
+    finally:
+        os.close(fd)
+    # exec_slot refuses euid 0 (or a uid-0 process) and never execs; as the test user it refuses a slot path that is not a slot.
+    code = subprocess.run([sys.executable, "-I", "-c", "import importlib.machinery,importlib.util,os,sys\n"
+                           "l=importlib.machinery.SourceFileLoader('L',sys.argv[1]);s=importlib.util.spec_from_loader(l.name,l);L=importlib.util.module_from_spec(s);l.exec_module(L)\n"
+                           "os.getuid=lambda:0\nL.exec_slot('/bin/true',['/bin/true'],{})\nprint('EXECUTED')", launch.__file__], capture_output=True, text=True)
+    check(code.returncode == 1 and "EXECUTED" not in code.stdout, "exec_slot with uid 0 exits 1 and does not exec")
+    if os.geteuid() != 0:
+        code = subprocess.run([sys.executable, "-I", "-c", "import importlib.machinery,importlib.util,os,sys\n"
+                               "l=importlib.machinery.SourceFileLoader('L',sys.argv[1]);s=importlib.util.spec_from_loader(l.name,l);L=importlib.util.module_from_spec(s);l.exec_module(L)\n"
+                               "L.exec_slot('/bin/true',['/bin/true','/opt/murage/dist-server/x.js'],{})\nprint('EXECUTED')", launch.__file__], capture_output=True, text=True)
+        check(code.returncode == 1 and "EXECUTED" not in code.stdout, "exec_slot refuses a /opt/murage path that does not resolve under a release slot")
+    source = open(launch.__file__).read()
+    check('"/proc/self/fd/%d/%s" % (dirfd, SUPERVISOR)' in source and source.index("def drop_privileges") < source.index("def exec_supervisor"), "the supervisor is exec'd through the verified descriptor, after the drop")
+    # start_gate hands back the live slot's own descriptor (the inode the seal walk read).
+    try:
+        launch.assert_root_ancestors(paths["releases"])
+        check(False, "a world-writable ancestor (/tmp) is refused")
+    except launch.Refused as refused:
+        check(refused.reason == "home_layout_mismatch", "ancestor walk refuses a go-writable ancestor")
+    slot_name, dirfd, _state = launch.start_gate(launcher_paths(paths), verify=active["signer"].verify, peer=lambda pid, uid: dict(active["client_peer"]), ancestors=False)
+    try:
+        check(slot_name == "A" and os.fstat(dirfd).st_ino == os.stat(slot).st_ino, "start_gate returns slot A's directory descriptor")
+    finally:
+        os.close(dirfd)
+
 
 def logs(root):
     ctx, cp, _calls, _ = setup(root)
@@ -718,6 +2045,8 @@ def contract(root):
         except m.Unsupported:
             check(False, "contract payload refused by the runner: " + kind)
         for field in payload:
+            if field in CONTRACT.get("optionalPayloadFields", {}).get(kind, []):
+                continue  # optional on the wire: an older control plane's command (without it) still runs
             trimmed = {k: v for k, v in payload.items() if k != field}
             try:
                 m.SHAPES[kind](trimmed)
@@ -1073,7 +2402,7 @@ def carry_pending(root):
             holder.close()
         broken["on"] = True
         # Conflicting work is refused while it is unfinished (update would have been "unsupported" here had it run).
-        upd = cp.add("update_software", {"keep": ["files", "settings", "logins"], "reason": "customer"})
+        upd = update_command(cp)
         outcomes = dict(m.poll_once(ctx))
         check(outcomes.get("update_software") == "failed" and outcomes.get("reset_from_backup") == "pending", "data work blocked: %r" % outcomes)
         check([a for a in cp.of("commands/ack") if a["commandId"] == upd][0]["outcome"] == "failed", "the blocked command is answered failed")
@@ -1113,27 +2442,6 @@ def carry_blocked(root):
     check(m.poll_once(ctx) == [("reset_from_backup", "failed")], "refused")
     check(tree(data) == before and not os.path.exists(m.work_dir(ctx, rid, "reset")), "nothing changed, staging removed")
     check(not os.path.exists(m.swap_record(ctx, rid, "reset")), "no swap began")
-
-def update_once(root):
-    """Astra SELFSERVICE3 #3: start-up finishes a committed update, and the interrupted command is then reported done (the same outcome),
-    however many times recovery runs."""
-    ctx, cp, _calls, _ = setup(root)
-    cid = str(uuid.uuid4())
-    m.update_journal(ctx, {"phase": "committed", "sequence": 7, "revision": "3" * 40, "commandId": cid})
-    m.journal_claim(ctx, cid, {"kind": "update_software", "state": "running", "startedAt": NOW, "acked": False, "deadline": DEADLINE})
-    ctx["sleep"] = lambda _s: (_ for _ in ()).throw(KeyboardInterrupt())
-    try:
-        m.run(ctx, monotonic=lambda: 0)
-    except KeyboardInterrupt:
-        pass
-    check(cp.of("commands/ack") == [{"generation": 3, "commandId": cid, "outcome": "done"}], "reported done: %r" % cp.of("commands/ack"))
-    check(not os.path.exists(m.update_result_file(ctx)), "the result is dropped once the command's journal holds it")
-    # Recovering twice gives the same answer; another command's interrupted update is not mistaken for this one.
-    m.update_journal(ctx, {"phase": "committed", "sequence": 8, "revision": "4" * 40, "commandId": cid})
-    first = m.recover_update(ctx)
-    record = {"kind": "update_software", "state": "running"}
-    check(first == "done" and m.recover(ctx, record, None, cid) == "done" and m.recover(ctx, record, None, cid) == "done", "idempotent")
-    check(m.recover(ctx, record, None, str(uuid.uuid4())) == "failed", "keyed to its own command")
 
 def export_deadline(root):
     """Astra SELFSERVICE3 #5: the run deadline stops production whatever the output (a compressible archive writes almost nothing)."""
@@ -1237,10 +2545,16 @@ def inhibit(root):
     check(tree(ctx["paths"]["data"])["home/work/report.md"] == "report restored", "restored data in place")
     check(tree(ctx["paths"]["data"])["home/engines/codex/.codex/auth.json"] == json.dumps({"tokens": {"refresh_token": CODEX_TOKEN}}), "sign-in kept")
     check(m.HOME_UNIT in active["running"] and not os.path.exists(m.inhibit_path(ctx)), "the home starts only then")
-    # The units carry the condition, on the runner's own path.
-    for unit in ("murage-home.service", "murage-home-recover.service"):
-        with open(os.path.join(os.path.dirname(program), unit)) as handle:
-            check("ConditionPathExists=!" + os.path.join(m.STATE, m.INHIBIT) + "\n" in handle.read(), unit + " honours the inhibition")
+    # The recover unit carries the condition on the runner's own path; the home unit no longer does (murage-home-launch, image root code
+    # that runs before any release byte, enforces the inhibition itself, which is what lets the updater start the home on its own grant
+    # while holding it).
+    with open(os.path.join(os.path.dirname(program), "murage-home-recover.service")) as handle:
+        check("ConditionPathExists=!" + os.path.join(m.STATE, m.INHIBIT) + "\n" in handle.read(), "murage-home-recover.service honours the inhibition")
+    with open(os.path.join(os.path.dirname(program), "murage-home.service")) as handle:
+        unit = handle.read()
+    check(not re.search(r"^ConditionPathExists=", unit, re.M) and "RestartPreventExitStatus=78 79\n" in unit, "murage-home.service leaves the inhibition to the launcher (exit 79 is not restarted)")
+    with open(os.path.join(os.path.dirname(program), "murage-home-launch.py")) as handle:
+        check('raise Refused("gate_phase")  # a reset/undo transition' in handle.read(), "the launcher refuses a start under the inhibition with nothing in flight")
 
 class Durability:
     """A crash-persistence model of the runner's state directory. A rename into place (os.replace) or an unlink is a directory entry
@@ -1370,94 +2684,6 @@ def durability(root):
     reboot_and_recover(ctx, cp, active, cid, "cut after the lift")
     results["durability"] = ["cut-at-stop", "cut-mid-reset", "cut-after-lift"]
 
-IMMUTABLE_FL, GETFLAGS, SETFLAGS = 0x10, 0x80086601, 0x40086602
-
-class Immutability:
-    """FS_IMMUTABLE_FL on directories, as the launcher sets it on workspace placeholders (r5 R5.1). Real when this process may set it
-    (root with CAP_LINUX_IMMUTABLE, as in a privileged test container, on a filesystem with inode flags); otherwise emulated at the
-    syscall boundary with the kernel's rules: an immutable directory cannot be renamed or removed, and nothing in it can be renamed,
-    removed or added, by anyone; only FS_IOC_SETFLAGS changes the flag."""
-    def __init__(self, root):
-        import fcntl
-        self.fcntl, self.real_ioctl, self.frozen, self.patched = fcntl, fcntl.ioctl, set(), {}
-        probe = os.path.join(root, "probe")
-        os.mkdir(probe)
-        try:
-            self._set(probe, True)
-            self._set(probe, False)
-            self.mode = "real"
-        except OSError:
-            self.mode = "emulated"
-        os.rmdir(probe)
-        if self.mode == "emulated":
-            self._emulate()
-    def _flags(self, fd):
-        buf = bytearray(8)
-        self.fcntl.ioctl(fd, GETFLAGS, buf)
-        return int.from_bytes(buf[:4], sys.byteorder)
-    def _set(self, path, frozen):
-        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-        try:
-            value = self._flags(fd)
-            self.fcntl.ioctl(fd, SETFLAGS, ((value | IMMUTABLE_FL) if frozen else (value & ~IMMUTABLE_FL)).to_bytes(4, sys.byteorder) + bytes(4))
-        finally:
-            os.close(fd)
-    def freeze(self, path):
-        self._set(path, True)
-    def is_frozen(self, path):
-        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-        try:
-            return bool(self._flags(fd) & IMMUTABLE_FL)
-        finally:
-            os.close(fd)
-    def thaw_all(self, root):
-        for current, dirs, _files in os.walk(root, followlinks=False):
-            for name in dirs:
-                full = os.path.join(current, name)
-                if not os.path.islink(full) and self.is_frozen(full):
-                    self._set(full, False)
-    def _emulate(self):
-        frozen, real = self.frozen, {n: getattr(os, n) for n in ("rename", "rmdir", "unlink", "remove")}
-        key = lambda st: (st.st_dev, st.st_ino)
-        def denied(path):
-            raise PermissionError(errno.EPERM, "Operation not permitted", path)
-        def inode(path, dir_fd=None):
-            try:
-                return key(os.stat(path, dir_fd=dir_fd, follow_symlinks=False))
-            except OSError:
-                return None
-        def parent(path, dir_fd=None):
-            if dir_fd is not None and os.sep not in str(path):
-                return key(os.fstat(dir_fd))
-            return inode(os.path.dirname(os.path.abspath(path)) if dir_fd is None else os.path.dirname(path), dir_fd)
-        def ioctl(fd, request, arg=0, mutate_flag=True):
-            if request == GETFLAGS:
-                arg[:4] = (IMMUTABLE_FL if key(os.fstat(fd)) in frozen else 0).to_bytes(4, sys.byteorder)
-                return 0
-            if request == SETFLAGS:
-                (frozen.add if int.from_bytes(bytes(arg[:4]), sys.byteorder) & IMMUTABLE_FL else frozen.discard)(key(os.fstat(fd)))
-                return 0
-            return self.real_ioctl(fd, request, arg, mutate_flag)
-        def rename(src, dst, *, src_dir_fd=None, dst_dir_fd=None):
-            if {inode(src, src_dir_fd), parent(src, src_dir_fd), parent(dst, dst_dir_fd)} & frozen:
-                denied(src)
-            return real["rename"](src, dst, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
-        def rmdir(path, *, dir_fd=None):
-            if {inode(path, dir_fd), parent(path, dir_fd)} & frozen:
-                denied(path)
-            return real["rmdir"](path, dir_fd=dir_fd)
-        def unlink(path, *, dir_fd=None):
-            if parent(path, dir_fd) in frozen:
-                denied(path)
-            return real["unlink"](path, dir_fd=dir_fd)
-        self.patched = dict(real, ioctl=self.real_ioctl)
-        os.rename, os.rmdir, os.unlink, os.remove, self.fcntl.ioctl = rename, rmdir, unlink, unlink, ioctl
-    def close(self, root):
-        self.thaw_all(root)
-        if self.patched:
-            os.rename, os.rmdir, os.unlink, os.remove = (self.patched[n] for n in ("rename", "rmdir", "unlink", "remove"))
-            self.fcntl.ioctl = self.patched["ioctl"]
-
 PLACEHOLDERS = (".claude", ".codex", ".fuigo", ".grok", ".kimi-code", ".opencode")
 CARRIED = (".claude", ".codex", ".grok", ".kimi-code")  # the placeholder names that are also engine credential names
 
@@ -1468,7 +2694,7 @@ def placeholders(root):
     ctx, cp, calls, active = setup(root)
     data = ctx["paths"]["data"]
     plant(data, "current")
-    immutable = Immutability(root)
+    immutable = IMMUTABLE
     results["immutable"] = immutable.mode
     # A plain workspace, one in a repository, deep ones (once inside an unfrozen .claude folder), and a turn folder inside a .fuigo.
     workspaces = [os.path.join(data, "home/workspaces/bot_1/.fuigo/project"), os.path.join(data, "home/workspaces/bot_1"),
@@ -1560,15 +2786,99 @@ def placeholders(root):
         outcome_checks("recovered reset", rels)
         check(not os.path.exists(m.work_dir(ctx, rid2, "reset")), "the previous tree is gone")
     finally:
-        immutable.close(root)
+        immutable.thaw_all(root)
 
-SCENARIOS = {"placeholders": placeholders, "restart": restart, "safe-mode": safe_mode, "refusals": refusals, "interrupted": interrupted, "update": update, "logs": logs,
+def update_target(root):
+    """The rollout controller's command names ONE sequence (payload.sequence): the home installs exactly it, is done when already on it, and
+    refuses any other release the channel serves (sequence_mismatch) without stopping anything. Its updater reports installed sequence,
+    lastResult and a Stuck code on update-state, on change and at the interval; an older control plane's 404 is tolerated; a command
+    without a sequence still runs (older control plane)."""
+    ctx, cp, calls, active = setup(root)
+    signer = active["signer"]
+    channel = served(ctx, root, ctx["paths"]["releases"])
+    channel.update(make_release(root, "b" * 40, 2, signer))
+    update_command(cp, sequence=3)
+    _, err = stderr_of(lambda: m.poll_once(ctx))
+    check("Self-service update refused: sequence_mismatch" in err and STOP not in calls, "channel serves 2, command wants 3: refused, nothing stopped: %r" % err)
+    check(m.read_update_state(ctx)["installed"]["sequence"] == 1 and m.read_update_state(ctx)["inflight"] is None, "nothing installed")
+    check([a["outcome"] for a in cp.of("commands/ack")] == ["failed"], "reported failed")
+    update_command(cp, sequence=2)
+    check(m.poll_once(ctx) == [("update_software", "done")] and m.read_update_state(ctx)["installed"]["sequence"] == 2, "channel serves 2, command wants 2: installed")
+    channel.clear(); channel.update(make_release(root, "c" * 40, 3, signer))
+    calls.clear()
+    update_command(cp, sequence=2)
+    check(m.poll_once(ctx) == [("update_software", "done")] and STOP not in calls and m.read_update_state(ctx)["installed"]["sequence"] == 2,
+          "already on the target sequence while the channel moved on: done, the newer release is not installed")
+    update_command(cp, sequence=3)
+    check(m.poll_once(ctx) == [("update_software", "done")] and m.read_update_state(ctx)["installed"]["sequence"] == 3, "command wants 3: installed")
+    for bad in (0, -1, "3", True, 1.5):
+        try:
+            m.SHAPES["update_software"]({"keep": ["files", "settings", "logins"], "reason": "rollout", "sequence": bad})
+            check(False, "sequence %r refused" % (bad,))
+        except m.Unsupported:
+            pass
+    m.SHAPES["update_software"]({"keep": ["files", "settings", "logins"], "reason": "rollout", "sequence": 4})
+    try:
+        m.SHAPES["update_software"]({"keep": ["files", "settings", "logins"], "reason": "customer"})
+        check(False, "a command with no sequence refused")
+    except m.Unsupported:
+        pass
+    channel.clear(); channel.update(make_release(root, "d" * 40, 4, signer))
+    calls.clear()
+    cp.add("update_software", {"keep": ["files", "settings", "logins"], "reason": "customer"})
+    check(m.poll_once(ctx) == [("update_software", "unsupported")] and m.read_update_state(ctx)["installed"]["sequence"] == 3,
+          "no sequence (an older control plane): refused, the channel's unpromoted release is not installed")
+    update_command(cp, sequence=4)
+    check(m.poll_once(ctx) == [("update_software", "done")] and m.read_update_state(ctx)["installed"]["sequence"] == 4, "the command that names 4 installs it")
+    # Reporting.
+    state = m.read_update_state(ctx)
+    check(set(CONTRACT["homeBodies"]["update-state"]) == {"generation", "installedSequence", "lastResult", "stuck"}, "the contract names the body")
+    m.report_update_state(ctx, None)
+    body = cp.of("update-state")[-1]
+    check(set(body) == set(CONTRACT["homeBodies"]["update-state"]) and set(body["lastResult"]) == set(CONTRACT["homeBodies"]["updateLastResult"]), "body shape is the contract's")
+    check(body["installedSequence"] == 4 and body["generation"] == ctx["binding"]["generation"] and body["stuck"] is None
+          and body["lastResult"] == {"commandId": state["lastResult"]["commandId"], "outcome": "done", "reason": None}, "reports the journal: %r" % body)
+    sent = len(cp.of("update-state"))
+    m.report_update_state(ctx, None)
+    check(len(cp.of("update-state")) == sent, "unchanged and inside the interval: not sent again")
+    m.report_update_state(ctx, "rollback_stop")
+    check(len(cp.of("update-state")) == sent + 1 and cp.of("update-state")[-1]["stuck"] == "rollback_stop", "a Stuck code is a change: sent")
+    real_now = ctx["now"]
+    ctx["now"] = lambda: real_now() + (m.UPDATE_REPORT_SECONDS + 1) * 1000
+    m.report_update_state(ctx, "rollback_stop")
+    check(len(cp.of("update-state")) == sent + 2, "unchanged past the interval: sent again")
+    ctx["now"] = real_now
+    # A control plane without the route (404) is tolerated and not hammered; other failures are retried on the next loop.
+    ctx["update_reported"] = None
+    def old_control_plane(binding, operation, body=None):
+        calls.append(("request", operation))
+        raise m.urllib.error.HTTPError("https://admin.murage.test", 404, "not found", {}, None)
+    ctx["request"] = old_control_plane
+    m.report_update_state(ctx, None); m.report_update_state(ctx, None)
+    check([c for c in calls if c == ("request", "update-state")] == [("request", "update-state")], "404: asked once, then left alone until the interval")
+    ctx["update_reported"] = None
+    def down(binding, operation, body=None):
+        calls.append(("down", operation))
+        raise OSError("network down")
+    ctx["request"] = down
+    m.report_update_state(ctx, None); m.report_update_state(ctx, None)
+    check([c for c in calls if c == ("down", "update-state")] == [("down", "update-state")] * 2, "network failure: retried on the next loop")
+    # The drive reports a Stuck code to the loop.
+    ctx["request"] = cp
+    check(m.drive_pending_update(ctx) is None, "nothing in flight: no stuck code")
+
+SCENARIOS = {"update-target": update_target, "placeholders": placeholders, "restart": restart, "safe-mode": safe_mode, "refusals": refusals, "interrupted": interrupted, "update": update,
+             "update-cuts": update_cuts, "update-phases": update_phases, "update-pending": update_pending, "gate": gate, "transition": transition,
+             "trust": trust, "forged": forged, "launcher": launcher, "logs": logs,
              "export": export, "swap-recovery": swap_recovery, "reset": reset_roundtrip, "reset-loop": reset_loop,
              "contract": contract, "deadline": deadline, "startup-recovery": startup_recovery, "unacked-retry": unacked_retry,
              "reset-safety": reset_safety, "carry": carry, "auth-state": auth_state, "upload": upload, "carry-pending": carry_pending,
-             "carry-blocked": carry_blocked, "update-once": update_once, "export-deadline": export_deadline, "inhibit": inhibit,
+             "carry-blocked": carry_blocked, "export-deadline": export_deadline, "inhibit": inhibit,
              "durability": durability}
 
 with tempfile.TemporaryDirectory(prefix="murage-commands-") as root:
-    SCENARIOS[scenario](root)
+    try:
+        SCENARIOS[scenario](root)
+    finally:
+        IMMUTABLE.thaw_all(root)
 print(json.dumps({"ok": True, "scenario": scenario, **results}))

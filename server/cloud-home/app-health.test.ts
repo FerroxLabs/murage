@@ -10,7 +10,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { healthSchema } from "../../cloudflare/control-plane/src/ops-monitor";
 import { classifyDataDirEntry } from "../data-dir-inventory.ts";
-import { HEALTH_PROBE_DIR_NAME, prepareHealthProbeDir } from "./supervisor.ts";
+import { HEALTH_PROBE_DIR_NAME, prepareHealthProbeDir } from "./home-volume-spec.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const control = fileURLToPath(new URL("../../deploy/cloud-home/murage-control", import.meta.url));
@@ -134,12 +134,12 @@ describe("app health probe", () => {
   });
   it("uiRenders is the app's own render answer on /api/health: \"ok\" true, any other value false, absent omitted (Astra AUTOCANARY-4 P1)", () => {
     const out = JSON.parse(execFileSync("python3", ["-I", "-c", script, control], { encoding: "utf8", timeout: 60_000 }));
-    const bare = { uiAt: "MISSING", instance: null, door: null };
+    const bare = { uiAt: "MISSING", instance: null, door: null, ownerFactor: false };
     expect(out.reports).toEqual({ ok: { ok: true, ui: null, ...bare }, uiOk: { ok: true, ui: true, ...bare }, uiFailed: { ok: true, ui: false, ...bare },
       uiPending: { ok: true, ui: false, ...bare }, uiNumber: { ok: true, ui: false, ...bare }, uiForeign: { ok: false, ui: null, ...bare },
       uiError: { ok: false, ui: null, ...bare },
-      uiFull: { ok: true, ui: true, uiAt: 1760000000000, instance: "AbCdEfGhIjKlMnOpQrSt_-", door: null },
-      uiPendingNull: { ok: true, ui: false, uiAt: null, instance: "AbCdEfGhIjKlMnOpQrSt_-", door: null },
+      uiFull: { ok: true, ui: true, uiAt: 1760000000000, instance: "AbCdEfGhIjKlMnOpQrSt_-", door: null, ownerFactor: false },
+      uiPendingNull: { ok: true, ui: false, uiAt: null, instance: "AbCdEfGhIjKlMnOpQrSt_-", door: null, ownerFactor: false },
       uiMalformed: { ok: true, ui: true, ...bare }, uiFloat: { ok: true, ui: true, ...bare }, uiBool: { ok: true, ui: true, ...bare },
       uiNegative: { ok: true, ui: true, ...bare },
       // Door v2: only a 200 murage body saying door "v2" reports it; every failure shape and any other value is None.
@@ -564,14 +564,38 @@ print(json.dumps(out))
 
 // The data volume in these runs is /dev/shm: a real mount point (tmpfs, root 1777: sticky, like /data's root:murage 1771) on a different
 // device from the temp directory, which stands in for the root file system a missing volume would leave /data on. The probe directory is a
-// top-level entry of the volume, as /data/.murage-health is. Without a writable /dev/shm mount, or without root (the probe directory
-// and its ancestors must be root owned), the volume cases cannot run; both are asserted rather than skipped.
+// top-level entry of the volume, as /data/.murage-health is. The code requires the probe directory to be root owned, so as root the run
+// uses real chown. As a non-root user (the CI and qualification containers) chown to another owner is impossible, so the script gives the
+// code's os.lstat an ownership view instead: entries the test user owns read as root's, and the cases that chown read the owner recorded
+// by own(). The decision logic under test (modes, devices, ancestors, EROFS) is the code's own either way; only who owns a path is
+// simulated, and the result carries "ownership" so the run says which. A host with no writable /dev/shm mount cannot run these cases and
+// the test fails rather than skipping.
 const checksScript = String.raw`
 import errno, importlib.machinery, importlib.util, json, os, shutil, sys, tempfile
 loader = importlib.machinery.SourceFileLoader("murage_control", sys.argv[1])
 spec = importlib.util.spec_from_loader("murage_control", loader)
 control = importlib.util.module_from_spec(spec)
 loader.exec_module(control)
+real_root = os.geteuid() == 0
+owners = {}
+def own(path, uid):
+    if real_root:
+        os.chown(path, uid, uid)
+    else:
+        owners[os.path.abspath(path)] = uid
+if not real_root:
+    import types
+    me = os.geteuid()
+    shim = types.ModuleType("os")
+    shim.__dict__.update(os.__dict__)
+    def lstat(path, *args, **kwargs):
+        info = os.lstat(path, *args, **kwargs)
+        uid = owners.get(os.path.abspath(os.fspath(path)), 0 if info.st_uid == me else info.st_uid)
+        fields = list(info)
+        fields[4] = uid
+        return os.stat_result(fields)
+    shim.lstat = lstat
+    control.os = shim
 root = tempfile.mkdtemp()
 os.chmod(root, 0o755)
 dist = os.path.join(root, "dist"); os.mkdir(dist)
@@ -593,7 +617,7 @@ for name in ("assets/index-B9x_Qe-2.js", "assets/index-Cc3.css", "assets/logo-Dd
     with open(os.path.join(dist, name), "w") as f:
         f.write("x")
 control.UI_DIST = dist
-out = {"root": os.geteuid() == 0}
+out = {"root": real_root, "ownership": "real" if real_root else "simulated"}
 # Manifest completeness (Astra AUTOCANARY-4 P1): every file the manifest names must be a non-empty regular file.
 out["bundleComplete"] = control.ui_bundle_complete()
 chunk = os.path.join(dist, "assets", "Settings-Ee5.js")
@@ -638,7 +662,7 @@ os.makedirs(plain, mode=0o755)
 control.DATA_PROBE_DIR = os.path.join(plain, ".murage-health")
 os.mkdir(control.DATA_PROBE_DIR, 0o700)
 out["notMounted"] = health(plain)
-if out["mount"] and out["root"]:
+if out["mount"]:
     probe = tempfile.mkdtemp(prefix=".murage-health-test-", dir=mount)  # a top-level entry of the volume, root 0700
     os.chmod(probe, 0o700)
     control.DATA_PROBE_DIR = probe
@@ -663,18 +687,18 @@ if out["mount"] and out["root"]:
     os.chmod(probe, 0o755)
     out["notExactly0700"] = health(mount)
     os.chmod(probe, 0o700)
-    os.chown(probe, 4242, 4242)
+    own(probe, 4242)
     out["notRootOwned"] = health(mount)
-    os.chown(probe, 0, 0)
+    own(probe, 0)
     # Not a top-level entry: below a directory the murage user owns (the old server-home/.health layout), even root 0700 itself.
     nest = tempfile.mkdtemp(dir=mount)
     os.chmod(nest, 0o700)
     nested = os.path.join(nest, ".murage-health"); os.mkdir(nested, 0o700)
-    os.chown(nest, 4242, 4242)
+    own(nest, 4242)
     control.DATA_PROBE_DIR = nested
     out["underMurageOwned"] = health(mount)
     out["ancestorsMurageOwned"] = control.root_controlled_ancestors(nested)
-    os.chown(nest, 0, 0)
+    own(nest, 0)
     out["ancestorsRootOwned"] = control.root_controlled_ancestors(nested)
     out["nestedRootOwned"] = health(mount)  # still refused: its parent is not the mount point
     os.chmod(nest, 0o777)
@@ -742,10 +766,10 @@ describe("readiness checks on the heartbeat (Astra AUTOCANARY-2 P1): the UI bund
   it("checks are omitted when they cannot be evaluated (no data mount)", () => {
     expect(out().noMount).toEqual({ appResponding: true });
   });
-  it("the volume cases need a writable /dev/shm mount on its own device, and root", () => {
+  it("the volume cases need a writable /dev/shm mount on its own device; root ownership is real as root and simulated otherwise", () => {
     // Fails loudly rather than skipping the volume cases unnoticed.
     expect(out().mount).toBe(true);
-    expect(out().root).toBe(true);
+    expect(out().ownership).toBe(process.getuid?.() === 0 ? "real" : "simulated");
   });
   it("both true with the index file and the probe directory on the volume, and the probe file is never left behind", () => {
     const o = out();
@@ -844,7 +868,7 @@ describe("the supervisor's health probe directory", () => {
     expect(() => prepareHealthProbeDir(other, () => undefined)).toThrow();
   });
   it("bindHomeVolume makes it only after the binding marker is validated, so an unbound volume never holds it", () => {
-    const source = readFileSync(fileURLToPath(new URL("./supervisor.ts", import.meta.url)), "utf8");
+    const source = readFileSync(fileURLToPath(new URL("./home-volume-spec.ts", import.meta.url)), "utf8");
     const bind = source.slice(source.indexOf("export function bindHomeVolume("));
     const marker = bind.indexOf("validateVolumeMarker(stat"), probe = bind.indexOf("prepareHealthProbeDir(dataDir)");
     expect(marker).toBeGreaterThan(-1);
@@ -928,6 +952,6 @@ print(json.dumps(out))
     // No ack change: the heartbeat ack is still read exactly as before, and the 400 resend carries the header too.
     const src = readFileSync(control, "utf8");
     expect(src).toContain('strict_fields(heartbeat, ("wire", "accepted", "generation", "evidenceEpoch"))');
-    expect(src.match(/request\(binding, "heartbeat", body, door=True\) if door else request\(binding, "heartbeat", body\)/g)).toHaveLength(2);
+    expect(src.match(/request\(binding, "heartbeat", body, door=True, \*\*owner_extra\) if door else request\(binding, "heartbeat", body, \*\*owner_extra\)/g)).toHaveLength(2);
   });
 });

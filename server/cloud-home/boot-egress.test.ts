@@ -25,7 +25,7 @@ function boot(output: string, status: number) {
     writeFileSync(helper, `#!/bin/bash\nif [[ \"\${1:-}\" == --envelope ]]; then\ncat <<'ENVELOPE'\n${output}\nENVELOPE\nexit ${status}\nfi\n`, { mode: 0o700 });
     writeFileSync(config, "MURAGE_CLOUD_MACHINE_ID=home-test\n");
     writeFileSync(node, `#!/usr/bin/python3\nimport os,json\nprint('supervisor entered',flush=True)\nv=json.load(os.fdopen(3))\nassert v['version']==2\nassert v['dataKey'] not in repr(dict(os.environ))\nassert v['bootstrapSecret'] not in repr(dict(os.environ))\nprint('supervisor started')\n`, { mode: 0o700 });
-    const script = source("start-home.sh").replaceAll("/usr/local/libexec/murage-enroll", helper).replaceAll("/etc/murage-home/home.env", config).replaceAll("/usr/local/bin/node", node);
+    const script = source("start-home.sh").replaceAll("/usr/local/libexec/murage-enroll", helper).replaceAll("/etc/murage-home/home.env", config).replaceAll("/usr/bin/python3 -I /usr/local/libexec/murage-home-launch", node);
     return spawnSync(modernBash!, ["-c", script], { encoding: "utf8", timeout: 5000 });
   } finally { removeTempDirSync(root); }
 }
@@ -33,12 +33,13 @@ runsBoot("launches with envelope only on FD3 (needs bash 4.4+)", () => { const r
 runsBoot.each([78, 1, 127])("preserves helper status %i and never execs with partial key (needs bash 4.4+)", status => { const result = boot(envelope, status); expect(result.status).toBe(status); expect(result.stdout).toBe(""); expect(result.stderr).not.toContain("AQEB"); if (status === 78) expect(result.stderr).toContain("stale generation"); });
 runsBoot.each(["", "broken", "{}", envelope.replace('"version":2', '"version":1')])("refuses missing or malformed envelope before exec (needs bash 4.4+)", value => { const result = boot(value, 0); expect(result.status).not.toBe(0); expect(result.stdout).toBe(""); expect(result.stderr).not.toContain("AQEB"); });
 it("systemd stops stale-generation restart", () => { expect(source("murage-home.service")).toContain("RestartPreventExitStatus=78"); });
-it("permits only turn stub DNS before loopback drop", () => {
+it("gives a turn no path to the host stub DNS (A2): only per-engine forwarder ports, before the loopback drop", () => {
  const nft = source("murage-egress.nft");
- for (const protocol of ["udp", "tcp"]) {
-  const rule = `meta skuid "murage-turn" ip daddr 127.0.0.53 ${protocol} dport 53 counter accept`;
-  expect(nft).toContain(rule); expect(nft.indexOf(rule)).toBeLessThan(nft.indexOf('meta skuid "murage-turn" ip daddr 127.0.0.0/8 counter drop'));
- }
+ expect(nft).not.toMatch(/meta skuid "murage-turn" ip daddr 127\.0\.0\.53[^\n]*accept/);
+ const drop = nft.indexOf('meta skuid "murage-turn" ip daddr 127.0.0.0/8 counter drop');
+ const accepts = nft.split("\n").filter(line => /meta skuid "murage-turn" meta skgid "murage-eng-\w+" ip daddr 127\.0\.0\.1 udp dport 53\d\d ct status dnat ct original ip daddr 127\.0\.0\.53 counter accept/.test(line.trim()));
+ expect(accepts).toHaveLength(14);
+ for (const line of accepts) expect(nft.indexOf(line)).toBeLessThan(drop);
  expect(nft).toContain('meta skuid "murage-browser" ip daddr 127.0.0.0/8 counter drop');
 });
 it("bounds new external flows while exempting root/server/loopback from meters", () => {
@@ -60,7 +61,7 @@ it("meters turn->proxy connections per engine gid and caps murage-egress overall
  expect(perEngine).toHaveLength(1);
  expect(perEngine[0]).toContain('oifname "lo" meta skuid "murage-turn" ct state new'); expect(perEngine[0]).toContain("{ meta skgid timeout 2m limit rate over 120/minute");
  // The per-engine meter runs before the first engine accept, so over-rate flows drop.
- expect(nft.indexOf("update @engine_connections")).toBeLessThan(nft.indexOf('meta skuid "murage-turn" meta skgid "murage-eng-antigravity" ip daddr 127.0.0.1'));
+ expect(nft.indexOf("update @engine_connections")).toBeLessThan(nft.indexOf('meta skuid "murage-turn" meta skgid "murage-eng-antigravity" ip daddr 127.0.0.1 tcp dport 8810'));
  const overall = nft.split("\n").filter(line => line.includes("update @egress_connections"));
  expect(overall).toHaveLength(1);
  expect(overall[0]).toContain('oifname != "lo" meta skuid "murage-egress" ct state new');

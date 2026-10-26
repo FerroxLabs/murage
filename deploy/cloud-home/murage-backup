@@ -9,6 +9,8 @@ refuses to run if that file is missing or lacks the required entries."""
 import fcntl
 import json
 import os
+import shutil
+import sqlite3
 import subprocess
 import sys
 import time
@@ -17,12 +19,35 @@ CONFIG = "/etc/murage-home/backup.json"
 EXCLUDES = "/etc/murage-home/backup-excludes.txt"
 LAST = "/var/lib/murage-home/backup-last"
 SOURCE = "/data"
-REQUIRED_EXCLUDES = (".claude", ".claude.json", ".codex", ".grok", ".kimi-code", "auth.json", ".credentials.json", "/data/engine-homes/**/signin")
+REQUIRED_EXCLUDES = (".claude", ".claude.json", ".codex", ".grok", ".kimi-code", ".gemini", ".antigravity", ".config/opencode", ".local/share/opencode", "auth.json", ".credentials.json", "/data/engine-homes/**/signin")
 KEEP_DAILY, KEEP_WEEKLY = "7", "4"
 # murage-commands takes the same lock for a reset, undo or export: never two writers on /data or the repository.
 OPS_LOCK = "/run/murage-data-ops.lock"
 # Working folders of murage-commands: never backed up.
 WORK_EXCLUDES = ("/data/.murage-reset", "/data/.murage-export")
+
+# The home database is WAL: a recursive copy of the live files can pair a db with the wrong -wal. The nightly run takes SQLite's online
+# backup of it into this staging folder (excluded from the live copy, below) and restic stores that single consistent file instead.
+# murage-commands puts the staged file back at home/messages.db when it restores.
+STAGE_DIR = ".murage-backup"
+HOME_DB = os.path.join("home", "messages.db")
+
+def online_backup(src, dest):
+    """SQLite's online backup API: a consistent copy of a live (WAL) database as one self-contained file."""
+    if os.path.exists(dest):
+        os.unlink(dest)
+    source = sqlite3.connect(src, timeout=60)
+    try:
+        target = sqlite3.connect(dest)
+        try:
+            source.backup(target)
+            target.execute("PRAGMA journal_mode=DELETE")
+            if target.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                raise sqlite3.DatabaseError("integrity")
+        finally:
+            target.close()
+    finally:
+        source.close()
 
 def restic_env(cfg):
     return {"PATH": "/usr/bin:/bin", "HOME": "/root", "RESTIC_REPOSITORY": cfg["repository"], "RESTIC_PASSWORD_FILE": cfg["passwordFile"],
@@ -84,8 +109,25 @@ def _backup(env, sftp, excludes, last, source, runner, capturer=capture):
         if runner(["restic", "init"] + sftp, env) != 0:
             return 1
     work = [arg for path in WORK_EXCLUDES for arg in ("--exclude", path)]
-    code, out = capturer(["restic", "backup", "--json", "--quiet", source, "--exclude-file", excludes] + work
-                         + ["--one-file-system", "--tag", "nightly"] + sftp, env)
+    live = os.path.join(source, HOME_DB)
+    stage = os.path.join(source, STAGE_DIR)
+    staged = False
+    shutil.rmtree(stage, ignore_errors=True)
+    if os.path.exists(live):
+        try:
+            os.makedirs(stage, mode=0o700)
+            online_backup(live, os.path.join(stage, "messages.db"))
+        except (OSError, sqlite3.Error):
+            shutil.rmtree(stage, ignore_errors=True)
+            return 1  # no consistent copy of the database: nothing is backed up or marked complete
+        staged = True
+        work += [arg for suffix in ("", "-wal", "-shm") for arg in ("--exclude", live + suffix)]
+    try:
+        code, out = capturer(["restic", "backup", "--json", "--quiet", source, "--exclude-file", excludes] + work
+                             + ["--one-file-system", "--tag", "nightly"] + sftp, env)
+    finally:
+        if staged:
+            shutil.rmtree(stage, ignore_errors=True)
     if code not in (0, 3):  # 3 = some files unreadable; the snapshot still exists (but is never marked complete)
         return 1
     made = snapshot_id(out) if code == 0 else None

@@ -341,19 +341,28 @@ describe("16: every bot-facing read goes through the door", () => {
 const RAW_READS: Record<string, number> = {
   "backup-waiting.ts": 1, "bot-egress.expect-errors.ts": 2, "boundary-ports.ts": 9, "branch-fill.ts": 5, "branch-index.ts": 7, "branch-store.ts": 4,
   "browser-extension-approvals.ts": 3, "browser-extension-setup.ts": 1, "card-summary.ts": 3, "conversation-deletion.ts": 3,
+  // 1.0.4 QW Q4 (0bc0c7c28): findWidget reads the one row whose id is the widget id, in the calling turn's own thread, and only while it holds
+  // that widget (the WidgetStore interface line counts as the second). update_widget answers the bot with ids and a fixed line, never the row.
+  "chat-widgets.ts": 2,
   // frozen-replies.ts (the boot recovery's scan and the rows it judges), handoff-reply.ts and held-replies.ts (an earlier build's held row, retired),
   // index.ts (the retired hold's result row), boundary-ports.ts (a shared request's closing row, terminalFor): server-side reads, never handed to a bot
   "frozen-replies.ts": 5,
   "handoff-boundary.ts": 1, "handoff-dispatch.ts": 1, "handoff-evidence.ts": 1, "handoff-reply.ts": 1, "harness/event-log.ts": 5, "held-replies.ts": 1, "host-computer-consent.ts": 1,
   "human-principals.ts": 1, "image-operations.ts": 2, "inbox-fill-worker.ts": 1, "inbox.base-reference.ts": 4, "inbox.legacy-reference.ts": 1,
-  "inbox.ts": 6, "index.ts": 69, "installation-activation.ts": 1, "installation-database-snapshot.ts": 6, "installation-restore-preparation.ts": 1,
-  "mcp-signin-card.ts": 1, "memory/branch-change.ts": 3, "murage-anchor.ts": 1, "memory/bring-in.ts": 1, "memory/capture.ts": 3, "memory/deny-read.ts": 1,
+  // 1.0.4 QW (20acb3e0d): roomAnswerReceipt reads the owner's own landed answer row back for the owner's client (the room answer's receipt)
+  "inbox.ts": 6, "index.ts": 75, "installation-activation.ts": 1, "installation-database-snapshot.ts": 6, "installation-restore-preparation.ts": 1,
+  // 1.0.4: index.ts adds the limit-failover resend (the owner's own user row, through acceptBotSend), the turn's sendIds, and the two owner-only MCP card routes
+  // (dismissMcpCards, mcp-enable-cards); mcp-bot-cards.ts reads only the ids of open cards. None hands a stored row to a bot.
+  "mcp-bot-cards.ts": 2, "mcp-signin-card.ts": 1, "memory/branch-change.ts": 3, "murage-anchor.ts": 1, "memory/bring-in.ts": 1, "memory/capture.ts": 3, "memory/deny-read.ts": 1,
   "memory/evolution-forgetting.ts": 1, "memory/learning-wiring.ts": 2, "memory/lineage-backfill.ts": 9, "memory/lineage-warm.ts": 2,
   "memory/memory-moments.ts": 5, "memory/outcomes.ts": 4, "memory/past-chats-build.ts": 2, "memory/pip-reflect.ts": 2, "memory/policy.ts": 1, "memory/replay-lineage.ts": 6,
   "memory/restore.ts": 1, "memory/reveal-capture.ts": 1, "memory/schema.ts": 1, "memory/upgrade-counts.ts": 2, "message-db.ts": 47,
   "message-search-index.ts": 7, "message-tables.ts": 6, "message-walker.ts": 2, "partition-sources.ts": 2, "peer-approval.ts": 1,
   "project-digest.ts": 2, "project-goals.ts": 1, "project-memory-tools.ts": 4, "project-routes.ts": 1, "project-tools.ts": 1, "prompt-quotes.ts": 2,
-  "publish/publish-ops.ts": 4, "room-turn-rows.ts": 3, "setup-thread-facts.ts": 1, "steer-queue.ts": 1, "storage-attachments.ts": 1, "store.ts": 6, "transcript-backfill.ts": 11, "transcript-seq.ts": 6,
+  "publish/publish-ops.ts": 4, "room-turn-rows.ts": 3, "setup-thread-facts.ts": 1, "steer-queue.ts": 1, "storage-attachments.ts": 1, "store.ts": 6,
+  // 1.0.6 recall-forgotten (bb32902a5): thread_list's newestRememberedAt pages a thread's rowid, id, time and withheld stamp to find the newest
+  // line the owner has not forgotten; only that time leaves, never a row or its words.
+  "thread-recall.ts": 1, "transcript-backfill.ts": 11, "transcript-seq.ts": 6,
   "turn-source-holds.ts": 6, "working-context.ts": 5,
 };
 
@@ -375,12 +384,13 @@ describe("18a: raw reads of stored rows only in the allowlist", () => {
 const statusRow = (id: string, murage: unknown, at = 1): Message => ({ id, role: "bot", kind: "activity", tool: { name: `stored secret words ${id}`, ok: true }, actorKind: "murage", murage, at } as Message);
 
 describe("rule 14: BOT_VISIBLE_STATUS", () => {
-  it("is exactly the nine keys, and a row can keep every one of them", () => {
-    expect([...BOT_VISIBLE_STATUS].sort()).toEqual(["call_ended", "card_result_line", "checking", "criteria_claim_corrected", "no_answer_checking", "request_finished", "result_unavailable", "setup_confirmed", "withheld"]);
+  it("is exactly the ten keys, and a row can keep every one of them", () => {
+    expect([...BOT_VISIBLE_STATUS].sort()).toEqual(["call_ended", "card_result_line", "checking", "criteria_claim_corrected", "no_answer_check_timed_out", "no_answer_checking", "request_finished", "result_unavailable", "setup_confirmed", "withheld"]);
     const made: Record<string, ReturnType<typeof status>> = {
       withheld: status("withheld"), checking: status("checking"), no_answer_checking: status("no_answer_checking"), request_finished: status("request_finished"), result_unavailable: status("result_unavailable"),
       card_result_line: status("card_result_line", { desk: botName({ name: "Desk" }), lead: botName({ name: "Lead" }), card: cardTitle({ title: "Card" }) }),
       criteria_claim_corrected: status("criteria_claim_corrected", { met: 2, total: 3 }), call_ended: status("call_ended", { minutes: 4 }), setup_confirmed: status("setup_confirmed"),
+      no_answer_check_timed_out: status("no_answer_check_timed_out", { name: botName({ name: "Worker" }) }),
     };
     for (const key of BOT_VISIBLE_STATUS) {
       const kept = statusRecordOf(made[key]!);

@@ -325,19 +325,26 @@ describe("scoped CI confirmation", () => {
     // Windows runs twelve shards; macOS and ubuntu keep ten, so their 11 and 12 are excluded.
     expect(vitest.strategy.matrix.exclude).toEqual([
       { os: "macos-latest", vitest_shard: 11 }, { os: "macos-latest", vitest_shard: 12 },
-      { os: "ubuntu-latest", vitest_shard: 11 }, { os: "ubuntu-latest", vitest_shard: 12 },
+      { os: "ubuntu-24.04", vitest_shard: 11 }, { os: "ubuntu-24.04", vitest_shard: 12 },
     ]);
     const full = vitest.steps.find(step => step.name === "Run Vitest shard");
     expect(full.if).toBe("inputs.vitest_file == ''");
     // The blocking shards run only GATE files, each on the OSes ci/gate-tests.txt names for it.
-    expect(full.run).toContain('node scripts/ci-test-tiers.mjs list --tier gate --os "$os" --shard "$SHARD"');
+    expect(full.run).toContain('node scripts/ci-test-tiers.mjs list --tier gate --os "$os" --shard "$SHARD" --skip server/cloud-home/placeholder-launcher-root.test.ts');
+    // The gate file the shards leave out needs root (the launcher makes .agents 0555, then creates targets in it); it runs as root once.
+    // placeholder-launcher.test.ts, the non-root half, stays in the shards with no --skip.
+    expect(full.run).not.toContain("--skip server/cloud-home/placeholder-launcher.test.ts");
+    const placeholderRoot = vitest.steps.find(step => step.name === "Run the root-only placeholder-launcher test as root");
+    expect(placeholderRoot.if).toBe("${{ !cancelled() && inputs.vitest_file == '' && matrix.os == 'ubuntu-24.04' && matrix.vitest_shard == 1 }}");
+    expect(placeholderRoot.run).toContain("node_modules/vitest/vitest.mjs run server/cloud-home/placeholder-launcher-root.test.ts");
+    expect(placeholderRoot.run.startsWith("sudo -E ")).toBe(true);
     expect(full.run).toContain("node node_modules/vitest/vitest.mjs run --tags-filter='!nightly && !perf-budget' \"${args[@]}\"");
     expect(full.env.SHARD).toBe("${{ matrix.vitest_shard }}/${{ matrix.os == 'windows-latest' && 12 || 10 }}");
     expect(full.env.MURAGE_SKIP_REAL_ELECTRON_BROWSER_FIXTURE).toBe("${{ matrix.os == 'windows-latest' && '1' || '0' }}");
     // EXTENDED files run on Linux in a job that never fails the run, and `required` does not wait on it.
     const extended = workflow.jobs.extended;
     expect(extended["continue-on-error"]).toBe(true);
-    expect(extended["runs-on"]).toBe("ubuntu-latest");
+    expect(extended["runs-on"]).toBe("ubuntu-24.04");
     expect(workflow.jobs.required.needs).not.toContain("extended");
     expect(extended.steps.find(step => step.name === "Run extended shard").run).toContain("--tier extended");
     // The one file the extended shards leave out runs as root on one of them, so nothing is skipped.
@@ -429,7 +436,7 @@ describe("scoped Windows confirmation", () => {
   it("keeps default CI complete and retains the full test command", () => {
     const ci = load("ci.yml");
     expect(triggers(ci).workflow_dispatch.inputs.windows_only.default).toBe(false);
-    for (const job of ["quality", "vitest"]) expect(ci.jobs[job].strategy.matrix.os, job).toBe('${{ fromJSON(inputs.windows_only && \'["windows-latest"]\' || \'["macos-latest","ubuntu-latest","windows-latest"]\') }}');
+    for (const job of ["quality", "vitest"]) expect(ci.jobs[job].strategy.matrix.os, job).toBe('${{ fromJSON(inputs.windows_only && \'["windows-latest"]\' || \'["macos-latest","ubuntu-24.04","windows-latest"]\') }}');
     expect(ci.jobs.vitest.steps.find(step => step.name === "Run Vitest shard").run).toContain("--tier gate");
     expect(ci.jobs.quality.steps.some(step => step.run === "pnpm test:electron")).toBe(true);
     expect(ci.jobs['control-plane'].if).toBe('${{ !inputs.windows_only && !inputs.human_files }}');
@@ -445,7 +452,7 @@ describe("scoped Ubuntu human confirmation", () => {
     expect(ci.jobs.human.if).toBe('${{ !inputs.windows_only && !inputs.human_files }}');
     const job = ci.jobs["human-confirmation"];
     expect(job.if).toBe("${{ github.event_name == 'workflow_dispatch' && inputs.human_files != '' }}");
-    expect(job["runs-on"]).toBe("ubuntu-latest");
+    expect(job["runs-on"]).toBe("ubuntu-24.04");
     expect(job.steps.find(step => step.name === "Confirm selected human specs").run).toContain('playwright test "${shared_paths[@]}" --retries=0 --trace=on');
     expect(job.steps.find(step => step.name === "Confirm selected human specs").run).toContain('node scripts/run-isolated-human-specs.mjs "${human_paths[@]}" -- --retries=0 --trace=on');
     expect(job.steps.find(step => step.name === "Upload human screenshots and traces").if).toBe("always()");
@@ -633,7 +640,7 @@ describe("tests CI's shards leave out still run (nightly.yml)", () => {
       expect(ci.jobs[job].steps.find(step => step.name === name).run, job).toContain("--tags-filter='!nightly && !perf-budget'");
     }
     const slow = nightly.jobs.slow;
-    expect(slow.strategy.matrix.os).toEqual(["macos-latest", "ubuntu-latest", "windows-latest"]);
+    expect(slow.strategy.matrix.os).toEqual(["macos-latest", "ubuntu-24.04", "windows-latest"]);
     expect(slow.steps.some(step => step.uses === "./.github/actions/vitest-runtime")).toBe(true);
     expect(slow.steps.find(step => step.name === "Run the nightly tests").run).toContain("--tags-filter=nightly");
     expect(slow.steps.find(step => step.name === "Run the whole-file scale tests").run).toContain("ci-test-tiers.mjs list --tier nightly");

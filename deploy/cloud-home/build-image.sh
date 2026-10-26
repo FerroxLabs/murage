@@ -3,13 +3,27 @@
 # Base: Ubuntu 24.04 LTS amd64 or arm64 (aarch64, build host CAX), Ubuntu serial 20260926.
 # One script builds either architecture; every download is pinned per architecture below.
 set -euo pipefail
+# Never let a python helper write __pycache__ into the source checkout (it dirties it and the stage 2 clean-checkout test refuses).
+export PYTHONDONTWRITEBYTECODE=1
+# Two-stage build (LANE-G r3 sec. 2, Grok ruling d, conditions 4 and 5). The manifest can only be signed from the finished tree, so
+# the build is split at the signed-slot block and each stage is explicit; there is no default and no one-pass mode:
+#   MURAGE_IMAGE_STAGE=tree  everything up to the signed-slot block (the pnpm build runs here, once); leaves the final tree
+#                            unsealed in /opt/murage-releases/A and writes the stage 1 marker, then stops.
+#   MURAGE_IMAGE_STAGE=seal  only the signed-slot block and what follows (verify the manifest and signature, check treeSha256, install
+#                            the trust root, seal, enable units). Refuses without the marker of a stage 1 on this host at this revision.
+image_stage=${MURAGE_IMAGE_STAGE:-}
+case $image_stage in
+  tree|seal) ;;
+  *) echo 'MURAGE_IMAGE_STAGE must be "tree" (build the tree) or "seal" (install the signed manifest and seal); there is no one-pass build'; exit 1 ;;
+esac
+stage_marker=/var/lib/murage-image-build/stage1.json
 machine=$(uname -m)
 [[ $(id -u) = 0 && ( $machine = x86_64 || $machine = aarch64 ) ]] || { echo 'An x86_64 or aarch64 root image builder is required'; exit 1; }
 # Per-architecture names: node/caddy/cloudflared/docker/Claude/Codex/Grok/Kimi/OpenCode release names, the
 # browser staging target and Chrome for Testing's directory name.
 case $machine in
-  x86_64)  node_arch=x64 caddy_arch=amd64 cloudflared_arch=amd64 docker_arch=x86_64 claude_platform=linux-x64 codex_triple=x86_64-unknown-linux-musl grok_platform=linux-x86_64 kimi_target=linux-x64 opencode_package=opencode-linux-x64-baseline browser_target=linux-x64 chrome_dir=chrome-headless-shell-linux64 ;;
-  aarch64) node_arch=arm64 caddy_arch=arm64 cloudflared_arch=arm64 docker_arch=aarch64 claude_platform=linux-arm64 codex_triple=aarch64-unknown-linux-musl grok_platform=linux-aarch64 kimi_target=linux-arm64 opencode_package=opencode-linux-arm64 browser_target=linux-arm64 chrome_dir=chrome-headless-shell-linux-arm64 ;;
+  x86_64)  node_arch=x64 caddy_arch=amd64 cloudflared_arch=amd64 docker_arch=x86_64 claude_platform=linux-x64 codex_triple=x86_64-unknown-linux-musl grok_platform=linux-x86_64 agy_dir=linux-x64 agy_file=cli_linux_x64.tar.gz kimi_target=linux-x64 opencode_package=opencode-linux-x64-baseline browser_target=linux-x64 chrome_dir=chrome-headless-shell-linux64 ;;
+  aarch64) node_arch=arm64 caddy_arch=arm64 cloudflared_arch=arm64 docker_arch=aarch64 claude_platform=linux-arm64 codex_triple=aarch64-unknown-linux-musl grok_platform=linux-aarch64 agy_dir=linux-arm agy_file=cli_linux_arm64.tar.gz kimi_target=linux-arm64 opencode_package=opencode-linux-arm64 browser_target=linux-arm64 chrome_dir=chrome-headless-shell-linux-arm64 ;;
 esac
 # SHA-256 pins per architecture. Each equals the vendor's own published checksum
 # (nodejs.org SHASUMS256.txt, Caddy checksums.txt [sha512 there], GitHub release asset
@@ -24,6 +38,10 @@ declare -A docker_sha256_by_arch=([x86_64]=4f798b3ee1e0140eab5bf30b0edc4e84f4cdb
 declare -A claude_sha256_by_arch=([x86_64]=a967e7b1d8b4e47ee421d5433027880347952b0c0857abf880e2c942a4ec93b3 [aarch64]=24caa9e6ff13bf227049a2626f1c816fc895023050f0ec3b12dbf14d897367e0)
 declare -A codex_sha256_by_arch=([x86_64]=86f268d81b898f3e144c5ecff2ad2fda2c5802e042d6195b72538fe0fa125057 [aarch64]=bf3ca2719f1143b1440fbd85c149379e696c782c50ad7991f8bfcec60b2600c1)
 declare -A grok_sha256_by_arch=([x86_64]=1668414b047e1050a96d25fe17dfc3efe63190fbf66d8cc1c3de8633caf50d11 [aarch64]=fc32410b6883c15a39b9f33ec04a6bfb7d070b383e5dbad7efbc48c787e5050d)
+# Antigravity CLI 1.4.4: the vendor publishes SHA-512 (not SHA-256) in its auto-updater manifests,
+# https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_{amd64,arm64}.json,
+# the ones antigravity.google/cli/install.sh reads. The pin is that published digest.
+declare -A agy_sha512_by_arch=([x86_64]=7ce149d350344c1046c7b59b6659bcc5d659f351bf3a07c6c085887d93427ceb89d927752e4ccd0844b53ffb91d33d6a49f72835ceb276c7cffdd13cfb8023b8 [aarch64]=7bfc4f7e5e2dda4cd0c536c72cf9725c2918a038028ad11fa4f7f5e57db77e9ff7d6b9beca05cd85618b77dd3e77de64b63629d33e5779f29111390dc53c7aaf)
 declare -A kimi_sha256_by_arch=([x86_64]=8ee7405d82958f0a50a3aab0773aba9e01057978bad93ba379eaf89e5b6111af [aarch64]=db89c9999efcd5cce0ddd87d8857c41028a50b9fa3c1297d31559b1557c14e85)
 declare -A opencode_sha256_by_arch=([x86_64]=6bdf946045ebfa5773811d0037c1ca8c8a3831880434289b9e4a40c2f1fe8432 [aarch64]=8481102c5d475013302d2f4766cea02b7390e76e74c146408a8cebe2b7f6778f)
 source /etc/os-release
@@ -36,7 +54,7 @@ source_dir=${2:?Source checkout is required}
 control_public_key=${3:-}
 if [[ -n $control_public_key ]]; then
     [[ $control_public_key = /* ]] || { echo 'Public trust input must be an absolute file path'; exit 1; }
-    python3 -I - "$control_public_key" <<'PY'
+    python3 -I -B - "$control_public_key" <<'PY'
 import base64, json, sys
 with open(sys.argv[1], encoding="utf-8") as stream:
     key = json.load(stream)
@@ -51,6 +69,13 @@ PY
 fi
 [[ $revision =~ ^[a-f0-9]{40}$ && $(git -C "$source_dir" rev-parse HEAD) = "$revision" ]] || exit 1
 [[ -z $(git -C "$source_dir" status --porcelain) ]] || { echo 'Source checkout must be clean'; exit 1; }
+source "$source_dir/deploy/cloud-home/build-guards.sh"
+if [[ $image_stage = tree ]]; then
+[[ ! -e $stage_marker ]] || { echo 'Stage 1 already completed on this host (marker exists); stage 1 never reruns'; exit 1; }
+# An aborted earlier run leaves slot A and the links behind and the next `ln -s` dies with "File exists": refuse here instead.
+require_fresh_builder /opt/murage-releases /opt/murage
+build_ram_mb=$(awk '/^MemTotal:/ {print int($2/1024)}' /proc/meminfo)
+require_builder_ram "$build_ram_mb"
 export DEBIAN_FRONTEND=noninteractive
 # snapshot.ubuntu.com answers intermittent 5xx during outages (2026-10-14). Retry each
 # fetch with backoff instead of failing the build; the pins are unchanged. Build-only:
@@ -113,6 +138,20 @@ apt-get -S 20260930T000000Z install -y zstd age
 # snapd is not used by a home and carried its own fixed Criticals: removed.
 apt-get -S 20260930T000000Z -o Dpkg::Options::=--force-confold full-upgrade -y
 apt-get purge -y --auto-remove snapd
+# No sshd on a customer image (purged by finalize-customer-image.sh, last): nobody at Ferrox or the provider logs in over ssh.
+# The base image ships openssh-server; only openssh-client stays (above). Staging reaches a home through the tunnel, not ssh.
+# The ONE exception is STAGING_OPS_SSH=1: a staging-only image keeps sshd for operator login and carries the visible marker
+# /etc/murage-image-kind = staging-ops-ssh. The control plane refuses that image for any non-staging home, and
+# image-release-check.sh fails a release image that has sshd or the marker. A staging home with sshd is never a customer home.
+if [[ ${STAGING_OPS_SSH:-} = 1 ]]; then
+image_kind=staging-ops-ssh
+printf 'staging-ops-ssh\n' > /etc/murage-image-kind
+else
+image_kind=customer
+rm -f /etc/murage-image-kind
+# openssh-server is still installed here ON PURPOSE: hz-live ssh's into this builder after this script for its cleanup and
+# checks. For a customer image the purge is finalize-customer-image.sh, the last command of the last ssh session.
+fi
 rm -rf /snap /var/snap /var/lib/snapd /var/cache/snapd
 if ! dpkg-query -W -f='${Status}' iproute2 2>/dev/null | grep 'install ok installed' >/dev/null; then
     apt-get -S 20260930T000000Z install -y iproute2
@@ -157,6 +196,7 @@ getent passwd murage-turn >/dev/null || useradd --system --no-create-home --home
 getent passwd murage-browser >/dev/null || useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin murage-browser
 getent passwd murage-proxy >/dev/null || useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin murage-proxy
 getent passwd murage-egress >/dev/null || useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin murage-egress
+getent passwd murage-dns >/dev/null || useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin murage-dns
 getent passwd murage-tunnel >/dev/null || useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin murage-tunnel
 usermod -aG murage-turn murage
 # Only turns may execute /usr/bin/bwrap (not murage, murage-proxy, murage-browser).
@@ -178,9 +218,13 @@ for engine in "${engines[@]}"; do
   getent group "murage-eng-$engine" >/dev/null || groupadd --system "murage-eng-$engine"
   engine_gids+="${engine_gids:+,}\"$engine\":$(getent group "murage-eng-$engine" | cut -d: -f3)"
 done
-install -d -o root -g root -m 0755 /opt/murage /etc/murage-home /usr/local/libexec
+# Two release slots and one atomic link (LANE-G r2 sec. 2, r3): the image's release is slot A; `current` is the only link
+# update_software ever moves; /opt/murage resolves through it so every path in the tree stays valid.
+install -d -o root -g root -m 0755 /opt/murage-releases /opt/murage-releases/A /etc/murage-home /usr/local/libexec
+ln -s A /opt/murage-releases/current
+ln -s murage-releases/current /opt/murage
 # Copy the exact commit, including its lockfile and third-party notices.
-git -C "$source_dir" archive "$revision" | tar -x -C /opt/murage
+git -C "$source_dir" archive "$revision" | tar -x -C /opt/murage-releases/A
 # The archive drops every export-ignore path in .gitattributes (maintainer notes,
 # agent records, the mobile app). Every customer home gets this tree, so the
 # build stops if any check-repository-custody rule (private path or private
@@ -195,9 +239,7 @@ pnpm install --frozen-lockfile
 # heap is sized to the build machine: three quarters of RAM, at least 6144 MB (what built the image on
 # 8 GB), at most 12288 MB; MURAGE_BUILD_HEAP_MB overrides. It is set on the build commands only, never
 # exported into the image or the services. A caller that already set --max-old-space-size in NODE_OPTIONS
-# (qualify/hz-live.py sizes its own builder) keeps its value.
-build_ram_mb=$(awk '/^MemTotal:/ {print int($2/1024)}' /proc/meminfo)
-[ "$build_ram_mb" -ge 7000 ] || echo "build-image: only ${build_ram_mb} MB of RAM; the build needs the documented 8 GB builder" >&2
+# keeps its value; qualify/hz-live.py sets none, so the builder's RAM decides.
 build_heap_mb=${MURAGE_BUILD_HEAP_MB:-$((build_ram_mb * 3 / 4))}
 [ "$build_heap_mb" -ge 6144 ] || build_heap_mb=6144
 [ "$build_heap_mb" -le 12288 ] || build_heap_mb=12288
@@ -239,6 +281,9 @@ codex_version=0.162.1
 codex_sha256=${codex_sha256_by_arch[$machine]}
 grok_version=1.0.52
 grok_sha256=${grok_sha256_by_arch[$machine]}
+agy_version=1.4.4
+agy_build=1.4.4-4783783166214144
+agy_sha512=${agy_sha512_by_arch[$machine]}
 kimi_version=2.2.0
 kimi_sha256=${kimi_sha256_by_arch[$machine]}
 opencode_version=1.19.0
@@ -253,6 +298,11 @@ install -o root -g root -m 0755 "$stage/codex-$codex_triple" bin/codex
 curl -fsSL "https://x.ai/cli/grok-$grok_version-$grok_platform" -o "$stage/grok"
 printf '%s  %s\n' "$grok_sha256" "$stage/grok" | sha256sum -c -
 install -o root -g root -m 0755 "$stage/grok" bin/grok
+curl -fsSL "https://storage.googleapis.com/antigravity-public/antigravity-cli/$agy_build/$agy_dir/$agy_file" -o "$stage/agy.tar.gz"
+printf '%s  %s\n' "$agy_sha512" "$stage/agy.tar.gz" | sha512sum -c -
+install -d "$stage/agy"
+tar -xzf "$stage/agy.tar.gz" -C "$stage/agy" antigravity
+install -o root -g root -m 0755 "$stage/agy/antigravity" bin/agy
 curl -fsSL "https://code.kimi.com/kimi-code/binaries/$kimi_version/kimi-code-$kimi_target" -o "$stage/kimi"
 printf '%s  %s\n' "$kimi_sha256" "$stage/kimi" | sha256sum -c -
 install -o root -g root -m 0755 "$stage/kimi" bin/kimi
@@ -268,12 +318,12 @@ install -o root -g root -m 0755 "$stage/opencode/package/bin/opencode" bin/openc
 for sdk in @ai-sdk/openai-compatible @ai-sdk/openai @ai-sdk/anthropic @ai-sdk/google @ai-sdk/mistral; do
   grep -aqF "\"$sdk\":()=>import(" bin/opencode || { echo "OpenCode $opencode_version does not embed $sdk" >&2; exit 1; }
 done
-chrome_dir=$chrome_dir python3 - <<'PY'
+chrome_dir=$chrome_dir python3 -B - <<'PY'
 import hashlib, json, os
 chrome_dir = os.environ["chrome_dir"]
 manifest = {}
 # Each entry is a single native executable (no interpreter or script), pinned by digest above.
-for engine, path in [("fuigoAgent", "/opt/murage/bin/fuigo"), ("claudeAgent", "/opt/murage/bin/claude"), ("codex", "/opt/murage/bin/codex"), ("grokAgent", "/opt/murage/bin/grok"), ("kimiAgent", "/opt/murage/bin/kimi"), ("opencodeGo", "/opt/murage/bin/opencode")]:
+for engine, path in [("fuigoAgent", "/opt/murage/bin/fuigo"), ("claudeAgent", "/opt/murage/bin/claude"), ("codex", "/opt/murage/bin/codex"), ("grokAgent", "/opt/murage/bin/grok"), ("antigravity", "/opt/murage/bin/agy"), ("kimiAgent", "/opt/murage/bin/kimi"), ("opencodeGo", "/opt/murage/bin/opencode")]:
     with open(path, "rb") as stream:
         manifest[engine] = [{"path": path, "sha256": hashlib.file_digest(stream, "sha256").hexdigest()}]
 # The MCP proxies a Cloud turn's rendered config may start (the launcher's MCP_PROXIES):
@@ -302,9 +352,19 @@ PY
 printf '%s\n' "$revision" > /etc/murage-home/source-commit
 printf '{"uid":%s,"gid":%s,"turnGid":%s,"proxyUid":%s,"proxyGid":%s,"engineGids":{%s}}\n' "$(id -u murage)" "$(id -g murage)" "$(id -g murage-turn)" "$(id -u murage-proxy)" "$(id -g murage-proxy)" "$engine_gids" > /etc/murage-home/identity.json
 chmod 0600 /etc/murage-home/identity.json
-install -m 0755 deploy/cloud-home/murage-turn-launch.py /usr/local/libexec/murage-turn-launch
-install -o root -g root -m 0755 deploy/cloud-home/murage-browser-namespace.py /usr/local/libexec/murage-browser-namespace
-install -o root -g root -m 0755 deploy/cloud-home/murage-browser-network.py /usr/local/libexec/murage-browser-network
+# The root launchers outside the release slots (deploy/cloud-home/launchers.txt) are image-pinned regular files (LANE-G r3 sec. 1.1):
+# installed once here through the shared step (which update_software keeps for the release's launcher list and ABI check), made
+# immutable below, and never changed by an update; a release that needs other launchers is refused and the home is re-imaged.
+install -o root -g root -m 0755 deploy/cloud-home/install-launchers.py /usr/local/libexec/murage-install-launchers
+/usr/bin/python3 -I -B /usr/local/libexec/murage-install-launchers deploy/cloud-home /usr/local/libexec
+[[ $(/usr/bin/python3 -I -B -c 'import importlib.machinery,importlib.util,sys;l=importlib.machinery.SourceFileLoader("il",sys.argv[1]);s=importlib.util.spec_from_loader(l.name,l);m=importlib.util.module_from_spec(s);l.exec_module(m);print(m.abi(sys.argv[2]))' /usr/local/libexec/murage-install-launchers deploy/cloud-home) = "$(cat deploy/cloud-home/launcher-abi)" ]] || { echo 'launchers.txt abi and deploy/cloud-home/launcher-abi disagree'; exit 1; }
+# The home's root launcher (LANE-G r3 sec. 1): the only uid-0 step of a home start; binds the volume, verifies the live slot and the
+# update journal, asks the updater's gate during an update, drops to the service user, execs the slot supervisor through the verified
+# descriptor. Image code, never from a release.
+install -o root -g root -m 0755 deploy/cloud-home/murage-home-launch.py /usr/local/libexec/murage-home-launch
+# The launcher sources inside slot A carry their manifest modes, as an updater-installed slot does after safe_extract + apply_modes and
+# as the release producer's tree does: one tree digest for the image build, the producer and the home.
+/usr/bin/python3 -I -B -c 'import importlib.machinery,importlib.util,os,sys;l=importlib.machinery.SourceFileLoader("il",sys.argv[1]);s=importlib.util.spec_from_loader(l.name,l);m=importlib.util.module_from_spec(s);l.exec_module(m);m.apply_modes(sys.argv[2],m.plan(os.path.join(sys.argv[2],"deploy","cloud-home")))' /usr/local/libexec/murage-install-launchers /opt/murage-releases/A
 # Per-engine outbound allowlist for turns (SNI proxy); the allowlist is root-owned
 # and read-only to the proxy, and a malformed file keeps the proxy from starting.
 install -o root -g root -m 0755 deploy/cloud-home/murage-egress-proxy.py /usr/local/libexec/murage-egress-proxy
@@ -343,6 +403,7 @@ install -m 0644 deploy/cloud-home/murage-turns.slice /etc/systemd/system/murage-
 install -m 0644 deploy/cloud-home/murage-browsers.slice /etc/systemd/system/murage-browsers.slice
 install -m 0644 deploy/cloud-home/murage-proxy.service /etc/systemd/system/murage-proxy.service
 install -m 0644 deploy/cloud-home/murage-egress-proxy.service /etc/systemd/system/murage-egress-proxy.service
+install -m 0644 deploy/cloud-home/murage-egress-dns.service /etc/systemd/system/murage-egress-dns.service
 install -m 0644 deploy/cloud-home/murage-miner-watch.service /etc/systemd/system/murage-miner-watch.service
 install -m 0644 deploy/cloud-home/murage-tunnel.service /etc/systemd/system/murage-tunnel.service
 install -m 0644 deploy/cloud-home/murage-tunnel-token.service /etc/systemd/system/murage-tunnel-token.service
@@ -394,15 +455,11 @@ install -d -o root -g root -m 0700 /var/cache/restic
 if [[ -n $control_public_key ]]; then
     install -o root -g root -m 0644 "$control_public_key" /etc/murage-home/control-plane-public-key.json
 fi
-# Optional signed release channel for "Update my Cloud" (murage-commands update_software). Without both
-# inputs the home answers an update with "unsupported". The key is an Ed25519 public key (PEM).
-if [[ -n ${MURAGE_RELEASE_CHANNEL_URL:-} || -n ${MURAGE_RELEASE_PUBLIC_KEY:-} ]]; then
-    [[ $MURAGE_RELEASE_CHANNEL_URL =~ ^https://[A-Za-z0-9.-]+(/[A-Za-z0-9._/-]*)?$ && $MURAGE_RELEASE_PUBLIC_KEY = /* ]] || { echo 'Release channel needs an https URL and an absolute key path'; exit 1; }
-    openssl pkey -pubin -in "$MURAGE_RELEASE_PUBLIC_KEY" -noout -text | grep '^ED25519 Public-Key' >/dev/null || { echo 'Release key must be an Ed25519 public key'; exit 1; }
-    install -o root -g root -m 0644 "$MURAGE_RELEASE_PUBLIC_KEY" /etc/murage-home/release-public-key.pem
-    printf '{"channelUrl":"%s"}\n' "$MURAGE_RELEASE_CHANNEL_URL" > /etc/murage-home/release.json
-    chmod 0644 /etc/murage-home/release.json
-fi
+# The signed release channel for "Update my Cloud" (murage-commands update_software) is mandatory (LANE-G r3 sec. 2, Astra C, Q4):
+# the channel URL, the Ed25519 public key (PEM), and the signed manifest + signature scripts/cloud-home-release.sh and
+# scripts/cloud-home-sign.sh produced for THIS revision's tree (the private key never touches the image build). All four, or the
+# build fails; staging builds use the staging key. They are required and checked by stage 2 (MURAGE_IMAGE_STAGE=seal) below.
+# Stage 1 (MURAGE_IMAGE_STAGE=tree, this part of the script) never sees them.
 install -d -o root -g root -m 0755 /etc/claude-code /etc/codex /etc/grok /etc/fuigo
 install -o root -g root -m 0644 deploy/cloud-home/managed/claude-settings.json /etc/claude-code/managed-settings.json
 install -o root -g root -m 0644 deploy/cloud-home/managed/codex-requirements.toml /etc/codex/requirements.toml
@@ -412,7 +469,7 @@ install -o root -g root -m 0644 deploy/cloud-home/managed/grok-requirements.toml
 install -o root -g root -m 0644 deploy/cloud-home/managed/fuigo-requirements.toml /etc/fuigo/requirements.toml
 install -o root -g root -m 0644 deploy/cloud-home/managed/fuigo-managed_config.toml /etc/fuigo/managed_config.toml
 # SPDX metadata belongs to our source file, not the vendor settings schema.
-python3 - <<'PY'
+python3 -B - <<'PY'
 import json
 path = "/etc/claude-code/managed-settings.json"
 with open(path, encoding="utf-8") as stream:
@@ -431,9 +488,82 @@ install -d -m 0755 /etc/sysctl.d
 printf 'fs.inotify.max_user_instances = 2048\nfs.inotify.max_user_watches = 524288\n' > /etc/sysctl.d/61-murage-inotify.conf
 # A VM image, not a container. proc restrictions apply to all service processes.
 if ! grep -q '^proc /proc proc .*hidepid=2' /etc/fstab; then printf 'proc /proc proc defaults,hidepid=2 0 0\n' >> /etc/fstab; fi
-chown -R root:root /opt/murage
-chmod -R go-w /opt/murage
+# GNU -R does not traverse a symlink argument: the real tree is the target.
+chown -R root:root /opt/murage-releases
+chmod -R go-w /opt/murage-releases
 test "$(stat -c %U /opt/murage/dist)" = root && test -f /opt/murage/dist/index.html
+# Stage 1 ends here: the tree is final and unsealed. The marker records its digest, the revision and this host, so stage 2 can refuse a
+# tree that changed, another revision or another builder. Pack the tree (scripts/cloud-home-release.sh prepare) from
+# /opt/murage-releases/A, have the manifest signed off-box, then run stage 2 on this same host.
+python3 -I -B "$source_dir/deploy/cloud-home/image-stage.py" mark "$source_dir/deploy/cloud-home/murage-commands" /opt/murage-releases/A "$revision" "$stage_marker" /etc/machine-id
+echo 'build-image: stage 1 (tree) complete; sign the manifest, then run MURAGE_IMAGE_STAGE=seal on this host'
+exit 0
+fi
+# ===== Stage 2 (MURAGE_IMAGE_STAGE=seal): only the signed-slot block and everything after it. No package build, no download, no tree change.
+# The marker is checked before anything else; the signature checks below are the final authority (condition 6).
+python3 -I -B "$source_dir/deploy/cloud-home/image-stage.py" check "$source_dir/deploy/cloud-home/murage-commands" /opt/murage-releases/A "$revision" "$stage_marker" /etc/machine-id
+cd /opt/murage
+[[ -n ${MURAGE_RELEASE_CHANNEL_URL:-} && -n ${MURAGE_RELEASE_PUBLIC_KEY:-} && -n ${MURAGE_RELEASE_MANIFEST:-} && -n ${MURAGE_RELEASE_MANIFEST_SIG:-} ]] \
+  || { echo 'MURAGE_RELEASE_CHANNEL_URL, MURAGE_RELEASE_PUBLIC_KEY, MURAGE_RELEASE_MANIFEST and MURAGE_RELEASE_MANIFEST_SIG are required (signed slot A)'; exit 1; }
+[[ $MURAGE_RELEASE_CHANNEL_URL =~ ^https://[A-Za-z0-9.-]+(/[A-Za-z0-9._/-]*)?$ && $MURAGE_RELEASE_PUBLIC_KEY = /* && $MURAGE_RELEASE_MANIFEST = /* && $MURAGE_RELEASE_MANIFEST_SIG = /* ]] \
+  || { echo 'Release channel needs an https URL and absolute paths for the key, the manifest and its signature'; exit 1; }
+openssl pkey -pubin -in "$MURAGE_RELEASE_PUBLIC_KEY" -noout -text | grep '^ED25519 Public-Key' >/dev/null || { echo 'Release key must be an Ed25519 public key'; exit 1; }
+# Slot A is signed (LANE-G r3 sec. 2): the release manifest must be this revision's, carry this image's launcher ABI and name exactly the
+# tree digest of /opt/murage-releases/A (the checkout's trusted murage-commands computes it and verifies the signature). It is installed
+# in the trust root and beside the update journal; the journal (state.json v3) names slot A with the manifest's sequence.
+python3 -I -B - "$source_dir/deploy/cloud-home/murage-commands" "$MURAGE_RELEASE_MANIFEST" "$MURAGE_RELEASE_MANIFEST_SIG" "$MURAGE_RELEASE_PUBLIC_KEY" "$revision" "$(cat deploy/cloud-home/launcher-abi)" "$MURAGE_RELEASE_CHANNEL_URL" <<'PY'
+import importlib.machinery, importlib.util, json, os, shutil, sys
+commands, manifest_path, sig_path, key, revision, abi, channel = sys.argv[1:8]
+loader = importlib.machinery.SourceFileLoader("mc", commands)
+spec = importlib.util.spec_from_loader(loader.name, loader)
+home = importlib.util.module_from_spec(spec)
+loader.exec_module(home)
+with open(manifest_path, "rb") as stream:
+    raw = stream.read(65537)
+with open(sig_path, "rb") as stream:
+    signature = stream.read(129)
+manifest = home.verify_manifest({"verify": home.verify_signature}, raw, signature, key)
+if manifest["revision"] != revision:
+    sys.exit("release manifest is for another revision")
+if manifest["launcherAbi"] != abi:
+    sys.exit("release manifest launcher ABI differs from this image's")
+fd = os.open("/opt/murage-releases/A", home.SLOT_OPEN)
+try:
+    digest = home.seal_walk_digest(fd, False)
+finally:
+    os.close(fd)
+if digest != manifest["treeSha256"]:
+    sys.exit("release manifest treeSha256 is not this image's slot A (%s)" % digest)
+trust, update = "/usr/lib/murage-home/trust", "/var/lib/murage-update"
+for directory in (trust, trust + "/manifests", update, update + "/manifests"):
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    os.chmod(directory, 0o700)
+for target, data in ((trust + "/manifests/A.json", raw), (trust + "/manifests/A.sig", signature), (update + "/manifests/A.json", raw), (update + "/manifests/A.sig", signature)):
+    home.write_bytes_private(target, data)
+    os.chmod(target, 0o600)
+shutil.copyfile(key, trust + "/release-public-key.pem")
+with open(trust + "/release.json", "w", encoding="utf-8") as stream:
+    json.dump({"channelUrl": channel, "minimumSequence": manifest["sequence"], "imageRevision": revision, "launcherAbi": abi}, stream)
+with open(trust + "/launcher-abi", "w", encoding="utf-8") as stream:
+    stream.write(abi + "\n")
+for name in ("release-public-key.pem", "release.json", "launcher-abi"):
+    os.chmod(trust + "/" + name, 0o600)
+home.write_private(update + "/state.json", {"format": home.UPDATE_STATE_FORMAT, "installed": {"slot": "A", "sequence": manifest["sequence"], "revision": revision},
+                                           "inflight": None, "lastResult": None})
+os.chmod(update + "/state.json", 0o600)
+PY
+# Seals (LANE-G r3 sec. 1.4, 2): every inode of slot A, the releases directory, the journal and the trust root, and the four root
+# launchers with their directory. Only image code (murage-commands, on the idle slot and around its own writes) ever lifts a flag.
+# Regular files and directories only: the dependency tree holds about 3000 symlinks, which chattr cannot flag (build-guards.sh).
+seal_tree /opt/murage-releases/A
+chattr +i /opt/murage-releases
+seal_tree /var/lib/murage-update /usr/lib/murage-home/trust
+chattr +i /usr/local/libexec/murage-turn-launch /usr/local/libexec/murage-browser-namespace /usr/local/libexec/murage-browser-network /usr/local/libexec/murage-home-launch /usr/local/libexec
+for launcher in murage-turn-launch murage-browser-namespace murage-browser-network murage-home-launch; do
+    [[ -f /usr/local/libexec/$launcher && ! -L /usr/local/libexec/$launcher && $(lsattr -d "/usr/local/libexec/$launcher" | cut -d' ' -f1) == *i* ]] \
+      || { echo "launcher $launcher is not an immutable regular file"; exit 1; }
+done
+test -d /usr/lib/murage-home/trust && test -f /usr/lib/murage-home/trust/manifests/A.sig && test -f /var/lib/murage-update/state.json
 systemctl daemon-reload
 systemctl enable data.mount murage-egress.service
 systemctl enable murage-volume.service
@@ -442,7 +572,7 @@ systemctl enable murage-volume.service
 # the dependency chain: home/proxy Require data.mount, which Requires
 # murage-volume, which unlocks only for an enrolled machine. Before enrollment
 # they fail on that dependency and nothing listens.
-systemctl enable murage-home.service murage-proxy.service murage-egress-proxy.service
+systemctl enable murage-home.service murage-proxy.service murage-egress-proxy.service murage-egress-dns.service
 # A transient volume-unlock failure (CP 5xx, network not up) fails the oneshot and
 # strands home/proxy; the timer restarts them, except after terminal exit 78.
 systemctl enable murage-home-recover.timer
@@ -471,8 +601,10 @@ if printf '%s\n' "$order_log" | grep -Ei 'ordering cycle|order is cyclic|break o
 # generator makes at boot, and cannot see a cycle through cloud-final.service. unit-order-check.py emulates that
 # generator and models the same ordering rules: it is the gate that fails on such a cycle. Any non-zero exit fails,
 # including 2 (load error) and 127 (no python3).
-python3 -I deploy/cloud-home/qualify/unit-order-check.py --root / || { echo 'boot ordering cycle in the image units; refusing to build'; exit 1; }
+python3 -I -B deploy/cloud-home/qualify/unit-order-check.py --root / || { echo 'boot ordering cycle in the image units; refusing to build'; exit 1; }
 # <<< boot ordering gate
+# The stage 1 marker is builder state, not image content: it is gone before the image is snapshotted.
+rm -rf /var/lib/murage-image-build
 if [[ $machine = aarch64 ]]; then
 # The pinned snapshot was only for building. A running home keeps receiving security
 # updates from the live arm64 archive, as the x86 image does from archive.ubuntu.com.
@@ -485,3 +617,5 @@ Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
 SOURCES
 fi
 rm -f /etc/apt/apt.conf.d/99murage-build-retries
+# The customer release gate (sshd purge, then image-release-check.sh) is NOT here: it must be the last step on the
+# disk that becomes the snapshot, so hz-live runs deploy/cloud-home/finalize-customer-image.sh as its final remote command.

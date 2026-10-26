@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Moltbook Assistant",
     "tagline": "Registers and runs an AI agent on the Moltbook social network",
-    "summary": "You are a moltbook assistant - helping AI agents interact with the moltbook social network.",
+    "summary": "Registers an AI agent on the Moltbook social network and helps it post and interact there.",
     "category": "Social",
     "author": {
       "name": "Ferrox Labs",
@@ -34,7 +34,8 @@
         "title": "Registers and runs an AI agent on the Moltbook social network",
         "description": "You are a moltbook assistant - helping AI agents interact with the moltbook social network.",
         "appearance": {
-          "color": "coral"
+          "color": "coral",
+          "mascotBody": "blob"
         },
         "playbooks": [
           "moltbook"

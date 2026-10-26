@@ -1,0 +1,974 @@
+#!/bin/bash
+# Runs on the throwaway rescue server (as root) after the image's disk is attached, before image-release-check.sh.
+# Mounts what will boot, read-only, at $MNT/img (root) and $MNT/efi (the ESP, if any),
+# and refuses (exit 1, reason on stdout) unless the disk is exactly the layout a Murage customer image has:
+#   one disk, sda; one ext4 root (label empty or cloudimg-rootfs); at most one vfat ESP holding only EFI/BOOT/BOOTX64.EFI;
+#   at most one BIOS boot partition with no filesystem; nothing else (a separate BOOT partition is refused).
+# The layout seen on staging image 447987145 (build host cx33, fsn1): sda1 ext4 root (no label, UUID in fstab and grub), sda14
+# BIOS boot, sda15 vfat ESP holding only EFI/BOOT/BOOTX64.EFI; no BOOT partition; grub.cfg only at sda1:/boot/grub/grub.cfg.
+# Usage: image-disk-check.sh mount-image ENV (ENV is staging or prod).
+# The whole boot closure is an ALLOWLIST of sha256 values for the image of ENV (closure_staging below; prod's is empty, so prod
+# refuses): the MBR boot code (disk bytes 0-439), the BIOS core image (sda14, whole partition), every file on the ESP, every file under /boot/grub that GRUB can load
+# (modules, lists, fonts, boot.img, core images; the *.cfg files are judged by the parser and grubenv by its variable rule), and every
+# entry of every systemd generator directory (plus the file a generator link points at). A file outside the list, a missing one,
+# or one with another hash is refused with its name. Pin lines are "AREA KIND VALUE PATH" (KIND f = sha256, l = link target).
+# To regenerate the list from a known-good mounted image: MURAGE_DISKCHECK_PRINT_CLOSURE=1 bash image-disk-check.sh mount-image staging
+# Every ext4 must be clean: a filesystem with needs_recovery has an unreplayed journal that a normal boot would replay, so
+# the tree seen here would not be the tree that boots. Every grub.cfg the bootloader can reach must boot the checked root
+# by UUID (or the cloudimg-rootfs label when the root carries it) with no init= override.
+set -euo pipefail
+
+MNT=${MURAGE_DISKCHECK_MNT:-/mnt}
+ENVN=${2:-}
+DISK=/dev/sda
+ESP_TYPE=c12a7328-f81f-11d2-ba4b-00a0c93ec93b
+BIOS_TYPE=21686148-6449-6e6f-744e-656564454649
+die() { echo "image-disk-check: REFUSED $*" >&2; exit 1; }
+
+field() { # field KEY LINE: the value of KEY="..." in an lsblk -P line
+    local re="(^| )$1=\"([^\"]*)\""
+    [[ $2 =~ $re ]] || return 1
+    printf '%s' "${BASH_REMATCH[2]}"
+}
+
+[[ $ENVN == staging || $ENVN == prod ]] || die "needs the environment (staging or prod) as its second argument"
+
+# ---- the boot closure ------------------------------------------------------------------------------------------------
+# staging image 447987145 (see the header). A test hook, MURAGE_DISKCHECK_CLOSURE_FILE, replaces the list; the rescue server's
+# environment is not set by the signer, which sends only the command line.
+closure_staging() {
+    cat <<'PINS'
+bios f f78422c2c5780917b77f99e450875eea3e54b4104781bad005c9cd5786318608 sda14
+efi f d1136fd2d32a930b69bcfaf974e970691488d050300e9df07349a5efeaf5851f EFI/BOOT/BOOTX64.EFI
+gen f 15c4d4502f06b8f6d6dafca932edbaafc1dbdb8d7a0edc324f34000a49ba4d08 usr/lib/systemd/system-generators/systemd-fstab-generator
+gen f 1940b17c163d9c1b5b98db9be3fe07204a33f3f4a23572934d731d7f0336ef80 usr/lib/systemd/system-generators/systemd-rc-local-generator
+gen f 1c4134dfba90289c3f27c4dad93122ad65acba58f0271f9a81f3c70a7d22b0a1 usr/lib/systemd/system-generators/systemd-debug-generator
+gen f 21fc559808b8ff2f0ae3b8b80908286b7bd482bd5428f85bad3aacd689ddc7d2 usr/lib/systemd/system-generators/friendly-recovery
+gen f 75385259d93f97d88c26d36d1d904600707e551388d1558b98259307c9b45f7e usr/lib/systemd/system-generators/systemd-veritysetup-generator
+gen f 8087dbc7d583fb91e945ed15bb793c960c10dbf04254d52cbf6e00bd40e3813b usr/lib/systemd/user-generators/systemd-xdg-autostart-generator
+gen f b25bbe3184dfdc205ca1f226c6829f21b39c132aed726d64deafe1007e45f5b6 usr/lib/systemd/system-generators/systemd-getty-generator
+gen f b4f4a82855044c085d8b0f11fa2a04623097922894bd92924badcf2b9900ecfb usr/lib/systemd/system-generators/systemd-hibernate-resume-generator
+gen f bd65fb104751c7c8d84f2f6054f1e6cafbd5877319f1a085d6ac16ef48f43a71 usr/lib/systemd/user-environment-generators/30-systemd-environment-d-generator
+gen f cfc54cf84dbd88c112c297edd656261e344af96f1a3edc39353c70be72a339e9 usr/lib/systemd/system-generators/cloud-init-generator
+gen f d0e4b0d8470530116b9b6919d2cd8455d97eaad89ace11d7a3b7387a41831302 usr/lib/systemd/system-generators/systemd-run-generator
+gen f e1eeff5894aa94f0bafa9618a2df290bdc7e57a44b0bf5c83c8e0a72b91260d2 usr/lib/systemd/system-generators/systemd-integritysetup-generator
+gen f e4557b5fc18adad8b41da15bf5297c121a9f8445bb4c9c9d34a83b262c6507b4 usr/lib/systemd/system-generators/systemd-sysv-generator
+gen f ed7791c0a28a4404065e863e703a469f3b3213a291a05baa960c83877de1d994 usr/lib/systemd/system-generators/systemd-system-update-generator
+gen f f15c109b8f2989b52d4b9fbe0616c34f1d6fc447b2df50972489befffdcdeeb9 usr/lib/systemd/system-generators/systemd-cryptsetup-generator
+gen f fd94e9ce13599b5a8fd05779fd292ead19ca0c53a19b8199c1b7853e556d6c34 usr/lib/systemd/system-generators/systemd-gpt-auto-generator
+gen l ../../../libexec/netplan/generate usr/lib/systemd/system-generators/netplan
+gen l /dev/null etc/systemd/system-generators/systemd-gpt-auto-generator
+gent f e7582461766691aa52e866baacfb2048ffd3f56780fa87d1a414d712c764d0a6 usr/libexec/netplan/generate
+grub f 00075030f332b09a13eccfaf80a29d0d0855c4cbacb9f7b602808ff6ceb69c70 i386-pc/hdparm.mod
+grub f 00084efd8a9c18513961cd3d93c38a875286ab8ca179d3bc3e68c979e3424abc i386-pc/blocklist.mod
+grub f 006662e5a109acbe4ed059ccd8b58b446bf99e097b3b4515b6026fde5df0f19d x86_64-efi/help.mod
+grub f 021ebbbc1abedfb473c478f814bad12b8cdd6aa22b6d5f76f1b4eba0335d0ce2 x86_64-efi/reiserfs.mod
+grub f 02c4a3f66cea667d6ba66569675ea59bbf9e2959389cdff5f00b142d8a56cbcd i386-pc/terminfo.mod
+grub f 03622f297989baa34fb9554d9b1cec32da5d46e59fb88445633106a6d333e042 i386-pc/boot.mod
+grub f 03fd6ea087fa1b55d1c558d90a1a455d17c67e987a2523168c8279364cd16b9a x86_64-efi/reboot.mod
+grub f 046c0ebd56153bd7b0715b575c875fcb215acfe40bbe5505aca1991ae855ca7b x86_64-efi/serial.mod
+grub f 0485688349b36bc868dab723bf2e78f945aa97a966b1da6ec3cd8807720a7c68 i386-pc/crypto.mod
+grub f 04f3f8237c11d74513578001ff0d1e1152824eb33e24f2d14a28ee0c8e2dd463 x86_64-efi/gettext.mod
+grub f 0653c3b117fadb92db82bab76edf60e622039f1c3d285f259547a096d96f8fda x86_64-efi/lsacpi.mod
+grub f 08d9067165bb28d6e15086115da9daa65d6daa07d38668f805a50b454c14a17b x86_64-efi/ext2.mod
+grub f 0916e57a0218b5fb3635a501f1f5785d442c53c40a1586951709b58dc69643c6 i386-pc/squash4.mod
+grub f 0964abe92a64e5b3dcf75687d89d580720d889d8d658ac19e0da3aec1d84b1e5 i386-pc/multiboot2.mod
+grub f 09ade633e9082d0e9557a8f0c09cfdfbc94479222044b50234f0490aa9ea6247 x86_64-efi/cmdline_cat_test.mod
+grub f 09df55808b2a305b254602d4191945046032f63aec00da37ee9e020499d849bc i386-pc/gcry_sha1.mod
+grub f 09ec6067688a3b5301a1c0c1fe1cadd496bbeb009190eabf75cdd4dbbfab35d0 i386-pc/search_fs_uuid.mod
+grub f 0af893a36327a53ad5b6445aaf6fcf36eb24f1c65ee10e5fbaf2016e09d57765 x86_64-efi/ahci.mod
+grub f 0b4f6e1e60790dce9bf029680ea9fec7ef2c77928b20f6682085b3624198ae58 x86_64-efi/usbms.mod
+grub f 0b66aa1c1916c4994e7b7779320f995a59ddd52cfe63486fe94b442bb3f3002d x86_64-efi/cbtime.mod
+grub f 0b89ee1fd97185551793e1b4ed72d169e7a88cdfa54a87f917f0f7128cd08d38 x86_64-efi/dm_nv.mod
+grub f 0bb05b1ff395284d502e5abc75c7d66978319c345f3f3d0e1e06871000f7760a x86_64-efi/gcry_sha256.mod
+grub f 0c34e5a0fb6e9ab0d650bddfdf031e319df30b96b76ad236125a2e725279106d x86_64-efi/cmp.mod
+grub f 0c7b92e447038b629f44764a80ef2f97d531a8ba5bbdb2d6198ae4010a416e29 i386-pc/gptsync.mod
+grub f 0d7b47fca8d2f4bbe737ccbf63b75ac2111363a201408ece32195ebe65b54a3c x86_64-efi/gcry_arcfour.mod
+grub f 0dcc135c908a27322239d9f48c03e720829c648c30fe4cfe277150d73f778c51 x86_64-efi/fat.mod
+grub f 0de5d9eec62d75b56c3c816533d4d4a686cf9123e5d41ad6594a8b3e6d4d45d1 i386-pc/lsacpi.mod
+grub f 0f45720dfed2c7b2f6f96b0d408da782502c25f7f4632f577ba5a05060385edd x86_64-efi/videotest_checksum.mod
+grub f 0f9fb8faad0ee2be96bb70878a069e0bb6a8d4ff255280d9d9c4d34ede09dad2 i386-pc/pgp.mod
+grub f 0fd1b4ef7f90e2f7977333b14d72b7e956da9a0b49076e07ef95ba5dcce14ac2 x86_64-efi/gcry_camellia.mod
+grub f 0ffe760cf2f94bf1f6124297fd06b86e3eaa1a8817c486b0b9ca307ee8128131 i386-pc/part_plan.mod
+grub f 10397f0dded473392cb9d67e6698e983332f7af3dfecd74e8aee8b6c2d323ac0 i386-pc/hashsum.mod
+grub f 11617d93c64468c45ddbaac756c47cc71628efc2b891d54052a63b55c14808e7 x86_64-efi/setpci.mod
+grub f 119d32b97765c94eb5688706aedb5ad89ac39a65c233b773803e2f86fc1d4384 x86_64-efi/gfxterm.mod
+grub f 11a90cf044105edc9ae3f58655a047a92da6ef1005a195a38764653655c9bd62 i386-pc/memrw.mod
+grub f 11b168d92b1e2e9e5b97303c4f650dba73f4024f436cff933887b3310f5ff1fd i386-pc/fat.mod
+grub f 11f56216c5a6987c730758000ccbad8a094d3cef9cb408240858262f6ff0030b x86_64-efi/cpio.mod
+grub f 122e242bfe7ddb924d6f59b4f1c4d977aac4b2ee29b3e1bac2801943aedcd43a i386-pc/ata.mod
+grub f 122e407c5bc612f255f990ac575eff7b2a82c090167717ac19337fac39b9e142 x86_64-efi/hashsum.mod
+grub f 12aa66210683b99704fc35b28a722fb49766eaab1704c335e90d7a1fe0151320 x86_64-efi/boot.mod
+grub f 1307f76a117f4f3380fef8152e8c1c9fc3fa06b64290bd08337dc2a86f302f66 x86_64-efi/tr.mod
+grub f 1362b09456215628efa62c393ece4f6978e144761c24bfacd8a3cec4882fe415 x86_64-efi/newc.mod
+grub f 14151402b238263ed903636c40969aecebcd859aeb20e3ccaf66afbdc40025bc x86_64-efi/all_video.mod
+grub f 161a60bce68906a57cfaf7e2cdca9847ce1fe05cbf5bd773372a99e8fca95767 i386-pc/jfs.mod
+grub f 172849cde59029e9c2dfed855276a01de8edfd8aa02318fee54a2e752c0c9e84 i386-pc/bswap_test.mod
+grub f 173d435c81e3cb3aafc3ccc700ba850be1ce08573f888132d1a953b49a82d9b7 x86_64-efi/tar.mod
+grub f 17dbcdb3fe9acd8dedb3450833d956807cb26924e2e92e9a072e56d7050757ae x86_64-efi/part_dvh.mod
+grub f 181be8c0ac5815883c4b391dae55ff7ea875bd682d948750261fe0e20acc23f6 x86_64-efi/luks2.mod
+grub f 189576282360e0fb5c56071bb046f455b97d41fd27c9fb4dd467cdc1d5af57da x86_64-efi/ata.mod
+grub f 18bdd4a28d84564b44da8bd4172f2f311af666437b8d2ceb63cd00722b3fb1c3 x86_64-efi/mdraid1x.mod
+grub f 18d4fa44bc9e2ccc7908c8cca875698104103bde015ab59d1fec882e3d54552d x86_64-efi/testload.mod
+grub f 194baadf192a33bbc55f9e65570503917bc4aa879a08c7570da5ded9f52df528 x86_64-efi/efi_gop.mod
+grub f 19b45da788a0695b0b40e5cca16db86341ca9868832ee7b7cce728784d3911d6 x86_64-efi/usbtest.mod
+grub f 19e710f37a467953e5df69f21e4532e21f9ddfc3028b2a8b0723d23dbd62a34d x86_64-efi/gcry_cast5.mod
+grub f 1a665a0d9f932343b51ce4cd6ee193a75ecbfcd3321d8f43ef70764f636d8c8c x86_64-efi/gcry_sha1.mod
+grub f 1ad9cfd58bae34ec3b529ae17118ef1cf98186adb3f05f31ef6a6339adfb0822 x86_64-efi/scsi.mod
+grub f 1b766f38a94927fe9b7bc1e809f0363e778e14c601e800faea271a2e75d3fc43 i386-pc/crypto.lst
+grub f 1b766f38a94927fe9b7bc1e809f0363e778e14c601e800faea271a2e75d3fc43 x86_64-efi/crypto.lst
+grub f 1b7c21346adebaf148e138c30ee336b33573d40781dcc3b103e74d9b60105372 i386-pc/usbms.mod
+grub f 1ec6112df11c6b4dc5f226ec1f48764b48fc23ed410bf079848a7f86949999ea i386-pc/exfctest.mod
+grub f 1f4374b73fe8326357a96097d8ba5d7be087a0c57a8ecdf4b5af3ad08a4672ed x86_64-efi/btrfs.mod
+grub f 1f585223776f041fe931448e28590bc896d9f3ae59001abe26de25e197cf2f0f x86_64-efi/elf.mod
+grub f 1fa4b3187fe6a454b0ba4a64af51f31f2536dff58375b9720d1299f951fb5212 i386-pc/gettext.mod
+grub f 200aedbdc378c35a72a65782ec8db47d0a243fc6fa4c7fd86722b3713f28c0e1 x86_64-efi/video_bochs.mod
+grub f 20a45c276502450211e639c28f9f14ec94e24bc021948e326fd568c0bf1f157c i386-pc/dm_nv.mod
+grub f 20b928e0f4fd272b9a26586685c47843993118c9ea2ef3cdaf956ea6ab41ca2f i386-pc/tar.mod
+grub f 20db8e9b2426fa75c06fcb2e6b715938698363fa6c08f42176be405ca95bd351 i386-pc/xnu_uuid.mod
+grub f 211ea2021bb291fd82618f0b65e50e7c2436fb5f32bf5c20d6cb34f2af1df732 i386-pc/adler32.mod
+grub f 212f02818c3decb2fc6f9ad3e9f6e84193df9819565c8adc0767ea023c81eecf x86_64-efi/fixvideo.mod
+grub f 21fb53dd25d4f5ecaa66d5ef4ad1bb0acea846d9f8a4044dd3d3526bfcb179b1 i386-pc/normal.mod
+grub f 21fc5d8fde60da39d6735e10b43bf32c4053346485bf9b867b88400e601f3dd2 i386-pc/diskfilter.mod
+grub f 2333af5204a2e35d01e6ad0cfa9b8cd977c196a4fc2ca8aff48fd34aac7c1c6c x86_64-efi/minix3.mod
+grub f 23afb1edc1935cceb13c735818da9bf1b2fce1b32e890b53778e3800724d9899 i386-pc/probe.mod
+grub f 2426e18daf10ceb758fc5dfcd970ac5852d3290a37c53644d913d68b467ea173 x86_64-efi/datehook.mod
+grub f 245993bc89f57028c5faf942e2976817ea7d13d27e8703373722066eb66e10bf x86_64-efi/archelp.mod
+grub f 24814ff7cc63d44f55b8c049de0ecfa60cff42260dbedf544540b9cf2d64dc6f i386-pc/legacycfg.mod
+grub f 24b2415d60e372d1dbeb9f3faeb88dabc520934fc1ac222ef190398621d48af0 i386-pc/datehook.mod
+grub f 255588d0ea8afa5da1b3ad0d9c61f09ebb2a9d5ca1a2149616658d9bd2c4be96 i386-pc/true.mod
+grub f 268c329b4372bc34107039674d682a4fb50d3d3ebabd9fb24cd68aff2d3b1a1c i386-pc/serial.mod
+grub f 26b9fa1978fba8a9db966c577800391ec7b3a63543f56063ceb648b3897277ed x86_64-efi/search_fs_uuid.mod
+grub f 26c5f7ba76f30252de5a20dc2657b5125d7ee424f5133244fb9c42a382484fee x86_64-efi/exfat.mod
+grub f 273247fe3c8e837d8e3d82432f0f6ed6ce4f7315c5b07fc6f0179960550835d2 x86_64-efi/hexdump.mod
+grub f 275800ecdc388ea8799c086d8788a9d713b8041823b02447ed5372d6d0f4c893 x86_64-efi/legacy_password_test.mod
+grub f 278e60d5bea493cbf2dfe42662a812b57b100681c387b9131488b578275f62d1 i386-pc/testload.mod
+grub f 283638e6ede05b9fedf33897a3c882b734d8d5f89eb08e859b90dab4ab576bbc x86_64-efi/part_gpt.mod
+grub f 29958582c1c660a76cef296545084e1c0bf562a18eab78c3f613bf74dd37f56b i386-pc/sleep.mod
+grub f 2b3ffd8d749efc2e8259dfaa60f6eb9e15305c0c3da0256bd331fbe9985c9b56 x86_64-efi/gzio.mod
+grub f 2b5a757958e711e63a461f5c8cea8ac119badc0bc3f967afc865bb861bf97868 x86_64-efi/usb.mod
+grub f 2c46b03bb5c5abf3cfcbded4fceadd5e1318d983daa79196a495d91a80f912ca x86_64-efi/odc.mod
+grub f 2c86ea6b5e063e5567ac0b44db2b910b562d15149b3f29507f7695f91c629bd7 i386-pc/minix_be.mod
+grub f 2cbc096b1b28671b8f26f37325380a2195bcd89dc0a586fe5f6693defcb8c113 x86_64-efi/efi_uga.mod
+grub f 2d7c48ef4587515df3a4763bfcfe47d23d072079a63a6d1f21901f3a0482f64f i386-pc/pxechain.mod
+grub f 2d9a7222a4d99d8df076711b7afa134fad1eaac302e6b549605f4f57ed652952 x86_64-efi/bufio.mod
+grub f 2e02c7f32ede6d9b8ed20013bac5a3f66222b58dd871d442b9c16e945e8d4cc2 i386-pc/disk.mod
+grub f 2e0eee9e2840b14eabfde0c4e63f276624d679fc71a6be29c8221c4918c4af26 i386-pc/afsplitter.mod
+grub f 2e745fc48db79820eb9f36b893ebcb150b08d97a5fb2fdb5b5113f86509489f9 i386-pc/gcry_tiger.mod
+grub f 2f8f4d18cc3d13ffe8f64816490642aa4cc1fce72624a001c483b4a56bcb2654 x86_64-efi/ohci.mod
+grub f 2fbdcb4a623378bf23c0e67c78ec14f2e6ea137e83fc9abfe11a9e6bb365e9d1 i386-pc/halt.mod
+grub f 2ff6bff3643ad170cd16ec740c9566f54522c1e15dbe0999ad74b221e8795b64 i386-pc/gfxterm_menu.mod
+grub f 30e270798373c6c568f041d1823cfeb306f2e729fa2991a3b0004efc15ffe536 x86_64-efi/jpeg.mod
+grub f 3181ebf7e75f9c4cd32f33d8f2d6aa8cf0568faec1a91316342a8cc786d55a00 i386-pc/keystatus.mod
+grub f 31ae78b2e0ebeee90dc5216df65bb26530a01f0191c9c33706adc12dc1e8561c i386-pc/aout.mod
+grub f 3204c8322faa635f6d86e79f7a66006531034662d2be55acb1350c14d8df4857 x86_64-efi/lzopio.mod
+grub f 32b97e6b53187fdfe542f7e781a7b9fa36cda3fd0ca2c9b51edfb3a8dfbcbaa9 i386-pc/fshelp.mod
+grub f 32c41e0db29ae6b06280c621a71e92a67d67f1e825e63d3ff24197ba02a1da8e x86_64-efi/acpi.mod
+grub f 32fc7f5de8c0a5dc0b1e7eb609ca31a77eb3475539e1d97a4543dca1b9b26c57 i386-pc/fs.lst
+grub f 32fc7f5de8c0a5dc0b1e7eb609ca31a77eb3475539e1d97a4543dca1b9b26c57 x86_64-efi/fs.lst
+grub f 3371e52b2b99f3efbf29c04d0c4669155c8b608ce830380689e3050320e093af i386-pc/part_gpt.mod
+grub f 33b315de4fc1e9c7c70d9ebc6554a7a0f5eec1bdc8855a190afa53fb81fb5e44 i386-pc/ufs1_be.mod
+grub f 33cd45c0830c41cc74eb726d2f36d94e6e8631d5df55c716b2b8b21ff30d7207 i386-pc/hexdump.mod
+grub f 33da10458f2a25d83f2d397276c13e38f0decf9851a4289a154f1bc494af507d x86_64-efi/gcry_rsa.mod
+grub f 34c1e5ecaf0b26696b2d6e81a1bc27a4ae45be20e56a8053eacb95bc40d4ea0c x86_64-efi/spkmodem.mod
+grub f 34db10ef2af8140504df22bd2af6b0927d199aa0745fffa115c0213feff1eb64 x86_64-efi/mul_test.mod
+grub f 35703071a38782c661aec472af33f9a9f707059221d1580aad121d0cf578bc1c i386-pc/functional_test.mod
+grub f 37dbca2b1d4e498f8a3f4d4eebd46f3f7fb84482e47c112a789b6e6e1e8522e8 x86_64-efi/search_label.mod
+grub f 386224379e75e5b8c219759a636726ab8e7967575635f2dd1f198110a39cd876 i386-pc/cpuid.mod
+grub f 387ae8640cd8db92c7208e47d290308917417009cae0a975c5b09d16a68dc08b x86_64-efi/cat.mod
+grub f 3899d467b3ee5305b24aee91ee406e10f50d0a16a8c8c59f5616d5b42a721fff i386-pc/cat.mod
+grub f 395502ac2ad05f050ba9b57feef0deaad069dfececb7c06de744575ae568ed28 i386-pc/tftp.mod
+grub f 3988b7da8c7728ebc2ebeb6e711245b5907d881ae4f7089b8719295d781b2341 x86_64-efi/wrmsr.mod
+grub f 39eef0391ba1a9ccafc0f48a67ebbb458c9a8dcbd0a017cd3ccc64f10be99702 i386-pc/f2fs.mod
+grub f 3a2c30bc665fc0c4316bb3ba8c23dcbf01b094552a0cbbbab8cb445b65c3d3e9 x86_64-efi/offsetio.mod
+grub f 3a4a1e18e89f4918d34764438b74014b6af22eb8c987109e4adb600105c528ff i386-pc/smbios.mod
+grub f 3aa3e9335f5c44fd6fe8d67ac0997b90f08d62a6c3d33f464dbe30a3b93cd7cb i386-pc/hwmatch.mod
+grub f 3b16cf0225b92c188753c250d733d67a697852bb7611902b33513b9f35b81b8b i386-pc/part_apple.mod
+grub f 3b2761019562eb2008819b82cbe23e708038945e6639636e3bb89643c044295e i386-pc/afs.mod
+grub f 3b2bf8a070ede4c5e7f5109d695770bf85a8cdc9f647cc9e50587cfe6bbee722 i386-pc/terminal.mod
+grub f 3b6f99b0d37d5d3bf9e51c3dd97341cd5fe52be5bc5e7edbb4240decbe52e332 i386-pc/romfs.mod
+grub f 3bc89a8b12cefd1f46a24f5e52c045569ad996ae3f24c9a1f30e49d3781bd063 x86_64-efi/crypto.mod
+grub f 3c1654e8c1c48b80cfe75e6abfa229d3df9e3ddf021afe5d3fdbd12d411dc698 x86_64-efi/gcry_crc.mod
+grub f 3c47305ad6abdf95f750f45e43413869d0942a060ec85e0067fc59e0664f203b i386-pc/legacy_password_test.mod
+grub f 3d08dfa5674e3da01427122745197a8d9385cebea239098e3ee72407a004a5a8 x86_64-efi/uhci.mod
+grub f 3d7e28f2bde2b0171c823c38bde443d599160bac64aab01411e6a870e325b02f i386-pc/verifiers.mod
+grub f 3e0372e3d62eb09e3fa647a294dbdf8172b5cb52bcbdc08b6a9b7a0d9d7f1e03 x86_64-efi/squash4.mod
+grub f 3e2f04b0173b4657ec7fb463b167de56e0602b1596cc16e3bc1741b60015f797 i386-pc/offsetio.mod
+grub f 3e614ffade942244131e6f54a94683ba56c82743a6d77403e4947a7e8dcb8833 x86_64-efi/password.mod
+grub f 3e72cd83e093d7fd46cbf369ab610b06ccabe604ab7f20dfbdddc88e82af3f3b i386-pc/sendkey.mod
+grub f 3ebab1a02d4549316923cdf5a9cf5616f8fc806e6ac2fc46f6d972fcd5fbcb79 i386-pc/lzopio.mod
+grub f 3f2f67b2136fa6160d97627285057bd89e067eab7a8d8417dcba3608254690f1 i386-pc/bfs.mod
+grub f 3fca40ae2b8c2623e44eb11432947d4b5174600081149f2b09f15bea70e2330d i386-pc/part_msdos.mod
+grub f 3ffb27bb34694abcfcb79d9484fd37d7c36b52260369076146ce41abc786fa55 i386-pc/ntfs.mod
+grub f 4068afb1b22fa850d78d43fdc4cca6320ebb116257e6411ad5f5dcd5b755ea5e x86_64-efi/cbls.mod
+grub f 412f9ab854907563298fd7f8d3486f6084ba3709b8a4268267f2139ed0332035 x86_64-efi/gcry_rijndael.mod
+grub f 417f10d1fe2274b255ef46fd2e96702c7b0634a356b53593b15f9b6b1760a95c i386-pc/cmosdump.mod
+grub f 4202c0114b9a6061376f1db776d4181a07023da03f9f6add87c836ad4966ff3f x86_64-efi/zstd.mod
+grub f 42be59618546fac94659b83372523772c75d7636ce2d3ae92e5150d281cd0d02 x86_64-efi/ntfscomp.mod
+grub f 44387fb56d918aa6b9a38ea0998c74987d206f2b103eb27597e0653b1a9bb313 x86_64-efi/xfs.mod
+grub f 4567b426eb42acec68c7f60c7afac9b5284c3cd9e610727bc0d5f1134423567e i386-pc/font.mod
+grub f 459b348a9ac796dbb2306e2ceefd085d72da3e78d11a7e5114767358442989ef x86_64-efi/memdisk.mod
+grub f 46f888c52f36baf9b62d60bc8d06426a314aad5a0ff86a4362a91c2512a1df9c x86_64-efi/terminal.lst
+grub f 46fce5061a6f6831c5febd4cf9c2667953d28682da140377aa0faca66dca1623 x86_64-efi/usbserial_pl2303.mod
+grub f 47016ccf56ca01927fe1f6f290d03f7d705aad30aa8e71ca906e7c6aac26289c x86_64-efi/strtoull_test.mod
+grub f 472cb49108979284ac9a0050f21ec9a395ea438ac5ca395525039efb15580394 i386-pc/lvm.mod
+grub f 477c444eb0fcc49dff93c8c6c390100b9970048f4898a8b37600a369ddee54f9 i386-pc/rdmsr.mod
+grub f 478b972e8ed5483f1e5f5738eb1402ccb0e583e5afcc8fb442b9f0975cfed1ee x86_64-efi/rdmsr.mod
+grub f 48476ad4a80f947a4c990a7be00026c8631bec903c058bde80646db1c8006f6e i386-pc/regexp.mod
+grub f 4868b52c3ba1a4c398536588246275bb2b3b9d627d1892e6dc177711afe01787 x86_64-efi/part_sun.mod
+grub f 48d39d0d806cd4878b3668bd87493cba91ef1a04ca1363c1ea018360d6562385 x86_64-efi/setjmp_test.mod
+grub f 490f418a1d8d4b496a0aa48b24a47363fad340769a92e79cf0f7a9b56d32f9a7 x86_64-efi/halt.mod
+grub f 49dc3281d680540a7f18d012cc131b3f8a1253bac171d6fd1110256c457ac91a x86_64-efi/minix2.mod
+grub f 49fd0ca48d4e6131caee062dd95e64e297d11c093761d8815464c3575a989b0f i386-pc/nilfs2.mod
+grub f 4a8ea5ff58ff5ecbb599d5b416a49caf8c65c46137e465e045dd8bcd05cb0413 x86_64-efi/afsplitter.mod
+grub f 4acef31143b74ee6e5e3f5c4f628130c372b7921b3312911cb0ce66ac83b4b14 i386-pc/reboot.mod
+grub f 4b164ad6adec86f4d73f15bbe9475901a0c87f2bfd69865fdc8b9bdf44c53405 i386-pc/morse.mod
+grub f 4b180fe5975f756845958ee59015f4ac35b064167826bd8010e292561551878f i386-pc/plainmount.mod
+grub f 4c34bd4f8c363cc89e3d14cb371b8e03358135435e8b97367a29089d1c9a1cea x86_64-efi/bfs.mod
+grub f 4d6e030283859e1fe852c462ce792990d2ed21c28c4ced779277b040107ceea1 i386-pc/procfs.mod
+grub f 4e87745e2f78b4df8a51db3ffead19ad6b336b23868ea16b48873daaf32bb5e8 x86_64-efi/sleep_test.mod
+grub f 4f053b95c9c3a76a73a305c1dc43efc6d58aaf901dc800fb80f64340750a2968 x86_64-efi/efinet.mod
+grub f 4f8e82195cfaeead5914d27f477e197321a2cf1a83c6c99389ebd258ab59fb44 i386-pc/play.mod
+grub f 5019d08b11f36c2354b5a80c0cb2c680b580dd3adaa25c99c5c55726f9c91632 x86_64-efi/minix3_be.mod
+grub f 504971b5468f60e08c5564433927f0ad3f033b22a32774d31c2abed34e34996f i386-pc/gcry_md4.mod
+grub f 50a8f23cbde7e861db931c712a321456627c51f33a1bc02c942576ef76eb9206 x86_64-efi/bswap_test.mod
+grub f 50b8f3db4549a644c056b156f26e0a8df5c8d94d08f2bbdc9ef8af63c0efd231 x86_64-efi/afs.mod
+grub f 50f2b02d97ed5ff855f4cda7fb3552c3d7700355894ef934e1607203a0aa3c58 x86_64-efi/progress.mod
+grub f 50ff4d6784cfed84fae960e25f90f94fdec69f9b707350f6926c1fe0ed557657 x86_64-efi/exfctest.mod
+grub f 518c1cc78088f6a395b554317bcd36ee97ded101e66166aa29d0afe46efc56b8 i386-pc/tga.mod
+grub f 51f4651f8d036f24c4278637c121d01dcb7d6c566accd233c40b3934193774de i386-pc/vbe.mod
+grub f 51f72fe708b296cd599aaec2722eeb8b22e767b403331ef7896507d7b5808dec x86_64-efi/eval.mod
+grub f 522aa33d1b711b0a08c3d3e5f9da028cbd1ee5ed64b06f490e2d407c2e94bf83 x86_64-efi/xnu_uuid.mod
+grub f 52b5442ad37625dc472d44ed10f93cd93d4e3b7c01d158185fc2c7a98d7919ac x86_64-efi/loopback.mod
+grub f 537c9b98de1505113bf91351f1675dcee5882d38427cb65e7a582997a713af71 i386-pc/linux.mod
+grub f 54bbead42a07c2155b71ecfdf1cb66a6ed6513330484523cbb2aaec85c462068 i386-pc/pbkdf2.mod
+grub f 5566feaa1d2fff64ebc3693f8b1b1edae2f65e51272395d8bee34004f06c1490 x86_64-efi/pbkdf2_test.mod
+grub f 5592defd9c79085543bc6c0774788a769b44896c446a04b80cf9fd9d7b76e002 x86_64-efi/gcry_rmd160.mod
+grub f 559369bbc092b71bad4f041554dd03df1632ab24aa819898bf88e9f0c7dc5f58 i386-pc/echo.mod
+grub f 562757b7c8a1d7c291d9f86d6277afeb4ed311fbf7042900acba843f7ba92d48 i386-pc/gcry_dsa.mod
+grub f 56616abdea9a2715f47002a7523369d208a3e4e1e923ea3ed274a61db48599c7 x86_64-efi/xnu_uuid_test.mod
+grub f 56cb96e55c607585a8ba8ed166080cb38d79be5104164bc6e4ee16de9e8e2527 i386-pc/archelp.mod
+grub f 570214439e97aa33d6309da61278a16791845997ce5920544c4fb7cc84fea007 i386-pc/linux16.mod
+grub f 57d9a498702d876efe4a7307c0d43deb1a0cfc4b9936963b61cad5b6b672a6c6 i386-pc/plan9.mod
+grub f 580e66093b7e4d20b718cd58d363aa9d7a7ec77714531f7dfc48fbd0991d7636 x86_64-efi/part_dfly.mod
+grub f 58e0add130d418f0d2798e090462d1a30d711174101cc9ce6ebf30b7854698ec i386-pc/cbmemc.mod
+grub f 591d56b4c7c7a061e4276f928d648b413ffbe9875569aa2388a2c5d335d6ad7b i386-pc/div_test.mod
+grub f 597267f5d0ddf04fb16878ff524a4d8ba943c62220c1d5cbd30afdf8cc11a091 i386-pc/pxe.mod
+grub f 5a4f16843cd246c3744b4aea8ab1fb116a30154dc252e2e169d0e7ba7a1936e5 x86_64-efi/datetime.mod
+grub f 5a5cd91c3e110646c7642b621f29bd635c2d26bc644ba2e2d59fcc5493c5c0bf x86_64-efi/loadbios.mod
+grub f 5aa296ff08b97ca9d41cfe610ec0d2a654ee31bf7446a8b21b2063811df7287a i386-pc/tr.mod
+grub f 5aee3c6358164c3d99b1c5ed153de29563fc5358b56eacf7ce0ebac43f54be9c i386-pc/usbserial_pl2303.mod
+grub f 5b3b45d3a2e848f24b6e826a1df2cd6368118af667263be1816908eecb47821e i386-pc/zstd.mod
+grub f 5b98538f06b53f7221c92135a86b23ac6afbc14d26f5d007e66081a693af4235 i386-pc/loadenv.mod
+grub f 5beb405059d884b05128fab2dfed4847c9caa956202bcab54918e9475f141117 x86_64-efi/xnu.mod
+grub f 5c1e9d781b2e81a3ed792a580e92b770e2b0927003627c66b5de64919328f13f x86_64-efi/mpi.mod
+grub f 5c2ee1034eed79acbef0085aa32dd58895849dbdf6f09afe1dbfa4d36e17c420 i386-pc/xnu_uuid_test.mod
+grub f 5c5f58694724755d98148170352176ba5d14521ccaf3d95ba1afc23f2ff58ef8 i386-pc/cbtable.mod
+grub f 5c9992ff6cd9074221553fee56d29ed148ad713d57789d453726edcf94f9f5c9 x86_64-efi/mmap.mod
+grub f 5caf9c909d8773f103b78f008ce5fab8dda68e21d5304401aa1b0bc027098241 x86_64-efi/gcry_twofish.mod
+grub f 5d4b9e572467c648b414af3dd1dbea91542e6dae4210830ec313bfee90bc3bdf x86_64-efi/at_keyboard.mod
+grub f 5d925c2ca45defdc3b037e7381c7d5c3dd5031614a844abb1d712887fc64b5ca i386-pc/usb_keyboard.mod
+grub f 5d9b3c9c3cfb979d17dde6136729cefbe52426f8014adfea0669bdcecc2ffc05 x86_64-efi/sleep.mod
+grub f 5dfe97f4268fb135a5d0a13d1c8fb559f4bb94cb0e5a6194c4f48c0c986ea07f i386-pc/mdraid09.mod
+grub f 5f66f46ff334859910ef4e15f3418545a6c4da16fdd82867043a7e3036febfa9 i386-pc/xfs.mod
+grub f 5f6f7abfb8ae933ec93d3f6b32065e185e9cbd96042b930961596708ff1f7421 i386-pc/cs5536.mod
+grub f 5fee25b8677355b9ce9e63b51827e2ab09f8f79ba3d0e1b6ba34c194e8859da7 x86_64-efi/zfsinfo.mod
+grub f 60c3a084fbf82afa205ba7556dd4d10b3b11809c9e87c88911270cd697274da6 i386-pc/trig.mod
+grub f 6149b3bf8aca6175663df5ff83b0b7bc55eca61435c8e255eccf0df0074d286d i386-pc/eval.mod
+grub f 61c8ab6aec2948283d0821a53b34950e23f2fb07fa9358f220f355015547fe25 x86_64-efi/lsefi.mod
+grub f 629d02117a12c501fccc0f0fe95709daee76b3312d960d3917c8d5bd39c3f990 x86_64-efi/http.mod
+grub f 63b99e69e13e98fc1079d73129526a9fe2f848232362ffc77921572b3db24f31 i386-pc/zfs.mod
+grub f 64a1501be92161a0e7c3dd2eda863928ea531f686290cee0a465d6dd753b9693 x86_64-efi/gcry_md5.mod
+grub f 64c76e2f5189a9ec59702d1d2d1ced44fe8a31082191b7e769b3c9df1e021d2f i386-pc/gzio.mod
+grub f 64d3dac31f25b680803037538dfa2e6e62e37de3bdfba5b19d1fdfcc1e05c7b3 i386-pc/raid5rec.mod
+grub f 653b248fd12840b2b9f605f60dc2766338f649cb127aeea41f46057f45ab354b x86_64-efi/raid6rec.mod
+grub f 65aec7258e017be8ab33afc7773cf6ea5fae1b3f4d9126d84f85176018c3f647 i386-pc/file.mod
+grub f 662eb86fc1ea89635e4bba8413590b79eb714ade5a2b5a5aa3dc5cf5f53a4463 fonts/unicode.pf2
+grub f 662eb86fc1ea89635e4bba8413590b79eb714ade5a2b5a5aa3dc5cf5f53a4463 unicode.pf2
+grub f 6652482a889cd90c0b815d0849ee21d8cb2bb89ab37a74b2368ce2e259de0f45 i386-pc/pcidump.mod
+grub f 6656bd683f8e497dec9fc55516800a11976e1ab80c661cbc0b169b2b84c4fda9 x86_64-efi/videotest.mod
+grub f 66b3478e72042600497e8ea695e3ca8db48d3afde2ef414594b9cf47795ab362 i386-pc/vga.mod
+grub f 66d1cfe1a26291cc67dbf7ac25175f4eb67de54aae6f6755898ef7c692e4becd i386-pc/keylayouts.mod
+grub f 66f779d43393588d1bade653bf3c349d733097d64293676310cab5d7faec4aaa x86_64-efi/lsefimmap.mod
+grub f 671933195b78fea671f57d154a93472235d00bbf3fdea8655d9e54d8ec49c3cd i386-pc/ohci.mod
+grub f 69935e76b8e3fad526e0b0caf47edf469201fa4f99fe3bd21c237f3ea0f22b7e i386-pc/gfxterm_background.mod
+grub f 69950b40c070523f1883b1e74a26427590d868678a6ead436ddce24b9b5fb78d i386-pc/luks.mod
+grub f 6b4ad965202086c5d2341db5d1475f0e8bb4eedc08c789794aa3f519abe57f83 x86_64-efi/signature_test.mod
+grub f 6b95e9405408326b8cb022b236ed079152a2a5d6831baf0473e6a2c78d080622 x86_64-efi/json.mod
+grub f 6cbf1f31eede76627cc64e47688ad6c31f8b6bcc4bca041e3d1ac71d3a0fb84c i386-pc/zfscrypt.mod
+grub f 6de6036ef0dc8a908e4cc248ef1d8aab87172e722d8c5bad9e137fd43994e0fe i386-pc/parttool.lst
+grub f 6de6036ef0dc8a908e4cc248ef1d8aab87172e722d8c5bad9e137fd43994e0fe x86_64-efi/parttool.lst
+grub f 6e94af6a4e7ad4641ab064208f27cbae9bc233187441e3ea97688e933aae010d i386-pc/cmostest.mod
+grub f 6fabbd77620c44eb6b24f7a7c83998f3d523a80c0e6373eace6fae67b60e8d40 x86_64-efi/ldm.mod
+grub f 709e326d8f5c78939b17367a17c9d63ecaac5fab050c9b333a55e7c535488817 i386-pc/iorw.mod
+grub f 70e0639aa24ce5319a89c36f7db22b96c0996998b0ac18f9ede8eea2d95fb0e4 i386-pc/video.mod
+grub f 717bb877d11496e6acd0134cc826d620199075182b6ab33d7babac69d4279e6a i386-pc/ls.mod
+grub f 71efa21cf0a1c086524b112ebc1abe8e91232bd9816c030c741cf59b47345796 x86_64-efi/smbios.mod
+grub f 71f2dec7bb57f15801034e8eba8bb28f993ca55cbc9988288b81b837961bb2ab x86_64-efi/xzio.mod
+grub f 725b6def3a7688d22886b0c7fe02220a3a6170b4d19350be3db6af1a461c1fbc x86_64-efi/ufs1.mod
+grub f 72e365a63aa60af01984589009127dc2baa0a27120e08df371d4615064a3eacf x86_64-efi/gcry_seed.mod
+grub f 72f3a010b7f8f9dd4aadad53a04a0d2da56c0ff69efde86b0eb4391ea8511ba2 x86_64-efi/cmp_test.mod
+grub f 731d2da183347489570d54d0caab00f444d7a818edac7d8470eea414536d46f7 i386-pc/loopback.mod
+grub f 73b863b64fa9600b87ab507a8e87733a45a2802e25161281e484a388e85ec515 i386-pc/multiboot.mod
+grub f 7485202726a6de4b4338e9218ad7025570cf6c9a9a98f9a5d75bea6d237d41bb x86_64-efi/loadenv.mod
+grub f 755528e646fc26d35fd757fdc38217f5149407d9be0ca3dbd864a9a4462835a5 i386-pc/biosdisk.mod
+grub f 758c9e5f28238e26f74334607dd93b176c694267f05b2a464064938dfe0f90d2 i386-pc/915resolution.mod
+grub f 75a156ed4a61e9e4c253f8f247e3b2ce23c49a23b915cf9f0d8e763e39335a2c i386-pc/gcry_sha512.mod
+grub f 75c8f1fb0bbca7d5d9c01dcdefa1b8a72c20818efc77f42163aac30e7ed5f599 x86_64-efi/echo.mod
+grub f 75eb024c06f2dacbc71a5733c8e867813b6f11b06906bea2eb1937c7f58f1020 x86_64-efi/minix.mod
+grub f 75ffc70f53c6be7be1f07260a26f7e916252ecf0b1da217c071ce2bcd86c6b1f x86_64-efi/ufs2.mod
+grub f 76103fc9a80db6c392bffcc6634da047a4a4f73ef73611b920db56ed7f7abe67 i386-pc/gcry_idea.mod
+grub f 761f2ee0bd47bf6efc5f25312140a8ad1b28ad06d748be8d8dc5752242d73d30 i386-pc/ext2.mod
+grub f 763aa90ef59178f5b91444556d85c9a5ea3313f7fbf1abf4e6cd0ed6adaf4a7d x86_64-efi/part_bsd.mod
+grub f 768789ab194d391f6376bba94e248ce15f52a367db43b022474250e0e36c0238 i386-pc/uhci.mod
+grub f 76ed2b90196ab1eb65cbacc833d54d61a9ff26ba751a5debfdefe098dd40797b x86_64-efi/normal.mod
+grub f 771e8510d4e5663b398df901c507a564f9a1d85348cc09bb3b4d3751c4cb6e2b i386-pc/udf.mod
+grub f 7720690bdaf25fd7e3ade7e01b8d0de91e0991653e2a6900011ab23daf6e6032 i386-pc/boot.img
+grub f 77daf619bb6cf457dd86e79669439ad93110e2c1acf2ea71798548636a680e38 x86_64-efi/luks.mod
+grub f 7871131471919c3d63195db76c41f8d5c71db69a93510ac362072b3ea0388a84 x86_64-efi/terminfo.mod
+grub f 78e99cb2772bb17f14b057b8c52bfc3e4f7a18c7df34408921528d1d94a3e04f i386-pc/sleep_test.mod
+grub f 797ad660b2c48de13c6bcc65175248de67825ee296349a932d921c2615d0da43 x86_64-efi/search.mod
+grub f 798f36bca60caa00e12ff31de4cb71a5d781070037b8b6cb5623823012e62b7f x86_64-efi/gcry_blowfish.mod
+grub f 7a0d39afca55a576369ed561face09e0d3389f56f92bdcc614a4ace4c115e564 i386-pc/video_colors.mod
+grub f 7a6b930411b577c06fa68756cd6cc9d6bec82e769edeaee23595c10a3507211f i386-pc/random.mod
+grub f 7b09f67e991ef76404319e7eeed8b3ba33948c8139762880b437794df0bc469d x86_64-efi/parttool.mod
+grub f 7b381171fc9b1a6b991178140872078885c1132b7d1007a740716d300d92f84f i386-pc/gcry_arcfour.mod
+grub f 7b47bcb0d58904cff8996d1455ea289ff151cd33521f0c74c30e22cbf4da7b5f i386-pc/test.mod
+grub f 7c076cc0659006fd8d901569293ceb5ba84c3a7c62f3e9b86d86633ef0bd83e3 i386-pc/cbls.mod
+grub f 7c48c2e552a11a7e32201c27b0ec3cdc6d0ad146eddf4510caac02ffa938b8d5 x86_64-efi/part_amiga.mod
+grub f 7c93cb2c796a144b841ef4d89342d421974acfc21d82a450d3dded3c294548a6 i386-pc/macbless.mod
+grub f 7cc194b6598c167414ab716bce8b55f9165b768bb174fcba69a6e9eae7354635 i386-pc/gcry_whirlpool.mod
+grub f 7df4384a5390c66df2b543b80ee3026c53a9dc5291b0377b2a8dbd25f396b26d i386-pc/mdraid1x.mod
+grub f 7e87eaba8121f621ab2f6e60444328964692e6a8fd7af52ec08b010c5c2542d2 x86_64-efi/plainmount.mod
+grub f 7e97dd491f4295fd6c6abc23985b837b532517c6994ca9e005c5caf3b45efd9f i386-pc/pci.mod
+grub f 7feee713fb6da6a89fc6d3d99efd91b8adb7ae3cdf1aaf0abe94877fab62762d x86_64-efi/video_colors.mod
+grub f 80b2aa89b38eb712a321b27bb8b48f5245648f8df6a53fdff846b4021a578465 i386-pc/gcry_rmd160.mod
+grub f 80b84392e8e8b5194f1dbdff90d0d1ef39ca5a1b6e45d26210f706187297d99b i386-pc/signature_test.mod
+grub f 80bfb3ed26dd1ee48f858fdbebe29f6cfdacd35edc52203e36079cc2cce741a8 i386-pc/usbserial_ftdi.mod
+grub f 80ee23a284ac3e174543cf2cdf1ad08189f97534bb888bf77038c1cbd68afa72 i386-pc/hello.mod
+grub f 81aa71fc6fe780e3156b5b92ff8fd81b64d12fc6f02de2c22a8efdf8fc6c7587 x86_64-efi/mdraid09_be.mod
+grub f 8315f5ddfacec1d81eb8793d90af7d02aec70d18cc38a455abb86ba98289b4de x86_64-efi/multiboot.mod
+grub f 83afc3836c79518569ecf9aca04fb9f0a631280ab2fad02e9198c9f8655b2073 i386-pc/usbserial_common.mod
+grub f 84336eff8f490451215fce126d01c3b10b6718dc17985b654ccec8d5f7f1acf5 x86_64-efi/modinfo.sh
+grub f 84894fe1c801c10bfaab3d1db4d88889e3828a7101357291ffd6359ab8bdc809 x86_64-efi/geli.mod
+grub f 8515a2f622554be89f978b5db53bd4753ce501764ca300643676d01160064a2c i386-pc/usb.mod
+grub f 85273ced21ce1e8c9beece9360643c3ee6c92589d7c5c09898072c287bbf9eb5 x86_64-efi/affs.mod
+grub f 859b418bdb18f9e692999d9595849a4e1ee167b9e248e16eb6ce77d9d432e565 i386-pc/gfxterm.mod
+grub f 85a3d5f84d20723a27c1442b861be44fbf58a4525eefe2ccbb2b5f7ceb21e8be i386-pc/partmap.lst
+grub f 85a3d5f84d20723a27c1442b861be44fbf58a4525eefe2ccbb2b5f7ceb21e8be x86_64-efi/partmap.lst
+grub f 87e3352b628ffd638d5e43919e59d27512a9203924b1a93aed107c9e895ff64d x86_64-efi/test.mod
+grub f 882d15cef7ff41eaf5e4b1d070a8806998e277c70f9faa16a398d1bc7b44b71b x86_64-efi/hello.mod
+grub f 8997691a682f6cace7205bf83a5aa4df82dc73376ad8126899172da090d324fb i386-pc/backtrace.mod
+grub f 8a8683963122b97616bd38655edcfd79da65be4e0daff371006217065bec96cb i386-pc/search_label.mod
+grub f 8b94f4281e2172e5c313875ba712acf98aabbe19bb18179cb4f3484c1546f663 i386-pc/msdospart.mod
+grub f 8ba3c6a21f458195da393c9da8b587f30e2df5e98554172f22179bbd8d38be69 i386-pc/strtoull_test.mod
+grub f 8c414507733b7acc44d47212c2394c3e31e5464eb59b83ca6b64f7f9d9febb72 x86_64-efi/cbtable.mod
+grub f 8cab313d567c8ff89bbc38ee28a716023ee2dda7b7b653d0cfd1fb0fc15b60d1 x86_64-efi/macbless.mod
+grub f 8d0d0307d621cf66b37dfdc75916373df9c67fe47ca1c28da4027b19ecba6880 i386-pc/minix3.mod
+grub f 8de485de920a817bbf4e6db6041264acd4189f704a7ff840370ec69f5cbe501e x86_64-efi/multiboot2.mod
+grub f 8e0c920f9091b0fe0caccac22f3824b861d11cc896aec3956e07f6d6ad294767 x86_64-efi/videoinfo.mod
+grub f 8f1c0ab39b0b5896610b71ef8e79e652c84d15890e3880be92b72377a5e5fe15 i386-pc/reiserfs.mod
+grub f 8f735436896dfca88955cab7b5e473b39ef9ae27643ce728d03910a6105189cc x86_64-efi/ls.mod
+grub f 9083b5cfe3a4a547670f44094a542342f05644f8833c47c526efbced8d841008 x86_64-efi/nativedisk.mod
+grub f 912f4bd58f4871947c964b82e703f0ebbf723834973a8b410d003f33f251b228 i386-pc/minix2.mod
+grub f 9140e4b4e51170812ad0d1d9cb2e760657c374b785998bac0d98849c560bc059 x86_64-efi/adler32.mod
+grub f 91dd3812fa5bdd19d2cfd81de0b843170ed8c6b7472a8c57ccd3b2f3baedcb95 i386-pc/gcry_rijndael.mod
+grub f 91eff6b0b46bd9bed6d9a014fb0306f53c66c21430af6d4c3422942740b787b2 i386-pc/gcry_seed.mod
+grub f 92c1058de947a9358a7c6054e572fabadf03faacd3c6e9c2c3fda975340bb92b i386-pc/gcry_md5.mod
+grub f 931d35093bf843bfdc73cd1bb67615d56e7242e6e865d2352cb6356c075864bb x86_64-efi/tftp.mod
+grub f 933f65a3ac663736e9f0129219b84ec3749ed905c1595e72726265805394ed55 x86_64-efi/raid5rec.mod
+grub f 939f5eafcd057f5d87ee1184af37e05f2187f2ab7ec80756fee39098100a37b7 i386-pc/json.mod
+grub f 945210b8c5c7d35c70c67c13385cfd83861e0baa0d709daec929083327ff9899 x86_64-efi/date.mod
+grub f 9488b1214d5505fed311d1338e038bc35adc86415b9dbefc8b8057acd749eb97 i386-pc/time.mod
+grub f 9526d43c3a31acc5a6cbb8e4d454f2f0a554b5d45df0a8609e8db30118b520c8 i386-pc/gcry_blowfish.mod
+grub f 9541945ed611ff9934cbdee7941f64a2aadd3d4073fc05bf789a2867a8c2b97a x86_64-efi/minix2_be.mod
+grub f 954881610a30c6c009fb36e9ccb3c6daa17cd31fb1736805ce97631b9f890f70 x86_64-efi/gcry_dsa.mod
+grub f 955f08f69493d0679f6873bed60a723fd1b0f172143e2ff75cc554b9381ee4f5 x86_64-efi/peimage.mod
+grub f 969f15910cc348538ca83f796632569cd0c0860cb21373ea9ec9689f52327013 i386-pc/minix2_be.mod
+grub f 9726c069269861d984a50c55a33a370ccfe2138d56fc15895bed8de6cd9e38ed x86_64-efi/minix_be.mod
+grub f 9761dfe6d02617e7425e885ea9926c008f9ece544ce54d9f34a8a2ff518552c2 i386-pc/geli.mod
+grub f 978ccea5baa421bf803ff7fe17a01b1490ce2e9dfa84e6600220cce89095de75 i386-pc/minicmd.mod
+grub f 97d89c8ed98c1fe7c5a9fb1c54e80fc401cd1b0f6a1f98dc9dc30529690b10cb x86_64-efi/linux16.mod
+grub f 9802c23fc64d795466df9a91714f9fcbb7b76cd879fdc8d42715c225794f5f2f i386-pc/videoinfo.mod
+grub f 9820c3b21a8cc122874066b58220190c929ea4a1283c126b75d26efea03d1492 i386-pc/syslinuxcfg.mod
+grub f 984f36659a07e2dd5c56dbadd227f6c57645e6d188f75f6a0d8791680f3b3e01 i386-pc/vga_text.mod
+grub f 98ae8a959890f90e15ecaafeb5e8d06b451c516b587a004f8074714afb1c8962 x86_64-efi/moddep.lst
+grub f 98fa60cd657fce787ad7294c94c0f175a0a0198f8d724846024bdd0ba27d9505 i386-pc/setjmp.mod
+grub f 99313a9da44a9c888423a4a832d7abce87206db1abe371ec8519598e2b19cd8e i386-pc/part_sun.mod
+grub f 9a1e3ce97cf49015418c147b98f861c42237c50df3634316ec90b97aa323bd6b x86_64-efi/efifwsetup.mod
+grub f 9abd64bcbd2a772cf658dd756bf8fb18687ebe0176dfc5a5f89b98b6f4695922 x86_64-efi/sfs.mod
+grub f 9b15eb738c905723fe6c0b5ef4ed254d50a72cc1e10e0da686a7e6dc6bf96177 x86_64-efi/minicmd.mod
+grub f 9b3f6139fba1ebefcaca7ec84d8bf154282f7c6eccff5cb5464912627793bce3 i386-pc/password_pbkdf2.mod
+grub f 9b50c9633ff6ede7643f0563f50506a0b8dd8c2a622372f92360e9464872fba1 x86_64-efi/msdospart.mod
+grub f 9c13bec6951e96baa3821de6f3a781b0f428c5f51afcd25be7bf5cb02a46e351 x86_64-efi/time.mod
+grub f 9c26e8c9766d546902c68af4b5ba53c166cc2180e3d0c874e1d8bf4b9a0c42fa x86_64-efi/part_acorn.mod
+grub f 9c52240a53b4c310abd3532a41f46ffa229585bc85b1607b8b604e4ce242ade8 i386-pc/terminal.lst
+grub f 9c890667ec71ccf0f3062a2d980ae3b5335ea5698f6c7af6d52fd29ee42fafae x86_64-efi/usbserial_ftdi.mod
+grub f 9d49444cff6af0f69e8e18240e40293dbcf96558ee873f613f426ba3f5f2a965 x86_64-efi/gfxterm_background.mod
+grub f 9db49786a2612c391ec99e21ed34e7e67ffb7446da317b72775b171dfa56b67d i386-pc/minix.mod
+grub f 9de5bd8838c79082a0d8c93106ee40ce09f1bed8871943ccb0a3164052c91a87 i386-pc/pata.mod
+grub f 9e769822cf7fe7f233088096a9e01fa063b01b315115dd86cbd46243fcbe80b1 i386-pc/video_fb.mod
+grub f 9e8830a200aea1add2e6fbdffe352e08ddad97610bfcad722367cf7a6a5b3152 x86_64-efi/gfxterm_menu.mod
+grub f 9e97fc488a7e4dd7f31074d3f65b2934d57503b6a6aa7fce8f6609920517b302 x86_64-efi/png.mod
+grub f 9f5407c4b9437c91a332ffbb0c85a5a96ef8d02787607baf034274ece0460bf1 i386-pc/bsd.mod
+grub f 9fc4194dadb2ee39b3e91a3113179d8cf6fd752a8b923562f2bb234fe0cf5619 x86_64-efi/morse.mod
+grub f a005827d5ae76a2b8a1f4e366d503a319576859a76dd2debbc5d4ede09360f28 i386-pc/acpi.mod
+grub f a13c2c1f19a9ca814e869d97b0945cb9d500b967876bfd545de111a5c88aa9cc x86_64-efi/keystatus.mod
+grub f a140e2add8a384b2158cc92a9bc7ae84476c49dae876285281f224ce45ef188b x86_64-efi/lsefisystab.mod
+grub f a1438e8a427d768ab512af06fffb44ab84ba47bc3d2d8449934c37f9d31a0d33 i386-pc/setpci.mod
+grub f a174fad62075698a4ae6cf734a6ac092306519d02fa7dcb14af83e4f6869ab5c x86_64-efi/password_pbkdf2.mod
+grub f a1cacbbc323637f74954ea35d23d5a834f2330c3243d1d516c0d5b932c6c2af8 x86_64-efi/udf.mod
+grub f a1efde63a458dc1cba9041368821aa7757f7cd93fc5c6b8e0e7870357a9c9f04 i386-pc/div.mod
+grub f a30d8565288ae01205d76e6938d384f7bc9b81642b00e1528517d33cd3113265 i386-pc/efiemu32.o
+grub f a31ed419161ab91d0682bd9a3920391452a07f964feaebf46df578009514e9c2 i386-pc/ufs1.mod
+grub f a39439af1dedf31648616a2ba09d57eb143d1e65ae6aad92f5bcff4c8067247e x86_64-efi/f2fs.mod
+grub f a3b80dd136bdf300b091f546f02a80aaf32d608809b06bed64c978c4c75f1f96 i386-pc/modinfo.sh
+grub f a3c5ccc1c223bf8b321f274053ef682bc3db7ab57516053bcdbd24da07bd17eb i386-pc/shift_test.mod
+grub f a489b36cb6e2c68915e2901f66cff9a0bf0b32c44689e65d229a7388da48a6d2 i386-pc/core.img
+grub f a49f8c2ca212152d4c879f9b382fec5f41d5c8d44de50d0a58dcc4bfc7a2d143 x86_64-efi/lspci.mod
+grub f a536052e4f0a946ad049bd29215240a4bd7188c86e89c2f05f398b88ca059ece i386-pc/part_dvh.mod
+grub f a539277b86d7c79b0a9b2ee26af733ee494d1295ef74507e10d58d77ee695a69 i386-pc/nativedisk.mod
+grub f a693bfd089751fd255d8ab223227e167d551f0cbc0524163d5a2341a150f9bff i386-pc/relocator.mod
+grub f a75db9927781347e394646c7850307548e33edc128726ad15b8f851cc01fd6b7 i386-pc/videotest.mod
+grub f a7a15f702f065ec04289e643d18e8db2db1e7cfde7b94923b1a9d590d7efb5d7 i386-pc/gcry_des.mod
+grub f a7c660ba2ac20e69a5c8b87cfd9387e653f561c5897801c36f36804415c41df8 x86_64-efi/gcry_sha512.mod
+grub f a801c0d25a9be3ef65ce1b56766ef36420b2ebae0b9515fed61b5244a1718882 x86_64-efi/hdparm.mod
+grub f a8b4e6e0461cfe8b7ab8a0f3d6c3805240af249ab91f70a2e6b6af07c17b16b4 i386-pc/efiemu64.o
+grub f a8fbc9cec1d1c8a75354cd0949bdc405b3900e5e69f87ee428751932d21e26fe x86_64-efi/lsmmap.mod
+grub f a9afafb53a7f2459d0adca1f31fa466b66b1147371574ac160282c594d0a980f x86_64-efi/terminal.mod
+grub f aa235ce936aa7ea565e92e3232298cb6385a919a19d5d01a573de3c59d285f13 i386-pc/newc.mod
+grub f aa733efbdd741465b195e6c08d363ff4934cbf6e152d2ee160dfc191de0b597e x86_64-efi/play.mod
+grub f ab3d1ca26d1a31bae75c94d55727a80a82c5e93ca67e2b679d831c3b73ec70c2 x86_64-efi/macho.mod
+grub f aca55433698923e84c89c9d1d457f2a15129633f97262edf5e704ea201c71007 i386-pc/ehci.mod
+grub f accb0c2617079b03df15d66103c92d5453ba6e85fe6d2aec7075ca1d75acbaa1 i386-pc/affs.mod
+grub f ad0395a634e5184bd870d180ab9053b1fe7108522a5cb35676a743dcf98009c6 x86_64-efi/random.mod
+grub f adc7ef4082d3d9091dfe9fc1dee1b80f26903ee2e78ca124b60a04b316272363 x86_64-efi/video_cirrus.mod
+grub f ae1577dfe520cd8b9139d9d8c9b1d4cf2de9f9fabea354e223f86d773d7a542f x86_64-efi/gcry_des.mod
+grub f ae5249904ab0ff9d959983f497eea90425b28aeca9df0d4848f15aeccb3ad5e7 i386-pc/password.mod
+grub f ae6346a94bb2846e2579710d14ad9a2c0626e13087858439bcfdc4d26e08ea06 i386-pc/part_amiga.mod
+grub f aef695413d1a1b9eaff753a15512d0ba79e23e5524033eec20c7a1c7c20eb1c4 x86_64-efi/command.lst
+grub f af169af9e155e562ac7d7c83b89d6253bb301ffb62b36a4282a7e909d4cf4655 x86_64-efi/diskfilter.mod
+grub f af59482cc949048e03f4946a760e47047da18dfde87030ee9eea8f73d70464ce i386-pc/macho.mod
+grub f af798ef3a9db6f07b97ff74756125a9446f7724d322a9751baffee183a2860e5 i386-pc/at_keyboard.mod
+grub f b0c0ddac453c4325cf730d3a98d50386363ef880310f75eab75880962476aad2 i386-pc/moddep.lst
+grub f b153c16f5d35b7fe6fcc6b3e9971688a3e579f999a2695bcd7c34fbada026771 i386-pc/lsapm.mod
+grub f b206728cada6f46f1f1a2838739d87a88c35c4b039ad77ca0aeed8634dcb35c0 i386-pc/mdraid09_be.mod
+grub f b2c7891baad57f3c4ea758ba475f0a1fdae336cf888ca5e3f6f74a5402635530 i386-pc/part_acorn.mod
+grub f b2e0a11c737af11ad1c8ddfc54de81bd44c6b8ca8a14dab3814e762749cf57f6 i386-pc/xzio.mod
+grub f b395d0fc43f3bb9def9c76bc9c5fa4e1859af9375584a21e797c79872d97b7d3 i386-pc/gcry_sha256.mod
+grub f b48380461595992e37407e4b97902f3d6be3a3c1749e4e0249b9dbcbe20cb9fb x86_64-efi/part_plan.mod
+grub f b49a7fd5edc02f168f0de51309313278dc2347c0f83a5cbedcb8974790a5e7e8 x86_64-efi/bli.mod
+grub f b4a3fb95b5929faf99bc273bce7ea04dff3a03802a274f5987cb92ec09c7eb64 x86_64-efi/usbserial_common.mod
+grub f b66b5455ad7113ca9d2646d0eeb77af13c25e5ee7a9a2aa2112ff6c4924c1c20 i386-pc/hfspluscomp.mod
+grub f b79c3cf043c47b43a25abeb94c4c7221ba702389ced117a82e2c3e62ee415f13 i386-pc/zfsinfo.mod
+grub f b7c240fc97a7b5c24d28d869545fd7fe276930a4ba6aa35436869d7dc0f0b2a4 i386-pc/memdisk.mod
+grub f b7d6932a79c974ee07821ac78e17efd1b91467a5528bcc7baae165b2509a3216 x86_64-efi/file.mod
+grub f b7dbed418f33f00d3c7d3ee522c46c0b6630eeb51b18aedf1aadd5e9c7892ca4 x86_64-efi/gcry_serpent.mod
+grub f b7dc8ff96a2e95ec0170edb13a8147895bdad23e9f33d62390f99590d468c204 x86_64-efi/gfxmenu.mod
+grub f b816bb8ed6b85c11ceecb49b5fa56880c8328b6f4069e5771052dae8320e74f8 x86_64-efi/keylayouts.mod
+grub f b88b2944d15c85ace6360b2c2d7a0cd787a1246eaff4617ba3284a61d7984ef2 x86_64-efi/div.mod
+grub f b92d07137ecfa8cb099c4c3c7730565189e2d03111e98dcc37c31a8c2e73239f x86_64-efi/video.mod
+grub f b95562dd68b3b48ace56ad9404d1290f4b022d3e3b0fc52e070b4a7ffc834d6e x86_64-efi/hfs.mod
+grub f b9ad14b715e372d8e1ea56757cd9fc9d3622af02fcc718b4fe144d84efc18042 i386-pc/minix3_be.mod
+grub f ba0098380ca84a133e305b68323330f8cbfe66c17f0438e7b72f2dee1af1cb9e x86_64-efi/test_blockarg.mod
+grub f baae9df4f55da46db626dfc4c3c02eee5247b59cdbbcd0d3c5126480fbe5a471 x86_64-efi/configfile.mod
+grub f baf47e0a536152e81fc730a81d2531a2b297c6d779f278c12a6e30038f800085 i386-pc/wrmsr.mod
+grub f bbc4c12163e9f4cf9b218bd0bfbaa142ca87153fda630b5eb3d3f7d8c5d5338b i386-pc/progress.mod
+grub f bbfe64faf40aa643c6e9ac6cb5a4bb693a5396abb8d7ac01f2eb0f580ad5b010 i386-pc/ntldr.mod
+grub f bcf548192a38c0b74876d42785c8d8621382beb3ebd95fe5d585dc2708cc7b6c i386-pc/mmap.mod
+grub f bd5dc4f271251e9ea04083bf7cc07b699b64f8cce1d23b3c2adfa1da19f7cbd9 x86_64-efi/romfs.mod
+grub f bd70454339a6e27724f0cdffcdcaacc956c7ef7c61f365ebb33a4fc32e3e3cc7 i386-pc/scsi.mod
+grub f be4d291d99e8fd7f831946b773b1e1992b4f95ba4d72923a6aa16e8331db82d2 x86_64-efi/font.mod
+grub f be595f9f231edb987f80a3d7ddf0046b5c8c498bb360d40dd854a8c4e95a1cc9 i386-pc/cmp.mod
+grub f bf4f7b3b60a3e1999b8bec308ced51afe4e3549c373ad301cc4ccf6b25a706f5 i386-pc/gcry_crc.mod
+grub f bfa2bda5eca8e6420dd92174c3ddeaf13baf75e40fc056f36fac15b1abefaeac i386-pc/gcry_rfc2268.mod
+grub f c08628bc03f6edd1297eb12aab16fae6c08ff5b6a87d1d8429b18baac7ce8930 x86_64-efi/testspeed.mod
+grub f c0b2a4670763bb8628b002ac0aadbfcb1136bbe3827bf5879b3589fba3c0538f i386-pc/btrfs.mod
+grub f c0ce85f0f79355f6c63f5b8760caec90cec2c2683373dde13d7bfe349e6f1b18 i386-pc/search.mod
+grub f c0f0c663cdc92bafb6f58e9299eb0908a0f328ca9df6def681cd5620f5422456 x86_64-efi/iorw.mod
+grub f c0f9af1b4d5405d9cb80021ac6407444fc94e49267a2bdb55c4ba5c37629ca4c i386-pc/cbfs.mod
+grub f c133c8c7b8e2bfb1140ac076981f3ef93694f9770382928aa0f6175285a069e2 i386-pc/luks2.mod
+grub f c1586627caa4ed331dab567366835f90f3de89b7bccb2b7e176877543e3563b1 x86_64-efi/mdraid09.mod
+grub f c162610841bb1493ea53c7e4a0e4038e0aa89b605de21753ea309a8dc4a52078 i386-pc/gcry_rsa.mod
+grub f c169e64b3ba0c3f0d77d82d12f525572d514141b095492785199a55c7d40be71 i386-pc/crc64.mod
+grub f c1c0b46a64d029ce596214bb7048d1b5125d03961340f158cedb6161f3af5987 i386-pc/odc.mod
+grub f c1d77263239d43db9b6bd485faf1ff1e40c1abcda1728076de4c00aedbe11d27 i386-pc/efiemu.mod
+grub f c1e522beadd3b37cad435d9ef6e955c5862d2964cc6534878ccff8c0a384dcc0 x86_64-efi/video.lst
+grub f c2a3a4d9c2a009b2b0449bbdae22220c2f47f8bbb7d0ff061a7d7cb99fee7369 x86_64-efi/pcidump.mod
+grub f c2c87944e53b7acf5bc83868872762d7d3f2a129b2313086af0e24e1d90cdb5e x86_64-efi/bitmap.mod
+grub f c2ffc7797bab1fbf036075937dea35bdbb4e0126dfb73018eb08b696e4a32e16 x86_64-efi/lvm.mod
+grub f c3524db8149aa10155a6d0b2d45c7204191068b781e16e7038ca526e7b2e660e x86_64-efi/extcmd.mod
+grub f c3c5ea1fbdc70910ec92c8b5ac81a729445cdc11fa9ee2ebc49b802a5ab80116 x86_64-efi/cbfs.mod
+grub f c49e5f2c1f50a6107c2835979493ac1e2230673b7be1e33ddd40a7443ad9c2e5 x86_64-efi/appleldr.mod
+grub f c52f12cf678994649f57ff3c911bf04223a87f6de7ca89dfe7688bc5c56e2156 x86_64-efi/crc64.mod
+grub f c53e3aec3ac780a5b455f5385055dd6b85290001e45f737f595746cd03b09089 x86_64-efi/linux.mod
+grub f c5976c90f64c39a322a80c9b1466843e40ec61cc6fc667539540601fd711e2b9 x86_64-efi/read.mod
+grub f c5ad99ef20515eee637cfc1a49dc09771b93d6bd0720cf3b76675db9271a98d8 i386-pc/testspeed.mod
+grub f c64715e5e8fa381664864dfe017f4b4626f6867c8099e91d58180c89e0b6b664 i386-pc/http.mod
+grub f c683030b55643328e09f7b15fa28b029d637cf5ec6f26c1bdc4fd14173947343 i386-pc/gdb.mod
+grub f c68c5d51d5a31724caa761615929048d97b4da02367dcac8b9abe9021c807366 x86_64-efi/cryptodisk.mod
+grub f c6ab127be43c8569754c706aca946d76043cbe5a8b01a07c508ab19c3b5d27c2 x86_64-efi/memrw.mod
+grub f c71cb7f087c18ea0982f9d3df4168d23bec31f598fabe2b0c89029259aaa57eb i386-pc/xnu.mod
+grub f c76880c633984c1caba3c2c43ae4fade9b0a3c16516ffc1ddf36422833c99e2f x86_64-efi/true.mod
+grub f c7b9b18056c62767efb43282c86e0f257c1fab1a42ea7203b9ec1e54204e4277 i386-pc/hfs.mod
+grub f c7d77a57bc425e30f8d765953e968411eb83a2dbb44eea517e17441598a4f929 i386-pc/parttool.mod
+grub f c86e7f751d2f7f924ef28033a1564365c1e20c23f1b9f559f7acd377a23b506f x86_64-efi/bitmap_scale.mod
+grub f c875c5faab6dfa280816dc4b35d3c9a45481bf3ccde9f82b6665ce80e568e403 x86_64-efi/ntfs.mod
+grub f c8a472d750df6bc20436955256fc80a6d040f0d4db4ba0b528be8a4aa3066972 x86_64-efi/setjmp.mod
+grub f c930d6513a100ea652054629d01ac669304e26aeb7cf79cf14f27b4b2316214f i386-pc/truecrypt.mod
+grub f caa0d95decec05ef099c0fb9b1d250d78bf76c84d77e0f5c821b443f8dc8a155 i386-pc/ctz_test.mod
+grub f cb866a0b90e2ed151d7e7d5f9d91845cef4cf63b7994474d54db7bf84cee539f i386-pc/part_sunpc.mod
+grub f cb9033899539eb90de567e381d83525cd9a5e3312c8e66576f33bc43ffa5f285 x86_64-efi/div_test.mod
+grub f cc5930399c06750c8f039869740bd3c3926c63ca914eef61d1bb190739b7d487 x86_64-efi/gptsync.mod
+grub f ccce25282fec66c944d661ce7e51e9e4dc1125ac32ef0c23763ca98ba939e3e8 i386-pc/priority_queue.mod
+grub f cd7f9b1c8203abc794a6a131e277eeb75ea7e0e55518e66c4afa303953b53325 x86_64-efi/procfs.mod
+grub f ce8bfe7b2d663aec0137e49ba31fdef86696f0846a2813b4a6c45e8129d7a17e x86_64-efi/syslinuxcfg.mod
+grub f cefc2b0ee0e922bd8bb8b04ef60f21e08af7fb97fc9120517ef846f9daec1b38 i386-pc/spkmodem.mod
+grub f d01c5f590b513d6c58960b31e99615ddb4086e477307088bb44f2c04a6a3a2f1 x86_64-efi/gcry_rfc2268.mod
+grub f d092cc97e6bc3f5b2cc1d398d729e9e00d6347d0816aaf2b30ebb120e90c5575 i386-pc/test_blockarg.mod
+grub f d10973c303148197b2fcdcb0922caf7d6d47cd101634ed21edd37a1ecffcfcc0 x86_64-efi/relocator.mod
+grub f d1098bffc61092a34cf5becd35af3be604976984c3dc38890f8b52cff1f930da x86_64-efi/usbserial_usbdebug.mod
+grub f d1136fd2d32a930b69bcfaf974e970691488d050300e9df07349a5efeaf5851f x86_64-efi/core.efi
+grub f d15e54ef2770716f3a5ed7587f20dd4bf0fbea0610df0eb5f9b556ed418be9ce i386-pc/video_cirrus.mod
+grub f d1e39004476dd597eade83a947284159955bf71c6c6cb0ad46a2d35768fe4846 x86_64-efi/disk.mod
+grub f d24b773c8645b66da9e707c54d6e9177d28f44dec72886abd420e5dc159de839 x86_64-efi/chain.mod
+grub f d38a3f25c3080e5ff60b6a9537b7a8393671f355f600037b996fd5b2c49e2f29 i386-pc/ldm.mod
+grub f d4cedcecc56e3df76cf228df14fc0dab612db0545b2439107f7d52c214126e10 i386-pc/cmp_test.mod
+grub f d5bfd5c7185d525d3224e08a6ddf9b94cc479fab5b8e3db69d69da2b05ba82a4 i386-pc/gcry_serpent.mod
+grub f d605bb85e6fd864c8009d7c589bfafbc8e26ee1cd8aef1d0d48b51c9b4ad9de2 x86_64-efi/grub.efi
+grub f d656b00093e7440b25da98e98e17b1a9fd236f7b3abe0290ad87b5065d8c16aa i386-pc/exfat.mod
+grub f d65f05a4f52635b53fa218714e15352fe2d38582002d56ac2bc28ba4ef7f283f x86_64-efi/cpuid.mod
+grub f d6f0e57ad0727663be75c92c9f3d594b6de290508e89ade083a8fd7386803c1f i386-pc/elf.mod
+grub f d87b7fc8fb49de9114574c37f0e182c110466690cf129c021d6d46776e7339fc x86_64-efi/part_msdos.mod
+grub f d8be03487c09dee5d86f9ee8a4b7cac6a33ae890a4170ff274e80428172c4390 i386-pc/bufio.mod
+grub f d9cf43d9b595380f8759428727e790ab2c06bef7e709baf141039e509f6773a9 x86_64-efi/pgp.mod
+grub f d9def7d8a9079e2077c15ecc467c36b7a886244b7418e654c919606c7d8630dc x86_64-efi/part_sunpc.mod
+grub f da7a9ed8a0f991dfdaa2c2f9940e9e36a402fdf11e0b10fa7979f36c1bb18e89 x86_64-efi/ufs1_be.mod
+grub f dacf3ae50e7b0abadce227273058abe00dd89560e0bd4633955987341514d68e x86_64-efi/backtrace.mod
+grub f dadfb487f3300c0f51723534948d1299b2c5af111e7a4f265921003c56a5243e x86_64-efi/shift_test.mod
+grub f db0dc230dcda6746b2df021dab3fb50bf8a7f027074a5ccebedc9543b3e738b6 i386-pc/hfsplus.mod
+grub f db17062e70847ade2e8fede691b7b17a42214d704aefb5ab3508439c576a6ff6 i386-pc/date.mod
+grub f db238f7f867e9111c4909fa1620257fa6d1c13f6268ad7c1b8112cf709fe4513 i386-pc/command.lst
+grub f db2f32b1e5d29624f8ca4f26bfbab6741bd1d80b44be797d892db8c1376da546 i386-pc/videotest_checksum.mod
+grub f dc0dbb3a1ecdf89d85bdae7d58756f88ce61a229668fbf3857f5f12f12633331 i386-pc/gcry_cast5.mod
+grub f dc529dcb2de6f5aee104d4e5a32ab595307c978dcfc295346f23a643294e5e90 x86_64-efi/functional_test.mod
+grub f dd1e601d913d45e0c8876ddb56011e6df626172f097dcb25c5a2dfcdaef39e25 i386-pc/configfile.mod
+grub f dd432557eabe607f3f32c01a020e366e872482408498f240db3bbb75c5fe5551 i386-pc/raid6rec.mod
+grub f dd8a0e4848b8d49867513b6c81fe7fe43d679c1beabc4957a30c9ad5b5989753 i386-pc/video_bochs.mod
+grub f ddab1c5d52040eb9bf1b2a52e09f1323cd57a1c85f1e9f9d551b955954c18783 i386-pc/sfs.mod
+grub f de353eb2981f1057a1266713e91ccd7dba43e0d7aa32a6c8a5dd0ba82d097adf i386-pc/gfxmenu.mod
+grub f de9a2d01467ffdcac207f614d8569018d2d7b804180db06a59ec1bd672fa0484 i386-pc/mpi.mod
+grub f dea639ab327ef83ee51ca6d2580a04c129a837c8db8ce95c431e224f7cf0633e x86_64-efi/video_fb.mod
+grub f dfaa89f5364aadf6b440d37385692472e21d6957254b20363f8436704afa77c8 i386-pc/all_video.mod
+grub f e00d826bccbbb732a5d916c54f6c02bf9f15da704467e344330d0cf30230a7bf i386-pc/video.lst
+grub f e043e4411e92f4097bb63716de9e5370fbcfc91aedcc512937f1cfb8b55b8e36 i386-pc/chain.mod
+grub f e062b3a624242802d17a0409578486f7b76e8d1af955afd7d59cdcd2c7a3f5c4 i386-pc/usbserial_usbdebug.mod
+grub f e0933d94fd2ad500586b5c7b71b3470e7d7aefa4f6001f3d7b7a77cabead513e x86_64-efi/zfscrypt.mod
+grub f e0f1c311c5bc27fefce263bdb8f8bb07ee55b516c0c65352d22ac48cf9302f91 x86_64-efi/part_apple.mod
+grub f e1489d7d4fcc8fdfa5ab3d7649cd86526fcd47c93ccb34f0d9c98b2b976e2c4f i386-pc/png.mod
+grub f e16eb0df83de064b1f43f9f180678413588176840feedefe3e7946092dbbcd02 i386-pc/read.mod
+grub f e1b398a625fa79a5aba311f1d47eb0c01db76012cb177670eb09ad341afda898 x86_64-efi/gcry_idea.mod
+grub f e229133c38dac9e095866ac0fb5fd0e1955c6011992da7b217208c51a2815239 i386-pc/ufs2.mod
+grub f e267e5f4660bf732eff2520df7d86bfa7f6dbf683bd400be1a5654a9fce0014e i386-pc/cpio_be.mod
+grub f e36b7929feb77bdbe25f0546a4218ceaf8d4334a80189c5b8ff8411d4be9328a x86_64-efi/trig.mod
+grub f e3911bcf4d4715f924302a03f9f80853ca4f070e45b9df2dfe0ecce2faf68d32 x86_64-efi/net.mod
+grub f e4860a47e9f861c26edbc1e9f330d191796e56d4e59f81b2b316d7118b1460ef i386-pc/net.mod
+grub f e4a21cb227247db3186b65e98ad1fb4ccd83d97de16fd7e8822b71325a4f96b9 x86_64-efi/jfs.mod
+grub f e5cd8084c8f66f48f37bb723e9ebad1304f4516abb435e7657845d35463d53aa x86_64-efi/tga.mod
+grub f e5e3a01acda7ff92e313e10fa5c4544103cc7ef1cd17cbe7981192629547bd05 x86_64-efi/blocklist.mod
+grub f e79976872824219b0e139bbce79f765dfe641373181970244c31ca1382e6c88f i386-pc/cpio.mod
+grub f e7dc01880d11dd9aa677334206f81c509ffbf38fa9445ef3e20c2617edd9678b i386-pc/usbtest.mod
+grub f e7e562080761892a60664b9fc1db0d29c35e1a2c7507ad9fb203d0ffb04d0a6d i386-pc/bitmap_scale.mod
+grub f e8a5f500a3c12bc0505658460cf67b641655c001543fcd7ed0d1b5f1a4a2235e x86_64-efi/ctz_test.mod
+grub f e8a66f2760a438fdf92c4cb5fad268a020fc0a75778ea44da349e4b6296dee9e x86_64-efi/hfsplus.mod
+grub f e91b6568a689b4e66cabaec49a8505db690ca407cf0831ba57c329631e083e55 i386-pc/extcmd.mod
+grub f e9344b5c8bfb8f00c45744433083495b2357c70f16cd5c2e714f8d0d37b80128 x86_64-efi/cpio_be.mod
+grub f e96b9abb74f7e4a8b65a7b5463608ad70dd5b6da0bd5b989d73bdcf823d77abd i386-pc/mda_text.mod
+grub f e98751c74a3bad1d86dd0ce3cbafbd85ba4b9796f550a8be29fc1f9c98680b0a i386-pc/gcry_twofish.mod
+grub f e9cee31b3b16bb2bd8212e9c4bb945a485426d963c4d37b6f9ed6ec15b2d4bce i386-pc/lsmmap.mod
+grub f eaa49e764da83124cb30ca9cb6722ff0d6c283b49ce214dc4a415eff7d37fe03 i386-pc/part_dfly.mod
+grub f ec1050b15c4cb45a66a35a67afb2c5edd8ee1b94b81a885ed0316c2d9a2dce26 x86_64-efi/fshelp.mod
+grub f ec1b37df46fd5754533cdc4244b0b1e30b9ef3b17db875e31606fa319d5237e0 i386-pc/cbtime.mod
+grub f ec2ec63c3fcac76e04a10154e62954567f40d52b83bbacd47e1d4f6f256e132e i386-pc/ahci.mod
+grub f ec4a0b600674e7fb6e7080e00ef623973fcb38986b85c58bd5d6f3137da14167 i386-pc/gcry_camellia.mod
+grub f ed1e37c1739700006951a5cbfa05e1a9436b65bf91c36ef94016745cbe790565 x86_64-efi/search_fs_file.mod
+grub f ed40edc78f0651f7b7b66ad8b3aecaf3404496e13d47d9ff7974b17a565365f7 x86_64-efi/iso9660.mod
+grub f ed487dfb80ef485dd3bc3e9c3221bfc5cf144c5d6b8294e9edfbbd962e7a8629 x86_64-efi/gcry_tiger.mod
+grub f ee516e882f46087ddec497d524f65246153706ee11f00858bf1d5cb86944a929 x86_64-efi/cbmemc.mod
+grub f ee5397a2bf2797c6ba1a9ca5bc16d73eea9dc6579c03394a1a5b1710c79d1e56 i386-pc/mul_test.mod
+grub f ee7709a094361b72ab9aec99d5d6721675297dd4dbbe1e3b2d0621ec740c04e7 i386-pc/jpeg.mod
+grub f ee86ed550c91d6951796eb4a12c115e7f7c50d68812be1bb46aedabc9ea2e910 i386-pc/cmdline_cat_test.mod
+grub f efe6a6b16899ef6240eec51d84c9088912314aadcba66211c97c7101c65fa86b x86_64-efi/hfspluscomp.mod
+grub f f0244efada1b1a8d724f10bd9248d72981d66bd9cb27e904336702405706d760 i386-pc/drivemap.mod
+grub f f0a1887bb2672973ad158feb04552eb36add0b8eabda8ec9a142c6c375fa6de6 x86_64-efi/zfs.mod
+grub f f0ba32a03dcb92d40acb3a9f29c8b85d4e13a8ac2975e52978cc7e1628adbd3a i386-pc/ntfscomp.mod
+grub f f1a02b0385832aa8fca2f3cc5550573fb9ad2765e07ef74298819f732826ddaa i386-pc/part_bsd.mod
+grub f f202ad69c8d888ece8cb63007cb4a71dfc9b18c21c8efed2791d0001756a0a56 x86_64-efi/pata.mod
+grub f f21032ab09e9422fc1b8a0363f6cb17a764128f77c21af6140e5bfa2979ddf10 i386-pc/iso9660.mod
+grub f f214e0cee5bb31e2d5efd02222580f16fc3d13e51124b23a862fb78f70e059ea x86_64-efi/ehci.mod
+grub f f23f0c2197bdaa45aa061a54d6abd4ca9a5406ece7b6b088e956759e5fbbf8f5 x86_64-efi/regexp.mod
+grub f f27b6508a1b9fbca9eeedac94009679867f53fe055691e7762e9e8ff2193273f x86_64-efi/bsd.mod
+grub f f30e6e0fc9ddcae5355aa4aa25e1a63f47ef6d68766f6d426747af795ed24ce1 i386-pc/lspci.mod
+grub f f4a1d270cbb50ce7e65b4d9edd559f563133b4ac195b87919d05b7c0e56f73a1 x86_64-efi/lssal.mod
+grub f f51188a335d18bf9d43a6d882481c5c0f204ac46b591c8fc54befe987b1f0def i386-pc/search_fs_file.mod
+grub f f59d6c55b19bee1a8cc4cb9b951c124354f4e4735c64264383af1c0f00f734f0 i386-pc/setjmp_test.mod
+grub f f61add09ecf8b4acfe701894f47aacd67a6bfc2f9ed74fd7f3d1160c2473209e i386-pc/help.mod
+grub f f724741d547104c3e8d4bf44db986bb230ccbd41950ec6f976425acba77e11c6 x86_64-efi/legacycfg.mod
+grub f f76d010314f3d576401b7779db2fa128393c82150cb4220d4bb11afa4007e7a7 x86_64-efi/cs5536.mod
+grub f f7e9263ac704b0babcf2c65016a32e05696f5c1051e39624ca3b9550d8c00d0c x86_64-efi/priority_queue.mod
+grub f f7f8a52e146dfaf753ca851bae610f9483ebf4ca802917f189db13acbd0287c1 x86_64-efi/usb_keyboard.mod
+grub f f8004a0282a1f9c61adc17b558c84d79d25a225abf88aad6ed28587458db0053 i386-pc/cryptodisk.mod
+grub f f813a5ed8794d629d6598a663da6dcc18b2e3915ad1ae44d3e58608804f648c6 i386-pc/datetime.mod
+grub f f9008d5a920756345aa475b2b4063d765803a15a23bbcd42c69525b35b34eab1 i386-pc/bitmap.mod
+grub f f9197d5a58a4f38b114472fad238aee67f58cae20aa9434b8f9e19f0f2d30d52 x86_64-efi/gcry_md4.mod
+grub f f936e48047fba27560181fd7f3c153f0f1d337f2cdda214428e8a4bd4d14295d x86_64-efi/gcry_whirlpool.mod
+grub f f9631a024c102b175f8272de6a5812d67b61df8e9cd2412645d408fbce7abca2 i386-pc/freedos.mod
+grub f f9bc2effe01efa8562acb3d4c8dadb06bc7509b1e0b1e39f6ca8029635e9e59f x86_64-efi/efitextmode.mod
+grub f fa240d29afd678b19ef659f9e6c5022905ced0b2e0437f96dd457d81fa3c3428 x86_64-efi/nilfs2.mod
+grub f faeb203f4cb8125ee1921a69dbd26aa6bc19c6228a172b2ec4ba4bf6d98ad8cf x86_64-efi/probe.mod
+grub f fbf7df75fa7f0825a72d20b8c5067991f0d35c529ebcc7d87eb62801b09da83a x86_64-efi/tpm.mod
+grub f fd01f96d3b98d66e99929eac0bac1b7a1eaee68dd92f4eef06b71b2d9daa3122 x86_64-efi/aout.mod
+grub f ff7d233b03701b163b509396a248d0bc6827a58a9a7322d22bd0cd510c2c8471 x86_64-efi/pbkdf2.mod
+grub f ffcb5803ad8760aa94f70e0e7b6544585bb4333f7e0334c72a3cbe1c35f52abd i386-pc/pbkdf2_test.mod
+mbr f 9f8fca4dba18ee53d5753c7662ab3cbd7136371bdca33aacdf0baa49c913e52c sda0-439
+PINS
+}
+closure_pins() {
+    if [[ -n ${MURAGE_DISKCHECK_CLOSURE_FILE:-} ]]; then cat -- "$MURAGE_DISKCHECK_CLOSURE_FILE"; return; fi
+    case $ENVN in staging) closure_staging ;; *) : ;; esac
+}
+# judge_closure OBSERVED_FILE: the observed lines must equal the pinned ones, key for key.
+judge_closure() {
+    local -A want=() seen=()
+    local area kind val path extra key n=0 what
+    while read -r area kind val path extra; do
+        [[ -n $area ]] || continue
+        [[ $area =~ ^(bios|mbr|efi|grub|gen|gent)$ && $kind =~ ^[fl]$ && -n $val && -n $path && -z $extra ]] || die "a boot closure pin line is malformed"
+        want["$area $path"]="$kind $val"; n=$((n + 1))
+    done < <(closure_pins)
+    (( n > 0 )) || die "no boot closure pin for $ENVN: the boot files cannot be judged"
+    while read -r area kind val path extra; do
+        [[ -n $area ]] || continue
+        key="$area $path"
+        [[ $kind == f || $kind == l ]] || die "$path ($area) is a $val, not a regular file or an allowed link"
+        [[ -n ${want[$key]+x} ]] || die "$path ($area) is not in the boot closure allowlist"
+        what=hash; [[ $kind == l ]] && what="link target"
+        [[ ${want[$key]} == "$kind $val" ]] || die "$path ($area) does not match its pinned $what"
+        seen[$key]=1
+    done < "$1"
+    for key in "${!want[@]}"; do
+        [[ -n ${seen[$key]+x} ]] || die "${key#* } (${key%% *}) is pinned in the boot closure but missing from the image"
+    done
+    CLOSURE_COUNT=${#want[@]}
+}
+if [[ -n ${MURAGE_DISKCHECK_JUDGE:-} ]]; then   # test hook: judge a saved listing, mount nothing
+    judge_closure "$MURAGE_DISKCHECK_JUDGE"
+    echo "image-disk-check: closure ok entries=$CLOSURE_COUNT"
+    exit 0
+fi
+
+disks=$(lsblk -dn -P -o NAME,TYPE) || die "cannot list disks"
+ndisk=0
+while IFS= read -r line; do
+    [[ -n $line ]] || continue
+    t=$(field TYPE "$line") || die "unreadable lsblk row"
+    if [[ $t == disk ]]; then ndisk=$((ndisk + 1)); [[ $(field NAME "$line") == "${DISK#/dev/}" ]] || die "unexpected disk: $line"; fi
+done <<< "$disks"
+(( ndisk == 1 )) || die "expected exactly one disk ($DISK), found $ndisk"
+
+rows=$(lsblk -n -P -p -o NAME,TYPE,FSTYPE,LABEL,UUID,PARTTYPE "$DISK") || die "cannot list partitions"
+root_dev="" root_uuid="" root_label="" esp_dev="" bios_dev="" bios=0
+while IFS= read -r line; do
+    [[ -n $line ]] || continue
+    name=$(field NAME "$line") || die "unreadable lsblk row"
+    type=$(field TYPE "$line") || die "unreadable lsblk row"
+    fs=$(field FSTYPE "$line") || fs=""
+    label=$(field LABEL "$line") || label=""
+    uuid=$(field UUID "$line") || uuid=""
+    ptype=$(field PARTTYPE "$line") || ptype=""
+    ptype=${ptype,,}
+    if [[ $type == disk ]]; then
+        [[ -z $fs ]] || die "the whole disk carries a filesystem ($fs)"
+        continue
+    fi
+    [[ $type == part ]] || die "unexpected block device $name of type $type"
+    if [[ -z $fs && $ptype == "$BIOS_TYPE" ]]; then
+        bios=$((bios + 1)); (( bios == 1 )) || die "more than one BIOS boot partition"
+        bios_dev=$name
+    elif [[ $fs == vfat && $ptype == "$ESP_TYPE" ]]; then
+        [[ -z $esp_dev ]] || die "more than one EFI system partition"
+        esp_dev=$name
+    elif [[ $fs == ext4 && ( -z $label || $label == cloudimg-rootfs ) ]]; then
+        [[ -z $root_dev ]] || die "more than one root filesystem candidate ($root_dev and $name)"
+        root_dev=$name root_uuid=${uuid,,} root_label=$label
+    else
+        die "unexpected partition $name (fs='$fs' label='$label' type='$ptype')"
+    fi
+done <<< "$rows"
+[[ -n $root_dev ]] || die "no ext4 root filesystem"
+[[ $root_uuid =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || die "root filesystem UUID is not a UUID"
+
+clean_ext4() { # clean_ext4 DEV: ext4 superblock is cleanly unmounted, journal needs no replay
+    local dev=$1 out feats state
+    out=$(LC_ALL=C dumpe2fs -h "$dev" 2>/dev/null) || die "dumpe2fs failed on $dev"
+    feats=$(sed -n 's/^Filesystem features: *//p' <<< "$out")
+    state=$(sed -n 's/^Filesystem state: *//p' <<< "$out")
+    [[ -n $feats && -n $state ]] || die "$dev: superblock has no feature or state line"
+    [[ " $feats " != *" needs_recovery "* ]] || die "$dev has an unreplayed journal (needs_recovery)"
+    [[ " $feats " != *" journal_dev "* ]] || die "$dev is an external journal device"
+    [[ $state == clean ]] || die "$dev is not cleanly unmounted (state: $state)"
+    if [[ $dev == "$root_dev" ]]; then
+        [[ $(sed -n 's/^Filesystem UUID: *//p' <<< "$out") == "$root_uuid" ]] || die "$dev: superblock UUID differs from lsblk"
+    fi
+}
+mount_ro() { # mount_ro TYPE DEV DIR
+    mkdir -p "$3"
+    mount -o ro -t "$1" "$2" "$3" || die "could not mount $2 read-only"
+    findmnt -n -o OPTIONS --target "$3" | tr ',' '\n' | grep -Fx ro >/dev/null || die "$2 is not mounted read-only"
+}
+clean_ext4 "$root_dev"
+mount_ro ext4 "$root_dev" "$MNT/img"
+[[ -z $esp_dev ]] || mount_ro vfat "$esp_dev" "$MNT/efi"
+[[ -r $MNT/img/var/lib/dpkg/status ]] || die "no dpkg status on the root filesystem"
+
+# Every grub.cfg (indeed every .cfg) the bootloader can reach: the root's /boot/grub and the ESP.
+scan_dirs=("$MNT/img/boot/grub")
+[[ -z $esp_dev ]] || scan_dirs+=("$MNT/efi")
+# find -P does not follow a symlink, GRUB does: refuse a linked /boot or /boot/grub and any directory link under the scanned trees.
+[[ ! -L $MNT/img/boot && ! -L $MNT/img/boot/grub && -d $MNT/img/boot/grub ]] || die "/boot or /boot/grub is missing or a symlink"
+cfgs=()
+for d in "${scan_dirs[@]}"; do
+    [[ -d $d && ! -L $d ]] || continue
+    if find -P "$d" -xdev -type l | grep . >/dev/null; then die "a symlink under $d: GRUB follows it on the image, a check on this host cannot judge where it leads"; fi
+    while IFS= read -r -d '' f; do cfgs+=("$f"); done < <(find -P "$d" -xdev \( -name '*.cfg' -o -name '*.cfg.*' \) -print0)
+    if find -P "$d" -xdev -type l -name '*.cfg*' | grep . >/dev/null; then die "a bootloader config under $d is a symlink"; fi
+done
+[[ -f $MNT/img/boot/grub/grub.cfg ]] || die "no /boot/grub/grub.cfg on the root filesystem"
+# prefix_ok FILE LABEL: every GRUB device path embedded in FILE is exactly /boot/grub on the checked root's partition. A core image
+# stores its modules compressed, so on the real image the string may not be readable at all (the staging BIOS image shows none);
+# the closure pin above is what binds the loader's bytes, this only refuses a plainly visible foreign path. A read error fails.
+prefix_ok() {
+    local f=$1 label=$2 pref n=${root_dev##*[!0-9]} all
+    # Split on NUL only: GRUB reads the whole C string, so the whole string must be exactly the allowed prefix.
+    all=$(LC_ALL=C tr '\0' '\n' < "$f" | LC_ALL=C grep -aE 'gpt[0-9]+\)' ) || all=""
+    while IFS= read -r pref; do
+        [[ -n $pref ]] || continue
+        [[ $pref == "(,gpt$n)/boot/grub" || $pref == "(hd0,gpt$n)/boot/grub" ]] || die "$label names a GRUB path other than /boot/grub on the checked root"
+    done <<< "$all"
+}
+# The ESP holds only the removable-media loader, and that loader must read its configuration from the checked root's /boot/grub.
+if [[ -n $esp_dev ]]; then
+    ents=$(cd "$MNT/efi" && find . -mindepth 1 | LC_ALL=C sort | tr '\n' ' ')
+    [[ $ents == "./EFI ./EFI/BOOT ./EFI/BOOT/BOOTX64.EFI " ]] || die "unexpected files on the ESP: $ents"
+    [[ -f $MNT/efi/EFI/BOOT/BOOTX64.EFI && ! -L $MNT/efi/EFI/BOOT/BOOTX64.EFI ]] || die "BOOTX64.EFI is not a regular file"
+    prefix_ok "$MNT/efi/EFI/BOOT/BOOTX64.EFI" "BOOTX64.EFI"
+    efi_sha=$(sha256sum "$MNT/efi/EFI/BOOT/BOOTX64.EFI" | cut -d' ' -f1)
+fi
+# The BIOS boot partition holds GRUB's core image, which carries its own prefix; same rule as the ESP loader.
+if [[ -n $bios_dev ]]; then prefix_ok "${MURAGE_DISKCHECK_BIOS_FILE:-$bios_dev}" "the BIOS boot image"; fi
+# A grubenv can set any variable (load_env), so it may not set the ones that move where GRUB reads files from.
+ge=$MNT/img/boot/grub/grubenv
+if [[ -e $ge || -L $ge ]]; then
+    [[ -f $ge && ! -L $ge ]] || die "grubenv is not a regular file"
+    if grep -aE '^(root|prefix|config_directory|cmdpath)=' "$ge" >/dev/null; then die "grubenv sets a variable that moves where GRUB reads files from"; fi
+fi
+# ---- observe the boot closure and judge it against the allowlist -------------------------------------------------------
+SAFE_NAME='^[A-Za-z0-9._+/-]+$'
+# link_text PATH: the link's text in LT, byte for byte. A command substitution drops trailing newlines, so a marker is kept and cut off.
+link_text() { LT=$(readlink -- "$1" && echo x) || return 1; LT=${LT%$'\nx'}; }
+emit() { # emit AREA FULLPATH RELPATH: one observed line (f sha256, l link target, x anything else)
+    local area=$1 p=$2 rel=$3 t h
+    [[ $rel =~ $SAFE_NAME ]] || die "an unusual file name in the boot closure ($area): $rel"
+    if [[ -L $p ]]; then
+        link_text "$p" || die "cannot read the link $rel ($area)"; t=$LT
+        [[ $t =~ $SAFE_NAME ]] || die "an unusual link target at $rel ($area)"
+        printf '%s l %s %s\n' "$area" "$t" "$rel"
+    elif [[ -f $p ]]; then
+        h=$(sha256sum -- "$p" | cut -d' ' -f1) || die "cannot hash $rel ($area)"
+        [[ $h =~ ^[0-9a-f]{64}$ ]] || die "unreadable hash for $rel ($area)"
+        printf '%s f %s %s\n' "$area" "$h" "$rel"
+    elif [[ -d $p ]]; then
+        printf '%s x directory %s\n' "$area" "$rel"
+    else
+        printf '%s x special-file %s\n' "$area" "$rel"
+    fi
+}
+observe_closure() { # observe_closure OUTFILE
+    local out=$1 tmp f rel d base sub h g rootreal link t cand rp
+    tmp=$(mktemp -d) || die "no scratch directory"
+    rootreal=$(realpath -e -- "$MNT/img") || die "cannot resolve the checked root"
+    : > "$out"
+    if [[ -n $esp_dev ]]; then
+        find -P "$MNT/efi" -mindepth 1 ! -type d -print0 > "$tmp/l" || die "cannot list the ESP"
+        while IFS= read -r -d '' f; do emit efi "$f" "${f#"$MNT/efi/"}" >> "$out"; done < "$tmp/l"
+    fi
+    if [[ -n $bios_dev ]]; then
+        h=$(sha256sum < "${MURAGE_DISKCHECK_BIOS_FILE:-$bios_dev}" | cut -d' ' -f1) || die "cannot hash the BIOS boot partition"
+        [[ $h =~ ^[0-9a-f]{64}$ ]] || die "unreadable hash for the BIOS boot partition"
+        printf 'bios f %s %s\n' "$h" "${bios_dev##*/}" >> "$out"
+    fi
+    # The MBR boot code (bytes 0-439 of the disk, before the disk signature and the partition table) is what the BIOS runs first.
+    h=$(head -c 440 "${MURAGE_DISKCHECK_MBR_FILE:-$DISK}" | sha256sum | cut -d' ' -f1) || die "cannot hash the MBR boot code"
+    [[ $h =~ ^[0-9a-f]{64}$ ]] || die "unreadable hash for the MBR boot code"
+    printf 'mbr f %s sda0-439\n' "$h" >> "$out"
+    g=$MNT/img/boot/grub
+    find -P "$g" -mindepth 1 ! -type d ! -name '*.cfg' ! -name '*.cfg.*' ! -path "$g/grubenv" -print0 > "$tmp/l" || die "cannot list /boot/grub"
+    while IFS= read -r -d '' f; do emit grub "$f" "${f#"$g/"}" >> "$out"; done < "$tmp/l"
+    # systemd runs every executable in these directories as root, early, before any unit; a link is judged by its text AND by the file
+    # it points at. /lib is the same directory as /usr/lib when it is the stock link to usr/lib.
+    for base in run/systemd usr/local/lib/systemd etc/systemd usr/lib/systemd lib/systemd; do
+        if [[ $base == lib/systemd && -L $MNT/img/lib ]] && link_text "$MNT/img/lib" && [[ $LT == usr/lib ]]; then continue; fi
+        for sub in generator generator.early generator.late system-generators user-generators system-environment-generators user-environment-generators; do
+            d=$base/$sub
+            rp=$(realpath -m -- "$MNT/img/$d") || die "cannot resolve $d"
+            [[ $rp == "$rootreal/$d" ]] || die "the generator directory /$d is reached through a symlink"
+            [[ -e $MNT/img/$d || -L $MNT/img/$d ]] || continue
+            [[ -d $MNT/img/$d && ! -L $MNT/img/$d ]] || die "the generator directory /$d is not a plain directory"
+            find -P "$MNT/img/$d" -mindepth 1 -print0 > "$tmp/l" || die "cannot list /$d"
+            while IFS= read -r -d '' f; do
+                emit gen "$f" "${f#"$MNT/img/"}" >> "$out"
+                [[ -L $f ]] || continue
+                link_text "$f" || die "cannot read the link $f"; t=$LT
+                [[ $t != /dev/null ]] || continue
+                if [[ $t == /* ]]; then cand=$MNT/img$t; else cand=$(dirname -- "$f")/$t; fi
+                rp=$(realpath -e -- "$cand" 2>/dev/null) || die "the generator link ${f#"$MNT/img/"} points at a missing file"
+                [[ $rp == "$rootreal"/* && -f $rp && ! -L $rp ]] || die "the generator link ${f#"$MNT/img/"} does not lead to a regular file inside the image"
+                emit gent "$rp" "${rp#"$rootreal/"}" >> "$out"
+            done < "$tmp/l"
+        done
+    done
+    LC_ALL=C sort -u -o "$out" "$out"
+    rm -rf "$tmp"
+}
+OBSERVED=$(mktemp) || die "no scratch file"
+observe_closure "$OBSERVED"
+if [[ -n ${MURAGE_DISKCHECK_PRINT_CLOSURE:-} ]]; then cat "$OBSERVED"; exit 0; fi
+judge_closure "$OBSERVED"
+
+want="root=UUID=$root_uuid"
+nlinux=0
+# GRUB is a shell, so the scan is an ALLOWLIST: it splits lines the way GRUB does (; & | and braces, ${name} as $name), and a
+# command that is not one a stock Ubuntu grub.cfg uses is refused, as is any quote, backslash, $ or backtick in a command word or
+# a linux argument. Variables that move where files come from (prefix, config_directory, cmdpath) may not be set, root may only
+# name hd0 and the partition of the checked filesystem, and kernel and initrd must be plain files on the checked mounts.
+quirk='["'"'"'\\$`]'
+ctl='^(if|then|else|elif|fi|do|done|while|until|for|function)$'
+cmds=" insmod set export search echo save_env load_env menuentry submenu linux linuxefi linux16 linux32 initrd initrdefi initrd16 terminal_output terminal_input fwsetup sleep loadfont [ true false return source "
+okargs='^(ro|quiet|splash|recovery|nomodeset|dis_ucode_ldr|console=[A-Za-z0-9,]+|consoleblank=[0-9]+|systemd\.show_status=(true|false|auto)|panic=-?[0-9]+)$'
+nums="${root_dev##*[!0-9]}"
+norm() { # norm LINE: print the line with ${name} as $name and block/pipe characters as command separators
+    local l=$1 m n
+    while [[ $l =~ \$\{([A-Za-z0-9_]+)\} ]]; do
+        m=${BASH_REMATCH[0]} n=\$${BASH_REMATCH[1]}
+        l=${l/"$m"/"$n"}
+    done
+    printf '%s' "${l//[\{\}&|]/ ; }"
+}
+check_var() { # check_var FILE NAME VALUE
+    local v
+    case $2 in
+        prefix|config_directory|cmdpath) die "$1: the script sets $2, which moves where GRUB reads files from" ;;
+        root)
+            v=${3#[\'\"]}; v=${v%[\'\"]}
+            [[ $v =~ ^\(?hd0,(gpt|msdos)(${nums})\)?$ ]] || die "$1: set root names another disk or partition: $3" ;;
+    esac
+}
+plain_file() { # plain_file PATH: an absolute path that is a regular file inside a checked ext4 mount (links resolved)
+    local p=$1 base real rb
+    [[ $p =~ ^/[A-Za-z0-9._+/-]+$ && $p != *..* ]] || return 1
+    for base in "$MNT/img"; do
+        real=$(realpath -e -- "$base$p" 2>/dev/null) || continue
+        rb=$(realpath -e -- "$base") || continue
+        if [[ $real == "$rb"/* && -f $real ]]; then return 0; fi
+    done
+    return 1
+}
+declare -A fn=()
+for f in "${cfgs[@]}"; do
+    while IFS= read -r line || [[ -n $line ]]; do
+        if [[ $line =~ (^|[[:space:];{])function[[:space:]]+([A-Za-z_][A-Za-z0-9_]*) ]]; then
+            [[ $cmds != *" ${BASH_REMATCH[2]} "* ]] || die "$f: a function redefines the command ${BASH_REMATCH[2]}"
+            fn[${BASH_REMATCH[2]}]=1
+        fi
+    done < "$f"
+done
+for f in "${cfgs[@]}"; do
+    while IFS= read -r line || [[ -n $line ]]; do
+        line=${line#"${line%%[![:space:]]*}"}
+        [[ -n $line && $line != '#'* ]] || continue
+        line=$(norm "$line")
+        IFS=';' read -r -a segs <<< "$line" || true
+        for seg in "${segs[@]}"; do
+            read -r -a w <<< "$seg" || true
+            while (( ${#w[@]} )) && [[ ${w[0]} =~ $ctl ]]; do
+                if [[ ${w[0]} == function ]]; then w=(); else w=("${w[@]:1}"); fi
+            done
+            (( ${#w[@]} )) || continue
+            [[ ${w[0]} != '#'* ]] || continue
+            cmd=${w[0]}
+            if [[ $cmd =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then   # a plain variable assignment runs nothing
+                check_var "$f" "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+                continue
+            fi
+            [[ ! $cmd =~ $quirk ]] || die "$f: a command word uses quoting or expansion: $cmd"
+            [[ $cmds == *" $cmd "* || -n ${fn[$cmd]:-} ]] || die "$f: command not allowed in a boot config: $cmd (could boot or load something else)"
+            case $cmd in
+                source)
+                    (( ${#w[@]} == 2 )) && [[ ${w[1]} == '$config_directory/custom.cfg' || ${w[1]} == '$prefix/custom.cfg' ]] \
+                        || die "$f: source of something other than custom.cfg" ;;
+                insmod)
+                    for t in "${w[@]:1}"; do [[ $t =~ ^[A-Za-z0-9_]+$ ]] || die "$f: insmod of a path or odd name: $t"; done ;;
+                set)
+                    for t in "${w[@]:1}"; do
+                        [[ $t =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]] || die "$f: set argument is not a literal name=value: $t"
+                        check_var "$f" "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+                    done ;;
+                search)
+                    u="" npos=0 okfs=0 nmode=0
+                    for t in "${w[@]:1}"; do
+                        if [[ $t == -* ]]; then
+                            [[ $t =~ ^(--no-floppy|--fs-uuid|--label|--set=root|--hint(-[a-z]+)?=.*)$ ]] || die "$f: search option not allowed: $t"
+                            [[ $t != --fs-uuid && $t != --label ]] || nmode=$((nmode + 1))
+                        else
+                            npos=$((npos + 1)); u=${t,,}
+                        fi
+                    done
+                    (( npos == 1 && nmode == 1 )) || die "$f: search must be one --fs-uuid or --label lookup of one name"
+                    if [[ " ${w[*]} " == *" --fs-uuid "* && $u == "$root_uuid" ]]; then okfs=1; fi
+                    if [[ " ${w[*]} " == *" --label "* && $u == cloudimg-rootfs && $root_label == cloudimg-rootfs ]]; then okfs=1; fi
+                    (( okfs )) || die "$f: search line does not name the checked filesystem" ;;
+                load_env)
+                    (( ${#w[@]} == 1 )) || die "$f: load_env with arguments (another environment file)" ;;
+                linux|linuxefi|linux16|linux32)
+                    nlinux=$((nlinux + 1)); nroot=0
+                    [[ ${w[1]:-} != '('* ]] || die "$f: the kernel is loaded from another device (${w[1]})"
+                    for t in "${w[@]:1}"; do
+                        [[ ! $t =~ $quirk ]] || die "$f: quoting or expansion in a linux line: $t"
+                    done
+                    for t in "${w[@]:2}"; do
+                        if [[ $t =~ $okargs ]]; then continue; fi
+                        case $t in
+                            root=*[!A-Za-z0-9=_.-]*) die "$f: forbidden kernel argument '$t'" ;;
+                            root=*)
+                                nroot=$((nroot + 1))
+                                if [[ $t == root=UUID=* && ${t#root=UUID=} == "$root_uuid" ]]; then :
+                                elif [[ $t == root=LABEL=cloudimg-rootfs && $root_label == cloudimg-rootfs ]]; then :
+                                else die "$f: kernel root is '$t', not the checked filesystem ($want)"; fi ;;
+                            *) die "$f: forbidden kernel argument '$t'" ;;
+                        esac
+                    done
+                    (( nroot == 1 )) || die "$f: a linux line has $nroot root= arguments"
+                    plain_file "${w[1]:-}" || die "$f: the kernel ${w[1]:-} is not a plain file on a checked filesystem" ;;
+                initrd|initrdefi|initrd16)
+                    (( ${#w[@]} >= 2 )) || die "$f: initrd with no file"
+                    for t in "${w[@]:1}"; do
+                        [[ $t != '('* ]] || die "$f: the initrd is loaded from another device ($t)"
+                        [[ ! $t =~ $quirk ]] || die "$f: quoting or expansion in an initrd line: $t"
+                        plain_file "$t" || die "$f: the initrd $t is not a plain file on a checked filesystem"
+                    done ;;
+            esac
+        done
+    done < "$f"
+done
+(( nlinux > 0 )) || die "no linux line in any bootloader config"
+echo "image-disk-check: ok env=$ENVN root=$root_dev uuid=$root_uuid esp=${esp_dev:-none} efi-sha256=${efi_sha:-none} closure-entries=$CLOSURE_COUNT configs=${#cfgs[@]} linux-lines=$nlinux"

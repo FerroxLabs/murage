@@ -104,6 +104,8 @@ api.runtime.onMessage.addListener((message, sender, respond) => {
 });
 for (const event of [api.webNavigation.onCommitted, api.webNavigation.onHistoryStateUpdated, api.webNavigation.onReferenceFragmentUpdated]) event.addListener(details => { void ready.then(() => runtime.navigation(details)); });
 api.downloads.onCreated.addListener(item => { void ready.then(() => runtime.downloadCreated(item)); });
+// A download Murage could not remove while it was still being written is removed once it finishes.
+api.downloads.onChanged?.addListener(delta => { void ready.then(() => runtime.downloadChanged(delta)); });
 // Every download waits for this answer; it is always given (suggest with no name keeps Chrome's own choice).
 api.downloads.onDeterminingFilename.addListener((item, suggest) => {
   const answer = () => { try { suggest(); } catch { /* cancelled, or already answered */ } };

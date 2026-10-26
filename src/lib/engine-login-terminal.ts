@@ -139,7 +139,7 @@ export interface EngineLoginBridge {
   onClosed(listener: (payload: { id: string; reason: string }) => void): () => void;
 }
 export type EngineLoginEngine = "codex" | "claudeAgent" | "grokAgent" | "kimiAgent" | "opencodeGo";
-/** Engines whose sign-in belongs to one bot (server/cloud-home/engine-login.ts BOT_LOGIN_ENGINES). Claude's is engine-wide. */
+/** Engines whose sign-in belongs to one bot (server/cloud-home/engine-login.ts BOT_LOGIN_ENGINES). Claude's is home-wide; it names a bot only for that bot's own sign-in. */
 export const BOT_LOGIN_ENGINES: readonly EngineLoginEngine[] = Object.freeze(["codex", "grokAgent", "kimiAgent", "opencodeGo"]);
 /** Same words as server/cloud-home/copy.ts (engineLoginBotRequired). */
 export const BOT_REQUIRED_COPY = "Choose which bot to sign this engine in for.";

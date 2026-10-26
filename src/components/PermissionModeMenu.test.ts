@@ -60,9 +60,11 @@ describe("composer approval-level menu", () => {
 describe("an engine that runs on its own tools and approvals", () => {
   it("says so once, as what it is, and leaves the Antigravity note alone", () => {
     const markup = render(true, undefined, "OpenClaw");
-    expect(markup).toContain("OpenClaw runs on its own tools and approvals, so these levels do not change what it does.");
+    expect(markup).toContain("OpenClaw runs on its own tools. At Ask it reads and answers only: it runs no commands and changes no files. At Auto, Full access and No limits it follows your own OpenClaw command settings.");
+    // U45: the old note said the levels change nothing, which is wrong at Ask.
+    expect(markup).not.toContain("these levels do not change what it does");
     expect(markup).not.toContain("cannot ask first");
     expect(markup).not.toMatch(/\u2014|\bunsafe\b/);
-    expect(render(true)).not.toContain("its own tools and approvals");
+    expect(render(true)).not.toContain("runs on its own tools");
   });
 });

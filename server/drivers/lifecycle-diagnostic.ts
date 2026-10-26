@@ -86,6 +86,8 @@ export interface LifecycleFields {
   settled?: boolean;
   cancelRequested?: boolean;
   promptSent?: boolean;
+  /** Windows stop_requested (U24 design R10): "job" when every process the CLI created is in its job, else "none". */
+  containment?: "job" | "none";
 }
 
 export type LifecycleRecord = Record<string, unknown> & {
@@ -298,6 +300,10 @@ export function createLifecycleRecorder(options: LifecycleRecorderOptions): Life
       if (fields[key] === undefined) continue;
       if (typeof fields[key] !== "boolean") return null;
       msg[key] = fields[key];
+    }
+    if (fields.containment !== undefined) {
+      if (fields.containment !== "job" && fields.containment !== "none") return null;
+      msg.containment = fields.containment;
     }
     return msg;
   };
