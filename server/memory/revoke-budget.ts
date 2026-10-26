@@ -38,6 +38,15 @@ const MIN_SLICE_CHANGES = 64;
  * and its leaf in its one index. A ceiling, 2.8x the largest per-row cost measured on the preflight file (2,904 bytes a row in the costliest
  * of 10,339 slices; 1.57 KB on average). */
 export const REVOKE_CHANGE_CEILING_FRAMES = 2;
+/** WAL frames one commit may write beyond its rows' own leaves before its measurement counts as over the ceiling: a tolerance of one leaf
+ * rebalance in each of a row's two btrees (SQLite's balance_nonroot usually rewrites up to 3 sibling leaves, adds one and rewrites their
+ * parent: 4 frames past the row's own leaf; a rebalance that adds two pages or reaches the grandparent is rarer still and is not covered). A
+ * split is a cost of the commit, not of each row: over full slices it averages into C, but a slice the 8 ms deadline ends after a few rows
+ * can land on one, and its frames over its rows read past W (1.0.6 gate B14: one commit of 5 rows wrote 11 frames, 9,064 bytes a row
+ * against W = 8,240; on the same data, 5-row commits touching the deny table, its revoke index and new pages wrote 8). Judging that commit
+ * against rows x W alone counted a split as a model error. Such a commit still counts when the whole run is past W a row (sustained
+ * excess, below). Only the over-ceiling count uses it: C, the charge and admission are as they were. */
+export const REVOKE_COMMIT_REBALANCE_FRAMES = 8;
 /** The least C is ever lowered to, as a fraction of the ceiling: a quarter frame a row. A measurement of a few frames over many rows (held
  * jobs saved unchanged, rows that share a page) can lower C only this far (Astra design check, S2). */
 const REVOKE_COST_FLOOR = 1 / 8;
@@ -46,6 +55,8 @@ const REVOKE_COST_FLOOR = 1 / 8;
 export const REVOKE_COST_MEMORY_ROWS = 8192;
 /** A WAL frame's header. */
 const FRAME_HEADER = 24;
+/** The WAL file's header, measured with a commit that starts the log. */
+const WAL_HEADER = 32;
 
 let clock: () => number = () => Date.now();
 type Entry = { at: number; bytes: number };
@@ -100,7 +111,11 @@ export function noteRevokeCost(db: DatabaseSync, bytes: number, rows: number): v
   const W = revokeChangeCeiling(db), from = revokeCostPerChange(db);
   const per = bytes / rows;
   revokeWriteMeter.measured++; revokeWriteMeter.measuredBytes += bytes; revokeWriteMeter.measuredChanges += rows;
-  if (per > W) revokeWriteMeter.overCeiling++;
+  // over: past its rows at W plus one commit's rebalances and the log header; or past W a row at all while every measurement so far, over
+  // at least a memory's worth of rows, is past W a row (small commits that are each within the tolerance but costlier than W on the whole)
+  const pastCommit = bytes > rows * W + REVOKE_COMMIT_REBALANCE_FRAMES * frameBytes(db) + WAL_HEADER;
+  const pastRun = per > W && revokeWriteMeter.measuredChanges >= REVOKE_COST_MEMORY_ROWS && revokeWriteMeter.measuredBytes > revokeWriteMeter.measuredChanges * W;
+  if (pastCommit || pastRun) revokeWriteMeter.overCeiling++;
   revokeWriteMeter.maxPerChange = Math.max(revokeWriteMeter.maxPerChange, per);
   revokeWriteMeter.maxSliceBytes = Math.max(revokeWriteMeter.maxSliceBytes, bytes);
   cost = Math.max(W * REVOKE_COST_FLOOR, Math.min(W, (from * REVOKE_COST_MEMORY_ROWS + bytes) / (REVOKE_COST_MEMORY_ROWS + rows)));
@@ -134,7 +149,9 @@ export function revokeWriteWaitMs(need: number, now: number = clock()): number {
 }
 
 /** Counters for tests and the drain bench: slices that changed rows and the bytes they were charged; the runner's measurements, their bytes
- * and rows; measurements whose cost a row was over the ceiling; the largest cost a row and the largest commit measured. */
+ * and rows; measurements over the ceiling (more than rows x W plus one commit's leaf rebalances, REVOKE_COMMIT_REBALANCE_FRAMES, or past W
+ * a row while the whole run is); the
+ * largest cost a row (raw: bytes over rows, splits included) and the largest commit measured. */
 export const revokeWriteMeter = { slices: 0, charged: 0, measured: 0, measuredBytes: 0, measuredChanges: 0, overCeiling: 0, maxPerChange: 0, maxSliceBytes: 0 };
 
 /** One marker slice inside the budget (the caller's transaction): "budget" when the minute has no room for its least rows at C (nothing

@@ -1,6 +1,7 @@
 import {useEffect,useRef,useState} from "react";
 import {resticS3TargetSchema,resticS3CredentialsSchema,sftpFolderSchema,sftpHostSchema,sftpPortSchema,sftpUserSchema} from "../../server/backup-restic-target";
 import type {BackupRemoteStatus} from "../../server/backup-remote-host";
+import { copyText } from "@/lib/copy-text";
 import {UNKNOWN_ACCOUNT_FIX} from "../../shared/windows-sddl.mjs";
 type RetentionPolicy={keepLast?:number;keepDaily?:number;keepWeekly?:number;keepMonthly?:number};
 // Retention methods are optional: an older desktop bridge simply does not offer removal.
@@ -210,14 +211,14 @@ export function OffsiteStatus({r}:{r:RemoteController}){
 }
 /** Public key, setup steps and the trusted fingerprint for an SFTP destination. */
 function SftpKeySteps({r}:{r:RemoteController}){
- const {status,copied,setCopied}=r;const sftp=status?.sftp;if(!sftp)return null;
- const copy=()=>{void navigator.clipboard?.writeText(sftp.publicKey).then(()=>{if(r.mounted.current)setCopied(true);},()=>{});};
+ const {status,copied,setCopied}=r;const [copyFailed,setCopyFailed]=useState(false);const sftp=status?.sftp;if(!sftp)return null;
+ const copy=()=>{void copyText(sftp.publicKey).then((ok)=>{if(!r.mounted.current)return;setCopyFailed(!ok);if(ok)setCopied(true);});};
  return <div className="space-y-2">
   <p className="break-words text-[13px] text-ink-secondary">Server: {sftp.user}@{sftp.host}, port {sftp.port}. Folder: {sftp.folder}</p>
   <h4 className="text-[13px] font-medium text-ink">Murage's key for this server</h4>
   <p className="text-[13px] text-ink-secondary">Murage made this key for this destination only. Add this key to the server's authorized keys for {sftp.user}. Murage never uses a password to sign in.</p>
   <pre aria-label="Public key" className="max-w-full overflow-x-auto whitespace-pre-wrap break-all rounded-lg border border-hairline/40 bg-inset p-3 font-mono text-[12px] text-ink" data-testid="sftp-public-key">{sftp.publicKey}</pre>
-  <button className={buttonClass} type="button" onClick={copy}>{copied?"Key copied":"Copy key"}</button>
+  <button className={buttonClass} type="button" onClick={copy}>{copyFailed?"Could not copy. Select the key above and copy it yourself.":copied?"Key copied":"Copy key"}</button>
   <ol className="list-decimal space-y-1 pl-5 text-[13px] text-ink-secondary">
    <li>On the server, add the key above as a new line in the file .ssh/authorized_keys in the home folder of {sftp.user}.</li>
    <li>Below, choose Create off-site password (or, on a new computer, the password file you kept).</li>

@@ -146,7 +146,7 @@ describe("each writer records its lineage row in the message's transaction", () 
     expect(carries("chat")).toEqual([{ parent_thread: "other", from_lsn: x2, to_lsn: x2, child_kind: 1, child_ref: turnChildRef(turn.turnLsn) }]);
     expect(decodeCarryChild(1, String(carries("chat")[0]!.child_ref), "chat")).toEqual({ kind: "turn", threadId: "chat", turnLsn: turn.turnLsn });
     expect(flows("chat")).toEqual([{ from_thread: "other", first_lsn: Number(r1.lsn) }]);
-    expect(inheritMarks).toHaveBeenCalledWith(expect.anything(), { kind: "turn", threadId: "chat", lsn: turn.turnLsn, holdFrom: Number(r1.lsn) }, [], [{ threadId: "other", from: x2, to: x2 }]);
+    expect(inheritMarks).toHaveBeenCalledWith(expect.anything(), { kind: "turn", threadId: "chat", lsn: turn.turnLsn, line: Number(r1.lsn), holdFrom: Number(r1.lsn) }, [], [{ threadId: "other", from: x2, to: x2 }]);
     // a second reply of the same turn writes no new carry row
     appendMessage("chat", msg("r1b", { parentId: "r1" }));
     expect(carries("chat")).toHaveLength(1);
@@ -321,7 +321,7 @@ describe("a reply written after a mark is born marked", () => {
     appendMessage("chat", msg("r1"));
     // the turn child inherits at its position (the marker's range from there denies every line of the turn)
     expect(db().prepare("SELECT revoke_id FROM memory_deny_line WHERE thread_id='chat' AND lsn=?").all(turn.turnLsn)).toEqual([{ revoke_id: 42 }]);
-    expect(inheritMarks).toHaveBeenCalledWith(expect.anything(), { kind: "turn", threadId: "chat", lsn: turn.turnLsn, holdFrom: Number(lineage("chat", "r1")!.lsn) }, [], [{ threadId: "other", from: x1, to: x1 }]);
+    expect(inheritMarks).toHaveBeenCalledWith(expect.anything(), { kind: "turn", threadId: "chat", lsn: turn.turnLsn, line: Number(lineage("chat", "r1")!.lsn), holdFrom: Number(lineage("chat", "r1")!.lsn) }, [], [{ threadId: "other", from: x1, to: x1 }]);
     // and a line written outside any turn, with no carried parent, inherits nothing
     closeTurnLineage(turn);
     appendMessage("chat", msg("r2"));

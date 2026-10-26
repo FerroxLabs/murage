@@ -54,7 +54,8 @@
         "title": "Salon and Spa",
         "description": "Chair prepares a weekly staff and appointment plan from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. ",
         "appearance": {
-          "color": "green"
+          "color": "green",
+          "mascotBody": "blob"
         },
         "skills": [
           "salon-owner",

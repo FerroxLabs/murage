@@ -4,12 +4,17 @@
 // After a Delete: what could not be removed, and where, in plain words.
 import { Loader2, X } from "lucide-react";
 
+import { retryResultLine } from "@/lib/deletion-notes";
 import { useAction } from "@/lib/use-action";
 import { ActionStatus } from "./ActionButton";
 
-export function DeletionNoteBanner({ note, onDismiss, onRetry }: { note: { title: string; items: string[]; retry?: boolean }; onDismiss: () => void; onRetry?: () => void | Promise<void> }) {
-  // The retry shows that it is running, then that it ran, or why it did not.
-  const retry = useAction(async () => { await onRetry?.(); }, { idle: "Try again now", pending: "Trying again…", success: "Tried again just now.", failure: "Could not try again right now. Check your connection and try again." });
+export const DISMISS_FAILED_LINE = "Could not dismiss this. Try again.";
+
+export function DeletionNoteBanner({ note, onDismiss, onRetry }: { note: { title: string; items: string[]; retry?: boolean }; onDismiss: () => void | Promise<void>; onRetry?: () => unknown | Promise<unknown> }) {
+  // The retry shows that it is running, then what it did in one short line (the server's answer), or why it did not run.
+  const retry = useAction(async () => onRetry?.(), { idle: "Try again now", pending: "Trying again…", success: (result) => retryResultLine(result), successMs: 10_000, failure: "Could not try again right now. Check your connection and try again." });
+  // Dismiss is saved by the server for a note from the owed list: the note goes once that is done, and stays with a line when it failed.
+  const dismiss = useAction(async () => { await onDismiss(); }, { success: null, failure: DISMISS_FAILED_LINE, describeError: () => DISMISS_FAILED_LINE });
   return (
     <div className="w-full px-5">
       <div role="status" className="mb-2 flex items-start gap-2 rounded-lg border border-hairline/50 bg-raised px-3 py-2 text-[13px] text-ink">
@@ -26,8 +31,9 @@ export function DeletionNoteBanner({ note, onDismiss, onRetry }: { note: { title
               <ActionStatus action={retry} />
             </div>
           )}
+          <ActionStatus action={dismiss} />
         </div>
-        <button type="button" aria-label="Dismiss" title="Dismiss" onClick={onDismiss} className="shrink-0 rounded p-0.5 text-ink-secondary hover:bg-inset hover:text-ink focus-visible:ring-2 focus-visible:ring-accent">
+        <button type="button" aria-label="Dismiss" title="Dismiss" onClick={() => void dismiss.run()} disabled={dismiss.pending} aria-busy={dismiss.pending} className="shrink-0 rounded p-0.5 text-ink-secondary hover:bg-inset hover:text-ink focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50">
           <X size={16} />
         </button>
       </div>

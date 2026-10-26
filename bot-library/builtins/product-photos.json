@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Product Photos",
     "tagline": "A product shot list with practical lighting and editing checks",
-    "summary": "Studio prepares a product-specific shot list from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For visuals, video and general social content, use Creator. For brand strategy and positioning, use Brand. For broader storefront work, use Storefront.",
+    "summary": "Studio prepares a product-specific shot list from the material you supply.",
     "category": "Marketing",
     "author": {
       "name": "Ferrox Labs",
@@ -54,7 +54,8 @@
         "title": "Product Photos",
         "description": "Studio prepares a product-specific shot list from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For visuals, video and general social content, use Creator. For brand strategy and positioning, use Brand. For broader storefront work, use Storefront.",
         "appearance": {
-          "color": "blue"
+          "color": "pink",
+          "mascotBody": "squircle"
         },
         "skills": [
           "product-photography",

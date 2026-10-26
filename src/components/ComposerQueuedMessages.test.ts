@@ -52,7 +52,7 @@ describe("QueuedComposerMessages", () => {
 
 describe("its place in the composer column", () => {
   const columnAt = composerSource.indexOf(
-    'className="relative z-[1] flex flex-col gap-1.5 rounded-3xl bg-raised px-2 py-1.5"',
+    'className={cn("relative z-[1] flex gap-1.5 bg-raised py-1.5"',
   );
   const queueAt = composerSource.indexOf("<QueuedComposerMessages");
   const textareaAt = composerSource.indexOf("<textarea");

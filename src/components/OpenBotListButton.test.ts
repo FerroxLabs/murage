@@ -37,6 +37,21 @@ describe("OpenBotListButton", () => {
     expect(withDrawer(control({ expanded: true }), createElement(OpenBotListButton))).toContain('aria-expanded="true"');
   });
 
+  it("draws the same button as a back circle for the phone chat header, keeping its name, state and focus ref", () => {
+    const html = withDrawer(control({ expanded: true }), createElement(OpenBotListButton, { circle: true }));
+    expect(html).toContain('aria-label="Open bot list"');
+    expect(html).toContain('aria-expanded="true"');
+    expect(html).toContain("data-open-bot-list");
+    expect(html).toContain("data-bot-list-circle");
+    expect(html).toMatch(/class="[^"]*\bmd:hidden\b/);
+    expect(html).toMatch(/class="[^"]*\brounded-full\b/);
+    expect(html).not.toMatch(/\babsolute\b/);
+    // the plain button is unchanged
+    const plain = withDrawer(control(), createElement(OpenBotListButton));
+    expect(plain).not.toContain("data-bot-list-circle");
+    expect(plain).toMatch(/class="[^"]*\brounded-md\b/);
+  });
+
   it("renders nothing without a drawer to open (md+ fixtures, the calendar focus view)", () => {
     expect(renderToStaticMarkup(createElement(OpenBotListButton))).toBe("");
     expect(withDrawer(null, createElement(OpenBotListButton))).toBe("");
@@ -82,7 +97,8 @@ describe("where the button is mounted", () => {
     const rowOpen = row.slice(0, row.indexOf(">\n") + 2);
     expect(rowOpen).toContain('"flex items-center gap-2 px-5 py-3"');
     const firstChild = row.slice(rowOpen.length).replace(/\{\/\*[\s\S]*?\*\/\}/g, "").trimStart();
-    expect(firstChild.startsWith("<OpenBotListButton />")).toBe(true);
+    // the phone header draws it as the back circle: same component, same focus return
+    expect(firstChild.startsWith("<OpenBotListButton circle={phone} />")).toBe(true);
   });
 
   it("is the first item of the room header's title row", () => {

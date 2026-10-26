@@ -48,7 +48,8 @@
         "title": "Goals and OKRs",
         "description": "Northstar prepares quarterly objectives and measurable key results. Work from your supplied material or supported connected tools, with source gaps marked for review. For founder decision coaching, use Coach. For a general decision discussion, use Advisor.",
         "appearance": {
-          "color": "blue"
+          "color": "yellow",
+          "mascotBody": "star"
         },
         "skills": [
           "okr-setting",

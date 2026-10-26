@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { synthesize, synthesizeClip, FLUX_GROK_MODEL, FLUX_VOICES, SpeechUnavailable } from "./flux-speech.ts";
+import { synthesize, synthesizeClip, FLUX_ELEVEN_VOICES, FLUX_GROK_MODEL, FLUX_VOICES, SpeechUnavailable } from "./flux-speech.ts";
 import { availableProviders, describeVoice, listVoices, speak, useVoiceRoutes, voiceProvider } from "./index.ts";
 import type { AppConfig } from "../config.ts";
 import type { VoiceEndpoint } from "../voice/voice-routes.ts";
@@ -202,13 +202,18 @@ describe("one Flux list with every Flux voice", () => {
   const routes = (xai?: typeof XAI) =>
     useVoiceRoutes({ speech: () => [FLUX], describe: () => ({ host: null, lookup: null, speech: "flux", transcribe: null }), ...(xai ? { xai: () => xai } : {}) });
 
-  it("lists OpenAI's 13 and xAI's 28 under Flux, each with a gender and where it comes from", async () => {
+  it("lists OpenAI's 13, xAI's 28 and ElevenLabs' 20 under Flux, each with a gender and where it comes from", async () => {
     routes();
+    // Flux's voice list for this key (a fixture): all 20 ElevenLabs names, playable
+    vi.stubGlobal("fetch", async () =>
+      new Response(JSON.stringify({ object: "list", data: FLUX_ELEVEN_VOICES.map((v) => ({ id: v.id, model: "flux-voice-speak-eleven", entitlement: "open" })) }), { status: 200 }));
     const voices = await listVoices(cfg(), undefined, "flux");
-    expect(voices).toHaveLength(41);
-    expect(new Set(voices.map((v) => v.id)).size).toBe(41);
+    expect(voices).toHaveLength(61);
+    expect(new Set(voices.map((v) => v.id)).size).toBe(61);
+    expect(new Set(voices.map((v) => v.label)).size).toBe(61);
     expect(voices.filter((v) => v.provider === "openai")).toHaveLength(13);
     expect(voices.filter((v) => v.provider === "grok")).toHaveLength(28);
+    expect(voices.filter((v) => v.provider === "elevenlabs")).toHaveLength(20);
     for (const v of voices) {
       expect(["female", "male", "neutral"]).toContain(v.gender);
       expect(v.description).toBeTruthy();
