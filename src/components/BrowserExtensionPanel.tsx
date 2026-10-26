@@ -30,6 +30,19 @@ export function browserList(chosen: Browser, shared: string[] | undefined): stri
   const names = [chosen, ...(shared ?? []).filter(item => item !== chosen)].map(item => BROWSER_NAMES[item] ?? item);
   return names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names[0];
 }
+/** Murage for Chrome is connected in at least one Chrome profile. Its hello
+ * says "chromium" in Chrome, Edge and Brave alike, so such a profile counts as
+ * paired but is never chosen for the owner: the picker asks. The profile is
+ * named only when it is the one Chrome profile and says "chrome". Same rule as
+ * server/user-chrome.ts pairedExtensionProfile. */
+export function pairedExtensionProfile(profiles: ReadonlyArray<{ profileId: string; browser?: string }>): { ready: boolean; profileId?: string } {
+  const chrome = profiles.filter(profile => ["chrome", "chromium"].includes((profile.browser ?? "").toLowerCase()));
+  const named = chrome.length === 1 && (chrome[0]!.browser ?? "").toLowerCase() === "chrome" ? chrome[0]!.profileId : undefined;
+  return { ready: chrome.length > 0, ...(named ? { profileId: named } : {}) };
+}
+/** Bots moved from remote debugging to Murage for Chrome by the panel itself,
+ * so the extension panel can say so once. */
+export const upgradedToExtension = new Set<string>();
 /** The browser this bot was connected in before, else Chrome. */
 export function rememberedBrowser(bot: Pick<Bot, "browserExtensionBrowser">): Browser { return bot.browserExtensionBrowser ?? "chrome"; }
 const control = "browser-extension-control min-h-11 rounded-lg bg-control px-3 py-2 text-sm text-ink disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
@@ -42,16 +55,17 @@ export function BrowserExtensionConsent({ botName, pending, onConfirm, onCancel 
   </div>;
 }
 type ViewProps = { botName: string; profileId?: string; status: BrowserExtensionPanelStatus | null; pending: boolean; error: string; connectBrowser: Browser; onConnectBrowser: (browser: Browser) => void; onCheck: (browser: Browser) => void; onProfile: (profileId: string) => void; onAction: (action: "stop" | "pause", bindingId: string) => void; /** Start a new task after Stop; shown only when the status carries the route. */ onStartNew?: (bindingId: string) => void; onSite: (bindingId: string, origin: string, access: ExtensionSiteAccess) => void; onOwnBrowser: () => void;
-  /** Mode, approved sites and activity (T34); the container fills it. */ settings?: ReactNode; removing?: boolean; removedNote?: string; onRepair?: (browser: Browser) => void; onRemoveAsk?: () => void; onRemoveConfirm?: (browser: Browser) => void; onRemoveCancel?: () => void };
-export function BrowserExtensionPanelView({ botName, profileId, status, pending, error, connectBrowser, onConnectBrowser, onCheck, onProfile, onAction, onStartNew, onSite, onOwnBrowser, settings, removing, removedNote, onRepair, onRemoveAsk, onRemoveConfirm, onRemoveCancel }: ViewProps) {
+  /** Mode, approved sites and activity (T34); the container fills it. */ settings?: ReactNode; /** Moved here from remote debugging by itself: say so once. */ upgraded?: boolean; onDismissUpgraded?: () => void; removing?: boolean; removedNote?: string; onRepair?: (browser: Browser) => void; onRemoveAsk?: () => void; onRemoveConfirm?: (browser: Browser) => void; onRemoveCancel?: () => void };
+export function BrowserExtensionPanelView({ botName, profileId, status, pending, error, connectBrowser, onConnectBrowser, onCheck, onProfile, onAction, onStartNew, onSite, onOwnBrowser, settings, upgraded, onDismissUpgraded, removing, removedNote, onRepair, onRemoveAsk, onRemoveConfirm, onRemoveCancel }: ViewProps) {
   const connected = !!status?.profiles.some(profile => !profileId || profile.profileId === profileId);
   return <section aria-label={`${botName}'s browser connection`} className="flex min-h-0 flex-col gap-3 overflow-y-auto p-1 text-sm text-ink">
-    <h3 className="font-medium">Use my browser</h3>
-    <p role="status" aria-live="polite" className="text-ink-secondary">{!status ? (error ? "Browser connection unavailable" : "Checking browser connection…") : connected ? "Browser profile connected" : profileId && status.profiles.length ? "Your selected browser profile is not connected" : "Browser extension not connected"}</p>
+    <h3 className="font-medium">Use my Chrome</h3>
+    {upgraded && <div role="status" className="flex items-start justify-between gap-2 rounded-lg bg-card p-3"><p>{botName} now works through Murage for Chrome. No more Allow prompts, and your tabs stay yours.</p>{onDismissUpgraded && <button className="rounded px-2 text-ink-secondary focus-visible:ring-2 focus-visible:ring-accent" aria-label="Dismiss" onClick={onDismissUpgraded}>×</button>}</div>}
+    <p role="status" aria-live="polite" className="text-ink-secondary">{!status ? (error ? "Browser connection unavailable" : "Checking browser connection…") : connected ? "Connected through Murage for Chrome" : profileId && status.profiles.length ? "Your selected browser profile is not connected" : "Install Murage for Chrome"}</p>
     {error && <p role="alert" className="rounded-lg border border-danger/30 p-3 text-danger">{error}</p>}
     {!connected && <div className="flex flex-col gap-3 rounded-lg bg-card p-3">
-      {status?.extensionBuild === "development" && <p>Open Murage for Chrome in your browser to connect. No store listing is available yet. This build uses an unpacked development extension.</p>}
-      <p className="text-ink-secondary">{status?.helper.reason || (status?.helper.running ? "Murage is waiting for the extension. Open its side panel, then check again." : "The browser helper needs to be connected before your tabs can be shared.")}</p>
+      {status?.extensionBuild === "development" && <p>Open Murage for Chrome in your browser to connect. This build uses an unpacked development extension.</p>}
+      <p className="text-ink-secondary">{status?.helper.reason || (status?.helper.running ? `Murage is waiting for the extension. Open its side panel and ${botName} connects by itself.` : `Add it from the Chrome Web Store and open its side panel. ${botName} connects by itself.`)}</p>
       {status?.storeUrl && <a className={`${control} text-center`} href={status.storeUrl} target="_blank" rel="noopener noreferrer">Open Chrome Web Store</a>}
       {status?.helper.problem === "repair" && onRepair && <button className={control} disabled={pending} onClick={() => onRepair(connectBrowser)}>Repair connection</button>}
       <label className="flex flex-col gap-2">Browser to connect<select className={control} value={connectBrowser} disabled={pending} onChange={event => onConnectBrowser(event.target.value as "chrome" | "edge" | "brave")}><option value="chrome">Chrome</option><option value="edge">Edge</option><option value="brave">Brave</option></select></label>
@@ -91,7 +105,9 @@ export function BrowserExtensionPanel({ bot }: { bot: Bot }) {
   const [connectBrowser, setConnectBrowser] = useState<Browser>(rememberedBrowser(bot));
   const [removing, setRemoving] = useState(false);
   const [removedNote, setRemovedNote] = useState("");
+  const [upgraded, setUpgraded] = useState(() => upgradedToExtension.has(bot.id));
   const epoch = useRef(0);
+  const picked = useRef(false);
   const base = `/api/bots/${encodeURIComponent(bot.id)}/browser-extension`;
   useEffect(() => {
     let alive = true; const generation = ++epoch.current; let timer: ReturnType<typeof setTimeout>;
@@ -110,7 +126,15 @@ export function BrowserExtensionPanel({ bot }: { bot: Bot }) {
     setRemoving(false); setStatus(result);
     setRemovedNote(result.removed?.status === "removed" ? `Removed the helper registration for ${browserList(browser, result.removed.sharedBrowsers)}.` : `No Murage helper registration was found for ${BROWSER_NAMES[browser]}.`);
   });
+  // Exactly one connected profile and none chosen yet: use it, no picker to find.
+  useEffect(() => {
+    const paired = pairedExtensionProfile(status?.profiles ?? []);
+    // A busy bot cannot change its browser connection (the server answers 409): wait for it to finish.
+    if (bot.browserExtensionProfileId || !paired.profileId || picked.current || pending || bot.busy) return;
+    picked.current = true;
+    void patch({ useMyChrome: true, browserTransport: "extension", browserExtensionProfileId: paired.profileId });
+  }, [status, bot.browserExtensionProfileId, bot.busy]);
   const patch = (body: Record<string, unknown>) => perform(async () => { const generation = epoch.current; const result = await api(`/api/bots/${encodeURIComponent(bot.id)}`, { method: "PATCH", body: JSON.stringify(body) }); if (generation === epoch.current) dispatch({ type: "botPatched", ...fromAnswer(result.bot), bot: result.bot }); });
   return <BrowserExtensionPanelView botName={bot.name} profileId={bot.browserExtensionProfileId} status={status} pending={pending} error={error || connectionError} connectBrowser={connectBrowser} onConnectBrowser={setConnectBrowser} onCheck={browser => void action({ action: "connect", browser })} onProfile={profileId => void patch({ useMyChrome: true, browserTransport: "extension", browserExtensionProfileId: profileId })} onAction={(name, bindingId) => void action({ action: name, bindingId })} onStartNew={bindingId => { const route = startNewTaskRoute(status); if (route) void perform(async () => { const generation = epoch.current; await api(route, { method: "POST", body: JSON.stringify({ bindingId }) }); const next = await api(base) as BrowserExtensionPanelStatus; if (generation === epoch.current) setStatus(next); }); }} onSite={(bindingId, origin, access) => void action({ action: "site", bindingId, origin, access })} onOwnBrowser={() => void patch({ useMyChrome: false, browserTransport: null, browserExtensionProfileId: null })}
-    settings={<><BrowserApprovalMode bot={bot} /><BrowserApprovedSites bot={bot} profileId={bot.browserExtensionProfileId} endedBindingIds={endedBindingIds(status)} sitesLowered={sitesLoweredIn(status)} /><BrowserActivityLog bot={bot} /></>} removing={removing} removedNote={removedNote} onRepair={browser => void repair(browser)} onRemoveAsk={() => { setRemovedNote(""); setRemoving(true); }} onRemoveConfirm={browser => void remove(browser)} onRemoveCancel={() => setRemoving(false)} />;
+    settings={<><BrowserApprovalMode bot={bot} /><BrowserApprovedSites bot={bot} profileId={bot.browserExtensionProfileId} endedBindingIds={endedBindingIds(status)} sitesLowered={sitesLoweredIn(status)} /><BrowserActivityLog bot={bot} /></>} upgraded={upgraded} onDismissUpgraded={() => { upgradedToExtension.delete(bot.id); setUpgraded(false); }} removing={removing} removedNote={removedNote} onRepair={browser => void repair(browser)} onRemoveAsk={() => { setRemovedNote(""); setRemoving(true); }} onRemoveConfirm={browser => void remove(browser)} onRemoveCancel={() => setRemoving(false)} />;
 }

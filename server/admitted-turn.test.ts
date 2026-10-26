@@ -111,11 +111,15 @@ describe("server wiring", () => {
   it("guards everything after a direct turn's admission", () => {
     const admit = source.indexOf("const run=directRuns.admit(bot.id,threadId,bot,[]");
     expect(admit).toBeGreaterThan(0);
-    expect(source.slice(admit, admit + 600)).toMatch(/void startAdmittedTurn\(\(\) => \{/);
+    // the admission line carries the rebuild takeover (DELETION-DRAIN-V2: takeOver), so the window reaches past it
+    expect(source.slice(admit, admit + 900)).toMatch(/void startAdmittedTurn\(\(\) => \{/);
     expect(source).toMatch(/\}, \(error, phase\) => \{ allowance\.close\(\); giveBackAdmittedTurn\(run, bot\.id, threadId, admitted, phase, error, opts\?\.onDispatchError\); \}\);/);
     // the unconfirmed-stop branch marks the thread kept before anything in it can throw, and each report is remembered
     expect(source).toMatch(/if\(acceptedTurnCleanupFailed\) \{\s*admitted\.keepThread = true;/);
-    expect(source.match(/opts\?\.onDispatchError\?\.\([^;]*\);\s*admitted\.reported = true;/g)?.length).toBe(2);
+    // (1.0.4 SETUP-LAST-RESORT 4f168ca49 added the third: a rebuild stopped while its revoke settled). Every report after the admission is one of them.
+    const guarded = source.slice(admit, source.indexOf("giveBackAdmittedTurn(run, bot.id, threadId, admitted, phase, error, opts?.onDispatchError)", admit));
+    expect(guarded.match(/opts\?\.onDispatchError\?\.\(/g)?.length).toBe(3);
+    expect(guarded.match(/opts\?\.onDispatchError\?\.\([^;]*\);\s*admitted\.reported = true;/g)?.length).toBe(3);
   });
 
   it("creates the routine-run map before the scheduler exists, and starts the scheduler after the last module state", () => {

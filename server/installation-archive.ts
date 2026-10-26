@@ -258,6 +258,9 @@ export async function writeInstallationArchive(dataDir: string, destination: str
   // Staged, archived and checked in one offline epoch: owner files are read
   // in place, so the installation must stay closed until the archive is done.
   return withOfflineInstallation(dataDir, async installation => {
+    // 1.0.6: no .zip refusal for an unknown top-level name. Every backup, this plaintext .zip included,
+    // leaves such a name out and lists it (data-dir-inventory.ts), so it can never carry a stray key file
+    // out in the clear, and one leftover file never stops the whole .zip (backup-zip-classification).
     const stage = await stageInstallationStateWhileOwned(installation, dirname(destination), options);
     // Whose folders the left-out items were in, read from the staged roster.
     const bots = stage.manifest.skippedCount ? botNames(join(stage.directory, "state", "bots.json")) : {};

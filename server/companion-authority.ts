@@ -1,4 +1,4 @@
-import { cloudIdentity } from "./cloud-request-identity.ts";
+import { cloudIdentity, isOwnerBrowser } from "./cloud-request-identity.ts";
 import { timingSafeEqual } from "node:crypto";
 import type { IncomingHttpHeaders } from "node:http";
 import { takeLaunchSecret } from "./launch-secret.ts";
@@ -23,7 +23,13 @@ export function createCompanionAuthority(token: string | undefined, header = "x-
 // closure survives config reloads; only a new trusted parent launch rotates it.
 const desktopCompanionAuthorized = createCompanionAuthority(launchToken);
 export const companionAuthorized = (headers: IncomingHttpHeaders): boolean => process.env.MURAGE_CLOUD_ROLE === "home"
-  ? ["owner-desktop","owner-phone","browser"].includes(cloudIdentity(headers)?.scope ?? "")
+  ? ["owner-desktop","owner-phone"].includes(cloudIdentity(headers)?.scope ?? "") || isOwnerBrowser(cloudIdentity(headers))
+  : desktopCompanionAuthorized(headers);
+/** The ACTING gate for mayApprove and requestOrigin: the owner at the keyboard or on the paired phone, never a browser
+ * cookie. On a home that is the owner-desktop or owner-phone scope ONLY; the passkey browser acts through requestSurface
+ * "desktop", and a remembered-owner browser never acts (H1). Off a home it is the desktop's own launch proof. */
+export const ownerActs = (headers: IncomingHttpHeaders): boolean => process.env.MURAGE_CLOUD_ROLE === "home"
+  ? ["owner-desktop","owner-phone"].includes(cloudIdentity(headers)?.scope ?? "")
   : desktopCompanionAuthorized(headers);
 /** The same launch secret in a second header: the companion stamps it on every
  * request it forwards (phone and browser door), so the harness can tell a

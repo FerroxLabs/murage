@@ -212,6 +212,7 @@ const INTERNAL_ONLY: Record<string, string> = {
   "electron/preload.cjs": "IPC channel names",
   "electron/restored-connections.mjs": "environment names",
   "server/bot-access.ts": "the service's tool id; the bridge shows engines the plain name",
+  "server/connector-scope-hint.ts": "matches tool-name prefixes in a relayed call; never shown to users",
   "server/cloud-home/credential-projection.ts": "credential keys a Cloud home projects from the supervisor",
   "server/cloud-home/credentials.ts": "a config section id and an environment name",
   "server/cloud-home/supervisor-port.ts": "supervisor IPC event types",

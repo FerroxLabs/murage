@@ -41,6 +41,10 @@ const NOISY_SYSTEM_SUBJECTS = [
   "observability", "reveal-capture", "reveal-scan", "procedure-review", "procedure-review-pending", "pip-stance", "pip-render",
   "pip-reflect", "pip-coverage", "consolidation-pending", "consolidation", "parked-sweep", "parked-reconcile", "origin-backfill",
   "memory-shape-check", "gepa-job", "continuity-budget", "extract-budget", "learning-spend", "memory-status-snapshot", "notebook-migration",
+  // The roster binding is rewritten on every save that adds a bot, a task or a room (a widening: nothing a hold rests on changes); what a
+  // save WITHDRAWS is bumped by policy.ts itself (bumpAuthorityHard on a removal, the policy revision on an audience change). A notebook
+  // link records what was imported and when it was last looked at; a changed import's own revoke moves the epoch, a first import nothing.
+  "roster", "notebook-link",
 ];
 const NOISY = (row: "NEW" | "OLD") => `${row}.subject_type='system' AND ${row}.subject_id IN (${NOISY_SYSTEM_SUBJECTS.map(subject => `'${subject}'`).join(",")})`;
 // A thread's checkpoint rolls to a new version on every captured message and the old version is archived; a receipt that cites
@@ -138,6 +142,9 @@ function install(db: DatabaseSync): boolean {
 
 /** Whether the epoch triggers are in place on the shared connection. */
 export function authorityEpochInstalled(): boolean { return install(database()); }
+/** A hard move of the epoch for a withdrawal no trigger can see (a thread leaving the roster whose receipts are already gone): every session
+ * hold and checked stamp is dropped. A no-op where the triggers could not be installed (every write moves the stamp there). */
+export function bumpAuthorityHard(db: DatabaseSync): void { if (install(db)) db.exec(BUMP); }
 
 /** A stamp that is equal at two moments only if nothing revocation-relevant was written in between by this
  * connection or committed by another. Undefined inside a transaction (a verdict may rest on writes that roll back). */

@@ -1,0 +1,15 @@
+{
+  "id": "seo-aeo-desk",
+  "name": "SEO and AEO Desk",
+  "version": "1.0.0",
+  "description": "Runs the search desk loop an agency sells: a keyword and question map, a content brief per target, and a page audit for classic search (SEO) and AI answer engines (AEO). Produces a keyword map, ready-to-write briefs and a prioritised fix list tied to evidence. Use when the user asks for keyword research, a content brief, an SEO or AEO audit, why a page does not rank or is not cited by AI answers, or a search plan for a site or client. Do NOT use for writing the finished article (use seo-blog-post), paid search ads, or local listings and reviews (use local search skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "seo",
+    "aeo",
+    "keywords",
+    "content-brief",
+    "audit"
+  ],
+  "requiredCapabilities": []
+}

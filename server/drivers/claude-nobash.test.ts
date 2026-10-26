@@ -6,7 +6,7 @@
 // tool is off; each mode denies the other's shell tool; the isolation overlay restates the hand over every settings `env`.
 
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -139,9 +139,9 @@ describe("3.4 / 11 D1: the overlay env restates the hand over every settings env
     expect(overlay.env.CLAUDE_CODE_DISABLE_WINDOWS_SHELL_LAUNCHER).toBe("1");
     expect(overlay.env.CLAUDE_CODE_SHELL_PREFIX).toBe("");
     expect(overlay.env.CLAUDE_CODE_PLUGIN_DIRS).toBe("");
-    // 14.6: BASH_ENV and ENV take the neutral /dev/null; CLAUDE_ENV_FILE and PYTHONINSPECT stay "" (ruled, CLAUDE_OVERLAY_EMPTY_ALLOWED)
-    for (const name of ["BASH_ENV", "ENV"]) expect(overlay.env[name], name).toBe("/dev/null");
-    for (const name of ["CLAUDE_ENV_FILE", "PYTHONINSPECT"]) expect(overlay.env[name], name).toBe("");
+    // 14.6: BASH_ENV takes the neutral /dev/null; ENV (1.0.4 U19), CLAUDE_ENV_FILE and PYTHONINSPECT stay "" (ruled, CLAUDE_OVERLAY_EMPTY_ALLOWED)
+    expect(overlay.env.BASH_ENV).toBe("/dev/null");
+    for (const name of ["ENV", "CLAUDE_ENV_FILE", "PYTHONINSPECT"]) expect(overlay.env[name], name).toBe("");
     for (const name of ["POSIXLY_CORRECT", "GIT_SSH"]) expect(name in overlay.env, name).toBe(false);
     expect(ABSENT_PINS.length).toBe(6);
     // the Bash path restates its own names
@@ -251,5 +251,97 @@ describe("5.4: the gate's hashed record of the hand (MURAGE_GATE_MCP_RECORD)", (
 
   it("CLAUDE_INHERIT_ADDS is exported, keyed by CLI version", () => {
     expect(Object.keys(claude.CLAUDE_INHERIT_ADDS)).toContain("2.1.305");
+  });
+});
+
+// 1.0.5 (Chip, Windows): every built-in MCP server is started through the murage-exec wrapper, so a wrapper that cannot run on
+// the machine left every one of them "Connection closed" with no reason. A found Git Bash is used only after a pre-flight
+// start through the wrapper passes; otherwise the turn runs powershell-inherit and says why.
+describe("1.0.5: the wrapper pre-flight decides murage-exec on Windows", () => {
+  const found = async () => ({ bash: WIN_BASH });
+  it("a failed pre-flight runs the turn on powershell-inherit with the reason", async () => {
+    const out = await mod.claudeShellDiscovery("win32", winHand(), 1, { gitBash: found, launchCheck: async () => ({ ok: false, detail: "exit=126 stderr=\"murage-exec: cygpath is not available\"" }) });
+    expect(out).toEqual({ bash: null, reason: "wrapper-failed", detail: "exit=126 stderr=\"murage-exec: cygpath is not available\"" });
+    expect(claude.claudeShellMode("win32", out)).toEqual({ kind: "powershell-inherit", reason: "wrapper-failed" });
+  });
+  it("a pre-flight that throws counts as failed", async () => {
+    const out = await mod.claudeShellDiscovery("win32", winHand(), 1, { gitBash: found, launchCheck: async () => { throw new Error("spawn EPERM sk-ant-SECRET"); } });
+    expect(out.bash).toBeNull();
+    expect(out.reason).toBe("wrapper-failed");
+    // r2 (Grok High): a fixed reason only, never the error's message
+    expect(out.detail).toBe("reason=check-error");
+  });
+  it("a passed pre-flight keeps the found Git Bash", async () => {
+    const seen: string[] = [];
+    const out = await mod.claudeShellDiscovery("win32", winHand(), 1, { gitBash: found, launchCheck: async (shell: string) => { seen.push(shell); return { ok: true }; } });
+    expect(out).toEqual({ bash: WIN_BASH });
+    expect(seen).toEqual([WIN_BASH]);
+  });
+  it("no Git Bash runs no pre-flight", async () => {
+    let calls = 0;
+    const out = await mod.claudeShellDiscovery("win32", winHand(), 1, { gitBash: async () => ({ bash: null, reason: "no-git-bash" }), launchCheck: async () => { calls++; return { ok: true }; } });
+    expect(out).toEqual({ bash: null, reason: "no-git-bash" });
+    expect(calls).toBe(0);
+  });
+});
+
+describe.skipIf(process.platform === "win32" || !existsSync("/bin/bash"))("1.0.5: claudeExecLaunchCheck starts a server through the real wrapper", () => {
+  let dir = "";
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "launch-check-")); mod.resetClaudeExecLaunchCheckForTests?.(); });
+  afterEach(() => { removeTempDirSync(dir); });
+  const hand = () => ({ PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: dir });
+  it("passes when the wrapper runs the command and the marker comes back", async () => {
+    expect(await mod.claudeExecLaunchCheck("/bin/bash", hand(), dir, 7, { platform: process.platform })).toEqual({ ok: true });
+  });
+  it("fails with the wrapper's own exit status when it cannot start the command", async () => {
+    const out = await mod.claudeExecLaunchCheck("/bin/bash", hand(), join(dir, "missing"), 7, { platform: process.platform });
+    expect(out.ok).toBe(false);
+    expect(out.detail).toMatch(/^exit=126/);
+  });
+  it("fails when the command never prints the marker", async () => {
+    const out = await mod.claudeExecLaunchCheck("/bin/bash", hand(), dir, 7, { platform: process.platform, runtime: join(dir, "no-such-runtime") });
+    expect(out.ok).toBe(false);
+    expect(out.detail).toMatch(/^exit=127/);
+  });
+  it("keeps a pass for the generation and checks again in a new one", async () => {
+    expect(await mod.claudeExecLaunchCheck("/bin/bash", hand(), dir, 8, { platform: process.platform })).toEqual({ ok: true });
+    expect(await mod.claudeExecLaunchCheck("/bin/bash", hand(), dir, 8, { platform: process.platform, runtime: join(dir, "no-such-runtime") })).toEqual({ ok: true });
+    expect((await mod.claudeExecLaunchCheck("/bin/bash", hand(), dir, 9, { platform: process.platform, runtime: join(dir, "no-such-runtime") })).ok).toBe(false);
+  });
+});
+
+// r2 (Grok High, Astra HIGH): the pre-flight runs with the pinned environment the engine run gets, logs only an exit status and a
+// fixed reason, and checks again when the shell is replaced at the same path.
+describe.skipIf(process.platform === "win32" || !existsSync("/bin/bash"))("1.0.5 r2: the pre-flight's pinned environment, log line and cache", () => {
+  let dir = "";
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "launch-check-r2-")); mod.resetClaudeExecLaunchCheckForTests?.(); });
+  afterEach(() => { removeTempDirSync(dir); });
+  const hand = (extra: Record<string, string> = {}) => ({ PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: dir, ...extra });
+  it("a handed NODE_OPTIONS --require runs nothing inside the pre-flight", async () => {
+    const ran = join(dir, "required-ran");
+    const hook = join(dir, "hook.cjs");
+    writeFileSync(hook, `require("node:fs").writeFileSync(${JSON.stringify(ran)}, "x");`);
+    expect(await mod.claudeExecLaunchCheck("/bin/bash", hand({ NODE_OPTIONS: `--require ${hook}` }), dir, 21, { platform: process.platform })).toEqual({ ok: true });
+    expect(existsSync(ran)).toBe(false);
+  });
+  it("a handed BASH_ENV or ENV is not sourced by the pre-flight's shell", async () => {
+    const ran = join(dir, "sourced-ran");
+    const rc = join(dir, "rc.sh");
+    writeFileSync(rc, `echo x > ${JSON.stringify(ran)}\n`);
+    expect(await mod.claudeExecLaunchCheck("/bin/bash", hand({ BASH_ENV: rc, ENV: rc }), dir, 22, { platform: process.platform })).toEqual({ ok: true });
+    expect(existsSync(ran)).toBe(false);
+  });
+  it("a failure's detail is the exit status and a fixed reason, never the child's stderr", async () => {
+    const out = await mod.claudeExecLaunchCheck("/bin/bash", hand(), dir, 23, { platform: process.platform, runtime: join(dir, "sk-ant-SECRET-runtime") });
+    expect(out).toEqual({ ok: false, detail: "exit=127 reason=wrapper-exit" });
+  });
+  it("a shell replaced at the same path is checked again in the same generation", async () => {
+    const shell = join(dir, "bash");
+    copyFileSync("/bin/bash", shell);
+    chmodSync(shell, 0o755);
+    expect(await mod.claudeExecLaunchCheck(shell, hand(), dir, 24, { platform: process.platform })).toEqual({ ok: true });
+    writeFileSync(shell, "#!/bin/sh\nexit 3\n");
+    chmodSync(shell, 0o755);
+    expect(await mod.claudeExecLaunchCheck(shell, hand(), dir, 24, { platform: process.platform })).toEqual({ ok: false, detail: "exit=3 reason=wrapper-exit" });
   });
 });

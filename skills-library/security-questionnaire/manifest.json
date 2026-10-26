@@ -1,0 +1,14 @@
+{
+  "id": "security-questionnaire",
+  "name": "Security Questionnaire",
+  "version": "1.0.0",
+  "description": "Fills security and vendor questionnaires (SIG, CAIQ, custom spreadsheets and portals) from an approved answer library, marks every answer with its source, and holds the whole response for the owner's approval before anything is submitted. Use when the user asks to answer a security questionnaire, a vendor assessment, a due diligence or compliance form, or to build and maintain a reusable answer library. Do NOT use for writing security policies from scratch, running a security audit of systems, or legal contract review.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "security-questionnaire",
+    "vendor-assessment",
+    "compliance",
+    "answer-library"
+  ],
+  "requiredCapabilities": []
+}

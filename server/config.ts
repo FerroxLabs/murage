@@ -12,7 +12,7 @@ import { assertNoCloudPlaintext, withCloudCredentials, syncCloudCredentialMemory
 import { DEFAULT_INSTANCES } from "./default-instances.ts";
 import { isCloudHiddenEngine } from "./cloud-home/runnable-engines.ts";
 import { EFFORT_LEVELS, type EffortLevel, type InstanceConfig, type InstanceConfigMap } from "./contracts.ts";
-import { isRemoteMcpServer, parseAnyStoredMcpServer, parseStoredMcpServer } from "./mcp-registry.ts";
+import { isRemoteMcpServer, mcpPendingKeys, parseAnyStoredMcpServer, parseStoredMcpServer } from "./mcp-registry.ts";
 import { mcpEnvHeld, resolveHeldEnv } from "./mcp-secrets.ts";
 import { parseJson, schemaIssue, type JsonObject, type JsonValue } from "./schema.ts";
 import { dataDirLeasePaths } from "./data-dir-lease.ts";
@@ -343,13 +343,6 @@ const appConfigSchema = z.object({
    *  every route that needs it injects a copy under a harness-owned name
    *  AFTER the strip. Absent = Flux routing is simply unavailable. */
   flux: z.object({ apiKey: optionalText, memory: z.object({ enabled: z.boolean().optional(), inject: z.boolean().optional(), owner: z.boolean().optional(), spaces: z.boolean().optional(), external: z.boolean().optional() }).strict().optional(), connectionAliases: z.array(z.object({ id: z.string().regex(/^[A-Za-z0-9_-]{1,100}$/), label: z.string().min(1).max(80), enabled: z.boolean(), revision: z.string().regex(/^[A-Za-z0-9_-]{1,100}$/) }).strict()).max(1024).optional() }).optional(),
-  /** Which control plane the onboarding signup is posted to. NOT a Sendlane
-   *  credential and deliberately incapable of holding one: an ASAR is an
-   *  archive, so anything a desktop build carries is public. The keys and the
-   *  list id live as Worker configuration — see server/sendlane.ts. Absent =
-   *  a packaged build uses the hosted default and any other build collects
-   *  nothing. */
-  sendlane: z.object({ baseUrl: optionalText }).optional(),
   /** In-app decision model (Flux Router /v1/decide). Everything defaults OFF.
    * `byoKey` is an advanced write-only override; the Flux key is the default
    * credential. See server/decider. */
@@ -430,7 +423,6 @@ export interface AppConfig {
     dailyProbe?: boolean };
   webSearch?: { provider?: "engine" | "auto" | "flux" | "tavily" | "exa" | "firecrawl" | "off"; tavilyApiKey?: string; exaApiKey?: string; firecrawlApiKey?: string };
   flux?: { apiKey?: string; memory?: { enabled?: boolean; inject?: boolean; owner?: boolean; spaces?: boolean; external?: boolean }; connectionAliases?: import("../electron/flux-credential-policy.mjs").FluxAlias[] };
-  sendlane?: { baseUrl?: string };
   decider?: { enabled?: boolean; provider?: "flux"; jobs?: { roomRouting?: boolean }; byoKey?: string; baseUrl?: string };
   profile?: { name?: string; email?: string };
   rooms?: { turnTimeoutMinutes: number };
@@ -655,6 +647,9 @@ export function loadConfig(): AppConfig {
   }
   if (process.env.MURAGE_CLOUD_ROLE === "home") {
     assertNoCloudPlaintext(cfg);
+    // The saved Flux Memory switches apply on a cloud home too: without this a
+    // restart fell back to the defaults (memory on) the owner had turned off.
+    applyFluxMemorySwitches(cfg);
     return withCloudCredentials(cfg);
   }
   // Env wins over the file for every credential. The desktop shell keeps
@@ -703,10 +698,15 @@ export function loadConfig(): AppConfig {
   cfg.flux = { ...cfg.flux };
   if (process.env.FLUX_API_KEY !== undefined) cfg.flux.apiKey = process.env.FLUX_API_KEY;
   if (process.env.MURAGE_FLUX_CONNECTION_ALIASES !== undefined) cfg.flux.connectionAliases = appConfigSchema.shape.flux.unwrap().shape.connectionAliases.parse(JSON.parse(process.env.MURAGE_FLUX_CONNECTION_ALIASES));
-  // Flux Memory switches: the saved ones; MURAGE_FLUX_MEMORY* env still overrides them.
-  setFluxMemoryConfig(cfg.flux.memory);
-  setFluxExternalMemory(cfg.flux.memory?.external);
+  applyFluxMemorySwitches(cfg);
   return cfg;
+}
+
+/** Flux Memory switches: the saved ones; MURAGE_FLUX_MEMORY* env still overrides them.
+ * Every loadConfig() return path calls this, the cloud home's included. */
+function applyFluxMemorySwitches(cfg: AppConfig): void {
+  setFluxMemoryConfig(cfg.flux?.memory);
+  setFluxExternalMemory(cfg.flux?.memory?.external);
 }
 
 /** After saveConfig() writes a credential, the running process's env must
@@ -844,6 +844,7 @@ export const PROVIDER_CREDENTIAL_ENV = [
   "XAI_API_KEY",
   "CURSOR_API_KEY",
   "CURSOR_AUTH_TOKEN",
+  "CLINE_API_KEY",
 ] as const;
 
 /** Strip every credential from the env of a pre-save CLI probe or a Claude
@@ -1191,6 +1192,7 @@ export function allInstanceConfigs(cfg: AppConfig): InstanceConfigMap {
   const CUSTOM_ONLY = {
     qwen: { driver: "qwenAgent" },
     hermes: { driver: "hermesAgent" },
+    cline: { driver: "clineAgent" },
     pi: { driver: "piAgent" },
   } as const;
   // New default-fleet engines that existing product configs would otherwise
@@ -1312,6 +1314,8 @@ export function customMcpServerDescriptors(cfg: AppConfig): {
     }
     const server = parsed.server;
     if (!server.enabled) continue;
+    // Item 118: a key a bot declared and the owner has not entered keeps the server unmounted, whatever the switch says.
+    if (mcpPendingKeys(server).length > 0) continue;
     if (isRemoteMcpServer(server)) {
       // Netlify's own deploy tools would skip the publish approval card: never handed to a bot.
       if (isNetlifyMcpUrl(server.url)) { skipMcpEntry(name, "Netlify's own server is used only to sign in for publishing."); continue; }

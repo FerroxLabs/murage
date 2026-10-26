@@ -50,6 +50,9 @@ export const BACKUP_CAPTURE_CODES = Object.freeze([
   // the conversation database's consistent copy
   "DATABASE_SNAPSHOT_FAILED", "DATABASE_INTEGRITY_FAILED", "DATABASE_SCHEMA_UNSUPPORTED", "DATABASE_UNREADABLE",
   "UNSAFE_DATABASE_FILE", "UNSUPPORTED_DATABASE_SIZE", "INVALID_MESSAGE_IDENTITY", "INVALID_MESSAGE_JSON", "INVALID_ACTIVE_BRANCH",
+  // the conversation check's own refusals (server/installation-transcript-graph.ts), which reached
+  // the page as "Murage couldn't say why" (1.0.7)
+  "INVALID_MESSAGE_PARENT", "CYCLIC_MESSAGE_BRANCH", "INVALID_RESTORE_MESSAGE", "RESTORE_TRANSCRIPT_LIMIT",
   // reading the finished file back
   "ARCHIVE_WRITE_FAILED", "INVALID_ARCHIVE_MANIFEST", "ARCHIVE_HASH_MISMATCH", "ARCHIVE_SIZE_MISMATCH", "ARCHIVE_ENTRY_COUNT_MISMATCH",
   "MISSING_ARCHIVE_ENTRY", "UNDECLARED_ARCHIVE_ENTRY", "UNSAFE_ARCHIVE_ENTRY", "MANIFEST_MUST_BE_FIRST", "ARCHIVE_INSPECTION_FAILED",
@@ -151,6 +154,14 @@ const REASONS = {
   INVALID_MESSAGE_JSON:
     "A conversation in Murage's database couldn't be read the way a backup needs, so the backup wasn't made. Open the diagnostics folder from Backups and contact support.",
   INVALID_ACTIVE_BRANCH:
+    "A conversation in Murage's database couldn't be read the way a backup needs, so the backup wasn't made. Open the diagnostics folder from Backups and contact support.",
+  INVALID_MESSAGE_PARENT:
+    "A conversation in Murage's database couldn't be read the way a backup needs, so the backup wasn't made. Open the diagnostics folder from Backups and contact support.",
+  CYCLIC_MESSAGE_BRANCH:
+    "A conversation in Murage's database couldn't be read the way a backup needs, so the backup wasn't made. Open the diagnostics folder from Backups and contact support.",
+  INVALID_RESTORE_MESSAGE:
+    "A conversation in Murage's database couldn't be read the way a backup needs, so the backup wasn't made. Open the diagnostics folder from Backups and contact support.",
+  RESTORE_TRANSCRIPT_LIMIT:
     "A conversation in Murage's database couldn't be read the way a backup needs, so the backup wasn't made. Open the diagnostics folder from Backups and contact support.",
   ARCHIVE_WRITE_FAILED:
     "Murage couldn't finish writing the backup file. Nothing in your workspace was changed. Back up again, and if it happens again, open the diagnostics folder from Backups.",

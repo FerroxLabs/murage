@@ -35,6 +35,9 @@ const assembled = firstRunAssembledStrings();
 
 const everything = [...readable, ...assembled];
 
+/** The news signup line on the hello card: mail from Murage to the person, not from a bot. */
+const NEWS_SIGNUP_LEAD = "FIRST_RUN_COPY.hello.welcome.lead";
+
 describe("first run copy: the house rules", () => {
   it("has strings to check at all", () => {
     expect(readable.length).toBeGreaterThan(40);
@@ -83,7 +86,9 @@ describe("first run copy: the house rules", () => {
 
   it("never frames the first run as school", () => {
     const banned = /\b(lesson|lessons|exercise|exercises|quiz|quizzes|assignment|assignments|homework|curriculum|tutorial)\b/i;
-    for (const { path, text } of everything) {
+    // The hello card lead names what Murage news carries (Sean's wording,
+    // 10-26): "tutorial" there is the newsletter's content, not the first run.
+    for (const { path, text } of everything.filter(({ path }) => path !== NEWS_SIGNUP_LEAD)) {
       const hit = banned.exec(text);
       expect.soft(hit ? `${path}: ${hit[0]}` : null).toBeNull();
     }
@@ -356,7 +361,11 @@ describe("first run copy: the things the flow promises", () => {
     /\b(?:a|an|any|each|one|this|that|these|those|some|certain|particular)\s+(?:kind|kinds|type|types|sort|sorts|category|categories)\s+of\b/i;
 
   it("puts sending email behind approval wherever the flow mentions it", () => {
-    const sending = everything.filter(({ text }) => SENDS_MAIL.test(text) && SENDING.test(text));
+    // The hello card lead is Murage sending the person their setup guide
+    // (server/news-signup.ts, single opt-in), not a bot sending mail for
+    // them, so the approval rule is about something else.
+    const sending = everything.filter(({ path, text }) =>
+      path !== NEWS_SIGNUP_LEAD && SENDS_MAIL.test(text) && SENDING.test(text));
     // If this ever drops to nothing, the flow stopped talking about email
     // rather than the rule being satisfied, and the rule would be vacuous.
     expect(sending.length, "no email-sending copy left to check").toBeGreaterThan(0);

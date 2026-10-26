@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
 import { classifyDataDirEntry, DATA_DIR_ENTRIES, DATA_DIR_PATTERNS } from "./data-dir-inventory.ts";
-import { DATA_DIR_NAMES_AFTER_102, downgradeInstallationMemorySchema } from "./installation-memory-downgrade.ts";
+import { DATA_DIR_NAMES_AFTER_102, DATA_DIR_OWNER_NOTES_AFTER_102, downgradeInstallationMemorySchema } from "./installation-memory-downgrade.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
 /** output_publications as 1.0.2 creates it (afbf549ba server/artifacts.ts initializeArtifacts). */
@@ -38,8 +38,10 @@ describe("1.0.3 data-folder names after memory-downgrade --to 10", () => {
 
   it("every 1.0.3 name 1.0.2 does not know is removed by the downgrade or written only by a Cloud home", () => {
     const newer = Object.keys(DATA_DIR_ENTRIES).filter(name => !classifiedBy102(name)).sort();
-    expect(newer).toEqual([...DATA_DIR_NAMES_AFTER_102, ...CLOUD_ONLY].sort());
+    expect(newer).toEqual([...DATA_DIR_NAMES_AFTER_102, ...DATA_DIR_OWNER_NOTES_AFTER_102, ...CLOUD_ONLY].sort());
     for (const name of DATA_DIR_NAMES_AFTER_102) expect(DATA_DIR_ENTRIES[name]?.backup, name).toBe("excluded");
+    // the follow-model marker is the owner's (backed up with bots.json), and the downgrade still takes it away for 1.0.2
+    for (const name of DATA_DIR_OWNER_NOTES_AFTER_102) expect(DATA_DIR_ENTRIES[name]?.backup, name).toBe("owner-file");
   });
 
   it("removes the 1.0.3 notes and env/, keeps the owner's files, and leaves only names 1.0.2's backup classifies", () => {
@@ -61,7 +63,16 @@ describe("1.0.3 data-folder names after memory-downgrade --to 10", () => {
     writeFileSync(join(DATA_DIR, "claude-private", "settings.0123456789abcdef.json"), "{}", { mode: 0o600 });
     // the Claude sign-in card's remembered answers (1.0.3 writes it when the owner answers the card; 1.0.2 has no such card)
     writeFileSync(join(DATA_DIR, "claude-signin-answers.json"), "{}", { mode: 0o600 });
-    expect(readdirSync(DATA_DIR).filter(name => !classifiedBy102(name)).sort()).toEqual([...DATA_DIR_NAMES_AFTER_102].sort());
+    // a draft-only Claude turn's empty working folder (drivers/claude.ts claudeDraftOnlyCwd; 1.0.2 has no draft-only bots)
+    mkdirSync(join(DATA_DIR, "draft-only-cwd", "thread-1"), { recursive: true });
+    // the one-time chat model cleanup's marker (1.0.4 SL-IK)
+    writeFileSync(join(DATA_DIR, ".threads-follow-model-v1"), "");
+    // the cloud computer prompt record and its set-aside unreadable copy (1.0.6 cloud-computer-turns.ts; 1.0.2 has no such record)
+    writeFileSync(join(DATA_DIR, "cloud-computer-turns.json"), JSON.stringify({ version: 1, entries: [] }));
+    writeFileSync(join(DATA_DIR, "cloud-computer-turns.json.unreadable"), "{");
+    // the first-run news ask record (1.0.7 news-signup.ts; 1.0.2 never asks)
+    writeFileSync(join(DATA_DIR, "news-signup.json"), JSON.stringify({ status: "declined" }), { mode: 0o600 });
+    expect(readdirSync(DATA_DIR).filter(name => !classifiedBy102(name)).sort()).toEqual([...DATA_DIR_NAMES_AFTER_102, ...DATA_DIR_OWNER_NOTES_AFTER_102].sort());
 
     expect(downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ status: "downgraded", to: 10 });
 

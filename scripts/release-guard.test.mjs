@@ -6,7 +6,10 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import { createHash } from "node:crypto";
-import { apiGet, assertReleaseUpdateFeed, findRelease, inspectReleaseBranch, nextVersion, parseVersion, shouldRelease, uploadDraft } from "./release-guard.mjs";
+import { apiGet, assertReleaseUpdateFeed, findRelease, inspectReleaseBranch, nextVersion, parseVersion, setReleaseBody, shouldRelease, uploadDraft, verifyReleaseTag } from "./release-guard.mjs";
+import { mkdtempSync as mkdtempBody, writeFileSync as writeBody } from "node:fs";
+import { tmpdir as tmpBody } from "node:os";
+import { join as joinBody } from "node:path";
 import { removeTempDirSync } from "../server/testing/cleanup.ts";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -317,5 +320,53 @@ describe("the updater feed a release build may carry (L18 qualification feed)", 
     for (const file of ["release/mac-arm64/Murage.app/Contents/Resources/app-update.yml", "release/mac/Murage.app/Contents/Resources/app-update.yml", "release/win-unpacked/resources/app-update.yml", "release/linux-unpacked/resources/app-update.yml"]) {
       expect(text.split("\n").some(line => line.includes("node scripts/release-guard.mjs update-feed ") && line.includes(` ${file}`)), file).toBe(true);
     }
+  });
+});
+
+describe("a release body edit restores the tag at once", () => {
+  const TAG_SHA = "c".repeat(40);
+  const notes = () => { const dir = mkdtempBody(joinBody(tmpBody(), "rel-body-")); const file = joinBody(dir, "notes.md"); writeBody(file, "notes"); return file; };
+  // A fake GitHub where a body PATCH clears the tag, exactly as the real one does.
+  const fakeGitHub = ({ draft = false, bodyFails = false, latestTag = "v1.2.3", remoteTag = true } = {}) => {
+    const state = { tag_name: "v1.2.3", name: "Murage 1.2.3", calls: [] };
+    const run = (command, args) => {
+      state.calls.push([command, ...args].join(" "));
+      if (command === "git") return { status: 0, stdout: remoteTag ? `${TAG_SHA}\trefs/tags/v1.2.3\n` : "" };
+      const method = args[args.indexOf("--method") + 1];
+      if (method === "PATCH") {
+        const fields = Object.fromEntries(args.filter(a => /^[a-z_]+=/.test(a)).map(a => [a.slice(0, a.indexOf("=")), a.slice(a.indexOf("=") + 1)]));
+        if ("body" in fields) { state.tag_name = "untagged-ed938328"; if (bodyFails) return { status: 1, stderr: "HTTP 502", stdout: "" }; }
+        for (const key of ["tag_name", "name"]) if (key in fields) state[key] = fields[key];
+        if ("target_commitish" in fields) state.target = fields.target_commitish;
+        return { status: 0, stdout: "{}" };
+      }
+      const endpoint = args.at(-1);
+      return http(200, endpoint.endsWith("/latest") ? { id: 7, tag_name: latestTag } : { id: 7, tag_name: state.tag_name, name: state.name, draft, assets: [] });
+    };
+    return { run, state };
+  };
+  it("re-PATCHes tag_name, target_commitish and name right after the body, then checks ls-remote and releases/latest", () => {
+    const { run, state } = fakeGitHub();
+    setReleaseBody("1.2.3", 7, notes(), "main", run);
+    expect(state).toMatchObject({ tag_name: "v1.2.3", name: "Murage 1.2.3", target: "main" });
+    const patches = state.calls.filter(c => c.includes("PATCH"));
+    expect(patches[0]).toContain("body=@");
+    expect(patches[1]).toMatch(/tag_name=v1\.2\.3 .*target_commitish=main .*name=Murage 1\.2\.3/);
+    expect(state.calls.some(c => c.startsWith("git ls-remote --tags https://github.com/FerroxLabs/murage-releases.git refs/tags/v1.2.3"))).toBe(true);
+    expect(state.calls.some(c => c.includes("releases/latest"))).toBe(true);
+  });
+  it("restores the tag even when the body PATCH itself failed", () => {
+    const { run, state } = fakeGitHub({ bodyFails: true });
+    expect(() => setReleaseBody("1.2.3", 7, notes(), "main", run)).toThrow(/refusing/);
+    expect(state.tag_name).toBe("v1.2.3");
+  });
+  it("refuses when the tag is missing on the remote or another release is latest", () => {
+    expect(() => verifyReleaseTag("1.2.3", 7, fakeGitHub({ remoteTag: false }).run)).toThrow(/not on/);
+    expect(() => verifyReleaseTag("1.2.3", 7, fakeGitHub({ latestTag: "v1.2.2" }).run)).toThrow(/releases\/latest/);
+  });
+  it("a draft has no remote tag yet: the record and title are what is checked", () => {
+    const { run, state } = fakeGitHub({ draft: true, remoteTag: false });
+    setReleaseBody("1.2.3", 7, notes(), "main", run);
+    expect(state.calls.some(c => c.startsWith("git "))).toBe(false);
   });
 });

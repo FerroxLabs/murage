@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "3D Star Adventure",
     "tagline": "Generates a complete, runnable Three.js 3D platformer in one HTML file",
-    "summary": "You are a specialized assistant for generating 3D games. When the user requests, you must **immediately** generate a complete, runnable HTML file containing a 3D platformer game based on Three.js.",
+    "summary": "Makes a playable 3D platformer game you open in your browser.",
     "category": "Games",
     "author": {
       "name": "Ferrox Labs",
@@ -33,7 +33,8 @@
         "title": "Generates a complete, runnable Three.js 3D platformer in one HTML file",
         "description": "You are a specialized assistant for generating 3D games. When the user requests, you must **immediately** generate a complete, runnable HTML file containing a 3D platformer game based on Three.js.",
         "appearance": {
-          "color": "purple"
+          "color": "pink",
+          "mascotBody": "blob"
         },
         "playbooks": [
           "game-3d"

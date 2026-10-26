@@ -351,12 +351,14 @@ describe("the size of the lists", () => {
   // `broken`, `system` — see the header of intake-matches.ts).
   // Ferrox teams batch (1.0.2): six retired lists out, three new teams in: 283 -> 280 lists,
   // 2,343 -> 2,221 terms, 1,189 -> 1,118 unique.
+  // 1.0.4 competitor gaps: ticket-triage, seo-aeo-desk and qa-repro: 280 -> 283 lists,
+  // 2,221 -> 2,239 terms, 1,118 -> 1,129 unique.
   // Bot library wave 1 added 150 slugs (134 bots, 16 teams): 133 -> 283 lists,
   // 1,627 -> 2,343 terms, 870 -> 1,189 unique.
   it("matches the maintained inventory including the three starter profiles", () => {
-    expect(Object.keys(INTAKE_MATCH_TERMS)).toHaveLength(280);
-    expect(terms).toHaveLength(2221);
-    expect(new Set(terms).size).toBe(1118);
+    expect(Object.keys(INTAKE_MATCH_TERMS)).toHaveLength(283);
+    expect(terms).toHaveLength(2239);
+    expect(new Set(terms).size).toBe(1129);
     expect(INTAKE_GENERIC_WORDS.size).toBe(554);
   });
 });

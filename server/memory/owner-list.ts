@@ -125,6 +125,29 @@ export interface OwnerListResult { rows:Array<Record<string,unknown>>; searchMod
  * index is being copied into age order) reads the second word table above the fill's frontier; R (ready) the full design. Without a
  * readable index the text match alone answers, over the newest keys, and says so. */
 export async function ownerMemoryList(input:OwnerListInput,roster:MemoryRoster):Promise<OwnerListResult>{
+  const result=await ownerMemoryListRead(input,roster);
+  ownerListHooks.beforeForgetCheck?.();
+  return withoutForgotten(database(),result);
+}
+
+/** Test seam (LAM-R5-6): runs after the last await of a list, just before the forgotten check. */
+export const ownerListHooks:{beforeForgetCheck?:()=>void}={};
+
+/** Learn about me R5.1 C4: a row whose record is forgotten (a RECORD tombstone for the whole record or that version) is dropped. It runs
+ * synchronously after the list's last await, so a Forget that committed while the list was reading is reflected, and it covers versions
+ * past the newest 64 that keep their words until the expand phase. One statement per page, by the tombstones' unique index. */
+function withoutForgotten(db:DatabaseSync,result:OwnerListResult):OwnerListResult{
+  if(!result.rows.length)return result;
+  const pairs=JSON.stringify(result.rows.map(row=>[String(row.id),Number(row.version)]));
+  const gone=db.prepare(`SELECT json_extract(p.value,'$[0]') AS id,json_extract(p.value,'$[1]') AS version FROM json_each(?) p
+    WHERE EXISTS(SELECT 1 FROM memory_tombstones t WHERE t.target_type='record' AND t.target_id=json_extract(p.value,'$[0]')
+    AND (t.revision IS NULL OR t.revision=json_extract(p.value,'$[1]')))`).all(pairs) as Array<{id:string;version:number}>;
+  if(!gone.length)return result;
+  const drop=new Set(gone.map(row=>`${row.id}:${row.version}`));
+  return {...result,rows:result.rows.filter(row=>!drop.has(keyOf(row)))};
+}
+
+async function ownerMemoryListRead(input:OwnerListInput,roster:MemoryRoster):Promise<OwnerListResult>{
   const db=database(),scopes=ownerListScopes(input,roster),view=input.view??"search";
   if(!recordKeysReady(db))return preparingList(db,input,scopes,view);
   const base:string[]=["(? IS NULL OR r.scope_id IN (SELECT value FROM json_each(?)))"];

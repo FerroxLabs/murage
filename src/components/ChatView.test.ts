@@ -216,7 +216,7 @@ describe("B14 error recovery", () => {
   it("renders an accessible dismiss control without coupling it to the draft", () => {
     expect(chat).toMatch(/export function ErrorBanner[\s\S]{0,900}role="alert"/);
     expect(chat).toMatch(/export function ErrorBanner[\s\S]{0,900}aria-label="Dismiss error"/);
-    expect(chat).toMatch(/export function ErrorBanner[\s\S]{0,900}\{message\}/);
+    expect(chat).toMatch(/export function ErrorBanner[\s\S]{0,900}\{plain\.line\}/);
   });
 
   it("clears only the existing global error state", () => {
@@ -305,7 +305,7 @@ describe("the chat header answers to its container, not the window", () => {
   it("gives the identity cluster the space the controls leave", () => {
     // ROOT CAUSE of the shipped overlap: the identity cluster was the only
     // thing without `shrink-0`, and had no `flex-1` to claim what was left.
-    expect(header).toContain('className="flex min-w-0 flex-1 items-center gap-2.5');
+    expect(header).toContain('"flex min-w-0 flex-1 items-center gap-2.5');
     expect(header).toContain("data-chat-header-name");
   });
 
@@ -435,5 +435,12 @@ describe("the comm chip on a phone never opens the wrong bot (E1, 2026-09-28)", 
   it("the open branch is unchanged: still a button that selects the group and shows the arrow", () => {
     expect(chipTail).toMatch(/onClick=\{\(\) => dispatch\(\{ type: "select", id: comm\.groupId \}\)\}/);
     expect(chipTail).toContain("<ChevronRight size={13} className=\"shrink-0\" />");
+  });
+});
+
+describe("Regenerate and widget rows", () => {
+  it("the last bot text row that Regenerate targets is never a widget row", () => {
+    const chat = readFileSync(fileURLToPath(new URL("./ChatView.tsx", import.meta.url)), "utf8");
+    expect(chat).toMatch(/m\.kind === "text" && !m\.widget\)\?\.id/);
   });
 });

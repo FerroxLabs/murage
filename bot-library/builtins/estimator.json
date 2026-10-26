@@ -60,7 +60,8 @@
         "title": "Estimator",
         "description": "Mason prepares an itemized labor and materials quote draft from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. ",
         "appearance": {
-          "color": "green"
+          "color": "teal",
+          "mascotBody": "hexagon"
         },
         "skills": [
           "trades-quote-checklist",

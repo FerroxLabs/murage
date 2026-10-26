@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { skillContentHash } from "./content-hash.ts";
+import { skillContentHash, stripTrailingBlanks } from "./content-hash.ts";
 
 const base = { name: "invoice-chaser", description: "Chases invoices.", triggerTerms: ["invoice"], files: [{ path: "SKILL.md", content: "Do the thing.\n" }] };
 
@@ -20,5 +20,18 @@ describe("skill content hash", () => {
   it("cannot be forged by moving text between fields", () => {
     expect(skillContentHash({ ...base, description: "a", files: [{ path: "SKILL.md", content: "b" }] }))
       .not.toBe(skillContentHash({ ...base, description: "a\0b", files: [{ path: "SKILL.md", content: "" }] }));
+  });
+  it("drops trailing blanks exactly as the line-end pattern did, in linear time (A2)", () => {
+    const old = (text: string) => text.replace(/[ \t]+$/gm, "");
+    const parts = ["a", " ", "\t", "\n", "\r", "\u2028", "\u2029", "b", "  "];
+    let seed = 7;
+    for (let round = 0; round < 400; round++) {
+      let text = "";
+      for (let n = 0; n < 12; n++) { seed = (seed * 1103515245 + 12345) % 2147483648; text += parts[seed % parts.length]; }
+      expect(stripTrailingBlanks(text)).toBe(old(text));
+    }
+    const start = performance.now();
+    stripTrailingBlanks(`never${" ".repeat(200000)}!`);
+    expect(performance.now() - start).toBeLessThan(500);
   });
 });

@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Company Wiki",
     "tagline": "Company knowledge organized into useful pages and answers with clear sources",
-    "summary": "Shelf organizes your supplied company documents into a wiki and drafts the first useful pages. It can also answer questions from the approved material, showing supporting passages, dates and conflicts. For customer-facing help articles, use Help Center Writer; for open research, use Researcher. For general desk work, use Cowork. For broad operations coordination, use Ops.",
+    "summary": "Shelf organizes your supplied company documents into a wiki and drafts the first useful pages.",
     "category": "Front office",
     "author": {
       "name": "Ferrox Labs",
@@ -55,7 +55,8 @@
         "title": "Company Wiki",
         "description": "Shelf organizes your supplied company documents into a wiki and drafts the first useful pages. It can also answer questions from the approved material, showing supporting passages, dates and conflicts. For customer-facing help articles, use Help Center Writer; for open research, use Researcher. For general desk work, use Cowork. For broad operations coordination, use Ops.",
         "appearance": {
-          "color": "purple"
+          "color": "purple",
+          "mascotBody": "blob"
         },
         "skills": [
           "knowledge-base-architect",

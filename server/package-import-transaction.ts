@@ -137,7 +137,10 @@ export function commitPackageImportFiles(dataDir: string, replacements: Readonly
   mkdirSync(tx, { mode: 0o700 });
   // A visible journal is retained on every failure. Startup performs the
   // deterministic old/new recovery before any Store/RoutineManager loads.
-  publishJournal(tx, journal); syncDirectory(root);
+  // ... except before the first journal is durable: a directory with no journal and no staged payload
+  // would stop every later start, so it is removed here and the original error is rethrown.
+  try { publishJournal(tx, journal); syncDirectory(root); }
+  catch (error) { try { rmSync(tx, { recursive: true, force: true }); syncDirectory(root); } catch { /* recovery treats an empty leftover as nothing to recover */ } throw error; }
   mkdirSync(join(tx, "old"), { mode: 0o700 }); mkdirSync(join(tx, "new"), { mode: 0o700 });
   for (const [index, item] of journal.entries.entries()) {
     if (originals[index] !== null) writeFileSync(join(tx, "old", String(index)), originals[index]!, { flag: "wx", mode: 0o600, flush: true });
@@ -171,6 +174,8 @@ export function recoverPackageImportTransaction(dataDir: string, options: Recove
   if (!stat) return { status: "none" };
   if (!stat.isDirectory() || stat.isSymbolicLink()) fail("INVALID_PACKAGE_IMPORT_JOURNAL");
   const raw = read(join(tx, "journal.json"));
+  // A crash before the first journal reached disk leaves the directory with nothing staged: nothing to recover.
+  if (!raw && !entry(join(tx, "old")) && !entry(join(tx, "new"))) { cleanup(root, tx); return { status: "none" }; }
   if (!raw || raw.length > 1024 * 1024) fail("INVALID_PACKAGE_IMPORT_JOURNAL");
   let value: unknown;
   try { value = JSON.parse(raw.toString("utf8")); } catch { fail("INVALID_PACKAGE_IMPORT_JOURNAL"); }

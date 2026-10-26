@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Launch Day",
     "tagline": "A launch checklist, copy pack and timed plan with clear go decisions",
-    "summary": "Launchpad prepares a launch readiness checklist from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For a complete product launch team, use Product Launch. For a course or digital product launch team, use Info-Product Launch. For a launch review team, use Pre-Mortem Room.",
+    "summary": "Launchpad prepares a launch readiness checklist from the material you supply.",
     "category": "Marketing",
     "author": {
       "name": "Ferrox Labs",
@@ -60,7 +60,8 @@
         "title": "Launch Day",
         "description": "Launchpad prepares a launch readiness checklist from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For a complete product launch team, use Product Launch. For a course or digital product launch team, use Info-Product Launch. For a launch review team, use Pre-Mortem Room.",
         "appearance": {
-          "color": "blue"
+          "color": "blue",
+          "mascotBody": "star"
         },
         "skills": [
           "product-hunt-launcher",
