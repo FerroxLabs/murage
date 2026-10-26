@@ -22,7 +22,7 @@ export const MINIMAL_ARGV: Record<(typeof CLOUD_TURN_ENGINES)[number], string[]>
   claudeAgent: ["-p", "--output-format", "stream-json", "--input-format", "stream-json", "--verbose", "--include-partial-messages", "--permission-mode", "acceptEdits", "--strict-mcp-config", "--session-id", "0b7f1c2e-3d4a-4b5c-8d6e-7f8091a2b3c4"],
   codex: ["app-server", "-c", "features.browser_use=false", "-c", "features.browser_use_external=false", "-c", "features.computer_use=false",
     "-c", 'plugins={ "browser@openai-bundled" = { enabled = false }, "computer-use@openai-bundled" = { enabled = false }, "unified-computer-use@openai-bundled" = { enabled = false } }'],
-  grokAgent: ["--permission-mode", "default", "agent", "stdio"],
+  grokAgent: ["--permission-mode", "default", "--no-memory", "agent", "--no-leader", "stdio"],
   kimiAgent: ["acp"],
   opencodeGo: ["acp"],
   fuigoAgent: ["--permission-mode", "default", "--no-memory", "agent", "--no-leader", "stdio"],

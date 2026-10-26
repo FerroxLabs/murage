@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
-import { browserExtensionListing, readBrowserExtensionBuild } from "./browser-extension-listing.ts";
+import { browserExtensionListing, browserExtensionSetupReason, readBrowserExtensionBuild } from "./browser-extension-listing.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const ID = "abcdefghijklmnopabcdefghijklmnop";
@@ -17,25 +17,37 @@ function resources(build: unknown) {
   return root;
 }
 
-it("a release build with its store item and the feed flag on links the Chrome Web Store listing", () => {
+it("a release build with its store item links the Chrome Web Store listing, with no feed flag", () => {
   const build = readBrowserExtensionBuild(resources({ version: 1, mode: "release", productionIds: [ID], chromeWebStoreId: ID }));
   expect(build).toEqual({ mode: "release", chromeWebStoreId: ID });
-  expect(browserExtensionListing(build, ["murage-for-chrome-listed"] as const)).toEqual({ build: "release", storeUrl: `https://chromewebstore.google.com/detail/${ID}` });
+  const listing = browserExtensionListing(build);
+  expect(listing).toEqual({ build: "release", storeUrl: `https://chromewebstore.google.com/detail/${ID}` });
+  expect(browserExtensionSetupReason(listing)).toBe("Add Murage for Chrome from the Chrome Web Store, then open its side panel and connect.");
 });
 
-it("no link until the feed says the listing is public", () => {
-  const build = readBrowserExtensionBuild(resources({ version: 1, mode: "release", productionIds: [ID], chromeWebStoreId: ID }));
-  expect(browserExtensionListing(build, undefined)).toEqual({ build: "release", storeUrl: null });
-  expect(browserExtensionListing(build, [])).toEqual({ build: "release", storeUrl: null });
+it("the shipped release ID links its live listing", () => {
+  const live = "gpilijlcanhphjaoogelbghhbhhminol";
+  expect(browserExtensionListing(readBrowserExtensionBuild(resources({ version: 1, mode: "release", productionIds: [live], chromeWebStoreId: live })))).toEqual({ build: "release", storeUrl: `https://chromewebstore.google.com/detail/${live}` });
 });
 
 it("a development, resources-only, missing or damaged build never links a listing", () => {
-  const flags = ["murage-for-chrome-listed"] as const;
-  expect(browserExtensionListing(readBrowserExtensionBuild(resources({ version: 1, mode: "development", developmentId: ID })), flags)).toEqual({ build: "development", storeUrl: null });
-  expect(browserExtensionListing(readBrowserExtensionBuild(resources({ version: 1, mode: "resources", productionIds: [] })), flags)).toEqual({ build: "none", storeUrl: null });
-  expect(browserExtensionListing(readBrowserExtensionBuild(resources(undefined)), flags)).toEqual({ build: "none", storeUrl: null });
-  expect(browserExtensionListing(readBrowserExtensionBuild(resources("{broken")), flags)).toEqual({ build: "none", storeUrl: null });
-  // A release build whose store item is not one of its allowed IDs is not trusted.
-  expect(browserExtensionListing(readBrowserExtensionBuild(resources({ version: 1, mode: "release", productionIds: ["b".repeat(32)], chromeWebStoreId: ID })), flags)).toEqual({ build: "release", storeUrl: null });
-  expect(browserExtensionListing(readBrowserExtensionBuild(resources({ version: 1, mode: "release", productionIds: [ID], chromeWebStoreId: "not-an-id" })), flags)).toEqual({ build: "release", storeUrl: null });
+  expect(browserExtensionListing(readBrowserExtensionBuild(resources({ version: 1, mode: "development", developmentId: ID })))).toEqual({ build: "development", storeUrl: null });
+  expect(browserExtensionListing(readBrowserExtensionBuild(resources({ version: 1, mode: "development", developmentId: ID, productionIds: [ID], chromeWebStoreId: ID })))).toEqual({ build: "development", storeUrl: null });
+  expect(browserExtensionListing(readBrowserExtensionBuild(resources({ version: 1, mode: "resources", productionIds: [] })))).toEqual({ build: "none", storeUrl: null });
+  expect(browserExtensionListing(readBrowserExtensionBuild(resources({ version: 1, mode: "resources", productionIds: [ID], chromeWebStoreId: ID })))).toEqual({ build: "none", storeUrl: null });
+  expect(browserExtensionListing(readBrowserExtensionBuild(resources(undefined)))).toEqual({ build: "none", storeUrl: null });
+  expect(browserExtensionListing(readBrowserExtensionBuild(resources("{broken")))).toEqual({ build: "none", storeUrl: null });
+});
+
+it("a release build whose store item is missing or not one of its allowed IDs never links, and never says the listing is missing", () => {
+  for (const build of [
+    { version: 1, mode: "release", productionIds: ["b".repeat(32)], chromeWebStoreId: ID },
+    { version: 1, mode: "release", productionIds: [ID], chromeWebStoreId: "not-an-id" },
+    { version: 1, mode: "release", productionIds: [ID] },
+    { version: 1, mode: "release", chromeWebStoreId: ID },
+  ]) {
+    const listing = browserExtensionListing(readBrowserExtensionBuild(resources(build)));
+    expect(listing).toEqual({ build: "release", storeUrl: null });
+    expect(browserExtensionSetupReason(listing)).not.toMatch(/not (in the Chrome Web Store|available)|yet/);
+  }
 });

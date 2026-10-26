@@ -60,6 +60,8 @@ function setup(origin: Origin = "owner") {
   if (origin === "room") {
     insertRoomRequest(database(), { id: "root", groupId: "g", verb: "owner_send", fromKind: "owner", toBotId: from.id, targetThreadId: from.threadId, admissionKey: "root", now: 1, lineage: LINEAGE(from.threadId) });
     markRequestDispatched(database(), "root", { now: 1 });
+    // a room hand-off starts once the turn that made it has settled: that turn waits on its asks (F3: a turn still running at boot ends its whole subtree)
+    database().prepare("UPDATE room_requests SET state='waiting_bot', waiting_since=1 WHERE id='root'").run();
     extra = { prepareDelegation: (fromBotId: string, to: string, source: string, _m: string, id: string) => {
       insertRoomRequest(database(), { id, groupId: "g", verb: "ask", fromKind: "bot", fromBotId, toBotId: to, parentId: "root", returnThreadId: source, returnBotId: fromBotId, admissionKey: `ask:delegation:${id}`, now: 2 });
       return "room" as const;

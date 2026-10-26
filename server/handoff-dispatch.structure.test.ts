@@ -161,8 +161,14 @@ function analyse(program: ts.Program, only?: string): Analysis {
     };
     if (!bound(prompt, "userMessage")) return false;
     if (destination && !bound(destination, "threadId")) return false;
-    // nothing after the spread but the allowed keys
-    return after.every((p) => { const key = keyOf(p.name); return key === "threadId" || key === "userMessage" || key === "memoryRedispatch"; });
+    // nothing after the spread but the allowed keys; `rebuildOf` (DELETION-DRAIN-V2: the generation of the held run the rebuild takes over, a string the
+    // start callback is handed) only as a shorthand of that callback's own parameter, never a run or a prompt
+    const heldGeneration = (p: ts.ObjectLiteralElementLike): boolean => {
+      if (!ts.isShorthandPropertyAssignment(p)) return false;
+      const symbol = checker.getShorthandAssignmentValueSymbol(p);
+      return Boolean(symbol?.declarations?.some((d) => ts.isParameter(d) && d.name.getText() === "rebuildOf" && ts.isArrowFunction(d.parent)));
+    };
+    return after.every((p) => { const key = keyOf(p.name); return key === "threadId" || key === "userMessage" || key === "memoryRedispatch" || (key === "rebuildOf" && heldGeneration(p)); });
   };
   /** Whether the node sits anywhere inside a function declaration with one of these names (an arrow or a closure nested in it counts: it is its code). */
   const insideFunction = (node: ts.Node, names: ReadonlySet<string>): boolean => { for (let at: ts.Node | undefined = node; at; at = at.parent) if (ts.isFunctionDeclaration(at) && at.name && names.has(at.name.text)) return true; return false; };
@@ -380,7 +386,9 @@ describe("the dispatch is the only place a hand-off starts (symbols resolved wit
 
   it("every way execution state can be written is in a function that owns it: SQL that starts a hand-off, stamps its start or sets its phase from a parameter", () => {
     // allowed: (file, function) pairs. The dispatch's startDelegation is the only start; the others only HOLD (started_at=NULL), migrate a stand-in record, or are test fixtures.
-    const startsOk = new Set([`${DISPATCH}:startDelegation`, "delegations.ts:holdUnexecuted", "delegations.ts:holdBusyGaveUp", "pending-delegations-schema.ts:migrateOwnerHandoffPage", "testing/handoff-turn.ts:forceStarted"]);
+    // recordAskTicket starts nothing either (F3 02-4): it records, as a started row, the turn a synchronous ask already started and whose wait ran out, so a restart
+    // settles it ("interrupted", or held) and never runs it again.
+    const startsOk = new Set([`${DISPATCH}:startDelegation`, "delegations.ts:holdUnexecuted", "delegations.ts:holdBusyGaveUp", "delegations.ts:recordAskTicket", "pending-delegations-schema.ts:migrateOwnerHandoffPage", "testing/handoff-turn.ts:forceStarted"]);
     const phaseFromParameterOk = new Set(["delegations.ts:stmts"]);
     const found: string[] = [];
     for (const file of base.getSourceFiles().filter(isSource)) {
@@ -461,17 +469,20 @@ export const probe = () => relay(host[key]);
     expect(analyseIndex(real)).toEqual([]);                                                   // (the real file is clean)
     const helper = analyseIndex(`${real}\nexport function relayStart(botId: string, options: Parameters<typeof startTurn>[2]) { return startTurn(botId, "x", options); }\n`);
     expect(helper.join("\n")).toMatch(/R8 forward/);
-    const redispatch = "{ ...opts, threadId, userMessage, memoryRedispatch: attempt }";
+    const redispatch = "{ ...opts, threadId, userMessage, memoryRedispatch: attempt, rebuildOf }";
     expect(real).toContain(redispatch);
-    const cleared = analyseIndex(real.replace(redispatch, "{ ...opts, threadId, userMessage: undefined, memoryRedispatch: attempt }"));
+    const cleared = analyseIndex(real.replace(redispatch, "{ ...opts, threadId, userMessage: undefined, memoryRedispatch: attempt, rebuildOf }"));
     expect(cleared.join("\n")).toMatch(/R2 spread/);
-    const reordered = analyseIndex(real.replace(redispatch, "{ userMessage, memoryRedispatch: attempt, threadId, ...opts }"));
+    const reordered = analyseIndex(real.replace(redispatch, "{ userMessage, memoryRedispatch: attempt, rebuildOf, threadId, ...opts }"));
     expect(reordered.join("\n")).toMatch(/R2 spread/);
     // r26b #6: a redispatch whose destination is another conversation (a literal, or any variable that is not the turn's own threadId) is reported too
-    const elsewhere = analyseIndex(real.replace(redispatch, '{ ...opts, threadId: "another-existing-task", userMessage, memoryRedispatch: attempt }'));
+    const elsewhere = analyseIndex(real.replace(redispatch, '{ ...opts, threadId: "another-existing-task", userMessage, memoryRedispatch: attempt, rebuildOf }'));
     expect(elsewhere.join("\n")).toMatch(/R2 spread/);
-    const otherVariable = analyseIndex(real.replace(redispatch, "{ ...opts, threadId: botId, userMessage, memoryRedispatch: attempt }"));
+    const otherVariable = analyseIndex(real.replace(redispatch, "{ ...opts, threadId: botId, userMessage, memoryRedispatch: attempt, rebuildOf }"));
     expect(otherVariable.join("\n")).toMatch(/R2 spread/);
+    // DELETION-DRAIN-V2: `rebuildOf` passes only as the start callback's own parameter; any other value after the spread is reported
+    const notHeld = analyseIndex(real.replace(redispatch, "{ ...opts, threadId, userMessage, memoryRedispatch: attempt, rebuildOf: userMessage.id }"));
+    expect(notHeld.join("\n")).toMatch(/R2 spread/);
   });
   it("an options object spread that carries the run, and a callback that forwards it", () => {
     const spread = probe(`import type { HandoffTurnOptions } from "./handoff-dispatch.ts";

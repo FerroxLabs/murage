@@ -61,7 +61,7 @@ test.beforeAll(async () => {
 });
 test.afterAll(async () => { try { await stopProxy(); await vite?.close(); } finally { await fixture?.close(); } });
 async function choose(page: Page, title: string, id: string) {
-  await page.getByRole("button", { name: "All threads", exact: true }).click();
+  await page.getByRole("button", { name: "Chat list", exact: true }).click();
   await page.getByRole("button", { name: new RegExp(`^${title}`) }).click();
   await expect.poll(async () => (await state()).threadId).toBe(id);
 }
@@ -75,7 +75,8 @@ test("selected report survives Inbox historical navigation, download and same-pr
   await (await openSidebar(page)).getByText("Joined proof bot", { exact: true }).first().click();
   await choose(page, "Report A", first);
   await expect(page.getByRole("button", { name: /^Thread model:/ })).toHaveAttribute("aria-label", `Thread model: ${modelLabel}`);
-  expect((await state()).tasks.find((task: any) => task.threadId === first).modelSelection).toMatchObject({ instanceId: "verification", model: modelId });
+  // 1.0.4 SL-K K1: a chat with no pick of its own follows its bot's model.
+  { const bot = await state(); expect(bot.tasks.find((task: any) => task.threadId === first).modelSelection).toBeUndefined(); expect(bot.modelSelection).toMatchObject({ instanceId: "verification", model: modelId }); }
   const sent = page.waitForResponse(response => response.url().endsWith(`/api/bots/${botId}/messages`) && response.request().method() === "POST");
   const composer = page.getByRole("textbox", { name: "Message Joined proof bot", exact: true });
   await composer.fill("__fixture_hold_authority__ joined report"); await composer.press(SEND_KEY);

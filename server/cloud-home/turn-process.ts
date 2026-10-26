@@ -65,7 +65,8 @@ export function cloudTurnEnvironment(engine: string, source: NodeJS.ProcessEnv, 
 
 export type CloudMcpProxyKind = "permission" | "agents" | "memory" | "phone" | "browser" | "computer" | "hostComputer" | "dweb" | "connectors" | "remote" | "vpsRelay" | "url";
 export interface CloudMcpStanza { proxy: CloudMcpProxyKind; socket?: string; server?: string; url?: string; env?: Record<string, string>; ask?: boolean }
-export interface CloudTurnRoute { provider: string; baseUrl: string; model: string; apiKey: string; protocol?: "openai" | "anthropic" | "responses"; contextSize?: number; label?: string; models?: string[] }
+export interface CloudTurnRoute { provider: string; baseUrl: string; model: string; apiKey: string; protocol?: "openai" | "anthropic" | "responses"; contextSize?: number; label?: string; models?: string[];
+  /** Flux Memory headers the launcher renders as the Codex provider table's http_headers. */ headers?: Record<string, string> }
 /** `resume`: the Codex thread id a fresh process will `thread/resume`, so the launcher stages that one
  * rollout file into the turn's home (its state allowlist) and no other session. */
 export interface CloudTurnRender { route?: CloudTurnRoute; mcp?: Record<string, CloudMcpStanza>; systemPrompt?: string; memoryTools?: boolean; resume?: string; codexPolicy?: CloudCodexPolicy }

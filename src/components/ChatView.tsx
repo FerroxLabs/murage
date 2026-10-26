@@ -1,11 +1,14 @@
-import { BrowserSetupCard, McpSignInCard, PublishCard } from "./LazyChatCards";
+import { ThreadLinkProvider } from "@/components/ThreadLinkMenu";
+import { BrowserSetupCard, McpEnableCard, McpSignInCard, PublishCard } from "./LazyChatCards";
+import { loopNoticeLabel } from "@/lib/loop-notice";
+import { isLimitOfferCard, LimitOfferCard } from "./ThreadFollowControls";
 import { readPublishCard } from "../../shared/publish-card";
 import { readBrowserSetupCard } from "../../shared/browser-setup-card";
 import { Component, Suspense, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
 import { DeletionNoteBanner } from "./DeletionNoteBanner";
+import { dismissDeletionNote } from "@/lib/deletion-notes";
 import { createPortal } from "react-dom";
 import {
-  ArrowDown,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -25,8 +28,9 @@ import {
 import { WorkingDots } from "@/components/WorkingIndicator";
 import { HelpersLine, HelpersSummary } from "@/components/HelpersLine";
 import { pickSubtasks } from "@/lib/subtasks";
-import { beginEdit, discardEdit, editDraftStore, editFailed, editSent, stopSaving, type EditDrafts } from "@/lib/edit-drafts";
+import { beginEdit, discardEdit, editChangesNothing, editDraftStore, editFailed, editSent, stopSaving, typeEdit, type EditDrafts } from "@/lib/edit-drafts";
 import { newSendId } from "@/lib/send-id";
+import { questionFenceCards } from "@/lib/question-fence-display";
 import { plainTextClamped } from "@/lib/plain-text";
 import { telegramMessageDisplay } from "@/lib/telegram-message-display";
 import {
@@ -46,6 +50,7 @@ import {
 } from "@/state/store";
 import { newDeleteAttempt } from "@/state/page-intent";
 import { EngineSetup } from "./EngineSetup";
+import { WidgetMessage } from "./widget/WidgetMessage";
 import { LazyBoundary, retryableLazy } from "./LazyBoundary";
 import { claudeUpdateTarget } from "@/lib/claude-update";
 import { hermesPinNoteProfile, hermesPinNoteText } from "../../shared/hermes-pin-note";
@@ -55,6 +60,7 @@ import type { ProviderErrorInfo } from "../../shared/provider-error";
 import type { IncidentMessageSelection } from "./DiagnosticDetails";
 import { BotAvatar } from "./Avatar";
 import { ChatHeader } from "./ChatHeader";
+import { ReconnectAppsBanner } from "./ReconnectAppsBanner";
 import { CommAvatar } from "./CommAvatar";
 import { TurnPresence } from "./TurnPresence";
 import { LiveThinking } from "./LiveThinking";
@@ -64,6 +70,7 @@ import { ApprovedStepsRow, isApprovedStepsLine } from "./ApprovedStepsRow";
 import { ImageRecordRow, isImageRecordLine } from "./ImageRecordRow";
 import { anchoredScrollTop, useKeyboardInset } from "@/lib/visual-viewport";
 import { showWorkingDots } from "@/lib/turn-tail";
+import { useTurnLive } from "@/state/turn-status";
 import { toolFailureSummary } from "../../shared/tool-activity";
 import { resourceWaitLabel } from "@/lib/resource-wait";
 import { liveActivityLabel, modelStillThinking, turnStatusLabel } from "@/lib/live-activity";
@@ -120,6 +127,7 @@ import { useThreadChips } from "@/lib/learned-chips";
 import { AccessLinkProvider, ChipsProvider, MessageChip } from "./LearnedChip";
 import { MessageOutcome, OutcomeRailButtons, OutcomesProvider, ProposedOutcomeCard, outcomeSheetActions, useOutcomes } from "./OutcomeMark";
 import { useFocusMessage } from "@/lib/focus-message";
+import { ExportPasteNote } from "./ExportPasteNote";
 import { groupTranscript, itemKeyHolding, transcriptItemKey } from "@/lib/activity-runs";
 import { TranscriptTail } from "./TranscriptTail";
 import { tailOf } from "@/lib/transcript-tail";
@@ -142,6 +150,7 @@ import {
 } from "@/lib/transcript-chrome";
 import { useCoarsePointer, useNarrowViewport } from "@/lib/media-query";
 import { enterSends } from "@/lib/composer-enter";
+import { currentSendKey, subscribeSendKey } from "@/lib/send-key";
 import { fetchOriginalScreenFrame, usePagedScreenFrame } from "@/lib/paged-screen-frame";
 import { isPhoneClient } from "@/lib/phone-client";
 import { commChipAction } from "@/lib/comm-chip-visibility";
@@ -165,6 +174,12 @@ import { engineDividers, engineHoverLabel } from "../../shared/chat-engine-notes
 import { HeldQueueRow } from "./EngineNotes";
 import { useReplyDraft } from "@/lib/drafts";
 import { findTask, isTruncated } from "@/lib/task-window";
+import { holdChatError, raiseTransientError } from "@/state/chat-error";
+import { plainError } from "@/lib/plain-error";
+import { JumpToLatestButton } from "./JumpToLatestButton";
+import { canScroll, describeKeyTarget, jumpScrollBehavior, jumpToLatestVisible, keyBreaksFollow, useCanScroll } from "@/lib/transcript-viewport";
+import { t } from "@/lib/i18n";
+import { copyOrReport, useCopyFeedback } from "@/lib/copy-text";
 
 /** Long user messages collapse behind a fade so pasted walls of text don't
  * bury the conversation; bots get full markdown. */
@@ -173,7 +188,11 @@ const USER_COLLAPSE_LINES = 8;
 const noop = () => {};
 
 export function ErrorBanner({message,onDismiss}:{message:string;onDismiss:()=>void}){
-  return <div className="w-full px-5"><div role="alert" className="mb-2 flex items-start gap-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-[13px] text-danger"><span className="min-w-0 flex-1">{message}</span><button type="button" aria-label="Dismiss error" title="Dismiss error" onClick={onDismiss} className="shrink-0 rounded p-0.5 text-danger hover:bg-danger/10 focus-visible:ring-2 focus-visible:ring-danger"><X size={16}/></button></div></div>;
+  const plain = plainError(message);
+  const detailsCopy = useCopyFeedback();
+  const [open, setOpen] = useState(false);
+  useEffect(() => setOpen(false), [message]);
+  return <div className="w-full px-5" onPointerEnter={() => holdChatError(true)} onPointerLeave={() => holdChatError(false)}><div role="alert" className="mb-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-[13px] text-danger"><div className="flex items-start gap-2"><span className="min-w-0 flex-1">{plain.line}</span>{plain.details !== null && <button type="button" aria-expanded={open} onClick={() => setOpen((value) => !value)} className="shrink-0 rounded px-1 text-[12px] underline hover:bg-danger/10 focus-visible:ring-2 focus-visible:ring-danger">{open ? t("err.plain.hideDetails") : t("err.plain.details")}</button>}<button type="button" aria-label="Dismiss error" title="Dismiss error" onClick={onDismiss} className="shrink-0 rounded p-0.5 text-danger hover:bg-danger/10 focus-visible:ring-2 focus-visible:ring-danger"><X size={16}/></button></div>{open && plain.details !== null && <div className="mt-1.5 flex items-start gap-2"><pre className="min-w-0 flex-1 select-text whitespace-pre-wrap break-words font-mono text-[12px] text-ink-secondary">{plain.details}</pre><button type="button" onClick={() => void detailsCopy.copy(plain.details ?? "")} className="shrink-0 rounded px-1 text-[12px] underline hover:bg-danger/10">{detailsCopy.mark === "copied" ? t("copy.copied") : detailsCopy.mark === "failed" ? t("copy.failed") : t("err.plain.copyDetails")}</button></div>}</div></div>;
 }
 
 /** "Today" / "Yesterday" / "Mon, Aug 11" - real dates, not a hardcoded label. */
@@ -241,22 +260,21 @@ function TaskTimeline({ messages, busy }: { messages: Message[]; busy: boolean }
 
 /** Hover/focus-revealed copy control shared by user + bot bubbles. */
 function CopyButton({ text, className }: { text: string; className?: string }) {
-  const [copied, setCopied] = useState(false);
+  const { mark, copy } = useCopyFeedback();
+  const failed = mark === "failed";
   return (
     <button
-      onClick={() => {
-        void navigator.clipboard?.writeText(text);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1200);
-      }}
-      aria-label="Copy message"
-      title="Copy message"
+      onClick={() => void copy(text)}
+      aria-label={failed ? t("copy.failed") : "Copy message"}
+      title={failed ? t("copy.failed") : "Copy message"}
       className={cn(
         "rounded-md p-1.5 text-ink-secondary opacity-0 transition-opacity hover:bg-raised hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100",
+        failed && "text-danger opacity-100",
         className,
       )}
     >
-      {copied ? <Check size={14} className="text-success" /> : <Copy size={14} />}
+      {mark === "copied" ? <Check size={14} className="text-success" /> : failed ? <X size={14} /> : <Copy size={14} />}
+      {failed && <span role="status" className="sr-only">{t("copy.failed")}</span>}
     </button>
   );
 }
@@ -384,19 +402,19 @@ const ClaudeUpdatePrompt = retryableLazy(() => import("./ClaudeUpdatePrompt")).C
 // Find in this conversation loads when someone asks for it (Cmd+F).
 const ChatFindBar = retryableLazy(() => import("./ChatFindBar").then((module) => ({ default: module.ChatFindBar })));
 
-export function ErrorRow({ message, details, errorKind, localFailure, localFailureEngine, diagnostic, turnId, incident, onRetry, setupInstance, authRequired = false, claudeUpdateInstance, providerError, botName, onOpenProviderSettings }: {
-  message: string; details?: string; errorKind?: string; localFailure?: string; localFailureEngine?: string; onRetry?: () => void; setupInstance?: InstanceInfo; botName?: string; claudeUpdateInstance?: InstanceInfo;
+export function ErrorRow({ message, details, errorKind, localFailure, localFailureEngine, diagnostic, turnId, incident, onRetry, retryLabel, setupInstance, authRequired = false, claudeUpdateInstance, providerError, botName, onOpenProviderSettings }: {
+  message: string; details?: string; errorKind?: string; localFailure?: string; localFailureEngine?: string; onRetry?: () => void; retryLabel?: string; setupInstance?: InstanceInfo; botName?: string; claudeUpdateInstance?: InstanceInfo;
   authRequired?: boolean; providerError?: ProviderErrorInfo; diagnostic?: unknown; turnId?: string; incident?:IncidentMessageSelection; onOpenProviderSettings: () => void;
 }) {
   const [authRecovered, setAuthRecovered] = useState(false);
-  if (providerError) return <ProviderErrorCard info={providerError} details={details} diagnostic={diagnostic} turnId={turnId} incident={incident} onRetry={onRetry} onOpenProviderSettings={onOpenProviderSettings} />;
+  if (providerError) return <ProviderErrorCard info={providerError} details={details} diagnostic={diagnostic} turnId={turnId} incident={incident} onRetry={onRetry} retryLabel={retryLabel} onOpenProviderSettings={onOpenProviderSettings} />;
   const forceSignIn = authRequired && !authRecovered;
   const needsSetup = setupInstance && (forceSignIn || !(setupInstance.snapshot.state === "available" && setupInstance.snapshot.authenticated !== false));
   if (claudeUpdateInstance) {
     return <RuntimeErrorCard message={message} details={details} botName={botName} diagnostic={diagnostic} turnId={turnId} incident={incident} onOpenProviderSettings={onOpenProviderSettings}
       setup={<Suspense fallback={null}><ClaudeUpdatePrompt instance={claudeUpdateInstance} onRetry={onRetry} /></Suspense>} />;
   }
-  return <RuntimeErrorCard message={message} details={details} errorKind={errorKind} localFailure={localFailure} localFailureEngine={localFailureEngine} botName={botName} diagnostic={diagnostic} turnId={turnId} incident={incident} onRetry={onRetry} onOpenProviderSettings={onOpenProviderSettings}
+  return <RuntimeErrorCard message={message} details={details} errorKind={errorKind} localFailure={localFailure} localFailureEngine={localFailureEngine} botName={botName} diagnostic={diagnostic} turnId={turnId} incident={incident} onRetry={onRetry} retryLabel={retryLabel} onOpenProviderSettings={onOpenProviderSettings}
     setup={needsSetup ? <EngineSetup instance={setupInstance} authRequired={forceSignIn} onReady={() => setAuthRecovered(true)} className="mt-3 text-ink-secondary" /> : undefined} />;
 }
 
@@ -410,7 +428,7 @@ class MessageBoundary extends Component<{ children: ReactNode; fallbackText: str
   render() {
     if (this.state.failed) {
       return (
-        <div className="w-fit max-w-[min(42rem,78%)] max-md:max-w-full rounded-2xl bg-card px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap text-ink">
+        <div dir="auto" className="w-fit max-w-[min(var(--chat-bubble-max),var(--chat-bubble-pct))] max-md:max-w-full rounded-2xl bg-card px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap text-ink">
           {this.props.fallbackText}
         </div>
       );
@@ -420,7 +438,7 @@ class MessageBoundary extends Component<{ children: ReactNode; fallbackText: str
 }
 
 /** Inline editor a user bubble turns into: Enter sends (forking the
- * conversation), Esc cancels. Shift+Enter for a newline, like everywhere.
+ * conversation), Esc cancels. The send key follows the Settings choice.
  * On a touch screen Return is a newline and Send sends, exactly as in the
  * composer (lib/composer-enter.ts). */
 function BubbleEditor({
@@ -429,6 +447,7 @@ function BubbleEditor({
   error,
   onCancel,
   onSubmit,
+  onDraft,
 }: {
   initial: string;
   /** Its edit is in flight: the words show, and they cannot be sent again until the server answers (or Cancel stops the wait). */
@@ -437,9 +456,12 @@ function BubbleEditor({
   error?: string;
   onCancel: () => void;
   onSubmit: (text: string) => void;
+  /** The words as they are typed, so the owner of the draft can keep them past this editor's life. */
+  onDraft?: (text: string) => void;
 }) {
   const [draft, setDraft] = useState(initial);
   const coarsePointer = useCoarsePointer();
+  const sendKey = useSyncExternalStore(subscribeSendKey, currentSendKey, currentSendKey);
   const ref = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
     const el = ref.current;
@@ -451,16 +473,16 @@ function BubbleEditor({
     if (!saving && draft.trim()) onSubmit(draft.trim());
   };
   return (
-    <div className="w-full max-w-[min(42rem,78%)] max-md:max-w-full rounded-2xl border border-hairline/40 bg-bubble-user px-4 py-3">
-      <textarea
+    <div className="w-full max-w-[min(var(--chat-bubble-max),var(--chat-bubble-pct))] max-md:max-w-full rounded-2xl border border-hairline/40 bg-bubble-user px-4 py-3">
+      <textarea dir="auto"
         ref={ref}
         value={draft}
         readOnly={saving}
         aria-busy={saving}
-        onChange={(e) => setDraft(e.target.value)}
+        onChange={(e) => { setDraft(e.target.value); onDraft?.(e.target.value); }}
         onKeyDown={(e) => {
           // isComposing: an IME confirm-Enter must not submit the edit
-          if (enterSends({ key: e.key, shiftKey: e.shiftKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey, isComposing: e.nativeEvent.isComposing }, coarsePointer)) {
+          if (enterSends({ key: e.key, shiftKey: e.shiftKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey, isComposing: e.nativeEvent.isComposing, keyCode: e.keyCode }, coarsePointer, sendKey)) {
             e.preventDefault();
             submit();
           }
@@ -512,10 +534,12 @@ function Bubble({
   onStartEdit,
   onCancelEdit,
   onSubmitEdit,
+  onDraftEdit,
   onRegenerate,
   replyTarget,
   onReply,
   narrow = false,
+  questionCards,
 }: {
   bot: Bot;
   message: Message;
@@ -530,12 +554,16 @@ function Bubble({
   onStartEdit: () => void;
   onCancelEdit: () => void;
   onSubmitEdit: (text: string) => void;
+  /** The words typed in the open editor, kept by the thread view past this bubble's life. */
+  onDraftEdit?: (text: string) => void;
   onRegenerate?: () => void;
   replyTarget?: Message;
   onReply: () => void;
   /** Below `md`, where the hover rail is `display: none`. Measured once by the
    *  list rather than per bubble: one `matchMedia` listener, not one per row. */
   narrow?: boolean;
+  /** QW Q2: this message's question fences that became cards in the thread ("0,2"). */
+  questionCards?: string;
 }) {
   const { state, dispatch } = useStore();
   const outcomes = useOutcomes();
@@ -554,7 +582,7 @@ function Bubble({
   if (user && editing && !webhookView) {
     return (
       <div className="flex w-full justify-end">
-        <BubbleEditor initial={editText ?? text} saving={editSaving} error={editError} onCancel={onCancelEdit} onSubmit={onSubmitEdit} />
+        <BubbleEditor initial={editText ?? text} saving={editSaving} error={editError} onCancel={onCancelEdit} onSubmit={onSubmitEdit} onDraft={onDraftEdit} />
       </div>
     );
   }
@@ -575,7 +603,7 @@ function Bubble({
   const speaking = isReading(speech, message.id);
   const actions: MessageAction[] = user
     ? [
-        { id: "copy", label: "Copy message", icon: <Copy size={18} />, onSelect: () => void navigator.clipboard?.writeText(visibleText) },
+        { id: "copy", label: "Copy message", icon: <Copy size={18} />, onSelect: () => void copyOrReport(visibleText, (message) => raiseTransientError(dispatch, message)) },
         { id: "reply", label: "Reply", icon: <MessageSquareReply size={18} />, onSelect: onReply },
         ...(message.kind === "text" && !webhookView && !bot.busy
           ? [{ id: "edit", label: "Edit message", icon: <Pencil size={18} />, onSelect: onStartEdit }]
@@ -583,7 +611,7 @@ function Bubble({
         { id: "pin", label: pinned ? "Unpin message" : "Pin message", icon: pinned ? <PinOff size={18} /> : <Pin size={18} />, onSelect: togglePin },
       ]
     : [
-        { id: "copy", label: "Copy message", icon: <Copy size={18} />, onSelect: () => void navigator.clipboard?.writeText(text) },
+        { id: "copy", label: "Copy message", icon: <Copy size={18} />, onSelect: () => void copyOrReport(text, (message) => raiseTransientError(dispatch, message)) },
         // Hidden with no voice endpoint, like the rail's button (SpeakButton).
         ...(message.kind === "text" && text.trim() && tts?.configured
           ? [{
@@ -692,7 +720,7 @@ function Bubble({
           // its drop shadow reaches past the row (styles.css .transcript-row)
           data-row-lift={user && webhookView ? "" : undefined}
           className={cn(
-            "w-fit max-w-[min(42rem,78%)] max-md:max-w-full rounded-2xl text-[15px] leading-relaxed",
+            "w-fit max-w-[min(var(--chat-bubble-max),var(--chat-bubble-pct))] max-md:max-w-full rounded-2xl text-[15px] leading-relaxed",
             BUBBLE_TAPPABLE,
             user && webhookView
               ? "overflow-hidden border border-accent/25 bg-card text-ink shadow-[0_10px_30px_rgba(0,0,0,0.18)]"
@@ -743,6 +771,7 @@ function Bubble({
               )}
               {visibleText && (
                 <div
+                  dir="auto"
                   className={cn(collapsible && "max-h-40 overflow-hidden [mask-image:linear-gradient(to_bottom,black_60%,transparent)]")}
                 >
                   {visibleText}
@@ -776,7 +805,7 @@ function Bubble({
                   className={text ? "justify-start" : "mb-0 justify-start"}
                 />
               ) : null}
-              {text ? <ChatMarkdown text={text} scope={{ botId: bot.id, threadId: bot.threadId }} /> : null}
+              {text ? <ChatMarkdown text={text} questionCards={questionCards} scope={{ botId: bot.id, threadId: bot.threadId }} /> : null}
               {message.artifactIds?.length ? <ArtifactCards ids={message.artifactIds} /> : null}
               {message.withheldFromBots && (
                 // the owner reads the words; this says what bots read of them (the same words as GroupView)
@@ -851,6 +880,7 @@ function Bubble({
         heading={`${user ? "You" : bot.name} · ${formatTime(message.at)}`}
         actions={actions}
       />
+      {user && message.memoryNote === "export-paste" && <ExportPasteNote message={message} />}
       {!user && <MessageOutcome messageId={message.id} />}
       {!user && <MessageChip messageId={message.id} botName={bot.name} />}
       {versions.length > 1 && (
@@ -929,7 +959,7 @@ function ActivityChip({ message, botName }: { message: Message; botName: string 
   const reason = detail ? toolFailureSummary(detail) : undefined;
   return (
     <div className="flex justify-start">
-      <div className="flex min-w-0 max-w-[min(42rem,78%)] max-md:max-w-full flex-col items-start gap-1">
+      <div className="flex min-w-0 max-w-[min(var(--chat-bubble-max),var(--chat-bubble-pct))] max-md:max-w-full flex-col items-start gap-1">
         <div
           data-testid="tool-chip"
           className={cn(CHIP, failed ? "text-danger" : "text-ink-secondary")}
@@ -943,7 +973,7 @@ function ActivityChip({ message, botName }: { message: Message; botName: string 
               <Check size={13} className="text-success" />
             )}
           </span>
-          <span data-testid="tool-chip-name" className={cn(CHIP_NAME, "font-mono")}>{tool.name}</span>
+          <span data-testid="tool-chip-name" className={cn(CHIP_NAME, "font-mono")}>{loopNoticeLabel(tool.name) ?? tool.name}</span>
           {/* not mono: the argument reads as prose beside the tool's name, and
               inherits the chip's colour so a failed call stays one piece */}
           {tool.summary && (
@@ -984,7 +1014,7 @@ function ScreenFrame({ png, mime, threadId, messageId }: { png: string; mime?: s
       <ScreenFrameMedia
         png={png}
         mime={mime}
-        className="block w-fit max-w-[min(42rem,78%)] max-md:max-w-full rounded-2xl border border-hairline/40"
+        className="block w-fit max-w-[min(var(--chat-bubble-max),var(--chat-bubble-pct))] max-md:max-w-full rounded-2xl border border-hairline/40"
         fetchOriginal={fetchOriginal}
       />
     </div>
@@ -1017,6 +1047,7 @@ const MessagesList = memo(function MessagesList({
   onStartEdit,
   onCancelEdit,
   onSubmitEdit,
+  onDraftEdit,
   onRegenerate,
   onReply,
   scrollRef,
@@ -1038,6 +1069,7 @@ const MessagesList = memo(function MessagesList({
   onStartEdit: (id: string) => void;
   onCancelEdit: (id: string) => void;
   onSubmitEdit: (id: string, text: string) => void;
+  onDraftEdit: (id: string, text: string) => void;
   onRegenerate: () => void;
   onReply: (message: Message) => void;
   /** The transcript scroller and its follow state: only the rows in view mount. */
@@ -1055,6 +1087,8 @@ const MessagesList = memo(function MessagesList({
   // becomes one reversible turn row while the terminal answer stays visible.
   const helperRuns = useStreamHelpers().runs[bot.threadId];
   const items = useMemo(() => groupTranscript(messages, helperRuns), [messages, helperRuns]);
+  // QW Q2: the bot messages whose question fences became cards, read across the whole active branch
+  const fenceCards = useMemo(() => questionFenceCards(transcript), [transcript]);
   const instances = state.instances;
   const engineLabel = useCallback(
     (engine: { instanceId: string }) => instances.find((i) => i.instanceId === engine.instanceId)?.displayName ?? engine.instanceId,
@@ -1135,6 +1169,7 @@ const MessagesList = memo(function MessagesList({
                         : undefined}
                       onReply={() => onReply(message)}
                       narrow={narrow}
+                      questionCards={fenceCards.get(message.id)}
                     />
                   </div>
                 ))}
@@ -1161,6 +1196,9 @@ const MessagesList = memo(function MessagesList({
         const m = item.message;
         if (m.id === emergingId) return divider ? <div key={m.id}>{divider}</div> : null;
         const row = (() => {
+          // QW Q4: a bot-authored widget rides a text row (its `text` is the readable version 1.0.3 and exports show) and is
+          // drawn by the field. A tree that cannot draw falls back to the message's own words.
+          if (m.widget) return <MessageBoundary fallbackText={m.text || ""}><WidgetMessage threadId={bot.threadId} message={m} /></MessageBoundary>;
           switch (m.kind) {
             case "secret":
               return m.secret ? <SecretRequestCard botId={bot.id} threadId={bot.threadId} message={m} /> : null;
@@ -1185,6 +1223,8 @@ const MessagesList = memo(function MessagesList({
               if (readBrowserSetupCard(m.card)) return <BrowserSetupCard bot={bot} message={m} />;
               // putting a site online (or taking one down): its own inline card with its own buttons
               if (m.card?.kind === "publish") return readPublishCard(m.card) ? <PublishCard threadId={bot.threadId} message={m} /> : null;
+              // a server a bot filed switched off: the owner's own Turn on (item 118)
+              if (m.card?.kind === "mcpEnable") return <McpEnableCard botId={bot.id} threadId={bot.threadId} message={m} />;
               // a live provider question gets the question card (header,
               // options with descriptions, multi-select, Other, expiry) -
               // before the approval box, which only answers permissions
@@ -1193,6 +1233,8 @@ const MessagesList = memo(function MessagesList({
               }
               // a live permission ask gets the approval box. The first-run
               // quiz drops out once they talk.
+              // the engine hit its limit: another engine for this message, or wait (1.0.4 SL-I I5)
+              if (isLimitOfferCard(m)) return <LimitOfferCard threadId={bot.threadId} message={m} />;
               if (m.card?.requestId && m.card.tool) {
                 return <ApprovalCard bot={bot} message={m} />;
               }
@@ -1261,7 +1303,7 @@ const MessagesList = memo(function MessagesList({
               const pinnedProfile = hermesPinNoteProfile(m.tool?.name);
               if (pinnedProfile) return <div className="flex justify-start"><div role="status" data-testid="hermes-pin-note" className="min-w-0 max-w-full rounded-2xl border border-hairline/40 bg-panel px-3 py-1.5 text-[13px] text-ink-secondary [overflow-wrap:anywhere]">{hermesPinNoteText(pinnedProfile)}</div></div>;
               const trustNotice = folderTrustNotice(m.tool?.name);
-              if (trustNotice) return <FolderTrustRow kind={trustNotice.kind} sources={trustNotice.sources} />;
+              if (trustNotice) return <FolderTrustRow kind={trustNotice.kind} sources={trustNotice.sources} botId={bot.id} threadId={bot.threadId} />;
               // a turn that ran without its browser: a quiet note, not a card
               const browserReason = browserUnavailableReason(m.tool?.name);
               if (browserReason) return <BrowserUnavailableRow reason={browserReason} />;
@@ -1310,10 +1352,12 @@ const MessagesList = memo(function MessagesList({
                   onStartEdit={() => onStartEdit(m.id)}
                   onCancelEdit={() => onCancelEdit(m.id)}
                   onSubmitEdit={(text) => onSubmitEdit(m.id, text)}
+                  onDraftEdit={(text) => onDraftEdit(m.id, text)}
                   onRegenerate={onRegenerate}
                   replyTarget={m.replyToId ? bot.messages.find((candidate) => candidate.id === m.replyToId) : undefined}
                   onReply={() => onReply(m)}
                   narrow={narrow}
+                  questionCards={fenceCards.get(m.id)}
                 />
               );
           }
@@ -1487,7 +1531,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
   );
 
   const lastBotTextId = useMemo(
-    () => [...messages].reverse().find((m) => m.role === "bot" && m.kind === "text")?.id,
+    () => [...messages].reverse().find((m) => m.role === "bot" && m.kind === "text" && !m.widget)?.id,
     [messages],
   );
 
@@ -1517,9 +1561,22 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
     setEditingId((current) => (current === id ? null : current));
     editDraftStore.update(botId, (drafts) => discardEdit(drafts, id));
   }, [bot.id]);
+  // Every word typed in an open editor is kept in the store, so a conversation switch (the view stays mounted, the editor does not) or a
+  // return to this bot finds the editor with what was typed, not the original message.
+  const draftEdit = useCallback((messageId: string, text: string) => {
+    editDraftStore.update(bot.id, (drafts) => typeEdit(drafts, messageId, text, newSendId()));
+  }, [bot.id]);
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
   const submitEdit = useCallback(
     (messageId: string, text: string) => {
       const botId = bot.id;
+      // Sending a message's own words back forks the conversation and reruns the bot for nothing: it closes like Cancel instead.
+      if (editChangesNothing(messagesRef.current.find((candidate) => candidate.id === messageId)?.text, text)) {
+        setEditingId((current) => (current === messageId ? null : current));
+        editDraftStore.update(botId, (drafts) => discardEdit(drafts, messageId));
+        return;
+      }
       const next = beginEdit(editDraftStore.get(botId), messageId, text, newSendId());
       if (!next) return; // this message's edit is still saving: a double Enter can't fork twice
       const sendId = next[messageId]!.sendId; // a resubmit of the same words keeps its sendId
@@ -1559,10 +1616,12 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
   // what it is waiting for instead of "Thinking".
   const resourceWait = findTask(profile, bot.threadId)?.waitingFor;
   const activityLabel = (bot.busy ? resourceWaitLabel(resourceWait) : undefined) ?? liveActivityLabel(lastMessage);
+  // The mascot and its timer stay for the whole turn; only its end hides them (upstream #3374).
+  const turnEnded = useTurnLive(bot.threadId).ended;
   const waiting = Boolean(
     bot.busy &&
       bot.activity !== "waiting-on-you" &&
-      showWorkingDots(bot.busy, lastMessage),
+      showWorkingDots(bot.busy, lastMessage, undefined, turnEnded),
   );
   const wasWaiting = useRef(false);
   const [popping, setPopping] = useState<{ id: string; text: string } | null>(null);
@@ -1570,9 +1629,12 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
     wasWaiting.current = false;
     setPopping(null);
   }, [bot.id, bot.threadId]);
+  // Armed while the turn runs; a new row other than the bot's own text re-arms
+  // it, because the mascot now stays through a mid-turn sentence and `waiting`
+  // alone no longer turns over between the steps of one turn.
   useEffect(() => {
-    if (waiting) wasWaiting.current = true;
-  }, [waiting]);
+    if (waiting && !(lastMessage?.role === "bot" && lastMessage.kind === "text")) wasWaiting.current = true;
+  }, [waiting, lastMessage?.id, lastMessage?.role, lastMessage?.kind]);
   // A reply that streamed in view is already on screen: it is replaced in
   // place by the stored message, so it does not pop in a second time.
   useEffect(() => {
@@ -1629,6 +1691,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
   // not the bot (OpenMausBot #2462, Apache-2.0).
   useEffect(() => setBottomFollow(true), [transcriptKey, setBottomFollow]);
   useBottomFollowResize(scrollRef, transcriptRef, followRef, transcriptKey);
+  const scrollable = useCanScroll(scrollRef, transcriptRef, transcriptKey);
 
   // A search result may be hundreds of rows before the mounted tail. Open a
   // bounded window around it first; useFocusMessage then scrolls and flashes
@@ -1776,8 +1839,8 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
   // ArrowUp only counts outside inputs - in the composer it edits, not scrolls.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const typing = e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement;
-      if (e.key === "PageUp" || ((e.key === "Home" || e.key === "ArrowUp") && !typing)) {
+      // arrow keys inside a menu, list, slider or select belong to that widget
+      if (keyBreaksFollow(e.key, describeKeyTarget(e.target))) {
         setBottomFollow(false);
       }
     };
@@ -1798,7 +1861,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
     setBottomFollow(true);
     setTranscriptWindow({ key: transcriptKey, start: tailWindowStart(messages.length), end: null });
     requestAnimationFrame(() => {
-      scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+      scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: jumpScrollBehavior() });
     });
   };
 
@@ -1811,6 +1874,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
   return (
     <OutcomesProvider value={outcomes}>
     <ChipsProvider value={chips}><AccessLinkProvider open={() => dispatch({ type: "toggleSettings", open: true, intent: { section: "permissions" } })}>
+    <ThreadLinkProvider botId={bot.id} threadId={bot.threadId} link={bot.tasks?.find((task) => task.threadId === bot.threadId)?.link}>
     <main className="relative flex h-full min-w-0 flex-1 flex-row bg-app">
     <div
       data-testid="chat-column"
@@ -1842,11 +1906,12 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
       <CallBarStrip ownId={bot.id} ownThreadId={bot.threadId} />
 
       <WorkThreadNotice bot={bot} />
+      <ReconnectAppsBanner enabled={bot.composio !== false && state.config?.composio?.configured === true} />
       {findOpen && <LazyBoundary onRetry={ChatFindBar.retry} onDismiss={() => setFindOpen(false)}><Suspense fallback={null}><ChatFindBar.Component threadId={bot.threadId} onClose={() => setFindOpen(false)} /></Suspense></LazyBoundary>}
 
       {/* Error banner */}
       {state.error && <ErrorBanner message={state.error} onDismiss={() => dispatch({ type: "error", message: null })}/>}
-      {state.deletionNote && <DeletionNoteBanner note={state.deletionNote} onDismiss={() => dispatch({ type: "deletionNote", note: null })} onRetry={async () => { const again = state.deletionNote?.retryBotId; if (again) { dispatch({ type: "deletionNote", note: null }); dispatch({ type: "deleteBot", source: "local", botId: again, attempt: newDeleteAttempt() }); return; } const response = await api("/api/deletions/retry", { method: "POST" }); dispatch({ type: "deletionOwed", notices: response?.notices, rev: response?.rev }); }} />}
+      {state.deletionNote && <DeletionNoteBanner note={state.deletionNote} onDismiss={() => dismissDeletionNote(state.deletionNote, (covers) => api("/api/deletions/dismiss", { method: "POST", body: JSON.stringify({ covers }) }), dispatch)} onRetry={async () => { const again = state.deletionNote?.retryBotId; if (again) { dispatch({ type: "deletionNote", note: null }); dispatch({ type: "deleteBot", source: "local", botId: again, attempt: newDeleteAttempt() }); return; } const response = await api("/api/deletions/retry", { method: "POST" }); dispatch({ type: "deletionOwed", notices: response?.notices, rev: response?.rev }); return response?.result; }} />}
 
       {/* Pinned message banner */}
       <PinnedBanner
@@ -1884,13 +1949,13 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
           if (el && e.target === el && e.nativeEvent.offsetX >= el.clientWidth) setBottomFollow(false);
         }}
         onWheel={(e) => {
-          if (e.deltaY < 0) setBottomFollow(false);
+          if (e.deltaY < 0) { if (canScroll(scrollRef.current) || !atLiveTail) setBottomFollow(false); }
           else if (atEnd()) setBottomFollow(true);
         }}
         onTouchStart={(e) => (touchY.current = e.touches[0]?.clientY ?? 0)}
         onTouchMove={(e) => {
           const y = e.touches[0]?.clientY ?? 0;
-          if (y > touchY.current + 4) setBottomFollow(false);
+          if (y > touchY.current + 4) { if (canScroll(scrollRef.current) || !atLiveTail) setBottomFollow(false); }
           else if (atEnd()) setBottomFollow(true);
         }}
         onScroll={() => {
@@ -1954,6 +2019,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
             onStartEdit={startEdit}
             onCancelEdit={cancelEdit}
             onSubmitEdit={submitEdit}
+            onDraftEdit={draftEdit}
             onRegenerate={regenerate}
             onReply={selectReply}
             scrollRef={scrollRef}
@@ -2003,7 +2069,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
             since={busySince}
           >
             {popping ? (
-              <div className="w-fit max-w-[min(42rem,78%)] max-md:max-w-full rounded-2xl bg-card px-4 py-2.5 text-[15px] leading-relaxed text-ink">
+              <div className="w-fit max-w-[min(var(--chat-bubble-max),var(--chat-bubble-pct))] max-md:max-w-full rounded-2xl bg-card px-4 py-2.5 text-[15px] leading-relaxed text-ink">
                 <MessageBoundary fallbackText={popping.text || "Generated image"}>
                   {poppingMessage?.attachments?.length ? (
                     <AttachedImageGallery
@@ -2023,16 +2089,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
       </div>
 
       {/* Reading scrollback - one tap back to the end, streaming or not */}
-      {!follow && (
-        <button
-          onClick={jumpToLatest}
-          aria-label="Jump to latest messages"
-          className="animate-pop-in absolute left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-hairline/40 bg-raised px-3 py-1.5 text-[12.5px] text-ink shadow-lg hover:bg-raised-hover"
-          style={{ bottom: composerDock.height }}
-        >
-          <ArrowDown size={13} /> Jump to latest
-        </button>
-      )}
+      {jumpToLatestVisible(follow, scrollable, atLiveTail) && <JumpToLatestButton onClick={jumpToLatest} bottom={composerDock.height} />}
 
       {/* Keyed by task: each conversation keeps its own draft and a failed
           request can restore the old task without spilling into the newly
@@ -2065,6 +2122,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
     </div>
       <WorkspacePane bot={bot} />
     </main>
+    </ThreadLinkProvider>
     </AccessLinkProvider></ChipsProvider>
     </OutcomesProvider>
   );

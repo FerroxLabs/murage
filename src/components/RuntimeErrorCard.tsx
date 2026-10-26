@@ -2,24 +2,27 @@ import { useId, type ReactNode } from "react";
 import { AlertTriangle, Hourglass, MonitorX, RefreshCw, Settings2 } from "lucide-react";
 import { isWordedLocalFailure, classifyLocalResourceConflict, classifyLocalSetupFailure, engineErrorCategory, type LocalResourceConflict, type LocalSetupFailure } from "../../shared/provider-error";
 import { t } from "@/lib/i18n";
+import { inNativeShell } from "@/lib/native-shell";
 import { isProviderSafetyBlock } from "../../shared/provider-safety";
-import { plainEngineError } from "../../shared/plain-engine-error";
+import { plainEngineError, withoutProviderSentence } from "../../shared/plain-engine-error";
 import { describeTurnError } from "../../shared/turn-error-code";
 import { DiagnosticDetails,type IncidentMessageSelection } from "./DiagnosticDetails";
 
 const focus = "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus";
 
 /** Plain-text diagnostics only. No provider HTML or automatic retry. */
-export function RuntimeErrorCard({ message, details, errorKind, localFailure, localFailureEngine, diagnostic: tracking, turnId, incident, setup, botName, onRetry, onOpenProviderSettings }: {
+export function RuntimeErrorCard({ message: rawMessage, details, errorKind, localFailure, localFailureEngine, diagnostic: tracking, turnId, incident, setup, botName, onRetry, retryLabel, onOpenProviderSettings }: {
   message: string; details?: string; errorKind?: string; localFailure?: string; localFailureEngine?: string; setup?: ReactNode; botName?: string;
   diagnostic?: unknown; turnId?: string; incident?:IncidentMessageSelection;
-  onRetry?: () => void; onOpenProviderSettings: () => void;
+  onRetry?: () => void; retryLabel?: string; onOpenProviderSettings: () => void;
 }) {
   const titleId = useId();
+  // The store apps show no provider-written payment wording (no purchase or top-up pointers).
+  const message = inNativeShell() ? withoutProviderSentence(rawMessage) : rawMessage;
   const conflict = setup ? undefined : classifyLocalResourceConflict(message, details);
-  if (conflict) return <ResourceBusyCard conflict={conflict} message={message} diagnostic={tracking} turnId={turnId} incident={incident} onRetry={onRetry} />;
+  if (conflict) return <ResourceBusyCard conflict={conflict} message={message} diagnostic={tracking} turnId={turnId} incident={incident} onRetry={onRetry} retryLabel={retryLabel} />;
   const local = setup ? undefined : classifyLocalSetupFailure(message, details, localFailure);
-  if (local) return <LocalSetupFailureCard failure={local} engine={localFailureEngine} message={message} details={details} diagnostic={tracking} turnId={turnId} incident={incident} onRetry={onRetry} />;
+  if (local) return <LocalSetupFailureCard failure={local} engine={localFailureEngine} message={message} details={details} diagnostic={tracking} turnId={turnId} incident={incident} onRetry={onRetry} retryLabel={retryLabel} />;
   const safetyBlocked = !setup && (isProviderSafetyBlock(message) || isProviderSafetyBlock(details ?? ""));
   const generic = /^(?:internal error|unknown error|ACP request failed|request failed)[.!]?$/i.test(message.trim());
   // Fixed copy for the kind the driver reported (Fuigo's error_kind), led
@@ -57,7 +60,7 @@ export function RuntimeErrorCard({ message, details, errorKind, localFailure, lo
         : "Review the details, then retry or choose another configured model in Provider settings."}</p>}
       {!safetyBlocked && <div className="mt-4 flex flex-wrap gap-2">
         <button type="button" onClick={onOpenProviderSettings} className={"inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-hairline/70 bg-control px-3 py-2 text-[13px] font-medium text-ink " + focus}><Settings2 size={15} aria-hidden="true" /> Provider settings</button>
-        {onRetry && !setup && <button type="button" onClick={onRetry} className={"inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-[13px] font-medium text-ink-secondary hover:bg-raised " + focus}><RefreshCw size={14} aria-hidden="true" /> Retry</button>}
+        {onRetry && !setup && <button type="button" onClick={onRetry} className={"inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-[13px] font-medium text-ink-secondary hover:bg-raised " + focus}><RefreshCw size={14} aria-hidden="true" /> {retryLabel ?? "Retry"}</button>}
       </div>}
       <details className="mt-3 text-[11px] text-ink-secondary">
         <summary className={"w-fit cursor-pointer rounded py-1 " + focus}>Technical details</summary>
@@ -72,8 +75,8 @@ export function RuntimeErrorCard({ message, details, errorKind, localFailure, lo
 /** Another thread on this device holds the browser, computer or working folder
  * this thread needs. The only useful action is to wait or stop that thread and
  * retry, so the card offers no provider, account or model settings. */
-function ResourceBusyCard({ conflict, message, diagnostic, turnId, incident, onRetry }: {
-  conflict: LocalResourceConflict; message: string; onRetry?: () => void;
+function ResourceBusyCard({ conflict, message, diagnostic, turnId, incident, onRetry, retryLabel }: {
+  conflict: LocalResourceConflict; message: string; onRetry?: () => void; retryLabel?: string;
   diagnostic?: unknown; turnId?: string; incident?:IncidentMessageSelection;
 }) {
   const titleId = useId();
@@ -92,7 +95,7 @@ function ResourceBusyCard({ conflict, message, diagnostic, turnId, incident, onR
         <p className="mt-1 text-[13px] leading-relaxed text-ink-secondary">{t(onRetry ? "runtimeError.busy.resolution" : "runtimeError.busy.resolutionSend")}</p>
       </div>
       {onRetry && <div className="mt-4 flex flex-wrap gap-2">
-        <button type="button" onClick={onRetry} className={"inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-hairline/70 bg-control px-3 py-2 text-[13px] font-medium text-ink hover:bg-raised " + focus}><RefreshCw size={14} aria-hidden="true" /> {t("runtimeError.busy.retry")}</button>
+        <button type="button" onClick={onRetry} className={"inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-hairline/70 bg-control px-3 py-2 text-[13px] font-medium text-ink hover:bg-raised " + focus}><RefreshCw size={14} aria-hidden="true" /> {retryLabel ?? t("runtimeError.busy.retry")}</button>
       </div>}
       <details className="mt-3 text-[11px] text-ink-secondary">
         <summary className={"w-fit cursor-pointer rounded py-1 " + focus}>{t("runtimeError.busy.details")}</summary>
@@ -107,8 +110,8 @@ function ResourceBusyCard({ conflict, message, diagnostic, turnId, incident, onR
  * the turn. Not a provider failure, so no Provider settings action and no
  * "choose another configured model" advice: the message names what to fix,
  * and Retry is the way on. */
-function LocalSetupFailureCard({ failure, engine, message, details, diagnostic, turnId, incident, onRetry }: {
-  failure: LocalSetupFailure; engine?: string; message: string; details?: string; onRetry?: () => void;
+function LocalSetupFailureCard({ failure, engine, message, details, diagnostic, turnId, incident, onRetry, retryLabel }: {
+  failure: LocalSetupFailure; engine?: string; message: string; details?: string; onRetry?: () => void; retryLabel?: string;
   diagnostic?: unknown; turnId?: string; incident?:IncidentMessageSelection;
 }) {
   const titleId = useId();
@@ -131,7 +134,7 @@ function LocalSetupFailureCard({ failure, engine, message, details, diagnostic, 
         <p className="mt-1 text-[13px] leading-relaxed text-ink-secondary">{t(`runtimeError.local.${failure}.resolution`, params)}</p>
       </div>
       {onRetry && <div className="mt-4 flex flex-wrap gap-2">
-        <button type="button" onClick={onRetry} className={"inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-hairline/70 bg-control px-3 py-2 text-[13px] font-medium text-ink hover:bg-raised " + focus}><RefreshCw size={14} aria-hidden="true" /> {t("runtimeError.busy.retry")}</button>
+        <button type="button" onClick={onRetry} className={"inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-hairline/70 bg-control px-3 py-2 text-[13px] font-medium text-ink hover:bg-raised " + focus}><RefreshCw size={14} aria-hidden="true" /> {retryLabel ?? t("runtimeError.busy.retry")}</button>
       </div>}
       <details className="mt-3 text-[11px] text-ink-secondary">
         <summary className={"w-fit cursor-pointer rounded py-1 " + focus}>{t("runtimeError.busy.details")}</summary>

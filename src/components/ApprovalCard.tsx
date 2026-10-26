@@ -4,8 +4,10 @@
 // approval is a decision about one concrete action, so it shows the tool
 // and the actual command/path in monospace, and the choices carry their
 // own behavior instead of being matched by their label text.
-import { Check, ShieldCheck, X } from "lucide-react";
-import { type Bot, type Message } from "@/state/store";
+import { useState } from "react";
+import { Check, ShieldCheck, Undo2, X } from "lucide-react";
+import { api, type Bot, type Message } from "@/state/store";
+import { AUTOMATION_UNDO_WINDOW_MS, automationActionUndoable } from "../../shared/routine-request";
 import { cn } from "@/lib/cn";
 import { SkillRequestPreview } from "@/components/SkillRequestPreview";
 import { ApprovalDetailBody } from "@/components/ApprovalDetailBody";
@@ -214,6 +216,57 @@ const ROUTINE_SETTLED_LABEL = {
   delete: "Routine deleted",
 } as const;
 
+const WEBHOOK_SETTLED_LABEL = {
+  create: "automations.webhookCreated",
+  update: "automations.webhookUpdated",
+  pause: "automations.webhookPaused",
+  resume: "automations.webhookResumed",
+  delete: "automations.webhookDeleted",
+} as const satisfies Record<string, LocaleKey>;
+
+/** SL-J J2: an applied routine or webhook change offers Undo for 7 days.
+ * Undo puts back exactly what the change replaced, through the same
+ * `/respond` as Confirm; the server refuses it once anything moved. */
+function AutomationUndo({ message }: { message: Message }) {
+  const card = message.card!;
+  const request = card.routineRequest!;
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const undo = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api(`/api/threads/${request.threadId}/respond`, { method: "POST", body: JSON.stringify({ requestId: request.requestId, behavior: "undo" }) });
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : String(failure));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <Check size={14} className="text-success" />
+      {t("automations.applied")}
+      <button
+        type="button"
+        onClick={() => void undo()}
+        disabled={busy}
+        className="ml-2 inline-flex items-center gap-1 rounded-md border border-hairline/60 px-2 py-0.5 text-[12.5px] text-ink hover:bg-control disabled:opacity-60"
+      >
+        <Undo2 size={13} /> {busy ? t("automations.undoing") : t("automations.undo")}
+      </button>
+      {error && <span role="alert" className="ml-2 text-warning">{error}</span>}
+    </>
+  );
+}
+
+/** Undo shows while the change is applied, not undone, undoable, and inside its 7 days. */
+function automationUndoOffered(card: NonNullable<Message["card"]>, now = Date.now()): boolean {
+  const request = card.routineRequest;
+  return Boolean(request && card.answered === "allow" && !card.undone && automationActionUndoable(request.operation.action)
+    && typeof request.appliedAt === "number" && now - request.appliedAt <= AUTOMATION_UNDO_WINDOW_MS);
+}
+
 const SKILL_SETTLED_LABEL = {
   create: "Skill enabled",
   update: "Skill updated",
@@ -260,6 +313,8 @@ function toolLabel(tool?: string): string {
     WebSearch: "search the web",
     schedule_routine: "schedule a routine",
     manage_routine: "change a routine",
+    create_webhook: "create a webhook",
+    manage_webhook: "change a webhook",
     stage_skill: "enable a learned skill",
     update_skill: "update a learned skill",
   };
@@ -288,7 +343,10 @@ export function ApprovalCard({
   const isSkillRequest = Boolean(card.skillRequest);
   const routineAction = card.routineRequest?.operation.action;
   const skillAction = card.skillRequest?.action;
-  const routineSettledLabel = routineAction ? ROUTINE_SETTLED_LABEL[routineAction] : undefined;
+  const isWebhookRequest = card.routineRequest?.kind === "webhook";
+  const routineSettledLabel = !routineAction ? undefined
+    : isWebhookRequest ? (routineAction === "run_now" ? undefined : t(WEBHOOK_SETTLED_LABEL[routineAction]))
+      : ROUTINE_SETTLED_LABEL[routineAction];
   const skillSettledLabel = skillAction ? SKILL_SETTLED_LABEL[skillAction] : undefined;
   // The one-time "use this computer" question (server/host-computer-consent.ts)
   // is not a tool call: it reads as a sentence with a plain explanation.
@@ -298,7 +356,8 @@ export function ApprovalCard({
   const delegation = !isRoutineRequest && !isSkillRequest && Boolean(card.tool) && delegationToolKind(card.tool!, card.subtitle ?? "") !== null;
   const peerTarget = delegation ? card.title?.match(/ @([^@]{1,40})$/)?.[1] : undefined;
   const displayTool = isRoutineRequest
-    ? routineAction === "create" ? "schedule_routine" : "manage_routine"
+    ? isWebhookRequest ? routineAction === "create" ? "create_webhook" : "manage_webhook"
+      : routineAction === "create" ? "schedule_routine" : "manage_routine"
     : isSkillRequest
       ? skillAction === "update" ? "update_skill" : "stage_skill"
     : card.tool;
@@ -338,7 +397,7 @@ export function ApprovalCard({
         <ApprovalDetailBody
           tool={isRoutineRequest || isSkillRequest ? undefined : card.tool}
           detail={card.subtitle}
-          label={isRoutineRequest ? "Routine details" : isSkillRequest ? "Skill details" : "Approval details"}
+          label={isWebhookRequest ? t("automations.webhookDetails") : isRoutineRequest ? "Routine details" : isSkillRequest ? "Skill details" : "Approval details"}
           preClassName="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-inset px-3 py-2 font-mono text-[12.5px] leading-relaxed text-ink"
         />
       )}
@@ -354,7 +413,13 @@ export function ApprovalCard({
       {/* The decision lives in the composer (one place to answer, and it
           can't be scrolled past); here we only record what happened. */}
       <div className="mt-3 flex items-center gap-1.5 text-[13px] text-ink-secondary">
-        {settled === "allow" ? (
+        {settled === "allow" && isRoutineRequest && card.undone ? (
+          <>
+            <Undo2 size={14} /> {t("automations.undone")}
+          </>
+        ) : settled === "allow" && automationUndoOffered(card) ? (
+          <AutomationUndo message={message} />
+        ) : settled === "allow" ? (
           <>
             <Check size={14} className="text-success" />
             {skillSettledLabel ?? routineSettledLabel ?? (isRoutineRequest ? "Routine confirmed" : isSkillRequest ? "Skill confirmed" : "Allowed")}

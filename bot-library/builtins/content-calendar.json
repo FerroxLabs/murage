@@ -54,7 +54,8 @@
         "title": "Content Calendar",
         "description": "Almanac prepares a 90-day content calendar from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For a complete editorial team, use Editorial Newsroom. For a dated promotions team, use Promo Calendar War-Room.",
         "appearance": {
-          "color": "blue"
+          "color": "blue",
+          "mascotBody": "squircle"
         },
         "skills": [
           "editorial-calendar",

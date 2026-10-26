@@ -1410,7 +1410,7 @@ describe("comms e2e (fake ACP fleet)", () => {
         );
         if (sourceChip && terminal) {
           // r7 F3: the delegating bot reads this conversation, so the chip says the kind of failure and never the engine's own words
-          expect(sourceChip.tool.name).toMatch(/could not start: (?:the provider is limiting requests right now|it is not signed in to its provider|its provider took too long to answer|its provider had an error|it did not say why)$/);
+          expect(sourceChip.tool.name).toMatch(/could not start: (?:the provider is limiting requests right now|it is not signed in to its provider|its provider took too long to answer|its provider had an error|it cannot be reached from this conversation|it is archived|it is no longer shared with this team|its team was removed|the request no longer fits its conversation|sharing is paused|Murage could not set up its turn\. Its conversation has the details)$/);
           // r7 R7-04: the full explanation stays where the owner reads it, in the helper's own conversation
           const helperBot = state.bots.find((b: any) => b.id === helper.id);
           const explained = helperBot.messages.find((m: any) => m.kind === "activity" && m.tool?.ok === false && /^error: /.test(m.tool?.name ?? "") && (m.tool?.errorDetails ?? "").length > 0);

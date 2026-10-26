@@ -8,6 +8,7 @@ import { ChatView } from "@/components/ChatView";
 import { GroupView } from "@/components/GroupView";
 import { preloadConnectedApps } from "@/lib/connected-apps-preload";
 import { UpdateBanner } from "@/components/UpdateBanner";
+import { UpdateStaleNotice } from "@/components/UpdateStaleNotice";
 import { ServerLifecycleBanner } from "@/components/ServerLifecycleBanner";
 import { MemoryIntegrityStrip } from "@/components/MemoryIntegrityStrip";
 import { CloudUnreachableBanner } from "@/components/cloud/CloudUnreachableBanner";
@@ -24,6 +25,7 @@ import { CommandPaletteHost } from "@/components/CommandPaletteHost";
 import { FirstRunPhases } from "@/components/FirstRunPhases";
 import { useSetupView } from "@/components/FirstRunChrome";
 import { firstRunOwnsMainView } from "@/lib/first-run";
+import { settleSendKeyForUpgrade } from "@/lib/send-key";
 import { BotListDrawerProvider, PhoneBotListBar, useBotListDrawer } from "@/components/OpenBotListButton";
 import { heldComputerControlBotIds } from "@/lib/computer-control";
 import { skillRecorderEnabled } from "@/lib/feature-flags";
@@ -64,6 +66,8 @@ const RoutinesPage = RoutinesPageLazy.Component;
 
 const TeamMapPageLazy = retryableLazy(() => import("@/components/TeamMapPage").then((module) => ({ default: module.TeamMapPage })));
 const TeamMapPage = TeamMapPageLazy.Component;
+const AllChatsPageLazy = retryableLazy(() => import("@/components/AllChatsPage").then((module) => ({ default: module.AllChatsPage })));
+const AllChatsPage = AllChatsPageLazy.Component;
 
 const SkillRecorderPageLazy = retryableLazy(() => import("@/components/SkillRecorderPage").then((module) => ({ default: module.SkillRecorderPage })));
 const SkillRecorderPage = SkillRecorderPageLazy.Component;
@@ -84,6 +88,9 @@ function Shell() {
   // The same cached `GET /api/setup` the phase bar reads, so the band and the
   // view underneath it cannot disagree about whose screen this is.
   const { view: setupView } = useSetupView();
+  // 1.0.4 made Ctrl/Cmd+Enter the Japanese default; an install set up before it keeps Enter.
+  const setupFirstRun = setupView?.firstRun;
+  useEffect(() => settleSendKeyForUpgrade(setupFirstRun), [setupFirstRun]);
   // Same three-state answer the whole app uses, and the same rule: only a
   // CONFIRMED desktop gets a first-run surface. See the comment on App().
   const desktop = useDesktopSurface();
@@ -201,12 +208,12 @@ function Shell() {
   // Engines switched off (a restored copy) never hide the conversations: the
   // chat stays, with a notice above it (D7).
   const enginesOff = noEngines && enginesOnlySwitchedOff(state.instances) && Boolean(bot || group);
-  // App-wide shortcuts: ⌘N new bot · ⌘, Settings · ⌘1–9 jump to bot · ⌘⇧[ / ⌘⇧] prev/next.
+  // App-wide shortcuts: ⌘N new bot · ⌘, Settings · ⌘1–9 jump to bot · ⌘⇧[ / ⌘⇧] prev/next · ⌘⇧K All chats.
   // Kept deliberately small; every panel already closes on Esc.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
-      if (!mod) return;
+      if (!mod || e.defaultPrevented || e.isComposing) return;
       const bots = state.bots.filter((b) => !b.hidden);
       if (e.key === "n" && !e.shiftKey) {
         e.preventDefault();
@@ -221,6 +228,10 @@ function Shell() {
           e.preventDefault();
           dispatch({ type: "select", id: target.id });
         }
+      } else if (e.shiftKey && !e.altKey && (e.key.toLowerCase() === "k" || e.code === "KeyK")) {
+        // All chats; again (or Escape) goes back to the chat
+        e.preventDefault();
+        dispatch(state.activeView === "all-chats" ? { type: "closeAllChats" } : { type: "showAllChats" });
       } else if (e.shiftKey && (e.key === "[" || e.key === "]")) {
         const idx = bots.findIndex((b) => b.id === state.selectedId);
         const next = bots[(idx + (e.key === "]" ? 1 : -1) + bots.length) % bots.length];
@@ -232,7 +243,7 @@ function Shell() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [state.bots, state.selectedId, dispatch]);
+  }, [state.bots, state.selectedId, state.activeView, dispatch]);
 
   useEffect(() => {
     notificationBridge()?.setUnreadCount?.(unreadCount);
@@ -271,7 +282,8 @@ function Shell() {
 
   useEffect(() => {
     if (state.activeView === "routines" && previousViewRef.current !== "routines") {
-      calendarOriginRef.current = previousViewRef.current;
+      // All chats is a list of chats, not a place to come back to: the calendar returns to the chat
+      calendarOriginRef.current = previousViewRef.current === "all-chats" ? "chat" : previousViewRef.current;
     }
     previousViewRef.current = state.activeView;
   }, [state.activeView]);
@@ -377,6 +389,7 @@ function Shell() {
       {state.signedOut && <SignedOutCard />}
       {/* fixed-position popup, bottom-left — outside the layout flow */}
       <UpdateBanner />
+      <UpdateStaleNotice />
       {/* The first run's phases, as a band ABOVE whatever is in the main view
           rather than on top of it or beside it. It owns its own visibility
           (src/lib/first-run.ts): the server's `view.firstRun` offers it, and
@@ -407,7 +420,9 @@ function Shell() {
         // focus still inside: the now inert drawer would drop it to the page.
         onReturnFocus={returnDrawerFocus}
       />}
-      {state.activeView === "team-map" ? (
+      {state.activeView === "all-chats" ? (
+        <LazyBoundary onRetry={AllChatsPageLazy.retry}><Suspense fallback={<LazyFallback />}><AllChatsPage /></Suspense></LazyBoundary>
+      ) : state.activeView === "team-map" ? (
         <LazyBoundary onRetry={TeamMapPageLazy.retry}><Suspense fallback={<LazyFallback />}><TeamMapPage /></Suspense></LazyBoundary>
       ) : state.activeView === "routines" ? (
         <LazyBoundary onRetry={RoutinesPageLazy.retry}><Suspense fallback={<LazyFallback />}><RoutinesPage onBack={closeCalendar} onOpenRoom={openCalendarRoom} /></Suspense></LazyBoundary>

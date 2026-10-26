@@ -37,9 +37,11 @@ function ticket(now: number, over: Record<string, unknown> = {}, raw = false): s
   return `${payload}.${sign("sha256", signed, { key: cp.privateKey, dsaEncoding: "ieee-p1363" }).toString("base64url")}`;
 }
 /** A ticket minted for this device's session key, and the body the page posts for it. */
-function enter(now: number, dev: Dev, over: Record<string, unknown> = {}, tamper: { proofKey?: Pair; proofOver?: string; deviceId?: unknown } = {}) {
+function enter(now: number, dev: Dev, over: Record<string, unknown> = {}, tamper: { proofKey?: Pair; proofOver?: string; deviceId?: unknown; assertionProofKey?: Pair; assertionProofOver?: string; omitAssertionProof?: boolean } = {}) {
   const t = ticket(now, { bind: bindOf(dev.key), ...over });
-  return { t, body: { ticket: t, device: { deviceId: tamper.deviceId ?? null, publicKey: pem(dev.key), assertionKey: pem(dev.assertion), proof: signWith(tamper.proofKey ?? dev.key, `murage-door-v2:${tamper.proofOver ?? t}`) } } };
+  const device: Record<string, unknown> = { deviceId: tamper.deviceId ?? null, publicKey: pem(dev.key), assertionKey: pem(dev.assertion), proof: signWith(tamper.proofKey ?? dev.key, `murage-door-v2:${tamper.proofOver ?? t}`) };
+  if (!tamper.omitAssertionProof) device.assertionProof = signWith(tamper.assertionProofKey ?? dev.assertion, `murage-door-v2-assertion:${tamper.assertionProofOver ?? t}`);
+  return { t, body: { ticket: t, device } };
 }
 const envelope = (t: string): SignedHomeKey => { const dot = t.indexOf("."); return { algorithm: "ES256", payload: t.slice(0, dot), signature: t.slice(dot + 1) }; };
 const verify = (t: string, now: number) => verifiedDoorTicket(envelope(t), cpJwk, homeId, generation, origin, now);
@@ -130,7 +132,7 @@ describe("the door routes", () => {
     const r = await h.call("POST", "/api/cloud/enter", enter(h.now(), dev).body);
     expect(r.status).toBe(200);
     expect(cookieOf(r)).toMatch(/^__Host-murage=[A-Za-z0-9_-]{43}; Path=\/; Secure; HttpOnly; SameSite=Strict; Max-Age=900$/);
-    expect(r.body).toEqual({ state: "signed-in", reason: "first-device", deviceId: expect.any(String), scope: "browser", expiresIn: 900 });
+    expect(r.body).toEqual({ state: "signed-in", reason: "first-device", deviceId: expect.any(String), scope: "browser", expiresIn: 900, owner: false });
     expect(JSON.stringify(r.body)).not.toContain("ccessToken");
     expect(h.sessions.owner()).toBe("owner");
     const row = h.sessions.device(r.body.deviceId)!;
@@ -453,7 +455,7 @@ describe("device management", () => {
     const r = await h.call("POST", "/api/cloud/enter", enter(h.now(), dev).body);
     const listed = await management(h, "/api/cloud/devices/list");
     expect(listed.status).toBe(200);
-    expect(listed.body.devices).toEqual([{ id: r.body.deviceId, scope: "browser", addedAt: h.now(), lastSeenAt: h.now(), keyHash: bindOf(dev.key), bind: bindOf(dev.key) }]);
+    expect(listed.body.devices).toEqual([{ id: r.body.deviceId, scope: "browser", addedAt: h.now(), lastSeenAt: h.now(), keyHash: bindOf(dev.key), bind: bindOf(dev.key), factor: null }]);
     const reused = nonce();
     expect((await management(h, "/api/cloud/devices/list", {}, { nonce: reused })).status).toBe(200);
     expect((await management(h, "/api/cloud/devices/list", {}, { nonce: reused })).status).toBe(403);
@@ -573,5 +575,118 @@ describe("devices/list stays fast and answers while another writer holds the dat
     b.exec("COMMIT");
     expect(sessions.verifyBootstrap(raw, sig(raw), secret).operation).toBe("/api/cloud/devices/list"); // the same call, retried
     expect(() => sessions.verifyBootstrap(raw, sig(raw), secret)).toThrow("Pairing authorization refused"); // a replay is still refused
+  });
+});
+
+describe("the remembered-owner factor", () => {
+  const factorRow = (h: { db: DatabaseSync }, id: string) =>
+    h.db.prepare("SELECT kind, expiresAt, revokedAt FROM cloud_browser_factors WHERE device=?").get(id) as { kind: string; expiresAt: number | null; revokedAt: number | null } | undefined;
+  it("the assertion proof: required for a browser, verified when present, matched to the device on file", async () => {
+    const h = await home(); const dev = mkDevice();
+    expect((await h.call("POST", "/api/cloud/enter", enter(h.now(), dev, {}, { omitAssertionProof: true }).body)).status).toBe(403); // body_malformed
+    expect(rows(h)).toBe(0);
+    expect((await h.call("POST", "/api/cloud/enter", enter(h.now(), dev, {}, { assertionProofKey: ec() }).body)).status).toBe(403); // assertion_proof_refused
+    expect(rows(h)).toBe(0);
+    await h.call("POST", "/api/cloud/enter", enter(h.now(), dev).body); // on file now
+    const r = await h.call("POST", "/api/cloud/enter", enter(h.now(), { key: dev.key, assertion: ec() }).body); // known key, different assertion key
+    expect(r.status).toBe(403); // device_key_invalid
+    // a desktop ticket enters without an assertion proof (R7)
+    expect((await h.call("POST", "/api/cloud/enter", enter(h.now(), mkDevice(), { kind: "desktop" }, { omitAssertionProof: true }).body)).status).toBe(200);
+  });
+  it("a browser proof ticket issues the factor, answers owner:true, opens the reads and sends chat but not writes", async () => {
+    const h = await home(); const dev = mkDevice();
+    const r = await h.call("POST", "/api/cloud/enter", enter(h.now(), dev, { proof: "email" }).body);
+    expect(r.status).toBe(200); expect(r.body.owner).toBe(true); expect(typeof r.body.ownerUntil).toBe("number");
+    const d = h.sessions.device(r.body.deviceId)!;
+    expect(d.factor).toBe("remembered-owner"); expect(isOwnerBrowser(d)).toBe(true);
+    const cookie = sessionCookie(r);
+    expect((await h.call("GET", "/api/decisions", undefined, cookie)).status).toBe(200);
+    expect((await h.call("POST", "/api/bots/b1/messages", { text: "hi" }, cookie)).status).toBe(200);
+    expect((await h.call("PUT", "/api/bots/b1/general-notes", { text: "x" }, cookie)).status).toBe(403);
+    // proof:"factor" issues the same way (R3)
+    const f = await h.call("POST", "/api/cloud/enter", enter(h.now(), mkDevice(), { proof: "factor" }).body);
+    expect(h.sessions.device(f.body.deviceId)!.factor).toBe("remembered-owner");
+  });
+  it("an unknown proof value is a malformed ticket, and a desktop proof ticket writes no factor", async () => {
+    const now = 1_800_000_000_000;
+    expect(outcomeOf(() => verify(ticket(now, { proof: "x" }), now))).toBe("ticket_malformed");
+    const h = await home(); const desk = mkDevice();
+    const r = await h.call("POST", "/api/cloud/enter", enter(h.now(), desk, { kind: "desktop", proof: "email" }).body);
+    expect(r.status).toBe(200); expect(r.body.owner).toBe(false);
+    expect(h.sessions.device(r.body.deviceId)!.factor).toBe(false);
+    expect(factorRow(h, r.body.deviceId)).toBeUndefined();
+  });
+  it("a bare ticket writes no factor (B1), and a known device renews only with a proof ticket, never a bare one; a passkey row is never replaced", async () => {
+    const h = await home(); const dev = mkDevice();
+    const bare = await h.call("POST", "/api/cloud/enter", enter(h.now(), dev).body);
+    expect(h.sessions.device(bare.body.deviceId)!.factor).toBe(false);
+    const first = await h.call("POST", "/api/cloud/enter", enter(h.now(), dev, { proof: "email" }).body); // same key, now with proof
+    const firstExpiry = factorRow(h, first.body.deviceId)!.expiresAt!;
+    h.tick(60_000);
+    await h.call("POST", "/api/cloud/enter", enter(h.now(), dev, { proof: "email" }).body); // renew
+    expect(factorRow(h, first.body.deviceId)!.expiresAt!).toBeGreaterThan(firstExpiry);
+    h.tick(60_000);
+    const renewed = factorRow(h, first.body.deviceId)!.expiresAt!;
+    await h.call("POST", "/api/cloud/enter", enter(h.now(), dev).body); // a BARE ticket does not renew
+    expect(factorRow(h, first.body.deviceId)!.expiresAt!).toBe(renewed);
+    // a passkey row is never replaced by a remembered-owner issuance
+    h.db.prepare("UPDATE cloud_browser_factors SET kind='passkey', expiresAt=NULL WHERE device=?").run(first.body.deviceId);
+    await h.call("POST", "/api/cloud/enter", enter(h.now(), dev, { proof: "email" }).body);
+    expect(factorRow(h, first.body.deviceId)!.kind).toBe("passkey");
+  });
+  it("after a revoke, only an emailed stepUpAt strictly after the mark re-issues, even for a never-seen key (R10)", async () => {
+    const h = await home();
+    const a = await h.call("POST", "/api/cloud/enter", enter(h.now(), mkDevice(), { proof: "email" }).body);
+    const t1 = h.now();
+    h.sessions.revoke(a.body.deviceId); // writes '*' at t1
+    expect(h.sessions.watermarkFor("*")).toBe(t1);
+    h.tick(20_000);
+    const stale = await h.call("POST", "/api/cloud/enter", enter(h.now(), mkDevice(), { proof: "email", stepUpAt: t1 + 1_000 }).body);
+    expect(h.sessions.device(stale.body.deviceId)!.factor).toBe(false); // not strictly after the mark + skew
+    const fresh = await h.call("POST", "/api/cloud/enter", enter(h.now(), mkDevice(), { proof: "email", stepUpAt: t1 + 6_000 }).body);
+    expect(h.sessions.device(fresh.body.deviceId)!.factor).toBe("remembered-owner");
+    const factorProof = await h.call("POST", "/api/cloud/enter", enter(h.now(), mkDevice(), { proof: "factor", stepUpAt: t1 + 6_000 }).body);
+    expect(h.sessions.device(factorProof.body.deviceId)!.factor).toBe(false); // email-only after a revoke
+  });
+  it("revokeOwnerFactor writes '*' and never clears a revoked row's revokedAt", async () => {
+    const h = await home();
+    const a = await h.call("POST", "/api/cloud/enter", enter(h.now(), mkDevice(), { proof: "email" }).body);
+    h.sessions.revokeOwnerFactor(a.body.deviceId);
+    expect(h.sessions.watermarkFor("*")).toBe(h.now());
+    expect(h.sessions.device(a.body.deviceId)!.factor).toBe(false);
+    const revokedAt = factorRow(h, a.body.deviceId)!.revokedAt;
+    expect(typeof revokedAt).toBe("number");
+    h.sessions.revokeOwnerFactor(a.body.deviceId); // a second watermark write never clears the old row
+    expect(factorRow(h, a.body.deviceId)!.revokedAt).toBe(revokedAt);
+  });
+  it("Medium-2: a crash between revoked=1 and the watermark rolls back both", async () => {
+    const h = await home();
+    const r = await h.call("POST", "/api/cloud/enter", enter(h.now(), mkDevice(), { proof: "email" }).body);
+    const id = r.body.deviceId;
+    const real = h.db.prepare.bind(h.db);
+    const breakWatermark = () => { (h.db as unknown as { prepare: (s: string) => unknown }).prepare = (sql: string) => { if (sql.includes("cloud_owner_watermarks")) throw new Error("boom"); return real(sql); }; };
+    const restore = () => { (h.db as unknown as { prepare: unknown }).prepare = real; };
+    breakWatermark();
+    expect(() => h.sessions.revoke(id)).toThrow();
+    restore();
+    expect(h.sessions.device(id)).toBeDefined();        // the device is NOT revoked
+    expect(h.sessions.watermarkFor("*")).toBe(0);       // the mark is unchanged
+    breakWatermark();
+    expect(() => h.sessions.revokeOwnerFactor(id)).toThrow();
+    restore();
+    expect(h.sessions.device(id)!.factor).toBe("remembered-owner"); // the factor is NOT revoked
+  });
+  it("transaction invariant: a replayed proof ticket adds no second device, factor or nonce; a revoke between enters withholds", async () => {
+    const h = await home(); const dev = mkDevice();
+    const e = enter(h.now(), dev, { proof: "email" });
+    expect((await h.call("POST", "/api/cloud/enter", e.body)).status).toBe(200);
+    const d1 = rows(h), n1 = nonces(h);
+    expect((await h.call("POST", "/api/cloud/enter", e.body)).status).toBe(403); // ticket_reused
+    expect(rows(h)).toBe(d1); expect(nonces(h)).toBe(n1);
+    const r1 = await h.call("POST", "/api/cloud/enter", enter(h.now(), dev, { proof: "email" }).body);
+    h.sessions.revoke(r1.body.deviceId); // revokes the device and writes '*'
+    const r2 = await h.call("POST", "/api/cloud/enter", enter(h.now(), dev, { proof: "email" }).body); // same key, new device, pre-revoke stepUpAt
+    expect(r2.status).toBe(200);
+    expect(h.sessions.device(r2.body.deviceId)!.factor).toBe(false);
   });
 });

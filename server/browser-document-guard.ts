@@ -105,7 +105,13 @@ export class BrowserDocumentGuard {
   private connection?: () => Duplex;
   /** `connectTimeoutMs`: an attached owner's Chrome asks them to Allow this
    * connection, which takes a person, not 5 seconds (0.1.60 Linux D12). */
-  constructor(command: (args: string[]) => Promise<unknown>, options: { connectTimeoutMs?: number; connection?: () => Duplex } = {}) { this.command = command; this.connection = options.connection; this.connectTimeoutMs = options.connectTimeoutMs ?? 5000; }
+  private endpoint?: string;
+  /** `endpoint`: a fixed loopback CDP address to use instead of asking the engine (the owner's Chrome, through Murage's one connection). */
+  /** `scope`: the only pages to check ("Use my Chrome": the bot's own tabs, the only ones its engine can see). Without it, every page. */
+  private scope?: () => { targets: ReadonlySet<string>; closed: number };
+  /** How many bot tabs had closed when this check last looked. */
+  private closedSeen = 0;
+  constructor(command: (args: string[]) => Promise<unknown>, options: { connectTimeoutMs?: number; connection?: () => Duplex; endpoint?: string; scope?: () => { targets: ReadonlySet<string>; closed: number } } = {}) { this.scope = options.scope; this.command = command; this.connection = options.connection; this.connectTimeoutMs = options.connectTimeoutMs ?? 5000; this.endpoint = options.endpoint; }
   private fail() {
     for(const p of this.pending.values()) {clearTimeout(p.timer);p.reject(new Error("Browser document guard disconnected"));}
     this.pending.clear();this.sessions.clear();this.socket=undefined;this.opening=undefined;
@@ -114,13 +120,15 @@ export class BrowserDocumentGuard {
     if(this.socket?.readyState===WebSocket.OPEN)return;
     if(this.opening)return this.opening;
     this.opening=(async()=>{
-      const value=await this.command(["get","cdp-url"]) as any;
+      const value=this.endpoint??await this.command(["get","cdp-url"]) as any;
       const endpoint=typeof value==="string"?value:value?.cdpUrl??value?.cdp_url??value?.url;
       const url=new URL(endpoint);
       if(url.protocol!=="ws:"||!["127.0.0.1","localhost","[::1]"].includes(url.hostname))throw new Error("Browser guard requires a local CDP endpoint");
       const socket=new WebSocket(url,{maxPayload:2*1024*1024,handshakeTimeout:this.connectTimeoutMs,...(this.connection?{createConnection:this.connection as never}:{})});this.socket=socket;
       socket.on("message",raw=>{
-        try {const message=JSON.parse(raw.toString());const p=this.pending.get(message.id);if(!p)return;this.pending.delete(message.id);clearTimeout(p.timer);if(message.error)p.reject(new Error("Browser document guard command refused"));else p.resolve(message.result);}
+        try {const message=JSON.parse(raw.toString());
+          if(message.id===undefined&&message.method==="Page.javascriptDialogOpening"&&typeof message.sessionId==="string"){this.answerDialog(message.params?.type,message.sessionId);return;}
+          const p=this.pending.get(message.id);if(!p)return;this.pending.delete(message.id);clearTimeout(p.timer);if(message.error)p.reject(new Error("Browser document guard command refused"));else p.resolve(message.result);}
         catch{socket.terminate();}
       });
       socket.on("close",()=>this.fail());
@@ -128,6 +136,18 @@ export class BrowserDocumentGuard {
       await new Promise<void>((resolve,reject)=>{socket.once("open",resolve);socket.once("error",()=>reject(new Error("Browser guard unavailable")));});
     })();
     try {await this.opening;} catch(error){this.opening=undefined;throw error;}
+  }
+  /** While a bot's tool call is in flight, a JavaScript dialog the page opens is answered here: the call (a click that opened an alert)
+   * cannot finish until it is, and the engine serves one command at a time. An alert or a beforeunload is accepted; a confirm or a prompt
+   * is dismissed, so the bot never agrees to something on the owner's behalf. Off between calls, so a dialog the owner meets while
+   * driving the page is theirs. */
+  private answeringDialogs=false;
+  answerDialogs(active:boolean){this.answeringDialogs=active;}
+  private answerDialog(type:unknown,sessionId:string){
+    if(!this.answeringDialogs)return;
+    const accept=type==="alert"||type==="beforeunload";
+    // A second answerer (the engine's own, on systems where it works) makes this fail with "no dialog showing": nothing to report.
+    void this.send("Page.handleJavaScriptDialog",{accept},sessionId).catch(()=>{});
   }
   private send(method:string,params:Record<string,unknown>={},sessionId?:string):Promise<any>{
     if(this.socket?.readyState!==WebSocket.OPEN)return Promise.reject(new Error("Browser guard disconnected"));
@@ -140,7 +160,18 @@ export class BrowserDocumentGuard {
   async protected(armed=true):Promise<boolean>{
     await this.open();
     const targets=await this.send("Target.getTargets");
-    const pages=(targets.targetInfos as any[]).filter(t=>t.type==="page");
+    let pages=(targets.targetInfos as any[]).filter(t=>t.type==="page");
+    if(this.scope){
+      // The owner's own tabs are out of the engine's sight (user-chrome-proxy.ts), so only the bot's tabs are checked.
+      const {targets:mine,closed}=this.scope();
+      // A bot tab closed since the last look, or one Chrome no longer lists, may hold what this step read: refuse once.
+      const listed=new Set(pages.map(t=>t.targetId));
+      if(closed!==this.closedSeen){this.closedSeen=closed;throw new Error("Browser document inventory unavailable");}
+      if([...mine].some(id=>!listed.has(id)))throw new Error("Browser document inventory unavailable");
+      pages=pages.filter(t=>mine.has(t.targetId));
+      // No bot tab yet, and none closed: no page has been opened or read, so nothing is protected.
+      if(!pages.length)return false;
+    }
     if(!pages.length||pages.length>20)throw new Error("Browser document inventory unavailable");
     let protectedDocument=false;
     for(const page of pages){
@@ -160,6 +191,8 @@ export class BrowserDocumentGuard {
   // Same defect as the relay's `resetStream`, and the same fix. This guard
   // opens with a 5s handshakeTimeout, so "closed before connected" is a state
   // it reaches by design rather than by accident.
+  /** Open the guard's own connection now (the owner's Chrome asks to Allow it). */
+  warm():Promise<void>{return this.open();}
   close(){closeSocketQuietly(this.socket);this.fail();}
   /** Release the connection and every session this guard holds; the next protected() call opens afresh (re-arm). */
   dispose(){this.close();}
