@@ -48,7 +48,7 @@ import { fluxKey } from "../flux-config.ts";
 import { applyFluxSurface, isFluxModel } from "../flux-routing.ts";
 import { claudeCustomHeadersValue, fluxMemoryContextForTurn, fluxMemoryDecision, logFluxMemoryHeaders, type FluxMemoryDecision } from "../flux-memory-headers.ts";
 import { mergeFluxCatalog } from "../flux-surface.ts";
-import { awaitCliTreeStopped, CLI_CALLER_DEADLINE_MS, cliTreeConfirmedStopped, cliTreeStoppedSignal, forceCliTreeStopped, brokerSocketPath, describeSpawnFailure, engineJob, engineProcessPid, execCli, killCliTree, spawnCli } from "../procs.ts";
+import { awaitCliTreeStopped, CLI_CALLER_DEADLINE_MS, cliTreeConfirmedStopped, cliTreeStoppedSignal, forceCliTreeStopped, brokerSocketPath, cliVersionReader, describeSpawnFailure, engineJob, engineProcessPid, execCli, killCliTree, spawnCli } from "../procs.ts";
 import { cachedCliVersion } from "../cli-version-cache.ts";
 import { anyMountIncomplete, bindCredentialPath, clearMountsIncomplete, connectorMountRefsOf, connectorScopeOf, createTurnCredentialStore, splitTurnSecrets, type TurnCredentialStore } from "./turn-credentials.ts";
 import { descendantBaseline, untrackedDescendants, processNames } from "./process-tree.ts";
@@ -4761,6 +4761,15 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             }
             break;
           }
+          case "tool_progress":
+            // Upstream #3328 (OpenMausBot, Apache-2.0): Claude Code sends one
+            // every 30 s while a tool runs. Forward it as tool activity so a
+            // long build or sub-agent is not taken for a stalled turn. Only
+            // while a turn is open: after settle a background task's tick
+            // has nothing to keep alive, and under the launching dispatch's
+            // id it would keep a newer turn on this thread from stalling.
+            if (session.turn && !session.turn.settled) emit({ ...base(threadId, session.turn.turnId), type: "item.updated", itemType: "tool" });
+            break;
           case "result":
             // A stopped/completed background task can produce its own
             // synthetic follow-up result before the submitted user's reply.
@@ -5301,6 +5310,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       if (session || left.length) console.info(`claude reset thread=${threadId} ms=${Date.now() - started} old=${exited ? "exited" : "killed"}${left.length ? " unconfirmed" : ""}`);
     };
 
+    // Upstream #3433: a slow probe keeps the last version; only a real miss reads as not installed.
+    const snapshotVersionOf = cliVersionReader(config.cli);
     const snapshot = async (): Promise<ProviderSnapshot> => {
       const env = claudeEnvironment(undefined, accountEnvironment());
       // item 5: both probes run on the handed map a turn gets, never the raw owner environment
@@ -5308,8 +5319,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       try { probeEnv = await claudeProbeEnv(env, config.configDir); }
       catch (error) { return { state: "unavailable", reason: `Murage could not prepare Claude's environment: ${(error as Error).message}` }; }
       const probed = await cachedCliVersion(config.cli, probeEnv, execCli);
-      const version = probed.error ? null : probed.stdout.trim();
-      if (!version) return { state: "unavailable", reason: `\`${config.cli}\` CLI not found` };
+      // Upstream #3433: a slow probe keeps the last version; only a real miss reads as not installed.
+      const probe = snapshotVersionOf(probed.error, probed.stdout);
+      if (!("version" in probe)) return { state: "unavailable", reason: probe.reason };
+      const { version } = probe;
       // Below the qualified minimum a turn would be refused: offer the update, not a sign-in.
       if (claudeVersionVerdict(version) === "below") return { state: "unavailable", version, reason: CLAUDE_UPDATE_MESSAGE };
       // The probe runs with the flags a turn gets, so it judges the login a turn will have.

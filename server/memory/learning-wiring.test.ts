@@ -25,7 +25,7 @@ function memoryDb() {
   const handle = new DatabaseSync(":memory:");
   handle.exec(MEMORY_SCHEMA);
   handle.exec("CREATE TABLE messages (thread_id TEXT, id TEXT, text TEXT)");
-  handle.prepare("INSERT INTO memory_meta(id,schema_version,installation_id,mode) VALUES(1,12,?,'active')").run(randomUUID());
+  handle.prepare("INSERT INTO memory_meta(id,schema_version,installation_id,mode) VALUES(1,13,?,'active')").run(randomUUID());
   ensureRevokeLateObjects(handle); // what every open makes from v8 on (the deny facts readers consult)
   return handle;
 }

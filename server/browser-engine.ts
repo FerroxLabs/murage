@@ -24,7 +24,14 @@ type ResolveOptions = { dataDir?: string; env?: NodeJS.ProcessEnv; platform?: No
 export type BrowserEngineStatus =
   | { kind: "ready"; binaryPath: string; version: string | null; runtimeVerified: false }
   | { kind: "unavailable"; reason: string; installable: boolean; /** The packaged browser is being checked right now: it will be ready in a moment, nothing failed. */ checking?: true; /** The check could not finish this time (busy machine). Nothing was refused; the next attempt asks again. */ unfinished?: true };
-export type AgentBrowserSpec = { command: string; args: string[]; env: Record<string, string> };
+export type AgentBrowserSpec = { command: string; args: string[]; env: Record<string, string>;
+  /** "Use my Chrome": where Murage's page check reaches the owner's Chrome, through
+   * the same one approved connection the engine uses (user-chrome-proxy.ts). Never
+   * passed to the engine's environment. */
+  guardCdpUrl?: string;
+  /** "Use my Chrome": the bot's own tabs in the owner's Chrome (UserChromeProxy.botTargets),
+   * the only pages the engine can see there. The page check looks at these only. */
+  guardScope?: () => { targets: ReadonlySet<string>; closed: number } };
 
 export function isMusl(platform: NodeJS.Platform = process.platform): boolean {
   if (platform !== "linux") return false;

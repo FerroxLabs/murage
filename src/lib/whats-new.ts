@@ -38,6 +38,8 @@ export const WHATS_NEW_BY_VERSION: Readonly<Record<string, WhatsNewEntry>> = {
   "1.0.5": { kind: "none" },
   // 1.0.6: the page, led by Murage for Chrome in the Chrome Web Store, with the existing tile art.
   "1.0.6": { kind: "page", releaseNotesUrl: "https://github.com/FerroxLabs/murage-releases/releases/tag/v1.0.6" },
+  // 1.0.7: the notes are on the docs changelog and the release page.
+  "1.0.7": { kind: "none" },
 };
 
 /** The page for `version`, or null when it has none. */

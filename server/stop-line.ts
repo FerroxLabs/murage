@@ -34,6 +34,7 @@ import { canonicalConnectedAppToolName } from "../shared/connected-app-names.ts"
 import { posix } from "node:path";
 import { EXACT_COMMAND_MAX_CHARS, normalizeCommand } from "../shared/exact-command.ts";
 import { WRAPPER_PREFIXES } from "../shared/arg-vocabulary.ts";
+import { parseApplyPatch, patchTextOf } from "../shared/apply-patch.ts";
 
 export type StopKind = "delete" | "pay" | "message";
 
@@ -1761,6 +1762,16 @@ export function classifyStopLine(tool: string, input: unknown, summary: string, 
   const command = commandText(tool, input, summary);
   // a Windows engine's commands run in PowerShell, and so do a PowerShell tool's anywhere
   const powershell = POWERSHELL_TOOLS.has(tool.toLowerCase().replace(/^mcp__.+__/, "").split(/[./]/).pop()!);
+  // r#7: a patch (Fuigo's codex/apply_patch) removes the files it deletes and the source of each move: those are deletes,
+  // judged as any delete tool's, before any command text the call carries (a `cmd` beside the patch never decides it);
+  // a patch this cannot read whole stops
+  if (tool === "apply_patch") {
+    // the ACP driver adds `paths` only beside a raw input that is exactly the one patch key (core.ts acpPatchPaths)
+    const patch = parseApplyPatch(patchTextOf(input, ["paths"]));
+    if (!patch) return { kind: "delete", what: "Murage could not read this patch whole, so it is waiting for you." };
+    if (!patch.deletes.length) return null;
+    return deleteHit({ deletes: patch.deletes.map((p) => resolveWord({ text: p, dynamic: false }, place.cwd, place.home)) }, place);
+  }
   if (command !== undefined) return powershell || WIN_CANON.test(place.home) ? psHit(command, place) : shellHit(command, place);
   const paths = deleteToolPaths(tool, input);
   if (paths) {

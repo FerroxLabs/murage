@@ -86,9 +86,15 @@ export const STAMP_NAMESPACES: readonly string[] = ["mcp", "fuigo_build"];
  * (fuigo-tools opencode/write: namespace `opencode`, sent as kind `edit` with
  * `locations: [file_path]` and rawInput `{file_path, content}`), so it is
  * judged like any edit: the edit contract, the stop line and the guards read
- * its path and body. Every other name in such a namespace stays unproven. */
+ * its path and body. Fuigo's patch tool is Codex's apply_patch (fuigo-tools
+ * codex/apply_patch: namespace `codex`, sent as kind `edit` with rawInput
+ * `{patch}` and no locations); the ACP driver reads the patch with the one
+ * apply_patch reader (shared/apply-patch.ts) and files every place it writes
+ * or removes as the call's paths, or the call as unread (r#7, 1.0.7). Every
+ * other name in such a namespace stays unproven. */
 const STAMPED_TOOLS: ReadonlyMap<string, ReadonlyMap<string, string>> = new Map([
   ["opencode", new Map([["write", "edit"]])],
+  ["codex", new Map([["apply_patch", "edit"]])],
 ]);
 /** Rule 9: the ACP kinds that identify an unstamped ask by themselves. */
 export const ACP_IDENTIFYING_KINDS: readonly string[] = ["execute", "edit", "read", "delete", "move", "search", "fetch"];

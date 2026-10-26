@@ -47,7 +47,7 @@ export const OWN_UNASKED: readonly OwnUnaskedRow[] = [
     tools: [
       "list_bots", "get_bot", "check_delegation", "wait_delegation", "get_permission_status", "list_routines", "skills_list",
       "list_reference_packs", "list_prompt_blocks", "get_prompt_block", "list_image_models", "tool_result_read", "murage_help",
-      "project_read_messages",
+      "project_read_messages", "venue_read_messages",
     ],
     boundary: "read handlers over Murage's own records for this bot's permitted roster; bot_id resolves against the roster",
   },

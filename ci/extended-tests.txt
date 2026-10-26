@@ -831,6 +831,7 @@ server/turnctx-r3-measure.test.ts	extended
 server/turnctx-r4.test.ts	extended
 server/turnctx-r5.test.ts	extended
 server/two-size.test.ts	delete (pending review; runs here until then)
+server/use-my-chrome-chromereal.test.ts	extended
 server/user-chrome.test.ts	extended
 server/visible-threads.test.ts	extended
 server/voice/call-note.test.ts	extended
@@ -1439,3 +1440,5 @@ server/memory/record-keys-budget.test.ts	the record-keys backfill write budget (
 server/browser-engine-windows-signed-real.test.ts	real signed Windows browser images from a packaged installer (needs WIN_SIGNED_BROWSER_RESOURCES; skipped otherwise)
 server/lee-phantom-scenario.test.ts	extended
 src/components/LearnAboutMe.test.ts	extended
+server/memory/recall-realdata-bench.test.ts	extended
+server/memory/schema-v13-realdata-roundtrip.test.ts	extended

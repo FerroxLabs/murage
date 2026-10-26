@@ -520,6 +520,36 @@ describe("Antigravity snapshot", () => {
     }
   });
 
+  // Upstream #3433: a slow --version probe on a busy machine never reads as "not installed".
+  it("a slow version probe keeps the last version; without one it names the timeout, not a missing CLI", async () => {
+    chmodSync(FAKE_CLI, 0o755);
+    const dir = mkdtempSync(join(tmpdir(), "murage-agy-slow-probe-"));
+    const delayFile = join(dir, "version-delay");
+    process.env.FAKE_AGY_VERSION_DELAY_FILE = delayFile;
+    const create = (instanceId: string) => AntigravityDriver.create({
+      instanceId,
+      displayName: undefined,
+      environment: {},
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: false },
+    });
+    const instance = await create("agy-slow-probe");
+    const fresh = await create("agy-slow-probe-fresh");
+    try {
+      await expect(instance.snapshot()).resolves.toMatchObject({ state: "available", version: "1.1.22" });
+      // Past the 8 second probe timeout.
+      writeFileSync(delayFile, "9000");
+      const [held, none] = await Promise.all([instance.snapshot(), fresh.snapshot()]);
+      expect(held).toMatchObject({ state: "available", version: "1.1.22" });
+      expect(none).toMatchObject({ state: "unavailable", reason: expect.stringContaining("took longer than 8 seconds") });
+    } finally {
+      delete process.env.FAKE_AGY_VERSION_DELAY_FILE;
+      await instance.dispose();
+      await fresh.dispose();
+      removeTempDirSync(dir);
+    }
+  }, 30_000);
+
   it("strips workspace credentials from snapshot and helper children", async () => {
     const scratch = mkdtempSync(join(tmpdir(), "murage-agy-env-"));
     const dump = join(scratch, "dump.json");

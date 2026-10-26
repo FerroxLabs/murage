@@ -756,6 +756,12 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
   },
   {
     "kind": "route",
+    "name": "/api/news",
+    "term": "Murage news",
+    "source": "server/index.ts"
+  },
+  {
+    "kind": "route",
     "name": "/api/owner",
     "term": "time zone",
     "source": "server/index.ts"

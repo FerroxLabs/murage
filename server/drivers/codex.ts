@@ -45,7 +45,7 @@ import { customMountEntries } from "../custom-mcp-mounts.ts";
 import { codexConfigMcpServerNames, externalMcpRecords, mountedMcpServerNames } from "./codex-mcp-names.ts";
 import type { ExecEnv, McpMountRecord } from "../../shared/mount-identity.ts";
 import { createPrewarmGate, createTurnMemory, spawnInputsOf, TAKEOVER_FAILED_MESSAGE, warmPool, pastWarmMaxAge, spawnedAtOf } from "./warm-pool.ts";
-import { awaitCliTreeStopped, describeSpawnFailure, engineJob, engineProcessPid, execCli, killCliTree, spawnCli } from "../procs.ts";
+import { awaitCliTreeStopped, cliVersionReader, describeSpawnFailure, engineJob, engineProcessPid, execCli, killCliTree, spawnCli } from "../procs.ts";
 import { cachedCliVersion } from "../cli-version-cache.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
 
@@ -2520,11 +2520,14 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
     return retained.has(threadId);
   };
 
+  // Upstream #3433: a slow probe keeps the last version; only a real miss reads as not installed.
+  const snapshotVersionOf = cliVersionReader(config.cli);
   const snapshot = async (): Promise<ProviderSnapshot> => {
     const env = childEnv();
     const probed = await cachedCliVersion(config.cli, env, execCli);
-    const version = probed.error ? null : probed.stdout.trim();
-    if (!version) return { state: "unavailable", reason: `\`${config.cli}\` CLI not found` };
+    const probe = snapshotVersionOf(probed.error, probed.stdout);
+    if (!("version" in probe)) return { state: "unavailable", reason: probe.reason };
+    const { version } = probe;
     const authenticated = await new Promise<boolean>((resolve) => {
       execCli(config.cli, ["login", "status"], { timeout: 8000, env }, (err, stdout, stderr) =>
         resolve(!err && /^logged in\b/im.test(`${stdout}\n${stderr ?? ""}`)),
