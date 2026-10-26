@@ -16,6 +16,8 @@ export const SPAWNED_PROXY_FILES = Object.freeze({
   engineHistoryWorker: "engine-history-worker",
   transcriptReadWorker: "transcript-read-worker",
   inboxFillWorker: "inbox-fill-worker",
+  // Windows only: the per-engine launcher that is in the engine's job before it starts the CLI (procs.ts, U24).
+  jobLauncher: "job-launcher",
   computer: "computer-proxy",
   permission: "permission-proxy",
   containerMcp: "container-mcp",

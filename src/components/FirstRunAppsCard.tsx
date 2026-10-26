@@ -20,13 +20,21 @@
 // inbox and a real calendar is the product. Each row says WHY in a few
 // words, because "Gmail" with a button beside it is a logo and a chore.
 //
-// One click each. The connecting itself is `connectApp`, the standalone
-// version of what the connected apps dialog does, so the card holds no
-// OAuth knowledge of its own.
+// One click each, then the label form filled in with a label to confirm
+// (#758: every sign-in starts from a confirmed label, as in Connected apps).
+// The connecting itself is `connectApp`, the standalone version of what the
+// connected apps dialog does, so the card holds no OAuth knowledge of its own.
 
 import { useEffect, useRef, useState } from "react";
 
-import { connectApp, readConnectAppStatus, type ConnectAppStatus } from "@/lib/connect-app";
+import {
+  connectApp,
+  connectLabelTaken,
+  firstFreeConnectLabel,
+  readConnectAppStatus,
+  type ConfirmedConnectLabel,
+  type ConnectAppStatus,
+} from "@/lib/connect-app";
 import { FIRST_RUN_COPY } from "@/lib/first-run-copy";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { api } from "@/state/store";
@@ -43,6 +51,7 @@ import {
   openOutside,
   skipSetupStep,
 } from "./FirstRunChrome";
+import { ConnectLabelForm } from "./ConnectLabelForm";
 
 const copy = FIRST_RUN_COPY.apps.apps;
 
@@ -50,6 +59,11 @@ export function FirstRunAppsCard({ settled }: { settled: boolean }) {
   const desktop = useDesktopSurface();
   const [status, setStatus] = useState<Record<string, ConnectAppStatus>>({});
   const [busySlug, setBusySlug] = useState("");
+  /** The row whose label form is open, or "". */
+  const [labelling, setLabelling] = useState("");
+  /** A label the server refused as in use, on the row it was tried on: the
+   *  form opens again holding it and says so on its own line. */
+  const [taken, setTaken] = useState<{ slug: string; label: string } | null>(null);
   const [failure, setFailure] = useState("");
   // A CARD SETTLES FROM THE SERVER, NOT ONLY FROM THIS COMPONENT.
   //
@@ -90,16 +104,28 @@ export function FirstRunAppsCard({ settled }: { settled: boolean }) {
     };
   }, []);
 
-  const connect = async (slug: string) => {
+  /** Connect opens the row's label form; nothing is authorized yet. */
+  const askLabel = (slug: string) => {
     if (busySlug || desktop !== true) return;
+    setFailure("");
+    setTaken(null);
+    setLabelling((current) => (current === slug ? "" : slug));
+  };
+
+  const connect = async (slug: string, alias: ConfirmedConnectLabel) => {
+    if (busySlug || desktop !== true) return;
+    const before = status[slug];
     setBusySlug(slug);
     setFailure("");
-    setStatus((current) => ({ ...current, [slug]: { connected: false, pending: true, status: "INITIATED" } }));
+    setTaken(null);
+    setLabelling("");
+    setStatus((current) => ({ ...current, [slug]: { ...current[slug], connected: false, pending: true, status: "INITIATED" } }));
     try {
       const result = await connectApp(slug, {
         request: api,
         openExternal: openOutside,
         desktop,
+        alias,
         cancelled: () => gone.current,
       });
       if (gone.current) return;
@@ -109,7 +135,16 @@ export function FirstRunAppsCard({ settled }: { settled: boolean }) {
         await answerSetupStep(PARKED_CARD_STEP, slug);
       }
     } catch (cause) {
-      if (!gone.current) setFailure(failureText(cause, copy.failure));
+      if (gone.current) return;
+      if (connectLabelTaken(cause)) {
+        // Said on the form, where the label can be changed, rather than as
+        // the card's general failure line.
+        setStatus((current) => ({ ...current, [slug]: before ?? { connected: false } }));
+        setTaken({ slug, label: alias });
+        setLabelling(slug);
+      } else {
+        setFailure(failureText(cause, copy.failure));
+      }
     } finally {
       if (!gone.current) setBusySlug("");
     }
@@ -151,11 +186,23 @@ export function FirstRunAppsCard({ settled }: { settled: boolean }) {
               </span>
               {connected ? (
                 <span className="text-[13px] text-success">{mine ? copy.connected : copy.connectedElsewhere}</span>
+              ) : desktop === true && labelling === row.slug && !done ? (
+                <ConnectLabelForm
+                  id={row.slug}
+                  service={row.label}
+                  // The first label no account here holds yet ("personal",
+                  // then "personal 2"...), or the one just refused.
+                  initial={taken?.slug === row.slug ? taken.label : firstFreeConnectLabel(state?.accounts)}
+                  takenLabel={taken?.slug === row.slug ? taken.label : undefined}
+                  busy={Boolean(busySlug)}
+                  onConfirm={(alias) => void connect(row.slug, alias)}
+                  onCancel={() => { setLabelling(""); setTaken(null); }}
+                />
               ) : desktop === true ? (
                 <button
                   type="button"
                   disabled={Boolean(busySlug) || done}
-                  onClick={() => void connect(row.slug)}
+                  onClick={() => askLabel(row.slug)}
                   className={`${FIRST_RUN_CHIP} ${FIRST_RUN_FOCUS}`}
                 >
                   {waiting ? copy.connecting : copy.connect}

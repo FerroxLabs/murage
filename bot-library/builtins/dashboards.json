@@ -54,7 +54,8 @@
         "title": "Dashboards",
         "description": "Query prepares a dashboard specification tied to business questions for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For an Excel dashboard file, use Dashboard Creator. For funnel, cohort and experiment analysis, use Analyst.",
         "appearance": {
-          "color": "green"
+          "color": "green",
+          "mascotBody": "capsule"
         },
         "skills": [
           "dashboard-design",

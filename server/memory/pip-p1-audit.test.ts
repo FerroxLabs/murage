@@ -123,22 +123,44 @@ describe("PIP keeps continuity out of the shared recall index", () => {
     writeBotIdentity(ticket, brief("Neutral keeps the dock notes.", "neutral"), roster);
     const index = new MemoryIndex(join(DATA_DIR, "memory-index.db")); opened.push(index);
     project(index);
+    // Recall answers on a wall-clock budget (search.ts SEARCH_BUDGET_MS, HYDRATION_LIMIT_MS): on a stalled runner a search can
+    // come back cut short (partial, or empty and MEMORY_RECALL_UNAVAILABLE), by design. A cut answer says nothing about the index,
+    // so a snapshot holding one is taken again; only a snapshot in which every search and bundle answered in full is compared.
+    let cut = false;
+    const ids = (result: Awaited<ReturnType<typeof searchMemory>>) => {
+      if (result.partial || result.degradedReason === "MEMORY_RECALL_PARTIAL" || result.degradedReason === "MEMORY_RECALL_UNAVAILABLE") cut = true;
+      return result.hits.map(hit => `${hit.id}@${hit.version}`);
+    };
+    const text = (bundle: Awaited<ReturnType<typeof buildMemoryBundle>>) => {
+      if (bundle.recallPartial || bundle.degradedReason === "MEMORY_RECALL_UNAVAILABLE") cut = true;
+      return bundle.text;
+    };
     const mossOf = async (bridge: ReturnType<typeof productionBridge>, query: string) => ({
-      ids: (await searchMemory(query, access(), bridge, { allowance: LineageAllowance.tool(1_000_000_000), limit: 20 })).hits.map(hit => `${hit.id}@${hit.version}`),
-      historical: (await searchMemory(query, access(), bridge, { allowance: LineageAllowance.tool(1_000_000_000), limit: 20, historical: true })).hits.map(hit => `${hit.id}@${hit.version}`),
-      off: (await buildMemoryBundle(query, access(), bridge, {allowance: LineageAllowance.tool()})).text,
-      offFalse: (await buildMemoryBundle(query, access(), bridge, { allowance: LineageAllowance.tool(), continuity: false })).text,
+      ids: ids(await searchMemory(query, access(), bridge, { allowance: LineageAllowance.tool(1_000_000_000), limit: 20 })),
+      historical: ids(await searchMemory(query, access(), bridge, { allowance: LineageAllowance.tool(1_000_000_000), limit: 20, historical: true })),
+      off: text(await buildMemoryBundle(query, access(), bridge, {allowance: LineageAllowance.tool()})),
+      offFalse: text(await buildMemoryBundle(query, access(), bridge, { allowance: LineageAllowance.tool(), continuity: false })),
     });
     const neutralOf = async (bridge: ReturnType<typeof productionBridge>, query: string) => ({
-      ids: (await searchMemory(query, access("neutral", "neutral-thread"), bridge, { allowance: LineageAllowance.tool(1_000_000_000), limit: 20 })).hits.map(hit => `${hit.id}@${hit.version}`),
-      text: (await buildMemoryBundle(query, access("neutral", "neutral-thread"), bridge, {allowance: LineageAllowance.tool()})).text,
+      ids: ids(await searchMemory(query, access("neutral", "neutral-thread"), bridge, { allowance: LineageAllowance.tool(1_000_000_000), limit: 20 })),
+      text: text(await buildMemoryBundle(query, access("neutral", "neutral-thread"), bridge, {allowance: LineageAllowance.tool()})),
     });
-    const snapshot = async (bridge: ReturnType<typeof productionBridge>) => {
+    const snapshotOnce = async (bridge: ReturnType<typeof productionBridge>) => {
+      cut = false;
       const out: Record<string, unknown> = {};
       for (const query of QUERIES) { out["moss " + query] = await mossOf(bridge, query); out["neutral " + query] = await neutralOf(bridge, query); }
-      return out;
+      return { out, cut };
     };
-    const baseline = await snapshot(productionBridge(index, freshEligibility()));
+    /** A full-answer snapshot. `bridgeFor` is called for every attempt, so a cold read stays cold on a retake. */
+    const snapshot = async (bridgeFor: () => ReturnType<typeof productionBridge>) => {
+      for (let attempt = 1; attempt <= 5; attempt++) {
+        const taken = await snapshotOnce(bridgeFor());
+        if (!taken.cut) return taken.out;
+        console.warn(`[pip-p1-audit] recall snapshot cut short by the search budget (attempt ${attempt}); taken again`);
+      }
+      throw new Error("every recall snapshot was cut short by the search budget: nothing to compare");
+    };
+    const baseline = await snapshot(() => productionBridge(index, freshEligibility()));
     const before = corpus(["harbour", "lantern", "oil", "quartz", "tuesdays", "dock", "rope"]);
     // recall really happened in the baseline
     expect((baseline["moss harbour lantern"] as { ids: string[] }).ids.length).toBeGreaterThanOrEqual(3);
@@ -156,15 +178,16 @@ describe("PIP keeps continuity out of the shared recall index", () => {
     expect(Number(database().prepare("SELECT count(*) AS n FROM memory_projection_receipts p JOIN memory_records r ON r.id=p.record_id AND r.version=p.record_version WHERE r.kind IN ('commitment','self-trait','relation')").get()!.n)).toBe(0);
     expect(corpus(["harbour", "lantern", "oil", "quartz", "tuesdays", "dock", "rope"])).toEqual(before);
 
-    const cold = productionBridge(index, freshEligibility());
-    expect(await snapshot(cold)).toEqual(baseline);
-    // warm: the same eligibility, read again
-    expect(await snapshot(cold)).toEqual(baseline);
+    // cold: a fresh eligibility for every take
+    let cold!: ReturnType<typeof productionBridge>;
+    expect(await snapshot(() => (cold = productionBridge(index, freshEligibility())))).toEqual(baseline);
+    // warm: the eligibility that answered cold, read again
+    expect(await snapshot(() => cold)).toEqual(baseline);
     // and a deleted PIP row changes nothing either
     deleteBotIdentity(ticket, { action: "identity-delete", botId: "moss", kind: "commitment", key: "lantern-a", expectedVersion: 1 }, roster);
     expect(project(index)).toBe(0);
     expect(corpus(["harbour", "lantern", "oil", "quartz", "tuesdays", "dock", "rope"])).toEqual(before);
-    expect(await snapshot(productionBridge(index, freshEligibility()))).toEqual(baseline);
+    expect(await snapshot(() => productionBridge(index, freshEligibility()))).toEqual(baseline);
   });
 
   it("is rebuilt without them: a reset index re-queues every receipt, and none belongs to a continuity row", () => {

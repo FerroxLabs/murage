@@ -54,7 +54,8 @@
         "title": "Retail Shop",
         "description": "Till prepares a prioritized stock reorder draft for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For a store operations team, use Back-Office Crew. For broader storefront work, use Storefront.",
         "appearance": {
-          "color": "pink"
+          "color": "pink",
+          "mascotBody": "squircle"
         },
         "skills": [
           "retail-shop",

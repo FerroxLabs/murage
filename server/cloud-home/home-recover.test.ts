@@ -44,6 +44,7 @@ it("home pulls in the turn egress proxy itself (after enrollment nothing else st
   const home = source("murage-home.service");
   expect(home).toMatch(/^Wants=.*\bmurage-egress-proxy\.service\b/m);
   expect(source("murage-egress-proxy.service")).toMatch(/^Before=.*\bmurage-home\.service\b/m);
+  expect(home).toMatch(/^Wants=.*\bmurage-egress-dns\.service\b/m);
 });
 
 // The recovery wipe is the launcher's engine-signin-cleanup (erase_credential_at). Run the real

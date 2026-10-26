@@ -127,7 +127,7 @@ test("a 0.1.59 install updating sees the page once, walks all three cards, and a
 
   await page.goto(origin + "/__whats-new?skin=dark");
   await expect(card(page, "hero")).toBeVisible();
-  await expect(dialog(page).getByRole("heading", { name: "Bots that remember what matters" })).toBeFocused();
+  await expect(dialog(page).getByRole("heading", { name: "Murage for Chrome is here" })).toBeFocused();
   // focus stays inside: Tab from the last control (the last pager dot) comes back round
   await dialog(page).getByRole("button", { name: "Card 3", exact: true }).focus();
   await page.keyboard.press("Tab");
@@ -148,7 +148,7 @@ test("a 0.1.59 install updating sees the page once, walks all three cards, and a
   await dialog(page).getByRole("button", { name: "Card 1", exact: true }).click();
   await expect(card(page, "hero")).toBeVisible();
   // back to the title (no ring) so the pictures show the resting state
-  await dialog(page).getByRole("heading", { name: "Bots that remember what matters" }).focus();
+  await dialog(page).getByRole("heading", { name: "Murage for Chrome is here" }).focus();
 
   await walkCards(page, "dark", dir);
   await expect(dialog(page).getByRole("link", { name: "Read the full release notes" })).toHaveAttribute("href", `https://github.com/FerroxLabs/murage-releases/releases/tag/v${VERSION}`);
@@ -177,22 +177,31 @@ test("reopens from the sidebar menu in the light skin, closes on Escape, and eac
   await page.keyboard.press("Escape");
   await expect(dialog(page)).toHaveCount(0);
 
-  // the hero's shortcut opens Settings > Memory
-  await page.evaluate(() => { (window as unknown as { __dispatched: unknown[] }).__dispatched.length = 0; });
+  // the hero's shortcut opens Murage for Chrome's Chrome Web Store page outside the app, and moves nothing in it
+  await page.evaluate(() => { (window as unknown as { __dispatched: unknown[] }).__dispatched.length = 0; (window as unknown as { __navigated: number }).__navigated = 0; });
   await chooseFromAccountMenu(page, "What's new");
-  await dialog(page).getByRole("button", { name: "Open Memory" }).click();
+  // the listing is answered here, so the spec never leaves the machine
+  const asked: string[] = [];
+  await page.context().route("https://chromewebstore.google.com/**", (route) => { asked.push(route.request().url()); return route.fulfill({ status: 200, contentType: "text/html", body: "<title>Murage for Chrome</title>" }); });
+  const store = page.context().waitForEvent("page");
+  await dialog(page).getByRole("button", { name: "Open Chrome Web Store" }).click();
+  const tab = await store;
+  await expect.poll(() => asked).toEqual(["https://chromewebstore.google.com/detail/gpilijlcanhphjaoogelbghhbhhminol"]);
+  await tab.close();
+  await page.context().unroute("https://chromewebstore.google.com/**");
   await expect(dialog(page)).toHaveCount(0);
-  expect(await page.evaluate(() => (window as unknown as { __dispatched: unknown[] }).__dispatched)).toEqual([{ type: "toggleAppSettings", open: true, section: "memory" }]);
+  expect(await page.evaluate(() => (window as unknown as { __dispatched: unknown[] }).__dispatched)).toEqual([]);
+  expect(await page.evaluate(() => (window as unknown as { __navigated: number }).__navigated)).toBe(0);
 
   // the six highlights, each through the real host
   const expected: Record<string, unknown[]> = {
-    // the 1.0.2 lineup (WHATS_NEW_TILES_102), each tile's shortcut through runWhatsNewAction
-    routing: [{ type: "toggleAppSettings", open: true, section: "botDefaults", anchor: "room-routing-label" }],
-    library: [{ type: "showTeamLibrary", view: "teams" }],
-    engines: [{ type: "toggleAppSettings", open: true, section: "engines" }],
-    chrome: [{ type: "toggleAppSettings", open: true, section: "computer" }],
-    speed: [{ type: "toggleAppSettings", open: true, section: "memory" }],
-    desktops: [{ type: "toggleAppSettings", open: true, section: "computer" }],
+    // the 1.0.6 lineup (WHATS_NEW_TILES_106), each tile's shortcut through runWhatsNewAction
+    allChats: [{ type: "showAllChats" }],
+    draftOnly: [{ type: "showTeamLibrary", view: "bots" }],
+    venues: [{ type: "showTeamMap" }],
+    ownWords: [{ type: "toggleAppSettings", open: true, section: "memory" }],
+    fuigo: [{ type: "toggleAppSettings", open: true, section: "engines" }],
+    backups: [{ type: "toggleAppSettings", open: true, section: "backups" }],
   };
   for (const [tile, dispatched] of Object.entries(expected)) {
     await page.evaluate(() => { (window as unknown as { __dispatched: unknown[] }).__dispatched.length = 0; (window as unknown as { __navigated: number }).__navigated = 0; });

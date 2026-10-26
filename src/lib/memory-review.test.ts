@@ -52,6 +52,9 @@ describe("the words", () => {
     for (const code of codes) { const text = errorSentence(new Error(code)); expect(text).not.toMatch(/MEMORY_|SQLITE|INVALID_/); expect(text).not.toBe(code); }
     expect(errorSentence(new TypeError("Failed to fetch"))).toBe("Reconnect to keep this. Nothing has been changed.");
     expect(errorSentence(new Error("MEMORY_VERSION_CONFLICT"))).toBe("This changed while you were looking. Here is the latest.");
+    // 1.0.4: the Pin action's 409 says how much room the pins take and have, as what Murage does.
+    expect(errorSentence(Object.assign(new Error("MEMORY_PIN_BUDGET: 2310/2048"), { status: 409 }))).toBe("Murage brings every pinned memory into each reply, and they have 2,048 bytes of room. With this one they would take 2,310. Unpin or shorten a pinned memory first, then pin this one.");
+    expect(errorSentence(new Error("MEMORY_PIN_BUDGET"))).not.toMatch(/MEMORY_|—|–|\bsafe/i);
     expect(workerSentence("MEMORY_WORKER_UNAVAILABLE")).toBe("Memory is catching up and will try again shortly.");
     expect(workerSentence("MEMORY_SOMETHING_NEW")).not.toMatch(/MEMORY_/);
     expect(workerSentence("Connection unavailable")).toBe("Connection unavailable");

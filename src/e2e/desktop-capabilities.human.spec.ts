@@ -461,6 +461,7 @@ test("desktop profile reports pending, failed and successful saves without dispa
 
 test("confirmed desktop retains persistent approvals, MCP and routine editing", async ({ page }) => {
   await mount(page, "approval", true);
+  await page.getByRole("button", { name: "More ways to allow", exact: true }).click();
   await page.getByRole("button", { name: "Always allow any git command", exact: true }).click();
   expect(await page.evaluate("window.dispatched.find(action => action.type === 'decideRequest').alwaysAllow")).toEqual({ botId: "bot-a", key: "Bash:git" });
   await mount(page, "plugins", true);
@@ -522,10 +523,12 @@ test("an exact command card recommends the narrow grant and records exactly that
   await mount(page, "approval-exact", true);
   const exact = page.getByRole("button", { name: "Always allow this exact command here", exact: true });
   await expect(exact).toBeVisible();
-  await expect(page.getByRole("button", { name: "Always allow any git command", exact: true })).toBeVisible();
-  // the recommended grant sits next to Allow once, ahead of the wider one
+  // the recommended grant sits next to Allow once; the wider one waits behind More
   const labels = await page.getByRole("button").allTextContents();
   expect(labels.indexOf("Always allow this exact command here")).toBe(labels.indexOf("Allow once") - 1);
+  await expect(page.getByRole("button", { name: "Always allow any git command", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "More ways to allow", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Always allow any git command", exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("approval-exact.png") });
   await exact.click();
   expect(await page.evaluate("window.dispatched.find(action => action.type === 'decideRequest')")).toMatchObject({

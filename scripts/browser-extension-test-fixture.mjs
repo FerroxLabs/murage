@@ -19,12 +19,15 @@ export function fixture(stored = {}, runtimeOptions = {}) {
     if (method === 'Runtime.evaluate' && params.contextId === 8) return { result: { type: 'boolean', value: true } };
     return { value: 'owned' };
   };
+  const removedFiles = new Set();
   const api = {
     webNavigation: { onCompleted: { addListener: listener => completionListeners.add(listener), removeListener: listener => completionListeners.delete(listener) } },
     storage: { local: { get: vi.fn(async key => ({ [key]: stored[key] })), set: vi.fn(async value => Object.assign(stored, structuredClone(value))) } },
     runtime: { getManifest: () => ({ version: '0.1.0' }) },
     tabs: { create: vi.fn(async ({ url }) => { const tab = { id: next++, url }; tabs.set(tab.id, tab); for (const listener of completionListeners) listener({ tabId: tab.id, frameId: 0, url }); return tab; }), get: vi.fn(async id => { if (!tabs.has(id)) throw Error('missing'); return tabs.get(id); }), group: vi.fn(async () => 42), remove: vi.fn(async id => tabs.delete(id)) },
-    downloads: { cancel: vi.fn(async () => {}), erase: vi.fn(async () => {}) },
+    // like Chrome: a looked-up item reports its file missing once removeFile has resolved for it
+    downloads: { cancel: vi.fn(async () => {}), removeFile: vi.fn(async id => { removedFiles.add(id); }), erase: vi.fn(async () => {}),
+      search: vi.fn(async query => (Number.isSafeInteger(query?.id) ? [{ id: query.id, state: 'complete', exists: !removedFiles.has(query.id) }] : [])) },
     tabGroups: { update: vi.fn(async () => {}) }, action: { setBadgeText: vi.fn(async () => {}) },
     debugger: { attach: vi.fn(async () => {}), detach: vi.fn(async () => {}), sendCommand: vi.fn(sendCommand) },
   };

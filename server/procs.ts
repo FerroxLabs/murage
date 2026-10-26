@@ -24,7 +24,11 @@ import {
 import type { Readable, Writable } from "node:stream";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { assignPipJob, closePipJob, createPipJob, stopWindowsJob } from "./memory/pip-job.ts";
+import { existsSync } from "node:fs";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
+import { SPAWNED_PROXIES } from "./proxy-paths.ts";
+import { assignPipJob, closePipJob, createPipJob, PipJobRefusedError, stopWindowsJob } from "./memory/pip-job.ts";
 import { loadExclusionAddon, type NativeHandle } from "./engine-exclusion.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { resolveCliSpawn, type ResolvedSpawn } from "./env-path.ts";
@@ -104,9 +108,10 @@ interface CliOwnership {
   exited?: boolean;
   /** Windows PIP: the CLI could not be put in its job. It was ended at once and the run is refused (PIP_JOB_REFUSAL). */
   jobRefused?: boolean;
-  /** Windows engine: its job could not be created ("create") or the first start could not be put in it ("assign"), so this CLI
-   *  runs without one (the taskkill route). */
-  jobFallback?: "create" | "assign";
+  /** Windows job route (U24): the root is the job launcher; this is the engine CLI it started, from the launcher's report. */
+  cliPid?: number;
+  /** Windows without a job: the one taskkill this root ever gets was started (a later request sends the root kill only). */
+  taskkillSent?: boolean;
   /** Windows without a job: the taskkill route still in flight. taskkill is a subprocess and can take seconds to answer (5 s to
    *  refuse with "Access denied" when WMI is unavailable to the session), so termination is not delivered until it returns and,
    *  on failure, the fallback kill went out. */
@@ -118,59 +123,106 @@ interface CliOwnership {
 // server restart. A retained live session is not stopped until requested.
 const cliOwnership = new WeakMap<ChildProcess, CliOwnership>();
 
-/** The Windows job a CLI runs in. PIP's (no `fallback`) is required: a job that cannot be created or assigned refuses the run.
- *  An engine's (`fallback: "no-job"`, engineJob) is a better stop route, never a gate: when the job cannot be created the CLI starts
- *  without one, and when the addon could not put the started CLI in it (it has then ended that CLI before any byte reached its
- *  stdin) the CLI is started once more without one. Either way the turn runs and stops through taskkill /T, then the root kill. */
-export interface CliJob { name: string; fallback?: "no-job" }
+/** The Windows job a CLI runs in (PIP: Local\\murage-pip-<id>; an engine turn: Local\\murage-pip-eng-<uuid>, the PIP naming the
+ *  addon accepts). U24 design R2/R3: on Windows a turn with a job runs on the job route or not at all. The job is created first,
+ *  the launcher (job-launcher.ts) is started and put in the job while it is still blocked, and only then does it start the CLI,
+ *  so the CLI and everything it ever starts are in the job before their first instruction. A launch that cannot be contained
+ *  (no addon, no launcher file, the job could not be created, the launcher could not be assigned) is refused: PIP as before
+ *  (PipJobRefusedError / cliJobRefused), an engine with a returned child whose `error` carries code ECONTAIN. */
+export interface CliJob { name: string }
 
-/** Windows engine turns: a fresh named job (Local\\murage-pip-eng-<id>, the PIP naming the addon accepts) when the addon can make one,
- *  so a stop terminates the CLI and every process it started (taskkill /T can be denied, and the root kill alone leaves
- *  grandchildren holding the root's pipes). undefined elsewhere and without the addon: today's taskkill route. */
+/** The one sentence an engine gets when its launch could not be contained (the turn was not started). */
+export const ENGINE_CONTAINMENT_MESSAGE = "Murage could not keep this engine's processes under its control, so the turn was not started. Restart Murage and try again; if it keeps happening, reinstall Murage.";
+export const ENGINE_CONTAINMENT_CODE = "ECONTAIN";
+
+let containmentWarned = false;
+/** Windows engine turns: a fresh named job for the launcher and the CLI. Always a job on Windows (U24 design R3); undefined
+ *  elsewhere. A Windows build that cannot contain engines (no usable addon, no launcher file) says so once in the app log; its
+ *  launches are refused by spawnCli, never run uncontained. */
 export function engineJob(): CliJob | undefined {
   if (process.platform !== "win32") return undefined;
-  let addon: ReturnType<typeof loadExclusionAddon> = null;
-  try { addon = loadExclusionAddon(); } catch { return undefined; }
-  if (typeof addon?.jobCreate !== "function") return undefined;
-  return { name: `Local\\murage-pip-eng-${randomUUID()}`, fallback: "no-job" };
-}
-
-/** Windows: libuv starts the CLI already running, so a process it started before jobAssign is in no job and would escape the job's
- *  stop. Right after a successful assignment, ONE sweep of the native process table puts every descendant of the root in the job
- *  too (a descendant starts no earlier than its parent: an older row under a reused parent pid is not one, and a row whose start
- *  cannot be read is skipped). A descendant the addon
- *  cannot assign is ended by it (the refusal code) and logged; the sweep never throws. Exported for tests. */
-export function sweepJobDescendants(job: NativeHandle, rootPid: number): number[] {
-  const assigned: number[] = [];
-  let rows: Array<{ pid: number; ppid: number; start: unknown }>;
-  try { rows = loadExclusionAddon()?.processes() ?? []; } catch (error) { console.warn(`[procs] job sweep: the process table could not be read (${error instanceof Error ? error.message : String(error)})`); return assigned; }
-  // The addon reports `start` as seconds (FILETIME ticks / 1e7, fractional); 0 means it could not be read.
-  const startOf = (row: { start: unknown }): number | null => typeof row.start === "number" && Number.isFinite(row.start) && row.start > 0 ? row.start : null;
-  const root = rows.find((row) => row.pid === rootPid);
-  if (!root) return assigned;
-  const rootStart = startOf(root);
-  if (rootStart === null) return assigned; // no start to compare against: assign nothing rather than a stranger
-  const queue: Array<{ pid: number; start: number }> = [{ pid: rootPid, start: rootStart }];
-  const seen = new Set<number>([rootPid]);
-  while (queue.length) {
-    const parent = queue.shift()!;
-    for (const row of rows) {
-      if (row.ppid !== parent.pid || seen.has(row.pid) || row.pid === process.pid) continue;
-      const start = startOf(row);
-      // Unreadable start, or older than its parent (a stale ppid naming a reused pid): skip it, never assign a stranger.
-      if (start === null || start < parent.start) continue;
-      seen.add(row.pid);
-      if (assignPipJob(job, row.pid)) assigned.push(row.pid);
-      else console.warn(`[procs] job sweep: descendant ${row.pid} of ${rootPid} could not be put in the job (the addon ended it)`);
-      queue.push({ pid: row.pid, start });
-    }
+  if (!containmentWarned && !containmentAvailable()) {
+    containmentWarned = true;
+    console.warn("[procs] engine turns on this Windows build cannot be contained (no usable engine-exclusion addon or job launcher) and will be refused");
   }
-  return assigned;
+  return { name: `Local\\murage-pip-eng-${randomUUID()}` };
 }
 
-/** Windows engine: why this CLI runs without the job it was given (undefined: it has its job, or was given none). */
-export function cliJobFallback(child: ChildProcess): "create" | "assign" | undefined {
-  return cliOwnership.get(child)?.jobFallback;
+function containmentAvailable(): boolean {
+  let addon: ReturnType<typeof loadExclusionAddon> = null;
+  try { addon = loadExclusionAddon(); } catch { return false; }
+  if (typeof addon?.jobCreate !== "function" || typeof addon.jobAssign !== "function") return false;
+  return launcherPath() !== null;
+}
+
+/** The launcher file (job-launcher.ts in dev, its compiled sibling packaged), or null when the build lacks it. */
+function launcherPath(): string | null {
+  const path = SPAWNED_PROXIES.jobLauncher;
+  return existsSync(path) ? path : null;
+}
+
+/** The launcher's own environment (U24 design R2.1): fixed, built from nothing the turn controls, so no NODE_OPTIONS, loader or
+ *  preload can run code before the launcher's gate. The turn's environment reaches the CLI through the frame, after assignment. */
+export function launcherEnvironment(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ELECTRON_RUN_AS_NODE: "1" };
+  for (const key of ["SystemRoot", "SYSTEMDRIVE", "TEMP", "TMP"]) if (typeof base[key] === "string") env[key] = base[key];
+  return env;
+}
+
+/** The frame the server writes to the launcher's stdin once it is in the job: a length line, then that many bytes of JSON. */
+export function launcherFrame(env: NodeJS.ProcessEnv | undefined, cwd: string | undefined): Buffer {
+  const body = Buffer.from(JSON.stringify({ env: env ?? {}, cwd: cwd ?? "" }), "utf8");
+  return Buffer.concat([Buffer.from(`${body.length}\n`, "utf8"), body]);
+}
+
+/** Windows job route: the pid of the engine CLI the launcher started (undefined until its report arrives, or off the route). */
+export function cliProcessPid(child: ChildProcess): number | undefined {
+  return cliOwnership.get(child)?.cliPid;
+}
+/** The process that IS the engine, for tree probes that look at its children: the CLI behind the launcher, else the child. */
+export function engineProcessPid(child: ChildProcess): number | undefined {
+  return cliProcessPid(child) ?? child.pid;
+}
+/** How this CLI's tree is held for Stop: a Windows job (every process it creates is in it) or nothing beyond the root. */
+export function cliContainment(child: ChildProcess): "job" | "none" {
+  const owned = cliOwnership.get(child);
+  return owned?.jobName && !owned.jobRefused ? "job" : "none";
+}
+
+const engineContainmentError = (reason: string): NodeJS.ErrnoException =>
+  Object.assign(new Error(`${ENGINE_CONTAINMENT_MESSAGE} (${reason})`), { code: ENGINE_CONTAINMENT_CODE, syscall: "spawn" });
+
+/** Emit a spawn-time failure the way Node does for ENOENT: `error` on the next tick, to listeners the caller attached right
+ *  after spawnCli returned. With no listener the sentence goes to the app log instead of becoming an uncaught exception. */
+function emitLaunchError(child: ChildProcess, error: NodeJS.ErrnoException): void {
+  process.nextTick(() => {
+    if (child.listenerCount("error") > 0) child.emit("error", error);
+    else console.warn(`[procs] ${error.message}`);
+  });
+}
+
+/** An engine launch refused before anything was started (no addon, no launcher, no job): a child object that reports the refusal
+ *  as Node reports ENOENT (error, then exit and close with -2), holds no process and no pid. */
+function unstartedLaunch(command: string, args: string[], reason: string): ChildProcessByStdio<Writable, Readable, Readable> {
+  const stdin = new PassThrough(), stdout = new PassThrough(), stderr = new PassThrough();
+  const child = Object.assign(new EventEmitter(), {
+    pid: undefined, exitCode: null as number | null, signalCode: null, killed: false, connected: false, spawnfile: command, spawnargs: [command, ...args],
+    stdin, stdout, stderr, stdio: [stdin, stdout, stderr, null, null], kill: () => false, ref: () => {}, unref: () => {},
+  }) as unknown as ChildProcessByStdio<Writable, Readable, Readable>;
+  stdin.on("error", () => {});
+  // Owned like any refused launch (cliJobRefused, containment "none"); with no pid there is nothing to stop, so a stop confirms.
+  const ownership: CliOwnership = { pid: undefined, platform: process.platform, closed: false, stopped: false, jobRefused: true, observations: [], observers: new Set() };
+  cliOwnership.set(child, ownership);
+  emitLaunchError(child, engineContainmentError(reason));
+  process.nextTick(() => {
+    (child as { exitCode: number | null }).exitCode = -2;
+    ownership.exited = true;
+    child.emit("exit", -2, null);
+    stdout.end(); stderr.end();
+    ownership.closed = true;
+    child.emit("close", -2, null);
+  });
+  return child;
 }
 
 export function spawnCli(
@@ -187,15 +239,27 @@ export function spawnCli(
   assertSafeCliArgv(resolved);
   const launch = mode?.serverTool === "docker" && cli === "docker" ? null : cloudTurnLaunch(resolved.command, resolved.args, opts.env, opts.cwd);
   const command = launch?.command ?? resolved.command, launchArgs = launch?.args ?? resolved.args;
-  // Windows PIP: the job exists before the CLI does (a taken name or a missing addon refuses the run before anything starts), and the
-  // CLI is put in it right after it starts (memory/pip-job.ts, THE WINDOW).
-  // An engine's job is optional (CliJob): one that cannot be created starts the CLI without it.
-  const optionalJob = job?.fallback === "no-job";
-  let jobFallback: "create" | "assign" | undefined;
+  // Windows, a job (PIP or engine): the job exists before anything does, the launcher is started and put in the job while it is
+  // blocked on its stdin, and only then (the frame) does it start the CLI inside the job (U24 design R2). A launch that cannot
+  // be contained is refused (R3): PIP throws PipJobRefusedError (job creation) or returns the ended launcher with
+  // cliJobRefused; an engine gets a child whose `error` carries ECONTAIN. Nothing ever runs outside its job.
+  const contained = process.platform === "win32" && job !== undefined && !launch;
+  const forEngine = contained && job!.name.startsWith("Local\\murage-pip-eng-");
   let pipJob: NativeHandle | undefined;
-  if (process.platform === "win32" && job && !launch) {
-    try { pipJob = createPipJob(job.name); }
-    catch (error) { if (!optionalJob) throw error; jobFallback = "create"; }
+  let launcher: string | null = null;
+  if (contained) {
+    launcher = launcherPath();
+    if (launcher === null) {
+      if (forEngine) { console.warn(`[procs] engine launch refused for ${cli}: no job launcher file in this build (${SPAWNED_PROXIES.jobLauncher})`); return unstartedLaunch(command, launchArgs, "launcher file missing"); }
+      throw new PipJobRefusedError("launcher");
+    }
+    try { pipJob = createPipJob(job!.name); }
+    catch (error) {
+      if (!forEngine) throw error;
+      // (1b): the exact cause reaches server.log (and so Export diagnostics): the addon load error or the job create error.
+      console.warn(`[procs] engine launch refused for ${cli}: the job could not be created: ${(error as PipJobRefusedError).reason ?? "job"} (${error instanceof Error ? error.message : String(error)})`);
+      return unstartedLaunch(command, launchArgs, "job create: " + ((error as PipJobRefusedError).reason ?? "job"));
+    }
   }
   const { stdio, closeStdin } = launchStdio(opts.stdio);
   const rest: SpawnOptions = { ...opts };
@@ -213,37 +277,64 @@ export function spawnCli(
     // kill(-pid) reaps child MCP servers. win32: a hidden console of its own
     // (CREATE_NO_WINDOW, every stdio piped), never DETACHED_PROCESS: a console
     // descendant of a console-less process would get a new visible console.
-    // PIP and engine turns use a named job (an engine's falls back to taskkill /T); other CLIs use taskkill /T.
+    // PIP and engine turns on Windows use a named job through the launcher; other Windows CLIs use taskkill /T.
     ...(process.platform === "win32" ? { windowsHide: true } : { detached: true }),
-  }) as ChildProcessByStdio<Writable, Readable, Readable>; // callers always pipe all three
-  let child = start();
-  // The assignment is the next synchronous call after spawn() and completes before spawnCli returns, so before any caller can write
-  // a byte to the CLI's stdin: a CLI never reads its prompt outside its job. A failed assignment (the addon could not open or assign
-  // the process; it has then ended it with PIP_JOB_REFUSAL where it could) ends the CLI here too, through Node's own handle, closes
-  // its stdin unwritten and refuses the run (cliJobRefused); no pid: nothing started.
+  }) as ChildProcessByStdio<Writable, Readable, Readable>;
+  // The launcher: the server's own Node (process.execPath run as Node) with a fixed environment, the CLI's argv after "--",
+  // the turn's cwd and stdio, and a fourth pipe for its one-line report. It executes nothing of the turn's before the frame.
+  const startLauncher = () => spawn(process.execPath, [launcher!, "--", command, ...launchArgs], {
+    cwd: opts.cwd,
+    env: launcherEnvironment(),
+    stdio: [...(stdio as Array<unknown>).slice(0, 3), "pipe"] as StdioOptions,
+    windowsHide: true,
+  }) as ChildProcessByStdio<Writable, Readable, Readable>;
+  const child = pipJob ? startLauncher() : start();
+  // The assignment is the next synchronous call after spawn() and completes before spawnCli returns. The launcher is blocked on
+  // its stdin until the frame, so a refused assignment (the addon could not open or assign it; it has then ended it with
+  // PIP_JOB_REFUSAL where it could) ends a process that started nothing: it is ended here too through Node's own handle, its
+  // stdin destroyed unwritten, and the launch is refused (cliJobRefused; an engine's child also reports ECONTAIN). A start that
+  // failed outright (no pid) is refused the same way: its `error` reports it.
   let jobRefused = false;
   if (pipJob && (child.pid === undefined || !assignPipJob(pipJob, child.pid))) {
     const started = child.pid !== undefined;
     closePipJob(pipJob);
     pipJob = undefined;
+    jobRefused = true;
     if (started) {
       try { child.kill(); } catch { /* the addon's terminate, or already gone */ }
-      try { child.stdin?.destroy(); } catch { /* nothing is written to a refused CLI */ }
+      try { child.stdin?.destroy(); } catch { /* nothing is written to a refused launcher */ }
     }
-    if (!optionalJob) jobRefused = started;
-    else if (started) {
-      // Engine: the refused start got no byte and is ended (by the addon and by Node's handle above). The turn is not refused: the
-      // CLI starts once more, outside any job, and stops through taskkill /T, then the root kill (a nested job not allowed, a
-      // process that could not be opened). A start that failed outright (no pid) is returned as it is: its `error` reports it.
-      const refused = child;
-      refused.on("error", () => {});
-      try { refused.stdout?.destroy(); refused.stderr?.destroy(); } catch { /* already closed */ }
-      jobFallback = "assign";
-      child = start();
+    if (forEngine) emitLaunchError(child, engineContainmentError(started ? "job assign failed" : "launcher did not start"));
+    console.warn(`[procs] ${forEngine ? "engine" : "PIP"} launch refused for ${cli}: ${started ? `the launcher (pid ${child.pid}) could not be put in its job (jobAssign failed)` : "the launcher did not start (no pid)"}`);
+  }
+  if (pipJob) {
+    // In the job: the frame releases the launcher, which starts the CLI as a job member. The driver's prompt follows in the same
+    // pipe, in order; the launcher reads exactly the frame and the CLI inherits the rest.
+    child.stdin?.write(launcherFrame(opts.env, typeof opts.cwd === "string" ? opts.cwd : opts.cwd?.toString()));
+    const report = Array.isArray(child.stdio) ? (child.stdio as Array<unknown>)[3] as Readable | null | undefined : undefined;
+    if (report) {
+      let line = "";
+      let done = false;
+      report.on("error", () => {});
+      report.on("data", (chunk: Buffer) => {
+        if (done) return;
+        line += chunk.toString("utf8");
+        const end = line.indexOf("\n");
+        if (end < 0) { if (line.length > 4096) done = true; return; }
+        done = true;
+        try {
+          const parsed = JSON.parse(line.slice(0, end)) as { pid?: unknown; error?: { code?: unknown; syscall?: unknown; path?: unknown } };
+          if (typeof parsed.pid === "number") { const owned = cliOwnership.get(child); if (owned) owned.cliPid = parsed.pid; }
+          else if (parsed.error) {
+            const code = typeof parsed.error.code === "string" ? parsed.error.code : "ESPAWN";
+            const path = typeof parsed.error.path === "string" ? parsed.error.path : command;
+            const error = Object.assign(new Error(`spawn ${path} ${code}`), { code, syscall: "spawn", path, spawnargs: launchArgs }) as NodeJS.ErrnoException;
+            if (child.listenerCount("error") > 0) child.emit("error", error); else console.warn(`[procs] ${error.message}`);
+          }
+        } catch { /* a report that is not the launcher's: ignored */ }
+      });
     }
   }
-  // Assigned: the root's descendants started before the assignment join it too (one sweep).
-  if (pipJob && child.pid !== undefined) sweepJobDescendants(pipJob, child.pid);
   if (closeStdin && !jobRefused) child.stdin?.end();
 
   if (launch) {
@@ -265,9 +356,10 @@ export function spawnCli(
   // is where every one of them settles the turn — so it is swallowed, not
   // logged.
   child.stdin?.on("error", () => {});
-  // PIP keeps its job name whatever happened (its refusal reads it); an engine names its job only while the CLI is really in it.
-  const jobName = optionalJob ? (pipJob ? job!.name : undefined) : job?.name;
-  const ownership: CliOwnership = { pid: child.pid, platform: process.platform, jobName, closed: false, stopped: false, observations: [], observers: new Set(), ...(jobRefused ? { jobRefused } : {}), ...(jobFallback ? { jobFallback } : {}) };
+  // The job name stays with a refused launch too (its refusal and its confirmation read it: a refused launcher was never a
+  // member, so its own exit is what confirms it).
+  const jobName = job?.name;
+  const ownership: CliOwnership = { pid: child.pid, platform: process.platform, jobName, closed: false, stopped: false, observations: [], observers: new Set(), ...(jobRefused ? { jobRefused } : {}) };
   cliOwnership.set(child, ownership);
   recordProcessHandle(child, [command, ...launchArgs].join(" "), opts.env);
   // As the 1.0.2 supervisor did when its CLI exited: closing the last handle ends every process the CLI left in the job. On the
@@ -448,7 +540,7 @@ export interface KillCliTreeDeps {
   execFile: (
     command: string,
     args: string[],
-    options: { windowsHide: boolean },
+    options: { windowsHide: boolean; timeout?: number; killSignal?: NodeJS.Signals },
     callback: (error: Error | null) => void,
   ) => void;
   killProcess: (pid: number, signal: NodeJS.Signals) => void;
@@ -474,28 +566,66 @@ export function killCliTree(child: ChildProcess, observer?: StopRouteObserver): 
     try { child.kill("SIGTERM"); } catch { /* no group ownership */ }
     return;
   }
-  if (ownership) deliverTracked(ownership, (done) => killCliTreeWith(child, observer, REAL_KILL_DEPS, done));
+  // U24 design R4: one taskkill per root, ever. A repeat while it is in flight joins it (the first route's delivery time is
+  // kept); a repeat after it was delivered, with the root still alive, sends the root kill only.
+  if (ownership?.delivering) return;
+  if (ownership?.taskkillSent) {
+    if (child.exitCode === null && child.signalCode === null) {
+      let ok = false;
+      try { ok = child.kill(); } catch { /* already gone */ }
+      try { observer?.({ route: "windows_child_kill", result: ok ? "succeeded" : "failed" }); } catch { /* diagnostics never affect stop */ }
+    }
+    return;
+  }
+  if (ownership) { ownership.taskkillSent = true; deliverTracked(ownership, (done) => killCliTreeWith(child, observer, REAL_KILL_DEPS, done), rootKillWatchdog(child, observer)); }
   else killCliTreeWith(child, observer, REAL_KILL_DEPS);
 }
 
-/** Run one termination route and record it as in flight until `done`. */
-function deliverTracked(owned: Pick<CliOwnership, "delivering" | "deliveredAt">, start: (done: () => void) => void): void {
+/** U24 design R6: the route watchdog. taskkill is a subprocess; Node kills it at WINDOWS_TASKKILL_CAP_MS, but its callback still
+ *  rides later lifecycle events. If the route has not settled delivery WINDOWS_ROUTE_WATCHDOG_MS after the cap, the watchdog
+ *  sends the root kill itself and settles delivery, so a Stop is never stuck behind a silent taskkill. */
+function rootKillWatchdog(child: Pick<ChildProcess, "exitCode" | "signalCode" | "kill">, observer?: StopRouteObserver): { afterMs: number; fallback: () => void } {
+  return {
+    afterMs: WINDOWS_TASKKILL_CAP_MS + WINDOWS_ROUTE_WATCHDOG_MS,
+    fallback: () => {
+      try { observer?.({ route: "windows_child_kill", result: "fallback" }); } catch { /* diagnostics never affect stop */ }
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      try { const ok = child.kill(); observer?.({ route: "windows_child_kill", result: ok ? "succeeded" : "failed" }); }
+      catch { try { observer?.({ route: "windows_child_kill", result: "failed" }); } catch { /* diagnostics */ } }
+    },
+  };
+}
+
+/** Run one termination route and record it as in flight until `done`; with a watchdog, settle it by `afterMs` regardless. */
+function deliverTracked(owned: Pick<CliOwnership, "delivering" | "deliveredAt" | "taskkillSent">, start: (done: () => void) => void, watchdog?: { afterMs: number; fallback: () => void }): void {
   let finish!: () => void;
   const delivery = new Promise<void>((resolve) => { finish = resolve; });
   owned.delivering = delivery;
   let finished = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const done = () => {
     if (finished) return;
     finished = true;
+    if (timer) clearTimeout(timer);
     if (owned.delivering === delivery) { owned.delivering = undefined; owned.deliveredAt = Date.now(); }
     finish();
   };
+  if (watchdog) {
+    timer = setTimeout(() => { if (finished) return; try { watchdog.fallback(); } finally { done(); } }, watchdog.afterMs);
+    timer.unref?.();
+  }
   try { start(done); } catch (error) { done(); throw error; }
 }
 
-/** Windows, no job: how long root close may take once termination was delivered, and the absolute cap from the start. */
+/** Windows, no job (U24 design R6/R7): taskkill is killed at its cap; the watchdog settles delivery a second later at the
+ *  latest; the root then has WINDOWS_ROOT_CLOSE_MS from delivery to close; the route's absolute cap is the sum. */
+export const WINDOWS_TASKKILL_CAP_MS = 4_000;
+export const WINDOWS_ROUTE_WATCHDOG_MS = 1_000;
 export const WINDOWS_ROOT_CLOSE_MS = 5_000;
-export const WINDOWS_STOP_ROUTE_CAP_MS = 15_000;
+export const WINDOWS_STOP_ROUTE_CAP_MS = WINDOWS_TASKKILL_CAP_MS + WINDOWS_ROUTE_WATCHDOG_MS + WINDOWS_ROOT_CLOSE_MS;
+/** Windows job route: how long any caller waits for the job's own answer before reading "not stopped" (the attempt itself
+ *  continues: a late empty-job answer still marks the tree stopped and releases every teardown waiter, U24 design R5). */
+export const JOB_STOP_CAP_MS = 4_500;
 
 /** Windows without a job: root `close` (every stdio pipe of the root at EOF, so no descendant that inherited them is still
  *  holding them) is what confirms. The close budget counts from delivered termination: taskkill /T is a subprocess and can
@@ -504,8 +634,8 @@ export const WINDOWS_STOP_ROUTE_CAP_MS = 15_000;
  *  raced by a second taskkill. Fail-closed: a root that has not closed by then, or a route that never answers by the cap,
  *  reads "not stopped". Exported for tests (the kill route is injected there). */
 export function confirmWindowsRootClose(
-  child: Pick<ChildProcess, "once" | "off">,
-  owned: { closed: boolean; delivering?: Promise<void>; deliveredAt?: number },
+  child: Pick<ChildProcess, "once" | "off" | "exitCode" | "signalCode" | "kill">,
+  owned: { closed: boolean; delivering?: Promise<void>; deliveredAt?: number; taskkillSent?: boolean },
   startRoute: (done: () => void) => void,
   closeMs = WINDOWS_ROOT_CLOSE_MS,
   capMs = WINDOWS_STOP_ROUTE_CAP_MS,
@@ -513,14 +643,21 @@ export function confirmWindowsRootClose(
   if (owned.closed) return Promise.resolve(true);
   return new Promise<boolean>((resolve) => {
     let closeTimer: ReturnType<typeof setTimeout> | undefined;
-    const finish = (value: boolean) => { clearTimeout(cap); if (closeTimer) clearTimeout(closeTimer); child.off("close", closed); resolve(value); };
+    let settled = false;
+    const finish = (value: boolean) => { if (settled) return; settled = true; clearTimeout(cap); if (closeTimer) clearTimeout(closeTimer); child.off("close", closed); resolve(value); };
     const closed = () => finish(true);
     const cap = setTimeout(() => finish(false), Math.max(capMs, closeMs));
-    const armClose = () => { if (!closeTimer) closeTimer = setTimeout(() => finish(false), closeMs); };
+    // U24: a route that answers after the close landed or the cap fired arms nothing (no stray timer).
+    const armClose = () => { if (!settled && !closeTimer) closeTimer = setTimeout(() => finish(false), closeMs); };
     child.once("close", closed);
     const inFlight = owned.delivering;
     if (inFlight) void inFlight.then(armClose);
-    else deliverTracked(owned, (done) => startRoute(() => { done(); armClose(); }));
+    // U24 design R6: a route whose callback never comes is settled by the watchdog, which sends the root kill (and says so)
+    // before delivery completes and the close budget starts.
+    else {
+      const watchdog = rootKillWatchdog(child);
+      deliverTracked(owned, (done) => startRoute(() => { done(); armClose(); }), { afterMs: watchdog.afterMs, fallback: () => { watchdog.fallback(); armClose(); } });
+    }
   });
 }
 
@@ -563,10 +700,14 @@ function stopOwnedCli(child: ChildProcess, owned: CliOwnership, observer?: StopR
       try { observer(observation); } catch { /* diagnostics never affect stop */ }
     }
   }
+  // U24 design R5: on the Windows job route every caller, the first and every one that joins, reads the answer by
+  // JOB_STOP_CAP_MS while the attempt itself continues (a late empty-job answer still marks the tree stopped).
+  const jobCap = owned.platform === "win32" && owned.jobName && !owned.jobRefused ? JOB_STOP_CAP_MS : undefined;
+  const view = jobCap === undefined ? deadlineMs : Math.min(deadlineMs ?? jobCap, jobCap);
   if (owned.stopping) {
     if (force) { try { owned.escalate?.(); } catch { /* confirmation still decides */ } }
     // Joined, not restarted: this caller still gets its own deadline.
-    return callerView(owned.stopping, deadlineMs);
+    return callerView(owned.stopping, view);
   }
   if (owned.stopped) return Promise.resolve(true);
   const pid = owned.pid;
@@ -583,26 +724,33 @@ function stopOwnedCli(child: ChildProcess, owned: CliOwnership, observer?: StopR
     if (owned.platform === "win32") {
       if (owned.jobName) {
         const jobName = owned.jobName;
+        const rootGone = () => owned.exited === true || owned.closed || child.exitCode !== null || child.signalCode !== null;
+        if (owned.jobRefused) {
+          // A refused launcher was never a job member and started nothing (no frame): its own exit is what confirms it. It was
+          // ended by the addon and through Node's handle at refusal; this only observes.
+          observe({ route: "windows_child_kill", result: "requested" });
+          if (rootGone()) return true;
+          return new Promise<boolean>(resolve => {
+            // T9b: a refused launcher still running after CLI_FORCE_WAIT_MS is said in the app log, by pid.
+            const overdue = setTimeout(() => { if (!rootGone()) console.warn(`[procs] a refused launcher (pid ${pid}) is still running ${CLI_FORCE_WAIT_MS} ms after it was ended; its exit is still awaited`); }, CLI_FORCE_WAIT_MS);
+            overdue.unref?.();
+            const onExit = () => { clearTimeout(timer); clearTimeout(overdue); child.off("exit", onExit); child.off("close", onExit); resolve(true); };
+            const timer = setTimeout(() => { clearTimeout(overdue); child.off("exit", onExit); child.off("close", onExit); resolve(rootGone()); }, termGraceMs + CLI_FORCE_WAIT_MS);
+            child.once("exit", onExit);
+            child.once("close", onExit);
+            try { child.kill(); } catch { /* already gone */ }
+          });
+        }
         owned.escalate = () => { void stopWindowsJob(jobName, CLI_FORCE_WAIT_MS); };
-        // Terminate the job first (the CLI and every member, by name) and confirm it is empty, never waiting on the root's streams
-        // before that: a descendant that inherited stdout or stderr holds them open until the job ends it. Then the root itself must
-        // have exited (a refused CLI was never in the job; Node's own handle ends it).
-        // The route is reported as the other routes are (R1-T8): the job's termination, then the root kill when the root outlived it.
+        // U24 design R5: terminate the job and confirm on its own count. Every member, the launcher and the CLI included, is in
+        // the job before its first instruction (R2), so an empty job is the whole tree gone: nothing is waited for after it.
+        // The root's exit and close arrive on their own; a root still reported alive after the empty answer gets the root kill
+        // (its handle closes the job then, the same way the supervisor's exit did).
         observe({ route: "windows_job", result: "requested" });
         const emptied = await stopWindowsJob(jobName, termGraceMs + CLI_FORCE_WAIT_MS);
         observe({ route: "windows_job", result: emptied ? "succeeded" : "failed" });
-        const rootGone = () => owned.exited === true || owned.closed || child.exitCode !== null || child.signalCode !== null;
-        if (rootGone()) return emptied;
-        observe({ route: "windows_child_kill", result: "fallback" });
-        const exited = await new Promise<boolean>(resolve => {
-          const onExit = () => { clearTimeout(timer); child.off("close", onExit); resolve(true); };
-          const timer = setTimeout(() => { child.off("exit", onExit); child.off("close", onExit); resolve(rootGone()); }, CLI_FORCE_WAIT_MS);
-          child.once("exit", onExit);
-          child.once("close", onExit);
-          try { observe({ route: "windows_child_kill", result: child.kill() ? "succeeded" : "failed" }); }
-          catch { observe({ route: "windows_child_kill", result: "failed" }); /* confirmation still required */ }
-        });
-        return emptied && exited;
+        if (emptied && !rootGone()) { observe({ route: "windows_child_kill", result: "fallback" }); try { child.kill(); } catch { /* already gone */ } }
+        return emptied;
       }
       // Windows without a job keeps EXACTLY the 1.0.1 stop semantics: one
       // `taskkill /PID <pid> /T /F` while the root is known alive, root close
@@ -611,7 +759,12 @@ function stopOwnedCli(child: ChildProcess, owned: CliOwnership, observer?: StopR
       // that every Windows descendant has stopped needs owned job handles; that
       // arrives with the native Job Object lane, not here.
       if (owned.closed) return true;
-      return confirmWindowsRootClose(child, owned, (done) => killCliTreeWith(child, observer, REAL_KILL_DEPS, done));
+      // U24 design R4: a root whose one taskkill already went out gets the root kill only, never a second taskkill.
+      return confirmWindowsRootClose(child, owned, (done) => {
+        if (owned.taskkillSent) { rootKillWatchdog(child, observe).fallback(); done(); return; }
+        owned.taskkillSent = true;
+        killCliTreeWith(child, observe, REAL_KILL_DEPS, done);
+      });
     }
     const settled = () => {
       if (owned.treeGone) return true;
@@ -673,7 +826,7 @@ function stopOwnedCli(child: ChildProcess, owned: CliOwnership, observer?: StopR
     if (owned.stopping === attempt) owned.stopping = undefined;
     if (stopped) markStopped(owned);
   });
-  return callerView(attempt, deadlineMs);
+  return callerView(attempt, view);
 }
 
 /** One caller's view of the shared confirmation: with a deadline it reads "not
@@ -740,7 +893,9 @@ function killCliTreeRoute(
 
   if (deps.platform === "win32") {
     observe("windows_taskkill", "requested");
-    deps.execFile("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true }, (err) => {
+    // U24 design R6: taskkill itself is capped. Node ends it at the cap and the callback reports the error, so the root kill
+    // fallback goes out and delivery settles; the watchdog in deliverTracked covers a callback that never comes.
+    deps.execFile("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, timeout: WINDOWS_TASKKILL_CAP_MS, killSignal: "SIGKILL" }, (err) => {
       if (!err) {
         observe("windows_taskkill", "succeeded");
         done?.();

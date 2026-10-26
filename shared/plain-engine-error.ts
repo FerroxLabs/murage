@@ -49,3 +49,10 @@ export function plainEngineError(message: string, botName: string, options: { de
     ? `${botName}'s model provider turned this request down.`
     : `${botName}'s model provider turned this request down. The details below say why.`;
 }
+
+/** A payment or access refusal carries the provider's own sentence after ours ("... The provider says: ..."). The store apps show no
+ *  purchase or top-up wording from a provider, so there it is dropped; the desktop keeps it (already redacted and capped by the driver). */
+export function withoutProviderSentence(message: string): string {
+  const at = message.indexOf(" The provider says: ");
+  return at < 0 ? message : message.slice(0, at);
+}
