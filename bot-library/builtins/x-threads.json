@@ -42,7 +42,8 @@
         "title": "X Threads",
         "description": "Chirp prepares five source-grounded thread drafts from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For visuals, video and general social content, use Creator. For general conversion copy, use Copy.",
         "appearance": {
-          "color": "blue"
+          "color": "cyan",
+          "mascotBody": "blob"
         },
         "skills": [
           "twitter-thread",

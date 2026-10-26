@@ -13,7 +13,7 @@
 // Not claimed: containment above the leaf. The folder is found by path on
 // every operation; this module makes no claim about who can rename the
 // folders above it.
-import { constants } from "node:fs";
+import { constants, statSync } from "node:fs";
 import type { BigIntStats } from "node:fs";
 import * as fsp from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
@@ -81,6 +81,28 @@ export function attachmentNameOf(home: AttachmentsHome, storedPath: string): str
  * paths as today). */
 export function storedPathOf(home: AttachmentsHome, name: string): string {
   return join(folderOf(home), name);
+}
+
+/** The folder, inside the attachments folder, that holds one empty marker
+ * file per removed name (1.0.4 SL-H). A dotted name, so it is never an
+ * attachment name itself. */
+export const REMOVED_FOLDER = ".removed";
+
+/** Was this name removed from storage (SL-H H2)? One stat of its marker,
+ * asked at the moment of use and never cached. The name is checked first,
+ * with no filesystem call: anything that is not a bare attachment name has no
+ * marker. Fail closed: only "no such file" means not removed; a disk that
+ * cannot answer counts as removed, so a removed file is never served or sent
+ * on a stat error. */
+export function attachmentRemoved(home: AttachmentsHome, name: string): boolean {
+  if (!isAttachmentName(name)) return false;
+  try {
+    statSync(join(folderOf(home), REMOVED_FOLDER, name));
+    return true;
+  } catch (error) {
+    const code = errno(error);
+    return !(code === "ENOENT" || code === "ENOTDIR");
+  }
 }
 
 // ---------------------------------------------------------------------------

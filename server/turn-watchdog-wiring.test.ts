@@ -91,6 +91,13 @@ describe("stall watchdog wiring (admission, exemptions, setup latch)", () => {
     expect(SOURCE).toMatch(/setupStallMs: TURN_SETUP_STALL_MS,/);
   });
 
+  it("caps a turn kept alive by tool heartbeats alone, never under the silence limit (#3328)", () => {
+    expect(SOURCE).toMatch(/const TURN_HEARTBEAT_ONLY_MS = Math\.max\(TURN_STALL_MS,/);
+    expect(SOURCE).toMatch(/heartbeatOnlyMs: TURN_HEARTBEAT_ONLY_MS,/);
+    expect(SOURCE).toContain('watchdog.touch(event.threadId, { heartbeat: event.type === "item.updated" && event.itemType === "tool" });');
+    expect(SOURCE).toContain('turn.stalledBy === "heartbeat-only"');
+  });
+
   it("arms the room watch at the claim with a setup latch honoured before dispatch", () => {
     const body = fn("runGroupMemberTurn");
     const claim = body.indexOf("groupSpeakers.set(threadId, { botId: bot.id, name: bot.name, color: bot.color });");

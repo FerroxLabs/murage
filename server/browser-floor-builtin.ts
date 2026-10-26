@@ -50,6 +50,9 @@ const ACTION_OPERATION: Record<string, string> = {
   focus: "focus", drag: "click",
 };
 
+/** Keyboard steps that land on whichever element has focus. */
+const LIVE_FOCUS_OPERATIONS = new Set(["press", "type", "keyboard_type", "insert_text"]);
+
 export const normalizeRef = (value: string): string | undefined => REF.exec(value.trim())?.[1];
 const clip = (value: string | undefined, max: number) => (value ?? "").replace(/\s+/g, " ").trim().slice(0, max);
 
@@ -144,11 +147,16 @@ export class BuiltinFloorGate {
   /** Facts for one step. A target that cannot be read is factsFailed, which the classifier treats as unsure. */
   async facts(operation: string, target: BuiltinTarget, read?: ReadElementHtml): Promise<FloorFacts> {
     const raw = target.ref ?? target.selector;
-    const wanted = raw !== undefined ? raw : this.focus;
+    // A keyboard step with no target goes to wherever focus really is. The page moves focus on its own, so when the
+    // live element can be read it is judged instead of the field this gate last acted on; a read that fails is unsure.
+    const liveFocus = raw === undefined && read !== undefined && LIVE_FOCUS_OPERATIONS.has(operation);
+    const wanted = raw !== undefined ? raw : liveFocus ? undefined : this.focus;
     const ref = wanted !== undefined ? normalizeRef(wanted) : undefined;
     const base: FloorFacts = { operation, ...(target.key !== undefined ? { key: target.key } : {}) };
     let own: FloorFacts | undefined;
-    if (ref !== undefined) {
+    if (liveFocus) {
+      own = factsFromElementHtml(await read!(":focus"), operation);
+    } else if (ref !== undefined) {
       const index = this.elements.findIndex((e) => e.ref === ref);
       if (index >= 0) {
         const e = this.elements[index];

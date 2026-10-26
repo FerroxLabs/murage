@@ -6,6 +6,9 @@
 // worker's words reach no receipt, replay record, frozen row, wake payload or routine answer record. One test per path the earlier Astra
 // reports showed (replay, frozen retry, dropped hold, poll while checking, expired, nested continuation, failed wake save, shared hand-off
 // from a direct chat), a scan of every store, and the clean path.
+// 1.0.5 (DELEGATED-REPLY-WITHHELD.md): with a DelegatedReplyChecks scheduler in its ports the finalizer first WAITS, bounded, for a checking
+// verdict to settle (server/delegated-reply-check.test.ts). The ports here carry no scheduler, so these tests exercise the final path that
+// runs once that wait is over or when no scheduler is wired: the invariants below (no hold, no words in any store, one wake) hold for both.
 import { mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";

@@ -13,6 +13,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, Plus, RefreshCw } from "lucide-react";
 
 import { api } from "@/state/store";
+import { copyTextOrThrow } from "@/lib/copy-text";
 import {
   LOCAL_SERVER_KIND_LABELS,
   LOCAL_SERVER_KINDS,
@@ -182,7 +183,7 @@ function ModelCard({ server, model, onTested, onRefresh }: {
         return;
       }
       if (action.kind === "copy-flag" && action.value) {
-        await navigator.clipboard.writeText(action.value);
+        await copyTextOrThrow(action.value);
         setNotice(`Copied: ${action.value}`);
         return;
       }

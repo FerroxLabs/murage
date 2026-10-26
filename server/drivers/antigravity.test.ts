@@ -31,6 +31,7 @@ import {
   STATIC_ANTIGRAVITY_MODELS,
 } from "./antigravity.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
+import { TURN_ASK_RULES } from "../../shared/ask-wording.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-agy-cli.ts");
 
@@ -120,13 +121,15 @@ describe("Antigravity decodeConfig", () => {
 });
 
 // 1.0.3: the turn spawn asks for the Windows engine job (procs.ts engineJob). engineJob answers only on Windows, so here it is
-// a fixed stand-in and every spawnCli job argument is recorded; the real spawnCli still runs (off Windows a job changes nothing).
-const jobProbe = vi.hoisted(() => ({ job: { name: "Local\\murage-pip-eng-probe", fallback: "no-job" as const }, jobs: [] as unknown[] }));
+// a stand-in and every spawnCli job argument is recorded; the real spawnCli still runs (off Windows a job changes nothing).
+// Each call names a fresh job, as engineJob does: on Windows spawnCli really creates the named job, and a second launch while a
+// first (warm) one still holds the same name is refused with EEXIST by design (procs.ts createPipJob).
+const jobProbe = vi.hoisted(() => ({ issued: [] as Array<{ name: string }>, jobs: [] as unknown[] }));
 vi.mock("../procs.ts", async (original) => {
   const actual = await original<typeof import("../procs.ts")>();
   return {
     ...actual,
-    engineJob: () => jobProbe.job,
+    engineJob: () => { const job = { name: `Local\\murage-pip-eng-probe-${process.pid}-${jobProbe.issued.length}` }; jobProbe.issued.push(job); return job; },
     spawnCli: (...args: Parameters<typeof actual.spawnCli>) => { jobProbe.jobs.push(args[3]); return actual.spawnCli(...args); },
   };
 });
@@ -169,7 +172,8 @@ describe("Antigravity turns (fake CLI)", () => {
     await create();
     const { turnId } = await instance.adapter.sendTurn({ threadId: "t-happy", text: "hi", model: "gemini-3.1-pro-high" });
     await recorder.until((e) => e.type === "turn.completed");
-    expect(jobProbe.jobs).toContainEqual(jobProbe.job); // the turn CLI was started in the engine job
+    expect(jobProbe.issued.length).toBeGreaterThan(0);
+    expect(jobProbe.jobs).toContainEqual(jobProbe.issued.at(-1)); // the turn CLI was started in the engine job
 
     const types = recorder.events.map((e) => e.type);
     expect(types).toEqual([
@@ -331,7 +335,7 @@ describe("Antigravity turns (fake CLI)", () => {
       await recorder.until((event) => event.type === "turn.completed");
 
       const seen = JSON.parse(readFileSync(dump, "utf8"));
-      expect(seen.prompt).toBe(`${system}\n\nreview the video`);
+      expect(seen.prompt).toBe(`${system}\n\n${TURN_ASK_RULES}\n\nreview the video`);
       expect(seen.argv).toContain("--input-format");
       expect(seen.argv).not.toContain("--print");
       expect(JSON.stringify(seen.argv)).not.toContain("room instructions");
@@ -515,6 +519,36 @@ describe("Antigravity snapshot", () => {
       delete process.env.FAKE_AGY_VERSION;
     }
   });
+
+  // Upstream #3433: a slow --version probe on a busy machine never reads as "not installed".
+  it("a slow version probe keeps the last version; without one it names the timeout, not a missing CLI", async () => {
+    chmodSync(FAKE_CLI, 0o755);
+    const dir = mkdtempSync(join(tmpdir(), "murage-agy-slow-probe-"));
+    const delayFile = join(dir, "version-delay");
+    process.env.FAKE_AGY_VERSION_DELAY_FILE = delayFile;
+    const create = (instanceId: string) => AntigravityDriver.create({
+      instanceId,
+      displayName: undefined,
+      environment: {},
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: false },
+    });
+    const instance = await create("agy-slow-probe");
+    const fresh = await create("agy-slow-probe-fresh");
+    try {
+      await expect(instance.snapshot()).resolves.toMatchObject({ state: "available", version: "1.1.22" });
+      // Past the 8 second probe timeout.
+      writeFileSync(delayFile, "9000");
+      const [held, none] = await Promise.all([instance.snapshot(), fresh.snapshot()]);
+      expect(held).toMatchObject({ state: "available", version: "1.1.22" });
+      expect(none).toMatchObject({ state: "unavailable", reason: expect.stringContaining("took longer than 8 seconds") });
+    } finally {
+      delete process.env.FAKE_AGY_VERSION_DELAY_FILE;
+      await instance.dispose();
+      await fresh.dispose();
+      removeTempDirSync(dir);
+    }
+  }, 30_000);
 
   it("strips workspace credentials from snapshot and helper children", async () => {
     const scratch = mkdtempSync(join(tmpdir(), "murage-agy-env-"));

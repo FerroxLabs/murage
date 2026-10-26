@@ -276,7 +276,7 @@ export function preflightRoute(engine: PipEngine, o: PreflightOptions = {}): Pre
 // ------------------------------------------------------- temp root + env ----
 
 export interface TempRoot { root: string; work: string; home: string; promptFile: string; debugFile: string }
-const ROOT_NAME = /^[a-z0-9][a-z0-9-]{0,120}$/;
+export const ROOT_NAME = /^[a-z0-9][a-z0-9-]{0,120}$/;
 
 /** `<base>/<runId>-<attempt>-<rand>`: private, with work/ and home/, and the prompt file unique per attempt. */
 export function createTempRoot(base: string, runId: string, attempt: number, prompt: string): TempRoot {
@@ -299,12 +299,53 @@ export function removeTempRoot(base: string, root: string): boolean {
   return true;
 }
 
-export const FUIGO_OFF_SWITCHES = { FUIGO_TELEMETRY_ENABLED: "0", FUIGO_SUBAGENTS: "0", FUIGO_MEMORY: "0", FUIGO_MANAGED_CONFIG: "0", FUIGO_DISABLE_AUTOUPDATER: "1" } as const;
+export const FUIGO_OFF_SWITCHES = { FUIGO_TELEMETRY_ENABLED: "0", FUIGO_SUBAGENTS: "0", FUIGO_MEMORY: "0", FUIGO_MANAGED_CONFIG: "0", FUIGO_DISABLE_AUTOUPDATER: "1",
+  // Fuigo 1.0.32: no daily ChatGPT/Grok subscription model refresh at startup (ignored by 1.0.31).
+  FUIGO_DISABLE_MODEL_REFRESH: "1" } as const;
 export const GROK_OFF_SWITCHES = { GROK_TELEMETRY_ENABLED: "0", GROK_SUBAGENTS: "0", GROK_MEMORY: "0", GROK_MANAGED_CONFIG: "0", GROK_DISABLE_AUTOUPDATER: "1" } as const;
 
-/** The whole environment of a reflection child: PATH, HOME=T, what the binding set, the off switches. */
+/**
+ * Every owner-import compat cell (Claude Code, Cursor, Codex and ~/.agents: MCP, skills, rules, agents, hooks,
+ * sessions), forced off for reflection. Reflection is text-only with no tools, so nothing here is ever wanted.
+ * Kept in step with fuigo.ts FUIGO_EXTERNAL_MCP_GATES and grok.ts GROK_EXTERNAL_COMPAT_GATES (a test pins it);
+ * not imported, because fuigo.ts reaches this module through headless-text-only.ts.
+ */
+const COMPAT_CELLS = ["SKILLS", "RULES", "AGENTS", "MCPS", "HOOKS", "SESSIONS"] as const;
+const compatCellsOff = (prefix: "FUIGO" | "GROK"): Record<string, "0"> => {
+  const out: Record<string, "0"> = {};
+  for (const source of ["CLAUDE", "CURSOR", "CODEX"]) for (const cell of COMPAT_CELLS) out[`${prefix}_${source}_${cell}_ENABLED`] = "0";
+  if (prefix === "FUIGO") out.FUIGO_AGENTS_SKILLS_ENABLED = "0";
+  return out;
+};
+export const FUIGO_REFLECTION_COMPAT_OFF = compatCellsOff("FUIGO");
+export const GROK_REFLECTION_COMPAT_OFF = compatCellsOff("GROK");
+
+/**
+ * The whole environment of a reflection child: PATH, HOME=USERPROFILE=T, what the binding set, the off switches.
+ * USERPROFILE is pinned on every OS: on Windows Fuigo/Grok resolve home from it (HOME is ignored) and an UNSET
+ * USERPROFILE falls back to the real profile, which would run the owner's ~/.claude, ~/.cursor, ~/.codex and
+ * ~/.fuigo/hooks inside reflection with the Flux key. Harmless on macOS and Linux. Same pattern as Cloud
+ * (cloud-home/turn-process.ts). The off switches and compat cells are spread last, so no binding can reopen them.
+ */
 export function buildReflectionEnv(engine: "fuigo" | "grok", pathValue: string, tempHome: string, tempRoot: string, bound: Record<string, string>): Record<string, string> {
-  return { PATH: pathValue, HOME: tempRoot, ...bound, ...(engine === "fuigo" ? FUIGO_OFF_SWITCHES : GROK_OFF_SWITCHES), ...(engine === "fuigo" ? { FUIGO_HOME: tempHome } : { GROK_HOME: tempHome }) };
+  return { PATH: pathValue, ...bound, HOME: tempRoot, USERPROFILE: tempRoot,
+    ...(engine === "fuigo" ? { ...FUIGO_OFF_SWITCHES, ...FUIGO_REFLECTION_COMPAT_OFF } : { ...GROK_OFF_SWITCHES, ...GROK_REFLECTION_COMPAT_OFF }),
+    ...(engine === "fuigo" ? { FUIGO_HOME: tempHome } : { GROK_HOME: tempHome }) };
+}
+
+/**
+ * Claude Code plugins (~/.claude/plugins) sit outside every compat cell and FUIGO_CONFIG drops `plugins`, so the
+ * only switch is `[plugins] auto_discover = false` in $FUIGO_HOME/config.toml (Cloud pins the same line,
+ * deploy/cloud-home/murage-turn-launch.py FUIGO_PINS). Appended to the temp home's config after the route binding
+ * wrote it; a config that already names a [plugins] table is refused rather than merged.
+ */
+export const REFLECTION_FUIGO_PLUGIN_PIN = "[plugins]\nauto_discover = false\n";
+export function pinReflectionFuigoConfig(tempHome: string): void {
+  const path = join(tempHome, "config.toml");
+  const current = existsSync(path) ? readFileSync(path, "utf8") : "";
+  if (/^\s*\[\s*plugins\s*\]/m.test(current)) throw new Error("PIP_REFLECTION_PLUGINS_TABLE");
+  const sep = current === "" || current.endsWith("\n") ? "" : "\n";
+  writeFileSync(path, `${sep}${REFLECTION_FUIGO_PLUGIN_PIN}`, { flag: "a", mode: 0o600 });
 }
 
 // ------------------------------------------------------------ route bind ----
