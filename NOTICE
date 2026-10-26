@@ -602,6 +602,31 @@ reviewed at the exact upstream commits named. None is a wholesale import.
     Murage: server/question-normalize.ts, server/drivers/codex.ts,
     server/testing/fake-codex-app-server.ts
 
+  OpenMausBot PR #3328 (Claude tool_progress heartbeat)
+    merge e1be06a9f4b72f7dbff0f40a2dea2bc5808237f8
+    A running tool's heartbeat counts as turn activity.
+    Murage: server/drivers/claude.ts, server/testing/fake-claude-cli.ts
+
+  OpenMausBot PR #3433 (a slow version probe is not "not installed")
+    merge 2da9ee21406cb7ece4daf0fb4351369040f79d27, commit
+    1a6f071b82f73ffe9e093fbe5d04e130e9859400
+    Murage: server/procs.ts, server/drivers/claude.ts, server/drivers/codex.ts,
+    server/drivers/pi.ts
+
+  OpenMausBot PR #3374 (mascot for the whole turn; turn-end tracking slice)
+    merge 3b94d6958ea3ae3ac3452079e63d42958c5170c2
+    Murage: src/state/turn-status.ts, src/lib/turn-tail.ts,
+    src/components/ChatView.tsx, src/components/GroupView.tsx,
+    src/components/use-reply-pop.ts
+
+  OpenMausBot PR #3173 ("Google Gemini (Antigravity)" engine name)
+    merge 1ba5829b4793acd0c16ae121ae5c971e6e8d0325
+    Murage: server/drivers/antigravity.ts
+
+  OpenMausBot PR #3181 (text-only MCP error results; guard only)
+    merge 1286a44ce84ac9545f3f989e25cc5555e47d1f27
+    Murage: server/mcp-error-result.ts, server/mcp-bridge.ts
+
 --------------------------------------------------------------------------
 
 Voice calls: designs and text adapted from LiveKit Agents and Pipecat

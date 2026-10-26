@@ -9,8 +9,9 @@ import { createEngineLoginRelay, type EngineLoginEngine, type EngineLoginExtra, 
 
 let server: Server, port: number, logs: string[], launches: Array<{ engine: string; action: string; extra: EngineLoginExtra; pid?: number }>, scope = "owner-desktop";
 async function start(options: EngineLoginOptions = {}) {
-  logs = []; launches = [];
-  const relay = createEngineLoginRelay({ log: line => logs.push(line), killGraceMs: 200, ...options,
+  // each relay writes to its own list: a session an earlier relay is still ending logs there, never into this test's lines
+  const mine: string[] = []; logs = mine; launches = [];
+  const relay = createEngineLoginRelay({ log: line => mine.push(line), killGraceMs: 200, ...options,
     spawnLauncher: options.spawnLauncher ?? ((engine: EngineLoginEngine, action, extra) => {
       const child = spawn("/bin/cat", [], { detached: true, stdio: ["pipe", "pipe", "pipe"] });
       launches.push({ engine, action, extra, pid: child.pid }); return child;
@@ -83,19 +84,25 @@ describe("engine login relay", () => {
     expect(await gone(launches[0]!.pid!)).toBe(true);
   });
   it("closes on an idle timeout and on the total timeout", async () => {
+    // The relay closes the socket first, then stops the child; its end line is written when the child has exited (it carries the
+    // exit), which on a loaded box comes after the client saw the close. So each session's end line is waited for: read too early it
+    // is missing here, and it lands in the next test's log instead (1.0.7: both failed together, 1 in 10 runs idle).
     await start({ limits: { idleMs: 150 } });
     const idle = await open(); expect(await closed(idle)).toBe(1001); expect(await gone(launches[0]!.pid!)).toBe(true);
+    await settled("codex", 0);
+    expect(logs.filter(line => line.startsWith("engine-login end"))[0]).toContain("reason=idle-timeout");
     await new Promise(resolve => server.close(resolve)); server.closeAllConnections();
     await start({ limits: { totalMs: 150, idleMs: 10_000 } });
     const long = await open(); const timer = setInterval(() => long.send("x"), 30);
     expect(await closed(long)).toBe(1001); clearInterval(timer);
-    expect(logs.some(line => line.includes("reason=total-timeout"))).toBe(true);
+    await settled("codex", 0);
+    expect(logs.filter(line => line.startsWith("engine-login end"))[0]).toContain("reason=total-timeout");
   });
   it("ends the session when the launcher exits first", async () => {
     await start({ spawnLauncher: () => spawn("/bin/sh", ["-c", "exit 3"], { detached: true, stdio: ["pipe", "pipe", "pipe"] }) });
     const ws = await open(); expect(await closed(ws)).toBe(1000);
-    await new Promise(r => setTimeout(r, 50));
-    expect(logs.filter(line => line.startsWith("engine-login end"))[0]).toContain("exit=3");
+    await settled("codex", 0);
+    expect(logs.filter(line => line.startsWith("engine-login end"))).toEqual([expect.stringContaining("exit=3")]);
   });
   it("a rejected handshake spawns nothing and frees the engine slot", async () => {
     await start();

@@ -965,6 +965,56 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "- Live updates without internet. On a desktop with no internet, chats keep their live updates from your own computer.\n- Hand-offs land where they belong. A reply a teammate hands back waits for its check, then arrives in the right conversation.\n- A smoother first run. An app connects under the label you confirm.\n- Kept downloads, in plain words. Files you keep from the browser are reported as kept.\n- Clearer library cards. Each template's card says in plain words what it does for you.\n- Murage for Chrome in one click. The setup card and the Browser panel open Murage for Chrome's Chrome Web Store listing directly."
   },
   {
+    "id": "changelog/v1-0-7#bots-in-1-0-7",
+    "title": "What changed in Murage 1.0.7",
+    "description": "Bots that read the projects and groups they belong to, a phone layout, ElevenLabs voices through Flux, a typed stop, and backups, routines and Linux starts that run straight through.",
+    "heading": "Bots in 1.0.7",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.7",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.7",
+    "url": "https://murage.app/docs/changelog/v1-0-7#bots-in-1-0-7",
+    "text": "- Bots read where they belong. A bot can read the messages of its own projects and groups when you ask it to.\n- Type stop. Write \"stop\" and the running turn ends, on every engine. A \"stop\" sent as a reply to a line stays an ordinary message.\n- Routines at No limits. Your own routines answer read-only commands on their follow-through turn without stopping for an approval card.\n- Routines in project rooms. Your own routines in a project room run at the level you set for the routine and its bot, and runs started from outside keep asking.\n- New bots in one step. A bot that cannot be created leaves nothing half made."
+  },
+  {
+    "id": "changelog/v1-0-7#voice-in-1-0-7",
+    "title": "What changed in Murage 1.0.7",
+    "description": "Bots that read the projects and groups they belong to, a phone layout, ElevenLabs voices through Flux, a typed stop, and backups, routines and Linux starts that run straight through.",
+    "heading": "Voice in 1.0.7",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.7",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.7",
+    "url": "https://murage.app/docs/changelog/v1-0-7#voice-in-1-0-7",
+    "text": "- ElevenLabs voices through Flux. With Flux connected, calls and voice replies can use the ElevenLabs voices Flux offers."
+  },
+  {
+    "id": "changelog/v1-0-7#engines-in-1-0-7",
+    "title": "What changed in Murage 1.0.7",
+    "description": "Bots that read the projects and groups they belong to, a phone layout, ElevenLabs voices through Flux, a typed stop, and backups, routines and Linux starts that run straight through.",
+    "heading": "Engines in 1.0.7",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.7",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.7",
+    "url": "https://murage.app/docs/changelog/v1-0-7#engines-in-1-0-7",
+    "text": "- Long tool runs keep going. A tool that reports progress keeps running, and the working indicator stays until the turn really ends.\n- Readable tool errors. Errors from apps reach your bot as readable text.\n- Engine versions for every engine. Murage reads the version of each installed engine."
+  },
+  {
+    "id": "changelog/v1-0-7#memory-and-data-in-1-0-7",
+    "title": "What changed in Murage 1.0.7",
+    "description": "Bots that read the projects and groups they belong to, a phone layout, ElevenLabs voices through Flux, a typed stop, and backups, routines and Linux starts that run straight through.",
+    "heading": "Memory and data in 1.0.7",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.7",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.7",
+    "url": "https://murage.app/docs/changelog/v1-0-7#memory-and-data-in-1-0-7",
+    "text": "- Back up now runs straight through. Backups finish on long histories, say which backup they are taking, and confirm the copy was saved and checked.\n- Your chat is saved at shutdown. Logging out or shutting down saves the chat in progress before Murage quits.\n- Checked context. A message sent while memory is still checking a line waits for the check, then goes out with the right context.\n- Steady opening. Murage opens steadily while another process is busy with its database."
+  },
+  {
+    "id": "changelog/v1-0-7#everyday-use-in-1-0-7",
+    "title": "What changed in Murage 1.0.7",
+    "description": "Bots that read the projects and groups they belong to, a phone layout, ElevenLabs voices through Flux, a typed stop, and backups, routines and Linux starts that run straight through.",
+    "heading": "Everyday use in 1.0.7",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.7",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.7",
+    "url": "https://murage.app/docs/changelog/v1-0-7#everyday-use-in-1-0-7",
+    "text": "- A phone layout. On a narrow screen the chat header and the composer fold into compact menus, with Stop, Attach and the approval level one tap away.\n- News from Murage. The first run asks once whether you want product news, and Settings > About keeps the choice.\n- Smoother on Linux. Murage uses the graphics card on Intel and AMD, and relaunches cleanly on Linux and WSL after a start from a terminal."
+  },
+  {
     "id": "computers/cloud-and-vps#box-cloud-computer",
     "title": "Cloud computer and your own VPS",
     "description": "Choose a managed Box desktop or a hardened container on a Linux server you own.",
@@ -2712,7 +2762,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → Where to find things in Settings",
     "where": "Murage docs → Features → Where to find things in Settings",
     "url": "https://murage.app/docs/features/settings-guide#app-settings-messaging-and-app",
-    "text": "Messaging & phone: Messaging apps (Telegram, Slack and Discord, see Telegram, Slack and Discord) and Phone and other devices (see The Murage phone app). App: Backups, Usage (how much each bot has used), About & updates, and Experimental (early features you can try, which may change)."
+    "text": "Messaging & phone: Messaging apps (Telegram, Slack and Discord, see Telegram, Slack and Discord) and Phone and other devices (see The Murage phone app). App: Backups, Usage (how much each bot has used), About & updates (where Get Murage news signs you up for Murage news by email: new releases, how-tos and tutorials), and Experimental (early features you can try, which may change)."
   },
   {
     "id": "features/settings-guide#bot-settings",

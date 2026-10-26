@@ -108,7 +108,9 @@ describe("SL-E EXTENDED: a linked person's hand-offs on the Slack fixture (real 
     const modelSelection = { instanceId, model: "fake-model" };
     const defaults = await api("PATCH", `/api/bots/${botId}`, { settingsScope: "defaults", modelSelection });
     expect(defaults.status, JSON.stringify(defaults.body)).toBe(200);
-    for (const { t } of personThreads()) {
+    // the bot's own conversations too (its owner thread and tasks are not bound to the person): a wake or a turn that lands on one of
+    // them must not run on the previous test's engine and hand the work to the previous worker (1.0.6 CI x-owner-seed "never started")
+    for (const t of new Set([...personThreads().map(({ t }) => t), ...ownThreads(botId).map(({ t }) => t)])) {
       const thread = await api("PATCH", `/api/bots/${botId}/tasks/${t}`, { modelSelection });
       if (thread.status !== 404) expect(thread.status, JSON.stringify(thread.body)).toBe(200);
     }
@@ -117,6 +119,15 @@ describe("SL-E EXTENDED: a linked person's hand-offs on the Slack fixture (real 
   const idle = (ids: string[]) => waitUntil(async () => { const all = (await api("GET", "/api/bots?messages=0")).body.bots; return ids.every(id => !all.find((b: any) => b.id === id)?.busy) || false; }, 90_000, "bots stayed busy");
   const event = (id: string, text: string) => child.send({ kind: "slack-fixture-event", body: { type: "event_callback", team_id: "TEAM", api_app_id: "APP", event_id: id, event_time: Math.floor(Date.now() / 1000), authorizations: [{ team_id: "TEAM", user_id: "UBOT", is_bot: true }], event: { type: "message", channel_type: "im", channel: "DOTHER", user: "UOTHER", text } } });
 
+  /** The bot's own conversations (its main thread and every task) with the engine each runs on, as the server's roster file holds them. */
+  const ownThreads = (botId: string): Array<{ t: string; engine?: string }> => {
+    try {
+      const bot = (JSON.parse(readFileSync(join(home, ".murage", "bots.json"), "utf8")) as any[]).find(b => b.id === botId);
+      if (!bot) return [];
+      const rows = [{ t: String(bot.threadId), engine: bot.modelSelection?.instanceId }, ...(bot.tasks ?? []).map((task: any) => ({ t: String(task.threadId), engine: task.modelSelection?.instanceId ?? bot.modelSelection?.instanceId }))];
+      return rows.filter((row, n) => rows.findIndex(other => other.t === row.t) === n);
+    } catch { return []; }
+  };
   /** Every conversation bound to the person, with the person each is bound to. */
   const personThreads = () => readDb(db => (db.prepare("SELECT subject_id AS t, json_extract(intent,'$.personId') AS p FROM memory_scope_bindings WHERE subject_type='human-thread' ORDER BY rowid").all() as Array<{ t: string; p: string }>), []);
   const rowsOf = (threadId: string) => readDb(db => (db.prepare("SELECT id,role,kind,text,json FROM messages WHERE thread_id=? ORDER BY at").all(threadId) as any[])
@@ -206,7 +217,13 @@ describe("SL-E EXTENDED: a linked person's hand-offs on the Slack fixture (real 
     const threadsBefore = new Set(personThreads().map(({ t }) => t));
     const before = new Set(personThreads().flatMap(({ t }) => rowsOf(t).map(m => m.id)));
     event(`Ev-${label}`, `${label}: please pick this up`);
-    await waitUntil(() => busy(worker.id), 60_000, `${label}: the worker never started`);
+    try { await waitUntil(() => busy(worker.id), 60_000, `${label}: the worker never started`); }
+    catch (error) {
+      // name the cause on the next occurrence: who went busy instead, and the engine each Chief conversation runs on
+      const bots = (await api("GET", "/api/bots?messages=0").catch(() => ({ body: { bots: [] } }))).body.bots as any[];
+      const diag = { busy: bots.filter(b => b.busy).map(b => b.name), chiefThreads: ownThreads(chief.id), personThreads: personThreads().filter(({ p }) => p === personId).map(({ t }) => t) };
+      throw new Error(`${(error as Error).message.split(". stderr tail:")[0]} ${JSON.stringify(diag)}. stderr tail: ${stderr.slice(-3000)}`);
+    }
     const workerThread = known ?? await waitUntil(() => personThreads().find(({ t, p }) => p === personId && !threadsBefore.has(t))?.t, 30_000, `${label}: the worker has no conversation for the person`);
     await during(workerThread);
     writeFileSync(gate, "go");

@@ -78,6 +78,10 @@ export class LineageAllowance {
   static room(nodes?: number): LineageAllowance { return new LineageAllowance("room", LineageAllowance.nodes(nodes), undefined, nodes === undefined ? defaultMs(TURN_LINEAGE_MS) : Infinity); }
   /** A check made outside a turn (a tool, a route, a procedure check, consolidation, skills). */
   static tool(nodes?: number): LineageAllowance { return new LineageAllowance("tool", LineageAllowance.nodes(nodes), undefined, nodes === undefined ? defaultMs(TOOL_LINEAGE_MS) : Infinity); }
+  /** A memory search's own hydration (1.0.7 memory-recall-hydration D3): the nodes of a tool check, and the search's own hydration limit as
+   * its time (search.ts recallHydrationLimitMs), so the search stops on its own limit, partial with what it proved, never on a stricter
+   * hidden one (TOOL_LINEAGE_MS is charged for each WHOLE record read: a hundred candidates outlast it). */
+  static search(ms: number): LineageAllowance { return new LineageAllowance("tool", LineageAllowance.nodes(), undefined, defaultMs(ms)); }
   /** A steer folded into a running turn. */
   static steer(nodes?: number): LineageAllowance { return new LineageAllowance("steer", LineageAllowance.nodes(nodes), undefined, nodes === undefined ? defaultMs(TURN_LINEAGE_MS) : Infinity); }
   /** One slice of the warmer. */

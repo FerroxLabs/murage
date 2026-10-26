@@ -5,7 +5,7 @@ import { MEMORY_CURSOR_MAX_CHARS } from "./cursor-limits.ts";
 import { Buffer } from "node:buffer";
 import { database,transaction } from "../database.ts";
 import { assertMemoryAccess,type MemoryAccess } from "./policy.ts";
-import { searchMemory,type MemorySearchBridge } from "./search.ts";
+import { recallHydrationLimitMs,searchMemory,type MemorySearchBridge } from "./search.ts";
 import { hydrateDisclosedMemoryRecord, hydrateMemoryRecord } from "./bundle.ts";
 import { readerWithheldMessage } from "./disclosures.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
@@ -70,7 +70,7 @@ export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAcc
   try {
     if(path==="/api/internal/memory/search"){
       const input=search.parse(body);
-      const result=bounded(await searchMemory(input.query,access,bridge,{...input,allowance:LineageAllowance.tool(),withheldMessage:readerWithheldMessage(access),caller:"tool"}));
+      const result=bounded(await searchMemory(input.query,access,bridge,{...input,allowance:LineageAllowance.search(recallHydrationLimitMs("tool")),withheldMessage:readerWithheldMessage(access),caller:"tool"}));
       handles?.noteLookup?.(result.hits.map(hit=>({id:hit.id,version:hit.version,evidence:hit.evidence.map(handle=>({sourceId:String(handle.sourceId),revision:Number(handle.revision)}))})),access);
       options.onRead?.(result.hits.flatMap(hit=>hit.evidence.map(handle=>String(handle.sourceId))));
       return result;

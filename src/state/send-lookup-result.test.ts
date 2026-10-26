@@ -11,6 +11,7 @@ describe("sendLookupResult", () => {
     ["started", "ack"],
     ["delivered", "ack"],
     ["unconfirmed", "ack"],
+    ["stopped", "ack"], // a typed stop (designs/TYPED-STOP-107.md): acknowledged, its words never kept as a draft
     ["refused", "refused"],
     ["cancelled", "cancelled"],
     ["failed", "none"],

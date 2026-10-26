@@ -60,11 +60,11 @@ it.each(["trigger", "counts", "cycle"])("rejects a hash-valid external database 
   expect(readdirSync(f.parent).filter(name => name.startsWith(".murage-archive-inspection-"))).toEqual([]);
 });
 
-it.each(["missing-parent", "cycle", "missing-head", "duplicate"])("rejects an external legacy transcript with %s", async kind => {
+it.each(["malformed-parent", "cycle", "missing-head", "duplicate"])("rejects an external legacy transcript with %s", async kind => {
   const f = fixture();
-  const message = { id: "m", at: 1, role: "user", kind: "text", parentId: kind === "cycle" ? "m" : kind === "missing-parent" ? "missing" : null };
+  const message = { id: "m", at: 1, role: "user", kind: "text", parentId: kind === "cycle" ? "m" : kind === "malformed-parent" ? "not a message id" : null };
   await crafted(f, [{ path: "messages-thread.json", text: JSON.stringify({ messages: kind === "duplicate" ? [message, message] : [message], activeLeafId: kind === "missing-head" ? "missing" : "m" }) }]);
-  await expect(prepareInstallationRestore(f.archive, f.parent)).rejects.toMatchObject({ code: kind === "cycle" ? "CYCLIC_MESSAGE_BRANCH" : kind === "missing-parent" ? "INVALID_MESSAGE_PARENT" : kind === "missing-head" ? "INVALID_ACTIVE_BRANCH" : "INVALID_RESTORE_MESSAGE" });
+  await expect(prepareInstallationRestore(f.archive, f.parent)).rejects.toMatchObject({ code: kind === "cycle" ? "CYCLIC_MESSAGE_BRANCH" : kind === "malformed-parent" ? "INVALID_MESSAGE_PARENT" : kind === "missing-head" ? "INVALID_ACTIVE_BRANCH" : "INVALID_RESTORE_MESSAGE" });
 });
 
 it.each(["routines.json", "webhooks.json", "delegation-receipts.json"])("rejects malformed external %s even when archive hashes are valid", async path => {

@@ -57,6 +57,28 @@ export function ownReplayRefs(threadId: string, messageIds: Iterable<string>): L
   for (const messageId of new Set(messageIds)) refs.push({ kind: "line", threadId, messageId, replay: true });
   return refs;
 }
+/** A line a prompt shows, as the turn builds collect them (steer-lineage.ts ShownLine). */
+export type PromptShownLine = { readonly threadId: string; readonly id: string; readonly copyOf?: { readonly threadId: string; readonly messageIds: readonly string[] }; readonly quoted?: boolean };
+/** Write-time lineage (DESIGN-WRITETIME 2.2): the lines of OTHER threads a turn's context showed in words, any role, as point carries for its
+ * replies and session (same-thread context is positional). A line the renderer replaced by its withheld line carried no words, so it is no
+ * parent (inheriting its mark would withhold a reply that never saw it); a quote rendered in full counts whatever a replay withheld.
+ * `ownByContent`: the prompt's own thread is read by content at the send fence (an owner-only room's prefix `content: true`). The originals
+ * of a copy one of its OWN rows carries are then judged by content as that row is (copyOfShown); every other ref keeps the fence's reader.
+ * `emitted`: the own rows the renderer actually wrote into the prompt in words (index.ts renderRoomContext). Only those rows' originals carry
+ * the flag (Astra design review A2): a row the renderer trimmed (its window, its budget) showed no words, so its originals stay judged for
+ * the fence's reader, as today. Without it no original carries the flag (fail closed). */
+export function crossThreadLineageRefs(threadId: string, shown: ReadonlyArray<PromptShownLine>, withheldIds: ReadonlySet<string>, ownByContent = false, emitted?: ReadonlySet<string>): LineageRef[] {
+  const refs: LineageRef[] = [];
+  for (const line of shown) {
+    if (line.threadId === threadId && withheldIds.has(line.id) && !line.quoted) continue;
+    if (line.threadId !== threadId) refs.push({ kind: "line", threadId: line.threadId, messageId: line.id });
+    if (line.copyOf && line.copyOf.threadId !== threadId) {
+      const byContent = ownByContent && line.threadId === threadId && !line.quoted && emitted !== undefined && emitted.has(line.id);
+      for (const id of line.copyOf.messageIds) refs.push(byContent ? { kind: "line", threadId: line.copyOf.threadId, messageId: id, copyOfShown: true } : { kind: "line", threadId: line.copyOf.threadId, messageId: id });
+    }
+  }
+  return refs;
+}
 /** Text that stands on nothing stored (Murage's own words, fixed copy). */
 export const noneRef = (reason: NoneReason): LineageRef => ({ kind: "none", reason });
 

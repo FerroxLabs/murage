@@ -131,6 +131,7 @@ import {
 } from "@/lib/transcript-chrome";
 import { useNarrowViewport } from "@/lib/media-query";
 import { showWorkingDots } from "@/lib/turn-tail";
+import { useTurnLive } from "@/state/turn-status";
 import { liveActivityLabel } from "@/lib/live-activity";
 import { splitTranscriptAttachments } from "@/lib/composer-attachments";
 import {
@@ -1541,10 +1542,18 @@ export function GroupView({ group }: { group: Group }) {
   const lastGroupMessage = roomMessages.at(-1);
   const toolInFlight = lastGroupMessage?.kind === "activity" && lastGroupMessage.tool?.ok === undefined;
   const activityLabel = liveActivityLabel(lastGroupMessage);
+  // The mascot stays for the speaker's whole turn; only its end hides it (upstream #3374).
+  const turnLiveState = useTurnLive(group.threadId);
+  const turnEnded = turnLiveState.ended;
   const waiting = Boolean(
-    speaker && showWorkingDots(true, roomMessages.at(-1), speaker.id),
+    speaker && showWorkingDots(true, roomMessages.at(-1), speaker.id, turnEnded),
   );
-  const popping = useReplyPop(`${group.id}:${group.threadId}`, lastGroupMessage, waiting);
+  const popping = useReplyPop(
+    `${group.id}:${group.threadId}`,
+    lastGroupMessage,
+    waiting,
+    `${speaker?.id ?? ""}:${turnLiveState.turnId ?? ""}`,
+  );
   // A team-goal routine waiting on the person: its card, not "Thinking".
   const waitingRun = channelWaitingRun(state.routineRuns, group);
   const presenceVisible = (waiting && !(waitingRun && waitingRun.botId === speaker?.id)) || popping !== null;
