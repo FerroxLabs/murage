@@ -1,5 +1,7 @@
 import { oneShots } from "../engine-one-shots.ts";
-import { cloudTurnBot, cloudTurnEnvironment } from "../cloud-home/turn-process.ts";
+import { cloudTurnBot, cloudTurnEnvironment, cloudTurnRender } from "../cloud-home/turn-process.ts";
+import { cloudRenderMcp } from "../cloud-home/engine-render.ts";
+import { cloudEngineSignedInSomewhere } from "../cloud-home/signin-status.ts";
 import { NEUTRAL_TOOL_SURFACE, renderMurageTurn } from "../murage-tool-surface.ts";
 // Antigravity driver — Google's `agy` CLI in headless stream-JSON mode,
 // modeled on claude.ts but fully self-contained. Per-turn CLI process; the conversation continues across
@@ -56,7 +58,7 @@ import { engineClosedLine } from "./stop-copy.ts";
 import { acpEngineExitStderrText } from "./acp/core.ts";
 import { writeFileAtomic } from "../atomic.ts";
 import { ASK_STOP_NOTE, ASK_STOP_PROMPT, ASK_STOP_REASON, replyCarriesAskStopNote } from "./ask-stop.ts";
-import { ANTIGRAVITY_RELAY_ASK_MS, antigravityMountRecords, antigravityRelayAsk, antigravityWorkspaceHookFiles, awaitRelayHookLoaded, openAntigravityRelay, type AntigravityRelay } from "./antigravity-relay.ts";
+import { ANTIGRAVITY_RELAY_ASK_MS, antigravityMountRecords, antigravityLauncherMasks, antigravityRelayAsk, antigravityWorkspaceHookFiles, awaitRelayHookLoaded, CLOUD_BROKER_DIR, launcherPlaceholder, openAntigravityRelay, type AntigravityRelay } from "./antigravity-relay.ts";
 import type { HookAnswer, HookDelivery } from "./codex-hook.ts";
 
 /** Shown when agy ran under accept-edits, denied an action (a shell command) and wrote no reply. At Auto and Full
@@ -563,7 +565,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       // agy loads the workspace's own hooks (<cwd>/.agents/hooks.json and the rest, every turn) beside Murage's relay
       // hook, and nothing turns that off: one could answer or run on its own. Checked at every turn start; a turn that
       // finds one runs as at Ask, with a line that names the file.
-      const workspaceHooks = relayWanted ? antigravityWorkspaceHookFiles([cwd]) : [];
+      const workspaceHooks = relayWanted ? antigravityWorkspaceHookFiles([cwd], process.env.MURAGE_CLOUD_ROLE === "home" ? launcherPlaceholder : undefined) : [];
       if (workspaceHooks.length) {
         console.warn(`${ENGINE} relay: the turn's folder has its own hooks file (${workspaceHooks[0]}); this turn runs as at Ask`);
         askStop = true;
@@ -653,12 +655,13 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       // direct adapter caller cannot expose token-bearing tools to a child
       // that has no interactive permission channel.
       let relay: AntigravityRelay | null = null;
+      const onCloudHome = process.env.MURAGE_CLOUD_ROLE === "home";
       let mcpMounts: ReturnType<typeof antigravityMountRecords> = [];
       const relayDir = join(DATA_DIR, "native", "antigravity-relay", `${tag}-${turnId}`.slice(0, 120));
       if (relayWanted) {
         const relayPreTool = (delivery: HookDelivery): Promise<HookAnswer> => new Promise((answer) => {
           if (settled || stopRequested) return answer({ decision: "deny", reason: "the turn has ended" });
-          const ask = antigravityRelayAsk(delivery, cwd, relayDir);
+          const ask = antigravityRelayAsk(delivery, cwd, relayDir, onCloudHome ? [`${CLOUD_BROKER_DIR}/agyr-`, ".gemini/config"] : undefined);
           const requestId = newId();
           const finish = (behavior: "allow" | "deny", source: "user" | "timeout" | "system", message?: string) => {
             if (!relayAsks.delete(requestId)) return false;
@@ -686,7 +689,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
           });
         });
         try {
-          relay = await openAntigravityRelay(relayDir, relayPreTool);
+          relay = await openAntigravityRelay(relayDir, relayPreTool, process.execPath, onCloudHome ? CLOUD_BROKER_DIR : undefined);
         } catch (error) {
           console.warn(`${ENGINE} relay: could not set up Murage's check (${error instanceof Error ? error.message : String(error)}); this turn runs in accept-edits`);
           relay = null;
@@ -697,8 +700,11 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       mcpMounts = antigravityMountRecords(mountedServers, { computer: ANTIGRAVITY_COMPUTER_MCP_KEY, agents: ANTIGRAVITY_AGENTS_MCP_KEY });
       let scoped: ReturnType<typeof buildAntigravityScopedHome> | null = null;
       let childEnv = env;
+      // On a Cloud home the launcher gives every turn an empty tmpfs HOME of its own (the owner's mirror below is
+      // desktop-only, and cloudTurnLaunch replaces HOME anyway): Murage's MCP servers and the Ask hook go to the
+      // launcher as typed render parts, which it writes into ~/.gemini/config of that HOME.
       try {
-        scoped = buildAntigravityScopedHome({
+        if (!onCloudHome) scoped = buildAntigravityScopedHome({
           realHome: realHomeOf(env),
           scopeRoot: antigravityScopeRoot(),
           name: `${tag}-${turnId}`.slice(0, 120),
@@ -706,10 +712,10 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
           ...(askStop ? { askStopHooks: antigravityAskStopHooks() } : relay ? { askStopHooks: relay.hooksJson } : {}),
         });
         // The relay's hooks.json is what keeps a skip-permissions turn in check: it must read back exactly as written.
-        if (relay && readFileSync(join(scoped.home, ".gemini", "config", "hooks.json"), "utf8") !== relay.hooksJson) {
+        if (scoped && relay && readFileSync(join(scoped.home, ".gemini", "config", "hooks.json"), "utf8") !== relay.hooksJson) {
           throw new Error("the scoped hooks.json did not read back as written");
         }
-        childEnv = { ...env, HOME: scoped.home, USERPROFILE: scoped.home };
+        if (scoped) childEnv = { ...env, HOME: scoped.home, USERPROFILE: scoped.home };
       } catch (error) {
         // Fails closed: never a start in the owner's real home with their personal MCP servers, hooks and skills.
         scoped?.dispose();
@@ -740,6 +746,14 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       // The instance environment is shared by every turn; this turn's copy names its bot.
       const turnEnv: NodeJS.ProcessEnv = { ...childEnv };
       cloudTurnBot(turnEnv, turn.warmIdentity?.botId);
+      if (onCloudHome) {
+        const stanzas = cloudRenderMcp(mountedServers);
+        if (Object.keys(stanzas).length) cloudTurnRender(turnEnv, "mcp", stanzas);
+        // the launcher's own copy of the Ask hook (deploy/cloud-home/murage-turn-launch.py AGY_ASK_HOOK_SOURCE)
+        if (askStop) cloudTurnRender(turnEnv, "hooks", "ask");
+        // Auto and Full: the relay's socket and token reach the launcher, which renders the hook root-owned in the turn's HOME
+        else if (relay?.cloud) cloudTurnRender(turnEnv, "hooks", { profile: "relay", ...relay.cloud });
+      }
       // the Ask hook runs as `<this program> <script>`; a packaged app is its own node only with this set
       if (askStop || relayed) turnEnv.ELECTRON_RUN_AS_NODE = "1";
       let child: ReturnType<typeof spawnCli>;
@@ -1019,7 +1033,18 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         // With agy's own permissions skipped, the relay hook is the only check: the prompt is written only once agy's
         // log shows it loaded the hook. Anything else refuses the turn with nothing written.
         // agy's count cannot tell a project's hook from Murage's: the check is exact (relayHookLoadState).
-        const expectHooks = { hooksPath: join(scoped!.home, ".gemini", "config", "hooks.json"), workspaceDirs: [cwd] };
+        // On a home there is no scoped home: the hook lives in the launcher's HOME for this turn, and the launcher masks
+        // <cwd>/<root>/hooks.json (all four customization roots) with an empty placeholder that agy counts and names (RelayHookExpect.launcherMasks).
+        if (onCloudHome ? !relay.cloud || !turnEnv.HOME : scoped === null) {
+          console.warn(`${ENGINE} relay: no place for Murage's hook to have loaded; the turn is refused before its prompt`);
+          stop();
+          turn.notWritten?.();
+          settle(false, "hook_not_loaded");
+          return { turnId };
+        }
+        const expectHooks = onCloudHome
+          ? { hooksPath: join(turnEnv.HOME!, ".gemini", "config", "hooks.json"), workspaceDirs: [cwd], launcherMasks: antigravityLauncherMasks([cwd]) }
+          : { hooksPath: join(scoped!.home, ".gemini", "config", "hooks.json"), workspaceDirs: [cwd] };
         void awaitRelayHookLoaded(relay.logPath, expectHooks, () => settled || stopRequested || childClosed).then((loaded) => {
           if (settled || stopRequested) return;
           if (loaded.state !== "loaded") {
@@ -1062,6 +1087,9 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       // No auth field: agy auth is keyring-backed with no reliable file marker
       // (~/.gemini/antigravity-cli/ exists after first run even when logged
       // out), so any file heuristic would overstate "signed in". Leave undefined.
+      // On a Cloud home the launcher DOES know (the bot's root-only store holds the token, which this server cannot
+      // read): a sign-in anywhere on the home is "they already pay for this". Otherwise still undefined.
+      if ((await cloudEngineSignedInSomewhere(DRIVER_KIND)) === true) return { state: "available", version, authenticated: true, setUpOnHome: true };
       return { state: "available", version };
     };
 

@@ -41,12 +41,12 @@ describe("Codex argv", () => {
 
 describe("Grok argv", () => {
   const text = source("../drivers/acp/grok.ts");
-  // spawnArgs is a block since the 1.0.3 merge (94a4d02b5: requireGrokAskHold runs before `return [`), so the argv
-  // is read from the start of spawnArgs to the end of its array, in either the expression or the block form.
-  const start = text.indexOf("spawnArgs: (config, turn, ctx) =>");
-  const block = start >= 0 ? text.slice(start) : "";
-  const ends = ["\n  ],", "\n    ];"].map(end => block.indexOf(end)).filter(at => at > 0);
-  const flags = [...block.slice(0, ends.length ? Math.min(...ends) : 2000).matchAll(/^\s*"(--[a-z-]+)",/gm)].map(m => m[1]!);
+  // spawnArgs is a block body (it runs requireGrokAskHold first) that returns the argv array; read that array, and fail loudly if the shape moves again.
+  const start = text.indexOf("spawnArgs: (config, turn, ctx) => {");
+  const open = start < 0 ? -1 : text.indexOf("return [", start);
+  const close = open < 0 ? -1 : text.indexOf("\n    ];", open);
+  const block = open >= 0 && close > open ? text.slice(open, close) : "";
+  const flags = [...block.matchAll(/^\s*"(--[a-z-]+)",/gm)].map(m => m[1]!);
   it("finds the flags it is meant to guard", () => { expect(flags).toEqual(expect.arrayContaining(["--permission-mode", "--no-memory"])); });
   it.each(flags)("the launcher accepts the driver's %s", flag => {
     // --no-memory and --no-leader are both required, so every accepted turn carries them.
@@ -162,6 +162,9 @@ describe("Flux memory overlays", () => {
   });
 });
 
+// A bot turn runs with the launcher's own serialization, which is the driver's applyOpenCodeTurnPermission output byte for byte.
+const driverTurnConfig = (base: string): string => { const env: Record<string, string | undefined> = { OPENCODE_CONFIG_CONTENT: base }; applyOpenCodeTurnPermission(env); return env.OPENCODE_CONFIG_CONTENT!; };
+
 // Fable follow-up 3: the OpenCode isolation writer (opencode-go.ts isolateOpenCodeFromPersonalSetup) rewrites OPENCODE_CONFIG_CONTENT
 // after the memory overlay, adding `mcp:{<owner server>:{enabled:false}}`. Its real output, alone and on top of the overlay,
 // must pass the launcher's opencode_config_value, or a Cloud turn with an owner MCP server loses the memory headers (now: is refused).
@@ -188,7 +191,7 @@ describe("OpenCode isolation writer (real isolateOpenCodeFromPersonalSetup)", ()
     isolateOpenCodeFromPersonalSetup(env);
     expect(JSON.parse(env.OPENCODE_CONFIG_CONTENT).mcp).toEqual({ composio: { enabled: false } });
     expect(valid(env.OPENCODE_CONFIG_CONTENT)).toBe(true);
-    expect(rig.plan(rig.request("opencodeGo", { env: { OPENCODE_CONFIG_CONTENT: env.OPENCODE_CONFIG_CONTENT } })).ok?.env).toMatchObject({ OPENCODE_CONFIG_CONTENT: env.OPENCODE_CONFIG_CONTENT });
+    expect(rig.plan(rig.request("opencodeGo", { env: { OPENCODE_CONFIG_CONTENT: env.OPENCODE_CONFIG_CONTENT } })).ok?.env).toMatchObject({ OPENCODE_CONFIG_CONTENT: driverTurnConfig(env.OPENCODE_CONFIG_CONTENT) });
   });
 });
 
@@ -228,7 +231,7 @@ describe("Flux memory headers per audience (real fluxMemoryDecision)", () => {
     applyGrokFluxMemory(grok, headers);
     expect(rig.plan(rig.request("grokAgent", { env: { GROK_CONFIG: grok.GROK_CONFIG } })).ok?.env.GROK_CONFIG).toBe(grok.GROK_CONFIG);
     expect(rig.plan(rig.request("fuigoAgent", { env: { FUIGO_CONFIG: fuigoConfigOverlay(headers) } })).ok?.env.FUIGO_CONFIG).toBe(fuigoConfigOverlay(headers));
-    expect(rig.plan(rig.request("opencodeGo", { env: { OPENCODE_CONFIG_CONTENT: opencodeConfigOverlay("flux", headers) } })).ok?.env.OPENCODE_CONFIG_CONTENT).toBe(opencodeConfigOverlay("flux", headers));
+    expect(rig.plan(rig.request("opencodeGo", { env: { OPENCODE_CONFIG_CONTENT: opencodeConfigOverlay("flux", headers) } })).ok?.env.OPENCODE_CONFIG_CONTENT).toBe(driverTurnConfig(opencodeConfigOverlay("flux", headers)));
   });
 });
 

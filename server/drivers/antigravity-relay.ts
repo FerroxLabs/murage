@@ -8,16 +8,19 @@
 // grants, cards), and the hook prints that answer. Proven on agy 1.4.4: the hook runs before run_command, read_file
 // and call_mcp_tool; a deny keeps the tool from running; a hook that fails blocks the tool; a hooks.json agy cannot
 // parse loads no hooks at all, so the turn's prompt is written only after agy's log shows the hook loaded.
-import { lstatSync, readdirSync, realpathSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { closeSync, fchmodSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { win32Canonical } from "../../shared/in-project.ts";
 import type { McpMountRecord } from "../../shared/mount-identity.ts";
 import { SENSITIVE_PATHS } from "../../shared/sensitive-paths.ts";
+import { CLOUD_BROKER_DIR } from "../cloud-home/turn-process.ts";
 import { removeTreeWithoutFollowing } from "../link-removal.ts";
 import { CodexHookGate, HOOK_ASK_BOUND_MS, HOOK_SCRIPT_DEADLINE_MS, HOOK_TIMEOUT_SEC, hookSocketPath, newHookToken, type HookAnswer, type HookDelivery } from "./codex-hook.ts";
 
-export { HOOK_ASK_BOUND_MS as ANTIGRAVITY_RELAY_ASK_MS };
+export { HOOK_ASK_BOUND_MS as ANTIGRAVITY_RELAY_ASK_MS, CLOUD_BROKER_DIR };
 
 const RELAY_SCRIPT = "murage-agy-relay.cjs";
 const RELAY_ENV = "murage-agy-relay.env";
@@ -94,6 +97,12 @@ const HOOK_PATH = /(?:[A-Za-z]:)?[\\/][^\s"'`:;,()<>]*hooks\.json/gi;
 /** The customization roots agy 1.4.4 reads in a workspace folder (the turn's folder and every `--add-dir`). */
 export const ANTIGRAVITY_WORKSPACE_ROOTS = [".agents", ".agent", "_agents", "_agent"] as const;
 
+/** Cloud home: the hooks.json paths the launcher binds an empty placeholder over (one per customization root, in the
+ *  turn's folder and every `--add-dir`). agy counts each as a hooks file and names it in its log. */
+export function antigravityLauncherMasks(dirs: readonly string[]): string[] {
+  return dirs.flatMap((dir) => ANTIGRAVITY_WORKSPACE_ROOTS.map((root) => join(dir, root, "hooks.json")));
+}
+
 /** Does a custom agent file carry a `hooks:` key in its front matter? A file that cannot be read, or whose front
  *  matter never closes, is read as one that does. */
 function agentFileHasHooks(path: string): boolean {
@@ -112,7 +121,7 @@ function agentFileHasHooks(path: string): boolean {
  *  custom agent, agents/*.md, whose front matter carries `hooks:`. A link, even one that leads nowhere, counts, and
  *  a folder Murage cannot list counts as holding one. agy has no switch to leave these out, so a turn that finds one
  *  does not run at Auto or Full access. */
-export function antigravityWorkspaceHookFiles(dirs: readonly string[]): string[] {
+export function antigravityWorkspaceHookFiles(dirs: readonly string[], placeholder?: LauncherPlaceholderCheck): string[] {
   const present = (path: string) => {
     try { lstatSync(path); return true; } catch { return false; }
   };
@@ -127,7 +136,7 @@ export function antigravityWorkspaceHookFiles(dirs: readonly string[]): string[]
     for (const root of ANTIGRAVITY_WORKSPACE_ROOTS) {
       const at = join(dir, root);
       if (!present(at)) continue;
-      for (const name of ["hooks.json", "plugins.json"]) if (present(join(at, name))) found.push(join(at, name));
+      for (const name of ["hooks.json", "plugins.json"]) if (present(join(at, name)) && !placeholder?.(join(at, name))) found.push(join(at, name));
       const plugins = list(join(at, "plugins"));
       if (plugins === null) found.push(join(at, "plugins"));
       for (const plugin of plugins ?? []) {
@@ -145,7 +154,50 @@ export function antigravityWorkspaceHookFiles(dirs: readonly string[]): string[]
 }
 
 /** What the hook-load check expects: Murage's own hooks.json, and the workspace folders agy reads hooks from. */
-export interface RelayHookExpect { hooksPath: string; workspaceDirs: readonly string[] }
+export interface RelayHookExpect {
+  hooksPath: string;
+  workspaceDirs: readonly string[];
+  /** Cloud home only. The hooks.json paths the launcher binds an empty placeholder over, which agy still counts as a
+   *  hooks file and names in its log. Unset on a desktop. With it set, "loaded" means exactly one named hook from
+   *  1 + launcherMasks.length files: a count alone never passes (the foreign-path and workspace scans still apply). */
+  launcherMasks?: readonly string[];
+  /** Test seam for the placeholder check (default: the real stat + lsattr). */
+  placeholder?: LauncherPlaceholderCheck;
+}
+
+/** Is this entry one of the launcher's own mask placeholders? */
+export type LauncherPlaceholderCheck = (path: string) => boolean;
+
+export interface PlaceholderProbe {
+  platform: NodeJS.Platform;
+  lstat(path: string): { uid: number; size: number; mode: number; isFile(): boolean; isDirectory(): boolean };
+  entryCount(path: string): number;
+  /** The `lsattr -d` attribute column of a folder. */
+  attrs(path: string): string;
+}
+const realProbe: PlaceholderProbe = {
+  platform: process.platform,
+  lstat: (path) => lstatSync(path),
+  entryCount: (path) => readdirSync(path).length,
+  attrs: (path) => execFileSync("lsattr", ["-d", path], { encoding: "utf8", timeout: 2000 }).trim().split(/\s+/)[0] ?? "",
+};
+/** The launcher creates a missing mask target on the host as a root-owned empty file (0444) or empty directory
+ *  (0555) inside a `.agents`-style folder it has made immutable (FS_IMMUTABLE_FL), so a turn user can neither
+ *  replace nor fill it. Anything else at that path (another owner, non-empty, other mode, folder not immutable) is a
+ *  hooks source like any other. Linux only; anywhere else, or when lsattr cannot say, nothing is a placeholder.
+ *  The probe is the stat seam the tests drive; the default is the real fs + lsattr. */
+export const makeLauncherPlaceholder = (probe: PlaceholderProbe = realProbe): LauncherPlaceholderCheck => (path) => {
+  try {
+    if (probe.platform !== "linux") return false;
+    const st = probe.lstat(path);
+    if (st.uid !== 0) return false;
+    if (st.isFile()) { if (st.size !== 0 || (st.mode & 0o7777) !== 0o444) return false; }
+    else if (st.isDirectory()) { if ((st.mode & 0o7777) !== 0o555 || probe.entryCount(path) !== 0) return false; }
+    else return false;
+    return probe.attrs(dirname(path)).includes("i");
+  } catch { return false; }
+};
+export const launcherPlaceholder: LauncherPlaceholderCheck = makeLauncherPlaceholder();
 
 /** "foreign": a hooks file that is not Murage's is in a workspace folder, or agy's log names one; `file` names it. */
 export type RelayHookLoad = { state: "loaded" | "refused" | "pending" } | { state: "foreign"; file: string };
@@ -160,13 +212,16 @@ export function relayHookLoadState(log: string, expect: RelayHookExpect): RelayH
   const own = sameFileText(expect.hooksPath);
   if ((log.match(HOOK_FILE_FAILED) ?? []).some((line) => sameFileText(line).includes(own))) return { state: "refused" };
   // a path with a space in it is read from its last space on, so a tail of Murage's own path is Murage's
-  const named = (log.match(HOOK_PATH) ?? []).find((path) => !own.endsWith(sameFileText(path)));
+  const masks = (expect.launcherMasks ?? []).map(sameFileText);
+  // a mask is named by its full path; an exact match only, so a look-alike path is still foreign
+  const named = (log.match(HOOK_PATH) ?? []).find((path) => !own.endsWith(sameFileText(path)) && !masks.includes(sameFileText(path)));
   if (named) return { state: "foreign", file: named };
-  const workspace = antigravityWorkspaceHookFiles(expect.workspaceDirs);
+  const workspace = antigravityWorkspaceHookFiles(expect.workspaceDirs, expect.launcherMasks ? (expect.placeholder ?? launcherPlaceholder) : undefined);
   if (workspace.length) return { state: "foreign", file: workspace[0]! };
   const loaded = LOADED_LINE.exec(log);
   if (!loaded) return { state: "pending" };
-  return { state: Number(loaded[1]) === 1 && Number(loaded[2]) === 1 ? "loaded" : "refused" };
+  const files = 1 + (expect.launcherMasks?.length ?? 0);
+  return { state: Number(loaded[1]) === 1 && Number(loaded[2]) === files ? "loaded" : "refused" };
 }
 
 /** How long a relayed turn waits for agy's log to show the hook loaded before it refuses the turn. */
@@ -272,14 +327,14 @@ function namesOwnDir(args: unknown, needles: readonly string[]): boolean | null 
  *  is this turn's relay folder: a call whose arguments name it (or the relay's files) could replace the check that
  *  judges every later call, so it is filed unread and the broker holds it for the owner at every level. So is a call
  *  that names a workspace hooks file agy would load beside Murage's on the next turn. */
-export function antigravityRelayAsk(delivery: HookDelivery, cwd: string, ownDir?: string): RelayAsk {
+export function antigravityRelayAsk(delivery: HookDelivery, cwd: string, ownDir?: string, extraNeedles: readonly string[] = []): RelayAsk {
   const name = typeof delivery.tool_name === "string" ? delivery.tool_name : "";
   const args = delivery.tool_input;
   const unread = (why: string, summary = name || "a tool"): RelayAsk => ({ tool: name || "unknown", summary, toolCall: { name: name || "unknown", input: isObject(args) ? args : {} }, toolInputMissing: why });
   if (!name) return unread("the tool's name");
   if (!isObject(args)) return unread("the tool's arguments");
   if (ownDir !== undefined) {
-    const named = namesOwnDir(args, ownNeedles(ownDir));
+    const named = namesOwnDir(args, [...ownNeedles(ownDir), ...extraNeedles.map(guardForm)]);
     const summary = (typeof args.CommandLine === "string" && args.CommandLine) || name;
     if (named === null) return unread("the call's arguments run past what Murage's self-check reads", summary);
     if (named) return unread("a path that holds Murage's check, or a hooks file Antigravity would load beside it", summary);
@@ -341,6 +396,8 @@ function removeRelayDir(dir: string): void {
 export interface AntigravityRelay {
   /** The hooks.json the scoped home carries. */
   hooksJson: string;
+  /** Cloud home only: the socket and token the launcher renders into the turn's own home as its root-owned hook. */
+  cloud?: { socket: string; token: string };
   /** agy's `--log-file` for this turn, read for the hook-load line. */
   logPath: string;
   /** Whether the relay answered this step (`<conversation>:<step>`) before agy ran it. */
@@ -351,8 +408,9 @@ export interface AntigravityRelay {
 /** Open one turn's relay: the socket, the hook program and its env file, written under `dir` (Murage's own folder,
  *  outside the scoped home, so nothing of it is ever adopted into the owner's home) and read back byte for byte.
  *  Throws when any of that fails; the caller then runs the turn in accept-edits with no tools. */
-export async function openAntigravityRelay(dir: string, onPreTool: (delivery: HookDelivery) => Promise<HookAnswer>, execPath = process.execPath): Promise<AntigravityRelay> {
+export async function openAntigravityRelay(dir: string, onPreTool: (delivery: HookDelivery) => Promise<HookAnswer>, execPath = process.execPath, cloudBrokerDir?: string): Promise<AntigravityRelay> {
   const token = newHookToken();
+  if (cloudBrokerDir) return openCloudRelay(cloudBrokerDir, token, onPreTool);
   const gate = new CodexHookGate(hookSocketPath());
   const seen = new Set<string>();
   removeRelayDir(dir);
@@ -378,13 +436,67 @@ export async function openAntigravityRelay(dir: string, onPreTool: (delivery: Ho
       logPath: join(dir, ANTIGRAVITY_RELAY_LOG),
       answered: (step) => seen.has(step),
       close: () => {
-        gate.close();
+        gate.close(); gate.release();
         removeRelayDir(dir);
       },
     };
   } catch (error) {
-    gate.close();
+    gate.close(); gate.release();
     try { removeRelayDir(dir); } catch { /* the open failure below is the one to report */ }
     throw error;
   }
+}
+
+
+/** Remove one cloud relay log: a single regular file named agyr-<12 hex>.log directly in the broker folder. Never a
+ *  directory, a link, or anything else; a missing file is already done. */
+export function removeCloudRelayLog(path: string, brokerDir = CLOUD_BROKER_DIR): void {
+  const own = resolve(path);
+  if (dirname(own) !== resolve(brokerDir) || !/^agyr-[0-9a-f]{12}\.log$/.test(basename(own))) throw new Error(`not a cloud relay log: ${path}`);
+  let st;
+  try { st = lstatSync(own); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
+  if (!st.isFile()) throw new Error(`the cloud relay log is not a plain file: ${path}`);
+  unlinkSync(own);
+}
+
+/** A Cloud home's relay. The engine runs in the launcher's sandbox as another user, with only the broker folder shared,
+ *  so the socket (0660, group murage-turn) and agy's log live there, and the hook config, program, socket and token
+ *  reach agy as the launcher's root-owned read-only profile (render.hooks, murage-turn-launch.py) in the turn's own home. */
+export async function openCloudRelay(brokerDir: string, token: string, onPreTool: (delivery: HookDelivery) => Promise<HookAnswer>, id = randomBytes(6).toString("hex")): Promise<AntigravityRelay> {
+  const socketPath = join(brokerDir, `agyr-${id}.sock`);
+  const logPath = join(brokerDir, `agyr-${id}.log`);
+  const gate = new CodexHookGate(socketPath, 0o660);
+  const seen = new Set<string>();
+  let logMade = false;
+  try {
+    // The log is created here, before agy exists, and never adopted: a file already at this name (planted by a sibling
+    // turn that shares the broker folder) refuses the relay, so the hook-load line is read only from a log Murage made.
+    // Group murage-turn (the folder's setgid group) is what lets agy write it; fchmod makes that independent of umask.
+    const made = openSync(logPath, "wx", 0o660);
+    logMade = true;
+    try { fchmodSync(made, 0o660); } finally { closeSync(made); }
+    await gate.listen();
+    gate.arm({
+      token,
+      onSession: () => {},
+      onPreTool: (delivery) => {
+        if (typeof delivery.tool_use_id === "string" && seen.size < 100_000) seen.add(delivery.tool_use_id);
+        return onPreTool(delivery);
+      },
+    });
+  } catch (error) {
+    gate.close(); gate.release();
+    if (logMade) try { removeCloudRelayLog(logPath, brokerDir); } catch { /* the open failure is the one to report */ }
+    throw error;
+  }
+  return {
+    hooksJson: "",
+    cloud: { socket: socketPath, token },
+    logPath,
+    answered: (step) => seen.has(step),
+    close: () => {
+      gate.close(); gate.release();
+      try { removeCloudRelayLog(logPath, brokerDir); } catch { /* a log that cannot be removed safely is left; the broker sweep owns it */ }
+    },
+  };
 }

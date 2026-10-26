@@ -97,6 +97,7 @@ import { ANSWER_TTL_MS, answerClock, carryAnswerTag, fromAnswer, sentAtOf, tagAn
 export { asAnswer, freshAnswer, fromAnswer } from "./answer-tag";
 import { hiddenPatchFrom } from "@/lib/record-numbers";
 import { requestPage } from "./page-intent";
+import { announceNewBot } from "@/lib/new-bot-step";
 export { newDeleteAttempt, requestPage } from "./page-intent";
 
 const MAX_ROUTINE_RUNS = 2_000;
@@ -961,6 +962,8 @@ export interface InstanceInfo {
     /** a reported cost on a subscription is notional; the UI says so */
     billing?: "metered" | "subscription";
     /** Cloud home: offer this engine's sign-in again (Claude's token is near expiry or no longer accepted) */
+    /** Home-level setup status only (some bot has a sign-in); never read it as a bot being signed in. */
+    setUpOnHome?: boolean;
     renewSignIn?: boolean;
   };
   models: { default: string; options: Array<{ id: string; label: string; custom?: boolean; loaded?: boolean; provider?: string }> };
@@ -5307,7 +5310,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           break;
         case "newBot":
           api("/api/bots", { method: "POST" })
-            .then(({ bot }) => rawDispatch({ type: "botAdded", ...fromAnswer(bot), bot }))
+            .then(({ bot }) => { rawDispatch({ type: "botAdded", ...fromAnswer(bot), bot }); announceNewBot({ id: bot.id, name: bot.name }); })
             .catch(showError);
           break;
         case "duplicateBot": {

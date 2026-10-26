@@ -179,6 +179,8 @@ import { JumpToLatestButton } from "./JumpToLatestButton";
 import { canScroll, describeKeyTarget, jumpScrollBehavior, jumpToLatestVisible, keyBreaksFollow, useCanScroll } from "@/lib/transcript-viewport";
 import { t } from "@/lib/i18n";
 import { copyOrReport, useCopyFeedback } from "@/lib/copy-text";
+import { BotChatSignInGate, BotSignInOffer, useHomeSignInLines } from "@/components/cloud/BotSignInOffer";
+import { ownSignedInOf } from "@/lib/cloud-signin-status";
 
 /** Long user messages collapse behind a fade so pasted walls of text don't
  * bury the conversation; bots get full markdown. */
@@ -401,14 +403,17 @@ const ClaudeUpdatePrompt = retryableLazy(() => import("./ClaudeUpdatePrompt")).C
 // Find in this conversation loads when someone asks for it (Cmd+F).
 const ChatFindBar = retryableLazy(() => import("./ChatFindBar").then((module) => ({ default: module.ChatFindBar })));
 
-export function ErrorRow({ message, details, errorKind, localFailure, localFailureEngine, diagnostic, turnId, incident, onRetry, retryLabel, setupInstance, authRequired = false, claudeUpdateInstance, providerError, botName, onOpenProviderSettings }: {
+export function ErrorRow({ message, details, errorKind, localFailure, localFailureEngine, diagnostic, turnId, incident, onRetry, retryLabel, setupInstance, ownSignedIn, authRequired = false, claudeUpdateInstance, providerError, botName, onOpenProviderSettings }: {
   message: string; details?: string; errorKind?: string; localFailure?: string; localFailureEngine?: string; onRetry?: () => void; retryLabel?: string; setupInstance?: InstanceInfo; botName?: string; claudeUpdateInstance?: InstanceInfo;
+  /** On a Cloud home: whether THIS bot is signed in to its engine (its own line, not the home's). Undefined elsewhere. */
+  ownSignedIn?: boolean;
   authRequired?: boolean; providerError?: ProviderErrorInfo; diagnostic?: unknown; turnId?: string; incident?:IncidentMessageSelection; onOpenProviderSettings: () => void;
 }) {
   const [authRecovered, setAuthRecovered] = useState(false);
   if (providerError) return <ProviderErrorCard info={providerError} details={details} diagnostic={diagnostic} turnId={turnId} incident={incident} onRetry={onRetry} retryLabel={retryLabel} onOpenProviderSettings={onOpenProviderSettings} />;
   const forceSignIn = authRequired && !authRecovered;
-  const needsSetup = setupInstance && (forceSignIn || !(setupInstance.snapshot.state === "available" && setupInstance.snapshot.authenticated !== false));
+  const signedIn = ownSignedIn ?? setupInstance?.snapshot.authenticated !== false;
+  const needsSetup = setupInstance && (forceSignIn || !(setupInstance.snapshot.state === "available" && signedIn));
   if (claudeUpdateInstance) {
     return <RuntimeErrorCard message={message} details={details} botName={botName} diagnostic={diagnostic} turnId={turnId} incident={incident} onOpenProviderSettings={onOpenProviderSettings}
       setup={<Suspense fallback={null}><ClaudeUpdatePrompt instance={claudeUpdateInstance} onRetry={onRetry} /></Suspense>} />;
@@ -1043,6 +1048,7 @@ const MessagesList = memo(function MessagesList({
   emergingId,
   canRetryLast,
   engine,
+  ownSignedIn,
   onStartEdit,
   onCancelEdit,
   onSubmitEdit,
@@ -1065,6 +1071,8 @@ const MessagesList = memo(function MessagesList({
   canRetryLast: boolean;
   /** This bot's engine, for rendering setup help on a `setup` error. */
   engine: InstanceInfo | undefined;
+  /** On a Cloud home: this bot's own sign-in for its engine; undefined when the home did not say. */
+  ownSignedIn?: boolean;
   onStartEdit: (id: string) => void;
   onCancelEdit: (id: string) => void;
   onSubmitEdit: (id: string, text: string) => void;
@@ -1320,6 +1328,7 @@ const MessagesList = memo(function MessagesList({
                     onRetry={m.id === messages.at(-1)?.id && canRetryLast ? onRegenerate : undefined}
                     setupInstance={m.tool.setup ? engine : undefined}
                     authRequired={m.tool.authRequired}
+                    ownSignedIn={ownSignedIn}
                     claudeUpdateInstance={m.tool.claudeUpdate ? claudeUpdateTarget(engine) : undefined}
                     details={m.tool.errorDetails}
                     errorKind={m.tool.errorKind}
@@ -1436,6 +1445,9 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const composerDock = useComposerDockPad();
+  // The bot's OWN sign-in for its engine (Cloud home only), the same lines the Connect panel shows.
+  const signInLines = useHomeSignInLines(bot.id, bot.modelSelection.instanceId);
+  const ownSignedIn = ownSignedInOf(signInLines, bot.id);
   // Where an active call's full-screen view portals to (src/lib/call-slot.ts).
   const callSlotRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -1901,6 +1913,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
 
       <WorkThreadNotice bot={bot} />
       <ReconnectAppsBanner enabled={bot.composio !== false && state.config?.composio?.configured === true} />
+      <BotSignInOffer bot={bot} />
       {findOpen && <LazyBoundary onRetry={ChatFindBar.retry} onDismiss={() => setFindOpen(false)}><Suspense fallback={null}><ChatFindBar.Component threadId={bot.threadId} onClose={() => setFindOpen(false)} /></Suspense></LazyBoundary>}
 
       {/* Error banner */}
@@ -2010,6 +2023,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
             emergingId={popping?.id}
             canRetryLast={!bot.busy && Boolean(lastUserMessage)}
             engine={state.instances.find((i) => i.instanceId === bot.modelSelection.instanceId)}
+            ownSignedIn={ownSignedIn}
             onStartEdit={startEdit}
             onCancelEdit={cancelEdit}
             onSubmitEdit={submitEdit}
@@ -2102,6 +2116,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
         ref={composerDock.ref}
         className="dock-safe-bottom absolute inset-x-0 bottom-0 z-[2] flex max-h-full flex-col"
       >
+      <BotChatSignInGate bot={bot} lines={signInLines}>
       <Composer
         key={bot.threadId}
         bot={bot}
@@ -2111,6 +2126,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
         onRestoreReply={restoreReply}
         onEditLast={lastUserMessage && !bot.busy ? () => setEditingId(lastUserMessage.id) : undefined}
       />
+      </BotChatSignInGate>
       </div>
       </div>
     </div>

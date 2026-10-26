@@ -5,7 +5,7 @@
   "commands": {
     "restart_service": { "reason": "customer" },
     "safe_mode": { "reason": "customer" },
-    "update_software": { "keep": ["files", "settings", "logins"], "reason": "customer" },
+    "update_software": { "keep": ["files", "settings", "logins"], "reason": "customer", "sequence": 5 },
     "reset_from_backup": { "resetId": "0b1c2d3e-aaaa-4bbb-8ccc-123456789abc", "from": "last_good_backup", "snapshotFirst": true,
       "snapshotTag": "murage-pre-reset-0b1c2d3e-aaaa-4bbb-8ccc-123456789abc", "keepSnapshotDays": 9 },
     "undo_reset": { "resetId": "0b1c2d3e-aaaa-4bbb-8ccc-123456789abc", "snapshotTag": "murage-pre-reset-0b1c2d3e-aaaa-4bbb-8ccc-123456789abc" },
@@ -13,7 +13,10 @@
     "export_archive": { "requestId": "export-0b1c2d3e-aaaa-4bbb-8ccc-123456789abc", "deliverBy": 1800000000000, "format": "tar.zst.age",
       "path": "exports/export-0b1c2d3e-aaaa-4bbb-8ccc-123456789abc/archive.tar.zst.age", "maxBytes": 107374182400 }
   },
+  "optionalPayloadFields": { "update_software": ["sequence"] },
   "homeBodies": {
+    "update-state": ["generation", "installedSequence", "lastResult", "stuck"],
+    "updateLastResult": ["commandId", "outcome", "reason"],
     "commands/ack": ["generation", "commandId", "outcome"],
     "ackOutcomes": ["done", "failed", "unsupported"],
     "logs": ["generation", "commandId", "chunk", "final", "lines"],

@@ -59,6 +59,8 @@ export function cloudTurnEnvironment(engine: string, source: NodeJS.ProcessEnv, 
     // No on-demand npm: external plugins off, no LSP installs (the launcher pins the same set).
     OPENCODE_PURE: "1", OPENCODE_DISABLE_LSP_DOWNLOAD: "1", OPENCODE_DISABLE_MODELS_FETCH: "1" });
   // KIMI_CODE_NO_AUTO_UPDATE is read by Kimi Code 2.2.0 (found in the shipped binary); the image pins the version.
+  // agy updates itself unless this is exactly "true" (measured on 1.4.4: "1" still calls the updater); the launcher pins the same value.
+  if (engine === "antigravity") env.AGY_CLI_DISABLE_AUTO_UPDATE = "true";
   if (engine === "kimiAgent") Object.assign(env, { KIMI_CODE_HOME: join(home, ".kimi-code"), KIMI_CODE_NO_AUTO_UPDATE: "1" });
   return env;
 }
@@ -69,7 +71,10 @@ export interface CloudTurnRoute { provider: string; baseUrl: string; model: stri
   /** Flux Memory headers the launcher renders as the Codex provider table's http_headers. */ headers?: Record<string, string> }
 /** `resume`: the Codex thread id a fresh process will `thread/resume`, so the launcher stages that one
  * rollout file into the turn's home (its state allowlist) and no other session. */
-export interface CloudTurnRender { route?: CloudTurnRoute; mcp?: Record<string, CloudMcpStanza>; systemPrompt?: string; memoryTools?: boolean; resume?: string; codexPolicy?: CloudCodexPolicy }
+export interface CloudTurnRender { route?: CloudTurnRoute; mcp?: Record<string, CloudMcpStanza>; systemPrompt?: string; memoryTools?: boolean; resume?: string; codexPolicy?: CloudCodexPolicy;
+  /** Antigravity: a named launcher-owned hook profile (never hook text). "relay" (Auto and Full access) carries only this
+  * turn's relay socket (in /data/broker) and token; the launcher owns the hook program and writes it read-only. */
+  hooks?: "ask" | { profile: "relay"; socket: string; token: string } }
 /** The approval policy and sandbox a resumed Codex thread must run under. The launcher renders
  * them as the effective policy (REQUIRED whenever `resume` is set), because a resumed thread
  * otherwise keeps whatever policy the stored rollout started with. */

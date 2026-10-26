@@ -1,0 +1,10 @@
+# The root launchers that live outside the release slots, in /usr/local/libexec, as image-pinned regular files (LANE-G r3 sec. 1.1):
+# build-image.sh installs them once through install-launchers.py and sets FS_IMMUTABLE_FL; an update never touches them. A release
+# must still ship the sources the image was built from (the floor of three below), and declares the launcher ABI they implement:
+# `murage-commands update_software` refuses a release whose abi differs from the image's (launcher_abi_mismatch) and the home is
+# re-imaged. deploy/cloud-home/launcher-abi holds the same token for build-image.sh.
+# Columns: source file (in this directory), installed name (in /usr/local/libexec), mode. Owner is always root:root.
+abi murage-launchers-1
+murage-turn-launch.py murage-turn-launch 0755
+murage-browser-namespace.py murage-browser-namespace 0755
+murage-browser-network.py murage-browser-network 0755

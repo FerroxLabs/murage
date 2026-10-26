@@ -4,6 +4,7 @@
 # Recipe pins: apt 20260930T000000Z, Node 24.21.0.
 # Supply a verified Ubuntu image digest in your image-builder manifest.
 # Supply this reviewed source at /build/murage and its full candidate commit at
-# /build/murage-revision. Neither file contains a credential.
+# /build/murage-revision. Neither file contains a credential. This runs stage 1 only (the tree); stage 2 (MURAGE_IMAGE_STAGE=seal) needs the
+# signed manifest and is run by the operator after the off-box signing step (LANE-G r3 sec. 2).
 runcmd:
-  - [bash, -c, 'exec /build/murage/deploy/cloud-home/build-image.sh "$(cat /build/murage-revision)" /build/murage']
+  - [bash, -c, 'MURAGE_IMAGE_STAGE=tree exec /build/murage/deploy/cloud-home/build-image.sh "$(cat /build/murage-revision)" /build/murage']

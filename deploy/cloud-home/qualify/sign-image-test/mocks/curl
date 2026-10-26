@@ -1,0 +1,48 @@
+#!/bin/bash
+# Mock curl for sign-image.sh --dry-run: answers the provider API from a small state machine. No network.
+set -u
+[[ -z ${AWS_ACCESS_KEY_ID:-}${AWS_SECRET_ACCESS_KEY:-} ]] || touch "${MOCK_STATE:-/dev/null}/leak"
+method=GET out=/dev/null url="" body=""
+args=("$@")
+for ((i = 0; i < ${#args[@]}; i++)); do
+    case ${args[i]} in
+        -X) method=${args[i+1]} ;;
+        -o) out=${args[i+1]} ;;
+        --data-binary) body=${args[i+1]} ;;
+    esac
+    url=${args[i]}
+done
+path=${url#https://api.provider.test/v1}
+echo "curl $method $path" >> "$MOCK_LOG"
+[[ $url == https://api.provider.test/v1* ]] || { echo "curl: unexpected host $url" >> "$MOCK_LOG"; exit 7; }
+st=$MOCK_STATE
+reply() { printf '%s' "$2" > "$out"; printf '%s' "$1"; exit 0; }
+server_json() { printf '{"server":{"id":4242,"name":"mv-verify-%s","status":"running","labels":{"purpose":"image-verify","murage/verify-run":"%s"},"public_net":{"ipv4":{"ip":"192.0.2.10"}}}}' "$(cat "$st/imgsuffix")" "$(cat "$st/run")"; }
+case "$method $path" in
+    "GET /images/"*)
+        n=$(( $(cat "$st/image_reads" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$st/image_reads"
+        if [[ ${MOCK_IMAGE_CHANGE:-0} == 1 && $n -ge 2 ]]; then reply 200 "$(cat "$MOCK_IMAGE_JSON_CHANGED")"; fi
+        reply 200 "$(cat "$MOCK_IMAGE_JSON")" ;;
+    "GET /server_types"*) reply 200 "$(cat "$MOCK_TYPES_JSON")" ;;
+    "POST /servers")
+        printf '%s' "$body" > "$st/create.body"
+        run=$(printf '%s' "$body" | sed -n 's/.*"murage\/verify-run":"\([^"]*\)".*/\1/p'); echo "$run" > "$st/run"
+        name=$(printf '%s' "$body" | sed -n 's/.*"name":"mv-verify-\([0-9]*\)".*/\1/p'); echo "$name" > "$st/imgsuffix"
+        touch "$st/created"
+        if [[ ${MOCK_LOST_CREATE_ANSWER:-0} == 1 ]]; then reply 500 '{"error":{"code":"timeout"}}'; fi
+        reply 201 '{"server":{"id":4242},"action":{"id":11}}' ;;
+    "GET /actions/"*) reply 200 '{"action":{"id":1,"status":"success"}}' ;;
+    "POST /servers/4242/actions/enable_rescue") reply 201 '{"action":{"id":12},"root_password":"mock-root-password"}' ;;
+    "POST /servers/4242/actions/poweron") reply 201 '{"action":{"id":13}}' ;;
+    "POST /servers/4242/actions/request_console") reply 201 '{"action":{"id":14},"wss_url":"wss://console.invalid/x","password":"mock-vnc"}' ;;
+    "GET /servers/4242")
+        if [[ -e $st/deleted || ! -e $st/created ]]; then reply 404 '{"error":{"code":"not_found"}}'; fi
+        reply 200 "$(server_json)" ;;
+    "DELETE /servers/4242") touch "$st/deleted"; reply 200 '{"action":{"id":15}}' ;;
+    "GET /servers?label_selector="*)
+        if [[ -e $st/created && ! -e $st/deleted ]]; then
+            reply 200 "$(printf '{"servers":[{"id":4242,"name":"mv-verify-%s","labels":{"purpose":"image-verify","murage/verify-run":"%s"}}]}' "$(cat "$st/imgsuffix")" "$(cat "$st/run")")"
+        fi
+        reply 200 '{"servers":[]}' ;;
+    *) echo "curl: unmocked $method $path" >> "$MOCK_LOG"; reply 404 '{"error":{"code":"unmocked"}}' ;;
+esac

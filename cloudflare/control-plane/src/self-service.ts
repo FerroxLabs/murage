@@ -24,6 +24,7 @@
 // (shared/cloud-control-shapes.json, additionalProperties false) is unchanged for homes that do not know them:
 //   GET  /v1/machines/<id>/commands        pending commands for this generation, oldest first; each is picked once and gets a run deadline
 //   POST /v1/machines/<id>/commands/ack    a command from GET commands ran (done, failed, unsupported); exactly once per command
+//   POST /v1/machines/<id>/update-state    the home's updater reports its installed sequence, lastResult and any Stuck code (optional: older homes never send it)
 //   POST /v1/machines/<id>/logs            redacted log lines for a collect_logs command, in chunks
 //   POST /v1/machines/<id>/export-ready    the encrypted export archive is in the home's backup space; carries its key once
 // The wire shapes on both sides are pinned by shared/self-service-contract.json (tested here and against deploy/cloud-home/murage-commands).
@@ -60,7 +61,7 @@ import { sha256 } from "./installations";
 import { keyWrapperFor } from "./key-wrapper";
 import { htmlOf, isoDate } from "./legal-flows";
 import { readyPairHolds } from "./pairing";
-import { raiseAlert } from "./ops-monitor";
+import { persistAlert, raiseAlert, resolveAlertStatement } from "./ops-monitor";
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -566,12 +567,14 @@ async function activeJob(env: Env, homeId: string, now: number, deps?: SelfServi
 /** Admits a job for the home: the job row (the unique index is the slot), its command (fenced by generation) and whatever the caller
  *  adds, in one batch that keeps nothing unless all of it applied. 409 job_in_progress when the slot is taken. Returns the command id. */
 async function admitJob(env: Env, lease: HomeLease | null, h: Home, kind: JobKind, ref: string | null, commandKind: string,
-  payload: Record<string, JSONValue>, now: number, ttl: number, extra: (commandId: string) => Q[]): Promise<string> {
+  payload: Record<string, JSONValue>, now: number, ttl: number, extra: (commandId: string) => Q[], onlyIfRolling?: string): Promise<string> {
   const busy = await activeJob(env, h.id, now);
   if (busy) throw new HTTPError(409, "job_in_progress", { job: busy.kind });
   const id = crypto.randomUUID();
   try {
     await runBatch(env, lease, [
+      // A rollout dispatch inserts nothing once its release is no longer rolling: the guard rolls the whole batch back.
+      ...(onlyIfRolling ? holds("EXISTS (SELECT 1 FROM cloud_releases WHERE id=? AND state='rolling')", onlyIfRolling) : []),
       q("INSERT INTO cloud_home_jobs (id,home_id,kind,ref,generation,state,created_at) VALUES (?,?,?,?,?,'active',?)", id, h.id, kind, ref, h.generation, now),
       ...exactlyOne(commandQ(h, id, commandKind, payload, now, ttl)),
       ...extra(id),
@@ -797,18 +800,60 @@ async function direct(env: Env, deps: SelfServiceDependencies, h: Home, account:
 
 // ---- Update my Cloud, Reset my Cloud, Undo reset ---------------------------------------------------------------------------------
 
+/** What the Update button says when there is nothing it may install: no release has been promoted past this home, so there is nothing newer. */
+export const UP_TO_DATE_WORDS = "You're on the latest version.";
+
+/** The newest sequence the rollout controller has promoted (every wave soaked), or null while none was. This is the only sequence a
+ *  customer's Update button ever installs; a release still rolling or halted is never offered to a customer. */
+export async function latestPromotedSequence(env: Env): Promise<number | null> {
+  const row = await env.DB.prepare("SELECT MAX(sequence) AS s FROM cloud_releases WHERE state='promoted'").first<{ s: number | null }>();
+  return row?.s ?? null;
+}
+
 async function updateSoftware(env: Env, deps: SelfServiceDependencies, h: Home, account: string, now: number): Promise<Response> {
   if (!ACTIVE_STATES.includes(h.desired_state)) throw new HTTPError(409, "home_inactive");
+  // Nothing promoted, or this home already reported the promoted sequence (or newer): there is nothing to install. Checked before any
+  // limit is charged and before a command exists; the home refuses any other sequence as well (murage-commands run_update).
+  const target = await latestPromotedSequence(env);
+  const seen = await env.DB.prepare("SELECT installed_sequence FROM cloud_home_update_reports WHERE home_id=? AND generation=?")
+    .bind(h.id, h.generation).first<{ installed_sequence: number | null }>();
+  if (target === null || (seen?.installed_sequence != null && seen.installed_sequence >= target)) {
+    throw new HTTPError(409, "up_to_date", { message: UP_TO_DATE_WORDS });
+  }
   await requireRunner(env, h);
   const busy = await activeJob(env, h.id, now, deps);
   if (busy) throw new HTTPError(409, "job_in_progress", { job: busy.kind });
   await limited(env, h, "update", "customer", account, "update", now);
   return underLease(env, h.id, async (lease) => {
     const cur = await currentHome(env, h);
-    const id = await admitJob(env, lease, cur, "update", null, "update_software", { keep: ["files", "settings", "logins"], reason: "customer" },
-      now, JOB_PICKUP_MS, (cmd) => [auditQ(h.id, "customer", account, "update", "queued", { commandId: cmd }, now)]);
+    const id = await admitJob(env, lease, cur, "update", null, "update_software", { keep: ["files", "settings", "logins"], reason: "customer", sequence: target },
+      now, JOB_PICKUP_MS, (cmd) => [auditQ(h.id, "customer", account, "update", "queued", { commandId: cmd, sequence: target }, now)]);
     return json({ action: "update", state: "queued", commandId: id, expiresAt: now + JOB_PICKUP_MS }, 202);
   });
+}
+
+/** SQL: a rollout command (update_software, reason "rollout") whose release is not rolling or promoted (halted, cancelled, draft, unknown). */
+export const ROLLOUT_COMMAND_STALE = `(kind='update_software' AND json_extract(payload,'$.reason')='rollout' AND NOT EXISTS (
+  SELECT 1 FROM cloud_releases r WHERE r.sequence=json_extract(payload,'$.sequence') AND r.state IN ('rolling','promoted')))`;
+
+/** The rollout controller's dispatch (rollout.ts): update_software with the release's TARGET sequence and reason "rollout", through the
+ *  same job slot, lease and generation fence as the customer's button. A refusal (busy, inactive, no runner yet) is returned, never
+ *  thrown: the controller leaves the home pending and tries again on its next pass. */
+export async function dispatchRolloutUpdate(env: Env, homeId: string, target: number, now: number, releaseId: string): Promise<{ commandId: string } | { refused: string }> {
+  const h = await env.DB.prepare("SELECT * FROM cloud_homes WHERE id=?").bind(homeId).first<Home>();
+  if (!h || !ACTIVE_STATES.includes(h.desired_state)) return { refused: "home_inactive" };
+  if (!await runnerKnown(env, h)) return { refused: "home_unsupported" };
+  try {
+    return await underLease(env, h.id, async (lease) => {
+      const cur = await currentHome(env, h);
+      const id = await admitJob(env, lease, cur, "update", null, "update_software", { keep: ["files", "settings", "logins"], reason: "rollout", sequence: target },
+        now, JOB_PICKUP_MS, (cmd) => [auditQ(h.id, "operator", null, "update", "queued", { commandId: cmd, sequence: target, reason: "rollout" }, now)], releaseId);
+      return { commandId: id };
+    });
+  } catch (e) {
+    if (e instanceof HTTPError) return { refused: e.code };
+    throw e;
+  }
 }
 
 /** Reset is reversible, so it never waits 72 hours: the home first keeps its current state as a tagged backup snapshot, then rebuilds
@@ -1354,6 +1399,13 @@ export async function exportDownload(request: Request, env: Env, deps: SelfServi
 
 // ---- home-side routes -----------------------------------------------------------------------------------------------------------
 
+const MAX_SAFE_SEQUENCE = 9007199254740991;
+/** What the home's updater reports about itself (murage-commands report_update_state): the installed sequence, the journal's lastResult
+ *  and a Stuck code. All optional on the wire in the sense that an older home never sends it; a home that does sends exactly this. */
+const updateStateBody = z.object({ generation: z.number().int().positive(),
+  installedSequence: z.number().int().min(1).max(MAX_SAFE_SEQUENCE).nullable(),
+  lastResult: z.object({ commandId: z.string().uuid(), outcome: z.enum(["done", "failed"]), reason: z.string().regex(/^[a-z_]{1,64}$/).nullable() }).strict().nullable(),
+  stuck: z.string().regex(/^[a-z_]{1,64}$/).nullable() }).strict();
 const ackBody = z.object({ generation: z.number().int().positive(), commandId: z.string().uuid(),
   outcome: z.enum(["done", "failed", "unsupported"]) }).strict();
 const readyBody = z.object({ generation: z.number().int().positive(), commandId: z.string().uuid(), requestId: z.string().regex(/^[\w-]{1,128}$/),
@@ -1363,7 +1415,7 @@ interface CommandRow { id: string; kind: string; payload: string; acked_at: numb
   picked_at: number | null; run_deadline: number | null }
 
 export async function selfServiceMachineRoute(request: Request, env: Env, deps: SelfServiceDependencies = {}): Promise<Response | null> {
-  const m = /^\/v1\/machines\/([\w-]{1,128})\/(commands|commands\/ack|logs|export-ready)$/.exec(new URL(request.url).pathname);
+  const m = /^\/v1\/machines\/([\w-]{1,128})\/(commands|commands\/ack|logs|export-ready|update-state)$/.exec(new URL(request.url).pathname);
   if (!m) return null;
   if (request.method !== (m[2] === "commands" ? "GET" : "POST")) throw new HTTPError(405, "method_not_allowed");
   const h = await env.DB.prepare("SELECT * FROM cloud_homes WHERE id=?").bind(m[1]).first<Home>();
@@ -1377,7 +1429,7 @@ export async function selfServiceMachineRoute(request: Request, env: Env, deps: 
       env.DB.prepare(`INSERT INTO cloud_home_runner (home_id,generation,polled_at) VALUES (?,?,?)
         ON CONFLICT(home_id) DO UPDATE SET generation=excluded.generation,polled_at=excluded.polled_at`).bind(h.id, h.generation, now),
       env.DB.prepare(`UPDATE cloud_home_commands SET picked_at=?,run_deadline=?+CASE kind ${Object.entries(RUN_MS).map(([k, v]) => `WHEN '${k}' THEN ${v}`).join(" ")} ELSE ${COMMAND_TTL_MS} END
-        WHERE home_id=? AND generation=? AND acked_at IS NULL AND picked_at IS NULL AND expires_at>?`).bind(now, now, h.id, h.generation, now),
+        WHERE home_id=? AND generation=? AND acked_at IS NULL AND picked_at IS NULL AND expires_at>? AND NOT ${ROLLOUT_COMMAND_STALE}`).bind(now, now, h.id, h.generation, now),
     ]);
     const rows = await env.DB.prepare(`SELECT id,kind,payload,created_at,run_deadline FROM cloud_home_commands
       WHERE home_id=? AND generation=? AND acked_at IS NULL AND picked_at IS NOT NULL AND run_deadline>? ORDER BY created_at,rowid LIMIT 10`)
@@ -1418,6 +1470,30 @@ export async function selfServiceMachineRoute(request: Request, env: Env, deps: 
     }
     if (job) await admitWaitingExports(env, now, h.id);
     return json({ acknowledged: true });
+  }
+  if (m[2] === "update-state") {
+    const input = await readJSON(request, updateStateBody);
+    if (input.generation !== h.generation) throw new HTTPError(409, "stale_generation");
+    const before = await env.DB.prepare("SELECT last_command_id FROM cloud_home_update_reports WHERE home_id=?").bind(h.id).first<{ last_command_id: string | null }>();
+    await env.DB.prepare(`INSERT INTO cloud_home_update_reports (home_id,generation,installed_sequence,last_command_id,last_outcome,last_reason,stuck,reported_at)
+      VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(home_id) DO UPDATE SET generation=excluded.generation,installed_sequence=excluded.installed_sequence,
+      last_command_id=excluded.last_command_id,last_outcome=excluded.last_outcome,last_reason=excluded.last_reason,stuck=excluded.stuck,reported_at=excluded.reported_at`)
+      .bind(h.id, input.generation, input.installedSequence, input.lastResult?.commandId ?? null, input.lastResult?.outcome ?? null,
+        input.lastResult?.reason ?? null, input.stuck, now).run();
+    // Per-home alerts, from the report alone (whether or not a rollout is running): a Stuck updater needs a person (update.stuck, P5); a
+    // rolled-back update is a digest line (update.rolled_back), once per update, cleared by the next update that lands.
+    if (input.stuck !== null) {
+      await persistAlert(env, { homeId: h.id, kind: "update.stuck", severity: "high", detail: `the home's updater is stuck: ${input.stuck}` }, now);
+    } else {
+      await resolveAlertStatement(env.DB, h.id, "update.stuck", now).run();
+    }
+    if (input.lastResult?.outcome === "failed" && input.lastResult.commandId !== before?.last_command_id) {
+      await persistAlert(env, { homeId: h.id, kind: "update.rolled_back", severity: "medium",
+        detail: `an update rolled back (${input.lastResult.reason ?? "no reason recorded"}); the home kept its earlier version` }, now);
+    } else if (input.lastResult?.outcome === "done") {
+      await resolveAlertStatement(env.DB, h.id, "update.rolled_back", now).run();
+    }
+    return json({ recorded: true });
   }
   if (m[2] === "logs") {
     const input = await readJSON(request, logsBody);

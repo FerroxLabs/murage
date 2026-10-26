@@ -25,7 +25,7 @@ function boot(output: string, status: number) {
     writeFileSync(helper, `#!/bin/bash\nif [[ \"\${1:-}\" == --envelope ]]; then\ncat <<'ENVELOPE'\n${output}\nENVELOPE\nexit ${status}\nfi\n`, { mode: 0o700 });
     writeFileSync(config, "MURAGE_CLOUD_MACHINE_ID=home-test\n");
     writeFileSync(node, `#!/usr/bin/python3\nimport os,json\nprint('supervisor entered',flush=True)\nv=json.load(os.fdopen(3))\nassert v['version']==2\nassert v['dataKey'] not in repr(dict(os.environ))\nassert v['bootstrapSecret'] not in repr(dict(os.environ))\nprint('supervisor started')\n`, { mode: 0o700 });
-    const script = source("start-home.sh").replaceAll("/usr/local/libexec/murage-enroll", helper).replaceAll("/etc/murage-home/home.env", config).replaceAll("/usr/local/bin/node", node);
+    const script = source("start-home.sh").replaceAll("/usr/local/libexec/murage-enroll", helper).replaceAll("/etc/murage-home/home.env", config).replaceAll("/usr/bin/python3 -I /usr/local/libexec/murage-home-launch", node);
     return spawnSync(modernBash!, ["-c", script], { encoding: "utf8", timeout: 5000 });
   } finally { removeTempDirSync(root); }
 }

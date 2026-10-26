@@ -15,6 +15,7 @@ import { devicesRoute } from "./devices";
 import { DOOR_HANDING_OUT, doorRoute, handOutDoorTicket, sweepDoorNotices } from "./door";
 import { trustedFactorRoute } from "./trusted-factors";
 import { sweepMonitoring } from "./ops-monitor";
+import { rolloutRoute, sweepRollout } from "./rollout";
 import { accountTwoFactorRoute } from "./account-2fa";
 import { admin } from "./b3-control";
 import { boundCustomer, carryBinding, createIdentity, DOOR_ROUTE, doorRecentProofAt, isFluxCapChange, isFluxOwnerPath, isTopupChange, needsStepUp, stepUpProofValid, type Identity, type IdentityDependencies } from "./customer-identity";
@@ -161,6 +162,9 @@ async function route(
   if (machineEndpoint) return machineEndpoint;
   const cp0Control = await cp0ControlRoute(request, env);
   if (cp0Control) return cp0Control;
+  // Home-update rollout controller: operator routes only (the CLOUD_ADMIN_TOKEN bearer); no customer route exists.
+  const rollout = await rolloutRoute(request, env);
+  if (rollout) return rollout;
   const b3Response = await b3Route(request, env, b3Dependencies);
   if (b3Response) return b3Response;
   const machineResponse = await cloudMachineRoute(request, env);
@@ -635,6 +639,12 @@ export function createWorker(
           await sweepMonitoring(env);
         } catch {
           console.error(JSON.stringify({ message: "monitoring sweep failed", requestId, errorCode: "monitoring_internal" }));
+        }
+        try {
+          // After monitoring, so the heartbeat and render alerts it raised this run are what the soak gate reads.
+          await sweepRollout(env);
+        } catch {
+          console.error(JSON.stringify({ message: "rollout sweep failed", requestId, errorCode: "rollout_internal" }));
         }
         try {
           await sweepManagedEndpointCleanup(env, readConfig(env), cloudflareFetch, requestId);

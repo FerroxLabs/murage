@@ -1,0 +1,37 @@
+{
+  "_note": "Pinned wire contract between the home (this image) and the control-plane Worker (cloudflare/control-plane/src/{pairing,devices,door,endpoints}.ts, pinned at dev cloud-v2/release 73395ce0f). Change both sides and this file together; a Worker-only deploy must not talk to an old image.",
+  "workerPin": "73395ce0f",
+  "homeRoutes": {
+    "pairing": { "method": "POST", "path": "/api/cloud/pairing", "auth": "hmac-sha256 hex in x-murage-signature over the exact body bytes" },
+    "pair": { "method": "POST", "path": "/api/cloud/pair" },
+    "challenge": { "method": "POST", "path": "/api/cloud/challenge" },
+    "refresh": { "method": "POST", "path": "/api/cloud/refresh" },
+    "enter": { "method": "POST", "path": "/api/cloud/enter" },
+    "doorState": { "method": "GET", "path": "/api/cloud/door-state" },
+    "devicesList": { "method": "POST", "path": "/api/cloud/devices/list" },
+    "devicesRevoke": { "method": "POST", "path": "/api/cloud/devices/revoke" },
+    "recoveryHold": { "method": "POST", "path": "/api/cloud/recovery/hold" },
+    "recoveryCancel": { "method": "POST", "path": "/api/cloud/recovery/cancel" }
+  },
+  "pairingRequestFields": {
+    "signedEnvelope": ["operation", "timestamp", "nonce", "account", "ttl", "generation"],
+    "device": ["scope", "publicKey", "assertionKey"],
+    "addDevice": ["pairHoldId", "pairHoldProof"],
+    "recovery": ["recovery", "recoveryId", "recoveryProof"],
+    "operationValue": "/api/cloud/pairing",
+    "deviceScopes": ["owner-desktop", "owner-phone", "browser"],
+    "nonceLength": { "min": 16, "max": 128 },
+    "timestampSkewSeconds": 300
+  },
+  "pairingResponseFields": ["code", "expiresIn"],
+  "devicesRevokeRequestFields": ["deviceId"],
+  "devicesRevokeResponseFields": ["revoked"],
+  "doorTicket": {
+    "type": "murage-door-v2",
+    "fields": ["type", "homeId", "generation", "publicOrigin", "account", "nonce", "stepUpAt", "issuedAt", "expiresAt", "bind", "kind", "pairHold", "proof"],
+    "kinds": ["browser", "desktop"],
+    "bindPattern": "^[0-9a-f]{64}$",
+    "strict": true
+  },
+  "doorVersion": { "v2": "murage-door-v2", "workerRefusesNonV2DesktopWith": "door_needs_update" }
+}

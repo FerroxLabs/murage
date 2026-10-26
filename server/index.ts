@@ -22,14 +22,20 @@ import { attachCloudUpgradeGate } from "./cloud-home/upgrade-gate.ts";
 import { createEngineLoginRelay } from "./cloud-home/engine-login.ts";
 import { createVpsMcpRelay } from "./cloud-home/vps-mcp-relay.ts";
 import { cloudHomeCopy } from "./cloud-home/copy.ts";
-import { cloudEngineChoiceRefusal, isCloudHiddenEngine } from "./cloud-home/runnable-engines.ts";
+import { cloudEngineChoiceRefusal, cloudEngineClientRefusal, isCloudEngineWithheldFromClient, isCloudHiddenEngine } from "./cloud-home/runnable-engines.ts";
+import { currentClientCapabilities, withClientCapabilities } from "./cloud-home/client-capabilities.ts";
 import { handleOwnServerApi } from "./cloud-home/own-server.ts";
 import { cloudIdentity, isPasskeyOwnerBrowser } from "./cloud-request-identity.ts";
 import { cloudPhoneHighRiskRefusal, isDesktopApp, ownerSurface, skipsFreshAuth } from "./cloud-owner-surface.ts";
+import { acceptSigninCode, swallowPastedCode } from "./cloud-home/agy-signin-routes.ts";
+import { configureAgySignin } from "./cloud-home/agy-signin-start.ts";
 import { validateOwnerTimeZone, writeOwnerTimeZone } from "./cloud-home/timezone.ts";
 import { CloudBrowserProfileUsage } from "./cloud-home/browser-profile-usage.ts";
 import { setCloudBrowserAdmission } from "./cloud-home/browser-process.ts";
 import { cloudTurnEnvironment, CLOUD_ENGINES } from "./cloud-home/turn-process.ts";
+import { configureCloudSignIns } from "./cloud-home/signin-status.ts";
+import { createSignInOffers } from "./cloud-home/signin-offers.ts";
+import { assertBotEngineSignedIn, createEngineSignInsApi, pickDefaultEngineForBot, useEngineAfterSignIn } from "./cloud-home/engine-signins.ts";
 import { assertCloudBotIdNotTombstoned, cloudBotStateRefusalCopy, installCloudBotGuards, releaseCloudBotState } from "./cloud-home/bot-state.ts";
 import { cloudHealthVersion, publicHealthBody } from "./cloud-home/health.ts";
 import { startUiCanary, uiHealth } from "./cloud-home/ui-canary.ts";
@@ -2990,8 +2996,9 @@ function askBotAndWait(targetBotId: string, message: string, depth: number, _fro
 }
 
 // default selection for new bots: first available instance, Fuigo preferred
-async function defaultSelection(): Promise<EngineChoice> {
-  return pickDefaultEngine(await describedInstances({ catalogs: "due" }));
+async function defaultSelection(botId: string | null = null): Promise<EngineChoice> {
+  // On a Cloud home a bot's default comes only from its own sign-in status (F4 C2); off a home it is the machine's.
+  return pickDefaultEngineForBot(await describedInstances({ catalogs: "due" }), botId, pickDefaultEngine);
 }
 
 /** What a bot gains or loses moving from one engine to another (triage row
@@ -3050,7 +3057,8 @@ function checkedModelSelection(
   if (current?.busy && changed) {
     return { ok: false, status: 409, error: "the bot is working: stop it before changing models" };
   }
-  const hidden = cloudEngineChoiceRefusal(cloudHome, allInstanceConfigs(cfg)[selection.instanceId]?.driver, !current || Boolean(changed));
+  const hidden = cloudEngineChoiceRefusal(cloudHome, allInstanceConfigs(cfg)[selection.instanceId]?.driver, !current || Boolean(changed))
+    ?? (!current || Boolean(changed) ? cloudEngineClientRefusal(cloudHome, allInstanceConfigs(cfg)[selection.instanceId]?.driver, currentClientCapabilities()) : undefined);
   if (hidden) return { ok: false, status: 403, error: hidden };
   const target = registry.get(selection.instanceId);
   // Model IDs remain free-form at the app's general API boundary. Custom
@@ -3131,10 +3139,16 @@ const store = new Store(() => bootSelection, (selection) => withNewBotEffort(sel
 setScopeRetentionHooks({ botExists: (botId) => Boolean(store.bot(botId)) });
 // Codex hook env files (0600) left by a closed Murage or a bot never launched again: swept for every bot scope at app start (codex-hook.ts).
 sweepAllHookEnv(scopedCliHomeRoot("codex"));
+// Cloud home: the in-chat Antigravity sign-in writes its link and outcome lines into the bot's thread (agy-signin-start.ts).
+if (cloudHome) configureAgySignin((botId, text) => {
+  try { store.appendMessage(requestedDirectBot(botId, undefined).threadId, murageLine({ role: "bot", kind: "text", text })); } catch { /* the bot is gone */ }
+});
 setLoginSplitHook(({ kind, botId }) => { warmPool.drainScope({ kind, bot: botId }); });
 // Cloud home: a tombstoned bot id is never minted again, and a bot is deleted only after the launcher
 // released its state (server/cloud-home/bot-state.ts). No-op on a desktop.
 installCloudBotGuards(store);
+// Cloud home: which engines the owner has signed in anywhere on the home (per-bot stores are root-only), for the new-bot ranking.
+configureCloudSignIns({ bots: () => store.bots.map(bot => bot.id) });
 // What asker wakes the last run owed (asker-wake.ts): restored before anything can deliver a result; the sweeps and turn ends wake them.
 for (const bot of store.bots) for (const task of bot.tasks ?? []) {
   const held = store.continuationHolder(bot.id, task.threadId)?.heldContinuations;
@@ -4426,7 +4440,7 @@ async function moveChiefToShippedEngine(view: SetupView, present: ReadonlySet<st
   const chief = store.bot(view.chiefBotId);
   if (!chief) return;
   const described = await describedInstances({ catalogs: "due" });
-  const selection = pickDefaultEngine(described);
+  const selection = await pickDefaultEngineForBot(described, chief.id, pickDefaultEngine);
   if (!selection.instanceId || !selection.model) return;
   const picked = described.find((instance) => instance.instanceId === selection.instanceId);
   if (picked?.driverKind !== "fuigoAgent") return;
@@ -14034,6 +14048,12 @@ async function acceptBotSend(input: { bot: BotRecord; threadId: string; text: st
 async function sendProjectUsageTurn(instance: ProviderInstance, built: BuiltSendTurnInput, fence: EngineFence) {
   homeExecutionGate?.requireOpen();
   let turn: SendTurnInput = fencedTurnInput(built, fence);
+  if (process.env.MURAGE_CLOUD_ROLE === "home") {
+    // F4 C2: a bot with no sign-in for its engine is told to sign in, not run through an unauthenticated CLI.
+    const turnBot = internalTurnOwners.get(turn.threadId)?.botId ?? store.botByThread(turn.threadId)?.id;
+    const bot = turnBot ? store.bot(turnBot) : undefined;
+    if (bot) await assertBotEngineSignedIn(instance.driverKind, { id: bot.id, name: bot.name });
+  }
   const owner = internalTurnOwners.get(turn.threadId);
   if (owner && !turn.warmIdentity) {
     turn = { ...turn, warmIdentity: { botId: owner.botId, audience: owner.notOwnerAudience === true ? "non-owner" : "owner", decidedOwner: owner.ownerAudience === true, humanPrincipal: ((p) => p ? `${p.personId}:${p.bindingId}` : undefined)(threadHumanPrincipal(turn.threadId)) } };
@@ -20550,6 +20570,14 @@ const homeModelSignInApi = homeSessions && cloudModelSignInMounted() ? createClo
   removeConnection: async provider => { await providerConnections.invalidate([SIGNIN_CONNECTION_IDS[provider]]); },
   readBody,
 }) : undefined;
+// F4 C2: per-bot sign-in lines and the "sign the other bots in" queue (names and booleans only).
+const signInOffers = createSignInOffers(join(DATA_DIR, "cloud-signin-offers.json"));
+const engineSignInsApi = createEngineSignInsApi({
+  bots: () => store.bots.map(bot => ({ id: bot.id, name: bot.name, driverKind: registry.get(bot.modelSelection.instanceId)?.driverKind ?? "" })),
+  // The owner's "Not now" per bot survives a panel reopen and a restart: a small file in the data folder, names only.
+  offers: signInOffers,
+  readBody,
+});
 startupMark("http.begin");
 const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise<unknown> => {
   ownerClock.note(req.method, req.url);
@@ -20573,6 +20601,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
     // loopback-host + loopback-origin gate before any route (DNS rebinding / CSRF)
     if (cloudAuth && await cloudAuth(req,res,url)) return;
     if (homeModelSignInApi && await homeModelSignInApi(req,res,url)) return;
+    if (process.env.MURAGE_CLOUD_ROLE === "home" && await engineSignInsApi(req,res,url)) return;
     if (!cloudAuth && !isLoopbackHost(req.headers.host)) {
       return json(res, 403, { error: "forbidden: loopback host required" });
     }
@@ -26491,6 +26520,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
           const phoneSaw = visibleToCompanion(store, { scope: "bot", botId: bot.id });
           const deleted = store.deleteBot(bot.id);
           if (deleted) askerWakes.dropBot(bot.id);
+          // The owner's "Not now" for this bot goes with it (the id is never reused).
+          if (deleted) signInOffers.forget(bot.id);
           if (deleted) botRemovals.markCompanionVisible(bot.id, phoneSaw);
           if (deleted) forgetForProject();
           // what the bot learned goes with it: lessons, results, feedback, ledger snippets and learning-local/<bot>
@@ -27126,6 +27157,17 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       }));
       return json(res, 202, { ok: true });
     }
+    // The Antigravity sign-in code has its own route and is registered BEFORE /messages: it never reaches the
+    // message pipeline (sendFingerprint, sendStore, the transcript, the engine). One owner-desktop request body,
+    // read with a tiny bound, written once to the held sign-in pty and dropped. Not logged, never echoed.
+    m = path.match(/^\/api\/bots\/([\w-]+)\/engine-signin\/code$/);
+    if (m && method === "POST") {
+      const reply = await acceptSigninCode({
+        cloudHome, scope: cloudIdentity(req.headers)?.scope, botId: m[1], readBody: () => readBody(req, 2048),
+        appendLine: (text) => { store.appendMessage(requestedDirectBot(m![1], undefined).threadId, murageLine({ role: "bot", kind: "text", text })); },
+      });
+      return json(res, reply.status, reply.body);
+    }
     m = path.match(/^\/api\/bots\/([\w-]+)\/messages$/);
     if (m && method === "POST") {
       // One message's bound (shared/message-limits.ts), not the generic
@@ -27136,6 +27178,12 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       }
       const text = String(body.text ?? "").trim();
       if (!text) return json(res, 400, { error: "text required" });
+      // A Google sign-in code pasted into the ordinary box (an old desktop): only while a sign-in is pending for this
+      // bot and only for a line shaped like a code. It is neither stored nor sent anywhere, and the bot says where it goes.
+      let swallowedIn: string | undefined;
+      if (swallowPastedCode({ cloudHome, botId: m[1], text, appendLine: (line) => { const bot = requestedDirectBot(m![1], body.threadId); swallowedIn = bot.threadId; store.appendMessage(bot.threadId, murageLine({ role: "bot", kind: "text", text: line })); } })) {
+        return json(res, 200, { ok: true, threadId: swallowedIn });
+      }
       const tooLarge = messageTooLargeRefusal(text);
       if (tooLarge) return json(res, 413, tooLarge);
       const bot = requestedDirectBot(m[1],body.threadId);
@@ -28320,7 +28368,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       const { discovered: instances, owner } = await ownerEnvAfterDiscovery(fresh, () => describedInstances({ catalogs: fresh ? "fresh" : "due" }));
       // Delta 5: one line per owner ssh setting engines do not use, or no OpenSSH found (engine-env.ts sshPinNotes)
       const sshNotes = sshPinNotes();
-      return json(res, 200, { instances, ...(cloudHome ? { engineNote: cloudHomeCopy.engineNotOnCloud } : {}), ...(owner ? { shellEnvironment: { capture: owner.capture, ...(owner.capturedAt ? { capturedAt: owner.capturedAt } : {}), ...(owner.cause ? { cause: owner.cause } : {}), ...(sshNotes.length ? { sshNotes } : {}) } } : {}) });
+      return json(res, 200, { instances: cloudHome ? instances.filter(item => !isCloudEngineWithheldFromClient(true, allInstanceConfigs(cfg)[item.instanceId]?.driver, currentClientCapabilities())) : instances, ...(cloudHome ? { engineNote: cloudHomeCopy.engineNotOnCloud } : {}), ...(owner ? { shellEnvironment: { capture: owner.capture, ...(owner.capturedAt ? { capturedAt: owner.capturedAt } : {}), ...(owner.cause ? { cause: owner.cause } : {}), ...(sshNotes.length ? { sshNotes } : {}) } } : {}) });
     }
 
     // ── CLI binary discovery for the Engines "detected" dropdown ──
@@ -30161,7 +30209,7 @@ const server = createServer((req, res) => {
   const source = routeSource(req.method, req.url);
   routeNames.set(res, source);
   // The synchronous part of the handler runs inside a named step too: JS work (row parsing, wiring a bot, a big body) is a holder, not "unknown".
-  return ioBudget.withSource(source, () => heldStep(source, () => handleRequest(req, res)));
+  return withClientCapabilities(req.headers, () => ioBudget.withSource(source, () => heldStep(source, () => handleRequest(req, res))));
 });
 
 startupMark("http.created");
@@ -30241,7 +30289,22 @@ const vpsMcpRelay = createVpsMcpRelay({
 if (cloudAuth) {
   // A cloud home's only websockets are the relays, behind the cloud gate; the
   // local companion's stream websocket is not served there.
-  const engineLoginRelay = createEngineLoginRelay();
+  const engineLoginRelay = createEngineLoginRelay({
+    // F4 C2: a bot on Fuigo that has just signed in to a per-bot engine moves onto it ("Sign <bot> in to <engine> and use it").
+    // A bot on any other engine is never moved.
+    onEnded: (engine, action, extra) => {
+      const bot = action === "login" && extra.bot ? store.bot(extra.bot) : undefined;
+      if (!bot) return;
+      const kind = registry.get(bot.modelSelection.instanceId)?.driverKind ?? "";
+      void useEngineAfterSignIn(engine, { id: bot.id, driverKind: kind }, driverKind => {
+        void (async () => {
+          const target = (await describedInstances({ catalogs: "due" })).find(d => d.driverKind === driverKind && d.snapshot.state === "available" && d.models.default);
+          if (target) store.patchBot(bot.id, { modelSelection: { instanceId: target.instanceId, model: target.models.default! } });
+        })();
+        return true;
+      });
+    },
+  });
   attachCloudUpgradeGate(server, cloudAuth, async (req, socket, head, url) =>
     (await vpsMcpRelay(req, socket, head, url)) || engineLoginRelay(req, socket, head, url));
 } else {

@@ -330,7 +330,14 @@ describe("scoped CI confirmation", () => {
     const full = vitest.steps.find(step => step.name === "Run Vitest shard");
     expect(full.if).toBe("inputs.vitest_file == ''");
     // The blocking shards run only GATE files, each on the OSes ci/gate-tests.txt names for it.
-    expect(full.run).toContain('node scripts/ci-test-tiers.mjs list --tier gate --os "$os" --shard "$SHARD"');
+    expect(full.run).toContain('node scripts/ci-test-tiers.mjs list --tier gate --os "$os" --shard "$SHARD" --skip server/cloud-home/placeholder-launcher-root.test.ts');
+    // The gate file the shards leave out needs root (the launcher makes .agents 0555, then creates targets in it); it runs as root once.
+    // placeholder-launcher.test.ts, the non-root half, stays in the shards with no --skip.
+    expect(full.run).not.toContain("--skip server/cloud-home/placeholder-launcher.test.ts");
+    const placeholderRoot = vitest.steps.find(step => step.name === "Run the root-only placeholder-launcher test as root");
+    expect(placeholderRoot.if).toBe("${{ !cancelled() && inputs.vitest_file == '' && matrix.os == 'ubuntu-24.04' && matrix.vitest_shard == 1 }}");
+    expect(placeholderRoot.run).toContain("node_modules/vitest/vitest.mjs run server/cloud-home/placeholder-launcher-root.test.ts");
+    expect(placeholderRoot.run.startsWith("sudo -E ")).toBe(true);
     expect(full.run).toContain("node node_modules/vitest/vitest.mjs run --tags-filter='!nightly && !perf-budget' \"${args[@]}\"");
     expect(full.env.SHARD).toBe("${{ matrix.vitest_shard }}/${{ matrix.os == 'windows-latest' && 12 || 10 }}");
     expect(full.env.MURAGE_SKIP_REAL_ELECTRON_BROWSER_FIXTURE).toBe("${{ matrix.os == 'windows-latest' && '1' || '0' }}");

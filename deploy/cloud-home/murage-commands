@@ -8,10 +8,13 @@ runs each command at most once, and reports it: POST commands/ack, or POST logs 
 
   restart_service    restart murage-home.service (normal mode)
   safe_mode          restart it with bots, schedules and add-ons paused, until the next start (/run/murage-safe-mode)
-  update_software    fetch the signed release named by /etc/murage-home/release.json, verify, swap /opt/murage, restart;
-                     /data (files, settings, logins) is not touched; every step is journaled (update-journal.json) and
-                     committed only once the app answers its health check; otherwise, or after an interruption, the
-                     previous release is put back
+  update_software    fetch the signed release named by the image's trust root (/usr/lib/murage-home/trust), verify, install it
+                     into the idle slot under /opt/murage-releases, stop the home, flip the `current` link, start the home on a
+                     counted one-shot grant and commit only once the app answers its health check; otherwise flip back to the
+                     previous slot (signed bytes only). /data (files, settings, logins) is not touched; every step is journaled
+                     (/var/lib/murage-update/state.json, this runner's only writer) so an interruption anywhere resumes the same
+                     state machine (LANE-G-UPDATE-STATE-MACHINE r2/r3/A1). The root launchers in /usr/local/libexec are
+                     image-pinned: a release that needs other launchers is refused (launcher_abi_mismatch) and the home is re-imaged
   reset_from_backup  with the home and its turn/browser slices confirmed stopped, keep the current /data as a complete
                      restic snapshot (exit 0 only; its exact id verified and recorded, kept keepSnapshotDays from
                      completion), then rebuild /data from the newest nightly confirmed complete; engine sign-ins and the
@@ -49,7 +52,10 @@ import os
 import re
 import secrets as random_source
 import shutil
+import signal
+import socket
 import stat
+import struct
 import subprocess
 import sys
 import tarfile
@@ -65,7 +71,11 @@ BACKUP = "/usr/local/libexec/murage-backup"
 STATE = "/var/lib/murage-home"
 CONFIG = "/etc/murage-home"
 DATA = "/data"
-OPT = "/opt/murage"
+RELEASES = "/opt/murage-releases"  # the two release slots and the `current` link (murage-home-launch resolves the live tree through it)
+UPDATE_STATE = "/var/lib/murage-update"  # the update journal and the installed slots' signed manifests; written only here
+TRUST = "/usr/lib/murage-home/trust"  # image-written, read-only for every unit: key, channel, sequence floor, slot A's signed manifest, launcher ABI
+GATE_RUN = "/run/murage-update"  # tmpfs: the drive lock and the start gate socket
+LIBEXEC = "/usr/local/libexec"
 RUN = "/run"
 HOME_UNIT = "murage-home.service"
 POLL_SECONDS = 15
@@ -120,7 +130,12 @@ def _reason(payload):
         raise Unsupported()
 
 def _update(payload):
-    _exact(payload, ("keep", "reason"))
+    # "sequence" is the release the rollout controller (or the customer's Update button, which carries the fleet's latest PROMOTED
+    # sequence) wants installed. It is required: a command without one would install whatever the channel serves, which during a
+    # rollout is the release the waves have not promoted yet. run_update refuses any other sequence.
+    _exact(payload, ("keep", "reason", "sequence"))
+    if not _int(payload["sequence"], 1):
+        raise Unsupported()
     if payload["keep"] != ["files", "settings", "logins"] or not isinstance(payload["reason"], str) or not REASON.fullmatch(payload["reason"]):
         raise Unsupported()
 
@@ -163,7 +178,7 @@ def command_envelope(value):
 
 # ---- transport ------------------------------------------------------------------------------------------------------
 
-OPERATIONS = {"commands": "GET", "commands/ack": "POST", "logs": "POST", "export-ready": "POST"}
+OPERATIONS = {"commands": "GET", "commands/ack": "POST", "logs": "POST", "export-ready": "POST", "update-state": "POST"}
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *_args, **_kwargs):
@@ -265,8 +280,9 @@ def default_context(binding, backup_module=None, control_module=None):
     return {"binding": binding, "request": machine_request, "systemctl": systemctl, "run": run_process, "fetch": fetch,
             "now": lambda: int(time.time() * 1000), "sleep": time.sleep, "backup": backup_module,
             "upload": upload_export, "environs": process_environs, "unit_state": unit_state, "app_healthy": app_healthy,
-            "disk_free": disk_free, "spawn": subprocess.Popen,
-            "paths": {"data": DATA, "state": STATE, "config": CONFIG, "opt": OPT, "run": RUN}}
+            "disk_free": disk_free, "spawn": subprocess.Popen, "verify": verify_signature, "peer": peer_identity, "gate": None,
+            "paths": {"data": DATA, "state": STATE, "config": CONFIG, "run": RUN, "libexec": LIBEXEC, "releases": RELEASES,
+                      "update_state": UPDATE_STATE, "trust": TRUST, "gate": GATE_RUN}}
 
 def path(ctx, name, *rest):
     return os.path.join(ctx["paths"][name], *rest)
@@ -358,13 +374,17 @@ def handle(ctx, command):
                 raise Unsupported()
             SHAPES[kind](command["payload"])
             before_deadline(ctx, command)  # never started after its run deadline
-            if kind in BLOCKED_BY_RECOVERY and recovery_pending(ctx, cid):
-                raise Blocked()  # an unfinished reset/undo recovery owns /data: no conflicting work until it completes
+            if kind in BLOCKED_BY_RECOVERY and recovery_pending(ctx):
+                raise Blocked()  # an unfinished reset/undo recovery or an update in flight owns the home: no conflicting work until it completes
             outcome = RUNNERS[kind](ctx, command)
         except Unsupported:
             outcome = "unsupported"
         except Exception:
             outcome = "failed"
+        if kind == "update_software" and update_inflight_for(ctx, cid):
+            # The update is in flight (verify, rollback, or Stuck): its command stays "running", never acked; driven every loop and at start.
+            print("Self-service recovery pending", file=sys.stderr)
+            return "pending"
         if swap_state(ctx, record) in ("swap", "committed"):
             # Data may be swapped in with sign-ins not yet carried, or a rollback not finished: never reported as done (or failed).
             # The command stays "running" with its swap record; recovery is retried every loop and at start.
@@ -415,11 +435,21 @@ def swap_state(ctx, record):
         return "swap"
     return found["phase"] if found else None
 
-def recovery_pending(ctx, current=None):
-    """Any reset or undo whose swap is not finished (installed with sign-ins carried, or rolled back)."""
+def recovery_pending(ctx):
+    """True while the home must not be started by this runner and no data command may run: an update in flight, a journal or trust root
+    that cannot be validated, a release layout the phase-aware predicate refuses (fail closed: the only False is an explicit, fully
+    validated "no inflight, layout sane, every swap terminal"), or any reset or undo whose swap is not finished (installed with sign-ins
+    carried, or rolled back). A query: it never stops anything (the driver does)."""
+    try:
+        state = read_update_state(ctx)
+        layout_ok(state, current_target(ctx), SlotEnv(ctx, release_config(ctx)))
+    except (Stuck, LayoutRefused, OSError, ValueError):
+        return True
+    if state["inflight"] is not None:
+        return True
     directory = path(ctx, "state", "commands")
     for name in sorted(os.listdir(directory)) if os.path.isdir(directory) else []:
-        if not name.endswith(".json") or name[:-5] == current:
+        if not name.endswith(".json"):
             continue
         record = journal_read(ctx, name[:-5])
         if isinstance(record, dict) and record.get("state") == "running" and swap_state(ctx, record) in ("swap", "committed"):
@@ -435,11 +465,7 @@ def recovery_pending(ctx, current=None):
     return False
 
 def forget_results(ctx, cid, record):
-    forget_swaps(ctx, record)
-    if record.get("kind") == "update_software":
-        result = read_update_result(ctx)
-        if result and result.get("commandId") == cid:
-            os.unlink(update_result_file(ctx))
+    forget_swaps(ctx, record)  # the update journal's lastResult is never unlinked: the next update overwrites it
 
 def forget_swaps(ctx, record):
     """The swap record outlives the staging tree until the terminal outcome is journaled (never before), and is kept while any
@@ -493,11 +519,8 @@ def recover(ctx, record, command=None, cid=None):
     if record.get("kind") in ("reset_from_backup", "undo_reset"):
         start_home(ctx)  # no reset id recorded: nothing was swapped
     if record.get("kind") == "update_software":
-        # Keyed to the command: if start-up already finished this command's update, its recorded result is returned again.
-        if read_update_journal(ctx) is not None:
-            recover_update(ctx)
-        result = read_update_result(ctx)
-        return result["outcome"] if result and result.get("commandId") == cid else "failed"
+        # Keyed to the command: pending (raised) while its update is in flight, else the journal's recorded outcome for this id.
+        return recover_update(ctx, cid)
     if record.get("kind") == "export_archive":
         clean_export_staging(ctx)
     if record.get("kind") == "safe_mode":
@@ -563,143 +586,1192 @@ def run_safe_mode(ctx, _command):
 
 
 # ---- update ---------------------------------------------------------------------------------------------------------------
+# Lane G (lanes/cloud-v2/LANE-G-UPDATE-STATE-MACHINE r2, r3, Amendment A1): two release trees side by side under
+# /opt/murage-releases/{A,B}, one atomic flip of the `current` link, every write by this runner. The journal
+# /var/lib/murage-update/state.json is the one authoritative record; its phases are installing | installed | flip | verify |
+# rollback. Root in the home unit is image code only (murage-home-launch), so nothing a release ships can write the journal, the trust
+# root or a slot. In verify and rollback the launcher starts slot code only on a one-shot grant from this process (the gate), and
+# every grant follows a counter write, so each start of a not yet verified tree is counted. The launcher and this runner share one
+# layout predicate (layout_ok, byte-identical in both files), one seal walk and one journal shape (the block marked "shared" below).
 
-RELEASE_FORMAT = "murage-cloud-home-release-v1"
-ARCHIVE_NAME = re.compile(r"murage-cloud-home-[A-Za-z0-9._-]{1,100}\.tar\.gz")
+RELEASE_FORMAT = "murage-cloud-home-release-v3"
+UPDATE_STATE_FORMAT = "murage-cloud-home-update-state-v3"
+PHASES = ("installing", "installed", "flip", "verify", "rollback")
+VERIFY_ATTEMPTS, ROLLBACK_ATTEMPTS = 2, 3
+HOME_CGROUP = "0::/system.slice/murage-home.service"
+GATE_REQUEST_MAX = 256
+TRUST_FIELDS = ("channelUrl", "minimumSequence", "imageRevision", "launcherAbi")
 
-def release_config(ctx):
+# ==== shared with deploy/cloud-home/murage-home-launch.py: byte-identical (T-S4) ====
+SLOTS = ("A", "B")
+FS_IOC_GETFLAGS, FS_IOC_SETFLAGS, FS_IMMUTABLE_FL = 0x80086601, 0x40086602, 0x00000010
+SLOT_OPEN = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+SEAL_OWNER = 0  # the owner every sealed inode must have; a test run without root models it as its own uid
+FILE_OPEN = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
+MANIFEST_FIELDS = ("format", "sequence", "revision", "arch", "archive", "bytes", "sha256", "treeSha256", "launcherAbi")
+JOURNAL_FIELDS = ("format", "installed", "inflight", "lastResult")
+INSTALLED_FIELDS = ("slot", "sequence", "revision")
+INFLIGHT_FIELDS = ("commandId", "slot", "sequence", "revision", "phase", "verifyAttempts", "rollbackAttempts", "restored", "startedAt",
+                   "deadline", "driveId", "reason")
+RESULT_FIELDS = ("commandId", "outcome", "reason")
+MAX_SAFE_INT = 9007199254740991
+
+
+class LayoutRefused(Exception):
+    """code: home_layout_mismatch | slot_seal_failed, the fixed token the launcher prints and the updater's Stuck carries."""
+    def __init__(self, code):
+        super().__init__(code)
+        self.code = code
+
+
+def inode_flags(fd):
+    """The FS_IOC_GETFLAGS word; 0 on a filesystem without inode flags (nothing there can be immutable)."""
+    flags = bytearray(8)
     try:
-        with open(path(ctx, "config", "release.json"), "rb") as handle:
-            config = strict_json(handle.read(4096).decode())
-        key = path(ctx, "config", "release-public-key.pem")
-        if not os.path.isfile(key):
-            raise FileNotFoundError(key)
-    except FileNotFoundError:
-        raise Unsupported() from None  # this image has no release channel
-    _exact_or_error(config, ("channelUrl",))
-    parsed = urllib.parse.urlsplit(config["channelUrl"]) if isinstance(config["channelUrl"], str) else None
-    if not parsed or parsed.scheme != "https" or not parsed.hostname or parsed.query or parsed.fragment or parsed.username:
-        raise ValueError("Invalid release channel")
-    return config["channelUrl"].rstrip("/"), key
+        fcntl.ioctl(fd, FS_IOC_GETFLAGS, flags)
+    except OSError as error:
+        if error.errno in (errno.ENOTTY, errno.EOPNOTSUPP, errno.EINVAL):
+            return 0
+        raise
+    return int.from_bytes(flags[:4], sys.byteorder)
 
-def verify_manifest(ctx, raw, signature, key):
+
+def manifest_json(raw):
+    """JSON with duplicate fields and non-finite numbers refused."""
+    def pairs(items):
+        result = {}
+        for name, value in items:
+            if name in result:
+                raise ValueError("Duplicate field")
+            result[name] = value
+        return result
+    return json.loads(raw, object_pairs_hook=pairs, parse_constant=lambda _v: (_ for _ in ()).throw(ValueError("Invalid number")))
+
+
+def _bounded(value, minimum, maximum=MAX_SAFE_INT):
+    return type(value) is int and minimum <= value <= maximum
+
+
+def parse_manifest(raw, arch):
+    """A release manifest (v3), strictly: exact field set, shapes and bounds. The signature is the caller's business. A manifest of
+    another format raises ValueError("release_format"), anything else ValueError("release_manifest")."""
+    manifest = manifest_json(raw.decode("utf-8"))
+    if not isinstance(manifest, dict) or set(manifest) != set(MANIFEST_FIELDS):
+        raise ValueError("release_manifest")
+    if manifest["format"] != "murage-cloud-home-release-v3":
+        raise ValueError("release_format")
+    if (not _bounded(manifest["sequence"], 1) or not isinstance(manifest["revision"], str) or not re.fullmatch(r"[0-9a-f]{40}", manifest["revision"])
+            or manifest["arch"] != arch or not isinstance(manifest["archive"], str)
+            or not re.fullmatch(r"murage-cloud-home-[A-Za-z0-9._-]{1,100}\.tar\.gz", manifest["archive"])
+            or not _bounded(manifest["bytes"], 1, 4 << 30) or not isinstance(manifest["sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", manifest["sha256"])
+            or not isinstance(manifest["treeSha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", manifest["treeSha256"])
+            or not isinstance(manifest["launcherAbi"], str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", manifest["launcherAbi"])):
+        raise ValueError("release_manifest")
+    return manifest
+
+
+def parse_update_state(raw):
+    """The journal (state.json, v3), strictly: anything but the exact shape raises ValueError."""
+    state = manifest_json(raw.decode("utf-8"))
+    if not isinstance(state, dict) or set(state) != set(JOURNAL_FIELDS) or state["format"] != "murage-cloud-home-update-state-v3":
+        raise ValueError("update_state")
+    installed = state["installed"]
+    if (not isinstance(installed, dict) or set(installed) != set(INSTALLED_FIELDS) or installed["slot"] not in ("A", "B")
+            or not _bounded(installed["sequence"], 1) or not isinstance(installed["revision"], str) or not re.fullmatch(r"[0-9a-f]{40}", installed["revision"])):
+        raise ValueError("update_state")
+    inflight = state["inflight"]
+    if inflight is not None:
+        if (not isinstance(inflight, dict) or set(inflight) != set(INFLIGHT_FIELDS)
+                or not isinstance(inflight["commandId"], str) or not re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", inflight["commandId"])
+                or inflight["slot"] not in ("A", "B") or not _bounded(inflight["sequence"], 1)
+                or not isinstance(inflight["revision"], str) or not re.fullmatch(r"[0-9a-f]{40}", inflight["revision"])
+                or inflight["phase"] not in ("installing", "installed", "flip", "verify", "rollback")
+                or not _bounded(inflight["verifyAttempts"], 0, 2) or not _bounded(inflight["rollbackAttempts"], 0, 3)
+                or type(inflight["restored"]) is not bool or not _bounded(inflight["startedAt"], 0) or not _bounded(inflight["deadline"], 1)
+                or not isinstance(inflight["driveId"], str) or not re.fullmatch(r"[0-9a-f]{32}", inflight["driveId"])
+                or not (inflight["reason"] is None or (isinstance(inflight["reason"], str) and re.fullmatch(r"[a-z_]{1,64}", inflight["reason"])))):
+            raise ValueError("update_state")
+    result = state["lastResult"]
+    if result is not None:
+        if (not isinstance(result, dict) or set(result) != set(RESULT_FIELDS)
+                or not isinstance(result["commandId"], str) or not re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", result["commandId"])
+                or result["outcome"] not in ("done", "failed")
+                or not (result["reason"] is None or (isinstance(result["reason"], str) and re.fullmatch(r"[a-z_]{1,64}", result["reason"])))):
+            raise ValueError("update_state")
+    return state
+
+
+def read_trust(trust):
+    """The image-owned trust root: a 0700 root directory carrying FS_IMMUTABLE_FL, the Ed25519 public key, release.json (channel, the
+    image's sequence floor, the image revision, the launcher ABI) and launcher-abi (the same token). Anything else raises."""
+    info = os.lstat(trust)
+    fd = os.open(trust, SLOT_OPEN)
+    try:
+        flags = inode_flags(fd)
+    finally:
+        os.close(fd)
+    if not stat.S_ISDIR(info.st_mode) or (info.st_uid != 0 and os.geteuid() == 0) or stat.S_IMODE(info.st_mode) != 0o700 or not flags & FS_IMMUTABLE_FL:
+        raise ValueError("trust_root")
+    key = os.path.join(trust, "release-public-key.pem")
+    key_info = os.lstat(key)
+    if not stat.S_ISREG(key_info.st_mode) or key_info.st_mode & 0o022 or key_info.st_size == 0 or key_info.st_size > 4096:
+        raise ValueError("trust_root")
+    fd = os.open(os.path.join(trust, "release.json"), FILE_OPEN)
+    with os.fdopen(fd, "rb") as handle:
+        raw = handle.read(4097)
+    config = manifest_json(raw.decode("utf-8")) if len(raw) <= 4096 else None
+    if not isinstance(config, dict) or set(config) != {"channelUrl", "minimumSequence", "imageRevision", "launcherAbi"}:
+        raise ValueError("trust_root")
+    if (not isinstance(config["channelUrl"], str) or not _bounded(config["minimumSequence"], 1)
+            or not isinstance(config["imageRevision"], str) or not re.fullmatch(r"[0-9a-f]{40}", config["imageRevision"])
+            or not isinstance(config["launcherAbi"], str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", config["launcherAbi"])):
+        raise ValueError("trust_root")
+    fd = os.open(os.path.join(trust, "launcher-abi"), FILE_OPEN)
+    with os.fdopen(fd, "rb") as handle:
+        abi = handle.read(256)
+    if abi.decode("utf-8", errors="replace").strip() != config["launcherAbi"]:
+        raise ValueError("trust_root")
+    return {"channelUrl": config["channelUrl"], "key": key, "minimumSequence": config["minimumSequence"], "imageRevision": config["imageRevision"],
+            "launcherAbi": config["launcherAbi"]}
+
+
+def links_stay_inside(links):
+    """Resolves every symlink component by component through the other links of the tree (rel path -> target text); False when any
+    link, followed through the links it crosses, leaves the tree or loops. A lexical check alone misses `a/b/l/../..` where l is
+    itself a link that climbs to the top."""
+    for rel, target in links.items():
+        parent = rel.split("/")[:-1]
+        stack, pending, hops = list(parent), target.split("/"), 0
+        while pending:
+            part = pending.pop(0)
+            if part in ("", "."):
+                continue
+            if part == "..":
+                if not stack:
+                    return False
+                stack.pop()
+                continue
+            stack.append(part)
+            crossed = "/".join(stack)
+            if crossed in links:
+                hops += 1
+                if hops > 40:
+                    return False
+                stack.pop()
+                pending = links[crossed].split("/") + pending
+    return True
+
+
+def seal_walk_digest(dirfd, sealed):
+    """The canonical digest of the tree under dirfd, read only through O_NOFOLLOW descriptors (a path is never re-resolved): sorted
+    relative paths; per entry type NUL path NUL mode NUL, then size NUL content-sha256 NUL for a file or the link target NUL for a
+    symlink (a symlink is never flagged, sealed or not, and is resolved through the other links of the tree); modes normalised to 0755/0644 as safe_extract writes them. With sealed, every directory and regular file (the root
+    included) must be uid 0, not group/world writable and carry FS_IMMUTABLE_FL, and no symlink may point outside the tree; a failure
+    raises LayoutRefused("slot_seal_failed"). An entry of any other type is refused the same way."""
+    entries = []
+
+    def refuse():
+        raise LayoutRefused("slot_seal_failed")
+
+    def inspect(fd, info):
+        if sealed and (info.st_uid != SEAL_OWNER or info.st_mode & 0o022 or not inode_flags(fd) & FS_IMMUTABLE_FL):
+            refuse()
+
+    def walk(fd, prefix):
+        inspect(fd, os.fstat(fd))
+        for name in sorted(os.listdir(fd)):
+            rel = prefix + name
+            info = os.lstat(name, dir_fd=fd)
+            if stat.S_ISLNK(info.st_mode):
+                target = os.readlink(name, dir_fd=fd)
+                resolved = os.path.normpath(os.path.join(os.path.dirname(rel), target))
+                if "\0" in target or target.startswith("/") or resolved == ".." or resolved.startswith("../"):
+                    refuse()
+                entries.append(("l", rel, target))
+            elif stat.S_ISDIR(info.st_mode):
+                child = os.open(name, SLOT_OPEN, dir_fd=fd)
+                try:
+                    walk(child, rel + "/")
+                finally:
+                    os.close(child)
+                entries.append(("d", rel, "0755"))
+            elif stat.S_ISREG(info.st_mode):
+                child = os.open(name, FILE_OPEN, dir_fd=fd)
+                try:
+                    detail = os.fstat(child)
+                    if not stat.S_ISREG(detail.st_mode):
+                        refuse()
+                    inspect(child, detail)
+                    digest = hashlib.sha256()
+                    with os.fdopen(child, "rb", closefd=False) as stream:
+                        for chunk in iter(lambda: stream.read(1 << 20), b""):
+                            digest.update(chunk)
+                finally:
+                    os.close(child)
+                entries.append(("f", rel, "0755" if detail.st_mode & 0o111 else "0644", str(detail.st_size), digest.hexdigest()))
+            else:
+                refuse()
+
+    walk(dirfd, "")
+    if not links_stay_inside({entry[1]: entry[2] for entry in entries if entry[0] == "l"}):
+        refuse()
+    total = hashlib.sha256()
+    for entry in sorted(entries, key=lambda item: item[1]):
+        total.update("\0".join(entry).encode() + b"\0")
+    return total.hexdigest()
+
+
+def verified_slot(env, name):
+    """Slot `name` through its own descriptor: sealed (seal walk), its stored manifest signature-verified (env.manifest) and the tree
+    digest equal to the manifest's treeSha256. Returns the manifest; raises LayoutRefused."""
+    try:
+        fd = env.open_slot(name)
+    except OSError:
+        raise LayoutRefused("home_layout_mismatch") from None
+    try:
+        digest = seal_walk_digest(fd, True)
+    finally:
+        os.close(fd)
+    try:
+        manifest = env.manifest(name)
+    except (OSError, ValueError):
+        raise LayoutRefused("home_layout_mismatch") from None
+    if manifest["treeSha256"] != digest:
+        raise LayoutRefused("slot_seal_failed")
+    return manifest
+
+
+def layout_ok(state, current, env):
+    """[A1] The phase-aware layout predicate, one function in murage-home-launch and murage-commands. state: the strict journal;
+    current: what the `current` link names; env: open_slot(name) -> dirfd, manifest(name) -> the signature-verified stored manifest,
+    trust -> {"minimumSequence", "launcherAbi"}. Committed group (no update in flight, or one before the flip): `current` is the
+    installed slot, sealed, and its signed sequence is the journal's and at or above the image floor. Transition group (flip, verify,
+    rollback): `current` is within what the phase allows, the candidate differs from the installed slot, and BOTH slots are sealed and
+    matched to their own signed manifests, the candidate's to the in-flight record, the trust ABI and the sequence floor. Returns
+    {slot: manifest} for the slots it verified; raises LayoutRefused(home_layout_mismatch | slot_seal_failed) for any other shape."""
+    installed, inflight = state["installed"], state["inflight"]
+    live = installed["slot"]
+    if current not in ("A", "B"):
+        raise LayoutRefused("home_layout_mismatch")
+    phase = inflight["phase"] if inflight is not None else None
+    if phase in (None, "installing", "installed"):
+        if current != live:
+            raise LayoutRefused("home_layout_mismatch")
+        committed = verified_slot(env, live)
+        if committed["sequence"] != installed["sequence"] or committed["sequence"] < env.trust["minimumSequence"]:
+            raise LayoutRefused("home_layout_mismatch")
+        return {live: committed}
+    candidate = inflight["slot"]
+    allowed = {"flip": (live, candidate), "verify": (candidate,), "rollback": (live,) if inflight["restored"] else (live, candidate)}
+    if candidate == live or phase not in allowed or current not in allowed[phase]:
+        raise LayoutRefused("home_layout_mismatch")
+    committed = verified_slot(env, live)
+    if committed["sequence"] != installed["sequence"] or committed["sequence"] < env.trust["minimumSequence"]:
+        raise LayoutRefused("home_layout_mismatch")
+    incoming = verified_slot(env, candidate)
+    if (incoming["sequence"] != inflight["sequence"] or incoming["revision"] != inflight["revision"] or incoming["launcherAbi"] != env.trust["launcherAbi"]
+            or incoming["sequence"] <= max(env.trust["minimumSequence"], committed["sequence"])):
+        raise LayoutRefused("home_layout_mismatch")
+    return {live: committed, candidate: incoming}
+# ==== end shared ====
+
+
+class Stuck(Exception):
+    """The update can move neither forward nor back without an operator (code: a fixed token). Nothing in the journal is cleared;
+    drive_update stops the home and its slices before raising (A1.3); every blocked kind stays refused; re-driven each poll."""
+    def __init__(self, code):
+        super().__init__(code)
+        self.code = code
+
+
+class Pending(Exception):
+    """The update is still in flight after this drive (or another driver holds the lock): driven again on the next poll or start."""
+
+
+class LauncherRefused(Exception):
+    """An update refused with a fixed reason token (code). The ack stays "failed" (the control plane's outcome set is closed); the
+    distinct reason is the one fixed line printed and the journal's lastResult.reason."""
+    def __init__(self, code):
+        super().__init__(code)
+        self.code = code
+
+
+def verify_signature(raw, signature, key):
+    """Ed25519 over the raw bytes (openssl pkeyutl -rawin), with the image's OpenSSL 3. The one place a release signature is checked."""
     with tempfile.TemporaryDirectory(prefix="murage-release-") as work:
         for name, value in (("manifest", raw), ("signature", signature)):
             with open(os.path.join(work, name), "wb") as handle:
                 handle.write(value)
-        code, out = ctx["run"](["openssl", "pkeyutl", "-verify", "-pubin", "-inkey", key, "-rawin",
-                                "-in", os.path.join(work, "manifest"), "-sigfile", os.path.join(work, "signature")], timeout=60)
-    if code != 0 or b"Signature Verified Successfully" not in out:
-        raise ValueError("Release signature refused")
-    manifest = strict_json(raw.decode("utf-8"))
-    _exact_or_error(manifest, ("format", "sequence", "revision", "arch", "archive", "bytes", "sha256"))
-    if (manifest["format"] != RELEASE_FORMAT or not _int(manifest["sequence"], 1) or not isinstance(manifest["revision"], str)
-            or not re.fullmatch(r"[0-9a-f]{40}", manifest["revision"]) or manifest["arch"] != os.uname().machine
-            or not isinstance(manifest["archive"], str) or not ARCHIVE_NAME.fullmatch(manifest["archive"])
-            or not _int(manifest["bytes"], 1) or manifest["bytes"] > (4 << 30)
-            or not isinstance(manifest["sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", manifest["sha256"])):
-        raise ValueError("Release manifest refused")
-    return manifest
+        code, out = run_process(["openssl", "pkeyutl", "-verify", "-pubin", "-inkey", key, "-rawin",
+                                 "-in", os.path.join(work, "manifest"), "-sigfile", os.path.join(work, "signature")], timeout=60)
+    return code == 0 and b"Signature Verified Successfully" in out
 
-def safe_extract(archive, target):
-    """Regular files, directories and in-tree relative symlinks only; root-owned, never group/world writable, no set-id."""
-    os.makedirs(target, mode=0o755)
-    total = 0
-    with tarfile.open(archive, "r:gz") as tar:
+
+def verify_manifest(ctx, raw, signature, key):
+    """The signature first (ctx["verify"]), then the strict v3 shape. ValueError on refusal (message: release_signature | release_format |
+    release_manifest)."""
+    if not isinstance(signature, bytes) or len(signature) != 64 or not ctx["verify"](raw, signature, key):
+        raise ValueError("release_signature")
+    return parse_manifest(raw, os.uname().machine)
+
+
+def release_config(ctx):
+    """The trust root, re-read on every drive and every manifest verification (never cached). Invalid: Stuck(trust_root_invalid), never
+    "no channel"."""
+    try:
+        trust = read_trust(ctx["paths"]["trust"])
+    except (OSError, ValueError):
+        raise Stuck("trust_root_invalid") from None
+    parsed = urllib.parse.urlsplit(trust["channelUrl"])
+    if parsed.scheme != "https" or not parsed.hostname or parsed.query or parsed.fragment or parsed.username:
+        raise Stuck("trust_root_invalid")
+    trust["channelUrl"] = trust["channelUrl"].rstrip("/")
+    return trust
+
+
+def update_state_file(ctx):
+    return path(ctx, "update_state", "state.json")
+
+
+def manifest_files(ctx, slot):
+    return path(ctx, "update_state", "manifests", slot + ".json"), path(ctx, "update_state", "manifests", slot + ".sig")
+
+
+def read_update_state(ctx):
+    """The journal, strictly (parse_update_state). OSError for a missing or unreadable file, ValueError for any other shape: both are
+    "owed" to recovery_pending and Stuck to drive_update."""
+    fd = os.open(update_state_file(ctx), FILE_OPEN)
+    with os.fdopen(fd, "rb") as handle:
+        raw = handle.read(65537)
+    if len(raw) > 65536:
+        raise ValueError("update_state")
+    return parse_update_state(raw)
+
+
+def set_frozen_fd(fd, frozen):
+    """Sets or clears FS_IMMUTABLE_FL on an open descriptor; a filesystem without inode flags is left alone (the seal walk then refuses
+    it, which is the right answer for a slot)."""
+    value = inode_flags(fd)
+    wanted = value | FS_IMMUTABLE_FL if frozen else value & ~FS_IMMUTABLE_FL
+    if wanted == value:
+        return
+    try:
+        set_inode_flags(fd, wanted)
+    except OSError as error:
+        if error.errno not in (errno.ENOTTY, errno.EOPNOTSUPP, errno.EINVAL):
+            raise
+
+
+def freeze(target, frozen):
+    """FS_IMMUTABLE_FL on one file or directory, by path (never through a link at its last component). Missing: nothing to do."""
+    try:
+        info = os.lstat(target)
+    except FileNotFoundError:
+        return
+    fd = os.open(target, SLOT_OPEN if stat.S_ISDIR(info.st_mode) else FILE_OPEN)
+    try:
+        set_frozen_fd(fd, frozen)
+    finally:
+        os.close(fd)
+
+
+def seal_tree(fd, frozen):
+    """FS_IMMUTABLE_FL on every regular file and directory under fd (and fd itself), through descriptors only."""
+    for name in os.listdir(fd):
+        info = os.lstat(name, dir_fd=fd)
+        if stat.S_ISDIR(info.st_mode):
+            child = os.open(name, SLOT_OPEN, dir_fd=fd)
+            try:
+                seal_tree(child, frozen)
+            finally:
+                os.close(child)
+        elif stat.S_ISREG(info.st_mode):
+            child = os.open(name, FILE_OPEN, dir_fd=fd)
+            try:
+                set_frozen_fd(child, frozen)
+            finally:
+                os.close(child)
+    set_frozen_fd(fd, frozen)
+
+
+_LAST_STATE_WRITTEN = {}
+
+
+def write_update_state(ctx, state):
+    """The one writer of the journal: FS_IMMUTABLE_FL lifted on the directory and the file around a write_private (tmp + fsync + rename +
+    directory fsync) and set again after; the flags are a guard, never state. A file that no longer holds what this process last wrote
+    is logged (update_state_tampered) and overwritten from the in-memory record, which is the only record a drive decides from."""
+    target = update_state_file(ctx)
+    directory = os.path.dirname(target)
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    last = _LAST_STATE_WRITTEN.get(target)
+    if last is not None and os.path.exists(target):
+        with open(target, "rb") as handle:
+            if handle.read(65537) != last:
+                print("update_state_tampered", file=sys.stderr)
+    freeze(directory, False)
+    freeze(target, False)
+    try:
+        write_private(target, state)
+        _LAST_STATE_WRITTEN[target] = json.dumps(state).encode()
+    finally:
+        freeze(target, True)
+        freeze(directory, True)
+
+
+def write_bytes_private(target, data):
+    directory = os.path.dirname(target)
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=".tmp-", dir=directory)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, target)
+        fsync_dir(directory)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def store_manifest(ctx, slot, raw, signature):
+    """The signed manifest of an installed slot, kept under /var/lib/murage-update/manifests (the launcher and every later gate verify
+    the slot against it)."""
+    manifest, sig = manifest_files(ctx, slot)
+    state_dir = ctx["paths"]["update_state"]
+    freeze(state_dir, False)
+    try:
+        os.makedirs(os.path.dirname(manifest), mode=0o700, exist_ok=True)
+        freeze(os.path.dirname(manifest), False)
+        for target in (manifest, sig):
+            freeze(target, False)
+        write_bytes_private(manifest, raw)
+        write_bytes_private(sig, signature)
+        for target in (manifest, sig):
+            freeze(target, True)
+        freeze(os.path.dirname(manifest), True)
+    finally:
+        freeze(state_dir, True)
+
+
+def remove_manifest(ctx, slot):
+    manifest, sig = manifest_files(ctx, slot)
+    state_dir = ctx["paths"]["update_state"]
+    freeze(state_dir, False)
+    try:
+        freeze(os.path.dirname(manifest), False)
+        for target in (manifest, sig):
+            freeze(target, False)
+            try:
+                os.unlink(target)
+            except FileNotFoundError:
+                pass
+        if os.path.isdir(os.path.dirname(manifest)):
+            fsync_dir(os.path.dirname(manifest))
+            freeze(os.path.dirname(manifest), True)
+    finally:
+        freeze(state_dir, True)
+
+
+def read_stored_manifest(ctx, slot):
+    manifest, sig = manifest_files(ctx, slot)
+    fd = os.open(manifest, FILE_OPEN)
+    with os.fdopen(fd, "rb") as handle:
+        raw = handle.read(65537)
+    fd = os.open(sig, FILE_OPEN)
+    with os.fdopen(fd, "rb") as handle:
+        signature = handle.read(129)
+    if len(raw) > 65536 or len(signature) > 128:
+        raise ValueError("release_manifest")
+    return raw, signature
+
+
+class SlotEnv:
+    """What layout_ok needs from this runner: a slot by descriptor under /opt/murage-releases, its stored manifest signature-verified
+    against the trust key, and the trust floor and ABI."""
+    def __init__(self, ctx, trust):
+        self.ctx, self.trust = ctx, trust
+
+    def open_slot(self, name):
+        releases = os.open(self.ctx["paths"]["releases"], SLOT_OPEN)
+        try:
+            return os.open(name, SLOT_OPEN, dir_fd=releases)
+        finally:
+            os.close(releases)
+
+    def manifest(self, name):
+        raw, signature = read_stored_manifest(self.ctx, name)
+        return verify_manifest(self.ctx, raw, signature, self.trust["key"])
+
+
+def current_target(ctx):
+    """What the `current` link names, read relative to the releases directory's descriptor; None when there is no such link."""
+    try:
+        releases = os.open(ctx["paths"]["releases"], SLOT_OPEN)
+    except OSError:
+        return None
+    try:
+        return os.readlink("current", dir_fd=releases)
+    except OSError:
+        return None
+    finally:
+        os.close(releases)
+
+
+def idle_slot(installed):
+    return "B" if installed == "A" else "A"
+
+
+def flip_current(ctx, slot):
+    """The flip (and the flip back): FS_IMMUTABLE_FL lifted on the releases directory, a fresh link renamed over `current` (atomic),
+    the directory fsynced, the flag set again, the link re-read. Idempotent."""
+    releases = ctx["paths"]["releases"]
+    current, temporary = os.path.join(releases, "current"), os.path.join(releases, "current.tmp")
+    freeze(releases, False)
+    try:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        os.symlink(slot, temporary)
+        os.rename(temporary, current)
+        fsync_dir(releases)
+    finally:
+        freeze(releases, True)
+    if current_target(ctx) != slot:
+        raise OSError(errno.EIO, "Current link did not move")
+
+
+def wipe_slot(ctx, state, slot):
+    """The idle slot's tree removed before an install (the only rmtree of a release tree). Astra D: the target is re-derived under the
+    drive lock at wipe time from `current`: it must differ from what `current` names, from the installed slot (which must be what
+    `current` names), and by inode from the live tree; FS_IMMUTABLE_FL on the releases directory is lifted only after that passes.
+    Any failure is Stuck(wipe_target). A slot that does not exist (a fresh image) is nothing to wipe."""
+    live = current_target(ctx)
+    installed = state["installed"]["slot"]
+    if slot not in SLOTS or slot == live or slot == installed or installed != live:
+        raise Stuck("wipe_target")
+    releases_dir = ctx["paths"]["releases"]
+    releases = os.open(releases_dir, SLOT_OPEN)
+    try:
+        try:
+            target = os.open(slot, SLOT_OPEN, dir_fd=releases)
+        except FileNotFoundError:
+            remove_manifest(ctx, slot)
+            return
+        try:
+            live_fd = os.open(live, SLOT_OPEN, dir_fd=releases)
+            try:
+                mine, theirs = os.fstat(target), os.fstat(live_fd)
+                if (mine.st_dev, mine.st_ino) == (theirs.st_dev, theirs.st_ino):
+                    raise Stuck("wipe_target")
+            finally:
+                os.close(live_fd)
+            freeze(releases_dir, False)
+            seal_tree(target, False)
+        finally:
+            os.close(target)
+        shutil.rmtree(slot, dir_fd=releases)
+        fsync_dir(releases_dir)
+    finally:
+        os.close(releases)
+        freeze(releases_dir, True)
+    remove_manifest(ctx, slot)
+
+
+def seal_slot(ctx, slot):
+    """After the digest: FS_IMMUTABLE_FL on every regular file and directory of the slot (its root included), then on the releases
+    directory."""
+    releases = os.open(ctx["paths"]["releases"], SLOT_OPEN)
+    try:
+        fd = os.open(slot, SLOT_OPEN, dir_fd=releases)
+        try:
+            seal_tree(fd, True)
+        finally:
+            os.close(fd)
+    finally:
+        os.close(releases)
+    freeze(ctx["paths"]["releases"], True)
+
+
+def archive_parts(member):
+    """The path components of a release member, or ValueError: no absolute name, no empty-after-cleanup name, no `..`, no NUL."""
+    name = member.name
+    if "\0" in name or name.startswith("/"):
+        raise ValueError("Release entry refused")
+    parts = [part for part in name.split("/") if part not in ("", ".")]
+    if not parts or ".." in parts:
+        raise ValueError("Release entry refused")
+    return parts
+
+
+def open_archive(path, expect=None):
+    """The one open of a downloaded release: O_NOFOLLOW, a regular file owned by root (or by this process), and, when `expect` is
+    (sha256 hex, size), its bytes hashed from this very descriptor, so the digest covers exactly what validate and extract then read.
+    Returns a rewound binary file object; both passes read it, nothing re-opens the path."""
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid not in (0, os.geteuid()):
+            raise ValueError("Release archive refused")
+        handle = os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
+    try:
+        if expect is not None:
+            digest, total = hashlib.sha256(), 0
+            for chunk in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(chunk)
+                total += len(chunk)
+            if digest.hexdigest() != expect[0] or total != expect[1]:
+                raise LauncherRefused("archive_digest")
+        handle.seek(0)
+    except BaseException:
+        handle.close()
+        raise
+    return handle
+
+
+def validate_archive(archive):
+    """Pass 1 of safe_extract, before anything is created: every member is a regular file, directory or relative symlink with a clean
+    name (no hardlink, device, fifo, absolute or `..` name), no member sits below a symlink of the archive, and every symlink, resolved
+    through the other symlinks of the archive's own member set, stays inside the tree and does not loop (links_stay_inside)."""
+    links, others, total = {}, set(), 0
+    archive.seek(0)
+    with tarfile.open(fileobj=archive, mode="r:gz") as tar:
         for member in tar:
-            name = os.path.normpath(member.name)
-            if name in (".", "") or name.startswith("/") or name == ".." or name.startswith("../") or "\0" in name:
-                raise ValueError("Release entry refused")
-            destination = os.path.join(target, name)
+            rel = "/".join(archive_parts(member))
+            if rel in links or rel in others:
+                raise ValueError("Release entry repeated")
             if member.issym():
-                link = os.path.normpath(os.path.join(os.path.dirname(name), member.linkname))
-                if member.linkname.startswith("/") or link == ".." or link.startswith("../"):
+                if "\0" in member.linkname or not member.linkname or member.linkname.startswith("/"):
                     raise ValueError("Release link refused")
-                os.makedirs(os.path.dirname(destination), mode=0o755, exist_ok=True)
-                os.symlink(member.linkname, destination)
-                if os.geteuid() == 0:
-                    os.lchown(destination, 0, 0)
-            elif member.isdir():
-                os.makedirs(destination, mode=0o755, exist_ok=True)
-                os.chmod(destination, 0o755)
-            elif member.isreg():
-                total += member.size
-                if total > (16 << 30):
-                    raise ValueError("Release too large")
-                os.makedirs(os.path.dirname(destination), mode=0o755, exist_ok=True)
-                source = tar.extractfile(member)
-                fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-                with os.fdopen(fd, "wb") as out:
-                    shutil.copyfileobj(source, out, 1 << 20)
-                os.chmod(destination, 0o755 if member.mode & 0o111 else 0o644)
+                links[rel] = member.linkname
+            elif member.isdir() or member.isreg():
+                if member.isreg():
+                    total += member.size
+                    if total > (16 << 30):
+                        raise ValueError("Release too large")
+                others.add(rel)
             else:
                 raise ValueError("Release entry type refused")
-            if os.geteuid() == 0 and not member.issym():
-                os.chown(destination, 0, 0)
+    for rel in list(links) + sorted(others):
+        parts = rel.split("/")
+        for depth in range(1, len(parts)):
+            if "/".join(parts[:depth]) in links:
+                raise ValueError("Release entry below a link refused")
+    if set(links) & others or not links_stay_inside(links):
+        raise ValueError("Release link refused")
 
-def run_update(ctx, command):
-    channel, key = release_config(ctx)
-    arch = os.uname().machine
-    raw = ctx["fetch"](channel + "/" + arch + "/manifest.json")
-    signature = ctx["fetch"](channel + "/" + arch + "/manifest.json.sig", limit=128)
-    manifest = verify_manifest(ctx, raw, signature, key)
-    state_file = path(ctx, "state", "release.json")
+
+def safe_extract(archive, target, expect=None):
+    """Regular files, directories and in-tree relative symlinks only; root-owned, never group/world writable, no set-id. The whole
+    archive is validated before the first create (validate_archive); every entry is then written relative to a directory descriptor,
+    walking from the extract root one O_NOFOLLOW|O_DIRECTORY openat per component, so a path is never re-resolved through a link."""
+    with open_archive(archive, expect) as handle:
+        validate_archive(handle)
+        extract_validated(handle, target)
+
+
+def extract_validated(handle, target):
+    """Pass 2 of safe_extract, from the same descriptor as pass 1."""
+    os.makedirs(target, mode=0o755)
+    root = os.open(target, SLOT_OPEN)
+    held = []  # [(component, fd)] the open directory chain of the previous member; held[0] is below root
+
+    def descend(parts):
+        keep = 0
+        while keep < len(held) and keep < len(parts) and held[keep][0] == parts[keep]:
+            keep += 1
+        while len(held) > keep:
+            os.close(held.pop()[1])
+        for part in parts[keep:]:
+            parent = held[-1][1] if held else root
+            try:
+                os.mkdir(part, 0o755, dir_fd=parent)
+            except FileExistsError:
+                pass
+            try:
+                held.append((part, os.open(part, SLOT_OPEN, dir_fd=parent)))
+            except OSError:
+                raise ValueError("Release entry refused") from None
+        return held[-1][1] if held else root
+
     try:
-        with open(state_file) as handle:
-            installed = json.load(handle)
-    except FileNotFoundError:
-        installed = {"sequence": 0, "revision": None}
-    if manifest["revision"] == installed.get("revision"):
-        return "done"  # already this release
-    if manifest["sequence"] <= installed.get("sequence", 0):
-        return "failed"  # never a downgrade, even a signed one
-    opt = ctx["paths"]["opt"]
-    staging, previous = opt + ".next", opt + ".prev"
-    download = path(ctx, "state", "update.tar.gz")
-    shutil.rmtree(staging, ignore_errors=True)
-    try:
-        digest, size = ctx["fetch"](channel + "/" + arch + "/" + manifest["archive"], download, limit=manifest["bytes"])
-        if digest != manifest["sha256"] or size != manifest["bytes"]:
-            raise ValueError("Release archive digest mismatch")
-        safe_extract(download, staging)
-        for required in ("dist-server/cloud-home-supervisor.js", "dist-server/index.js"):
-            if not os.path.isfile(os.path.join(staging, required)):
-                raise ValueError("Release incomplete")
-    except Exception:
-        shutil.rmtree(staging, ignore_errors=True)
-        raise
+        handle.seek(0)
+        with tarfile.open(fileobj=handle, mode="r:gz") as tar:
+            for member in tar:
+                parts = archive_parts(member)
+                parent = descend(parts[:-1])
+                leaf = parts[-1]
+                if member.issym():
+                    os.symlink(member.linkname, leaf, dir_fd=parent)
+                    if os.geteuid() == 0:
+                        os.chown(leaf, 0, 0, dir_fd=parent, follow_symlinks=False)
+                elif member.isdir():
+                    try:
+                        os.mkdir(leaf, 0o755, dir_fd=parent)
+                    except FileExistsError:
+                        pass
+                    try:
+                        fd = os.open(leaf, SLOT_OPEN, dir_fd=parent)
+                    except OSError:
+                        raise ValueError("Release entry refused") from None
+                    try:
+                        os.fchmod(fd, 0o755)
+                        if os.geteuid() == 0:
+                            os.fchown(fd, 0, 0)
+                    finally:
+                        os.close(fd)
+                elif member.isreg():
+                    fd = os.open(leaf, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=parent)
+                    with os.fdopen(fd, "wb") as out:
+                        shutil.copyfileobj(tar.extractfile(member), out, 1 << 20)
+                        out.flush()
+                        os.fchmod(out.fileno(), 0o755 if member.mode & 0o111 else 0o644)
+                        if os.geteuid() == 0:
+                            os.fchown(out.fileno(), 0, 0)
+                else:
+                    raise ValueError("Release entry type refused")
     finally:
+        while held:
+            os.close(held.pop()[1])
+        os.close(root)
+
+LAUNCHER_INSTALLER = "murage-install-launchers"
+
+
+def launcher_module(ctx):
+    """The launcher list step that lives on the image (build-image.sh puts it in libexec): plan, apply_modes and check_abi for a staged
+    release. Never from the release itself. An image without it cannot take an update (fail closed)."""
+    target = os.path.join(ctx["paths"]["libexec"], LAUNCHER_INSTALLER)
+    try:
+        info = os.lstat(target)
+        if not stat.S_ISREG(info.st_mode) or (info.st_uid != 0 and os.geteuid() == 0) or info.st_mode & 0o022:
+            raise FileNotFoundError(target)
+        return load_module("murage_install_launchers", target)
+    except (OSError, SyntaxError):
+        raise LauncherRefused("launcher_installer_missing") from None
+
+
+def gate_server(ctx):
+    """The start gate (r3 sec. 3): a root-only unix socket under /run/murage-update served by a thread of this process. It holds one
+    in-memory grant, set by the drive that is inside verify or rollback right after its counter write, and answers `grant` once, to a
+    peer that is uid 0, lives in murage-home.service's cgroup (read through a pidfd taken before and checked alive after, so a recycled
+    pid cannot pass) and runs the image's python3; everything else, and every second request, is `deny`. Returns the listening socket."""
+    directory = ctx["paths"]["gate"]
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    target = os.path.join(directory, "gate.sock")
+    try:
+        os.unlink(target)
+    except FileNotFoundError:
+        pass
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    mask = os.umask(0o077)
+    try:
+        server.bind(target)
+    finally:
+        os.umask(mask)
+    os.chmod(target, 0o600)
+    server.listen(8)
+    ctx["gate"] = {"lock": threading.Lock(), "grant": None}
+
+    def serve():
+        while True:
+            try:
+                connection, _ = server.accept()
+            except OSError:
+                return
+            with connection:
+                try:
+                    connection.settimeout(5)
+                    connection.sendall(gate_answer(ctx, connection))
+                except OSError:
+                    pass
+
+    threading.Thread(target=serve, name="murage-update-gate", daemon=True).start()
+    return server
+
+
+def peer_identity(pid, uid):
+    """The facts the gate checks about a connected peer: its uid (from SO_PEERCRED), its cgroup line and its executable."""
+    with open("/proc/%d/cgroup" % pid, encoding="ascii") as stream:
+        cgroup = stream.read(4096).strip()
+    return {"uid": uid, "cgroup": cgroup, "exe": os.path.realpath("/proc/%d/exe" % pid)}
+
+
+def gate_answer(ctx, connection):
+    try:
+        pid, uid, _gid = struct.unpack("3i", connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+        pidfd = os.pidfd_open(pid)
+        try:
+            peer = ctx["peer"](pid, uid)
+            signal.pidfd_send_signal(pidfd, 0)  # the process the facts describe is still alive: no recycled pid
+        finally:
+            os.close(pidfd)
+        if peer["uid"] != 0 or peer["cgroup"] != HOME_CGROUP or not re.fullmatch(r"/usr/bin/python3(\.[0-9]{1,3})?", peer["exe"]):
+            return b"deny\n"
+        raw = connection.recv(GATE_REQUEST_MAX + 1)
+        if len(raw) > GATE_REQUEST_MAX:
+            return b"deny\n"
+        request = strict_json(raw.decode("utf-8"))
+        _exact(request, ("slot",))
+        if request["slot"] not in SLOTS:
+            return b"deny\n"
+        gate = ctx["gate"]
+        with gate["lock"]:
+            grant = gate["grant"]
+            if grant is not None and grant["slot"] == request["slot"]:
+                gate["grant"] = None
+                return b"grant\n"
+        return b"deny\n"
+    except Exception:
+        return b"deny\n"
+
+
+def grant_and_start(ctx, drive_id, slot):
+    """One counted start of slot code: the grant is set (after the caller's counter write) and the unit started; the launcher consumes
+    the grant, so a second start (systemd's Restart=, a boot, an operator) runs no slot code."""
+    gate = ctx["gate"]
+    with gate["lock"]:
+        gate["grant"] = {"driveId": drive_id, "slot": slot}
+    return ctx["systemctl"]("start", HOME_UNIT)
+
+
+def drive_lock(ctx):
+    """flock on /run/murage-update/lock: the poll loop and --recover-update never interleave; a second holder gets Pending."""
+    directory = ctx["paths"]["gate"]
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    handle = open(os.path.join(directory, "lock"), "a")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        handle.close()
+        raise Pending() from None
+    return handle
+
+
+def drive_update(ctx, release=None):
+    """The single driver (r2 sec. 4, r3 sec. 4, A1). One load of the journal per drive, every durable write before the step it
+    authorises, every handler idempotent so a resume re-runs it. `release` ({"manifest", "raw", "signature"}) is given only by
+    run_update for the install it just journaled; a resume at `installing` without it aborts (nothing live was touched). Returns the
+    outcome ("done" | "failed") when the update ended in this drive, None when nothing was in flight; raises Pending while it stays in
+    flight, Stuck (after the explicit stop of the home and its slices, A1.3) when an operator is needed."""
+    lock = drive_lock(ctx)
+    try:
+        try:
+            return drive_phases(ctx, release)
+        except Stuck as stuck:
+            print("Self-service update stuck: " + stuck.code, file=sys.stderr)
+            stop_writers(ctx)
+            raise
+    finally:
+        lock.close()
+
+
+def drive_phases(ctx, release):
+    trust = release_config(ctx)
+    try:
+        state = read_update_state(ctx)
+    except (OSError, ValueError):
+        raise Stuck("update_state_invalid") from None
+    env = SlotEnv(ctx, trust)
+    try:
+        layout_ok(state, current_target(ctx), env)
+    except LayoutRefused as refused:
+        raise Stuck(refused.code) from None
+    if state["inflight"] is None:
+        return None
+    drive_id = random_source.token_hex(16)
+    state["inflight"]["driveId"] = drive_id  # mirrored into the record at its next write, for the logs
+    while True:
+        inflight = state["inflight"]
+        phase, slot = inflight["phase"], inflight["slot"]
+        if phase == "installing":
+            if release is None or release["manifest"]["revision"] != inflight["revision"] or release["manifest"]["sequence"] != inflight["sequence"]:
+                abort_install(ctx, state, "install_interrupted")
+                return "failed"
+            try:
+                install_release(ctx, state, trust, release)
+            except Stuck:
+                raise
+            except LauncherRefused as refused:
+                abort_install(ctx, state, refused.code)
+                return "failed"
+            except Exception:
+                abort_install(ctx, state, "install_failed")
+                return "failed"
+            release = None
+            inflight["phase"] = "installed"
+            write_update_state(ctx, state)
+        elif phase == "installed":
+            if ctx["now"]() >= inflight["deadline"]:
+                abort_install(ctx, state, "expired")  # the run deadline passed before the irreversible step: nothing live was touched
+                start_home(ctx)
+                return "failed"
+            if not stop_writers(ctx):
+                abort_install(ctx, state, "writers_running")
+                start_home(ctx)
+                return "failed"
+            inflight["phase"] = "flip"
+            write_update_state(ctx, state)
+        elif phase == "flip":
+            try:
+                flip_current(ctx, slot)
+            except OSError:
+                enter_rollback(ctx, state, "flip_failed")
+                continue
+            inflight.update(phase="verify", verifyAttempts=0)
+            write_update_state(ctx, state)
+        elif phase == "verify":
+            if ctx["unit_state"](HOME_UNIT) != "active":
+                if inflight["verifyAttempts"] >= VERIFY_ATTEMPTS:
+                    enter_rollback(ctx, state, "unhealthy")
+                    continue
+                inflight["verifyAttempts"] += 1  # the counter is written before the one start it bounds
+                write_update_state(ctx, state)
+                remove_flag(ctx)
+                grant_and_start(ctx, drive_id, slot)
+            if wait_healthy(ctx):
+                # The commit: one write, from this drive's own observation. The previous slot is kept until the next install.
+                state["installed"] = {"slot": slot, "sequence": inflight["sequence"], "revision": inflight["revision"]}
+                finish_update(ctx, state, "done", None)
+                return "done"
+            enter_rollback(ctx, state, "unhealthy")
+        elif phase == "rollback":
+            previous = state["installed"]["slot"]
+            if not inflight["restored"]:
+                # [A1] the flip back never happens under a running candidate: if stop_writers reports a unit still up, Stuck before the flip.
+                if not stop_writers(ctx):
+                    raise Stuck("rollback_stop")
+                try:
+                    verified_slot(env, previous)  # signed manifest and seal only; there is no unsigned path
+                except LayoutRefused:
+                    raise Stuck("rollback_gate") from None
+                try:
+                    flip_current(ctx, previous)
+                except OSError:
+                    raise Stuck("rollback_flip") from None
+                inflight["restored"] = True
+                write_update_state(ctx, state)
+            # Health is accepted only after THIS drive has taken the home down and started the previous slot itself: a candidate that
+            # kept serving is never recorded by finish_update. A unit that will not leave active is Stuck; rollbackAttempts progresses
+            # on every drive regardless of what is still active, so an unhealthy rollback always reaches Stuck("rollback_unhealthy").
+            if not stop_writers(ctx):
+                raise Stuck("rollback_stop")
+            if inflight["rollbackAttempts"] >= ROLLBACK_ATTEMPTS:
+                raise Stuck("rollback_unhealthy")
+            inflight["rollbackAttempts"] += 1
+            write_update_state(ctx, state)
+            remove_flag(ctx)
+            grant_and_start(ctx, drive_id, previous)
+            if wait_healthy(ctx):
+                finish_update(ctx, state, "failed", inflight["reason"] or "unhealthy")
+                return "failed"
+            stop_writers(ctx)  # the restored release did not answer: taken down, counted again on the next poll
+            raise Pending()
+        else:
+            raise Stuck("update_state_invalid")
+
+
+def enter_rollback(ctx, state, reason):
+    """phase := rollback (written), then the explicit stop (A1.3): the unhealthy candidate may still be up and Wants= will not take it down."""
+    state["inflight"].update(phase="rollback", restored=False, reason=reason)
+    write_update_state(ctx, state)
+    stop_writers(ctx)
+
+
+def abort_install(ctx, state, reason):
+    """installing or installed failed before anything live was touched: the idle slot is wiped, the record closed as failed/<reason>."""
+    inflight = state["inflight"]
+    try:
+        wipe_slot(ctx, state, inflight["slot"])
+    except Stuck:
+        raise
+    except OSError:
+        # A partial or symlink idle slot is left: keep inflight and Stuck, never clear the record over a slot that was not wiped.
+        raise Stuck("wipe_target") from None
+    print("Self-service update refused: " + reason, file=sys.stderr)
+    state["inflight"] = None
+    state["lastResult"] = {"commandId": inflight["commandId"], "outcome": "failed", "reason": reason}
+    write_update_state(ctx, state)
+
+
+def finish_update(ctx, state, outcome, reason):
+    """The terminal write (commit, or rollback complete), then and only then the inhibit is lifted and the home started."""
+    inflight = state["inflight"]
+    state["inflight"] = None
+    state["lastResult"] = {"commandId": inflight["commandId"], "outcome": outcome, "reason": reason}
+    write_update_state(ctx, state)
+    start_home(ctx)
+
+
+def install_release(ctx, state, trust, release):
+    """The installing phase: wipe the idle slot (re-derived), download (bytes and digest against the signed manifest), safe_extract,
+    required files, the launcher list (plan, modes, ABI), the tree digest against the signed treeSha256, the manifest stored beside the
+    journal, then the seal. Nothing live is touched."""
+    manifest, slot = release["manifest"], state["inflight"]["slot"]
+    releases, state_dir = ctx["paths"]["releases"], ctx["paths"]["update_state"]
+    wipe_slot(ctx, state, slot)
+    if ctx["disk_free"](releases) < manifest["bytes"] * 4:
+        raise LauncherRefused("disk_space")
+    download = os.path.join(state_dir, "download.tar.gz")
+    freeze(state_dir, False)
+    try:
+        arch = os.uname().machine
+        digest, size = ctx["fetch"](trust["channelUrl"] + "/" + arch + "/" + manifest["archive"], download, limit=manifest["bytes"])
+        if digest != manifest["sha256"] or size != manifest["bytes"]:
+            raise LauncherRefused("archive_digest")
+        tree = os.path.join(releases, slot)
+        freeze(releases, False)
+        safe_extract(download, tree, (manifest["sha256"], manifest["bytes"]))
+        for required in ("dist-server/cloud-home-supervisor.js", "dist-server/index.js"):
+            if not os.path.isfile(os.path.join(tree, required)):
+                raise LauncherRefused("release_incomplete")
+        module = launcher_module(ctx)
+        launcher_source = os.path.join(tree, "deploy", "cloud-home")
+        try:
+            entries = module.plan(launcher_source)
+            module.apply_modes(tree, entries)
+            module.check_abi(tree, trust["launcherAbi"])
+        except module.LauncherError as error:
+            raise LauncherRefused(error.code) from None
+        fd = os.open(tree, SLOT_OPEN)
+        try:
+            found = seal_walk_digest(fd, False)
+        finally:
+            os.close(fd)
+        if found != manifest["treeSha256"]:
+            raise LauncherRefused("tree_digest")
+        store_manifest(ctx, slot, release["raw"], release["signature"])
+        seal_slot(ctx, slot)
+    finally:
+        freeze(state_dir, False)  # store_manifest sets the directory flag again; the download is removed under a lifted flag
         if os.path.exists(download):
             os.unlink(download)
+        freeze(state_dir, True)
+        freeze(releases, True)
+
+
+def run_update(ctx, command):
+    """update_software: the drive entry checks (trust, journal, layout), the manifest from the channel verified against the trust key,
+    the idle refusals (same revision: done; at or below the signed floor: downgrade; another launcher ABI: launcher_abi_mismatch; the
+    run deadline; disk), then one write (installing) and the drive. The in-process path and the resume path are the same function."""
+    layout_outcome = drive_update(ctx)  # Stuck or Pending propagate: the command stays pending while the journal is owed
+    if layout_outcome is not None:
+        return layout_outcome
+    trust = release_config(ctx)
+    state = read_update_state(ctx)
+    live = layout_ok(state, current_target(ctx), SlotEnv(ctx, trust))[state["installed"]["slot"]]
+    arch = os.uname().machine
+    raw = ctx["fetch"](trust["channelUrl"] + "/" + arch + "/manifest.json")
+    signature = ctx["fetch"](trust["channelUrl"] + "/" + arch + "/manifest.json.sig", limit=128)
     try:
-        before_deadline(ctx, command)  # the code swap is the irreversible step
-    except Expired:
-        shutil.rmtree(staging, ignore_errors=True)
-        raise
-    if not stop_writers(ctx):
-        shutil.rmtree(staging, ignore_errors=True)
-        start_home(ctx)
-        return "failed"  # the home did not stop: its code is not swapped under it
-    # An older kept release is moved out of the way first (a partly deleted copy is never mistaken for the previous release).
-    if os.path.lexists(previous):
-        shutil.rmtree(opt + ".old", ignore_errors=True)
-        os.rename(previous, opt + ".old")
-        shutil.rmtree(opt + ".old", ignore_errors=True)
-    # Every step from here is journaled outside /opt, so an interruption is recovered before any command is accepted.
-    update_journal(ctx, {"phase": "swap", "sequence": manifest["sequence"], "revision": manifest["revision"], "commandId": command["id"]})
-    try:
-        os.rename(opt, previous)
-        os.rename(staging, opt)
-    except Exception:
-        recover_update(ctx)  # the journal says how far it got: the previous release goes back
-        return "failed"
-    update_journal(ctx, {"phase": "verify", "sequence": manifest["sequence"], "revision": manifest["revision"], "commandId": command["id"]})
-    remove_flag(ctx)
-    if start_home(ctx) == 0 and wait_healthy(ctx):
-        commit_update(ctx, {"phase": "committed", "sequence": manifest["sequence"], "revision": manifest["revision"], "commandId": command["id"]})
+        manifest = verify_manifest(ctx, raw, signature, trust["key"])
+    except ValueError as error:
+        return refuse_update(str(error) if str(error) in ("release_signature", "release_format", "release_manifest") else "release_manifest")
+    target = command["payload"]["sequence"]
+    # The command names ONE sequence. Already on it: done. The channel's manifest names another (a newer release is not yet promoted,
+    # or the channel was changed): refuse, never install a sequence nobody asked for.
+    if live["sequence"] == target:
         return "done"
-    # The new release did not come up healthy: put the previous one back, and check it answers again.
-    return rollback_update(ctx)
+    if manifest["sequence"] != target:
+        return refuse_update("sequence_mismatch")
+    if manifest["revision"] == state["installed"]["revision"]:
+        return "done"  # already this release
+    if manifest["sequence"] <= max(trust["minimumSequence"], live["sequence"]):
+        return refuse_update("downgrade")  # never below the signed floor, even signed
+    if manifest["launcherAbi"] != trust["launcherAbi"]:
+        return refuse_update("launcher_abi_mismatch")  # the launchers are image-pinned: this release needs a fresh home image
+    before_deadline(ctx, command)
+    state["inflight"] = {"commandId": command["id"], "slot": idle_slot(state["installed"]["slot"]), "sequence": manifest["sequence"],
+                         "revision": manifest["revision"], "phase": "installing", "verifyAttempts": 0, "rollbackAttempts": 0, "restored": False,
+                         "startedAt": ctx["now"](), "deadline": command["expiresAt"], "driveId": random_source.token_hex(16), "reason": None}
+    write_update_state(ctx, state)
+    return drive_update(ctx, {"manifest": manifest, "raw": raw, "signature": signature})
+
+
+def refuse_update(reason):
+    print("Self-service update refused: " + reason, file=sys.stderr)
+    return "failed"
+
+
+def update_inflight_for(ctx, cid):
+    """True while the journal holds this command's update. A journal that cannot be read holds no command: that is Stuck for the driver
+    (which stops the home and surfaces it every poll), and the command is answered failed, never left as a guess."""
+    try:
+        inflight = read_update_state(ctx)["inflight"]
+    except (OSError, ValueError):
+        return False
+    return inflight is not None and inflight["commandId"] == cid
+
+
+def recover_update(ctx, cid):
+    """The outcome of this command's update: pending (raised) while its record is in flight or the journal is unreadable; its lastResult
+    once it ended; failed when the journal never recorded it."""
+    try:
+        state = read_update_state(ctx)
+    except (OSError, ValueError):
+        raise Pending() from None
+    if state["inflight"] is not None and state["inflight"]["commandId"] == cid:
+        raise Pending()
+    result = state["lastResult"]
+    return result["outcome"] if result and result["commandId"] == cid else "failed"
+
+
+def drive_pending_update(ctx):
+    """At start and on every poll: an update in flight (or an unreadable journal) is driven, whether or not its command is still
+    journaled or listed. Stuck and Pending are the drive's answers, not errors of the poll."""
+    try:
+        state = read_update_state(ctx)
+    except (OSError, ValueError):
+        state = None
+    if state is None or state["inflight"] is not None:
+        try:
+            drive_update(ctx)
+        except Pending:
+            print("Self-service recovery pending", file=sys.stderr)
+        except Stuck as stuck:
+            print("Self-service recovery pending", file=sys.stderr)
+            return stuck.code
+    return None
+
+
+UPDATE_REPORT_SECONDS = 600
+
+def update_report(ctx, stuck):
+    """What the updater says about itself, in fixed vocabulary only: the installed sequence, the journal's lastResult (command id, outcome,
+    reason token) and a Stuck code. An unreadable journal is itself Stuck."""
+    try:
+        state = read_update_state(ctx)
+    except (OSError, ValueError):
+        return {"installedSequence": None, "lastResult": None, "stuck": stuck or "update_state_invalid"}
+    result = state["lastResult"]
+    return {"installedSequence": state["installed"]["sequence"], "stuck": stuck,
+            "lastResult": None if result is None else {"commandId": result["commandId"], "outcome": result["outcome"], "reason": result["reason"]}}
+
+def report_update_state(ctx, stuck=None):
+    """Tells the control plane (POST update-state) what the updater reports, when it changed and at least every UPDATE_REPORT_SECONDS. An
+    older control plane answers 404: noted, and asked again only at the interval. Any other failure is retried on the next loop."""
+    body = update_report(ctx, stuck)
+    key = json.dumps(body, sort_keys=True)
+    now = ctx["now"]()
+    last = ctx.get("update_reported")
+    if last is not None and last[0] == key and now - last[1] < UPDATE_REPORT_SECONDS * 1000:
+        return
+    try:
+        answer = ctx["request"](ctx["binding"], "update-state", dict(body, generation=ctx["binding"]["generation"]))
+    except urllib.error.HTTPError as error:
+        if error.code == 404:
+            ctx["update_reported"] = (key, now)
+        return
+    except Exception:
+        return
+    if answer == {"recorded": True}:
+        ctx["update_reported"] = (key, now)
+
 
 UPDATE_HEALTH_SECONDS, UPDATE_HEALTH_PASSES = 180, 2
 
@@ -716,84 +1788,6 @@ def wait_healthy(ctx, seconds=UPDATE_HEALTH_SECONDS, passes=UPDATE_HEALTH_PASSES
             good = 0
         ctx["sleep"](3)
     return False
-
-def update_journal_file(ctx):
-    return path(ctx, "state", "update-journal.json")
-
-def update_journal(ctx, value):
-    write_private(update_journal_file(ctx), value)
-
-def update_result_file(ctx):
-    return path(ctx, "state", "update-result.json")
-
-def read_update_result(ctx):
-    try:
-        with open(update_result_file(ctx), "rb") as handle:
-            result = json.loads(handle.read(4096))
-    except FileNotFoundError:
-        return None
-    return result if isinstance(result, dict) and result.get("outcome") in ("done", "failed") else None
-
-def finish_update(ctx, entry, outcome):
-    """The terminal outcome is written for the update's command before the journal goes, and kept until that command's own journal
-    records it (forget_results): recovering twice, or recovering at start and again for the command, gives the same answer."""
-    write_private(update_result_file(ctx), {"commandId": entry.get("commandId"), "outcome": outcome})
-    os.unlink(update_journal_file(ctx))
-
-def commit_update(ctx, entry):
-    update_journal(ctx, entry)  # committed first: an interruption below re-applies it
-    write_private(path(ctx, "state", "release.json"), {"sequence": entry["sequence"], "revision": entry["revision"]})
-    finish_update(ctx, entry, "done")
-
-def rollback_update(ctx):
-    opt = ctx["paths"]["opt"]
-    previous, failed = opt + ".prev", opt + ".failed"
-    entry = read_update_journal(ctx) or {}
-    update_journal(ctx, dict(entry, phase="rollback"))
-    stop_writers(ctx)
-    if os.path.lexists(opt) and os.path.lexists(previous):
-        shutil.rmtree(failed, ignore_errors=True)
-        os.rename(opt, failed)
-    if not os.path.lexists(opt) and os.path.lexists(previous):
-        os.rename(previous, opt)
-    shutil.rmtree(failed, ignore_errors=True)
-    finish_update(ctx, entry, "failed")
-    start_home(ctx)
-    if not wait_healthy(ctx):
-        print("Self-service update rollback unhealthy", file=sys.stderr)
-    return "failed"
-
-def read_update_journal(ctx):
-    try:
-        with open(update_journal_file(ctx), "rb") as handle:
-            entry = json.loads(handle.read(4096))
-    except FileNotFoundError:
-        return None
-    if not isinstance(entry, dict) or entry.get("phase") not in ("swap", "verify", "committed", "rollback"):
-        raise ValueError("Invalid update journal")
-    return entry
-
-def recover_update(ctx):
-    """An update interrupted at any step: a committed one is finished; anything else goes back to the previous release (verified).
-    "failed" with nothing to do when no swap had begun."""
-    entry = read_update_journal(ctx)
-    if entry is None:
-        return "failed"
-    opt = ctx["paths"]["opt"]
-    staging = opt + ".next"
-    if entry["phase"] == "committed":
-        commit_update(ctx, entry)
-        start_home(ctx)
-        return "done"
-    if entry["phase"] == "swap" and os.path.lexists(staging):
-        # The new release never reached /opt/murage: at most the first rename happened.
-        if not os.path.lexists(opt) and os.path.lexists(opt + ".prev"):
-            os.rename(opt + ".prev", opt)
-        shutil.rmtree(staging, ignore_errors=True)
-        finish_update(ctx, entry, "failed")
-        start_home(ctx)
-        return "failed"
-    return rollback_update(ctx)
 
 
 # ---- reset and undo -----------------------------------------------------------------------------------------------------
@@ -898,7 +1892,7 @@ def start_home(ctx):
 
 def release_stale_inhibit(ctx):
     """An inhibition with nothing unresolved behind it (all recovered) is lifted and the home started."""
-    if os.path.exists(inhibit_path(ctx)) and not recovery_pending(ctx) and read_update_journal(ctx) is None:
+    if os.path.exists(inhibit_path(ctx)) and not recovery_pending(ctx):
         start_home(ctx)
 
 def stop_writers(ctx):
@@ -932,19 +1926,7 @@ def is_credential(rel):
 # freezes each one again at its place in the new tree (the launcher also freezes every placeholder again before a turn mounts on it).
 PLACEHOLDER_NAMES = frozenset((".claude", ".codex", ".fuigo", ".grok", ".kimi-code", ".opencode"))
 WORKSPACES = "home/workspaces"
-FS_IOC_GETFLAGS, FS_IOC_SETFLAGS, FS_IMMUTABLE_FL = 0x80086601, 0x40086602, 0x00000010
 PLACEHOLDER_OPEN = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
-
-def inode_flags(fd):
-    """The FS_IOC_GETFLAGS word; 0 on a filesystem without inode flags (nothing there can be immutable)."""
-    flags = bytearray(8)
-    try:
-        fcntl.ioctl(fd, FS_IOC_GETFLAGS, flags)
-    except OSError as error:
-        if error.errno in (errno.ENOTTY, errno.EOPNOTSUPP, errno.EINVAL):
-            return 0
-        raise
-    return int.from_bytes(flags[:4], sys.byteorder)
 
 def set_inode_flags(fd, value):
     fcntl.ioctl(fd, FS_IOC_SETFLAGS, value.to_bytes(4, sys.byteorder) + bytes(4))
@@ -1849,9 +2831,9 @@ def run_export(ctx, command):
 
 
 def run(ctx, monotonic=time.monotonic):
-    # Before any command is accepted: an interrupted code swap is finished or rolled back, abandoned export staging removed, and
+    # Before any command is accepted: an update in flight is driven forward or back, abandoned export staging removed, and
     # interrupted resets and undos recovered.
-    for step in (recover_update, clean_export_staging, recover_interrupted, release_stale_inhibit):
+    for step in (drive_pending_update, clean_export_staging, recover_interrupted, release_stale_inhibit):
         try:
             step(ctx)
         except Exception:
@@ -1864,6 +2846,8 @@ def run(ctx, monotonic=time.monotonic):
             # Remote bytes and local errors stay private.
             print("Self-service command poll unavailable", file=sys.stderr)
         try:
+            stuck = drive_pending_update(ctx)  # an update in flight is driven on every loop, whether or not its command is still listed
+            report_update_state(ctx, stuck)
             recover_interrupted(ctx)  # unfinished recoveries (a sign-in carry that failed) are retried until they complete
             release_stale_inhibit(ctx)
             retry_unacknowledged(ctx)
@@ -1885,7 +2869,7 @@ RUNNERS = {"restart_service": run_restart, "safe_mode": run_safe_mode, "update_s
 
 # ---- main -----------------------------------------------------------------------------------------------------------------
 
-def main():
+def main(recover_only=False):
     control = load_module("murage_control", CONTROL)
     backup = load_module("murage_backup", BACKUP)
     deadline = time.monotonic() + 300
@@ -1899,14 +2883,31 @@ def main():
             time.sleep(5)
     ctx = default_context(binding, backup, control)
     os.makedirs(path(ctx, "state", "commands"), mode=0o700, exist_ok=True)
+    if recover_only:
+        # `murage-commands --recover-update`: the same drive_update, once, in the foreground, with no override flags (I3). The grants it
+        # issues are answered by the gate it serves; while the service is up that service owns the gate socket and drives the update on
+        # its own, so the foreground run only reports and leaves (exit 75) rather than stealing the socket.
+        if unit_state("murage-commands.service") == "active":
+            print("Self-service update runner is active; it drives the update itself", file=sys.stderr)
+            return 75
+        gate_server(ctx)
+        try:
+            drive_update(ctx)
+        except Pending:
+            print("Self-service recovery pending", file=sys.stderr)
+            return 75
+        except Stuck:
+            return 1
+        return 0
+    gate_server(ctx)
     run(ctx)
 
 if __name__ == "__main__":
     try:
-        if os.geteuid() != 0 or sys.argv[1:]:
+        if os.geteuid() != 0 or sys.argv[1:] not in ([], ["--recover-update"]):
             raise ValueError("Root runner required")
         os.umask(0o077)
-        main()
+        sys.exit(main(recover_only=bool(sys.argv[1:])))
     except Exception:
         print("Self-service command runner refused", file=sys.stderr)
         sys.exit(78)

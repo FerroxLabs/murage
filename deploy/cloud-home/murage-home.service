@@ -1,12 +1,17 @@
 [Unit]
 Description=Murage Cloud home
-After=network-online.target murage-egress.service data.mount
+After=network-online.target murage-egress.service data.mount murage-commands.service
 Requires=murage-egress.service data.mount
-Wants=network-online.target murage-control.service murage-egress-proxy.service murage-egress-dns.service
+# Wants=, not Requires=: systemd propagates an explicit stop or restart of a Requires= dependency to the dependent, so every restart of
+# murage-commands (Restart=always) would restart the customer's home. The gate does not need Requires=: while an update is in flight
+# murage-home-launch refuses to start unless murage-commands grants, so an absent updater means "home stays stopped", never "home
+# boots unverified". Wherever the update design needs the home stopped (Stuck, rollback entry) the updater issues the stop itself.
+Wants=network-online.target murage-control.service murage-egress-proxy.service murage-egress-dns.service murage-commands.service
 RequiresMountsFor=/data
-# Never started (by boot, the recovery timer or anyone) while murage-commands holds a data transition (a reset, undo or update swap)
-# unresolved: it sets this file before stopping the writers and removes it only once the transition is durably resolved.
-ConditionPathExists=!/var/lib/murage-home/recovery-inhibit
+# The start inhibition (/var/lib/murage-home/recovery-inhibit, set by murage-commands before it stops the writers for a reset, undo or
+# update) is enforced by murage-home-launch itself, image root code that runs before any release byte: that is what lets the updater
+# hold the inhibition through an update's verify and still start the home on its own one-shot grant. murage-home-recover.service keeps
+# its ConditionPathExists on the same file.
 
 [Service]
 Type=simple
@@ -15,7 +20,8 @@ Group=root
 ExecStart=/usr/local/libexec/murage-home-start
 Restart=on-failure
 RestartSec=5
-RestartPreventExitStatus=78
+# 78: stale generation (murage-enroll). 79: refused by the launcher's gate, seal, layout or trust checks; the updater or an operator acts.
+RestartPreventExitStatus=78 79
 KillMode=control-group
 # Turn and browser slices may use 85% of RAM between them; keep the server alive.
 MemoryLow=512M
@@ -36,12 +42,18 @@ LimitCORE=0
 # /proc masked the kernel refuses the fresh /proc mount pasta and bwrap make
 # for a turn ("Couldn't mount /proc: Operation not permitted", seen on a real
 # home), so every turn started by the server would fail.
-# /etc is read-only except /etc/murage-home, which murage-enroll rewrites.
+# /etc is read-only except /etc/murage-home, which murage-enroll rewrites; nothing trusted lives there any more
+# (the release key and channel are in /usr/lib/murage-home/trust, read-only under ProtectSystem=full, in no ReadWritePaths).
 ProtectSystem=full
 ReadWritePaths=/etc/murage-home
+# The release slots and the update journal: read by the root launcher before the drop; after the drop the 0700 journal directory is
+# opaque and the slots are FS_IMMUTABLE_FL root inodes. Only murage-commands writes either.
+ReadOnlyPaths=/opt /var/lib/murage-update
 ProtectHome=yes
 ProtectKernelModules=yes
-# Privilege drop is performed by the supervisor after root-only volume binding.
+# Privilege drop is performed by murage-home-launch (image root code) after the root-only volume binding and the slot verification;
+# the slot supervisor refuses uid 0. CapabilityBoundingSet cannot drop CAP_LINUX_IMMUTABLE (murage-turn-launch freezes workspace
+# placeholders as root) or CAP_SYS_ADMIN (bwrap/pasta mounts); both are held by image launchers only, never by slot code.
 # Do not set NoNewPrivileges: the constrained turn launcher needs exec transitions.
 
 [Install]

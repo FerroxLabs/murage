@@ -73,7 +73,6 @@ describe("launcher login mode (r9 launcher modes)", () => {
     { mode: "login", engine: "kimiAgent", action: "status", bot: "bot-atlas" },
     { mode: "login", engine: "codex", action: "login" },
     { mode: "login", engine: "opencodeGo", action: "login" },
-    { mode: "login", engine: "claudeAgent", action: "login", bot: "bot-atlas" },
     { mode: "login", engine: "codex", action: "login", bot: "../x" },
     { mode: "login", engine: "codex", action: "login", bot: "bot-atlas", secret: "fixture-key-0123456789abc" }, // secret-scan: fixture
     { mode: "login", engine: "codex", action: "enroll-key" },
@@ -94,8 +93,9 @@ describe("launcher login mode (r9 launcher modes)", () => {
     expect(run({ mode: "login", engine: "codex", action: "login", bot: "bot-atlas" }).turn.pty).toBeUndefined();
     for (const pty of ["yes", 1, null, ["x"]]) expect(run({ mode: "login", engine: "codex", action: "login", bot: "bot-atlas", pty }).ok).toBe(false);
   });
-  // asserts the Linux line discipline's echo; a BSD (macOS) pty echoes the EOF it is sent as "^D\\b\\b"
-  it.skipIf(process.platform !== "linux")("relays a pseudo-terminal: the command sees a tty, bytes pass both ways, the exit status survives", () => {
+  // asserts the Linux line discipline's echo; a BSD (macOS) pty echoes the EOF it is sent as "^D\\b\\b". run_in_pty execs through the
+  // launcher's exec_slot, which refuses uid 0 (LANE-G r3 sec. 1.3), so under a root test run this is left to unprivileged runners.
+  it.skipIf(process.platform !== "linux" || process.getuid?.() === 0)("relays a pseudo-terminal: the command sees a tty, bytes pass both ways, the exit status survives", () => {
     const probe = `import importlib.util,sys,os
 spec=importlib.util.spec_from_file_location("l",sys.argv[1]); m=importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
 r,w=os.pipe(); o_r,o_w=os.pipe()

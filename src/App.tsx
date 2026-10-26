@@ -41,6 +41,7 @@ import { loadPlainApproval } from "@/lib/plain-approval";
 import { canPrefetchWhenIdle, loadBotSettings, loadedBotSettings, preloadBotSettings, subscribeBotSettings } from "@/lib/preload-bot-settings";
 import { LazyBoundary, retryableLazy } from "@/components/LazyBoundary";
 import { TermsGate } from "@/components/TermsGate";
+import { NewBotSignInStep } from "@/components/cloud/BotSignInOffer";
 
 // Opened by a tap, so loaded by one (spec §6). Settings alone pulls in every
 // settings page and, through House rules and the skill editor, Tiptap; a phone
@@ -503,6 +504,7 @@ function Shell() {
           </Suspense>
         </LazyBoundary>
       )}
+      <NewBotSignInStep />
       {state.pluginsOpen && <LazyBoundary onRetry={PluginsPanelLazy.retry}><Suspense fallback={<LazyFallback />}><PluginsPanel /></Suspense></LazyBoundary>}
       {/* mounted after the modals: same z-50 tier, so DOM order keeps the
           palette on top when one of them is open underneath */}

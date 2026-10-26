@@ -64,7 +64,7 @@ print(json.dumps({"plan": plan, "calls": calls, "bad": bad, "root": root}))`);
 const mainWith = (cgroupLine: string, argv: string[], execBinary?: string, admitted = true) => run(`
 cg = tempfile.NamedTemporaryFile("w", delete=False); cg.write(${JSON.stringify(cgroupLine)}); cg.close()
 payload = tempfile.TemporaryFile(); payload.write(b'{"mode":"turn"}'); payload.flush(); os.dup2(payload.fileno(), 3); os.lseek(3, 0, 0)
-os.geteuid = lambda: 0; os.environ["SUDO_UID"] = "1234"
+os.geteuid = lambda: 0; os.environ["SUDO_UID"] = "1234"; m.assert_image_launcher = lambda: None
 m.pwd = SimpleNamespace(getpwnam=lambda n: SimpleNamespace(pw_uid=1234))
 _in_scope = m.in_scope; m.in_scope = lambda plan: _in_scope(plan, cg.name)
 ${execBinary ? `m.SYSTEMD_RUN = ${JSON.stringify(execBinary)}` : ""}
@@ -94,7 +94,7 @@ it("never launches an in-scope turn whose payload carries no admission record", 
 it("refuses to enter a scope for requests that never get one", () => {
   const r = run(`
 f = tempfile.NamedTemporaryFile(); f.write(b'{"mode":"browser-cleanup","bot":"bot-1"}'); f.flush(); os.dup2(f.fileno(), 3); os.lseek(3, 0, 0)
-os.geteuid = lambda: 0; os.environ["SUDO_UID"] = "1234"
+os.geteuid = lambda: 0; os.environ["SUDO_UID"] = "1234"; m.assert_image_launcher = lambda: None
 m.pwd = SimpleNamespace(getpwnam=lambda n: SimpleNamespace(pw_uid=1234))
 m.in_scope = lambda plan: True
 m.take_scope_request = lambda path: b'{"mode":"browser-cleanup","bot":"bot-1"}'
@@ -172,7 +172,7 @@ def drive(request):
     # admission (bot and workspace locks on the host /run) is tested in admission-launcher.test.ts
     m.admit = lambda request, unit, bot=None: {"fds": 0, "names": [], "bot": bot, "roots": []}
     f = tempfile.NamedTemporaryFile(); f.write(json.dumps(request).encode()); f.flush(); os.dup2(f.fileno(), 3); os.lseek(3, 0, 0)
-    os.geteuid = lambda: 0; os.environ["SUDO_UID"] = "1234"
+    os.geteuid = lambda: 0; os.environ["SUDO_UID"] = "1234"; m.assert_image_launcher = lambda: None
     m.pwd = SimpleNamespace(getpwnam=lambda n: SimpleNamespace(pw_uid=1234))
     sys.argv = ["launcher"]
     try: m.main()
@@ -256,6 +256,14 @@ it("the image applies every update at its pinned snapshot and drops snapd (audit
   const image = readFileSync(fileURLToPath(new URL("../../deploy/cloud-home/build-image.sh", import.meta.url)), "utf8");
   expect(image).toMatch(/^apt-get -S 20260930T000000Z -o Dpkg::Options::=--force-confold full-upgrade -y$/m);
   expect(image).toMatch(/^apt-get purge -y --auto-remove snapd$/m);
+});
+it("the customer image has no sshd: finalize-customer-image.sh purges openssh-server, only the client is installed", () => {
+  const image = readFileSync(fileURLToPath(new URL("../../deploy/cloud-home/build-image.sh", import.meta.url)), "utf8");
+  const fin = readFileSync(fileURLToPath(new URL("../../deploy/cloud-home/finalize-customer-image.sh", import.meta.url)), "utf8");
+  expect(fin).toMatch(/^apt-get purge -y --auto-remove openssh-server$/m);
+  expect(image).toMatch(/install -y openssh-client$/m);
+  expect(image).not.toMatch(/install -y[^\n]*openssh-server/);
+  expect(image).not.toMatch(/PermitRootLogin\s+yes|systemctl (enable|unmask)[^\n]*ssh/);
 });
 it("no early-exit grep -q pipes under pipefail in the image build (SIGPIPE 141 on a real build)", () => {
   const image = readFileSync(fileURLToPath(new URL("../../deploy/cloud-home/build-image.sh", import.meta.url)), "utf8");

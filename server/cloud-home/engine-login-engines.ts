@@ -7,6 +7,6 @@
 // read it, so an engine the relay accepts can never reach it without step-up.
 // Kept dependency-free: route-policy.ts imports nothing heavier than this.
 
-export const ENGINE_LOGIN_ENGINES = ["codex", "claudeAgent", "grokAgent", "kimiAgent", "opencodeGo"] as const;
+export const ENGINE_LOGIN_ENGINES = ["codex", "claudeAgent", "antigravityAgent", "grokAgent", "kimiAgent", "opencodeGo"] as const;
 export type EngineLoginEngine = (typeof ENGINE_LOGIN_ENGINES)[number];
 export const ENGINE_LOGIN_PATH = new RegExp(`^/api/engine-login/(${ENGINE_LOGIN_ENGINES.join("|")})$`);

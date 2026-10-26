@@ -10,6 +10,7 @@ import { SealedSecretStore } from "./secrets.ts";
 const selection = { scope: "application-data", credentialPolicy: "preserve-in-encrypted-fidelity" } as const;
 const walk = (dir: string): string[] => readdirSync(dir).flatMap(name => { const p = join(dir, name); return statSync(p).isDirectory() ? walk(p) : [p]; });
 
+// Same gate as the sibling backup suites: skipped only where no pinned age build exists for the platform (rawAgeHost). On a pinned host it runs, and fails if the staged age tools (scripts/prepare-backup-test-fixtures.mjs, MURAGE_BACKUP_TEST_AGE_DIR) are missing.
 it.skipIf(!rawAgeHost)("the installation backup leaves the Cloud secrets directory out entirely: no plaintext and no sealed store", async () => {
   const f = backupFixture(), keys = testAgeKeys();
   const canary = "FAKE-PENDING-REVOKE-TOKEN-CANARY";

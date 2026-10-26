@@ -42,15 +42,15 @@ describe("queryCloudBotState", () => {
   it("parses names and timestamps; unknown modes read as null and non-object engine entries are left out", async () => {
     const fake = query({ tombstoned: false, engines: {
       codex: { mode: "apikey", signedIn: true, expiresAt: null },
-      claudeAgent: { mode: "oauth-token", signedIn: true, expiresAt: 1_900_000_000 },
+      claudeAgent: { mode: "oauth-token", signedIn: true, expiresAt: 1_900_000_000, source: "bot" },
       grokAgent: { mode: "password", signedIn: "yes", expiresAt: "soon" },
       kimiAgent: "signed-in", opencodeGo: null, qwenAgent: [1, 2],
     } });
     const state = await queryCloudBotState("bot-atlas", fake.launch);
     expect(state).toEqual({ tombstoned: false, engines: {
-      codex: { mode: "apikey", signedIn: true, expiresAt: null },
-      claudeAgent: { mode: "oauth-token", signedIn: true, expiresAt: 1_900_000_000 },
-      grokAgent: { mode: null, signedIn: false, expiresAt: null },
+      codex: { mode: "apikey", signedIn: true, expiresAt: null, source: null },
+      claudeAgent: { mode: "oauth-token", signedIn: true, expiresAt: 1_900_000_000, source: "bot" },
+      grokAgent: { mode: null, signedIn: false, expiresAt: null, source: null },
     } });
   });
   it("sends only mode and bot, and no bot at all for the engine-wide stores", async () => {

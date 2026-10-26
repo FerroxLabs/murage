@@ -33,7 +33,7 @@ const SAMPLES = [
   ["POST", "/api/bots/b1/secret-cards/s1/provided"], ["POST", "/api/bots/b1/connector-cards/c1/authorize"], ["POST", "/api/bots/b1/mcp-sign-in-cards/m1/resume"],
   ["POST", "/api/publish/netlify/check"], ["POST", "/api/bots/b1/published-sites/s1/take-down"],
   ["POST", "/api/bots/b1/computer/provision"], ["POST", "/api/bots/b1/local-computer/run"],
-  ["GET", "/api/engine-login/codex"],
+  ["GET", "/api/engine-login/codex"], ["GET", "/api/engine-login/antigravityAgent"], ["POST", "/api/bots/b1/engine-signin/code"],
   ["DELETE", "/api/bots/b1"], ["DELETE", "/api/groups/g1"], ["PATCH", "/api/groups/g1"], ["PATCH", "/api/bots/b1"], ["POST", "/api/bots"], ["PATCH", "/api/bots/b1/profile"],
   ["POST", "/api/move/commit"], ["POST", "/api/lend/scopes"],
   // 1.0.4 step-up routes (SL-K/SL-I chat permissions and limit backup, MCP-118-175 enable cards, SL-H attachment remove).

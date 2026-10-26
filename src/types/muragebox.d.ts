@@ -180,6 +180,8 @@ type SkillRecordingPayload = {
       reachable(): Promise<{ ok: true } | { ok: false; code: string; message: string }>;
       /** Settings: disconnect this computer from this window's own home. Main then closes the window and shows the Connect panel. */
       disconnectThisComputer?(): Promise<{ disconnected: true }>;
+      /** A new bot's "Sign <bot> in to <engine>": main opens that sign-in in the local window. A bot id and an engine name only. */
+      requestSignIn?(request: { bot: string; engine: string }): Promise<{ requested: true }>;
     };
     muragebox?: {
       platform: NodeJS.Platform;
@@ -247,7 +249,12 @@ type SkillRecordingPayload = {
         state(): Promise<{ enabled: true; cpSignedIn: boolean; paired: { homeId: string; origin: string }[] }>;
         listHomes(): Promise<{ id: string; name: string; status: string; reachable: boolean; paired: boolean }[]>;
         /** The bots of a paired home (id and name only): a per-bot engine sign-in names one. */
-        listBots(homeId: string): Promise<{ id: string; name: string }[]>;
+        /** `signIn`: the engine the bot uses and whether it is signed in (F4 C2); absent when the home cannot say. `uses` is Claude's: the home-wide or the bot's own. */
+        listBots(homeId: string): Promise<{ id: string; name: string; signIn?: { engine: string; label: string; signedIn: boolean; uses: "home" | "own" | null; signedInEngines?: string[]; dismissed?: string[] } }[]>;
+        /** "Not now" on a sign-in offer, kept on the home for good. */
+        dismissOffer?(homeId: string, bot: string, engine: string): Promise<{ dismissed: true }>;
+        /** main -> this window: a Cloud window asked for a bot's engine sign-in (names only). */
+        onSignInRequested?(callback: (request: { homeId: string; bot: string; engine: string }) => void): () => void;
         /** Fires when Cloud goes live (true) or stops being live (false); the entry appears or disappears without a restart. */
         onLive(callback: (live: boolean) => void): () => void;
         /** Door v2: Connect from the browser. connectStart opens the system browser; the window then carries on by itself. */

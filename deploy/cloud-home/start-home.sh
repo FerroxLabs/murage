@@ -50,4 +50,7 @@ exec 3< <(printf '%s' "$envelope")
 unset envelope
 export MURAGE_CLOUD_SECRETS_FD=3
 if [[ -n $safe_mode ]]; then export MURAGE_SAFE_MODE=1; else unset MURAGE_SAFE_MODE; fi
-exec /usr/local/bin/node /opt/murage/dist-server/cloud-home-supervisor.js
+# The image-owned root launcher (LANE-G r3 sec. 1): binds the volume, verifies the live release slot and the update journal, asks the
+# updater's gate while an update is in flight, drops to the service user and only then execs the slot's supervisor through the verified
+# directory descriptor, with an environment it builds itself from home.env (nothing of this shell's environment reaches node).
+exec /usr/bin/python3 -I /usr/local/libexec/murage-home-launch

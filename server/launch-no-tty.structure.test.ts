@@ -42,6 +42,7 @@ const ALLOWLIST: Record<string, string> = {
   "job-launcher.ts": "the Windows job launcher procs.ts starts (U24): it starts the engine CLI itself, inside the engine's job, with the stdio pipes it inherited from spawnCli",
   "env-path.ts": "the owner's own login capture (Rule 74a, Murage's process, stdin closed); its Fuigo --version read is an engine probe and starts a session of its own (asserted below)",
   "drivers/process-tree.ts": "non-engine helper: ps and PowerShell process listing",
+  "drivers/antigravity-relay.ts": "non-engine helper: lsattr read of a Cloud home folder, stdin closed, no network (the relay hook check)",
   "drivers/process-identity.ts": "non-engine helper: ps start-time read of a known pid",
   "drivers/warm-pool.ts": "non-engine helper: ps and vm_stat memory reads",
   "drivers/claude.ts": "git rev-parse of the session folder with stdin ignored and no network",

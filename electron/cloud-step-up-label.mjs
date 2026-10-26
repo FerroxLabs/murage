@@ -24,7 +24,8 @@ export const STEP_UP_LABELS = Object.freeze([
   { methods: ["POST"], path: /^\/api\/cloud\/model-signins\/(?:chatgpt|supergrok)\/attempts\/[^/]+\/cancel$/, label: "Cancel a model sign-in on your Cloud home" },
   { methods: ["DELETE"], path: rx(String.raw`/api/cloud/model-signins/(?:chatgpt|supergrok)`), label: "Remove a model connection from your Cloud home" },
   { methods: ANY, path: /^\/api\/cloud\/own-server(?:\/(?:confirm|test))?$/, label: "Change the server your bots use as a computer" },
-  { methods: ANY, path: /^\/api\/engine-login\/(?:codex|claudeAgent|grokAgent|kimiAgent|opencodeGo)$/, label: "Sign in or out of an engine on your Cloud home" },
+  { methods: ANY, path: /^\/api\/engine-login\/(?:codex|claudeAgent|antigravityAgent|grokAgent|kimiAgent|opencodeGo)$/, label: "Sign in or out of an engine on your Cloud home" },
+  { methods: ["POST"], path: /^\/api\/bots\/[\w-]+\/engine-signin\/code$/, label: "Finish an Antigravity sign-in for a bot on your Cloud home" },
 
   // Bots.
   { methods: ["POST"], path: rx("/api/bots"), label: "Create a bot", summary: "bot" },

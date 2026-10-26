@@ -14,7 +14,9 @@ describe("engine-login route class", () => {
     expect(routeClass("GET", "/api/engine-login/claudeAgent")).toBe("engine-login");
     expect(routeClass("GET", "/api/engine-login/grokAgent")).toBe("engine-login");
     expect(routeClass("GET", "/api/engine-login/kimiAgent")).toBe("engine-login");
+    // OpenCode Go signs in and enrolls keys through the same relay (engine-login.ts), so its route is classed too.
     expect(routeClass("GET", "/api/engine-login/opencodeGo")).toBe("engine-login");
+    expect(routeClass("GET", "/api/engine-login/opencodeGoX")).not.toBe("engine-login");
     expect(routeClass("GET", "/api/engine-login/pi")).not.toBe("engine-login");
   });
   it("requires step-up for every engine the relay accepts (1.0.4 audit 11-1: OpenCode Go skipped it)", () => {
@@ -48,7 +50,7 @@ describe("model-signin on a cloud home", () => {
     expect(cloudModelSignInMounted()).toBe(false);
     const index = readFileSync(fileURLToPath(new URL("../index.ts", import.meta.url)), "utf8");
     expect(index).toContain("homeSessions && cloudModelSignInMounted() ? createCloudModelSignInApi(");
-    expect(index).toContain("const engineLoginRelay = createEngineLoginRelay();");
+    expect(index).toContain("const engineLoginRelay = createEngineLoginRelay({");
     expect(index).toContain("|| engineLoginRelay(req, socket, head, url));");
   });
 });
