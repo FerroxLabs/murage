@@ -262,7 +262,7 @@ for (const width of [390, 820, 1440]) for (const skin of ["light", "dark"]) test
   await expect(page.getByRole("heading", { name: "Saved versions", exact: true })).toBeVisible();
   await page.getByRole("tab", { name: "Memory", exact: true }).click();
   await page.getByLabel("Search memory", { exact: true }).fill("delayed");
-  await page.getByRole("button", { name: "Search", exact: true }).click();
+  await page.getByTestId("memory-settings").getByRole("button", { name: "Search", exact: true }).click();
   try {
     await expect.poll(() => Boolean(releaseOld)).toBe(true);
     await page.evaluate(() => (window as any).fixtureStore.dispatch({ type: "select", id: "other" }));

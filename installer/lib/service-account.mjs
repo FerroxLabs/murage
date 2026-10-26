@@ -30,14 +30,15 @@ import {
   fchmodSync,
   fchownSync,
   fstatSync,
-  lchownSync,
   lstatSync,
   mkdirSync,
   openSync,
   realpathSync,
   statSync,
 } from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve, sep } from "node:path";
+
+import { asAccount } from "./private-files.mjs";
 
 export class ServiceAccountRefused extends Error {
   /** @param {string} code @param {string} message */
@@ -210,55 +211,168 @@ export function setupPaths({ env, account, euid, home }) {
 }
 
 /**
+ * A directory only root can change: owned by uid 0, not writable by its group
+ * or by others. Nobody but root can rename, replace or add an entry in it, so
+ * a path that runs through such directories cannot be redirected under root.
+ * @param {import("node:fs").Stats} st
+ */
+function rootOnly(st) {
+  return !st.isSymbolicLink() && st.isDirectory() && st.uid === 0 && (st.mode & 0o022) === 0;
+}
+
+/** Every directory on a resolved path, from `/`, is one only root can change. */
+function rootOnlyChain(real, lstat) {
+  let dir = sep;
+  if (!rootOnly(lstat(dir))) return false;
+  for (const name of real.split(sep).filter(Boolean)) {
+    dir = join(dir, name);
+    let st;
+    try {
+      st = lstat(dir);
+    } catch {
+      return false;
+    }
+    if (!rootOnly(st)) return false;
+  }
+  return true;
+}
+
+/**
+ * How far down `dataDir` root may act on its own: the deepest existing
+ * directory on the path that only root can change (`trusted`), and the first
+ * component under it (`next`), which root may create when it is missing.
+ * Everything below that is the service account's to create, as the account.
+ * Exported for tests; `lstat` and `realpath` are seams.
+ * @param {string} dataDir absolute
+ * @param {{ lstat?: typeof lstatSync, realpath?: (p: string) => string }} [seams]
+ * @returns {{ trusted: string | null, next: string | null }}
+ */
+export function rootTrustedPrefix(dataDir, { lstat = lstatSync, realpath = realpathSync } = {}) {
+  let trusted = sep;
+  try {
+    if (!rootOnly(lstat(trusted))) return { trusted: null, next: null };
+  } catch {
+    return { trusted: null, next: null };
+  }
+  for (const name of dataDir.split(sep).filter(Boolean)) {
+    const next = join(trusted, name);
+    let st;
+    try {
+      st = lstat(next);
+    } catch (error) {
+      if (/** @type {NodeJS.ErrnoException} */ (error).code === "ENOENT") return { trusted, next };
+      return { trusted, next: null };
+    }
+    if (st.isSymbolicLink()) {
+      // The link sits in a directory only root can change, so it is stable;
+      // follow it only to a place that is just as closed.
+      let real;
+      try {
+        real = realpath(next);
+      } catch {
+        return { trusted, next: null };
+      }
+      if (!rootOnlyChain(real, lstat)) return { trusted, next: null };
+      trusted = real;
+      continue;
+    }
+    if (!rootOnly(st)) return { trusted, next: null };
+    trusted = next;
+  }
+  return { trusted, next: null };
+}
+
+/**
  * Make sure the data directory exists, belongs to the service account, and is
  * 0700. Creates it (owned by the account) when missing. Refuses, and changes
  * nothing, when it is a symlink, not a directory, or owned by someone else.
+ *
+ * When root prepares the directory for another account, root itself acts only
+ * inside directories only root can change, and creates at most the one missing
+ * directory directly under them, handing it to the account. Everything else
+ * (creating the rest of the path, opening, checking and tightening the data
+ * directory) runs AS the account (`asAccount`). The account can rename its own
+ * directories and plant symlinks at any moment; done as the account, a planted
+ * link reaches only what the account could already change, never a system
+ * directory (audit 08-1: `state` swapped for a link to /etc/systemd).
  * @param {string} dataDir
- * @param {{ user: string, uid: number, gid: number }} account
+ * @param {{ user: string, uid: number, gid: number, groups?: number[] }} account
  * @param {{ euid: number | null }} opts
  * @returns {{ created: boolean }}
  */
 export function prepareDataDir(dataDir, account, { euid }) {
   if (!isAbsolute(dataDir)) throw new ServiceAccountRefused("DATA_DIR_NOT_ABSOLUTE", `${dataDir} is not an absolute path`);
+  if (euid !== 0 || account.uid === 0) return prepareOwnDataDir(dataDir, account, false);
+  let rootMade = false;
+  const { next } = rootTrustedPrefix(dataDir);
+  if (next) {
+    // `next` is missing and its parent only root can change: nobody can swap
+    // the parent or plant a link at `next` while root works here.
+    try {
+      mkdirSync(next, { mode: 0o700 });
+      rootMade = true;
+    } catch (error) {
+      if (/** @type {NodeJS.ErrnoException} */ (error).code !== "EEXIST") throw error;
+    }
+    if (rootMade) {
+      const fd = openSync(next, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_DIRECTORY ?? 0));
+      try {
+        fchmodSync(fd, 0o700);
+        fchownSync(fd, account.uid, account.gid);
+      } finally {
+        closeSync(fd);
+      }
+    }
+  }
+  const result = asAccount(account, () => prepareOwnDataDir(dataDir, account, true));
+  return { created: result.created || (rootMade && next === dataDir) };
+}
+
+/**
+ * The data directory work done by the account that will own it (the caller is
+ * that account, or wears its identity). Nothing here is privileged, so no
+ * symlink can make it change anything the account could not change anyway.
+ * @param {string} dataDir
+ * @param {{ user: string, uid: number }} account
+ * @param {boolean} forAnother setup runs as root for this account
+ * @returns {{ created: boolean }}
+ */
+function prepareOwnDataDir(dataDir, account, forAnother) {
   let st = null;
   try {
     st = lstatSync(dataDir);
   } catch (error) {
-    if (/** @type {NodeJS.ErrnoException} */ (error).code !== "ENOENT") throw error;
+    const code = /** @type {NodeJS.ErrnoException} */ (error).code;
+    if (code === "EACCES" && forAnother) throw cannotReach(dataDir, account);
+    if (code !== "ENOENT") throw error;
   }
   const notPlain = () =>
     new ServiceAccountRefused("DATA_DIR_NOT_A_DIRECTORY", `${dataDir} exists and is not a plain directory; setup will not write through it.`);
   if (st && (st.isSymbolicLink() || !st.isDirectory())) throw notPlain();
 
   // Everything below works on an fd opened without following a symlink, not
-  // on the path: when root prepares this directory for another account, that
-  // account can rename it away and plant a symlink at any moment, and a
-  // chmod or chown by path would follow the link to wherever it points.
-  const first = st ? undefined : mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+  // on the path, so a link planted at the data directory itself is refused.
+  if (!st) {
+    try {
+      mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+    } catch (error) {
+      const code = /** @type {NodeJS.ErrnoException} */ (error).code;
+      if (forAnother && (code === "EACCES" || code === "EPERM")) throw cannotReach(dataDir, account);
+      throw error;
+    }
+  }
   let fd;
   try {
     fd = openSync(dataDir, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_DIRECTORY ?? 0));
   } catch (error) {
     const code = /** @type {NodeJS.ErrnoException} */ (error).code;
     if (code === "ELOOP" || code === "EMLINK" || code === "ENOTDIR") throw notPlain();
+    if (code === "EACCES" && forAnother) throw cannotReach(dataDir, account);
     throw error;
   }
   try {
     const now = fstatSync(fd);
     if (!now.isDirectory()) throw notPlain();
-    if (!st) {
-      fchmodSync(fd, 0o700);
-      if (euid === 0 && account.uid !== 0 && first) {
-        fchownSync(fd, account.uid, account.gid);
-        // The other directories this call created, and nothing that already
-        // existed. lchown, so one swapped for a symlink is not followed.
-        for (let dir = dataDir; dir !== first && dir !== dirname(dir); ) {
-          dir = dirname(dir);
-          lchownSync(dir, account.uid, account.gid);
-        }
-      }
-      return { created: true };
-    }
     if (now.uid !== account.uid) {
       throw new ServiceAccountRefused(
         "DATA_DIR_FOREIGN_OWNER",
@@ -266,11 +380,20 @@ export function prepareDataDir(dataDir, account, { euid }) {
           `data. Fix the ownership yourself if that data is ${account.user}'s, or choose another MURAGE_DATA_DIR.`
       );
     }
-    if ((now.mode & 0o077) !== 0) fchmodSync(fd, 0o700);
-    return { created: false };
+    if (!st || (now.mode & 0o077) !== 0) fchmodSync(fd, 0o700);
+    return { created: !st };
   } finally {
     closeSync(fd);
   }
+}
+
+/** @param {string} dataDir @param {{ user: string }} account */
+function cannotReach(dataDir, account) {
+  return new ServiceAccountRefused(
+    "DATA_DIR_NOT_REACHABLE",
+    `${account.user} cannot create or open ${dataDir}. Setup prepares the data directory as ${account.user}, so pick a ` +
+      `MURAGE_DATA_DIR inside a directory ${account.user} owns, or create it for ${account.user} yourself first.`
+  );
 }
 
 /**

@@ -36,6 +36,19 @@ it("aggregates sibling and group activity without persisting runtime busy state"
   expect(disk.busy).toBeUndefined();expect(disk.tasks.every((task:any)=>task.busy===undefined&&task.activity===undefined)).toBe(true);
   const restored=fresh();expect(restored.bot(bot.id)?.busy).toBe(false);expect(restored.taskByThread(bot.id,first)?.unread).toBe(true);
 });
+it("tracks whether a running turn has the browser mounted, per thread, and never persists it",()=>{
+  const store=fresh(),bot=store.createBot(),first=bot.threadId,second=store.createTask(bot.id)!;
+  const mounted=(threadId:string)=>store.tasks(bot.id).find(task=>task.threadId===threadId)?.browserMounted;
+  store.setTaskActivity(bot.id,first,"working");store.setTaskActivity(bot.id,second.threadId,"working");
+  expect(mounted(first)).toBeUndefined();
+  store.setTaskBrowserMounted(bot.id,first,true);
+  expect(mounted(first)).toBe(true);expect(mounted(second.threadId)).toBeUndefined();
+  store.patchTask(bot.id,first,{unread:true});
+  const disk=JSON.parse(readFileSync(join(DATA_DIR,"bots.json"),"utf8"))[0];
+  expect(disk.tasks.every((task:any)=>task.browserMounted===undefined)).toBe(true);
+  store.setTaskActivity(bot.id,first,"idle");
+  expect(mounted(first)).toBeUndefined();
+});
 it("stamps a task's turn start on its idle-to-busy transition and never persists it",async()=>{
   const store=fresh(),bot=store.createBot(),first=bot.threadId,second=store.createTask(bot.id)!;
   const startOf=(threadId:string)=>store.taskByThread(bot.id,threadId)?.turnStartedAt;
@@ -116,17 +129,16 @@ it("does not publish a rejected settings write and can save again after recovery
   store.patchTask(bot.id,threadId,{autoApprove:true});
   expect(fresh().projectBotForTask(bot.id,threadId)?.autoApprove).toBe(true);
 });
-it("keeps existing task settings and cursors when the owner changes new-thread defaults",()=>{
+it("keeps task permissions when the owner changes defaults; chats that follow the bot move to its new account with a fresh session (1.0.4 K1)",()=>{
   const store=fresh(),bot=store.createBot(),first=bot.threadId;
   store.setResumeCursor(bot.id,"engine-one","keep-session",first);
   store.patchBot(bot.id,{modelSelection:{instanceId:"engine-two",model:"two",connectionId:"account-two"},autoApprove:true},{preserveTaskSettings:true});
-  expect(store.projectBotForTask(bot.id,first)).toMatchObject({modelSelection:{instanceId:"engine-one",connectionId:"account-one"},autoApprove:false,resumeCursors:{"engine-one":"keep-session"}});
-  // Active creation preserves the currently visible model; detached routine
-  // work uses the owner's updated defaults. Both retain existing task cursors.
-  const next=store.createTask(bot.id)!;expect(next).toMatchObject({modelSelection:{instanceId:"engine-one",connectionId:"account-one"},autoApprove:true});
+  expect(store.projectBotForTask(bot.id,first)).toMatchObject({modelSelection:{instanceId:"engine-two",connectionId:"account-two"},autoApprove:false,resumeCursors:{}});
+  // New chats are born following the bot, active or detached; both take the owner's updated permission defaults.
+  const next=store.createTask(bot.id)!;expect(next).toMatchObject({autoApprove:true});expect(next.modelSelection).toBeUndefined();
   const detached=store.createTask(bot.id,"Detached defaults",false)!;
-  expect(detached).toMatchObject({modelSelection:{instanceId:"engine-two",connectionId:"account-two"},autoApprove:true});
-  expect(store.projectBotForTask(bot.id,first)?.resumeCursors).toEqual({"engine-one":"keep-session"});
+  expect(detached).toMatchObject({autoApprove:true});expect(detached.modelSelection).toBeUndefined();
+  expect(store.projectBotForTask(bot.id,detached.threadId)?.modelSelection).toMatchObject({instanceId:"engine-two",connectionId:"account-two"});
 });
 
 it("adopts the first task pick as the bot's own model, and leaves a bot that already chose one alone",()=>{
@@ -144,8 +156,9 @@ it("adopts the first task pick as the bot's own model, and leaves a bot that alr
   expect(store.bot(starter.id)?.modelSelection).toEqual(picked);
   const disk=()=>JSON.parse(readFileSync(join(DATA_DIR,"bots.json"),"utf8"));
   expect(disk().find((row:any)=>row.id===starter.id).modelSelection).toEqual(picked);
-  // Its other task is not dragged along.
-  expect(store.taskByThread(starter.id,starterSecond.threadId)?.modelSelection).toEqual({instanceId:"",model:""});
+  // Its other task has no pick of its own: it follows the bot (1.0.4 K1).
+  expect(store.taskByThread(starter.id,starterSecond.threadId)?.modelSelection).toBeUndefined();
+  expect(store.projectBotForTask(starter.id,starterSecond.threadId)?.modelSelection).toEqual(picked);
   // A bot that already has a bot-level model keeps it: a pick on one of its
   // tasks stays a deliberate per-task override.
   defaults={instanceId:"engine-one",model:"one",effort:"medium",connectionId:"account-one"};

@@ -98,7 +98,7 @@ describe.skipIf(!built || !posix)("T1: an engine that starts right after the las
         // right after the last look at the process list said "closed", the engine starts
         afterGate: (_key: string, _index: number, step: Step) => {
           if (launched || step.k !== "rewrite") return;
-          launched = start(script, { R_HOME: home, R_ROW: row, R_READY: ready, R_RESULT: result });
+          launched = start(script, { R_HOME: home, R_ROW: row, R_READY: ready, R_RESULT: result, CLAUDE_CONFIG_DIR: home });
           expect(waitFor(() => existsSync(ready))).toBe(true);
         },
       });

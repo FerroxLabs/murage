@@ -22,7 +22,7 @@ function pollers(source: string): string[] {
 }
 
 describe("pollers pause while hidden", () => {
-  it.each([["Inbox.tsx", 1], ["SidebarPhoneButton.tsx", 1], ["WorkspacePane.tsx", 1], ["ComputerPanel.tsx", 3]])(
+  it.each([["Inbox.tsx", 1], ["SidebarPhoneButton.tsx", 1], ["WorkspacePane.tsx", 1], ["ComputerPanel.tsx", 4]])(
     "%s",
     (file, count) => {
       const source = read(file);
@@ -30,6 +30,9 @@ describe("pollers pause while hidden", () => {
       const found = pollers(source);
       expect(found).toHaveLength(count);
       for (const effect of found) {
+        // The live-desktop keepalive must keep beating while this page is hidden: the viewer is its own window and the
+        // computer stops when the beats stop, so hiding the main window must not pause it.
+        if (effect.includes("/local-computer/keepalive")) { expect(effect).not.toMatch(/pageVisible/); continue; }
         expect(effect).toMatch(/!pageVisible\)?\s*\)?\s*return;|\|\| !pageVisible\) return;/);
         expect(effect).toMatch(/\[[^\]]*\bpageVisible\b[^\]]*\]\);$/);
       }

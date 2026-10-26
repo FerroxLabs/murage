@@ -45,7 +45,7 @@ export const LiveReplyBubble = memo(function LiveReplyBubble({
     <div
       data-testid="live-reply"
       aria-hidden="true"
-      className={cn("w-fit max-w-[min(42rem,78%)] max-md:max-w-full rounded-2xl bg-card px-4 py-2.5 text-[15px] leading-relaxed text-ink", className)}
+      className={cn("w-fit max-w-[min(var(--chat-bubble-max),var(--chat-bubble-pct))] max-md:max-w-full rounded-2xl bg-card px-4 py-2.5 text-[15px] leading-relaxed text-ink", className)}
     >
       <ChatMarkdown text={text} streaming scope={scope} />
     </div>

@@ -57,7 +57,8 @@
         "role": "leader",
         "team": "Follow-Up Desk",
         "appearance": {
-          "color": "blue"
+          "color": "blue",
+          "mascotBody": "circle"
         },
         "skills": [
           "project-manager",
@@ -77,7 +78,8 @@
         "role": "member",
         "team": "Follow-Up Desk",
         "appearance": {
-          "color": "teal"
+          "color": "teal",
+          "mascotBody": "squircle"
         },
         "skills": [
           "email-productivity",
@@ -97,7 +99,8 @@
         "role": "member",
         "team": "Follow-Up Desk",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "drop"
         },
         "skills": [
           "follow-up-sequences",
@@ -117,7 +120,8 @@
         "role": "member",
         "team": "Follow-Up Desk",
         "appearance": {
-          "color": "purple"
+          "color": "purple",
+          "mascotBody": "capsule"
         },
         "skills": [
           "patch-crm-hygiene",

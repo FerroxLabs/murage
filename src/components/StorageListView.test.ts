@@ -8,10 +8,11 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import {
-  INDEXING_LINE, LIST_ROUTE, loadFirst, loadMore, STALE_LINE, TRUNCATED_LINE, UNREADABLE_LINE, usedInLine,
+  INDEXING_LINE, isBotPicture, LIST_ROUTE, loadFirst, loadMore, PICTURE_IN_USE_LINE, REMOVE_CONFIRM_LINE, REMOVE_FAILED_LINE, REMOVE_PENDING_LINE, REMOVE_ROUTE,
+  REMOVED_LINE, removeFile, STALE_LINE, TRUNCATED_LINE, UNREADABLE_LINE, usedInLine,
   type StorageListAnswer, type StorageListItem, type StorageListPage, type StorageListState, type StorageListTotals,
 } from "@/lib/storage-list";
-import { StorageListView } from "./StorageListView";
+import { StorageListView, type StorageRemoveControls } from "./StorageListView";
 
 const read = (file: string) => readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8");
 const kinds = ["image", "document", "audio", "video", "other"] as const;
@@ -63,8 +64,9 @@ describe("R1.9: the list asks for no attachment bytes", () => {
       const source = read(file);
       expect(source, file).not.toMatch(/<img|src=|\/api\/attachments|\/api\/media|saveUrl|clickDownload|fetch\(/);
     }
-    // the only request the component makes is through the pager, to the list route
-    expect(read("./StorageList.tsx").match(/api\(/g)).toHaveLength(1);
+    // the component's requests: the pager's, to the list route, and Remove's (1.0.4 SL-H), to its route
+    expect(read("./StorageList.tsx").match(/api\(/g)).toHaveLength(2);
+    expect(read("./StorageList.tsx")).toMatch(/api\(url, \{ method: "POST"/);
   });
 });
 
@@ -131,8 +133,45 @@ describe("copy", () => {
       expect(source, file).not.toMatch(new RegExp(`\\b(${["sa" + "fe", "unsa" + "fe", "sa" + "fety"].join("|")})\\b`, "i"));
     }
   });
-  it("no Export, Remove or thumbnail controls in this release", () => {
+  it("no Export or thumbnail controls, and no Remove unless this computer offers it (never a Cloud home)", () => {
     const html = render({ phase: "ready", order: "size", snapshot: "s", items: [row(0)], nextCursor: null, notices: [], totals: totals(), loadingMore: false });
     expect(html).not.toMatch(/export|remove|delete|checkbox|thumbnail/i);
+    expect(read("./StorageList.tsx")).toMatch(/const removable = !isCloudOrigin\(\)/);
+  });
+});
+
+// 1.0.4 SL-H: Remove on each row, after a confirm; a bot's picture is refused.
+describe("Remove (SL-H)", () => {
+  const controls = (over: Partial<StorageRemoveControls> = {}): StorageRemoveControls => ({ confirming: null, removing: null, notice: null, onAsk: () => {}, onCancel: () => {}, onConfirm: () => {}, ...over });
+  const picture: StorageListItem = { ...row(4), usedIn: { state: "used", labels: ["Picture of Fern"], more: false } };
+  const state = (items: StorageListItem[]): StorageListState => ({ phase: "ready", order: "size", snapshot: "s", items, nextCursor: null, notices: [], totals: totals(), loadingMore: false });
+  const view = (items: StorageListItem[], remove: StorageRemoveControls) => renderToStaticMarkup(createElement(StorageListView, { state: state(items), order: "size", onOrder: () => {}, onMore: () => {}, onReload: () => {}, remove }));
+
+  it("offers Remove on each row and disables it, with the reason, on a bot's picture", () => {
+    const html = view([row(1), picture], controls());
+    expect(html.match(/data-storage-remove="true"/g)).toHaveLength(2);
+    expect(html).toMatch(new RegExp(`disabled="" title="${PICTURE_IN_USE_LINE.replace("'", "&#x27;")}"`));
+    expect(isBotPicture(picture.usedIn)).toBe(true);
+    expect(isBotPicture(row(0).usedIn)).toBe(false);
+  });
+
+  it("asks before it removes, and says how it went", () => {
+    const confirm = view([row(1)], controls({ confirming: row(1).name }));
+    expect(confirm).toContain(REMOVE_CONFIRM_LINE);
+    expect(confirm).toContain("data-storage-remove-confirm");
+    expect(confirm).toContain("Keep it");
+    expect(view([row(1)], controls({ notice: REMOVED_LINE }))).toContain(REMOVED_LINE);
+  });
+
+  it("removeFile posts one name to the Remove route and reads every answer", async () => {
+    const posted: unknown[] = [];
+    const answer = (results: unknown) => async (url: string, body: unknown) => { posted.push([url, body]); return { results } as never; };
+    const name = row(1).name;
+    expect(await removeFile(answer([{ name, state: "removed" }]), name)).toEqual({ removed: true, line: REMOVED_LINE });
+    expect(posted[0]).toEqual([REMOVE_ROUTE, { names: [name] }]);
+    expect(await removeFile(answer([{ name, state: "pending" }]), name)).toEqual({ removed: true, line: REMOVE_PENDING_LINE });
+    const refused = async () => { throw Object.assign(new Error("x"), { status: 409, body: { results: [{ name, state: "refused", error: PICTURE_IN_USE_LINE }] } }); };
+    expect(await removeFile(refused, name)).toEqual({ removed: false, line: PICTURE_IN_USE_LINE });
+    expect(await removeFile(async () => { throw new Error("offline"); }, name)).toEqual({ removed: false, line: REMOVE_FAILED_LINE });
   });
 });

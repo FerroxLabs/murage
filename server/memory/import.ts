@@ -14,9 +14,12 @@ import { isMemoryTopicName, MEMORY_SEED } from "../workspace.ts";
 import { scopeRow } from "./scope-id.ts";
 import { revokeAllDisclosures } from "./revocation.ts";
 import { inheritEdge } from "./revoke-commit.ts";
+import { insertMemoryRecord } from "./record-write.ts";
 
 export type ImportSelection = {kind:"bot";botId:string;topic?:string}|{kind:"section";section:string}|{kind:"partition";botId:string;partition:Partition;topic?:string};
-interface ImportItem {selection:ImportSelection;path:string;hash:string;bytes:number;text:string;scopeId:string;scopeLabel:string;alreadyImported:boolean}
+// `hash` is over the text as stored (redacted and masked), so the hash kept beside a masked payload says nothing about the digits it
+// lost. `legacyHash` is over the text as read, the hash 1.0.3 and earlier stored: a notebook forgotten then is still refused by its tombstone.
+interface ImportItem {selection:ImportSelection;path:string;hash:string;legacyHash:string;bytes:number;text:string;scopeId:string;scopeLabel:string;alreadyImported:boolean}
 interface Preview {previewId:string;items:ImportItem[];expiresAt:number;policyRevision:number}
 const previews=new Map<string,Preview>();
 let checkedDatabase:ReturnType<typeof database>|undefined;
@@ -90,12 +93,13 @@ function selectionItem(selection:ImportSelection,roster:MemoryRoster):ImportItem
     if(typeof record?.text!=="string")throw new Error("MEMORY_IMPORT_SECTION_MISSING");
     text=record.text;path=`${join(DATA_DIR,"section-contexts.json")}#${section}`;scopeId=ensureScope("team",section);scopeLabel=`Team brief: ${section||"General"}`;
   }
-  const originalHash=hash(text);
+  const legacyHash=hash(text);
   text=redactSecretsInText(text);
+  const originalHash=hash(text);
   if(!text.trim())throw new Error("MEMORY_IMPORT_EMPTY");
   const sourceId=importSourceId(database(),scopeId,path);
   const previous=database().prepare("SELECT content_hash FROM memory_sources WHERE id=?").get(sourceId);
-  return {selection,path,hash:originalHash,bytes:Buffer.byteLength(text),text,scopeId,scopeLabel,alreadyImported:previous?.content_hash===originalHash};
+  return {selection,path,hash:originalHash,legacyHash,bytes:Buffer.byteLength(text),text,scopeId,scopeLabel,alreadyImported:previous?.content_hash===originalHash||previous?.content_hash===legacyHash};
 }
 
 /** Import sources for the two notebooks a turn's prompt carries whole: the
@@ -149,17 +153,19 @@ const CONFLICT_OF_RECORD="(r.owner_pinned=1 OR r.state IN ('archived','deleted')
 /** `retryLater`: the tracked sync and the notebook walk, which leave the link as it was and look again. Anything else is told to try again in a moment. */
 function commitImportItems(items:ImportItem[], track=false, retryLater=false){
   return transaction(db=>{
-    let imported=0,skipped=0;const recordIds:string[]=[];let deferred=0;
+    let imported=0,skipped=0;const recordIds:string[]=[];let superseded=false;let deferred=0;
     for(const item of items){
       const id=importSourceId(db,item.scopeId,item.path);
-      if(db.prepare("SELECT 1 FROM memory_tombstones WHERE (target_type='source' AND target_id=?) OR (target_type='import' AND target_id=? AND content_hash=?)").get(id,item.scopeId,item.hash))throw new Error("MEMORY_IMPORT_FORGOTTEN");
+      if(db.prepare("SELECT 1 FROM memory_tombstones WHERE (target_type='source' AND target_id=?) OR (target_type='import' AND target_id=? AND content_hash IN (?,?))").get(id,item.scopeId,item.hash,item.legacyHash??item.hash))throw new Error("MEMORY_IMPORT_FORGOTTEN");
       const prior=db.prepare("SELECT revision,content_hash,state FROM memory_sources WHERE id=?").get(id);
       if(prior && prior.state!=="active")throw new Error("MEMORY_IMPORT_SOURCE_RETIRED");
       // No row for the source means no evidence can name it (the foreign key runs through memory_sources), so a first import reads no evidence at
       // all. A changed one reads it by source through memory_evidence_by_source, which leads with source_id (memory_evidence has no index on it).
       // While that index is not built nothing of the notebook is applied: records that cite the old revision (derived ones too) could not all be
       // found, and the tracked sync tries it again once the index is ready.
-      if(prior && prior.content_hash!==item.hash){
+      // an unscrubbed 1.0.3 row holds the hash of the text as read: the same notebook, not a change (the scrub rewrites the hash)
+      const unchangedSince=Boolean(prior && (prior.content_hash===item.hash || prior.content_hash===item.legacyHash));
+      if(prior && !unchangedSince){
         if(!evidenceReady(db)){
           if(!retryLater)throw new Error("MEMORY_IMPORT_INDEX_BUILDING");
           deferred++;continue;
@@ -175,21 +181,25 @@ function commitImportItems(items:ImportItem[], track=false, retryLater=false){
         if(!unchanged)db.prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'system','notebook-link',0,'granted',?) ON CONFLICT(id) DO UPDATE SET state='granted',intent=excluded.intent")
           .run(`notebook-link:${id}`,item.scopeId,JSON.stringify({selection:item.selection,hash:item.hash,status:"current",checkedAt:Date.now()}));
       }
-      if(prior?.content_hash===item.hash){skipped++;continue;}
+      if(unchangedSince){skipped++;continue;}
       const revision=prior?Number(prior.revision)+1:1;
-      if(prior)db.prepare(`UPDATE memory_records SET state='superseded' WHERE id IN (${evidenceSourceQuery}) AND state!='deleted'`).run(id);
+      // A changed notebook still ends every receipt (SCOPED-REVOKES E10: a version-scoped revoke needs the marker to tell a chunk's earlier
+      // version from its replacement, which shares the id; that is the marker lane's contract, not this one's). A first import ends nothing.
+      if(prior){superseded=true;db.prepare(`UPDATE memory_records SET state='superseded' WHERE id IN (${evidenceSourceQuery}) AND state!='deleted'`).run(id);}
       db.prepare("INSERT INTO memory_sources VALUES(?,?,NULL,NULL,NULL,?,?,'legacy-import','import','imported',NULL,'active') ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,content_hash=excluded.content_hash,state='active'").run(id,item.scopeId,revision,item.hash);
       db.prepare("INSERT INTO memory_source_versions VALUES(?,?,?,?,?)").run(id,revision,item.hash,JSON.stringify({text:item.text,path:item.path,originalHash:item.hash,selection:item.selection}),Date.now());
       for(const [index,chunk] of chunksFor(item.text).entries()){
         const recordId=`${id}:chunk:${index}`;recordIds.push(recordId);
-        db.prepare("INSERT INTO memory_records VALUES(?,?,?,'evidence',?,'unverified-import','active',0,?,NULL,NULL,?)").run(recordId,revision,item.scopeId,chunk.text,Date.now(),Date.now());
+        insertMemoryRecord(db,{id:recordId,version:revision,scopeId:item.scopeId,kind:"evidence",text:chunk.text,assertion:"unverified-import",state:"active",validFrom:Date.now(),createdAt:Date.now()});
         db.prepare("INSERT INTO memory_evidence VALUES(?,?,?,?,?,?)").run(recordId,revision,id,revision,chunk.startByte,chunk.endByte);
         inheritEdge(db,{kind:"record",id:recordId,version:revision},{kind:"source",id});
         db.prepare("INSERT INTO memory_projection_receipts VALUES(?,?,0,'pending','pending',NULL)").run(recordId,revision);
       }
       imported++;
     }
-    if(imported){db.exec("UPDATE memory_meta SET data_revision=data_revision+1");revokeAllDisclosures(db,"import");}
+    // A brand-new notebook withdraws nothing: no receipt could cite it, so no session resets and no hold moves (the notebook-link binding is a
+    // NOISY subject of the authority epoch). A changed one ends every receipt, as before (E10).
+    if(imported){db.exec("UPDATE memory_meta SET data_revision=data_revision+1");if(superseded)revokeAllDisclosures(db,"import");}
     return {imported,skipped,deferred,recordIds,originals:"preserved" as const};
   });
 }

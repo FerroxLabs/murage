@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Portfolio",
     "tagline": "Five evidence-based case pages that show what you contributed",
-    "summary": "Folio prepares a portfolio outline with up to five case-page drafts from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For general writing and editing, use Writer. For creating a website and publishing it when requested, use Site Builder.",
+    "summary": "Folio prepares a portfolio outline with up to five case-page drafts from the material you supply.",
     "category": "Agencies",
     "author": {
       "name": "Ferrox Labs",
@@ -54,7 +54,8 @@
         "title": "Portfolio",
         "description": "Folio prepares a portfolio outline with up to five case-page drafts from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For general writing and editing, use Writer. For creating a website and publishing it when requested, use Site Builder.",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "squircle"
         },
         "skills": [
           "creative-portfolio-builder",

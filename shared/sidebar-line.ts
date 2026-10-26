@@ -40,6 +40,8 @@ export interface SidebarLine {
   };
   /** Options rows: the card's title. */
   cardTitle?: string;
+  /** Connection cards: which app and where the sign-in stands, so the row reads "<app> · <state>" in the reader's language. */
+  connector?: { label: string; status: "required" | "authorizing" | "connected" | "failed" };
   /** Goal runs: the status and the first SIDEBAR_TEXT_CHARS of the goal and detail. */
   goalRun?: { status: GroupGoalRunCardData["status"]; goal: string; detail?: string };
   /** User rows: the outbox reconciles a send against this after a reload. */
@@ -70,6 +72,7 @@ export interface SidebarLineSource {
     localFailureEngine?: string;
   };
   card?: { title?: string };
+  connector?: { label: string; status: "required" | "authorizing" | "connected" | "failed" };
   goalRun?: { status: GroupGoalRunCardData["status"]; goal: string; detail?: string };
   sendId?: string;
   queueId?: string;
@@ -100,6 +103,7 @@ export function sidebarLineOf(message: SidebarLineSource): SidebarLine {
     line.tool = tool;
   }
   if (message.kind === "options" && typeof message.card?.title === "string") line.cardTitle = head(message.card.title);
+  if (message.kind === "connector" && message.connector) line.connector = { label: head(message.connector.label), status: message.connector.status };
   if (message.goalRun) {
     line.goalRun = { status: message.goalRun.status, goal: head(message.goalRun.goal ?? "") };
     if (typeof message.goalRun.detail === "string") line.goalRun.detail = head(message.goalRun.detail);

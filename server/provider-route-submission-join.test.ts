@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { launchVerificationServer } from "../scripts/control-murage.ts";
 import { ProviderConnectionsService } from "./provider-connections.ts";
+import { transformSync } from "esbuild";
 import { TurnSubmissionBoundary } from "./turn-dispatch-guard.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
@@ -17,7 +18,8 @@ it("actual direct and room submission callbacks reject changed provider revision
   try {
     for (const body of bodies) {
       // the callbacks mark the turn trace at submission (77cb5d307): a trace that records nothing stands in for it
-      const callback = (current: unknown, route: unknown, receipt: unknown, opts: unknown) => new Function("providerRouteIsCurrent", "providerRoute", "memoryReceipt", "opts", "trace", body)(current, route, receipt, opts, { mark() {} });
+      // the room callback also asks whether the turn was stopped (U29): a live turn of generation 1 stands in for it here
+      const callback = (current: unknown, route: unknown, receipt: unknown, opts: unknown) => compileBody(body)(current, route, receipt, opts, { mark() {} }, ...liveRoom());
       const current = (route?: { connectionId: string; revision: string }) => !route || service.isCurrent(route.connectionId, route.revision);
       const accepted = vi.fn(); const boundary = new TurnSubmissionBoundary(); boundary.started(); revision = "r2";
       expect(() => boundary.beforeSubmit(() => callback(current, { connectionId: "fixture", revision: "r1" }, { accepted }, undefined))).toThrow("changed before submission");
@@ -27,6 +29,38 @@ it("actual direct and room submission callbacks reject changed provider revision
       const native = new TurnSubmissionBoundary(); native.started(); native.beforeSubmit(() => callback(current, undefined, { accepted }, undefined)); expect(accepted).toHaveBeenCalledTimes(2);
     }
   } finally { removeTempDirSync(cacheDir); }
+});
+
+const LIVE_ROOM_NAMES = ["abandoned", "isCancelled", "internalTurnOwners", "internalCapabilities", "threadId", "internalGeneration"] as const;
+// The callback bodies are lifted from index.ts as written, TypeScript included (the direct one casts `error as { code?: string }`):
+// esbuild erases the types first, so the real body runs and not a syntax error.
+const BODY_PARAMS = ["providerRouteIsCurrent", "providerRoute", "memoryReceipt", "opts", "trace", ...LIVE_ROOM_NAMES];
+const compileBody = (body: string) => new Function(...BODY_PARAMS,
+  `${transformSync(`function liftedBody(${BODY_PARAMS.join(", ")}) {${body}\n}`, { loader: "ts" }).code}\nreturn liftedBody(${BODY_PARAMS.join(", ")});`);
+// `revoked`: the attempt's capability generation was revoked (CANCEL-TREE-104 R1: its request cancelled) while the turn owner still reads live
+const liveRoom = (stopped: { abandoned?: boolean; cancelled?: boolean; generation?: number; revoked?: boolean } = {}) =>
+  [stopped.abandoned === true, () => stopped.cancelled === true, new Map([["room-t", { generation: stopped.generation ?? 1 }]]),
+    { activeGeneration: (threadId: string) => threadId === "room-t" && !stopped.revoked ? (stopped.generation ?? 1) : undefined }, "room-t", 1];
+
+it("U29 + CANCEL-TREE-104 R1: the room's one pre-submit check refuses a turn stopped after setup or whose generation was revoked, before the engine call and before memory acceptance", () => {
+  const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+  const bodies = [...source.matchAll(/beforeSubmit: \(\) => submissionBoundary\.beforeSubmit\(\(\) => \{([\s\S]*?)\n\s*\}\),/g)].map(match => match[1]);
+  const room = bodies.find(body => !body.includes("askerWakeId"));
+  expect(room).toBeDefined();
+  const run = (stopped: Parameters<typeof liveRoom>[0]) => {
+    const accepted = vi.fn(); const boundary = new TurnSubmissionBoundary(); boundary.started();
+    const call = () => boundary.beforeSubmit(() => compileBody(room!)(() => true, undefined, { accepted }, undefined, { mark() {} }, ...liveRoom(stopped)));
+    return { accepted, call, boundary };
+  };
+  for (const stopped of [{ cancelled: true }, { abandoned: true }, { generation: 2 }, { revoked: true }]) {
+    const { accepted, call, boundary } = run(stopped);
+    expect(call, JSON.stringify(stopped)).toThrow("turn stopped before submission");
+    expect(accepted).not.toHaveBeenCalled();
+    expect(() => boundary.assertNotRefused()).toThrow();
+  }
+  const live = run({});
+  live.call();
+  expect(live.accepted).toHaveBeenCalledTimes(1);
 });
 
 it("owner key rotation during real Grok ACP setup prevents the old route from submitting", async () => {

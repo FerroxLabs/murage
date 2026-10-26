@@ -10,5 +10,5 @@ export type { UpdaterState };
 export function useUpdaterState(): UpdaterState | null {
   const [state, setState] = useState<UpdaterState | null>(null);
   useEffect(() => window.muragebox?.updater?.onState(setState), []);
-  return window.muragebox?.updater ? state : null;
+  return typeof window !== "undefined" && window.muragebox?.updater ? state : null;
 }

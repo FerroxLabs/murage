@@ -38,6 +38,8 @@ import {
 } from "@/lib/app-catalog";
 import { VirtualRows } from "./VirtualRows";
 import { returnFocus } from "@/lib/return-focus";
+import type { ConfirmedConnectLabel } from "@/lib/connect-app";
+import { ConnectLabelForm } from "./ConnectLabelForm";
 
 type ToolkitCard = AppCard;
 
@@ -387,6 +389,86 @@ export function connectorPrimaryAction(state: { pending?: boolean; pendingUrl?: 
   return "label-account";
 }
 
+/**
+ * THE LABEL FORM'S STATE, AS ONE VALUE (#758).
+ *
+ * Which row's label form is open, the label it opens with, and the account a
+ * Reconnect replaces. Every way the form opens or closes is an event here, so
+ * the rule is one function a test can drive: a new account (the first one
+ * included) opens the form empty, a Reconnect opens it with that account's
+ * label and remembers that account for that row only, and every close drops
+ * the replaced account. `opened` changes on every opening, so the form starts
+ * again from its label each time.
+ */
+export interface ConnectorLabelFormState {
+  slug: string | null;
+  initial: string;
+  reconnect: { slug: string; accountId: string } | null;
+  opened: number;
+}
+
+export type ConnectorLabelFormEvent =
+  /** The row's primary button chose "label-account": opens the form, or closes it when it is already open there. */
+  | { type: "label-account"; slug: string }
+  /** A Reconnect on one account: the form opens with that account's label. */
+  | { type: "reconnect"; slug: string; accountId: string; alias?: string }
+  /** The server said this app needs a label after all: the form opens again, empty. */
+  | { type: "needs-label"; slug: string }
+  /** Cancel on one row's form. */
+  | { type: "cancel"; slug: string }
+  /** The sign-in started, or the button did something other than labelling. */
+  | { type: "close" };
+
+export const CLOSED_LABEL_FORM: ConnectorLabelFormState = { slug: null, initial: "", reconnect: null, opened: 0 };
+
+export function connectorLabelFormAfter(state: ConnectorLabelFormState, event: ConnectorLabelFormEvent): ConnectorLabelFormState {
+  const open = (slug: string, initial: string, reconnect: ConnectorLabelFormState["reconnect"]) =>
+    ({ slug, initial, reconnect, opened: state.opened + 1 });
+  switch (event.type) {
+    case "label-account":
+      return state.slug === event.slug
+        ? { ...state, slug: null, initial: "", reconnect: null }
+        : open(event.slug, "", null);
+    case "reconnect":
+      return open(event.slug, event.alias ?? "", { slug: event.slug, accountId: event.accountId });
+    case "needs-label":
+      return open(event.slug, "", null);
+    case "cancel":
+      return {
+        ...state,
+        slug: state.slug === event.slug ? null : state.slug,
+        initial: "",
+        reconnect: state.reconnect?.slug === event.slug ? null : state.reconnect,
+      };
+    case "close":
+      return { ...state, slug: null, initial: "", reconnect: null };
+  }
+}
+
+/** What the authorize request carries for a label confirmed on `slug`'s form:
+ *  the label, and the replaced account only when the form was opened by that
+ *  row's Reconnect. */
+export function connectorAuthorizeBody(
+  state: ConnectorLabelFormState,
+  slug: string,
+  alias: ConfirmedConnectLabel,
+): { alias: ConfirmedConnectLabel; reconnect?: string } {
+  return state.reconnect?.slug === slug ? { alias, reconnect: state.reconnect.accountId } : { alias };
+}
+
+/** The label form's hint and the field's accessible name: a Reconnect, an
+ *  additional account and the first account are each worded for what they are. */
+export function connectorLabelFormCopy(input: { service: string; hasAccounts: boolean; reconnecting: boolean }): { hint: string; label: string } {
+  return {
+    hint: input.reconnecting
+      ? "Confirm the label for the account you are reconnecting, then sign in again."
+      : input.hasAccounts ? t("connectedApps.alias.anotherHint") : t("connectedApps.alias.firstHint"),
+    label: input.hasAccounts
+      ? t("connectedApps.alias.anotherLabel", { service: input.service })
+      : t("connectedApps.alias.firstLabel", { service: input.service }),
+  };
+}
+
 export function connectorActionLabel(
   phase: ConnectorInventoryPhase,
   state: { busy: boolean; included: boolean; canContinue: boolean; pending?: boolean; hasAccounts: boolean; failed: boolean },
@@ -530,8 +612,9 @@ export function PluginsPanel() {
     cachedConnectorStatus !== null && !cachedConnectorStatusAuthoritative,
   );
   const [pendingUrls, setPendingUrls] = useState<Record<string, string>>({});
-  const [aliasSlug, setAliasSlug] = useState<string | null>(null);
-  const [aliasDraft, setAliasDraft] = useState("");
+  /** the open label form, and the account a Reconnect replaces while it is open */
+  const [labelForm, setLabelForm] = useState<ConnectorLabelFormState>(CLOSED_LABEL_FORM);
+  const labelFormEvent = (event: ConnectorLabelFormEvent) => setLabelForm((current) => connectorLabelFormAfter(current, event));
   const [busySlug, setBusySlug] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [inventoryPhase, setInventoryPhase] = useState<ConnectorInventoryPhase>(
@@ -1031,15 +1114,14 @@ export function PluginsPanel() {
     pollTimers.current.set(slug, timer);
   };
 
-  const connect = async (slug: string, alias?: string) => {
+  /** Starts a sign-in. Only the label form's confirmed label fits `body`. */
+  const connect = async (slug: string, body: { alias: ConfirmedConnectLabel; reconnect?: string }) => {
     if (desktop !== true) return;
     statusGenerations.current.set(slug, (statusGenerations.current.get(slug) ?? 0) + 1);
     setBusySlug(slug);
     setError(null);
     try {
-      const request: RequestInit = { method: "POST" };
-      if (alias) request.body = JSON.stringify({ alias });
-      const { url } = await api(`/api/connectors/${slug}/authorize`, request);
+      const { url } = await api(`/api/connectors/${slug}/authorize`, { method: "POST", body: JSON.stringify(body) });
       setPendingUrls((current) => ({ ...current, [slug]: url }));
       setStatus((current) => ({
         ...current,
@@ -1050,8 +1132,7 @@ export function PluginsPanel() {
           status: "INITIATED",
         },
       }));
-      setAliasSlug(null);
-      setAliasDraft("");
+      labelFormEvent({ type: "close" });
       startPolling(slug);
       await openConnectUrl(url);
     } catch (e) {
@@ -1059,8 +1140,7 @@ export function PluginsPanel() {
       if (requiresAccountAlias(message)) {
         // Recover gracefully if an existing account was discovered after the
         // button rendered. Show the label field and refresh only this app.
-        setAliasSlug(slug);
-        setAliasDraft("");
+        labelFormEvent({ type: "needs-label", slug });
         setError("This app already has an account. Add a label such as work or personal to connect another.");
         void refreshStatus([slug]);
       } else {
@@ -1074,8 +1154,7 @@ export function PluginsPanel() {
   /** Close the label form without authorizing and return focus to its button. */
   const cancelAlias = (slug: string) => {
     dialogRef.current?.querySelector<HTMLButtonElement>(`[data-connector-action="${CSS.escape(slug)}"]`)?.focus();
-    setAliasSlug((current) => (current === slug ? null : current));
-    setAliasDraft("");
+    labelFormEvent({ type: "cancel", slug });
   };
 
   const disconnectAccount = (slug: string, accountId: string) => {
@@ -1120,7 +1199,7 @@ export function PluginsPanel() {
               // pointless authorize. It ships included.
               const included = card.noAuth === true
                 || (serviceStatus?.connected === true && !accounts.length && !pending && !failed);
-              const addingAccount = aliasSlug === card.slug && !pending;
+              const addingAccount = labelForm.slug === card.slug && !pending;
               const busy = busySlug === card.slug;
               return (
                 <div
@@ -1159,11 +1238,10 @@ export function PluginsPanel() {
                           // Every new account, the first one included, is
                           // labelled before OAuth starts; nothing is
                           // authorized until the label is confirmed.
-                          setAliasSlug((current) => current === card.slug ? null : card.slug);
-                          setAliasDraft("");
+                          labelFormEvent({ type: "label-account", slug: card.slug });
                           return;
                         }
-                        setAliasSlug(null);
+                        labelFormEvent({ type: "close" });
                         setError(null);
                         if (action === "continue") {
                           void openConnectUrl(pendingUrls[card.slug]).catch((e) => setError(e.message));
@@ -1192,17 +1270,37 @@ export function PluginsPanel() {
                     <div className="ml-14 mt-3 space-y-2">
                       {accounts.map((account) => {
                         const active = /^active$/i.test(account.status);
+                        const needsReconnect = active && serviceStatus?.needsReconnect === true;
                         return (
                           <div key={account.id} className="flex items-center gap-2 rounded-lg bg-raised/45 px-3 py-2">
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center gap-1.5 text-[12.5px] font-medium text-ink">
-                                {active && <Check size={13} className="shrink-0 text-success" />}
+                                {active && !needsReconnect && <Check size={13} className="shrink-0 text-success" />}
                                 <span className="truncate">{account.alias || account.id}</span>
                               </div>
                               <div className="mt-0.5 truncate text-[10.5px] text-ink-secondary">
-                                {account.alias ? `${account.id} · ` : ""}{account.status.toLowerCase()}
+                                {account.alias ? `${account.id} · ` : ""}{needsReconnect ? "needs reconnecting" : account.status.toLowerCase()}
                               </div>
                             </div>
+                            {needsReconnect && (
+                              <button
+                                type="button"
+                                data-connector-reconnect={card.slug}
+                                disabled={desktop !== true || busy}
+                                onClick={() => {
+                                  // Same rule as a new account: nothing is
+                                  // authorized until the label form is
+                                  // confirmed. The form opens with this
+                                  // account's label filled in.
+                                  setError(null);
+                                  labelFormEvent({ type: "reconnect", slug: card.slug, accountId: account.id, alias: account.alias });
+                                }}
+                                className="rounded-md bg-accent/15 px-2 py-1 text-[11px] font-medium text-ink transition-colors hover:bg-accent/25 disabled:opacity-40"
+                                aria-label={`Reconnect ${account.alias || account.id} for ${card.label}`}
+                              >
+                                Reconnect
+                              </button>
+                            )}
                             <button
                               type="button"
                               disabled={desktop !== true || busy}
@@ -1221,58 +1319,18 @@ export function PluginsPanel() {
                     </div>
                   )}
                   {desktop === true && addingAccount && (
-                    <form
-                      className="ml-14 mt-3"
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                        const alias = aliasDraft.trim();
-                        if (!alias) {
-                          setError("Enter a label for the account, such as work or personal.");
-                          return;
-                        }
-                        void connect(card.slug, alias);
-                      }}
-                    >
-                      <p id={`connector-alias-hint-${card.slug}`} className="mb-2 text-[11.5px] leading-snug text-ink-secondary">
-                        {accounts.length > 0 ? t("connectedApps.alias.anotherHint") : t("connectedApps.alias.firstHint")}
-                      </p>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <input
-                          autoFocus
-                          value={aliasDraft}
-                          maxLength={64}
-                          onChange={(event) => setAliasDraft(event.target.value)}
-                          onKeyDown={(event) => {
-                            // Cancel only the label form; the dialog stays open.
-                            if (event.key !== "Escape") return;
-                            event.preventDefault();
-                            event.stopPropagation();
-                            cancelAlias(card.slug);
-                          }}
-                          placeholder="Account label (work, personal…)"
-                          aria-label={accounts.length > 0
-                            ? t("connectedApps.alias.anotherLabel", { service: card.label })
-                            : t("connectedApps.alias.firstLabel", { service: card.label })}
-                          aria-describedby={`connector-alias-hint-${card.slug}`}
-                          className="min-w-0 flex-1 basis-40 rounded-lg bg-raised px-3 py-2 text-[12px] text-ink placeholder:text-ink-secondary focus:outline-none focus:ring-1 focus:ring-accent"
-                        />
-                        <button
-                          type="submit"
-                          disabled={busy || !aliasDraft.trim()}
-                          className="rounded-lg bg-accent px-3 py-2 text-[12px] font-medium text-white disabled:opacity-40"
-                        >
-                          Continue
-                        </button>
-                        <button
-                          type="button"
-                          disabled={busy}
-                          onClick={() => cancelAlias(card.slug)}
-                          className="rounded-lg px-3 py-2 text-[12px] text-ink-secondary transition-colors hover:bg-raised hover:text-ink disabled:opacity-40"
-                        >
-                          {t("connectedApps.alias.cancel")}
-                        </button>
-                      </div>
-                    </form>
+                    <ConnectLabelForm
+                      key={`${card.slug}:${labelForm.opened}`}
+                      compact
+                      id={card.slug}
+                      service={card.label}
+                      initial={labelForm.initial}
+                      busy={busy}
+                      {...connectorLabelFormCopy({ service: card.label, hasAccounts: accounts.length > 0, reconnecting: labelForm.reconnect?.slug === card.slug })}
+                      onInvalid={(message) => setError(message)}
+                      onConfirm={(alias) => void connect(card.slug, connectorAuthorizeBody(labelForm, card.slug, alias))}
+                      onCancel={() => cancelAlias(card.slug)}
+                    />
                   )}
                 </div>
               );

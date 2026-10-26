@@ -78,8 +78,10 @@ describe("OpenClaw agent names and instances", () => {
     for (const bad of ["", "Fred", "-x", "a/b", "..", "a".repeat(65), 3, undefined]) {
       expect(isOpenclawAgentName(bad)).toBe(false);
     }
-    expect(openclawSessionKey("fred")).toBe("agent:fred:main");
-    expect(() => openclawSessionKey("a:b")).toThrow();
+    expect(openclawSessionKey("fred", { threadId: "t1", audience: "owner" })).toMatch(/^agent:fred:murage-owner-[0-9a-f]{24}$/);
+    expect(openclawSessionKey("fred", { threadId: "t1" })).toMatch(/^agent:fred:murage-guest-[0-9a-f]{24}$/);
+    expect(() => openclawSessionKey("a:b", { threadId: "t1", audience: "owner" })).toThrow();
+    expect(() => openclawSessionKey("fred", { threadId: "" })).toThrow();
     expect(openclawInstanceIdFor("fred")).toBe("openclaw-agent-fred");
   });
 

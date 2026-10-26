@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Webinars and Events",
     "tagline": "An event run sheet, invitations and follow-up drafts ready for review",
-    "summary": "Booth prepares an event plan and timed run sheet from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For channel strategy, use Channels. For broad operations coordination, use Ops. For teaching cohort operations, use Cohort Ops Control Tower.",
+    "summary": "Booth prepares an event plan and timed run sheet from the material you supply.",
     "category": "Sales",
     "author": {
       "name": "Ferrox Labs",
@@ -60,7 +60,8 @@
         "title": "Webinars and Events",
         "description": "Booth prepares an event plan and timed run sheet from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For channel strategy, use Channels. For broad operations coordination, use Ops. For teaching cohort operations, use Cohort Ops Control Tower.",
         "appearance": {
-          "color": "orange"
+          "color": "orange",
+          "mascotBody": "squircle"
         },
         "skills": [
           "webinar-host",
