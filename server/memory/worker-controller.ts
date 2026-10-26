@@ -1,4 +1,5 @@
 import { bundledModelDirectory, resolveMemoryModelDirectory } from "./model-location.ts";
+import { setScrubRewriteFinisher } from "./scrub-pass.ts";
 import "./model-adoption.ts";
 import { refreshMemoryCheckpoint } from "./consolidate.ts";
 import { fork, type ChildProcess } from "node:child_process";
@@ -11,6 +12,7 @@ import { BACKGROUND_BUSY_MS, awaitWriterGate, database,isDatabaseBusy,transactio
 import { BLOCK_BYTES, ioBudget } from "../io-budget.ts";
 import { claimMemoryJob, deferStaleMemoryWork, hasClaimableMemoryJob, heartbeatMemoryJob, isStaleMemoryPublication, nextMemoryJobDelay, notifyMemoryWork, onMemoryWork, publishMemoryWork, redriveTransientFailedJobs, requeueStaleMemoryWork, STALE_MEMORY_REQUEUE_LIMIT } from "./jobs.ts";
 import { memoryState } from "./repository.ts";
+import { sendSearch } from "./scope-set.ts";
 import { resultSchema, type MemoryWork,type MemorySearchInput,type MemorySearchResult } from "./worker-protocol.ts";
 import { hasPendingProjection, pendingProjectionRecords, rolledCheckpointSql } from "./projection.ts";
 import type { ModelManifest } from "./embeddings.ts";
@@ -29,6 +31,7 @@ import { heldStep } from "../observe.ts";
 
 /** The helper owns the index writer: a checkpoint the reader asks for is answered within this, or counted as not done. */
 export const CHECKPOINT_ACK_MS=5_000;
+export const FINISH_REWRITE_ACK_MS=120_000;
 export const MEMORY_IDLE_SWEEP_MS=30_000;
 /** Queued consolidation drains at most once a second, as before. */
 export const MEMORY_DRAIN_GAP_MS=1_000;
@@ -369,8 +372,9 @@ export class MemoryWorkerController {
         this.claimTurnCritical();return;}
       // Typing and a routine or engine start come first too (owner-first.ts; 1.0.2 bgwork): no claim, projection or idle
       // pass starts while they hold, never past the gate's bound. Running work and its deadlines are checked above.
-      const ownerHold=ownerFirst.admit("memory-worker",{only:["owner-typing","work-starting"]});
-      if(!ownerHold.admitted){
+      // (a delegated reply waiting on a check is admitted past this hold too: hurryLineage)
+      const ownerHold=this.hurrying()?null:ownerFirst.admit("memory-worker",{only:["owner-typing","work-starting"]});
+      if(ownerHold&&!ownerHold.admitted){
         if(requested)this.requested=true;ownerRetryMs=ownerHold.retryInMs;
         // Except what a starting turn itself depends on: its own thread's recent captures (its prompt's capture rolls
         // the thread checkpoint inside the dispatch window). Projection, idle passes and every other scope stay held.
@@ -523,6 +527,15 @@ export class MemoryWorkerController {
   /** Asks for a slice of lineage warming soon (lineage-warm.ts): after a start, and when a turn reaches a thread that is not warm.
    * Idle-only like the status scan: it waits for the owner's turn, typing and load, and each slice is short. */
   wakeLineageWarm(delay=0){this.scheduleLineageWarm(delay);}
+  private hurryUntil=0;
+  /** A delegated reply is waiting on this memory's checks (DELEGATED-REPLY-WITHHELD.md section 4): for `ms`, lineage warming and the
+   * worker's tick are admitted past owner-first (the turn hold, io budget and upgrade yield still apply, so slices stay short). */
+  hurryLineage(ms:number){
+    this.hurryUntil=Math.max(this.hurryUntil,performance.now()+Math.max(0,ms));
+    this.scheduleLineageWarm(0);this.wake();
+  }
+  /** Whether a hurry is in force now. */
+  hurrying():boolean{return performance.now()<this.hurryUntil;}
   private scheduleLineageWarm(delay:number){
     if(this.stopping||!this.started||this.lineageWarmTimer||!this.options.onLineageWarm)return;
     this.lineageWarmTimer=setTimeout(()=>{
@@ -531,7 +544,8 @@ export class MemoryWorkerController {
       if(writersHeldForIndexBuild()){this.deferForHold(this.resumeLineageWarm);return;}
       if(this.turnHeld()||ioBudget.shouldDefer("memory-idle")){this.scheduleLineageWarm(500);return;}
       if(this.upgradeYield()){this.scheduleLineageWarm(UPGRADE_RECHECK_MS);return;}
-      const admission=ownerFirst.admit("memory-lineage");
+      // a delegated reply waiting on this thread's lineage is admitted past owner-first (hurryLineage)
+      const admission=this.hurrying()?{admitted:true as const}:ownerFirst.admit("memory-lineage");
       if(!admission.admitted){this.scheduleLineageWarm(Math.max(500,admission.retryInMs));return;}
       let more=false;
       try{
@@ -685,7 +699,7 @@ export class MemoryWorkerController {
       // An exit before "ready" that nothing asked for (failInit already counted its own kill) is a failed start, never a silent respawn.
       if(!this.ready&&!this.stopping&&this.idleExit!==child&&this.failedStart!==child)this.backOffStart("MEMORY_WORKER_START_FAILED");
       this.failedStart=null;
-      unblockMemoryIndexReader();setWalCheckpointRequester(null);this.settleCheckpoints(false);
+      unblockMemoryIndexReader();setWalCheckpointRequester(null);setScrubRewriteFinisher(null);this.settleCheckpoints(false);
       // A helper that goes away because Murage is quitting says nothing about the job it held: it reschedules without spending an attempt.
       this.modelReady=false;const planned=this.idleExit===child;this.idleExit=null;if(planned&&!this.stopping)this.idleExited=true;
       this.clearHeartbeat();this.failWork(this.stopping?"MEMORY_WORKER_STOPPED":"MEMORY_WORKER_EXITED");this.child=null;this.ready=false;this.indexing=false;
@@ -753,8 +767,8 @@ export class MemoryWorkerController {
         if(event.reset)this.resetPending=true;
         // A turn on its way to the engine comes first: the next tick applies the owing (resetPending) instead.
         if(!this.turnHeld())this.applyIndexReset();
-        this.ready=true;this.initFailures=0;this.clearError("helper");unblockMemoryIndexReader();setWalCheckpointRequester(()=>this.requestCheckpoint());
-        for(const [requestId,pending] of this.queries)if(!pending.sent){pending.sent=true;child.send({type:"query",requestId,input:pending.input});}
+        this.ready=true;this.initFailures=0;this.clearError("helper");unblockMemoryIndexReader();setWalCheckpointRequester(()=>this.requestCheckpoint());setScrubRewriteFinisher(()=>this.requestFinishRewrite());
+        for(const [requestId,pending] of this.queries)if(!pending.sent){pending.sent=true;try{sendSearch(m=>child.send(m),requestId,pending.input);}catch{this.queries.delete(requestId);pending.cleanup();pending.reject(new Error("MEMORY_QUERY_REFUSED"));logSwallowed("recall","MEMORY_QUERY_REFUSED");}}
         if(this.warmOwed){this.warmOwed=false;this.requestWarm(child);}
         this.scheduleTick(handlerStart);return;
       }
@@ -811,6 +825,14 @@ export class MemoryWorkerController {
       if(event.type==="index-aged"){this.indexNote="";console.log("[memory] search index is in age order");return;}
       if(event.type==="index-error"){this.setError("index","MEMORY_INDEX_FAILED");logSwallowed("index","MEMORY_INDEX_FAILED",MEMORY_IDLE_SWEEP_MS);this.indexing=false;this.indexRequestId=null;this.schedule(MEMORY_IDLE_SWEEP_MS);return;}
       // Work is only sent once the helper is ready, so an error before then is its initialisation failing.
+      // A refused search names its request: that search fails and is logged as recall. It is not a capture result.
+      // A refusal for a search that already ended (timed out, cancelled) is logged and dropped; it is never a result of the capture work.
+      if(event.type==="error"&&typeof event.requestId==="string"){
+        const pending=this.queries.get(event.requestId);
+        logSwallowed("recall",String((event as {reason?:unknown}).reason??"INVALID_MEMORY_SEARCH"));
+        if(pending){this.queries.delete(event.requestId);pending.cleanup();pending.reject(new Error("MEMORY_QUERY_REFUSED"));}
+        return;
+      }
       if(event.type==="error"&&!this.ready){this.failInit("MEMORY_WORKER_START_FAILED");return;}
       if(!this.work)return;
       const work=this.work;
@@ -937,19 +959,22 @@ export class MemoryWorkerController {
     if(this.statusScanTimer)clearTimeout(this.statusScanTimer);this.statusScanTimer=null;
     if(this.lineageWarmTimer)clearTimeout(this.lineageWarmTimer);this.lineageWarmTimer=null;
     try{flushMemoryCounters(Date.now(),true);}catch{/* counters are advisory */}
-    setWalCheckpointRequester(null);this.settleCheckpoints(false);
+    setWalCheckpointRequester(null);setScrubRewriteFinisher(null);this.settleCheckpoints(false);
     unblockMemoryIndexReader();closeMemoryIndexReader();
   }
+  /** Asks the helper to end the number scrub's rewrite of the index (MemoryIndex.finishRewrite); true when it acknowledges that it did. */
+  requestFinishRewrite():Promise<boolean>{return this.requestCheckpoint(true);}
   /** Asks the helper (which owns the index writer) to truncate the write-ahead log; true when it acknowledges that it did. */
-  requestCheckpoint():Promise<boolean>{
+  requestCheckpoint(finishRewrite=false):Promise<boolean>{
     const child=this.child;
     if(!child||!this.ready||this.stopping)return Promise.resolve(false);
     const requestId=randomUUID();
     return new Promise<boolean>(resolve=>{
-      const timer=setTimeout(()=>{if(this.checkpoints.delete(requestId))resolve(false);},CHECKPOINT_ACK_MS);
+      // the whole-index merge of a finished rewrite takes longer than a checkpoint
+      const timer=setTimeout(()=>{if(this.checkpoints.delete(requestId))resolve(false);},finishRewrite?FINISH_REWRITE_ACK_MS:CHECKPOINT_ACK_MS);
       timer.unref?.();
       this.checkpoints.set(requestId,ok=>{clearTimeout(timer);resolve(ok);});
-      try{child.send({type:"checkpoint",requestId});}catch{this.checkpoints.delete(requestId);clearTimeout(timer);resolve(false);}
+      try{child.send({type:"checkpoint",requestId,...finishRewrite?{finishRewrite:true}:{}});}catch{this.checkpoints.delete(requestId);clearTimeout(timer);resolve(false);}
     });
   }
   private settleCheckpoints(ok:boolean){for(const done of this.checkpoints.values())done(ok);this.checkpoints.clear();}
@@ -964,7 +989,7 @@ export class MemoryWorkerController {
       this.queries.set(requestId,pending);
       try{
         if(!this.child){if(Date.now()<this.respawnAt)throw new Error("MEMORY_WORKER_START_BACKOFF");this.spawn();}
-        if(this.ready){pending.sent=true;this.child!.send({type:"query",requestId,input});}
+        if(this.ready){pending.sent=true;sendSearch(m=>this.child!.send(m),requestId,input);}
       }catch{this.queries.delete(requestId);pending.cleanup();this.setError("helper","MEMORY_WORKER_START_FAILED");logSwallowed("recall","MEMORY_WORKER_START_FAILED");reject(new Error("MEMORY_WORKER_START_FAILED"));}
     });
   }

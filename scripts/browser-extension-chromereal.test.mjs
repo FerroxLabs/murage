@@ -103,7 +103,9 @@ describe('Fable M7: downloads from owned tabs are cancelled (the debugger cannot
   it('the downloads event then the page event does the same', async () => {
     const f = await ready(); await f.runtime.downloadCreated({ id: 8, url: page.url, finalUrl: page.url });
     expect(f.api.downloads.cancel).not.toHaveBeenCalled();
-    await f.runtime.debuggerEvent({ tabId: 1 }, 'Page.downloadWillBegin', page); expect(f.api.downloads.cancel).toHaveBeenCalledWith(8);
+    await f.runtime.debuggerEvent({ tabId: 1 }, 'Page.downloadWillBegin', page);
+    // B decision: the item is stopped at its filename step (which Chrome runs after onCreated), never removed by the announcement itself
+    expect(await f.runtime.downloadDetermining({ id: 8, url: page.url, finalUrl: page.url })).toBe(true); expect(f.api.downloads.cancel).toHaveBeenCalledWith(8);
   });
   it('a download the owner starts elsewhere is left alone', async () => {
     const f = await ready(); await f.runtime.downloadCreated({ id: 9, url: 'https://other.test/a.zip', finalUrl: 'https://other.test/a.zip', referrer: 'https://other.test/' });

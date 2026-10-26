@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/state/store";
 import { shouldPollTelegramStatus, telegramHealthLabel, telegramStatusFrom, type TelegramStatus } from "@/lib/telegram-status";
+import { copyTextOrThrow } from "@/lib/copy-text";
 
 interface PairCode { code: string; expiresAt: number; username?: string; botIdentityId: string }
 export function TelegramSettings() {
@@ -94,7 +95,7 @@ export function TelegramSettings() {
     </div>
     {pair && !expired && <div className="mt-3 rounded-lg bg-inset p-3 text-[12px] text-ink">
       <p>Send this command to your Telegram bot:</p><code className="mt-2 block break-all select-all">/pair {pair.code}</code>
-      <button type="button" className="mt-2 rounded-lg border border-hairline/40 px-3 py-2" onClick={() => void run("copy", async () => { await navigator.clipboard.writeText(`/pair ${pair.code}`); setNotice("Pairing command copied."); })} disabled={Boolean(busy)}>Copy pairing command</button>
+      <button type="button" className="mt-2 rounded-lg border border-hairline/40 px-3 py-2" onClick={() => void run("copy", async () => { await copyTextOrThrow(`/pair ${pair.code}`); setNotice("Pairing command copied."); })} disabled={Boolean(busy)}>Copy pairing command</button>
       <p className="mt-1 text-ink-secondary">Expires {new Date(pair.expiresAt).toLocaleTimeString()}. Status updates automatically while pairing.</p>
       {username && <a href={`https://t.me/${username}`} target="_blank" rel="noreferrer" className="mt-2 inline-block text-accent hover:underline">Open Telegram bot</a>}
     </div>}

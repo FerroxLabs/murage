@@ -8,7 +8,7 @@ import { ZipFile } from "yazl";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, it } from "vitest";
 import { inspectInstallationArchive, portableArchivePath, writeInstallationArchive } from "./installation-archive.ts";
-import { prepareInstallationRestore } from "./installation-restore-preparation.ts";
+import { prepareInstallationRestore, RESTORE_UNRECOGNISED } from "./installation-restore-preparation.ts";
 import { initializeMessageTables } from "./message-tables.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
@@ -60,11 +60,11 @@ it.each(["trigger", "counts", "cycle"])("rejects a hash-valid external database 
   expect(readdirSync(f.parent).filter(name => name.startsWith(".murage-archive-inspection-"))).toEqual([]);
 });
 
-it.each(["missing-parent", "cycle", "missing-head", "duplicate"])("rejects an external legacy transcript with %s", async kind => {
+it.each(["malformed-parent", "cycle", "missing-head", "duplicate"])("rejects an external legacy transcript with %s", async kind => {
   const f = fixture();
-  const message = { id: "m", at: 1, role: "user", kind: "text", parentId: kind === "cycle" ? "m" : kind === "missing-parent" ? "missing" : null };
+  const message = { id: "m", at: 1, role: "user", kind: "text", parentId: kind === "cycle" ? "m" : kind === "malformed-parent" ? "not a message id" : null };
   await crafted(f, [{ path: "messages-thread.json", text: JSON.stringify({ messages: kind === "duplicate" ? [message, message] : [message], activeLeafId: kind === "missing-head" ? "missing" : "m" }) }]);
-  await expect(prepareInstallationRestore(f.archive, f.parent)).rejects.toMatchObject({ code: kind === "cycle" ? "CYCLIC_MESSAGE_BRANCH" : kind === "missing-parent" ? "INVALID_MESSAGE_PARENT" : kind === "missing-head" ? "INVALID_ACTIVE_BRANCH" : "INVALID_RESTORE_MESSAGE" });
+  await expect(prepareInstallationRestore(f.archive, f.parent)).rejects.toMatchObject({ code: kind === "cycle" ? "CYCLIC_MESSAGE_BRANCH" : kind === "malformed-parent" ? "INVALID_MESSAGE_PARENT" : kind === "missing-head" ? "INVALID_ACTIVE_BRANCH" : "INVALID_RESTORE_MESSAGE" });
 });
 
 it.each(["routines.json", "webhooks.json", "delegation-receipts.json"])("rejects malformed external %s even when archive hashes are valid", async path => {
@@ -78,10 +78,39 @@ it.each(["routines.json", "webhooks.json", "delegation-receipts.json"])("rejects
   expect(readFileSync(f.archive)).toEqual(original);
 });
 
-it.each(["companion/devices.json", "companion", "connection-profiles/old/credentials.bin", "restored-connections.json", "browser-extension/clients.json", "browser-extension/native-host/registration-chrome.json", "browser-extension"])("an external archive cannot install connection authority at %s", async path => {
+// 1.0.6: a restore refuses only a name it writes itself (its review notes, its fresh connection
+// profile, its quarantine folder), in any spelling, and nothing changes.
+it.each(["restored-connections.json", "Restored-Connections.json", "restore-review.json", "recovery-quarantine/old/x.json"])("an external archive cannot place the restore's own record at %s", async path => {
   const f = fixture();
-  await crafted(f, [{ path, text: "injected-connection-authority" }]);
+  await crafted(f, [{ path: "bots.json", text: "[]" }, { path, text: "injected-restore-record" }]);
+  const original = readFileSync(f.archive);
   await expect(prepareInstallationRestore(f.archive, f.parent)).rejects.toMatchObject({ code: "RESERVED_RESTORE_COMPONENT" });
+  expect(readFileSync(f.archive)).toEqual(original);
+});
+
+// Two spellings of one top-level folder are one folder on a case-insensitive disk: leaving the
+// unknown spelling out would take the owner's files with it, so the restore stops and nothing changes.
+it.each([["workspaces/bot/notes.md", "Workspaces/bot/secret.md"], ["workspaces/bot/notes.md", "WORKSPACES/other/x.md"]])("refuses an archive holding %s and %s, two spellings of one top-level name", async (first, second) => {
+  const f = fixture();
+  await crafted(f, [{ path: "bots.json", text: "[]" }, { path: first, text: "owner-notes" }, { path: second, text: "other-spelling" }]);
+  const original = readFileSync(f.archive);
+  await expect(prepareInstallationRestore(f.archive, f.parent)).rejects.toMatchObject({ code: "UNSAFE_ARCHIVE_PATH" });
+  expect(readFileSync(f.archive)).toEqual(original);
+  expect(readdirSync(f.parent).filter(name => name.startsWith(".murage-archive-inspection-"))).toEqual([]);
+});
+
+const walkFiles = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap(entry => entry.isDirectory() ? walkFiles(join(dir, entry.name)) : [join(dir, entry.name)]);
+
+// Device pairings and connection profiles from another computer are never installed, and they
+// no longer stop the whole restore: each is left out and listed once.
+it.each(["companion/devices.json", "companion", "connection-profiles/old/credentials.bin", "browser-extension/clients.json", "browser-extension/native-host/registration-chrome.json", "browser-extension", "bx-run/x.json"])("an external archive cannot install connection authority at %s, and the restore still completes", async path => {
+  const f = fixture();
+  await crafted(f, [{ path: "bots.json", text: "[]" }, { path, text: "injected-connection-authority" }]);
+  const original = readFileSync(f.archive);
+  const result = await prepareInstallationRestore(f.archive, f.parent);
+  for (const file of walkFiles(result.stateDirectory)) expect(readFileSync(file).includes("injected-connection-authority"), file).toBe(false);
+  expect(result.modifications.filter(item => item.component === path.split("/")[0])).toEqual([{ component: path.split("/")[0], action: RESTORE_UNRECOGNISED }]);
+  expect(readFileSync(f.archive)).toEqual(original);
 });
 
 it("round trips a private installation archive without changing source or exporting configured credentials", async () => {
@@ -169,4 +198,20 @@ it("refuses cancellation without leaving partial extraction directories", async 
 
 it.each(["../outside", "/root", "C:/data", "a\\b", "a//b", "a/./b", "a/../b", "NUL.txt", "a:stream", "a. "])("refuses unsafe portable path %s", path => {
   expect(portableArchivePath(path)).toBe(false);
+});
+
+// 1.0.6 (was A3, a refusal): state a backup never captures (script-access grants, credentials,
+// provider keys, a kept login-shell environment, a VM home) is never installed, in any spelling,
+// and never makes the whole restore fail. It is left out, listed once, and stays in the backup file.
+it.each(["mcp-grants.json", "MCP-grants.json", "Mcp-Grants.JSON", "credentials.bin", "providers/key.json", "mcp-access.token", "env/owner-env.0123456789abcdef", "vm-home/x.json", "learning-local/b/l.json"])("leaves out %s, which a backup never captures, and the restore still completes", async path => {
+  const f = fixture();
+  await crafted(f, [{ path: "bots.json", text: "[]" }, { path, text: "{\"planted\":\"never-restored-canary\"}" }]);
+  const original = readFileSync(f.archive);
+  const result = await prepareInstallationRestore(f.archive, f.parent);
+  const top = path.split("/")[0]!;
+  expect(readdirSync(result.stateDirectory).map(name => name.toLowerCase())).not.toContain(top.toLowerCase());
+  expect(readdirSync(result.stateDirectory)).toContain("bots.json");
+  for (const file of walkFiles(result.stateDirectory)) expect(readFileSync(file).includes("never-restored-canary"), file).toBe(false);
+  expect(result.modifications.filter(item => item.component === top)).toEqual([{ component: top, action: RESTORE_UNRECOGNISED }]);
+  expect(readFileSync(f.archive)).toEqual(original);
 });

@@ -26,6 +26,17 @@ describe("appendNative", () => {
     });
   });
 
+  it("09-A5: a credential streamed across partial-message deltas cannot be rebuilt from the stored frames", () => {
+    const thread = "t-stream-split-key";
+    const frame = (text: string) => ({ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } } });
+    for (const piece of ["Your key is ", "sk-ant-", "api03-AbCdEf01", "23456789xyzXYZ0123456789", " done"]) appendNative(thread, { dir: "in", source: "fixture", msg: frame(piece) });
+    const text = readFileSync(join(NATIVE_DIR, `${thread}.ndjson`), "utf8").trimEnd().split("\n").map((line) => JSON.parse(line).msg.event.delta.text).join("");
+    expect(text).not.toContain("AbCdEf01");
+    expect(text).not.toContain("xyzXYZ");
+    expect(text).toContain("Your key is ");
+    expect(text).toContain(" done");
+  });
+
   it("bounds repeated multibyte and image-heavy records and keeps a recent ordinary reply", () => {
     const thread = "t-size-limits";
     for (let i = 0; i < 12; i++) {

@@ -1684,7 +1684,7 @@ describe("RoutineManager", () => {
       webhookName: "New ticket",
       prompt: "Handle ticket 42",
       botId: "ember-webhook",
-      runOn: "cloud",
+      runOn: "ember",
       deliveryId: "delivery-42",
       receivedAt,
     });
@@ -1699,7 +1699,7 @@ describe("RoutineManager", () => {
     });
     expect(queued).not.toHaveProperty("durationMinutes");
     expect(h.started).toEqual([{ botId: "ember-webhook", threadId: "thread-1", prompt: "Handle ticket 42" }]);
-    expect(h.runOns).toEqual(["cloud"]);
+    expect(h.runOns).toEqual(["ember"]);
     expect(h.triggerSources).toEqual(["webhook"]);
     expect(h.taskActivations).toEqual([true]);
   });
@@ -2376,5 +2376,168 @@ describe("a run's history lines (the routine carve-out)", () => {
     expect(run.notesMore).toBe(7);
     const reloaded = new RoutineManager(h.options);
     expect(reloaded.listRuns().find((item) => item.id === queued.id)).toMatchObject({ notes: run.notes, notesMore: 7 });
+  });
+});
+
+describe("unknown routine file fields round-trip (104 S4)", () => {
+  it("keeps unknown file-level, routine-level and schedule fields across a save", () => {
+    const h = harness();
+    const file = h.options.file!;
+    h.manager.create({
+      name: "Keep fields", prompt: "p", botId: "bot-a", target: "bot", runOn: "ember", enabled: false,
+      schedule: { type: "interval", everyMinutes: 30, anchorAt: h.nowValue() },
+    });
+    const disk = JSON.parse(readFileSync(file, "utf8"));
+    disk.futureFileField = { keep: true };
+    disk.routines[0].futureRoutineField = "x";
+    disk.routines[0].schedule.futureScheduleField = 7;
+    writeFileSync(file, JSON.stringify(disk, null, 2));
+    const h2 = (() => { const m = new RoutineManager({ ...h.options }); return m; })();
+    h2.create({
+      name: "Second", prompt: "p", botId: "bot-a", target: "bot", runOn: "ember", enabled: false,
+      schedule: { type: "daily", time: "09:00", weekdays: [1] },
+    });
+    const after = JSON.parse(readFileSync(file, "utf8"));
+    expect(after.futureFileField).toEqual({ keep: true });
+    const first = after.routines.find((r: any) => r.name === "Keep fields");
+    expect(first.futureRoutineField).toBe("x");
+    expect(first.schedule.futureScheduleField).toBe(7);
+  });
+});
+
+// ── SL-L: a routine waiting for its first seat (1.0.4 item 127) ───────────
+describe("SL-L: a routine run waiting in line for a busy folder, computer or browser", () => {
+  const create = (h: ReturnType<typeof harness>) => h.manager.create({
+    name: "Folder sweep",
+    prompt: "Sweep the folder",
+    botId: "ember-seat",
+    schedule: { type: "daily", time: "23:59", weekdays: [1] },
+    timeoutMinutes: 60,
+  });
+  const runOf = (manager: RoutineManager, id: string) => manager.listRuns().find((candidate) => candidate.id === id)!;
+  async function running(h: ReturnType<typeof harness>) {
+    const routine = create(h);
+    const queued = h.manager.runNow(routine.id)!;
+    await h.manager.tick();
+    const run = runOf(h.manager, queued.id);
+    expect(run.status).toBe("running");
+    return { routine, run };
+  }
+
+  it("hands the scheduler's own run id to the turn it starts", async () => {
+    const h = harness();
+    const ids: Array<string | undefined> = [];
+    h.options.startTurn = async (botId, threadId, prompt, _runOn, _trigger, _onError, _eventId, _notOwner, routineRunId) => {
+      h.started.push({ botId, threadId, prompt });
+      ids.push(routineRunId);
+    };
+    const { run } = await running(h);
+    expect(ids).toEqual([run.id]);
+  });
+
+  // User failure: a routine queued behind a busy folder is failed at restart instead of running.
+  it("puts a run that was waiting for its first seat back in the queue at restart, and runs it once", async () => {
+    const h = harness();
+    const { run } = await running(h);
+    const waitingSince = h.nowValue();
+    h.manager.runSeatWait(run.id, "working-folder");
+    expect(runOf(h.manager, run.id)).toMatchObject({ status: "running", seatWait: { kind: "working-folder", at: waitingSince } });
+    const reloaded = new RoutineManager(h.options);
+    const back = runOf(reloaded, run.id);
+    expect(back).toMatchObject({ status: "queued", scheduledFor: run.scheduledFor });
+    expect(back.notes).toContain("waited for a busy working folder across a restart");
+    expect(back.seatWait).toBeUndefined();
+    expect(back.startedAt).toBeUndefined();
+    expect(back.error).toBeUndefined();
+    expect(h.failed).toEqual([]);
+    const before = h.started.length;
+    await reloaded.tick();
+    await reloaded.tick();
+    expect(h.started.length).toBe(before + 1);
+    expect(runOf(reloaded, run.id).status).toBe("running");
+    expect(reloaded.listRuns().filter((candidate) => candidate.routineId === run.routineId)).toHaveLength(1);
+  });
+
+  // User failure: a run that had already started work is run a second time after a restart.
+  it("fails, as before, a run whose seat was granted or that a card answer carried on", async () => {
+    const granted = harness();
+    const first = (await running(granted)).run;
+    granted.manager.runSeatWait(first.id, "computer");
+    granted.manager.runSeatWait(first.id, null);
+    expect(runOf(granted.manager, first.id).seatGrantedAt).toBe(granted.nowValue());
+    const afterGrant = runOf(new RoutineManager(granted.options), first.id);
+    expect(afterGrant).toMatchObject({ status: "failed", error: "Murage restarted while this routine was running" });
+
+    const carried = harness();
+    const second = (await running(carried)).run;
+    carried.manager.runSeatWait(second.id, "working-folder");
+    const threadId = second.threadId!;
+    expect(carried.manager.cardOpened(threadId, "req-1", "Allow the folder?")).toBe(true);
+    carried.manager.handleRuntimeEvent({ eventId: "e1", provider: "fake", threadId, createdAt: new Date().toISOString(), type: "turn.completed", ok: true });
+    carried.setNow(carried.nowValue() + 60_000);
+    expect(carried.manager.cardClosed(threadId, "req-1")).toBe(true);
+    // the continuation's own wait is never recorded as a first seat
+    carried.manager.runSeatWait(second.id, "browser");
+    expect(runOf(carried.manager, second.id).seatWait?.kind).toBe("working-folder");
+    const afterResume = runOf(new RoutineManager(carried.options), second.id);
+    expect(afterResume).toMatchObject({ status: "failed", error: "Murage restarted while this routine was running" });
+  });
+
+  // User failure: two copies of the same routine run after a restart.
+  it("cancels the recovered run when a later occurrence is already queued, so exactly one runs", async () => {
+    const h = harness();
+    const { routine, run } = await running(h);
+    h.manager.runSeatWait(run.id, "working-folder");
+    h.setBot("busy");
+    const later = h.manager.runNow(routine.id)!;
+    await h.manager.tick();
+    expect(runOf(h.manager, later.id).status).toBe("queued");
+    const reloaded = new RoutineManager(h.options);
+    const recovered = runOf(reloaded, run.id);
+    expect(recovered.status).toBe("cancelled");
+    expect(recovered.notes).toContain("a later occurrence is already queued");
+    expect(runOf(reloaded, later.id).status).toBe("queued");
+    h.setBot("ready");
+    const before = h.started.length;
+    await reloaded.tick();
+    await reloaded.tick();
+    expect(h.started.length).toBe(before + 1);
+    expect(reloaded.listRuns().filter((candidate) => candidate.status === "running").map((candidate) => candidate.id)).toEqual([later.id]);
+  });
+
+  // User failure: a 60-minute routine is stopped by its own limit while it only waited in line.
+  it("does not charge time in line against the run limit, and counts it from the grant", async () => {
+    const h = harness();
+    const { run } = await running(h);
+    const startedAt = run.startedAt!;
+    h.manager.runSeatWait(run.id, "working-folder");
+    h.setNow(startedAt + 120 * 60_000);
+    await h.manager.tick();
+    expect(runOf(h.manager, run.id).status).toBe("running");
+    expect(h.interruptedTurns).toEqual([]);
+    h.manager.runSeatWait(run.id, null);
+    h.setNow(startedAt + 179 * 60_000);
+    await h.manager.tick();
+    expect(runOf(h.manager, run.id).status).toBe("running");
+    h.setNow(startedAt + 180 * 60_000);
+    await h.manager.tick();
+    expect(runOf(h.manager, run.id)).toMatchObject({ status: "failed", error: "Stopped after reaching the 60-minute run limit" });
+    expect(h.interruptedTurns).toHaveLength(1);
+  });
+
+  // Downgrade to 1.0.3: the waiting row must be one 1.0.3 reads (a known
+  // status, plain extra fields its loader spreads) and fails as a live run.
+  it("downgrade rehearsal: a waiting row is a plain running row and keeps its fields when failed", async () => {
+    const h = harness();
+    const { run } = await running(h);
+    h.manager.runSeatWait(run.id, "working-folder");
+    const saved = readRoutinesWithRuns(h.options.file!).runs.find((candidate: { id: string }) => candidate.id === run.id) as Record<string, unknown>;
+    expect(saved.status).toBe("running");
+    expect(saved.seatWait).toEqual({ kind: "working-folder", at: h.nowValue() });
+    expect(JSON.parse(JSON.stringify(saved))).toEqual(saved);
+    // what 1.0.3 does with any live row: failed, nothing dropped
+    h.manager.runSeatWait(run.id, null);
+    const failed = runOf(new RoutineManager(h.options), run.id);
+    expect(failed).toMatchObject({ status: "failed", error: "Murage restarted while this routine was running", seatGrantedAt: h.nowValue() });
   });
 });

@@ -26,11 +26,11 @@ icon: Clock
 ## Spending ceiling and setup backup in 1.0.3
 
 - **The monthly learning ceiling holds.** Replies that report no usage are counted as unmetered, and learning stops at the ceiling you set.
-- **First-run backup ends verified.** Setup finishes only when your first backup has run and checked out, or when you have turned backups off yourself. A lost record of either no longer lets setup finish early.
+- **First-run backup ends verified.** Setup finishes only when your first backup has run and checked out, or when you have turned backups off yourself. Setup checks both records before it finishes.
 
 ## Rooms and memory in 1.0.3
 
-- **A room with memory off works as it should.** A room member whose memory is off keeps its place in the conversation, and Keep all lets every turn run.
+- **Rooms run with memory off.** A room member whose memory is off keeps its place in the conversation, and Keep all lets every turn run.
 - **Rooms keep their order.** Each message in a room has one place in the conversation, on every window and on your phone.
 - **Search and browse show your newest memories first.**
 
@@ -74,8 +74,8 @@ icon: Clock
 - **Hand-offs return your teammate's words after memory-settings or team changes.** Change a bot's memory settings, add or remove a teammate, or switch permissions, and the next hand-off still brings the teammate's answer straight back to the asking bot.
 - **Hand-offs never hold.** Delegating to a teammate always answers the asker at once, with the teammate's words or a plain line saying what happened.
 - **The asker is woken when a shared teammate answers.** A hand-off from a direct chat to a shared teammate starts the asker's next turn when the answer arrives, so the bot carries on without a nudge.
-- **A clean reply goes through as written.** A reply from a turn that began after a change is no longer caught by the earlier memory check, so it reaches the channel when it is sent.
-- **Earlier replies come back.** Replies that 1.0.2 saved as withheld in your own conversations are restored after the upgrade. When Murage starts, it checks them again and restores each one whose words are still stored.
+- **A clean reply goes through as written.** A reply from a turn that began after a change goes straight to the channel when it is sent.
+- **Replies held in 1.0.2 are restored.** Replies that 1.0.2 saved as withheld in your own conversations are restored after the upgrade. When Murage starts, it checks them again and restores each one whose words are still stored.
 - **Your roster, permissions and settings stay yours to change.** A change holds only the replies of turns that began before it; new turns go straight through.
 - **Delegating bots follow through.** When a bot hands work to a teammate, the follow-through starts when the reply arrives, at the level the asker asked under, and Murage asks again if your authority has changed since. Each owed follow-through is one durable record, so a restart does not lose it.
 
@@ -97,7 +97,7 @@ icon: Clock
 - **Forgetting a memory is quick and complete.** Removing a memory costs only its own deletion, and the memory helper starts with the server's data directory, so it always works on the right store.
 - **Memory changes settle in the background at a steady pace.** Changes to what a bot may remember are applied in measured slices under a per-minute budget, so your rooms keep responding while the work completes.
 - **The memory panel and review section draw on first open,** and markup drawn before the sanitizer loaded is drawn again once it is ready.
-- **First paint is back under budget,** with the engine sign-in work moved out of the way.
+- **First paint is quicker,** with the engine sign-in work moved out of the way.
 - **Routines due at boot run.** A routine that came due while Murage was closed runs when it starts and frees its thread.
 - **Threads recover from a failed turn.** A turn whose own failure handling fails keeps the thread it was using.
 - **A bot picks up the conversation right after a restart.** The first turn after Murage restarts rebuilds the conversation in full, so the bot carries on where you left off.

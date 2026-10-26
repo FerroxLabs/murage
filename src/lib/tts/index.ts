@@ -69,6 +69,13 @@ const VOICE_NO_ANSWER = "The voice service didn't answer. Try again in a moment.
 /** What to show when the harness refuses a voice request. Its own sentences
  *  ("Flux rejected the saved key...") are kept; a bare status, or the 404
  *  body it gives a request it will not place ("no such route"), is not. */
+/** A voice sample from the picker (voice-picker-model's previewMessageId).
+ *  The harness then speaks exactly that voice or says why not, rather than
+ *  standing another voice in for it as a call would. */
+function isPreview(messageId: string | undefined): boolean {
+  return Boolean(messageId?.startsWith("voice-preview:"));
+}
+
 export function voiceFailure(status: number, said: unknown): string {
   const text = typeof said === "string" ? said.trim() : "";
   if (status === 404 || status === 403 || /^no such route$/i.test(text)) return VOICE_UNREACHABLE;
@@ -486,7 +493,7 @@ export class Speaker {
     // turn — the only gap the listener hears is the first.
     type Rendered = { blob: Audible; error?: never } | { blob?: never; error: unknown };
     const render = (utterance: string): Promise<Rendered> =>
-      this.render(utterance, opts.voiceId, controller.signal, opts.botId, player).then(
+      this.render(utterance, opts.voiceId, controller.signal, opts.botId, player, undefined, isPreview(opts.messageId)).then(
         (blob) => ({ blob }),
         (error: unknown) => ({ error }),
       );
@@ -819,13 +826,13 @@ export class Speaker {
   }
 
   /** Resolves as soon as the audio starts arriving; see Incoming. */
-  private async render(text: string, voiceId: string | undefined, signal: AbortSignal, botId: string | undefined, player: ClipPlayer, timing?: ClipTiming): Promise<Audible> {
+  private async render(text: string, voiceId: string | undefined, signal: AbortSignal, botId: string | undefined, player: ClipPlayer, timing?: ClipTiming, preview = false): Promise<Audible> {
     const askedAt = this.now();
     const res = await fetch("/api/tts/speak", {
       method: "POST",
       redirect: "error",
       headers: { "content-type": "application/json", ...desktopCallerHeaders() },
-      body: JSON.stringify({ text, voiceId, botId }),
+      body: JSON.stringify({ text, voiceId, botId, ...(preview ? { preview: true } : {}) }),
       signal,
     });
     if (!res.ok) {

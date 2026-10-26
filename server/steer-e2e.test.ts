@@ -32,8 +32,10 @@ const currentRequestMarker = "\n\nCurrent request:\n";
 const memoryLine = /^- m[1-9][0-9]{0,2} \([^()\n]+\) "(?:[^"\\\n]|\\.)*"$/;
 // The date line rides on top of every message (withNowLine) and the fake
 // echoes it back. Only the request itself is under test here.
+/** An owner turn opens with the Where I belong block (1.0.6 venue awareness, eaea5227e, merged 064472f7a): framing, not the request. */
+const VENUE_BLOCK = /^(bot:reply to: )<where-i-belong>\n[\s\S]*?\n<\/where-i-belong>\n\n/;
 function currentRequestEcho(text: string): string {
-  return requestEcho(text).replace(/^(bot:reply to: )It is now [^\n]*\n\n/, "$1");
+  return requestEcho(text.replace(VENUE_BLOCK, "$1")).replace(/^(bot:reply to: )It is now [^\n]*\n\n/, "$1").replace(VENUE_BLOCK, "$1");
 }
 function requestEcho(text: string): string {
   const prefix = "bot:reply to: ";

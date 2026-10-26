@@ -198,6 +198,8 @@ function prepare(intake: Intake, inspected: ReturnType<typeof inspect>, options:
       // format has no such field). Raising the level is the owner's own
       // later action in the bot's settings.
       composio: false, computer: "off", browser: false, autoApprove: false, fullAccess: false, noLimits: false, chiefOfStaff: false,
+      // A draft-only profile stays draft-only: the relay reads this, not the prompt.
+      ...(agent.outbound === "draft-only" ? { draftOnly: true as const } : {}),
       section: teamSection(agent.team),
       ...(playbooks.length ? { playbooks: structuredClone(playbooks) } : {}),
       installedPackage: { id: pkg.id, name: pkg.name, release: pkg.release, requiredApps: pkg.requirements.apps.map((app) => ({ ...app })),

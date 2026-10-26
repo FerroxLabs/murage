@@ -246,22 +246,32 @@ export async function refreshSession(): Promise<boolean> {
 }
 
 export type EnterResult = "signed-in" | "expired" | "too-many" | "hold" | "failed";
-/** Spends the ticket with this browser's keys and a proof signed by the session key; stores the deviceId the home answers. */
+/** The remembered-owner state the last successful enter answered: whether this browser is now an owner browser and, for a
+ *  remembered-owner factor, when it expires. The device list UI reads it; a stolen cookie never sets it (no enter). */
+let lastOwner: { owner: boolean; ownerUntil?: number } = { owner: false };
+export const enteredOwnerState = (): { owner: boolean; ownerUntil?: number } => lastOwner;
+/** Spends the ticket with this browser's keys: a proof signed by the session key, and (§4.2) an assertionProof signed by the
+ *  assertion key, both over this ticket. Stores the deviceId the home answers and records the owner state it reports. */
 export async function enterWithTicket(ticket: string): Promise<EnterResult> {
   const device = await ensureDevice();
   const proof = await sign(device.privateKey, `murage-door-v2:${ticket}`);
-  const entered = await post("/api/cloud/enter", { ticket, device: { deviceId: device.deviceId, publicKey: await pemOf(device.publicKey), assertionKey: await pemOf(device.assertionPublicKey), proof } });
+  const assertionProof = await sign(device.assertionPrivateKey, `murage-door-v2-assertion:${ticket}`);
+  const entered = await post("/api/cloud/enter", { ticket, device: { deviceId: device.deviceId, publicKey: await pemOf(device.publicKey), assertionKey: await pemOf(device.assertionPublicKey), proof, assertionProof } });
   if (entered.status === 429) return "expired";
   if (entered.status === 403) {
     const reason = entered.body?.reason;
     return reason === "too_many_devices" ? "too-many" : reason === "hold_required" ? "hold" : reason === "expired" ? "expired" : "failed";
   }
   if (entered.status !== 200 || entered.body?.state !== "signed-in" || typeof entered.body.deviceId !== "string") return "failed";
+  lastOwner = { owner: entered.body?.owner === true, ...(typeof entered.body?.ownerUntil === "number" ? { ownerUntil: entered.body.ownerUntil } : {}) };
   try { await saveDevice({ ...device, deviceId: entered.body.deviceId }); } catch (error) { reportDoorProblem("device_save", error); throw error; }
   return "signed-in";
 }
 
-export interface HomeDevice { id: string; scope: string; addedAt: number | string | null; lastSeenAt: number | string | null; keyHash: string }
+export interface HomeDevice { id: string; scope: string; addedAt: number | string | null; lastSeenAt: number | string | null; keyHash: string;
+  /** The LIVE owner factor this device carries (server/cloud-sessions.ts listDevices): "remembered-owner" is an owner until
+   *  `factorExpiresAt`; another non-empty value is an owner with no expiry; null or false is chat only. Older homes omit it. */
+  factor?: "remembered-owner" | (string & {}) | false | null; factorExpiresAt?: number | null }
 export async function listDevices(): Promise<{ devices: HomeDevice[]; self: string | null } | null> {
   try {
     const res = await fetch(DEVICES_PATH, { credentials: "same-origin", redirect: "error", headers: desktopCallerHeaders() });
@@ -278,4 +288,13 @@ export async function forgetThisBrowser(): Promise<boolean> {
     await forgetDevice();
     return true;
   } catch (error) { reportDoorProblem("device_forget", error); return false; }
+}
+/** "Make this browser chat-only": drops just the owner factor on `deviceId` by posting the home's own owner-factor revoke
+ *  (server/cloud-request-auth.ts POST /api/cloud/devices/:id/owner/revoke -> revokeOwnerFactor, which runs the revoke and the
+ *  watermark in one transaction). The device stays connected for chat. True only when the home answers 200. */
+export async function makeChatOnly(deviceId: string): Promise<boolean> {
+  try {
+    const res = await post(`${DEVICES_PATH}/${encodeURIComponent(deviceId)}/owner/revoke`, {});
+    return res.status === 200;
+  } catch { return false; }
 }

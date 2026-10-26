@@ -401,9 +401,16 @@ describe("lane cards review 2", () => {
     const schemas = await import("./drivers/project-tool-schemas.ts");
     expect(listeners()).toBe(before);
     expect(schemas.PROJECT_TOOLS.map((tool: { name: string }) => tool.name)).toContain("project_card_manage");
+    // 1.0.7 venue awareness part 2 moved the venue_read_messages schema and its body builder into the same module, so the proxy now
+    // takes three names from it; each must come from the schemas module (loaded above with no stdin listener), never be defined in the proxy.
+    expect(schemas.VENUE_READ_TOOL.name).toBe("venue_read_messages");
+    expect(typeof schemas.venueReadBody).toBe("function");
     const proxy = readFileSync(new URL("./drivers/agents-proxy.ts", import.meta.url), "utf8");
-    expect(proxy).toMatch(/import \{ PROJECT_TOOLS \} from "\.\/project-tool-schemas\.ts";/);
-    expect(proxy).not.toMatch(/const PROJECT_TOOLS\b/);
+    const schemaImport = proxy.match(/^import \{ ([\w, ]+) \} from "\.\/project-tool-schemas\.ts";$/m);
+    expect(schemaImport, "agents-proxy.ts imports its tool schemas from ./project-tool-schemas.ts").not.toBeNull();
+    const imported = schemaImport![1]!.split(",").map((name) => name.trim());
+    expect(imported).toEqual(expect.arrayContaining(["PROJECT_TOOLS", "VENUE_READ_TOOL", "venueReadBody"]));
+    for (const name of imported) expect(proxy).not.toMatch(new RegExp(`(?:const|let|var|function)\\s+${name}\\b`));
     expect(readFileSync(new URL("./project-review-converge.test.ts", import.meta.url), "utf8")).not.toMatch(/from "\.\/drivers\/agents-proxy\.ts"/);
   });
 });

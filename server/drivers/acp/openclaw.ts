@@ -63,7 +63,7 @@ import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { writeFileAtomic } from "../../atomic.ts";
 import { DATA_DIR } from "../../config.ts";
-import type { ModelCatalog } from "../../contracts.ts";
+import type { ModelCatalog, SendTurnInput } from "../../contracts.ts";
 import { execCli } from "../../procs.ts";
 import { AskStopRefusal, ASK_STOP_OPENCLAW_OLD_NOTE } from "../ask-stop.ts";
 import { createAcpDriver, type AcpConfig, type AcpSupport } from "./core.ts";
@@ -87,11 +87,55 @@ const CATALOG: ModelCatalog = {
 
 type OpenclawAgentConfig = { agent?: string } | undefined;
 
-/** argv AFTER the binary: enter ACP stdio mode for one named agent. Every
- * spawn names its agent, so nothing OpenClaw keeps as a default can change who
- * answers. The one place to extend for the future remote form. */
-export function openclawBridgeArgs(config: OpenclawAgentConfig): string[] {
-  return ["acp", "--session", openclawSessionKey(openclawAgentOf(config))];
+const generationsPath = (dataDir: string): string => join(dataDir, "native", "openclaw-session-generations.json");
+
+function readGenerations(dataDir: string): Record<string, number> {
+  try {
+    const parsed = JSON.parse(readFileSync(generationsPath(dataDir), "utf8")) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(Object.entries(parsed as Record<string, unknown>).filter(([, value]) => Number.isSafeInteger(value) && (value as number) > 0)) as Record<string, number>;
+  } catch {
+    return {};
+  }
+}
+
+/** How many times this conversation's OpenClaw session was reset (0 when never). */
+export function openclawSessionGeneration(threadId: string, dataDir = DATA_DIR): number {
+  return readGenerations(dataDir)[threadId] ?? 0;
+}
+
+/** A reset turn (edit, rewind, memory revocation) moves the conversation to a new gateway key: the gateway keeps
+ *  one conversation per key, so the old key's history, which holds what the owner removed, is attached to nobody. */
+export function bumpOpenclawSessionGeneration(threadId: string, dataDir = DATA_DIR): number {
+  const all = readGenerations(dataDir);
+  const next = (all[threadId] ?? 0) + 1;
+  all[threadId] = next;
+  mkdirSync(join(dataDir, "native"), { recursive: true, mode: 0o700 });
+  writeFileAtomic(generationsPath(dataDir), `${JSON.stringify(all)}\n`, { mode: 0o600 });
+  return next;
+}
+
+/** argv AFTER the binary: enter ACP stdio mode for one named agent, on the
+ * gateway conversation that belongs to this Murage conversation and audience
+ * (openclawSessionKey). Every spawn names its agent, so nothing OpenClaw keeps
+ * as a default can change who answers, and the bridge binds every session it
+ * opens or loads to this key, so no other conversation's history is reachable.
+ * The old shared `agent:<agent>:main` history is orphaned in the gateway and
+ * attached to nobody; every conversation and person starts fresh on its own key.
+ * The one place to extend for the future remote form. */
+export function openclawBridgeArgs(config: OpenclawAgentConfig, turn: Pick<SendTurnInput, "threadId" | "warmIdentity">): string[] {
+  return ["acp", "--session", openclawTurnSessionKey(config, turn)];
+}
+
+/** The Gateway session a turn runs on: the one key openclawBridgeArgs hands the bridge and the Ask hard stop
+ *  (applyOpenclawAskStop) sets read-only, so the stop always lands on the session the turn uses. */
+export function openclawTurnSessionKey(config: OpenclawAgentConfig, turn: Pick<SendTurnInput, "threadId" | "warmIdentity">): string {
+  return openclawSessionKey(openclawAgentOf(config), {
+    threadId: turn.threadId,
+    generation: openclawSessionGeneration(turn.threadId),
+    audience: turn.warmIdentity?.audience,
+    humanPrincipal: turn.warmIdentity?.humanPrincipal,
+  });
 }
 
 /** OpenClaw's inline exec directive on an Ask turn, "for this run only": no shell command runs at all (it can only
@@ -197,10 +241,11 @@ async function currentPermissionMode(call: OpenclawGatewayCall, cli: string, key
  * the session still shows "read-only" (an owner who changed it since keeps their choice), then drop the record. With
  * no record nothing is called, so Auto and Full access run as before.
  */
-export async function applyOpenclawAskStop(ctx: { env: Record<string, string | undefined>; config: AcpConfig; askLevel: boolean },
+export async function applyOpenclawAskStop(ctx: { env: Record<string, string | undefined>; config: AcpConfig; turn: Pick<SendTurnInput, "threadId" | "warmIdentity">; askLevel: boolean },
   call: OpenclawGatewayCall = openclawGatewayCall, dataDir = DATA_DIR, probeVersion: OpenclawVersionProbe = openclawVersionProbe): Promise<void> {
   const cli = ctx.config.cli || "openclaw";
-  const key = openclawSessionKey(openclawAgentOf(ctx.config as OpenclawAgentConfig));
+  // the turn's own Gateway session (one per conversation and audience), the one its bridge runs on
+  const key = openclawTurnSessionKey(ctx.config as OpenclawAgentConfig, ctx.turn);
   const recordPath = openclawAskStopRecordPath(cli, key, dataDir);
   const record = readRecord(recordPath);
   if (ctx.askLevel) {
@@ -254,7 +299,8 @@ export const openclawSupport: AcpSupport = {
     signInCommand: "openclaw onboard",
   },
   decodeExtra: (raw) => (isOpenclawAgentName(raw.agent) ? { agent: raw.agent } : {}),
-  spawnArgs: (config) => openclawBridgeArgs(config),
+  spawnArgs: (config, turn) => openclawBridgeArgs(config, turn),
+  onSessionReset: (turn) => { bumpOpenclawSessionGeneration(turn.threadId); },
   // authMethods is empty: nothing to authenticate, and a missing sign-in is
   // OpenClaw's own error to report, not a reason to refuse the spawn.
   pickAuthMethod: () => null,

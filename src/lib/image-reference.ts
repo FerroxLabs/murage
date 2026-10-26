@@ -80,14 +80,16 @@ export function referenceChip(response: MediaReferenceResponse, id = chipId()): 
 export type ReferenceRequester = (path: string, init: RequestInit) => Promise<unknown>;
 export type AddImageReferenceResult =
   | { status: "added"; target: ComposerReferenceTarget; chip: ImageAttachment }
-  | { status: "no-conversation" };
+  | { status: "no-conversation" }
+  /** The draft could not store the chip on this device: never reported as added. */
+  | { status: "not-saved"; target: ComposerReferenceTarget };
 
 /** Pin the image into the target conversation and add its chip to that
  * conversation's draft. Throws the harness's explanation when it refuses. */
 export async function addImageReference(
   input: { source: ImageReferenceSource; threadId?: string; botId?: string },
   request: ReferenceRequester,
-  append: (draftId: string, attachments: ImageAttachment[]) => void = appendComposerDraftAttachments,
+  append: (draftId: string, attachments: ImageAttachment[]) => Promise<boolean> = appendComposerDraftAttachments,
 ): Promise<AddImageReferenceResult> {
   const target = composerReferenceTarget(input.threadId);
   if (!target) return { status: "no-conversation" };
@@ -96,6 +98,6 @@ export async function addImageReference(
   const response = await request(MEDIA_ROUTES.reference, { method: "POST", body: JSON.stringify(body) }) as MediaReferenceResponse;
   if (!response?.attachment?.path || !response.reference?.id) throw new Error("The image could not be prepared as a reference.");
   const chip = referenceChip(response);
-  append(target.draftId, [chip]);
+  if (!(await append(target.draftId, [chip]))) return { status: "not-saved", target };
   return { status: "added", target, chip };
 }

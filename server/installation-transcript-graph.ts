@@ -2,7 +2,11 @@ import { validInstallationMessagePayload } from "./installation-message-validati
 
 /** Bounded, iterative validation. Explicit parents may reference later rows:
  * inserting a message into an existing branch legitimately does that. Missing
- * parent fields retain the runtime's legacy chain-in-row-order semantics. */
+ * parent fields retain the runtime's legacy chain-in-row-order semantics.
+ * An explicit parent that names no message in the thread makes that message a
+ * root, exactly as the runtime reads it (branch-index parentRowid). Real
+ * installations hold such rows, and refusing them stopped every backup of that
+ * installation (1.0.7). A malformed parent value is still refused. */
 export class InstallationTranscriptGraph {
   private parents = new Map<string, string | null>();
   private previous: string | null = null;
@@ -31,7 +35,7 @@ export class InstallationTranscriptGraph {
       const path: string[] = [];
       let current: string | null = start;
       while (current !== null) {
-        if (!this.parents.has(current)) this.fail("INVALID_MESSAGE_PARENT");
+        if (!this.parents.has(current)) break; // a parent outside this thread: the chain ends at a root
         if (colors.get(current) === 2) break;
         if (colors.get(current) === 1) this.fail("CYCLIC_MESSAGE_BRANCH");
         colors.set(current, 1); path.push(current);

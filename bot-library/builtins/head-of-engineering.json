@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Head of Engineering",
     "tagline": "Engineering priorities and incident updates grounded in the team's actual evidence",
-    "summary": "Ship organizes engineering priorities, release decisions and incident coordination from the evidence your team supplies. It names owners, open decisions and the checks that support a release or recovery claim. For implementation, use Builder; for detailed architecture, use Code. For a complete software team, use Dev Shop. For coordinated software delivery, use the engineering team.",
+    "summary": "Ship organizes engineering priorities, release decisions and incident coordination from the evidence your team supplies.",
     "category": "Founders",
     "author": {
       "name": "Ferrox Labs",
@@ -40,6 +40,18 @@
           "optional": true
         },
         {
+          "slug": "sentry",
+          "label": "Sentry",
+          "reason": "When connected and its tools support this task, use Sentry for your head of engineering work. Drafting also works from material you supply. Ask for your yes before an external change.",
+          "optional": true
+        },
+        {
+          "slug": "datadog",
+          "label": "Datadog",
+          "reason": "When connected and its tools support this task, use Datadog for your head of engineering work. Drafting also works from material you supply. Ask for your yes before an external change.",
+          "optional": true
+        },
+        {
           "slug": "slack",
           "label": "Slack",
           "reason": "When connected and its tools support this task, use Slack for your head of engineering work. Drafting also works from material you supply. Ask for your yes before an external change.",
@@ -55,7 +67,8 @@
         "title": "Head of Engineering",
         "description": "Ship organizes engineering priorities, release decisions and incident coordination from the evidence your team supplies. It names owners, open decisions and the checks that support a release or recovery claim. For implementation, use Builder; for detailed architecture, use Code. For a complete software team, use Dev Shop. For coordinated software delivery, use the engineering team.",
         "appearance": {
-          "color": "purple"
+          "color": "purple",
+          "mascotBody": "hexagon"
         },
         "skills": [
           "cto-playbook",

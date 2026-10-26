@@ -118,6 +118,10 @@ export function markUnavailable(endpoint: VoiceEndpoint, now = Date.now()): void
 export function isUnavailable(endpoint: VoiceEndpoint, now = Date.now()): boolean {
   return (unavailable.get(sourceId(endpoint)) ?? 0) > now;
 }
+/** Forget one source's refusal, for an owner asking to check again now. */
+export function clearUnavailable(endpoint: VoiceEndpoint): void {
+  unavailable.delete(sourceId(endpoint));
+}
 /** Test seam: forget every refusal. */
 export function resetUnavailable(): void {
   unavailable.clear();

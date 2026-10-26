@@ -24,6 +24,7 @@ import { requestSourceThread } from "./execution-audience.ts";
 import { WorkerText, type EgressOrigin, type ReleasedText } from "./released-text.ts";
 import { releaseStoredResult } from "./result-egress.ts";
 import { roomRequest } from "./room-requests.ts";
+import { rateLimited } from "./observe.ts";
 
 /** Where a note came from, as the activity row keeps it beside the note. */
 export interface NoteOrigin {
@@ -70,6 +71,18 @@ export function requestAnswerOrigin(request: { target_thread_id?: unknown; resul
   const threadId = request?.target_thread_id, messageId = request?.result_message_id;
   return typeof threadId === "string" && threadId && typeof messageId === "string" && messageId ? { threadId, messageIds: [messageId] } : undefined;
 }
+
+/** A note as a prompt may quote it now: its released words, "held" when a note was written but is not released now (what it rests on was
+ * withheld or forgotten since, or it cannot be checked), or undefined when there is no note. A held note is said in the prompt (1.0.4 U02):
+ * the reader knows a teammate's note exists and asks for it again, instead of working as if none was written. */
+export function noteForPrompt(db: DatabaseSync, note: StoredNote | null | undefined, notOwnerAudience: boolean): ReleasedText | "held" | undefined {
+  if (!note) return undefined;
+  const released = releaseNote(db, note, notOwnerAudience);
+  if (released !== undefined) return released;
+  rateLimited(`project-note-held\u0000${note.origin?.requestId ?? "no-origin"}`, NOTE_HELD_LOG_MS, folded => `[project] note held request=${note.origin?.requestId ?? "none"} lineage=${note.origin?.lineage === undefined ? "none" : noteLineageShown(db, note.origin.lineage) ? "shown" : "withheld"}${folded ? ` more=${folded}` : ""}`);
+  return "held";
+}
+const NOTE_HELD_LOG_MS = 60_000;
 
 /** The note as the gate releases it to a bot now, or nothing. `notOwnerAudience`: the reading turn is not the owner's audience. */
 export function releaseNote(db: DatabaseSync, note: StoredNote | null | undefined, notOwnerAudience: boolean): ReleasedText | undefined {
