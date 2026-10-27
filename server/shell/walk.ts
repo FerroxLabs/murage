@@ -49,6 +49,7 @@
 // node kind fails the typecheck until it is placed.
 
 import { homedir } from "node:os";
+import { powershellRunner } from "./pwsh.ts";
 
 import { isPlain, lex, lexQuotedBody, literalText, renderWord, Unreadable, type Part, type Word } from "./lex.ts";
 import { parse, type AndOr, type Command, type Pipeline, type Redirect, type Script } from "./parse.ts";
@@ -118,6 +119,11 @@ export type Candidate =
   | { kind: "fromFile"; path: string };
 
 export interface WalkContext {
+  /** Server-authorized literal Bash payloads from a Windows command. Shared across forks. */
+  windowsBash?: string[];
+  /** Set while PowerShell or cmd hands a command to `env`, `sudo`-style wrappers or a POSIX shell (walkForeignExecutor): an
+   *  interpreter reached from there asks, as bare `python -c` does on PowerShell (1.0.8 fallback, Grok r3). */
+  windowsForeign?: boolean;
   /** the folder the next command runs from, when the text says */
   cwd?: string;
   /** branches moved to different folders: a relative delete from here asks */
@@ -245,6 +251,8 @@ export function newContext(cwd?: string): WalkContext {
  * moves to does not leak back out unless `merge` is asked to. */
 export function fork(ctx: WalkContext, deeper = false): WalkContext {
   const next: WalkContext = {
+    windowsBash: ctx.windowsBash,
+    windowsForeign: ctx.windowsForeign,
     cwd: ctx.cwd,
     cwdConflict: ctx.cwdConflict,
     bound: new Map(ctx.bound),
@@ -2113,6 +2121,16 @@ function readLua(text: string): string {
  * the file the code came from (`strict`). */
 type OpaqueInput = { key?: string; rest?: Word[]; stdin?: Provenance; strict?: boolean };
 
+/** Inspect literal inline argv identically in every outer shell. */
+export function scanInterpreterInline<H>(name: string, args: Word[], ctx: WalkContext, visitor: Visitor<H>, stdin?: Provenance): void {
+  const key = interpreterKey(name === "py" ? "python" : name);
+  if (!key) throw new Unreadable("opaque", "unknown interpreter");
+  const program = interpreterProgram(key, args, ctx);
+  if (program.kind !== "code") throw new Unreadable("opaque", "inline code was not literal");
+  if (!program.words.every(isPlain)) throw new Unreadable("opaque", "inline code from a value");
+  scanOpaque(program.words.map(renderWord).join("\n"), !!ctx.elevated, visitor, ctx, { key, rest: program.rest, ...(stdin ? { stdin } : {}) });
+}
+
 /** Code in a language the reader does not model (`python -c`, `node -e`, a
  * heredoc into `perl`). Out of reach: a target the code computes, and a file
  * it did not get from this text. It asks when it runs elevated; when it runs,
@@ -3367,6 +3385,9 @@ function visitUnwrapped<H>(unwrapped: Unwrapped, command: Extract<Command, { kin
   }
   const name = resolveName(words[0]!);
   if (name === undefined) throw new Unreadable("dynamic-name", renderWord(words[0]!));
+  const windowsRunner = ctx.windowsBash ? powershellRunner(name) : undefined;
+  if (ctx.windowsForeign && (powershellRunner(name) === "interpreter" || interpreterKey(name) !== undefined)) throw new Unreadable("pwsh", `${name} reached through a wrapper needs approval`);
+  if (ctx.windowsBash && (windowsRunner === "interpreter" || windowsRunner === "launcher" && name !== "bash" || /^(cmd|wsl|start-process|set-content|powershell|pwsh)(\.exe)?$/i.test(name) || /\.(ps1|psm1|psd1|py|sh)$/i.test(name))) throw new Unreadable("pwsh", "the nested executor needs approval");
   if (ctx.indirect === "trap") (ctx.trapCalls ??= new Set()).add(name);
   const shape = ctx.functions.get(name);
   if (shape?.forkBomb) return visitor.forkBomb();
@@ -3437,6 +3458,15 @@ function visitUnwrapped<H>(unwrapped: Unwrapped, command: Extract<Command, { kin
   }
   if (name === "eval") {
     // the text runs in this shell: what it binds, moves to or defines stays
+    if (!args.every(isPlain)) {
+      const values = args.flatMap(word => expandWord(word, ctx));
+      if (values.every(isPlain)) {
+        // Preserve a known catastrophic payload before the residual value
+        // hold, without widening Ask/Auto for ordinary eval-from-a-value.
+        hit = walkInPlace(values.map(renderWord).join(" "), fork(ctx, true), visitor, "eval");
+        if (hit) return hit;
+      }
+    }
     plainWords(args, "text eval runs");
     const text = args.map(renderWord).join(" ");
     if (text.trim()) {

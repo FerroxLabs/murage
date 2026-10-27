@@ -10,7 +10,7 @@ const CORPUS: readonly HelpEntry[] = [
     description: "Run work on a schedule.", heading: "Routines",
     breadcrumb: "Murage docs → Features → Routines and webhooks",
     where: "Murage docs → Features → Routines and webhooks",
-    url: "https://murage.app/docs/features/automation#routines",
+    url: "https://murage.ai/docs/features/automation#routines",
     text: "A routine runs a bot on a schedule you choose. Paused routines never fire.",
   },
   {
@@ -18,7 +18,7 @@ const CORPUS: readonly HelpEntry[] = [
     description: "How approvals are handled.", heading: "Approval cards",
     breadcrumb: "Murage docs → Security → Permissions and secrets",
     where: "Settings → Permissions",
-    url: "https://murage.app/docs/security/permissions-and-secrets#approval-cards",
+    url: "https://murage.ai/docs/security/permissions-and-secrets#approval-cards",
     text: "Murage shows a permission request inline and records the outcome. Do not paste API keys into chat.",
   },
   {
@@ -29,7 +29,7 @@ const CORPUS: readonly HelpEntry[] = [
     description: "", heading: "Webhook",
     breadcrumb: "Murage docs → Decoy",
     where: "Murage docs → Decoy",
-    url: "https://murage.app/docs/decoy#webhook",
+    url: "https://murage.ai/docs/decoy#webhook",
     text: "Webhook webhook webhook.",
   },
   {
@@ -37,7 +37,7 @@ const CORPUS: readonly HelpEntry[] = [
     description: "Inspect what agents remember.", heading: "Memory",
     breadcrumb: "Murage docs → Features → Voice and memory",
     where: "Murage docs → Features → Voice and memory",
-    url: "https://murage.app/docs/features/voice-and-memory#memory",
+    url: "https://murage.ai/docs/features/voice-and-memory#memory",
     text: "Each bot can keep plain-text memory you can inspect, correct, or delete.",
   },
 ];
@@ -146,6 +146,21 @@ describe("the shipped index", () => {
     const page = HELP_INDEX.filter((entry) => entry.id.startsWith("features/mcp-servers#"));
     expect(page.length).toBeGreaterThan(3);
     expect(page.map((entry) => entry.where).join(" ")).toContain("Connected apps → MCP servers");
+  });
+
+  it("places the graduated browser and recorder in regular Settings with their defaults", () => {
+    for (const [id, where] of [
+      ["built-in-browser", "Settings → Devices → Built-in browser"],
+      ["teach-a-skill", "Settings → Skills → Teach a skill"],
+    ]) {
+      const entry = HELP_INDEX.find((item) => item.id === `features/settings-guide#${id}`);
+      expect(entry?.where).toBe(where);
+      expect(entry?.text).toContain("on by default");
+      expect(entry?.text).toContain("A switch you turned off stays off.");
+    }
+    const guide = HELP_INDEX.filter((entry) => entry.id.startsWith("features/settings-guide#"));
+    expect(guide.map((entry) => entry.text).join(" ")).not.toContain("Experimental");
+    expect(guide.find((entry) => entry.id.endsWith("#teach-a-skill"))?.text).toContain("Cloud homes keep the skills library without the recorder.");
   });
 
   it("is regenerated from the docs, never edited by hand", () => {

@@ -28,6 +28,10 @@ const imageRequests = () => { const file = join(fixture.info.dataDir, "network.l
 beforeAll(async () => {
   chmodSync(FAKE_ACP, 0o755);
   fixture = await launchVerificationServer(process.env, undefined, { env: { MURAGE_MODEL_PROVIDER_CONNECTIONS: bank } as Record<string, string>, instrumentationSource: `
+    // This child does not inherit the Vitest worker's in-memory fake-engine
+    // override. These image-policy tests do not need a shipped host-power wrapper.
+    process.env.NODE_ENV = 'test';
+    globalThis[Symbol.for('murage.hostPower.testUnwrapped')] = true;
     const fs=await import('node:fs');const path=await import('node:path');
     const originalFetch=globalThis.fetch;
     globalThis.fetch=(input,init)=>{ const url=String(input instanceof Request?input.url:input); if(url.startsWith('https://')){ fs.appendFileSync(path.join(process.env.MURAGE_DATA_DIR,'network.log'),url+'\\n'); return Promise.reject(new Error('External network is refused in this fixture')); } return originalFetch(input,init); };

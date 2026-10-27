@@ -1,7 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The engine-exclusion addon (native/engine-exclusion/exclusion.c, version 9) for Electron's own Windows calls that used to start
+// The engine-exclusion addon (native/engine-exclusion/exclusion.c, version 10) for Electron's own Windows calls that used to start
 // PowerShell (murage-releases #1): a folder's drive type and format (backup-folder-check.mjs), a process's exact creation time
 // (data-dir-lease.mjs), a file's owner SID and the computer's domains (backup-windows-acl.mjs), the update signature check
 // (windows-update-signature.mjs). The packaged app's copy is
@@ -13,7 +13,7 @@ import {existsSync} from "node:fs";
 import path from "node:path";
 import {fileURLToPath} from "node:url";
 
-export const WINDOWS_NATIVE_VERSION=9;
+export const WINDOWS_NATIVE_VERSION=10;
 const here=path.dirname(fileURLToPath(import.meta.url));
 let loaded;
 function candidates(){

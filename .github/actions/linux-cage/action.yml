@@ -1,0 +1,32 @@
+name: Linux cage
+description: Build the shipped bwrap and pinned filters before Linux tests.
+runs:
+  using: composite
+  steps:
+    - name: Install cage build tools
+      if: runner.os == 'Linux'
+      shell: bash
+      run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libseccomp-dev binutils xz-utils
+    - name: Build the Linux cage
+      if: runner.os == 'Linux'
+      shell: bash
+      run: pnpm build:murage-cage
+    - name: Install the source cage AppArmor profile
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        if [[ -d /sys/kernel/security/apparmor ]] && [[ "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || true)" == "1" ]]; then
+          # The shared installer uses sudo tee /etc/apparmor.d/murage-src-cage
+          # followed by sudo apparmor_parser -r for this checkout's exact bwrap.
+          pnpm cage:apparmor
+        fi
+    - name: Smoke the built Linux cage
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        arch="$(node -p 'process.arch')"
+        bwrap="$PWD/dist-native/cage/linux-$arch/bwrap"
+        if ! "$bwrap" --unshare-user --unshare-pid --ro-bind / / --proc /proc --dev /dev true; then
+          echo "::error::The built Murage cage could not create user namespaces. Check the source-path AppArmor profile and the runner's namespace permissions."
+          exit 1
+        fi

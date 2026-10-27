@@ -25,6 +25,7 @@ import { isQuestionTool } from "../../auto-approve.ts";
 import { fluxHeaderRefusal, fluxMemoryContextForTurn, fluxMemoryDecision, logFluxMemoryHeaders } from "../../flux-memory-headers.ts";
 import { fluxSurfaceFor, isFluxModel } from "../../flux-routing.ts";
 import { fuigoMemoryAllowOnce, newFuigoMemoryAlias } from "./fuigo-memory-permission.ts";
+import { ApprovalDeliveryError, approvalWriteReason, deliverApproval, writeAcpResponse, type ApprovalDeliveryFailure, type ApprovalDeliveryResult, type ApprovalWriteCallback } from "./approval-delivery.ts";
 import {
   fromElicitationForm,
   fromElicitationUrl,
@@ -62,7 +63,7 @@ import { decodeInjectId } from "../local-inject.ts";
 import { createFuigoFailureObservations, failureKind } from "./failure-diagnostics.ts";
 import { withCliMemoryLearning } from "../cli-memory-learning.ts";
 import { DIAGNOSTIC_RPC_METHODS, parseRuntimeErrorDiagnostic } from "../../../shared/error-diagnostic.ts";
-import { cliContainment, describeSpawnFailure, engineJob, engineProcessPid, execCli, killCliTree, spawnCli } from "../../procs.ts";
+import { cliContainment, describeSpawnFailure, engineJob, engineProcessPid, engineWrapsHostPower, execCli, HOST_POWER_CODE, hostPowerMessage, hostPowerRefused, killCliTree, spawnCli } from "../../procs.ts";
 import { cachedCliVersion } from "../../cli-version-cache.ts";
 import { claudeExecutableIdentity } from "../claude-guards.ts";
 import { ProviderStopUnconfirmedError, stopBudget, TurnTeardowns, type ChildTeardown, type TeardownWait } from "../child-teardown.ts";
@@ -713,6 +714,107 @@ export function acpEngineStderrCapture(stderr: string, truncated: boolean): stri
     + (truncated ? "\n[Stderr capture truncated; later output omitted]" : "");
 }
 
+/** The one stderr capture size: ACP's 256 KiB diagnostic prefix. */
+export const ENGINE_STDERR_CAPTURE_CHARS = 256 * 1024;
+
+/** The one stderr capture shape for every child whose stderr can reach a card,
+ * a row or an owner-facing error: the stream's FIRST `limit` characters, as
+ * ACP keeps them. Never a tail window: a window cut at its front can scroll a
+ * PEM `-----BEGIN` line (or a credential's label) off before redaction, and
+ * the body that remains matches no rule. The capture is prepared by
+ * `acpEngineStderrCapture` (unfinished PEM closed, cap-cut line dropped) and
+ * redacted WHOLE before any display cut. */
+export class EngineStderrCapture {
+  text = "";
+  truncated = false;
+  private readonly limit: number;
+  constructor(limit = ENGINE_STDERR_CAPTURE_CHARS) {
+    this.limit = limit;
+  }
+  push(chunk: string | Buffer): void {
+    if (this.truncated) return;
+    const text = String(chunk);
+    const remaining = this.limit - this.text.length;
+    this.text += text.slice(0, Math.max(0, remaining));
+    if (text.length > remaining) this.truncated = true;
+  }
+  reset(): void {
+    this.text = "";
+    this.truncated = false;
+  }
+  /** The whole capture redacted, then its last `max` characters. Empty when stderr said nothing. */
+  redactedEnd(max: number): string {
+    return engineStderrRedacted(this.text, this.truncated).trim().slice(-max).trim();
+  }
+  /** The quoted reason for an engine's exit line, or undefined when stderr said nothing. */
+  lastWords(): string | undefined {
+    return engineStderrLastWords(this.text, this.truncated);
+  }
+}
+
+// Recognize control-separated credentials before VT stripping can consume a
+// label character (ESC + token) or erase its boundary (word + CSI + api_key).
+// CSI/OSC are whole separators; other controls are single separators. Keep
+// CR/LF outside this guard so a value never absorbs the next diagnostic line.
+const STDERR_CREDENTIAL_CONTROL = String.raw`(?:\u001b\[[0-?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b\r\n]*(?:\u0007|\u001b\\)|[\u0000-\u0009\u000b\u000c\u000e-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff])`;
+const STDERR_CONTROL_CREDENTIAL = new RegExp(
+  `(${STDERR_CREDENTIAL_CONTROL}|(?<![A-Za-z0-9_-]))`
+  + `((?:[A-Za-z0-9_-]+${STDERR_CREDENTIAL_CONTROL}*[=:]|sk${STDERR_CREDENTIAL_CONTROL}*-)${STDERR_CREDENTIAL_CONTROL}*)`
+  + `([A-Za-z0-9._~+/=-]+(?:${STDERR_CREDENTIAL_CONTROL}+[A-Za-z0-9._~+/=-]+)*)`,
+  "g",
+);
+const STDERR_CREDENTIAL_CONTROLS = new RegExp(STDERR_CREDENTIAL_CONTROL, "g");
+
+function redactControlSeparatedStderrCredentials(text: string): string {
+  return text.replace(STDERR_CONTROL_CREDENTIAL, (match, boundary: string, header: string, value: string) => {
+    const joinedHeader = header.replace(STDERR_CREDENTIAL_CONTROLS, "");
+    const joined = joinedHeader + value.replace(STDERR_CREDENTIAL_CONTROLS, "");
+    if (!boundary && joined === header + value) return match;
+    // Let the shared rules decide which names/prefixes and lengths qualify.
+    // Joining the entire value before masking also covers a control in its
+    // middle: masking just its first fragment would orphan the remaining one.
+    const redacted = redactSecretsInText(joined);
+    if (redacted === joined) return match;
+    // Keep formatting outside the masked value, including tabs around '='.
+    // A prefix rule such as sk- masks the entire token, including its header.
+    return boundary + (redacted.startsWith(joinedHeader) ? header + redacted.slice(joinedHeader.length) : redacted);
+  });
+}
+
+/** A finished prefix capture (`EngineStderrCapture`, or an exec buffer kept from its start), redacted whole. */
+export function engineStderrRedacted(captured: string, truncated: boolean): string {
+  const capture = redactControlSeparatedStderrCredentials(acpEngineStderrCapture(captured, truncated));
+  // Mask with the control boundary present, delete leftover controls, then
+  // mask credentials exposed by that deletion. Strip VT exactly once here.
+  return redactSecretsInText(redactSecretsInText(stripVTControlCharacters(capture))
+    .replace(INVISIBLE_CONTROLS, (controls) => controls.replace(/[^\t\r\n]/g, "")));
+}
+
+/** A log tail can start inside a line or a PEM block. Cut only raw text here;
+ * engineStderrRedacted owns the single VT strip before redaction.
+ * `startsMidFile` is conservative when the read exactly fills the window. */
+export function engineStderrTailRedacted(captured: string, startsMidFile: boolean): string {
+  let text = captured;
+  if (startsMidFile) {
+    const newline = text.indexOf("\n");
+    text = newline < 0 ? "" : text.slice(newline + 1);
+    const firstMarker = /-----(BEGIN|END) [A-Z ]*KEY-----/.exec(text);
+    if (firstMarker?.[1] === "END") {
+      text = `[redacted leading private-key block]\n${text.slice(firstMarker.index + firstMarker[0].length)}`;
+    } else {
+      // A still-growing PEM may have neither marker in this window. Only
+      // at a lost beginning, conservatively mask leading base64-only lines.
+      text = text.replace(/^[A-Za-z0-9+/=]+(?:\r?\n[A-Za-z0-9+/=]+)*(?:\r?\n|$)/, "[redacted leading key material]\n");
+    }
+  }
+  return engineStderrRedacted(text, false);
+}
+
+/** The exit-line reason quoted from a finished prefix capture (see `EngineStderrCapture`). */
+export function engineStderrLastWords(captured: string, truncated: boolean): string | undefined {
+  return acpEngineExitStderrText(acpEngineStderrCapture(captured, truncated));
+}
+
 /** Fuigo's typed failure kind, a snake_case token. Read only from
  * `error.data.error_kind`: it travels as its own field so nothing has to
  * recover it from text the engine wrote. */
@@ -1245,7 +1347,8 @@ function mcpListSettled(states: Map<string, string>, names: string[]): boolean {
  * question (Fuigo's ask_user_question, an ACP elicitation) takes `answer`
  * with the owner's validated picks, or a deny that is an explicit skip
  * (0.1.52 ASK3). */
-type AcpAskFinish = (behavior: string, source?: "user" | "timeout" | "system", answers?: QuestionAnswer[]) => boolean | void;
+type AcpAskResult = boolean | void | ApprovalDeliveryFailure;
+type AcpAskFinish = (behavior: string, source?: "user" | "timeout" | "system", answers?: QuestionAnswer[]) => AcpAskResult | Promise<AcpAskResult>;
 
 /** Fuigo's ACP extension request for its AskUserQuestion tool. The ACP wire
  * prefixes extension methods with `_`; the leader gateway may nest the real
@@ -1824,15 +1927,17 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
       /** Threads with a send still waiting on an earlier child before it spawns: Stop All must fence them too. */
       const sendWaits = new Map<string, number>();
 
-      const writeTo = (threadId: string, proc: AcpProcess, obj: unknown) => {
+      const writeTo = (threadId: string, proc: AcpProcess, obj: unknown, done?: ApprovalWriteCallback) => {
         const out = obj as { id?: unknown; method?: unknown; result?: unknown; error?: unknown } | null;
-        if (out && out.id !== undefined && out.method === undefined && (out.result !== undefined || out.error !== undefined)) {
-          proc.openRequests.delete(String(out.id));
-        }
-        try {
-          proc.child.stdin.write(JSON.stringify(obj) + "\n");
-        } catch {}
-        appendNative(threadId, { dir: "out", source: SOURCE, msg: nativeLogMessage(obj) });
+        writeAcpResponse(proc.child.stdin, obj, (error, accepted) => {
+          if (!error) {
+            if (out && out.id !== undefined && out.method === undefined && (out.result !== undefined || out.error !== undefined)) {
+              proc.openRequests.delete(String(out.id));
+            }
+            appendNative(threadId, { dir: "out", source: SOURCE, msg: nativeLogMessage(obj) });
+          } else if (!done) console.warn(`acp write thread=${threadId} error=${approvalWriteReason(error)}`);
+          done?.(error, accepted);
+        });
       };
 
       /** Remove this exact process from the driver pool, under whatever thread it is
@@ -2069,7 +2174,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
        *  baseline (a shell a tool left running) closes it and its whole tree; a
        *  probe that cannot answer means it is not proven idle, and it closes too. */
       const guardParkedTree = (threadId: string, proc: AcpProcess) => {
-        const pid = engineProcessPid(proc.child); // the engine itself (behind the Windows job launcher), U24 design R2.4
+        const pid = engineProcessPid(proc.child); // host PID of the engine, behind the job launcher or Linux cage
         const pending = proc.turnBaseline;
         const gen = proc.parkGen;
         if (!pid || !pending) { closeProcess(threadId, proc, "process probe has no baseline"); return; }
@@ -2118,7 +2223,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
        *  admitted replacements: an exited MCP server's pid is dropped, so a
        *  process that later gets that pid is never exempt. */
       const reconcileReusedTree = async (proc: AcpProcess, servers: ReadonlyArray<{ command: string; args: string[] }>): Promise<{ baseline: ProcessIdentities; leftover: string | null }> => {
-        const pid = engineProcessPid(proc.child); // a replacement MCP child's parent is the engine, never the job launcher
+        const pid = engineProcessPid(proc.child); // a replacement MCP child's parent is the engine's host PID, including under bwrap
         const verified = proc.turnBaseline ? await proc.turnBaseline.catch(() => null) : null;
         if (!pid || !verified) return { baseline: new Map(), leftover: "process probe has no baseline" };
         const tree = await untrackedIdentified(pid, verified).catch(() => null);
@@ -2391,8 +2496,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // Existing 256 KiB diagnostic cap, preserving the start before any
         // redaction. Never keep a second raw tail that can lose a PEM header.
         let stderrDiagnostic = "", stderrDiagnosticTruncated = false;
-        const STDERR_DIAGNOSTIC_CHARS = 256 * 1024;
+        const STDERR_DIAGNOSTIC_CHARS = ENGINE_STDERR_CAPTURE_CHARS;
         const asks = new Map<string, AcpAskFinish>();
+        const nativeApprovals = new Map<unknown, { paramsKey: string; requestId: string }>();
+        const approvalDeliveryStop = new AbortController();
         // Tool calls the agent started and has not yet reported finished. A
         // tool such as `sleep` or a quiet build sends nothing while it runs,
         // so the prompt's silence guard waits for these as it does for asks.
@@ -2464,7 +2571,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // Murage's own decision: the engine's store needs no rewriting.
         const upstreamTrusted = support.folderTrust === true && turn.folderTrust?.upstreamTrusted === true;
 
-        const send = (obj: unknown) => {
+        const send = (obj: unknown, done?: ApprovalWriteCallback) => {
           // Answering a server→client request (a permission decision, a file
           // read) hands the agent back the thing it was blocked on, so its
           // silence up to here was ours, not its: restart every idle deadline.
@@ -2472,11 +2579,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           if (message.id !== undefined && (message.result !== undefined || message.error !== undefined)) {
             for (const pending of rpcPending.values()) pending.armIdle();
           }
-          if (proc) return writeTo(threadId, proc, obj);
-          try {
-            child?.stdin.write(JSON.stringify(obj) + "\n");
-          } catch {}
-          appendNative(threadId, { dir: "out", source: SOURCE, msg: nativeLogMessage(obj) });
+          if (proc) return writeTo(threadId, proc, obj, done);
+          writeAcpResponse(child?.stdin, obj, (error, accepted) => {
+            if (!error) appendNative(threadId, { dir: "out", source: SOURCE, msg: nativeLogMessage(obj) });
+            else if (!done) console.warn(`acp write thread=${threadId} error=${approvalWriteReason(error)}`);
+            done?.(error, accepted);
+          });
         };
         /** `timeoutMs` is a hard deadline measured from the request. `idleMs`
          *  is for `session/prompt` alone — the one call that legitimately
@@ -2560,6 +2668,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             promptSent: state.promptSent,
             ...(child && process.platform === "win32" ? { containment: cliContainment(child) } : {}),
           });
+          // Withdraw pending asks while the peer's input is still open. Waiting
+          // until its close event is too late to send the cancellation response.
+          approvalDeliveryStop.abort();
+          for (const finish of [...asks.values()]) finish("cancel", "system");
           teardown?.markStopRequested();
           // A process a turn stops is never pooled again; its hooks stay so
           // this turn still observes the exit it asked for.
@@ -2684,6 +2796,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         ) => {
           if (state.settled) return;
           state.settled = true;
+          approvalDeliveryStop.abort();
           endTurnTrace(threadId, ok ? (stopReason ?? "ok") : "failed");
           state.finished = ok && stopReason === null;
           state.failed = !ok;
@@ -2951,6 +3064,18 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             return send({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "method not found" } });
           }
           const params = msg.params ?? {};
+          // Only the same native request in this turn/session shares a card;
+          // an identical command with a new RPC id still needs its own decision.
+          const paramsKey = createHash("sha256").update(JSON.stringify(params)).digest("hex");
+          const pendingNative = nativeApprovals.get(msg.id);
+          if (pendingNative) {
+            if (pendingNative.paramsKey === paramsKey) return;
+            // An RPC id cannot name two pending operations. Retire its original
+            // resolver and cancel the id once; an accepted answer is uncertain
+            // and teardown must not send a conflicting cancellation after it.
+            settle(false, "approval_request_conflict");
+            return;
+          }
           flushAssistantText();
           const options: Array<{ optionId?: string; kind?: string }> = Array.isArray(params.options) ? params.options : [];
           // A card answers only this request. Never widen it to an engine's
@@ -3017,14 +3142,63 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           const toolInput = !commandLine && !editPaths ? boundedToolInput(toolCall.rawInput) : undefined;
           const computerAsk = controlsHost && acpAskControlsComputer(toolCall);
           const requestId = newId();
-          const finish: AcpAskFinish = (behavior, source = "user") => {
-            if (!asks.delete(requestId)) return;
-            traceClose("permission.wait", requestId, behavior);
+          let delivery: { behavior: string; promise: Promise<AcpAskResult>; stop: AbortController; uncertain: boolean; superseded: boolean } | undefined;
+          let expired = false;
+          const clearAsk = () => {
+            asks.delete(requestId);
+            nativeApprovals.delete(msg.id);
             clearTimeout(timer);
+          };
+          const finish: AcpAskFinish = (behavior, source = "user") => {
+            if (!asks.has(requestId)) return false;
+            // Teardown withdraws the card, never claims the owner's answer landed.
+            if (state.settled || behavior === "cancel") {
+              // A pending ask still needs ACP's cancellation reply. An in-flight
+              // answer is uncertain: never write a second response to that RPC.
+              if (!delivery?.uncertain) send({ jsonrpc: "2.0", id: msg.id, result: cancelled });
+              clearAsk();
+              traceClose("permission.wait", requestId, "engine_stopped");
+              if (delivery || state.failed) {
+                const itemId = `approval-undelivered-${requestId}`;
+                emit({ ...base(threadId, turnId), type: "item.started", itemId, itemType: "tool", origin: "murage", toolKind: "notice", title: "The engine stopped before approval delivery could be confirmed." });
+                emit({ ...base(threadId, turnId), type: "item.completed", itemId, itemType: "tool", ok: false });
+              }
+              // The engine may still execute an accepted line. A system denial
+              // would falsely record that the operation was prevented.
+              if (!delivery?.uncertain) emit({ ...base(threadId, turnId), type: "request.resolved", requestId, behavior: "deny", source: "system" });
+              return { ok: false, reason: "engine_stopped", terminal: true };
+            }
+            if (behavior === "allow" && expired) return { ok: false, reason: "approval_expired", terminal: false };
+            if (delivery) {
+              if (behavior !== "deny" || delivery.behavior !== "allow") {
+                return delivery.behavior === behavior ? delivery.promise : { ok: false, reason: "delivery_pending", terminal: false };
+              }
+              const pending = delivery;
+              if (source === "timeout") {
+                expired = true;
+                // Let an outstanding write report its result, but never retry after expiry.
+                if (pending.uncertain) return pending.promise.then<AcpAskResult>(() => {
+                  if (!asks.has(requestId)) return false;
+                  if (pending.uncertain) {
+                    settle(false, "approval_delivery_failed");
+                    return { ok: false, reason: "engine_stopped", terminal: true };
+                  }
+                  return finish("deny", "timeout");
+                });
+              }
+              if (pending.uncertain) {
+                // The Allow may already be at the engine. A second RPC answer cannot undo it.
+                settle(false, "approval_delivery_failed");
+                return { ok: false, reason: "engine_stopped", terminal: true };
+              }
+              pending.superseded = true;
+              pending.stop.abort();
+              return pending.promise.then(() => finish("deny", source));
+            }
             const want = behavior === "allow" ? "allow" : "reject";
-            const optionId = behavior === "cancel" ? null : optionFor(want);
-            if (behavior !== "cancel" && !optionId) missing(want);
-            send({
+            const optionId = optionFor(want);
+            if (!optionId) missing(want);
+            const response = {
               jsonrpc: "2.0",
               id: msg.id,
               result: optionId ? {
@@ -3038,28 +3212,85 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                   ? { _meta: { followup_message: source === "timeout" ? DENY_TIMEOUT_FOLLOWUP : "The user denied this operation. Do not retry it, bypass the denial, or perform an equivalent action through another tool. Keep the operation unexecuted and explain the limitation and any safe alternatives without taking further action." } }
                   : {}),
               } : cancelled,
+            };
+            const alive = () => !state.settled && !state.cancelRequested && !!child &&
+              child.exitCode === null && child.signalCode === null && !proc?.dead && !proc?.closing &&
+              child.stdin.writable && !child.stdin.destroyed && !child.stdin.writableEnded;
+            const current = { behavior, promise: Promise.resolve<AcpAskResult>(false), stop: new AbortController(), uncertain: false, superseded: false };
+            const stopped = () => current.stop.abort();
+            approvalDeliveryStop.signal.addEventListener("abort", stopped, { once: true });
+            if (approvalDeliveryStop.signal.aborted) stopped();
+            const acceptResult = (result: ApprovalDeliveryResult): AcpAskResult => {
+              if (!result.ok) {
+                if (current.superseded || (expired && behavior === "allow" && !current.uncertain)) {
+                  return { ok: false, reason: expired ? "approval_expired" : "approval_cancelled", terminal: false };
+                }
+                if (result.reason === "delivery_pending") return result;
+                console.warn(`acp approval delivery thread=${threadId} request=${requestId} error=${result.reason}`);
+                if (result.terminal || source !== "user") {
+                  settle(false, "approval_delivery_failed");
+                  return { ...result, terminal: true };
+                }
+                return result;
+              }
+              // The write callback clears the ask even if Stop raced with delivery.
+              if (state.settled || state.cancelRequested || approvalDeliveryStop.signal.aborted) {
+                return { ok: false, reason: "engine_stopped", terminal: true };
+              }
+              traceClose("permission.wait", requestId, behavior);
+              emit({
+                ...base(threadId, turnId),
+                type: "request.resolved",
+                requestId,
+                behavior: optionId && behavior === "allow" ? "allow" : "deny",
+                source: optionId ? source : "system",
+                approvalScope: computerAsk ? "local-computer" : undefined,
+              });
+              return Boolean(optionId);
+            };
+            const releaseDelivery = () => {
+              approvalDeliveryStop.signal.removeEventListener("abort", stopped);
+              if (delivery === current) {
+                delivery = undefined;
+                // The deadline may have fired while this answer was in flight.
+                // A definite miss leaves a live ask that still needs a deadline.
+                if (asks.has(requestId) && !current.uncertain && !state.settled) armDenyDeadline();
+              }
+            };
+            delivery = current;
+            current.promise = deliverApproval(done => {
+              current.uncertain = true;
+              send(response, (error, accepted = true) => {
+                current.uncertain = !!error && accepted;
+                if (!error) clearAsk();
+                else if (expired && behavior === "allow") current.stop.abort();
+                done(error, accepted);
+              });
+            }, alive, current.stop.signal, result => {
+              acceptResult(result);
+              releaseDelivery();
+            }).then(acceptResult).finally(() => {
+              // A timed out write still owns this RPC until its callback or teardown.
+              if (!current.uncertain || current.stop.signal.aborted) releaseDelivery();
             });
-            emit({
-              ...base(threadId, turnId),
-              type: "request.resolved",
-              requestId,
-              behavior: optionId && behavior === "allow" ? "allow" : "deny",
-              source: optionId ? source : "system",
-              approvalScope: computerAsk ? "local-computer" : undefined,
-            });
-            return Boolean(optionId);
+            return current.promise;
           };
           // An unanswered card denies after 15 minutes. That is the owner not
           // answering, not an engine failure, so it raises no runtime error
           // (whose card sends people to Provider settings); request.resolved
           // with source "timeout" is the record. A routine run holds its
           // cards open instead (SendTurnInput.holdPermissionAsks).
-          const timer = turn.holdPermissionAsks ? undefined : setTimeout(() => {
-            finish("deny", "timeout");
-          }, permissionDenyMs());
-          timer?.unref?.();
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          const armDenyDeadline = () => {
+            clearTimeout(timer);
+            if (turn.holdPermissionAsks) return;
+            timer = setTimeout(() => { finish("deny", "timeout"); }, permissionDenyMs());
+            timer.unref?.();
+          };
+          armDenyDeadline();
           traceOpen("permission.wait", requestId);
           asks.set(requestId, finish);
+          nativeApprovals.set(msg.id, { paramsKey, requestId });
           // F12 (Rule 74): every permission request reports the map this engine was handed; a command's after the check of the
           // generation its card opens in (Rule 74d), made now and never at spawn
           const f12 = handedEnv;
@@ -3631,6 +3862,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         error: (e) => {
           if (!spawned) lifecycle.record("spawn_failed", { errno: errnoCategory(e) });
           emit({ ...base(threadId, turnId), type: "runtime.error", ...describeSpawnFailure(e, config.cli) });
+          // S4 power: a launch the block could not cover wrote no prompt (turn-attribution.ts notWritten).
+          if ((e as NodeJS.ErrnoException).code === HOST_POWER_CODE) turn.notWritten?.();
           settle(false, "spawn_error");
         },
         close: (code, signal) => {
@@ -3672,6 +3905,14 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             // locators and secrets removed, one line, inside the
             // transcript's own length — and quoted from its END, which is
             // where a crash's fatal line is.
+            // S4 power (design sections 2 and 8): bwrap or sandbox-exec refused before the engine ran; nothing was delivered.
+            if (hostPowerRefused(target.child)) {
+              emit({ ...base(threadId, turnId), type: "runtime.error", message: hostPowerMessage() });
+              turn.notWritten?.();
+              settle(false, "exit_before_result");
+              stderrDiagnostic = "";
+              return;
+            }
             const detail = acpEngineExitStderrText(captured);
             emit({
               ...base(threadId, turnId),
@@ -3977,8 +4218,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // `agent/folder_trust.rs`), so a change Murage can see (the owner's
         // decision, the sources the scan found, a grant added to or revoked
         // from the user's own trusted_folders.toml) must reach a new process.
+        // S4 power (design sections 2 and 7): Fuigo is not under the block on Mac and Linux (it does not nest with a command
+        // sandbox there); every other ACP engine is, and Windows covers them all. A spawn under the block puts the constant in the digest.
+        const hostPowerOptions = { posixHostPower: support.driverKind !== "fuigoAgent" };
         contractKey = poolable
           ? digest([config.cli, launchTarget, argv, cwd, env, support.folderTrust ? turn.folderTrust ?? null : null,
+            ...(engineWrapsHostPower(hostPowerOptions) ? [{ hostPower: 1 }] : []),
             ...(support.spawnFingerprint ? [support.spawnFingerprint(env, config)] : []),
             ...(support.restartOnMcpChange ? [mcpServers.map((server) => server.name)] : [])])
           : null;
@@ -3999,7 +4244,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 // object is built here and handed to the child; nothing keeps it.
                 env: support.secretEnv ? { ...env, ...support.secretEnv(env, config) } : env,
                 stdio: ["pipe", "pipe", "pipe"],
-              }, engineJob());
+              }, engineJob(hostPowerOptions));
             } catch (error) {
               lifecycle.record("spawn_failed", { errno: errnoCategory(error) });
               throw error;
@@ -5037,10 +5282,11 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             if (decision.behavior === "answer") {
               // only a question ask carries the owner's picks to the engine
               if (!decision.answers?.length) return "unavailable";
-              finish("answer", "user", decision.answers);
+              await finish("answer", "user", decision.answers);
               return "answered";
             }
-            const delivered = finish(decision.behavior === "allow" ? "allow" : "deny", "user");
+            const delivered = await finish(decision.behavior === "allow" ? "allow" : "deny", "user");
+            if (delivered && typeof delivered === "object" && !delivered.ok) throw new ApprovalDeliveryError(delivered.reason, delivered.terminal);
             if (delivered === false) return "unavailable";
             return decision.behavior === "allow" ? "allowed-once" : "rejected";
           },

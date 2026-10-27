@@ -1636,7 +1636,11 @@ describe("internal capability authority", () => {
       expect(exposed).not.toContain(turn.env.MURAGE_COMMS_TOKEN);
       expect(JSON.stringify((await desktopApi("GET", "/api/config")).body)).not.toContain(turn.env.MURAGE_COMMS_TOKEN);
     } finally {
-      await api("POST", `/api/bots/${source.id}/interrupt`);
+      // The source has two tasks, so a Stop that names no thread is refused (thread_required) and the turn would run on,
+      // holding the engine: every later deletion then waits on it and holds new turns back. The bot-level Stop reaches it.
+      await api("POST", `/api/bots/${source.id}/interrupt`, { all: true });
+      await expect.poll(async () => (await api("GET", "/api/bots?messages=0")).body.bots
+        .find((item: { id: string }) => item.id === source.id)?.busy, { timeout: 10_000 }).toBe(false).catch(() => {});
       await desktopApi("DELETE", `/api/bots/${source.id}`);
       await desktopApi("DELETE", `/api/bots/${other.id}`);
     }
@@ -1767,9 +1771,13 @@ describe("internal capability authority", () => {
       const human = await startInternalFixtureTurn(bot.id);
       expect((await create(human.headers, human.env.MURAGE_THREAD_ID, 5)).status).toBe(201);
     } finally {
-      await api("POST", `/api/bots/${bot.id}/interrupt`);
+      // The routine's run gave the bot a second task, so a Stop that names no thread is refused (thread_required) and the
+      // human turn would run on, holding the engine for every later deletion. The bot-level Stop reaches every live turn.
+      await api("POST", `/api/bots/${bot.id}/interrupt`, { all: true });
       if (runId) await desktopApi("POST", `/api/routine-runs/${runId}/cancel`);
       if (routineId) await desktopApi("DELETE", `/api/routines/${routineId}`);
+      await expect.poll(async () => (await api("GET", "/api/bots?messages=0")).body.bots
+        .find((item: { id: string }) => item.id === bot.id)?.busy, { timeout: 10_000 }).toBe(false).catch(() => {});
       for (const id of createdIds) await desktopApi("DELETE", `/api/bots/${id}`);
       await desktopApi("DELETE", `/api/bots/${bot.id}`);
     }

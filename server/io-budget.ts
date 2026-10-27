@@ -77,6 +77,8 @@ export class IoBudget {
   /** Totals at the last statement-trace line, so each line is one minute's cost. */
   private traced = new Map<string, { calls: number; ms: number }>();
   private traceTimer: ReturnType<typeof setInterval> | null = null;
+  /** One diagnostic per category per minute; three fixed keys bound state even as sources change. */
+  private readonly diagnosticLogs = new Map<"writing" | "cpu" | "both", { at: number; suppressed: number }>();
 
   constructor(options: IoBudgetOptions = {}) {
     this.read = options.read ?? readProcess;
@@ -228,12 +230,21 @@ export class IoBudget {
     const tripped = writing || spinning;
     if (tripped) {
       this.calmMinutes = 0;
-      const top = this.topStatements().map(cost => `${Math.round(cost.ms)}ms x${cost.calls} ${cost.sql}`).join(" | ") || "none recorded";
       const next = Math.min(IO_BUDGET_MAX_SCALE, this.scale * 2);
       this.deferredSource = [...this.bytes].sort((a,b) => b[1]-a[1])[0]?.[0] ?? this.topStatements(1)[0]?.sql ?? "process";
       this.deferUntil = reading.at + next * IO_BUDGET_INTERVAL_MS;
-      this.log(`[io-budget] ${writing ? `writing ${(writeBytesPerMinute / 1048576).toFixed(1)} MB/min (budget ${(budget / 1048576).toFixed(0)}${planned > 0 ? `, ${(planned / minutes / 1048576).toFixed(1)} MB/min planned not counted` : ""})` : ""}`
-        + `${writing && spinning ? ", " : ""}${spinning ? `cpu ${(cpu * 100).toFixed(0)}%${systemHot ? ` (computer: ${system!.why})` : ""} for ${this.hotCpuMinutes} min` : ""}; source: ${this.deferredSource}; top statements: ${top}; poll rate x1/${next}`);
+      const category = writing ? (spinning ? "both" : "writing") : "cpu";
+      const lastLog = this.diagnosticLogs.get(category);
+      if (!lastLog || reading.at - lastLog.at >= IO_BUDGET_INTERVAL_MS) {
+        const top = this.topStatements().map(cost => `${Math.round(cost.ms)}ms x${cost.calls} ${cost.sql}`).join(" | ") || "none recorded";
+        const line = `[io-budget] ${writing ? `writing ${(writeBytesPerMinute / 1048576).toFixed(1)} MB/min (budget ${(budget / 1048576).toFixed(0)}${planned > 0 ? `, ${(planned / minutes / 1048576).toFixed(1)} MB/min planned not counted` : ""})` : ""}`
+          + `${writing && spinning ? ", " : ""}${spinning ? `cpu ${(cpu * 100).toFixed(0)}%${systemHot ? ` (computer: ${system!.why})` : ""} for ${this.hotCpuMinutes} min` : ""}; source: ${this.deferredSource}; top statements: ${top}; poll rate x1/${next}`;
+        // Bound diagnostics too: custom source names and load descriptions need not be short.
+        this.log(`${line.length > 4096 ? `${line.slice(0, 4096)}…` : line}; suppressed=${lastLog?.suppressed ?? 0}`);
+        this.diagnosticLogs.set(category, { at: reading.at, suppressed: 0 });
+      } else {
+        lastLog.suppressed++;
+      }
       this.setScale(next);
       this.statements.clear(); this.traced.clear();
       if (spinning) this.hotCpuMinutes = 0;

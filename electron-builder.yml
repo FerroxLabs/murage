@@ -402,6 +402,15 @@ linux:
       to: fuigo-probe/launcher
     - from: dist-native/fuigo-probe/linux-x64/manifest.json
       to: fuigo-probe/manifest.json
+    - from: dist-native/cage/linux-${arch}
+      to: cage
+      filter:
+        - bwrap
+        - murage-cage.bpf
+        - murage-power.bpf
+        - manifest.json
+        - COPYING
+    # The TypeScript lane adds resources/cage/cage-forwarder.mjs to cage/ here.
     - from: dist-native/engine-exclusion/linux-x64/engine-exclusion.node
       to: engine-exclusion.node
     - from: dist-native/cloudflared/linux-x64/cloudflared

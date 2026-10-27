@@ -7,7 +7,7 @@
 //
 //   FAKE_PI_MODE   happy (default) | project-propose (the Chief's New project proposal through
 //                  the agents server in MURAGE_MCP_CONFIG; see fake-mcp-propose.ts) | text-propose (the
-//                  proposal as a block in the reply, after a gated read) | tooluse | permission | host-confirm | gate | question | editor | interleave | todo | turn-error | no-models | exit-early | stream
+//                  proposal as a block in the reply, after a gated read) | tooluse | permission | host-confirm | gate | question | editor | interleave | todo | turn-error | no-models | exit-early | exit-127 | close-before-ready | crash-mid-turn | stream
 //                  stream = long work that keeps streaming: one text delta every FAKE_PI_STREAM_EVERY_MS
 //                  (default 500) for FAKE_PI_STREAM_FOR_MS (default 8000), then "long reply done" and a clean turn_end
 //                  permission = a `select` ask ("Run bash: echo hi?", Allow once / Deny) — since 0.1.52 ASK3 a select
@@ -19,7 +19,7 @@
 //   FAKE_PI_SET_MODEL ok (default) | reject (success:false with pi's error text) | silent (never answers)
 //   FAKE_PI_SESSION   ok (default) | reject (new_session / switch_session answer success:false)
 //   FAKE_PI_SESSION_GATE  path: hold the new_session / switch_session answer until
-//                  this file exists (writes `<path>.waiting` while held, polls
+//                  this file exists (writes its launch nonce to `<path>.waiting` while held, polls
 //                  every 25 ms). The driver's sendTurn awaits that answer, so a
 //                  test gets a deterministic window in which the harness has
 //                  called sendTurn but the provider turn is not yet accepted.
@@ -38,6 +38,8 @@
 //                  and memory receipts link every such turn as one session)
 //   FAKE_PI_LINGER_MS  stay alive this long after SIGTERM or stdin end (max
 //                  10 s). POSIX-only observation: Windows taskkill /F runs no handler.
+//   FAKE_PI_ABORT_MS / FAKE_PI_ABORT_MARKER delay the abort reply, then write the session-flush marker in this engine.
+//   FAKE_PI_ABORT_SILENT=1 never completes abort, for the bounded wait test.
 
 import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -53,6 +55,8 @@ const gateAsks = (toolName: string, only?: string): boolean => (only ? toolName 
 const proposalAsks = new Map<string, (confirmed: boolean) => void>();
 
 const mode = process.env.FAKE_PI_MODE ?? "happy";
+// Namespace PIDs repeat across wrapped launches; attribution uses this nonce.
+const launchId = randomUUID();
 const modelPairs = (process.env.FAKE_PI_MODELS ?? "ollama-cloud/glm-5.2,openai/gpt-4o")
   .split(",")
   .filter(Boolean)
@@ -91,6 +95,7 @@ if (process.env.FAKE_PI_DUMP) {
       process.env.FAKE_PI_DUMP,
       JSON.stringify({
         argv,
+        launchId,
         envConfigured: [
           "PATH",
           "HOME",
@@ -120,6 +125,10 @@ if (process.env.FAKE_PI_DUMP) {
 // runtime.error + failed turn, never a hang.
 if (mode === "exit-early") {
   process.exit(1);
+}
+// exit-127: the shape of a launcher whose runtime is missing (`/usr/bin/env: 'node': No such file or directory`, exit 127).
+if (mode === "exit-127") {
+  process.stderr.write("/usr/bin/env: 'node': No such file or directory\n", () => process.exit(127));
 }
 
 const send = (obj: any) => process.stdout.write(JSON.stringify(obj) + "\n");
@@ -331,7 +340,7 @@ process.stdin.on("end", () => (lingerMs > 0 ? lingerThenExit() : process.exit(0)
 const afterSessionGate = (answer: () => void) => {
   const gate = process.env.FAKE_PI_SESSION_GATE;
   if (!gate || existsSync(gate)) return answer();
-  writeFileSync(`${gate}.waiting`, String(process.pid));
+  writeFileSync(`${gate}.waiting`, launchId);
   const poll = setInterval(() => {
     if (!existsSync(gate)) return;
     clearInterval(poll);
@@ -359,6 +368,11 @@ function handle(cmd: any) {
       });
       return;
     case "new_session":
+      // close-before-ready: read the handshake, never answer it, and exit (a pi that dies under a wrapper holding stdin open)
+      if (mode === "close-before-ready") {
+        process.stderr.write("pi could not load its settings\n", () => process.exit(1));
+        return;
+      }
       if (process.env.FAKE_PI_SESSION === "reject") {
         send({ type: "response", command: "new_session", success: false, error: "Could not create session directory" });
         return;
@@ -409,10 +423,15 @@ function handle(cmd: any) {
       send({ type: "response", command: "set_thinking_level", success: true });
       return;
     case "prompt":
+      // crash-mid-turn: take the prompt and exit with no terminal event (a pi that crashes after the first write)
+      if (mode === "crash-mid-turn") {
+        process.stderr.write("pi crashed while answering\n", () => process.exit(1));
+        return;
+      }
       // record receipt so a test can prove a prompt was (or was never) sent
       if (process.env.FAKE_PI_DUMP) {
         try {
-          appendFileSync(process.env.FAKE_PI_DUMP, JSON.stringify({ prompt: true, action: true, pid: process.pid, message: cmd.message }) + "\n");
+          appendFileSync(process.env.FAKE_PI_DUMP, JSON.stringify({ prompt: true, action: true, pid: process.pid, launchId, message: cmd.message }) + "\n");
         } catch {
           /* never let dumping break a run */
         }
@@ -529,6 +548,11 @@ function handle(cmd: any) {
     case "abort":
       aborted = true;
       send({ type: "turn_end", message: { stopReason: "cancelled", usage: { input: 0, output: 0 } }, usage: { input: 0, output: 0 } });
+      if (process.env.FAKE_PI_ABORT_SILENT === "1") return;
+      setTimeout(() => {
+        if (process.env.FAKE_PI_ABORT_MARKER) writeFileSync(process.env.FAKE_PI_ABORT_MARKER, "session flushed");
+        send({ type: "response", command: "abort", success: true });
+      }, Math.min(10_000, Number(process.env.FAKE_PI_ABORT_MS) || 0));
       return;
     default:
       return;
