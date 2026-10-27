@@ -33,6 +33,11 @@ export const UPGRADE_APP_TABLES = [ROOT_SET_WORKLIST_TABLE, APP_WRITE_REVISION_T
  * UPGRADE_DERIVED_TABLES); the next newer start makes them again, and the scrub, having no pass row, runs again (it is idempotent). */
 export const UPGRADE_104_TABLES = ["flux_capture_hold", "upgrade_scrub_pass"] as const;
 
+/** The table 1.0.8 adds to messages.db: the delivery authority of a project routine's queued request (project-tables.ts, project-routines.ts).
+ * No older build reads it, and a request without its row asks again (the authority is never assumed), so every downgrade drops it with the rows of
+ * UPGRADE_104_TABLES; the next newer start makes it again empty, as a restore leaves it. */
+export const UPGRADE_108_TABLES = ["project_routine_authority"] as const;
+
 /** Tables an earlier preview of 1.0.2 wrote and this build no longer reads: derived data, never trusted, dropped by every start (ensureUpgradeAppTables)
  * and by the downgrade, and accepted by the archive inspector in exactly the shapes those previews wrote, so an archive of a preview file restores. The
  * proofs of large root sets were kept here; they now live in the process only (replay-lineage.ts). */

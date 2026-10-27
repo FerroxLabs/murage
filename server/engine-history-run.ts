@@ -17,12 +17,12 @@
 import { anyProcessNames, configureScopes, engineState, foreignEngineHolders, holdersClearOf, inScopeFolder, privateScopeHome } from "./engine-closed.ts";
 import { executeEnginePlans, recoverAll } from "./engine-exec.ts";
 import { configureRedo, listRedo } from "./engine-redo.ts";
-import { realEngineFs } from "./engine-fs.ts";
+import { exclOps, realEngineFs } from "./engine-fs.ts";
 import type { DeletionEngineHome, DeletionLeftover } from "./conversation-deletion.ts";
 import type { EngineDiscovery, EngineHistoryJob, EngineHistoryResult } from "./engine-history-offthread.ts";
 import { planAcpEngineHistory } from "./engine-plan-acp.ts";
 import { planClaudeProjects, planCodexRollouts, planFuigoSessions } from "./engine-plan-files.ts";
-import { ASIDE_SUFFIX, hasContentSteps, homeKey, OPEN_PASS_STEPS, Known, pathApiFor, PlanError, Planner, type EngineFs, type HomePlanData } from "./engine-plan-core.ts";
+import { ASIDE_SUFFIX, hasContentSteps, HelperError, homeKey, OPEN_PASS_STEPS, Known, pathApiFor, PlanError, Planner, type EngineFs, type HomePlanData } from "./engine-plan-core.ts";
 
 /** Plan / execute / verify rounds per attempt before the home is reported failed and left to the retry schedule. */
 export const MAX_ENGINE_ROUNDS = 3;
@@ -79,6 +79,15 @@ export function planEngineHistory(job: EngineHistoryJob, fs: EngineFs = realEngi
       reasons[home.home] = homeReasons[key] = "held";
       continue;
     }
+    // No helper on this system (engine-exclusion.ts found none it could load): nothing of the home could be changed, and without it the
+    // process list cannot be read either, so the engine would read as "cannot be told" and be asked about every 10 minutes for good. It is
+    // said for what it is, once (conversation-deletion.ts names it at once and tries again after Murage's next update).
+    if (!exclOps.available()) {
+      failedHomes.push(key);
+      if (!failed.includes(home.home)) failed.push(home.home);
+      reasons[home.home] = homeReasons[key] = new HelperError("helper-unloadable").message;
+      continue;
+    }
     const pl = new Planner(fs, facts);
     pl.synced = fs.syncedHome?.(home.home) === true;
     if (recovery.unreadable) {
@@ -109,7 +118,7 @@ export function planEngineHistory(job: EngineHistoryJob, fs: EngineFs = realEngi
         continue;
       }
       reasons[home.home] = homeReasons[key] = before.state === "unknown" ? "engine-unchecked" : "engine-open";
-      if (!job.quiet?.includes(key)) console.warn(`engine history: ${home.engine} home not read: ${before.state} by ${before.via}${"unknownBy" in before && before.unknownBy ? ` ${JSON.stringify(before.unknownBy.slice(0, 5))}` : ""}${before.holders?.length ? ` holders ${JSON.stringify(before.holders)}` : ""}`);
+      if (!job.quiet?.includes(key)) console.info(`engine history: ${home.engine} home not read: ${before.state} by ${before.via}${"unknownBy" in before && before.unknownBy ? ` ${JSON.stringify(before.unknownBy.slice(0, 5))}` : ""}${before.holders?.length ? ` holders ${JSON.stringify(before.holders.map(({ pid, ppid, name, exe, by }) => ({ pid, ppid, name, exe, by })))}` : ""}`);
       if (before.app) homeApps[key] = before.app;
       continue;
     }

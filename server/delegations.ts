@@ -1,8 +1,9 @@
 import { threadHumanPrincipal } from "./human-principals.ts";
 import { askerCancelled, handoffRequest, isTerminalRoomRequestState, type RoomRequest, completeRequest, requeueRequest } from "./room-requests.ts";
-import { awaitWriterGate, database, isDatabaseBusy, transaction } from "./database.ts";
+import { awaitWriterGate, database, isDatabaseBusy, onDatabaseClose, transaction } from "./database.ts";
+import { isNoSpaceError } from "./disk-space.ts";
 import { afterCommit } from "./tx-scope.ts";
-import { registerLegacyDelegationParser, importLegacyDelegations, delegationTurnKey, holdForReconcile, ownerRecordMigrationPending } from "./pending-delegations-schema.ts";
+import { registerLegacyDelegationParser, importLegacyDelegations, delegationTurnKey, delegationAdmissionHeld, holdForReconcile, ownerRecordMigrationPending } from "./pending-delegations-schema.ts";
 import { _forgetInFlight, dispatchHandoff } from "./handoff-dispatch.ts";
 import type { DatabaseSync, StatementSync } from "node:sqlite";
 import { botDeleted, onOwnerDeletion, ownerDeletedThread } from "./owner-deletions.ts";
@@ -230,10 +231,12 @@ export const PENDING_SQL = Object.freeze({
   sharedOfThread: `SELECT rowid AS pos, ${COLUMNS} FROM pending_delegations INDEXED BY pd_thread_shared WHERE source_thread_id=? AND phase<>'started' AND origin='shared' AND rowid>? ORDER BY rowid LIMIT ?`,
   /** The boot settling's page of started hand-offs after a cursor (started_at, rowid): a row that cannot be settled is passed over, never read again this start. */
   startedAfter: `SELECT rowid AS pos, started_at, id FROM pending_delegations WHERE started_at>=0 AND (started_at, rowid)>(?, ?) ORDER BY started_at, rowid LIMIT ${DRAIN_PAGE}`,
+  /** The boot settling's next started hand-off after a cursor (BOOT-SETTLE-108 3: one per unit, since its settling may write a receipt). */
+  startedNext: "SELECT rowid AS pos, started_at, id FROM pending_delegations WHERE started_at>=0 AND (started_at, rowid)>(?, ?) ORDER BY started_at, rowid LIMIT 1",
 });
 
 interface Statements {
-  byId: StatementSync; byThread: StatementSync; byThreadPage: StatementSync; byThreadTail: StatementSync; sharedOfThread: StatementSync; removeStarted: StatementSync; removeHeld: StatementSync; heldPage: StatementSync; startedPage: StatementSync; countThread: StatementSync; insert: StatementSync; update: StatementSync; remove: StatementSync;
+  byId: StatementSync; byThread: StatementSync; byThreadPage: StatementSync; byThreadTail: StatementSync; sharedOfThread: StatementSync; removeStarted: StatementSync; removeHeld: StatementSync; heldPage: StatementSync; startedPage: StatementSync; startedNext: StatementSync; countThread: StatementSync; insert: StatementSync; update: StatementSync; remove: StatementSync;
   removeThread: StatementSync; due: StatementSync; postpone: StatementSync; release: StatementSync;
   nextBusyBot: StatementSync; busyOfBot: StatementSync; waitingSame: StatementSync; waitingAfter: StatementSync; releaseOfBot: StatementSync;
 }
@@ -256,6 +259,7 @@ function stmts(): Statements {
       removeHeld: db.prepare("DELETE FROM pending_delegations WHERE id=? AND phase='started' AND started_at IS NULL"),
       heldPage: db.prepare("SELECT id, source_thread_id, to_bot_id, from_bot_id, submitted_at, item, origin FROM pending_delegations INDEXED BY pd_held WHERE phase='started' AND started_at IS NULL AND id>? ORDER BY id LIMIT 100"),
       startedPage: db.prepare(PENDING_SQL.startedPage),
+      startedNext: db.prepare(PENDING_SQL.startedNext),
       removeThread: db.prepare(PENDING_SQL.forgetThread),
       due: db.prepare(PENDING_SQL.due),
       postpone: db.prepare("UPDATE pending_delegations SET retry_at=? WHERE id=?"),
@@ -402,9 +406,10 @@ function saveReceipts(): boolean {
  * handoff the ledger ends without a turn (cancelled, refused, target gone)
  * still reaches the bot waiting on it. */
 /** The listener runs INSIDE the transaction that removes the started row (settleReceipted): the writes it makes commit or roll back with the row's removal. What it
- * returns, if anything, runs after that commit (wakes, notices): never inside it. */
-let receiptListener: ((receipt: DelegationReceipt, delivered: { id: string } | null) => (() => void) | void) | undefined;
-export function onDelegationReceipt(listener: ((receipt: DelegationReceipt, delivered: { id: string } | null) => (() => void) | void) | undefined): void {
+ * returns, if anything, runs after that commit (wakes, notices): never inside it. That follow-up returns false while the wake it owes is not on disk yet: the
+ * receipt then keeps its owed line for the next start. */
+let receiptListener: ((receipt: DelegationReceipt, delivered: { id: string } | null) => (() => boolean | void) | void) | undefined;
+export function onDelegationReceipt(listener: ((receipt: DelegationReceipt, delivered: { id: string } | null) => (() => boolean | void) | void) | undefined): void {
   receiptListener = listener;
 }
 
@@ -602,7 +607,7 @@ export function settleReceipted(receipt: DelegationReceipt): boolean {
     stranded.add(receipt.id);
     return false;
   }
-  let after: (() => void) | void = undefined;
+  let after: (() => boolean | void) | void = undefined;
   let written = false;
   try {
     transaction(() => {
@@ -625,11 +630,16 @@ export function settleReceipted(receipt: DelegationReceipt): boolean {
     console.error("delegations: a finished handoff could not be settled; its row stays and the next pass settles it", error);
     return false;
   }
-  // the line committed with the settle: the receipt owes nothing any more (after the OUTERMOST commit, so a rollback around this leaves it owed)
-  if (written) afterCommit(() => replyDelivered(receipt.id));
-  // the follow-ups (wakes announced, the pump) wait for the OUTERMOST commit: inside an enclosing transaction that later rolls back, nobody is told of a completion that did not happen
-  const followUp = after as (() => void) | void;
-  if (followUp) afterCommit(() => { try { followUp(); } catch (error) { console.error("delegations: receipt follow-up failed", error); } });
+  // the follow-ups (wakes announced, the pump) wait for the OUTERMOST commit: inside an enclosing transaction that later rolls back, nobody is told of a completion that did not happen.
+  // The line committed with the settle, so the receipt owes nothing any more, but it lets go of that only AFTER its follow-up: a direct hand-off's follow-up puts its
+  // asker's wake on disk, and a death between the two must leave the obligation for the next start's OWED pass (AskerWakes dedupes the wake it then delivers again).
+  // A follow-up that throws, or says its wake is not on disk yet (false), keeps the line owed the same way.
+  const followUp = after as (() => boolean | void) | void;
+  if (written || followUp) afterCommit(() => {
+    let keep = false;
+    if (followUp) { try { keep = followUp() === false; } catch (error) { keep = true; console.error("delegations: receipt follow-up failed", error); } }
+    if (written && !keep) replyDelivered(receipt.id);
+  });
   return true;
 }
 
@@ -1207,6 +1217,9 @@ export function settleQueuedDelegations(bus: CommsBus, approvalBus: ApprovalBus,
  * woken by their own events. A drain looks at ONE page of them (DRAIN_PAGE, from where the last drain of this thread stopped, wrapping round), so one that the
  * round cannot reach (its request ended while it waited) is still settled, and the work of a turn's end never follows the shared backlog. */
 export function drainDelegations(bus: CommsBus, approvalBus: ApprovalBus, threadId: string): void {
+  // BOOT-SETTLE-108 3: while admission is held nothing could start, and a walk of a long queue would keep this thread draining across its page yields (its
+  // Stop waiting meanwhile); the settling's success drains every waiting conversation (the boot drain), the migration's opening likewise
+  if (delegationAdmissionHeld()) return;
   if (drainingThreads.has(threadId)) {
     queuedRedrains.add(threadId);
     return;
@@ -1564,91 +1577,207 @@ const yieldToLoop = (): Promise<void> => new Promise<void>((resolve) => setImmed
 
 /** Where the boot settling has got to: the (started_at, rowid) of the last started row it looked at. */
 type StartedCursor = { at: number; pos: number };
-/** One page of started hand-offs after the cursor, each settled once. The cursor to go on from, or null when there are no more. A row whose settling fails is
- * passed over (it stays started, and the next start looks at it again): it never keeps the rows after it from being settled. */
-function settleStartedPage(cursor: StartedCursor, totals: SettleTotals, options: SettleOptions): StartedCursor | null {
-  const page = database().prepare(PENDING_SQL.startedAfter).all(cursor.at, cursor.pos) as unknown as Array<{ id: string; pos: number; started_at: number }>;
-  if (!page.length) return null;
-  for (const row of page) {
-    try {
-      const outcome = settleAfterFailure(row.id, options);
-      if (outcome === "receipted") totals.receipted++;
-      else if (outcome === "interrupted") totals.interrupted++;
-      else if (outcome === "redispatched") totals.redispatched++;
-      else if (outcome === "fresh") totals.fresh++;
-      else if (outcome === "held") totals.held++;
-      else if (outcome === "alreadyHeld") { /* already counted by whoever held it */ }
-    } catch (error) {
-      if (isDatabaseBusy(error)) throw error; // a held lock: the page runs again (settlePage), the row is still started
-      console.error("delegations: could not settle a started handoff at boot", error);
-    }
+/** BOOT-SETTLE-108 4.9: a failure that is the database's or the machine's, never the row's (a held lock, no space, I/O, memory, descriptors, a locked table, a
+ * file that cannot open): it is not taken as the row's own failure (the row is never passed over for it), and the unit runs again. The SQLite codes are matched
+ * by their low byte, so the extended codes count too. Anything else a row throws (a generic SQLite error, a classification refusal) is that row's own. */
+const OPERATIONAL_NODE_CODES = new Set(["EIO", "ENOMEM", "EMFILE", "ENFILE"]);
+const OPERATIONAL_SQLITE_CODES = new Set([6, 7, 10, 13, 14]);   // SQLITE_LOCKED, SQLITE_NOMEM, SQLITE_IOERR, SQLITE_FULL, SQLITE_CANTOPEN
+export function isBootSettleOperationalError(error: unknown): boolean {
+  if (isDatabaseBusy(error) || isNoSpaceError(error)) return true;
+  const e = error as { code?: unknown; errcode?: unknown } | null;
+  if (!e || typeof e !== "object") return false;
+  if (typeof e.code === "string" && OPERATIONAL_NODE_CODES.has(e.code)) return true;
+  return typeof e.errcode === "number" && OPERATIONAL_SQLITE_CODES.has(e.errcode & 0xff);
+}
+/** One started hand-off after the cursor, settled once (BOOT-SETTLE-108 3: its settling may write a receipt, so it is a unit of its own). The cursor to go on
+ * from, or null when there are no more. A row whose settling fails is passed over (it stays started, and the next start looks at it again): it never keeps the
+ * rows after it from being settled. An operational failure is not the row's: it escapes, and the unit runs again from the same cursor. */
+function settleStartedOne(cursor: StartedCursor, totals: SettleTotals, options: SettleOptions): StartedCursor | null {
+  const row = stmts().startedNext.get(cursor.at, cursor.pos) as { id: string; pos: number; started_at: number } | undefined;
+  if (!row) return null;
+  try {
+    const outcome = settleAfterFailure(row.id, options);
+    if (outcome === "receipted") totals.receipted++;
+    else if (outcome === "interrupted") totals.interrupted++;
+    else if (outcome === "redispatched") totals.redispatched++;
+    else if (outcome === "fresh") totals.fresh++;
+    else if (outcome === "held") totals.held++;
+    else if (outcome === "alreadyHeld") { /* already counted by whoever held it */ }
+  } catch (error) {
+    if (isBootSettleOperationalError(error)) throw error; // not the row's: the unit runs again, the row is still started
+    console.error("delegations: could not settle a started handoff at boot", error);
   }
-  const last = page[page.length - 1]!;
-  return page.length < DRAIN_PAGE ? null : { at: Number(last.started_at), pos: Number(last.pos) };
+  return { at: Number(row.started_at), pos: Number(row.pos) };
 }
 const STARTED_FROM: StartedCursor = { at: -1, pos: 0 };
+/** The shared-work pass: the highest request row when the pass began (read by its first unit), and the range it has reached. */
+type SharedCursor = { top?: number; after: number };
+function sharedUnit(cursor: SharedCursor): SharedCursor | null {
+  const top = cursor.top ?? sharedRequestsTop();
+  const after = requeueUnstartedSharedRange(cursor.after, top);
+  return after === null ? null : { top, after };
+}
+/** The owed-reply pass (BOOT-SETTLE-108 3): the receipts array as it was when the pass began and its length, a finite list of ids; each id is looked up again
+ * (findDelegationReceipt) right before it is settled, so a receipt replaced or acknowledged meanwhile is read as it is now, never as it was. */
+type OwedCursor = { list?: readonly DelegationReceipt[]; size?: number; index: number };
+function owedUnit(cursor: OwedCursor, count: { delivered: number }): OwedCursor | null {
+  const list = cursor.list ?? receipts, size = cursor.size ?? list.length;
+  let index = cursor.index;
+  for (let looked = 0; index < size && looked < SETTLE_PAGE; looked++) {
+    const id = list[index++]!.id;
+    const current = findDelegationReceipt(id);
+    if (!current || !owes(current)) continue;   // acknowledged, removed, or aged out since
+    if (handoffRow(id)) continue;               // a row still there is settled by the started-row pass (settleAfterFailure), never here
+    if (settleReceipted(current)) count.delivered++;
+    break;                                      // at most one settle (one receipt-bearing write) per unit
+  }
+  return index >= size ? null : { list, size, index };
+}
 
-/** Boot, BEFORE any drain and before the room requests are reconciled: settles every handoff whose turn had started, by the row alone (settleAfterFailure).
- * The started rows are read through `pd_started` (normally none), ONE PAGE PER EVENT-LOOP PASS, then the held notices, then the orphan lines, each the same
- * way; the dispatch gate stays closed until the last page is done, so settling still comes before any drain. */
+/** The five passes of the boot settling, in order, each a sequence of bounded units: a unit takes its cursor and returns the next one, or null when its pass is done. */
+type SettleUnit = { pass: string; from: unknown; step: (cursor: unknown) => unknown };
+const unit = <C>(pass: string, from: C, step: (cursor: C) => C | null): SettleUnit => ({ pass, from, step: step as unknown as (cursor: unknown) => unknown });
+function settlePasses(totals: SettleTotals, options: SettleOptions, owed: { delivered: number }): SettleUnit[] {
+  return [
+    unit<StartedCursor>("started", STARTED_FROM, (cursor) => settleStartedOne(cursor, totals, options)),
+    unit<string>("held", "", (after) => heldUnit(after, options)),
+    unit<SharedCursor>("shared", { after: 0 }, sharedUnit),
+    unit<string>("orphans", "", (after) => sweepOrphanHeldPage(after, options)),
+    unit<OwedCursor>("owed", { index: 0 }, (cursor) => owedUnit(cursor, owed)),
+  ];
+}
+
+/** Boot, BEFORE any drain and before anything is admitted: settles every handoff whose turn had started, by the row alone (settleAfterFailure), then the held
+ * notices, the shared requests, the orphan lines and the owed replies. Each unit is bounded (BOOT-SETTLE-108 3) and is followed by a real turn of the event loop,
+ * the last one too; the dispatch gate stays closed until the last unit is done, so settling still comes before any drain. A unit that fails for an operational
+ * reason runs again by itself (runSettleUnit), the gate still closed and the cursor where it was; the promise resolves only once every pass is done, and rejects
+ * only when the database closed under it. */
 export async function settleStartedDelegations(options: SettleOptions = {}): Promise<SettleTotals> {
   const totals = noTotals();
   if (ownerRecordMigrationPending()) return totals;
   const release = holdForReconcile();
+  const job: SettleJob = { closed: false, delay: BOOT_SETTLE_RETRY_FIRST_MS };
+  watchSettleJob(job);
   try {
     await yieldToLoop();                      // the gate is closed across at least one pass of the event loop, even when there is nothing to settle
     // the server's first start: the gate is closed now, the writes wait for the first health answer (an empty listen tick, STALLS-FINAL-DESIGN 3.4)
     if (options.ready) await options.ready;
-    // bounded: the cursor only moves forward over the started rows (pd_started), so each is looked at once per start, whatever its settling does
-    // each page is retried, with the gate still closed, when it meets a held write lock (the server runs this under a background source, whose
-    // writes give up after the background budget instead of holding the serving thread for the owner's 1 s)
-    for (let cursor: StartedCursor | null = STARTED_FROM; cursor !== null;) { const from: StartedCursor = cursor; cursor = await settlePage(() => settleStartedPage(from, totals, options)); if (cursor !== null) await yieldToLoop(); }
-    for (let after: string | null = ""; after !== null;) { const from: string = after; after = await settlePage(() => noticeHeldPage(from, options)); if (after !== null) await yieldToLoop(); }
-    for (let top = await settlePage(sharedRequestsTop), after: number | null = 0; after !== null;) { const from: number = after; after = await settlePage(() => requeueUnstartedSharedRange(from, top)); if (after !== null) await yieldToLoop(); }
-    for (let after: string | null = ""; after !== null;) { const from: string = after; after = await settlePage(() => sweepOrphanHeldPage(from, options)); if (after !== null) await yieldToLoop(); }
-    await settlePage(deliverOwedReplies);
-  } finally { release(); }
+    // bounded: every cursor only moves forward, so each row is looked at once per start, whatever its settling does
+    for (const pass of settlePasses(totals, options, { delivered: 0 })) {
+      for (let cursor: unknown = pass.from; cursor !== null;) {
+        const from = cursor;
+        cursor = await runSettleUnit(job, pass.pass, from, () => pass.step(from));
+        await yieldToLoop();
+      }
+    }
+  } finally { settleJobs.delete(job); release(); }
   return totals;
 }
-/** How many times one settling page meets a held lock before the settling gives up for this start. */
+/** BOOT-SETTLE-108 2: the server's ONE boot settling. The first call starts it (unless the owner-record migration is pending: its gate holds admission, and its
+ * listener calls this again); every later call joins the same job. `first` says whether this call started it: only that caller runs the success continuation
+ * (ticket cleanup, the boot drain), once. */
+let bootSettleJob: Promise<unknown> | undefined;
+export function joinBootSettle(run: () => Promise<unknown>): { job: Promise<unknown>; first: boolean } | null {
+  if (bootSettleJob) return { job: bootSettleJob, first: false };
+  if (ownerRecordMigrationPending()) return null;
+  bootSettleJob = run();
+  return { job: bootSettleJob, first: true };
+}
+/** How many times one settling unit meets a held lock before it waits for the outer retry. */
 const SETTLE_BUSY_ATTEMPTS = 20;
-/** One page of the boot settling; a held write lock (DatabaseBusyError, SQLITE_BUSY) waits for the writer gate and a growing pause, then the page
- * runs again (each page is idempotent: it reads its rows again). */
-async function settlePage<T>(page: () => T): Promise<T> {
-  for (let attempt = 1, pause = 100; ; attempt++, pause = Math.min(pause * 2, 2_000)) {
-    try { return page(); }
-    catch (error) {
-      if (!isDatabaseBusy(error) || attempt >= SETTLE_BUSY_ATTEMPTS) throw error;
-      await awaitWriterGate();
-      await new Promise<void>((resolve) => { const timer = setTimeout(resolve, pause); timer.unref?.(); });
+/** BOOT-SETTLE-108 4.9: the automatic retry of a unit that failed for an operational reason (or whose own transaction could not begin or commit): 1 s, doubling
+ * to 60 s, again and again until it succeeds or the database closes. One timer, one attempt at a time; the delay starts over after a unit that succeeds. */
+export const BOOT_SETTLE_RETRY_FIRST_MS = 1_000;
+export const BOOT_SETTLE_RETRY_MAX_MS = 60_000;
+type SettleJob = { closed: boolean; delay: number; wake?: () => void };
+const settleJobs = new Set<SettleJob>();
+const SETTLE_CLOSED = "BOOT_SETTLE_DATABASE_CLOSED";
+// registered with the first job, never at module load (the database module may still be loading then)
+let closeWatched = false;
+function watchSettleJob(job: SettleJob): void {
+  if (!closeWatched) { closeWatched = true; onDatabaseClose(() => { for (const open of settleJobs) { open.closed = true; open.wake?.(); } }); }
+  settleJobs.add(job);
+}
+/** The code a retry's warning names: the SQLite code, the system code, or the error's kind. Never its message (it can carry a row's content). */
+function settleErrorCode(error: unknown): string {
+  const e = error as { errcode?: unknown; code?: unknown; name?: unknown } | null;
+  if (e && typeof e === "object") {
+    if (typeof e.errcode === "number") return `SQLITE_${e.errcode}`;
+    if (typeof e.code === "string" && /^[A-Z0-9_]{1,40}$/u.test(e.code)) return e.code;
+    if (typeof e.name === "string" && /^[A-Za-z]{1,40}$/u.test(e.name)) return e.name;
+  }
+  return "unknown";
+}
+/** Where a unit stood, for the retry's warning: the cursor's position, never any content. */
+function settleCursorLabel(cursor: unknown): string {
+  if (typeof cursor === "string") return cursor ? `after:${cursor.slice(0, 80)}` : "start";
+  if (cursor && typeof cursor === "object") {
+    const c = cursor as { at?: unknown; pos?: unknown; after?: unknown; index?: unknown };
+    if (typeof c.at === "number") return `started_at:${c.at},rowid:${String(c.pos)}`;
+    if (typeof c.after === "number") return `rowid:${c.after}`;
+    if (typeof c.index === "number") return `index:${c.index}`;
+  }
+  return "start";
+}
+async function runSettleUnit<T>(job: SettleJob, pass: string, cursor: unknown, step: () => T): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    if (job.closed) throw coded(SETTLE_CLOSED, "the database closed while the boot settling was running; the next start settles again");
+    try {
+      const next = await settleUnitBusy(job, step);
+      job.delay = BOOT_SETTLE_RETRY_FIRST_MS;
+      return next;
+    } catch (error) {
+      if (job.closed) throw coded(SETTLE_CLOSED, "the database closed while the boot settling was running; the next start settles again");
+      const delay = job.delay;
+      job.delay = Math.min(BOOT_SETTLE_RETRY_MAX_MS, delay * 2);
+      console.warn("delegations: the boot settling waits and tries again", { phase: pass, cursor: settleCursorLabel(cursor), code: settleErrorCode(error), attempt, nextDelayMs: delay });
+      await closableWait(job, (done) => { const timer = setTimeout(done, delay); timer.unref?.(); return () => clearTimeout(timer); });
     }
   }
 }
-/** The same settling, every page at once. For tests and one-off tools; the server settles through settleStartedDelegations. */
+/** A wait of the boot settling that the database's close ends at once (job.wake): the outer retry's timer, the busy pause and the writer gate alike. */
+function closableWait(job: SettleJob, wait: (done: () => void) => (() => void) | void): Promise<void> {
+  return new Promise<void>((resolve) => {
+    if (job.closed) { resolve(); return; }
+    let finished = false, cancel: (() => void) | void;
+    const done = (): void => { if (finished) return; finished = true; if (job.wake === done) job.wake = undefined; cancel?.(); resolve(); };
+    job.wake = done;
+    cancel = wait(done);
+    if (finished) cancel?.();
+  });
+}
+/** One unit of the boot settling; a held write lock (DatabaseBusyError, SQLITE_BUSY) waits for the writer gate and a growing pause, then the unit runs again
+ * (each unit is idempotent: it reads its rows again), at most SETTLE_BUSY_ATTEMPTS times before the outer retry takes over. */
+async function settleUnitBusy<T>(job: SettleJob, step: () => T): Promise<T> {
+  for (let attempt = 1, pause = 100; ; attempt++, pause = Math.min(pause * 2, 2_000)) {
+    // never an attempt after the database closed: it would open it again and write after shutdown
+    if (job.closed) throw coded(SETTLE_CLOSED, "the database closed while the boot settling was running; the next start settles again");
+    try { return step(); }
+    catch (error) {
+      if (!isDatabaseBusy(error) || attempt >= SETTLE_BUSY_ATTEMPTS) throw error;
+      await closableWait(job, (done) => { void awaitWriterGate().then(done, done); });
+      await closableWait(job, (done) => { const timer = setTimeout(done, pause); timer.unref?.(); return () => clearTimeout(timer); });
+    }
+  }
+}
+/** The same settling, every unit at once. For tests and one-off tools; the server settles through settleStartedDelegations. */
 export function reconcileStartedDelegations(options: SettleOptions = {}): SettleTotals {
   const totals = noTotals();
   if (ownerRecordMigrationPending()) return totals;
-  for (let cursor: StartedCursor | null = STARTED_FROM; cursor !== null;) cursor = settleStartedPage(cursor, totals, options);
-  for (let after: string | null = ""; after !== null;) after = noticeHeldPage(after, options);
-  for (let top = sharedRequestsTop(), after: number | null = 0; after !== null;) after = requeueUnstartedSharedRange(after, top);
-  for (let after: string | null = ""; after !== null;) after = sweepOrphanHeldPage(after, options);
-  deliverOwedReplies();
+  for (const pass of settlePasses(totals, options, { delivered: 0 })) for (let cursor: unknown = pass.from; cursor !== null;) cursor = pass.step(cursor);
   return totals;
 }
 /** Boot, after the started rows are settled: a receipt that still owes its source conversation a line but has no row left (an earlier build removed the row
  * without the line, or the process died between the final commit and the receipt file's rewrite) delivers it now, under the line's stable id, so a line
  * already there is not written twice. Its request ends with it if it had not. One that cannot be written stays owed for the next start. Returns how many. */
 export function deliverOwedReplies(): number {
-  let delivered = 0;
-  for (const receipt of receipts.filter(owes)) {
-    if (handoffRow(receipt.id)) continue;   // a row still there is settled by the started-row pass (settleAfterFailure), never here
-    if (settleReceipted(receipt)) delivered++;
-  }
-  return delivered;
+  const count = { delivered: 0 };
+  for (let cursor: OwedCursor | null = { index: 0 }; cursor !== null;) cursor = owedUnit(cursor, count);
+  return count.delivered;
 }
 /** Shared work the first process dispatched but never started (it was waiting on the owner's approval, or had not reached its turn): its request is
  * running and its hand-off row was never stamped. Both go back to waiting, the request to queued, so it dispatches again. */
-export const SHARED_REQUEUE_ROWS = 500;
+export const SHARED_REQUEUE_ROWS = SETTLE_PAGE;   // BOOT-SETTLE-108 3: a range of P, as every other unit
 const sharedRequestsTop = (): number => Number((database().prepare("SELECT COALESCE(MAX(rowid), 0) AS top FROM room_requests").get() as { top: number }).top);
 /** One range of at most SHARED_REQUEUE_ROWS request rows after `after` (up to `top`, the highest row when the pass began): the cost of a pass follows the range and never
  * the number of requests that match. The cursor to go on from, or null when the last range is done. */
@@ -1691,32 +1820,88 @@ const removeHeldRow = (id: string): boolean => { deliverOwedBeforeRemoval(id); c
 
 /** The owner is told about every held hand-off: a receipt (the delegating bot reads it too) and a line in the conversation it was made in. Idempotent: the
  * receipt is replaced by id and the line has a stable id, so repeating it after a crash, or at every start while the row is held, adds nothing. A row held for
- * more than HELD_KEPT_MS is let go (its control cleared in the same commit). Found by the pd_held index, ONE page of 100 per call: the cursor to go on from,
- * or null when the last page is done. */
+ * more than HELD_KEPT_MS is let go (its control cleared in the same commit). Found by the pd_held index, in id order (BOOT-SETTLE-108 3): one unit is either
+ * the next run of plainly expired rows (at most SETTLE_PAGE, one commit: heldExpiryBatchable) or ONE row on its own (anything that can touch a receipt or a
+ * request). The cursor to go on from, or null when the last row is done. */
 const HELD_KEPT_MS = 30 * 24 * 60 * 60 * 1000;
-function noticeHeldPage(after: string, options: SettleOptions): string | null {
-  const now = Date.now();
-  const page = stmts().heldPage.all(after) as unknown as Array<{ id: string; source_thread_id: string; to_bot_id: string; from_bot_id: string | null; submitted_at: number | null; item: string; origin: DelegationOrigin }>;
-  if (!page.length) return null;
-  for (const row of page) {
-    try {
-      // CLOUD-COMPUTER-BOOT-105 H1: a held hand-off whose request ended is closed as cancelled, not noticed as held
-      if (row.origin === "room" || row.origin === "shared") { const full = handoffRow(row.id); if (full && settleEndedRequest(full, options) !== null) continue; }
-      if (row.submitted_at !== null && now - row.submitted_at > HELD_KEPT_MS) { releaseHeld(options.store, { id: row.id, sourceThreadId: row.source_thread_id }, () => removeHeldRow(row.id)); continue; }
-      noticeHeldOne(row, options);
-    } catch (error) { console.error("delegations: could not tell the owner about a held handoff", error); }
-  }
-  return page.length < 100 ? null : page[page.length - 1]!.id;
+type HeldPageRow = { id: string; source_thread_id: string; to_bot_id: string; from_bot_id: string | null; submitted_at: number | null; item: string; origin: DelegationOrigin };
+const heldRowNow = (id: string): HeldPageRow | undefined =>
+  database().prepare("SELECT id, source_thread_id, to_bot_id, from_bot_id, submitted_at, item, origin FROM pending_delegations WHERE id=? AND phase='started' AND started_at IS NULL").get(id) as HeldPageRow | undefined;
+/** BOOT-SETTLE-108 3.1: a held row whose expiry is SQL only (row, control, registration): an owner hand-off, submitted longer ago than HELD_KEPT_MS, with no
+ * request of its own and no receipt (so no line is owed and no listener can run). Anything else is settled one row at a time. */
+function heldExpiryBatchable(row: HeldPageRow, now: number): boolean {
+  if (row.origin !== "owner" || row.submitted_at === null || now - row.submitted_at <= HELD_KEPT_MS) return false;
+  let paired: boolean;
+  try { paired = handoffRequest(database(), row.id) !== null; } catch { paired = true; }   // no request table: not proven alone, so one at a time
+  return !paired && findDelegationReceipt(row.id) === null;
 }
-/** The receipt and the line for one held hand-off (repeatable). */
-export function noticeHeldOne(row: { id: string; source_thread_id: string; to_bot_id: string; from_bot_id: string | null; item: string }, options: SettleOptions): void {
+function heldUnit(after: string, options: SettleOptions): string | null {
+  const now = Date.now();
+  const page = stmts().heldPage.all(after) as unknown as HeldPageRow[];
+  if (!page.length) return null;
+  const next = (index: number): string | null => (index === page.length - 1 && page.length < SETTLE_PAGE ? null : page[index]!.id);
+  if (!heldExpiryBatchable(page[0]!, now)) {
+    try { heldOne(page[0]!, options, now); }
+    catch (error) {
+      if (isBootSettleOperationalError(error)) throw error;
+      console.error("delegations: could not tell the owner about a held handoff", error);
+    }
+    return next(0);
+  }
+  // the run of expired rows from here, in key order, ONE commit; it stops before the first row that is not (that one is a unit of its own, after a yield)
+  let done = -1;
+  transaction(() => {
+    for (let index = 0; index < page.length; index++) {
+      const row = heldRowNow(page[index]!.id);
+      if (!row || !heldExpiryBatchable(row, now)) break;
+      // a row's own failure is its own (its savepoint rolled back, the row stays for a later pass); an operational one is the unit's
+      try { releaseHeld(options.store, { id: row.id, sourceThreadId: row.source_thread_id }, () => removeHeldRow(row.id)); }
+      catch (error) {
+        if (isBootSettleOperationalError(error)) throw error;
+        console.error("delegations: could not let an expired held handoff go", error);
+      }
+      done = index;
+    }
+  }, { op: "delegation-boot-expiry" });
+  return done < 0 ? after : next(done);
+}
+/** One held hand-off, on its own (BOOT-SETTLE-108 3): a request that ended closes it as cancelled (H1); a request still live is settled first, from the saved
+ * receipt (or the ordinary notice receipt, written now), so a restart between the receipt and its settle completes it once; only then may the row expire.
+ * A partner still live after that (a held reply, a settle that failed and waits in `stranded`) keeps the row and its notice. */
+function heldOne(row: HeldPageRow, options: SettleOptions, now: number): void {
+  if (row.origin === "room" || row.origin === "shared") {
+    // CLOUD-COMPUTER-BOOT-105 H1: a held hand-off whose request ended is closed as cancelled, not noticed as held
+    const full = handoffRow(row.id);
+    if (full && settleEndedRequest(full, options) !== null) return;
+    const request = handoffRequest(database(), row.id);
+    if (request && !isTerminalRoomRequestState(request.state)) {
+      const receipt = findDelegationReceipt(row.id);
+      if (receipt && !holds(receipt)) settleReceipted(receipt);
+      else if (!receipt) recordHeldReceipt(row, heldNoticeOf(row, options));
+      const after = handoffRequest(database(), row.id);
+      if (after && !isTerminalRoomRequestState(after.state)) { noticeHeldOne(row, options); return; }
+    }
+  }
+  if (row.submitted_at !== null && now - row.submitted_at > HELD_KEPT_MS) { releaseHeld(options.store, { id: row.id, sourceThreadId: row.source_thread_id }, () => removeHeldRow(row.id)); return; }
+  noticeHeldOne(row, options);
+}
+type HeldNoticeOf = { name: string; reason: HeldReason | undefined; text: string; heldStatus: MurageStatus };
+function heldNoticeOf(row: { to_bot_id: string; item: string }, options: SettleOptions): HeldNoticeOf {
   const name = options.botName?.(row.to_bot_id) ?? row.to_bot_id;
   let reason: HeldReason | undefined;
   try { const held = (JSON.parse(row.item) as { heldReason?: unknown }).heldReason; if (held === "busy" || held === "didNotStart") reason = held; } catch { /* an unreadable payload reads as the restart notice */ }
   const text = reason ? heldReasonText(reason, name) : uncertainHandoffText(name);
   const heldStatus = status(reason === "busy" ? "receipt_held_busy" : reason ? "receipt_held_didnotstart" : "receipt_uncertain", { name: name as BotName });
-  if (!findDelegationReceipt(row.id)) recordDelegationReceipt({ id: row.id, sourceThreadId: row.source_thread_id, toBotId: row.to_bot_id, toBotName: name, status: reason === "busy" ? "busy_gave_up" : "failed", result: heldStatus });
-  options.notice?.({ id: row.id, sourceThreadId: row.source_thread_id, toBotId: row.to_bot_id, fromBotId: row.from_bot_id, toBotName: name, text, ...(reason ? { reason } : {}) });
+  return { name, reason, text, heldStatus };
+}
+function recordHeldReceipt(row: { id: string; source_thread_id: string; to_bot_id: string }, notice: HeldNoticeOf): void {
+  recordDelegationReceipt({ id: row.id, sourceThreadId: row.source_thread_id, toBotId: row.to_bot_id, toBotName: notice.name, status: notice.reason === "busy" ? "busy_gave_up" : "failed", result: notice.heldStatus });
+}
+/** The receipt and the line for one held hand-off (repeatable). */
+export function noticeHeldOne(row: { id: string; source_thread_id: string; to_bot_id: string; from_bot_id: string | null; item: string }, options: SettleOptions): void {
+  const notice = heldNoticeOf(row, options);
+  if (!findDelegationReceipt(row.id)) recordHeldReceipt(row, notice);
+  options.notice?.({ id: row.id, sourceThreadId: row.source_thread_id, toBotId: row.to_bot_id, fromBotId: row.from_bot_id, toBotName: notice.name, text: notice.text, ...(notice.reason ? { reason: notice.reason } : {}) });
 }
 /** Tells the owner about the one hand-off that was just held (the dispatch calls it when a start failed or a teammate stayed busy). */
 export function announceHeld(id: string, options: SettleOptions): void {
@@ -1726,37 +1911,77 @@ export function announceHeld(id: string, options: SettleOptions): void {
 
 // ── held lines whose row is gone ─────────────────────────────────────────────────────
 /** One page (at most SWEEP_PAGE) of the registered held lines after `after`: a line whose hand-off is no longer held has its control cleared, and its registration goes
- * with it in the same commit. Only the registered lines are walked, so the cost follows the number of held hand-offs and never the size of any conversation. A line
- * that could not be cleared keeps its registration and is looked at again by the next pass. The cursor to go on from, or null when the last page is done. */
+ * with it, all of the page's in ONE commit (BOOT-SETTLE-108 3.2: SQL only, no receipt). Only the registered lines are walked, so the cost follows the number of held
+ * hand-offs and never the size of any conversation. A line that could not be cleared keeps its registration and is looked at again by the next pass. The cursor
+ * to go on from, or null when the last page is done. */
 const SWEEP_PAGE = 100;
 function sweepOrphanHeldPage(after: string, options: SettleOptions): string | null {
   const page = database().prepare("SELECT message_id, delegation_id, source_thread_id FROM held_notice_lines WHERE message_id>? ORDER BY message_id LIMIT ?").all(after, SWEEP_PAGE) as unknown as Array<{ message_id: string; delegation_id: string; source_thread_id: string }>;
   if (!page.length) return null;
-  for (const line of page) {
-    try {
-      const row = handoffRow(line.delegation_id);
-      if (row && row.phase === "started" && row.started_at === null) continue;       // still held: the control is right
-      releaseHeld(options.store, { id: line.delegation_id, sourceThreadId: line.source_thread_id }, () => false);
-    } catch (error) { console.error("delegations: could not clear a held line whose handoff is gone", error); }
+  const stillHeld = (id: string): boolean => { const row = handoffRow(id); return Boolean(row && row.phase === "started" && row.started_at === null); };
+  if (page.some((line) => !stillHeld(line.delegation_id))) {
+    transaction(() => {
+      for (const line of page) {
+        try {
+          if (stillHeld(line.delegation_id)) continue;       // still held: the control is right
+          releaseHeld(options.store, { id: line.delegation_id, sourceThreadId: line.source_thread_id }, () => false);
+        } catch (error) {
+          if (isBootSettleOperationalError(error)) throw error;
+          console.error("delegations: could not clear a held line whose handoff is gone", error);
+        }
+      }
+    }, { op: "delegation-boot-orphans" });
   }
   return page.length < SWEEP_PAGE ? null : page[page.length - 1]!.message_id;
 }
 
+/** BOOT-SETTLE-108 3: how an owner action (Dismiss, Send again) ends a held hand-off's request that is still live. The server passes the room's own completion
+ * (its hooks; the wakes and other follow-ups wait for the outer commit); without one the request is completed as cancelled, as settleHandoffPair does. */
+export type HeldPartnerCancel = (db: DatabaseSync, id: string, outcome: { state: "cancelled"; now: number; outcomeNote: string }) => void;
+export interface HeldActionOptions { cancelPartner?: HeldPartnerCancel }
+/** Thrown inside an owner action's transaction when the held hand-off's request could not be ended: nothing of the action is kept. */
+export const HELD_PARTNER_LIVE = "HELD_PARTNER_LIVE";
+const SEND_AGAIN_REFUSED = "SEND_AGAIN_REFUSED";
+/** Ends the request of a held hand-off before its row goes, INSIDE the removal's transaction (BOOT-SETTLE-108 3). Dismiss cancels it. Send again (`fromReceipt`)
+ * ends it from its saved receipt when one can complete it (a held reply cannot), else cancels it. The request must really be terminal afterwards; otherwise this
+ * throws and the whole owner action rolls back (the row, its control and its request stay; a settle that failed has already put the id in `stranded`, which
+ * settles the row that is still there). A receipt settle that leaves the request waiting (a done result whose request still waits on asks of its own) is such a
+ * deferral: it is refused, never followed by a cancel of the work still open. */
+function closeHeldPartner(id: string, options: HeldActionOptions, fromReceipt: boolean): void {
+  const db = database();
+  const live = (): boolean => { const request = handoffRequest(db, id); return request !== null && !isTerminalRoomRequestState(request.state); };
+  if (!live()) return;
+  const receipt = fromReceipt ? findDelegationReceipt(id) : null;
+  if (receipt && !holds(receipt)) {
+    if (!settleReceipted(receipt)) throw coded(HELD_PARTNER_LIVE, "the held hand-off's request could not be settled from its receipt; nothing was removed");
+    // deferred, not transient: the partner waits on asks of its own, so only Dismiss or those asks ending changes this (the route words it apart)
+    if (live()) throw Object.assign(coded(HELD_PARTNER_LIVE, "the held hand-off's request did not end from its receipt; nothing was removed"), { reason: "waiting" as const });
+    return;
+  }
+  const cancel = options.cancelPartner ?? ((at, request, outcome) => { completeRequest(at, request, outcome); });
+  cancel(db, id, { state: "cancelled", now: Date.now(), outcomeNote: "the handoff was removed" });
+  if (live()) throw coded(HELD_PARTNER_LIVE, "the held hand-off's request is still live; nothing was removed");
+}
+
 /** The owner's Send again on a held hand-off: it is queued as a NEW hand-off (new id, same payload), and the held one is removed in the same commit (with its
- * control). First it asks whether the original ran after all: an accepted turn, output that follows its prompt, or a run still going on the stored conversation.
- * If so nothing is sent again ("already_ran"), the held line is released and an interrupted receipt is written.
+ * control), its request ended first (closeHeldPartner) in that commit too. First it asks whether the original ran after all: an accepted turn, output that
+ * follows its prompt, or a run still going on the stored conversation. If so nothing is sent again ("already_ran"), the held line is released and an
+ * interrupted receipt is written. A replacement the queue refuses rolls the whole action back: the held row, its control and its request stay.
  * Returns the queue result with the new id; "not_held" when there is nothing to send again (already sent, dismissed or never held). */
-export function resendHeldDelegation(bus: CommsBus, id: string): { result: QueueResult | "not_held" | "sender_gone" | "already_ran"; id?: string; toBotName?: string } {
+export function resendHeldDelegation(bus: CommsBus, id: string, options: HeldActionOptions = {}): { result: QueueResult | "not_held" | "sender_gone" | "already_ran"; id?: string; toBotName?: string } {
   const db = database();
   const row = db.prepare("SELECT id, source_thread_id, to_bot_id, from_bot_id, phase, retry_at, item, origin, target_thread_id, turn_key, accepted_turn_id, evidence_at FROM pending_delegations WHERE id=? AND phase='started' AND started_at IS NULL").get(id) as unknown as (StoredRow & { target_thread_id: string | null; turn_key: string | null; accepted_turn_id: string | null; evidence_at: number | null }) | undefined;
   if (!row) return { result: "not_held" };
-  const parsed = itemOf({ ...row, phase: "fresh", retry_at: null } as StoredRow);
-  if (!parsed) { removeHeldRow(id); return { result: "not_held" }; }
+  // the row is read again inside each removal's transaction; its request ends in that same commit
+  const closeAndRemove = (): boolean => { if (!heldRowNow(id)) return false; closeHeldPartner(id, options, true); return removeHeldRow(id); };
   const held = { id, sourceThreadId: row.source_thread_id };
+  const parsed = itemOf({ ...row, phase: "fresh", retry_at: null } as StoredRow);
+  // an unreadable payload cannot be sent again: it goes like any other removal, its control and registration in the same commit
+  if (!parsed) { releaseHeld(bus.store, held, closeAndRemove); return { result: "not_held" }; }
   const name = bus.store.bot(row.to_bot_id)?.name ?? row.to_bot_id;
   // a hand-off held for being busy or for not starting was never handed to the provider: there is nothing it could have done. Any other held one asks first.
   if (parsed.heldReason === undefined && (row.accepted_turn_id || row.evidence_at !== null || (row.target_thread_id !== null && bus.handoffRunning?.(row.target_thread_id, id) === true))) {
-    releaseHeld(bus.store, held, () => removeHeldRow(id));
+    releaseHeld(bus.store, held, closeAndRemove);
     recordDelegationReceipt({ id, sourceThreadId: row.source_thread_id, toBotId: row.to_bot_id, toBotName: name, status: "failed", result: status("receipt_restart") });
     return { result: "already_ran", toBotName: name };
   }
@@ -1764,18 +1989,33 @@ export function resendHeldDelegation(bus: CommsBus, id: string): { result: Queue
   if (!from) return { result: "sender_gone" };
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { id: _id, attempts: _a, fromBotId: _f, waitingOnBusy: _w, waitingSince: _s, waitMessageId: _m, unknownTarget: _u, unknownRetryAt: _r, unknownAttempts: _n, unknownRecheck: _c, origin: _o, heldReason: _h, ...payload } = parsed;
-  return transaction(() => {
-    const queued = queueDelegation(bus, from, payload, payload.depth + 1, row.source_thread_id);
-    if (queued.result === "ok") releaseHeld(bus.store, held, () => removeHeldRow(id));
-    return queued;
-  }, { op: "delegation-send-again" });
+  try {
+    return transaction((): ReturnType<typeof resendHeldDelegation> => {
+      if (!heldRowNow(id)) return { result: "not_held" };
+      // the original's request ends first, then the replacement is queued, then the original row goes: one commit, or none of it
+      closeHeldPartner(id, options, true);
+      const queued = queueDelegation(bus, from, payload, payload.depth + 1, row.source_thread_id);
+      if (queued.result !== "ok") throw Object.assign(coded(SEND_AGAIN_REFUSED, "the replacement was not queued; nothing was removed"), { queued });
+      releaseHeld(bus.store, held, () => removeHeldRow(id));
+      return queued;
+    }, { op: "delegation-send-again" });
+  } catch (error) {
+    const refused = error as { code?: unknown; queued?: QueuedDelegation };
+    if (refused.code === SEND_AGAIN_REFUSED && refused.queued) return refused.queued;
+    throw error;
+  }
 }
 
-/** The owner's Dismiss on a held hand-off: the row goes with its control, in one commit; nothing runs. */
-export function dismissHeldDelegation(id: string, store?: Pick<Store, "patchMessage">): boolean {
+/** The owner's Dismiss on a held hand-off: its request is cancelled (closeHeldPartner; a saved receipt does not decide it) and the row goes with its control,
+ * in one commit; nothing runs. A request that could not be ended keeps everything as it was (this throws). */
+export function dismissHeldDelegation(id: string, store?: Pick<Store, "patchMessage">, options: HeldActionOptions = {}): boolean {
   const row = database().prepare("SELECT source_thread_id FROM pending_delegations WHERE id=? AND phase='started' AND started_at IS NULL").get(id) as { source_thread_id: string } | undefined;
   if (!row) return false;
-  return releaseHeld(store, { id, sourceThreadId: row.source_thread_id }, () => removeHeldRow(id));
+  return releaseHeld(store, { id, sourceThreadId: row.source_thread_id }, () => {
+    if (!heldRowNow(id)) return false;
+    closeHeldPartner(id, options, false);
+    return removeHeldRow(id);
+  });
 }
 
 /** A started hand-off that is known NOT to have executed (its start was cut short before the provider took it) becomes held for the owner, with the reason kept.
@@ -1921,37 +2161,42 @@ let unreachableAgain = false;
 export function dropUnreachableDelegations(bus: CommsBus): Promise<number> {
   // a change that arrives while a sweep runs asks for one more pass after it, so the roster it saw is never stale
   if (unreachableSweep) { unreachableAgain = true; return unreachableSweep; }
-  unreachableSweep = (async () => {
+  const sweep = (async () => {
     let dropped = 0;
-    try {
-      do {
-        unreachableAgain = false;
-        const db = database();
-        const page = db.prepare(`SELECT rowid AS rid, ${COLUMNS} FROM pending_delegations WHERE rowid>? ORDER BY rowid LIMIT ${UNREACHABLE_PAGE}`);
-        for (let cursor = 0;;) {
-          const rows = page.all(cursor) as unknown as Array<StoredRow & { rid: number }>;
-          if (!rows.length) break;
-          cursor = rows[rows.length - 1]!.rid;
-          for (const row of rows) {
-            if (drainingThreads.has(row.source_thread_id)) continue;
-            const item = readable(row);
-            if (!item) continue;
-            const sender = (item.fromBotId ? bus.store.bot(item.fromBotId) : null) ?? bus.store.botByThread(row.source_thread_id);
-            const target = bus.store.bot(item.toBotId);
-            if (!sender || !target) continue;
-            if (!dropIfUnreachable(bus, sender, target, row.source_thread_id, item)) continue;
-            if (!removeItem(item.id)) continue;
-            clearWaitLine(bus, row.source_thread_id, item);
-            dropped += 1;
-          }
-          // the event loop is free between pages
-          await new Promise<void>((resolve) => setImmediate(resolve));
+    do {
+      unreachableAgain = false;
+      const db = database();
+      const page = db.prepare(`SELECT rowid AS rid, ${COLUMNS} FROM pending_delegations WHERE rowid>? ORDER BY rowid LIMIT ${UNREACHABLE_PAGE}`);
+      for (let cursor = 0;;) {
+        const rows = page.all(cursor) as unknown as Array<StoredRow & { rid: number }>;
+        if (!rows.length) break;
+        cursor = rows[rows.length - 1]!.rid;
+        for (const row of rows) {
+          if (drainingThreads.has(row.source_thread_id)) continue;
+          const item = readable(row);
+          if (!item) continue;
+          const sender = (item.fromBotId ? bus.store.bot(item.fromBotId) : null) ?? bus.store.botByThread(row.source_thread_id);
+          const target = bus.store.bot(item.toBotId);
+          if (!sender || !target) continue;
+          if (!dropIfUnreachable(bus, sender, target, row.source_thread_id, item)) continue;
+          if (!removeItem(item.id)) continue;
+          clearWaitLine(bus, row.source_thread_id, item);
+          dropped += 1;
         }
-      } while (unreachableAgain);
-    } finally { unreachableSweep = undefined; }
+        // the event loop is free between pages
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+    } while (unreachableAgain);
     return dropped;
   })();
-  return unreachableSweep;
+  // Cleared once the sweep has settled, never from inside it: a sweep that
+  // finds nothing reaches no await, so a `finally` in the body ran before this
+  // assignment and the slot kept a settled promise, and every later roster
+  // change got that promise back without a sweep (upstream fa0402dbc's class).
+  unreachableSweep = sweep;
+  const clear = () => { if (unreachableSweep === sweep) unreachableSweep = undefined; };
+  sweep.then(clear, clear);
+  return sweep;
 }
 
 /** Test helper: how many items remain queued for a thread. */
@@ -1966,6 +2211,7 @@ export function _resetPending(): void {
 }
 /** Test helper: forget what only a running process knows (draining threads, redrain requests, receipts) while the queued rows stay, as a restart does. */
 export function _simulateRestart(): void {
+  bootSettleJob = undefined;
   drainingThreads.clear();
   sharedCursor.clear();
   stranded.clear();

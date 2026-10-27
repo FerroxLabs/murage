@@ -101,6 +101,12 @@ export function unreadableHit(): AlwaysAskHit {
   return hit("unreadable");
 }
 
+/** Preserve security-bearing exceptions even when they share the unreadable rule. */
+function readerFailure(error: Unreadable): AlwaysAskHit {
+  if (error.message.endsWith(REMOTE_ELEVATED)) return { rule: "unreadable", what: REMOTE_ELEVATED_WHAT };
+  return hit("unreadable");
+}
+
 /** Top-level folders the system runs from (macOS, Linux). A delete of one of
  * these, or of everything inside one, always asks. */
 const SYSTEM_FOLDERS = new Set([
@@ -205,6 +211,9 @@ function classifyCandidate(candidate: Candidate, ctx: WalkContext): AlwaysAskRul
     // an item of a list file on disk: the same trust as a script on disk
     case "fromFile": return null;
     case "value": {
+      // Splitting/globbing can mark a resolved assignment as a value.
+      // Its known literal landing still takes the catastrophe rule.
+      if (!candidate.path.includes(UNKNOWN_MARK)) return classifyPath(resolveFrom(cwd, candidate.path));
       if (candidate.lead) {
         const rest = candidate.path.slice(1).replace(/\\/g, "/");
         return rest !== "" && /^(\/(\*|\.)?)+$/.test(rest) ? "unknown-target" : null;
@@ -1156,6 +1165,30 @@ function carvableTargets(cmd: SimpleCommand, ctx: WalkContext): "all" | Set<Cand
 }
 const FIND_RUNS = new Set(["-exec", "-execdir", "-ok", "-okdir"]);
 
+/** Recognize an executable foreign marker, not a word printed as data.
+ * A foreign executor is outside the stamped reader's model and asks. */
+function foreignExecutorIn(text: string, powerShell: boolean): boolean {
+  let head = true;
+  try {
+    const tokens = lex(text);
+    for (const [index, token] of tokens.entries()) {
+      if (token.kind === "newline" || token.kind === "op" && [";", "|", "||", "&&", "&", "("].includes(token.op)) { head = true; continue; }
+      if (token.kind !== "word" || !head) continue;
+      const word = literalText(token.word);
+      const next = tokens[index + 1];
+      const nextText = next?.kind === "word" ? renderWord(next.word) : next?.kind === "op" ? next.op : "";
+      if (word !== undefined && (powerShell
+        ? word === "eval" && token.word.parts.every(part => part.kind === "lit" && part.quote === "none")
+        : /^invoke-expression$/i.test(word) || /^iex$/i.test(word) && /^(?:\(|\$|\[|-Command)/i.test(nextText))) return true;
+      if (word !== undefined && /^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) continue;
+      head = false;
+    }
+  } catch (error) {
+    if (!(error instanceof Unreadable)) throw error;
+  }
+  return false;
+}
+
 /** Does this command always ask, whatever the bot's access level? Null when
  * it is an ordinary command. `cwd` is the folder it runs in, when the engine
  * reported one: `rm -rf *` there is a delete of that folder.
@@ -1165,16 +1198,21 @@ const FIND_RUNS = new Set(["-exec", "-execdir", "-ok", "-okdir"]);
  * command, where a stray apostrophe in a file name must not ask.
  *
  * `shell: "pwsh"` is for an engine's PowerShell tool: its text is
- * PowerShell's whatever it starts with, so it is read by the PowerShell
- * reader only. */
-export function alwaysAskCommand(text: string | undefined, cwd?: string, mode: "command" | "text" = "command", shell?: "pwsh"): AlwaysAskHit | null {
+ * PowerShell's whatever it starts with. Foreign execution markers are a
+ * reader failure and keep asking at every access level. */
+export function alwaysAskCommand(text: string | undefined, cwd?: string, mode: "command" | "text" = "command", shell?: "pwsh", windowsBash?: string[]): AlwaysAskHit | null {
   if (!text) return null;
   try {
-    return readWhole(text, cwd, shell);
+    const found = readWhole(text, cwd, shell, windowsBash);
+    // Keep foreign executors held without mistaking Elixir iex for PowerShell.
+    const foreignExecutor = foreignExecutorIn(text, shell !== undefined);
+    return !found && mode === "command" && foreignExecutor
+      ? hit("unreadable")
+      : found;
   } catch (error) {
     if (!(error instanceof Unreadable)) throw error;
     if (mode !== "command") return null;
-    return error.message.endsWith(REMOTE_ELEVATED) ? { rule: "unreadable", what: REMOTE_ELEVATED_WHAT } : hit("unreadable");
+    return readerFailure(error);
   }
 }
 
@@ -1183,11 +1221,14 @@ export function alwaysAskCommand(text: string | undefined, cwd?: string, mode: "
  * a pipe, `%x%`, `!x!`). */
 const CMD_RUNS_TEXT = /\s\/[ckr](?=[\s"]|$)|[&%!]|(?<!>)\|/i;
 
-function read(text: string, cwd: string | undefined, shell?: "pwsh"): AlwaysAskHit | null {
+function read(text: string, cwd: string | undefined, shell?: "pwsh", windowsBash?: string[]): AlwaysAskHit | null {
   deferred = null;
   unseen = { text, paths: [] };
   try {
-    return (shell === "pwsh" ? walkPwsh(text, newContext(cwd || undefined), visitor) : readRules(text, cwd)) ?? deferred;
+    return (shell === "pwsh" ? walkPwsh(text, { ...newContext(cwd || undefined), windowsBash }, visitor) : readRules(text, cwd)) ?? deferred;
+  } catch (error) {
+    if (deferred && error instanceof Unreadable) return deferred;
+    throw error;
   } finally {
     deferred = null;
   }
@@ -1220,10 +1261,11 @@ export function alwaysAskRoutineCommand(text: string | undefined, cwd?: string, 
 /** `read`, then the unseen script files when nothing else asked: they may go
  * ahead at Full access and No limits only in a text of the allowed shape
  * (`unseenShapeAdmits`); any other text with one asks at every level. */
-function readWhole(text: string, cwd: string | undefined, shell?: "pwsh"): AlwaysAskHit | null {
+function readWhole(text: string, cwd: string | undefined, shell?: "pwsh", windowsBash?: string[]): AlwaysAskHit | null {
   try {
-    const found = read(text, cwd, shell);
+    const found = read(text, cwd, shell, windowsBash);
     if (found || !unseen || unseen.paths.length === 0) return found;
+    if (windowsBash) return hit("unreadable");
     return unseenShapeAdmits(text, unseen.paths, cwd, shell) ? { ...hit("unreadable"), unseenScript: true } : hit("unreadable");
   } finally {
     unseen = null;

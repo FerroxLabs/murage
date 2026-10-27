@@ -81,7 +81,7 @@ import {
 } from "./mdns.ts";
 import { createDeviceStreamUpgrade, createProxyHandler } from "./proxy.ts";
 import { doorForwardHeaders } from "./routes.ts";
-import { rejectUpgrade } from "./stream-upgrade.ts";
+import { closeStreamUpgrades, rejectUpgrade } from "./stream-upgrade.ts";
 import { companionOriginSocket, listenCompanionOrigin } from "./origin.ts";
 import { answerDoorChallenge, takeDoorIdentity } from "./door-identity.ts";
 import { createHarnessCall } from "./push-door.ts";
@@ -780,6 +780,8 @@ const shutdown = async (signal: string): Promise<void> => {
   // own — drop the sockets so "stop" means stopped, now.
   companion.closeAllConnections?.();
   control.closeAllConnections?.();
+  // ...and a call's voice stream, which closeAllConnections() skips once upgraded
+  closeStreamUpgrades();
   browser.closeAllConnections?.();
   managedOrigin?.closeAllConnections?.();
   await Promise.all([

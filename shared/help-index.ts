@@ -1015,6 +1015,56 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "- A phone layout. On a narrow screen the chat header and the composer fold into compact menus, with Stop, Attach and the approval level one tap away.\n- News from Murage. The first run asks once whether you want product news, and Settings > About keeps the choice.\n- Smoother on Linux. Murage uses the graphics card on Intel and AMD, and relaunches cleanly on Linux and WSL after a start from a terminal."
   },
   {
+    "id": "changelog/v1-0-8#fewer-interruptions-at-full-access-in-1-0-8",
+    "title": "What changed in Murage 1.0.8",
+    "description": "Fewer interruptions at Full access, a Stop that lands cleanly, backups you can count on, engines that cannot shut down your computer, and secrets masked in every error message.",
+    "heading": "Fewer interruptions at Full access in 1.0.8",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.8",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.8",
+    "url": "https://murage.app/docs/changelog/v1-0-8#fewer-interruptions-at-full-access-in-1-0-8",
+    "text": "- Fewer approval cards. At Full access and No limits, your bots ask far less often before everyday commands, most of all on Windows.\n- Everyday commands keep flowing on Windows. They keep going even when Murage's check of your computer's setup is slow or doesn't finish.\n- One default for every conversation. Raise your default and Murage offers to apply it to your open conversations too, with a count of how many it will change.\n- No limits in project rooms. No limits in a project room stays on after Murage restarts."
+  },
+  {
+    "id": "changelog/v1-0-8#stop-in-1-0-8",
+    "title": "What changed in Murage 1.0.8",
+    "description": "Fewer interruptions at Full access, a Stop that lands cleanly, backups you can count on, engines that cannot shut down your computer, and secrets masked in every error message.",
+    "heading": "Stop in 1.0.8",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.8",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.8",
+    "url": "https://murage.app/docs/changelog/v1-0-8#stop-in-1-0-8",
+    "text": "- Stop that lands cleanly. On Linux, Stop gives sandboxed engines a moment to finish up and tidy away their work, so the next turn picks up right where you left off."
+  },
+  {
+    "id": "changelog/v1-0-8#backups-in-1-0-8",
+    "title": "What changed in Murage 1.0.8",
+    "description": "Fewer interruptions at Full access, a Stop that lands cleanly, backups you can count on, engines that cannot shut down your computer, and secrets masked in every error message.",
+    "heading": "Backups in 1.0.8",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.8",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.8",
+    "url": "https://murage.app/docs/changelog/v1-0-8#backups-in-1-0-8",
+    "text": "- Backups you can count on. If Murage can't save its backup state, it tells you exactly what to check (disk space and permissions), and Return to workspace takes you straight back once it's sorted."
+  },
+  {
+    "id": "changelog/v1-0-8#your-computer-and-your-secrets-in-1-0-8",
+    "title": "What changed in Murage 1.0.8",
+    "description": "Fewer interruptions at Full access, a Stop that lands cleanly, backups you can count on, engines that cannot shut down your computer, and secrets masked in every error message.",
+    "heading": "Your computer and your secrets in 1.0.8",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.8",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.8",
+    "url": "https://murage.app/docs/changelog/v1-0-8#your-computer-and-your-secrets-in-1-0-8",
+    "text": "- Your computer stays yours. On Windows, macOS and Linux x64, engines Murage wraps cannot shut down or restart your computer.\n- Your secrets stay hidden. Keys, tokens and private key blocks are masked in the error messages Murage shows you, from engines, computers, checkpoints and updates.\n- Deleting a chat clears Fuigo's copy. On Ubuntu 22.04 and Debian 12, deleting a chat also clears the copy Fuigo keeps on that computer, in under a second."
+  },
+  {
+    "id": "changelog/v1-0-8#everyday-use-in-1-0-8",
+    "title": "What changed in Murage 1.0.8",
+    "description": "Fewer interruptions at Full access, a Stop that lands cleanly, backups you can count on, engines that cannot shut down your computer, and secrets masked in every error message.",
+    "heading": "Everyday use in 1.0.8",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.8",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.8",
+    "url": "https://murage.app/docs/changelog/v1-0-8#everyday-use-in-1-0-8",
+    "text": "- The built-in browser is on for everyone. On Mac, Teach a skill is ready to use from the start.\n- Helper bots carry on. Approvals a helper bot asks for reach you and carry its work on once you answer.\n- One update control. The sidebar has a single update control: one spinner while a new version downloads, and a tap opens the update details.\n- Every reply explains itself. When a reply can't finish, or ends with nothing to show, Murage tells you why in one plain line."
+  },
+  {
     "id": "computers/cloud-and-vps#box-cloud-computer",
     "title": "Cloud computer and your own VPS",
     "description": "Choose a managed Box desktop or a hardened container on a Linux server you own.",
@@ -2762,7 +2812,27 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → Where to find things in Settings",
     "where": "Murage docs → Features → Where to find things in Settings",
     "url": "https://murage.app/docs/features/settings-guide#app-settings-messaging-and-app",
-    "text": "Messaging & phone: Messaging apps (Telegram, Slack and Discord, see Telegram, Slack and Discord) and Phone and other devices (see The Murage phone app). App: Backups, Usage (how much each bot has used), About & updates (where Get Murage news signs you up for Murage news by email: new releases, how-tos and tutorials), and Experimental (early features you can try, which may change)."
+    "text": "Messaging & phone: Messaging apps (Telegram, Slack and Discord, see Telegram, Slack and Discord) and Phone and other devices (see The Murage phone app). App: Backups, Usage (how much each bot has used) and About & updates (where Get Murage news signs you up for Murage news by email: new releases, how-tos and tutorials)."
+  },
+  {
+    "id": "features/settings-guide#built-in-browser",
+    "title": "Where to find things in Settings",
+    "description": "Every Settings page and every bot settings section, with what each one is for, so a bot can point to the right place.",
+    "heading": "Built-in browser",
+    "breadcrumb": "Murage docs → Features → Where to find things in Settings",
+    "where": "Settings → Devices → Built-in browser",
+    "url": "https://murage.app/docs/features/settings-guide#built-in-browser",
+    "text": "The built-in browser is on by default. Its workspace switch lives in Settings → Devices → Built-in browser. Each bot also has its own browser switch in Bot settings → Access. A switch you turned off stays off. Bots still hand steps such as entering credentials or agreeing to terms back to you."
+  },
+  {
+    "id": "features/settings-guide#teach-a-skill",
+    "title": "Where to find things in Settings",
+    "description": "Every Settings page and every bot settings section, with what each one is for, so a bot can point to the right place.",
+    "heading": "Teach a skill",
+    "breadcrumb": "Murage docs → Features → Where to find things in Settings",
+    "where": "Settings → Skills → Teach a skill",
+    "url": "https://murage.app/docs/features/settings-guide#teach-a-skill",
+    "text": "Teach a skill is on by default in the desktop app. Record a workflow, review the result and choose which bots can use it. Find its switch in Settings → Skills → Teach a skill, and open the recorder from your menu in the sidebar. A switch you turned off stays off. Recording is available on your computer; Cloud homes keep the skills library without the recorder."
   },
   {
     "id": "features/settings-guide#bot-settings",

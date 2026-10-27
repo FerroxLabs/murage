@@ -9,8 +9,11 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { buildEngineExclusion, msvcCommand } from "./build-engine-exclusion.mjs";
+import { buildEngineExclusion, msvcCommand, ENGINE_EXCLUSION_BUILD_SCRIPT } from "./build-engine-exclusion.mjs";
+import { LINUX_FLOOR_IMAGE } from "./linux-floor.mjs";
 import { validateEngineExclusionResource } from "./engine-exclusion-resource.mjs";
+import { ADDON_VERSION, WINDOWS_NATIVE_FUNCTIONS } from "../server/engine-exclusion.ts";
+import { WINDOWS_NATIVE_VERSION } from "../electron/windows-native.mjs";
 import { removeTempDirSync } from "../server/testing/cleanup.ts";
 
 const directories = [];
@@ -34,6 +37,7 @@ describe("the Windows build", () => {
       const text = calls.map((call) => `${call.command} ${call.args.join(" ")}`).join("\n");
       expect(text).toContain("/MT");
       expect(text).toContain("/LD");
+      expect(text).toContain("Advapi32.lib");
       expect(text).not.toMatch(/\/MD\b/);
       expect(calls).toHaveLength(2); // lib.exe, cl.exe
       if (env.VSCMD_ARG_TGT_ARCH) expect(calls[1].command).toBe("cl.exe");
@@ -46,8 +50,51 @@ describe("the Windows build", () => {
   });
 
   it("the Linux build is compiled with -Wall -Werror", () => {
-    const source = fs.readFileSync(new URL("./build-engine-exclusion.mjs", import.meta.url), "utf8");
-    expect(source).toContain('"-Wall","-Werror","-fPIC"');
+    expect(ENGINE_EXCLUSION_BUILD_SCRIPT).toContain('-Wall -Werror -fPIC');
+  });
+
+  it("both loaders require addon v10 and Windows requires the privilege-drop export", () => {
+    const source = fs.readFileSync(new URL("../native/engine-exclusion/exclusion.c", import.meta.url), "utf8");
+    expect(ADDON_VERSION).toBe(10);
+    expect(WINDOWS_NATIVE_VERSION).toBe(ADDON_VERSION);
+    expect(source).toMatch(/^#define ADDON_VERSION 10$/m);
+    expect(WINDOWS_NATIVE_FUNCTIONS).toContain("dropShutdownPrivileges");
+    expect(source).toContain('add(env, exports, "dropShutdownPrivileges", drop_shutdown_privileges);');
+  });
+});
+
+describe.skipIf(process.platform === "win32")("the Linux floor build", () => {
+  it.each(["ok", "glibc", "needed"])("uses pinned Docker and checks the emitted addon (%s)", mode => {
+    const outputRoot = scratch(), headerDirectory = headers(), calls = [];
+    const exec = (command, args) => {
+      calls.push({ command, args });
+      if (command === "docker") {
+        expect(args).toContain(LINUX_FLOOR_IMAGE);
+        expect(args).toContain(`type=bind,source=${headerDirectory},target=/headers,readonly`);
+        expect(args).toContain(`type=bind,source=${path.resolve("native/engine-exclusion/exclusion.c")},target=/source/exclusion.c,readonly`);
+        expect(args).toContain(`type=bind,source=${path.join(outputRoot, `linux-${process.arch}`)},target=/work`);
+        expect(args.slice(-3)).toEqual(["/bin/bash", "-c", ENGINE_EXCLUSION_BUILD_SCRIPT]);
+        expect(args).not.toContain("--privileged");
+        expect(ENGINE_EXCLUSION_BUILD_SCRIPT).not.toContain(outputRoot);
+        fs.writeFileSync(path.join(outputRoot, `linux-${process.arch}`, "engine-exclusion.node"), "fixture addon");
+        return "";
+      }
+      if (command === "objdump") {
+        expect(args[0]).toBe("-T");
+        return `GLIBC_${mode === "glibc" ? "2.38" : "2.17"}`;
+      }
+      if (command === "readelf") return `(NEEDED) Shared library: [${mode === "needed" ? "libm.so.6" : "libc.so.6"}]`;
+      throw new Error(`Unexpected command ${command}`);
+    };
+    const build = () => buildEngineExclusion({ platform: "linux", headerDirectory, outputRoot, exec, env: { CC: "must-not-run" } });
+    if (mode === "ok") expect(build()[0]).toMatchObject({ glibcFloor: "2.28", containerImage: LINUX_FLOOR_IMAGE, napiVersion: 9, version: 1 });
+    else {
+      expect(build).toThrow(mode === "glibc" ? "GLIBC_FLOOR_EXCEEDED" : "DYNAMIC_DEPENDENCY");
+      expect(fs.existsSync(path.join(outputRoot, `linux-${process.arch}`, "build.json"))).toBe(false);
+    }
+    expect(calls[0].command).toBe("docker");
+    expect(calls.filter(call => call.command === "docker")).toHaveLength(1);
+    expect(calls.some(call => call.command === "objdump")).toBe(true);
   });
 });
 

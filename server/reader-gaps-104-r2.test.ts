@@ -203,3 +203,42 @@ describe("the sweep: nothing that asked before is allowed now", () => {
     expect(before.bashStop.filter((cmd) => classifyStopLine("Bash", { command: cmd }, "", nix()) === null)).toEqual([]);
   });
 });
+
+// 1.0.8: the PowerShell and cmd stop line reads a delete written as code the
+// way the Bash one does, by the paths it names (drive spellings too).
+describe("PowerShell and cmd: a delete in inline code is a stop line", () => {
+  it.each([
+    `python3 -c "import shutil; shutil.rmtree('C:\\Users\\owner\\Documents')"`,
+    `node -e "require('fs').rmSync('~/notes', { recursive: true })"`,
+    `perl -e 'unlink "C:/Users/owner/.ssh/id_ed25519"'`,
+    `cmd /c python -c "import shutil; shutil.rmtree('C:/Users/owner/Documents')"`,
+    `python -c "import shutil; shutil.rmtree('dist')"`,
+    // a drive-relative name, beside one in the project, is still unplaced
+    `python -c "import os; os.remove('./notes.txt'); os.remove('C:secret')"`,
+    // `~` alone is the home folder, beside a name in the project
+    `python -c "import shutil, os; shutil.rmtree(os.path.expanduser('~')); print('./x')"`,
+  ])("%s", (cmd) => {
+    expect(stop(cmd), cmd).not.toBeNull();
+  });
+  it("code that deletes nothing is no stop line", () => {
+    expect(stop(`python -c "print('/')"`)).toBeNull();
+  });
+});
+
+// 1.0.8: a file written inside a block, an assignment's right side, a nested
+// shell or a cmd branch stays written, so inline code that runs it asks.
+describe("PowerShell and cmd: inline code that runs a file this text wrote asks", () => {
+  const RUN = `python3 -c "import os; os.system(open('c.txt').read())"`;
+  it.each([
+    `Set-Content c.txt 'rm -rf ~'; ${RUN}`,
+    `$null = Set-Content c.txt 'rm -rf ~'; ${RUN}`,
+    `& { Set-Content c.txt 'rm -rf ~' }; ${RUN}`,
+    `& { 'rm -rf ~' > c.txt }; ${RUN}`,
+    `pwsh -Command "Set-Content c.txt 'rm -rf ~'"; ${RUN}`,
+    `cmd /c "echo rm -rf ~ > c.txt"; ${RUN}`,
+    `cmd /c "if 1==1 echo rm -rf ~ > c.txt"; ${RUN}`,
+    `cmd /c "for %i in (a) do echo rm -rf ~ > c.txt"; ${RUN}`,
+  ])("%s", (cmd) => {
+    expect(alwaysAskCommand(cmd, WIN_CWD, "command", "pwsh"), cmd).not.toBeNull();
+  });
+});

@@ -5,7 +5,7 @@
 // held by handles the addon owns (share-none, shared with a lock, the right to delete), the no-replace rename, the process list with a
 // named process that was really started, and whole deletions of engine history through all of it. These run on Windows only; the POSIX
 // twin of each is in engine-exclusion.test.ts.
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -38,8 +38,15 @@ describe.skipIf(!built || !windows)("the real addon on Windows", () => {
 
   it("loads, says its version, and offers the handle functions", () => {
     const addon = loadExclusionAddon()!;
-    expect(addon.version()).toBe(9);
+    expect(addon.version()).toBe(10);
     for (const name of ["openFile", "handleRead", "handleWrite", "handleSync", "handleLock", "handleMarkDelete", "handleId", "handleSize", "handleClose", "renameNoReplace", "processes"] as const) expect(typeof addon[name], name).toBe("function");
+  });
+
+  it("removes shutdown privileges and accepts an already stripped token in a disposable process", () => {
+    const code = "const a=require(process.argv[1]);process.stdout.write(JSON.stringify([a.dropShutdownPrivileges(),a.dropShutdownPrivileges()]));";
+    const child = spawnSync(process.execPath, ["-e", code, built!], { encoding: "utf8", timeout: 15000 });
+    expect(child.status, child.stderr).toBe(0);
+    expect(JSON.parse(child.stdout)).toEqual([{ ok: true }, { ok: true }]);
   });
 
   it("a share-none handle keeps every other opener out, in the addon and in Node; letting go lets them in", () => {

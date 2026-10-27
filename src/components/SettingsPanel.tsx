@@ -1,6 +1,6 @@
 import { ChevronDown, ChevronLeft, FolderOpen, X } from "lucide-react";
 import { notebookLastWrittenLine } from "../lib/notebook-last-written";
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { api, useStore, type Bot } from "@/state/store";
 import { stateForBot } from "@/lib/mascot";
 import { CloudBackendPicker } from "./CloudBackendPicker";
@@ -32,7 +32,7 @@ import { FullAccessWarning } from "./FullAccessWarning";
 import { BotPermissionDefault } from "./BotPermissionDefault";
 import { BotImageApproval } from "./BotImageApproval";
 import { RememberedApprovals } from "./RememberedApprovals";
-import { defaultModeStep, PEER_CONTACT_LABEL, peerContactHint, type PermissionMode } from "@/lib/permission-mode";
+import { defaultModeStep, permissionModeOf, PEER_CONTACT_LABEL, peerContactHint, type PermissionMode } from "@/lib/permission-mode";
 import { VoiceSettings } from "./VoiceSettings";
 import { BOT_PROFILE_LIMITS } from "../../shared/bot-profile";
 import { Switch } from "./SettingsPrimitives";
@@ -398,6 +398,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
   const localSelectable = localComputerSelectable({ capabilities, providerSupportsLocal });
   const [localAutoWarning, setLocalAutoWarning] = useState<"auto" | "full" | "unlimited" | "local" | null>(null);
   const [fullAccessWarning, setFullAccessWarning] = useState<{ onThisComputer: boolean; level: "full" | "unlimited" } | null>(null);
+  const permissionRequest = useRef<{ botId: string; mode: PermissionMode } | null>(null);
   const localDisabledReason = localComputerDisabledReason({ capabilities, providerSupportsLocal });
   // The roster carries the first lines of a long description (`descriptionCut`). The whole text is fetched before the field can be
   // edited, so an edit never writes the cut copy back over the rest.
@@ -438,7 +439,13 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
         | "modelSelection"
       >
     > & { acknowledgeLocalAuto?: boolean; acknowledgeFullAccess?: boolean; acknowledgeNoLimits?: boolean; persona?: string },
-  ) => dispatch({ type: "updateBot", botId: bot.id, patch: {...p,...(p.modelSelection!==undefined||p.autoApprove!==undefined||p.fullAccess!==undefined||p.noLimits!==undefined?{settingsScope:"defaults" as const}:{})} });
+  ) => {
+    // Record actual saves, after any warning was confirmed.
+    if (p.autoApprove !== undefined || p.fullAccess !== undefined || p.noLimits !== undefined) {
+      permissionRequest.current = { botId: bot.id, mode: permissionModeOf({ ...bot, ...p }) };
+    }
+    dispatch({ type: "updateBot", botId: bot.id, patch: {...p,...(p.modelSelection!==undefined||p.autoApprove!==undefined||p.fullAccess!==undefined||p.noLimits!==undefined?{settingsScope:"defaults" as const}:{})} });
+  };
   // The bot's default approval level: the same warnings, in the same order,
   // as the composer's switch (defaultModeStep). The platform is the
   // harness's own (announced on /api/config), not this browser's UA.
@@ -867,7 +874,9 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
 
           <SettingsSection id="permissions" active={section}>
           <BotPermissionDefault
+            botId={bot.id}
             bot={bot}
+            requested={permissionRequest}
             onThisComputer={bot.computer === "local"}
             desktop={desktop}
             onChoose={chooseDefaultMode}
