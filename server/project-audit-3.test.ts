@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync, mkdirSync } from "node:fs";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { initializeProjectTables, prepareProjectTablesForRestore, assertProjectTablesPaused } from "./project-tables.ts";
 import { channelToProjectRows } from "./project-settings.ts";
 import { createProjectCard, cancelProjectCard } from "./project-cards.ts";
@@ -17,6 +17,89 @@ const rows = { groups: [{ id: "g", channelProject: {} }], botIds: new Set(["lead
 const databases: DatabaseSync[] = [];
 afterEach(() => { for (const db of databases.splice(0)) db.close(); });
 const owner = { kind: "owner" as const };
+
+// Local to F3's repeatable owner creates/edits. Do not apply this to arbitrary sends.
+function projectOwnerApi(baseUrl: string, secret: string, send = fetch,
+  wait = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))) {
+  return async (method: "POST" | "PATCH", path: string, body: unknown) => {
+    const url = `${baseUrl}${path}`;
+    const request = { method, headers: { "content-type": "application/json", "x-murage-surface": "desktop", "x-murage-surface-secret": secret }, body: JSON.stringify(body) };
+    for (let attempt = 1; ; attempt++) {
+      const response = await send(url, request);
+      const answer = { status: response.status, body: await response.json() as Record<string, any> };
+      if (attempt === 5 || answer.status !== 503 || answer.body?.code !== "DATABASE_BUSY" || answer.body?.retryable !== true) return answer;
+      // busyJson supplies Retry-After in seconds. Default to 1 s and cap each wait at 5 s.
+      const seconds = Number(response.headers.get("retry-after") || "1");
+      const delay = Number.isFinite(seconds) && seconds >= 0 ? Math.min(seconds, 5) * 1000 : 1000;
+      await wait(delay);
+    }
+  };
+}
+
+it.each(["POST", "PATCH"] as const)("F3 HTTP helper repeats the identical %s owner request after retryable busy", async method => {
+  const busy = { code: "DATABASE_BUSY", retryable: true };
+  const send = vi.fn<typeof fetch>()
+    .mockResolvedValueOnce(new Response(JSON.stringify(busy), { status: 503, headers: { "retry-after": "2" } }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ id: "created" }), { status: 201 }));
+  let resume!: () => void;
+  let waiting!: () => void;
+  const startedWaiting = new Promise<void>(resolve => { waiting = resolve; });
+  const wait = vi.fn((_ms: number) => new Promise<void>(resolve => { resume = resolve; waiting(); }));
+  const body = { name: "Lead" };
+  const result = projectOwnerApi("http://fixture.invalid", "fixture-proof", send, wait)(method, "/api/bots", body);
+  await startedWaiting;
+  expect(send).toHaveBeenCalledTimes(1);
+  expect(wait).toHaveBeenCalledWith(2000);
+  body.name = "Changed while waiting";
+  resume();
+  expect(await result).toEqual({ status: 201, body: { id: "created" } });
+  expect(send).toHaveBeenCalledTimes(2);
+  expect(send.mock.calls[1]).toEqual(send.mock.calls[0]);
+  expect(send.mock.calls[1]).toEqual(["http://fixture.invalid/api/bots", {
+    method, headers: { "content-type": "application/json", "x-murage-surface": "desktop", "x-murage-surface-secret": "fixture-proof" }, body: '{"name":"Lead"}',
+  }]);
+});
+
+it.each([
+  ["1", 1000], ["999", 5000], [undefined, 1000], ["invalid", 1000], ["-1", 1000], ["Infinity", 1000],
+] as const)("F3 HTTP helper bounds Retry-After %s and returns the fifth busy response", async (retryAfter, delay) => {
+  const busy = { code: "DATABASE_BUSY", retryable: true, error: "Still busy" };
+  const send = vi.fn<typeof fetch>().mockImplementation(async () => new Response(JSON.stringify(busy), {
+    status: 503, headers: retryAfter === undefined ? {} : { "retry-after": retryAfter },
+  }));
+  const wait = vi.fn(async (_ms: number) => {});
+  expect(await projectOwnerApi("http://fixture.invalid", "fixture-proof", send, wait)("POST", "/api/bots", { name: "Lead" }))
+    .toEqual({ status: 503, body: busy });
+  expect(send).toHaveBeenCalledTimes(5);
+  expect(wait.mock.calls).toEqual([[delay], [delay], [delay], [delay]]);
+});
+
+it.each([
+  { status: 201, body: { bot: { id: "created" } } },
+  { status: 409, body: { code: "DATABASE_BUSY", retryable: true } },
+  { status: 500, body: { code: "DATABASE_BUSY", retryable: true } },
+  { status: 503, body: { code: "OTHER", retryable: true } },
+  { status: 503, body: { code: "DATABASE_BUSY", retryable: false } },
+  { status: 503, body: { code: "DATABASE_BUSY", retryable: "true" } },
+  { status: 503, body: { code: "DATABASE_BUSY" } },
+  { status: 503, body: null },
+])("F3 HTTP helper returns other answers unchanged: %j", async answer => {
+  const send = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify(answer.body), { status: answer.status }));
+  const wait = vi.fn(async (_ms: number) => {});
+  expect(await projectOwnerApi("http://fixture.invalid", "fixture-proof", send, wait)("PATCH", "/api/groups/project", { channelProject: null })).toEqual(answer);
+  expect(send).toHaveBeenCalledTimes(1);
+  expect(wait).not.toHaveBeenCalled();
+});
+
+it("F3 HTTP helper does not repeat a request after a transport error", async () => {
+  const error = new Error("Connection closed");
+  const send = vi.fn<typeof fetch>().mockRejectedValue(error);
+  const wait = vi.fn(async (_ms: number) => {});
+  await expect(projectOwnerApi("http://fixture.invalid", "fixture-proof", send, wait)("POST", "/api/bots", { name: "Lead" })).rejects.toBe(error);
+  expect(send).toHaveBeenCalledTimes(1);
+  expect(wait).not.toHaveBeenCalled();
+});
+
 function fixture() {
   const db = new DatabaseSync(":memory:"); databases.push(db); initializeProjectTables(db);
   channelToProjectRows(db, { groupId: "g", bulletin: "Rules", leadBotId: "lead", now: 1 });
@@ -62,13 +145,10 @@ it("F3 legacy PATCH refuses every project edit except End", async () => {
   const server = await launchVerificationServer(process.env);
   try {
     const proof = await fetch(`${server.info.url}/api/desktop-secret`).then(r => r.json()) as { secret: string };
-    const api = async (method: string, path: string, body: unknown) => {
-      const response = await fetch(`${server.info.url}${path}`, { method, headers: { "content-type": "application/json", "x-murage-surface": "desktop", "x-murage-surface-secret": proof.secret }, body: JSON.stringify(body) });
-      return { status: response.status, body: await response.json() as Record<string, any> };
-    };
+    const api = projectOwnerApi(server.info.url, proof.secret);
     // A create is checked for its 201 before its body is read, so a refused create names its status, its answer and the
-    // server's own log (CI 40179744623 read the missing bot as "reading 'id'" with none of these). Not repeated: the app
-    // does not repeat a create either, so any refusal here is one a person would see.
+    // server's own log (CI 40179744623 read the missing bot as "reading 'id'" with none of these). Like the client, the
+    // helper repeats only retryable DATABASE_BUSY replies; a final refusal still includes this evidence.
     const create = async (path: string, body: unknown) => {
       const answer = await api("POST", path, body);
       if (answer.status !== 201) {

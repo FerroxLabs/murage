@@ -32,6 +32,8 @@ export const STEP_UP_LABELS = Object.freeze([
   { methods: ["PATCH"], path: rx(`/api/bots/${ID}`), label: "Change a bot's settings", summary: "settings" },
   { methods: ["PATCH"], path: rx(`/api/bots/${ID}/profile`), label: "Change a bot's name, personality or voice", summary: "settings" },
   { methods: ["POST", "PATCH"], path: rx(`/api/bots/${ID}/tasks/${ID}`), label: "Change a task of a bot", summary: "settings" },
+  // 1.0.8 A-UI: a raised default applied to the bot's open chats, after its preview.
+  { methods: ["POST"], path: rx(`/api/bots/${ID}/permissions/refresh`), label: "Give the bot's open chats its new default permissions" },
   // 1.0.4 SL-K / SL-I: copy the bot's permissions onto one chat, and the engine that takes over at the bot's limit.
   { methods: ["POST"], path: rx(`/api/bots/${ID}/tasks/${ID}/permissions/refresh`), label: "Give a chat the bot's current permissions" },
   { methods: ["PUT", "DELETE"], path: rx(`/api/bots/${ID}/limit-backup`), label: "Change the engine that takes over when a bot hits its limit" },

@@ -28,10 +28,12 @@
 //     expires the lease too, so the supervisor ends a job even when the stop
 //     could not signal it itself
 //   - output goes through a pipe to capped files, so a chatty command keeps
-//     only a tail on disk, and a daemon it left running loses its output
+//     only a prefix on disk, and a daemon it left running loses its output
 //     pipe once the command itself exits (as it did on the old endpoint)
 //   - a record from before a reboot is never signalled (its ids may belong
 //     to someone else now); stale and abandoned records are swept at start
+
+import { engineStderrRedacted } from "./drivers/acp/core.ts";
 
 export interface BoxRun {
   ok: boolean;
@@ -47,7 +49,7 @@ export interface BoxExecOptions {
   pollSec: number;
   /** A job unchecked for this long is stopped box-side. */
   leaseSec: number;
-  /** Per output stream, bytes kept on disk before the older part is dropped. */
+  /** Per-stream disk ceiling; diagnostic capture also stops at KEEP_BYTES. */
   outputCapBytes: number;
 }
 
@@ -91,8 +93,6 @@ const CHILD_CPU_SHARE = 0.05;
 const shq = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
 const b64 = (s: string) => Buffer.from(s, "utf8").toString("base64");
 const JOB_ROOT = '"$HOME/.cache/murage-exec"';
-const STDOUT_TAIL = 6_000;
-const STDERR_TAIL = 2_000;
 /** Seconds past its lease after which a record with no result is abandoned. */
 const ABANDON_MARGIN_SEC = 120;
 
@@ -159,12 +159,28 @@ const HELPERS = [
 /** Runs box-side as `bash sup <dir> <leaseSec> <capBytes>` in its own
  * session. The command gets a session of its own too. */
 function supervisorScript(): string {
+  // Python is installed by the desktop bootstrap. Drain every byte for
+  // progress, but never put output beyond the diagnostic prefix on disk.
+  const capture = [
+    "import os, sys",
+    "path, cap = sys.argv[1], min(int(sys.argv[2]), " + KEEP_BYTES + ")",
+    "total = 0",
+    'with open(path, "wb", buffering=0) as out:',
+    "    while True:",
+    "        chunk = os.read(0, 65536)",
+    "        if not chunk: break",
+    "        if total < cap: out.write(chunk[:cap - total])",
+    "        total += len(chunk)",
+    '        with open(path + ".bytes.tmp", "w") as count: count.write(str(total))',
+    '        os.replace(path + ".bytes.tmp", path + ".bytes")',
+    '        if total > cap: open(path + ".dropped", "a").close()',
+  ].join("\n");
   return [
     'J=$1; LEASE=$2; CAP=$3',
     HELPERS,
     'mkfifo "$J/o.fifo" "$J/e.fifo" || { echo 127 > "$J/rc"; exit 0; }',
-    'cat "$J/o.fifo" >> "$J/out" & RO=$!',
-    'cat "$J/e.fifo" >> "$J/err" & RE=$!',
+    `python3 -c ${shq(capture)} "$J/out" "$CAP" < "$J/o.fifo" & RO=$!`,
+    `python3 -c ${shq(capture)} "$J/err" "$CAP" < "$J/e.fifo" & RE=$!`,
     `setsid -w bash -c 'read -r l < /proc/$$/stat; set -- \${l##*")" }; echo "\${20}" > "$0/sidstart"; echo $$ > "$0/sid"; exec bash "$0/cmd"' "$J" > "$J/o.fifo" 2> "$J/e.fifo" < /dev/null &`,
     'P=$!',
     '(',
@@ -180,14 +196,6 @@ function supervisorScript(): string {
     '      sigS TERM; sleep 3; sigS KILL',
     '      break',
     '    fi',
-    '    for f in out err; do',
-    '      s=$(stat -c %s "$J/$f" 2>/dev/null || echo 0)',
-    '      if [ "$s" -gt "$CAP" ]; then',
-    `        tail -c ${KEEP_BYTES} "$J/$f" > "$J/$f.keep"; : > "$J/$f"`,
-    '        d=$(cat "$J/$f.dropped" 2>/dev/null || echo 0)',
-    `        echo $((d + s - ${KEEP_BYTES})) > "$J/$f.dropped"`,
-    '      fi',
-    '    done',
     '  done',
     ') & M=$!',
     'wait "$P"; rc=$?',
@@ -214,7 +222,7 @@ const STATUS = [
   '  if [ ! -d "$J" ] || [ -f "$J/cancel" ] || [ "$(cat "$J/boot" 2>/dev/null)" != "$BOOT" ]; then echo "EXEC_STATE missing"; return; fi',
   '  if [ -f "$J/rc" ]; then echo "EXEC_STATE done"; echo "EXEC_RC $(cat "$J/rc")"; else echo "EXEC_STATE running"; fi',
   '  if [ -f "$J/abandoned" ]; then echo "EXEC_ABANDONED yes"; fi',
-  '  n=0; for f in out err; do s=$(stat -c %s "$J/$f" 2>/dev/null || echo 0); d=$(cat "$J/$f.dropped" 2>/dev/null || echo 0); n=$((n + s + d)); done',
+  '  n=0; for f in out err; do s=$(cat "$J/$f.bytes" 2>/dev/null || echo 0); n=$((n + s)); done',
   '  echo "EXEC_BYTES $n"',
   '  if sidok; then set -- $(members cpu); echo "EXEC_CPU ${1:-0}"; echo "EXEC_CCPU ${2:-0}"; echo "EXEC_IO $(io)"; else echo "EXEC_CPU 0"; echo "EXEC_CCPU 0"; echo "EXEC_IO 0"; fi',
   '  echo "EXEC_HZ $(getconf CLK_TCK 2>/dev/null || echo 100)"',
@@ -223,8 +231,8 @@ const STATUS = [
   // so a poll whose answer was lost can be asked again
   'collect() {',
   '  if [ -f "$J/out.dropped" ] || [ -f "$J/err.dropped" ]; then echo "EXEC_DROPPED yes"; fi',
-  `  echo "EXEC_STDOUT $(cat "$J/out.keep" "$J/out" 2>/dev/null | tail -c ${STDOUT_TAIL} | base64 -w0)"`,
-  `  echo "EXEC_STDERR $(cat "$J/err.keep" "$J/err" 2>/dev/null | tail -c ${STDERR_TAIL} | base64 -w0)"`,
+  `  echo "EXEC_STDOUT $(head -c ${KEEP_BYTES} "$J/out" 2>/dev/null | base64 -w0)"`,
+  `  echo "EXEC_STDERR $(head -c ${KEEP_BYTES} "$J/err" 2>/dev/null | base64 -w0)"`,
   '  if [ -f "$J/rc" ]; then : > "$J/collected"; fi',
   '}',
 ].join("\n");
@@ -494,7 +502,7 @@ export async function runBoxExec(
   if (status.state === "cancelled") return { kind: "stopped" };
   if (status.state === "unknown") {
     await stopBoxJob(deps, id, false);
-    return { kind: "failed", detail: first.stderr.slice(0, 300) || `exit ${first.exitCode ?? "unknown"}` };
+    return { kind: "failed", detail: engineStderrRedacted(first.stderr, false).slice(0, 300) || `exit ${first.exitCode ?? "unknown"}` };
   }
   let lastBytes = status.bytes;
   let lastCpu = status.cpu;
@@ -548,7 +556,7 @@ export async function runBoxExec(
     const next = parseStatus(out.stdout);
     if (next.state === "unknown") {
       failingSince ??= now();
-      if (now() - failingSince >= opts.leaseSec * 1000) return giveUp(out.stderr.slice(0, 300) || `exit ${out.exitCode ?? "unknown"}`);
+      if (now() - failingSince >= opts.leaseSec * 1000) return giveUp(engineStderrRedacted(out.stderr, false).slice(0, 300) || `exit ${out.exitCode ?? "unknown"}`);
       await sleep(2_000, signal);
       continue;
     }

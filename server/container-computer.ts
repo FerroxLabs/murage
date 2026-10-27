@@ -5,6 +5,7 @@
 // harness. Desktop automation itself is Cua Driver. Agents connect directly to
 // `cua-driver mcp` inside the container; this module never reimplements clicks,
 // typing, screenshots, accessibility, or window discovery.
+import { engineStderrRedacted, engineStderrTailRedacted, ENGINE_STDERR_CAPTURE_CHARS } from "./drivers/acp/core.ts";
 import { cloudBoxRelayEnv, isCloudHome } from "./box-relay.ts";
 import { execFile } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
@@ -597,15 +598,16 @@ export async function containerComputerStatus(
       // An empty log means XFCE and the supervisor-owned Cua daemon are
       // probably still starting. A real startup failure should be actionable
       // in the panel instead of looking like an endless readiness wait.
-      status.desktop_error = error instanceof Error ? error.message.slice(0, 320) : null;
+      status.desktop_error = error instanceof Error ? engineStderrRedacted(error.message, false).slice(0, 320) : null;
       try {
         const errorLog = await runner(
           status.runtime,
-          ["exec", target.containerName, "tail", "-n", "4", "/var/log/supervisor/cua-driver.error.log"],
+          ["exec", target.containerName, "tail", "-c", String(ENGINE_STDERR_CAPTURE_CHARS), "/var/log/supervisor/cua-driver.error.log"],
           4000,
         );
         status.desktop_error =
-          errorLog.stdout.replace(/\s+/g, " ").trim().slice(0, 320) ||
+          engineStderrTailRedacted(errorLog.stdout, Buffer.byteLength(errorLog.stdout) >= ENGINE_STDERR_CAPTURE_CHARS)
+            .trimEnd().split("\n").slice(-4).join(" ").replace(/\s+/g, " ").trim().slice(0, 320) ||
           status.desktop_error;
       } catch {
         // The log may not exist during the first seconds of container boot.

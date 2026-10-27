@@ -333,7 +333,10 @@ export async function consolidateMemorySource(completedJobId:string,extractor:Te
     intent.sliceCalls=sliceCalls=(Number(intent.sliceCalls)||0)+1;
     chargeDb.prepare("UPDATE memory_scope_bindings SET intent=? WHERE id=?").run(JSON.stringify(intent),id);
   };
-  const result=text!.trim()?await extractCandidates(text!,extractor,signal,readMemoryEvolutionPolicy(state!.evolutionPolicyRevision),charge(true)):{status:"complete" as const,candidates:[]};
+  // Each queued owner retry gets one admitted call through reply backoff. Budget/busy deferrals do not consume it;
+  // persisted extractionAttempts does, so later automatic attempts (including after a restart) respect backoff.
+  const ownerRetry=!!state!.retries?.length&&(state!.extractionAttempts??0)===0;
+  const result=text!.trim()?await extractCandidates(text!,extractor,signal,readMemoryEvolutionPolicy(state!.evolutionPolicyRevision),charge(true),{ownerRetry}):{status:"complete" as const,candidates:[]};
   const corrections=new Map<object,{id:string;version:number}>();
   const support=new Map<object,{supported:boolean;reason:string}>();
   // One grounding call per candidate: with a correction target the same call answers the correction and the support check.
@@ -362,7 +365,7 @@ export async function consolidateMemorySource(completedJobId:string,extractor:Te
     if(result.status!=="complete"||signal.aborted){
       const reason=result.status!=="complete"?result.reason:"extraction-incomplete";
       if((counted.extractionAttempts??0)>=SLICE_ATTEMPT_LIMIT&&length)return skipSlice(db,source!,counted,length!,persist);
-      const nextRetry=retryAfter(reason);
+      const nextRetry=("retryAfter" in result?result.retryAfter:undefined)??retryAfter(reason);
       persist(source!.scope_id,{...counted,status:"deferred",reason,retryAfter:nextRetry,updatedAt:Date.now()});
       return {status:"deferred" as const,reason,candidateIds:[],cursor:state!.cursor,candidateCount:state!.candidateCount,retryAfter:nextRetry};
     }

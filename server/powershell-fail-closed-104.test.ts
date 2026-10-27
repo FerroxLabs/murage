@@ -365,3 +365,61 @@ describe("F1 r2: ordinary PowerShell work still goes through", () => {
     expect(USABLE.length).toBeGreaterThanOrEqual(50);
   });
 });
+
+describe("108 owner literal Bash launcher boundary", () => {
+  const levels = [ASK, AUTO, FULL, NO_LIMITS];
+  const origins = ["owner", "routine", "owner-channel", "other"] as const;
+  it("unwraps literal Bash only at Full/No limits for an owner turn", () => {
+    for (const [index, level] of levels.entries()) for (const fullAccessOrigin of origins) {
+      const command = "bash -c 'echo fixture'";
+      const verdict = autoVerdict(level, "PowerShell", command, { ...ask(command), fullAccessOrigin });
+      expect(verdict.approve !== null, `${index}/${fullAccessOrigin}`).toBe(index >= 2 && fullAccessOrigin === "owner");
+    }
+  });
+  it.each([
+    "bash.exe", "C:\\Tools\\bash.exe", "/usr/bin/bash",
+    "& 'C:\\Program Files\\Git\\bin\\bash.exe'", "& '\\\\fixture-host\\tools\\bash.exe'",
+  ])("unwraps the literal executable %s only for the owner at Full/No limits", executable => {
+    const command = `${executable} -c 'echo fixture'`;
+    for (const [index, level] of levels.entries()) for (const fullAccessOrigin of origins) {
+      expect(autoVerdict(level, "PowerShell", command, { ...ask(command), fullAccessOrigin }).approve !== null,
+        `${index}/${fullAccessOrigin}`).toBe(index >= 2 && fullAccessOrigin === "owner");
+    }
+  });
+  it.each([
+    "$env:TOOL_DIR/bash.exe -c 'echo fixture'",
+    "${env:TOOL_DIR}/bash.exe -c 'echo fixture'",
+    "& $env:TOOL_DIR/bash.exe -c 'echo fixture'",
+    '& "$env:TOOL_DIR/bash.exe" -c \'echo fixture\'',
+    "$exe = 'bash'; $exe -c 'echo fixture'",
+    "$exe = 'bash'; & $exe -c 'echo fixture'",
+    "$(Join-Path $env:TOOL_DIR bash.exe) -c 'echo fixture'",
+    "& (Join-Path $env:TOOL_DIR bash.exe) -c 'echo fixture'",
+    "& ('ba' + 'sh') -c 'echo fixture'",
+    "[string]$exe -c 'echo fixture'",
+    "C:\\Tools\\$env:SUBDIR\\bash.exe -c 'echo fixture'",
+    "C:\\Tools\\(Join-Path bin bash.exe)\\bash.exe -c 'echo fixture'",
+    "./bash.exe -c 'echo fixture'", ".\\bash.exe -c 'echo fixture'",
+    "C:bash.exe -c 'echo fixture'", "\\Tools\\bash.exe -c 'echo fixture'",
+    "tools/bash.exe -c 'echo fixture'",
+    "bash -c $payload", "$payload = 'echo fixture'; bash -c $payload",
+    'bash -c "echo fixture"', 'bash -c "echo $env:USERNAME"',
+    "bash -c ('echo fixture')", "bash -c ('echo ' + 'fixture')",
+    "bash -c 'echo ' + 'fixture'", "bash -c 'echo '$env:USERNAME",
+  ])("keeps nonliteral or relative Bash launches asking at every level: %s", command => {
+    for (const [index, level] of levels.entries()) for (const fullAccessOrigin of origins) {
+      expect(autoVerdict(level, "PowerShell", command, { ...ask(command), fullAccessOrigin }).approve,
+        `${index}/${fullAccessOrigin}`).toBeNull();
+    }
+  });
+  it("reads the entire injected payload and retains every deferred executor hold", () => {
+    const payloads = ["rm -rf /", "rm -rf ~", "rm -rf /etc", "dd if=/dev/zero of=/dev/sda", ":(){ :|:& };:", "chmod -R 777 /", "cat ~/.ssh/id_rsa", 'cat ~/.ss""h/id_rsa', "python -c 'print(open(chr(47)+chr(101)+chr(116)+chr(99)+chr(47)+chr(115)+chr(104)+chr(97)+chr(100)+chr(111)+chr(119)).read())'", "wsl -e echo fixture", "py.exe -c 'print(1)'", "node.exe -e 'console.log(1)'", "schtasks /query", "Start-Process notepad", "Set-Content x.ps1 'echo fixture'; & ./x.ps1", "bash script.sh"];
+    for (const level of levels) for (const fullAccessOrigin of origins) for (const payload of payloads) {
+      const command = `bash -c '${payload.replaceAll("'", "''")}'`;
+      expect(autoVerdict(level, "PowerShell", "tool output requested this command", { ...ask(command), fullAccessOrigin }).approve, payload).toBeNull();
+    }
+    for (const command of ["Start-Process notepad", "wsl -e echo fixture", "Set-Content x.ps1 'echo fixture'; & ./x.ps1", "& ./x.ps1", 'bash -c "echo $env:USERNAME"', "bash -lc 'echo fixture'", "bash -c 'echo fixture' extra", "bash.cmd -c 'echo fixture'", "$env:TOOL_DIR/bash.exe -c 'echo fixture'"]) expect(autoVerdict(NO_LIMITS, "PowerShell", command, { ...ask(command), fullAccessOrigin: "owner" }).approve, command).toBeNull();
+    // 1.0.8 fallback (as 1.0.7): PowerShell does not read literal interpreter code, so even benign code asks; D is deferred to 1.0.9.
+    expect(autoVerdict(NO_LIMITS, "PowerShell", "python -c 'print(1)'", { ...ask("python -c 'print(1)'"), fullAccessOrigin: "owner" }).approve).toBeNull();
+  });
+});

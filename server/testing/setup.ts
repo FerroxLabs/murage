@@ -78,6 +78,11 @@ globalThis.fetch = ((input: Parameters<typeof fetch>[0], init?: Parameters<typeo
 // point MURAGE_ENGINE_EXCLUSION_PATH at the build (server/engine-exclusion.test.ts).
 process.env.MURAGE_ENGINE_EXCLUSION_PATH = join(dirname(fileURLToPath(import.meta.url)), "engine-exclusion-stub.cjs");
 
+// S4 power (server/host-power.ts): the suite's fake engines run as they did before the Mac and Linux power block, because a test
+// box has no shipped bwrap and cannot always build a user namespace. This is a value in this worker's memory (not an environment
+// variable), honoured only in a test process; server/host-power.test.ts clears it and runs the real planning and wrap.
+(globalThis as Record<symbol, unknown>)[Symbol.for("murage.hostPower.testUnwrapped")] = true;
+
 // The crash journal of an engine-history rewrite (server/engine-redo.ts) lives in a throwaway folder of its own in tests.
 process.env.MURAGE_ENGINE_REDO_DIR = join(mkdtempSync(join(tmpdir(), "murage-test-redo-")), "engine-redo");
 

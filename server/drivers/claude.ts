@@ -48,7 +48,7 @@ import { fluxKey } from "../flux-config.ts";
 import { applyFluxSurface, isFluxModel } from "../flux-routing.ts";
 import { claudeCustomHeadersValue, fluxMemoryContextForTurn, fluxMemoryDecision, logFluxMemoryHeaders, type FluxMemoryDecision } from "../flux-memory-headers.ts";
 import { mergeFluxCatalog } from "../flux-surface.ts";
-import { awaitCliTreeStopped, CLI_CALLER_DEADLINE_MS, cliTreeConfirmedStopped, cliTreeStoppedSignal, forceCliTreeStopped, brokerSocketPath, cliVersionReader, describeSpawnFailure, engineJob, engineProcessPid, execCli, killCliTree, spawnCli } from "../procs.ts";
+import { awaitCliTreeStopped, CLI_CALLER_DEADLINE_MS, cliTreeConfirmedStopped, cliTreeStoppedSignal, forceCliTreeStopped, brokerSocketPath, cliVersionReader, describeSpawnFailure, engineJob, engineProcessPid, execCli, killCliTree, spawnCli, hostPowerKeyField } from "../procs.ts";
 import { cachedCliVersion } from "../cli-version-cache.ts";
 import { anyMountIncomplete, bindCredentialPath, clearMountsIncomplete, connectorMountRefsOf, connectorScopeOf, createTurnCredentialStore, splitTurnSecrets, type TurnCredentialStore } from "./turn-credentials.ts";
 import { descendantBaseline, untrackedDescendants, processNames } from "./process-tree.ts";
@@ -108,7 +108,7 @@ import { BROKER_UNAVAILABLE_NOTE, brokerPathForArgv } from "../permission-pipe.t
 import { normalizeEngineCommands } from "../engine-commands.ts";
 import { engineCommandText } from "../../shared/engine-commands.ts";
 import { engineClosedLine } from "./stop-copy.ts";
-import { acpEngineExitStderrText } from "./acp/core.ts";
+import { EngineStderrCapture, engineStderrRedacted } from "./acp/core.ts";
 import { connectedAppsServerName } from "../../shared/connected-app-names.ts";
 import type { McpMountRecord } from "../../shared/mount-identity.ts";
 import { OWN_BUILTINS, OWN_UNASKED, type OwnBuiltin } from "../../shared/own-servers.ts";
@@ -168,7 +168,12 @@ export function claudeAuthStatus(
       const said = `${stderr ?? ""}\n${stdout ?? ""}`;
       const refusal = claudeLaunchRefusal(said);
       if (refusal) resolve({ signedIn: false, refusal });
-      else resolve({ signedIn: false, error: (stderr ?? "").trim().slice(-300) || error?.message || "auth status printed no status" });
+      // The exec buffer keeps stderr from its start (maxBuffer); it is redacted whole before the shown cut (acp/core.ts EngineStderrCapture).
+      else {
+        const truncated = (error as { stderrTruncated?: boolean } | null)?.stderrTruncated === true;
+        const detail = engineStderrRedacted(String(stderr ?? ""), truncated).trim().slice(-300).trim();
+        resolve({ signedIn: false, error: detail || engineStderrRedacted(error?.message ?? "", false).trim().slice(-300).trim() || "auth status printed no status" });
+      }
     });
   });
 }
@@ -301,6 +306,13 @@ export function resetClaudeMcpReadinessForTests(): void {
 
 /** How long a settle check waits for the init-time baseline probe. */
 const BASELINE_WAIT_MS = 5_000;
+/** How long a turn whose steer may be unread waits after `result` for the
+ * CLI's follow-up turn. Claude Code 2.1.309 starts it within milliseconds
+ * (its `init` follows the result at once); without one the turn settles. */
+const STEER_FOLLOW_UP_WAIT_MS = 2_000;
+/** A steer written this long before the CLI's last tool result was read at
+ * that point (the CLI reads queued input before the next model call). */
+const STEER_FOLD_MARGIN_MS = 1_000;
 
 /** How long a prewarmed CLI gets to confirm its startup (its first stdout frame: the answer to
  * the `initialize` control request, or `init`). Its MCP config and prompt files are removed only
@@ -1205,12 +1217,12 @@ export const CLAUDE_BUILT_IN_AGENTS: ReadonlySet<string> = new Set([
 ]);
 
 const scanWarned = new Set<string>();
-/** Logs once per folder and reason, then carries on: a partial list still switches most of the
- * owner's setup off, and refusing the turn would cost the owner their chat. */
-function scanWarn(key: string, message: string): void {
+/** Process-lifetime notices: once per folder/reason, or per file for all front-matter failures.
+ * A partial list still switches most of the owner's setup off; refusing would cost their chat. */
+function scanWarn(key: string, message: string, level: "warn" | "info" = "warn"): void {
   if (scanWarned.has(key)) return;
   scanWarned.add(key);
-  console.warn(`claude isolation: ${message}`);
+  console[level](`claude isolation: ${message}`);
 }
 
 /** Markdown files under `dir`, as paths relative to it ("sub/name.md"), recursively. Bounded (depth,
@@ -1246,7 +1258,7 @@ export function declaredName(path: string): string | undefined {
   if (!/^---[ \t]*\r?\n/.test(head)) return undefined;
   const close = /\r?\n---[ \t]*(?:\r?\n|$)/.exec(head.slice(3));
   if (!close) {
-    if (head.length > FRONT_MATTER_BYTES) scanWarn(`${path}:long`, `${path}: front matter longer than ${FRONT_MATTER_BYTES} bytes; switched off by file name only`);
+    if (head.length > FRONT_MATTER_BYTES) scanWarn(`${path}:front-matter`, `${path}: front matter longer than ${FRONT_MATTER_BYTES} bytes; switched off by file name only`, "info");
     return undefined;
   }
   try {
@@ -1256,7 +1268,7 @@ export function declaredName(path: string): string | undefined {
     const name = data && typeof data === "object" ? (data as { name?: unknown }).name : undefined;
     return typeof name === "string" && name.trim() ? name.trim() : undefined;
   } catch {
-    scanWarn(`${path}:yaml`, `${path}: front matter does not parse; switched off by file name only`);
+    scanWarn(`${path}:front-matter`, `${path}: front matter does not parse; switched off by file name only`, "info");
     return undefined;
   }
 }
@@ -2789,6 +2801,20 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       toolsUnavailable?: string[];
       /** "unknown": the CLI could not say whether they were up (see GateOutcome). */
       mcpReadiness?: "unknown";
+      /** When each steer the CLI may not have read yet was written. The CLI
+       * reads queued input only after a tool result, before its next model
+       * call; a tool result drops the steers written well before it. Input
+       * that arrives during the final answer is run as a turn of its own
+       * right after `result` (steerFollowUp): every message queued by then is
+       * joined into that one follow-up turn (probed on 2.1.309). */
+      unreadSteers?: number[];
+      /** A result arrived while a steer may still be unread: the turn waits
+       * briefly for the CLI's own follow-up turn, whose frames are this one's. */
+      steerFollowUp?: { timer: ReturnType<typeof setTimeout>; finish: () => void; usage: { input: number; output: number; cachedInput: number }; total: number | null };
+      /** token totals of results that did not settle the turn (steer follow-ups) */
+      carriedUsage?: { input: number; output: number; cachedInput: number };
+      /** the CLI's running cost total from the last result that did not settle the turn */
+      carriedTotal?: number | null;
     }
     interface BackgroundState {
       tracker: SubtaskTracker;
@@ -2835,7 +2861,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       turn: SessionTurn | null;
       idleTimer: ReturnType<typeof setTimeout> | null;
       closing: boolean;
-      stderr: string;
+      /** the process's stderr, kept from its start and redacted whole before any cut */
+      stderr: EngineStderrCapture;
       /** The CLI's running total that the next turn's cost is measured from
        * (see turnCostFromRunningTotal): what --resume restored until the
        * first turn settles, then the last settled turn's total_cost_usd.
@@ -3154,6 +3181,16 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       });
     };
 
+    /** A message accepted while a turn waits for a steer's follow-up joins
+     * that follow-up: the wait starts over, so its `init` is not missed. */
+    const extendSteerHold = (t: SessionTurn) => {
+      const held = t.steerFollowUp;
+      if (!held) return;
+      clearTimeout(held.timer);
+      held.timer = setTimeout(held.finish, STEER_FOLLOW_UP_WAIT_MS);
+      held.timer.unref?.();
+    };
+
     /** Writes the steers that waited for `init`, each only if its turn is
      * still the live, unstopped one: a Stop or close in between writes nothing. */
     const flushQueuedSteers = (s: Session, threadId: string, written = true) => {
@@ -3162,7 +3199,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       for (const item of queued ?? []) {
         const live = written && s.turn === item.turn && !item.turn.settled && !item.turn.stopRequested && !s.closing && s.child.exitCode === null;
         if (!live || !steerFenceHolds(item.beforeWrite)) item.resolve(false);
-        else void writeUser(s, threadId, item.text).then(item.resolve);
+        else {
+          (item.turn.unreadSteers ??= []).push(Date.now());
+          extendSteerHold(item.turn);
+          void writeUser(s, threadId, item.text).then(item.resolve);
+        }
       }
     };
     /** One control request to the CLI, answered by its control_response (the
@@ -3857,6 +3898,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         system: turn.system ?? null,
         args: keyArgs,
         settingsRev: claudeSettingsRevision(env, cwd),
+        // S4 power (design section 7): a constant on a key whose spawn is under the block (Windows only for Claude).
+        ...hostPowerKeyField({ posixHostPower: false }),
       });
 
       // Reuse the live process when it is idle, unchanged, and is the session
@@ -4292,7 +4335,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           cwd,
           env,
           stdio: ["pipe", "pipe", "pipe"],
-        }, engineJob());
+          // S4 power (design section 2): the Windows job and the privilege removal; no hostPower on Mac or Linux, where the
+          // block does not nest with the CLI's own command sandbox.
+        }, engineJob({ posixHostPower: false }));
       } catch (error) {
         // The fence above released the prompt to a write that will not happen (turn-attribution.ts, I14).
         turn.notWritten?.();
@@ -4324,7 +4369,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         turn: launchTurn,
         idleTimer: null,
         closing: false,
-        stderr: "",
+        stderr: new EngineStderrCapture(),
         commands: { requestId: `murage-commands-${newId()}` },
         costTotal: undefined,
         cliIdentity,
@@ -4356,6 +4401,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         const t = session.turn;
         if (!t || t.settled) return;
         t.settled = true;
+        if (t.steerFollowUp) clearTimeout(t.steerFollowUp.timer);
+        t.steerFollowUp = undefined;
         // A steer still waiting for `init` belongs to this turn, which has
         // ended: it is dropped now, never carried to another turn.
         flushQueuedSteers(session, threadId, false);
@@ -4545,6 +4592,33 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         if ((session.closing || sessions.get(threadId) !== session) && ((o.type === "system" && o.subtype === "init") || !session.turn || session.turn.settled)) return;
         const contentFrame = o.type === "stream_event" || o.type === "assistant" || o.type === "user";
         const taskFrame = o.type === "system" && typeof o.subtype === "string" && (o.subtype.startsWith("task_") || o.subtype === "background_tasks_changed");
+        // Held for a steer's follow-up (the result case): the CLI starts the
+        // turn it runs for input queued during the final answer with `init`.
+        // That follow-up is this turn's own continuation. Anything else first
+        // means no follow-up is coming: the turn settles now, as it would have.
+        // An earlier turn's continuation playing out meanwhile (a background
+        // task's notice, then its own init, frames and result) is neither:
+        // those frames take their usual path and the wait goes on.
+        // A background task's own synthetic result (origin task-notification) is
+        // not the follow-up either: it neither ends the wait nor is adopted.
+        const followUp = session.turn?.steerFollowUp;
+        const notificationResult = o.type === "result" && o.origin?.kind === "task-notification";
+        if (followUp && session.turn && !session.turn.lateContinuation && !taskFrame && !notificationResult) {
+          if (o.type === "system" && o.subtype === "init") {
+            clearTimeout(followUp.timer);
+            session.turn.steerFollowUp = undefined;
+            // Claude Code runs every message queued by then as one follow-up
+            // (joined, probed on 2.1.309); one written just now may be next.
+            if (session.turn.unreadSteers) { const at = Date.now() - STEER_FOLD_MARGIN_MS; session.turn.unreadSteers = session.turn.unreadSteers.filter((written) => written > at); }
+            const carried = (session.turn.carriedUsage ??= { input: 0, output: 0, cachedInput: 0 });
+            carried.input += followUp.usage.input;
+            carried.output += followUp.usage.output;
+            carried.cachedInput += followUp.usage.cachedInput;
+            if (followUp.total !== null) session.turn.carriedTotal = followUp.total;
+          } else if (contentFrame || o.type === "result") {
+            followUp.finish();
+          }
+        }
         // Frames with no open turn were not asked for: a background task's
         // notice or the model's follow-up to it, from a turn that is over.
         // They belong to no turn, and must never be read as the next one's.
@@ -4713,6 +4787,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           case "user":
             for (const b of Array.isArray(o.message?.content) ? o.message.content : []) {
               if (b.type === "tool_result") {
+                // queued input written well before this point goes into the next model call
+                if (session.turn?.unreadSteers) { const at = Date.now() - STEER_FOLD_MARGIN_MS; session.turn.unreadSteers = session.turn.unreadSteers.filter((written) => written > at); }
                 emit({ ...base(threadId, currentTurnId()), type: "item.completed", itemType: "tool", itemId: b.tool_use_id, ok: !b.is_error, result: b.content });
                 // The proxy fails closed when it cannot reach the broker, and its own
                 // stderr only reaches the engine's MCP log: say so in the app log.
@@ -4785,6 +4861,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             const foreignResult = session.turn?.lateContinuation === true && o.origin?.kind === "task-notification";
             if (session.turn) session.turn.lateContinuation = false;
             if (foreignResult) break;
+            // Still held for a steer's follow-up: the follow-up's own frames
+            // ended or adopted the wait above, so this result is a background
+            // task's, and it settles nothing.
+            if (session.turn?.steerFollowUp) break;
             if (o.origin?.kind === "task-notification" && !session.turn?.bg?.waiting) break;
             // result.usage is this turn's own figure, "per-turn in
             // streaming-input sessions" even on a retained process. cache
@@ -4830,20 +4910,60 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
               break;
             }
             const heldUsage = session.turn?.bg?.waiting ? session.turn.bg.usage : null;
-            settle(
+            const carried = session.turn?.carriedUsage ?? null;
+            const settleArgs: Parameters<typeof settle> = [
               stoppedResult || (o.is_error !== true && !session.turn?.authFailed && !session.turn?.updateRequired),
               stoppedResult ? "cancelled" : session.turn?.authFailed ? "auth_required" : session.turn?.updateRequired ? "update_required" : o.stop_reason ?? o.terminal_reason ?? null,
-              o.total_cost_usd ?? null,
-              o.usage
+              o.total_cost_usd ?? session.turn?.carriedTotal ?? null,
+              o.usage || carried
                 ? {
-                    input: (o.usage.input_tokens || 0) + (o.usage.cache_read_input_tokens || 0) + (o.usage.cache_creation_input_tokens || 0) + (heldUsage?.input ?? 0),
-                    output: (o.usage.output_tokens || 0) + (heldUsage?.output ?? 0),
-                    ...(typeof o.usage.cache_read_input_tokens === "number"
-                      ? { cachedInput: o.usage.cache_read_input_tokens + (heldUsage?.cachedInput ?? 0) }
+                    input: (o.usage?.input_tokens || 0) + (o.usage?.cache_read_input_tokens || 0) + (o.usage?.cache_creation_input_tokens || 0) + (heldUsage?.input ?? 0) + (carried?.input ?? 0),
+                    output: (o.usage?.output_tokens || 0) + (heldUsage?.output ?? 0) + (carried?.output ?? 0),
+                    ...(typeof o.usage?.cache_read_input_tokens === "number" || carried
+                      ? { cachedInput: (o.usage?.cache_read_input_tokens || 0) + (heldUsage?.cachedInput ?? 0) + (carried?.cachedInput ?? 0) }
                       : {}),
                   }
                 : undefined,
-            );
+            ];
+            // A steer written during the final answer was not read by it: the
+            // CLI answers it in a turn of its own, started (with `init`) right
+            // after this result. Settling now would leave that answer to an
+            // idle process, which is closed for it, and the message the
+            // person saw delivered would be lost. So a result that comes
+            // after a steer the CLI may not have read (written after, or just
+            // before, its last tool result) waits a moment for that follow-up.
+            // (A turn held for background agents that have all reported comes
+            // here with its closing result too: its held usage stays on bg.)
+            const t = session.turn;
+            if (t && !t.settled && settleArgs[0] && !stoppedResult && !t.stopRequested && !session.closing && t.unreadSteers?.length && !(t.bg?.open.size)) {
+              const usage = {
+                input: (o.usage?.input_tokens || 0) + (o.usage?.cache_read_input_tokens || 0) + (o.usage?.cache_creation_input_tokens || 0),
+                output: o.usage?.output_tokens || 0,
+                cachedInput: o.usage?.cache_read_input_tokens || 0,
+              };
+              // The background wait is over; this wait is the turn's now. Its
+              // held usage moves into this result's, and a follow-up that starts
+              // new background agents is held (and capped) afresh.
+              if (t.bg) {
+                if (t.bg.cap) { clearTimeout(t.bg.cap); t.bg.cap = undefined; }
+                if (t.bg.waiting) {
+                  usage.input += t.bg.usage.input; usage.output += t.bg.usage.output; usage.cachedInput += t.bg.usage.cachedInput;
+                  t.bg.usage = { input: 0, output: 0, cachedInput: 0 };
+                  t.bg.waiting = false;
+                }
+              }
+              const finish = () => {
+                if (t.steerFollowUp) clearTimeout(t.steerFollowUp.timer);
+                t.steerFollowUp = undefined;
+                // a Stop or close meanwhile settles the turn on its own path, as cancelled
+                if (session.turn === t && !t.settled && !t.stopRequested && !session.closing) settle(...settleArgs);
+              };
+              const timer = setTimeout(finish, STEER_FOLLOW_UP_WAIT_MS);
+              timer.unref?.();
+              t.steerFollowUp = { timer, finish, usage, total: typeof o.total_cost_usd === "number" ? o.total_cost_usd : null };
+              break;
+            }
+            settle(...settleArgs);
             break;
         }
       };
@@ -4873,8 +4993,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       registerIntake(threadId, child.stdout, child);
 
       child.stderr.on("data", (c) => {
-        session.stderr += c;
-        if (session.stderr.length > 8192) session.stderr = session.stderr.slice(-8192);
+        session.stderr.push(c);
       });
 
       child.on("error", (e) => {
@@ -4903,12 +5022,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           // error card would contradict the update offer (audit round 1, Kimi 2).
           retryState.delete(threadId);
           settle(false, "update_required");
-        } else if (session.turn && !session.turn.settled && code !== 0 && !session.initHandled && claudeLaunchRefusal(session.stderr)) {
+        } else if (session.turn && !session.turn.settled && code !== 0 && !session.initHandled && claudeLaunchRefusal(session.stderr.text)) {
           // The CLI refused its own command line at startup (it exited before any `init`): one of
           // Murage's launch flags it does not know (too old: the update offer) or a managed MCP
           // policy that forbids --strict-mcp-config. Neither is transient, so no retry and no
           // generic exit card. A process that got as far as `init` is never read this way.
-          const refusal = claudeLaunchRefusal(session.stderr)!;
+          const refusal = claudeLaunchRefusal(session.stderr.text)!;
           retryState.delete(threadId);
           emit({
             ...base(threadId, currentTurnId()), type: "runtime.error", message: refusal.message, setup: true,
@@ -4917,10 +5036,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           settle(false, refusal.stopReason);
         } else if (session.turn && !session.turn.settled) {
           const closingTurn = session.turn;
-          const message = `claude exited ${code} before result${session.stderr ? `: ${session.stderr.trim().slice(-300)}` : ""}`;
+          const message = `claude exited ${code} before result${session.stderr.text ? `: ${session.stderr.text.trim().slice(-300)}` : ""}`;
           const verdict = classifyError({ exitCode: code, stderr: message });
           // The classifier reads the raw exit above; the chat reads plain words.
-          const shown = engineClosedLine(ENGINE, code, undefined, session.stderr ? acpEngineExitStderrText(session.stderr.trim().slice(-300)) : undefined);
+          const shown = engineClosedLine(ENGINE, code, undefined, session.stderr.lastWords());
           if (
             !retry.cancelled &&
             code !== 0 &&
@@ -5266,6 +5385,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // if the turn was stopped or the process closed meanwhile.
       if (!s.initHandled) return new Promise<boolean>((resolve) => (s.queuedSteers ??= []).push({ turn: s.turn!, text, beforeWrite, resolve }));
       if (!steerFenceHolds(beforeWrite)) return false;
+      (s.turn.unreadSteers ??= []).push(Date.now());
+      extendSteerHold(s.turn);
       return writeUser(s, threadId, text);
     };
 
@@ -5406,9 +5527,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             env,
             ...(memory ? { cwd: memory.cwd } : {}),
           },
+          // S4 power (design sections 1 and 7): the Windows job, as the turn spawn; no hostPower on Mac or Linux.
+          engineJob({ posixHostPower: false }),
         );
         let stdout = "";
-        let stderr = "";
+        const stderr = new EngineStderrCapture();
         /** stderr as it stood when `init` arrived; null until then */
         let preInitStderr: string | null = null;
         let result: { text: string; isError: boolean } | null = null;
@@ -5424,7 +5547,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         const readLine = (line: string) => {
           let frame: { type?: unknown; subtype?: unknown; result?: unknown; is_error?: unknown };
           try { frame = JSON.parse(line); } catch { return; }
-          if (frame.type === "system" && frame.subtype === "init" && preInitStderr === null) preInitStderr = stderr;
+          if (frame.type === "system" && frame.subtype === "init" && preInitStderr === null) preInitStderr = stderr.text;
           if (frame.type === "result") result = { text: typeof frame.result === "string" ? frame.result : "", isError: frame.is_error === true };
         };
         const onAbort = () => {
@@ -5455,16 +5578,16 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           }
         });
         child.stderr.on("data", (chunk: string) => {
-          stderr = (stderr + chunk).slice(-8_192);
+          stderr.push(chunk);
         });
         child.on("error", (error) => finish(error));
         child.on("close", (code) => {
           if (stdout.trim()) readLine(stdout);
-          const failed = result?.isError ? (result.text.trim() || `Claude review failed`) : null;
+          const failed = result?.isError ? (engineStderrRedacted(result.text, false).trim() || `Claude review failed`) : null;
           if (code === 0 && result && !failed) { finish(); return; }
           // a refusal of the launch flags only counts from before the CLI's `init`
-          const refusal = claudeLaunchRefusalError(preInitStderr ?? stderr);
-          finish(refusal ?? new Error(failed ?? (stderr.trim() || (code === 0 ? "Claude review gave no result" : `Claude review exited ${code}`))));
+          const refusal = claudeLaunchRefusalError(preInitStderr ?? stderr.text);
+          finish(refusal ?? new Error(failed ?? (stderr.redactedEnd(8_192) || (code === 0 ? "Claude review gave no result" : `Claude review exited ${code}`))));
         });
         if (signal?.aborted) onAbort();
         else {

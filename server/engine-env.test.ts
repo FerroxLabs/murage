@@ -5,13 +5,14 @@
 // login capture (74a), the handed map with the pins written last (74a(3),
 // 74c), and the consistency check that can only remove (74d).
 
-import { chmodSync, mkdtempSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ABSENT_PINS, valuePins, type PinRun } from "../shared/arg-vocabulary.ts";
-import { compareCheck, execEnvHanded, execEnvNow, handedPinsOf, handEnv, noteStartupFileEvent, type HandedEnv } from "./engine-env.ts";
-import { isExecEnv } from "../shared/mount-identity.ts";
+import * as procs from "./procs.ts";
+import { comparePowerShellCheck, setExecEnvBotReader, setExecEnvOriginReader, compareCheck, execEnvHanded, execEnvNow, handedPinsOf, handEnv, noteStartupFileEvent, type HandedEnv } from "./engine-env.ts";
+import { envInfoOf, isExecEnv } from "../shared/mount-identity.ts";
 import { askTouchesStartup } from "./startup-files.ts";
 import { captureOwnerEnv, invalidateEnvCapture, ownerEnvState, parseEnvBlock, readCapture, resetPathCacheForTests, setOwnerEnvStore } from "./env-path.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
@@ -115,13 +116,14 @@ describe("the consistency check (Rule 74d)", () => {
     expect(result.absent).toEqual(["BASH_ENV"]);
     expect(result.unknown.sort()).toEqual(["NEW", "PAGER", "POSIXLY_CORRECT"]);
     expect(result.cwdKnown).toBe(true);
-    expect(compareCheck(handed, "/q", printed)).toMatchObject({ ok: true, cwdKnown: false });
+    expect(compareCheck(handed, "/q", printed)).toMatchObject({ ok: false, reason: "cwd-disagreement" });
   });
 
-  it("a check that cannot be read is U20: the F12 record carries no env and no absence", async () => {
+  it.skipIf(!posixShell)("malformed output and a missing cwd stay U20", async () => {
     expect(compareCheck(handed, "/p", "garbage")).toMatchObject({ ok: false });
     const failed = await execEnvNow("s1", ["/bin/sh", "-c"], { ...handed, env: { ...handed.env, PATH: "/nonexistent" } }, "/nonexistent-dir");
-    expect(failed).toMatchObject({ env: {}, absent: [], cwd: "/nonexistent-dir" });
+    expect(failed).toMatchObject({ env: {}, absent: [], cwd: "/nonexistent-dir", unread: { code: "U20" } });
+    expect(failed.unchecked).toBeUndefined();
   });
 
   it.skipIf(!posixShell)("runs the pinned form for real and keeps an untouched map", async () => {
@@ -129,6 +131,16 @@ describe("the consistency check (Rule 74d)", () => {
     const result = await execEnvNow("s2", ["/bin/sh", "-c"], real, dir);
     expect(result).toMatchObject({ cwd: dir, absent: ["POSIXLY_CORRECT"] });
     expect(result.env).toEqual(real.env);
+  });
+
+  it.skipIf(!posixShell)("never executes a shadow env earlier on the handed PATH", async () => {
+    const marker = join(dir, "shadow-ran");
+    writeFileSync(join(dir, "env"), `#!/bin/sh\nprintf ran > '${marker}'\nexit 1\n`, { mode: 0o755 });
+    const real = { ...handed, env: { PATH: `${dir}:/usr/bin:/bin`, HOME: dir, PAGER: "cat" } };
+    const result = await execEnvNow("shadow-env", ["/bin/sh", "-c"], real, dir);
+    expect(result.unread).toBeUndefined(); expect(result.unchecked).toBeUndefined();
+    expect(result.env).toEqual(real.env);
+    expect(existsSync(marker)).toBe(false);
   });
 });
 
@@ -179,5 +191,110 @@ describe("execEnvHanded with provenance (powershell-inherit)", () => {
     expect(isExecEnv({ ...inherited, provenance: { kind: "inherited", cli: 1, adds: [], unenforceable: [] } })).toBe(false);
     expect(isExecEnv({ ...inherited, managedEnv: ["PAGER"] })).toBe(true);
     expect(isExecEnv({ ...inherited, managedEnv: [1] })).toBe(false);
+  });
+});
+
+describe("108 Windows framing and retry state", () => {
+  const hand: HandedEnv = { env: { Path: "C:\\bin", NOTE: "ภาษาไทย ☕" }, absent: ["BASH_ENV"], capture: "session", ownerStartup: {}, pins: new Map() };
+  const nonce = "a".repeat(32), cwd = "C:\\work space\\日本語";
+  const envelope = (over: Record<string, unknown> = {}) => JSON.stringify({ version: 1, nonce, env: Object.entries(hand.env), provider: "FileSystem", cwd, processCwd: cwd, ...over });
+  afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); setExecEnvOriginReader(() => "other"); });
+  it("reads Unicode, folds names, and only removes handed facts", () => {
+    expect(comparePowerShellCheck(hand, cwd, envelope(), nonce)).toMatchObject({ ok: true, env: hand.env });
+    expect(comparePowerShellCheck(hand, cwd, envelope({ env: [["PATH", "C:\\bin"], ["NOTE", "changed"], ["NEW", "x"], ["bash_env", "x"]] }), nonce)).toMatchObject({ ok: true, env: { Path: "C:\\bin" }, absent: [] });
+  });
+  it("rejects extra, truncated, wrong-version/nonce, aliases and provider/cwd disagreement", () => {
+    for (const output of [envelope() + envelope(), "noise" + envelope(), envelope().slice(0, -1), envelope({ nonce: "wrong" }), envelope({ version: 2 }), envelope({ provider: "Registry" }), envelope({ processCwd: "C:\\elsewhere" }), envelope({ cwd: "HKLM:\\" }), envelope({ env: [["PATH", "one"], ["Path", "two"]] }), envelope({ env: [["X", 3]] })]) expect(comparePowerShellCheck(hand, cwd, output, nonce).ok).toBe(false);
+    expect(comparePowerShellCheck({ ...hand, env: { Path: "one", PATH: "two" } }, cwd, envelope(), nonce).ok).toBe(false);
+  });
+  it("shares in-flight checks, removes failures, cools down 30/120 seconds and caches recovery", async () => {
+    vi.useFakeTimers();
+    let finish!: Parameters<typeof procs.execCli>[3];
+    const run = vi.spyOn(procs, "execCli").mockImplementation((_file, _args, _opts, cb) => { finish = cb; });
+    const form = [process.platform === "win32" ? "powershell.exe" : "/fixture/powershell.exe", "-NoProfile", "-Command"];
+    const a = execEnvNow("retry", form, hand, cwd), b = execEnvNow("retry", form, hand, cwd);
+    expect(run).toHaveBeenCalledTimes(1);
+    finish(new Error("fixture"), "");
+    expect(await a).toMatchObject({ env: {}, absent: [], unread: { code: "U20" } }); await b;
+    await execEnvNow("retry", form, hand, cwd); expect(run).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(30_000);
+    const c = execEnvNow("retry", form, hand, cwd); finish(new Error("fixture"), ""); await c;
+    await vi.advanceTimersByTimeAsync(119_999); await execEnvNow("retry", form, hand, cwd); expect(run).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
+    const d = execEnvNow("retry", form, hand, cwd);
+    const script = run.mock.calls.at(-1)![1].at(-1)!;
+    finish(null, envelope({ nonce: script.match(/nonce='([a-f0-9]+)'/)![1] }));
+    expect((await d).unread).toBeUndefined(); await execEnvNow("retry", form, hand, cwd); expect(run).toHaveBeenCalledTimes(3);
+  });
+  it("isolates origins, rejects throwing launches and reruns a changed generation", async () => {
+    let origin = "routine"; setExecEnvOriginReader(() => origin);
+    const form = [process.platform === "win32" ? "powershell.exe" : "/fixture/powershell.exe", "-NoProfile", "-Command"];
+    const run = vi.spyOn(procs, "execCli").mockImplementation(() => { throw new Error("fixture launch"); });
+    await execEnvNow("origin", form, hand, cwd); await execEnvNow("origin", form, hand, cwd);
+    origin = "owner"; await execEnvNow("origin", form, hand, cwd); expect(run).toHaveBeenCalledTimes(2);
+    invalidateEnvCapture("fixture reset");
+    run.mockImplementation((_file, args, _opts, cb) => {
+      if (run.mock.calls.length === 3) invalidateEnvCapture("fixture race");
+      cb(null, envelope({ nonce: args.at(-1)!.match(/nonce='([a-f0-9]+)'/)![1] }));
+    });
+    expect((await execEnvNow("origin", form, hand, cwd)).unread).toBeUndefined(); expect(run).toHaveBeenCalledTimes(4);
+  });
+});
+
+describe("108 E1 typed operational failures", () => {
+  const hand: HandedEnv = { env: { HOME: "C:\\private-home", PAGER: "cat", PRIVATE_NAME: "private-value" }, absent: ["BASH_ENV"], capture: "session", ownerStartup: {}, pins: new Map() };
+  const cwd = "C:\\work", form = [process.platform === "win32" ? "C:\\fixture\\pwsh.exe" : "/fixture/pwsh.exe", "-NoProfile", "-Command"];
+  afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); vi.unstubAllEnvs(); setExecEnvBotReader(() => undefined); });
+  it.each([
+    ["launch-failed", "ENOENT"], ["launch-failed", "EACCES"], ["timeout", undefined],
+  ] as const)("retains the handed map and cooldown reason for %s (%s), with one value-free log per window", async (reason, code) => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(100_000);
+    setExecEnvBotReader(() => "fixture-bot");
+    const log = vi.spyOn(console, "info").mockImplementation(() => {});
+    const run = vi.spyOn(procs, "execCli").mockImplementation((_file, _args, _opts, cb) => {
+      cb(Object.assign(new Error("private-value"), { code, killed: reason === "timeout" }), "");
+    });
+    const failed = await execEnvNow("e1", form, hand, cwd);
+    const cooled = await execEnvNow("e1", form, hand, cwd);
+    for (const record of [failed, cooled]) {
+      expect(record).toMatchObject({ env: hand.env, absent: hand.absent, unchecked: { reason } });
+      expect(record.unread).toBeUndefined(); expect(isExecEnv(record)).toBe(true);
+      expect(envInfoOf(record).unchecked).toEqual({ reason });
+      expect(JSON.stringify(envInfoOf(record))).not.toContain("private-value");
+    }
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(log.mock.calls).toEqual([[`approvals: environment unchecked bot=fixture-bot reason=${reason}`]]);
+    vi.setSystemTime(130_000); await execEnvNow("e1", form, hand, cwd);
+    expect(run).toHaveBeenCalledTimes(2); expect(log).toHaveBeenCalledTimes(2);
+    vi.setSystemTime(249_999); await execEnvNow("e1", form, hand, cwd);
+    expect(run).toHaveBeenCalledTimes(2); expect(log).toHaveBeenCalledTimes(2);
+  });
+  it.each(["cwd", "alias", "extra", "nonce", "version", "malformed", "cloud", "no-form", "unpinned"])("keeps %s failures and their cooldowns U20", async kind => {
+    const run = vi.spyOn(procs, "execCli").mockImplementation((_file, args, _opts, cb) => {
+      const nonce = args.at(-1)!.match(/nonce='([a-f0-9]+)'/)![1];
+      const value = { version: 1, nonce, provider: "FileSystem", env: Object.entries(hand.env), cwd, processCwd: cwd,
+        ...(kind === "cwd" ? { cwd: "C:\\elsewhere" } : {}),
+        ...(kind === "alias" ? { env: [["PATH", "one"], ["Path", "two"]] } : {}),
+        ...(kind === "extra" ? { extra: true } : {}), ...(kind === "nonce" ? { nonce: "wrong" } : {}),
+        ...(kind === "version" ? { version: 2 } : {}),
+      };
+      cb(null, kind === "malformed" ? "invalid" : JSON.stringify(value));
+    });
+    if (kind === "cloud") vi.stubEnv("MURAGE_CLOUD_ROLE", "home");
+    const shell = kind === "no-form" ? [] : kind === "unpinned" ? [process.platform === "win32" ? "powershell.exe" : "/fixture/powershell.exe", "-Command"] : form;
+    for (let i = 0; i < 2; i++) {
+      const record = await execEnvNow("held", shell, hand, cwd);
+      expect(record).toMatchObject({ env: {}, absent: [], unread: { code: "U20" } });
+      expect(record.unchecked).toBeUndefined();
+    }
+    expect(run).toHaveBeenCalledTimes(["cloud", "no-form", "unpinned"].includes(kind) ? 0 : 1);
+  });
+  it("labels POSIX and Windows cwd disagreements and rejects unproven short names", () => {
+    expect(compareCheck(hand, "/work", "HOME=/h\0\0/elsewhere\n")).toMatchObject({ ok: false, reason: "cwd-disagreement" });
+    const value = { version: 1, nonce: "n", provider: "FileSystem", env: Object.entries(hand.env), cwd: "C:\\PROGRA~1", processCwd: "C:\\PROGRA~1" };
+    expect(comparePowerShellCheck(hand, "C:\\Program Files", JSON.stringify(value), "n")).toMatchObject({ ok: false, reason: "cwd-disagreement" });
+    for (const reason of ["did-not-finish", "cwd-disagreement", "overflow", "exit-or-stderr", "changed-while-checked", "unpinned-shell-path"]) {
+      expect(isExecEnv({ ...execEnvHanded(hand, cwd, form), unchecked: { reason } })).toBe(false);
+    }
   });
 });

@@ -105,7 +105,7 @@ import { sharedRegistrationBrowsers } from "../scripts/browser-extension-host-re
 import type { SkillProcedureContext } from "./skills.ts";
 import { sweepBackupWork } from "./backup-local-work.ts";
 import { routineRunMarkerName, routineRunPromptNote } from "../shared/routine-run-marker.ts";
-import { procedurePinFitsAudience, createProcedurePin, preparePinnedProcedures } from "./procedure-bundles.ts";
+import { procedurePinFitsAudience, procedurePinServesTurn, createProcedurePin, preparePinnedProcedures } from "./procedure-bundles.ts";
 import { improvedMomentForEvent, reconcileOutstandingChangesPass, setImprovedListener } from "./memory/procedure-landing.ts";
 import { startRecoveryScheduler } from "./recovery-scheduler.ts";
 import { advanceRootSetProofs } from "./memory/replay-lineage.ts";
@@ -253,7 +253,7 @@ import { startRecordKeysBuild } from "./memory/record-keys.ts";
 import { flipMemoryOnForUpgrade, listPastChatThreads, pastChatsOwed, startPastChatsBuild } from "./memory/past-chats-build.ts";
 import { runningAppVersion } from "./memory/app-version.ts";
 import type { DatabaseSync } from "node:sqlite";
-import { recordProjectRoutine, linkLegacyProjectRoutineRuns, projectMainThread, projectRoutineCeiling, ProjectRoutineCeilings } from "./project-routines.ts";
+import { recordProjectRoutine, linkLegacyProjectRoutineRuns, projectMainThread, projectRoutineCeiling, persistedProjectRoutineOptions } from "./project-routines.ts";
 import { projectProposalFolderSignals, createProjectRows, projectProposalInput, proposeProject, PROPOSAL_REPLY_LIMIT, startCreatedProjectGoal } from "./project-new.ts";
 import { ChiefProposalTurns, newProposalServerAlias, PROJECT_PROPOSE_ROUTE, projectProposalToolRefusal, proposalAskAllowed, proposalAskContext, proposalAskRefusalLine, proposalEngine, proposalOwnToolLine, proposalSettings, proposalToolCall, proposalToolItemStops, type ProposalTurnOutcome, type ValidatedProposal } from "./project-proposal-engines.ts";
 import { omitNativeLog } from "./drivers/native.ts";
@@ -310,6 +310,7 @@ import type { ArtifactKind } from "../shared/artifacts.ts";
 import { newClaudeAccount, claudeAccountInfo, assertSeparateClaudeAccount, createClaudeAccountSchema, claudeAccountSettingsSchema, resolveClaudeConfigDir } from "./claude-accounts.ts";
 import { fluxHermesHome, HERMES_CONFIG_MODEL_ID } from "./drivers/acp/hermes.ts";
 import { openclawVersionNote } from "./drivers/acp/openclaw.ts";
+import { ApprovalDeliveryError, denyAutomaticApproval, watchApprovalRequest } from "./drivers/acp/approval-delivery.ts";
 import { hermesInstanceProfiles, hermesProfileOf, listHermesProfiles, planHermesImport, planHermesProfilePins, type HermesPin } from "./hermes-profiles.ts";
 import { hermesPinNoteActivityName } from "../shared/hermes-pin-note.ts";
 import { ConversationDeletions, ENGINE_FOR_DRIVER, ENGINE_LABEL, instancesForHomes, engineHomeFor, runConversationDeletion, type DeletionEngine, type DeletionEngineHome, type DeletionInput, type DeletionReport } from "./conversation-deletion.ts";
@@ -504,11 +505,12 @@ import { customIntegrations } from "./custom-mcp-mounts.ts";
 import { ComputerControl } from "./computer-control.ts";
 import { NarrowDenials } from "./narrow-denials.ts";
 import { augmentedPath, engineIdentities, findCliCandidates, resetPathCache, bundledFuigoPath, resolveFuigoCli, ownerEnvAfterDiscovery, setOwnerEnvStore } from "./env-path.ts";
-import { handedPinsOf, noteStartupFileEvent, promptFactsOf, sshPinNotes } from "./engine-env.ts";
+import { setExecEnvBotReader, setExecEnvOriginReader, handedPinsOf, noteStartupFileEvent, promptFactsOf, sshPinNotes } from "./engine-env.ts";
 import { fluxSelectionRefusal } from "./flux-surface.ts";
 import { isFluxModel } from "./flux-surface.ts";
 import { fluxFirstTokenProbe } from "./flux-memory-first-token.ts";
 import { describeSpawnFailure, execCli } from "./procs.ts";
+import { startHostPowerStub } from "./host-power.ts";
 import { updateClaudeCli } from "./claude-update.ts";
 import { engineSwitchLines } from "../shared/engine-switch.ts";
 import { withNewBotEffort } from "./new-bot-defaults.ts";
@@ -618,7 +620,7 @@ import { answersAsMessage, isQuestionCard, questionFromChoices, questionsForCard
 import { QUESTION_FENCE } from "../shared/ask-wording.ts";
 import { closedFences, WIDGET_FENCE } from "../shared/murage-fences.ts";
 import { promptWithReply, transcriptText } from "./replies.ts";
-import { _loadPending, onOwedHandoffReply, FINALIZER_WRITES, discardDelegations, forgetDelegationsForThreads, drainDelegations, settleQueuedDelegations, dropUnreachableDelegations, findDelegationReceipt, pendingDelegationInfo, pendingDelegationSnapshot, pendingThreads, recordDelegationReceipt, markAskTicketAccepted, startedTicket, releaseDelegationsWaitingOn, releaseParkedDelegations, hasActiveDelegationWork, DRAIN_PAGE, stopWaitingDelegation, settleStartedDelegations, resendHeldDelegation, dismissHeldDelegation, heldLineId, appendHeldLine, releaseHeld, idleReleaseHasMore, DELEGATION_DELETED, DELEGATION_NOT_STARTABLE, DELEGATION_REQUEST_ENDED, DELETED_NOTE, alreadyPickedUpText, settleHeldOfEndedRequest, type HeldDelegation, } from "./delegations.ts";
+import { _loadPending, onOwedHandoffReply, FINALIZER_WRITES, discardDelegations, forgetDelegationsForThreads, drainDelegations, settleQueuedDelegations, dropUnreachableDelegations, findDelegationReceipt, pendingDelegationInfo, pendingDelegationSnapshot, pendingThreads, recordDelegationReceipt, markAskTicketAccepted, startedTicket, releaseDelegationsWaitingOn, releaseParkedDelegations, hasActiveDelegationWork, DRAIN_PAGE, stopWaitingDelegation, settleStartedDelegations, joinBootSettle, type HeldPartnerCancel, resendHeldDelegation, dismissHeldDelegation, HELD_PARTNER_LIVE, heldLineId, appendHeldLine, releaseHeld, idleReleaseHasMore, DELEGATION_DELETED, DELEGATION_NOT_STARTABLE, DELEGATION_REQUEST_ENDED, DELETED_NOTE, alreadyPickedUpText, settleHeldOfEndedRequest, type HeldDelegation, } from "./delegations.ts";
 import { configureCloudComputerLines, recoverCloudComputerTurns } from "./cloud-computer-turns.ts";
 import {
   cancelSteeredMessage,
@@ -894,7 +896,7 @@ import * as vps from "./vps-computer.ts";
 import { awaitBoxWakeAtDispatch, turnTrace } from "./computer-wake.ts";
 import { type StoredAnswerDeps } from "./handoff-replay.ts";
 import { runEventAction, type EventActionHandle, type EventActionSpec } from "./event-limit.ts";
-import { isLiveRoutineRunStatus, isOpenRoutineRunStatus, routineRunCard, RoutineManager, setLimitResetReader, type Routine, type RoutineLimitRefusal, type RoutineRun, type RoutineRunOn, type RoutineRunTrigger } from "./routines.ts";
+import { isLiveRoutineRunStatus, isOpenRoutineRunStatus, routineRecoveredLine, routineRunCard, RoutineManager, setLimitResetReader, type Routine, type RoutineLimitRefusal, type RoutineRun, type RoutineRunOn, type RoutineRunTrigger } from "./routines.ts";
 import { resolveTurnSelection, type RouteVerdict, type TurnSelectionResult } from "./turn-selection.ts";
 import { LimitStateStore, engineKey, limitUntil } from "./limit-state.ts";
 import { LimitFailoverStore, bootRecovery, effectiveState, type FailoverRow } from "./limit-failovers.ts";
@@ -902,7 +904,7 @@ import { engineBilling, limitBackupAllowed, routineBackupBilling, type BillingFa
 import { engineFamilyOf, limitRefusal } from "./limit-refusal.ts";
 import { setChannelReplyLanguage } from "./channels/reply-text.ts";
 import { LIMIT_WAIT_OPTION, LimitTurns, failoverLine, limitCardAnswer, limitOfferCard, limitOutcome, plainLimitLine, relayedRefusalText, channelLimitLine, routineLimitFailedLine, routineLimitLine, type LimitTurn } from "./limit-continuation.ts";
-import { refreshPreview } from "./thread-permissions-refresh.ts";
+import { refreshPreview, openRefreshPreview, permissionLevelPatch, openPermissionExclusion } from "./thread-permissions-refresh.ts";
 import { attachmentVisibleToRemote, RemoteUploadGrants } from "./attachment-access.ts";
 import { CalendarCallManager, type CalendarCall } from "./calendar-calls.ts";
 import {
@@ -961,7 +963,7 @@ import { listenWebhookIngress, webhookCredential, type WebhookIngress } from "./
 import { memberTurnSelection } from "./member-turn.ts";
 import { WebhookManager } from "./webhooks.ts";
 import { SPAWNED_PROXIES } from "./proxy-paths.ts";
-import { attachedSkillOn, attachedSkillsFor, CHIEF_GUIDE_ID, isChiefForAttached, loadBundledSkills, loadUserSkills, mergeSkills, renderSkillInstructions, selectBundledSkills, shippedSkillCheck, skillsWithMountedTools } from "./skill-library.ts";
+import { attachedSkillOn, attachedSkillsFor, CHIEF_GUIDE_ID, isChiefForAttached, loadBundledSkills, loadUserSkills, mergeSkills, renderSkillInstructions, selectBundledSkills, shippedSkillCheck, skillsForAudience, skillsWithMountedTools } from "./skill-library.ts";
 import { installedPlaybookInstructions } from "./installed-playbooks.ts";
 import { createBotPackageExport, getBotPackageExportSelectionCandidates } from "./package-export.ts";
 import { scanBotPackageContents } from "./bot-package-scan.ts";
@@ -1007,6 +1009,7 @@ import { mediaAssetsRoute } from "./media-assets.ts";
 import { resolveImageReferenceRoute } from "./image-reference-resolver.ts";
 import { BrowserCheckTurns, runBrowserCheck } from "./browser-check-state.ts";
 import { turnAskStopped, turnOutcome, turnStopped, turnSucceeded, TURN_INTERRUPTED_NOTE, TURN_STOPPED_DESKTOP_ACTION_NOTE, TURN_STOPPED_NOTE } from "./turn-outcome.ts";
+import { emptyTurnLine, failedTurnLine, turnErrorShown, turnProducedSomething, turnWroteText, wantsEmptyTurnLine, wantsFailedTurnLine } from "./failed-turn-line.ts";
 import { hostStoppedActivityName, hostStoppedReason } from "../shared/host-stop.ts";
 import { isSendNoticeCode } from "../shared/send-notice.ts";
 import { BROWSER_HELD_FOR_ANSWER_REASON, browserUnavailableActivityName, USER_CHROME_ALLOW_REASON, USER_CHROME_UNREACHABLE_REASON } from "../shared/browser-unavailable.ts";
@@ -6390,7 +6393,10 @@ async function deliverAnswer(
   if (!requestId.startsWith("image-") && !requestId.startsWith("publish-") && instance) {
     try {
       outcome = await instance.adapter.respondToRequest(threadId, requestId, { behavior, message, ...(answers ? { answers } : {}) });
-    } catch {
+    } catch (error) {
+      // A live ACP ask whose response could not be written remains answerable.
+      // Let the HTTP boundary show its plain 503 instead of dismissing the card.
+      if (error instanceof ApprovalDeliveryError) throw error;
       outcome = "unavailable";
     }
   }
@@ -7454,12 +7460,18 @@ function askerOwnRoutine(botId: string, threadId: string, routineCeiling: boolea
 }
 /** NOLIMITS-PROJECT-ROUTINE-107: the ceilings of the owner's own scheduled or manual routine runs this process delivered to a project
  * room, by room request id (project-routines.ts). */
-const projectRoutineCeilings = new ProjectRoutineCeilings();
-/** A routine's level now (its own, capped by its bot's level now), or undefined when the routine or its bot is gone or draft-only. */
-function projectRoutineLevelNow(routineId: string): RoutinePermissionMode | undefined {
-  const routine = routines?.listRoutines().find((item) => item.id === routineId);
-  const owner = routine ? store.bot(routine.botId) : undefined;
-  return routine && owner && !owner.draftOnly ? effectiveRoutinePermissionMode(routine, owner) : undefined;
+function projectRoutineCurrent(routineId: string, groupId: string, threadId: string, targetBotId: string, runId: string) {
+  const routine = routines?.listRoutines().find(item => item.id === routineId);
+  const run = routines?.listRuns().find(item => item.id === runId && item.routineId === routineId && item.groupId === groupId && item.botId === routine?.botId);
+  const source = routine && store.bot(routine.botId), target = store.bot(targetBotId), group = store.group(groupId);
+  const settings = projectSettingsFor(database(), groupId);
+  if (!routine || routine.groupId !== groupId || !run || run.threadId !== undefined && run.threadId !== threadId || !projectRoutineCeiling(run, routine, source) || !source || source.hidden || source.draftOnly || !target || target.hidden || target.draftOnly || !group?.channelProject
+      || group.hidden || group.threadId !== threadId || !group.memberIds.includes(source.id) || !group.memberIds.includes(target.id)
+      || !settings || settings.closedAt !== null || settings.endedAt !== null
+      || !turnAudienceIsOwner(source.threadId) || !turnAudienceIsOwner(threadId)) return undefined;
+  return { sourceBotId: source.id, ownerBinding: JSON.stringify(threadHumanPrincipal(source.threadId)),
+    audienceBinding: JSON.stringify(threadHumanPrincipal(threadId)), permissionMode: effectiveRoutinePermissionMode(routine, source),
+    triggerSource: projectRoutineCeiling(run, routine, source)!.triggerSource };
 }
 /** NOLIMITS-PROJECT-ROUTINE-107: the routine ceiling of the room turn `asker` is running in `threadId` right now, when that turn is
  * the owner's own project routine run delivered by this process: the lowest of the level recorded at delivery, the routine's level
@@ -7468,7 +7480,7 @@ function projectRoomRoutineCeiling(threadId: string, asker: BotRecord): RoutineP
   const requestId = roomTurnRequests.get(roomTurnRequestKey(threadId, asker.id));
   const request = requestId ? roomRequest(database(), requestId) : null;
   if (!request || request.toBotId !== asker.id || request.targetThreadId !== threadId || request.state !== "running") return undefined;
-  const ceiling = projectRoutineCeilings.turnOptions(request, projectRoutineLevelNow).routineAuthority;
+  const ceiling = persistedProjectRoutineOptions(database(), request, projectRoutineCurrent).routineAuthority;
   const profile = store.bot(asker.id);
   if (!ceiling || !profile || asker.draftOnly || profile.draftOnly) return undefined;
   const mode = effectiveRoutinePermissionMode({ permissionMode: effectiveRoutinePermissionMode(ceiling, asker) }, profile);
@@ -7982,6 +7994,7 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
 
   switch (event.type) {
     case "turn.started":
+      turnErrorShown.noteStarted(event.threadId, event.turnId);
       recordMemorySettlement(event.threadId, event.turnId ?? `start:${store.activeLeaf(event.threadId)}`, "working");
       break;
     case "session.started": {
@@ -8118,17 +8131,26 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
       // whole point of asking is that a person decides — and anything that
       // looks destructive stops even in auto mode.
       const asker = bot ?? (speaker ? store.bot(speaker.botId) : undefined);
+      const denyAutomatically = (message: string) => {
+        const instance = registry.get(event.providerInstanceId ?? asker!.modelSelection.instanceId);
+        if (!instance) return;
+        const request = watchApprovalRequest(event, listener => bus.subscribe(listener, { durable: false }));
+        void denyAutomaticApproval(
+          () => instance.adapter.respondToRequest(event.threadId, event.requestId!, { behavior: "deny", message }),
+          () => instance.adapter.interruptTurn(event.threadId, event.turnId),
+          request.live,
+          name => pushMessage({ role: "bot", kind: "activity", tool: { name, notice: true, ok: false } }),
+        ).finally(request.dispose);
+      };
       const partitionDenial = permission && asker ? partitionFileRefusal(asker, event.threadId, event.filePaths, turnCwdByThread.get(event.threadId)) : null;
       if (partitionDenial && event.requestId && asker) {
-        const instance = registry.get(event.providerInstanceId ?? asker.modelSelection.instanceId);
-        void instance?.adapter.respondToRequest(event.threadId, event.requestId, { behavior: "deny", message: partitionDenial });
+        denyAutomatically(partitionDenial);
         return;
       }
       // A draft-only bot (server/draft-only.ts) runs toolless or on a chat model, so it raises no ask; any permission ask from it
       // is denied here with no card, before Auto, a grant or a routine level reads it.
       if (permission && asker?.draftOnly && event.requestId) {
-        const instance = registry.get(event.providerInstanceId ?? asker.modelSelection.instanceId);
-        void instance?.adapter.respondToRequest(event.threadId, event.requestId, { behavior: "deny", message: DRAFT_ONLY_COMMAND_REFUSAL });
+        denyAutomatically(DRAFT_ONLY_COMMAND_REFUSAL);
         return;
       }
       const unattended = permission && asker && event.requestId ? isUnattended(event.threadId) : false;
@@ -8253,6 +8275,7 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
               // U20 (Rule 74d): the driver's F12 record says the environment check failed; the card names the cause
               // on a command ask only: a file or MCP card is not held by a shell check (Astra r6 item 8)
               ...(event.execEnv?.unread && (exactCommand !== undefined || isCommandTool(event.tool) || event.tool === "PowerShell" || event.toolKind === "execute") ? { envUnread: event.execEnv?.unread?.cause } : {}),
+              ...(event.execEnv?.unchecked && (exactCommand !== undefined || isCommandTool(event.tool) || event.tool === "PowerShell" || event.toolKind === "execute") ? { envUnchecked: event.execEnv.unchecked } : {}),
               call: grantCall,
               ...(stopRows ? { stopRows } : {}),
               taskAllowanceKeys: taskAllowances.keys(asker.id, event.threadId),
@@ -8269,6 +8292,7 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
               // is judged as Auto would judge it
               automated: Boolean(routineRun) || routines?.isActiveThread(event.threadId) === true,
               // ...and the owner's own channel message, if the bot allows it
+              fullAccessOrigin: fullAccessTurnOrigin(event.threadId),
               channelOwner: fullAccessTurnOrigin(event.threadId) === "owner-channel",
               // The bot editing its own MEMORY.md or its own thread files
               // is Murage's own bookkeeping, not a permission, including on an
@@ -8331,6 +8355,7 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
         // Claiming approval first and correcting later means a moment
         // where the transcript says "approved" over a request nothing
         // answered — and if the provider is gone entirely, forever.
+        const request = watchApprovalRequest(event, listener => bus.subscribe(listener, { durable: false }));
         void (async () => {
           try {
             if (!instance) throw new Error("provider unavailable");
@@ -8375,9 +8400,11 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
               // a routine wake answered at its routine's level still records that nobody was at the keyboard (Grok final r1 Low)
               unattended: unattended || undefined,
             });
-          } catch {
-            // couldn't answer it for them — hand it back to the human
-            // rather than leaving the bot waiting on nobody
+          } catch (error) {
+            // A live request can precede a resumable session. Its exact
+            // request/turn events, not hasSession(), fence this fallback.
+            if (!instance || !request.canFallback(error)) return;
+            // A live request whose write failed can still be answered by the owner.
             ratePermissionRisk();
             const card = pushMessage({
               role: "bot",
@@ -8415,6 +8442,8 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
               source: "auto-fallback",
               rule: verdict.rule,
             });
+          } finally {
+            request.dispose();
           }
         })();
         break;
@@ -8630,6 +8659,7 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
       // dispatch moves it to working; turn.completed (which follows a setup
       // failure) is told to leave "dead" alone.
       if (event.setup && bot) store.setTaskActivity(bot.id,event.threadId, "dead");
+      if (bot) turnErrorShown.noteError(event.threadId, event.turnId);
       break;
     }
     case "thread.token-usage.updated":
@@ -8728,6 +8758,40 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
           kind: "activity",
           ...(completedTurnId ? { turnId: completedTurnId } : {}),
           tool: { name: desktopActionStopped ? TURN_STOPPED_DESKTOP_ACTION_NOTE : TURN_STOPPED_NOTE, ok: true },
+        });
+      }
+      // A failed direct turn is never silent: when no runtime.error (or other failure line of Murage's) was shown for it, the
+      // owner gets one plain line (server/failed-turn-line.ts). Rooms, delegations, routines and refusals have their own lines.
+      // The same for a turn the engine called finished that produced nothing (no reply, image or tool result): ACP's
+      // empty-turn rule, for the engines that do not report it themselves.
+      const errorShownForTurn = bot ? turnErrorShown.take(event.threadId, event.turnId) : false;
+      const directOwnerTurn = Boolean(bot && directRun && completedTurnId && !turnStopped(event)) && isWorkspaceOwner(threadHumanPrincipal(event.threadId));
+      // the turn's rows through the turn index, never a filter over the loaded thread: per-turn work never grows with history
+      const lineRows = directOwnerTurn ? store.turnRowsBounded(event.threadId, completedTurnId!) : [];
+      const lineContext = {
+        directOwnerTurn,
+        replacementOwnsThread,
+        delegated: delegationWatch.has(event.threadId),
+        routine: Boolean(routineRun),
+        lateRedispatch: Boolean(lateRedispatch),
+        errorShown: errorShownForTurn,
+        failureRowShown: Boolean(memoryEcho && echoOnlyReply)
+          || lineRows.some((message) => message.role === "bot" && message.kind === "activity" && message.tool?.ok === false),
+      };
+      if (bot && wantsFailedTurnLine(event, lineContext)) {
+        const wroteText = turnWroteText(lineRows);
+        pushMessage({
+          role: "bot",
+          kind: "activity",
+          ...(completedTurnId ? { turnId: completedTurnId } : {}),
+          tool: { name: `error: ${failedTurnLine(bot.name, wroteText)}`, ok: false },
+        });
+      } else if (bot && wantsEmptyTurnLine(event, { ...lineContext, produced: Boolean(lastReply.get(event.threadId)?.trim()) || turnProducedSomething(lineRows) })) {
+        pushMessage({
+          role: "bot",
+          kind: "activity",
+          ...(completedTurnId ? { turnId: completedTurnId } : {}),
+          tool: { name: `error: ${emptyTurnLine(engineNameOf(registry.get(bot.modelSelection.instanceId) ?? { driverKind: bot.modelSelection.instanceId }))}`, ok: false },
         });
       }
       // The turn is over: rows appended from here on are not this engine's, unless a newer turn already took the thread.
@@ -9164,8 +9228,10 @@ function markTaskContextExternallyUpdated(bot: BotRecord, threadId: string, mess
   store.recordTaskExternalUpdate(bot.id, threadId, messageId);
   const routeBot = store.projectBotForTask(bot.id, threadId) ?? bot;
   if (!routeHasTools(registry.get(routeBot.modelSelection.instanceId)?.adapter.capabilities)) noteHeldQueue(bot.id, threadId);
-  // patchBot broadcasts the unread state; the queued debt is already saved.
-  store.patchBot(bot.id, { unread: true });
+  // The conversation that was written to is the one marked unread (the bot's
+  // own mark follows from its tasks); patchTask broadcasts it, and the queued
+  // debt is already saved.
+  store.patchTask(bot.id, threadId, { unread: true });
 }
 
 /** Where a delegation's result has to land. A source conversation is a bot's
@@ -11098,9 +11164,14 @@ async function startTurnAdmitting(
       // Set when this bot is on the owner's browser and it is not ready: a short hint replaces the tools.
       let extensionBrowserHint: string | undefined;
       sweepBotSkills(bot.id); // a skill the scanner blocks is off, and its pins released, before this turn reuses or makes a pin
-      if (task.procedurePin && !procedurePinFitsAudience(bot.id,threadId,task.procedurePin,procedureContext(bot.id,threadId))) store.releaseTaskProcedures(bot.id,threadId);
-      const procedurePin = (task.procedurePin && procedurePinFitsAudience(bot.id,threadId,task.procedurePin,procedureContext(bot.id,threadId)) ? task.procedurePin : undefined) ?? store.pinTaskProcedures(bot.id, threadId,
-        createProcedurePin(bot.id, threadId, availableSkills(), bot.playbooks ?? [], procedureRoutineSnapshot(threadId), procedureContext(bot.id,threadId)));
+      // The owner's own skills ride, in the prompt and on disk, only a turn that answers the owner (skillsForAudience).
+      const pinAudience = { ownerTurn: directOwnerAudience && ownServersAllowedFor(bot), shipped: murageSkill };
+      const taskPinFits = (pin: typeof task.procedurePin) => Boolean(pin && procedurePinFitsAudience(bot.id,threadId,pin,procedureContext(bot.id,threadId)) && procedurePinServesTurn(bot.id,threadId,pin,pinAudience.ownerTurn));
+      // The owner's own skills are never projected onto this task's desk, only into app state for an owner
+      // turn's pin (OWNER-PIN-AUDIENCE-108.md): nothing has to leave the desk before a turn that does not answer the owner.
+      if (task.procedurePin && !taskPinFits(task.procedurePin)) store.releaseTaskProcedures(bot.id,threadId);
+      const procedurePin = (taskPinFits(task.procedurePin) ? task.procedurePin : undefined) ?? store.pinTaskProcedures(bot.id, threadId,
+        createProcedurePin(bot.id, threadId, availableSkills(), bot.playbooks ?? [], procedureRoutineSnapshot(threadId), procedureContext(bot.id,threadId), pinAudience));
       routines?.notePinnedBundle(threadId, procedurePin.bundleId);
       const pinnedProcedures = preparePinnedProcedures(bot.id, threadId, procedurePin, false, procedureContext(bot.id,threadId));
       // The Chief of Staff guide rides every turn of the workspace Chief
@@ -11114,7 +11185,8 @@ async function startTurnAdmitting(
           // tools are mounted, as the images line (imagePromptFor)
           ...(imageGenerationOn() && instance.adapter.capabilities.agentsMcp === true ? ["imageGeneration"] : []),
         ],
-        pinnedProcedures.catalogue,
+        // the owner's own recordings ride only the owner's turns (skillsForAudience)
+        skillsForAudience(pinnedProcedures.catalogue, directOwnerAudience && ownServersAllowedFor(bot), murageSkill),
       ), ...attachedSkillsFor(bot, pinnedProcedures.catalogue)];
       if (directOwnerAudience && selectedSkills.some((skill) => skill.manifest.requiredCapabilities.includes("phoneMcp"))) {
         integrations.phone = phoneIntegration();
@@ -11977,6 +12049,9 @@ async function startTurnAdmitting(
         ? [...new Set([store.bot(bot.id)?.cwd, store.taskByThread(bot.id, threadId)?.cwd].filter((dir): dir is string => typeof dir === "string" && dir.length > 0))]
           .filter(dir => dir !== cwd && dir !== privateWorkspace && isAbsolute(dir) && dir !== homedir() && dir !== parse(dir).root && !partitionFileRefusal(bot, threadId, [dir]))
         : [];
+      // The owner's own skills (a recording's frames) are in app state, not on the desk: the owner's turn may read
+      // them without an ask on the same terms. pinnedProcedures.ownerRoot is set only for an owner turn's pin.
+      if (bot.autoApprove === true && pinAudience.ownerTurn && !opts?.projectCardRun && !opts?.sharedWorkRun && opts?.runOn !== "cloud" && pinnedProcedures.ownerRoot) grantedDirs.push(pinnedProcedures.ownerRoot);
       // Output lineage, every mode (v6): what this turn shows the engine
       // (its replay, the owed lines, the quoted working context) and what its
       // resumed session already holds.
@@ -12612,9 +12687,12 @@ function syncRoutineRunToSource(run: RoutineRun): string | null {
 
   // Merely queueing/running is ambient progress. Attention and terminal
   // states become unread in the conversation where the user asked for them.
+  // THAT conversation, not the bot: patchBot's unread reaches a task only
+  // when the bot has one, so with several the report lit the bot and left
+  // the chat it landed in unmarked (upstream b34ac3ba6).
   if (statusChanged && ["waiting", "needs-you", "completed", "failed", "missed"].includes(run.status)) {
     if (source.group) store.patchGroup(source.group.id, { unread: true });
-    else store.patchBot(source.bot.id, { unread: true });
+    else store.patchTask(source.bot.id, sourceThreadId, { unread: true });
   }
   if (!existing && run.watch?.outcome === "changed") notify(buildNotification("done", source.bot, sourceThreadId, card.summary ?? "The selected file changed."));
   return sourceThreadId;
@@ -12677,7 +12755,7 @@ routines = new RoutineManager({
   maxConcurrentAutomaticRuns: Math.max(2, Math.min(8, Math.floor(availableParallelism() / 2))),
   // grows with measured service time (routines.ts automaticRunCap), up to one run per core
   automaticCapCeiling: Math.max(2, Math.min(16, availableParallelism())),
-  admitAutomatic: (_run, waitedMs) => ownerFirst.admit("routine", { waitedMs }).admitted,
+  admitAutomatic: (_run, waitedMs) => ownerFirst.admit("routine", { waitedMs, ignoreStarts: true }).admitted,
   // From a run's dispatch to its engine start, background work yields (owner-first.ts; 1.0.2 bgwork).
   beginStart: () => ownerFirst.beginStart(),
   // Project routine work queued or running in project rooms holds a place under the cap (review finding 4).
@@ -12754,8 +12832,11 @@ routines = new RoutineManager({
     const owner = store.bot(run.botId);
     const ceiling = owner && !owner.draftOnly ? projectRoutineCeiling(run, routine, owner) : undefined;
     transaction(db => {
-      const delivery = recordProjectRoutine(db, { groupId: group.id, threadId, memberIds: group.memberIds, runId: run.id, botId: run.botId, name: run.routineName, prompt: run.prompt ?? "", now: Date.now() });
-      if (delivery.created && ceiling) projectRoutineCeilings.record(delivery.requestId, run.routineId, ceiling);
+      const delivery = recordProjectRoutine(db, { groupId: group.id, threadId, memberIds: group.memberIds, runId: run.id, botId: run.botId, name: run.routineName, prompt: run.prompt ?? "", now: Date.now(),
+        ...(() => {
+          const current = ceiling && projectRoutineCurrent(run.routineId, group.id, threadId, activeProjectGoal(db, group.id) ? settings.leadBotId! : run.botId, run.id);
+          return current ? { authority: { routineId: run.routineId, ceiling: ceiling!, ownerBinding: current.ownerBinding, audienceBinding: current.audienceBinding } } : {};
+        })() });
       if (delivery.created) store.appendMessage(threadId, { role: "user", kind: "text", text: `${run.routineName}: ${run.prompt ?? ""}`, automation:{kind:run.manual?"manual":"schedule",routineId:run.routineId}, routineRunPrompt: { trigger: run.manual ? "manual" : "schedule", routineName: run.routineName } });
     });
     projectFrames.strip(group.id);
@@ -12771,6 +12852,7 @@ routines = new RoutineManager({
   boxEngine: botId => registry.get(store.bot(botId)?.modelSelection.instanceId ?? "")?.driverKind === "boxAgent",
   // One conversation per routine (see RoutineManager.tick)
   taskExists: (botId, threadId) => Boolean(store.taskByThread(botId, threadId)),
+  goalTaskExists: (groupId, threadId) => store.groupByThread(threadId)?.id === groupId,
   onRunDispatch: (run, reused) => {
     if (!run.threadId) return;
     // Each run starts a fresh engine session in the routine's conversation:
@@ -12825,6 +12907,14 @@ routines = new RoutineManager({
     // back to the bot's current conversation because it goes to the person
     // who owns it. This report goes to a PEER.
     reportTeamIncident({ bot, threadId: run.threadId ?? null, muteKeys: routineIncidentMuteKeys(run), detail });
+  },
+  // A run that completes after a failed one says so in the routine's chat, once, quietly: the done notification
+  // already rang, and the failure line it answers did not notify either (upstream 84b63940c). Not in a room
+  // channel, whose own unread state a hidden execution task never writes.
+  onRunRecovered: (run) => {
+    const threadId = routineSourceThread(run) ?? run.threadId;
+    if (!threadId || store.groupByThread(threadId) || !store.bot(run.botId)) return;
+    store.appendMessage(threadId, murageLine({ role: "bot", kind: "activity", tool: { name: routineRecoveredLine(run.routineName), ok: true } }));
   },
 });
 procedureReviews = createProcedureReviewHost({
@@ -13974,8 +14064,8 @@ void recoverCloudComputerTurns({ token: () => cfg.box?.token ?? process.env.BOX_
 // receipt, the single re-dispatch, or a fresh run), so no restart can run one twice or lose one. The settling reads one page per event-loop pass and keeps the
 // dispatch gate closed until the last page is done; the drain follows it.
 const settleStartedHandoffs = async (): Promise<void> => {
-  // the dispatch gate closes at once; the settling's writes wait for the first health answer (the listen tick writes nothing)
-  // under the background source: a held lock costs a page the background budget and a retry, never the serving thread the owner's 1 s
+  // the dispatch gate closes at once (synchronously, in this call); the settling's writes wait for the first health answer (the listen tick writes nothing)
+  // under the background source: a held lock costs a unit the background budget and a retry, never the serving thread the owner's 1 s
   const settled = await ioBudget.withSource("startup", () => settleStartedDelegations({ ...handoffSettleOptions({ bus: commsBus, approvalBus }), ready: startupWritesReady() }));
   if (settled.interrupted || settled.redispatched || settled.held) console.log(`delegations: ${settled.interrupted} interrupted by the restart, ${settled.redispatched} resumed once, ${settled.held} left for the owner to send again`);
 };
@@ -13996,7 +14086,14 @@ const interruptUnresolvedEventTimeoutsOnce = (): void => {
   eventTimeoutsChecked = true;
   try { routines?.interruptUnresolvedEventTimeouts(taskId => taskCanBeAnswered(taskId, taskResolutionDeps)); } catch (error) { console.error("events: could not end the tickets nothing can answer", error); }
 };
-const settleThenDrain = (): void => { void trackBootJob(settleStartedHandoffs().catch((error) => console.error("delegations: the boot settling failed; queued handoffs wait for the next start", error)).then(() => { interruptUnresolvedEventTimeoutsOnce(); drainBootPage(""); })); };
+// BOOT-SETTLE-108 2: one settling per start. A pending owner-record migration keeps admission held and calls this again when it opens; a call while the settling
+// runs (or after it finished) joins it. Only its success ends the unresolved event tickets and runs the boot drain, once: a unit that fails retries by itself
+// with the gate still closed, so a failed settling never opens the way to either.
+const settleThenDrain = (): void => {
+  const boot = joinBootSettle(settleStartedHandoffs);
+  if (!boot?.first) return;
+  void trackBootJob(boot.job.then(() => { interruptUnresolvedEventTimeoutsOnce(); drainBootPage(""); }, (error) => console.error("delegations: the boot settling stopped; queued handoffs wait for the next start", error)));
+};
 // What a task id stands for is defined once (task-resolution.ts); this pass, the hand-off replay and the status route all ask it. A started row answers
 // for its task from any process that opened the store (`started`), before the boot settling and after it.
 const taskResolutionDeps: TaskResolutionDeps = {
@@ -14399,6 +14496,12 @@ function resumeAllProjectCloses(): void {
   for (const group of store.groups) if (group.channelProject && !group.dm) { resumeProjectCloses(database(),projectCloseDeps(group)); resumeGoalCloseSummaries(database(),projectCloseDeps(group)); }
 }
 
+/** BOOT-SETTLE-108 3: Dismiss or Send again ends a held hand-off's still-live request with the room's own completion, inside the removal's transaction; what the
+ * completion announces (wakes, the pump, a cancelled subtree's hand-offs) follows the outer commit, so a rolled-back owner action announces nothing. */
+const heldPartnerCancel: HeldPartnerCancel = (db, id, outcome) => {
+  const result = completeRequest(db, id, outcome, roomCompletionHooks);
+  afterCommit(() => afterRoomCompletion(result));
+};
 function afterRoomCompletion(result: { request: RoomRequest; wakes: RoomRequest[]; cancelled?: RoomRequest[]; interrupt?: RoomRequest[] }): void {
   // F3: a request that ended other than done cancelled its open subtree in the same commit: their queued hand-offs go, their running turns stop
   if (result.cancelled?.length) {
@@ -14741,7 +14844,8 @@ onDelegationReceipt((receipt, delivered) => {
   }) : undefined;
   const row = handoffRequest(database(), receipt.id);
   // no request: a direct hand-off, recovered after its final commit failed. Its asker is woken once the line has committed, as the finalizer would have.
-  if (!row) return () => { try { marked?.(); } finally { wakeAfterRecoveredReceipt(askerWakePort, receipt, delivered?.id); } };
+  // Its answer (false: the wake is not on disk yet) keeps the receipt's owed line, so a death before the wake reaches disk is delivered again by the next start.
+  if (!row) return () => { try { marked?.(); } catch (error) { console.error("delegations: could not mark the source conversation updated", error); } return wakeAfterRecoveredReceipt(askerWakePort, receipt, delivered?.id); };
   const state = receipt.status === "done" ? "done" : receipt.status === "cancelled" || receipt.status === "denied" || receipt.status === "dropped" ? "cancelled" : receipt.status === "expired" || receipt.status === "busy_gave_up" ? "expired" : "failed";
   // runs inside the transaction that removes the hand-off's row (delegations.ts settleReceipted): the request ends with it or the row stays; the wakes follow the commit
   // how it ended is kept as the receipt's own line; the receipt's words are kept beside it for the owner only
@@ -16611,9 +16715,13 @@ async function runGroupMemberTurn(
   const procedureHolder = group.dm ? group : store.groupTaskByThread(group.id, threadId)!;
   sweepBotSkills(bot.id); // a blocked skill is off, and its pins released, before this turn reuses or makes a pin
   const oldProcedurePin = procedureHolder.procedurePins?.[bot.id];
-  if (oldProcedurePin && !procedurePinFitsAudience(bot.id,threadId,oldProcedurePin,procedureContext(bot.id,threadId))) store.releaseGroupProcedures(group.id,threadId,bot.id);
-  const procedurePin = (oldProcedurePin && procedurePinFitsAudience(bot.id,threadId,oldProcedurePin,procedureContext(bot.id,threadId)) ? oldProcedurePin : undefined) ?? store.pinGroupProcedures(group.id, threadId, bot.id,
-    {...createProcedurePin(bot.id, threadId, availableSkills(), bot.playbooks ?? [], procedureRoutineSnapshot(threadId), procedureContext(bot.id,threadId)),
+  // The owner's own skills ride, in the prompt and on disk, only a turn that answers the owner (skillsForAudience):
+  // a pin an owner turn wrote is not reused by a turn that does not, and its owner copy is never on the desk.
+  const pinAudience = { ownerTurn: roomOwnerAudience && ownServersAllowedFor(bot), shipped: murageSkill };
+  const oldPinFits = Boolean(oldProcedurePin && procedurePinFitsAudience(bot.id,threadId,oldProcedurePin,procedureContext(bot.id,threadId)) && procedurePinServesTurn(bot.id,threadId,oldProcedurePin,pinAudience.ownerTurn));
+  if (oldProcedurePin && !oldPinFits) store.releaseGroupProcedures(group.id,threadId,bot.id);
+  const procedurePin = (oldPinFits ? oldProcedurePin : undefined) ?? store.pinGroupProcedures(group.id, threadId, bot.id,
+    {...createProcedurePin(bot.id, threadId, availableSkills(), bot.playbooks ?? [], procedureRoutineSnapshot(threadId), procedureContext(bot.id,threadId), pinAudience),
       ...(procedureHolder.pinnedCwd !== undefined ? {legacyRoomWorkspace:true as const} : {})});
   const pinnedProcedures = preparePinnedProcedures(bot.id, threadId, procedurePin, false, procedureContext(bot.id,threadId));
   const skills = pinnedProcedures.catalogue;
@@ -16645,16 +16753,18 @@ async function runGroupMemberTurn(
   // judged by content at the send fence (crossThreadLineageRefs `emitted`, Astra design review A2).
   let roomEmittedIds = new Set<string>();
   const emittedNow = () => (roomEmittedIds = new Set<string>());
+  // The owner's own recordings ride only a turn that answers the owner (skillsForAudience).
+  const audienceSkills = skillsForAudience(skills, roomOwnerAudience && ownServersAllowedFor(bot), murageSkill);
   const selectedSkills = mergeSkills(
     selectBundledSkills(
       roomContextText(),
       instance.adapter.capabilities.phoneMcp === true ? ["phoneMcp"] : [],
-      skills,
+      audienceSkills,
     ),
     [...selectBundledSkills(
       latestUser?.text ?? "",
       [...(skillAuthoring ? ["skillAuthoring"] : []), ...(imageGenerationOn() && instance.adapter.capabilities.agentsMcp === true ? ["imageGeneration"] : [])],
-      skills,
+      audienceSkills,
     ), ...attachedSkillsFor(bot, skills)],
   );
   // The owner's own phone, for the owner's audience only, as in a 1:1 turn.
@@ -18509,6 +18619,8 @@ function routineLevelRefusal(body: unknown, routineBotId?: string): string | nul
  * anything but "other"; inside a routine run only the owner's own channel
  * message counts, and an unattended mark with no run (a turn another bot's
  * unattended turn started) stays "other". */
+setExecEnvOriginReader(fullAccessTurnOrigin);
+setExecEnvBotReader(threadId => store.botByThread(threadId)?.id);
 function fullAccessTurnOrigin(threadId: string): FullAccessOrigin {
   if (!isWorkspaceOwner(threadHumanPrincipal(threadId))) return "other";
   if (routinePeerSources.has(threadId) && !isUnattended(threadId)) return "routine";
@@ -23230,12 +23342,22 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       }
       const sourceThread = held.source_thread_id;
       let newId: string | undefined;
-      if (dismiss) { if (!dismissHeldDelegation(heldId, store)) return json(res, 409, { error: noLonger }); }
-      else {
-        const sent = resendHeldDelegation(commsBus, heldId);
-        if (sent.result === "already_ran") return json(res, 409, { error: alreadyPickedUpText(sent.toBotName ?? "your teammate") });
-        if (sent.result !== "ok") return json(res, 409, { error: sent.result === "not_held" ? noLonger : "It could not be sent again just now. Try again in a moment." });
-        newId = sent.id;
+      try {
+        if (dismiss) { if (!dismissHeldDelegation(heldId, store, { cancelPartner: heldPartnerCancel })) return json(res, 409, { error: noLonger }); }
+        else {
+          const sent = resendHeldDelegation(commsBus, heldId, { cancelPartner: heldPartnerCancel });
+          if (sent.result === "already_ran") return json(res, 409, { error: alreadyPickedUpText(sent.toBotName ?? "your teammate") });
+          if (sent.result !== "ok") return json(res, 409, { error: sent.result === "not_held" ? noLonger : "It could not be sent again just now. Try again in a moment." });
+          newId = sent.id;
+        }
+      } catch (error) {
+        // the hand-off's request could not be ended (BOOT-SETTLE-108 3): nothing was changed, and the owner may try again
+        if ((error as { code?: unknown })?.code === HELD_PARTNER_LIVE) {
+          // "waiting": the teammate is parked on asks of its own, so trying again soon would not help
+          if ((error as { reason?: unknown }).reason === "waiting") return json(res, 409, { error: "Your teammate asked a question of its own on this hand-off and that work is still open. Dismiss it to close that work along with the hand-off." });
+          return json(res, 409, { error: "This hand-off could not be closed just now. Try again in a moment." });
+        }
+        throw error;
       }
       if (newId) drainDelegations(commsBus, approvalBus, sourceThread);
       return json(res, 200, { ok: true, ...(newId ? { id: newId } : {}) });
@@ -23613,7 +23735,16 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       if (!message?.png) return json(res, 404, { error: "no image on that message" });
       // A settled message's image is never rewritten; its length stands in
       // for a digest should that ever change.
-      return sendImage(res, url, `screen:${m[1]}:${message.id}`, String(message.png.length), Buffer.from(message.png, "base64"), message.mime ?? "image/png");
+      //
+      // NEVER KEPT IN A CACHE. A screen capture of a bot's desktop is
+      // transcript content, and this route answers by who is asking: the
+      // same URL is a 404 for a caller that may not read the conversation.
+      // A year-long immutable copy outlived every access change (a hidden
+      // bot, a revoked phone, a signed-out browser door on a shared profile).
+      // The renderer fetches these pixels once and keeps them itself.
+      return sendImage(res, url, `screen:${m[1]}:${message.id}`, String(message.png.length), Buffer.from(message.png, "base64"), message.mime ?? "image/png", {
+        "cache-control": "private, no-store",
+      });
     }
 
     // ── image attachments ────────────────────────────────────────────────
@@ -25952,6 +26083,42 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       const visible = wireBot(store.bot(record.id)!, ROSTER_TASK_WINDOW);
       broadcast({ kind: "bot", bot: visible });
       return json(res, 200, { bot: visible });
+    }
+    m = path.match(/^\/api\/bots\/([\w-]+)\/permissions\/refresh$/);
+    if (m && method === "POST") {
+      if (requestSurface(req.headers, url.searchParams) !== "desktop") return json(res, 404, { error: "not found" });
+      const body = await readBody(req);
+      if (body?.scope !== "open" || (body.previewId !== undefined && typeof body.previewId !== "string")) return json(res, 400, { error: "Choose open conversations." });
+      const record = store.bot(m[1]);
+      if (!record || record.hidden) return json(res, body.previewId === undefined ? 404 : 409, { error: "Check the open conversations again.", code: "preview_stale" });
+      const automationThreads = new Set([
+        ...(routines?.listRuns() ?? []).map(run => run.threadId),
+        ...(routines?.listRoutines() ?? []).map(routine => routine.threadId),
+      ].filter((threadId): threadId is string => threadId !== undefined));
+      const preview = openRefreshPreview(record, store.tasks(record.id).map(task => {
+        const groupId = task.channelProjectDesk?.groupId;
+        const group = groupId ? store.group(groupId) : store.groupByThread(task.threadId);
+        const settings = group?.channelProject ? projectSettingsFor(database(), group.id) : undefined;
+        const holder = store.continuationHolder(record.id, task.threadId);
+        const reason = openPermissionExclusion({
+          owner: turnAudienceIsOwner(task.threadId),
+          automation: Boolean(task.automationEventId || automationThreads.has(task.threadId)),
+          closed: Boolean(task.channelProjectDesk?.archivedAt !== undefined || task.sharedWork?.quarantined || task.sharedWork?.closedAt !== undefined || group?.hidden
+            || settings?.closedAt != null || settings?.endedAt != null || groupId && !group),
+          roomOwner: !group || group.memberIds.includes(record.id) && turnAudienceIsOwner(group.threadId),
+          busy: Boolean(task.busy || directThreadBusy(record.id, task.threadId) || holder?.heldContinuations?.length || holder?.heldQueueRowId
+            || task.externalUpdates?.length || store.openRequestCardRows(task.threadId).some(row => row.card && !row.card.answered && !row.card.dismissed)),
+        });
+        return { threadId: task.threadId, autoApprove: task.autoApprove, fullAccess: task.fullAccess, noLimits: task.noLimits,
+          binding: JSON.stringify([threadHumanPrincipal(task.threadId), group && [group.id, group.memberIds, threadHumanPrincipal(group.threadId)], task.sharedWork, task.channelProjectDesk]), reason };
+      }));
+      if (body.previewId === undefined) return json(res, 200, preview);
+      if (body.previewId !== preview.previewId) return json(res, 409, { error: "Check the open conversations again before applying this level.", code: "preview_stale" });
+      if (preview.targetLevel === "no-limits" && record.noLimitsAcknowledgedAt === undefined
+          || preview.targetLevel === "full" && record.fullAccessAcknowledgedAt === undefined && record.noLimitsAcknowledgedAt === undefined) return json(res, 409, { error: "Confirm this approval level in the bot settings first." });
+      const changed = store.raiseTaskPermissions(record.id, preview.eligible.map(task => task.threadId), permissionLevelPatch(preview.targetLevel));
+      broadcast({ kind: "bot", bot: wireBot(record, ROSTER_TASK_WINDOW) });
+      return json(res, 200, { ...preview, changed });
     }
     // 1.0.4 SL-K K3: copy the bot's permissions onto one chat. First call previews, the second applies that exact preview.
     m = path.match(/^\/api\/bots\/([\w-]+)\/tasks\/([\w-]+)\/permissions\/refresh$/);
@@ -30546,6 +30713,9 @@ function listenTickWitness(): void {
 }
 // The stall watch starts BEFORE the port opens (its timers are unref'd, its resolution 20 ms): every block from the listen tick on is logged with
 // its holder, and the `startup.*` and `listen.*` names of the steps below appear on it (STALLS-FINAL-DESIGN 3.4).
+// S4 power (design section 4): on a Linux desktop the bus stub is bound at startup, before the port opens and so before any turn;
+// until it is bound, or when it cannot be, a wrapped engine turn is refused. Not in the Cloud home, whose launcher is its own boundary.
+if (process.platform === "linux" && !cloudHome) void startHostPowerStub();
 void releasePreListenHealth().catch(() => undefined).then(() => { startLoopLagMonitor(); server.listen(PORT, "127.0.0.1", () => {
   if (cloudHome) listenCloudProxy(server, process.env.MURAGE_TRUSTED_PROXY?.slice(5) ?? "/data/proxy/murage.sock");
   console.log(`murage server on http://127.0.0.1:${PORT}`);

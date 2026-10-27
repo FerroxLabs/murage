@@ -23,7 +23,7 @@ describe("ambient Murage environment", () => {
   it("runtime keys are ambient; keys that steer the test run are not", () => {
     for (const key of ["MURAGE_DATA_DIR", "MURAGE_HARNESS_URL", "MURAGE_COMMS_TOKEN", "MURAGE_PORT", "MURAGE_BOT_ID", "MURAGE_DEV_DESKTOP_SECRET", "MURAGE_ACP_POOL", "MURAGE_SKIP_PROVIDER_KEY"])
       expect(isAmbientMurageKey(key), key).toBe(true);
-    for (const key of ["MURAGE_BACKUP_TEST_AGE_DIR", "MURAGE_E2E_DATA_DIR", "MURAGE_SMOKE_DIST", "MURAGE_KEEP_SMOKE_DIR", "MURAGE_SKIP_REAL_ELECTRON_BROWSER_FIXTURE", "MURAGE_B33_NATIVE_DIR", "MURAGE_QUAL_EVIDENCE_DIR", "MURAGE_GEPA_TEST_PYTHON", "PATH", "HOME"])
+    for (const key of ["MURAGE_CORPUS_OUT", "MURAGE_BACKUP_TEST_AGE_DIR", "MURAGE_E2E_DATA_DIR", "MURAGE_SMOKE_DIST", "MURAGE_KEEP_SMOKE_DIR", "MURAGE_SKIP_REAL_ELECTRON_BROWSER_FIXTURE", "MURAGE_B33_NATIVE_DIR", "MURAGE_QUAL_EVIDENCE_DIR", "MURAGE_GEPA_TEST_PYTHON", "PATH", "HOME"])
       expect(isAmbientMurageKey(key), key).toBe(false);
   });
 

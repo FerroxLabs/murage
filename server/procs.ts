@@ -22,7 +22,7 @@ import {
   type StdioOptions,
 } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
-import { join } from "node:path";
+import { isAbsolute, join, win32 as windowsPath } from "node:path";
 import { tmpdir } from "node:os";
 import { existsSync } from "node:fs";
 import { EventEmitter } from "node:events";
@@ -30,9 +30,14 @@ import { PassThrough } from "node:stream";
 import { SPAWNED_PROXIES } from "./proxy-paths.ts";
 import { assignPipJob, closePipJob, createPipJob, PipJobRefusedError, stopWindowsJob } from "./memory/pip-job.ts";
 import { loadExclusionAddon, type NativeHandle } from "./engine-exclusion.ts";
+import {
+  closePowerFilter, HOST_POWER_CODE, HOST_POWER_MESSAGE, hostPowerPlatform, hostPowerStubMessage, hostPowerTestUnwrapped, openPowerFilter, planHostPower,
+  wrapperRefusalText, bwrapEngineStarted, bwrapEarlyExitMessage, BWRAP_ARGS_FD, BWRAP_SECCOMP_FD, BWRAP_STATUS_FD,
+} from "./host-power.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { resolveCliSpawn, type ResolvedSpawn } from "./env-path.ts";
 import { platformConfirmStopped, recordProcessHandle } from "./platform-process-hooks.ts";
+import { hostProcessGone, hostProcessIdentity, hostProcessIsChild, resolveBwrapProcesses, type HostProcessIdentity } from "./bwrap-process.ts";
 
 export function resolveCli(cli: string, args: string[] = [], searchPath?: string): ResolvedSpawn {
   return resolveCliSpawn(cli, args, searchPath);
@@ -86,6 +91,7 @@ export const CLI_CALLER_DEADLINE_MS = CLI_TERM_GRACE_MS + CLI_CONFIRM_CAP_MS;
 /** How long a pending confirmation stays cached as THE pending stop; past it a
  * retry starts a fresh attempt (the old one may still succeed and is honoured). */
 export const CLI_LIFECYCLE_CAP_MS = 20_000;
+const CLI_LATE_CONFIRM_MS = 60_000;
 interface CliOwnership {
   pid: number | undefined;
   platform: NodeJS.Platform;
@@ -118,6 +124,12 @@ interface CliOwnership {
   delivering?: Promise<void>;
   /** When the last tracked delivery finished (Date.now()). */
   deliveredAt?: number;
+  /** S4 power: the block could not be applied (the pid-less EPOWER child, or the wrapper refused before the engine ran). */
+  hostPowerRefused?: boolean;
+  /** Linux cage: retain host identities independently of wrapper close and its pipes. */
+  bwrap?: { root?: HostProcessIdentity; childPid?: number; init?: HostProcessIdentity };
+  lateConfirmationTimer?: ReturnType<typeof setTimeout>;
+  stopRequested?: boolean;
 }
 // Evidence belongs to this exact spawn/handle, never a PID recovered after a
 // server restart. A retained live session is not stopped until requested.
@@ -129,24 +141,72 @@ const cliOwnership = new WeakMap<ChildProcess, CliOwnership>();
  *  so the CLI and everything it ever starts are in the job before their first instruction. A launch that cannot be contained
  *  (no addon, no launcher file, the job could not be created, the launcher could not be assigned) is refused: PIP as before
  *  (PipJobRefusedError / cliJobRefused), an engine with a returned child whose `error` carries code ECONTAIN. */
-export interface CliJob { name: string }
+export interface CliJob { name: string; hostPower?: true }
+/** S4 power (design section 2): a Mac or Linux engine spawn under the block carries this marker and no job. */
+export interface HostPowerMark { name?: undefined; hostPower: true }
+export type EngineSpawnJob = CliJob | HostPowerMark;
 
 /** The one sentence an engine gets when its launch could not be contained (the turn was not started). */
 export const ENGINE_CONTAINMENT_MESSAGE = "Murage could not keep this engine's processes under its control, so the turn was not started. Restart Murage and try again; if it keeps happening, reinstall Murage.";
 export const ENGINE_CONTAINMENT_CODE = "ECONTAIN";
 
 let containmentWarned = false;
-/** Windows engine turns: a fresh named job for the launcher and the CLI. Always a job on Windows (U24 design R3); undefined
- *  elsewhere. A Windows build that cannot contain engines (no usable addon, no launcher file) says so once in the app log; its
- *  launches are refused by spawnCli, never run uncontained. */
-export function engineJob(): CliJob | undefined {
-  if (process.platform !== "win32") return undefined;
+/** Windows engine turns: a fresh named job for the launcher and the CLI. Always a job on Windows (U24 design R3), and that object
+ *  also sets `hostPower` (S4 design section 2: the privilege removal covers every engine). On Mac and Linux, `{ hostPower: true }`
+ *  for a spawn the power block wraps, and undefined for one it does not: Claude, Codex and Fuigo pass `posixHostPower: false`,
+ *  because the block does not nest with their own sandboxes there (section 2, revision 4.1). A Windows build that cannot contain
+ *  engines (no usable addon, no launcher file) says so once in the app log; its launches are refused by spawnCli, never run
+ *  uncontained. */
+export function engineJob(options: { posixHostPower?: boolean } = {}): EngineSpawnJob | undefined {
+  if (process.platform !== "win32") return engineWrapsHostPower(options) ? { hostPower: true } : undefined;
   if (!containmentWarned && !containmentAvailable()) {
     containmentWarned = true;
     console.warn("[procs] engine turns on this Windows build cannot be contained (no usable engine-exclusion addon or job launcher) and will be refused");
   }
-  return { name: `Local\\murage-pip-eng-${randomUUID()}` };
+  return { name: `Local\\murage-pip-eng-${randomUUID()}`, hostPower: true };
 }
+
+/** Whether an engine spawn with these options is under the power block on this system (Windows: always; Mac and Linux: unless
+ *  `posixHostPower` is false; elsewhere: no). A warm key whose spawn is under the block carries `hostPower: 1` (section 7). */
+export function engineWrapsHostPower(options: { posixHostPower?: boolean } = {}): boolean {
+  if (process.platform === "win32") return true;
+  if (process.platform !== "linux" && process.platform !== "darwin") return false;
+  return options.posixHostPower !== false;
+}
+/** Section 7: the constant warm-key field for a spawn under the block, nothing for one that is not. */
+export function hostPowerKeyField(options: { posixHostPower?: boolean } = {}): { hostPower?: 1 } {
+  return engineWrapsHostPower(options) ? { hostPower: 1 } : {};
+}
+
+// ── Windows: shutdown privilege removal (S4 design section 6) ─────────────────────────────────────────────────────────────────
+type ShutdownDrop = { ok: true } | { ok: false; reason: string };
+let shutdownDrop: ShutdownDrop | undefined;
+/** Removes SeShutdownPrivilege and SeRemoteShutdownPrivilege from the server's own primary token, once, before any engine spawn
+ *  (the addon removes and then verifies neither LUID remains). Unless the addon answers `ok === true`, the drop failed: every
+ *  wrapped Windows engine launch is refused with EPOWER, and everything else the server does keeps working (the addon stays loaded
+ *  for its other calls). Run at load of this module on win32; a later call returns the first answer. */
+export function dropServerShutdownPrivileges(): ShutdownDrop {
+  if (shutdownDrop) return shutdownDrop;
+  let addon: ReturnType<typeof loadExclusionAddon> = null;
+  try { addon = loadExclusionAddon(); } catch { addon = null; }
+  if (typeof addon?.dropShutdownPrivileges !== "function") shutdownDrop = { ok: false, reason: "the engine-exclusion addon is missing or out of date" };
+  else {
+    try {
+      const answer = addon.dropShutdownPrivileges() as { ok?: unknown; step?: unknown; error?: unknown } | null | undefined;
+      shutdownDrop = answer?.ok === true ? { ok: true } : { ok: false, reason: `the privilege removal failed at ${String(answer?.step ?? "unknown")} (${String(answer?.error ?? "no code")})` };
+    } catch (error) {
+      shutdownDrop = { ok: false, reason: `the privilege removal threw: ${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
+  if (!shutdownDrop.ok) console.warn(`[procs] engine turns on this Windows build will not be started: ${shutdownDrop.reason}`);
+  return shutdownDrop;
+}
+/** Tests only: forget the answer so a simulated Windows test can run the drop against its own stand-in. */
+export function resetShutdownDropForTests(): void {
+  if (process.env.NODE_ENV !== "test" || process.env.MURAGE_PACKAGED) throw new Error("resetShutdownDropForTests is for tests only");
+  shutdownDrop = undefined;
+}
+if (process.platform === "win32") dropServerShutdownPrivileges();
 
 function containmentAvailable(): boolean {
   let addon: ReturnType<typeof loadExclusionAddon> = null;
@@ -179,9 +239,34 @@ export function launcherFrame(env: NodeJS.ProcessEnv | undefined, cwd: string | 
 export function cliProcessPid(child: ChildProcess): number | undefined {
   return cliOwnership.get(child)?.cliPid;
 }
-/** The process that IS the engine, for tree probes that look at its children: the CLI behind the launcher, else the child. */
+/** The engine's host PID for tree probes: behind the job launcher or Linux cage, else the child. An unresolved cage returns undefined. */
 export function engineProcessPid(child: ChildProcess): number | undefined {
+  const owned = cliOwnership.get(child);
+  if (owned?.bwrap) return bwrapProcesses(owned).engine?.pid;
   return cliProcessPid(child) ?? child.pid;
+}
+
+function bwrapProcesses(owned: CliOwnership): ReturnType<typeof resolveBwrapProcesses> {
+  pinBwrapInit(owned);
+  const cage = owned.bwrap;
+  if (!cage?.root || !cage.init || owned.exited || owned.closed) return {};
+  const resolved = resolveBwrapProcesses(cage.root);
+  // The walk cross-checks the status record; it cannot replace the pinned init.
+  return resolved.init?.pid === cage.init.pid && resolved.init.start === cage.init.start ? resolved : {};
+}
+
+function pinBwrapInit(owned: CliOwnership): void {
+  const cage = owned.bwrap;
+  if (cage?.childPid && !cage.init) cage.init = hostProcessIdentity(cage.childPid);
+}
+
+function bwrapNamespaceGone(owned: CliOwnership): boolean {
+  pinBwrapInit(owned); // retry an unavailable stat, including after wrapper close
+  const cage = owned.bwrap;
+  if (!cage) return true;
+  if (cage.init) return hostProcessGone(cage.init);
+  // Only close drains the status pipe: no child-pid then means no namespace was created.
+  return owned.closed && cage.childPid === undefined;
 }
 /** How this CLI's tree is held for Stop: a Windows job (every process it creates is in it) or nothing beyond the root. */
 export function cliContainment(child: ChildProcess): "job" | "none" {
@@ -191,6 +276,9 @@ export function cliContainment(child: ChildProcess): "job" | "none" {
 
 const engineContainmentError = (reason: string): NodeJS.ErrnoException =>
   Object.assign(new Error(`${ENGINE_CONTAINMENT_MESSAGE} (${reason})`), { code: ENGINE_CONTAINMENT_CODE, syscall: "spawn" });
+/** S4 power: the block could not be applied, so the turn was not started (design section 2). The message is the section 8 sentence. */
+const hostPowerError = (message: string = HOST_POWER_MESSAGE): NodeJS.ErrnoException =>
+  Object.assign(new Error(message), { code: HOST_POWER_CODE, syscall: "spawn" });
 
 /** Emit a spawn-time failure the way Node does for ENOENT: `error` on the next tick, to listeners the caller attached right
  *  after spawnCli returned. With no listener the sentence goes to the app log instead of becoming an uncaught exception. */
@@ -203,7 +291,7 @@ function emitLaunchError(child: ChildProcess, error: NodeJS.ErrnoException): voi
 
 /** An engine launch refused before anything was started (no addon, no launcher, no job): a child object that reports the refusal
  *  as Node reports ENOENT (error, then exit and close with -2), holds no process and no pid. */
-function unstartedLaunch(command: string, args: string[], reason: string): ChildProcessByStdio<Writable, Readable, Readable> {
+function unstartedLaunch(command: string, args: string[], reason: string | NodeJS.ErrnoException): ChildProcessByStdio<Writable, Readable, Readable> {
   const stdin = new PassThrough(), stdout = new PassThrough(), stderr = new PassThrough();
   const child = Object.assign(new EventEmitter(), {
     pid: undefined, exitCode: null as number | null, signalCode: null, killed: false, connected: false, spawnfile: command, spawnargs: [command, ...args],
@@ -211,9 +299,10 @@ function unstartedLaunch(command: string, args: string[], reason: string): Child
   }) as unknown as ChildProcessByStdio<Writable, Readable, Readable>;
   stdin.on("error", () => {});
   // Owned like any refused launch (cliJobRefused, containment "none"); with no pid there is nothing to stop, so a stop confirms.
-  const ownership: CliOwnership = { pid: undefined, platform: process.platform, closed: false, stopped: false, jobRefused: true, observations: [], observers: new Set() };
+  const power = typeof reason !== "string";
+  const ownership: CliOwnership = { pid: undefined, platform: process.platform, closed: false, stopped: false, jobRefused: true, observations: [], observers: new Set(), ...(power ? { hostPowerRefused: true } : {}) };
   cliOwnership.set(child, ownership);
-  emitLaunchError(child, engineContainmentError(reason));
+  emitLaunchError(child, typeof reason === "string" ? engineContainmentError(reason) : reason);
   process.nextTick(() => {
     (child as { exitCode: number | null }).exitCode = -2;
     ownership.exited = true;
@@ -229,7 +318,7 @@ export function spawnCli(
   cli: string,
   args: string[],
   opts: SpawnOptions,
-  job?: CliJob,
+  job?: EngineSpawnJob,
   /** Cloud home only: the Docker client the SERVER itself runs against the owner's own
    * server (vps-computer.ts). It is not an engine turn, holds the home's ssh key and
    * must not go through the turn launcher. Nothing else may ask for this. */
@@ -243,8 +332,29 @@ export function spawnCli(
   // blocked on its stdin, and only then (the frame) does it start the CLI inside the job (U24 design R2). A launch that cannot
   // be contained is refused (R3): PIP throws PipJobRefusedError (job creation) or returns the ended launcher with
   // cliJobRefused; an engine gets a child whose `error` carries ECONTAIN. Nothing ever runs outside its job.
-  const contained = process.platform === "win32" && job !== undefined && !launch;
-  const forEngine = contained && job!.name.startsWith("Local\\murage-pip-eng-");
+  // S4 power (design section 2): the block applies to a spawn that carries `hostPower: true`, has no cloud launch and is not the
+  // docker server tool. Windows: the launch is refused (EPOWER, before any job) unless the shutdown privileges were removed from the
+  // server's token. Mac and Linux: the engine runs under sandbox-exec or bwrap, or a launch that cannot be wrapped is refused.
+  const hostPower = job?.hostPower === true && !launch && mode?.serverTool !== "docker";
+  if (hostPower && process.platform === "win32" && dropServerShutdownPrivileges().ok !== true) {
+    console.warn(`[procs] engine launch refused for ${cli}: the shutdown privileges are still on this server's token`);
+    return unstartedLaunch(command, launchArgs, hostPowerError());
+  }
+  const posixPower = hostPower && process.platform !== "win32" && hostPowerPlatform() !== null && !hostPowerTestUnwrapped()
+    ? planHostPower(command, launchArgs, opts.env, typeof opts.cwd === "string" ? opts.cwd : opts.cwd?.toString())
+    : null;
+  if (posixPower?.kind === "refuse") {
+    console.warn(`[procs] engine launch refused for ${cli}: ${posixPower.reason}`);
+    return unstartedLaunch(command, launchArgs, hostPowerError(hostPowerStubMessage() ?? undefined));
+  }
+  // Linux: the filter is opened once and hashed through that fd; the same fd is what bwrap reads (no second open by path).
+  const powerFilterFd = posixPower?.kind === "bwrap" ? openPowerFilter(posixPower.bpf, posixPower.bpfSha256) : null;
+  if (posixPower?.kind === "bwrap" && powerFilterFd === null) {
+    console.warn(`[procs] engine launch refused for ${cli}: ${posixPower.bpf} is not the pinned power filter`);
+    return unstartedLaunch(command, launchArgs, hostPowerError());
+  }
+  const contained = process.platform === "win32" && job?.name !== undefined && !launch;
+  const forEngine = contained && job!.name!.startsWith("Local\\murage-pip-eng-");
   let pipJob: NativeHandle | undefined;
   let launcher: string | null = null;
   if (contained) {
@@ -253,7 +363,7 @@ export function spawnCli(
       if (forEngine) { console.warn(`[procs] engine launch refused for ${cli}: no job launcher file in this build (${SPAWNED_PROXIES.jobLauncher})`); return unstartedLaunch(command, launchArgs, "launcher file missing"); }
       throw new PipJobRefusedError("launcher");
     }
-    try { pipJob = createPipJob(job!.name); }
+    try { pipJob = createPipJob(job!.name!); }
     catch (error) {
       if (!forEngine) throw error;
       // (1b): the exact cause reaches server.log (and so Export diagnostics): the addon load error or the job create error.
@@ -288,7 +398,30 @@ export function spawnCli(
     stdio: [...(stdio as Array<unknown>).slice(0, 3), "pipe"] as StdioOptions,
     windowsHide: true,
   }) as ChildProcessByStdio<Writable, Readable, Readable>;
-  const child = pipJob ? startLauncher() : start();
+  // Linux: the shipped bwrap, its own fixed environment (PATH only), the turn's three pipes, the filter's fd, the --args pipe and
+  // the status pipe (fd 5, --json-status-fd),
+  // nothing else of the caller's options (design section 4). Every bwrap option, the turn environment's --setenv pairs among them,
+  // is written to the --args pipe and never put on bwrap's argv: /proc/<pid>/cmdline is world-readable for the life of the turn.
+  // bwrap reads the pipe to its end and closes it before it starts the engine. macOS: sandbox-exec with the spawn's own stdio, cwd
+  // and environment (section 5).
+  const startWrapped = (): ChildProcessByStdio<Writable, Readable, Readable> => {
+    if (posixPower?.kind === "seatbelt") return spawn(posixPower.command, posixPower.args, { ...rest, stdio, detached: true }) as ChildProcessByStdio<Writable, Readable, Readable>;
+    const plan = posixPower as Extract<NonNullable<typeof posixPower>, { kind: "bwrap" }>;
+    const fd = powerFilterFd!;
+    try {
+      const pipes = (stdio as Array<unknown>).slice(0, 3);
+      const wrappedStdio = [...pipes, ...Array(Math.max(0, BWRAP_SECCOMP_FD - pipes.length)).fill("ignore"), fd, ...Array(Math.max(0, BWRAP_ARGS_FD - BWRAP_SECCOMP_FD - 1)).fill("ignore"), "pipe", ...Array(Math.max(0, BWRAP_STATUS_FD - BWRAP_ARGS_FD - 1)).fill("ignore"), "pipe"] as StdioOptions;
+      const wrapped = spawn(plan.command, plan.args, { env: plan.env, cwd: "/", stdio: wrappedStdio, detached: true }) as ChildProcessByStdio<Writable, Readable, Readable>;
+      const argsPipe = wrapped.stdio[BWRAP_ARGS_FD] as Writable | null;
+      if (argsPipe) {
+        // A bwrap that exits before reading it ends the pipe (EPIPE): that exit is the refusal read at close, not an error here.
+        argsPipe.on("error", () => {});
+        argsPipe.end(plan.argsData, () => argsPipe.destroy());
+      }
+      return wrapped;
+    } finally { closePowerFilter(fd); }
+  };
+  const child = pipJob ? startLauncher() : posixPower ? startWrapped() : start();
   // The assignment is the next synchronous call after spawn() and completes before spawnCli returns. The launcher is blocked on
   // its stdin until the frame, so a refused assignment (the addon could not open or assign it; it has then ended it with
   // PIP_JOB_REFUSAL where it could) ends a process that started nothing: it is ended here too through Node's own handle, its
@@ -360,7 +493,59 @@ export function spawnCli(
   // member, so its own exit is what confirms it).
   const jobName = job?.name;
   const ownership: CliOwnership = { pid: child.pid, platform: process.platform, jobName, closed: false, stopped: false, observations: [], observers: new Set(), ...(jobRefused ? { jobRefused } : {}) };
+  if (posixPower?.kind === "bwrap") ownership.bwrap = { root: child.pid ? hostProcessIdentity(child.pid) : undefined };
   cliOwnership.set(child, ownership);
+  // Linux: the bwrap stage is judged by a positive sign, never by its stderr. bwrap writes `{ "exit-code": N }` to its status fd
+  // only when the engine's execvp succeeded; a wrapped run that closes without that record never started the engine, whatever it
+  // printed. That covers bwrap's own refusals ("bwrap: ..."), a dynamic loader that could not start bwrap at all
+  // ("<path>/bwrap: ... GLIBC_2.38 not found"), an exec failure of bwrap itself and a failed execvp of the engine: each is the
+  // EPOWER refusal, and nothing ever runs the engine outside the cage. A run Murage itself stopped is a stop, not a refusal.
+  // macOS: sandbox-exec names itself on stderr, which the engine has not written to yet. The driver reads hostPowerRefused() when
+  // the child closes (design sections 2 and 8). Both listeners are the first on `close`: the last bytes can follow the exit.
+  if (posixPower?.kind === "bwrap") {
+    const status = (child.stdio as Array<unknown>)[BWRAP_STATUS_FD] as Readable | null | undefined;
+    let record = "";
+    const take = (chunk: Buffer | string) => {
+      if (record.length < 64 * 1024) record += chunk.toString();
+      const cage = ownership.bwrap!;
+      if (cage.childPid === undefined) {
+        for (const line of record.split("\n")) {
+          try {
+            const pid: unknown = JSON.parse(line)?.["child-pid"];
+            if (typeof pid === "number" && Number.isInteger(pid) && pid > 1) { cage.childPid = pid; break; }
+          } catch { /* incomplete status record; the next chunk retries it */ }
+        }
+      }
+      pinBwrapInit(ownership);
+    };
+    status?.on("error", () => {});
+    status?.on("data", take);
+    let firstErr = "";
+    const takeErr = (chunk: Buffer | string) => { firstErr += chunk.toString(); if (firstErr.length >= 200) child.stderr?.off("data", takeErr); };
+    child.stderr?.on("data", takeErr);
+    child.once("close", (code, signal) => {
+      status?.off("data", take);
+      child.stderr?.off("data", takeErr);
+      if (bwrapEngineStarted(record)) return;
+      if (ownership.stopRequested || ownership.stopped) return;
+      ownership.hostPowerRefused = true;
+      console.warn(`[procs] engine launch refused for ${cli}: ${bwrapEarlyExitMessage(signal ?? `exit ${String(code)}`, firstErr, posixPower.command)}`);
+    });
+  } else if (posixPower && child.stderr) {
+    let prefix = "";
+    const take = (chunk: Buffer | string) => {
+      prefix += chunk.toString();
+      if (prefix.length >= 64) child.stderr.off("data", take);
+    };
+    child.stderr.on("data", take);
+    child.once("close", (code) => {
+      child.stderr.off("data", take);
+      if (code !== 0 && wrapperRefusalText(prefix)) {
+        ownership.hostPowerRefused = true;
+        console.warn(`[procs] engine launch refused for ${cli}: sandbox-exec could not apply the power block`);
+      }
+    });
+  }
   recordProcessHandle(child, [command, ...launchArgs].join(" "), opts.env);
   // As the 1.0.2 supervisor did when its CLI exited: closing the last handle ends every process the CLI left in the job. On the
   // root's `exit`, not `close`: a descendant that inherited stdout or stderr keeps the streams (and so `close`) open until the job
@@ -375,9 +560,40 @@ export function spawnCli(
     // Root close keeps ownership of POSIX group members and Windows job
     // members until the corresponding tree confirmation finishes.
     if (ownership.platform !== "win32" || ownership.jobName) void awaitCliTreeStopped(child);
+    // A wrapper can close before a namespace finishes exiting. Keep the late
+    // confirmation observable even if the ordinary stop budget expires first.
+    if (ownership.bwrap && !bwrapNamespaceGone(ownership) && !ownership.lateConfirmationTimer) {
+      const deadline = Date.now() + CLI_LATE_CONFIRM_MS;
+      let delay = 100;
+      const poll = () => {
+        ownership.lateConfirmationTimer = undefined;
+        if (ownership.stopped) return;
+        if (Date.now() >= deadline) {
+          observeCliStop(ownership, { route: "already_exited", result: "failed", errno: "ETIMEDOUT" });
+          console.warn(`[procs] namespace stop for pid ${ownership.pid} remains unconfirmed after ${CLI_LATE_CONFIRM_MS} ms; ownership retained`);
+          return;
+        }
+        if (bwrapNamespaceGone(ownership)) void awaitCliTreeStopped(child);
+        delay = Math.min(delay * 2, 2_000);
+        ownership.lateConfirmationTimer = setTimeout(poll, Math.min(delay, deadline - Date.now()));
+        ownership.lateConfirmationTimer.unref?.();
+      };
+      ownership.lateConfirmationTimer = setTimeout(poll, delay);
+      ownership.lateConfirmationTimer.unref?.();
+    }
   });
   return child;
 }
+
+/** S4 power: true when this wrapped launch was not started because the block could not be applied: the pid-less EPOWER child, or
+ *  a bwrap whose run ended with no sign the engine was exec'd (its status fd), or a sandbox-exec that exited with its own refusal. Read it at `exit`/`close`; the driver
+ *  shows HOST_POWER_MESSAGE and withdraws the prompt's delivery (turn-attribution notWritten). */
+export function hostPowerRefused(child: ChildProcess): boolean {
+  return cliOwnership.get(child)?.hostPowerRefused === true;
+}
+export { HOST_POWER_CODE, HOST_POWER_MESSAGE };
+/** The owner-facing sentence for a host-power refusal now: the long-TMPDIR one when the stub could not be placed, else section 8's. */
+export const hostPowerMessage = (): string => hostPowerStubMessage() ?? HOST_POWER_MESSAGE;
 
 /** Windows PIP: true when spawnCli could not put this CLI in its job, ended it and refused the run (the caller reads it as the
  *  PIP_JOB_REFUSAL path, whatever exit code the ended CLI reports). */
@@ -388,9 +604,15 @@ export function cliJobRefused(child: ChildProcess): boolean {
 export function execCli(
   cli: string,
   args: string[],
-  opts: ExecFileOptions,
+  opts: ExecFileOptions & { absoluteExecutable?: boolean },
   cb: (err: Error | null, stdout: string, stderr?: string) => void,
 ): void {
+  // Environment probes pass an already pinned executable. Never let CLI
+  // resolution select a PATH shadow or a PATHEXT/shim substitute for it.
+  if (opts.absoluteExecutable && !(process.platform === "win32" ? windowsPath.isAbsolute(cli) : isAbsolute(cli))) {
+    queueMicrotask(() => cb(Object.assign(new Error("Probe executable is not absolute"), { code: "EUNPINNEDPROBE" }), "", ""));
+    return;
+  }
   if (process.env.MURAGE_CLOUD_ROLE === "home") {
     let child: ReturnType<typeof spawnCli>;
     try { child = spawnCli(cli, args, { env: opts.env, cwd: opts.cwd, stdio: ["pipe", "pipe", "pipe"] }); }
@@ -411,9 +633,9 @@ export function execCli(
     child.stdin.end();
     return;
   }
-  // A probe runs the file found on the PATH it is handed first (a driver may put its own engine's folder there, the bundled
-  // Fuigo's), so the version it reads belongs to the engine a turn on that PATH launches (isolation-cache.ts engineLaunchFile).
-  const resolved = resolveCli(cli, args, envSearchPath(opts.env));
+  // Version probes resolve on the handed PATH (isolation-cache.ts engineLaunchFile).
+  // Environment probes instead run their already pinned absolute file verbatim.
+  const resolved = opts.absoluteExecutable ? { command: cli, args } : resolveCli(cli, args, envSearchPath(opts.env));
   try {
     assertSafeCliArgv(resolved);
   } catch (error) {
@@ -445,19 +667,52 @@ export function execCli(
   child.stdin?.on("error", () => {});
   child.stdin?.end();
   const out: Buffer[] = [], err: Buffer[] = [];
-  let bytes = 0, killed = false, overflow = false, settled = false;
+  // `killed` records our timeout/overflow stop only, never an outside signal.
+  let bytes = 0, killed = false, overflow = false, stderrTruncated = false, settled = false;
+  let cleanup: ChildProcess | undefined;
+  let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
   const stop = () => {
+    if (killed || settled) return;
     killed = true;
+    // The stop settles at once and destroys both pipes (1.0.8), so stderr that
+    // had not ended is cut here, even when stdout spent the budget: the
+    // redactor then treats its tail as incomplete.
+    if (child.stderr && !child.stderr.readableEnded) stderrTruncated = true;
+    const failure = Object.assign(new Error(overflow ? "Probe output limit exceeded" : "Probe timed out"), { killed: true, ...(overflow ? { code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" } : {}) });
+    const complete = () => {
+      if (cleanupTimer) clearTimeout(cleanupTimer);
+      if (win32) { try { child.kill(killSignal); } catch { /* root already ended */ } }
+      child.stdout?.destroy(); child.stderr?.destroy(); child.stdin?.destroy();
+      finish(failure);
+    };
     const pid = child.pid;
-    if (!win32 && pid) {
-      try { process.kill(-pid, killSignal); return; } catch { /* the group is gone: the child below */ }
+    if (win32 && pid) {
+      // Resolve from the server's Windows directory, never from the handed PATH.
+      const root = process.env.SystemRoot || process.env.WINDIR;
+      if (!root || !windowsPath.isAbsolute(root)) { try { child.kill(); } catch {} complete(); return; }
+      try {
+        cleanup = spawn(windowsPath.join(root, "System32", "taskkill.exe"), ["/PID", String(pid), "/T", "/F"], { windowsHide: true, shell: false, stdio: "ignore" });
+        cleanupTimer = setTimeout(() => { try { cleanup?.kill(); } catch {} complete(); }, 1_000);
+        cleanup.once("error", complete);
+        cleanup.once("exit", complete);
+      } catch { complete(); }
+      return;
     }
-    try { child.kill(killSignal); } catch { /* already gone */ }
+    if (pid) { try { process.kill(-pid, killSignal); } catch { try { child.kill(killSignal); } catch {} } }
+    complete();
   };
   const take = (into: Buffer[]) => (chunk: Buffer) => {
-    if (overflow) return;
+    if (killed || settled) {
+      if (overflow && into === err) stderrTruncated = true;
+      return;
+    }
     bytes += chunk.length;
-    if (bytes > maxBuffer) { overflow = true; stop(); return; }
+    if (bytes > maxBuffer) {
+      overflow = true;
+      if (into === err) stderrTruncated = true;
+      stop();
+      return;
+    }
     into.push(chunk);
   };
   child.stdout?.on("data", take(out));
@@ -467,10 +722,13 @@ export function execCli(
     if (settled) return;
     settled = true;
     if (timer) clearTimeout(timer);
+    // The budget covers both streams. Only discarded stderr chunks make its capture incomplete.
+    if (error) Object.assign(error, { stderrTruncated });
     cb(error, Buffer.concat(out).toString("utf8"), Buffer.concat(err).toString("utf8"));
   };
-  child.once("error", (error) => finish(error));
+  child.once("error", (error) => { if (!killed) finish(error); });
   child.once("close", (code, signal) => {
+    if (killed) return;
     if (code === 0 && !killed) return finish(null);
     const error = Object.assign(
       new Error(overflow ? "stdout or stderr maxBuffer length exceeded" : `Command failed: ${[resolved.command, ...resolved.args].join(" ")}`),
@@ -521,6 +779,7 @@ function launchStdio(stdio: SpawnOptions["stdio"]): { stdio: StdioOptions; close
 type SpawnFailure = { message: string; setup: boolean };
 
 export function describeSpawnFailure(err: NodeJS.ErrnoException, cli: string): SpawnFailure {
+  if (err.code === HOST_POWER_CODE) return { message: err.message || HOST_POWER_MESSAGE, setup: false };
   if (err.code === "ENOENT")
     return { message: `\`${cli}\` isn't installed, or isn't on this app's PATH`, setup: true };
   if (err.code === "EACCES" || err.code === "EPERM")
@@ -543,6 +802,7 @@ export type StopRoute =
   | "windows_child_kill"
   | "posix_group_sigterm"
   | "posix_child_sigterm"
+  | "posix_engine_sigterm"
   | "already_exited";
 export type StopRouteResult = "requested" | "succeeded" | "failed" | "fallback";
 export interface StopRouteObservation {
@@ -707,8 +967,17 @@ export function forceCliTreeStopped(child: ChildProcess, deadlineMs = CLI_CONFIR
 }
 
 function markStopped(owned: CliOwnership): void {
+  clearTimeout(owned.lateConfirmationTimer);
+  owned.lateConfirmationTimer = undefined;
   owned.stopped = true;
   owned.resolveStopped?.(true);
+}
+
+function observeCliStop(owned: CliOwnership, observation: StopRouteObservation): void {
+  owned.observations.push(observation);
+  for (const listener of owned.observers) {
+    try { listener(observation); } catch { /* diagnostics never affect stop */ }
+  }
 }
 
 function stopOwnedCli(child: ChildProcess, owned: CliOwnership, observer?: StopRouteObserver, termGraceMs = CLI_TERM_GRACE_MS, force = false, deadlineMs?: number): Promise<boolean> {
@@ -731,13 +1000,9 @@ function stopOwnedCli(child: ChildProcess, owned: CliOwnership, observer?: StopR
   const pid = owned.pid;
   if (pid === undefined) return Promise.resolve(true); // failed spawn
   if (!Number.isInteger(pid) || pid <= 1 || pid === process.pid || child.pid !== pid) return Promise.resolve(false);
+  owned.stopRequested = true;
   owned.observations = [];
-  const observe: StopRouteObserver = (observation) => {
-    owned.observations.push(observation);
-    for (const listener of owned.observers) {
-      try { listener(observation); } catch { /* diagnostics never affect stop */ }
-    }
-  };
+  const observe: StopRouteObserver = (observation) => observeCliStop(owned, observation);
   const run = async () => {
     if (owned.platform === "win32") {
       if (owned.jobName) {
@@ -784,14 +1049,16 @@ function stopOwnedCli(child: ChildProcess, owned: CliOwnership, observer?: StopR
         killCliTreeWith(child, observe, REAL_KILL_DEPS, done);
       });
     }
+    bwrapProcesses(owned);
     const settled = () => {
-      if (owned.treeGone) return true;
+      const namespaceGone = () => bwrapNamespaceGone(owned);
+      if (owned.treeGone) return namespaceGone();
       if (!owned.closed) return false;
       try { process.kill(-pid, 0); return false; }
       catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ESRCH") return false;
         owned.treeGone = true; // permanent: the number may be reused by an unrelated group
-        return true;
+        return namespaceGone();
       }
     };
     const signal = (value: NodeJS.Signals) => {
@@ -819,10 +1086,25 @@ function stopOwnedCli(child: ChildProcess, owned: CliOwnership, observer?: StopR
       observe({ route: "already_exited", result: "succeeded" });
       return true;
     }
+    // --new-session separates the engine from bwrap's group. Keep bwrap alive
+    // during engine cleanup: killing it first triggers --die-with-parent.
+    const engine = !force && termGraceMs > 0 ? bwrapProcesses(owned).engine : undefined;
+    let engineTermSent = false;
+    if (engine) {
+      observe({ route: "posix_engine_sigterm", result: "requested" });
+      try {
+        if (owned.bwrap?.init && hostProcessIsChild(engine, owned.bwrap.init)) {
+          process.kill(engine.pid, "SIGTERM");
+          engineTermSent = true;
+          observe({ route: "posix_engine_sigterm", result: "succeeded" });
+        } else observe({ route: "posix_engine_sigterm", result: "failed" });
+      } catch { observe({ route: "posix_engine_sigterm", result: "failed" }); }
+    }
+    if (engineTermSent && await wait(termGraceMs)) return true;
     // Preserve existing diagnostic route/fallback observations, including
     // after root close (the retained group is still ours).
-    killCliTreeWith({ pid, exitCode: null, signalCode: null, kill: (value) => owned.closed ? false : child.kill(value) }, observe, REAL_KILL_DEPS);
-    if (await wait(termGraceMs)) return true;
+    if (!owned.treeGone) killCliTreeWith({ pid, exitCode: null, signalCode: null, kill: (value) => owned.closed ? false : child.kill(value) }, observe, REAL_KILL_DEPS);
+    if (!engineTermSent && await wait(termGraceMs)) return true;
     signal("SIGKILL");
     return wait(CLI_FORCE_WAIT_MS);
   };

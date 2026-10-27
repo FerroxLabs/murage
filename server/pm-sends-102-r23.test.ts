@@ -19,7 +19,7 @@ import { closeDatabase, database } from "./database.ts";
 import { stopWalMaintenance } from "./wal-maintenance.ts";
 import {
   DELETED_NOTE, IDLE_RELEASE_BATCH, RESTART_RECEIPT, _delegationQueueWrites, _drainingCount, _loadPending, _resetPending, _simulateRestart, dismissHeldDelegation,
-  findDelegationReceipt, idleReleaseHasMore, queueDelegation, reconcileStartedDelegations, recordDelegationReceipt,
+  findDelegationReceipt, idleReleaseHasMore, onDelegationReceipt, queueDelegation, reconcileStartedDelegations, recordDelegationReceipt,
   releaseDelegationsWaitingOn, resendHeldDelegation, startedDelegation, uncertainHandoffText, type HeldDelegation,
 } from "./delegations.ts";
 import { configureHandoffDispatch, configureSharedHandoffs } from "./handoff-dispatch.ts";
@@ -28,7 +28,7 @@ import { downgradeApplicationSchemaTo101 } from "./installation-app-schema-downg
 import { downgradeInstallationMemorySchema } from "./installation-memory-downgrade.ts";
 import { _resetOwnerMigration, delegationAdmissionHeld, ensureHandoffPairGuard, delegationTurnKey, initializePendingDelegations, onDelegationAdmissionOpen, runOwnerHandoffMigration } from "./pending-delegations-schema.ts";
 import { recordOwnerDeletion } from "./owner-deletions.ts";
-import { insertRoomRequest, markRequestDispatched, reconcileRoomRequestsAtBoot, roomRequest } from "./room-requests.ts";
+import { completeRequest, insertRoomRequest, isTerminalRoomRequestState, markRequestDispatched, reconcileRoomRequestsAtBoot, roomRequest } from "./room-requests.ts";
 import { configureSharedDrain, drainSharedWork, enqueueSharedWork, sharedRequestDeleted } from "./shared-work.ts";
 import { createWorkAdmission } from "./work-admission.ts";
 import { Store } from "./store.ts";
@@ -186,7 +186,8 @@ describe("F1. a hand-off the provider took, whose acceptance was not recorded, n
     await drainAll(s, s.from.threadId, (taskId) => { ran.push(taskId); stamp(s, taskId); runOf(taskId).accepted("turn-3"); recordDelegationReceipt({ id: taskId, sourceThreadId: s.from.threadId, toBotId: s.target.id, toBotName: "Helper", status: "done", result: released("ok") }); });
     expect(ran).toEqual([plain]);
     expect(promptsIn(s.target.threadId)).toBe(2);      // one per hand-off, never two for one
-    if (origin === "room") expect(roomRequest(database(), sub)!.state).toBe("unknown");     // the held one's request is interrupted, not left running
+    // BOOT-SETTLE-108 3: the sweep leaves a held hand-off's request to the hand-off's own settling (its receipt ends it; this world has no receipt listener)
+    if (origin === "room") expect(roomRequest(database(), sub)!.state).not.toBe("unknown");
   });
 });
 
@@ -270,11 +271,14 @@ describe("F2. shared hand-offs are stamped by their start, after the approval wa
     await turnsStarted(w, 2);
     w.crash();
     const held: HeldDelegation[] = [];
-    expect(reconcileStartedDelegations({ notice: (h) => held.push(h) })).toMatchObject({ redispatched: 1, held: 1, interrupted: 0 });
+    // BOOT-SETTLE-108 3: the held one's request is ended by its own notice receipt (as the server's receipt listener does), not by the room sweep
+    onDelegationReceipt((receipt) => { const row = roomRequest(database(), receipt.id); if (row && !isTerminalRoomRequestState(row.state)) completeRequest(database(), row.id, { state: "failed", now: 20 }); });
+    try { expect(reconcileStartedDelegations({ notice: (h) => held.push(h) })).toMatchObject({ redispatched: 1, held: 1, interrupted: 0 }); }
+    finally { onDelegationReceipt(undefined); }
     reconcileRoomRequestsAtBoot(database(), 20);
     expect(roomRequest(database(), "sh-a")!.state).toBe("queued");
     expect(rowOf("sh-a")).toMatchObject({ phase: "fresh", start_attempts: 1 });
-    expect(roomRequest(database(), "sh-b")!.state).toBe("unknown");
+    expect(roomRequest(database(), "sh-b")!.state).toBe("failed");
     expect(held.map((h) => h.id)).toEqual(["sh-b"]);
     // the re-run: the shared drain dispatches the request again, and its start is the held re-dispatch into the same thread with the same prompt
     drainSharedWork(w.iris.id);
