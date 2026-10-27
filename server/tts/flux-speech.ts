@@ -21,10 +21,119 @@ import { fluxCallHeaders } from "../flux-memory-headers.ts";
 import { notPermitted, VoiceUnavailable, type VoiceEndpoint } from "../voice/voice-routes.ts";
 import { XAI_VOICES } from "./xai-speech.ts";
 
+/** The provider answered, but speech is not switched on for this account
+ *  (Flux while its speech capability is dark). The next source can take over. */
+export class SpeechUnavailable extends VoiceUnavailable {}
+
 /** Flux's alias for xAI's voices (2026-09-23): the same Flux request, xAI's
  *  voice names. Flux translates it to xAI's own schema. */
 export const FLUX_GROK_MODEL = "flux-voice-speak-grok";
 const XAI_IDS = new Set(XAI_VOICES.map((v) => v.id));
+
+/** Flux's ElevenLabs voices (2026-10-25 contract, FLUX-ELEVEN-CONTRACT-107):
+ *  the same Flux request on the workspace's Flux key, no ElevenLabs key of
+ *  the owner's own. Flux takes a fixed list of 20 voice NAMES (not raw
+ *  ElevenLabs ids), mp3 only, speed 0.7 to 1.2, never SSE. A key whose model
+ *  list leaves this model out answers 403 model_not_allowed. */
+export const FLUX_ELEVEN_MODEL = "flux-voice-speak-eleven";
+/** What speaks when an ElevenLabs voice is asked for that Flux does not list. */
+export const DEFAULT_ELEVEN_VOICE = "Aria";
+
+/** The 20 voices Flux serves on `flux-voice-speak-eleven`. `id` is the name
+ *  Flux takes and is what gets stored and sent, so it is also the label.
+ *  Descriptions follow ElevenLabs' own labels for its default voices; the
+ *  accent closes the description only where ElevenLabs names one. */
+export const FLUX_ELEVEN_VOICES: Voice[] = ([
+  ["Aria", "Expressive, warm, American", "female"],
+  ["Sarah", "Soft, reassuring, American", "female"],
+  ["Laura", "Upbeat, quirky, American", "female"],
+  ["Alice", "Confident, clear, British", "female"],
+  ["Matilda", "Friendly, warm, American", "female"],
+  ["Jessica", "Expressive, youthful, American", "female"],
+  ["Lily", "Warm, velvety, British", "female"],
+  ["Roger", "Confident, easygoing, American", "male"],
+  ["Charlie", "Natural, casual, Australian", "male"],
+  ["George", "Warm, mature, British", "male"],
+  ["Callum", "Intense, husky", "male"],
+  ["Liam", "Articulate, youthful, American", "male"],
+  ["Will", "Friendly, relaxed, American", "male"],
+  ["Eric", "Smooth, friendly, American", "male"],
+  ["Chris", "Casual, natural, American", "male"],
+  ["Brian", "Deep, resonant, American", "male"],
+  ["Daniel", "Authoritative, steady, British", "male"],
+  ["Adam", "Deep, firm, American", "male"],
+  ["Bill", "Trustworthy, seasoned, American", "male"],
+  ["River", "Calm, relaxed, American", "neutral"],
+] as const).map(([id, description, gender]) => ({ id, label: id, description, gender, provider: "elevenlabs" as const }));
+const ELEVEN_IDS = new Set(FLUX_ELEVEN_VOICES.map((v) => v.id));
+
+/** One of Flux's ElevenLabs voices. The names never collide with OpenAI's
+ *  or xAI's ids (lowercase) or with an own ElevenLabs key's raw voice ids. */
+export function isFluxElevenVoice(id: string | undefined): boolean {
+  return Boolean(id && ELEVEN_IDS.has(id));
+}
+
+/** Flux's ElevenLabs voices are not on this key (403 model_not_allowed). The
+ *  rest of Flux still speaks; the caller hides these voices and says why. */
+export class ElevenNotOnKey extends SpeechUnavailable {}
+
+/** Flux turned down one ElevenLabs request (400): the key is fine and the
+ *  other Flux voices still speak. A call goes on in the default voice. */
+export class ElevenRefused extends Error {}
+
+/** Flux does not offer the ElevenLabs voice that was asked for (400, param
+ *  "voice"): the saved name is no longer on Flux's list. */
+export class ElevenVoiceNotOffered extends ElevenRefused {}
+
+/** What Flux's own voice list says about its ElevenLabs voices on this key:
+ *  "on" (listed and playable), "notOnKey" (not listed: the key's model list
+ *  leaves flux-voice-speak-eleven out), "locked" (listed as premium_locked:
+ *  the Flux account has not switched voice on). */
+export type ElevenOnKey = "on" | "notOnKey" | "locked";
+export interface ElevenCatalog {
+  status: ElevenOnKey;
+  /** The ElevenLabs names Flux listed as playable on this key. */
+  names: ReadonlySet<string>;
+}
+/** The voice list is a small read; a slow one is not worth holding the picker for. */
+export const FLUX_VOICE_LIST_TIMEOUT_MS = 5_000;
+
+/** GET /v1/audio/voices on the Flux key (never billed). Flux filters it to
+ *  the calling key: only voices whose model the key may use come back, each
+ *  with an `entitlement` ("open" and "paid_cleared" play, "premium_locked"
+ *  does not). Null when the list could not be read; the caller then shows no
+ *  ElevenLabs voices rather than guess. */
+export async function readElevenCatalog(endpoint: VoiceEndpoint, call: typeof fetch = fetch): Promise<ElevenCatalog | null> {
+  if (endpoint.via !== "flux") return null;
+  const control = new AbortController();
+  const timer = setTimeout(() => control.abort(), FLUX_VOICE_LIST_TIMEOUT_MS);
+  try {
+    const res = await call(`${baseFor(endpoint)}/audio/voices`, {
+      method: "GET",
+      headers: { authorization: `Bearer ${endpoint.key}`, ...fluxCallHeaders("voice-speech") },
+      signal: control.signal,
+    });
+    if (!res.ok) {
+      await res.body?.cancel().catch(() => undefined);
+      return null;
+    }
+    const body: any = await res.json();
+    if (!body || !Array.isArray(body.data)) return null;
+    const rows = body.data.filter((row: any) => row && row.model === FLUX_ELEVEN_MODEL && typeof row.id === "string");
+    if (!rows.length) return { status: "notOnKey", names: new Set() };
+    const playable = rows.filter((row: any) => row.entitlement !== "premium_locked");
+    if (!playable.length) return { status: "locked", names: new Set() };
+    return { status: "on", names: new Set(playable.map((row: any) => row.id as string)) };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export const ELEVEN_LOCKED = "ElevenLabs voices are locked on this Flux account. Once Flux has voice switched on for the account, check again in the voice list, or pick another voice.";
+
+export const ELEVEN_NOT_ON_KEY = "ElevenLabs voices aren't available on this Flux key. Pick another voice, or use a Flux key that includes ElevenLabs voices.";
 
 /** A test seam for the Flux base only; production uses the resolved route. */
 function baseFor(endpoint: VoiceEndpoint): string {
@@ -76,20 +185,17 @@ export function isFluxVoice(id: string | undefined): boolean {
   return Boolean(id && IDS.has(id));
 }
 
-/** The provider answered, but speech is not switched on for this account
- *  (Flux while its speech capability is dark). The next source can take over. */
-export class SpeechUnavailable extends VoiceUnavailable {}
-
-async function refusal(res: Response): Promise<{ message: string; code: string }> {
+async function refusal(res: Response): Promise<{ message: string; code: string; param: string }> {
   try {
     const body: any = await res.json();
     const error = body?.error ?? body;
     return {
       message: (typeof error?.message === "string" && error.message.trim()) || "",
       code: (typeof error?.code === "string" && error.code) || "",
+      param: (typeof error?.param === "string" && error.param) || "",
     };
   } catch {
-    return { message: "", code: "" };
+    return { message: "", code: "", param: "" };
   }
 }
 const said = async (res: Response) => (await refusal(res)).message;
@@ -106,8 +212,14 @@ export async function synthesizeClip(text: string, voice: string, endpoint: Voic
   // An agent that still carries a voice from another engine gets Flux's
   // default rather than a 400 for a voice Flux has never heard of.
   // xAI's voices on Flux's xAI alias, OpenAI's everywhere else.
+  // ElevenLabs' voices on Flux's ElevenLabs model, by name.
   const grok = endpoint.via === "flux" && endpoint.model === FLUX_GROK_MODEL;
-  const chosen = grok ? (voice && XAI_IDS.has(voice) ? voice : "eve") : isFluxVoice(voice) ? voice : "marin";
+  const eleven = endpoint.via === "flux" && endpoint.model === FLUX_ELEVEN_MODEL;
+  const chosen = grok
+    ? (voice && XAI_IDS.has(voice) ? voice : "eve")
+    : eleven
+      ? (isFluxElevenVoice(voice) ? voice : DEFAULT_ELEVEN_VOICE)
+      : isFluxVoice(voice) ? voice : "marin";
   // A clip of a sentence or two that takes 20 s to START is already a failed
   // conversation; only longer clips (up to the route's 500) get 60 s. The
   // limit is for the response headers only: audio that is arriving is never
@@ -156,8 +268,12 @@ export async function synthesizeClip(text: string, voice: string, endpoint: Voic
   if (!res.ok && (res.status < 500 || res.status === 501)) fail(res.status, 0);
   if (res.status === 404) throw new SpeechUnavailable(`${provider} voices aren't switched on for this account yet.`);
   if (res.status === 403) {
-    const theirs = await said(res);
-    if (notPermitted(theirs)) throw new SpeechUnavailable(`${provider} voices aren't switched on for this key yet.`);
+    const { message: theirs, code } = await refusal(res);
+    // Flux's contract: a key whose model list leaves this model out. The key
+    // itself is good, and the rest of Flux still speaks on it.
+    const notAllowed = code === "model_not_allowed" || notPermitted(theirs);
+    if (eleven && notAllowed) throw new ElevenNotOnKey(ELEVEN_NOT_ON_KEY);
+    if (notAllowed) throw new SpeechUnavailable(`${provider} voices aren't switched on for this key yet.`);
     throw new Error(`${provider} rejected the saved key. Paste a fresh one in Settings.`);
   }
   if (res.status === 401) throw new Error(`${provider} rejected the saved key. Paste a fresh one in Settings.`);
@@ -169,6 +285,11 @@ export async function synthesizeClip(text: string, voice: string, endpoint: Voic
     throw new Error(`${provider} couldn't charge for speech${message ? `: ${message}` : ""}. Check the account's balance and the key's budget.`);
   }
   if (res.status === 429) throw new RateLimitedError((await said(res)) || `${provider} is rate-limiting this account. Wait a moment and try again.`, retryAfterMs(res.headers.get("retry-after")));
+  if (eleven && res.status === 400) {
+    const { param } = await refusal(res);
+    if (param === "voice") throw new ElevenVoiceNotOffered(`Flux no longer offers the ElevenLabs voice ${chosen}. Pick another voice.`);
+    throw new ElevenRefused("ElevenLabs couldn't speak this text through Flux. Try again, or pick another voice.");
+  }
   if (!res.ok) {
     const theirs = await said(res);
     throw new Error(theirs ? `Speaking failed: ${theirs}` : `Speaking failed (${res.status})`);

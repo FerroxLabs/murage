@@ -48,6 +48,11 @@
 //                                  a file's owner SID and account-name lookups, and SAPI speech. Each is described where it is defined.
 //   domainSids                     Windows (version 9): this computer's account, joined and forest-root domain SIDs (LSA policy), for
 //                                  the SDDL domain aliases. Version 9 also ends a process jobAssign cannot open.
+//   cwdOf(pid)                     Windows (DELETION-WHILE-OPEN-107): another process's working folder, read from its PEB
+//                                  (ProcessParameters->CurrentDirectory.DosPath); null when it cannot be read. Optional: an older
+//                                  build without it only means the open-home pass does not run there (it fails closed).
+//   dropShutdownPrivileges         Windows (version 10): removes both shutdown privileges from this process's primary token and
+//                                  verifies they are absent. Returns { ok: true } or { ok: false, step, error }.
 // Nothing here reads or writes a file on POSIX: Node does that through its own descriptor (writers() on Linux opens a file read only,
 // only to ask for a lease, and reads nothing). Only a process that is confirmed gone
 // (ESRCH/ENOENT on that process) is left out of processes(). Built per platform by scripts/build-engine-exclusion.mjs (N-API 9).
@@ -85,7 +90,7 @@
 #endif
 #endif
 
-#define ADDON_VERSION 9
+#define ADDON_VERSION 10
 #define LOCK_WAIT_MS 1000
 #define LOCK_STEP_MS 10
 
@@ -761,6 +766,53 @@ static napi_value environment_of(napi_env env, napi_callback_info info) {
   if (!ok) napi_get_null(env, &out);
   return out;
 }
+
+#ifdef _WIN32
+// ── cwdOf(pid): Windows ─────────────────────────────────────────────────
+//
+// DELETION-WHILE-OPEN-107: the working folder of another process, as Windows keeps it in the process's own memory:
+// RTL_USER_PROCESS_PARAMETERS.CurrentDirectory.DosPath. <winternl.h> declares that block only as Reserved2[10] before ImagePathName:
+// ConsoleHandle, ConsoleFlags, StandardInput, StandardOutput, StandardError, then CurrentDirectory (a UNICODE_STRING, the size of two
+// pointers on both 32- and 64-bit Windows), so DosPath is Reserved2[5]. null when it cannot be read: the process is gone, another
+// user's or protected, a 32-bit process on 64-bit Windows, or any read that fails. Murage asks it only of the processes on an engine
+// home whose conversation is being deleted (engine-closed.ts holdersClearOf); a null keeps that home for the closed-engine pass.
+static napi_value cwd_of(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value argv[1];
+  uint32_t pid = 0;
+  napi_get_cb_info(env, info, &argc, argv, NULL, NULL);
+  if (argc < 1 || napi_get_value_uint32(env, argv[0], &pid) != napi_ok || pid == 0) return fail(env, "cwdOf needs a pid");
+  napi_value out;
+  napi_get_null(env, &out);
+  HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, FALSE, pid);
+  NtQueryInformationProcessFn query = (NtQueryInformationProcessFn)(void *)GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtQueryInformationProcess");
+  BOOL wow = TRUE;
+  if (process && query && IsWow64Process(process, &wow) && !wow) {
+    PROCESS_BASIC_INFORMATION basic;
+    ULONG returned = 0;
+    PEB peb;
+    RTL_USER_PROCESS_PARAMETERS parameters;
+    SIZE_T read = 0;
+    if (query(process, 0, &basic, sizeof basic, &returned) == 0 && basic.PebBaseAddress &&
+        ReadProcessMemory(process, basic.PebBaseAddress, &peb, sizeof peb, &read) && read == sizeof peb && peb.ProcessParameters &&
+        ReadProcessMemory(process, peb.ProcessParameters, &parameters, sizeof parameters, &read) && read == sizeof parameters) {
+      UNICODE_STRING dos;
+      memcpy(&dos, &parameters.Reserved2[5], sizeof dos);
+      if (dos.Buffer && dos.Length > 0 && dos.Length % sizeof(wchar_t) == 0 && dos.Length <= dos.MaximumLength) {
+        wchar_t *path = malloc((size_t)dos.Length + sizeof(wchar_t));
+        if (path && ReadProcessMemory(process, dos.Buffer, path, dos.Length, &read) && read == dos.Length) {
+          char *text = wide_to_utf8(path, (int)(dos.Length / sizeof(wchar_t)));
+          if (text && text[0]) napi_create_string_utf8(env, text, NAPI_AUTO_LENGTH, &out);
+          free(text);
+        }
+        free(path);
+      }
+    }
+  }
+  if (process) CloseHandle(process);
+  return out;
+}
+#endif
 
 // ── renameNoReplace(from, to): all platforms ────────────────────────────
 
@@ -1790,6 +1842,74 @@ static napi_value authenticode(napi_env env, napi_callback_info info) {
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "advapi32.lib")
 
+static napi_value shutdown_privileges_result(napi_env env, const char *step, DWORD error) {
+  napi_value out, value;
+  napi_create_object(env, &out);
+  napi_set_named_property(env, out, "ok", make_bool(env, step == NULL));
+  if (step) {
+    napi_create_string_utf8(env, step, NAPI_AUTO_LENGTH, &value);
+    napi_set_named_property(env, out, "step", value);
+    napi_create_uint32(env, error, &value);
+    napi_set_named_property(env, out, "error", value);
+  }
+  return out;
+}
+
+// Removal is permanent for this primary token and inherited by normal child spawns.
+// ERROR_NOT_ALL_ASSIGNED is expected when either privilege was already absent;
+// success still requires reading the token back and finding neither LUID.
+static napi_value drop_shutdown_privileges(napi_env env, napi_callback_info info) {
+  (void)info;
+  HANDLE token = NULL;
+  struct { DWORD PrivilegeCount; LUID_AND_ATTRIBUTES Privileges[2]; } remove;
+  TOKEN_PRIVILEGES *current = NULL;
+  DWORD length = 0, error = ERROR_SUCCESS;
+  const char *step = "open";
+  if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &token))
+    return shutdown_privileges_result(env, step, GetLastError());
+  memset(&remove, 0, sizeof remove);
+  remove.PrivilegeCount = 2;
+  step = "lookup";
+  if (!LookupPrivilegeValueW(NULL, L"SeShutdownPrivilege", &remove.Privileges[0].Luid)
+      || !LookupPrivilegeValueW(NULL, L"SeRemoteShutdownPrivilege", &remove.Privileges[1].Luid)) {
+    error = GetLastError(); goto done;
+  }
+  remove.Privileges[0].Attributes = SE_PRIVILEGE_REMOVED;
+  remove.Privileges[1].Attributes = SE_PRIVILEGE_REMOVED;
+  step = "adjust";
+  SetLastError(ERROR_SUCCESS);
+  if (!AdjustTokenPrivileges(token, FALSE, (TOKEN_PRIVILEGES *)&remove, 0, NULL, NULL)) {
+    error = GetLastError(); goto done;
+  }
+  error = GetLastError();
+  if (error != ERROR_SUCCESS && error != ERROR_NOT_ALL_ASSIGNED) goto done;
+  step = "verify";
+  if (GetTokenInformation(token, TokenPrivileges, NULL, 0, &length)) {
+    error = ERROR_INVALID_DATA; goto done;
+  }
+  error = GetLastError();
+  if (error != ERROR_INSUFFICIENT_BUFFER) goto done;
+  current = malloc(length);
+  if (!current) { error = ERROR_NOT_ENOUGH_MEMORY; goto done; }
+  if (!GetTokenInformation(token, TokenPrivileges, current, length, &length)) {
+    error = GetLastError(); goto done;
+  }
+  for (DWORD i = 0; i < current->PrivilegeCount; i++) {
+    for (DWORD j = 0; j < 2; j++) {
+      if (current->Privileges[i].Luid.LowPart == remove.Privileges[j].Luid.LowPart
+          && current->Privileges[i].Luid.HighPart == remove.Privileges[j].Luid.HighPart) {
+        error = ERROR_ACCESS_DENIED; goto done; // A remaining LUID fails even when disabled.
+      }
+    }
+  }
+  step = NULL;
+  error = ERROR_SUCCESS;
+done:
+  free(current);
+  CloseHandle(token);
+  return shutdown_privileges_result(env, step, error);
+}
+
 /** A UTF-16 string argument of 1..max code units, NUL-ended, in memory the caller frees; NULL when it is not one (no exception). */
 static wchar_t *get_wide(napi_env env, napi_value value, size_t max) {
   size_t length = 0;
@@ -2355,8 +2475,10 @@ NAPI_MODULE_INIT() {
   add(env, exports, "accountSid", account_sid);
   add(env, exports, "machineSid", machine_sid);
   add(env, exports, "domainSids", domain_sids);
+  add(env, exports, "dropShutdownPrivileges", drop_shutdown_privileges);
   add(env, exports, "speechVoices", speech_voices);
   add(env, exports, "speechToWave", speech_to_wave);
+  add(env, exports, "cwdOf", cwd_of);
 #endif
   add(env, exports, "bootId", boot_id);
   add(env, exports, "version", version);

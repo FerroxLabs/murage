@@ -12,6 +12,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { expect, it } from "vitest";
+import { backupResultNotice } from "../electron/backup-failure-notice.mjs";
 import { createBackupScheduleHost } from "../electron/backup-schedule-host.mjs";
 import { backupAgePinForTarget } from "../shared/backup-age-pin.ts";
 import { BackupCoordinator } from "./backup-coordinator.ts";
@@ -93,6 +94,17 @@ it.skipIf(!backupAgePinForTarget(process.platform, process.arch))("a data folder
     expect(logged.reasons).toEqual({ unrecognised: STRAYS.length });
     expect([...logged.names].sort()).toEqual([...STRAYS].sort());
     expect(skippedLines[0]).not.toContain(STRAY_KEY);
+
+    // 1.0.7: once Murage reopens, the person is told it worked and how many items were left
+    // out, by count; the Backups page names them. No stray name and no key in the words.
+    const reopened = shared.status();
+    expect(reopened.job?.phase).toBe("returned");
+    const notice = backupResultNotice(reopened, null, "backups");
+    expect(notice?.title).toBe("Backup saved and checked");
+    expect(notice?.body).toBe(`Your workspace is backed up to backups. ${STRAYS.length} items were left out. Settings → Backups lists them.`);
+    for (const name of STRAYS) expect(notice!.body).not.toContain(name);
+    expect(notice!.body).not.toContain(STRAY_KEY);
+    expect(backupResultNotice(reopened, notice!.key, "backups"), "announced once").toBeNull();
 
     // Left out of the archive's plaintext path too, and still in the data folder, unchanged.
     expect(readFileSync(archive).includes(STRAY_KEY)).toBe(false);

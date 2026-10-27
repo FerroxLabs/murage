@@ -39,6 +39,8 @@ import { inScopeFolder, privateScopeHome, scopeCandidates } from "./engine-close
 import { runEngineHistoryOffThread, type EngineDiscovery, type EngineHistoryJob, type EngineHistoryResult } from "./engine-history-offthread.ts";
 import { hasContentSteps, homeKey, pathApiFor, type EnginePlanData, type HomePlanData } from "./engine-plan-core.ts";
 import { scrubWalAfterDelete } from "./wal-maintenance.ts";
+import { runningAppVersion } from "./memory/app-version.ts";
+import { OPEN_PASS_ENGINES } from "./engine-history-run.ts";
 import { closeThreadLog, threadLogNames, threadSessionLines, threadTempFiles, type SessionReadOptions } from "./harness/event-log.ts";
 
 const ID = /^[\w-]+$/;
@@ -127,17 +129,26 @@ export interface PendingConversationDeletion {
    * words shown come from ownerNoticeText (never a path or an error). Cleared when the deletion finishes. */
   owed?: OwedStatus;
 }
-export type OwedCode = "engine-open" | "engine-unchecked" | "held" | "aside" | "using" | "unreadable" | "unopenable" | "helper" | "other";
+export type OwedCode = "engine-open" | "engine-unchecked" | "held" | "aside" | "using" | "unreadable" | "unopenable" | "helper" | "helper-unloadable" | "other";
 /** One engine home this deletion still owes, as the last attempt left it. `named`: the owner may be told about it (an engine that
  * is open or cannot be told, a file another program has, at once; anything else once the retry schedule has run out). `since`: when
  * this engine first became owed for this deletion (the grace before anything is shown counts from it). `dismissedAt`: the owner
- * dismissed the line that covered it; it keeps being retried and clears itself when done, it is only not shown. */
-export interface OwedItem { engine: DeletionEngine; code: OwedCode; /** the desktop application that is open (Claude, Cursor), when that is why */ app?: string; /** `engine\0home` */ home?: string; named?: boolean; since: number; dismissedAt?: number }
+ * dismissed the line that covered it; it keeps being retried and clears itself when done, it is only not shown. `version`: for
+ * "helper-unloadable", the version of Murage whose helper would not load; the next start of ANOTHER version tries again. */
+export interface OwedItem { engine: DeletionEngine; code: OwedCode; /** the desktop application that is open (Claude, Cursor), when that is why */ app?: string; /** `engine\0home` */ home?: string; named?: boolean; since: number; dismissedAt?: number; version?: string }
 /** What is still owed for one deletion. 1.0.3 saved `homes` (one per failing home, every one named); it is read as `items`. */
 export interface OwedStatus { since: number; items: OwedItem[] }
 /** What the owner is told about engine copies that are still owed: one line per engine. `covers`: the obligations (`<deletion id>:<engine>`)
  * the line stands for, which Dismiss names, so a newer deletion owed by the same engine is never dismissed with it. */
-export interface OwnerNotice { id: string; text: string; /** the owner may ask Murage to try again now (false for a line that says a copy is gone) */ tryAgain: boolean; covers?: string[] }
+export interface OwnerNotice { id: string; text: string; /** the owner may ask Murage to try again now (false for a line that says a copy is gone) */ tryAgain: boolean; covers?: string[];
+  /** the engine is open: a retry cannot change that, and Murage finishes by itself once it closes, so the window offers no "Try again now" for it */
+  byItself?: true;
+  /** Murage's helper cannot load on this system: the copy is not cleared by itself, it is tried again after Murage's next update */
+  waitsForUpdate?: true;
+  /** the bots whose conversations the line is about */
+  botIds?: string[];
+  /** the engine's name as the owner knows it (Claude Code, Grok), for the one quiet line in Settings that sums up what is owed */
+  label?: string }
 /** What "Try again now" did: the engines whose copies are now gone, those still owed (one per engine), whether anything changed at all,
  * and one short line saying so. */
 export interface RetryResult { started: number; finished: DeletionEngine[]; still: Array<{ engine: DeletionEngine; code: OwedCode; app?: string }>; unchanged: boolean; line: string }
@@ -151,6 +162,12 @@ export class JournalUnreadableError extends Error {
 export const JOURNAL_UNREADABLE_TEXT = "Murage could not read its list of deleted conversations to finish. It tries again by itself.";
 /** How long an owed copy waits before the owner is told about it (a Codex session lets go of its files about a minute after its terminal closes). */
 export const OWED_GRACE_MS = 120_000;
+/** The bots whose conversations a deletion removed (its desks, and bots deleted whole), sorted: where its lines are shown. */
+function deletionBotIds(entry: Pick<PendingConversationDeletion, "desks" | "botIds">): string[] {
+  return [...new Set([...entry.desks.map((desk) => desk.botId), ...(entry.botIds ?? [])].filter((id) => ID.test(id)))].sort();
+}
+/** The grace before an owed line is shown: none for a helper that cannot load (it never clears by itself), else `grace`. */
+const graceOf = (item: Pick<OwedItem, "code">, grace: number): number => item.code === "helper-unloadable" ? Math.min(grace, UNLOADABLE_GRACE_MS) : grace;
 /** An undismissed owed line is told again on an automatic retry only when the window was last told at least this long ago: a window
  * that dropped the broadcast gets it on the next retry after this, and fast retries do not repeat the same notice. */
 export const OWED_RETELL_MS = 60_000;
@@ -167,14 +184,20 @@ export function normalizeOwed(owed: unknown): OwedStatus | undefined {
   return items.length ? { since: Math.min(since, ...items.map((item) => item.since)), items } : undefined;
 }
 
-/** When one engine is owed for different reasons, the line says the one the owner can most act on. */
-const CODE_RANK: readonly OwedCode[] = ["engine-open", "held", "aside", "engine-unchecked", "helper", "using", "unopenable", "unreadable", "other"];
+/** When one engine is owed for different reasons, the line says the one the owner can most act on. A helper that cannot load comes first:
+ * nothing of that engine is cleared before Murage's next update, whatever else holds another of its homes, so no other line is true. */
+const CODE_RANK: readonly OwedCode[] = ["helper-unloadable", "engine-open", "held", "aside", "engine-unchecked", "helper", "using", "unopenable", "unreadable", "other"];
 const rankOf = (code: OwedCode): number => { const at = CODE_RANK.indexOf(code); return at < 0 ? CODE_RANK.length : at; };
 
 /** The codes that mean "tried and not touched, try again soon": an engine that is open or cannot be told, a file another program has, a
  * file the engine started anew. Each is asked about every 10 minutes at most (the owner closes an engine whenever they like) and told on
  * the FIRST attempt. */
 const WAITS_FOR_OWNER: ReadonlySet<OwedCode> = new Set<OwedCode>(["engine-open", "engine-unchecked", "held", "aside"]);
+/** The codes named on the FIRST attempt: those above, and a helper that cannot load on this system (no retry before Murage's next
+ * update can change that, so waiting out the schedule would only keep the owner from knowing for 45 minutes). */
+const NAMED_AT_ONCE: ReadonlySet<OwedCode> = new Set<OwedCode>([...WAITS_FOR_OWNER, "helper-unloadable"]);
+/** How long a line for a helper that cannot load waits before it is shown: none. It never clears by itself, so it cannot flash. */
+export const UNLOADABLE_GRACE_MS = 0;
 
 /** How long a hold gives Murage's own running turn to end, by the attempts this deletion already lost to one: 250 ms, 1 s, 4 s, then 15 s.
  * New turns of those instances wait for that long at most, once per attempt (harness/instance-holds.ts). */
@@ -193,6 +216,7 @@ export function owedCodeOf(reason: string | undefined): OwedCode {
   if (/^(EACCES|EPERM|EROFS)$/.test(text)) return "unopenable";
   if (/^(EIO|EMFILE|ENFILE|ENAMETOOLONG|ENOENT|ENOTDIR|EISDIR)$/.test(text)) return "unreadable";
   if (/^(busy|changed|locked|engine-running)$/.test(text) || /locked by its engine|kept changing|still being written/.test(text)) return "using";
+  if (text === "helper-unloadable") return "helper-unloadable";
   if (text === "worker-unavailable" || text === "helper") return "helper";
   return "other";
 }
@@ -219,6 +243,7 @@ export function ownerNoticeText(label: string, code: OwedCode, app?: string, cou
     case "using": return `${label} was using its history. Murage tries again by itself and finishes removing ${what}.`;
     case "unreadable": return `Murage could not read ${label}'s history yet. It tries again by itself and finishes removing ${what}.`;
     case "helper": return `Murage could not start its cleanup helper. It tries again by itself and finishes removing ${what} from ${label}.`;
+    case "helper-unloadable": return `Murage removed ${what}, but could not clear ${count > 1 ? "them" : "it"} from ${label}'s own history on this system. Murage tries again after its next update.`;
     default: return `Murage is still removing ${what} from ${label}. It finishes this by itself. ${tail}`;
   }
 }
@@ -347,6 +372,8 @@ export interface DeletionServiceOptions {
   /** Pauses before each replay of a deletion that could not finish (default 30 s, 2 min, 10 min, 30 min; then every 6 hours and at
    * each start). An empty list turns the replays off. */
   retryDelaysMs?: number[];
+  /** tests: the shortest gap between two `home not read` lines for one home another program keeps open (FOREIGN_RELOG_MS) */
+  foreignRelogMs?: number;
   /** The pause between replays once the list above has run out (default 6 hours). */
   slowRetryMs?: number;
   /** The pause between tries while an engine is open (default 10 minutes). */
@@ -381,11 +408,16 @@ export interface DeletionServiceOptions {
   owedGraceMs?: number;
   /** The least time between two tellings of an unchanged owed line on automatic retries (default OWED_RETELL_MS, 1 minute). */
   owedRetellMs?: number;
+  /** The running Murage version (default runningAppVersion). A copy owed because the helper cannot load is tried again at a start of a
+   * different version than the one it failed under; null (unknown) always tries. */
+  appVersion?: () => string | null;
 }
 
 /** A home skipped because another program has it open is still given one whole attempt (pause, hold, plan) every this many tries
  * (an hour at the ten-minute pace), so a home held by a process of Murage's own that the probe cannot place still gets the hold. */
 export const FULL_TRY_EVERY = 6;
+/** While another program keeps an engine home open, a changed holder is logged again at most this often. */
+export const FOREIGN_RELOG_MS = 3_600_000;
 
 export class ConversationDeletions {
   readonly journal: string;
@@ -504,10 +536,11 @@ export class ConversationDeletions {
   /** Remove everything the record names, then clear the record. If anything in it throws while the record is still pending, the
    * retry schedule is armed again before the error goes on: a scheduled retry, "Try again now" and the start-up pass can all
    * fail on a transient fault (a busy database), and none of them may leave the record with no next attempt. */
-  async finish(entry: PendingConversationDeletion): Promise<DeletionReport> {
+  async finish(entry: PendingConversationDeletion, options: { allHomes?: boolean } = {}): Promise<DeletionReport> {
     // One attempt per deletion at a time: two plan/execute loops on one engine home could each rewrite a file from a stale copy and
     // put back lines the other just removed (engine-history-offthread.ts). A call that arrives while an attempt runs (a woken wait, a
     // timer, "Try again now") gets that attempt's answer, and one more attempt follows it at once when the record is still pending.
+    if (options.allHomes) this.allHomes.add(entry.id);
     const running = this.inFlight.get(entry.id);
     if (running) { this.again.add(entry.id); return running; }
     const attempt = (async () => {
@@ -515,7 +548,8 @@ export class ConversationDeletions {
       try {
         for (;;) {
           this.again.delete(current.id);
-          const report = await this.finishGuarded(current);
+          const allHomes = this.allHomes.delete(current.id);
+          const report = await this.finishGuarded(current, allHomes);
           if (!this.again.has(current.id) || this.disposed) return report;
           let next: PendingConversationDeletion | undefined;
           try { next = this.pending().find((item) => item.id === current.id); } catch { next = undefined; }
@@ -527,6 +561,7 @@ export class ConversationDeletions {
       } finally {
         this.inFlight.delete(entry.id);
         this.again.delete(entry.id);
+        this.allHomes.delete(entry.id);
       }
     })();
     this.inFlight.set(entry.id, attempt);
@@ -536,14 +571,16 @@ export class ConversationDeletions {
   /** The attempt in flight for each deletion, and the deletions asked for again while theirs ran. */
   private readonly inFlight = new Map<string, Promise<DeletionReport>>();
   private readonly again = new Set<string>();
+  /** The deletions whose next attempt plans every home, a home that waits for Murage's next update too ("Try again now"). */
+  private readonly allHomes = new Set<string>();
 
-  private async finishGuarded(entry: PendingConversationDeletion): Promise<DeletionReport> {
+  private async finishGuarded(entry: PendingConversationDeletion, allHomes = false): Promise<DeletionReport> {
     // The wait for Murage's own turns that the last attempt armed ends here: this attempt plans every home again, and arms a new
     // wait (from its own start time) if a turn still holds one back. A turn that ends meanwhile can never start a second attempt.
     this.ownTurnWaits.get(entry.id)?.();
     this.ownTurnWaits.delete(entry.id);
     try {
-      return await this.finishOnce(entry);
+      return await this.finishOnce(entry, allHomes);
     } catch (error) {
       let pending = true;
       try { pending = this.pending().some((item) => item.id === entry.id); } catch { /* the record could not be read: try again */ }
@@ -552,7 +589,7 @@ export class ConversationDeletions {
     }
   }
 
-  private async finishOnce(entry: PendingConversationDeletion): Promise<DeletionReport> {
+  private async finishOnce(entry: PendingConversationDeletion, allHomes = false): Promise<DeletionReport> {
     const startedAt = Date.now();
     const dirs = this.dir;
     const removed: string[] = [];
@@ -629,27 +666,41 @@ export class ConversationDeletions {
     const memoryFolders = entry.desks.filter((desk) => threadIds.includes(desk.threadId) && typeof desk.memoryFolder === "string" && desk.memoryFolder.endsWith(desk.threadId)).map((desk) => desk.memoryFolder!);
     // Murage's private Codex and Grok scopes of these bots join the homes (saved in the record before anything is planned).
     if (folders.length) this.mergeScopes(entry, leftovers);
+    // A home whose helper would not load under this same version waits for Murage's next update: an automatic attempt (the schedule,
+    // the end of Murage's own turn, a start) leaves it as it is owed and works on the other homes. "Try again now" plans it too.
+    const deferred = allHomes ? [] : this.deferredHomes(entry);
+    const deferredKeys = new Set(deferred.map((home) => homeKey(home.engine, home.home)));
+    const homes = deferred.length ? entry.engineHomes.filter((home) => !deferredKeys.has(homeKey(home.engine, home.home))) : entry.engineHomes;
     // The engines' history and messages.db's log are independent: both start now, and neither waits for the other (an engine
     // job can take as long as its own timeout).
-    const engineWork = folders.length ? this.removeEngineHistory(entry, { homes: entry.engineHomes, folders: [...new Set(folders)], memoryFolders, sessions: entry.engineSessions ?? {}, redoDir: this.redoDir, nativeDir: this.dir.native }) : undefined;
+    const engineWork = folders.length ? this.removeEngineHistory(entry, { homes, folders: [...new Set(folders)], memoryFolders, sessions: entry.engineSessions ?? {}, redoDir: this.redoDir, nativeDir: this.dir.native }) : undefined;
     // The rows are gone and overwritten (secure_delete); the write-ahead log still holds the old pages until the log is
     // copied and restarted. That happens without holding the writer lock (wal-maintenance.ts); if a reader holds the log
     // for now, the scrub stays owed there and is retried, and the next start's TRUNCATE settles it after a crash.
     const walWork = scrubWalAfterDelete().catch((error) => { console.warn("conversation deletion: the write-ahead log was not scrubbed yet", error); return false; });
-    const engines = await engineWork;
+    const ran = await engineWork;
     await walWork;
+    // the homes left for Murage's next update are still owed, for the same reason
+    const engines = ran && deferred.length ? {
+      ...ran,
+      failed: [...new Set([...ran.failed, ...deferred.map((home) => home.home)])],
+      failedHomes: [...ran.failedHomes, ...deferredKeys],
+      homeReasons: { ...ran.homeReasons, ...Object.fromEntries([...deferredKeys].map((key) => [key, "helper-unloadable"])) },
+    } : ran;
     if (engines) { removed.push(...engines.removed); failed.push(...engines.failed); leftovers.push(...engines.leftovers); }
     // Once the retry schedule has run out, what is still owed is named for the owner (it is NOT done) and tried again every few
     // hours and at each start. The words come from ownerNoticeText by reason code; nothing from the engine's error is shown.
+    let owedSaved = false;
     if (engines && failed.length) {
       // Every home still owed is kept (what "Try again now" compares). An engine that has its files open is named at once (the line
       // still waits for the grace period); every other reason only once the retry schedule has run out.
       const exhausted = this.retriesExhausted(entry);
+      const version = this.appVersion();
       const items = engines.failedHomes.map((key) => {
         const code = owedCodeOf(engines.homeReasons?.[key]);
-        return { engine: key.split("\0")[0] as DeletionEngine, code, home: key, ...(engines.homeApps?.[key] ? { app: engines.homeApps[key] } : {}), ...(exhausted || WAITS_FOR_OWNER.has(code) ? { named: true } : {}) };
+        return { engine: key.split("\0")[0] as DeletionEngine, code, home: key, ...(engines.homeApps?.[key] ? { app: engines.homeApps[key] } : {}), ...(exhausted || NAMED_AT_ONCE.has(code) ? { named: true } : {}), ...(code === "helper-unloadable" && version ? { version } : {}) };
       });
-      this.setOwed(entry, items);
+      owedSaved = this.setOwed(entry, items);
     } else if (!failed.length) this.setOwed(entry, []);
     // A home in a synced folder: once its copy is gone the owner is told, once, that the cloud provider may keep older copies.
     if (engines) this.tellSynced(entry, engines);
@@ -673,7 +724,14 @@ export class ConversationDeletions {
       state.ownTurnLosses = ownTurnKeys.length > 0 ? (state.ownTurnLosses ?? 0) + 1 : 0;
       state.holders = this.holdersOf(entry); state.looks = 0;
       this.retries.set(entry.id, state);
-      this.scheduleRetry(entry);
+      // Only engine homes whose helper would not load under THIS version are owed: no retry can change that before Murage is updated,
+      // so no timer is armed (the 6-hour cadence would run for good). Every start still runs reconcile in full (rows, records, Murage's
+      // own files) and leaves only those homes out; a start of another version, and "Try again now", plan them too. Anything else
+      // owed (a file of Murage's own, another home, an unknown version, a notice the journal did not keep) keeps the schedule.
+      const onlyUnloadable = !!engines && !!this.appVersion() && !ownTurnKeys.length && failed.length === engines.failed.length && engines.failedHomes.length > 0
+        && engines.failedHomes.every((key) => owedCodeOf(engines.homeReasons?.[key]) === "helper-unloadable");
+      if (onlyUnloadable && owedSaved) { if (state.timer) { clearTimeout(state.timer); state.timer = undefined; } }
+      else this.scheduleRetry(entry);
     }
     return { leftovers: dedupeLeftovers(leftovers), failed };
   }
@@ -715,10 +773,22 @@ export class ConversationDeletions {
   private rev = Date.now();
   /** The synced-folder lines (a copy is gone, and the cloud provider may keep older ones); shown for a few minutes. There is no
    * "Removed from <Engine>." line: when nothing is owed, nothing is shown. */
-  private doneLines: Array<{ id: string; text: string; at: number }> = [];
+  private doneLines: Array<{ id: string; text: string; at: number; botIds?: string[] }> = [];
   private readonly expiryTimers = new Set<ReturnType<typeof setTimeout>>();
 
   currentRev(): number { return this.rev; }
+
+  private appVersion(): string | null {
+    try { return (this.options.appVersion ?? runningAppVersion)() ?? null; } catch { return null; }
+  }
+
+  /** The homes of this deletion owed because the helper would not load under THIS version (none when the version is unknown). */
+  private deferredHomes(entry: PendingConversationDeletion): DeletionEngineHome[] {
+    const version = this.appVersion();
+    if (!version) return [];
+    const keys = new Set((normalizeOwed(entry.owed)?.items ?? []).filter((item) => item.code === "helper-unloadable" && item.version === version && item.home).map((item) => item.home!));
+    return keys.size ? entry.engineHomes.filter((home) => keys.has(homeKey(home.engine, home.home))) : [];
+  }
 
   private labelFor(engine: DeletionEngine): string {
     const kind = Object.keys(ENGINE_FOR_DRIVER).find((driver) => ENGINE_FOR_DRIVER[driver] === engine);
@@ -733,11 +803,12 @@ export class ConversationDeletions {
     try { entries = this.pending(); } catch { return [{ id: "owed:journal", text: JOURNAL_UNREADABLE_TEXT, tryAgain: true, covers: [] }]; }
     const grace = this.options.owedGraceMs ?? OWED_GRACE_MS;
     const now = Date.now();
-    const byEngine = new Map<DeletionEngine, { code: OwedCode; app?: string; deletions: Set<string>; covers: Set<string> }>();
+    const byEngine = new Map<DeletionEngine, { code: OwedCode; app?: string; deletions: Set<string>; covers: Set<string>; bots: Set<string> }>();
     for (const entry of entries) {
       for (const item of normalizeOwed(entry.owed)?.items ?? []) {
-        if (!item.named || item.dismissedAt !== undefined || now - item.since < grace) continue;
-        const line = byEngine.get(item.engine) ?? { code: item.code, deletions: new Set<string>(), covers: new Set<string>() };
+        if (!item.named || item.dismissedAt !== undefined || now - item.since < graceOf(item, grace)) continue;
+        const line = byEngine.get(item.engine) ?? { code: item.code, deletions: new Set<string>(), covers: new Set<string>(), bots: new Set<string>() };
+        for (const id of deletionBotIds(entry)) line.bots.add(id);
         if (rankOf(item.code) < rankOf(line.code)) { line.code = item.code; line.app = item.app; }
         else if (item.code === line.code && !line.app && item.app) line.app = item.app;
         line.deletions.add(entry.id);
@@ -745,9 +816,9 @@ export class ConversationDeletions {
         byEngine.set(item.engine, line);
       }
     }
-    const out: OwnerNotice[] = [...byEngine].map(([engine, line]) => ({ id: `owed:${engine}`, text: ownerNoticeText(this.labelFor(engine), line.code, line.app, line.deletions.size), tryAgain: true, covers: [...line.covers] }));
+    const out: OwnerNotice[] = [...byEngine].map(([engine, line]) => ({ id: `owed:${engine}`, text: ownerNoticeText(this.labelFor(engine), line.code, line.app, line.deletions.size), tryAgain: true, covers: [...line.covers], label: this.labelFor(engine), ...(line.code === "engine-open" ? { byItself: true as const } : {}), ...(line.code === "helper-unloadable" ? { waitsForUpdate: true as const } : {}), ...(line.bots.size ? { botIds: [...line.bots].sort() } : {}) }));
     this.expireDoneLines();
-    for (const line of this.doneLines) out.push({ id: line.id, text: line.text, tryAgain: false, covers: [line.id] });
+    for (const line of this.doneLines) out.push({ id: line.id, text: line.text, tryAgain: false, covers: [line.id], ...(line.botIds?.length ? { botIds: line.botIds } : {}) });
     return out;
   }
 
@@ -793,7 +864,7 @@ export class ConversationDeletions {
     const now = Date.now();
     let next = Number.POSITIVE_INFINITY;
     for (const entry of entries) for (const item of normalizeOwed(entry.owed)?.items ?? []) {
-      if (item.named && item.dismissedAt === undefined && now - item.since < grace) next = Math.min(next, item.since + grace);
+      if (item.named && item.dismissedAt === undefined && now - item.since < graceOf(item, grace)) next = Math.min(next, item.since + graceOf(item, grace));
     }
     if (this.graceTimer) { clearTimeout(this.graceTimer); this.graceTimer = undefined; }
     if (!Number.isFinite(next)) return;
@@ -821,7 +892,8 @@ export class ConversationDeletions {
       const engine = key.split("\0")[0] as DeletionEngine;
       const id = `${entry.id}:${engine}:synced`;
       if (this.doneLines.some((line) => line.id === id)) continue;
-      this.doneLines.push({ id, text: syncedHomeText(this.labelFor(engine)), at: Date.now() });
+      const botIds = deletionBotIds(entry);
+      this.doneLines.push({ id, text: syncedHomeText(this.labelFor(engine)), at: Date.now(), ...(botIds.length ? { botIds } : {}) });
       const timer = setTimeout(() => { this.expiryTimers.delete(timer); this.expireDoneLines(); }, DONE_LINE_MS + 50);
       timer.unref?.();
       this.expiryTimers.add(timer);
@@ -834,10 +906,11 @@ export class ConversationDeletions {
 
   /** Saves what is owed with the pending record, then tells the owner. What the owner did with a line (`dismissedAt`) and when an engine
    * first became owed (`since`) are merged from the record as it is saved NOW, never from the copy this attempt started with: a dismiss
-   * made while the attempt ran stays. When the record cannot be read or written nothing is published (the window keeps what it showed). */
-  private setOwed(entry: PendingConversationDeletion, items: Array<Omit<OwedItem, "since">>): void {
+   * made while the attempt ran stays. When the record cannot be read or written nothing is published (the window keeps what it showed).
+   * True when what is owed is in the journal now (saved, unchanged, or the record is no longer pending); false when it could not be. */
+  private setOwed(entry: PendingConversationDeletion, items: Array<Omit<OwedItem, "since">>): boolean {
     let entries: PendingConversationDeletion[];
-    try { entries = this.pending(); } catch (error) { console.warn("conversation deletion: could not read what is owed", error); return; }
+    try { entries = this.pending(); } catch (error) { console.warn("conversation deletion: could not read what is owed", error); return false; }
     const at = entries.findIndex((item) => item.id === entry.id);
     const saved = at >= 0 ? normalizeOwed(entries[at]!.owed) : normalizeOwed(entry.owed);
     const now = Date.now();
@@ -855,14 +928,15 @@ export class ConversationDeletions {
       // is told again once the window was last told at least owedRetellMs ago.
       const retell = this.options.owedRetellMs ?? OWED_RETELL_MS;
       if (owed?.items.some((item) => item.dismissedAt === undefined) && Date.now() - this.lastPublishAt >= retell) this.publish();
-      return;
+      return true;
     }
     if (at >= 0) {
       if (owed) entries[at] = { ...entries[at]!, owed }; else delete entries[at]!.owed;
-      try { this.save(entries); } catch (error) { console.warn("conversation deletion: could not save what is owed", error); return; }
+      try { this.save(entries); } catch (error) { console.warn("conversation deletion: could not save what is owed", error); return false; }
     }
     if (owed) entry.owed = owed; else delete entry.owed;
     this.publish();
+    return true;
   }
 
   /** Every engine still owed, by engine (the code the owner can most act on), across all pending deletions. */
@@ -885,7 +959,7 @@ export class ConversationDeletions {
       if (state?.timer) clearTimeout(state.timer);
       this.retries.delete(entry.id);
       started++;
-      try { await this.finish(entry); } catch (error) { console.warn("conversation deletion: a retry could not finish", error); }
+      try { await this.finish(entry, { allHomes: true }); } catch (error) { console.warn("conversation deletion: a retry could not finish", error); }
     }
     // The owner asked: tell the window what is owed now, once, so a window that missed or dropped an earlier broadcast (a dismiss
     // answered while a deletion became owed) shows it without a reconnect. A line the owner dismissed is not told again.
@@ -908,12 +982,19 @@ export class ConversationDeletions {
     if (!started) return "Nothing is waiting to be removed.";
     const parts: string[] = [];
     if (finished.length) parts.push(`Removed from ${names(finished)}.`);
-    if (!finished.length && unchanged) parts.push("Nothing changed yet. Murage keeps trying by itself.");
-    else {
+    const update = still.filter((item) => item.code === "helper-unloadable").map((item) => item.engine);
+    const others = still.filter((item) => item.code !== "helper-unloadable").map((item) => item.engine);
+    if (!finished.length && unchanged) {
+      // an engine whose helper cannot load is never promised a try before Murage's next update
+      if (!update.length) parts.push("Nothing changed yet. Murage keeps trying by itself.");
+      else if (!others.length) parts.push("Nothing changed. Murage tries again after its next update.");
+      else parts.push(`Nothing changed yet. Murage keeps trying ${names(others)} by itself, and tries ${names(update)} again after its next update.`);
+    } else {
       const open = still.filter((item) => item.code === "engine-open").map((item) => item.engine);
-      const waiting = still.filter((item) => item.code !== "engine-open").map((item) => item.engine);
+      const waiting = still.filter((item) => item.code !== "engine-open" && item.code !== "helper-unloadable").map((item) => item.engine);
       if (open.length) parts.push(`${names(open)} ${open.length > 1 ? "are" : "is"} still open.`);
       if (waiting.length) parts.push(`Still finishing ${names(waiting)}.`);
+      if (update.length) parts.push(`Murage tries ${names(update)} again after its next update.`);
     }
     return parts.join(" ");
   }
@@ -1090,6 +1171,25 @@ export class ConversationDeletions {
         homeReasons[key] ??= "engine-open";
         if (seen.app) homeApps[key] = seen.app;
       }
+      // DELETION-WHILE-OPEN-107: a home the owner's own CLI keeps open (Claude Code, Fuigo, Grok in a terminal, all day) still has the
+      // conversation's OWN files removed now: its project or session folder and its session side files, each under the per-file hold,
+      // with no database opened (engine-history-run.ts openHomePass). Its shared files and databases stay owed for the closed pass.
+      const openPass = [...stuck].filter((key) => foreign[key] !== undefined && OPEN_PASS_ENGINES.has(homeOf(key).engine));
+      if (openPass.length) {
+        try {
+          // the plan first, and the ids it found saved, before anything they name is removed: a transcript removed now is where the
+          // closed pass would otherwise learn the session id of a side file that stays owed
+          const planned = await runEngineHistoryOffThread({ ...base, kind: "openPass", known: entry.engineDiscovery ?? {}, only: openPass });
+          const ready = Object.keys(planned.plans ?? {});
+          if (ready.length) {
+            const merged = { ...(entry.engineDiscovery ?? {}), ...(planned.discovery ?? {}) };
+            if (Object.keys(merged).length) entry.engineDiscovery = merged;
+            this.saveEngineState(entry);
+            const ran = await runEngineHistoryOffThread({ ...base, kind: "openPass", known: entry.engineDiscovery ?? {}, only: ready, plans: planned.plans });
+            removed.push(...ran.removed);
+          }
+        } catch (error) { console.warn("conversation deletion: the open-engine pass did not run; the closed pass still does it all", error); }
+      }
       const open = keys.filter((key) => !stuck.has(key));
       if (this.options.pauseBackgroundRuns && open.length) {
         try { unpause = await this.options.pauseBackgroundRuns([...new Set(open.map((key) => homeOf(key).engine))]); } catch (error) { console.warn("conversation deletion: the background runs were not paused", error); }
@@ -1206,13 +1306,16 @@ export class ConversationDeletions {
     }
   }
 
-  /** The last foreign-holder line written per engine home (`engine\0home`), so a home held open for hours logs once, not on every try. */
-  private readonly foreignLogged = new Map<string, string>();
+  /** The last foreign-holder line written per engine home (`engine\0home`): what held it and when, so a home held open for hours logs
+   * once, not on every try. */
+  private readonly foreignLogged = new Map<string, { signature: string; at: number }>();
   /** How many attempts in a row skipped each home for another program (see FULL_TRY_EVERY). */
   private readonly foreignSkips = new Map<string, number>();
 
   /** The homes of this attempt that a program Murage did not start has open (engine-history-run.ts probeEngineHomes, off the thread).
-   * Logs one `home not read` line per home when what holds it changes (by program and rule, not by pid), never on every try. */
+   * Logs one `home not read` line per home when another program starts holding it, then at most once an hour while it is still held,
+   * and only when what holds it changed (by program and rule, not by pid). The owner's own Claude Code starts a shell or a search
+   * for every tool call, so its holder list changes all day; a line per change was a line every few seconds (Sean's 1.0.6 log). */
   private async foreignHomes(base: Omit<EngineHistoryJob, "kind" | "known" | "only" | "plans">, keys: string[]): Promise<NonNullable<EngineHistoryResult["foreignHomes"]>> {
     let probed: EngineHistoryResult;
     try { probed = await runEngineHistoryOffThread({ ...base, kind: "probe", only: keys }); } catch { return {}; }
@@ -1222,10 +1325,12 @@ export class ConversationDeletions {
       if (!seen) { this.foreignLogged.delete(key); this.foreignSkips.delete(key); continue; }
       const holders = seen.holders ?? [];
       const signature = JSON.stringify([seen.app ?? null, seen.kinds ?? [...new Set(holders.map((item) => `${item.name ?? ""}|${item.by}`))].sort()]);
-      if (this.foreignLogged.get(key) === signature) continue;
-      if (this.foreignLogged.size >= 256) this.foreignLogged.delete(this.foreignLogged.keys().next().value!);
-      this.foreignLogged.set(key, signature);
-      console.warn(`engine history: ${key.split("\0")[0]} home not read: open by process holders ${JSON.stringify(holders)} (another program; tried again in the background, logged again only when this changes)`);
+      const last = this.foreignLogged.get(key);
+      const now = Date.now();
+      if (last && (last.signature === signature || now - last.at < (this.options.foreignRelogMs ?? FOREIGN_RELOG_MS))) continue;
+      if (!last && this.foreignLogged.size >= 256) this.foreignLogged.delete(this.foreignLogged.keys().next().value!);
+      this.foreignLogged.set(key, { signature, at: now });
+      console.warn(`engine history: ${key.split("\0")[0]} home not read: open by process holders ${JSON.stringify(holders)} (another program; tried again in the background, logged again at most hourly while it changes)`);
     }
     return found;
   }

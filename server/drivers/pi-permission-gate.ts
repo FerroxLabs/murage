@@ -184,6 +184,18 @@ const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
     read: [".envrc"],
     bash: ["*.envrc*"],
   },
+  // Fuigo 1.0.32 holds its own config files and permission grant stores as protected paths, at every mode but its
+  // always-approve (shell_access.rs, permission manager): a write to one changes the rules that decide every later
+  // call (an ask rule removed, a standing grant added). A request Fuigo raises for one is never answered by a mode or
+  // a grant here either. The global home (~/.fuigo, or one named by $FUIGO_HOME) and a workspace's .fuigo alike.
+  {
+    id: "fuigo-engine-config",
+    // Read as text, so it holds any call that names Fuigo's home (`.fuigo`, `$FUIGO_HOME`) and one of these files anywhere
+    // in it, in either order: `~/.fuigo/./config.toml`, `.fuigo.\config.toml` and `cd ~/.fuigo && printf … >> config.toml` too.
+    re: /(?:\.fuigo(?![\w-])|FUIGO_HOME)[\s\S]*?(?:(?:config|managed_config|requirements|sandbox)\.toml|permission[^\\/\s"']*\.toml)(?![\w-])|(?:config|managed_config|requirements|sandbox)\.toml(?![\w-])[\s\S]*?(?:\.fuigo(?![\w-])|FUIGO_HOME)/i,
+    read: ["~/.fuigo/config.toml", "~/.fuigo/managed_config.toml", "~/.fuigo/requirements.toml", "~/.fuigo/sandbox.toml", "~/.fuigo/sessions/*/permission*.toml", ".fuigo/config.toml"],
+    bash: ["*.fuigo/config.toml*", "*.fuigo/managed_config.toml*", "*.fuigo/requirements.toml*", "*.fuigo/sandbox.toml*", "*.fuigo/sessions/*/permission*"],
+  },
 ];
 
 interface SensitiveTextRow { id: string; re: RegExp }
@@ -796,7 +808,7 @@ export const GATE_UNASKED: ReadonlyArray<readonly [string, readonly string[]]> =
   ["own:agents", [
     "list_bots", "get_bot", "check_delegation", "wait_delegation", "get_permission_status", "list_routines", "skills_list",
     "list_reference_packs", "list_prompt_blocks", "get_prompt_block", "list_image_models", "tool_result_read", "murage_help",
-    "project_read_messages",
+    "project_read_messages", "venue_read_messages",
     "ask_bot", "delegate_bot", "project_assign", "project_accept", "project_card_manage", "project_review_assign",
     "project_criteria", "project_blocked", "project_brief_update", "project_card_update", "project_review_result",
     "project_suggest", "project_summary_update", "project_bring_in",

@@ -962,7 +962,10 @@ const playTurn = (prompt: JsonValue) => {
       if (!gate || !existsSync(gate)) return;
       unlinkSync(gate);
       clearInterval(timer);
-      out({ type: "result", is_error: false, stop_reason: "end_turn", total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 0 } });
+      // Gate release models a completed reply. An empty result deliberately
+      // exercises the product's empty-turn error and cannot model settlement.
+      out({ type: "assistant", message: { content: [{ type: "text", text: "Fixture turn finished." }] } });
+      out({ type: "result", is_error: false, stop_reason: "end_turn", total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 } });
       turnRunning = false;
       finishIfDone();
     }, gate ? 10 : 1_000);
@@ -1063,6 +1066,11 @@ const playTurn = (prompt: JsonValue) => {
       },
     });
   });
+  if (mode === "tool-heartbeat") {
+    // Upstream #3328: Claude Code sends this every 30 s while a tool runs.
+    out({ type: "tool_progress", tool_use_id: "tu-1-heartbeat-0", tool_name: "Bash",
+      parent_tool_use_id: "tu-1", elapsed_time_seconds: 30, heartbeat: true });
+  }
   out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tu-1", is_error: false }] } });
 
   const finish = () => {
@@ -1081,6 +1089,12 @@ const playTurn = (prompt: JsonValue) => {
       usage: { input_tokens: 10, cache_read_input_tokens: 2, output_tokens: 5 },
       modelUsage: runningCost.modelUsage,
     });
+    // A background task's heartbeat after the turn settled: nothing is open
+    // for it to keep alive.
+    if (mode === "tool-heartbeat-late") {
+      out({ type: "tool_progress", tool_use_id: "tu-bg-heartbeat-0", tool_name: "Bash",
+        parent_tool_use_id: "tu-bg", elapsed_time_seconds: 30, heartbeat: true });
+    }
     turnRunning = false;
     finishIfDone();
   };

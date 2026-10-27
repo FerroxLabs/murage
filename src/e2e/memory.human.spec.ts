@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { launchVerificationServer, runControlMurage, type VerificationServer } from "../../scripts/control-murage.ts";
 import { openSidebar } from "./fixtures.ts";
+import { chooseFromHeaderMenu, expectChatHeader, openBotProfile, phoneLayout } from "./chat-controls.ts";
 import { openSidebarPlace } from "./sidebar-nav";
 import { storeAnchorMessage } from "../../server/memory/testing/anchor-message.ts";
 
@@ -145,7 +146,7 @@ test("reviewed memory survives sharing and correction, then forgetting excludes 
   };
   await page.addInitScript(()=>localStorage.setItem("murage-email-gate","skipped"));
   await page.goto(origin);
-  await expect(page.getByRole("button",{name:/^Open .+'s profile$/}).first()).toBeVisible();
+  await expectChatHeader(page);
   // The Flux key banner that used to sit here went with the 0.1.58 first run
   // (311387b1): the key is offered in the Chief's conversation now.
   await expect(page.getByRole("complementary",{name:"Let your bots pick the right model",exact:true})).toHaveCount(0);
@@ -219,7 +220,7 @@ test("bot memory keeps workspace settings out of the narrow profile panel", asyn
   if(await invitation.count())await invitation.getByRole("button",{name:"Not now",exact:true}).last().click();
   const sidebar=await openSidebar(page);
   await sidebar.getByText("Memory browser fixture",{exact:true}).click();
-  await page.getByRole("button",{name:"Open Memory browser fixture's profile",exact:true}).first().click();
+  await openBotProfile(page,"Memory browser fixture");
   // The profile is Bot settings now (51786fe3); its Memory section holds the launcher.
   const settings=page.getByRole("dialog",{name:"Bot settings"});
   const sectionSelect=settings.getByRole("combobox",{name:"Section",exact:true});
@@ -263,7 +264,7 @@ test("owner imports full notebooks, tracks changes, and selects existing Flux ex
   expect(defaults.learning.connection).toMatchObject({instanceId:"@murage/flux-fast",source:"default"});
   await page.addInitScript(()=>localStorage.setItem("murage-email-gate","skipped"));
   await page.goto(origin);
-  await expect(page.getByRole("button",{name:/^Open .+'s profile$/}).first()).toBeVisible();
+  await expectChatHeader(page);
   const sidebar=await openSidebar(page);
   // Connection selection moved to the visible Learning card in Settings > Memory.
   await sidebar.getByRole("button",{name:"App settings",exact:true}).click();
@@ -294,7 +295,19 @@ test("owner imports full notebooks, tracks changes, and selects existing Flux ex
   await clickAction(page,"Import selected notes","import-commit");
   expect(readFileSync(join(root,"MEMORY.md"),"utf8")).toBe(original);
   writeFileSync(join(root,"MEMORY.md"),"CHANGED_NOTEBOOK_CANARY");
-  await expect.poll(async()=> (await action({action:"list",botId:bot.id,state:"active",query:"CHANGED_NOTEBOOK_CANARY"})).records.length,{timeout:30000}).toBeGreaterThan(0);
+  try{
+    await expect.poll(async()=> (await action({action:"list",botId:bot.id,state:"active",query:"CHANGED_NOTEBOOK_CANARY"})).records.length,{timeout:30000}).toBeGreaterThan(0);
+  }catch(error){
+    // Diagnostics only (1.0.7 CI 40281567347 stalled here once and left no server-side trace): what the tracked sync last recorded for
+    // each notebook link (status, error, hash, last check) and the memory mode, read through the owner's inventory, which writes nothing.
+    // Only the sync's own verdict per link (by index: no selection, id or hash); a diagnostic that fails never hides the real failure.
+    try{
+      const links=await action({action:"import-inventory"}).then(result=>(result.links as Array<{status?:unknown;error?:unknown;checkedAt?:unknown}>).map((link,index)=>({index,status:link.status,error:link.error??null,checkedAt:link.checkedAt})),(cause:unknown)=>`inventory unreadable: ${String(cause)}`);
+      const mode=await api("GET","/api/memory/status").then(status=>status.mode,(cause:unknown)=>`status unreadable: ${String(cause)}`);
+      console.log(JSON.stringify({trackedNotebookDiagnostics:{at:Date.now(),mode,links}}));
+    }catch(diagnostic){console.log(`trackedNotebookDiagnostics unavailable: ${String(diagnostic)}`);}
+    throw error;
+  }
   await clickAction(page,"Find existing notebooks","import-inventory");
   const tracked=page.getByRole("group",{name:"Tracked notebook: Memory browser fixture · MEMORY.md",exact:true});
   await expect(tracked).toBeVisible();
@@ -318,7 +331,9 @@ test("paged bot memory handles 3000 records in both skins without accumulating c
   if(await invitation.count())await invitation.getByRole("button",{name:"Not now",exact:true}).last().click();
   const sidebar=await openSidebar(page);
   await sidebar.getByText("Memory browser fixture",{exact:true}).click();
-  await page.getByRole("button",{name:"Open memory for Memory browser fixture",exact:true}).first().click();
+  // The header's memory button; a phone keeps it in the "..." menu.
+  if(await phoneLayout(page))await chooseFromHeaderMenu(page,"Memory");
+  else await page.getByRole("button",{name:"Open memory for Memory browser fixture",exact:true}).first().click();
   const panel=page.getByRole("region",{name:"Bot memory",exact:true});
   await panel.getByRole("textbox",{name:"Search memory",exact:true}).fill("PAGEDMEMORY");
   await panel.getByRole("button",{name:"Search",exact:true}).click();

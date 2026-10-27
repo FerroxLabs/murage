@@ -48,7 +48,7 @@ import { fluxKey } from "../flux-config.ts";
 import { applyFluxSurface, isFluxModel } from "../flux-routing.ts";
 import { claudeCustomHeadersValue, fluxMemoryContextForTurn, fluxMemoryDecision, logFluxMemoryHeaders, type FluxMemoryDecision } from "../flux-memory-headers.ts";
 import { mergeFluxCatalog } from "../flux-surface.ts";
-import { awaitCliTreeStopped, CLI_CALLER_DEADLINE_MS, cliTreeConfirmedStopped, cliTreeStoppedSignal, forceCliTreeStopped, brokerSocketPath, describeSpawnFailure, engineJob, engineProcessPid, execCli, killCliTree, spawnCli } from "../procs.ts";
+import { awaitCliTreeStopped, CLI_CALLER_DEADLINE_MS, cliTreeConfirmedStopped, cliTreeStoppedSignal, forceCliTreeStopped, brokerSocketPath, cliVersionReader, describeSpawnFailure, engineJob, engineProcessPid, execCli, killCliTree, spawnCli, hostPowerKeyField } from "../procs.ts";
 import { cachedCliVersion } from "../cli-version-cache.ts";
 import { anyMountIncomplete, bindCredentialPath, clearMountsIncomplete, connectorMountRefsOf, connectorScopeOf, createTurnCredentialStore, splitTurnSecrets, type TurnCredentialStore } from "./turn-credentials.ts";
 import { descendantBaseline, untrackedDescendants, processNames } from "./process-tree.ts";
@@ -108,7 +108,7 @@ import { BROKER_UNAVAILABLE_NOTE, brokerPathForArgv } from "../permission-pipe.t
 import { normalizeEngineCommands } from "../engine-commands.ts";
 import { engineCommandText } from "../../shared/engine-commands.ts";
 import { engineClosedLine } from "./stop-copy.ts";
-import { acpEngineExitStderrText } from "./acp/core.ts";
+import { EngineStderrCapture, engineStderrRedacted } from "./acp/core.ts";
 import { connectedAppsServerName } from "../../shared/connected-app-names.ts";
 import type { McpMountRecord } from "../../shared/mount-identity.ts";
 import { OWN_BUILTINS, OWN_UNASKED, type OwnBuiltin } from "../../shared/own-servers.ts";
@@ -168,7 +168,12 @@ export function claudeAuthStatus(
       const said = `${stderr ?? ""}\n${stdout ?? ""}`;
       const refusal = claudeLaunchRefusal(said);
       if (refusal) resolve({ signedIn: false, refusal });
-      else resolve({ signedIn: false, error: (stderr ?? "").trim().slice(-300) || error?.message || "auth status printed no status" });
+      // The exec buffer keeps stderr from its start (maxBuffer); it is redacted whole before the shown cut (acp/core.ts EngineStderrCapture).
+      else {
+        const truncated = (error as { stderrTruncated?: boolean } | null)?.stderrTruncated === true;
+        const detail = engineStderrRedacted(String(stderr ?? ""), truncated).trim().slice(-300).trim();
+        resolve({ signedIn: false, error: detail || engineStderrRedacted(error?.message ?? "", false).trim().slice(-300).trim() || "auth status printed no status" });
+      }
     });
   });
 }
@@ -2835,7 +2840,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       turn: SessionTurn | null;
       idleTimer: ReturnType<typeof setTimeout> | null;
       closing: boolean;
-      stderr: string;
+      /** the process's stderr, kept from its start and redacted whole before any cut */
+      stderr: EngineStderrCapture;
       /** The CLI's running total that the next turn's cost is measured from
        * (see turnCostFromRunningTotal): what --resume restored until the
        * first turn settles, then the last settled turn's total_cost_usd.
@@ -3857,6 +3863,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         system: turn.system ?? null,
         args: keyArgs,
         settingsRev: claudeSettingsRevision(env, cwd),
+        // S4 power (design section 7): a constant on a key whose spawn is under the block (Windows only for Claude).
+        ...hostPowerKeyField({ posixHostPower: false }),
       });
 
       // Reuse the live process when it is idle, unchanged, and is the session
@@ -4292,7 +4300,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           cwd,
           env,
           stdio: ["pipe", "pipe", "pipe"],
-        }, engineJob());
+          // S4 power (design section 2): the Windows job and the privilege removal; no hostPower on Mac or Linux, where the
+          // block does not nest with the CLI's own command sandbox.
+        }, engineJob({ posixHostPower: false }));
       } catch (error) {
         // The fence above released the prompt to a write that will not happen (turn-attribution.ts, I14).
         turn.notWritten?.();
@@ -4324,7 +4334,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         turn: launchTurn,
         idleTimer: null,
         closing: false,
-        stderr: "",
+        stderr: new EngineStderrCapture(),
         commands: { requestId: `murage-commands-${newId()}` },
         costTotal: undefined,
         cliIdentity,
@@ -4761,6 +4771,15 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             }
             break;
           }
+          case "tool_progress":
+            // Upstream #3328 (OpenMausBot, Apache-2.0): Claude Code sends one
+            // every 30 s while a tool runs. Forward it as tool activity so a
+            // long build or sub-agent is not taken for a stalled turn. Only
+            // while a turn is open: after settle a background task's tick
+            // has nothing to keep alive, and under the launching dispatch's
+            // id it would keep a newer turn on this thread from stalling.
+            if (session.turn && !session.turn.settled) emit({ ...base(threadId, session.turn.turnId), type: "item.updated", itemType: "tool" });
+            break;
           case "result":
             // A stopped/completed background task can produce its own
             // synthetic follow-up result before the submitted user's reply.
@@ -4864,8 +4883,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       registerIntake(threadId, child.stdout, child);
 
       child.stderr.on("data", (c) => {
-        session.stderr += c;
-        if (session.stderr.length > 8192) session.stderr = session.stderr.slice(-8192);
+        session.stderr.push(c);
       });
 
       child.on("error", (e) => {
@@ -4894,12 +4912,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           // error card would contradict the update offer (audit round 1, Kimi 2).
           retryState.delete(threadId);
           settle(false, "update_required");
-        } else if (session.turn && !session.turn.settled && code !== 0 && !session.initHandled && claudeLaunchRefusal(session.stderr)) {
+        } else if (session.turn && !session.turn.settled && code !== 0 && !session.initHandled && claudeLaunchRefusal(session.stderr.text)) {
           // The CLI refused its own command line at startup (it exited before any `init`): one of
           // Murage's launch flags it does not know (too old: the update offer) or a managed MCP
           // policy that forbids --strict-mcp-config. Neither is transient, so no retry and no
           // generic exit card. A process that got as far as `init` is never read this way.
-          const refusal = claudeLaunchRefusal(session.stderr)!;
+          const refusal = claudeLaunchRefusal(session.stderr.text)!;
           retryState.delete(threadId);
           emit({
             ...base(threadId, currentTurnId()), type: "runtime.error", message: refusal.message, setup: true,
@@ -4908,10 +4926,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           settle(false, refusal.stopReason);
         } else if (session.turn && !session.turn.settled) {
           const closingTurn = session.turn;
-          const message = `claude exited ${code} before result${session.stderr ? `: ${session.stderr.trim().slice(-300)}` : ""}`;
+          const message = `claude exited ${code} before result${session.stderr.text ? `: ${session.stderr.text.trim().slice(-300)}` : ""}`;
           const verdict = classifyError({ exitCode: code, stderr: message });
           // The classifier reads the raw exit above; the chat reads plain words.
-          const shown = engineClosedLine(ENGINE, code, undefined, session.stderr ? acpEngineExitStderrText(session.stderr.trim().slice(-300)) : undefined);
+          const shown = engineClosedLine(ENGINE, code, undefined, session.stderr.lastWords());
           if (
             !retry.cancelled &&
             code !== 0 &&
@@ -5301,6 +5319,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       if (session || left.length) console.info(`claude reset thread=${threadId} ms=${Date.now() - started} old=${exited ? "exited" : "killed"}${left.length ? " unconfirmed" : ""}`);
     };
 
+    // Upstream #3433: a slow probe keeps the last version; only a real miss reads as not installed.
+    const snapshotVersionOf = cliVersionReader(config.cli);
     const snapshot = async (): Promise<ProviderSnapshot> => {
       const env = claudeEnvironment(undefined, accountEnvironment());
       // item 5: both probes run on the handed map a turn gets, never the raw owner environment
@@ -5308,8 +5328,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       try { probeEnv = await claudeProbeEnv(env, config.configDir); }
       catch (error) { return { state: "unavailable", reason: `Murage could not prepare Claude's environment: ${(error as Error).message}` }; }
       const probed = await cachedCliVersion(config.cli, probeEnv, execCli);
-      const version = probed.error ? null : probed.stdout.trim();
-      if (!version) return { state: "unavailable", reason: `\`${config.cli}\` CLI not found` };
+      // Upstream #3433: a slow probe keeps the last version; only a real miss reads as not installed.
+      const probe = snapshotVersionOf(probed.error, probed.stdout);
+      if (!("version" in probe)) return { state: "unavailable", reason: probe.reason };
+      const { version } = probe;
       // Below the qualified minimum a turn would be refused: offer the update, not a sign-in.
       if (claudeVersionVerdict(version) === "below") return { state: "unavailable", version, reason: CLAUDE_UPDATE_MESSAGE };
       // The probe runs with the flags a turn gets, so it judges the login a turn will have.
@@ -5393,9 +5415,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             env,
             ...(memory ? { cwd: memory.cwd } : {}),
           },
+          // S4 power (design sections 1 and 7): the Windows job, as the turn spawn; no hostPower on Mac or Linux.
+          engineJob({ posixHostPower: false }),
         );
         let stdout = "";
-        let stderr = "";
+        const stderr = new EngineStderrCapture();
         /** stderr as it stood when `init` arrived; null until then */
         let preInitStderr: string | null = null;
         let result: { text: string; isError: boolean } | null = null;
@@ -5411,7 +5435,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         const readLine = (line: string) => {
           let frame: { type?: unknown; subtype?: unknown; result?: unknown; is_error?: unknown };
           try { frame = JSON.parse(line); } catch { return; }
-          if (frame.type === "system" && frame.subtype === "init" && preInitStderr === null) preInitStderr = stderr;
+          if (frame.type === "system" && frame.subtype === "init" && preInitStderr === null) preInitStderr = stderr.text;
           if (frame.type === "result") result = { text: typeof frame.result === "string" ? frame.result : "", isError: frame.is_error === true };
         };
         const onAbort = () => {
@@ -5442,16 +5466,16 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           }
         });
         child.stderr.on("data", (chunk: string) => {
-          stderr = (stderr + chunk).slice(-8_192);
+          stderr.push(chunk);
         });
         child.on("error", (error) => finish(error));
         child.on("close", (code) => {
           if (stdout.trim()) readLine(stdout);
-          const failed = result?.isError ? (result.text.trim() || `Claude review failed`) : null;
+          const failed = result?.isError ? (engineStderrRedacted(result.text, false).trim() || `Claude review failed`) : null;
           if (code === 0 && result && !failed) { finish(); return; }
           // a refusal of the launch flags only counts from before the CLI's `init`
-          const refusal = claudeLaunchRefusalError(preInitStderr ?? stderr);
-          finish(refusal ?? new Error(failed ?? (stderr.trim() || (code === 0 ? "Claude review gave no result" : `Claude review exited ${code}`))));
+          const refusal = claudeLaunchRefusalError(preInitStderr ?? stderr.text);
+          finish(refusal ?? new Error(failed ?? (stderr.redactedEnd(8_192) || (code === 0 ? "Claude review gave no result" : `Claude review exited ${code}`))));
         });
         if (signal?.aborted) onAbort();
         else {

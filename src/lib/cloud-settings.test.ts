@@ -79,7 +79,7 @@ describe("Settings in a Cloud window", () => {
       if (aliasOnly && !pageOnly) {
         // The page renders in a Cloud window, so the alias's card is hidden there.
         expect(alias).toBe("experimental");
-        expect(modal).toContain('{!cloudCardHidden("experimental-settings", cloud) && desktop === true && <div id="experimental-settings"');
+        expect(modal).toContain('{!cloudCardHidden("skill-recorder-heading", cloud) && <Anchor id="skill-recorder-heading"><WorkspaceFeatureRow feature="skillRecorder" /></Anchor>}');
       } else if (!aliasOnly && pageOnly) {
         // The alias may be used but its page may not: only the alias's card renders.
         expect(alias).toBe("images");
@@ -112,7 +112,7 @@ describe("Settings search in a Cloud window", () => {
   // The modal and search read one list: every card the modal hides on a page a Cloud window renders.
   it("each of this computer's cards on a Cloud-usable page is a registered card, and the modal gates it by that list", () => {
     const modal = read("SettingsModal.tsx");
-    expect([...CLOUD_COMPUTER_ONLY_CARDS].sort()).toEqual(["diagnostics-heading", "experimental-settings", "mcp-servers-heading", "setup-heading", "startup-heading", "updates-heading"]);
+    expect([...CLOUD_COMPUTER_ONLY_CARDS].sort()).toEqual(["diagnostics-heading", "mcp-servers-heading", "setup-heading", "skill-recorder-heading", "startup-heading", "updates-heading"]);
     for (const anchor of CLOUD_COMPUTER_ONLY_CARDS) {
       const card = cards.find((entry) => entry.anchor === anchor);
       expect(card, anchor).toBeDefined();
@@ -125,7 +125,7 @@ describe("Settings search in a Cloud window", () => {
     expect(modal).not.toMatch(/!cloud &&|!isCloudOrigin\(\) &&/);
   });
 
-  it("finds none of Startup, Set up again, Updates, Diagnostics, Experimental or MCP servers, and keeps their pages' other cards", async () => {
+  it("finds none of Startup, Set up again, Updates, Diagnostics, Teach a skill or MCP servers, and keeps their pages' other cards", async () => {
     const { searchSettingsCards } = await import("./settings-search");
     for (const word of ["startup", "set up", "updates", "diagnostics", "teach a skill", "mcp"]) {
       const cloudHits = searchSettingsCards(word, true, cards, undefined, undefined, true).map((hit) => hit.card.anchor);
@@ -137,6 +137,7 @@ describe("Settings search in a Cloud window", () => {
     kept("appearance", "appearance-heading");
     kept("shortcuts", "shortcuts-heading");
     kept("connected apps", "connections-heading");
+    kept("skills", "skills-settings-title");
   });
 
   it("changes nothing outside a Cloud window", async () => {

@@ -1338,10 +1338,11 @@ export function parentlessAsksInterruptedByRestart(db: DatabaseSync): Array<{ id
  */
 export function reconcileRoomRequestsAtBoot(db: DatabaseSync, now: number, hooks: CompletionHooks = {}): { unknown: number; wakes: RoomRequest[] } {
   return withTx(db, () => {
-    // A request whose handoff row is still queued is that row's partner: the row decides it (a start cut short before the provider took it is
+    // A request whose handoff row is still there is that row's partner: the row decides it (a start cut short before the provider took it is
     // run once more, server/delegations.ts reconcileStartedDelegations), so the sweep leaves it running.
-    // A row the owner has to decide (held: started, no start time) is not a partner: its request is interrupted like any other.
-    const partner = tableExists(db, "pending_delegations") ? " AND NOT EXISTS (SELECT 1 FROM pending_delegations p WHERE p.id=room_requests.id AND NOT (p.phase='started' AND p.started_at IS NULL))" : "";
+    // BOOT-SETTLE-108 3: a held row (started, no start time) is a partner too: the hand-off's own settling ends its request, from the receipt it saved
+    // when it has one, so a restart between that receipt and its settle never ends the request as interrupted first.
+    const partner = tableExists(db, "pending_delegations") ? " AND NOT EXISTS (SELECT 1 FROM pending_delegations p WHERE p.id=room_requests.id)" : "";
     const rows = (db.prepare(`SELECT * FROM room_requests WHERE (state IN ('running','waiting_owner') OR (state='queued' AND work_item_id IS NOT NULL AND dispatched_at IS NOT NULL))${partner} ORDER BY created_at, id`).all() as Record<string, unknown>[]).map(fromRow);
     const wakes: RoomRequest[] = [];
     let unknown = 0;

@@ -330,7 +330,9 @@ describe("planning never touches the -wal and -shm of an engine's database", () 
     // macOS reports a folder's changes through FSEvents: late, coalesced, and including what happened just before the watch
     // began (the fixture's own database writes, the removal above). A quiet spell is no proof that those are all in, so each
     // phase ends with a marker file written into the folder: the stream is ordered, so once the marker is heard, every change
-    // made before it has been heard too. Count only what arrives between the two markers.
+    // made before it has been heard too. Count only what arrives between the two markers. FSEvents also starts its stream a
+    // moment after watch() returns, and a change made before the stream is live is never reported at all, so the marker is
+    // written again every 250 ms until one write is heard: any write of it that is heard was made after everything before it.
     let marker = "";
     let markerHeard: (() => void) | undefined;
     const watcher = watch(sessions, (_event, name) => {
@@ -340,11 +342,16 @@ describe("planning never touches the -wal and -shm of an engine's database", () 
     });
     const drain = async (tag: string): Promise<void> => {
       marker = `.r22-marker-${tag}-${process.pid}`;
+      const path = join(sessions, marker);
+      let writes = 0;
+      const write = () => { writes += 1; writeFileSync(path, `${tag} ${writes}`); };
+      let again: ReturnType<typeof setInterval> | undefined;
       const heard = new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error(`the folder watch never reported ${marker}`)), 15_000);
-        markerHeard = () => { clearTimeout(timer); resolve(); };
+        const timer = setTimeout(() => { clearInterval(again); reject(new Error(`the folder watch never reported ${marker} (written ${writes} times)`)); }, 15_000);
+        markerHeard = () => { clearTimeout(timer); clearInterval(again); resolve(); };
       });
-      writeFileSync(join(sessions, marker), tag);
+      write();
+      again = setInterval(write, 250);
       await heard;
       rmSync(join(sessions, marker), { force: true });
       marker = "";
@@ -424,7 +431,7 @@ describe.skipIf(!built || !posix)("real addon: writers() and a file a renamed wr
 
   it("writers() names a process with the file open for writing, by its identity, and not a reader, a zombie or this process", () => {
     const addon = loadExclusionAddon()!;
-    expect(addon.version()).toBe(9);
+    expect(addon.version()).toBe(10);
     const file = join(mkdtempSync(join(scratch, "w-")), "f.jsonl");
     writeFileSync(file, "x\n");
     const own = openSync(file, "a");

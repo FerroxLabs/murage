@@ -172,7 +172,7 @@ describe("card one: hello", () => {
   it("asks for two things, offers a way past, and says detection is already running", () => {
     const markup = render("hello", "welcome");
     expect(markup).toContain(copy.heading);
-    expect(markup).toContain(copy.lead);
+    expect(markup).toContain(copy.lead.replace(/'/g, "&#x27;"));
     expect(markup).toContain(`aria-label="${copy.nameLabel}"`);
     expect(markup).toContain(`aria-label="${copy.emailLabel}"`);
     expect(markup).toContain(copy.skip);
@@ -183,11 +183,16 @@ describe("card one: hello", () => {
     // The step that builds the owner's list, so its words are the ones that
     // were signed off rather than a paraphrase of them. Both fields say what
     // they are FOR: a field with no stated purpose is a field people skip.
-    expect(copy.heading).toBe("First, who am I working for?");
-    expect(copy.lead).toContain("Your name is what I call you.");
-    expect(copy.lead).toContain("how Murage tells you when there is something new it can do");
+    // Sean's Halbert wording, 10-26: single opt-in, so no confirm line, and
+    // the setup guide is the reason to give a real address.
+    expect(copy.heading).toBe("Where should I send your setup guide?");
+    expect(copy.lead).toContain("We've put together a short guide to getting the most out of Murage from day one");
+    expect(copy.lead).toContain("Tell me your name so I know who I'm working for");
+    expect(copy.lead).toContain("every new release, insight, how-to and tutorial we put out");
+    expect(copy.lead).not.toMatch(/confirm/i);
     expect(copy.submit).toBe("Continue");
-    expect(copy.skip).toBe("Skip for now");
+    expect(copy.skip).toBe("Skip");
+    expect(copy.lead).toContain(`press ${copy.skip}.`);
   });
 
   /**
@@ -213,7 +218,13 @@ describe("card one: hello", () => {
       .filter((entry) => readFileSync(root + entry.name, "utf8").includes("ownerEmail"))
       .map((entry) => entry.name);
     expect(consumers, "something now reads an owner email; the lead may say so again").toEqual([]);
-    expect(copy.lead).not.toMatch(/reach you|away from this computer|email you|send you/i);
+    expect(copy.lead).not.toMatch(/reach you|away from this computer|email you/i);
+    // The one mail the lead DOES promise (1.0.7): the address goes to the news
+    // list, which sends the getting set up guide at once. That promise is only
+    // true while the server really posts it there.
+    const news = readFileSync(root + "news-signup.ts", "utf8");
+    expect(news).toContain('NEWS_SUBSCRIBE_PATH = "/api/news/subscribe"');
+    expect(news).toContain('DEFAULT_NEWS_BASE_URL = "https://murage.ai"');
   });
 
   it("will not save until the email is one", () => {

@@ -54,6 +54,24 @@ const WORKER = `
     const exec = cp.execFileSync;
     cp.execFileSync = (path, ...args) => path === '/usr/sbin/sysctl' ? bootProbe() : exec(path, ...args);
   }
+  // /proc/<pid>/stat seam (Linux liveness): fault one answer, or record every read.
+  const procReads = [];
+  // (no backslashes: this source is a template literal)
+  const isProcStat = (path) => typeof path === 'string' && path.startsWith('/proc/') && path.endsWith('/stat') && /^([0-9]+|self)$/.test(path.slice(6, -5));
+  if (process.env.LEASE_TEST_PROCSTAT !== undefined || process.env.LEASE_TEST_PROCWATCH !== undefined) {
+    const read = fs.readFileSync;
+    fs.readFileSync = (path, ...args) => {
+      if (!isProcStat(path)) return read(path, ...args);
+      procReads.push(path);
+      const mode = process.env.LEASE_TEST_PROCSTAT;
+      if (mode === 'throw') throw Object.assign(new Error('no proc'), { code: 'EACCES' });
+      if (mode === 'garble') return 'garbled';
+      if (mode === 'nospace') return '1 (x)Z 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1';
+      if (mode === 'comm') { const real = String(read(path, ...args)); return real.slice(0, real.indexOf('(') + 1) + 'x) Z ' + real.slice(real.indexOf('(') + 1); }
+      return read(path, ...args);
+    };
+  }
+  if (process.env.LEASE_TEST_PLATFORM) Object.defineProperty(process, 'platform', { value: process.env.LEASE_TEST_PLATFORM });
   if (process.env.LEASE_TEST_UPTIME !== undefined) os.uptime = () => {
     if (process.env.LEASE_TEST_UPTIME === 'throw') throw new Error('uptime unavailable');
     return Number(process.env.LEASE_TEST_UPTIME);
@@ -70,7 +88,7 @@ const WORKER = `
   if (process.env.LEASE_TEST_PS !== undefined) {
     const table = JSON.parse(process.env.LEASE_TEST_PS);
     const native = {
-      version: () => 9,
+      version: () => 10,
       processStart(pid) {
         probes.push({ mode: 'sync', pid });
         const entry = pid === process.pid && table.self !== undefined ? table.self.replace('SELF_PID', String(process.pid)) : table[String(pid)];
@@ -166,13 +184,13 @@ const WORKER = `
       } else if (message.command === 'release') {
         process.send({event:'released', released:lease.release(), ...seam});
       } else if (message.command === 'inspect') {
-        process.send({event:'inspect', result:{...mod.inspectDataDirLease(process.env.LEASE_TEST_DATA_DIR)}, ...seam});
+        process.send({event:'inspect', result:{...mod.inspectDataDirLease(process.env.LEASE_TEST_DATA_DIR)}, procReads, ...seam});
       } else if (message.command === 'generic-child') {
         const result = spawnSync(process.execPath, ['--eval', 'process.stdout.write(process.env.${PRIVATE_ENV} === undefined ? "absent" : "present")'], {env:process.env,encoding:'utf8'});
         process.send({event:'generic-child', inherited:result.stdout !== 'absent'});
       } else if (message.command === 'exit') process.exit(0);
     } catch (error) {
-      process.send({event:'error', code:error.code, message:error.message, hasCause:error.cause !== undefined, attempts, ...seam});
+      process.send({event:'error', code:error.code, message:error.message, hasCause:error.cause !== undefined, attempts, procReads, ...seam});
     }
   });
   process.send({event:'ready', pid:process.pid});
@@ -189,7 +207,7 @@ function worker(f, environment = {}) {
   child.stderr.on("data", (chunk) => { stderr = (stderr + chunk).slice(-8192); });
   const exited = new Promise((resolve) => child.once("close", resolve));
   const item = {
-    child, messages, exited,
+    child, messages, exited, stderr: () => stderr,
     async event(name) {
       await until(() => messages.some((message) => message.event === name) || child.exitCode !== null || child.signalCode !== null, `worker ${name}`);
       const index = messages.findIndex((message) => message.event === name);
@@ -1387,4 +1405,170 @@ test("parent release that clears an exited child's record also clears the child'
   assert.equal(existsSync(heldOf(f.childLeasePath, childOwner)), false);
   // the in-process child handle finds its record cleared by the parent
   assert.throws(() => child.release(), errorCode("LEASE_NOT_OWNED"));
+});
+
+// ---- LEASE-REAP-RELAUNCH-107 F2: Linux liveness reads /proc state and starttime ----
+// A zombie answers kill(pid, 0), so under a PID 1 that never reaps (WSL) a killed server child held its lease for ever and
+// every relaunch exited LEASE_CHILD_BUSY. Only processes these tests spawn are signalled; a reused PID is a sleeper of ours.
+const linuxOnly = { skip: process.platform !== "linux" };
+const procState = (pid) => { try { const raw = readFileSync(`/proc/${pid}/stat`, "latin1"); return raw.slice(raw.lastIndexOf(")") + 1).trim().split(/\s+/)[0]; } catch { return null; } };
+const procStart = (pid) => { const raw = readFileSync(`/proc/${pid}/stat`, "latin1"); return raw.slice(raw.lastIndexOf(")") + 1).trim().split(/\s+/)[19]; };
+// A zombie of our own: the shell backgrounds a short child, then execs into a sleep that never waits for it.
+async function zombie() {
+  const holder = spawn("/bin/sh", ["-c", "sleep 0.05 & echo $!; exec sleep 60"], { stdio: ["ignore", "pipe", "ignore"] });
+  const exited = new Promise((resolve) => holder.once("close", resolve));
+  sleepers.add({ child: holder, exited });
+  let out = "";
+  holder.stdout.on("data", (chunk) => { out += chunk; });
+  await until(() => /^[0-9]+\n/.test(out), "zombie pid");
+  const pid = Number(out.trim());
+  await until(() => procState(pid) === "Z", "child turns zombie");
+  return pid;
+}
+const writeLinuxIdentity = (recordPath, owner, start) => {
+  const value = { version: 3, pid: owner.pid, token: owner.token, start };
+  writeFileSync(identityOf(recordPath, owner), `${JSON.stringify(value)}\n`, { mode: 0o600 });
+  return value;
+};
+
+test("Linux: a zombie server child no longer blocks relaunch, and its dead primary is retired", linuxOnly, async () => {
+  const f = fixture();
+  const pid = await zombie();
+  writeRecord(f.childLeasePath, record(pid));
+  writeRecord(f.leasePath, record(await deadPid()));
+  assert.equal(inspectDataDirLease(f.dataDir).status, "available");
+  const lease = acquireDataDirLease(f.dataDir);
+  assert.equal(lease.ownerPid, process.pid);
+  assert.equal(lease.release(), true);
+  assert.equal(procState(pid), "Z");
+  rmSync(f.childLeasePath);
+});
+
+test("Linux: a zombie primary is retired", linuxOnly, async () => {
+  const f = fixture();
+  const stale = record(await zombie());
+  writeRecord(f.leasePath, stale);
+  const lease = acquireDataDirLease(f.dataDir);
+  assert.notEqual(JSON.parse(readFileSync(f.leasePath, "utf8")).token, stale.token);
+  assert.equal(lease.release(), true);
+});
+
+test("Linux: a stopped orphan child is a possible writer and is refused, never retired", linuxOnly, async () => {
+  const f = fixture();
+  const stopped = await sleeper();
+  stopped.kill("SIGSTOP");
+  await until(() => procState(stopped.pid) === "T", "child stops");
+  const child = record(stopped.pid);
+  writeRecord(f.childLeasePath, child);
+  assert.equal(inspectDataDirLease(f.dataDir).code, "LEASE_CHILD_BUSY");
+  assert.throws(() => acquireDataDirLease(f.dataDir), errorCode("LEASE_CHILD_BUSY"));
+  assert.deepEqual(JSON.parse(readFileSync(f.childLeasePath, "utf8")), child);
+  rmSync(f.childLeasePath);
+  stopped.kill("SIGCONT");
+});
+
+test("Linux: a running orphan child after its main was killed is a live writer: refused, record kept, never signalled", linuxOnly, async () => {
+  const f = fixture();
+  const running = await sleeper();
+  await until(() => ["S", "R"].includes(procState(running.pid)), "child runs");
+  const child = record(running.pid);
+  writeRecord(f.childLeasePath, child);
+  writeLinuxIdentity(f.childLeasePath, child, procStart(running.pid));
+  writeRecord(f.leasePath, record(await deadPid()));
+  assert.equal(inspectDataDirLease(f.dataDir).code, "LEASE_CHILD_BUSY");
+  assert.throws(() => acquireDataDirLease(f.dataDir), errorCode("LEASE_CHILD_BUSY"));
+  assert.deepEqual(JSON.parse(readFileSync(f.childLeasePath, "utf8")), child);
+  assert.equal(stillRunning(running), true);
+  rmSync(f.childLeasePath);
+  rmSync(identityOf(f.childLeasePath, child));
+});
+
+test("Linux: a reused PID is disproved by its starttime; the unrelated process is untouched", linuxOnly, async () => {
+  const f = fixture();
+  const unrelated = await sleeper();
+  const realStart = procStart(unrelated.pid);
+  const stale = record(unrelated.pid);
+  writeRecord(f.leasePath, stale);
+  writeLinuxIdentity(f.leasePath, stale, String(BigInt(realStart) + 1n));
+  const staleChild = record(unrelated.pid);
+  writeRecord(f.childLeasePath, staleChild);
+  writeLinuxIdentity(f.childLeasePath, staleChild, "1");
+  assert.equal(inspectDataDirLease(f.dataDir).status, "available");
+  const lease = acquireDataDirLease(f.dataDir);
+  assert.equal(existsSync(identityOf(f.leasePath, stale)), false);
+  assert.equal(lease.release(), true);
+  assert.equal(stillRunning(unrelated), true);
+  rmSync(f.childLeasePath);
+  rmSync(identityOf(f.childLeasePath, staleChild));
+});
+
+test("Linux: a matching starttime, a legacy record and a malformed identity all keep exclusion", linuxOnly, async () => {
+  const f = fixture();
+  const holder = await sleeper();
+  const owner = record(holder.pid);
+  writeRecord(f.leasePath, owner);
+  assert.throws(() => acquireDataDirLease(f.dataDir), errorCode("LEASE_BUSY")); // legacy: no identity
+  writeLinuxIdentity(f.leasePath, owner, procStart(holder.pid));
+  assert.throws(() => acquireDataDirLease(f.dataDir), errorCode("LEASE_BUSY")); // true owner
+  for (const bad of [{ start: "x1" }, { start: 5 }, { pid: holder.pid + 1, start: "1" }, { token: randomUUID(), start: "1" }, { extra: true, start: "1" }]) {
+    writeFileSync(identityOf(f.leasePath, owner), JSON.stringify({ version: 3, pid: holder.pid, token: owner.token, ...bad }), { mode: 0o600 });
+    assert.throws(() => acquireDataDirLease(f.dataDir), errorCode("LEASE_BUSY"));
+  }
+  assert.deepEqual(JSON.parse(readFileSync(f.leasePath, "utf8")), owner);
+  rmSync(f.leasePath);
+  rmSync(identityOf(f.leasePath, owner));
+});
+
+for (const [name, mode] of [["an unreadable", "throw"], ["a garbled", "garble"], ["zombie-looking comm in a", "comm"], ["a no-space-after-comm", "nospace"]]) {
+  test(`Linux: ${name} /proc stat fails closed`, linuxOnly, async () => {
+    const f = fixture();
+    const holder = await sleeper();
+    const owner = record(holder.pid);
+    writeRecord(f.leasePath, owner);
+    // unreadable or garbled: even a wrong starttime cannot disprove; a comm that looks like a zombie state: the true start
+    writeLinuxIdentity(f.leasePath, owner, mode === "comm" ? procStart(holder.pid) : "1");
+    const contender = worker(f, { LEASE_TEST_PROCSTAT: mode });
+    assert.equal((await contender.command("acquire")).code, "LEASE_BUSY");
+    assert.equal((await contender.command("inspect")).result.code, "LEASE_BUSY");
+    assert.deepEqual(JSON.parse(readFileSync(f.leasePath, "utf8")), owner);
+    await stop(contender);
+    rmSync(f.leasePath);
+    rmSync(identityOf(f.leasePath, owner));
+  });
+}
+
+test("Linux: owners publish a v3 starttime identity and remove it on release", linuxOnly, async () => {
+  const f = fixture();
+  const holder = worker(f);
+  const acquired = await holder.command("acquire");
+  assert.equal(acquired.event, "acquired", JSON.stringify(acquired));
+  const owner = JSON.parse(readFileSync(f.leasePath, "utf8"));
+  assert.deepEqual(Object.keys(owner).sort(), ["boot", "createdAt", "host", "pid", "token", "uptime", "version"]);
+  assert.equal(owner.version, 1);
+  const identity = JSON.parse(readFileSync(identityOf(f.leasePath, owner), "utf8"));
+  assert.deepEqual(identity, { version: 3, pid: acquired.pid, token: owner.token, start: procStart(acquired.pid) });
+  const { environment } = await holder.command("capability");
+  const child = worker(f, environment);
+  assert.equal((await child.command("acquire")).delegated, true);
+  const childOwner = JSON.parse(readFileSync(f.childLeasePath, "utf8"));
+  assert.equal(JSON.parse(readFileSync(identityOf(f.childLeasePath, childOwner), "utf8")).version, 3);
+  assert.equal((await child.command("release")).released, true);
+  assert.equal(existsSync(identityOf(f.childLeasePath, childOwner)), false);
+  assert.equal((await holder.command("release")).released, true);
+  assert.equal(existsSync(identityOf(f.leasePath, owner)), false);
+});
+
+test("macOS and Windows liveness never read /proc and are unchanged", async () => {
+  const f = windowsFixture();
+  const holder = await sleeper();
+  const owner = record(holder.pid);
+  writeRecord(f.leasePath, owner);
+  for (const environment of [{ LEASE_TEST_PLATFORM: "darwin" }, { LEASE_TEST_WIN32: "1", SystemRoot: SYSTEM_ROOT }]) {
+    const contender = worker(f, { LEASE_TEST_PROCWATCH: "1", ...environment });
+    const outcome = await contender.command("acquire");
+    assert.equal(outcome.code, "LEASE_BUSY", JSON.stringify(outcome) + contender.stderr());
+    assert.deepEqual(outcome.procReads, []);
+    await stop(contender);
+  }
+  rmSync(f.leasePath);
 });

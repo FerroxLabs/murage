@@ -28,14 +28,14 @@ function evidence(threadId:string,text:string){
 }
 function proposal(threadId:string,audienceKey:string,text:string){
   const source=evidence(threadId,text),context:SkillProcedureContext={audienceKey,allowedScopeIds:[source.scopeId]};
-  const pin=createProcedurePin(botId,threadId,[],[],undefined,context),base=readProcedureBundle(botId,threadId,pin).imported[0]!;
+  const pin=createProcedurePin(botId,threadId,[],[],undefined,context,{ownerTurn:true,shipped:()=>true}),base=readProcedureBundle(botId,threadId,pin).imported[0]!;
   const state=memoryState();
   const snapshot:ProcedureReviewSnapshot={requestId:`review:${threadId}`,scopeId:source.scopeId,target:{kind:"skill",scopeId:source.scopeId,ownerId:botId,artifactId:name,baseRevision:base.revision!,threadId,bundleId:pin.bundleId},evidenceDigest:procedureCandidateHash(JSON.stringify([source])),policyRevision:state.policyRevision,deletionEpoch:state.deletionEpoch,learningRevision:1,evidence:[source],outcomeBasis:"source-reported"};
   const candidate=md(text),receipt:ProcedureEvaluationReceipt={id:`receipt:${threadId}`,requestId:snapshot.requestId,snapshotDigest:procedureSnapshotDigest(snapshot),targetDigest:procedureTargetDigest(snapshot.target),evidenceDigest:snapshot.evidenceDigest,candidate,candidateHash:procedureCandidateHash(candidate),evaluator:"fixture-evaluator",decision:"accepted",heldout:{corpusDigest:"a".repeat(64),untouched:true,cases:2,baseline:0,candidate:1,regressions:0},budgetRespected:true,cancelled:false};
   return {source,context,pin,snapshot,receipt};
 }
 function pinnedText(threadId:string,context:SkillProcedureContext){
-  const pin=createProcedurePin(botId,threadId,[],[],undefined,context),prepared=preparePinnedProcedures(botId,threadId,pin,true,context);
+  const pin=createProcedurePin(botId,threadId,[],[],undefined,context,{ownerTurn:true,shipped:()=>true}),prepared=preparePinnedProcedures(botId,threadId,pin,true,context);
   const file=JSON.parse(/Read (".*")\./.exec(prepared.importedPrompt)![1]!);
   return {pin,text:readFileSync(file,"utf8"),file};
 }
@@ -84,7 +84,7 @@ it("scoped rollback retains audience/evidence and cannot use the global rollback
   const second=proposal("second",first.context.audienceKey,"PRIVATE TWO");
   second.context.allowedScopeIds=[...second.context.allowedScopeIds,...first.context.allowedScopeIds];
   // Build its target pin again under the combined current grant.
-  const secondPin=createProcedurePin(botId,"second",[],[],undefined,second.context);
+  const secondPin=createProcedurePin(botId,"second",[],[],undefined,second.context,{ownerTurn:true,shipped:()=>true});
   second.snapshot.target={...second.snapshot.target,bundleId:secondPin.bundleId,baseRevision:readProcedureBundle(botId,"second",secondPin).imported[0]!.revision!};
   second.receipt.targetDigest=procedureTargetDigest(second.snapshot.target);second.receipt.snapshotDigest=procedureSnapshotDigest(second.snapshot);
   publishEvaluatedScopedSkill(second.snapshot,second.receipt,second.context);

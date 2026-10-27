@@ -10,6 +10,7 @@
 //   - stop→archived ~5s, resume→idle ~8s; disk persists, tmux does not.
 //   - X11 desktop with Chrome + Ghostty; passwordless sudo; node 24.
 //   - the dedicated IP rotates across archive/resume — never persist it.
+import { engineStderrRedacted } from "./drivers/acp/core.ts";
 import type { AppConfig } from "./config.ts";
 import { ensureRemoteCuaCommand, remoteComputerBootstrapCommand } from "./remote-computer.ts";
 
@@ -256,7 +257,7 @@ export async function provisionBox(cfg: AppConfig, botId: string, botName: strin
       await new Promise((r) => setTimeout(r, 3000));
     }
     if (!boot?.ok) {
-      const detail = boot?.stderr?.slice(0, 200) || (boot?.exitCode != null ? `exit ${boot.exitCode}` : "no response");
+      const detail = engineStderrRedacted(boot?.stderr ?? "", false).slice(0, 200) || (boot?.exitCode != null ? `exit ${boot.exitCode}` : "no response");
       throw new Error(`box setup failed: ${detail}`);
     }
 
@@ -311,7 +312,7 @@ export async function execOnBox(cfg: AppConfig, botId: string, command: string) 
   const ready = await waitReady(cfg, box.id, 60_000);
   if (!ready) throw new Error("box did not wake");
   const out = await runCommand(cfg, box.id, String(command ?? "").slice(0, 4000));
-  return { exitCode: out.exitCode, stdout: out.stdout.slice(-4000), stderr: out.stderr.slice(-2000) };
+  return { exitCode: out.exitCode, stdout: engineStderrRedacted(out.stdout, false).slice(-4000), stderr: engineStderrRedacted(out.stderr, false).slice(-2000) };
 }
 
 // Screenshot for the Computer panel + screen-in-chat. Two hops: capture
@@ -423,7 +424,7 @@ export async function screenshotBox(cfg: AppConfig, botId: string, knownBoxId?: 
   }
   const out = await runCommand(cfg, boxId, SHOT_CMD, { timeoutMs: 60_000 });
   if (!/captured/.test(out.stdout)) {
-    throw new Error(out.stderr.slice(0, 200) || "screen capture failed on the box");
+    throw new Error(engineStderrRedacted(out.stderr, false).slice(0, 200) || "screen capture failed on the box");
   }
   const data = await readFileBase64(cfg, boxId, PANEL_PATH);
   if (!data) throw new Error("could not read the frame back from the box");

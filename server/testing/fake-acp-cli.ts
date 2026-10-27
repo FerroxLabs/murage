@@ -33,6 +33,8 @@
 //                     shell command in its arguments, answering with a frame
 //                   | wrapped-tool-image  a custom MCP server's screenshot made
 //                     through a "use a tool" wrapper, answering with an image
+//                   | permission-always-only (same ask, offering only
+//                     allow_always and reject_once)
 //                   | permission-session-first (same ask, but the options are
 //                     ordered the way Fuigo's edit prompt really orders them:
 //                     `allow_always` "allow all edits this session" BEFORE
@@ -139,7 +141,7 @@
 //                        handed, for the one test that must call Murage
 //                        with the turn's own capability; never a dump
 //   FAKE_ACP_UNIQUE_SESSIONS=1  every session/new opens its own session id
-//                        (`fake-acp-session-<pid>-<n>`), the way a real engine does
+//                        (`fake-acp-session-<launch-id>-<n>`), the way a real engine does
 //   FAKE_ACP_LATE_FRAMES_MS  N: N ms after this process's FIRST prompt completes,
 //                        send that session's late output (an agent_message_chunk
 //                        "LATE FRAME FROM THE EARLIER SESSION") and a
@@ -154,6 +156,9 @@
 //                        servers actually changed
 //   FAKE_ACP_MCP_READY_DELAY_MS  announce that long after the servers were
 //                        handed over (a real engine announces once they settle)
+//   FAKE_ACP_MCP_READY_GATE_FILE  also wait for this file before announcing
+//                        readiness, so a test can inspect the real process tree
+//                        before a reused turn reconciles its replacement servers
 //   FAKE_ACP_MCP_LIST_READY_AFTER_MS  with FAKE_ACP_MCP_LIST "all:<status>",
 //                        report every server "initializing" until that long
 //                        after the servers were handed over
@@ -245,6 +250,7 @@
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
 import { execFileSync, spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { appendFileSync, closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync, renameSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { once } from "node:events";
 import { homedir } from "node:os";
@@ -255,6 +261,9 @@ import { fakeReviewByTool, fakeReviewReply, fakeReviewToolArgs } from "./fake-re
 import { callFirstCustomTool, customToolReply, customToolServer } from "./fake-custom-tool.ts";
 
 const mode = process.env.FAKE_ACP_MODE ?? "happy";
+// Separate cages may both call their engine PID 2. Files and session identities
+// must distinguish launches independently of the PID namespace.
+const launchId = randomUUID();
 // permission modes: the command the approval asks about (default "echo hi")
 const permissionCommand = process.env.FAKE_ACP_PERMISSION_COMMAND || "echo hi";
 // A whole tool call (JSON) for a permission-mode ask, verbatim, so a test can
@@ -345,6 +354,11 @@ const dumpEnv = Object.fromEntries(
     "FUIGO_HOME",
     "FUIGO_DISABLE_MODEL_REFRESH",
     "FUIGO_SUBAGENTS",
+    "FUIGO_WORKFLOWS",
+    "FUIGO_SCHEDULER_BACKGROUND_LOOPS",
+    "FUIGO_GOAL",
+    "FUIGO_AGENT",
+    "FUIGO_WORKSPACE_REWIND_GIT",
     "HERMES_HOME",
     "OPENCODE_DISABLE_PROJECT_CONFIG",
     // Flux Memory headers: config overlays and settings paths, no secret
@@ -654,6 +668,11 @@ const announceMcpReady = (sessionId: string, servers: unknown) => {
   if (process.env.FAKE_ACP_MCP_READY !== "1" || !Array.isArray(servers) || !servers.length) return;
   // Grok Build announces the same thing under its own name (FAKE_ACP_MCP_READY_METHOD).
   const announce = () => {
+    const gate = process.env.FAKE_ACP_MCP_READY_GATE_FILE;
+    if (gate && !existsSync(gate)) {
+      setTimeout(announce, 10).unref();
+      return;
+    }
     mcpTimeline("ready");
     out({ jsonrpc: "2.0", method: process.env.FAKE_ACP_MCP_READY_METHOD || "_fuigo/mcp_initialized", params: { sessionId, mcpToolCount: servers.length, elapsedMs: 1 } });
   };
@@ -1000,6 +1019,8 @@ function handle(msg: any) {
   }
   if (!msg.method) return;
   recordMethod(msg.method);
+  // FAKE_ACP_RPC_FULL_LOG: every client request and notification, whole (method and params), one JSON line each
+  if (process.env.FAKE_ACP_RPC_FULL_LOG) appendFileSync(process.env.FAKE_ACP_RPC_FULL_LOG, JSON.stringify({ method: msg.method, params: msg.params ?? null }) + "\n");
   if (process.env.FAKE_ACP_RPC_LOG) {
     const agentsToken = agentsTokenOf(msg.params?.mcpServers);
     appendFileSync(process.env.FAKE_ACP_RPC_LOG, JSON.stringify({
@@ -1074,7 +1095,7 @@ function handle(msg: any) {
       }
       const opts = configOptions();
       const mdls = sessionModels();
-      const newSessionId = process.env.FAKE_ACP_UNIQUE_SESSIONS ? `fake-acp-session-${process.pid}-${++sessionSeq}` : "fake-acp-session";
+      const newSessionId = process.env.FAKE_ACP_UNIQUE_SESSIONS ? `fake-acp-session-${launchId}-${++sessionSeq}` : "fake-acp-session";
       liveSession = newSessionId;
       liveServers = JSON.stringify(servers);
       startMcpChild(servers);
@@ -1196,7 +1217,7 @@ function handle(msg: any) {
       }
       // A marker is observable before the held prompt has a terminal message.
       if (process.env.FAKE_ACP_ACCEPT_DIR && ["parallel-card", "parallel-card-retry", "cancel-ack"].includes(mode)) {
-        writeFileSync(join(process.env.FAKE_ACP_ACCEPT_DIR, `${process.pid}-${msg.id}.accepted`), String(Date.now()));
+        writeFileSync(join(process.env.FAKE_ACP_ACCEPT_DIR, `${launchId}-${msg.id}.accepted`), String(Date.now()));
       }
       if (process.env.FAKE_ACP_PROMPT_DUMP) writeFileSync(process.env.FAKE_ACP_PROMPT_DUMP, JSON.stringify(msg.params?.prompt ?? null));
       // FAKE_CUSTOM_TOOL_SERVER (fake-custom-tool.ts): call the first tool of
@@ -2166,7 +2187,7 @@ function handle(msg: any) {
         });
         return;
       }
-      if (mode === "permission" || mode === "question-tool" || mode === "permission-session-first" || mode === "permission-edit-file") {
+      if (mode === "permission" || mode === "question-tool" || mode === "permission-session-first" || mode === "permission-edit-file" || mode === "permission-always-only") {
         // ask the client to approve a tool, then complete once answered.
         // question-tool: the agent routes its AskUserQuestion tool through
         // request_permission (named in the tool call), exactly the shape a
@@ -2215,6 +2236,12 @@ function handle(msg: any) {
                   { optionId: "allow-edits-session", kind: "allow_always", name: "Yes, allow all edits during this session" },
                   { optionId: "allow-once", kind: "allow_once", name: "Yes" },
                   { optionId: "reject-once", kind: "reject_once", name: "No, and tell Fuigo what to do differently" },
+                ]
+              : mode === "permission-always-only"
+              // no one-time allow on offer: only a standing grant (an engine that remembers it)
+              ? [
+                  { optionId: "allow-always", kind: "allow_always", name: "Yes, and don't ask again for this command" },
+                  { optionId: "reject-once", kind: "reject_once", name: "No" },
                 ]
               : [
                   { optionId: "allow-once", kind: "allow_once" },

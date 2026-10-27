@@ -12,6 +12,7 @@ import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
+import { OWNER_FIRST_MAX_DEFER_MS } from "./owner-first.ts";
 
 const ABOUT = "ABOUT_ME_CANARY I run a small candle shop and like short answers.";
 const posixOnly = describe.skipIf(process.platform === "win32");
@@ -31,11 +32,15 @@ const api = async (method: string, path: string, body?: unknown) => {
 };
 const idle = async () => { const state = await api("GET", "/api/bots?messages=0"); return !state.bots.some((bot: any) => bot.busy) && !state.groups.some((group: any) => group.busyBotId || group.working); };
 const marker = () => `ABOUT_TURN_${++sequence}`;
+/** A webhook run is automatic: while the whole computer looks loaded (a 3-core macOS CI runner easily does) the owner-first gate holds it,
+ * and admits it anyway once it has waited OWNER_FIRST_MAX_DEFER_MS (owner-first.ts). The wait for its turn outlasts that bound, as in
+ * unattended.test.ts. A manual run, a direct chat and a room turn are not held, so they keep the shorter wait. */
+const AUTOMATIC_RUN_WAIT_MS = OWNER_FIRST_MAX_DEFER_MS + 30_000;
 
 /** The system prompt of the first engine turn whose prompt carries `tag`, read from the dump history (one line per dumped turn). The single
  * latest-turn file is replaced by whatever turn dumps next, so a poll that lands after that never sees the turn it waits for. A routine or webhook
  * run starts late on a loaded machine (the owner-first gate backs automatic starts off), so the wait is for the turn itself, with room for that. */
-async function captured(tag: string): Promise<string> {
+async function captured(tag: string, timeout = 45000): Promise<string> {
   let found: any;
   await expect.poll(() => {
     let lines: string[] = [];
@@ -47,7 +52,7 @@ async function captured(tag: string): Promise<string> {
       if (JSON.stringify(dump.prompt ?? null).includes(tag)) { found = dump; return true; }
     }
     return false;
-  }, { timeout: 45000 }).toBe(true);
+  }, { timeout }).toBe(true);
   await expect.poll(idle, { timeout: 30000 }).toBe(true);
   return String(found.systemPrompt ?? "");
 }
@@ -112,11 +117,11 @@ posixOnly("About me", () => {
     expect(hook.status, JSON.stringify(hook.body)).toBe(201);
     const delivered = await fetch(hook.body.credential.url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ event: "ping" }) });
     expect(delivered.status).toBe(202);
-    const hooked = await captured(hookTag);
+    const hooked = await captured(hookTag, AUTOMATIC_RUN_WAIT_MS);
     expect(hooked).toContain("authenticated external webhook");
     // a webhook's payload came from outside and its reply may go back out
     expect(hooked).not.toContain(ABOUT);
-  }, 180000);
+  }, 300000);
 
   it("switches off for this bot only, and back on", async () => {
     expect((await call("PATCH", `/api/bots/${moss.id}`, { aboutMe: "no" })).status).toBe(400);

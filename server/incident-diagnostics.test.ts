@@ -22,6 +22,20 @@ it("projects actual lifecycle rows by exact generation AND turn, never raw proto
  const result=f.read();expect(result.rows).toHaveLength(1);expect(result.rows[0]).toMatchObject({event:"rpc_rejected",turnId:f.diagnostic.turnId,processGeneration:f.diagnostic.processGeneration,httpStatus:402,terminalKind:"http",observedKind:"api"});expect(result.diagnostic).toEqual(f.diagnostic);
  expect(JSON.stringify(result)).not.toMatch(/private-|private\.invalid|instanceId|driver|source|body|omittedReason/);expect(result.coverage.omittedRows).toBe(0);expect(parseIncidentDiagnostics(result)).toEqual(result);
 });
+it("preserves the engine TERM route through the recorder and incident reader", () => {
+  const f = fixture();
+  const recorder = createLifecycleRecorder({
+    threadId: f.threadId, turnId: f.diagnostic.turnId, driver: "grokAgent", instanceId: "fixture",
+    sink: (_thread, entry) => appendFileSync(f.current, f.line({ at: "2026-10-27T00:00:00.000Z", ...entry })),
+  });
+  recorder.observeStopRoute({ route: "posix_engine_sigterm", result: "requested" });
+  recorder.observeStopRoute({ route: "posix_engine_sigterm", result: "succeeded" });
+  const result = readIncidentDiagnostics({ ...f, diagnostic: { ...f.diagnostic, processGeneration: recorder.generation } });
+  expect(result.rows.map(row => [row.route, row.result])).toEqual([
+    ["posix_engine_sigterm", "requested"], ["posix_engine_sigterm", "succeeded"],
+  ]);
+  expect(parseIncidentDiagnostics(result)).toEqual(result);
+});
 it("reads exactly the writer's previous segment with remaining budget and keeps newest100 rows",()=>{
  const f=fixture();const rows=(start:number,end:number)=>Array.from({length:end-start+1},(_,index)=>f.line({...f.raw,msg:{...f.raw.msg,sequence:start+index}})).join("");writeFileSync(f.previous,rows(1,60));writeFileSync(f.current,rows(61,120));
  const result=f.read();expect(result.coverage.segments).toEqual({current:"read",previous:"read"});expect(result.rows).toHaveLength(INCIDENT_MAX_ROWS);expect(result.rows.map(row=>row.sequence)).toEqual(Array.from({length:100},(_,index)=>21+index));expect(result.coverage).toMatchObject({omittedRows:20,truncated:true,tailLimited:false});expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(INCIDENT_OUTPUT_BYTES);

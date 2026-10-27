@@ -200,17 +200,21 @@ export const FIRST_RUN_COPY = {
      * was always true, which is what the field is really for.
      */
     welcome: {
-      heading: "First, who am I working for?",
+      // Sean's Halbert wording, 10-26 (single opt-in, so no confirm line). The
+      // setup guide is the reason to give a real address; it leads the card.
+      heading: "Where should I send your setup guide?",
       lead:
-        "I am your chief of staff. Your name is what I call you. Your email is how Murage tells you when "
-        + "there is something new it can do.",
+        "We've put together a short guide to getting the most out of Murage from day one, and I'd like to send it to you. "
+        + "Tell me your name so I know who I'm working for, and your email so the guide is yours, along with every new "
+        + "release, insight, how-to and tutorial we put out. "
+        + "Or just press Skip.",
       nameLabel: "Your name",
       namePlaceholder: "What should I call you?",
       emailLabel: "Your email (optional)",
       emailPlaceholder: "you@example.com",
       submit: "Continue",
       working: "Saving",
-      skip: "Skip for now",
+      skip: "Skip",
       detecting: "While you type, I am having a look around this computer to see what is already here.",
       /** How a bot learns, said once, in plain words. It promises a note only when something was kept (design 7 and 12a). */
       learnLine: "Tell any bot how you like replies, like shorter, warmer or in bullet points, and it starts right away. For anything bigger, it asks you with one tap.",

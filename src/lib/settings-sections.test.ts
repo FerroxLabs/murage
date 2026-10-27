@@ -47,10 +47,10 @@ describe("the grouped sections", () => {
     expect(SETTINGS_GROUPS).toEqual(["you", "bots", "ai", "reach", "app"]);
     expect(SETTINGS_SECTIONS.map((entry) => `${entry.group}:${entry.id}`)).toEqual([
       "you:general", "you:aboutMe",
-      "bots:botDefaults", "bots:houseRules", "bots:skills", "bots:memory",
+      "bots:botDefaults", "bots:houseRules", "bots:skills", "bots:experimental", "bots:memory",
       "ai:models", "ai:engines", "ai:images", "ai:webSearch", "ai:voice",
       "reach:connections", "reach:channels", "reach:companion", "reach:computer",
-      "app:backups", "app:storage", "app:usage", "app:about", "app:experimental",
+      "app:backups", "app:storage", "app:usage", "app:about",
     ]);
     // a group's sections sit together, so a heading is drawn once
     const groups = SETTINGS_SECTIONS.map((entry) => entry.group);

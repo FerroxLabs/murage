@@ -62,7 +62,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { engineState, type EngineVerdict } from "./engine-closed.ts";
 import type { Barrier } from "./engine-exclusion.ts";
 import { exclOps, fsOps, mutOps, realEngineFs, type FileWriters } from "./engine-fs.ts";
-import { ASIDE_SUFFIX, UNDO_JOIN_TRIES, associationsOf, slugsReferenced, clearEdits, EngineOpenError, evalPred, HelperError, isCleared, isStrictlyInside, JSONL_FORMAT, OPEN_REASON, pathApiFor, rowSkeleton, sameFolder, skeletonOf, StaleError, stepPath, type FileRef, type HomePlanData, type JsonlFormat, type RowEdit, type RowRef, type Step } from "./engine-plan-core.ts";
+import { ASIDE_SUFFIX, UNDO_JOIN_TRIES, associationsOf, slugsReferenced, clearEdits, EngineOpenError, evalPred, HelperError, isCleared, isStrictlyInside, JSONL_FORMAT, OPEN_PASS_STEPS, OPEN_REASON, pathApiFor, rowSkeleton, sameFolder, skeletonOf, StaleError, stepPath, type FileRef, type HomePlanData, type JsonlFormat, type RowEdit, type RowRef, type Step } from "./engine-plan-core.ts";
 import { dropRedo, editsOf, listRedo, markFellBack, rebootedSince, redoDirectory, rowsRecordsOf, writeJoin, writeRedo, type AnyRecord, type JoinRecord, type RedoRecord, type RedoRow } from "./engine-redo.ts";
 import { checkpointTruncate } from "./sqlite-checkpoint.ts";
 
@@ -149,9 +149,10 @@ export function allowOwnerWrites(directory: string): void {
 
 // ── exclusion ───────────────────────────────────────────────────────────
 
-/** Nothing of an engine's is changed unless the helper that takes exclusion is there. */
+/** Nothing of an engine's is changed unless the helper that takes exclusion is there. Not there is a load failure (engine-exclusion.ts
+ * loadExclusionAddon found no usable addon, and looks only once per process): it stays so on this system until Murage is updated. */
 function needHelper(): void {
-  if (!exclOps.available()) throw new HelperError();
+  if (!exclOps.available()) throw new HelperError("helper-unloadable");
 }
 
 const aside = (path: string): string => `${path}${ASIDE_SUFFIX}`;
@@ -285,8 +286,20 @@ function markDeleteEach(files: readonly string[], judged: ReadonlyMap<string, Ju
  * (renamed aside) opened it before the rename and is running now: a closed answer after the rename means nobody can write to it. */
 function gateNow(): EngineVerdict {
   if (!currentWindow) return { state: "unknown", via: "enumeration" };
-  return engineState(currentWindow.engine, currentWindow.home, { dbs: currentWindow.dbs, identities: currentWindow.identities });
+  return openPassGate(currentWindow, engineState(currentWindow.engine, currentWindow.home, { dbs: currentWindow.dbs, identities: currentWindow.identities }));
 }
+/** DELETION-WHILE-OPEN-107: in an open-home pass the engine being open is expected (the owner's own CLI on the home); what keeps the
+ * running CLI's files out of reach is the per-file hold every step of that pass takes (renamed to a private name, then `noWriters`
+ * on macOS and Linux; a share-none handle on Windows), never the home gate. An engine that cannot be checked still stops it. Only the
+ * removal steps of an open pass run under it (OPEN_PASS_STEPS). */
+function openPassGate(window: Pick<Window, "open">, verdict: EngineVerdict): EngineVerdict {
+  return window.open && verdict.state === "open" ? { ...verdict, state: "closed" } : verdict;
+}
+/** An open-home pass never unlinks a link, at the top of a step or inside a folder it removes: the folder is put back and the home
+ * stays owed for the closed pass (Grok design r1). */
+const linksWaitInOpenPass = (links: readonly string[]): void => {
+  if (currentWindow?.open && links.length) throw new EngineOpenError("held", "a link is removed once the engine is closed");
+};
 const notClosed = (verdict: EngineVerdict): EngineOpenError =>
   new EngineOpenError(verdict.state === "unknown" ? "unchecked" : "open", verdict.state === "unknown" ? "it could not be checked" : "its engine started");
 
@@ -406,6 +419,7 @@ function removeGuarded(root: string, target: string, fp: string | undefined, out
   const stat = lstatOrNull(full);
   if (!stat) return;
   if (stat.isSymbolicLink() || !(stat.isFile() || stat.isDirectory())) {
+    linksWaitInOpenPass([full]);
     // a link is only a name
     needHelper();
     try { gUnlink(treeGuard({ files: [], links: [full] }), full); } catch (error) { if (codeOf(error) !== "ENOENT") throw error; }
@@ -434,6 +448,7 @@ function settleAside(away: string, original: string, fp: string | undefined, out
   const judged = new Map<string, Judged>();
   let same = true;
   try {
+    linksWaitInOpenPass(tree.links);
     // macOS, Linux: nobody finds the aside by name, so only a process that opened a file of it BEFORE it was moved can write to it, and
     // that process is running now. The engine must be closed now, after the move, and no process may have a file of it open for
     // writing: then what is read next is final.
@@ -513,6 +528,7 @@ function removeListed(step: Extract<Step, { k: "remove" }>, out: { removed: stri
     if (victims.length) {
       needHelper();
       const trees = victims.map((name) => ({ name, tree: treeOf(api.join(dir, name)) }));
+      linksWaitInOpenPass(trees.flatMap((item) => item.tree.links));
       // macOS, Linux: the folder is aside, so only a process that opened a file in it before the move can still write there (see
       // settleAside): the engine must be closed now and no process may have one of its files open for writing, before the reads that decide
       if (exclOps.mode === "posix") {
@@ -614,7 +630,7 @@ const LOCK_STALE_MS = 10_000;
 const LOCK_FRESH_MS = 1_000;
 
 /** The window of the home that is being run (executeEnginePlans): what stale-lock cleanup asks again before it moves anything. */
-interface Window { engine: string; home: string; dbs: string[]; identities: string[] }
+interface Window { engine: string; home: string; dbs: string[]; identities: string[]; /** DELETION-WHILE-OPEN-107: an open-home pass */ open?: boolean }
 let currentWindow: Window | null = null;
 /** The gate's whole verdict, asked again while the lock is taken: an open engine and one that could not be checked are told apart. */
 const verdictNow = (ownLock: boolean): EngineVerdict => (currentWindow ? engineState(currentWindow.engine, currentWindow.home, { dbs: currentWindow.dbs, identities: currentWindow.identities, ignoreHistoryLock: ownLock }) : { state: "unknown", via: "enumeration" });
@@ -1573,14 +1589,16 @@ const gateReason = (verdict: EngineVerdict): string => (verdict.state === "unkno
  * each file (see the header). A step that waits for another (`needs`) is skipped unless that one FINISHED in this run. A failed step
  * fails its group (later steps on the same database or file wait) and leaves the home unfinished; the other steps still run. A stale
  * step stops its home: nothing more of it runs until it is planned again. */
-export function executeEnginePlans(plans: Record<string, HomePlanData>, onStep?: (key: string, index: number) => void, hooks: ExecHooks = {}): ExecResult {
+export function executeEnginePlans(plans: Record<string, HomePlanData>, onStep?: (key: string, index: number) => void, hooks: ExecHooks = {}, mode: { openHome?: boolean } = {}): ExecResult {
   const result: ExecResult = { removed: [], failed: [], failedHomes: [], staleHomes: [], reasons: {}, homeReasons: {}, homeApps: {}, factsDelta: {}, leftovers: [] };
   for (const [key, plan] of Object.entries(plans)) {
     const delta = (result.factsDelta[key] ??= { clear: {} });
     const clear = (name: string, value: string) => { (delta.clear[name] ??= []).push(value); };
     if (plan.steps.every((step) => step.done && step.k !== "ownerCheck")) continue;
-    const window: Window = { engine: plan.engine, home: plan.home, dbs: dbsOf(plan), identities: [...(plan.identities ?? [])] };
-    const verdict = (): EngineVerdict => engineState(window.engine, window.home, { dbs: window.dbs, identities: window.identities });
+    const window: Window = { engine: plan.engine, home: plan.home, dbs: dbsOf(plan), identities: [...(plan.identities ?? [])], ...(mode.openHome ? { open: true } : {}) };
+    // an open-home pass runs nothing but its own removal steps, with no proof to wait for (checked here as well as where it is planned)
+    if (mode.openHome && plan.steps.some((step) => !OPEN_PASS_STEPS.has(step.k) || step.needs?.length)) { result.failedHomes.push(key); result.homeReasons[key] ??= "other"; continue; }
+    const verdict = (): EngineVerdict => openPassGate(window, engineState(window.engine, window.home, { dbs: window.dbs, identities: window.identities }));
     const failHome = (): void => { if (!result.failedHomes.includes(key)) result.failedHomes.push(key); };
     const pendingHome = (path: string, reason: string, app?: string): void => {
       failHome();

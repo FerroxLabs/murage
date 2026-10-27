@@ -20,6 +20,8 @@ import { approvalSummaryIsCut } from "../shared/approval-summary.ts";
 import { SENSITIVE_RULES } from "../shared/sensitive-paths.ts";
 import { globKeyRead } from "../shared/sensitive-globs.ts";
 import { powershellRunner } from "./shell/pwsh.ts";
+import { lex, Unreadable, type Part, type Word } from "./shell/lex.ts";
+import { braceCandidates } from "./shell/walk.ts";
 import { requiredFields } from "./drivers/contracts.ts";
 import { homedir } from "node:os";
 import { realPathInOrder, win32Canonical, type PlaceOptions } from "../shared/in-project.ts";
@@ -137,6 +139,98 @@ export function withoutBareCommandGrants(keys: string[]): string[] {
 function matchFirst(rules: readonly RegExp[], text: string): string | null {
   for (const re of rules) if (re.test(text)) return re.source;
   return null;
+}
+
+/**
+ * The key guard's second read of a shell command (1.0.7): its words as bash will hand them to the program, quotes
+ * removed and braces multiplied out, so a spelling split by quotes (`~/.fu''igo/config.toml`, `~/.ss"h"/id_rsa`)
+ * or by a brace (`~/.{ssh,x}/id_rsa`) meets the same rows as the plain one. A substitution's own text is read the
+ * same way. `homeGlob` names a glob or brace that picks a folder or file directly in the home folder, or anywhere
+ * under a dot folder there (`~/.*rc`, `~/*\/config.toml`, `$HOME/.fu*o/x`): no reader can say which key file that
+ * is, so it is held as one. A command the lexer cannot read gives undefined; the always-ask reader holds those.
+ */
+export function dequotedShellText(text: string, depth = 0): { text: string; globText: string; homeGlob?: string } | undefined {
+  // past this depth the text is not read: held, never handed on with its quotes
+  if (depth > 4) return { text: "", globText: "", homeGlob: "substitutions nested too deep to read" };
+  let tokens;
+  try { tokens = lex(text); } catch (error) {
+    if (error instanceof Unreadable) return undefined;
+    return { text: "", globText: "", homeGlob: "a command the reader could not read" };
+  }
+  const out: string[] = [];
+  const globOut: string[] = [];
+  let homeGlob: string | undefined;
+  // globText: the same words with a quoted or escaped `*`, `?` or `[` kept literal, so only a real glob meets the
+  // glob reader (`echo $'\?'` prints a question mark; it names no file)
+  const render = (parts: readonly Part[], forGlob: boolean): string => parts.map((part) => {
+    switch (part.kind) {
+      // an unquoted `*` or `?` lexes as a glob part, so one in a lit was quoted or escaped; an unquoted `[` stays a
+      // lit (the lexer does not model brackets), so only a quoted one is neutralized
+      case "lit": return forGlob ? part.text.replace(part.quote === "none" ? /[*?]/g : /[*?[\]]/g, "_") : part.text;
+      case "tilde": return `~${part.user}`;
+      // `${NAME:+word}` and kin: bash may hand on the operand, so it is read as words too
+      case "var": {
+        if (!part.word) return `$${part.name}`;
+        // `${X:-w}`, `${X:+w}`, `${X=w}`: the operand is a value bash may hand on. After `#`, `%`, `/`, `^`, `,` or
+        // `:` it is a pattern, a replacement or an offset: its words still meet the rows, its globs match nothing
+        const value = /^:?[-=+?]$/.test(part.op ?? "");
+        if (value) homeGlob ??= homeGlobIn(part.word);
+        const operand = render(part.word.parts, forGlob);
+        return `$${part.name} ${forGlob && !value ? operand.replace(/[*?[\]]/g, "_") : operand} `;
+      }
+      case "glob": return part.text;
+      case "brace": return "";
+      case "subst": case "arith": case "procsub": {
+        const inner = dequotedShellText(part.text, depth + 1);
+        if (inner?.homeGlob) homeGlob ??= inner.homeGlob;
+        return inner ? ` ${forGlob ? inner.globText : inner.text} ` : ` ${part.text} `;
+      }
+    }
+  }).join("");
+  for (const token of tokens) {
+    // an unquoted heredoc body runs its substitutions: the body is read as words of its own
+    if (token.kind === "op" && token.heredoc && !token.heredoc.quoted && /\$\(|`/.test(token.heredoc.body)) {
+      const body = dequotedShellText(token.heredoc.body, depth + 1)
+        ?? { text: "", globText: "", homeGlob: "a heredoc substitution the reader could not read" };
+      out.push(body.text); globOut.push(body.globText);
+      homeGlob ??= body.homeGlob;
+      continue;
+    }
+    if (token.kind !== "word") continue;
+    const word: Word = token.word;
+    homeGlob ??= homeGlobIn(word);
+    let candidates: Word[];
+    try { candidates = braceCandidates(word); } catch { candidates = [word]; homeGlob ??= "a brace with too many values"; }
+    for (const candidate of candidates) { out.push(render(candidate.parts, false)); globOut.push(render(candidate.parts, true)); }
+  }
+  return { text: out.join(" "), globText: globOut.join(" "), ...(homeGlob ? { homeGlob } : {}) };
+}
+
+/** A glob or brace in the first segment under the home folder, or in any segment at or below a dot folder there. */
+function homeGlobIn(word: Word): string | undefined {
+  const [first] = word.parts;
+  if (!first) return undefined;
+  const homeVarNames = new Set(["HOME", "USERPROFILE"]);
+  let text = "";
+  let anchored = first.kind === "tilde" || (first.kind === "var" && homeVarNames.has(first.name));
+  let start = anchored ? 0 : -1;
+  for (const part of word.parts) {
+    if (part.kind === "lit") {
+      text += part.text;
+      if (!anchored) {
+        const home = /^(?:\/Users\/[^/]+|\/home\/[^/]+|\/root|[A-Za-z]:[\\/]Users[\\/][^\\/]+)(?=[\\/]|$)/i.exec(text);
+        if (home) { anchored = true; start = home[0].length; }
+      }
+      continue;
+    }
+    if (!anchored) { if (part.kind !== "tilde" && part.kind !== "var") return undefined; continue; }
+    if (part.kind !== "glob" && part.kind !== "brace") { text += "\u0001"; continue; }
+    const under = text.slice(start).replace(/^[\\/]+/, "");
+    const segments = under.split(/[\\/]+/);
+    if (segments.length <= 1 || segments.slice(0, -1).some((segment) => segment.startsWith("."))) return `a ${part.kind} in a path under the home folder`;
+    text += "\u0001";
+  }
+  return undefined;
 }
 
 export function looksSensitive(text: string): boolean {
@@ -861,7 +955,16 @@ function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, con
   // 09-1: a glob in the command text that could match a key file
   // (`cat ~/.aw?/credentials`, `Get-Content ~\.aws\cred*`) is a read of it
   const commandGlobText = isCommandTool(tool) || commandParts.length || wholeText !== undefined ? [isCommandTool(tool) ? summary : "", ...commandParts, wholeText ?? "", context?.commandText ?? ""].join("\n") : "";
-  const keyHit = (): string | null => unread ?? localHold ?? matchFirst(SENSITIVE, keyText) ?? globKeyRead(commandGlobText);
+  // 1.0.7: the same rows over the command as bash hands it on (quotes removed, braces multiplied out), and a glob
+  // or brace that picks a home folder entry, which no reader can name
+  const dequoted = pinShell === "pwsh" || !commandGlobText.trim() ? undefined : (() => {
+    // each text on its own: a card summary cut mid-quote must not hide the engine's whole command
+    const reads = [isCommandTool(tool) ? summary : "", ...commandParts, wholeText ?? "", context?.commandText ?? ""].filter((part) => part.trim()).map((part) => dequotedShellText(part));
+    const read = reads.filter((one): one is NonNullable<typeof one> => one !== undefined);
+    return read.length ? { text: read.map((one) => one.text).join("\n"), globText: read.map((one) => one.globText).join("\n"), homeGlob: read.find((one) => one.homeGlob)?.homeGlob } : undefined;
+  })();
+  const keyHit = (): string | null => unread ?? localHold ?? matchFirst(SENSITIVE, keyText) ?? globKeyRead(commandGlobText)
+    ?? (dequoted ? matchFirst(SENSITIVE, dequoted.text) ?? globKeyRead(dequoted.globText) ?? (dequoted.homeGlob ? `${dequoted.homeGlob} could name a key file` : null) : null);
   const sensitive = destructive ? null : keyHit();
   const sensitiveSource: AutoVerdictSource = unread ? "unread-call" : "sensitive-guard";
   // The stop line outranks every mode, Full access included: deleting

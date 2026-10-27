@@ -104,6 +104,24 @@ describe("asker wakes", () => {
     expect(askerWakeTurnOptions({ ...intent(), depth: 1, notOwnerAudience: true, unattended: true, coordination: undefined }))
       .toEqual({ askerWake: true, commsDepth: 1, notOwnerAudience: true, chainNotOwner: true, unattended: true });
   });
+  // NOLIMITS-ROUTINE-WAKE-107 (Sean 10-25): the follow-through of the owner's own routine is still marked unattended, and says it is
+  // that routine's wake, so its tool approvals are judged at the routine's ceiling; never for an outside event or without the ceiling.
+  it("marks the wake of the owner's own scheduled or manual routine as a routine wake, and nothing else", () => {
+    const schedule = { permissionMode: "unlimited" as const, triggerSource: "schedule" as const };
+    const base = { askerWake: true, coordination: { rootId: "r", path: ["lead"] }, unattended: true };
+    expect(askerWakeTurnOptions({ ...intent(), routineRun: true, ownRoutine: true, routineAuthority: schedule })).toEqual({ ...base, routineAuthority: schedule, routineWake: true });
+    const manual = { permissionMode: "full" as const, triggerSource: "manual" as const };
+    expect(askerWakeTurnOptions({ ...intent(), routineRun: true, ownRoutine: true, routineAuthority: manual })).toEqual({ ...base, routineAuthority: manual, routineWake: true });
+    // Grok design r1: a live run the routine manager did not record as the owner's schedule or manual run (a channel or webhook run,
+    // a routine conversation's owner-turn level) is not the owner's routine
+    expect(askerWakeTurnOptions({ ...intent(), routineRun: true, routineAuthority: manual })).not.toHaveProperty("routineWake");
+    // an asking turn an outside event started, words nobody proved were the owner's, no ceiling, or not a routine run: no routine wake
+    expect(askerWakeTurnOptions({ ...intent(), routineRun: true, ownRoutine: true, unattended: true, routineAuthority: schedule })).not.toHaveProperty("routineWake");
+    expect(askerWakeTurnOptions({ ...intent(), routineRun: true, ownRoutine: true, notOwnerAudience: true, routineAuthority: schedule })).not.toHaveProperty("routineWake");
+    expect(askerWakeTurnOptions({ ...intent(), routineRun: true, ownRoutine: true })).not.toHaveProperty("routineWake");
+    expect(askerWakeTurnOptions({ ...intent(), routineRun: true })).not.toHaveProperty("routineWake");
+    expect(askerWakeTurnOptions({ ...intent(), routineAuthority: schedule })).not.toHaveProperty("routineWake");
+  });
   it("never merges a routine run's reply into the owner's wake", () => {
     const wakes = new AskerWakes();
     wakes.register("a", intent()); wakes.register("b", { ...intent(), routineRun: true });

@@ -2229,6 +2229,9 @@ def validate_request(request, manifest_path=ENGINE_MANIFEST, manifest_uid=0, eng
     # The argv grammar runs on the request's tokens; placeholders become the paths of
     # the files rendered for this turn.
     args = check_argv(engine, args, render, login)
+    if engine == "fuigoAgent":
+        # Every Fuigo shell command asks Murage, on every spawn but Full access (fuigo_config_text).
+        render["bashAsk"] = not fuigo_full_access(args)
     # A probe (--version, auth status) runs outside any bot: without a bot it stages and
     # collects nothing. Every other non-login turn names its bot (r5 R5.2).
     if bot is None and not login and args not in [list(probe) for probe in ARGV_PROBES.get(engine, ())]:
@@ -2525,7 +2528,12 @@ ENGINE_ENV_PIN = {
     # spawn_startup_refresh); Murage owns the catalog, and 1.0.31 ignores the name. Fuigo's own
     # subagents are off: a subagent definition may name a wider permissionMode than the bot's,
     # and its calls would never reach Murage's approval layer (fuigo.ts FUIGO_SUBAGENTS_OFF).
-    "fuigoAgent": {**{name: "0" for name in FUIGO_COMPAT_GATES}, "FUIGO_DISABLE_MODEL_REFRESH": "1", "FUIGO_SUBAGENTS": "0"},
+    # Workflow runs, background scheduler loops and goal runs spawn `general-purpose` past
+    # FUIGO_SUBAGENTS=0, and a workspace .fuigo/agents/general-purpose.md can redefine it, so
+    # those are off too (fuigo.ts FUIGO_AGENT_SPAWNS_OFF). FUIGO_AGENT and
+    # FUIGO_WORKSPACE_REWIND_GIT are in no allowlist, so a request's value is dropped.
+    "fuigoAgent": {**{name: "0" for name in FUIGO_COMPAT_GATES}, "FUIGO_DISABLE_MODEL_REFRESH": "1", "FUIGO_SUBAGENTS": "0",
+                   "FUIGO_WORKFLOWS": "0", "FUIGO_SCHEDULER_BACKGROUND_LOOPS": "0", "FUIGO_GOAL": "0"},
 }
 # Rule 74c (APP-GRANT-AMEND-14): the server hands every engine its pinned environment, and the
 # launcher would drop those names as unallowed, so it pins the same values itself for every engine
@@ -3057,6 +3065,10 @@ def codex_config_text(render):
         text += ("startup_timeout_sec = " + str(CODEX_CUSTOM_MCP_STARTUP_TIMEOUT_SEC) + "\n") if stanza["ask"] else "default_tools_approval_mode = \"auto\"\n"
     return text
 
+def fuigo_full_access(args):
+    """Full access is exactly `--permission-mode bypassPermissions` (the owner's own choice); anything else asks."""
+    return any(arg == "--permission-mode" and args[i + 1:i + 2] == ["bypassPermissions"] for i, arg in enumerate(args))
+
 def fuigo_config_text(render):
     text = "[cli]\nuse_leader = false\n" + FUIGO_PINS
     route = render["route"]
@@ -3067,9 +3079,18 @@ def fuigo_config_text(render):
             "\nenv_key = \"MURAGE_PROVIDER_API_KEY\"\napi_backend = \"" + ROUTE_PROTOCOLS[route["protocol"]] + "\"\nauth_scheme = \"" + \
             ("x_api_key" if route["protocol"] == "anthropic" else "bearer") + "\"\n[model.murage_selected]\nmodel = " + toml_string(route["model"]) + \
             "\nmodel_provider = \"" + name + "\"\n"
-    if render["memoryTools"]:
-        rules = ",\n".join("{ action = \"allow\", tool = \"mcp\", pattern = \"murage-memory__" + tool + "\" }" for tool in FUIGO_MEMORY_TOOLS)
-        text += "\n[permission]\nrules = [\n" + rules + "\n]\n"
+    # Fuigo 1.0.32: `ask = ["Bash"]` sends every shell command to Murage as a permission request, past the
+    # engine's own read-only auto-allow. Rules are order-independent (deny > ask > allow; resolution.rs), so
+    # no workspace allow or bypass defaultMode lifts it, and this file is mounted read-only for the turn.
+    # A render without the flag (the template check) asks too.
+    ask = render.get("bashAsk", True)
+    if ask or render["memoryTools"]:
+        text += "\n[permission]\n"
+        if ask:
+            text += "ask = [\"Bash\"]\n"
+        if render["memoryTools"]:
+            rules = ",\n".join("{ action = \"allow\", tool = \"mcp\", pattern = \"murage-memory__" + tool + "\" }" for tool in FUIGO_MEMORY_TOOLS)
+            text += "rules = [\n" + rules + "\n]\n"
     return text
 
 def opencode_config_text(render):

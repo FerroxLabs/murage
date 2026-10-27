@@ -80,7 +80,7 @@ posix("headless text-only: stub binary (group 1)", () => {
     // a child's cwd is reported canonical (macOS /var is /private/var)
     expect(r.cwd.replace(/^\/private(?=\/var\/)/, "")).toBe(`${T}/work`);
     expect(r.homeFiles).toContain("config.toml");
-    expect(r.fuigoConfig).toMatch(/\n\[plugins\]\nauto_discover = false\n$/); // Claude plugins off (1.0.6)
+    expect(r.fuigoConfig).toMatch(/\n\[plugins\]\nauto_discover = false\n\[skills\]\nauto_discover = false\n$/); // Claude plugins and skill discovery off
     expect(r.prompt).toBe("SYS\n\nUSER");
     expect(existsSync(T)).toBe(false); // temp root gone after confirmed exit
   });

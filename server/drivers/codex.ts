@@ -45,7 +45,7 @@ import { customMountEntries } from "../custom-mcp-mounts.ts";
 import { codexConfigMcpServerNames, externalMcpRecords, mountedMcpServerNames } from "./codex-mcp-names.ts";
 import type { ExecEnv, McpMountRecord } from "../../shared/mount-identity.ts";
 import { createPrewarmGate, createTurnMemory, spawnInputsOf, TAKEOVER_FAILED_MESSAGE, warmPool, pastWarmMaxAge, spawnedAtOf } from "./warm-pool.ts";
-import { awaitCliTreeStopped, describeSpawnFailure, engineJob, engineProcessPid, execCli, killCliTree, spawnCli } from "../procs.ts";
+import { awaitCliTreeStopped, cliVersionReader, describeSpawnFailure, engineJob, engineProcessPid, execCli, killCliTree, spawnCli, hostPowerKeyField } from "../procs.ts";
 import { cachedCliVersion } from "../cli-version-cache.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
 
@@ -87,7 +87,7 @@ import { QUESTION_TIMEOUT_MS } from "../../shared/questions.ts";
 import { CODEX_BUILTIN_COMMANDS, normalizeEngineCommands } from "../engine-commands.ts";
 import { engineClosedLine, plainDuration } from "./stop-copy.ts";
 import { boundedToolInput, codexApprovalText } from "../approval-text.ts";
-import { acpEngineExitStderrText } from "./acp/core.ts";
+import { EngineStderrCapture } from "./acp/core.ts";
 import { backgroundCapNote, backgroundWaitCapMs, SubtaskTracker } from "../subtasks.ts";
 import { shellDialectOf } from "../shell/pwsh.ts";
 
@@ -971,6 +971,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           // the scope's login generation this process runs on: a new generation never reuses a process on the older one
           scopeHome: scopedHome,
           args: digest(appServerArgs),
+          // S4 power (design section 7): the constant on a key whose spawn is under the block (Windows only for Codex).
+          ...hostPowerKeyField({ posixHostPower: false }),
         });
         for (const name of Object.keys(env)) delete env[name];
         Object.assign(env, handed.env);
@@ -1112,7 +1114,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
               cwd: turnCwd,
               env,
               stdio: ["pipe", "pipe", "pipe"],
-            }, engineJob());
+              // S4 power (design section 2, revision 4.1): Windows only; on Mac and Linux Codex keeps its own sandbox
+              // (codexTurnPolicy, unchanged) and its spawn carries no hostPower.
+            }, engineJob({ posixHostPower: false }));
           }
         } catch (error) {
           if (!reuse) { hookGate?.close(); hookGate?.release(); }
@@ -1994,7 +1998,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         } catch {
           return;
         }
-        stderrSinceOutput = "";
+        stderrSinceOutput.reset();
         // The native tee is a plain file people paste into issues. A
         // generated image would put megabytes of base64 in it and the
         // provider's own filesystem path beside them; keep the SHAPE and
@@ -2030,18 +2034,13 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       };
 
       conn.onLine = handleStdoutLine;
-      let stderr = "";
-      // Stderr received after the last parsed protocol message. The lifetime
-      // buffer's tail can name a long-past event (a websocket 426 logged at
-      // turn start, echoed when something else later kills the process), so
-      // only this slice may explain or classify an exit (U07).
-      let stderrSinceOutput = "";
-      on(child.stderr, "data", (c: Buffer) => {
-        stderr += c;
-        stderrSinceOutput += c;
-        if (stderr.length > 8192) stderr = stderr.slice(-8192);
-        if (stderrSinceOutput.length > 2048) stderrSinceOutput = stderrSinceOutput.slice(-2048);
-      });
+      // Stderr received after the last parsed protocol message. Older stderr
+      // can name a long-past event (a websocket 426 logged at turn start,
+      // echoed when something else later kills the process), so only this
+      // capture may explain or classify an exit (U07). It is the shared
+      // prefix capture, redacted whole before any cut (acp/core.ts).
+      const stderrSinceOutput = new EngineStderrCapture();
+      on(child.stderr, "data", (c: Buffer) => stderrSinceOutput.push(c));
       on(child, "error", (e: Error) => {
         if (abandoned) return;
         emit({ ...base(threadId, turnId), type: "runtime.error", ...describeSpawnFailure(e, config.cli) });
@@ -2059,7 +2058,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           return;
         }
         if (!state.settled) {
-          const recentStderr = stderrSinceOutput.trim();
+          const recentStderr = stderrSinceOutput.text.trim();
           // A signal exit is terminal whatever stderr says: something killed
           // the process, and the classifier cannot see a signal behind a null
           // code. Otherwise classify only this generation's recent stderr.
@@ -2106,7 +2105,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             type: "runtime.error",
             // Shown in the chat: the engine, the exit and its last words, never
             // the app-server's protocol names.
-            message: engineClosedLine(ENGINE, code, signal, recentStderr ? acpEngineExitStderrText(recentStderr.slice(-300)) : undefined),
+            message: engineClosedLine(ENGINE, code, signal, stderrSinceOutput.lastWords()),
           });
           settle(false, "exit_before_result");
         }
@@ -2520,11 +2519,14 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
     return retained.has(threadId);
   };
 
+  // Upstream #3433: a slow probe keeps the last version; only a real miss reads as not installed.
+  const snapshotVersionOf = cliVersionReader(config.cli);
   const snapshot = async (): Promise<ProviderSnapshot> => {
     const env = childEnv();
     const probed = await cachedCliVersion(config.cli, env, execCli);
-    const version = probed.error ? null : probed.stdout.trim();
-    if (!version) return { state: "unavailable", reason: `\`${config.cli}\` CLI not found` };
+    const probe = snapshotVersionOf(probed.error, probed.stdout);
+    if (!("version" in probe)) return { state: "unavailable", reason: probe.reason };
+    const { version } = probe;
     const authenticated = await new Promise<boolean>((resolve) => {
       execCli(config.cli, ["login", "status"], { timeout: 8000, env }, (err, stdout, stderr) =>
         resolve(!err && /^logged in\b/im.test(`${stdout}\n${stderr ?? ""}`)),

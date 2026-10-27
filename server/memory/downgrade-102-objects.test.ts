@@ -56,7 +56,7 @@ it("a full 1.0.3 file has objects 1.0.2 refuses before the downgrade (the check 
 it("memory-downgrade --to 10 leaves exactly objects 1.0.2 accepts, every 1.0.3 addition gone and every v10 object kept", () => {
   const db = full103();
   try {
-    expect(downgradeMemorySchema(db, 10)).toEqual({ status: "downgraded", from: 12, to: 10 });
+    expect(downgradeMemorySchema(db, 10)).toEqual({ status: "downgraded", from: 13, to: 10 });
     expect(refusedBy102(db)).toEqual({ unknown: [], missing: [] });
   } finally { db.close(); }
 });

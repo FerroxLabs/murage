@@ -77,9 +77,9 @@ export function validateEngineExclusionResource(resources, platform, arch = proc
 
 /** Windows: the calls that replaced every PowerShell Murage started itself (murage-releases #1), plus the handle calls. A Windows package
  * whose addon lacks one is refused (ENGINE_EXCLUSION_RESOURCE_FUNCTIONS): a missing call must fail the build, never degrade the app.
- * Kept equal to server/engine-exclusion.ts's HANDLE_FUNCTIONS + WINDOWS_NATIVE_FUNCTIONS, plus environment (engine-closed.ts) (engine-exclusion-r20.test.ts). */
+ * Kept equal to server/engine-exclusion.ts's HANDLE_FUNCTIONS + WINDOWS_NATIVE_FUNCTIONS, plus environment and cwdOf (engine-closed.ts) (engine-exclusion-r20.test.ts). */
 export const WINDOWS_ADDON_FUNCTIONS = ["openFile", "handleRead", "handleWrite", "handleSync", "handleLock", "handleMarkDelete", "handleId", "handleSize", "handleClose", "removeTree",
-  "authenticode", "jobCreate", "jobAssign", "jobClose", "jobStop", "processStart", "driveInfo", "fileOwnerSid", "accountSid", "machineSid", "domainSids", "speechVoices", "speechToWave", "environment"];
+  "authenticode", "jobCreate", "jobAssign", "jobClose", "jobStop", "processStart", "driveInfo", "fileOwnerSid", "accountSid", "machineSid", "domainSids", "dropShutdownPrivileges", "speechVoices", "speechToWave", "environment", "cwdOf"];
 
 /** macOS and Linux: the calls the server makes on top of lock / processes / renameNoReplace (engine-exec.ts writers, engine-fs.ts fullSync,
  * engine-redo.ts bootId, engine-closed.ts environment). A package whose addon lacks one is refused too. Every export the code calls is on this list or on

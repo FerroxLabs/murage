@@ -1985,16 +1985,10 @@ export class Store {
   private saveBotsNow(bots: BotRecord[] = this.bots) {
     // Role/config changes permanently revoke scoped grants. Write the revoked
     // candidate before publishing it so changing a role back cannot resurrect access.
-    const normalized = bots.map(bot => {
-      const identity = accessRoleBinding({ ...bot, accessRoleEpoch: 0 });
-      const prior = this.accessRoles.get(bot.id);
-      const next = prior !== undefined && prior !== identity ? { ...bot, accessRoleEpoch: (bot.accessRoleEpoch ?? 0) + 1 } : bot;
-      return next.connectedAppAccess === undefined ? next : { ...next, connectedAppAccess: botAccessPolicy(next) };
-    });
+    const { normalized, json } = this.rosterJson(bots);
     // Busy and activity never reach disk, so most saves (a turn starting or
     // ending, a badge) leave the persisted roster byte for byte as it was. Then
     // there is nothing to write and no memory roster to re-persist.
-    const json = persistedBotsJson(normalized);
     const mode = !this.memoryReady || teamChangeOpen() ? "plain" : "memory";
     const key = `${mode}\0${json}\0${this.groups.length ? JSON.stringify(this.groups.map(({ busyBotId: _b, turnStartedAt: _t, ...g }) => g)) : ""}`;
     if (key === this.lastRosterKey && existsSync(BOTS_FILE)) { this.afterRosterSave(bots, normalized); return; }
@@ -2002,6 +1996,17 @@ export class Store {
     if (mode === "plain") write(); else persistMemoryRoster({ bots: normalized, groups: this.groups }, write);
     this.lastRosterKey = key;
     this.afterRosterSave(bots, normalized);
+  }
+
+  /** The roster as bots.json holds it (normalized: a changed role bumps its epoch, the app access policy is derived). Reads only. */
+  private rosterJson(bots: BotRecord[]): { normalized: BotRecord[]; json: string } {
+    const normalized = bots.map(bot => {
+      const identity = accessRoleBinding({ ...bot, accessRoleEpoch: 0 });
+      const prior = this.accessRoles.get(bot.id);
+      const next = prior !== undefined && prior !== identity ? { ...bot, accessRoleEpoch: (bot.accessRoleEpoch ?? 0) + 1 } : bot;
+      return next.connectedAppAccess === undefined ? next : { ...next, connectedAppAccess: botAccessPolicy(next) };
+    });
+    return { normalized, json: persistedBotsJson(normalized) };
   }
 
   /** What the last roster save wrote (mode, bots.json, groups). */
@@ -3069,6 +3074,13 @@ export class Store {
     return mdb.turnRows(threadId, turnId).map(sanitizeMessageDiagnostic);
   }
 
+  /** The rows one turn wrote, read through the turn index (turn_first) even when the thread is loaded: the work is the turn's own
+   * rows, never a filter over the loaded thread's history. A loaded thread not yet prepared reads its cache, as turnRows does. */
+  turnRowsBounded(threadId: string, turnId: string): Message[] {
+    if (this.threads.has(threadId) && !isThreadPrepared(threadId)) return this.turnRows(threadId, turnId);
+    return mdb.turnRows(threadId, turnId).map(sanitizeMessageDiagnostic);
+  }
+
   /** The ids of the replies a turn wrote on its own (bot text that is not a copy), oldest first: the originals a copy of the
    * turn's answer links, found through the line index so a turn that wrote thousands of tool rows between its replies
    * still gives every one. */
@@ -3851,7 +3863,8 @@ export class Store {
       if (!this.threads.has(threadId)) {
         // read as a load reads it: a legacy row is chained to the row stored before it
         const step = mdb.branchStep(threadId, messageId);
-        if (!step) return null;
+        // the message is gone: the other change is still owed, as on a loaded thread (no conversation is made for it)
+        if (!step) { if (within) transaction(() => within()); return null; }
         const before = sanitizeMessageDiagnostic({ ...step.message, parentId: step.parent });
         const next = sanitizeMessageDiagnostic({ ...before, ...boundRemovedText(patch), card: patch.card ?? before.card });
         // `within` joins this write too: a card settled with the send it became (QW Q1) is one transaction on an unloaded thread as well
@@ -3927,16 +3940,38 @@ export class Store {
     bot.voiceAssigned = true;
     if (opts.noAccess) { bot.computer = "off"; bot.browser = false; bot.composio = false; }
     bot.tasks = [{ threadId: bot.threadId, title: UNTITLED_TASK, createdAt: bot.createdAt, resumeCursors: {},autoApprove:false,alwaysAllow:[],unread:false }];
-    this.bots.unshift(bot);
-    this.saveBots();
-    // Announce the owner before its onboarding transcript. SSE clients need
-    // the bot/thread mapping before they can place either message.
-    this.emit({ type: "bot", botId: bot.id });
-    if (opts.seedMessages !== false) {
-      this.appendMessage(bot.threadId, murageLine({ role: "bot", kind: "text", text: openingLine(name) }));
-      this.appendMessage(bot.threadId, murageLine({ role: "bot", kind: "options", card: intakeOpeningQuestion() }));
-    }
+    // All or nothing: the roster (bots.json and its memory binding), the announcement and the opening lines land together. The write lock
+    // is taken first (BEGIN IMMEDIATE), so a busy database refuses before anything changes; any later failure rolls the rows back, the
+    // announcements never go out (tx-scope.ts), and the roster is written again without the bot. A caller that retries after an error
+    // makes one bot, never two.
+    transaction(() => {
+      this.bots.unshift(bot);
+      onRollback(() => this.withdrawCreatedBot(bot.id));
+      this.saveBots();
+      // Announce the owner before its onboarding transcript. SSE clients need
+      // the bot/thread mapping before they can place either message.
+      this.emit({ type: "bot", botId: bot.id });
+      if (opts.seedMessages !== false) {
+        this.appendMessage(bot.threadId, murageLine({ role: "bot", kind: "text", text: openingLine(name) }));
+        this.appendMessage(bot.threadId, murageLine({ role: "bot", kind: "options", card: intakeOpeningQuestion() }));
+      }
+    }, { op: "createBot" });
     return bot;
+  }
+
+  /** createBot's rollback: the bot leaves the live roster and bots.json is written again from it, FILE ONLY: the memory binding and every
+   * other row rolled back with the transaction, and nothing here writes to the database (an enclosing transaction that rolls back several
+   * creates rewrites the file for each, newest first). The last-save key is cleared, and a deferred save of the live roster follows, so
+   * a write that failed here, or a change the failed save had carried, still reaches disk and a restart never brings the bot back. */
+  private withdrawCreatedBot(botId: string) {
+    const at = this.bots.findIndex(b => b.id === botId);
+    if (at === -1) return;
+    this.bots.splice(at, 1);
+    this.accessRoles.delete(botId);
+    this.lastRosterKey = undefined;
+    try { writeFileAtomic(BOTS_FILE, this.rosterJson(this.bots).json, { mode: 0o600 }); }
+    catch (error) { console.error("store: could not rewrite the roster after a failed bot create", error); }
+    scheduleCoalesced(BOTS_FILE, () => this.saveBotsNow());
   }
 
   /** Remove a bot for good: its record, every task transcript, its

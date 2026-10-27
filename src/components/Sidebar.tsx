@@ -83,7 +83,8 @@ import { isMascotAnimated, stateForBot } from "@/lib/mascot";
 import { botUnreadThreadIds, markBotRead } from "@/lib/bot-read";
 import { useUpdaterState } from "@/lib/updater";
 import { cn } from "@/lib/cn";
-import { skillRecorderEnabled } from "@/lib/feature-flags";
+import { skillRecorderAvailable } from "@/lib/feature-flags";
+import { isCloudOrigin } from "@/lib/cloud-workspace";
 import { nextRename } from "@/lib/rename";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { MIN_QUERY, SearchResults } from "./SearchResults";
@@ -2759,7 +2760,7 @@ export function Sidebar({ open, onClose, onReturnFocus }: { open: boolean; onClo
     ...(whatsNew.available ? [{ key: "whats-new", label: t("settings.about.whatsNewTitle"), icon: <Megaphone size={17} />, onSelect: whatsNew.reopen }] : []),
     { key: "version", label: t("nav.versionItem", { version: APP_VERSION }), icon: <Info size={17} />, onSelect: () => openSettings("about") },
     { key: "keyboard-shortcuts", label: t("settings.about.shortcutsTitle"), icon: <Keyboard size={17} />, onSelect: () => setShortcutsOpen(true) },
-    ...(skillRecorderEnabled(state.config)
+    ...(skillRecorderAvailable(state.config, desktop, isCloudOrigin(), capabilities.host.platform)
       ? [{ key: "skill-recorder", label: t("nav.teachSkill"), icon: <Sparkles size={17} />, onSelect: () => { dispatch({ type: "showSkillRecorder" }); onNavigate(); } }]
       : []),
     ...(desktop === true ? [{ key: "get-set-up", label: t("nav.getSetUp"), icon: <Compass size={17} />, onSelect: () => { onNavigate(); openFirstRun(); } }] : []),

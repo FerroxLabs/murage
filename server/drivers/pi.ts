@@ -33,8 +33,8 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { deleteEnvNames, PROVIDER_CREDENTIAL_ENV, stripRoutingEnv, stripWorkspaceCredentialEnv } from "../config.ts";
 import { computerProxyEnv } from "../container-computer.ts";
 import { augmentedPath } from "../env-path.ts";
-import { describeSpawnFailure, engineJob, killCliTree, spawnCli } from "../procs.ts";
-import { ProviderStopUnconfirmedError, providerCloseDeadlineMs, TurnTeardowns, type TeardownWait } from "./child-teardown.ts";
+import { CLI_TERM_GRACE_MS, cliVersionReader, describeSpawnFailure, engineJob, killCliTree, spawnCli, HOST_POWER_CODE, HOST_POWER_MESSAGE, hostPowerRefused } from "../procs.ts";
+import { ProviderStopUnconfirmedError, stopBudget, TurnTeardowns, type TeardownWait } from "./child-teardown.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
 import { customMountEntries } from "../custom-mcp-mounts.ts";
 
@@ -72,7 +72,8 @@ import { PI_GATE_TITLE_PREFIX } from "./pi-permission-gate.ts";
 import { execEnvHanded, execEnvNow, handedEngineEnv } from "../engine-env.ts";
 import type { ExecEnv } from "../../shared/mount-identity.ts";
 import { createTodoBlockFilter, extractTodoBlocks, type TodoFilterOutput } from "../../shared/todo-block.ts";
-import { plainDuration } from "./stop-copy.ts";
+import { engineClosedLine, plainDuration } from "./stop-copy.ts";
+import { EngineStderrCapture } from "./acp/core.ts";
 import { redactSecretsInText } from "../redact.ts";
 import { toolFailureText } from "../../shared/tool-activity.ts";
 import { connectedAppsServerName } from "../../shared/connected-app-names.ts";
@@ -774,14 +775,11 @@ export const PiDriver: ProviderDriver<PiConfig> = {
     // after a room claimed the bot). Such a Stop is kept and honoured as soon
     // as the turn has started, before its handshake and prompt.
     const starting = new Set<string>(), earlyStops = new Set<string>();
-    // settle() emits the terminal event and then requests termination; the
-    // child is owned until its close is observed (A2).
+    // Settlement emits the terminal event; Stop lets abort finish before
+    // termination. The child remains owned until close is confirmed (A2).
     const teardowns = new TurnTeardowns();
-    // pi requests the kill in the same tick as settlement, so no grace period.
-    const piStopBudget = (): TeardownWait => {
-      const closeMs = providerCloseDeadlineMs();
-      return { closeMs, maxMs: closeMs };
-    };
+    // Pi's abort response follows its session flush; the close budget starts after that bounded grace.
+    const piStopBudget = (): TeardownWait => stopBudget(CLI_TERM_GRACE_MS);
 
     const emit = (event: RuntimeEvent) => {
       for (const l of [...listeners]) l(event);
@@ -1003,6 +1001,12 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", origin: "engine", text });
       };
 
+      let aborting = false;
+      const terminate = () => {
+        try { child.stdin.end(); } catch { /* already closed */ }
+        teardown.markStopRequested();
+        try { killCliTree(child); } catch { /* already gone */ }
+      };
       const settle = (ok: boolean, stopReason?: string | null, usage?: { input?: number; output?: number }) => {
         if (settled) return;
         settled = true;
@@ -1014,31 +1018,21 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           stopReason: stopReason ?? (ok ? "end_turn" : "failed"),
           ...(usage ? { usage: { input: usage.input ?? 0, output: usage.output ?? 0 } } : {}),
         });
-        try {
-          child.stdin.end();
-        } catch {
-          /* already closed */
-        }
-        teardown.markStopRequested();
-        try {
-          killCliTree(child);
-        } catch {
-          /* already gone */
-        }
+        if (!aborting) terminate();
         active.delete(threadId);
       };
 
       const stop = () => {
+        if (settled || aborting) return;
+        aborting = true;
+        // Register before writing. A turn_end can precede the abort response;
+        // it must not close stdin or kill Pi while its session is still flushing.
+        const completed = awaitResponse("abort", CLI_TERM_GRACE_MS);
+        void completed.catch(() => {}).then(terminate);
         try {
           send({ type: "abort" });
         } catch {
-          /* ignore */
-        }
-        teardown.markStopRequested();
-        try {
-          killCliTree(child);
-        } catch {
-          /* ignore */
+          rejectWaiters(new Error(`${ENGINE} stopped taking input.`));
         }
         settle(true, "cancelled");
       };
@@ -1273,18 +1267,44 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           rejectWaiters(new Error(message));
         },
       });
+      // The last words pi wrote, for the line shown if it closes before its turn ended (a missing runtime, a crash).
+      const stderrTail = new EngineStderrCapture();
+      child.stderr?.on("data", (chunk: Buffer) => stderrTail.push(chunk));
+      let sessionReady = false;
+      const piClosedMessage = (code: number | null, signal: NodeJS.Signals | null) => {
+        // the capture is kept from its start and redacted whole before any cut (acp/core.ts EngineStderrCapture)
+        const lastWords = stderrTail.lastWords();
+        if (sessionReady) return engineClosedLine(ENGINE, code, signal, lastWords);
+        return `${ENGINE} could not start a session: it closed before it was ready${lastWords ? ` (${lastWords})` : ""}. Send your message again. If this keeps happening, check that ${ENGINE} is installed and runs, or choose another engine for this bot.`;
+      };
       child.stdout.on("data", (chunk: Buffer) => stdoutLines.push(chunk));
       registerIntake(threadId, child.stdout, child);
       child.on("error", (err) => {
         const fail = describeSpawnFailure(err as NodeJS.ErrnoException, config.cli);
+        // S4 power: a launch the block could not cover wrote no prompt (turn-attribution.ts notWritten).
+        if ((err as NodeJS.ErrnoException).code === HOST_POWER_CODE) turn.notWritten?.();
         rejectWaiters(new Error(fail.message));
         emit({ ...base(threadId, turnId), type: "runtime.error", message: fail.message, setup: fail.setup });
         settle(false);
       });
-      child.on("close", () => {
-        // a clean close without a terminal event is a failed turn, never a hang
-        rejectWaiters(new Error("pi process exited before replying"));
-        settle(false);
+      child.on("close", (code: number | null, signal: NodeJS.Signals | null) => {
+        // S4 power (design sections 2 and 8): bwrap or sandbox-exec refused before pi ran; nothing it was sent was delivered.
+        if (!settled && hostPowerRefused(child)) {
+          turn.notWritten?.();
+          rejectWaiters(new Error(HOST_POWER_MESSAGE));
+          emit({ ...base(threadId, turnId), type: "runtime.error", message: HOST_POWER_MESSAGE });
+          settle(false);
+          return;
+        }
+        // A close without a terminal event is a failed turn, never a hang, and never a silent one: a wrapper (bwrap,
+        // sandbox-exec) holds stdin open until it exits, so no EPIPE fires first, and a pi that crashes after the first
+        // write gets none either. Exactly one error, emitted and settled before the waiters are rejected, so a pending
+        // handshake step (failBeforePrompt) sees the turn is over and adds no second one.
+        if (!settled) {
+          emit({ ...base(threadId, turnId), type: "runtime.error", message: piClosedMessage(code, signal) });
+          settle(false);
+        }
+        rejectWaiters(new Error(`${ENGINE} stopped before replying.`));
       });
 
       emit({ ...base(threadId, turnId), type: "turn.started" });
@@ -1314,6 +1334,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         send(sessionPath ? { type: "switch_session", sessionPath } : { type: "new_session" });
         const hs = (await hsPromise) as { sessionFile?: string; sessionId?: string } | undefined;
         if (hs?.sessionFile) sessionFile = hs.sessionFile;
+        sessionReady = true;
         emit({
           ...base(threadId, turnId),
           type: "session.started",
@@ -1370,21 +1391,28 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       try {
         send({ type: "prompt", message });
       } catch {
-        settle(false);
+        failBeforePrompt(`${ENGINE} stopped before it took this message. Send your message again.`);
       }
 
       return { turnId };
     };
 
     const snapshot = async (): Promise<ProviderSnapshot> => {
-      const version = await probePiVersion();
-      if (!version) return { state: "unavailable", reason: `\`${config.cli}\` CLI not found` };
+      const probe = await probePi();
+      if (!("version" in probe)) return { state: "unavailable", reason: probe.reason };
+      const { version } = probe;
       // pi manages its own credentials (~/.pi/agent/auth.json); there is no
       // separate sign-in step the harness can probe, so treat it as authed.
       return { state: "available", version, authenticated: true };
     };
+    // Upstream #3433: a slow probe keeps the last version; only a real miss reads as not installed.
+    const snapshotVersionOf = cliVersionReader(config.cli);
     async function probePiVersion(): Promise<string | null> {
-      const version = await new Promise<string | null>((resolve) => {
+      const probe = await probePi();
+      return "version" in probe ? probe.version : null;
+    }
+    async function probePi(): Promise<{ version: string } | { reason: string }> {
+      const answer = await new Promise<{ err: Error | null; out: string }>((resolve) => {
         const child = spawnCli(config.cli, ["--version"], {
           stdio: ["ignore", "pipe", "pipe"],
           env: piProbeEnv(),
@@ -1398,22 +1426,23 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           } catch {
             /* ignore */
           }
-          resolve(null);
+          resolve({ err: Object.assign(new Error("pi --version timed out"), { killed: true }), out: "" });
         }, 8000);
         timer.unref?.();
-        child.on("error", () => {
+        child.on("error", (error) => {
           clearTimeout(timer);
-          resolve(null);
+          resolve({ err: error, out: "" });
         });
         child.on("close", () => {
           clearTimeout(timer);
-          resolve(out.trim() || null);
+          resolve({ err: out.trim() ? null : new Error("pi --version printed nothing"), out });
         });
       });
+      const version = answer.err ? null : answer.out.trim();
       const sig = cliSig(config.cli, piProbeEnv());
       noteVersionProbe(`pi|${config.cli}`, sig, Boolean(version));
       if (version) { piVersion = version; piCliSig = sig; rememberCliVersion(`pi|${config.cli}`, sig, version); }
-      return version;
+      return snapshotVersionOf(answer.err, answer.out);
     }
 
     return {
@@ -1458,8 +1487,8 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           effortLevels: EFFORT_LEVELS,
         },
         sendTurn,
-        // Close-confirmed stop (A2): stop() settles and requests termination;
-        // resolve only after the child closed, reject at the deadline.
+        // Close-confirmed stop (A2): stop() settles, waits for abort, then
+        // requests termination; resolve on confirmed close or reject at the deadline.
         interruptTurn: async (threadId, turnId) => {
           const entry = active.get(threadId);
           if (entry) entry.stop();

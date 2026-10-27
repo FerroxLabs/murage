@@ -57,6 +57,12 @@ Requirements for building from source:
 - Ubuntu 24.04 LTS x86_64
 - Node.js 24 or newer
 - pnpm 10.33.0 (Corepack can install the version declared by the project)
+- Cage build: Docker access, `build-essential`, `pkg-config`, `libseccomp-dev`,
+  `binutils` and `xz-utils`. Bubblewrap and static libcap build in the pinned
+  AlmaLinux 8 image on a glibc 2.28 floor; filter generators use the host's
+  libseccomp 2.5.5. Local source archives can be supplied with
+  `MURAGE_CAGE_TARBALL` and `MURAGE_CAGE_LIBCAP_TARBALL`; Docker still needs
+  access to the pinned image and RPM repositories.
 
 ```sh
 git clone https://github.com/FerroxLabs/murage.git
@@ -165,9 +171,13 @@ fail-closed on Wayland. XWayland's `DISPLAY` never bypasses the Wayland safety g
 Installed `.deb` and AppImage builds include the certified **Cua Driver 0.19.3** CLI and cursor-theme sidecar.
 On GNOME Xorg, open Settings, choose **Enable local control (Beta)**, wait for **Ready**, then explicitly assign a bot
 to **This computer**. No driver download, terminal command, `chmod`, or daemon setup is required. The owned daemon
-starts with `--no-overlay`, so Cua's decorative full-screen X11 cursor surface is never created. Murage also
-uses Electron software rendering on Linux to avoid the reproduced NVIDIA/libGLES GPU-process failure that could
-leave an invisible focused app window receiving input.
+starts with `--no-overlay`, so Cua's decorative full-screen X11 cursor surface is never created.
+
+Murage uses GPU acceleration on Linux with Intel, AMD and other drivers, on X11 and Wayland. When the NVIDIA
+driver or the open-source nouveau driver is loaded, it uses Electron software rendering instead, which avoids the
+reproduced NVIDIA/libGLES GPU-process failure that could leave an invisible focused app window receiving input.
+Set `MURAGE_LINUX_GPU=off` to force software rendering or `MURAGE_LINUX_GPU=on` to force the GPU. Murage prints the
+choice and its reason when it starts, so running it from a terminal shows which one applies.
 
 Cua actions use a private logical cursor. With the decorative overlay disabled, `move_cursor` does not move the
 user's physical pointer; approved click and typing actions still target the requested window, while the user's own

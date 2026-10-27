@@ -62,7 +62,7 @@ import { decodeInjectId } from "../local-inject.ts";
 import { createFuigoFailureObservations, failureKind } from "./failure-diagnostics.ts";
 import { withCliMemoryLearning } from "../cli-memory-learning.ts";
 import { DIAGNOSTIC_RPC_METHODS, parseRuntimeErrorDiagnostic } from "../../../shared/error-diagnostic.ts";
-import { cliContainment, describeSpawnFailure, engineJob, engineProcessPid, execCli, killCliTree, spawnCli } from "../../procs.ts";
+import { cliContainment, describeSpawnFailure, engineJob, engineProcessPid, engineWrapsHostPower, execCli, HOST_POWER_CODE, HOST_POWER_MESSAGE, hostPowerRefused, killCliTree, spawnCli } from "../../procs.ts";
 import { cachedCliVersion } from "../../cli-version-cache.ts";
 import { claudeExecutableIdentity } from "../claude-guards.ts";
 import { ProviderStopUnconfirmedError, stopBudget, TurnTeardowns, type ChildTeardown, type TeardownWait } from "../child-teardown.ts";
@@ -713,6 +713,107 @@ export function acpEngineStderrCapture(stderr: string, truncated: boolean): stri
     + (truncated ? "\n[Stderr capture truncated; later output omitted]" : "");
 }
 
+/** The one stderr capture size: ACP's 256 KiB diagnostic prefix. */
+export const ENGINE_STDERR_CAPTURE_CHARS = 256 * 1024;
+
+/** The one stderr capture shape for every child whose stderr can reach a card,
+ * a row or an owner-facing error: the stream's FIRST `limit` characters, as
+ * ACP keeps them. Never a tail window: a window cut at its front can scroll a
+ * PEM `-----BEGIN` line (or a credential's label) off before redaction, and
+ * the body that remains matches no rule. The capture is prepared by
+ * `acpEngineStderrCapture` (unfinished PEM closed, cap-cut line dropped) and
+ * redacted WHOLE before any display cut. */
+export class EngineStderrCapture {
+  text = "";
+  truncated = false;
+  private readonly limit: number;
+  constructor(limit = ENGINE_STDERR_CAPTURE_CHARS) {
+    this.limit = limit;
+  }
+  push(chunk: string | Buffer): void {
+    if (this.truncated) return;
+    const text = String(chunk);
+    const remaining = this.limit - this.text.length;
+    this.text += text.slice(0, Math.max(0, remaining));
+    if (text.length > remaining) this.truncated = true;
+  }
+  reset(): void {
+    this.text = "";
+    this.truncated = false;
+  }
+  /** The whole capture redacted, then its last `max` characters. Empty when stderr said nothing. */
+  redactedEnd(max: number): string {
+    return engineStderrRedacted(this.text, this.truncated).trim().slice(-max).trim();
+  }
+  /** The quoted reason for an engine's exit line, or undefined when stderr said nothing. */
+  lastWords(): string | undefined {
+    return engineStderrLastWords(this.text, this.truncated);
+  }
+}
+
+// Recognize control-separated credentials before VT stripping can consume a
+// label character (ESC + token) or erase its boundary (word + CSI + api_key).
+// CSI/OSC are whole separators; other controls are single separators. Keep
+// CR/LF outside this guard so a value never absorbs the next diagnostic line.
+const STDERR_CREDENTIAL_CONTROL = String.raw`(?:\u001b\[[0-?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b\r\n]*(?:\u0007|\u001b\\)|[\u0000-\u0009\u000b\u000c\u000e-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff])`;
+const STDERR_CONTROL_CREDENTIAL = new RegExp(
+  `(${STDERR_CREDENTIAL_CONTROL}|(?<![A-Za-z0-9_-]))`
+  + `((?:[A-Za-z0-9_-]+${STDERR_CREDENTIAL_CONTROL}*[=:]|sk${STDERR_CREDENTIAL_CONTROL}*-)${STDERR_CREDENTIAL_CONTROL}*)`
+  + `([A-Za-z0-9._~+/=-]+(?:${STDERR_CREDENTIAL_CONTROL}+[A-Za-z0-9._~+/=-]+)*)`,
+  "g",
+);
+const STDERR_CREDENTIAL_CONTROLS = new RegExp(STDERR_CREDENTIAL_CONTROL, "g");
+
+function redactControlSeparatedStderrCredentials(text: string): string {
+  return text.replace(STDERR_CONTROL_CREDENTIAL, (match, boundary: string, header: string, value: string) => {
+    const joinedHeader = header.replace(STDERR_CREDENTIAL_CONTROLS, "");
+    const joined = joinedHeader + value.replace(STDERR_CREDENTIAL_CONTROLS, "");
+    if (!boundary && joined === header + value) return match;
+    // Let the shared rules decide which names/prefixes and lengths qualify.
+    // Joining the entire value before masking also covers a control in its
+    // middle: masking just its first fragment would orphan the remaining one.
+    const redacted = redactSecretsInText(joined);
+    if (redacted === joined) return match;
+    // Keep formatting outside the masked value, including tabs around '='.
+    // A prefix rule such as sk- masks the entire token, including its header.
+    return boundary + (redacted.startsWith(joinedHeader) ? header + redacted.slice(joinedHeader.length) : redacted);
+  });
+}
+
+/** A finished prefix capture (`EngineStderrCapture`, or an exec buffer kept from its start), redacted whole. */
+export function engineStderrRedacted(captured: string, truncated: boolean): string {
+  const capture = redactControlSeparatedStderrCredentials(acpEngineStderrCapture(captured, truncated));
+  // Mask with the control boundary present, delete leftover controls, then
+  // mask credentials exposed by that deletion. Strip VT exactly once here.
+  return redactSecretsInText(redactSecretsInText(stripVTControlCharacters(capture))
+    .replace(INVISIBLE_CONTROLS, (controls) => controls.replace(/[^\t\r\n]/g, "")));
+}
+
+/** A log tail can start inside a line or a PEM block. Cut only raw text here;
+ * engineStderrRedacted owns the single VT strip before redaction.
+ * `startsMidFile` is conservative when the read exactly fills the window. */
+export function engineStderrTailRedacted(captured: string, startsMidFile: boolean): string {
+  let text = captured;
+  if (startsMidFile) {
+    const newline = text.indexOf("\n");
+    text = newline < 0 ? "" : text.slice(newline + 1);
+    const firstMarker = /-----(BEGIN|END) [A-Z ]*KEY-----/.exec(text);
+    if (firstMarker?.[1] === "END") {
+      text = `[redacted leading private-key block]\n${text.slice(firstMarker.index + firstMarker[0].length)}`;
+    } else {
+      // A still-growing PEM may have neither marker in this window. Only
+      // at a lost beginning, conservatively mask leading base64-only lines.
+      text = text.replace(/^[A-Za-z0-9+/=]+(?:\r?\n[A-Za-z0-9+/=]+)*(?:\r?\n|$)/, "[redacted leading key material]\n");
+    }
+  }
+  return engineStderrRedacted(text, false);
+}
+
+/** The exit-line reason quoted from a finished prefix capture (see `EngineStderrCapture`). */
+export function engineStderrLastWords(captured: string, truncated: boolean): string | undefined {
+  return acpEngineExitStderrText(acpEngineStderrCapture(captured, truncated));
+}
+
 /** Fuigo's typed failure kind, a snake_case token. Read only from
  * `error.data.error_kind`: it travels as its own field so nothing has to
  * recover it from text the engine wrote. */
@@ -880,6 +981,14 @@ export interface AcpSupport {
      *  back whatever an earlier Ask turn replaced. */
     apply?(ctx: { env: Record<string, string | undefined>; config: AcpConfig; turn: SendTurnInput; askLevel: boolean }): Promise<void>;
   };
+  /** Never send `session/set_mode` (Fuigo 1.0.32: it advertises no modes, and set_mode resolves any id, "default"
+   *  included, through the workspace's `.fuigo/agents/<id>.md` first, so a repo file could replace the bot's
+   *  system prompt and permission mode). No mode is set, so the turn stays in the engine's default. */
+  noSessionModes?: true;
+  /** Answer a permission request only with a one-time allow, at every level, Full access included: an
+   *  allow-always option would leave a grant in the engine that answers later requests without Murage
+   *  (Fuigo 1.0.32 remembered Bash grants). With no one-time allow on offer, Murage cancels the request. */
+  allowOnceOnly?: true;
   /** Extra `_meta` on every session/prompt (Fuigo: `verbatim`, so the
    * engine does not cut a long prompt and offload the rest to a file). */
   promptMeta?: Record<string, unknown>;
@@ -2061,7 +2170,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
        *  baseline (a shell a tool left running) closes it and its whole tree; a
        *  probe that cannot answer means it is not proven idle, and it closes too. */
       const guardParkedTree = (threadId: string, proc: AcpProcess) => {
-        const pid = engineProcessPid(proc.child); // the engine itself (behind the Windows job launcher), U24 design R2.4
+        const pid = engineProcessPid(proc.child); // host PID of the engine, behind the job launcher or Linux cage
         const pending = proc.turnBaseline;
         const gen = proc.parkGen;
         if (!pid || !pending) { closeProcess(threadId, proc, "process probe has no baseline"); return; }
@@ -2110,7 +2219,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
        *  admitted replacements: an exited MCP server's pid is dropped, so a
        *  process that later gets that pid is never exempt. */
       const reconcileReusedTree = async (proc: AcpProcess, servers: ReadonlyArray<{ command: string; args: string[] }>): Promise<{ baseline: ProcessIdentities; leftover: string | null }> => {
-        const pid = engineProcessPid(proc.child); // a replacement MCP child's parent is the engine, never the job launcher
+        const pid = engineProcessPid(proc.child); // a replacement MCP child's parent is the engine's host PID, including under bwrap
         const verified = proc.turnBaseline ? await proc.turnBaseline.catch(() => null) : null;
         if (!pid || !verified) return { baseline: new Map(), leftover: "process probe has no baseline" };
         const tree = await untrackedIdentified(pid, verified).catch(() => null);
@@ -2383,7 +2492,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // Existing 256 KiB diagnostic cap, preserving the start before any
         // redaction. Never keep a second raw tail that can lose a PEM header.
         let stderrDiagnostic = "", stderrDiagnosticTruncated = false;
-        const STDERR_DIAGNOSTIC_CHARS = 256 * 1024;
+        const STDERR_DIAGNOSTIC_CHARS = ENGINE_STDERR_CAPTURE_CHARS;
         const asks = new Map<string, AcpAskFinish>();
         // Tool calls the agent started and has not yet reported finished. A
         // tool such as `sleep` or a quiet build sends nothing while it runs,
@@ -2984,7 +3093,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             return send({ jsonrpc: "2.0", id: msg.id, result: reject ? { outcome: { outcome: "selected", optionId: reject } } : cancelled });
           }
           if (turnConfig.fullAuto && !questionTool) {
-            const allow = optionFor("allow", true);
+            const allow = optionFor("allow", !support.allowOnceOnly);
             if (!allow) missing("allow");
             return send({
               jsonrpc: "2.0",
@@ -3623,6 +3732,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         error: (e) => {
           if (!spawned) lifecycle.record("spawn_failed", { errno: errnoCategory(e) });
           emit({ ...base(threadId, turnId), type: "runtime.error", ...describeSpawnFailure(e, config.cli) });
+          // S4 power: a launch the block could not cover wrote no prompt (turn-attribution.ts notWritten).
+          if ((e as NodeJS.ErrnoException).code === HOST_POWER_CODE) turn.notWritten?.();
           settle(false, "spawn_error");
         },
         close: (code, signal) => {
@@ -3664,6 +3775,14 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             // locators and secrets removed, one line, inside the
             // transcript's own length — and quoted from its END, which is
             // where a crash's fatal line is.
+            // S4 power (design sections 2 and 8): bwrap or sandbox-exec refused before the engine ran; nothing was delivered.
+            if (hostPowerRefused(target.child)) {
+              emit({ ...base(threadId, turnId), type: "runtime.error", message: HOST_POWER_MESSAGE });
+              turn.notWritten?.();
+              settle(false, "exit_before_result");
+              stderrDiagnostic = "";
+              return;
+            }
             const detail = acpEngineExitStderrText(captured);
             emit({
               ...base(threadId, turnId),
@@ -3969,8 +4088,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // `agent/folder_trust.rs`), so a change Murage can see (the owner's
         // decision, the sources the scan found, a grant added to or revoked
         // from the user's own trusted_folders.toml) must reach a new process.
+        // S4 power (design sections 2 and 7): Fuigo is not under the block on Mac and Linux (it does not nest with a command
+        // sandbox there); every other ACP engine is, and Windows covers them all. A spawn under the block puts the constant in the digest.
+        const hostPowerOptions = { posixHostPower: support.driverKind !== "fuigoAgent" };
         contractKey = poolable
           ? digest([config.cli, launchTarget, argv, cwd, env, support.folderTrust ? turn.folderTrust ?? null : null,
+            ...(engineWrapsHostPower(hostPowerOptions) ? [{ hostPower: 1 }] : []),
             ...(support.spawnFingerprint ? [support.spawnFingerprint(env, config)] : []),
             ...(support.restartOnMcpChange ? [mcpServers.map((server) => server.name)] : [])])
           : null;
@@ -3991,7 +4114,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 // object is built here and handed to the child; nothing keeps it.
                 env: support.secretEnv ? { ...env, ...support.secretEnv(env, config) } : env,
                 stdio: ["pipe", "pipe", "pipe"],
-              }, engineJob());
+              }, engineJob(hostPowerOptions));
             } catch (error) {
               lifecycle.record("spawn_failed", { errno: errnoCategory(error) });
               throw error;
@@ -4438,7 +4561,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               }
               // The Ask hard stop (ask-stop.ts): the engine's own read-only switch, set before anything is prompted.
               // At Ask a switch that cannot be set refuses the turn; otherwise what an earlier Ask turn set is put back.
-              const readOnlyMode = support.askStop?.sessionMode;
+              const readOnlyMode = support.noSessionModes ? undefined : support.askStop?.sessionMode;
               if (readOnlyMode && sessionId) {
                 const modes = sessionResult?.modes as { currentModeId?: unknown; availableModes?: Array<{ id?: unknown }> } | undefined;
                 if (askStop) {

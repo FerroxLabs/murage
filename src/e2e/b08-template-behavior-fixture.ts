@@ -680,7 +680,7 @@ export function prepareReadOnlyTaskWorkspace(options: {
       const audience = backgroundMemoryAudience(bot.id, task.threadId, { bots, groups });
       const context = audience ? { audienceKey: audience.audienceKey, allowedScopeIds: audience.scopeIds } : undefined;
       const catalogue = mergeSkills(loadBundledSkills(), loadUserSkills(join(DATA_DIR, "skills")));
-      const pin = task.procedurePin ?? createProcedurePin(bot.id, task.threadId, catalogue, bot.playbooks ?? [], undefined, context);
+      const pin = task.procedurePin ?? createProcedurePin(bot.id, task.threadId, catalogue, bot.playbooks ?? [], undefined, context,{ownerTurn:true,shipped:()=>true});
       if (args.expectedBundle) assert.equal(pin.bundleId, args.expectedBundle, "procedure identity changed during readonly preparation");
       ensureTaskWorkspace(bot.id, task.threadId);
       migrateSkillDiscoveryToTasks(bot.id, true);
