@@ -328,14 +328,15 @@ describe("1b: a transcript or folder an engine owns is removed only when nobody 
     expect(h).toBeTruthy();
   });
 
-  it("without the helper nothing is changed at all, and the home says so (helper)", () => {
+  it("without the helper nothing is changed at all, and the home says the helper cannot load (helper-unloadable)", () => {
     const fx = buildFixture("claude", scratch);
     const before = treeDigest(fx.root);
     const planned = planEngineHistory(job(fx));
     Object.assign(exclOps, { available: () => false });
     const ran = run(fx, planned);
-    expect(ran.homeReasons[key(fx)]).toBe("helper");
+    expect(ran.homeReasons[key(fx)]).toBe("helper-unloadable");
     expect(treeDigest(fx.root)).toBe(before);
+    expect(owedCodeOf("helper-unloadable")).toBe("helper-unloadable");
     expect(owedCodeOf("helper")).toBe("helper");
     expect(ownerNoticeText("Claude Code", "helper")).toContain("cleanup helper");
   });

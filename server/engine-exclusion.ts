@@ -11,7 +11,8 @@
 // <platform>-<arch>/ in a source checkout. $MURAGE_ENGINE_EXCLUSION_PATH (a test stand-in or a test build) is honoured ONLY when
 // the process is a test (NODE_ENV=test) that is not packaged (no MURAGE_PACKAGED, no resources folder); it is decided before any
 // file is loaded, because loading a module runs its code. A missing or broken addon is `null`: the executor then changes no engine
-// file at all and says the helper is missing (HelperError in engine-plan-core.ts).
+// file at all and says the helper cannot load on this system (HelperError "helper-unloadable" in engine-plan-core.ts). That covers a
+// missing file, a require() the loader refuses (an older glibc), and an addon of another version; it is looked for once per process.
 import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -85,6 +86,8 @@ export interface ExclusionAddon {
   /** Version 9: this computer's account domain, the AD domain it is joined to and that domain's forest root (LSA policy), each a
    * domain SID or null (a workgroup computer has no primary or forest root). Throws when the policy cannot be read. */
   domainSids?(): { account: string | null; primary: string | null; forestRoot: string | null };
+  /** Version 10: removes both shutdown privileges from this process's primary token and verifies that neither remains. */
+  dropShutdownPrivileges?(): { ok: true } | { ok: false; step: "open" | "lookup" | "adjust" | "verify"; error: number };
   /** The installed SAPI voices: { name (the id System.Speech gives), culture, description }. */
   speechVoices?(): Promise<Array<{ name: string; culture: string; description: string }>>;
   /** One utterance (plain text) to a 22,050 Hz 16-bit mono WAV file; true when `voice` was found and used, false for the default voice. */
@@ -115,8 +118,8 @@ export interface FileWriters { writers: Array<{ pid: number; index: number }>; u
 export type Barrier = "full" | "fallback" | "none";
 
 /** 7: fullSync says which barrier it gave. 8: the Windows calls that replaced PowerShell. 9: domainSids, and jobAssign ends a
- * process it cannot open. */
-export const ADDON_VERSION = 9;
+ * process it cannot open. 10: removes and verifies the Windows shutdown privileges. */
+export const ADDON_VERSION = 10;
 
 /** The override is for tests only: not in a packaged app, and never outside a test process. */
 export function overrideAllowed(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -138,9 +141,9 @@ function candidates(): string[] {
 }
 
 const HANDLE_FUNCTIONS = ["openFile", "handleRead", "handleWrite", "handleSync", "handleLock", "handleMarkDelete", "handleId", "handleSize", "handleClose"] as const;
-/** Windows, version 9: what replaced Murage's own PowerShell starts. A packaged build that lacks one is refused when it is assembled
+/** Windows, version 10: the native calls and shutdown privilege removal. A packaged build that lacks one is refused when it is assembled
  * (scripts/engine-exclusion-resource.mjs). */
-export const WINDOWS_NATIVE_FUNCTIONS = ["authenticode", "jobCreate", "jobAssign", "jobClose", "jobStop", "processStart", "driveInfo", "fileOwnerSid", "accountSid", "machineSid", "domainSids", "speechVoices", "speechToWave"] as const;
+export const WINDOWS_NATIVE_FUNCTIONS = ["authenticode", "jobCreate", "jobAssign", "jobClose", "jobStop", "processStart", "driveInfo", "fileOwnerSid", "accountSid", "machineSid", "domainSids", "dropShutdownPrivileges", "speechVoices", "speechToWave"] as const;
 
 function usable(addon: Partial<ExclusionAddon>): addon is ExclusionAddon {
   if (typeof addon.lock !== "function" || typeof addon.processes !== "function" || typeof addon.renameNoReplace !== "function" || typeof addon.version !== "function") return false;

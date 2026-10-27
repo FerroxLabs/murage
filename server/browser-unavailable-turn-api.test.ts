@@ -10,6 +10,7 @@
 // the red "This request hit a problem" card, which pointed at Provider
 // settings for a failure no provider was involved in.
 import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawn, type ChildProcess } from "node:child_process";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
@@ -19,8 +20,8 @@ import { BROWSER_UNAVAILABLE_PREFIX } from "../shared/browser-unavailable.ts";
 
 // The fixture writes the engine where the server resolves it, a version-check
 // budget short enough that a hanging check times out inside the test, and a
-// native relay that never launches anything (nothing in this suite drives a
-// page; it only needs the binding decision).
+// native relay that never launches a browser. Most tests need only the binding
+// decision; the default-on floor test reads one declared consent-button fixture.
 const instrumentation = `
 import { registerHooks } from 'node:module';
 const fs = await import('node:fs');
@@ -54,15 +55,18 @@ if (windows) fs.writeFileSync(engineScript, [
   "else console.log('agent-browser ${AGENT_BROWSER_VERSION}');",
   '',
 ].join(String.fromCharCode(10)));
-const file = path.join(dataDir, 'config.json');
-const cfg = JSON.parse(fs.readFileSync(file, 'utf8'));
-cfg.features = { browser: true };
-fs.writeFileSync(file, JSON.stringify(cfg));
+// Leave features.browser absent: every binding in this suite uses the shipped default.
 process.env.FAKE_CLAUDE_DUMP_EACH_TURN = '1';
 registerHooks({ load(url, context, nextLoad) {
   if (url.endsWith('/browser-native-relay.ts')) return { format: 'module', shortCircuit: true, source: \`
+    import { appendFileSync } from 'node:fs';
+    import { join } from 'node:path';
     export function createNativeBrowser() { return {
-      request: async (method) => method === 'tools/list' ? { tools: [] } : { content: [] },
+      request: async (method, params) => {
+        if (method === 'tools/list') return { tools: [] };
+        appendFileSync(join(process.env.MURAGE_DATA_DIR, 'browser-calls.jsonl'), JSON.stringify({ name: params?.name }) + String.fromCharCode(10));
+        return { content: [{ type: 'text', text: params?.name === 'agent_browser_get_html' ? '<button>I agree to the terms and conditions</button>' : 'Fixture page' }] };
+      },
       protected: async () => false, resetStream() {}, input() {}, command: async () => '',
       connect: async () => 'fixture-stream', close: async () => {},
     }; }
@@ -148,6 +152,7 @@ afterAll(async () => {
 it("runs on the fixture's own port and data dir, never the owner's live app", () => {
   expect(fixture.info.url).toBe("http://127.0.0.1:18799");
   expect(fixture.info.dataDir).not.toContain(".murage");
+  expect(JSON.parse(readFileSync(join(fixture.info.dataDir, "config.json"), "utf8")).features ?? {}).not.toHaveProperty("browser");
 });
 
 let first: any;
@@ -252,5 +257,60 @@ it("a bot set to the owner's browser gets a short hint instead of browser tools 
   expect(captured.systemPrompt).toContain("Murage for Chrome");
   expect(captured.systemPrompt).toContain("request_browser_connection");
   expect((await activities(bot.threadId, "error:")).map((m) => m.tool.name)).toEqual([]);
+}, 60_000);
+
+it("keeps the per-bot browser switch in force when the workspace browser defaults on", async () => {
+  setEngine("ok");
+  const bot = await createBot("Default browser bot switch fixture");
+  expect((await api("GET", "/api/config")).body.features.browser).toBe(true);
+  expect((await api("PATCH", `/api/bots/${bot.id}`, { browser: false })).status).toBe(200);
+  const disabled = await runTurn(bot, "work with the browser switched off for this bot");
+  expect(disabled.mcpConfig?.mcpServers?.browser).toBeUndefined();
+  expect((await api("PATCH", `/api/bots/${bot.id}`, { browser: true })).status).toBe(200);
+  const enabled = await runTurn(bot, "work with this bot's browser enabled");
+  expect(enabled.mcpConfig?.mcpServers?.browser).toBeDefined();
+  expect(JSON.parse(readFileSync(join(fixture.info.dataDir, "config.json"), "utf8")).features ?? {}).not.toHaveProperty("browser");
+}, 60_000);
+
+// Real server admission and mounted stdio proxy; only the engine version response
+// and page relay are fixtures. A consent button must reach the floor before input.
+it("hands a consent step to the owner on a default-on browser turn", async () => {
+  setEngine("ok");
+  const bot = await createBot("Default browser floor fixture");
+  let proxy: ChildProcess | undefined;
+  try {
+    rmSync(fixture.fixtureDumpPath, { force: true });
+    const callsFile = join(fixture.info.dataDir, "browser-calls.jsonl");
+    rmSync(callsFile, { force: true });
+    expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "__fixture_hold_authority__ inspect the terms page", threadId: bot.threadId })).status).toBe(202);
+    await expect.poll(() => dump()?.mcpConfig?.mcpServers?.browser?.env?.MURAGE_BOT_ID, { timeout: 20_000 }).toBe(bot.id);
+    const mounted = dump().mcpConfig.mcpServers.browser as { command: string; args: string[]; env: Record<string, string> };
+    expect((await api("GET", "/api/config")).body.features.browser).toBe(true);
+    expect(JSON.parse(readFileSync(join(fixture.info.dataDir, "config.json"), "utf8")).features ?? {}).not.toHaveProperty("browser");
+    proxy = spawn(mounted.command, mounted.args, {
+      env: { PATH: process.env.PATH, HOME: fixture.info.dataDir, MURAGE_DATA_DIR: fixture.info.dataDir, ...mounted.env },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    proxy.stdout!.on("data", (chunk) => { stdout += chunk; });
+    proxy.stderr!.resume();
+    const child = proxy;
+    const closed = new Promise<number | null>((resolve, reject) => {
+      const timer = setTimeout(() => { child.kill(); reject(new Error("Browser proxy fixture timed out")); }, 15_000);
+      child.once("error", (error) => { clearTimeout(timer); reject(error); });
+      child.once("close", (code) => { clearTimeout(timer); resolve(code); });
+    });
+    proxy.stdin!.end(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "agent_browser_click", arguments: { selector: "#accept" } } }) + "\n");
+    expect(await closed).toBe(0);
+    const reply = JSON.parse(stdout.trim());
+    // The built-in floor answers with plain hand-off text (floorToolResult), not an error result,
+    // so every engine reads it the same way; it must name the consent step.
+    expect(reply.result).toEqual({ content: [{ type: "text", text: expect.stringMatching(/^YOUR TURN: This step needs you in person \(agree to the site's terms or consent\)\./) }] });
+    const calls = readFileSync(callsFile, "utf8").trim().split("\n").map((line) => JSON.parse(line).name);
+    expect(calls).toEqual(["agent_browser_get_html"]);
+  } finally {
+    if (proxy && proxy.exitCode === null && proxy.signalCode === null) proxy.kill();
+    await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: bot.threadId });
+  }
 }, 60_000);
 

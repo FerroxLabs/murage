@@ -26,7 +26,7 @@ export const CLOUD_SETTINGS_CLASS: Readonly<Record<AppSettingsSection, CloudSett
   aboutMe: "home",
   botDefaults: "home",
   houseRules: "home",
-  skills: "home",
+  skills: "mixed",
   memory: "home",
   // API keys, Flux and provider connections are stored by this computer's encrypted credential store (credential:set,
   // model-signin:* are refused from the Cloud window); a home's own sign-ins are made from the connect screen.
@@ -46,7 +46,7 @@ export const CLOUD_SETTINGS_CLASS: Readonly<Record<AppSettingsSection, CloudSett
   usage: "home",
   // The updater and diagnostics export are this computer's.
   about: "mixed",
-  // The skill recorder and the built-in browser both run on this computer.
+  // Legacy link to the skill recorder, which runs on this computer.
   experimental: "computer-only",
 });
 
@@ -66,7 +66,7 @@ export const CLOUD_COMPUTER_ONLY_CARDS: ReadonlySet<string> = new Set([
   "setup-heading", // About: Set up again walks this computer's first run.
   "updates-heading", // About: the updater is this computer's (the Cloud window has no window.muragebox).
   "diagnostics-heading", // About: the diagnostics export is this computer's.
-  "experimental-settings", // About: the skill recorder and the built-in browser run on this computer.
+  "skill-recorder-heading", // Skills: the recorder runs on this computer.
   "mcp-servers-heading", // Connected apps: this computer's MCP servers (mcp-servers:*).
 ]);
 
