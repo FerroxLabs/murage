@@ -999,6 +999,7 @@ function cmdHit(words: Word[], cwd: string | undefined, place: StopLinePlace, fo
     return null;
   }
   if (!name) return null;
+  if (codeDeleteHit(name, args, cwd, place, found, line)) return null;
   return commandHit(name, args, operands(args), cwd, place, found, line);
 }
 
@@ -1011,6 +1012,24 @@ function cmdHit(words: Word[], cwd: string | undefined, place: StopLinePlace, fo
  * read as a delete nobody could place. */
 const PS_HERE = /@(['"])\r?\n([\s\S]*?)\r?\n\1@/g;
 const PS_INTERPRETER = /^(python\d*(\.\d+)?|py|node|nodejs|deno|bun|ruby|perl|php|lua)$/;
+/** A delete written as code on a Windows line (`python -c "shutil.rmtree('x')"`,
+ * `node -e "fs.rmSync(…)"`), from PowerShell or cmd: judged as the Bash
+ * reader judges it, by the literal paths the code names (drive and
+ * backslash spellings too), and stopped when it names none. 1.0.8: these
+ * readers pass inline code to the command reader like Bash does, so the stop
+ * line reads the delete in it like Bash does. True when it was such a delete. */
+function codeDeleteHit(name: string, args: Word[], cwd: string | undefined, place: StopLinePlace, found: Collected, line: string): boolean {
+  if (!(PS_INTERPRETER.test(name) || name === "swift")) return false;
+  const script = args.map((word) => word.text).join(" ");
+  if (!CODE_DELETE.test(script)) return false;
+  if (args.some((word) => word.dynamic)) { found.unknownDelete ??= short(line); return true; }
+  // `~` alone is the home folder, as on Bash; a drive-relative name
+  // (`C:secret`) depends on that drive's own folder: unplaced, so it stops
+  const literals = [...script.matchAll(/['"]((?:~|\.\.?)?[\\/][^'"]*|~|[A-Za-z]:[^'"]*)['"]/g)].map((m) => m[1]!);
+  if (!literals.length) found.unknownDelete ??= short(line);
+  for (const lit of literals) found.deletes.push(resolveWord({ text: lit, dynamic: false }, cwd, place.home));
+  return true;
+}
 function psHereStrings(line: string): { flat: string; docs: Array<{ body: string; sink: "code" | "ps" | "data" }> } {
   const docs: Array<{ body: string; sink: "code" | "ps" | "data" }> = [];
   const flat = line.replace(PS_HERE, (_whole, _quote: string, body: string, offset: number) => {
@@ -1101,6 +1120,8 @@ function psHit(line: string, place: StopLinePlace, depth = 0): StopHit | null {
       } else addDeletes(paths);
     } else if (DOTNET_DELETE.test(name)) {
       addDeletes(args.slice(0, 1));
+    } else if (codeDeleteHit(name, args, cwd, place, found, line)) {
+      // judged above, by the paths the code names
     } else if (PS_CD.has(name)) {
       const to = psPaths(args)[0];
       cwd = !to ? cwd : to.dynamic ? undefined : resolveWord(to, cwd, place.home).path;

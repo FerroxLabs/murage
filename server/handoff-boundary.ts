@@ -903,12 +903,13 @@ export function askerWakeIntent(bx: Pick<BoundaryPorts, "isUnattended" | "ownerS
 /** A finished hand-off whose final commit failed is settled later from its receipt (delegations.ts settleReceipted). Its asker is
  * woken then, as the finalizer would have, once the line is in its conversation. A hand-off the owner or the ledger ended (cancelled,
  * denied, dropped, expired) restarts nobody, and its wake is no longer owed. Only a receipt with no request reaches here (rooms wake
- * through the request tree), and only a task registered as owing a wake wakes anyone (AskerWakes.deliver). */
-export function wakeAfterRecoveredReceipt(askerWake: AskerWakePort | undefined, receipt: { id: string; sourceThreadId: string; toBotId: string; toBotName: string; status: string }, deliveredId: string | undefined): void {
-  if (!askerWake) return;
-  if (receipt.status !== "done" && receipt.status !== "failed") { askerWake.consume(receipt.id); return; }
-  if (!deliveredId) return;
-  askerWake.returned(receipt.id, receipt.sourceThreadId, { toBotId: receipt.toBotId, toBotName: receipt.toBotName, ok: receipt.status === "done", messageId: deliveredId });
+ * through the request tree), and only a task registered as owing a wake wakes anyone (AskerWakes.deliver). False while the wake it owes is not on disk yet (the
+ * port's own answer): the caller keeps the receipt's owed line until it is. */
+export function wakeAfterRecoveredReceipt(askerWake: AskerWakePort | undefined, receipt: { id: string; sourceThreadId: string; toBotId: string; toBotName: string; status: string }, deliveredId: string | undefined): boolean {
+  if (!askerWake) return true;
+  if (receipt.status !== "done" && receipt.status !== "failed") { askerWake.consume(receipt.id); return true; }
+  if (!deliveredId) return true;
+  return askerWake.returned(receipt.id, receipt.sourceThreadId, { toBotId: receipt.toBotId, toBotName: receipt.toBotName, ok: receipt.status === "done", messageId: deliveredId }) !== false;
 }
 
 /** How many of a running delegation's latest steps a bot is told. */

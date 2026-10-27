@@ -21,6 +21,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { devHarnessEnvironment } from "../electron/harness-resources.mjs";
+import { prepareSourceCage } from "./prepare-source-cage.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -61,8 +62,9 @@ export function devServerEnvironment(
 }
 
 /** Start the harness with that environment and mirror its exit. */
-export function startDevServer(argv = []) {
-  const child = spawn(
+export function startDevServer(argv = [], { prepare = prepareSourceCage, spawnChild = spawn, lifecycle = process } = {}) {
+  prepare();
+  const child = spawnChild(
     process.execPath,
     ["--experimental-strip-types", path.join(REPO_ROOT, SERVER_ENTRY), ...argv],
     { cwd: REPO_ROOT, env: devServerEnvironment(), stdio: "inherit" },
@@ -70,15 +72,18 @@ export function startDevServer(argv = []) {
   // Ctrl-C in the terminal reaches the whole process group already; this is
   // for a parent that signals this process alone.
   for (const signal of ["SIGINT", "SIGTERM"]) {
-    process.on(signal, () => child.kill(signal));
+    lifecycle.on(signal, () => child.kill(signal));
   }
   child.on("exit", (code, signal) => {
-    process.exitCode = signal ? 1 : (code ?? 0);
+    lifecycle.exitCode = signal ? 1 : (code ?? 0);
   });
   return child;
 }
 
 // Importable by the tests without starting anything.
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  startDevServer(process.argv.slice(2));
+  try { startDevServer(process.argv.slice(2)); } catch (error) {
+    console.error(error.message);
+    process.exitCode = 1;
+  }
 }

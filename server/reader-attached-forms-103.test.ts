@@ -120,24 +120,44 @@ describe("perl -l takes no word: the code after it is read", () => {
     expect(posixRule("lua -l socket -e 'print(1)'")).toBe("unreadable");
   });
   it("PowerShell reads `perl -l -e <code>` as inline code too", () => {
+    // 1.0.8 parity: the code after -l is scanned as the POSIX reader scans it
+    expect(pwshRule("perl -l -e 'system(\"rm -rf ~\")'")).toBe(pwshRule("perl -e 'system(\"rm -rf ~\")'"));
+    expect(pwshRule("perl -l -e 'system(\"rm -rf ~\")'")).not.toBeNull();
     expect(pwshRule("perl -l -e 'print 1'")).toBe(pwshRule("perl -e 'print 1'"));
-    expect(pwshRule("perl -l -e 'print 1'")).not.toBeNull();
+    expect(pwshRule("perl -l -e 'print 1'")).toBe(posixRule("perl -l -e 'print 1'"));
   });
 });
 
+// 1.0.8 (KEEP, parity): PowerShell reads literal inline code with the POSIX
+// reader's code scan instead of asking for any inline code, so a row holds
+// only when its code would ask on the POSIX reader too. Each interpreter row
+// carries code that does (1.0.7 rows carried harmless code, which asked only
+// because PowerShell then asked for all inline code); the harmless forms are
+// in PWSH_PARITY below, read exactly as the POSIX reader reads them.
 const PWSH_HELD: Array<[string, string]> = [
-  ["node --eval=console.log(1)", "node --eval console.log(1)"],
+  ["node --eval=require('fs').rmSync('/',{recursive:true})", "node --eval require('fs').rmSync('/',{recursive:true})"],
+  ["node --eval='require(\"child_process\").execSync(\"rm -rf ~\")'", "node --eval 'require(\"child_process\").execSync(\"rm -rf ~\")'"],
+  ["node -erequire('fs').rmSync('/',{recursive:true})", "node -e require('fs').rmSync('/',{recursive:true})"],
+  ["bun --print='require(\"fs\").rmSync(\"/\", {recursive: true})'", "bun --print 'require(\"fs\").rmSync(\"/\", {recursive: true})'"],
+  ["perl -e'system(\"rm -rf ~\")'", "perl -e 'system(\"rm -rf ~\")'"],
+  ["perl -lne'system(\"rm -rf ~\")'", "perl -lne 'system(\"rm -rf ~\")'"],
+  ["ruby -e'FileUtils.rm_rf(Dir.home)'", "ruby -e 'FileUtils.rm_rf(Dir.home)'"],
+  ["php -r'system(\"rm -rf ~\");'", "php -r 'system(\"rm -rf ~\");'"],
+  ["python -c'import shutil, os; shutil.rmtree(os.environ[\"HOME\"])'", "python -c 'import shutil, os; shutil.rmtree(os.environ[\"HOME\"])'"],
+  ["pwsh -Command:'Remove-Item -Recurse -Force ~'", "pwsh -Command 'Remove-Item -Recurse -Force ~'"],
+  ["pwsh -c:'Remove-Item -Recurse -Force ~'", "pwsh -c 'Remove-Item -Recurse -Force ~'"],
+  ["cmd /c\"rd /s /q C:\\Users\\owner\"", "cmd /c \"rd /s /q C:\\Users\\owner\""],
+];
+
+/** [attached, spaced twin] with harmless code: both read as the POSIX reader reads the same text. */
+const PWSH_PARITY: Array<[string, string]> = [
   ["node --eval='console.log(1)'", "node --eval 'console.log(1)'"],
-  ["node -econsole.log(1)", "node -e console.log(1)"],
   ["bun --print=1", "bun --print 1"],
   ["perl -e'print 1'", "perl -e 'print 1'"],
   ["perl -lne'print'", "perl -lne 'print'"],
   ["ruby -e'puts 1'", "ruby -e 'puts 1'"],
   ["php -r'echo 1;'", "php -r 'echo 1;'"],
   ["python -c'print(1)'", "python -c 'print(1)'"],
-  ["pwsh -Command:'Remove-Item -Recurse -Force ~'", "pwsh -Command 'Remove-Item -Recurse -Force ~'"],
-  ["pwsh -c:'Remove-Item -Recurse -Force ~'", "pwsh -c 'Remove-Item -Recurse -Force ~'"],
-  ["cmd /c\"rd /s /q C:\\Users\\owner\"", "cmd /c \"rd /s /q C:\\Users\\owner\""],
 ];
 
 const PWSH_ORDINARY = [
@@ -155,6 +175,18 @@ describe("A-b1-1: attached inline code, PowerShell reader", () => {
   });
   it.each(PWSH_ORDINARY)("%s stays ordinary", (cmd) => {
     expect(pwshRule(cmd)).toBeNull();
+  });
+  // Unquoted `(` is Bash syntax, so the POSIX reader cannot parse these and
+  // asks; PowerShell passes the code through, and the code only prints
+  it.each([["node --eval=console.log(1)", "node --eval console.log(1)"], ["node -econsole.log(1)", "node -e console.log(1)"]])("%s reads as its spaced twin: harmless code, readable only as PowerShell", (attached, spaced) => {
+    expect(pwshRule(attached)).toBe(pwshRule(spaced));
+    expect(pwshRule(attached)).toBeNull();
+    expect(posixRule(attached)).toBe("unreadable");
+  });
+  it.each(PWSH_PARITY)("%s reads as its spaced twin and as the POSIX reader reads it", (attached, spaced) => {
+    expect(pwshRule(attached)).toBe(pwshRule(spaced));
+    expect(pwshRule(attached)).toBe(posixRule(attached));
+    expect(pwshRule(spaced)).toBe(posixRule(spaced));
   });
 });
 
@@ -217,8 +249,11 @@ describe("H2: perl digit bundles read their code", () => {
     expect(posixRule(cmd)).toBeNull();
   });
   it("PowerShell reads a digit bundle as inline code", () => {
+    // 1.0.8 parity: the code is scanned as the POSIX reader scans it, so the digit bundle reads as its plain twin, and as POSIX reads it
+    expect(pwshRule("perl -0777pe 'system(\"rm -rf ~\")'")).toBe(pwshRule("perl -pe 'system(\"rm -rf ~\")'"));
+    expect(pwshRule("perl -0777pe 'system(\"rm -rf ~\")'")).not.toBeNull();
     expect(pwshRule("perl -0777pe 'print'")).toBe(pwshRule("perl -pe 'print'"));
-    expect(pwshRule("perl -0777pe 'print'")).not.toBeNull();
+    expect(pwshRule("perl -0777pe 'print'")).toBe(posixRule("perl -0777pe 'print'"));
   });
 });
 

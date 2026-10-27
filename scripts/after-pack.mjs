@@ -65,6 +65,33 @@ async function requireRegularFile(file, mode) {
   if (mode !== undefined) await chmod(file, mode);
 }
 
+export async function validatePackagedCage(resources, archValue, required = true) {
+  const root = path.join(resources, "cage");
+  try { await lstat(root); } catch (error) {
+    // Older partial hook fixtures omit native resources; real packages require them.
+    if (error?.code === "ENOENT" && !required) return;
+    throw error;
+  }
+  const arch = typeof archValue === "string" ? archValue : ({ 1: "x64", 3: "arm64" })[archValue];
+  if (!["x64", "arm64"].includes(arch)) throw new Error("CAGE_RESOURCE_ARCH_UNSUPPORTED");
+  await requireRealDirectory(root);
+  const manifestFile = path.join(root, "manifest.json");
+  await requireRegularFile(manifestFile, 0o644);
+  const manifest = JSON.parse(await readFile(manifestFile, "utf8"));
+  if (manifest.schema !== 1 || manifest.target !== `linux-${arch}` || manifest.executable !== "bwrap") throw new Error("CAGE_RESOURCE_MANIFEST_MISMATCH");
+  for (const [name, expected] of [
+    ["bwrap", manifest.binarySha256],
+    ["murage-cage.bpf", manifest.filters?.["murage-cage.bpf"]?.sha256],
+    ["murage-power.bpf", manifest.filters?.["murage-power.bpf"]?.sha256],
+  ]) {
+    const file = path.join(root, name);
+    await requireRegularFile(file, name === "bwrap" ? 0o755 : 0o644);
+    if (typeof expected !== "string" || !/^[a-f0-9]{64}$/.test(expected)
+        || createHash("sha256").update(await readFile(file)).digest("hex") !== expected) throw new Error(`CAGE_RESOURCE_HASH_MISMATCH: ${name}`);
+  }
+  await requireRegularFile(path.join(root, "COPYING"), 0o644);
+}
+
 async function validateCloudflared(resources, platform, required) {
   const root = path.join(resources, "cloudflared");
   try {
@@ -413,6 +440,7 @@ export default async function afterPack(context) {
 
   if (context.electronPlatformName !== "linux") return;
 
+  await validatePackagedCage(resources, context.arch, Boolean(context.packager));
   const cuaRoot = path.join(resources, "cua-linux-x64");
   const licenses = path.join(cuaRoot, "licenses");
   for (const directory of [context.appOutDir, resources, cuaRoot, licenses]) {

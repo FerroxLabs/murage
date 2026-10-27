@@ -64,14 +64,14 @@ async function review(f: ReturnType<typeof fixture>) {
 it("runs the actual source queue through the host and scoped skill publisher without changing another person's version", async () => {
   const f = fixture(); install(f);
   const original = skillEvolutionDescriptor(f.bot.id, "checked-method")!;
-  const pin = createProcedurePin(f.bot.id, f.threadId, [], [], undefined, context(f)); f.store.pinTaskProcedures(f.bot.id, f.threadId, pin);
+  const pin = createProcedurePin(f.bot.id, f.threadId, [], [], undefined, context(f),{ownerTurn:true,shipped:()=>true}); f.store.pinTaskProcedures(f.bot.id, f.threadId, pin);
   preparePinnedProcedures(f.bot.id, f.threadId, pin, true, context(f));
   settle(f); const rows = await review(f);
   expect(rows).toHaveLength(1); expect(f.evaluator).toHaveBeenCalledOnce();
   expect(skillEvolutionDescriptor(f.bot.id, "checked-method")?.revision).toBe(original.revision);
   expect(skillEvolutionDescriptor(f.bot.id, "checked-method", context(f))?.revision).not.toBe(original.revision);
   const next = f.store.createTask(f.bot.id, "next", false)!;
-  const improved = createProcedurePin(f.bot.id, next.threadId, [], [], undefined, context(f, next.threadId));
+  const improved = createProcedurePin(f.bot.id, next.threadId, [], [], undefined, context(f, next.threadId),{ownerTurn:true,shipped:()=>true});
   expect(preparePinnedProcedures(f.bot.id, next.threadId, improved, false, context(f, next.threadId)).importedPrompt).toContain("checked-method");
   const selectedFile = (thread: string, bundleId: string) => join(taskWorkspacePath(DATA_DIR, f.bot.id, thread), ".murage-procedures", bundleId, "skills", "checked-method", "SKILL.md");
   expect(readFileSync(selectedFile(next.threadId, improved.bundleId), "utf8")).toContain("Verify the output before reporting success.");
@@ -84,7 +84,7 @@ it("runs the actual source queue through the host and scoped skill publisher wit
 it("publishes a validated routine update through the same host and retains source handles on future runs", async () => {
   const f = fixture();
   const routine = f.manager.create({ name: "Review output", botId: f.bot.id, prompt: "Original routine", target: "bot", enabled: false, runOn: "ember", permissionMode: "ask", schedule: { type: "interval", everyMinutes: 5, anchorAt: Date.now() } });
-  const pin = createProcedurePin(f.bot.id, f.threadId, [], [], { id: routine.id, instructionRevision: routineInstructionRevision(routine) }, context(f)); f.store.pinTaskProcedures(f.bot.id, f.threadId, pin);
+  const pin = createProcedurePin(f.bot.id, f.threadId, [], [], { id: routine.id, instructionRevision: routineInstructionRevision(routine) }, context(f),{ownerTurn:true,shipped:()=>true}); f.store.pinTaskProcedures(f.bot.id, f.threadId, pin);
   settle(f); await review(f);
   const promoted = f.manager.listRoutines()[0];
   expect(promoted.prompt).toBe("Verify the output before reporting success.");
@@ -96,7 +96,7 @@ it("publishes a validated routine update through the same host and retains sourc
 });
 it("keeps the real production host pending when no evaluator is configured", async () => {
   const f = fixture(false); install(f);
-  f.store.pinTaskProcedures(f.bot.id, f.threadId, createProcedurePin(f.bot.id, f.threadId, [], [], undefined, context(f)));
+  f.store.pinTaskProcedures(f.bot.id, f.threadId, createProcedurePin(f.bot.id, f.threadId, [], [], undefined, context(f),{ownerTurn:true,shipped:()=>true}));
   settle(f); const rows = await review(f);
   expect(rows).toHaveLength(1); expect(f.evaluator).not.toHaveBeenCalled();
   expect(JSON.parse(String(database().prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(rows[0].id)!.intent))).toMatchObject({ status: "deferred", reason: "procedure-evaluator-unavailable" });
@@ -105,7 +105,7 @@ it("reviews a procedure pinned in a pair room (a room that is its own holder) fo
   const f = fixture(); install(f);
   const peer = f.store.createBot(), pair = f.store.createGroup("pair", [f.bot.id, peer.id], true, "");
   reconcileMemoryRoster({ bots: f.store.bots, groups: f.store.groups });
-  const pin = createProcedurePin(f.bot.id, pair.threadId, [], [], undefined, context(f, pair.threadId));
+  const pin = createProcedurePin(f.bot.id, pair.threadId, [], [], undefined, context(f, pair.threadId),{ownerTurn:true,shipped:()=>true});
   f.store.pinGroupProcedures(pair.id, pair.threadId, f.bot.id, pin);
   preparePinnedProcedures(f.bot.id, pair.threadId, pin, true, context(f, pair.threadId));
   transaction(db => {

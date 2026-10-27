@@ -26,6 +26,7 @@
 //     type, Enter) in one round trip with one frame at the end.
 //
 // stdout is the MCP channel — never console.log here.
+import { engineStderrRedacted, ENGINE_STDERR_CAPTURE_CHARS } from "./drivers/acp/core.ts";
 import { randomBytes } from "node:crypto";
 import {
   normalizeBrowserUrl,
@@ -856,14 +857,14 @@ async function actAndObserve(
   if (!acted && !out.stdout.includes("GEOM")) {
     return text(
       id,
-      `${note.replace(/^./, (c) => c.toLowerCase())} failed: ${out.stderr.slice(0, 200) || `exit ${out.exitCode}`}`,
+      `${note.replace(/^./, (c) => c.toLowerCase())} failed: ${engineStderrRedacted(out.stderr, false).slice(0, 200) || `exit ${out.exitCode}`}`,
       true,
     );
   }
   const backend = automationSummary(out.stdout);
   const full = acted
     ? `${note}\n(${backend})`
-    : `${note}\n(the action reported an error: ${out.stderr.slice(0, 160) || "no detail"}; ${backend})`;
+    : `${note}\n(the action reported an error: ${engineStderrRedacted(out.stderr, false).slice(0, 160) || "no detail"}; ${backend})`;
   if (!observe) return text(id, full, !acted);
   if (await frameWithheld(id, full)) return;
   return observed(id, full, await frameFrom(out));
@@ -904,7 +905,7 @@ async function semanticActAndObserve(
     ? action === "fill"
       ? `filled ${ref} with ${value?.length ?? 0} chars (trusted Chrome DevTools input)`
       : `clicked ${ref} (trusted Chrome DevTools input)`
-    : `${action} ${ref} failed: ${out.stderr.slice(0, 200) || `the page changed; take a new ${murageToolOnThisServer("browser_snapshot")}`}`;
+    : `${action} ${ref} failed: ${engineStderrRedacted(out.stderr, false).slice(0, 200) || `the page changed; take a new ${murageToolOnThisServer("browser_snapshot")}`}`;
   if (!observe) return text(id, note, !acted);
   if (await frameWithheld(id, note)) return;
   return observed(id, note, await frameFrom(out));
@@ -988,11 +989,11 @@ async function call(id: unknown, name: string, args: any, signal: AbortSignal = 
     }
     const out = await runOnBox([ENV, GEOMETRY, ensureRemoteCuaCommand(), captureBlock(0, crop)].join("; "), 60_000);
     if (/CROP_FAILED/.test(out.stdout)) {
-      return text(id, `crop failed: ${out.stderr.slice(0, 200) || "ImageMagick could not create the requested region"}`, true);
+      return text(id, `crop failed: ${engineStderrRedacted(out.stderr, false).slice(0, 200) || "ImageMagick could not create the requested region"}`, true);
     }
     const frame = await frameFrom(out);
     if (!frame) {
-      return text(id, `screenshot failed: ${out.stderr.slice(0, 200) || "capture produced no frame"}`, true);
+      return text(id, `screenshot failed: ${engineStderrRedacted(out.stderr, false).slice(0, 200) || "capture produced no frame"}`, true);
     }
     return observed(id, crop ? "cropped screen captured" : "screen captured", frame, crop, false);
   }
@@ -1129,8 +1130,9 @@ async function call(id: unknown, name: string, args: any, signal: AbortSignal = 
     // MCP: a request the client cancelled gets no response
     if (outcome.kind === "stopped" || signal.aborted) return;
     if (outcome.kind === "failed") return text(id, `the command could not be run to the end: ${outcome.detail}`, true);
-    const dropped = `${outcome.kind === "done" && outcome.abandoned ? "(the command was stopped because this tool lost track of it for too long)\n" : ""}${outcome.dropped ? "(earlier output was dropped to keep the computer's disk free)\n" : ""}`;
-    const body = `${dropped}${outcome.stdout.slice(-6000)}${outcome.stderr ? `\n[stderr]\n${outcome.stderr.slice(-2000)}` : ""}`;
+    const dropped = `${outcome.kind === "done" && outcome.abandoned ? "(the command was stopped because this tool lost track of it for too long)\n" : ""}${outcome.dropped ? "(later output was omitted to keep the computer's disk free)\n" : ""}`;
+    const shown = (output: string, max: number) => engineStderrRedacted(output, Buffer.byteLength(output) >= ENGINE_STDERR_CAPTURE_CHARS).slice(-max);
+    const body = `${dropped}${shown(outcome.stdout, 6000)}${outcome.stderr ? `\n[stderr]\n${shown(outcome.stderr, 2000)}` : ""}`;
     if (outcome.kind === "silent") {
       const seconds = Math.round(outcome.silentMs / 1000);
       return text(
@@ -1200,7 +1202,7 @@ async function call(id: unknown, name: string, args: any, signal: AbortSignal = 
     const out = await runOnBox(loop, (timeout + 15) * 1000);
     const marker = out.stdout.match(/^WAIT_RESULT (yes|no) ELAPSED (\d+)$/m);
     if (!out.ok || !marker) {
-      const detail = out.stderr.slice(0, 300) || `exit ${out.exitCode ?? "unknown"}`;
+      const detail = engineStderrRedacted(out.stderr, false).slice(0, 300) || `exit ${out.exitCode ?? "unknown"}`;
       return text(id, `wait_for could not check ${label}: ${detail}`, true);
     }
     const met = marker[1] === "yes";

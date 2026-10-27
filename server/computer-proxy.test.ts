@@ -10,6 +10,7 @@
 //   4. computer_batch runs a whole sequence in one round trip,
 //   5. an unchanged screen is reported as text instead of resending the
 //      same pixels.
+import { errorTextCases, ERROR_TEXT_LEAK } from "./testing/error-text-fixtures.ts";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import { dirname, join } from "node:path";
@@ -32,6 +33,7 @@ describe("computer proxy (fake box)", () => {
   let proxy: ChildProcess;
   let port = 0;
   const commands: string[] = [];
+  let commandOverride: { stdout: string; stderr: string; exitCode: number } | null = null;
   let fileReads = 0;
   let hash = "aaaa1111";
   let browserUrl = "https://example.com/";
@@ -58,6 +60,11 @@ describe("computer proxy (fake box)", () => {
         req.on("end", () => {
           const command = JSON.parse(body || "{}").command ?? "";
           commands.push(command);
+          if (commandOverride) {
+            res.writeHead(200, { "content-type": "application/json" });
+            res.end(JSON.stringify(commandOverride));
+            return;
+          }
           // a real box echoes what the capture block printed
           const size = Buffer.from(JPEG, "base64").length;
           const isWait = command.includes("WAIT_RESULT");
@@ -586,6 +593,41 @@ describe("computer proxy (fake box)", () => {
     expect(repeated.result.content).toHaveLength(1);
     expect(repeated.result.content[0].text).toMatch(/identical/i);
   });
+
+  let errorId = 1000;
+  const errorSites = [
+    { site: "action without geometry", tool: "click", args: { x: 1, y: 1, observe: false }, stdout: "ACT failed\n" },
+    { site: "action with geometry", tool: "click", args: { x: 1, y: 1, observe: false }, stdout: "GEOM 1920 1080\nACT failed\n" },
+    { site: "semantic action", tool: "browser_click", args: { ref: "b42", observe: false }, stdout: "SEM failed\n" },
+    { site: "crop", tool: "screenshot", args: {}, stdout: "CROP_FAILED\n" },
+    { site: "screenshot", tool: "screenshot", args: {}, stdout: "SHOT_FAILED\n" },
+    { site: "wait", tool: "wait_for", args: { condition: "output_matches", command: "fixture", pattern: "ready", timeout_seconds: 1 }, stdout: "" },
+    { site: "exec stdout and stderr", tool: "computer_exec", args: { command: "fixture" }, stdout: "" },
+  ];
+  for (const site of errorSites) {
+    it.each(errorTextCases())(`redacts ${site.site} before its MCP response cut: $name`, async ({ raw, name }) => {
+      if (site.tool === "browser_click") {
+        const prep = ++errorId;
+        rpc({ jsonrpc: "2.0", id: prep, method: "tools/call", params: { name: "browser_snapshot", arguments: {} } });
+        const snapshot = await waitFor(prep);
+        expect(snapshot.result.content[0].text).toContain("b42");
+      }
+      const encoded = Buffer.from(raw).toString("base64");
+      commandOverride = { exitCode: 1, stderr: raw, stdout: site.tool === "computer_exec"
+        ? `EXEC_STATE done\nEXEC_RC 1\nEXEC_STDOUT ${encoded}\nEXEC_STDERR ${encoded}\n`
+        : site.stdout };
+      try {
+        const id = ++errorId;
+        rpc({ jsonrpc: "2.0", id, method: "tools/call", params: { name: site.tool, arguments: site.args } });
+        const response = await waitFor(id);
+        expect(response.result).toBeDefined();
+        const shown = response.result.content.filter((item: any) => item.type === "text").map((item: any) => item.text).join("\n");
+        expect(shown).not.toMatch(ERROR_TEXT_LEAK);
+        if (name === "short diagnostic") expect(shown).toContain(raw);
+        else expect(shown).toMatch(/redacted \d+ chars/);
+      } finally { commandOverride = null; }
+    });
+  }
 });
 
 describe("computer proxy control gate (fake box + fake control)", () => {

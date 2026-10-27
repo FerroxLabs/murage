@@ -1,5 +1,5 @@
 // Builds native/engine-exclusion/exclusion.c (+ exclusion-lsa.c on Windows) (N-API 9) for the platform it runs on, into dist-native/engine-exclusion/<platform>-<arch>/.
-// macOS: both architectures with clang. Linux: gcc (or $CC), -Wall -Werror. Windows: cl.exe /MT, run inside the Visual Studio developer
+// macOS: both architectures with clang. Linux: pinned AlmaLinux 8 gcc, -Wall -Werror. Windows: cl.exe /MT, run inside the Visual Studio developer
 // environment (the current one, or VsDevCmd found with vswhere, as scripts/build-fuigo-probe.mjs does); it links against an import
 // library made here from the napi_* names the source uses, and the source resolves them in the host executable at load time.
 // /MT matters: a /MD build imports VCRUNTIME140.dll, which a clean Windows machine lacks (no VC++ redistributable), so the addon would not
@@ -12,6 +12,14 @@ import {existsSync,mkdirSync,readFileSync,realpathSync,writeFileSync} from "node
 import {createHash} from "node:crypto";
 import path from "node:path";
 import {fileURLToPath,pathToFileURL} from "node:url";
+import {LINUX_FLOOR_IMAGE,floorDockerArgs,verifyGlibcFloor,verifyNeededLibraries} from "./linux-floor.mjs";
+export const ENGINE_EXCLUSION_BUILD_SCRIPT = String.raw`set -euo pipefail
+case "$MURAGE_BUILD_UID" in ''|*[!0-9]*) exit 2 ;; esac
+case "$MURAGE_BUILD_GID" in ''|*[!0-9]*) exit 2 ;; esac
+trap 'chown -R "$MURAGE_BUILD_UID:$MURAGE_BUILD_GID" /work' EXIT
+dnf -y --setopt=install_weak_deps=False --enablerepo=powertools install gcc-8.5.0-29.el8_10.alma.1
+gcc -std=c11 -D_GNU_SOURCE -O2 -Wall -Werror -fPIC -shared -DNAPI_VERSION=9 -I /headers /source/exclusion.c -o /work/engine-exclusion.node
+`;
 const root=fileURLToPath(new URL("../",import.meta.url));
 const HEADERS=["node_api.h","node_api_types.h","js_native_api.h","js_native_api_types.h"];
 function developerEnvironment(env){
@@ -45,7 +53,13 @@ export function buildEngineExclusion({platform=process.platform,exec=execFileSyn
    exec("/usr/bin/xcrun",["clang","-std=gnu11","-O2","-Wall","-DNAPI_VERSION=9","-mmacosx-version-min=12.0","-arch",target,"-bundle","-undefined","dynamic_lookup","-I",headerDirectory,source,"-o",output],{timeout:120000,stdio:"inherit"});
    exec("/usr/bin/lipo",[output,"-verify_arch",target],{timeout:5000,stdio:"inherit"});
   }else if(platform==="linux"){
-   exec(env.CC||"gcc",["-std=c11","-D_GNU_SOURCE","-O2","-Wall","-Werror","-fPIC","-shared","-DNAPI_VERSION=9","-I",headerDirectory,source,"-o",output],{timeout:120000,stdio:"inherit"});
+   exec("docker",floorDockerArgs({arch,mounts:[
+    {source,target:"/source/exclusion.c",readOnly:true},
+    {source:path.resolve(headerDirectory),target:"/headers",readOnly:true},
+    {source:path.resolve(directory),target:"/work"},
+   ],command:["/bin/bash","-c",ENGINE_EXCLUSION_BUILD_SCRIPT]}),{timeout:20*60*1000,stdio:"inherit"});
+   verifyGlibcFloor(String(exec("objdump",["-T",output],{encoding:"utf8",timeout:120000,maxBuffer:4*1024*1024})));
+   verifyNeededLibraries(String(exec("readelf",["-d",output],{encoding:"utf8",timeout:120000})));
   }else if(platform==="win32"){
    const names=[...new Set(text.toString("utf8").match(/\bnapi_[a-z0-9_]+(?=\()/g)||[])].sort();
    const def=path.join(directory,"node.def"),lib=path.join(directory,"node.lib");
@@ -55,6 +69,7 @@ export function buildEngineExclusion({platform=process.platform,exec=execFileSyn
    run("cl.exe",["/nologo","/O2","/W3","/MT","/LD","/DNAPI_VERSION=9","/I"+headerDirectory,source,lsaSource,"/Fo"+directory.replace(/\\/g,"/")+"/","/Fe"+output,"/link","/DELAYLOAD:node.exe","delayimp.lib","Advapi32.lib","Shell32.lib","Ole32.lib",lib],120000);
   }else throw Error("ENGINE_EXCLUSION_PLATFORM_UNSUPPORTED: "+platform);
   const receipt={version:1,target:platform+"-"+arch,napiVersion:9,sourceSha256,sha256:createHash("sha256").update(readFileSync(output)).digest("hex")};
+  if(platform==="linux")Object.assign(receipt,{glibcFloor:"2.28",containerImage:LINUX_FLOOR_IMAGE});
   writeFileSync(path.join(directory,"build.json"),JSON.stringify(receipt,null,2)+"\n");outputs.push(receipt);
  }
  return outputs;

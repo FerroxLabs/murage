@@ -3074,6 +3074,13 @@ export class Store {
     return mdb.turnRows(threadId, turnId).map(sanitizeMessageDiagnostic);
   }
 
+  /** The rows one turn wrote, read through the turn index (turn_first) even when the thread is loaded: the work is the turn's own
+   * rows, never a filter over the loaded thread's history. A loaded thread not yet prepared reads its cache, as turnRows does. */
+  turnRowsBounded(threadId: string, turnId: string): Message[] {
+    if (this.threads.has(threadId) && !isThreadPrepared(threadId)) return this.turnRows(threadId, turnId);
+    return mdb.turnRows(threadId, turnId).map(sanitizeMessageDiagnostic);
+  }
+
   /** The ids of the replies a turn wrote on its own (bot text that is not a copy), oldest first: the originals a copy of the
    * turn's answer links, found through the line index so a turn that wrote thousands of tool rows between its replies
    * still gives every one. */
@@ -3856,7 +3863,8 @@ export class Store {
       if (!this.threads.has(threadId)) {
         // read as a load reads it: a legacy row is chained to the row stored before it
         const step = mdb.branchStep(threadId, messageId);
-        if (!step) return null;
+        // the message is gone: the other change is still owed, as on a loaded thread (no conversation is made for it)
+        if (!step) { if (within) transaction(() => within()); return null; }
         const before = sanitizeMessageDiagnostic({ ...step.message, parentId: step.parent });
         const next = sanitizeMessageDiagnostic({ ...before, ...boundRemovedText(patch), card: patch.card ?? before.card });
         // `within` joins this write too: a card settled with the send it became (QW Q1) is one transaction on an unloaded thread as well
@@ -4997,6 +5005,27 @@ export class Store {
     Object.assign(task,next);if(!next.pinned)delete task.pinned;Object.assign(bot,mirrors,adopted,{unread:candidate.unread});
     }
     this.emit({type:"bot",botId});return task;
+  }
+
+  /** Persist one candidate roster before publishing any changed task or event. */
+  raiseTaskPermissions(botId: string, threadIds: readonly string[], patch: { autoApprove: boolean; fullAccess: boolean; noLimits: boolean }): number {
+    const bot = this.bot(botId);
+    if (!bot) return 0;
+    const rank = (v: { autoApprove?: boolean; fullAccess?: boolean; noLimits?: boolean }) => !v.autoApprove ? 0 : !v.fullAccess ? 1 : v.noLimits ? 3 : 2;
+    const selected = new Set(threadIds), changed = new Map<TaskRecord, TaskRecord>();
+    const tasks = (bot.tasks ?? []).map(task => {
+      if (!selected.has(task.threadId) || rank(task) >= rank(patch)) return task;
+      const next = { ...task, autoApprove: patch.autoApprove, fullAccess: patch.fullAccess, noLimits: patch.noLimits };
+      changed.set(task, next); return next;
+    });
+    if (!changed.size) return 0;
+    const revision = this.recordRevision;
+    try { this.saveBots(this.bots.map(current => current === bot ? { ...bot, tasks } : current)); }
+    catch (error) { this.recordRevision = revision; throw error; }
+    for (const [task, next] of changed) Object.assign(task, next);
+    // Permission defaults belong to the bot; its active task is projected separately.
+    this.emit({ type: "bot", botId });
+    return changed.size;
   }
 
   /** After a turn: the last pull or merge request the bot's reply named becomes the thread's link, unless
