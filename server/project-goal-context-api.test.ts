@@ -16,13 +16,19 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, onTestFailed, vi } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const TESTING = join(dirname(fileURLToPath(import.meta.url)), "testing");
 const FAKE_ACP = join(TESTING, "fake-acp-cli.ts");
 let fixture: VerificationServer, proof: string, fixtureRoot: string, leadDump: string;
+
+// A failed run prints the end of its fixture server's log, so a failure on a
+// CI runner can be read from the job log alone.
+beforeEach(() => onTestFailed(() => {
+  try { if (fixture?.info.logPath) console.error(`[fixture server log, last 12000 bytes]\n${readFileSync(fixture.info.logPath, "utf8").slice(-12000)}`); } catch { /* no log yet */ }
+}));
 const api = async (method: string, path: string, body?: unknown) => {
   const response = await fetch(`${fixture.info.url}${path}`, { method, headers: { "content-type": "application/json", "x-murage-surface": "desktop", "x-murage-surface-secret": proof }, body: body === undefined ? undefined : JSON.stringify(body) });
   return { status: response.status, body: await response.json().catch(() => null) as any };

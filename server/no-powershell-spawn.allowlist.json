@@ -1,5 +1,5 @@
 {
-  "_about": "Every shipped code LINE that holds a PowerShell program name, by fingerprint (the first 16 hex digits of the sha256 of the trimmed line; the text beside it is only a reminder). names_only: lines that hold the name without starting it (they classify a command an engine proposes, or label the owner's shell). user_terminal: the ONE place Murage opens PowerShell, the person's own Open terminal when Windows Terminal is missing (MurageMain, nops round 3: the commands Murage shows for pasting on Windows are PowerShell, so the fallback window is PowerShell, never cmd). open_spawns: Murage-own code that still starts PowerShell; EMPTY for 1.0.3 (MurageMain, no deferral) and the guard keeps it so. A changed or new line fails the guard until it is reviewed here; any launch of PowerShell fails wherever it is, unless it is the user_terminal line (server/no-powershell-spawn.test.ts). Murage must not start PowerShell by itself on Windows (murage-releases #1: an antivirus notice and a visible start; the packaged smoke step 5 fails on any app-spawned powershell.exe).",
+  "_about": "Every shipped code line naming a PowerShell program is fingerprinted. Direct launches remain prohibited except the exact user-terminal entry. The additional command-environment probe in engine-env.ts uses execCli, a fixed nonce-tagged script, a pinned NoProfile form, closed stdin, a hidden console, bounded output and bounded cleanup. No command text or environment value is interpolated into that script.",
   "names_only": {
     "electron/terminal-launch.mjs": {
       "reason": "label: WINDOWS_FALLBACK_SHELL names the shell the Open terminal fallback window runs, so its tests can compare it with the shell the shown commands are written for; starts nothing",
@@ -8,20 +8,20 @@
       }
     },
     "server/always-ask.ts": {
-      "reason": "recognizer: rule table that classifies a proposed command; starts nothing",
+      "reason": "recognizer: rule table and foreign-executor recognition classify proposed command text; unreadable commands keep asking; starts nothing",
       "lines": {
         "f798c6c601f85705": "if (matches.length !== 1) throw new Unreadable(\"pwsh\", matches.length ? `-${given} is ambi",
         "34c511b1f6deaab9": "if (text === \"--%\") throw new Unreadable(\"pwsh\", \"--% stops parsing\");",
         "fd802efc925dde44": "if (parameter[2] !== undefined) throw new Unreadable(\"pwsh\", `${text}: a parameter with a ",
         "44dbaba2e814a529": "if (!value) throw new Unreadable(\"pwsh\", `${text} without a value`);",
-        "e8d8d03c8c792cb7": "export function alwaysAskCommand(text: string | undefined, cwd?: string, mode: \"command\" |",
-        "733a71ce7ca81653": "function read(text: string, cwd: string | undefined, shell?: \"pwsh\"): AlwaysAskHit | null ",
-        "6348bf7838a7c242": "return (shell === \"pwsh\" ? walkPwsh(text, newContext(cwd || undefined), visitor) : readRul",
+        "867f37075d51104e": "export function alwaysAskCommand(text: string | undefined, cwd?: string, mode: \"command\" |",
+        "856694841b5b0975": "function read(text: string, cwd: string | undefined, shell?: \"pwsh\", windowsBash?: string[",
+        "69e7b0d4c190f105": "return (shell === \"pwsh\" ? walkPwsh(text, { ...newContext(cwd || undefined), windowsBash }",
         "5224e533a4b1c64f": "export function alwaysAskRoutineCommand(text: string | undefined, cwd?: string, shell?: \"p",
-        "dc0d467803f91f89": "case \"pwsh\": return walkPwsh(text, ctx, visitor);",
-        "355ce97061f015b7": "readWhole signature: the dialect a text is read in; starts nothing",
-        "00dfe41692902268": "unseenShapeAdmits signature: the dialect a text is read in; starts nothing",
-        "a2686ec8e9bae1b7": "the on-disk relief is POSIX only: a PowerShell text keeps asking; starts nothing"
+        "68c721502f46a59f": "function readWhole(text: string, cwd: string | undefined, shell?: \"pwsh\", windowsBash?: st",
+        "00dfe41692902268": "function unseenShapeAdmits(text: string, paths: string[], cwd: string | undefined, shell?:",
+        "a2686ec8e9bae1b7": "if (shell === \"pwsh\" || looksLikePowerShell(text) !== null || /^\\s*robocopy(\\.exe)?(?=\\s|$",
+        "dc0d467803f91f89": "case \"pwsh\": return walkPwsh(text, ctx, visitor);"
       }
     },
     "server/auto-approve.ts": {
@@ -29,14 +29,16 @@
       "lines": {
         "a82a0188806e4666": "const COMMAND_TOOLS = new Set([\"bash\", \"shell\", \"execute\", \"exec_command\", \"run_command\", ",
         "f66ec09b84cdfaf5": "const POWERSHELL_TOOLS = new Set([\"powershell\", \"pwsh\"]);",
-        "e9d73fe0f652b644": "const dequoted = pinShell === \"pwsh\" || !commandGlobText.trim() ? undefined : (() => {",
         "476755901dcc1868": "function simpleProgram(summary: string, dialect: \"posix\" | \"pwsh\" = \"posix\"): string | und",
         "5945fbeb2c17e4c0": "if (dialect === \"pwsh\" && /[\\u2018-\\u201E\\u2013-\\u2015]/.test(summary)) return undefined;",
         "12e9f537632338f4": "if (dialect === \"pwsh\" && (words[0]?.assignment || words[0]?.quoted || words[0]?.value.toL",
         "18937de8359a9c38": "if (dialect === \"pwsh\" && executable.includes(\"/\") && !/\\.(exe|com)$/i.test(executable)) r",
         "203bdd47c0c1c407": "const program = simpleProgram(summary, isPowerShellTool(tool) || call?.commandShell === \"p",
         "7d1492fed80afe89": "const shell = isPowerShellTool(tool) || (commandTool && context?.call?.commandShell === \"p",
-        "cf3fd17ebff44577": "const pinShell = isPowerShellTool(tool) || (isCommandTool(tool) && context?.call?.commandS"
+        "f7f4f3d0f1e47544": "const windowsBash = shell === \"pwsh\" && fullAccessOriginOf(context) === \"owner\" && fullAcc",
+        "cf3fd17ebff44577": "const pinShell = isPowerShellTool(tool) || (isCommandTool(tool) && context?.call?.commandS",
+        "54aef574116e11f9": "const dequoted = pinShell === \"pwsh\" && !windowsBash?.length || !commandGlobText.trim() ? ",
+        "2b3dc75b64c03c12": "const reads = (pinShell === \"pwsh\" ? windowsBash ?? [] : [isCommandTool(tool) ? summary : "
       }
     },
     "server/claude-accounts.ts": {
@@ -52,13 +54,13 @@
       }
     },
     "server/drivers/acp/core.ts": {
-      "reason": "label: same as codex.ts, the owner's shell form for the F12 record; nothing is started from it on Windows",
+      "reason": "Driver shell form or tool-name recognizer. Command asks may run only the fixed bounded environment probe in engine-env.ts through execCli. Claude retains its separate inherited-environment path; this entry authorizes no arbitrary PowerShell launch.",
       "lines": {
         "8cb86bbb080abbce": "const acpShellForm: readonly string[] = process.platform === \"win32\" ? [\"powershell.exe\", "
       }
     },
     "server/drivers/claude.ts": {
-      "reason": "recognizer and label: the Claude Code tool name 'PowerShell' in the ask list, in an ask's tool field, in the mode's --disallowedTools entry and its tool type; and CLAUDE_POWERSHELL_FORM, the F12 shell form a PowerShell tool command is recorded with (the CLI runs its own PowerShell tool on the inherit path; server/engine-env.ts checkExecEnv refuses a PowerShell shell form as U20 without starting it); starts nothing",
+      "reason": "Driver shell form or tool-name recognizer. Command asks may run only the fixed bounded environment probe in engine-env.ts through execCli. Claude retains its separate inherited-environment path; this entry authorizes no arbitrary PowerShell launch.",
       "lines": {
         "2101e5911314cb27": "ask: [...CLAUDE_BARE_ASK_TOOLS, ...(platform === \"win32\" ? [\"PowerShell\"] : []), ...claude",
         "353828da41736378": "export const CLAUDE_POWERSHELL_FORM: readonly string[] = [\"powershell.exe\", \"-NoProfile\", ",
@@ -69,7 +71,7 @@
       }
     },
     "server/drivers/codex.ts": {
-      "reason": "label: names the owner's Windows shell form for the F12 environment record; the environment check no longer starts it on Windows (server/engine-env.ts resolves U20 without a spawn)",
+      "reason": "Driver shell form or tool-name recognizer. Command asks may run only the fixed bounded environment probe in engine-env.ts through execCli. Claude retains its separate inherited-environment path; this entry authorizes no arbitrary PowerShell launch.",
       "lines": {
         "1bec92323babde07": "const shellForm: readonly string[] = process.platform === \"win32\" ? [\"powershell.exe\", \"-N"
       }
@@ -79,12 +81,13 @@
       "lines": {
         "31c6d7b6132bed33": "const display = tool === \"bash\" ? \"Bash\" : tool === \"powershell\" ? \"PowerShell\" : tool ===",
         "148716009b9dbaa0": "if (tool === \"bash\" || tool === \"powershell\") {",
-        "3cfcd9af3561916c": "if (gate && !questions && (gate.tool === \"Bash\" || gate.tool === \"PowerShell\")) void execE"
+        "5881c57513811be3": "if (gate && !questions && (gate.tool === \"Bash\" || gate.tool === \"PowerShell\")) void execE"
       }
     },
     "server/index.ts": {
       "reason": "recognizer: tool-name comparison on a permission event; starts nothing",
       "lines": {
+        "ca444eaa2a77bfbf": "...(event.execEnv?.unchecked && (exactCommand !== undefined || isCommandTool(event.t",
         "f17418f396ccd9f7": "...(event.execEnv?.unread && (exactCommand !== undefined || isCommandTool(event.tool) || e"
       }
     },
@@ -102,7 +105,7 @@
       }
     },
     "server/shell/pwsh.ts": {
-      "reason": "recognizer: the PowerShell lexer for the always-ask rules; parses a command an engine proposes, starts nothing",
+      "reason": "recognizer: the PowerShell lexer for the always-ask rules; parses a command an engine proposes, starts nothing; literal interpreter argv is inspected by the shared POSIX scanner",
       "lines": {
         "09d2bf808b29b4fa": "export const POWERSHELLS = new Set([\"powershell\", \"powershell.exe\", \"pwsh\", \"pwsh.exe\"]);",
         "1e488447888185b3": "if (lead?.kind === \"var\" || lead?.kind === \"subst\") throw new Unreadable(\"pwsh\", \"an assig",
@@ -110,21 +113,22 @@
         "cf822222c93d11ea": "if (option === \"-ec\" || abbreviates(option, \"-encodedcommand\") || abbreviates(option, \"-en",
         "33b5a96c564d490a": "if (!ctx.written.has(resolveWritten(ctx, path))) throw new Unreadable(\"pwsh\", \"a shell run",
         "8a7858771328d279": "function scriptFile(spelled: string, name: string, dialect: \"pwsh\" | \"cmd\"): boolean {",
+        "1457f2c611ff93cb": "function unmodelled(name: string, spelled: string, args: Word[], stdin: Provenance | undef",
+        "40a0eae1f6d02106": "if (runner === \"launcher\" && dialect === \"pwsh\" && ctx.windowsBash && literalBash && /^(ba",
         "010785822862ee19": "export function shellDialectOf(form: readonly string[] | undefined): \"pwsh\" | undefined {",
         "017242b6056ce69c": "return program !== undefined && (programBase(program) === \"powershell\" || programBase(prog",
+        "f50cd4e5846055b2": "const loader = mentionsLoaderVariable(text, \"pwsh\");",
         "5b6978843826ba92": "throw new Unreadable(\"pwsh\", \"a .NET call\");",
         "dbfbdb7a8bcbb2e9": "if (!set) throw new Unreadable(\"pwsh\", \"Set-Variable with a value the reader does not foll",
         "987d8b811a9778d6": "if (dashed && slashed) throw new Unreadable(\"pwsh\", `${program} with both -Parameters and ",
+        "1e4b1d96015d381e": "unmodelled(name, renderPwshWord(call[0]!), args, stdin, \"pwsh\", ctx, literalProgram);",
         "a387e386e017f5c9": "if ((program === \"foreach-object\" || program === \"%\") && callsMember(args)) throw new Unre",
         "416c8c274eae452f": "export function looksLikePowerShell(text: string): \"pwsh\" | \"cmd\" | \"both\" | null {",
         "470ad91e307cab39": "if (/^\\s*\\[[A-Za-z][\\w.]*\\]::[A-Za-z]/.test(text)) return \"pwsh\";",
         "fe7db5fc453ccf18": "if (/^\\s*\\$[A-Za-z_][\\w:]*\\s*=/.test(text)) return \"pwsh\";",
         "93246a19243b672f": "if (/^[A-Z][a-z]+-[A-Z]/.test(first)) return \"pwsh\";",
         "4d1662205ce5d0a0": "if (POWERSHELLS.has(lower)) return \"pwsh\";",
-        "b2a8a5d6d9a7c37a": "return [\"format-volume\", \"clear-disk\", \"initialize-disk\", \"remove-item\", \"ri\", \"set-locati",
-        "a17aad16a0219d2b": "unmodelled signature: the dialect a program is read in; starts nothing",
-        "f50cd4e5846055b2": "the shared loader check read on PowerShell and cmd text (1.0.5 r8); starts nothing",
-        "ee0e5b0d5c218135": "unmodelled call for a PowerShell statement; starts nothing"
+        "b2a8a5d6d9a7c37a": "return [\"format-volume\", \"clear-disk\", \"initialize-disk\", \"remove-item\", \"ri\", \"set-locati"
       }
     },
     "server/startup-files.ts": {
@@ -172,6 +176,19 @@
         "9314154261a656db": "the shared loader check: PowerShell backticks taken out of a name; starts nothing",
         "2631599405df977a": "the shared loader check: which dialect a text is read in; starts nothing"
       }
+    },
+    "server/env-path.ts": {
+      "reason": "Fixed environment-probe executable only: builds Windows PowerShell from the server absolute SystemRoot; never searches handed PATH. This helper starts nothing; engine-env.ts launches the fixed bounded probe.",
+      "lines": {
+        "185f94ce07a26daa": "return win32.join(root, \"System32\", \"WindowsPowerShell\", \"v1.0\", \"powershell.exe\");"
+      }
+    },
+    "server/shell/walk.ts": {
+      "reason": "recognizer: restored nested Windows executor guard rejects interpreters and launchers the Bash reader cannot model; starts nothing",
+      "lines": {
+        "43dcf0abd9a7b67f": "if (ctx.windowsBash && (windowsRunner === \"interpreter\" || windowsRunner === \"launch",
+        "c2b2989bcf2825a7": "if (ctx.windowsForeign && (powershellRunner(name) === \"interpreter\" || interpreterKey(name) !== undefined)) throw new Unreadable(\"pwsh\", `${name} reached throug"
+      }
     }
   },
   "user_terminal": {
@@ -185,5 +202,11 @@
       }
     }
   },
-  "open_spawns": {}
+  "open_spawns": {},
+  "fixed_probe": {
+    "file": "server/engine-env.ts",
+    "launch": "a6fa54200af68732",
+    "script": "666769f50c9d3a8a",
+    "reason": "Only a command ask runs this fixed nonce-tagged environment probe through an absolute executable and pinned NoProfile form with closed stdin, hidden console, bounded output and bounded cleanup; no handed PATH lookup, tool command or environment value is interpolated."
+  }
 }

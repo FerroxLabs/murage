@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// Lane R schema tests: the eleven project tables, their registration in the
+// Lane R schema tests: the project tables, their registration in the
 // archive inspector, and the shared row validator (SPEC-P 15.2).
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it, vi } from "vitest";
@@ -66,13 +66,13 @@ function insertRequest(db: DatabaseSync, id: string, groupId: string, state: str
 }
 
 describe("initializeProjectTables", () => {
-  it("creates all eleven tables with their indexes, idempotently", () => {
+  it("creates all project tables with their indexes, idempotently", () => {
     const db = freshDb();
     initializeProjectTables(db); // second run must be a no-op
     const tables = new Set((db.prepare("SELECT name FROM sqlite_schema WHERE type='table'").all() as Array<{ name: string }>).map(row => row.name));
     for (const name of PROJECT_TABLE_NAMES) expect(tables.has(name), name).toBe(true);
     expect(PROJECT_TABLE_NAMES).toEqual([
-      "project_settings", "room_requests", "project_work_items", "project_board_columns", "project_briefs",
+      "project_settings", "room_requests", "project_routine_authority", "project_work_items", "project_board_columns", "project_briefs",
       "project_goals", "project_budgets", "usage_ledger", "project_summaries", "project_activity", "project_member_state",
     ]);
     const indexes = (db.prepare("SELECT name FROM sqlite_schema WHERE type='index' AND name LIKE 'room_requests_%' OR name LIKE 'project_%' OR name LIKE 'usage_%'").all() as Array<{ name: string }>).map(row => row.name);
@@ -376,6 +376,20 @@ describe("project restore matrix", () => {
     expect(() => prepareProjectTablesForRestore(db, ctx)).not.toThrow();
     expect(db.prepare("SELECT 1 FROM sqlite_schema WHERE name=?").get(table)).toBeUndefined();
     db.close();
+  });
+  it.each([false, true])("skips missing room requests with foreign keys enabled (authority also absent: %s)", omitAuthority => {
+    const db = freshDb();
+    try {
+      db.exec("PRAGMA foreign_keys=ON");
+      insertSettings(db, "grp");
+      if (omitAuthority) db.exec("DROP TABLE project_routine_authority");
+      db.exec("DROP TABLE room_requests");
+      expect(() => prepareProjectTablesForRestore(db, ctx)).not.toThrow();
+      expect(db.prepare("SELECT 1 FROM sqlite_schema WHERE name='room_requests'").get()).toBeUndefined();
+      expect(Boolean(db.prepare("SELECT 1 FROM sqlite_schema WHERE name='project_routine_authority'").get())).toBe(!omitAuthority);
+      if (!omitAuthority) expect(db.prepare("SELECT count(*) n FROM project_routine_authority").get()?.n).toBe(0);
+      expect(db.prepare("PRAGMA foreign_keys").get()?.foreign_keys).toBe(1);
+    } finally { db.close(); }
   });
 });
 

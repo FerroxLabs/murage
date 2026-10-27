@@ -66,6 +66,8 @@ export const SETTINGS_SECTIONS: readonly SettingsSectionEntry[] = [
   { id: "botDefaults", group: "bots", desktopOnly: true },
   { id: "houseRules", group: "bots", desktopOnly: true },
   { id: "skills", group: "bots", desktopOnly: true },
+  // An alias of the Teach a skill card on the Skills page (settings-pages.ts SECTION_ALIASES), grouped with it.
+  { id: "experimental", group: "bots", desktopOnly: true },
   { id: "memory", group: "bots", desktopOnly: true },
   { id: "models", group: "ai", desktopOnly: true },
   { id: "engines", group: "ai", desktopOnly: true },
@@ -80,7 +82,6 @@ export const SETTINGS_SECTIONS: readonly SettingsSectionEntry[] = [
   { id: "storage", group: "app", desktopOnly: true },
   { id: "usage", group: "app" },
   { id: "about", group: "app" },
-  { id: "experimental", group: "app", desktopOnly: true },
 ];
 
 const SECTION_IDS = new Set<string>(SETTINGS_SECTIONS.map((entry) => entry.id));

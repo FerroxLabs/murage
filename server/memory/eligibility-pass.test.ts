@@ -50,7 +50,9 @@ function park(db: ReturnType<typeof database>, i: number, botId: string, threadI
   const receipt = { id: `rc${i}`, requestId: snapshot.requestId, targetDigest: procedureTargetDigest(snapshot.target), snapshotDigest: procedureSnapshotDigest(snapshot), evidenceDigest: snapshot.evidenceDigest,
     candidate, candidateHash: procedureCandidateHash(candidate), evaluator: "t", decision: "accepted", heldout: { corpusDigest: "c".repeat(64), untouched: true, cases: 3, baseline: 1, candidate: 2, regressions: 0 }, budgetRespected: true, cancelled: false };
   const intent = { schema: 1, id: `procedure-review:${i}`, scopeId: "s", status: "deferred", retryAfter: Date.now() + 3_600_000, evidence: [], policyRevision: 0, deletionEpoch: 0, learningRevision: 0, snapshot, receipt };
-  const scope = db.prepare("SELECT id FROM memory_scopes LIMIT 1").get()!.id;
+  // Bound to bot0's own scope, which no test deletes: scope ids are random, so
+  // "LIMIT 1" could pick room3's scope and its DELETE below would break the foreign key.
+  const scope = db.prepare("SELECT id FROM memory_scopes WHERE kind='bot' AND owner_key='bot0'").get()!.id;
   db.prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'system','procedure-review-pending',0,'granted',?)").run(intent.id, scope, JSON.stringify(intent));
 }
 

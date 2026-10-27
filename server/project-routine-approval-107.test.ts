@@ -5,16 +5,23 @@
 // raised a card for every command of the owner's own scheduled routine there. Its tool approvals are now judged as the routine's turn
 // at the lowest of the routine's level, its bot's level when the run was delivered, and the running bot's level now. A webhook or
 // channel run, and any request this process did not deliver itself, keep asking.
-import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { ProjectRoutineCeilings, projectRoutineCeiling, type ProjectRoutineRunFacts } from "./project-routines.ts";
+import { DatabaseSync } from "node:sqlite";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { initializeProjectTables, prepareProjectTablesForRestore, deleteProjectRows } from "./project-tables.ts";
+import { initializeMessageTables } from "./message-tables.ts";
+import { channelToProjectRows } from "./project-settings.ts";
+import { roomRequest, markRequestDispatched } from "./room-requests.ts";
+import { inspectInstallationDatabase, snapshotInstallationDatabase } from "./installation-database-snapshot.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
+import { persistedProjectRoutineOptions, recordProjectRoutine, projectRoutineCeiling, type ProjectRoutineRunFacts, type ProjectRoutineAuthorityCurrent } from "./project-routines.ts";
 import { applyRoutinePermissionMode, effectiveRoutinePermissionMode, routineTurnApproval, type RoutinePermissionMode } from "./routine-permissions.ts";
 
-const READ = "ls -la ~/work/ | head -40; tail -15 ~/work/notes.md";
 const bot = (mode: RoutinePermissionMode) => applyRoutinePermissionMode({}, mode);
 const run = (over: Partial<ProjectRoutineRunFacts> = {}): ProjectRoutineRunFacts => ({ id: "run-1", routineId: "r1", manual: false, triggerSource: "schedule", ...over });
-const request = (over: Record<string, unknown> = {}) => ({ id: "req-1", verb: "routine" as const, fromKind: "routine" as const, origin: "server" as const, admissionKey: "routine:run-1", unattended: true, notOwnerAudience: false, ...over });
 
 describe("the ceiling taken when the run is delivered to the room", () => {
   it("a scheduled or manual run: the lower of the routine's level and its bot's level then", () => {
@@ -33,68 +40,96 @@ describe("the ceiling taken when the run is delivered to the room", () => {
   });
 });
 
-describe("the room turn that runs the delivered request", () => {
-  const recorded = (mode: RoutinePermissionMode = "unlimited") => { const c = new ProjectRoutineCeilings(); c.record("req-1", "r1", { permissionMode: mode, triggerSource: "schedule" }); return c; };
-
-  it("carries the recorded ceiling, lowered by the routine's level now", () => {
-    expect(recorded().turnOptions(request(), () => "unlimited")).toEqual({ routineAuthority: { permissionMode: "unlimited", triggerSource: "schedule" }, projectRoutine: true });
-    expect(recorded().turnOptions(request(), () => "auto").routineAuthority?.permissionMode).toBe("auto");
-    expect(recorded("full").turnOptions(request(), () => "unlimited").routineAuthority?.permissionMode).toBe("full");
-  });
-
-  it("nothing for a request this process did not deliver (a restart), a routine since deleted, or any other request", () => {
-    expect(new ProjectRoutineCeilings().turnOptions(request(), () => "unlimited")).toEqual({});
-    expect(recorded().turnOptions(request(), () => undefined)).toEqual({});
-    expect(recorded().turnOptions(request({ verb: "room_turn" }), () => "unlimited")).toEqual({});
-    expect(recorded().turnOptions(request({ fromKind: "bot" }), () => "unlimited")).toEqual({});
-    expect(recorded().turnOptions(request({ origin: "desktop" }), () => "unlimited")).toEqual({});
-    expect(recorded().turnOptions(request({ admissionKey: "owner:1" }), () => "unlimited")).toEqual({});
-    expect(recorded().turnOptions(request({ notOwnerAudience: true }), () => "unlimited")).toEqual({});
-    expect(recorded().turnOptions(request({ id: "req-2" }), () => "unlimited")).toEqual({});
-    const forgot = recorded(); forgot.forget("req-1");
-    expect(forgot.turnOptions(request(), () => "unlimited")).toEqual({});
-  });
-
-  it("keeps at most its limit, oldest out first", () => {
-    const c = new ProjectRoutineCeilings(2);
-    for (const id of ["a", "b", "c"]) c.record(id, "r1", { permissionMode: "unlimited", triggerSource: "schedule" });
-    expect(c.turnOptions(request({ id: "a" }), () => "unlimited")).toEqual({});
-    expect(c.turnOptions(request({ id: "c" }), () => "unlimited").projectRoutine).toBe(true);
-  });
-});
-
-describe("the verdict", () => {
-  /** The judge for a project routine turn: the ceiling (capped by the running bot now) as the run, the unattended mark lifted for tool approvals only. */
-  const judged = (running: RoutinePermissionMode, ceiling: RoutinePermissionMode) => {
-    const authority = recorded(ceiling);
-    const options = authority.turnOptions(request(), () => "unlimited");
-    const mode = effectiveRoutinePermissionMode(options.routineAuthority!, bot(running));
-    return routineTurnApproval({ bot: bot(running), run: { permissionMode: mode }, tool: "Bash", summary: READ, context: { stopLine: null } }).verdict;
-  };
-  function recorded(mode: RoutinePermissionMode) { const c = new ProjectRoutineCeilings(); c.record("req-1", "r1", { permissionMode: mode, triggerSource: "schedule" }); return c; }
-
-  it("No limits answers a read-only command of the owner's own project routine; Full access as Full access", () => {
-    expect(judged("unlimited", "unlimited")).toMatchObject({ source: "no-limits" });
-    expect(judged("full", "unlimited")).toMatchObject({ source: "full-access" });
-  });
-
-  it("never above the lowest level: a routine at Ask, or a bot lowered to Ask, still asks", () => {
-    expect(judged("unlimited", "ask").approve).toBeNull();
-    expect(judged("ask", "unlimited").approve).toBeNull();
-  });
-
-  it("a webhook or channel run keeps the unattended judge", () => {
-    const verdict = routineTurnApproval({ bot: bot("unlimited"), run: null, tool: "Bash", summary: READ, context: { stopLine: null, unattended: true, automated: true } }).verdict;
-    expect(verdict).toMatchObject({ approve: null, source: "unattended-block" });
-  });
-});
-
 describe("the server wiring", () => {
   const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
   it("records a ceiling only for a request it just created, and the judge reads it only for an unattended turn", () => {
-    expect(source).toMatch(/if \(delivery\.created && ceiling\) projectRoutineCeilings\.record\(delivery\.requestId, run\.routineId, ceiling\);/);
+    expect(source).toContain("persistedProjectRoutineOptions(database(), request, projectRoutineCurrent)");
     expect(source).toMatch(/const routineWake = unattended \? routineWakeCeiling\(event\.threadId\) \?\? \(asker \? projectRoomRoutineCeiling\(event\.threadId, asker\) : undefined\) : undefined;/);
-    // the room request itself stays unattended on disk: a restart, or any process that did not deliver it, keeps asking
+    // The room request keeps its unattended mark; only the validated tool-approval lookup supplies a routine ceiling.
     expect(readFileSync(new URL("./project-routines.ts", import.meta.url), "utf8")).toMatch(/targetThreadId: input\.threadId, unattended: true/);
+  });
+});
+
+describe("108 durable project routine authority", () => {
+  let root: string, dataDir: string, db: DatabaseSync;
+  const current = (): ProjectRoutineAuthorityCurrent => ({ sourceBotId: "lead", ownerBinding: "owner-binding", audienceBinding: "room-binding", permissionMode: "unlimited", triggerSource: "schedule" });
+  const input = (runId = "durable-run") => ({ groupId: "g", threadId: "room", memberIds: ["lead"], runId, botId: "lead", name: "Check", prompt: "Read the fixture", now: 3,
+    authority: { routineId: "r1", ceiling: { permissionMode: "unlimited" as RoutinePermissionMode, triggerSource: "schedule" as const }, ownerBinding: "owner-binding", audienceBinding: "room-binding" } });
+  const deliver = (value = input()) => {
+    db.exec("BEGIN");
+    try { const result = recordProjectRoutine(db, value); db.exec("COMMIT"); return result.requestId; }
+    catch (error) { db.exec("ROLLBACK"); throw error; }
+  };
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "routine108-"));
+    dataDir = join(root, "installation"); mkdirSync(dataDir);
+    db = new DatabaseSync(join(dataDir, "messages.db")); db.exec("PRAGMA foreign_keys=ON");
+    initializeMessageTables(db); initializeProjectTables(db);
+    channelToProjectRows(db, { groupId: "g", leadBotId: "lead", bulletin: "", now: 1 });
+    db.exec("UPDATE project_settings SET mode='ongoing'");
+  });
+  afterEach(() => { db.close(); removeTempDirSync(root); });
+  const options = (id: string, now = current) => persistedProjectRoutineOptions(db, roomRequest(db, id)!, now);
+  it("reopens a queued request, admits that exact request and caps its approval at current limits", () => {
+    const id = deliver(); db.close(); db = new DatabaseSync(join(dataDir, "messages.db"));
+    expect(roomRequest(db, id)?.state).toBe("queued");
+    expect(options(id).routineAuthority?.permissionMode).toBe("unlimited");
+    expect(markRequestDispatched(db, id, { now: 5, targetThreadId: "room" })).toBe(true);
+    for (const level of ["ask", "auto", "full", "unlimited"] as const) {
+      const authority = options(id, () => ({ ...current(), permissionMode: level })).routineAuthority!;
+      expect(authority.permissionMode).toBe(level);
+      const verdict = routineTurnApproval({ bot: bot("unlimited"), run: authority, tool: "Bash", summary: "echo fixture", context: { stopLine: null } }).verdict;
+      if (level === "ask") expect(verdict.approve).toBeNull(); else expect(verdict.approve).not.toBeNull();
+    }
+    expect(effectiveRoutinePermissionMode(options(id).routineAuthority!, bot("ask"))).toBe("ask");
+  });
+  it("keeps authenticated manual delivery distinct from scheduled delivery", () => {
+    const manual = { ...input(), authority: { ...input().authority, ceiling: { permissionMode: "full" as const, triggerSource: "manual" as const } } };
+    db.exec("BEGIN"); const id = recordProjectRoutine(db, manual).requestId; db.exec("COMMIT");
+    expect(options(id)).toEqual({});
+    expect(options(id, () => ({ ...current(), triggerSource: "manual" })).routineAuthority).toEqual({ permissionMode: "full", triggerSource: "manual" });
+  });
+  it("does not remint or raise a duplicate and rolls request and authority back together", () => {
+    const first = input(); first.authority.ceiling.permissionMode = "full";
+    const id = deliver(first); expect(deliver()).toBe(id);
+    expect(options(id).routineAuthority?.permissionMode).toBe("full");
+    db.exec("CREATE TRIGGER fixture_refuse_authority BEFORE INSERT ON project_routine_authority BEGIN SELECT RAISE(ABORT, 'fixture failure'); END");
+    expect(() => deliver(input("rollback"))).toThrow();
+    expect(db.prepare("SELECT id FROM room_requests WHERE admission_key='routine:rollback'").get()).toBeUndefined();
+  });
+  it.each(["cancelled", "done", "waiting_owner", "unknown"])("does not authorize a %s request", state => {
+    const id = deliver(); db.prepare("UPDATE room_requests SET state=? WHERE id=?").run(state, id); expect(options(id)).toEqual({});
+  });
+  it("holds foreign origins, retargeting, changed bindings, deleted sources and corrupt/missing rows", () => {
+    const id = deliver(), original = roomRequest(db, id)!;
+    for (const patch of [{ origin: "desktop" }, { notOwnerAudience: true }, { toBotId: "other" }, { groupId: "other" }, { targetThreadId: "other" }, { rootThreadId: "other" }]) expect(persistedProjectRoutineOptions(db, { ...original, ...patch } as typeof original, current)).toEqual({});
+    for (const patch of [{ sourceBotId: "other" }, { ownerBinding: "other" }, { audienceBinding: "other" }]) expect(options(id, () => ({ ...current(), ...patch }))).toEqual({});
+    expect(persistedProjectRoutineOptions(db, original, () => undefined)).toEqual({});
+    expect(persistedProjectRoutineOptions(db, original, () => { throw new Error("fixture unavailable"); })).toEqual({});
+    db.prepare("UPDATE project_routine_authority SET ceiling='corrupt' WHERE request_id=?").run(id); expect(options(id)).toEqual({});
+    db.prepare("DELETE FROM project_routine_authority WHERE request_id=?").run(id); expect(options(id)).toEqual({});
+  });
+  it("inspects an actual snapshot, drops authority on restore, and accepts a legacy archive", async () => {
+    const id = deliver(); expect(() => inspectInstallationDatabase(db)).not.toThrow();
+    db.close();
+    const snapshot = join(root, "archive.db");
+    try { await snapshotInstallationDatabase(dataDir, snapshot); } finally { db = new DatabaseSync(join(dataDir, "messages.db")); }
+    const restored = new DatabaseSync(snapshot);
+    try {
+      expect(() => inspectInstallationDatabase(restored)).not.toThrow();
+      prepareProjectTablesForRestore(restored, { groups: [{ id: "g", channelProject: {} }], botIds: new Set(["lead"]), now: 10 });
+      expect(restored.prepare("SELECT count(*) n FROM project_routine_authority").get()?.n).toBe(0);
+      expect(persistedProjectRoutineOptions(restored, roomRequest(restored, id)!, current)).toEqual({});
+      restored.exec("DROP TABLE project_routine_authority");
+      expect(() => inspectInstallationDatabase(restored)).not.toThrow();
+      expect(() => prepareProjectTablesForRestore(restored, { groups: [{ id: "g", channelProject: {} }], botIds: new Set(["lead"]), now: 11 })).not.toThrow();
+      initializeProjectTables(restored); expect(restored.prepare("SELECT count(*) n FROM project_routine_authority").get()?.n).toBe(0);
+    } finally { restored.close(); }
+  });
+  it("deletes the authority with the request and with its project", () => {
+    const id = deliver(); db.prepare("DELETE FROM room_requests WHERE id=?").run(id);
+    expect(db.prepare("SELECT count(*) n FROM project_routine_authority").get()?.n).toBe(0);
+    deliver(input("next")); deleteProjectRows(db, "g", 20);
+    expect(db.prepare("SELECT count(*) n FROM project_routine_authority").get()?.n).toBe(0);
   });
 });

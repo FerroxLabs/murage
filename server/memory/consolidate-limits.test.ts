@@ -17,17 +17,19 @@ import { reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
 import { setMemoryMode } from "./repository.ts";
 import { ownerMemoryTicket } from "./authority.ts";
 import { memoryOwnerRoute } from "./settings.ts";
-import type { TextOnlyExtractor } from "./extract.ts";
+import { extractCandidates, type TextOnlyExtractor } from "./extract.ts";
+import { extractionOutcomes } from "./extraction-outcomes.ts";
 import { SLICE_CALL_GUARD, SLICE_CALL_LIMIT_REASON } from "../../shared/memory-learning-contract.ts";
 
 import { removeTempDirSync } from "../testing/cleanup.ts";
 import { storeAnchorMessage } from "./testing/anchor-message.ts";
 const roster = { bots: [{ id: "bot", threadId: "thread" }], groups: [] } as unknown as MemoryRoster;
 beforeEach(() => {
+  extractionOutcomes.clear();
   closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   reconcileMemoryRoster(roster); setMemoryMode("capture"); resetMemoryClaimCursor();
 });
-afterEach(() => vi.useRealTimers());
+afterEach(() => { extractionOutcomes.clear(); vi.useRealTimers(); });
 
 const TEXT = "I prefer green tea in the morning.";
 function captured(text = TEXT) {
@@ -120,6 +122,34 @@ it("retry-skipped: one press queues the slice with fresh counters, the cursor st
   expect(await consolidateMemorySource(job, working, signal())).toMatchObject({ status: "unchanged" });
   expect(working).toHaveBeenCalledTimes(1);
   await expect(retry(5)).rejects.toThrow("MEMORY_SKIPPED_SLICE_UNKNOWN");
+});
+
+it.each([true, false])("retry-skipped bypasses active reply backoff for one admitted call (success=%s)", async succeeds => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  const job = captured();
+  configure({ callsPerMinute: 60 });
+  let reply = "bad";
+  const extractor = vi.fn(async () => reply) as unknown as TextOnlyExtractor;
+  for (let n = 0; n < 3; n++) await consolidateMemorySource(job, extractor, signal());
+  // Two more unusable replies from the same pair elsewhere open backoff after the slice was skipped.
+  for (let n = 0; n < 2; n++) await extractCandidates(TEXT, extractor, signal());
+  expect(await extractCandidates(TEXT, extractor, signal())).toMatchObject({ reason: "extractor-backoff" });
+  expect((await retry(0)).retry.status).toBe("queued");
+  configure({ ceiling: { input: 0, output: 0 } });
+  expect(await consolidateMemorySource(job, extractor, signal())).toMatchObject({ reason: "spend-ceiling" });
+  expect(intent().extractionAttempts).toBe(0);
+  expect(extractor).toHaveBeenCalledTimes(5);
+  configure({ ceiling: { input: 200_000_000, output: 30_000_000 } });
+  reply = succeeds ? "[]" : "bad";
+  expect(await consolidateMemorySource(job, extractor, signal())).toMatchObject(succeeds
+    ? { status: "complete", cursor: Buffer.byteLength(TEXT) }
+    : { status: "deferred", reason: "extraction-incomplete" });
+  expect(extractor).toHaveBeenCalledTimes(6);
+  closeDatabase(); // The admitted attempt persists; reopening must not grant another bypass.
+  expect(await consolidateMemorySource(job, extractor, signal())).toMatchObject(succeeds
+    ? { status: "unchanged" }
+    : { status: "deferred", reason: "extractor-backoff" });
+  expect(extractor).toHaveBeenCalledTimes(6);
 });
 
 // Astra L3 High 1: two retries pressed before the worker runs are both kept; each slice runs exactly once, and nothing after them reruns.

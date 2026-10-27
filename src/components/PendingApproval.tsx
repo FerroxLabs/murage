@@ -385,14 +385,14 @@ export function PendingApprovalActions({
   const feedback = useDecisionFeedback();
   // Rule 83b: an answer that failed (not a cancelled device prompt) stays on
   // this card with its retry; the next press clears it.
-  const [failed, setFailed] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
   const status: QueueStatus = feedback.busy !== null || feedback.sent ? "sending" : failed ? "failed" : "waiting";
   useEffect(() => onStatus?.(status), [onStatus, status]);
   // A Deny and Cancel turn are never held by an Allow in flight: a Deny goes out at once and takes over the card.
   const btn = (choice: string, classes: string) => approvalButton(feedback, choice, classes, choice === "deny");
   const decide = (choice: "deny" | "program" | "task" | "routine" | "exact" | "allow", behavior: "allow" | "deny", always: false | "program" | "exact" | "routine" = false, forTask = false) =>
     feedback.run(choice, (hooks) => {
-      setFailed(false);
+      setFailed(null);
       return send(behavior, always, forTask, hooks);
     }, choice === "deny" ? { preempt: true } : undefined);
   const send = (behavior: "allow" | "deny", always: false | "program" | "exact" | "routine", forTask: boolean, hooks: DecisionHooks) => {
@@ -423,8 +423,8 @@ export function PendingApprovalActions({
       // Success keeps the buttons held until the card goes; refusal, a cancelled device prompt or an error returns them.
       onDevicePrompt: hooks.devicePrompt,
       onSuccess: hooks.succeed,
-      onError: (_error: string, code?: string) => {
-        if (hooks.live() && code !== "cancelled") setFailed(true);
+      onError: (error: string, code?: string) => {
+        if (hooks.live() && code !== "cancelled") setFailed(code === "delivery_pending" ? "Your earlier answer is still being delivered." : error || "This answer could not be delivered. Please try again.");
         hooks.settle();
       },
     });
@@ -489,6 +489,7 @@ export function PendingApprovalActions({
       )}
       {computerOnly && <ComputerOnlyNotice className="w-full text-right text-[13px] text-ink-secondary" />}
       <ApprovalConfirmLine prompting={feedback.prompting} className="w-full text-right text-[13px] text-ink-secondary" />
+      {failed && <div role="alert" className="w-full text-right text-[13px] text-danger">{failed}</div>}
       <button
         onClick={() => decide("deny", "deny")}
         {...btn("deny", cn(base, "border border-danger/40 text-danger hover:bg-danger/10"))}

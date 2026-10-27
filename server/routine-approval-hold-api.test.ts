@@ -16,7 +16,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
@@ -64,12 +64,13 @@ async function makeBot(name: string) {
 
 let serverPort = 0;
 async function startServer() {
-  child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+  child = spawn(process.execPath, ["--import", pathToFileURL(join(home, "fake-engine-setup.mjs")).href, join(SERVER_DIR, "index.ts")], {
     cwd: join(SERVER_DIR, ".."),
     env: {
       ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
       HOME: home,
       USERPROFILE: home,
+      NODE_ENV: "test",
       MURAGE_PORT: String(serverPort),
       MURAGE_WEBHOOK_PORT: String(serverPort + 1),
       MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1",
@@ -99,6 +100,9 @@ describe.skipIf(process.platform === "win32")("an unanswered approval in a routi
     chmodSync(FAKE_CLI, 0o755);
     home = mkdtempSync(join(tmpdir(), "murage-routine-hold-"));
     expect(home.startsWith(tmpdir())).toBe(true);
+    // Each server child (including crash restarts) needs the worker's existing
+    // fake-engine override; a process-local symbol cannot survive spawn().
+    writeFileSync(join(home, "fake-engine-setup.mjs"), "globalThis[Symbol.for('murage.hostPower.testUnwrapped')] = true;\n");
     mkdirSync(join(home, ".murage"), { recursive: true });
     writeFileSync(join(home, ".murage", "config.json"), JSON.stringify({
       instances: {
