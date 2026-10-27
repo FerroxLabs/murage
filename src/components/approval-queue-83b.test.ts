@@ -52,7 +52,8 @@ describe("Rule 83b: answers carry their own card's identity", () => {
 
   it("each card reports its own answer state; a failure (not a cancelled prompt) is kept for retry", () => {
     expect(actions).toContain("onStatus?: (status: QueueStatus) => void;");
-    expect(actions).toMatch(/if \(hooks\.live\(\) && code !== "cancelled"\) setFailed\(true\);/);
+    // 1.0.8 #19: the kept failure carries its reason (a still-delivering answer, or the error) instead of `true`
+    expect(actions).toMatch(/if \(hooks\.live\(\) && code !== "cancelled"\) setFailed\(code === "delivery_pending" \? "[^"]+" : error \|\| "[^"]+"\);/);
     expect(queue).toContain("onStatus={(status) =>");
   });
 });

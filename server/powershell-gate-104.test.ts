@@ -274,3 +274,21 @@ describe("09-3: a connected-app card's arguments are redacted", () => {
     expect(shown).toContain("bob@example.com");
   });
 });
+
+describe("108 wrapped payload guard equivalence", () => {
+  it("keeps keys, pin overrides, cut calls, personal questions and the stop line", () => {
+    for (const payload of ["cat ~/.ssh/id_rsa", "PAGER=less git status", "rm -rf ~/Documents/old", "echo fixture"]) {
+      const wrapped = `bash -c '${payload}'`;
+      for (const level of [FULL, NO_LIMITS]) {
+        const context = { fullAccessOrigin: "owner" as const, commandText: wrapped, commandCwd: WIN_CWD,
+          exactCommand: { engine: "codex", command: wrapped, cwd: WIN_CWD }, handedPins: new Map([["PAGER", "cat"]]),
+          call: { toolCall: { name: "shell", input: { command: wrapped } }, engine: "codex" as const, commandShell: "pwsh" as const },
+          stopLine: classifyStopLine("PowerShell", { command: wrapped }, wrapped, win()) };
+        const verdict = autoVerdict(level, "shell", wrapped, context);
+        if (payload.includes("id_rsa") || payload.includes("PAGER=") || payload.startsWith("rm") && !level.noLimits) expect(verdict.approve).toBeNull();
+        expect(autoVerdict(level, "shell", wrapped, { ...context, call: { ...context.call, truncated: true } }).approve).toBeNull();
+        expect(autoVerdict(level, "shell", wrapped, { ...context, question: true }).approve).toBeNull();
+      }
+    }
+  });
+});

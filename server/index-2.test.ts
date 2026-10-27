@@ -26,6 +26,15 @@ import { removeTempDirSync } from "./testing/cleanup.ts";
 
 
 describe("harness HTTP API", () => {
+  it("serves browser and Teach a skill on for an untouched install without saving defaults", async () => {
+    const before = await api("GET", "/api/config");
+    expect(before.status).toBe(200);
+    expect(before.body.features).toMatchObject({ browser: true, skillRecorder: true, showToolCalls: false });
+    const disk = JSON.parse(readFileSync(join(home, ".murage", "config.json"), "utf8"));
+    expect(disk.features ?? {}).not.toHaveProperty("browser");
+    expect(disk.features ?? {}).not.toHaveProperty("skillRecorder");
+  });
+
   it("exports every visible bot and imports the team without creating a room", async () => {
     const first = (await desktopApi("POST", "/api/bots", { modelSelection: STATE_ONLY_SELECTION })).body.bot;
     const second = (await desktopApi("POST", "/api/bots", { modelSelection: STATE_ONLY_SELECTION })).body.bot;
@@ -2357,31 +2366,30 @@ describe("harness HTTP API", () => {
     }
   });
 
-  it("keeps Teach a skill off by default and persists an explicit opt-in", async () => {
-    const before = await api("GET", "/api/config");
+  it("persists explicit browser and Teach a skill opt-outs independently", async () => {
+    const before = await desktopApi("GET", "/api/config");
     expect(before.status).toBe(200);
-    // the turn-engine switches are served with their defaults (lane E1)
-    // Lane D flag, SPEC-P 14: the served learning default stays off.
-    const learning = { learningDefaultOn: false };
-    // 1.0.3 flux-signin: desktop Sign in with Flux is served from its one default constant (off)
-    const signin = { fluxDesktopSignin: false };
-    const engine = { roomsThreadAdmission: true, roomsQueue: true, roomsMentionChain: true, projectsAutonomy: true, projectsAutoWake: true, projectsParallelCards: true };
-    expect(before.body.features).toEqual({ browser: false, projectsLead: true, projectsGoals: true, projectsBudgets: true, projectsWorkProfile: true, projectsBoard: true, projectsDigest: true, skillRecorder: false, showToolCalls: false, ...engine, ...learning, ...signin });
+    const file = join(home, ".murage", "config.json");
+    const original = JSON.parse(readFileSync(file, "utf8")).features ?? {};
+    try {
+      const off = await desktopApi("PATCH", "/api/config", { features: { browser: false, skillRecorder: false } });
+      expect(off.status).toBe(200);
+      expect(off.body.features).toEqual({ ...before.body.features, browser: false, skillRecorder: false });
+      expect(JSON.parse(readFileSync(file, "utf8")).features).toEqual({ ...original, browser: false, skillRecorder: false });
+      expect((await desktopApi("GET", "/api/config")).body.features).toEqual(off.body.features);
 
-    const saved = await desktopApi("PATCH", "/api/config", {
-      features: { skillRecorder: true },
-    });
-    expect(saved.status).toBe(200);
-    expect(saved.body.features).toEqual({ botsSharedAcrossTeams: true, browser: false, projectsLead: true, projectsGoals: true, projectsBudgets: true, projectsWorkProfile: true, projectsBoard: true, projectsDigest: true, skillRecorder: true, showToolCalls: false, ...engine, ...learning, ...signin });
+      const saved = await desktopApi("PATCH", "/api/config", { features: { skillRecorder: true } });
+      expect(saved.status).toBe(200);
+      expect(saved.body.features).toEqual({ ...off.body.features, skillRecorder: true });
+      expect(JSON.parse(readFileSync(file, "utf8")).features).toEqual({ ...original, browser: false, skillRecorder: true });
 
-    const disk = JSON.parse(readFileSync(join(home, ".murage", "config.json"), "utf8"));
-    expect(disk.features).toEqual({ skillRecorder: true });
-
-    const tools = await desktopApi("PATCH", "/api/config", { features: { showToolCalls: true } });
-    expect(tools.status).toBe(200);
-    expect(tools.body.features).toEqual({ botsSharedAcrossTeams: true, browser: false, projectsLead: true, projectsGoals: true, projectsBudgets: true, projectsWorkProfile: true, projectsBoard: true, projectsDigest: true, skillRecorder: true, showToolCalls: true, ...engine, ...learning, ...signin });
-
-    await desktopApi("PATCH", "/api/config", { features: { skillRecorder: false, showToolCalls: false } });
+      const tools = await desktopApi("PATCH", "/api/config", { features: { showToolCalls: true } });
+      expect(tools.status).toBe(200);
+      expect(tools.body.features).toEqual({ ...saved.body.features, showToolCalls: true });
+      expect(JSON.parse(readFileSync(file, "utf8")).features).toEqual({ ...original, browser: false, skillRecorder: true, showToolCalls: true });
+    } finally {
+      await desktopApi("PATCH", "/api/config", { features: { browser: before.body.features.browser, skillRecorder: before.body.features.skillRecorder, showToolCalls: before.body.features.showToolCalls } });
+    }
   });
 
   it("refuses to delete a bot while it owns an active channel turn", async () => {

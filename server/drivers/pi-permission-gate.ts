@@ -94,6 +94,14 @@ const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
     read: ["~/.codex/auth.json", "~/.claude/.credentials*", "~/.murage/config.json", "**/provider-keys*"],
     bash: ["*.codex/auth.json*", "*.claude/.credentials*", "*provider-keys*", "*.murage/config.json*"],
   },
+  // Desktop userData can be relocated by restore profiles: match the
+  // store basename, not only the default Murage directory.
+  {
+    id: "murage-desktop-secrets",
+    re: /(?:^|[\s\\/"'=])credentials\.bin(?:$|[\s"';|&)\\/])|provider-keys/i,
+    read: ["**/credentials.bin", "**/provider-keys*"],
+    bash: ["*credentials.bin*", "*provider-keys*"],
+  },
   // Rule 35: the Windows spellings, rows of their own.
   {
     id: "windows-credential-files",

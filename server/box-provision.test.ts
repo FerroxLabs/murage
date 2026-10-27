@@ -1,3 +1,4 @@
+import { errorTextCases, ERROR_TEXT_LEAK } from "./testing/error-text-fixtures.ts";
 import { createHash } from "node:crypto";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -9,6 +10,7 @@ describe("cloud computer provisioning cleanup", () => {
   let provisionBox: typeof import("./box.ts").provisionBox;
   let scenario: "rename-failure" | "existing-desktop-failure" = "rename-failure";
   const requests: RequestRecord[] = [];
+  let bootstrapError: string | null = null;
 
   const nameFor = (botId: string) => {
     const prefix = botId.slice(0, 8).toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -42,7 +44,7 @@ describe("cloud computer provisioning cleanup", () => {
             JSON.stringify({ ok: true, box: { id: "existing-box", name: nameFor("existing-bot"), state: "ready" } }),
           );
         } else if (url.pathname.endsWith("/commands")) {
-          res.writeHead(200).end(JSON.stringify({ ok: true, exitCode: 0, stdout: "bootstrapped", stderr: "" }));
+          res.writeHead(200).end(JSON.stringify({ ok: true, exitCode: bootstrapError === null ? 0 : 1, stdout: "bootstrapped", stderr: bootstrapError ?? "" }));
         } else if (url.pathname.endsWith("/desktop")) {
           res.writeHead(500).end(JSON.stringify({ ok: false, message: "desktop unavailable" }));
         } else {
@@ -75,6 +77,20 @@ describe("cloud computer provisioning cleanup", () => {
     expect(JSON.parse(creation?.body ?? "{}")).toMatchObject({ noEnv: true });
     expect(removal?.path).toBe("/api/box/v1/boxes/new-box");
     expect(removal?.headers["x-ascii-confirm-delete"]).toBe("new-box");
+  });
+
+  it.each(errorTextCases())("redacts bootstrap stderr before the HTTP error cut: $name", async ({ raw, name }) => {
+    scenario = "existing-desktop-failure";
+    bootstrapError = raw;
+    try {
+      const error = await provisionBox({ box: { token: "box_test" } } as any, "existing-bot", "Existing Bot").catch((error: Error) => error);
+      expect(error).toBeInstanceOf(Error);
+      const message = (error as Error).message;
+      expect(message).not.toMatch(ERROR_TEXT_LEAK);
+      expect(message).toContain("box setup failed:");
+      if (name === "short diagnostic") expect(message).toContain(raw);
+      else expect(message).toContain("redacted");
+    } finally { bootstrapError = null; }
   });
 
   it("never deletes a pre-existing box when a later step fails", async () => {

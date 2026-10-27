@@ -12,7 +12,7 @@ const native = vi.hoisted(() => ({ spawn: vi.fn(), execFile: vi.fn() }));
 vi.mock("node:child_process", () => native);
 vi.mock("./env-path.ts", () => ({ resolveCliSpawn: (command: string, args: string[]) => ({ command, args }) }));
 // The Windows job object is the engine-exclusion addon's (no PowerShell supervisor any more, murage-releases #1).
-const addon = vi.hoisted(() => ({ jobCreate: vi.fn(), jobAssign: vi.fn(), jobClose: vi.fn(), jobStop: vi.fn(), processes: vi.fn() }));
+const addon = vi.hoisted(() => ({ jobCreate: vi.fn(), jobAssign: vi.fn(), jobClose: vi.fn(), jobStop: vi.fn(), processes: vi.fn(), dropShutdownPrivileges: vi.fn(() => ({ ok: true })) }));
 // `present: false` is a build without the addon (engineJob then keeps the taskkill route).
 const addonState = vi.hoisted(() => ({ present: true }));
 vi.mock("./engine-exclusion.ts", () => ({
@@ -382,10 +382,11 @@ describe("Windows engine job: contained or refused (U24)", () => {
 
   it("engineJob always names a fresh job on Windows, and nothing off it", () => {
     const a = engineJob(), b = engineJob();
-    expect(a).toEqual({ name: expect.stringMatching(ENGINE_NAME) });
+    expect(a).toEqual({ name: expect.stringMatching(ENGINE_NAME), hostPower: true });
     expect(b!.name).not.toBe(a!.name);
     Object.defineProperty(process, "platform", { ...platformDescriptor, value: "linux" });
-    try { expect(engineJob()).toBeUndefined(); } finally { Object.defineProperty(process, "platform", { ...platformDescriptor, value: "win32" }); }
+    // Off Windows an engine job is the S4 power marker only (host-power.test.ts), and a spawn that does not nest gets nothing.
+    try { expect(engineJob()).toEqual({ hostPower: true }); expect(engineJob({ posixHostPower: false })).toBeUndefined(); } finally { Object.defineProperty(process, "platform", { ...platformDescriptor, value: "win32" }); }
   });
 
   it("the engine job is created like the PIP job: the name only, no breakaway of any kind", () => {

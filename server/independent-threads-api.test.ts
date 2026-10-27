@@ -26,7 +26,9 @@ beforeAll(async()=>{
     const file=path.join(process.env.MURAGE_DATA_DIR,'config.json');const cfg=JSON.parse(fs.readFileSync(file,'utf8'));
     cfg.instances.second={...cfg.instances.verification,displayName:'Second isolated account',environment:{FAKE_CLAUDE_DUMP:path.join(process.env.MURAGE_DATA_DIR,'second-dump.json')}};
     const acp=(name)=>path.join(process.env.MURAGE_DATA_DIR,'close-confirmed-'+name);
-    cfg.instances.acpStop={driver:'customAcp',displayName:'Close-confirmed ACP fixture',config:{cli:${JSON.stringify(FAKE_ACP)}},environment:{FAKE_ACP_MODE:'cancel-ack',FAKE_ACP_TERM:'gate',FAKE_ACP_PID_FILE:acp('pid'),FAKE_ACP_TERM_MARK:acp('term'),FAKE_ACP_EXIT_GATE:acp('gate'),FAKE_ACP_RPC_DUMP:acp('rpc')}};
+    const {installCliStopGate}=await import(${JSON.stringify(new URL("./testing/cli-stop-gate.ts",import.meta.url).href)});
+    installCliStopGate('working-folder-close-fixture',acp('gate'),acp('host-engine-pid'));
+    cfg.instances.acpStop={driver:'customAcp',displayName:'Close-confirmed ACP fixture',config:{cli:${JSON.stringify(FAKE_ACP)}},environment:{MURAGE_PROCESS_TAG:'working-folder-close-fixture',FAKE_ACP_MODE:'cancel-ack',FAKE_ACP_TERM:'gate',FAKE_ACP_PID_FILE:acp('pid'),FAKE_ACP_TERM_MARK:acp('term'),FAKE_ACP_EXIT_GATE:acp('gate'),FAKE_ACP_RPC_DUMP:acp('rpc')}};
     fs.writeFileSync(file,JSON.stringify(cfg));process.env.FAKE_CLAUDE_DUMP_EACH_TURN='1';
   `});
   const proof=await api("GET","/api/desktop-secret",undefined,false);headers={"x-murage-surface":"desktop","x-murage-surface-secret":proof.body.secret};
@@ -276,14 +278,19 @@ it("keeps a stopped ACP thread's working folder until its engine process has clo
   expect((await api("PATCH",`/api/bots/${created.id}/tasks/${sibling.threadId}`,{cwd:unrelated,modelSelection:{instanceId:"verification",model:modelOne}})).status).toBe(200);
   expect((await api("POST",`/api/bots/${created.id}/messages`,{threadId:acpThread,text:"close-confirmed fixture"})).status).toBe(202);
   await expect.poll(()=>{try{return readFileSync(acpFile("rpc"),"utf8").includes("session/prompt");}catch{return false;}},{timeout:10000}).toBe(true);
-  const pid=Number(readFileSync(acpFile("pid"),"utf8"));
+  let pid=Number(readFileSync(acpFile("pid"),"utf8"));
   await hold(created.id,sibling.threadId,"close-confirmed-unrelated");
   const stopping=api("POST",`/api/bots/${created.id}/interrupt`,{threadId:acpThread});
   if(process.platform!=="win32"){
-    // POSIX delivers SIGTERM to a handler, so the engine can outlive its
-    // termination request until the gate opens. Windows taskkill /F cannot be
-    // intercepted; there only the post-close invariants below are observable.
+    // The engine holds TERM on Linux and macOS. Its marker confirms delivery;
+    // Linux's separate host PID identifies the engine outside its namespace.
+    // Windows taskkill /F cannot stage this window.
     await expect.poll(()=>existsSync(acpFile("term")),{timeout:10000}).toBe(true);
+    if(process.platform==="linux"){
+      await expect.poll(()=>existsSync(acpFile("host-engine-pid")),{timeout:5000}).toBe(true);
+      pid=Number(readFileSync(acpFile("host-engine-pid"),"utf8"));
+    }
+    expect(Number.isInteger(pid)&&pid>1&&pid<=0x7fffffff).toBe(true);
     // The same-folder send waits (it does not fail) until the engine closes.
     expect((await api("POST",`/api/bots/${created.id}/messages`,{threadId:waiting.threadId,text:"__fixture_hold_authority__ close-confirmed-replacement"})).status).toBe(202);
     await expect.poll(async()=>(await botState(created.id)).tasks.find((task:any)=>task.threadId===waiting.threadId).waitingFor?.resource,{timeout:5000}).toBe("working-folder");

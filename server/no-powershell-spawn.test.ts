@@ -1,5 +1,5 @@
-// Murage must not start PowerShell by itself on Windows (murage-releases #1: an antivirus notice and a visible start on every
-// launch; the packaged Windows smoke step 5 fails on any app-spawned powershell.exe). This guard reads every shipped code file
+// Murage permits only its fixed bounded command-environment probe and the user terminal on Windows.
+// Packaged smoke records that probe exception explicitly. This guard reads every shipped code file
 // (server/, electron/ including the vendored bundles, shared/, installer/lib/ and the packaged script) and finds each LINE that
 // holds a PowerShell program name as a code string. Each such line must be on server/no-powershell-spawn.allowlist.json by its
 // fingerprint (sha256 of the trimmed line), with a written reason for its file: a new line, even inside a file already listed,
@@ -53,6 +53,7 @@ const isComment = (line: string) => /^\s*(?:\/\/|\/\*|\*)/.test(line);
 const fingerprint = (line: string) => createHash("sha256").update(line.trim()).digest("hex").slice(0, 16);
 interface Allowlist {
   _about: string;
+  fixed_probe?: { file: string; launch: string; script: string; reason: string };
   names_only: Record<string, { reason: string; lines: Record<string, string> }>;
   user_terminal: Record<string, { reason: string; lines: Record<string, string>; launches?: Record<string, string> }>;
   open_spawns: Record<string, unknown>;
@@ -183,7 +184,7 @@ describe("no app-spawned PowerShell", () => {
   it("every shipped line naming PowerShell as a program is on the allowlist by its fingerprint", () => {
     expect(result.unlisted, "not allowlisted: remove it or add its fingerprint with a reason").toEqual([]);
   });
-  it("no shipped code launches PowerShell, except the one user_terminal entry", () => {
+  it("no additional direct PowerShell launch sites beyond the user terminal; the fixed probe uses execCli", () => {
     expect(result.forbiddenLaunches, "a PowerShell launch").toEqual([]);
   });
   it("every allowlist entry is current and carries a written reason", () => {
@@ -219,6 +220,22 @@ describe("no app-spawned PowerShell", () => {
       expect(result.holders.filter(finding => finding.file === file), file).toEqual([]);
       expect(file in list.names_only, file).toBe(false);
     }
+  });
+
+  it("the command environment exception uses one fixed script and rejects unpinned forms", () => {
+    const source = shipped["server/engine-env.ts"]!;
+    expect(list.fixed_probe?.file).toBe("server/engine-env.ts");
+    expect(list.fixed_probe?.reason.length).toBeGreaterThan(40);
+    expect(list.fixed_probe?.launch).toBe(fingerprint(source.split("\n").find(line => line.includes("execCli(executable, [...args, script]"))!));
+    expect(list.fixed_probe?.script).toBe(fingerprint(source.split("\n").find(line => line.includes("return `$ErrorActionPreference="))!));
+    expect(source).toContain('flags.at(-1) === "-command"');
+    expect(source).toContain('flags.includes("-noprofile")');
+    expect(source).toContain('powershell ? powerShellEnvProbe(nonce)');
+    expect(source).toContain('maxBuffer: CHECK_BYTES');
+    expect(source).toContain("absoluteExecutable: true");
+    expect(source).toContain('environmentProbeProgram(shell[0] ?? "")');
+    expect(source).toContain('CHECK_WINDOWS_MS');
+    expect(source).toContain("[Console]::OpenStandardOutput()");
   });
 
   // Astra nops #8: the old guard exempted whole files, so a new spawn in an already-listed file passed.

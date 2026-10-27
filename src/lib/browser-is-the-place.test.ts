@@ -9,14 +9,17 @@ describe("browser is the place in the panel", () => {
       for (const enabled of [undefined, false, true]) {
         it.each([undefined, false, true])(`${computer ?? "auto"}, browser=${browser}, enabled=${enabled}, capability=%s`, browserMcp => {
           expect(browserIsThePlace({ computer, browser }, { features: { browser: enabled } }, { capabilities: { browserMcp } }))
-            .toBe((computer === "off" || computer === "browser") && browser !== false && enabled === true && browserMcp === true);
+            .toBe((computer === "off" || computer === "browser") && browser !== false && enabled !== false && browserMcp === true);
         });
       }
     }
   }
 
-  it("waits for configuration and the selected engine", () => {
+  it("uses the browser default but still requires a capable engine and the bot's permission", () => {
+    expect(browserIsThePlace({ computer: "off" }, {}, { capabilities: { browserMcp: true } })).toBe(true);
+    // before the saved switches load, an explicit off may still arrive
     expect(browserIsThePlace({ computer: "off" }, null, { capabilities: { browserMcp: true } })).toBe(false);
+    expect(browserIsThePlace({ computer: "browser", browser: false }, {}, { capabilities: { browserMcp: true } })).toBe(false);
     expect(browserIsThePlace({ computer: "browser" }, { features: { browser: true } }, undefined)).toBe(false);
   });
 });

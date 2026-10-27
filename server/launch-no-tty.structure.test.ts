@@ -158,7 +158,8 @@ describe("engine processes have no controlling terminal (Rule 74c launch clause)
     expect(read("drivers/acp/hermes.ts")).toMatch(/spawnCli\(cli, \["-p", profile, "acp"\]/);
     expect(read("drivers/acp/hermes.ts")).toMatch(/quietChildPipes\(child\)/);
     expect(read("drivers/headless-target-guard.ts")).toMatch(/spawnCli\(spec\.command, \["--session"/);
-    expect(read("engine-env.ts")).toMatch(/execCli\(program, \[\.\.\.args, "env -0; printf/);
+    // 1.0.8 E1: the environment probe runs a pinned env script on the absolute shell it checked, still through the launcher
+    expect(read("engine-env.ts")).toMatch(/execCli\(executable, \[\.\.\.args, script\], \{ absoluteExecutable: true,/);
     // the Fuigo update check runs the candidate engine: its --version read and its stdio session go through the launcher
     expect(read("fuigo-native-update.ts")).toMatch(/execCliAsync\(command, \[\.\.\.prefix, "--version"\]/);
     expect(read("fuigo-native-update.ts")).toMatch(/spawnCli\(command, \[\.\.\.prefix, "--permission-mode"/);

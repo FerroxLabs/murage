@@ -7,13 +7,14 @@
 // longer than one request is allowed to with a 504, as a timed-out request
 // does. A long command must therefore survive its own request.
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { errorTextCases, ERROR_TEXT_LEAK } from "./testing/error-text-fixtures.ts";
 
 const PROXY = join(dirname(fileURLToPath(import.meta.url)), "computer-proxy.ts");
 const REQUEST_LIMIT_MS = 3_000;
@@ -259,13 +260,36 @@ describe.skipIf(process.platform !== "linux")("computer_exec on the cloud box (r
     }
   }, 60_000);
 
-  it("a chatty command keeps only a bounded tail on the computer's disk", async () => {
+  for (const size of [8192, 262144]) {
+    it.each(errorTextCases(size))(`redacts real child stdout and stderr through MCP, fixture size ${size}: $name`, async ({ raw, name }) => {
+      const file = join(home, "error-output.txt");
+      writeFileSync(file, raw);
+      // Earlier cases in this file may leave their own records; this case checks only its own.
+      const earlier = new Set(jobDirs());
+      const ownJobs = () => jobDirs().filter((id) => !earlier.has(id));
+      start();
+      exec(20, `cat '${file}'; cat '${file}' >&2`);
+      const res = await waitFor(20);
+      const text = res.result.content[0].text as string;
+      expect(text).toMatch(/^exit 0\n/);
+      expect(text).toContain("[stderr]");
+      expect(text).not.toMatch(ERROR_TEXT_LEAK);
+      if (name === "short diagnostic") expect(text).toContain(raw);
+      else expect(text).toMatch(/redacted|capture truncated/);
+      const deadline = Date.now() + 10_000;
+      while (Date.now() < deadline && ownJobs().length) await new Promise((r) => setTimeout(r, 50));
+      expect(ownJobs()).toEqual([]);
+    }, 40_000);
+  }
+
+  it("a chatty command keeps only a bounded prefix on the computer's disk", async () => {
     start({ MURAGE_EXEC_OUTPUT_CAP: "524288" });
-    exec(8, "for i in 1 2 3 4 5; do head -c 400000 /dev/zero | tr '\\0' a; echo; sleep 1; done; echo END");
+    exec(8, "echo beginning; for i in 1 2 3 4 5; do head -c 400000 /dev/zero | tr '\\0' a; echo; sleep 1; done; echo END");
     const res = await waitFor(8);
     const text = res.result.content[0].text as string;
-    expect(text).toContain("earlier output was dropped");
-    expect(text.trimEnd().endsWith("END")).toBe(true);
+    expect(text).toContain("later output was omitted");
+    expect(text).toContain("beginning");
+    expect(text).not.toContain("END");
   }, 40_000);
 
   it("a quiet build of many short-lived steps is working, not silent", async () => {

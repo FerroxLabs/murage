@@ -3289,7 +3289,7 @@ function reduceState(state: AppState, action: Action): AppState {
     case "closeAllChats":
       return state.activeView === "all-chats" ? { ...state, activeView: "chat", allChatsScope: undefined } : state;
     case "showSkillRecorder":
-      if (!skillRecorderEnabled(state.config)) return state;
+      if (isCloudOrigin() || !skillRecorderEnabled(state.config)) return state;
       return {
         ...state,
         activeView: "skill-recorder",
@@ -3401,7 +3401,7 @@ function reduceState(state: AppState, action: Action): AppState {
         ...state,
         config: action.config,
         activeView:
-          state.activeView === "skill-recorder" && !skillRecorderEnabled(action.config)
+          state.activeView === "skill-recorder" && (isCloudOrigin() || !skillRecorderEnabled(action.config))
             ? "chat"
             : state.activeView,
       };

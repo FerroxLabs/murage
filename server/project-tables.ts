@@ -29,11 +29,12 @@ import { initializeRoomRequestOwed, rebuildOwedTableIfStale } from "./room-reque
 import { initializeSharedReady } from "./shared-ready.ts";
 import { ensureHandoffPairGuard } from "./pending-delegations-schema.ts";
 
-/** The eleven tables, in creation order. Indexes are created by the same
+/** The project tables, in creation order. Indexes are created by the same
  * statements and are not listed separately. */
 export const PROJECT_TABLE_NAMES = [
   "project_settings",
   "room_requests",
+  "project_routine_authority",
   "project_work_items",
   "project_board_columns",
   "project_briefs",
@@ -334,6 +335,14 @@ CREATE TABLE IF NOT EXISTS project_member_state (
  * is absent there belongs to an older release and is skipped, not created. */
 export function initializeProjectTables(db: DatabaseSync): void {
   db.exec(PROJECT_DDL);
+  db.exec(`CREATE TABLE IF NOT EXISTS project_routine_authority (
+    request_id TEXT PRIMARY KEY REFERENCES room_requests(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL, run_id TEXT NOT NULL, routine_id TEXT NOT NULL,
+    source_bot_id TEXT NOT NULL, group_id TEXT NOT NULL, thread_id TEXT NOT NULL,
+    target_bot_id TEXT NOT NULL, admission_key TEXT NOT NULL,
+    owner_binding TEXT NOT NULL, audience_binding TEXT NOT NULL,
+    trigger TEXT NOT NULL, ceiling TEXT NOT NULL
+  );`);
   // A request that is a hand-off's says so on its own row, for its whole life (project-turn-engine.ts reads it): set by the database when the hand-off's row
   // and the request meet (pending-delegations-schema.ts ensureHandoffPairGuard). Listed as optional in APP_TABLES; the 1.0.1 downgrade rebuilds the table without it.
   const columns = (db.prepare("PRAGMA table_info(room_requests)").all() as Array<{ name: string }>).map((column) => column.name);
@@ -648,6 +657,9 @@ const RESTORE_PAUSE_REASON = "Restored from a backup: paused. Resume?";
  * its paused, authority-free restore shape, one `modifications` entry per
  * rewrite. Absent tables (an older archive) are skipped, never created. */
 export function prepareProjectTablesForRestore(db: DatabaseSync, ctx: ProjectRowContext): Array<{ component: string; action: string }> {
+  // Restored delivery authority is never dispatch authority on this installation.
+  // SQLite resolves the foreign-key parent even for an empty DELETE. Older archives can omit it.
+  if (projectTableExists(db, "room_requests") && projectTableExists(db, "project_routine_authority")) db.exec("DELETE FROM project_routine_authority");
   validateProjectAuthority(db);
   const modifications: Array<{ component: string; action: string }> = [];
   const has = (name: ProjectTableName) => projectTableExists(db, name);

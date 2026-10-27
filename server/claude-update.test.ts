@@ -3,11 +3,23 @@
 import type { ExecFileOptions } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
+import { errorTextCases, ERROR_TEXT_LEAK } from "./testing/error-text-fixtures.ts";
 import { updateClaudeCli } from "./claude-update.ts";
 
 type Callback = (error: Error | null, stdout: string, stderr?: string) => void;
 
 describe("updateClaudeCli", () => {
+  it.each(errorTextCases())("redacts updater stderr before the HTTP error cut: $name", async ({ raw, name }) => {
+    const execute = (_cli: string, _args: string[], _options: ExecFileOptions, callback: Callback) => {
+      callback(Object.assign(new Error("exit 1"), { code: 1 }), "", raw);
+    };
+    const error = await updateClaudeCli("claude", {}, execute).catch((error: Error) => error);
+    expect(error).toBeInstanceOf(Error);
+    const message = (error as Error).message;
+    expect(message).not.toMatch(ERROR_TEXT_LEAK);
+    if (name === "short diagnostic") expect(message).toBe(`Claude update failed: ${raw}. Run \`claude update\` in Terminal, then try again.`);
+  });
+
   it("runs the official updater before reading the installed version", async () => {
     const calls: Array<{ cli: string; args: string[]; options: ExecFileOptions }> = [];
     const execute = (cli: string, args: string[], options: ExecFileOptions, callback: Callback) => {

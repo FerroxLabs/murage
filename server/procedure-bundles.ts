@@ -6,10 +6,13 @@ import { DATA_DIR } from "./config.ts";
 import { taskWorkspacePath } from "./workspace.ts";
 import { relinkDirectory, removeLinkWithRetry } from "./link-removal.ts";
 import { skillAvailableForAudience, listSkills, snapshotProceduralSkill, assertSkillProcedureEvidence, type SkillProcedureContext, type SkillProcedureEvidence, fitSkillIndex, skillIndexOmissionNotice, nativeLinkPointsToSkill, onSkillsSwitchedOff, sweepBotSkills } from "./skills.ts";
-import { skillFileText, type BundledSkill } from "./skill-library.ts";
+import { skillFileText, skillsForAudience, type BundledSkill } from "./skill-library.ts";
 import type { InstalledPlaybook } from "./store.ts";
 
 export interface ProcedurePin { schema:1; bundleId:string; legacyRoomWorkspace?:true }
+/** Whom the turn answers, by the rule the prompt uses (skill-library.ts skillsForAudience):
+ *  `ownerTurn` is the owner's audience on a bot that takes the owner's own resources. */
+export interface PinAudience { ownerTurn:boolean; shipped:(skill:BundledSkill)=>boolean }
 interface Payload { path:string; bytes:string; sha256:string; executable:boolean }
 interface ProcedureBundle {
   schema:1; botId:string; threadId:string; audienceKey?:string;
@@ -18,6 +21,10 @@ interface ProcedureBundle {
   catalogue:BundledSkill[];
   playbooks:InstalledPlaybook[];
   files:Payload[];
+  /** Whom the pin's turn answers. Only an owner turn's pin holds the owner's own skills, and only under
+   *  `owner/`, which is written to app state, never to the task's desk (preparePinnedProcedures).
+   *  Absent: written before this was recorded; such a pin serves no turn (procedurePinServesTurn). */
+  ownerTurn?:boolean;
 }
 const digest=(bytes:string|Buffer)=>createHash("sha256").update(bytes).digest("hex");
 const fail=():never=>{throw new Error("Pinned procedures are unavailable or changed; no replacement instructions were used");};
@@ -68,9 +75,23 @@ function stateRoot(botId:string,threadId:string):string {
   if(!safeId(botId)||!safeId(threadId))fail();
   return join(DATA_DIR,"skill-state",botId,"task-bundles",threadId);
 }
+/** Where an owner turn's pin projects the owner's own skills: app state beside the pin's bundle (which holds
+ * the same bytes already), never under the task's desk, so no turn that does not answer the owner is given it. */
+function ownerProjectionRoot(botId:string,threadId:string,bundleId:string):string {
+  if(!/^[a-f0-9]{64}$/.test(bundleId))fail();
+  return join(stateRoot(botId,threadId),"owner",bundleId);
+}
 /** Capture once, before native admission. Complete payloads remain in existing
  * app-owned skill state; all later selections use this catalogue. */
-export function createProcedurePin(botId:string,threadId:string,catalogue:BundledSkill[],playbooks:InstalledPlaybook[],routine?:{id:string;instructionRevision:string},context?:SkillProcedureContext):ProcedurePin {
+export function createProcedurePin(botId:string,threadId:string,catalogue:BundledSkill[],playbooks:InstalledPlaybook[],routine:{id:string;instructionRevision:string}|undefined,context:SkillProcedureContext|undefined,audience:PinAudience):ProcedurePin {
+  // The owner's own skills (a recording's narration, window titles and control names) are not copied
+  // into a pin for a turn that does not answer the owner: the folder on disk follows the prompt's rule.
+  // A pin that does not say whom its turn answers is refused, never built from the full catalogue.
+  if(!audience||typeof audience.ownerTurn!=="boolean"||typeof audience.shipped!=="function")throw new Error("PROCEDURE_AUDIENCE_REQUIRED");
+  const offered=skillsForAudience(catalogue,audience.ownerTurn,audience.shipped);
+  // An owner-only skill (not shipped, not shared with everyone) is filed under `owner/`: its copy lives in
+  // app state beside this bundle, never on the desk a turn that does not answer the owner also runs in.
+  const everyAudience=new Set(skillsForAudience(offered,false,audience.shipped));
   // A skill the scanner now blocks is switched off before it can be pinned (a no-op once this bot was scanned).
   sweepBotSkills(botId);
   context=partitionProcedureContext(botId,threadId,context);
@@ -83,16 +104,16 @@ export function createProcedurePin(botId:string,threadId:string,catalogue:Bundle
     return {name:skill.name,description:snapshot.description,sha256,revision:snapshot.revision,editable:snapshot.editable,enabled:snapshot.enabled,
       ...(snapshot.audienceKey?{audienceKey:snapshot.audienceKey,evidence:snapshot.evidence,globalBaseRevision:snapshot.globalBaseRevision,globalBaseSha256:snapshot.globalBaseSha256}:{})};
   });
-  const frozen=catalogue.map(skill=>{
+  const frozen=offered.map(skill=>{
     if(!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(skill.manifest.id))fail();
-    const directory=`catalogue/${skill.manifest.id}`;
+    const directory=`${everyAudience.has(skill)?"catalogue":"owner"}/${skill.manifest.id}`;
     collectTree(skill.directory,directory,files);
     const content=files.find(file=>file.path===`${directory}/SKILL.md`);
     if(!content||skillFileText(Buffer.from(content.bytes,"base64").toString("utf8"))!==skill.instructions)fail();
     return {...structuredClone(skill),directory};
   });
   if(files.length>2000||files.reduce((sum,file)=>sum+Buffer.byteLength(file.bytes,"base64"),0)>64*1024*1024)fail();
-  const bundle:ProcedureBundle={schema:1,botId,threadId,...(context?{audienceKey:context.audienceKey}:{}),imported,catalogue:frozen,playbooks:structuredClone(playbooks),files,...(routine?{routine}:{})};
+  const bundle:ProcedureBundle={schema:1,botId,threadId,...(context?{audienceKey:context.audienceKey}:{}),imported,catalogue:frozen,playbooks:structuredClone(playbooks),files,...(routine?{routine}:{}),ownerTurn:audience.ownerTurn};
   const bytes=JSON.stringify(bundle),bundleId=digest(bytes),root=stateRoot(botId,threadId);
   ownedDirectory(root);
   const path=join(root,`${bundleId}.json`);
@@ -135,22 +156,30 @@ export function preparePinnedProcedures(botId:string,threadId:string,pin:Procedu
   }catch(error){revokePinnedMaterialization(botId,threadId,pin,bundle);throw error;}
   const desk=taskWorkspacePath(DATA_DIR,botId,threadId);
   const root=join(desk,".murage-procedures",pin.bundleId);ownedDirectory(root);
+  // The owner's own skills (`owner/`) are only in an owner turn's pin, and their copy is written to app state
+  // beside the bundle, never to the desk: a turn that does not answer the owner runs in this same desk, and
+  // is never given the owner folder. Nothing has to leave the desk for it (OWNER-PIN-AUDIENCE-108.md).
+  const owned=bundle.files.filter(file=>file.path.startsWith("owner/"));
+  if(owned.length&&bundle.ownerTurn!==true)fail();
+  const ownerRoot=owned.length?ownerProjectionRoot(botId,threadId,pin.bundleId):undefined;
+  if(ownerRoot)ownedDirectory(ownerRoot);
+  const at=(path:string)=>path.startsWith("owner/")?join(ownerRoot!,path):join(root,path);
   const published=join(root,".complete");
   const isPublished=existsSync(published);
-  const expected=new Set(bundle.files.map(file=>file.path));
   for(const file of bundle.files){
-    if(!/^(skills|catalogue)\//.test(file.path)||file.path.split("/").some(part=>!part||part==="."||part===".."||/[\\\0]/.test(part)))fail();
-    const path=join(root,file.path);ownedDirectory(dirname(path));
+    if(!/^(skills|catalogue|owner)\//.test(file.path)||file.path.split("/").some(part=>!part||part==="."||part===".."||/[\\\0]/.test(part)))fail();
+    const path=at(file.path);ownedDirectory(dirname(path));
     if(existsSync(path)){if(digest(regularBytes(path))!==file.sha256)fail();}
     else{
-      if(isPublished)fail();
+      if(isPublished&&!file.path.startsWith("owner/"))fail();
       const bytes=Buffer.from(file.bytes,"base64");if(digest(bytes)!==file.sha256)fail();
       writeFileSync(path,bytes,{flag:"wx",mode:file.executable?0o500:0o400});
     }
   }
   // Additional injected files are not part of the pin either.
-  const inspect=(path:string,prefix="")=>{for(const name of readdirSync(path)){if(!prefix&&name===".complete")continue;const key=prefix?`${prefix}/${name}`:name,full=join(path,name),stat=lstatSync(full);if(stat.isSymbolicLink())fail();if(stat.isDirectory())inspect(full,key);else if(!expected.has(key)||!stat.isFile())fail();}};
-  inspect(root);
+  const inspect=(path:string,expected:Set<string>,prefix="")=>{for(const name of readdirSync(path)){if(!prefix&&name===".complete")continue;const key=prefix?`${prefix}/${name}`:name,full=join(path,name),stat=lstatSync(full);if(stat.isSymbolicLink())fail();if(stat.isDirectory())inspect(full,expected,key);else if(!expected.has(key)||!stat.isFile())fail();}};
+  inspect(root,new Set(bundle.files.filter(file=>!file.path.startsWith("owner/")).map(file=>file.path)));
+  if(ownerRoot)inspect(ownerRoot,new Set(owned.map(file=>file.path)));
   if(!isPublished)writeFileSync(published,pin.bundleId,{flag:"wx",mode:0o400});
   else if(regularBytes(published).toString()!==pin.bundleId)fail();
   // Native discovery dirs exist only when a skill is linked into them, as
@@ -205,8 +234,10 @@ export function preparePinnedProcedures(botId:string,threadId:string,pin:Procedu
   // without a word (upstream #2060).
   const candidates=bundle.imported.map(skill=>`- ${skill.name}: ${skill.description} Read ${JSON.stringify(join(root,"skills",skill.name,"SKILL.md"))}.`);
   const lines=fitSkillIndex(candidates,(kept,omitted)=>importedSkillsPrompt(kept,omitted));
-  return {catalogue:bundle.catalogue.map(skill=>({...skill,directory:join(root,skill.directory)})),playbooks:bundle.playbooks,
-    importedPrompt:importedSkillsPrompt(lines,candidates.length-lines.length),linkNotice:skillLinkNotice(unlinked)};
+  // `ownerRoot`: the folder holding the owner's own skills, for the owner turn's engine to read (index.ts grantedDirs).
+  return {catalogue:bundle.catalogue.map(skill=>({...skill,directory:at(skill.directory)})),playbooks:bundle.playbooks,
+    importedPrompt:importedSkillsPrompt(lines,candidates.length-lines.length),linkNotice:skillLinkNotice(unlinked),
+    ...(ownerRoot?{ownerRoot}:{})};
 }
 
 /** The in-chat line for pinned skills whose native link could not be made
@@ -233,13 +264,26 @@ function revokePinnedMaterialization(botId:string,threadId:string,pin:ProcedureP
   for(const skill of bundle.imported){
     for(const dir of [".claude/skills",".agents/skills",".grok/skills"]){
       const directory=join(desk,dir),link=join(directory,skill.name);
+      // A discovery dir that is not there holds no link, and is not created here.
+      if(!existsSync(directory))continue;
       try{ownedDirectory(directory);if(nativeLinkPointsToSkill(link,join(root,"skills",skill.name)))removeLinkWithRetry(link);}catch{/* Never follow an unknown replacement. */}
     }
   }
   for(const file of bundle.files){
-    const path=join(root,file.path);
+    const path=file.path.startsWith("owner/")?join(ownerProjectionRoot(botId,threadId,pin.bundleId),file.path):join(root,file.path);
+    if(!lstatSync(path,{throwIfNoEntry:false}))continue;// already gone; its folders are not made again
     try{ownedDirectory(dirname(path));if(digest(regularBytes(path))===file.sha256)rmSync(path);}catch{/* A changed file is not ours to delete. */}
   }
+}
+
+/** A pin serves only the kind of turn it was built for: a non-owner turn never reuses an owner turn's pin
+ *  (its catalogue names the owner's own skills), and an owner turn rebuilds a non-owner pin to get them back.
+ *  A pin written before whom it serves was recorded serves no turn: it may carry the owner's skills under
+ *  `catalogue/`, which projects to the desk, so the task pins again instead. One bundle read, whatever the
+ *  task's history (OWNER-PIN-AUDIENCE-108.md). */
+export function procedurePinServesTurn(botId:string,threadId:string,pin:ProcedurePin,ownerTurn:boolean):boolean {
+  const recorded=readProcedureBundle(botId,threadId,pin).ownerTurn;
+  return typeof recorded==="boolean"&&recorded===ownerTurn;
 }
 
 export function procedurePinFitsAudience(botId: string, threadId: string, pin: ProcedurePin, context?: SkillProcedureContext): boolean {
