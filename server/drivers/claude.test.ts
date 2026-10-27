@@ -4117,6 +4117,7 @@ describe("claudeIsolation", () => {
 
   it("falls back to the file name for front matter it cannot read, and logs a traversal bound instead of refusing", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
     try {
       const h = temp();
       const dir = join(h, ".claude");
@@ -4125,12 +4126,26 @@ describe("claudeIsolation", () => {
       write(join(dir, "agents", ...Array.from({ length: 10 }, (_, i) => `d${i}`), "deep.md"), "---\nname: deep\n---\n");
       const settings = settingsOf(claudeIsolation({ CLAUDE_CONFIG_DIR: dir }, join(h, "w")));
       expect(settings.permissions.deny).toEqual(["Agent(broken)", "Agent(long)"]);
-      const said = warn.mock.calls.map((c) => String(c[0]));
+      const said = info.mock.calls.map((c) => String(c[0]));
       expect(said.some((m) => m.includes("front matter longer than"))).toBe(true);
       expect(said.some((m) => m.includes("does not parse"))).toBe(true);
-      expect(said.some((m) => m.includes("nested deeper than"))).toBe(true);
+      expect(info).toHaveBeenCalledTimes(2);
+      expect(warn.mock.calls.some((c) => String(c[0]).includes("nested deeper than"))).toBe(true);
+      expect(warn.mock.calls.some((c) => String(c[0]).includes("front matter"))).toBe(false);
+      // Repeated scans in this launch, even with a different failure for the same file, stay quiet.
+      claudeIsolation({ CLAUDE_CONFIG_DIR: dir }, join(h, "w"));
+      write(join(dir, "agents", "broken.md"), `---\nname: hidden\ndescription: ${"x".repeat(70 * 1024)}\n---\n`);
+      claudeIsolation({ CLAUDE_CONFIG_DIR: dir }, join(h, "w"));
+      expect(info).toHaveBeenCalledTimes(2);
+      // A different file still gets its own notice; valid edits are still read after a notice.
+      write(join(dir, "agents", "another.md"), "---\nname: [unclosed\n---\n");
+      write(join(dir, "agents", "broken.md"), "---\nname: repaired\n---\n");
+      const repaired = settingsOf(claudeIsolation({ CLAUDE_CONFIG_DIR: dir }, join(h, "w")));
+      expect(repaired.permissions.deny).toContain("Agent(repaired)");
+      expect(info).toHaveBeenCalledTimes(3);
     } finally {
       warn.mockRestore();
+      info.mockRestore();
     }
   });
 

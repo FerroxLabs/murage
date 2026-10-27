@@ -79,6 +79,9 @@ it("prepares a blocked candidate preserving terminal identities and suspending c
   const result = await prepareInstallationRestore(f.archive, f.root);
   const read = (path: string) => JSON.parse(readFileSync(join(result.stateDirectory, path), "utf8"));
   expect(read("config.json").engineDiscovery).toBe("explicit");
+  // A restore pauses execution for review: the default-on browser and Teach a skill come back off
+  // as explicit choices here, while an ordinary upgrade (no stored flag) keeps both on.
+  expect(read("config.json").features).toEqual({ browser: false, skillRecorder: false, showToolCalls: false });
   expect(read("config.json").instances.fuigo).toMatchObject({ driver: "fuigoAgent", enabled: false });
   expect(Object.values(read("config.json").instances).every((entry: any) => entry.enabled === false)).toBe(true);
   const profile = restoredConnectionProfile(result.stateDirectory);

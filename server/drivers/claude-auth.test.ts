@@ -1,5 +1,6 @@
 // Where "is Claude signed in?" is answered. These tests inject the CLI
 // runner, so they never read or mutate the developer's real credentials.
+import { errorTextCases, ERROR_TEXT_LEAK } from "../testing/error-text-fixtures.ts";
 import { describe, expect, it } from "vitest";
 
 import { claudeAuthFailure, claudeAuthStatus, claudeSignedIn, claudeVersionTooOld } from "./claude.ts";
@@ -9,6 +10,27 @@ describe("claudeAuthStatus", () => {
   const refusing = (stderr: string) => ((_cli, _args, _options, callback) => {
     callback(new Error("Command failed: exit code 1"), "", stderr);
   }) satisfies typeof import("../procs.ts").execCli;
+
+  it.each(errorTextCases())("redacts the whole auth stderr before its owner cut: $name", async ({ raw, name }) => {
+    const status = await claudeAuthStatus("claude", {}, refusing(raw));
+    expect(status.error).toBeTruthy();
+    expect(status.error).not.toMatch(ERROR_TEXT_LEAK);
+    if (name === "short diagnostic") expect(status.error).toBe(raw);
+    else expect(status.error).toContain("redacted");
+  });
+
+  it.each([false, true])("uses stderr truncation separately from combined output overflow: %s", async (stderrTruncated) => {
+    const run = ((_cli, _args, _options, callback) => {
+      callback(Object.assign(new Error("stdout or stderr maxBuffer length exceeded"), {
+        code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER", stderrTruncated,
+      }), "x".repeat(65500), "ordinary diagnostic");
+    }) satisfies typeof import("../procs.ts").execCli;
+    const status = await claudeAuthStatus("claude", {}, run);
+    if (stderrTruncated) {
+      expect(status.error).toContain("Stderr capture truncated; later output omitted");
+      expect(status.error).not.toContain("ordinary diagnostic");
+    } else expect(status.error).toBe("ordinary diagnostic");
+  });
 
   it("reads a refusal of the launch flags as an update, not a lost login", async () => {
     // rig, 2.1.281 and 2.1.295: `claude --<unknown> auth status --json` prints this on stderr, exit 1
@@ -20,6 +42,12 @@ describe("claudeAuthStatus", () => {
   it("reads a managed MCP policy's refusal as that conflict", async () => {
     const status = await claudeAuthStatus("claude", {}, refusing("You cannot use --strict-mcp-config when an enterprise MCP config is present\n"));
     expect(status.refusal).toMatchObject({ stopReason: "managed_mcp_conflict" });
+  });
+
+  it("redacts the CLI's words before cutting them to 300 characters, so a long key never loses its label", async () => {
+    const status = await claudeAuthStatus("claude", {}, refusing(`error: auth failed api_key=${"Q7x".repeat(120)}\n`));
+    expect(status.error).toBeDefined();
+    expect(status.error).not.toMatch(/Q7|7x|xQ/);
   });
 
   it("keeps any other failure as the CLI's own words, signed out and no refusal", async () => {

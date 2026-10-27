@@ -1,18 +1,23 @@
 // The bundled Fuigo engine's packaging contract: an exact pinned version, one
 // staged file per BUILD TARGET rather than per build host, and a staged file
 // name that cannot drift from the electron-builder `to:` basename.
-import { readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { FUIGO_EXECUTABLE_NAMES } from "../electron/harness-resources.mjs";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 import { executableTarget } from "./prepare-cloudflared.mjs";
+import * as cloudflared from "./prepare-cloudflared.mjs";
 import {
   FUIGO_ASSETS,
   FUIGO_VERSION,
   expectedManifest,
+  finalizeTargetDirectory,
   fuigoExecutableName,
   parsePrepareFuigoArgs,
+  prepareFuigo,
   stagedDirectory,
   tarballName,
   tarballUrl,
@@ -211,6 +216,76 @@ describe("pinned fuigo packaging", () => {
   it("stages each target where electron-builder's per-platform `from:` looks", () => {
     for (const target of Object.keys(PINNED_ASSETS)) {
       expect(stagedDirectory("/repo", target)).toBe(join("/repo", "dist-native", "fuigo", target));
+    }
+  });
+
+  it.skipIf(process.platform === "win32").each([
+    "darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64",
+  ])("publishes %s with modes readable by the runtime user", (target) => {
+    const root = mkdtempSync(join(tmpdir(), "murage-prepare-fuigo-"));
+    try {
+      const staging = mkdtempSync(join(root, `.${target}-`));
+      const finalDirectory = join(root, target);
+      const executable = fuigoExecutableName(target);
+      const manifest = `${JSON.stringify(expectedManifest(target))}\n`;
+      writeFileSync(join(staging, executable), executableFixture(target), { mode: 0o700 });
+      writeFileSync(join(staging, "manifest.json"), manifest, { mode: 0o600 });
+      // Explicit private modes make the regression independent of umask.
+      chmodSync(staging, 0o700);
+      chmodSync(join(staging, executable), 0o700);
+      chmodSync(join(staging, "manifest.json"), 0o600);
+
+      finalizeTargetDirectory(staging, finalDirectory, target);
+
+      expect(existsSync(staging)).toBe(false);
+      expect(statSync(finalDirectory).mode & 0o777).toBe(0o755);
+      expect(statSync(join(finalDirectory, "manifest.json")).mode & 0o777).toBe(0o644);
+      expect(statSync(join(finalDirectory, executable)).mode & 0o777).toBe(0o755);
+      expect(readFileSync(join(finalDirectory, "manifest.json"), "utf8")).toBe(manifest);
+      expect(readFileSync(join(finalDirectory, executable))).toEqual(executableFixture(target));
+    } finally {
+      safeWipeSync(root);
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("widens a pre-existing same-version tree to 0755/0644/0755 on an offline prepare rerun", async () => {
+    const root = mkdtempSync(join(tmpdir(), "murage-prepare-fuigo-"));
+    // A non-host target keeps the synthetic executable from being run.
+    const target = process.platform === "linux" && process.arch === "arm64"
+      ? "linux-x64" : "linux-arm64";
+    const directory = stagedDirectory(root, target);
+    const binary = join(directory, fuigoExecutableName(target));
+    const manifestFile = join(directory, "manifest.json");
+    const bytes = executableFixture(target);
+    const manifest = `${JSON.stringify(expectedManifest(target))}\n`;
+    const checksum = vi.spyOn(cloudflared, "verifySha256")
+      .mockReturnValue(FUIGO_ASSETS[target].binarySha256);
+    const fetch = vi.spyOn(globalThis, "fetch")
+      .mockRejectedValue(new Error("unexpected network access during offline prepare rerun"));
+    try {
+      mkdirSync(directory, { recursive: true });
+      writeFileSync(binary, bytes);
+      writeFileSync(manifestFile, manifest);
+      chmodSync(directory, 0o700);
+      chmodSync(manifestFile, 0o600);
+      chmodSync(binary, 0o700);
+      const paths = [directory, manifestFile, binary];
+      const inodes = paths.map((path) => statSync(path).ino);
+
+      await prepareFuigo({ root, targets: [target] });
+
+      expect(paths.map((path) => statSync(path).mode & 0o777)).toEqual([0o755, 0o644, 0o755]);
+      expect(paths.map((path) => statSync(path).ino)).toEqual(inodes);
+      expect(readFileSync(manifestFile, "utf8")).toBe(manifest);
+      expect(readFileSync(binary)).toEqual(bytes);
+      expect(checksum).toHaveBeenCalledExactlyOnceWith(
+        bytes, FUIGO_ASSETS[target].binarySha256, `${target} fuigo executable`,
+      );
+      expect(fetch).not.toHaveBeenCalled();
+    } finally {
+      checksum.mockRestore();
+      fetch.mockRestore();
+      safeWipeSync(root);
     }
   });
 

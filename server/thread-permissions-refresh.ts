@@ -42,3 +42,37 @@ export function refreshPreview(bot: PermissionHolder, task: PermissionHolder): R
   const previewId = createHash("sha256").update(JSON.stringify({ bot: b, task: t, add: [...alwaysAllowAdd].sort() })).digest("hex");
   return { previewId, level: { from: permissionLevel(task), to: permissionLevel(patch) }, alwaysAllowAdd, patch };
 }
+
+export const PERMISSION_LEVELS: readonly PermissionLevel[] = ["ask", "auto", "full", "no-limits"];
+export interface OpenPermissionCandidate extends PermissionHolder {
+  threadId: string;
+  /** Server-derived identity/lineage binding and current eligibility. */
+  binding: string;
+  reason?: string;
+}
+export interface OpenRefreshPreview {
+  previewId: string;
+  targetLevel: PermissionLevel;
+  eligible: Array<{ threadId: string; from: PermissionLevel; to: PermissionLevel }>;
+  skipped: Array<{ threadId: string; reason: string }>;
+}
+export function permissionLevelPatch(level: PermissionLevel) {
+  return { autoApprove: level !== "ask", fullAccess: level === "full" || level === "no-limits", noLimits: level === "no-limits" };
+}
+export function openRefreshPreview(bot: PermissionHolder, candidates: readonly OpenPermissionCandidate[]): OpenRefreshPreview {
+  const targetLevel = permissionLevel(bot), eligible: OpenRefreshPreview["eligible"] = [], skipped: OpenRefreshPreview["skipped"] = [];
+  const roster = [...candidates].sort((a, b) => a.threadId.localeCompare(b.threadId));
+  for (const task of roster) {
+    const from = permissionLevel(task);
+    const reason = task.reason ?? (PERMISSION_LEVELS.indexOf(from) >= PERMISSION_LEVELS.indexOf(targetLevel) ? "already-at-level" : undefined);
+    if (reason) skipped.push({ threadId: task.threadId, reason });
+    else eligible.push({ threadId: task.threadId, from, to: targetLevel });
+  }
+  const previewId = createHash("sha256").update(JSON.stringify({ scope: "open", targetLevel, roster })).digest("hex");
+  return { previewId, targetLevel, eligible, skipped };
+}
+
+/** One server-derived eligibility decision shared by preview and apply. */
+export function openPermissionExclusion(facts: { owner: boolean; automation: boolean; closed: boolean; roomOwner: boolean; busy: boolean }): string | undefined {
+  return !facts.owner ? "other-owner" : facts.automation ? "automation" : facts.closed ? "closed" : !facts.roomOwner ? "room-owner" : facts.busy ? "busy" : undefined;
+}

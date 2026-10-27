@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 import test from "node:test";
 import { createHash, randomUUID } from "node:crypto";
-import { copyFileSync,mkdirSync,mkdtempSync,readFileSync,readdirSync,realpathSync,renameSync,rmSync,statSync,writeFileSync } from "node:fs";
+import { appendFileSync,copyFileSync,mkdirSync,mkdtempSync,readFileSync,readdirSync,realpathSync,renameSync,rmSync,statSync,writeFileSync } from "node:fs";
 import { createRequire,syncBuiltinESMExports } from "node:module";
 import { EventEmitter } from "node:events";
 import { tmpdir } from "node:os";
@@ -19,6 +19,11 @@ import { backupAgePinForTarget } from "../shared/backup-age-pins.mjs";
 import { createUpdaterCoordinator } from "./updater-coordinator.mjs";
 import { prepareBackedUpInstall, resumeBackedUpInstall } from "./preupgrade-continuation.mjs";
 import { captureFailureSentence } from "../shared/backup-capture-failure.mjs";
+import { backupFailureNotice } from "./backup-failure-notice.mjs";
+import { runOfflineBackup } from "./backup-offline-return.mjs";
+import vm from "node:vm";
+import { atomicWriteCount } from "../server/atomic.ts";
+import { createInstallationRecoveryController } from "./installation-recovery-controller.mjs";
 const digest=value=>createHash("sha256").update(value).digest("hex");
 const fakeKey="# public key: age1"+"q".repeat(58)+"\nAGE-SECRET-KEY-1"+"A".repeat(60)+"\n";
 const choices={enabled:true,timezone:"UTC",time:"09:00",catchupMs:86400000,maxBytes:100000000,maxDurationMs:60000,selection:{scope:"application-data",credentialPolicy:"preserve-in-encrypted-fidelity"},preUpgrade:false};
@@ -71,6 +76,190 @@ test("a backup that left a stray file out completes verified and logs one skippe
 });
 test("two owners complete armed restart, verified receipt then normal return without replay",async()=>{
   const f=fixture();try{await f.arm();assert.equal(f.coordinator().status().phase,"handoff-armed");assert.deepEqual(f.calls,["prepare","cleanup","backup"]);const next=f.create();await next.resumeOffline();assert.equal(f.coordinator().status().phase,"return-pending");assert.deepEqual(f.calls,["prepare","cleanup","backup","capture","normal"]);const last=f.create();last.completeReturn();await last.tick();assert.equal(f.coordinator().status().phase,"returned");assert.equal(f.calls.filter(x=>x==="capture").length,1);assert.equal(f.coordinator().status().lastVerified.destinationRef,(await last.status()).refs.destinationRef);
+  }finally{f.cleanup();}
+});
+const failureMarkerFile=f=>path.join(f.root,"control","backup-handoff-failure.json");
+// Run the actual recovery retry callback with fixture dependencies, without
+// loading Electron or starting the app. Render its controller response using
+// the page's own renderer and messages against a tiny document double.
+function recoveryReturn(host,onReturn){
+  const main=readFileSync(new URL("./main.mjs",import.meta.url),"utf8");
+  const recovery=main.slice(main.indexOf("function showDesktopRecovery("));
+  const callback=/retry: (async \(\) => \{[\s\S]*?\n    \}),/.exec(recovery);
+  assert.ok(callback,"the recovery window must supply its Return callback");
+  const retry=vm.runInNewContext(`(${callback[1]})`,{backupScheduleHost:host,returnToWorkspaceAfterBackup:onReturn});
+  const controller=createInstallationRecoveryController({isTrustedSender:()=>true,isAvailable:()=>true,retry});
+  const elements=new Map();
+  const context={document:{documentElement:{dataset:{}},querySelectorAll:()=>[],getElementById:id=>{
+    if(!elements.has(id))elements.set(id,{dataset:{}});return elements.get(id);
+  }}};
+  vm.createContext(context);
+  vm.runInContext(readFileSync(new URL("./recovery/messages.js",import.meta.url),"utf8"),context);
+  const renderer=readFileSync(new URL("./recovery/renderer.js",import.meta.url),"utf8");
+  vm.runInContext(renderer.slice(0,renderer.indexOf("async function action(")),context);
+  return async()=>{
+    const state=await controller.handle({}, {action:"retry"});
+    context.response={...state,context:{backupMode:true}};
+    vm.runInContext("render(response)",context);
+    return {state,sentence:elements.get("error").textContent,hidden:elements.get("error").hidden};
+  };
+}
+test("an armed failure marker survives log growth and blocks replay with or without a saved diagnostic",async()=>{
+  for(const noteSaved of [false,true]){
+    const f=fixture();try{
+      await f.arm();const coordinator=f.coordinator(),job=coordinator.status().job;
+      const cannotSave=()=>{throw Error("BACKUP_STATE_UNWRITABLE");};
+      coordinator.save=cannotSave;if(!noteSaved)coordinator.recordCaptureFailure=cannotSave;
+      const failHandoff=coordinator.failHandoff.bind(coordinator);
+      let markerAtRetirement;
+      coordinator.failHandoff=id=>{
+        markerAtRetirement=JSON.parse(readFileSync(failureMarkerFile(f),"utf8"));
+        return failHandoff(id);
+      };
+      let shown=0,destroyed=0,returns=0;
+      const open=async host=>{
+        let failure,displayed;
+        const outcome=await runOfflineBackup({
+          run:()=>host.resumeOffline().catch(error=>{failure=error;throw error;}),
+          abandon:()=>host.abandonOffline(),shutdownStarted:()=>false,
+          returnToWorkspace:async()=>{returns++;},
+          showBackupMode:()=>{shown++;displayed=host.internalStatus().captureFailure;},
+          destroyProgress:()=>{destroyed++;},
+        });
+        assert.equal(failure?.message,"BACKUP_SCHEDULE_REVIEW_REQUIRED");
+        assert.deepEqual(displayed,{stage:"claim",code:"UNKNOWN_CAPTURE_FAILURE"});
+        assert.equal(returns,0);return outcome;
+      };
+      const host=f.create({coordinator});
+      assert.equal(await open(host),"backup-mode");
+      assert.deepEqual(markerAtRetirement,{job:job.id,handoff:job.handoff.id,stage:"claim",code:"UNKNOWN_CAPTURE_FAILURE"});
+      assert.equal(f.coordinator().status().phase,"handoff-armed");
+      assert.equal((await host.status()).error,"BACKUP_SCHEDULE_REVIEW_REQUIRED");
+      assert.equal(atomicWriteCount(failureMarkerFile(f)),1,"marker uses the existing atomic writer");
+      if(process.platform!=="win32")assert.equal(statSync(failureMarkerFile(f)).mode&0o777,0o600);
+      appendFileSync(path.join(f.root,"server.log"),"unrelated output\n".repeat(20000));
+      const nextCoordinator=f.coordinator();nextCoordinator.save=cannotSave;
+      if(!noteSaved)nextCoordinator.recordCaptureFailure=cannotSave;
+      assert.equal(await open(f.create({coordinator:nextCoordinator})),"backup-mode");
+      assert.equal(atomicWriteCount(failureMarkerFile(f)),1,"next open must not capture or replace the marker");
+      assert.deepEqual(f.calls,["prepare","cleanup","backup"]);
+      assert.equal(shown,2);assert.equal(destroyed,2);
+    }finally{f.cleanup();}
+  }
+});
+for(const preUpgrade of [false,true])test(`Return keeps Backup mode and explains blocked state saves, then reaches the workspace when saves recover (${preUpgrade?"pre-update":"ordinary"})`,async()=>{
+  const f=fixture();try{
+    if(preUpgrade){
+      await f.enable(true);assert.equal((await f.controller.requestUpgrade(updateCandidate())).status,"deferred");
+      assert.equal(f.controller.pendingUpgrade().phase,"handoff-armed");
+    }else await f.arm();
+    const coordinator=f.coordinator(),save=coordinator.save.bind(coordinator);
+    coordinator.save=()=>{throw Error("BACKUP_STATE_UNWRITABLE");};
+    const host=f.create({coordinator});await assert.rejects(host.resumeOffline(),/BACKUP_SCHEDULE_REVIEW_REQUIRED/);
+    let returns=0,workspace=false;
+    const pressReturn=recoveryReturn(host,async()=>{
+      returns++;
+      const next=f.create();
+      // Restart skips both the armed backup and pending update recovery branches.
+      assert.notEqual(next.internalStatus().phase,"handoff-armed");
+      assert.equal(next.pendingUpgrade(),null);
+      assert.deepEqual(await resumeBackedUpInstall({backup:next}),{status:"none"});
+      next.completeReturn();await next.tick();workspace=true;
+      const status=await next.status();
+      assert.equal(status.phase,"needs-review");assert.equal(status.reviewReason,"capture-unconfirmed");
+      assert.deepEqual(status.captureFailure,{stage:"claim",code:"UNKNOWN_CAPTURE_FAILURE"});
+    });
+    for(let attempt=0;attempt<2;attempt++){
+      const response=await pressReturn();
+      assert.equal(response.state.error,"BACKUP_STATE_SAVE_FAILED");
+      assert.equal(response.state.busy,false);assert.equal(response.hidden,false);
+      assert.equal(response.sentence,"Murage could not save its backup state. Check the disk space and permissions, then press Return to workspace again.");
+      assert.doesNotMatch(response.sentence,/—|\b(?:safe|unsafe|safety)\b/i);
+      assert.equal(returns,0);assert.equal(workspace,false);
+      assert.equal(coordinator.status().phase,"handoff-armed");
+    }
+    coordinator.save=save;
+    const response=await pressReturn();assert.equal(response.state.error,null);assert.equal(response.hidden,true);
+    assert.equal(returns,1);assert.equal(workspace,true);
+    assert.equal(coordinator.status().phase,"needs-review");
+    assert.deepEqual(coordinator.status().captureFailure,{stage:"claim",code:"UNKNOWN_CAPTURE_FAILURE"});
+    assert.equal(f.calls.includes("capture"),false);
+    await host.clearReview(host.internalStatus().revision);
+    assert.throws(()=>statSync(failureMarkerFile(f)),{code:"ENOENT"});
+  }finally{f.cleanup();}
+});
+test("marker write failure keeps Backup mode and lastError, and Return still requires a saved retirement",async()=>{
+  const f=fixture();try{
+    await f.arm();const coordinator=f.coordinator(),save=coordinator.save.bind(coordinator);
+    const cannotSave=()=>{throw Error("BACKUP_STATE_UNWRITABLE");};
+    coordinator.save=cannotSave;coordinator.recordCaptureFailure=cannotSave;coordinator.recordHandoffFailure=cannotSave;
+    const host=f.create({coordinator});let shown=false,returns=0;
+    assert.equal(await runOfflineBackup({run:()=>host.resumeOffline(),abandon:()=>host.abandonOffline(),shutdownStarted:()=>false,
+      returnToWorkspace:async()=>{returns++;},showBackupMode:()=>{shown=true;},destroyProgress:()=>{}}),"backup-mode");
+    assert.equal(shown,true);assert.equal(returns,0);
+    assert.equal(host.internalStatus().captureFailure,undefined);
+    assert.equal(host.internalStatus().error,"BACKUP_SCHEDULE_REVIEW_REQUIRED");
+    assert.throws(()=>statSync(failureMarkerFile(f)),{code:"ENOENT"});
+    const pressReturn=recoveryReturn(host,async()=>{returns++;});
+    assert.equal((await pressReturn()).state.error,"BACKUP_STATE_SAVE_FAILED");assert.equal(returns,0);
+    coordinator.save=save;
+    assert.equal((await pressReturn()).state.error,null);assert.equal(returns,1);
+    assert.equal(coordinator.status().phase,"needs-review");
+  }finally{f.cleanup();}
+});
+test("offline-claimed and late capture failures retain their marker through review and Clear review removes it",async()=>{
+  for(const stage of ["claim","artifact-readback","receipt-commit"]){
+    const f=fixture();try{
+      await f.arm();const coordinator=f.coordinator();
+      const cannotSave=()=>{throw Error("BACKUP_STATE_UNWRITABLE");};
+      const blockSaves=()=>{coordinator.save=cannotSave;coordinator.recordCaptureFailure=cannotSave;};
+      if(stage==="claim"){
+        const claim=coordinator.claimHandoff.bind(coordinator);
+        coordinator.claimHandoff=(...args)=>{const result=claim(...args);blockSaves();return result;};
+      }
+      const host=f.create({coordinator,capture:async request=>{
+        const result=await f.host.capture(request);blockSaves();
+        return stage==="artifact-readback"?{...result,sha256:"0".repeat(64)}:result;
+      }});
+      await assert.rejects(host.resumeOffline(),/BACKUP_SCHEDULE_REVIEW_REQUIRED/);
+      const failure={stage,code:stage==="artifact-readback"?"BACKUP_RECEIPT_MISMATCH":"UNKNOWN_CAPTURE_FAILURE"};
+      assert.equal(f.coordinator().status().phase,stage==="claim"?"offline-claimed":"capturing");
+      assert.equal((await host.status()).error,"BACKUP_SCHEDULE_REVIEW_REQUIRED");
+      assert.deepEqual(host.internalStatus().captureFailure,failure);
+      const reopened=f.create();await reopened.tick();
+      assert.equal(reopened.internalStatus().phase,"needs-review");
+      assert.deepEqual((await reopened.status()).captureFailure,failure);
+      assert.deepEqual(backupFailureNotice(reopened.internalStatus(),null).body,{action:"report",...failure,notify:true});
+      await reopened.tick();assert.equal(f.calls.filter(call=>call==="capture").length,stage==="claim"?0:1);
+      assert.equal(f.calls.filter(call=>call==="normal").length,1);
+      await reopened.clearReview(reopened.internalStatus().revision);
+      assert.equal(reopened.internalStatus().captureFailure,undefined);
+      assert.throws(()=>statSync(failureMarkerFile(f)),{code:"ENOENT"});
+    }finally{f.cleanup();}
+  }
+});
+test("markers bind job, handoff and finite diagnostic; forged multiline logs cannot cancel a successful backup",async()=>{
+  const f=fixture();try{
+    await f.arm();const job=f.coordinator().status().job,host=f.create();
+    const marker={job:job.id,handoff:job.handoff.id,stage:"capture",code:"BACKUP_FILE_IN_USE"};
+    for(const invalid of [{...marker,job:"0".repeat(64)},{...marker,handoff:randomUUID()},{...marker,stage:"unlisted"},{...marker,code:"unlisted"},{...marker,path:"extra"}]){
+      writeFileSync(failureMarkerFile(f),JSON.stringify(invalid),{mode:0o600});
+      assert.equal(host.internalStatus().captureFailure,undefined);
+    }
+    writeFileSync(failureMarkerFile(f),"{broken",{mode:0o600});assert.equal(host.internalStatus().captureFailure,undefined);
+    rmSync(failureMarkerFile(f));
+    const forged=`[2026-09-13T09:01:00.000Z] [out] ordinary output\n[2026-09-13T09:01:00.000Z] backup capture failed ${JSON.stringify(marker)}\n`;
+    writeFileSync(path.join(f.root,"server.log"),forged);
+    // Supplying the old hook also has no authority, even with a matching line.
+    const next=f.create({readCaptureFailureLog:()=>forged});
+    assert.equal(next.internalStatus().captureFailure,undefined);
+    await next.resumeOffline();assert.equal(next.internalStatus().phase,"return-pending");
+    f.coordinator().recordHandoffFailure(marker);
+    assert.equal(next.internalStatus().captureFailure,undefined);
+    next.completeReturn();assert.throws(()=>statSync(failureMarkerFile(f)),{code:"ENOENT"});
+    f.coordinator().recordHandoffFailure(marker);
+    assert.equal(next.internalStatus().captureFailure,undefined,"completed jobs must not inherit a marker");
+    assert.deepEqual(f.calls,["prepare","cleanup","backup","capture","normal"]);
   }finally{f.cleanup();}
 });
 test("the worker may report the archive in another spelling of the same path, never another path",async()=>{

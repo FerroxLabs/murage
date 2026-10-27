@@ -47,7 +47,9 @@ jobs:
           sudo apt-get update && sudo apt-get install -y
           at-spi2-core dbus-x11 desktop-file-utils libxi6 libxkbcommon0 squashfs-tools x11-utils xdotool xvfb
           build-essential binutils libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev libffi-dev liblzma-dev
+          pkg-config libseccomp-dev xz-utils python3 python3-pip git linux-libc-dev
       - run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/linux-cage
       # Murage for Chrome: the store item ID and public key when the owner has
       # set them (plan 2.3); until then this build carries no extension identity.
       - name: Murage for Chrome identity, when set
@@ -68,6 +70,10 @@ jobs:
         run: |
           gepa_hash="$(node -e 'const fs=require("node:fs"); const m=JSON.parse(fs.readFileSync("qualification-evidence/gepa-package-metadata.json","utf8")); const h=m.extraMetadata.murageGepaManifests["linux-x64"]; if(!/^[a-f0-9]{64}$/.test(h))process.exit(1); process.stdout.write(h)')"
           pnpm package:linux:offline "--config.extraMetadata.murageGepaManifests.linux-x64=$gepa_hash"
+      - name: Enforce the Linux GLIBC floor on shipped artifacts
+        run: |
+          v="$(node -p 'require("./package.json").version')"
+          node scripts/check-linux-glibc-floor.mjs "release/Murage-$v-amd64.deb" "release/Murage-$v-x86_64.AppImage" dist-native/fuigo/linux-x64/fuigo
       # The FINAL packaged build.json, not a pre-build directory (handoff 9):
       # release mode, the store identity, no development ID.
       - name: Murage for Chrome identity in the packaged app

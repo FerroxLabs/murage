@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { loadBundledSkills, loadUserSkills, mergeSkills, parseSkillManifest, selectBundledSkills, skillInstructionsFor, skillsWithMountedTools, type BundledSkill } from "./skill-library.ts";
+import { loadBundledSkills, loadUserSkills, mergeSkills, parseSkillManifest, selectBundledSkills, shippedSkillCheck, skillInstructionsFor, skillsForAudience, skillsWithMountedTools, type BundledSkill } from "./skill-library.ts";
 
 const phone: BundledSkill = {
   directory: "/skills/phone-harness",
@@ -52,6 +52,35 @@ describe("bundled skill library", () => {
     writeFileSync(join(broken, "SKILL.md"), "broken");
 
     expect(loadUserSkills(root).map((skill) => skill.manifest.id)).toEqual(["file-expense"]);
+  });
+
+  it("keeps an owner's recording to turns that answer the owner unless the owner shares it", () => {
+    const root = mkdtempSync(join(tmpdir(), "murage-skills-"));
+    const write = (id: string, extra: Record<string, unknown>) => {
+      const directory = join(root, id);
+      mkdirSync(directory);
+      writeFileSync(join(directory, "manifest.json"), JSON.stringify({
+        id, name: id, version: "1.0.0", description: "Recorded", defaultEnabled: true, triggerTerms: ["expense"], requiredCapabilities: [], ...extra,
+      }));
+      writeFileSync(join(directory, "SKILL.md"), `---\nname: ${id}\ndescription: Recorded\n---\nWindow title: Payroll.\n`);
+    };
+    write("recorded-expense", { audience: "owner" });
+    write("older-recording", {});
+    write("shared-expense", { audience: "everyone" });
+    const shippedPhone = { ...phone, manifest: { ...phone.manifest, triggerTerms: ["expense"], requiredCapabilities: [] }, shipped: true as const };
+    const catalogue = mergeSkills([shippedPhone], loadUserSkills(root));
+    const shipped = shippedSkillCheck([shippedPhone]);
+    const ids = (ownerTurn: boolean) => selectBundledSkills("file my expense", [], skillsForAudience(catalogue, ownerTurn, shipped)).map((skill) => skill.manifest.id).sort();
+    expect(ids(true)).toEqual(["older-recording", "phone-harness", "recorded-expense", "shared-expense"]);
+    expect(ids(false)).toEqual(["phone-harness", "shared-expense"]);
+    expect(() => parseSkillManifest({ ...phone.manifest, audience: "room" }, "/skills/phone-harness")).toThrow(/invalid audience/);
+  });
+
+  it("chooses trigger-term skills from the audience's catalogue on direct and room turns", () => {
+    const index = readFileSync(join(import.meta.dirname, "index.ts"), "utf8");
+    expect(index).toContain("skillsForAudience(pinnedProcedures.catalogue, directOwnerAudience && ownServersAllowedFor(bot), murageSkill)");
+    expect(index).toContain("const audienceSkills = skillsForAudience(skills, roomOwnerAudience && ownServersAllowedFor(bot), murageSkill);");
+    expect(index.match(/^\s+audienceSkills,$/gmu)).toHaveLength(2);
   });
 
   it("does not let a user skill shadow a bundled skill id", () => {
