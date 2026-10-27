@@ -83,13 +83,13 @@ describe("a package whose addon lacks a called export is refused (fixture addon,
     const dir = mkdtempSync(join(tmpdir(), "murage-addon-fixture-"));
     const file = join(dir, "engine-exclusion.cjs");
     const members = names.map(name => `${JSON.stringify(name)}: () => {}`).join(", ");
-    writeFileSync(file, `module.exports = { version: () => 9, lock: () => {}, renameNoReplace: () => 0, processes: () => [{ pid: process.pid }], ${members} };\n`);
+    writeFileSync(file, `module.exports = { version: () => 10, lock: () => {}, renameNoReplace: () => 0, processes: () => [{ pid: process.pid }], ${members} };\n`);
     return { dir, file };
   };
   const check = (names: string[], platform: "win32" | "darwin" | "linux") => {
     const { dir, file } = fixture(names);
     try {
-      return loadEngineExclusionResource(file, platform, process.arch, 9, (command, args, env) => {
+      return loadEngineExclusionResource(file, platform, process.arch, 10, (command, args, env) => {
         const run = spawnSync(command, args, { env: { ...process.env, ...env }, encoding: "utf8" });
         if (run.status !== 0) throw Object.assign(new Error("run failed"), { status: run.status, stderr: run.stderr });
         return run.stdout;

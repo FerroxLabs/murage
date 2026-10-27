@@ -75,6 +75,12 @@ describe("the place strip", () => {
 });
 
 describe("the You menu", () => {
+  it("gates the recorder menu and page on the local macOS desktop as well as the switch", () => {
+    expect(sidebar).toContain("skillRecorderAvailable(state.config, desktop, isCloudOrigin(), capabilities.host.platform)");
+    const app = readFileSync(fileURLToPath(new URL("../App.tsx", import.meta.url)), "utf8");
+    expect(app).toContain('state.activeView === "skill-recorder" && skillRecorderAvailable(state.config, desktop, isCloudOrigin(), capabilities.host.platform)');
+    expect(app).toContain("const { capabilities } = useDesktopCapabilities();");
+  });
   const items: YouMenuItem[] = [
     { key: "about-me", label: "About me", icon: null, onSelect: vi.fn() },
     { key: "whats-new", label: "What's new", icon: null, onSelect: vi.fn() },

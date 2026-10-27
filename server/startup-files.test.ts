@@ -177,8 +177,14 @@ describe("startup files by resolved identity", () => {
     const source = readFileSync(join(import.meta.dirname, "engine-env.ts"), "utf8");
     const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "").replace(/\s\/\/ .*$/gm, "");
     expect(code).not.toMatch(/shell-rc|cmd-autorun|SENSITIVE_PATHS|SENSITIVE_TEXT|STARTUP_ROWS|RegExp/);
-    // no regex literal: a slash opening an expression after `(`, `,`, `=`, `:` or `[`
-    expect(code).not.toMatch(/[(,=:[!&|?]\s*\/(?![/*])[^/\n]+\/[dgimsuy]*/);
+    // no startup-file pattern: the only regex literals (a slash opening an
+    // expression after `(`, `,`, `=`, `:` or `[`) are 1.0.8's input checks on
+    // the environment probe (its nonce, an env name, a bot id) and its two
+    // Windows folder spellings (a Git Bash /c/ drive, trailing separators),
+    // none of which names a startup file; any other regex literal fails here
+    const literals = [...code.matchAll(/[(,=:[!&|?{]\s*(\/(?![/*])(?:\\.|\[(?:\\.|[^\]\\\n])*\]|[^/\\\n[])+\/[dgimsuy]*)/g)].map((m) => m[1]);
+    const allowed = ["/^[a-f0-9]{32}$/", "/[=\\0]/", "/^[\\w-]+$/", "/^\\/([a-zA-Z])\\//", "/[\\\\/]+$/"];
+    expect(literals.filter((re) => !allowed.includes(re!))).toEqual([]);
     const note = code.slice(code.indexOf("export function noteStartupFileEvent"));
     expect(note).toContain("askTouchesStartup(");
     expect(note).toContain("invalidateEnvCapture(");

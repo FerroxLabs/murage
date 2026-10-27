@@ -2999,10 +2999,10 @@ function showDesktopRecovery(reasonCode = "STARTUP_FAILED") {
   // A backup that stopped now says what stopped it, on the page the person is
   // looking at. Stage and code only, both from closed sets, so nothing from
   // the failure itself — no path, no filename, no secret — can be printed.
-  let captureFailure = null;
-  try { captureFailure = backupScheduleHost?.internalStatus().captureFailure ?? null; } catch { /* A missing note never blocks recovery. */ }
+  let captureFailure = null, backupError = null;
+  try { const status = backupScheduleHost?.internalStatus(); captureFailure = status?.captureFailure ?? null; backupError = status?.error ?? null; } catch { /* A missing note never blocks recovery. */ }
   const reason = reasonCode === "BACKUP_REQUESTED"
-    ? (captureFailure ? captureFailureSentence(captureFailure) + " " : "")
+    ? (captureFailure ? captureFailureSentence(captureFailure) + " " : backupError ? "Murage could not complete this backup. Choose Return to workspace to continue. " : "")
       + "You are in Backup mode. Your bots, schedules and messaging apps are paused while you are here. Restore a backup or make one, or choose Return to workspace."
     : reasonCode === "LEASE_FOREIGN_HOST"
     ? "Murage's data folder says it was last used on a computer with a different name. That does not mean anything is damaged, and reinstalling Murage won't change it."
@@ -3028,6 +3028,7 @@ function showDesktopRecovery(reasonCode = "STARTUP_FAILED") {
     encryptedAvailable: () => Boolean(desktopDataOwner && desktopBackupTool.currentTool()),
     verifyEncrypted: requireDesktopBackupTool,
     retry: async () => {
+      backupScheduleHost?.prepareWorkspaceReturn();
       if(backupScheduleHost?.pendingUpgrade())await backupScheduleHost.returnUpgradeToWorkspace();
       // The same single attempt as a backup's own return: cleanup first, one
       // relaunch however often this is pressed, then a bounded quit.
@@ -4634,8 +4635,8 @@ async function initializeBackupScheduleHost(){
     firstRunChanged:()=>firstRunBackupChanged(),
     reportOutcome:line=>slog(line),
     reportProgress:name=>backupProgress?.stage(name),
-    reportCaptureFailure:failure=>{
-      try{fs.mkdirSync(LOG_DIR,{recursive:true});fs.appendFileSync(path.join(LOG_DIR,"server.log"),`[${new Date().toISOString()}] backup capture failed ${JSON.stringify(failure)}\n`,{mode:0o600});}catch{/* Logging never changes backup authority or result. */}
+    reportCaptureFailure:(failure,handoff)=>{
+      try{fs.mkdirSync(LOG_DIR,{recursive:true});fs.appendFileSync(path.join(LOG_DIR,"server.log"),`[${new Date().toISOString()}] backup capture failed ${JSON.stringify({...failure,...handoff})}\n`,{mode:0o600});}catch{/* Logging never changes backup authority or result. */}
     },
     capture:parameters=>runDesktopRecovery("backup-encrypted",parameters),
     relaunch:async mode=>{

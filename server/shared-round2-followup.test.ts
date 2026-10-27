@@ -27,6 +27,7 @@ import { partitionFileRefusal } from "./partition-files.ts";
 import { autoVerdict, isCommandTool } from "./auto-approve.ts";
 import { windowRuntimeEvent } from "./runtime-event-out.ts";
 import { noteStartupFileEvent } from "./engine-env.ts";
+import { denyAutomaticApproval, watchApprovalRequest } from "./drivers/acp/approval-delivery.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
@@ -85,7 +86,7 @@ it("R2.2 contact in a marked room cannot pin home learned skills", () => {
   installSkill(f.iris.id, "learn:conversation", [{ path: "SKILL.md", content: "---\nname: private-method\ndescription: HOME_SKILL_CANARY\n---\n\nHOME_SKILL_CANARY" }]); setSkillEnabled(f.iris.id, "private-method", true);
   const audience = backgroundMemoryAudience(f.iris.id, f.room.threadId, f.store)!;
   expect(audience.audienceKey).toBe(`room:${f.room.id}:bot:${f.iris.id}`);
-  const pin = createProcedurePin(f.iris.id, f.room.threadId, [], [], undefined, { audienceKey: audience.audienceKey, allowedScopeIds: audience.scopeIds });
+  const pin = createProcedurePin(f.iris.id, f.room.threadId, [], [], undefined, { audienceKey: audience.audienceKey, allowedScopeIds: audience.scopeIds },{ownerTurn:true,shipped:()=>true});
   expect(readProcedureBundle(f.iris.id, f.room.threadId, pin).imported).toEqual([]);
 });
 it.each([false, true])("R2.3 index coordination preserves Chief tools (shared=%s)", shared => {
@@ -160,6 +161,8 @@ it("R2.7 real permission event denies cross-partition writes before Full access 
   const fold = seam("foldRuntimeEvent", { fluxFirstTokenProbe: { begin() {}, observe() {} }, providerReplyOf: () => undefined, accountProjectEvent: vi.fn(), shouldIgnoreProviderEvent: () => false, accountPresentedProjectEvent: () => true, presentedRequests: { publish: vi.fn() }, localVmThreadTargets: new Map(), groupGoalCoordinatorTurns: new Map(), groupGoalCoordinatorTurnForEvent: () => undefined, broadcast: vi.fn(), routines: null, store: f.store, botForDirectThread: () => f.iris, partitionFileRefusal, turnCwdByThread: new Map(), turnEngineByThread: new Map(), registry: { get: () => ({ adapter: { respondToRequest } }) }, autoVerdict: judged,
     // index.ts imports it from engine-env.ts and calls it for every permission event (Rule 74a): the real one, as in production
     noteStartupFileEvent,
+    // 1.0.8 #19: an automatic denial is tied to its request and turn (approval-delivery.ts), the real ones over a bus that never fires
+    watchApprovalRequest, denyAutomaticApproval, bus: { subscribe: () => () => {} },
     // the window's copy of every runtime event and the command-tool test, the real ones, as index.ts imports them
     windowRuntimeEvent, isCommandTool,
     // lane PF's reply speaker guard: not a project room here, so it guards nothing

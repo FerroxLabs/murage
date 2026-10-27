@@ -40,7 +40,6 @@ import { autoVerdict } from "../../auto-approve.ts";
 import { execChecks, resetExecChecks } from "../../testing/exec-check-spy.ts";
 import { approveStartupWrite } from "../../testing/startup-write.ts";
 import { engineJob } from "../../procs.ts";
-import { isPowerShellProgram } from "../../../shared/arg-vocabulary.ts";
 
 vi.mock("node:child_process", async (original) => (await import("../../testing/exec-check-spy.ts")).withExecCheckSpy(await original()));
 
@@ -881,16 +880,16 @@ describe("ACP turns (fake CLI)", () => {
       await instance.adapter.sendTurn({ threadId: "t-gen-acp", text: "go" });
       const first = (await recorder.until((e) => e.type === "request.opened")) as any;
       expect(first.execEnv).toMatchObject({ shell: expect.any(Array) });
-      // The check's script is POSIX; a PowerShell shell form (Windows) is never started for it and reads U20 (engine-env.ts).
-      const checked = !isPowerShellProgram(first.execEnv.shell[0]);
-      expect(execChecks.runs).toBe(checked ? 1 : 0);
-      if (!checked) expect(first.execEnv).toMatchObject({ env: {}, unread: { code: "U20" } });
+      // Both shell families must answer their fixed environment probe.
+      expect(first.execEnv.unread).toBeUndefined();
+      expect(execChecks.runs).toBe(1);
+
       expect(approveStartupWrite()).toBe(true);
       await instance.adapter.respondToRequest("t-gen-acp", first.requestId, { behavior: "allow" });
       const second = (await recorder.until((e) => e.type === "request.opened" && (e as any).requestId !== first.requestId)) as any;
-      expect(execChecks.runs).toBe(checked ? 2 : 0);
+      expect(execChecks.runs).toBe(2);
       expect(second.execEnv).toMatchObject({ shell: expect.any(Array) });
-      if (!checked) expect(second.execEnv).toMatchObject({ env: {}, unread: { code: "U20" } });
+      expect(second.execEnv.unread).toBeUndefined();
       await instance.adapter.respondToRequest("t-gen-acp", second.requestId, { behavior: "deny" });
       await recorder.until((e) => e.type === "turn.completed");
     } finally { delete process.env.FAKE_ACP_PERMISSION_TWICE; }

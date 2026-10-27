@@ -536,11 +536,23 @@ describe("Teach a skill feature flag", () => {
     features: { skillRecorder: true },
   });
 
-  it("does not open the recorder while the experiment is disabled", () => {
-    expect(reducer(initialState, { type: "showSkillRecorder" }).activeView).toBe("chat");
+  it("opens by default and honours an explicit off", () => {
+    expect(reducer({ ...initialState, config: { ...config, features: undefined } }, { type: "showSkillRecorder" }).activeView).toBe("skill-recorder");
+    expect(reducer({ ...initialState, config: { ...config, features: { skillRecorder: false } } }, { type: "showSkillRecorder" }).activeView).toBe("chat");
   });
 
-  it("opens after opt-in and returns to chat when disabled", () => {
+  it("keeps Cloud out of the recorder even with the switch on", () => {
+    vi.stubGlobal("location", { protocol: "murage-home:" });
+    try {
+      expect(reducer({ ...initialState, config }, { type: "showSkillRecorder" }).activeView).toBe("chat");
+      expect(reducer({ ...initialState, config: { ...config, features: undefined } }, { type: "showSkillRecorder" }).activeView).toBe("chat");
+      expect(reducer({ ...initialState, activeView: "skill-recorder" }, { type: "configStatus", config }).activeView).toBe("chat");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("opens with an explicit on and returns to chat when disabled", () => {
     const enabled = reducer({ ...initialState, config }, { type: "showSkillRecorder" });
     expect(enabled.activeView).toBe("skill-recorder");
 

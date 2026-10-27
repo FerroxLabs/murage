@@ -57,6 +57,12 @@ Requirements for building from source:
 - Ubuntu 24.04 LTS x86_64
 - Node.js 24 or newer
 - pnpm 10.33.0 (Corepack can install the version declared by the project)
+- Cage build: Docker access, `build-essential`, `pkg-config`, `libseccomp-dev`,
+  `binutils` and `xz-utils`. Bubblewrap and static libcap build in the pinned
+  AlmaLinux 8 image on a glibc 2.28 floor; filter generators use the host's
+  libseccomp 2.5.5. Local source archives can be supplied with
+  `MURAGE_CAGE_TARBALL` and `MURAGE_CAGE_LIBCAP_TARBALL`; Docker still needs
+  access to the pinned image and RPM repositories.
 
 ```sh
 git clone https://github.com/FerroxLabs/murage.git

@@ -20,6 +20,11 @@ const captureFailureSchema = z.object({
   path: z.string().max(1024).refine(value => captureFailurePath(value) === value).optional(),
   at: z.number().int().nonnegative().optional(),
 }).strict();
+const handoffFailureSchema = captureFailureSchema.pick({stage:true,code:true}).extend({
+  job: z.string().regex(/^[a-f0-9]{64}$/),
+  handoff: backupHandoffSchema.shape.id,
+}).strict();
+const failureMarkerPhases = new Set(["handoff-armed","offline-claimed","capturing","needs-review"]);
 /** What the last verified backup left out (audit A-01), in its own file for
  * the same reason as the failure note: an older build never opens it. */
 const skippedSchema = z.object({
@@ -79,7 +84,10 @@ export class BackupCoordinator {
       return stateSchema.parse(JSON.parse(readFileSync(this.file(),"utf8")));
     } catch(error){if((error as NodeJS.ErrnoException).code==="ENOENT")return {version:1,revision:0,configuredAt:0,schedule:backupScheduleSchema.parse({}),seen:[],watermark:0};throw new Error("BACKUP_COORDINATOR_STATE_INVALID");}
   }
-  private save(state:State){const checked=stateSchema.parse(state);mkdirSync(this.options.stateDirectory,{recursive:true,mode:0o700});writeFileAtomic(this.file(),JSON.stringify(checked),{mode:0o600});}
+  private save(state:State){
+    const checked=stateSchema.parse(state);mkdirSync(this.options.stateDirectory,{recursive:true,mode:0o700});writeFileAtomic(this.file(),JSON.stringify(checked),{mode:0o600});
+    if(!checked.job||!failureMarkerPhases.has(checked.job.phase))this.clearHandoffFailure();
+  }
   private lease(){mkdirSync(this.options.stateDirectory,{recursive:true,mode:0o700});try{return this.options.acquire?.()??acquireDataDirLeaseForProcess(this.options.stateDirectory);}catch{throw new Error("BACKUP_COORDINATOR_BUSY");}}
   private async releaseIdle(claimed:{release:()=>Promise<void>}|undefined){
     try{await claimed?.release();}catch{
@@ -93,6 +101,35 @@ export class BackupCoordinator {
    * a separate file is simply not opened by one. Stage and code only —
    * never a path, a filename or anything the failure said. */
   private failureFile(){return join(this.options.stateDirectory,"backup-capture-failure.json");}
+  private handoffFailureFile(){return join(this.options.stateDirectory,"backup-handoff-failure.json");}
+  private handoffFailureCache?:{stamp:string;value:z.infer<typeof handoffFailureSchema>|undefined};
+  /** Independent of coordinator saves and log retention; only this job can use it. */
+  recordHandoffFailure(input:unknown){
+    const marker=handoffFailureSchema.parse(input);
+    mkdirSync(this.options.stateDirectory,{recursive:true,mode:0o700});
+    writeFileAtomic(this.handoffFailureFile(),JSON.stringify(marker),{mode:0o600});
+    this.handoffFailureCache=undefined;
+  }
+  private clearHandoffFailure(){
+    this.handoffFailureCache=undefined;
+    try{rmSync(this.handoffFailureFile(),{force:true});}catch{/* A resolved job never consults a retained marker. */}
+  }
+  private handoffFailure(job:Job|undefined){
+    if(!job?.handoff||!failureMarkerPhases.has(job.phase))return undefined;
+    try{
+      const stat=lstatSync(this.handoffFailureFile());
+      if(!stat.isFile()||stat.isSymbolicLink()||stat.nlink!==1||stat.size>1024)return undefined;
+      const stamp=[stat.dev,stat.ino,stat.size,stat.mtimeMs,stat.ctimeMs].join(":");
+      if(this.handoffFailureCache?.stamp!==stamp){
+        const contents=readFileSync(this.handoffFailureFile(),"utf8");
+        let value;try{value=JSON.parse(contents);}catch{/* Cache malformed contents until the file changes. */}
+        const parsed=handoffFailureSchema.safeParse(value);
+        this.handoffFailureCache={stamp,value:parsed.success?parsed.data:undefined};
+      }
+      const marker=this.handoffFailureCache?.value;
+      return marker?.job===job.id&&marker.handoff===job.handoff.id?{stage:marker.stage,code:marker.code}:undefined;
+    }catch{return undefined;}
+  }
   private skippedFile(){return join(this.options.stateDirectory,"backup-last-skipped.json");}
   /** What the backup just verified left out, or nothing when it left nothing out. */
   recordSkipped(jobId:string,input:unknown){
@@ -152,7 +189,7 @@ export class BackupCoordinator {
     }catch{return undefined;}
   }
   status(){const s=this.read();return {enabled:s.schedule.enabled,revision:s.revision,schedule:s.schedule,phase:s.job?.phase??"idle",job:s.job,lastVerified:s.lastVerified,lastClosedResult:s.lastClosedResult,reviewReason:s.job?.phase==="needs-review"?s.job.error:undefined,
-    captureFailure:s.job?.phase==="needs-review"?this.captureFailure():undefined,
+    captureFailure:(s.job?.phase==="needs-review"?this.captureFailure():undefined)??this.handoffFailure(s.job),
     lastSkipped:this.lastSkipped(s.lastVerified?.jobId),
     message:s.job?.phase==="waiting-backup-mode"?"Due, waiting for Backup mode":s.job?.phase==="waiting-idle"?"Due, waiting for idle":s.job?.phase==="needs-review"?"Interrupted backup needs review; it will not run again automatically":undefined};}
   configure(expectedRevision:number,input:unknown){

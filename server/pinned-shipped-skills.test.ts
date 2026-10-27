@@ -49,7 +49,7 @@ function bot(): string {
 }
 /** The catalogue a turn reads: pinned once for the task, then restored. */
 function pinned(catalogue: BundledSkill[], botId = bot(), threadId = `task-${randomUUID()}`): BundledSkill[] {
-  const pin = createProcedurePin(botId, threadId, catalogue, []);
+  const pin = createProcedurePin(botId, threadId, catalogue, [],undefined,undefined,{ownerTurn:true,shipped:()=>true});
   return preparePinnedProcedures(botId, threadId, JSON.parse(JSON.stringify(pin)), false).catalogue;
 }
 const byId = (skills: readonly BundledSkill[], id: string) => skills.find(skill => skill.manifest.id === id)!;
@@ -64,7 +64,7 @@ const ENGINE_NAMES = ENGINES.map(item => item[0]);
 describe("a task's pinned copy of a shipped skill", () => {
   it("lives in the task's folder, keeps its shipped mark in the pin, and is still Murage's", () => {
     const id = bot(), thread = "task-mark";
-    const pin = createProcedurePin(id, thread, bundled, []);
+    const pin = createProcedurePin(id, thread, bundled, [],undefined,undefined,{ownerTurn:true,shipped:()=>true});
     expect(readProcedureBundle(id, thread, pin).catalogue.every(skill => skill.shipped === true)).toBe(true);
     const copies = preparePinnedProcedures(id, thread, pin, false).catalogue;
     expect(copies.map(skill => skill.manifest.id)).toEqual(bundled.map(skill => skill.manifest.id));
