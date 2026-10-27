@@ -1,7 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // RETAINED -> RELEASED_LATE through the real harness. An ACP turn ends, its
-// engine child outlives the close deadline (SIGTERM held by a gate), and the
+// engine child outlives the close deadline (termination held by a gate), and the
 // run is retained with the unconfirmed line. When the child does close later,
 // that close alone releases the run: the bot reads idle, one activity line
 // says so, and the conversation takes the next message.
@@ -32,7 +32,9 @@ beforeAll(async () => {
       const fs=await import('node:fs');const path=await import('node:path');
       const file=path.join(process.env.MURAGE_DATA_DIR,'config.json');const cfg=JSON.parse(fs.readFileSync(file,'utf8'));
       const at=(name)=>path.join(process.env.MURAGE_DATA_DIR,'late-close-'+name);
-      cfg.instances.lateClose={driver:'customAcp',displayName:'Late close ACP fixture',config:{cli:${JSON.stringify(FAKE_ACP)}},environment:{FAKE_ACP_TERM:'gate',FAKE_ACP_PID_FILE:at('pid'),FAKE_ACP_TERM_MARK:at('term'),FAKE_ACP_EXIT_GATE:at('gate')}};
+      const {installCliStopGate}=await import(${JSON.stringify(new URL("./testing/cli-stop-gate.ts", import.meta.url).href)});
+      installCliStopGate('late-close-fixture',at('gate'),at('host-engine-pid'));
+      cfg.instances.lateClose={driver:'customAcp',displayName:'Late close ACP fixture',config:{cli:${JSON.stringify(FAKE_ACP)}},environment:{MURAGE_PROCESS_TAG:'late-close-fixture',FAKE_ACP_TERM:'gate',FAKE_ACP_PID_FILE:at('pid'),FAKE_ACP_TERM_MARK:at('term'),FAKE_ACP_EXIT_GATE:at('gate')}};
       fs.writeFileSync(file,JSON.stringify(cfg));
   ` });
   const proof = await fetch(`${fixture.info.url}/api/desktop-secret`).then(response => response.json() as Promise<any>);
@@ -53,11 +55,16 @@ it.skipIf(process.platform === "win32")("releases a retained direct run when its
       .catch(async (error) => { console.error("[late-close diag]", JSON.stringify((await api("GET", `/api/threads/${bot.threadId}/messages?limit=100`)).body).slice(0, 4000), JSON.stringify(await task(bot.id, bot.threadId))); throw error; });
     expect((await task(bot.id, bot.threadId))?.busy).toBe(true);
     expect(await lines(bot.threadId)).not.toContain(LATE_NOTE);
-    const pid = Number(readFileSync(file("pid"), "utf8"));
+    // The engine has received TERM and is holding it. Linux records its host
+    // PID separately: the engine's own pid file is in the cage's namespace.
+    if (process.platform === "linux") await expect.poll(() => existsSync(file("host-engine-pid")), { timeout: 5_000 }).toBe(true);
+    const pid = Number(readFileSync(file(process.platform === "linux" ? "host-engine-pid" : "pid"), "utf8"));
+    expect(Number.isInteger(pid) && pid > 1 && pid <= 0x7fffffff).toBe(true);
     expect(() => process.kill(pid, 0)).not.toThrow();
     // The child closes later: that confirmed close releases the run (RELEASED_LATE).
     writeFileSync(file("gate"), "");
     await expect.poll(async () => (await task(bot.id, bot.threadId))?.busy, { timeout: 20_000 }).toBe(false);
+    expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
     expect((await lines(bot.threadId)).filter(name => name === LATE_NOTE)).toHaveLength(1);
     // The conversation continues.
     expect((await api("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "after the late close" })).status).toBe(202);

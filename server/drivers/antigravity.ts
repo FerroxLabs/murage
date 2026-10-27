@@ -23,7 +23,7 @@ import { NEUTRAL_TOOL_SURFACE, renderMurageTurn } from "../murage-tool-surface.t
 // instances only; the host desktop stays off (no approval channel in print
 // mode, ever).
 import { registerIntake } from "../harness/intake.ts";
-import { awaitCliTreeStopped, cliVersionReader, describeSpawnFailure, engineJob, execCli, killCliTree, spawnCli } from "../procs.ts";
+import { awaitCliTreeStopped, cliVersionReader, describeSpawnFailure, engineJob, execCli, killCliTree, spawnCli, HOST_POWER_CODE, hostPowerMessage, hostPowerRefused } from "../procs.ts";
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -53,7 +53,7 @@ import { newEventId, newId } from "../contracts.ts";
 import { appendNative } from "./native.ts";
 import { customMountEntries } from "../custom-mcp-mounts.ts";
 import { engineClosedLine } from "./stop-copy.ts";
-import { acpEngineExitStderrText } from "./acp/core.ts";
+import { EngineStderrCapture, engineStderrRedacted } from "./acp/core.ts";
 import { writeFileAtomic } from "../atomic.ts";
 import { ASK_STOP_NOTE, ASK_STOP_PROMPT, ASK_STOP_REASON, replyCarriesAskStopNote } from "./ask-stop.ts";
 import { ANTIGRAVITY_RELAY_ASK_MS, antigravityMountRecords, antigravityRelayAsk, antigravityWorkspaceHookFiles, awaitRelayHookLoaded, openAntigravityRelay, type AntigravityRelay } from "./antigravity-relay.ts";
@@ -944,14 +944,13 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         }
       });
 
-      let stderr = "";
-      child.stderr.on("data", (c) => {
-        stderr += c;
-        if (stderr.length > 8192) stderr = stderr.slice(-8192);
-      });
+      const stderr = new EngineStderrCapture();
+      child.stderr.on("data", (c) => stderr.push(c));
 
       child.on("error", (e) => {
         emit({ ...base(threadId, turnId), type: "runtime.error", ...describeSpawnFailure(e, config.cli) });
+        // S4 power: a launch the block could not cover wrote no prompt (turn-attribution.ts notWritten).
+        if ((e as NodeJS.ErrnoException).code === HOST_POWER_CODE) turn.notWritten?.();
         settle(false, "spawn_error");
       });
 
@@ -974,11 +973,16 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
           } else if (!settled && askStopHalted) {
           // The process ended because the Ask stop halted it: the turn ends, with the note, and no error card.
           settle(true, ANTIGRAVITY_ASK_STOP_REASON);
+          } else if (!settled && hostPowerRefused(child)) {
+          // S4 power (design sections 2 and 8): the wrapper refused before the engine ran; the prompt was not delivered.
+          emit({ ...base(threadId, turnId), type: "runtime.error", message: hostPowerMessage() });
+          turn.notWritten?.();
+            settle(false, "exit_before_result");
           } else if (!settled) {
           emit({
             ...base(threadId, turnId),
             type: "runtime.error",
-            message: engineClosedLine(ENGINE, code, undefined, stderr ? acpEngineExitStderrText(stderr.trim().slice(-300)) : undefined),
+            message: engineClosedLine(ENGINE, code, undefined, stderr.lastWords()),
           });
             settle(false, "exit_before_result");
           }
@@ -1114,6 +1118,8 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
             ],
             // This call's copy of the scoped text environment names the bot it is made for.
             { env: (() => { const callEnv: NodeJS.ProcessEnv = { ...textEnv }; cloudTurnBot(callEnv, botId); return callEnv; })(), stdio: ["pipe", "pipe", "pipe"] },
+            // S4 power (design sections 1 and 7): the helper prompt is an engine spawn on every OS.
+            engineJob(),
           );
         } catch (error) {
           textScope?.dispose();
@@ -1129,7 +1135,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         let response: string | null = null;
         let resultError: Error | null = null;
         let stdoutBuffer = "";
-        let stderr = "";
+        const stderr = new EngineStderrCapture();
         const timer = setTimeout(() => {
           killCliTree(child);
           finish(new Error("Antigravity text generation timed out"));
@@ -1143,7 +1149,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
           if (error) reject(error);
           else if (resultError) reject(resultError);
           else if (response !== null) resolve(response);
-          else reject(new Error(stderr.trim() || "Antigravity exited before returning a result"));
+          else reject(new Error(stderr.redactedEnd(8_192) || "Antigravity exited before returning a result"));
         };
 
         child.stdout.setEncoding("utf8");
@@ -1159,7 +1165,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
               if (event.event !== "result") continue;
               const result = event.result ?? {};
               if (result.status === "SUCCESS" && typeof result.response === "string") response = result.response;
-              else resultError = new Error(String(result.message ?? result.error ?? `Antigravity result: ${result.status ?? "unknown"}`));
+              else resultError = new Error(engineStderrRedacted(String(result.message ?? result.error ?? `Antigravity result: ${result.status ?? "unknown"}`), false));
             } catch {
               // Ignore non-protocol output; close below reports a missing result.
             }
@@ -1167,14 +1173,15 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         });
         child.stderr.setEncoding("utf8");
         child.stderr.on("data", (chunk) => {
-          stderr = (stderr + chunk).slice(-8_192);
+          stderr.push(chunk);
         });
         child.on("error", (error) => finish(error));
         child.on("close", (code) => {
           children.delete(child);
           textScope?.dispose();
           if (code === 0) finish();
-          else finish(new Error(stderr.trim() || `Antigravity exited ${code}`));
+          else if (hostPowerRefused(child)) finish(new Error(hostPowerMessage()));
+          else finish(new Error(stderr.redactedEnd(8_192) || `Antigravity exited ${code}`));
         });
 
         try {

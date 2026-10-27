@@ -962,7 +962,10 @@ const playTurn = (prompt: JsonValue) => {
       if (!gate || !existsSync(gate)) return;
       unlinkSync(gate);
       clearInterval(timer);
-      out({ type: "result", is_error: false, stop_reason: "end_turn", total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 0 } });
+      // Gate release models a completed reply. An empty result deliberately
+      // exercises the product's empty-turn error and cannot model settlement.
+      out({ type: "assistant", message: { content: [{ type: "text", text: "Fixture turn finished." }] } });
+      out({ type: "result", is_error: false, stop_reason: "end_turn", total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 } });
       turnRunning = false;
       finishIfDone();
     }, gate ? 10 : 1_000);

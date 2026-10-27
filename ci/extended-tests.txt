@@ -1442,3 +1442,6 @@ server/lee-phantom-scenario.test.ts	extended
 src/components/LearnAboutMe.test.ts	extended
 server/memory/recall-realdata-bench.test.ts	extended
 server/memory/schema-v13-realdata-roundtrip.test.ts	extended
+scripts/build-fuigo-probe.test.mjs	extended
+server/boot-settle-108.perf.test.ts	extended
+src/components/WorkspaceFeatureRow.test.ts	extended

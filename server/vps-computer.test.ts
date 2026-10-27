@@ -1,3 +1,4 @@
+import { errorTextCases, errorLogTailCases, ERROR_TEXT_DIAGNOSTIC, ERROR_TEXT_LEAK } from "./testing/error-text-fixtures.ts";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -580,6 +581,40 @@ describe("VPS computer", () => {
     const afterMissing = await vpsComputerAction("remove", CONFIG, BOT_ID, absent.runner);
     expect(afterMissing.container).toBe("missing");
     expect(absent.calls.some(({ args }) => args[2] === "rm")).toBe(false);
+  });
+
+  for (const source of ["log", "probe"] as const) {
+    it.each(errorTextCases())(`redacts the desktop ${source} before the owner status cut: $name`, async ({ raw, name }) => {
+      const fake = fixture({ desktopProbeFails: true });
+      const runner: VpsCommandRunner = async (args, options) => {
+        if (args.some((arg) => arg.endsWith("/cua-driver.error.log"))) {
+          expect(args).toContain("tail");
+          if (source === "probe") throw new Error("log missing");
+          return { stdout: raw, stderr: "" };
+        }
+        if (source === "probe" && args.at(-1) === "--version") throw new Error(raw);
+        return fake.runner(args, options);
+      };
+      const status = await vpsComputerStatus(CONFIG, BOT_ID, runner);
+      expect(status.desktop_error).toBeTruthy();
+      expect(JSON.stringify([status.desktop_error, status.problem])).not.toMatch(ERROR_TEXT_LEAK);
+      if (name === "short diagnostic") expect(status.desktop_error).toBe(raw);
+      else expect(status.desktop_error).toContain("redacted");
+    });
+  }
+
+  it.each(errorLogTailCases())("shows the current VPS log error after redacting the tail: $name", async ({ raw }) => {
+    const fake = fixture({ desktopProbeFails: true });
+    const runner: VpsCommandRunner = async (args, options) => {
+      if (args.some((arg) => arg.endsWith("/cua-driver.error.log"))) {
+        expect(args.slice(-4)).toEqual(["tail", "-c", "262144", "/var/log/supervisor/cua-driver.error.log"]);
+        return { stdout: Buffer.from(raw).subarray(-262144).toString(), stderr: "" };
+      }
+      return fake.runner(args, options);
+    };
+    const status = await vpsComputerStatus(CONFIG, BOT_ID, runner);
+    expect(status.desktop_error).toContain(ERROR_TEXT_DIAGNOSTIC);
+    expect(JSON.stringify([status.desktop_error, status.problem])).not.toMatch(ERROR_TEXT_LEAK);
   });
 
   it("surfaces the supervisor error log when the desktop probe fails", async () => {

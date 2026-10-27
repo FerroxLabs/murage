@@ -18,7 +18,7 @@ const PAGE_FILES: Record<string, string[]> = {
   botDefaults: ["BotsSettings.tsx", "HouseRulesSettings.tsx", "StarterProfiles.tsx", "RoomTurnTimeoutSettings.tsx", "RoomRoutingSettings.tsx", "ProjectAutonomySetting.tsx"],
   models: ["AiSettings.tsx", "ModelsSettings.tsx", "EnginesSettings.tsx", "ClaudeAccountsSettings.tsx", "LocalModelsSettings.tsx"],
   webSearch: ["ToolsSettings.tsx", "SearchSettings.tsx", "ImageSettings.tsx", "TranscriptionSettings.tsx"],
-  companion: ["DevicesSettings.tsx", "CompanionSection.tsx", "ScriptAccessSettings.tsx"],
+  companion: ["SettingsModal.tsx", "DevicesSettings.tsx", "CompanionSection.tsx", "ScriptAccessSettings.tsx"],
   about: ["SettingsModal.tsx", "AnnouncementsSettings.tsx"],
 };
 
@@ -61,15 +61,18 @@ describe("the regrouped pages", () => {
   });
 
   it("withholds the desktop cards from a phone and keeps General and About on every surface", () => {
-    for (const id of ["general.about-me", "general.startup", "general.sidebar-density", "about.experimental", "about.announcements"]) {
+    for (const id of ["general.about-me", "general.startup", "general.sidebar-density", "skills.recorder", "companion.browser", "about.announcements"]) {
       expect(SETTINGS_CARDS.find((card) => card.id === id)!.surface, id).toBe("desktop");
     }
     const visible = new Set(cardsForSurface(SETTINGS_CARDS, false).map((card) => card.id));
     for (const id of ["general.profile", "general.appearance", "about.version", "about.updates", "about.diagnostics"]) expect(visible.has(id), id).toBe(true);
-    for (const id of ["general.about-me", "about.experimental"]) expect(visible.has(id), id).toBe(false);
+    for (const id of ["general.about-me", "skills.recorder", "companion.browser"]) expect(visible.has(id), id).toBe(false);
     for (const page of ["general", "about"]) expect(SECTION_PAGES.find((entry) => entry.id === page)!.desktopOnly, page).toBeFalsy();
     expect(modal).toMatch(/desktop === true && <Anchor id="announcements-heading">/);
-    expect(modal).toMatch(/desktop === true && <div id="experimental-settings"/);
+    expect(modal).toMatch(/desktop === true && section === "skills" && \([\s\S]*?<WorkspaceFeatureRow feature="skillRecorder"/);
+    expect(modal).toMatch(/desktop === true && section === "companion" && \([\s\S]*?<WorkspaceFeatureRow feature="browser"/);
+    expect(modal).not.toContain("ExperimentalFeaturesRow");
+    expect(modal).not.toContain('id="experimental-settings"');
   });
 
   it("renders the anchor every alias lands on", () => {

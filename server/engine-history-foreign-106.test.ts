@@ -31,7 +31,8 @@ let lines: string[];
 beforeEach(() => {
   fake = useFakeExclusion();
   lines = [];
-  vi.spyOn(console, "warn").mockImplementation((...args: unknown[]) => { const line = args.map(String).join(" "); if (line.includes("home not read")) lines.push(line); });
+  vi.spyOn(console, "info").mockImplementation((...args: unknown[]) => { const line = args.map(String).join(" "); if (line.includes("home not read")) lines.push(line); });
+  vi.spyOn(console, "warn").mockImplementation(() => {});
 });
 afterEach(() => {
   vi.restoreAllMocks();
@@ -74,21 +75,46 @@ function world(foreignRelogMs?: number, owedGraceMs?: number) {
 
 it("another program on the home: no pause, no hold, one log line over many tries, owed as open", async () => {
   const w = world();
+  const prompt = "PRIVATE_FOREIGN_HOLDER_PROMPT_CANARY";
   // the owner's own Claude Code in a terminal, on THIS home, for the whole test (Claude Code's tool child too)
-  running("/Users/x/.local/share/claude/versions/2.1.308", { HOME: scratch, CLAUDE_CONFIG_DIR: w.home }, ["claude", "--resume"]);
+  running("/Users/x/.local/share/claude/versions/2.1.308", { HOME: scratch, CLAUDE_CONFIG_DIR: w.home }, ["claude", "-p", prompt]);
   running("/Users/x/.local/share/claude/versions/2.1.308", { HOME: scratch, CLAUDE_CONFIG_DIR: w.home }, ["ugrep", "-G"]);
   expect(engineState("claude", w.home).state).toBe("open");
+  expect(engineState("claude", w.home).holders?.[0]?.argv).toContain(prompt);
   const { report } = await runConversationDeletion(w.deletions, { threadIds: [THREAD], engineHomes: w.fx.homes }, () => true);
   expect(report.failed.length).toBeGreaterThan(0);
   for (let n = 0; n < 3; n++) await w.deletions.retryNow();
   // base: "pause claude", "hold 1", "release", "unpause" on each of the 4 tries, and a `home not read` line on each
   expect(w.events).toEqual([]);
   expect(lines).toHaveLength(1);
-  expect(lines[0]).toMatch(/engine history: claude home not read: open by process holders .*ugrep.*another program/);
+  expect(lines[0]).toMatch(/engine history: claude home not read: open by process holders .*install path.*another program/);
+  expect(lines[0]).not.toContain('"argv"');
+  expect(JSON.stringify(vi.mocked(console.info).mock.calls)).not.toContain(prompt);
+  expect(JSON.stringify(vi.mocked(console.warn).mock.calls)).not.toContain(prompt);
+  expect(vi.mocked(console.warn).mock.calls.some((args) => args.some((arg) => String(arg).includes("home not read")))).toBe(false);
   expect(w.deletions.pending()).toHaveLength(1);
   expect(canaryHits(w.fx.root, w.fx.canaries).length).toBeGreaterThan(0); // nothing of the home was touched
   const owed = (await w.deletions.retryNow()).still;
   expect(owed.map((item) => [item.engine, item.code])).toEqual([["claude", "engine-open"]]);
+});
+
+it("the planner reports an open home at info level and respects an already logged home", () => {
+  const fx = buildFixture("claude", scratch);
+  const home = fx.homes[0]!.home;
+  const prompt = "PRIVATE_PLANNER_HOLDER_PROMPT_CANARY";
+  running("/usr/local/bin/claude", { HOME: scratch, CLAUDE_CONFIG_DIR: home }, ["claude", "-p", prompt]);
+  expect(engineState("claude", home).holders?.[0]?.argv).toContain(prompt);
+  const job: EngineHistoryJob = { ...fx, kind: "plan", redoDir: join(fx.root, "redo"), nativeDir: join(fx.root, "native") };
+  const planned = runEngineHistoryJob(job);
+  expect(planned.homeReasons?.[`claude\0${home}`]).toBe("engine-open");
+  expect(lines).toHaveLength(1);
+  expect(lines[0]).toContain("home not read: open");
+  runEngineHistoryJob({ ...job, quiet: [`claude\0${home}`] });
+  expect(lines).toHaveLength(1);
+  expect(lines[0]).toContain('"by":"program name"');
+  expect(lines[0]).not.toContain('"argv"');
+  expect(JSON.stringify(vi.mocked(console.info).mock.calls)).not.toContain(prompt);
+  expect(console.warn).not.toHaveBeenCalled();
 });
 
 it("a new holder logs again once the hour since the last line has passed; one whole attempt is still made every sixth try", async () => {

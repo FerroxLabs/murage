@@ -100,7 +100,7 @@ export function withCliMemoryLearning<T extends ProviderInstance>(live: T, optio
       await untilIdle(signal);
       if (signal.aborted) throw new Error("MEMORY_EXTRACTION_ABORTED");
       const answer = stripFence(await runner(flattenMemoryMessages(messages), signal, { maxBytes }));
-      if (!answer || Buffer.byteLength(answer) > maxBytes) throw new Error(answer ? "MEMORY_EXTRACTION_RESPONSE_LIMIT" : "MEMORY_EXTRACTION_INVALID_RESPONSE");
+      if (!answer || Buffer.byteLength(answer) > maxBytes) throw new Error(answer ? "MEMORY_EXTRACTION_RESPONSE_LIMIT" : "MEMORY_EXTRACTION_EMPTY_REPLY");
       return answer;
     });
   };

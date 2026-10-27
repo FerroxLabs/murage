@@ -30,7 +30,7 @@ describe("the sidebar", () => {
 describe("the anchor in the store", () => {
   it("is set from the alias, an explicit anchor wins, a page has none, and closing forgets it", () => {
     expect(reducer(initialState, { type: "toggleAppSettings", open: true, section: "voice" })).toMatchObject({ appSettingsSection: "voice", appSettingsAnchor: "voice-settings-heading" });
-    expect(reducer(initialState, { type: "toggleAppSettings", open: true, section: "experimental" }).appSettingsAnchor).toBe("experimental-settings");
+    expect(reducer(initialState, { type: "toggleAppSettings", open: true, section: "experimental" }).appSettingsAnchor).toBe("skill-recorder-heading");
     expect(reducer(initialState, { type: "toggleAppSettings", open: true, section: "models" }).appSettingsAnchor).toBeNull();
     const result = reducer(initialState, { type: "toggleAppSettings", open: true, section: "botDefaults", anchor: "tool-calls-heading" });
     expect(result).toMatchObject({ appSettingsSection: "botDefaults", appSettingsAnchor: "tool-calls-heading" });

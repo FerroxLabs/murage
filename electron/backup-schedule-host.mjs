@@ -96,6 +96,7 @@ export function captureFailureDiagnostic(stage,error){
 export function createBackupScheduleHost(host) {
   const coordinator=host.coordinator;
   let running=false,timer=null,lastError=null,upgradeRequest=null,upgradeCandidateId=null;
+  const internalStatus=()=>({...coordinator.status(),error:lastError});
   // Who the last refused backup was waiting on, when it was a person's
   // answer (electron/backup-waiting.mjs). A due daily backup keeps trying
   // every minute, so `since` is when it first had to wait.
@@ -157,7 +158,7 @@ export function createBackupScheduleHost(host) {
    * never a claim: it carries no state. */
   const firstRunChanged=async()=>{try{await host.firstRunChanged?.();}catch{/* the harness re-derives on its next read */}};
   const publicStatus=async()=>{
-    const s=coordinator.status();let refs;try{const b=await read();if(b)refs={installationRef:b.installationRef,destinationRef:b.destinationRef,recoveryRef:b.recoveryRef,destinationLabel:path.basename(b.destination),recoveryLabel:path.basename(b.keyFile)};}catch{lastError="BACKUP_BINDINGS_UNAVAILABLE";}
+    const s=internalStatus();let refs;try{const b=await read();if(b)refs={installationRef:b.installationRef,destinationRef:b.destinationRef,recoveryRef:b.recoveryRef,destinationLabel:path.basename(b.destination),recoveryLabel:path.basename(b.keyFile)};}catch{lastError="BACKUP_BINDINGS_UNAVAILABLE";}
     let preUpgradeSupported=false;try{await assertUpgradeAllowed();preUpgradeSupported=true;}catch{/* Static capability refusal is not a schedule failure. */}
     let closedAppSupported=false;try{await assertClosedAllowed();closedAppSupported=true;}catch{/* Static capability refusal is not a schedule failure. */}
     const supported=host.supported(),checking=!supported&&Boolean(host.checking?.());
@@ -188,7 +189,7 @@ export function createBackupScheduleHost(host) {
   const captureBlocked=()=>relaunchRefusal()??(host.elevated?.()?"BACKUP_ELEVATED":null);
   const assertRelaunchPossible=()=>{const blocked=captureBlocked();if(blocked)throw Error(blocked);};
   const assertClosedAllowed=async()=>{if(!host.supported()||typeof host.assertClosedAllowed!=="function")throw Error("BACKUP_CLOSED_UNAVAILABLE");await host.assertClosedAllowed();};
-  function pendingUpgrade(){const s=coordinator.status(),candidate=s.job?.handoff?.upgrade;return candidate&&!["upgrade-complete","upgrade-cancelled"].includes(s.phase)?{candidate,handoffId:s.job.handoff.id,phase:s.phase}:null;}
+  function pendingUpgrade(){const s=coordinator.status(),candidate=s.job?.handoff?.upgrade;return candidate&&!["needs-review","upgrade-complete","upgrade-cancelled"].includes(s.phase)?{candidate,handoffId:s.job.handoff.id,phase:s.phase}:null;}
   async function verifyUpgrade(candidate){
     candidate=checkedCandidate(candidate);await assertUpgradeAllowed(candidate);
     const b=await checked(),s=coordinator.status(),intent=s.job?.handoff;
@@ -351,14 +352,20 @@ export function createBackupScheduleHost(host) {
       // A run already given up at its ceiling keeps that reason: what the
       // stuck capture throws once the workspace closes is only the shutdown.
       if(!run.abandoned){
+        if(intent&&["handoff-armed","offline-claimed","capturing"].includes(coordinator.status().phase))try{
+          coordinator.recordHandoffFailure({job:s.job.id,handoff:intent.id,stage:diagnostic.stage,code:diagnostic.code});
+        }catch{/* lastError still reports the failure if the marker cannot be written. */}
         try{host.reportOutcome?.(`backup local failed ${JSON.stringify({stage:diagnostic.stage,code:diagnostic.code})}`);}catch{/* Logging never changes the result. */}
-        try{host.reportCaptureFailure?.(cause?{...diagnostic,cause}:diagnostic);}catch{/* Diagnostic failure never changes the handoff result. */}
+        try{host.reportCaptureFailure?.(cause?{...diagnostic,cause}:diagnostic,{job:s.job?.id,handoff:intent?.id});}catch{/* Diagnostic failure never changes the handoff result. */}
         // Durable, so the reason survives the return to the workspace and the
         // Backups page can say what happened instead of only that it failed.
         try{coordinator.recordCaptureFailure?.(diagnostic);}catch{/* A note is never worth losing the authoritative state over. */}
       }
       if(intent&&coordinator.status().phase!=="return-pending"&&(claimed||(s.phase==="handoff-armed"&&coordinator.status().phase==="handoff-armed")))try{coordinator.failHandoff(intent.id);}catch{/* Preserve evidence. */}
       lastError="BACKUP_SCHEDULE_REVIEW_REQUIRED";
+      // As in abandonOffline, an armed job must stay on the Backup mode page
+      // when its failure could not be saved; reopening would run it again.
+      if(coordinator.status().phase==="handoff-armed")throw new Error(lastError);
       // Only the SUCCESS path used to reopen the workspace, so a failed
       // backup left the person stranded on the Backup mode page with no way
       // back but a button they had no reason to trust. The durable state is
@@ -372,8 +379,28 @@ export function createBackupScheduleHost(host) {
     if(running)throw Error("BACKUP_BUSY");
     // Given up before it started (a tool check that never settled): never start it after all.
     if(offlineGivenUp)throw Error("BACKUP_SCHEDULE_REVIEW_REQUIRED");
+    const previous=internalStatus();
+    if(previous.phase==="handoff-armed"&&previous.captureFailure){
+      // On the next open, show the marked failure instead of capturing again.
+      // If writes have recovered, also let Return to workspace leave this job.
+      try{coordinator.recordCaptureFailure?.(previous.captureFailure);}catch{/* The marker still carries the reason. */}
+      try{coordinator.failHandoff(previous.job.handoff.id);}catch{/* Keep the armed job on the Backup mode page. */}
+      lastError="BACKUP_SCHEDULE_REVIEW_REQUIRED";throw new Error(lastError);
+    }
     running=true;
     try{return await captureArmed();}finally{running=false;}
+  }
+  /** Return cannot relaunch into an armed handoff. Retire it before cleanup. */
+  function prepareWorkspaceReturn(){
+    try{
+      const s=internalStatus();
+      if(s.phase!=="handoff-armed")return;
+      if(s.captureFailure)try{coordinator.recordCaptureFailure?.(s.captureFailure);}catch{/* The marker retains the reason. */}
+      coordinator.failHandoff(s.job.handoff.id);
+    }catch{
+      lastError="BACKUP_STATE_SAVE_FAILED";
+      throw Object.assign(new Error(lastError),{code:lastError});
+    }
   }
   /** 1.0.7 RC6: the backup-mode run passed its ceiling (backup-offline-return.mjs).
    * Record it as a failed backup that took too long, so the reopened workspace
@@ -384,12 +411,14 @@ export function createBackupScheduleHost(host) {
     const s=coordinator.status(),intent=s.job?.handoff;
     if(!intent||["return-pending","returned","needs-review"].includes(s.phase))return false;
     const stage=offline?.stage??"precondition";offlineGivenUp=true;if(offline)offline.abandoned=true;
+    try{coordinator.recordHandoffFailure({job:s.job.id,handoff:intent.id,stage,code:"RECOVERY_WORKER_TIMEOUT"});}catch{/* The page still reports lastError. */}
     try{host.reportOutcome?.(`backup local failed ${JSON.stringify({stage,code:"RECOVERY_WORKER_TIMEOUT",ceiling:true})}`);}catch{/* Logging never changes the result. */}
     try{coordinator.recordCaptureFailure?.({stage,code:"RECOVERY_WORKER_TIMEOUT"});}catch{/* The phase below still stops a re-run. */}
     // Thrown when the job could not be set aside: reopening would arm the
     // same backup again, so the caller shows the Backup mode page instead.
+    lastError="BACKUP_SCHEDULE_REVIEW_REQUIRED";
     coordinator.failHandoff(intent.id);
-    lastError="BACKUP_SCHEDULE_REVIEW_REQUIRED";return true;
+    return true;
   }
   const closedResult=(status,reason)=>{
     try{return coordinator.recordClosedResult({status,...(reason?{reason}:{})});}
@@ -438,7 +467,7 @@ export function createBackupScheduleHost(host) {
       return{archivePath,receipt};
   }
   return {
-    status:publicStatus,internalStatus:()=>coordinator.status(),isPreparing:()=>running,start,stopPolling,tick,runNow,clearReview,resumeOffline,abandonOffline,runClosedDue,requestUpgrade,pendingUpgrade,verifyUpgrade,
+    status:publicStatus,internalStatus,isPreparing:()=>running,start,stopPolling,tick,runNow,clearReview,resumeOffline,prepareWorkspaceReturn,abandonOffline,runClosedDue,requestUpgrade,pendingUpgrade,verifyUpgrade,
     /** Folder the saved references back up into, for recovery-key placement checks. */
     async selectedDestination(){const b=await read();return b?b.destination:null;},
     /** The recovery key file the saved references read, or null. */

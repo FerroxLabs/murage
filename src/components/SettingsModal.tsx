@@ -408,67 +408,47 @@ function ToolCallsRow() {
   );
 }
 
-function ExperimentalFeaturesRow() {
+export function WorkspaceFeatureRow({ feature }: { feature: "skillRecorder" | "browser" }) {
   const { state, dispatch } = useStore();
-  const skillRecorder = skillRecorderEnabled(state.config);
-  const browser = builtInBrowserEnabled(state.config);
+  const browser = feature === "browser";
+  const enabled = browser ? builtInBrowserEnabled(state.config) : skillRecorderEnabled(state.config);
   const desktopBrowser = Boolean(window.muragebox?.browser);
-  const [saving, setSaving] = useState<"skillRecorder" | "browser" | null>(null);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  const toggle = async (feature: "skillRecorder" | "browser", next: boolean) => {
+  const toggle = async () => {
     if (saving) return;
-    setSaving(feature);
+    setSaving(true);
     setError("");
     try {
       const config: ConfigStatus = await api("/api/config", {
         method: "PATCH",
-        body: JSON.stringify({ features: { [feature]: next } }),
+        body: JSON.stringify({ features: { [feature]: !enabled } }),
       });
       dispatch({ type: "configStatus", config });
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not save the experimental feature setting.");
+      setError(cause instanceof Error ? cause.message : t("settings.workspaceFeature.saveError"));
     } finally {
-      setSaving(null);
+      setSaving(false);
     }
   };
 
   return (
-    <Card
-      title="Experimental features"
-      subtitle="Early features may change while we test them. They stay off unless you enable them."
-    >
+    <Card title={t(browser ? "settings.l1.card.companion.browser" : "settings.l1.card.skills.recorder")}>
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0">
-          <div className="text-[14px] font-medium text-ink">Teach a skill</div>
-          <div className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">
-            Record a workflow, use /learn, or ask a supported bot to run /create-verification-skill. Every change waits for your review.
+          <div className="text-[12px] leading-relaxed text-ink-secondary">
+            {t(browser
+              ? desktopBrowser ? "settings.workspaceFeature.browser.note" : "settings.workspaceFeature.browser.desktopOnly"
+              : "settings.workspaceFeature.recorder.note")}
           </div>
         </div>
         <Switch
-          checked={skillRecorder}
-          aria-label="Show Teach a skill"
-          disabled={saving !== null}
-          onClick={() => void toggle("skillRecorder", !skillRecorder)}
-          className="disabled:cursor-wait disabled:opacity-50"
-        />
-      </div>
-      <div className="mt-4 flex items-center justify-between gap-4 border-t border-hairline/30 pt-4">
-        <div className="min-w-0">
-          <div className="text-[14px] font-medium text-ink">Built-in browser</div>
-          <div className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">
-            {desktopBrowser
-              ? browser
-                ? "Enabled for this workspace. Each bot also has its own browser switch."
-                : "Off by default. Enable it to let supported bots use a browser tab you can watch and take over."
-              : "Needs the Murage desktop app."}
-          </div>
-        </div>
-        <Switch
-          checked={browser}
-          aria-label="Enable the built-in browser"
-          disabled={saving !== null || (!browser && !desktopBrowser)}
-          onClick={() => void toggle("browser", !browser)}
+          checked={enabled}
+          aria-label={t(browser ? "settings.workspaceFeature.browser.aria" : "settings.workspaceFeature.recorder.aria")}
+          // Until the saved switches load, the row cannot tell on from off, so it waits instead of saving a guess.
+          disabled={saving || state.config == null || (browser && !enabled && !desktopBrowser)}
+          onClick={() => void toggle()}
           className="disabled:cursor-wait disabled:opacity-50"
         />
       </div>
@@ -1030,7 +1010,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
 
   const openCard = (card: SettingsCard) => dispatch({ type: "toggleAppSettings", open: true, section: card.section, anchor: card.anchor });
 
-  // The open section stays in view in the list: a deep link to Experimental
+  // The open section stays in view in the list: a deep link to Skills
   // on a short window, or a chip at the far end of the phone strip.
   useEffect(() => {
     const nav = navRef.current;
@@ -1298,6 +1278,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
 
             {desktop === true && section === "skills" && (
               <AdvancedHost>
+                {!cloudCardHidden("skill-recorder-heading", cloud) && <Anchor id="skill-recorder-heading"><WorkspaceFeatureRow feature="skillRecorder" /></Anchor>}
                 <SkillsSettings />
                 <AdvancedSection {...advancedFor("skills")} summary={t("settings.l1.advanced.skills")}><AdvancedSlotTarget /></AdvancedSection>
               </AdvancedHost>
@@ -1319,7 +1300,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
             )}
 
             {desktop === true && section === "companion" && (
-              <DevicesSettings advanced={advancedFor("companion")} profileEmail={state.config?.profile?.email} bots={state.bots} browserProfiles={<BrowserProfilesRow />} />
+              <DevicesSettings advanced={advancedFor("companion")} profileEmail={state.config?.profile?.email} bots={state.bots} browserProfiles={<><Anchor id="browser-settings-heading"><WorkspaceFeatureRow feature="browser" /></Anchor><BrowserProfilesRow /></>} />
             )}
 
             {desktop === true && section === "backups" && <div className="space-y-4"><BackupSettings /><div id="storage-heading"><StorageSettings /></div></div>}
@@ -1339,7 +1320,6 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
                 <AdvancedSection {...advancedFor("about")} summary={t("settings.l1.advanced.about")}>
                   {desktop === true && <Anchor id="announcements-heading"><AnnouncementsSettings /></Anchor>}
                   {!cloudCardHidden("diagnostics-heading", cloud) && <Anchor id="diagnostics-heading"><DiagnosticsRow /></Anchor>}
-                  {!cloudCardHidden("experimental-settings", cloud) && desktop === true && <div id="experimental-settings" tabIndex={-1} className="outline-none"><ExperimentalFeaturesRow /></div>}
                 </AdvancedSection>
               </>
             )}

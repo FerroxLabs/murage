@@ -7,9 +7,10 @@
 # e.g. scripts/scale/hz-vitest.sh ci-123 "$GITHUB_SHA" perf-budget
 # The perf-budget tag (vite.config.ts) marks tests that assert a wall-clock budget measured on this kind of
 # machine; hosted runners are several times slower and noisier, so those tests run here, from nightly.yml.
-# The commit is exported with `git archive` (nothing is built on the caller). Output streams back and the exit
+# The commit is exported with `git archive`; build its Linux cage on the caller first with
+# `pnpm build:murage-cage` (Linux x64, Docker and the host build tools). Output streams back and the exit
 # code is Vitest's. The tree is removed afterwards. Host rules: at most 2 such containers, never prune.
-set -eu
+set -euo pipefail
 RIG_HOST=${RIG_HOST:-build-host}
 label=${1:?label}; commit=${2:?commit}; filter=${3:?tags filter}
 [[ "$label" =~ '^[a-z0-9-]+$' ]] || { echo "bad label"; exit 2; }
@@ -26,6 +27,9 @@ cleanup() { ssh $SSHO $RIG_HOST "docker rm -f mm-vitest-$label >/dev/null 2>&1; 
 trap cleanup EXIT
 ssh $SSHO $RIG_HOST "mkdir -p '$dir/src' $H/store && df -h $H | tail -1"
 git -C "$top" archive --format=tar "$sha" | gzip -1 | ssh $SSHO $RIG_HOST "tar -xz -C '$dir/src'"
+# The caller builds the cage on Linux. Carry that exact output into the
+# exported checkout; the unprivileged test container does not run Docker.
+tar -C "$top" -czf - dist-native/cage/linux-x64 | ssh $SSHO $RIG_HOST "tar -xz -C '$dir/src'"
 echo "running Vitest --tags-filter='$filter' at $sha on $RIG_HOST"
 ssh $SSHO $RIG_HOST "chown -R 2001:2001 '$dir' $H/store && docker run --init --rm --name mm-vitest-$label --user 2001:2001 --cpus 8 --memory 16g \
   -e HOME=/tmp/home -e CI=1 -e ELECTRON_SKIP_BINARY_DOWNLOAD=1 -e npm_config_store_dir=/store \
