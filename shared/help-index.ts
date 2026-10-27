@@ -23,7 +23,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "The complete history of published Murage desktop releases.",
     "breadcrumb": "Murage docs → Changelog",
     "where": "Murage docs → Changelog",
-    "url": "https://murage.app/docs/changelog",
+    "url": "https://murage.ai/docs/changelog",
     "text": "The changelog tracks published desktop builds. Changes merged into main after a release are not listed as shipped until a new build is published.\n\nBrowse checksums, installers, and older notes in the Murage releases repository."
   },
   {
@@ -33,7 +33,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Please read in 0.1.59",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.59",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.59",
-    "url": "https://murage.app/docs/changelog/v0-1-59#please-read-in-0-1-59",
+    "url": "https://murage.ai/docs/changelog/v0-1-59#please-read-in-0-1-59",
     "text": "Murage is now licensed AGPL-3.0-or-later. Murage as a whole, including every Ferrox Labs change and addition, is under the GNU Affero General Public License, version 3 or later. If you run a modified copy of Murage as a service for other people, you publish your changes. The OpenMausBot portions that Murage builds on remain under Apache-2.0. Releases before 0.1.59 remain available under Apache-2.0.\n\nFull access now stops at a few lines. A bot on Full access still does ordinary work without asking, but it now stops and asks before deleting anything outside its own folder, before paying for anything, and before messaging someone for the first time or posting in public.…"
   },
   {
@@ -43,7 +43,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "What's new and the tray in 0.1.59",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.59",
     "where": "Tools menu → What's new",
-    "url": "https://murage.app/docs/changelog/v0-1-59#what-s-new-and-the-tray-in-0-1-59",
+    "url": "https://murage.ai/docs/changelog/v0-1-59#what-s-new-and-the-tray-in-0-1-59",
     "text": "- What's new. After updating, Murage shows what changed once; click any card to try that feature. Reopen it any time from the sidebar's Tools menu → What's new.\n- Tray. The menu-bar icon shows the Murage glyph and a count of what needs you. Its menu lists approvals (ordinary ones can be allowed or denied right there), what your bots are working on (Working now), and New message to… a bot."
   },
   {
@@ -53,7 +53,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Skills in 0.1.59",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.59",
     "where": "Settings → Skills",
-    "url": "https://murage.app/docs/changelog/v0-1-59#skills-in-0-1-59",
+    "url": "https://murage.ai/docs/changelog/v0-1-59#skills-in-0-1-59",
     "text": "- Skills live in Settings. Settings → Skills is one place for every skill: search first, then Your skills, then the library by search or by topic.\n- Import a skill. Drop or choose a file, a folder or a zip, or paste a GitHub link, right inside Settings → Skills.\n- Skill Guard checks every skill before a bot can use it: on import, on install, on every switch-on, after every edit, and again at startup.\n- Edit and Duplicate in the skill reader. Editing a built-in skill edits your own copy.\n- Add a skill inside a bot. Add a skill in a bot's window opens a picker right there.\n- The Chief of Staff guide belongs to your workspace Chief only, and can be switched off."
   },
   {
@@ -63,7 +63,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "New Bot, New Team and House rules in 0.1.59",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.59",
     "where": "Settings → House rules",
-    "url": "https://murage.app/docs/changelog/v0-1-59#new-bot-new-team-and-house-rules-in-0-1-59",
+    "url": "https://murage.ai/docs/changelog/v0-1-59#new-bot-new-team-and-house-rules-in-0-1-59",
     "text": "- One chooser each. The + menu has one New Bot and one New Team. Type a sentence and the best matching templates come up, or browse one topic at a time.\n- House rules. Settings → House rules holds one set of rules that goes first in every bot's instructions. Edit them, switch them off, or reset them to the default. Murage's built-in protections always apply.\n- Rich editor. The rich editor from Wayland now edits files, skills and House rules, and keeps Markdown tables exact."
   },
   {
@@ -73,7 +73,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "What shapes a bot and engine commands in 0.1.59",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.59",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.59",
-    "url": "https://murage.app/docs/changelog/v0-1-59#what-shapes-a-bot-and-engine-commands-in-0-1-59",
+    "url": "https://murage.ai/docs/changelog/v0-1-59#what-shapes-a-bot-and-engine-commands-in-0-1-59",
     "text": "- What shapes a bot. A section in each bot's window lists every part of that bot's instructions in the order the model reads them, with switches for the parts you choose and \"Show exactly what it read\". Desktop app only.\n- Engine \"/\" commands. Typing \"/\" in the message box shows Murage's commands and then a group for the bot's engine with the commands that engine offers, read live."
   },
   {
@@ -83,7 +83,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Approvals in 0.1.59",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.59",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.59",
-    "url": "https://murage.app/docs/changelog/v0-1-59#approvals-in-0-1-59",
+    "url": "https://murage.ai/docs/changelog/v0-1-59#approvals-in-0-1-59",
     "text": "- Full access stops before the lines that matter: deleting outside its own folder, paying for anything, and messaging someone new or posting in public. Messages to you, your own linked accounts and the person a channel conversation is with never stop.\n- Allow once, Allow for this task, Always allow. A stop card offers all three, on the desktop, in the Inbox and on Telegram.\n- New No limits level. Ask, Auto, Full access and No limits. No limits still asks before reading your keys and passwords. Desktop only, with a one-time warning per bot.\n- Approved N steps. Steps approved under Full access or No limits fold into one line that opens to list them."
   },
   {
@@ -93,7 +93,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Voice in 0.1.59",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.59",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.59",
-    "url": "https://murage.app/docs/changelog/v0-1-59#voice-in-0-1-59",
+    "url": "https://murage.ai/docs/changelog/v0-1-59#voice-in-0-1-59",
     "text": "- Real-time calls start speaking on the first sentence. You can talk over the bot, Mute replaces Interrupt, and a spoken \"stop\" stops it at once.\n- Voice through Flux by default. Your own keys are optional and still work.\n- Voice notes. A bot can send an answer as a voice note, in the chat and on Telegram, Slack and Discord.\n- Voice picker. Every Flux voice in one list, grouped by female, male and neutral.\n- A voice per bot, each with its own voice service."
   },
   {
@@ -103,7 +103,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Also in 0.1.59",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.59",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.59",
-    "url": "https://murage.app/docs/changelog/v0-1-59#also-in-0-1-59",
+    "url": "https://murage.ai/docs/changelog/v0-1-59#also-in-0-1-59",
     "text": "- Bots know the time. Every turn tells the bot today's date, the time and your time zone.\n- Web search through Flux. Settings offers Flux Router as a web search provider, using the Flux key saved under Models.\n- New models: Claude Opus 5.5, GPT-6 Sol, GPT-6 Luna and Grok 4.7. Defaults are unchanged.\n- Chat: math and Mermaid diagrams, long conversations open faster.\n- Inbox: Clear and Clear all for failures and reports, dismiss old connection requests, and \"I don't use\" an engine.\n- Routines: a recurring routine can queue one run behind a run that is still going, and the problems count opens a list of the runs behind it."
   },
   {
@@ -113,7 +113,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Please read in 0.1.60",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.60",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.60",
-    "url": "https://murage.app/docs/changelog/v0-1-60#please-read-in-0-1-60",
+    "url": "https://murage.ai/docs/changelog/v0-1-60#please-read-in-0-1-60",
     "text": "- Routines now have their own approval level. Each routine runs at a level you choose (routine editor, Advanced > Approvals for this routine): Ask, Auto, Full access or No limits. A routine you have not set follows its bot's level at the moment it runs, so a bot on No limits no longer stops its own routines to ask. The routine's conversation, its editor and its approval cards all show the level that actually applies.\n- A routine that needs you says so straight away. When a routine run hits a question or an approval, you hear about it at once and the run ends as \"waiting on you\", instead of sitting until it times out."
   },
   {
@@ -123,7 +123,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Connected apps in 0.1.60",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.60",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.60",
-    "url": "https://murage.app/docs/changelog/v0-1-60#connected-apps-in-0-1-60",
+    "url": "https://murage.ai/docs/changelog/v0-1-60#connected-apps-in-0-1-60",
     "text": "Connected apps stay connected. One failed check of the connected-apps service used to leave every bot without its apps until Murage restarted. Each bot's turn now checks again, so a short network blip no longer cuts your bots off."
   },
   {
@@ -133,7 +133,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Routines in 0.1.60",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.60",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.60",
-    "url": "https://murage.app/docs/changelog/v0-1-60#routines-in-0-1-60",
+    "url": "https://murage.ai/docs/changelog/v0-1-60#routines-in-0-1-60",
     "text": "- Long instructions arrive whole. A routine's instructions can be up to 100,000 characters, and the editor tells you before you go over. Nothing is cut off.\n- Always allow for this routine. An approval card raised by a routine offers Always allow for this routine, which covers that same command or place for that routine only.\n- One conversation per routine. Each routine keeps one conversation, so runs no longer pile up as separate conversations.\n- Fewer false stops on Auto. Deleting inside a bot's own folders and temporary files is no longer treated as dangerous. Stopping other programs still asks."
   },
   {
@@ -143,7 +143,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Approvals in 0.1.60",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.60",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.60",
-    "url": "https://murage.app/docs/changelog/v0-1-60#approvals-in-0-1-60",
+    "url": "https://murage.ai/docs/changelog/v0-1-60#approvals-in-0-1-60",
     "text": "- Always allow this exact command. A card for a command offers Always allow this exact command here. Each bot lists what it always allows under Bot settings > Permissions > Always allowed, and you can remove any of it.\n- Fewer false stops. Text a command writes into a file, and scripts handed to Python or Node, are judged by what they actually delete, not by words that happen to appear in them.\n- Pi asks first. Bots on the Pi engine now ask Murage before running commands, editing outside their folder or using connected apps, like every other engine.\n- Only you can say yes. Only your own desktop app and paired devices can answer an approval card.…"
   },
   {
@@ -153,7 +153,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Inbox in 0.1.60",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.60",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.60",
-    "url": "https://murage.app/docs/changelog/v0-1-60#inbox-in-0-1-60",
+    "url": "https://murage.ai/docs/changelog/v0-1-60#inbox-in-0-1-60",
     "text": "A cleaner Inbox. I don't use, Turn it off and Dismiss all now take effect straight away, the list holds still while it refreshes, and sections are tidier. Sign-in commands have a copy button."
   },
   {
@@ -163,7 +163,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Conversations and teams in 0.1.60",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.60",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.60",
-    "url": "https://murage.app/docs/changelog/v0-1-60#conversations-and-teams-in-0-1-60",
+    "url": "https://murage.ai/docs/changelog/v0-1-60#conversations-and-teams-in-0-1-60",
     "text": "- Snooze. Snooze a conversation from the sidebar or a conversation list. Conversations with a question waiting show a badge.\n- Manage teams. Rename a team, change its members and its lead, or delete it, from the sidebar or the channel details.\n- Deleting conversations. Deleting the last conversation with a bot or in a channel leaves a fresh one, and errors are shown instead of failing quietly.\n- Edit and rerun. Editing a message and running it again no longer starts twice.\n- Who said what. In a channel with tool activity hidden, every bot reply is labelled with the bot that wrote it.\n- Menus fit the window.…"
   },
   {
@@ -173,7 +173,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "About me in 0.1.60",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.60",
     "where": "Settings → About me",
-    "url": "https://murage.app/docs/changelog/v0-1-60#about-me-in-0-1-60",
+    "url": "https://murage.ai/docs/changelog/v0-1-60#about-me-in-0-1-60",
     "text": "About me. Settings → About me holds a short profile of you. Your bots read it on your own turns and never on turns started by other people or webhooks. What shapes a bot has a switch for it."
   },
   {
@@ -183,7 +183,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Voice and notifications in 0.1.60",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.60",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.60",
-    "url": "https://murage.app/docs/changelog/v0-1-60#voice-and-notifications-in-0-1-60",
+    "url": "https://murage.ai/docs/changelog/v0-1-60#voice-and-notifications-in-0-1-60",
     "text": "- Voice picker. Every voice in the list has its own play button.\n- Notification sounds. Turn off notification sounds on this computer.\n- Voice notes. A voice note is dropped cleanly when the turn ends while it is being made."
   },
   {
@@ -193,7 +193,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Off-site backups in 0.1.60",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.60",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.60",
-    "url": "https://murage.app/docs/changelog/v0-1-60#off-site-backups-in-0-1-60",
+    "url": "https://murage.ai/docs/changelog/v0-1-60#off-site-backups-in-0-1-60",
     "text": "- Back up to your own server over SFTP. Keep an encrypted off-site copy on a NAS, a home server or any server you can reach over SFTP. Murage makes its own key for the server, shows you what to add to the server, and asks you to confirm the server's identity once.\n- Murage sets up the storage for you. For SFTP and S3-compatible storage, Murage creates the backup store and its password itself. You can save a copy of the password wherever you like.\n- Off-site copies on every computer. Off-site copies now work on Intel Macs, Windows and Linux as well as Apple silicon Macs."
   },
   {
@@ -203,7 +203,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Privacy in 0.1.60",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.60",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.60",
-    "url": "https://murage.app/docs/changelog/v0-1-60#privacy-in-0-1-60",
+    "url": "https://murage.ai/docs/changelog/v0-1-60#privacy-in-0-1-60",
     "text": "Deleting a conversation deletes it everywhere. Its messages, files, attachments and the history each engine kept for it (Claude Code, Codex, Gemini, Qwen, OpenCode, Kimi, Cursor, Droid, Hermes, Antigravity and Fuigo) are removed. The approvals log keeps only the time, bot and verdict, and any unsent draft of it is cleared from the app. The confirmation says how many saved files go with it, and anything Murage could not remove is listed afterwards."
   },
   {
@@ -213,7 +213,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Web app in your phone's browser in 0.1.60",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.60",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.60",
-    "url": "https://murage.app/docs/changelog/v0-1-60#web-app-in-your-phone-s-browser-in-0-1-60",
+    "url": "https://murage.ai/docs/changelog/v0-1-60#web-app-in-your-phone-s-browser-in-0-1-60",
     "text": "Photo uploads work again. Uploading an image from the web app in your phone's browser no longer fails, and the web app loads faster."
   },
   {
@@ -223,7 +223,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Polish in 0.1.60",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.60",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.60",
-    "url": "https://murage.app/docs/changelog/v0-1-60#polish-in-0-1-60",
+    "url": "https://murage.ai/docs/changelog/v0-1-60#polish-in-0-1-60",
     "text": "- Numbers stay numbers. A reply of \"391.\" shows as 391., and numbered lists keep their starting number.\n- Plain names for app tools. Approval cards, activity and the Inbox say \"Connected app: Gmail send email\" rather than internal tool names.\n- Connected count. The Connected apps tab counts only apps that are working, and names any that are not ready yet.\n- Longer commands on cards. Approval cards show commands of up to 4,000 characters, marked where they are cut.\n- Team templates. A team made from a template gets a one-line purpose as its channel instructions, and skills that failed to switch on for some templates now work.\n- Help inside the app. Ask a bot how Murage works.…"
   },
   {
@@ -233,7 +233,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Reliability in 0.1.60",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.60",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.60",
-    "url": "https://murage.app/docs/changelog/v0-1-60#reliability-in-0-1-60",
+    "url": "https://murage.ai/docs/changelog/v0-1-60#reliability-in-0-1-60",
     "text": "- A backup that stops tells you. If a backup can't finish, an Inbox item and a notification say what stopped it and what to do.\n- Backups tell you what they wait for. If a bot is waiting for your answer when a backup is due, the Backups page and the Inbox name the bot, and the backup starts as soon as you answer.\n- Turning an engine off stops only that engine's work, and says so in plain words. A routine waiting for your answer no longer holds up the bot's other conversations.\n- Stalled turns. A turn that stops making progress is noticed from the moment it starts, with allowances for waits that are expected.\n- VPS turns.…"
   },
   {
@@ -243,7 +243,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Room replies in 0.1.61",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.61",
-    "url": "https://murage.app/docs/changelog/v0-1-61#room-replies-in-0-1-61",
+    "url": "https://murage.ai/docs/changelog/v0-1-61#room-replies-in-0-1-61",
     "text": "- Bots in a room always see each other's replies. Every member of a room now reads what its teammates said there, also after you add or remove a member or change a setting. Before, a change like that could hide earlier replies from the bots, so a teammate would redo work that was already done.\n- A reply that used something you deleted is shown as withheld. When a room reply drew on something you have since deleted or changed, bots see a short note that the reply was withheld instead of its text, and you see \"Bots no longer see this reply\" under it. The same holds when that reply would come back through memory, through a copy of it in another conversation or through a delegated result.…"
   },
   {
@@ -253,7 +253,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Room memory in 0.1.61",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.61",
-    "url": "https://murage.app/docs/changelog/v0-1-61#room-memory-in-0-1-61",
+    "url": "https://murage.ai/docs/changelog/v0-1-61#room-memory-in-0-1-61",
     "text": "- A pinned note that uses a withheld reply is left out. If you pin a room's notes and later forget a reply they rest on, bots are no longer given that pinned note. Murage says once in the room that the pinned note uses a reply the bots no longer see, so you can unpin it and pin a newer one. Replies made after that stay visible to every teammate.\n- Forgetting a room's notes forgets only the notes. When you forget a room's notes in Memory, the earlier replies they quoted stay visible to the bots. Only a reply that was made with those notes is withheld.\n- Room memory recall reaches every bot in the room, and a small pin no longer stops the room.…"
   },
   {
@@ -263,7 +263,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Room turns in 0.1.61",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.61",
-    "url": "https://murage.app/docs/changelog/v0-1-61#room-turns-in-0-1-61",
+    "url": "https://murage.ai/docs/changelog/v0-1-61#room-turns-in-0-1-61",
     "text": "- Room replies keep going while a bot is working. A room reply no longer stops at a fixed five minutes. It stops only after the set number of minutes with no activity (20 by default), or when you press Stop.\n- Murage says when a bot could not answer. When a bot in a room could not answer or stopped part way, Murage says so in its own line with the reason, so it never reads as the bot's own words.\n- A bot that cannot start its turn frees the room. If a bot cannot start its turn in a room, the room is freed and a plain line says so, instead of staying busy.\n- Each teammate gets its turn.…"
   },
   {
@@ -273,7 +273,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Long rooms and unconfirmed messages in 0.1.61",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.61",
-    "url": "https://murage.app/docs/changelog/v0-1-61#long-rooms-and-unconfirmed-messages-in-0-1-61",
+    "url": "https://murage.ai/docs/changelog/v0-1-61#long-rooms-and-unconfirmed-messages-in-0-1-61",
     "text": "- Rooms with long histories keep working. A room with a very long history no longer stops answering.\n- Messages Murage cannot confirm stay outside your memory. A room message whose sender Murage cannot confirm no longer gives bots what they remember about you, your preferences or your teams, and the same goes for the handoffs it starts."
   },
   {
@@ -283,7 +283,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Teams and tools in 0.1.61",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.61",
-    "url": "https://murage.app/docs/changelog/v0-1-61#teams-and-tools-in-0-1-61",
+    "url": "https://murage.ai/docs/changelog/v0-1-61#teams-and-tools-in-0-1-61",
     "text": "- Bots on Fuigo can reach their teammates again. A bot that runs on Fuigo can now ask a teammate, hand work off and use Murage's own tools, in a room and in a direct chat. Before, those calls failed, so a lead on Fuigo ended up doing the work alone.\n- Every engine gets tool names it can call. The names of Murage's tools in what bots read, including image tools and error lines, now match the engine each bot runs on, so a bot no longer gets \"Tool not found\" when it follows them."
   },
   {
@@ -293,7 +293,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Image keys in 0.1.61",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
     "where": "Settings → Models",
-    "url": "https://murage.app/docs/changelog/v0-1-61#image-keys-in-0-1-61",
+    "url": "https://murage.ai/docs/changelog/v0-1-61#image-keys-in-0-1-61",
     "text": "- Every saved image-capable key appears in Image generation. A key you saved under Settings → Models for a provider that makes images now also shows in Image generation, including xAI keys and keys saved with a slash at the end of their address.\n- Your Google Gemini key works for chat and images. Add a Google Gemini key under Settings → Models and bots can chat on Gemini models, and Image generation can use it too. A key saved under the wrong provider is never sent to another one; Settings shows it for you to review."
   },
   {
@@ -303,7 +303,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Images in 0.1.61",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.61",
-    "url": "https://murage.app/docs/changelog/v0-1-61#images-in-0-1-61",
+    "url": "https://murage.ai/docs/changelog/v0-1-61#images-in-0-1-61",
     "text": "- Sending more than 10 images no longer fails the turn. The first 10 go to the bot, and one plain line says how many were not sent. The message box tells you before you send.\n- Image generation takes longer prompts and more shapes. Each image model now has its own prompt length, so a model that takes a long, detailed prompt gets all of it. You can ask for portrait and landscape shapes such as 9:16, and the approval card shows the prompt length, the model and the size that will be made. When a model cannot make what you asked, Murage says so before anything is sent.\n- Images that take a while are never cut off.…"
   },
   {
@@ -313,7 +313,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Saved image prompts and packs in 0.1.61",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
     "where": "Settings → Tools & Connections → Image generation",
-    "url": "https://murage.app/docs/changelog/v0-1-61#saved-image-prompts-and-packs-in-0-1-61",
+    "url": "https://murage.ai/docs/changelog/v0-1-61#saved-image-prompts-and-packs-in-0-1-61",
     "text": "- Saved prompt blocks. Save a part of an image prompt you use again, such as a character or a brand look, as a named block. Bots send saved blocks first, then the scene. Every save is a new version, and earlier images keep the version they used. You and your bots can add them: find them under Settings → Tools & Connections → Image generation.\n- Reference packs. A bot can save up to 16 reference images from a conversation as a named pack and use the pack again later. Murage checks each image against its saved copy every time the pack is used."
   },
   {
@@ -323,7 +323,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Image models and settings in 0.1.61",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.61",
-    "url": "https://murage.app/docs/changelog/v0-1-61#image-models-and-settings-in-0-1-61",
+    "url": "https://murage.ai/docs/changelog/v0-1-61#image-models-and-settings-in-0-1-61",
     "text": "- More control over each image. Where the model supports it, bots can ask for several images at once, PNG, JPEG or WebP, a seed, a transparent background, or an exact size in pixels.\n- Long renders are followed to the end. For models that send their images in parts or work as a longer job, Murage follows the render until it is done, and a render that was interrupted picks up where it was instead of starting again.\n- See what each model can do. Image generation in Settings shows each model's prompt length and sizes, when it last worked, and a Check this model now button. A daily check of the default model is off unless you turn it on.\n- Clearer cards and lines.…"
   },
   {
@@ -333,7 +333,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Long work in 0.1.61",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.61",
-    "url": "https://murage.app/docs/changelog/v0-1-61#long-work-in-0-1-61",
+    "url": "https://murage.ai/docs/changelog/v0-1-61#long-work-in-0-1-61",
     "text": "- A working bot is never stopped by a fixed clock. A turn that is still working stops only when it goes quiet for the time you set, when you press Stop, or when it reaches a budget you set. This holds on every engine, including Antigravity and Box.\n- Bots on OpenAI-compatible engines, MiniMax and xAI wait for slow answers. A model that takes a while to answer is no longer cut off after two or three minutes of waiting.\n- Long commands on a bot's computer run to the end. A command that takes a long time keeps running as long as it shows activity, and stops when it finishes, goes quiet, or you press Stop.\n- Clear stop lines.…"
   },
   {
@@ -343,7 +343,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Languages in 0.1.61",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.61",
-    "url": "https://murage.app/docs/changelog/v0-1-61#languages-in-0-1-61",
+    "url": "https://murage.ai/docs/changelog/v0-1-61#languages-in-0-1-61",
     "text": "- Translations are up to date and load when you pick them. The seven translated languages cover the newest screens, and each one loads only when you choose it, so Murage opens faster."
   },
   {
@@ -353,7 +353,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Mac in 0.1.61",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.61",
-    "url": "https://murage.app/docs/changelog/v0-1-61#mac-in-0-1-61",
+    "url": "https://murage.ai/docs/changelog/v0-1-61#mac-in-0-1-61",
     "text": "- The first-run step bar clears the window buttons. On a Mac, the steps across the top of the first run no longer sit under the close, minimize and zoom buttons."
   },
   {
@@ -363,7 +363,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Recovery key in 0.1.61",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.61",
-    "url": "https://murage.app/docs/changelog/v0-1-61#recovery-key-in-0-1-61",
+    "url": "https://murage.ai/docs/changelog/v0-1-61#recovery-key-in-0-1-61",
     "text": "- Your recovery key stays out of folders that sync to the cloud. When Murage chooses where to save your backup recovery key, it no longer uses a folder that syncs to OneDrive, iCloud Drive, Dropbox or Google Drive, and it starts with your home folder instead of Documents. If you pick a folder that syncs, Murage tells you and asks before it saves anything there.\n- A recovery key already in a folder that syncs is pointed out once. If an earlier version saved your recovery key in a folder that syncs to the cloud, the Backups page tells you once and offers Move and Keep here. Move puts a checked copy in your home folder, points your daily backups at it and then removes the old file.…"
   },
   {
@@ -373,7 +373,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Backups in 0.1.61",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.61",
-    "url": "https://murage.app/docs/changelog/v0-1-61#backups-in-0-1-61",
+    "url": "https://murage.ai/docs/changelog/v0-1-61#backups-in-0-1-61",
     "text": "- Your pre-update backup choice is kept. If you tick \"Back up before installing an in-app update\" under Advanced before you first turn on backups, that choice is now kept. Where this install cannot take a backup before an update, setup tells you so.\n- The off-site password file follows the recovery key's rule. The password file for off-site backups is saved in your home folder, never in a folder that syncs to the cloud, and Murage asks first if you pick one that does."
   },
   {
@@ -383,7 +383,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Lighter in the background in 0.1.62",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.62",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.62",
-    "url": "https://murage.app/docs/changelog/v0-1-62#lighter-in-the-background-in-0-1-62",
+    "url": "https://murage.ai/docs/changelog/v0-1-62#lighter-in-the-background-in-0-1-62",
     "text": "- Murage uses far less disk and CPU while it sits in the background. This matters most when you have a long history. The Inbox and approvals badge now update only when something changes. An idle Murage writes almost nothing to disk now."
   },
   {
@@ -393,7 +393,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Long conversations in 0.1.62",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.62",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.62",
-    "url": "https://murage.app/docs/changelog/v0-1-62#long-conversations-in-0-1-62",
+    "url": "https://murage.ai/docs/changelog/v0-1-62#long-conversations-in-0-1-62",
     "text": "- Long conversations keep going, well past where most agents stop. Keep one conversation running for weeks, like a sales thread or a long project, and your bot keeps answering with its memory and everything recent you have worked on together. There is no need to start over.\n- Bots take on far more work. A bot can now hand thousands of tasks a day to its helpers and keep going, well past the point where most agents stall. Murage also looks after itself better: it sorts out the unexpected on its own and always opens ready to work."
   },
   {
@@ -402,7 +402,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Murage 1.0 brings projects with a lead, a plan and a board, Murage on your phone, Murage for Chrome, bots that learn from you, tools you add by pasting a link, and calls that feel like a conversation.",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.0",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.0",
-    "url": "https://murage.app/docs/changelog/v1-0-0",
+    "url": "https://murage.ai/docs/changelog/v1-0-0",
     "text": "Murage 1.0 is here.\n\nIt's a team of AI bots that works on your own computer, led by Ember, your Chief of Staff. Ember plans the work, hands it to the right bot and reports back. Your bots run projects with goals and a board, remember what matters, browse in your own Chrome, take your calls and talk to the apps you already use. And you stay in charge the whole time, from your desk or from your phone.\n\nThis is the biggest release we've ever shipped. Here's what's in it."
   },
   {
@@ -412,7 +412,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "The headlines",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.0",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.0",
-    "url": "https://murage.app/docs/changelog/v1-0-0#the-headlines",
+    "url": "https://murage.ai/docs/changelog/v1-0-0#the-headlines",
     "text": "- Projects that actually get done. Give a project a purpose, a lead and a goal. The lead turns it into a plan, splits the work into cards on a board and hands them out. You sign off when it's finished.\n- Murage in your pocket. Pair your phone, answer approvals from the lock screen, call your bots and run your projects from anywhere.\n- Murage for Chrome, arriving in the Chrome Web Store. Your bots can work in your own signed-in browser, in the tabs you share, and they ask before anything is sent.\n- Bots that learn from you. Correct a bot once and it keeps the lesson. Every lesson shows up where you can see it, edit it or undo it.\n- Add any tool by pasting a link.…"
   },
   {
@@ -422,7 +422,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Projects in 1.0.0",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.0",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.0",
-    "url": "https://murage.app/docs/changelog/v1-0-0#projects-in-1-0-0",
+    "url": "https://murage.ai/docs/changelog/v1-0-0#projects-in-1-0-0",
     "text": "A channel is a place to talk. A project is a place to get something done.\n\nPress + and choose New Project. Give it a purpose, pick the bots, choose a lead, and add a deadline, a work folder, a goal and a budget if you want them. Or skip the form-filling: press \"Ask Ember to propose\" and your Chief of Staff drafts the brief and the budget for you to edit.\n- A lead that plans. The lead turns your goal into a plan, hands out cards and reports to you. Choose \"Show me the plan first\" and nothing starts until you approve it.\n- A real board. Cards have an owner, a state, a due date and a work folder.…"
   },
   {
@@ -432,7 +432,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Murage on your phone in 1.0.0",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.0",
     "where": "Settings → Phone and other devices",
-    "url": "https://murage.app/docs/changelog/v1-0-0#murage-on-your-phone-in-1-0-0",
+    "url": "https://murage.ai/docs/changelog/v1-0-0#murage-on-your-phone-in-1-0-0",
     "text": "- The Murage phone app. Pair once with a scan from Settings → Phone and other devices and your phone reaches the Murage on your computer. Tailscale is the recommended way in, and it works from anywhere. The iPhone app is in App Store review now and is coming to the App Store.\n- Approve from the lock screen. When a bot needs your OK, your phone tells you. A low-risk step can be allowed right from the notification. Anything bigger asks for Face ID, Touch ID, your passcode or your Android phone's fingerprint or screen lock first, and the answer is tied to exactly what the card showed. Lock-screen text is generic by default, and you can choose to show more for each phone.…"
   },
   {
@@ -442,7 +442,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Murage for Chrome in 1.0.0",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.0",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.0",
-    "url": "https://murage.app/docs/changelog/v1-0-0#murage-for-chrome-in-1-0-0",
+    "url": "https://murage.ai/docs/changelog/v1-0-0#murage-for-chrome-in-1-0-0",
     "text": "Murage for Chrome is arriving in the Chrome Web Store.\n- Your bots, in your own browser. Murage for Chrome works in Chrome, Edge and Brave on Mac, Windows and Linux, signed in as you, in the tabs you choose to share.\n- It asks before it sends. Reading and scrolling go ahead. Sending, posting, submitting and deleting ask you every time.\n- Human-only steps come to you. Passwords, codes, card details, cookie choices and \"prove you're human\" checks get handed back with a \"Your turn\" card. The bot waits, and carries on when you press Continue.\n- Banking, payment, health and password pages stay yours. They ask before every step, or are handed to you entirely.\n- You can always see it working.…"
   },
   {
@@ -452,7 +452,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Bots that work together in 1.0.0",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.0",
     "where": "Bot settings → Permissions",
-    "url": "https://murage.app/docs/changelog/v1-0-0#bots-that-work-together-in-1-0-0",
+    "url": "https://murage.ai/docs/changelog/v1-0-0#bots-that-work-together-in-1-0-0",
     "text": "- Can talk to. Choose who each bot may contact in Bot settings → Permissions: My team, Everyone, or Pick bots.\n- Share a bot with other teams. Your best researcher can now work for three teams and keep its home team. One job for each team at a time.\n- See the conversation between bots. When one bot contacts another, the exchange lands in its own bot-to-bot channel. Read it, and chip in whenever you like.\n- Rooms that never drop a message. A busy bot gets queued instead of skipped, your messages to a room are held until they're answered, and a result wakes the bot that asked for it. Every bot turn says what it's answering.\n- See the helpers.…"
   },
   {
@@ -462,7 +462,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Memory and learning in 1.0.0",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.0",
     "where": "Bot settings → Learning",
-    "url": "https://murage.app/docs/changelog/v1-0-0#memory-and-learning-in-1-0-0",
+    "url": "https://murage.ai/docs/changelog/v1-0-0#memory-and-learning-in-1-0-0",
     "text": "- Bots learn from your feedback. Say \"keep client emails under 120 words\" in a chat, edit a reply, or mark one, and the bot keeps a short lesson for next time. Lessons go into the bot's instructions, so they work on every engine.\n- You see everything it keeps. A small chip under the reply says what was kept, like \"Ember will do this differently: lead with the decision\". Tap it to Edit, Forget, Undo or say Not quite.\n- A Learning screen for every bot. Bot settings → Learning shows what it learned, what it remembers and a \"Tell it something\" box for when you'd rather just say it.\n- Mark wins and losses. Mark a reply won or lost, good or bad.…"
   },
   {
@@ -472,7 +472,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Engines and models in 1.0.0",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.0",
     "where": "Settings → Models",
-    "url": "https://murage.app/docs/changelog/v1-0-0#engines-and-models-in-1-0-0",
+    "url": "https://murage.ai/docs/changelog/v1-0-0#engines-and-models-in-1-0-0",
     "text": "- Fuigo 1.0.22. Send a message while a bot is working and it steers the running turn. A message is never sent twice, and one that didn't land is shown plainly.\n- Use the plan you already pay for. Sign in with your ChatGPT plan, or your Grok plan (an unofficial sign-in), under Settings → Models and your bots can use the models that come with it.\n- Claude and Codex answer faster. Murage keeps the engine ready between turns, so your follow-ups start sooner. It watches free memory, so a smaller machine stays responsive.\n- Claude Sonnet 5.5 and Claude Haiku 5.5 are in the model list, and Requesty is a named model connection.\n- Switch with your eyes open.…"
   },
   {
@@ -482,7 +482,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Connected apps and tools in 1.0.0",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.0",
     "where": "Connected apps → MCP servers",
-    "url": "https://murage.app/docs/changelog/v1-0-0#connected-apps-and-tools-in-1-0-0",
+    "url": "https://murage.ai/docs/changelog/v1-0-0#connected-apps-and-tools-in-1-0-0",
     "text": "- MCP servers by link. Open Connected apps → MCP servers, press Add server and paste a link, a command or a config snippet. Murage works out the type. If it needs a sign-in, you get a \"Sign in to...\" button; Murage keeps the sign-in and never hands it to a bot. Test tells you in plain words what's wrong if something is.\n- One key for connected apps. Your Flux Router key unlocks every connected app. Nothing else to find or paste.\n- Up to 10 accounts per app. Connect several Gmail inboxes or calendars and your bots tell them apart by address.\n- WhatsApp. Message your Chief of Staff from WhatsApp, next to Telegram, Slack and Discord.…"
   },
   {
@@ -492,7 +492,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Calls and voice in 1.0.0",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.0",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.0",
-    "url": "https://murage.app/docs/changelog/v1-0-0#calls-and-voice-in-1-0-0",
+    "url": "https://murage.ai/docs/changelog/v1-0-0#calls-and-voice-in-1-0-0",
     "text": "- Bots answer sooner. The first words of a reply are spoken while the rest is still being written.\n- It waits while you think. A pause mid-sentence no longer ends your turn, on every call path.\n- \"One sec.\" When a reply will take a moment, the bot says a short line in its own voice, in all eight languages, so you're never left in silence.\n- A call screen that feels alive. A glow that follows real voice levels, a clear mood for listening, thinking and speaking, and live captions you can read along with.\n- Room calls with the whole team. The bot you're talking to answers in its own voice and hands the heavy work to its engine. Interrupt or hang up and the voice stops.\n- Clean dictation.…"
   },
   {
@@ -502,7 +502,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Control and trust in 1.0.0",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.0",
     "where": "Permissions → Images",
-    "url": "https://murage.app/docs/changelog/v1-0-0#control-and-trust-in-1-0-0",
+    "url": "https://murage.ai/docs/changelog/v1-0-0#control-and-trust-in-1-0-0",
     "text": "- Approval cards show what's really happening. The real command, the files touched, how many lines change, and the To and Subject of an email. Long content opens with Show all.\n- Images follow your access level. Under Full access, bots make images in your own conversations without asking, with a record of each. Change it per bot under Permissions → Images.\n- Every package is checked before it lands. Bot and team packages you import are scanned first, and anything worth a look is shown with where it is. Official packages say \"Signed by Ferrox Labs\". Imported bots start at Ask, and their routines arrive paused.\n- Verified updates on Linux.…"
   },
   {
@@ -512,7 +512,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Everyday polish in 1.0.0",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.0",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.0",
-    "url": "https://murage.app/docs/changelog/v1-0-0#everyday-polish-in-1-0-0",
+    "url": "https://murage.ai/docs/changelog/v1-0-0#everyday-polish-in-1-0-0",
     "text": "- A sidebar that gets out of the way. Routines, Files, Apps and the Team map sit in one row. Your name opens About me, What's new and Settings.\n- Search Settings. Settings is grouped into clear sections, and a search box finds any setting by name.\n- Snooze until something happens. Snooze a conversation until there's new activity in it.\n- Murage opens cleanly. The window appears as soon as it can paint and recovers by itself if the graphics driver resets.\n\nWelcome to Murage 1.0."
   },
   {
@@ -522,7 +522,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Conversations in 1.0.1",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.1",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.1",
-    "url": "https://murage.app/docs/changelog/v1-0-1#conversations-in-1-0-1",
+    "url": "https://murage.ai/docs/changelog/v1-0-1#conversations-in-1-0-1",
     "text": "- Your bots keep their own replies in view. When a bot's memory changes partway through a conversation, it picks up with your messages and its own replies alike, so it always knows what it said and what you agreed. If a reply relied on something you have since forgotten, the bot sees a short \"Reply withheld\" line in its place."
   },
   {
@@ -532,7 +532,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Memory and learning in 1.0.1",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.1",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.1",
-    "url": "https://murage.app/docs/changelog/v1-0-1#memory-and-learning-in-1-0-1",
+    "url": "https://murage.ai/docs/changelog/v1-0-1#memory-and-learning-in-1-0-1",
     "text": "- Reflection runs on current Claude. Bots that use reflection on Claude now reflect on your conversations as intended, including on the latest Claude Code."
   },
   {
@@ -542,7 +542,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Models in 1.0.1",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.1",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.1",
-    "url": "https://murage.app/docs/changelog/v1-0-1#models-in-1-0-1",
+    "url": "https://murage.ai/docs/changelog/v1-0-1#models-in-1-0-1",
     "text": "- Model names read cleanly. The model list shows names like Claude Haiku 5.5 and Claude Opus 4.1, and Claude Haiku 5.5 shows its price."
   },
   {
@@ -552,7 +552,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Under the hood in 1.0.1",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.1",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.1",
-    "url": "https://murage.app/docs/changelog/v1-0-1#under-the-hood-in-1-0-1",
+    "url": "https://murage.ai/docs/changelog/v1-0-1#under-the-hood-in-1-0-1",
     "text": "- Image handling is up to date. Murage uses the latest image library for previews and thumbnails.\n- Backups on Windows wait for a slow start. On a busy Windows computer, setting up owner-only backup files now waits longer, so the step completes."
   },
   {
@@ -562,7 +562,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Memory in 1.0.2",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.2",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.2",
-    "url": "https://murage.app/docs/changelog/v1-0-2#memory-in-1-0-2",
+    "url": "https://murage.ai/docs/changelog/v1-0-2#memory-in-1-0-2",
     "text": "- Memory stays compact on long conversations. Memory now stores each reply's sources as a small step from the one before, so a long-running thread takes a fraction of the disk it did and memory search answers quickly. The upgrade screen shows its progress, and Murage hands freed space back to your disk when there is room.\n- Memory answers faster. The first check of a resumed conversation is held to about a tenth of a second, and if it needs longer Murage shows \"checking\" and finishes in the background. Recall reads its index first, and background memory work gives way to what you are doing.\n- Memories that need you are easy to find.…"
   },
   {
@@ -572,7 +572,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Speed on long histories in 1.0.2",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.2",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.2",
-    "url": "https://murage.app/docs/changelog/v1-0-2#speed-on-long-histories-in-1-0-2",
+    "url": "https://murage.ai/docs/changelog/v1-0-2#speed-on-long-histories-in-1-0-2",
     "text": "- Quick however much history you have. A turn does work in proportion to what is new, so a conversation with years of messages answers as fast as a new one.\n- The Inbox opens from a ready summary, and stays quick. Suggestions waiting for you are read straight from where they are kept, so it opens quickly however many there are. While it fills for the first time, it shows \"Getting your inbox ready\".\n- Search stays responsive. Results come from the newest matches first, and Murage tells you when it showed a limited set.\n- Your team list loads light. Each bot and room brings just its latest few messages, enough for the sidebar.…"
   },
   {
@@ -582,7 +582,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Engines in 1.0.2",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.2",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.2",
-    "url": "https://murage.app/docs/changelog/v1-0-2#engines-in-1-0-2",
+    "url": "https://murage.ai/docs/changelog/v1-0-2#engines-in-1-0-2",
     "text": "- Fuigo 1.0.28. Murage 1.0.2 comes with Fuigo 1.0.28 bundled."
   },
   {
@@ -592,7 +592,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Stopped and queued messages in 1.0.2",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.2",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.2",
-    "url": "https://murage.app/docs/changelog/v1-0-2#stopped-and-queued-messages-in-1-0-2",
+    "url": "https://murage.ai/docs/changelog/v1-0-2#stopped-and-queued-messages-in-1-0-2",
     "text": "- A message you stopped stays stopped, including across a restart. It runs only when you press Send again.\n- Send again and Dismiss are shown for any message or hand-off waiting on you.\n- A queued message runs once."
   },
   {
@@ -602,7 +602,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Deleting a conversation in 1.0.2",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.2",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.2",
-    "url": "https://murage.app/docs/changelog/v1-0-2#deleting-a-conversation-in-1-0-2",
+    "url": "https://murage.ai/docs/changelog/v1-0-2#deleting-a-conversation-in-1-0-2",
     "text": "- Deleting a conversation also removes it from the coding engines' own files, including engines that keep their files in a synced folder.\n- When an engine is open, Murage says so, and finishes removing the conversation after you close it.\n- For synced folders, Murage tells you that your cloud provider may still hold older copies in its version history."
   },
   {
@@ -612,7 +612,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Routines in 1.0.2",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.2",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.2",
-    "url": "https://murage.app/docs/changelog/v1-0-2#routines-in-1-0-2",
+    "url": "https://murage.ai/docs/changelog/v1-0-2#routines-in-1-0-2",
     "text": "- Routines stay light over years of runs. Run history is compacted during scheduled work, so a routine that has run for years costs no more than a new one.\n- Always allow for this routine holds. A command you allow for a routine runs on its later runs without asking again, and your bot reads the results of its own connected-app calls without asking at all, so a routine can run while you sleep.\n- Delete a past run. Each past run on the Routines calendar has a Delete button, so you can keep the history tidy."
   },
   {
@@ -622,7 +622,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Group chats in 1.0.2",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.2",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.2",
-    "url": "https://murage.app/docs/changelog/v1-0-2#group-chats-in-1-0-2",
+    "url": "https://murage.ai/docs/changelog/v1-0-2#group-chats-in-1-0-2",
     "text": "- Group chats pick the right bot to answer. With a Flux key, Murage's decision model chooses which bot should reply in a group chat, asks Flux not to keep anything it sends, and decides within about a second. If it takes longer, or is not sure, the lead answers. You can switch it off in Settings."
   },
   {
@@ -632,7 +632,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Chats and bots in 1.0.2",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.2",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.2",
-    "url": "https://murage.app/docs/changelog/v1-0-2#chats-and-bots-in-1-0-2",
+    "url": "https://murage.ai/docs/changelog/v1-0-2#chats-and-bots-in-1-0-2",
     "text": "- Unmatched actions live in the Inspector. When a bot says it did something Murage has no record of, the note now sits in the Inspector sidebar beside the chat, and actions a teammate ran for the bot count as records.\n- House rules keep up with your typing. The house rules editor keeps every word you type, however fast you write.\n- Edits you are typing stay with their message. An edit keeps its words when you switch bots or while Murage is busy, and you can edit again if a change has not gone through after 20 seconds.\n- Any engine can run your bot. A bot moved to an engine that cannot reach its computer still answers, and says what it can do without the computer.…"
   },
   {
@@ -642,7 +642,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Murage for Chrome in 1.0.2",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.2",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.2",
-    "url": "https://murage.app/docs/changelog/v1-0-2#murage-for-chrome-in-1-0-2",
+    "url": "https://murage.ai/docs/changelog/v1-0-2#murage-for-chrome-in-1-0-2",
     "text": "- Murage for Chrome reads like the app. The panel shows the bot's own name and colour, cards have plain headings such as \"click on example.com\", access levels use the app's names (Ask each step, Ask once per task, Full access), an approval card waits 15 minutes like every other card, and the browser check finishes in the background and says \"checking\" while it runs."
   },
   {
@@ -652,7 +652,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Connected apps in 1.0.2",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.2",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.2",
-    "url": "https://murage.app/docs/changelog/v1-0-2#connected-apps-in-1-0-2",
+    "url": "https://murage.ai/docs/changelog/v1-0-2#connected-apps-in-1-0-2",
     "text": "- Connected apps keep every valid tool. If one tool in a connected app's list is malformed, Murage keeps all the others and your bot can use them.\n- A real action through a connected app is recorded as done. When your bot sends an email, adds a calendar event or posts through a connected app, Murage records the action, so the reply and the Inspector agree with what happened.\n- Approvals read in plain words. Each approval card says what your bot wants to do in everyday language, and your bot no longer asks to read its own results.\n- Delegations, team names and the business crew's lead show correctly.…"
   },
   {
@@ -662,7 +662,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Windows in 1.0.2",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.2",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.2",
-    "url": "https://murage.app/docs/changelog/v1-0-2#windows-in-1-0-2",
+    "url": "https://murage.ai/docs/changelog/v1-0-2#windows-in-1-0-2",
     "text": "- Windows installs and uninstalls cleanly without admin rights. Murage installs for a standard user in a couple of minutes, starts healthy, and uninstalls completely, including its entry in Apps."
   },
   {
@@ -672,7 +672,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Flux in 1.0.2",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.2",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.2",
-    "url": "https://murage.app/docs/changelog/v1-0-2#flux-in-1-0-2",
+    "url": "https://murage.ai/docs/changelog/v1-0-2#flux-in-1-0-2",
     "text": "- Pictures and voice through Flux use Flux's current services. Image generation goes straight to Flux's live image service, and live transcription stays behind its own switch until you turn it on.\n- Murage checks your Flux key once and waits for you. If Flux does not accept a key, Murage stops asking until you test, save or re-enter it, and connected apps and web search try again on a steady schedule of their own."
   },
   {
@@ -682,7 +682,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Under the hood in 1.0.2",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.2",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.2",
-    "url": "https://murage.app/docs/changelog/v1-0-2#under-the-hood-in-1-0-2",
+    "url": "https://murage.ai/docs/changelog/v1-0-2#under-the-hood-in-1-0-2",
     "text": "- A wide set of everyday improvements. Up to eight per-bot desktops, MCP tools that start from Windows command shims, remote MCP servers that get 30 seconds to list their tools, phone pairing that picks your real Wi-Fi or Ethernet address, chats that follow the newest message after you switch threads, routines that keep their detailed error, and settings files saved with a byte order mark all work as you would expect.\n- Every release is checked on Intel Macs. Each build now starts on a real Intel Mac and checks its WhatsApp connection before it is published."
   },
   {
@@ -692,7 +692,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Always ask in 1.0.3",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
-    "url": "https://murage.app/docs/changelog/v1-0-3#always-ask-in-1-0-3",
+    "url": "https://murage.ai/docs/changelog/v1-0-3#always-ask-in-1-0-3",
     "text": "- Always ask reads each command before it runs. If the text names your home folder, a system folder, a whole disk or a mounted volume, Murage asks first, at every access level, including Full access and No limits.\n- It covers more than the shell. The same check reads PowerShell, Command Prompt, Windows Subsystem for Linux, and code run through Python, Node and similar tools.\n- Raw writes to a disk always ask. Any write to a storage device asks first, whatever the device is called."
   },
   {
@@ -702,7 +702,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Apps and engine settings in 1.0.3",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
-    "url": "https://murage.app/docs/changelog/v1-0-3#apps-and-engine-settings-in-1-0-3",
+    "url": "https://murage.ai/docs/changelog/v1-0-3#apps-and-engine-settings-in-1-0-3",
     "text": "- Each app gets only the grants you give it. A connected app asks before it reaches a new tool, and what you allow stays with that app and that bot.\n- A routine's remembered approvals stay with the bot that runs it. Another bot cannot borrow them.\n- The settings that decide what an engine may do are protected. A bot cannot change them from inside a turn; you change them in Settings.\n- Murage's own approval hooks stay Murage's. Bots cannot change them, at any access level, including Full access and No limits."
   },
   {
@@ -712,7 +712,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Approvals on your phone and in calls in 1.0.3",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
-    "url": "https://murage.app/docs/changelog/v1-0-3#approvals-on-your-phone-and-in-calls-in-1-0-3",
+    "url": "https://murage.ai/docs/changelog/v1-0-3#approvals-on-your-phone-and-in-calls-in-1-0-3",
     "text": "- Approval cards reach your phone. Allow or deny from the phone and the waiting bot carries on.\n- Calls announce what is waiting. A call tells you how many approvals are waiting and lets you answer by voice, with the plain words spoken back to you.\n- The composer keeps your draft while an approval card is open, and returns with it when you are done."
   },
   {
@@ -722,7 +722,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Spending ceiling and setup backup in 1.0.3",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
-    "url": "https://murage.app/docs/changelog/v1-0-3#spending-ceiling-and-setup-backup-in-1-0-3",
+    "url": "https://murage.ai/docs/changelog/v1-0-3#spending-ceiling-and-setup-backup-in-1-0-3",
     "text": "- The monthly learning ceiling holds. Replies that report no usage are counted as unmetered, and learning stops at the ceiling you set.\n- First-run backup ends verified. Setup finishes only when your first backup has run and checked out, or when you have turned backups off yourself. Setup checks both records before it finishes."
   },
   {
@@ -732,7 +732,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Rooms and memory in 1.0.3",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
-    "url": "https://murage.app/docs/changelog/v1-0-3#rooms-and-memory-in-1-0-3",
+    "url": "https://murage.ai/docs/changelog/v1-0-3#rooms-and-memory-in-1-0-3",
     "text": "- Rooms run with memory off. A room member whose memory is off keeps its place in the conversation, and Keep all lets every turn run.\n- Rooms keep their order. Each message in a room has one place in the conversation, on every window and on your phone.\n- Search and browse show your newest memories first."
   },
   {
@@ -742,7 +742,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Thread recall in 1.0.3",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
-    "url": "https://murage.app/docs/changelog/v1-0-3#thread-recall-in-1-0-3",
+    "url": "https://murage.ai/docs/changelog/v1-0-3#thread-recall-in-1-0-3",
     "text": "- A bot can recall an earlier thread. Ask it to find what was said in another conversation and it reads that thread, within what it is allowed to see.\n- It works with memory off or paused, because it reads the conversation itself."
   },
   {
@@ -752,7 +752,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Bots read only what they may in 1.0.3",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
-    "url": "https://murage.app/docs/changelog/v1-0-3#bots-read-only-what-they-may-in-1-0-3",
+    "url": "https://murage.ai/docs/changelog/v1-0-3#bots-read-only-what-they-may-in-1-0-3",
     "text": "- Each memory remembers where it came from. Murage tracks the conversation a memory was learned in, so a bot reads only the memories from conversations it was part of.\n- Switching a bot's engine keeps that line. The new engine picks up the same boundaries."
   },
   {
@@ -762,7 +762,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Faster memory cleanup in 1.0.3",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
-    "url": "https://murage.app/docs/changelog/v1-0-3#faster-memory-cleanup-in-1-0-3",
+    "url": "https://murage.ai/docs/changelog/v1-0-3#faster-memory-cleanup-in-1-0-3",
     "text": "- Removing a memory or a person's access is one quick pass. Murage handles the whole backlog together instead of one receipt at a time.\n- Cleanup counts the real work it does, so it stays inside its budget.\n- No long freezes while memory builds. The memory index builds and updates in small steps that always finish, so Murage stays smooth on a very long history.\n- Idle checks only visit threads with work waiting."
   },
   {
@@ -772,7 +772,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Attachments in 1.0.3",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
-    "url": "https://murage.app/docs/changelog/v1-0-3#attachments-in-1-0-3",
+    "url": "https://murage.ai/docs/changelog/v1-0-3#attachments-in-1-0-3",
     "text": "- Attachments are checked as they are read. Murage confirms the file is the one you attached, a regular file of a sensible size, and unchanged since it was saved, before a bot reads it."
   },
   {
@@ -782,7 +782,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Engines in 1.0.3",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
-    "url": "https://murage.app/docs/changelog/v1-0-3#engines-in-1-0-3",
+    "url": "https://murage.ai/docs/changelog/v1-0-3#engines-in-1-0-3",
     "text": "- Fuigo 1.0.31. Murage 1.0.3 comes with Fuigo 1.0.31 bundled.\n- Antigravity at Auto asks first in projects with their own hooks. When a project carries its own Antigravity hooks file, the turn runs as at Ask, so every change waits for you.\n- OpenClaw 2026.8.1 or newer. Murage works with OpenClaw from version 2026.8.1. At Ask, OpenClaw asks before it runs anything. At Auto and Full access it follows your own OpenClaw command settings, as in 1.0.2."
   },
   {
@@ -792,7 +792,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Murage Cloud in 1.0.3",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
-    "url": "https://murage.app/docs/changelog/v1-0-3#murage-cloud-in-1-0-3",
+    "url": "https://murage.ai/docs/changelog/v1-0-3#murage-cloud-in-1-0-3",
     "text": "- Your Cloud home runs the engines Murage offers on your computer, with the same approvals, the same settings pages and the same memory.\n- Settings in a Cloud window show what applies there. Pages about your computer say so and point you to the desktop app.\n- The Cloud browser stops by itself when idle, so a browser you left open does not keep running."
   },
   {
@@ -802,7 +802,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Delegated team replies in 1.0.3",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
-    "url": "https://murage.app/docs/changelog/v1-0-3#delegated-team-replies-in-1-0-3",
+    "url": "https://murage.ai/docs/changelog/v1-0-3#delegated-team-replies-in-1-0-3",
     "text": "- Replies are held and checked before they reach a channel, then released automatically. While Murage checks a delegated reply against what its bots may read, you see the words with the note \"Bots will see this reply once earlier memory is checked\", and your bots read that the reply is left out for now. When the check finishes, the reply is released to them on its own, with no step from you.\n- A reply is marked as using something you deleted or changed only when that is true. A check that is still running reads as checking, never as a removed source.\n- Hand-offs return your teammate's words after memory-settings or team changes.…"
   },
   {
@@ -812,7 +812,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Windows in 1.0.3",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
-    "url": "https://murage.app/docs/changelog/v1-0-3#windows-in-1-0-3",
+    "url": "https://murage.ai/docs/changelog/v1-0-3#windows-in-1-0-3",
     "text": "- On Windows, Codex sessions start cleanly. Murage hands Codex its session hook in a form the Windows command line reads exactly, so every Codex session starts with its approval check connected.\n- On Windows, in-project files are recognized even under short folder names. Murage reads every part of a path by its full folder name, so a path written in the short form (such as RUNNER~1) is still known to be inside your project.\n- Engines on Windows always get the live environment. Every engine start reads Murage's current environment, so a value Murage sets or removes later reaches the next engine.\n- On Windows with Git installed, every Ask shows its approval card.…"
   },
   {
@@ -822,7 +822,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Moving to 1.0.2 and back in 1.0.3",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
-    "url": "https://murage.app/docs/changelog/v1-0-3#moving-to-1-0-2-and-back-in-1-0-3",
+    "url": "https://murage.ai/docs/changelog/v1-0-3#moving-to-1-0-2-and-back-in-1-0-3",
     "text": "- Downgrade to 1.0.2 and back keeps all data. \"Prepare to reinstall\" leaves a folder that 1.0.2 opens and can back up, including your memory file. When you return to 1.0.3, it rebuilds what 1.0.2 does not keep and carries on the memory work where it stopped."
   },
   {
@@ -832,7 +832,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Also in 1.0.3",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
-    "url": "https://murage.app/docs/changelog/v1-0-3#also-in-1-0-3",
+    "url": "https://murage.ai/docs/changelog/v1-0-3#also-in-1-0-3",
     "text": "- Forgetting a memory is quick and complete. Removing a memory costs only its own deletion, and the memory helper starts with the server's data directory, so it always works on the right store.\n- Memory changes settle in the background at a steady pace. Changes to what a bot may remember are applied in measured slices under a per-minute budget, so your rooms keep responding while the work completes.\n- The memory panel and review section draw on first open, and markup drawn before the sanitizer loaded is drawn again once it is ready.\n- First paint is quicker, with the engine sign-in work moved out of the way.\n- Routines due at boot run.…"
   },
   {
@@ -842,7 +842,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Known limits in 1.0.3",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
-    "url": "https://murage.app/docs/changelog/v1-0-3#known-limits-in-1-0-3",
+    "url": "https://murage.ai/docs/changelog/v1-0-3#known-limits-in-1-0-3",
     "text": "Always ask reads a command as it is written. It is a strong first line, and a few command shapes still get past it. A per-command sandbox, which stops the write itself, is the planned next step.\n- A folder named in a setting, a variable or another command's output is not followed, because Always ask reads only what the text spells out. Deleting or mirroring into a folder held in a variable still asks.\n- Routines keep their 1.0.2 behaviour for writes whose folder sits in a variable. On a scheduled or manual routine run, such a write runs without a card and the run history records a line for it. Owner turns, webhooks and every other rule are unchanged.…"
   },
   {
@@ -852,7 +852,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Delegate follow-through",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
-    "url": "https://murage.app/docs/changelog/v1-0-3#delegate-follow-through",
+    "url": "https://murage.ai/docs/changelog/v1-0-3#delegate-follow-through",
     "text": "- A follow-through is automatic at most once. If a follow-through had started when Murage stopped unexpectedly, it is not replayed. Its reply is kept as context for the bot's next turn.\n- A cancellation can need a second stop. If the disk refuses the write that records a cancellation and Murage then stops unexpectedly, the cancellation may not survive the restart, and the follow-through can still run once. Stopping the bot again cancels it."
   },
   {
@@ -862,7 +862,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Memory change settling",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
-    "url": "https://murage.app/docs/changelog/v1-0-3#memory-change-settling",
+    "url": "https://murage.ai/docs/changelog/v1-0-3#memory-change-settling",
     "text": "- After upgrading a large install, earlier memory finishes its background check over a few hours. On a large real install it took about 3 hours, at about 17 MiB a minute. Rooms can answer a little slower until it finishes.\n- Delegated replies from turns that began before a change wait for that check. New turns are not held.\n- Memory added while a forget or an edit is still being cleaned up appears once that cleanup finishes. Until then a bot answers without it. Small installs finish in seconds; on a large install it can take a few hours.\n- Right after a large delete or forget, a bot's first reply can take about 5 seconds longer while the cleanup keeps its steady pace.…"
   },
   {
@@ -871,7 +871,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "The 1.0.3 hotfix. Claude asks before phone, web search and site tools, and Claude on Windows with Git Bash starts its approval tools reliably.",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.4",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.4",
-    "url": "https://murage.app/docs/changelog/v1-0-4",
+    "url": "https://murage.ai/docs/changelog/v1-0-4",
     "text": "Murage 1.0.4 is the hotfix for 1.0.3. Everything in 1.0.3 is included."
   },
   {
@@ -881,7 +881,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Claude in 1.0.4",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.4",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.4",
-    "url": "https://murage.app/docs/changelog/v1-0-4#claude-in-1-0-4",
+    "url": "https://murage.ai/docs/changelog/v1-0-4#claude-in-1-0-4",
     "text": "- Claude now asks before phone, web search and site tools. Tapping, typing or swiping on your phone, web search, and publishing a site each show an approval card first, as your access level sets.\n- Claude on Windows with Git Bash now starts its approval tools reliably. When Git for Windows is installed, Claude's turns reach Murage's approval tools, so Always ask shows its card as it should."
   },
   {
@@ -891,7 +891,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Conversations in 1.0.5",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.5",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.5",
-    "url": "https://murage.app/docs/changelog/v1-0-5#conversations-in-1-0-5",
+    "url": "https://murage.ai/docs/changelog/v1-0-5#conversations-in-1-0-5",
     "text": "- Deleting a conversation finishes on its own. Murage keeps working through a deletion until every engine's copy is gone, and the notice tells you what is still on the way."
   },
   {
@@ -901,7 +901,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Connected apps in 1.0.5",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.5",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.5",
-    "url": "https://murage.app/docs/changelog/v1-0-5#connected-apps-in-1-0-5",
+    "url": "https://murage.ai/docs/changelog/v1-0-5#connected-apps-in-1-0-5",
     "text": "- Connected apps tell you when they need you. When an app needs to be connected again, Murage shows it in the chat, with the step to bring it back."
   },
   {
@@ -911,7 +911,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Teams in 1.0.5",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.5",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.5",
-    "url": "https://murage.app/docs/changelog/v1-0-5#teams-in-1-0-5",
+    "url": "https://murage.ai/docs/changelog/v1-0-5#teams-in-1-0-5",
     "text": "- Hand-offs name what held them up. When a teammate cannot pick up a hand-off, the project's Activity says why, so you know what to change."
   },
   {
@@ -921,7 +921,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Chats in 1.0.6",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.6",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.6",
-    "url": "https://murage.app/docs/changelog/v1-0-6#chats-in-1-0-6",
+    "url": "https://murage.ai/docs/changelog/v1-0-6#chats-in-1-0-6",
     "text": "- All chats. Every conversation sits in one searchable list, opened from a wider chat pop-up."
   },
   {
@@ -931,7 +931,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Bots in 1.0.6",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.6",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.6",
-    "url": "https://murage.app/docs/changelog/v1-0-6#bots-in-1-0-6",
+    "url": "https://murage.ai/docs/changelog/v1-0-6#bots-in-1-0-6",
     "text": "- Draft-only bots. A bot can prepare replies and drafts for you to review and send, and it keeps to that on every engine and channel.\n- Bots know where they belong. Each bot knows which projects and groups it is part of.\n- Your own scripts run at Full access. A script on disk, like bash build.sh, runs straight through at Full access and No limits. Ask and Auto still check with you first."
   },
   {
@@ -941,7 +941,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Engines in 1.0.6",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.6",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.6",
-    "url": "https://murage.app/docs/changelog/v1-0-6#engines-in-1-0-6",
+    "url": "https://murage.ai/docs/changelog/v1-0-6#engines-in-1-0-6",
     "text": "- Fuigo starts faster on Windows. Fuigo starts steadily from every install shape.\n- Codex explains a slow start. A Codex that takes a moment to get ready says so, and is never called out of date.\n- Stop means stopped on Codex. Stop on a Codex turn always ends it as stopped by you.\n- Clearer model chips. A new chat follows its bot's model, and the chip shows it.\n- Stop that ends just your turn. Stop on a cloud computer ends your own turn, even when the computer is shared, and a hand-off answer already on record is kept."
   },
   {
@@ -951,7 +951,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Memory and data in 1.0.6",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.6",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.6",
-    "url": "https://murage.app/docs/changelog/v1-0-6#memory-and-data-in-1-0-6",
+    "url": "https://murage.ai/docs/changelog/v1-0-6#memory-and-data-in-1-0-6",
     "text": "- Forget means gone at once. Forget a memory and its words are gone the moment you click.\n- Memories in your own words. What your bots learn from you is anchored to what you actually said.\n- Past chats at hand. Bots look through your past chats without stopping to ask, and a line you forgot never turns up.\n- Quicker upkeep on long histories. Deleting conversations finishes faster, and Stop on a routine ends it cleanly.\n- More numbers masked. Account and card numbers you paste are masked in more formats, IBANs included.\n- Backups run straight through. Backups know every folder Murage keeps."
   },
   {
@@ -961,7 +961,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Everyday use in 1.0.6",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.6",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.6",
-    "url": "https://murage.app/docs/changelog/v1-0-6#everyday-use-in-1-0-6",
+    "url": "https://murage.ai/docs/changelog/v1-0-6#everyday-use-in-1-0-6",
     "text": "- Live updates without internet. On a desktop with no internet, chats keep their live updates from your own computer.\n- Hand-offs land where they belong. A reply a teammate hands back waits for its check, then arrives in the right conversation.\n- A smoother first run. An app connects under the label you confirm.\n- Kept downloads, in plain words. Files you keep from the browser are reported as kept.\n- Clearer library cards. Each template's card says in plain words what it does for you.\n- Murage for Chrome in one click. The setup card and the Browser panel open Murage for Chrome's Chrome Web Store listing directly."
   },
   {
@@ -971,7 +971,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Bots in 1.0.7",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.7",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.7",
-    "url": "https://murage.app/docs/changelog/v1-0-7#bots-in-1-0-7",
+    "url": "https://murage.ai/docs/changelog/v1-0-7#bots-in-1-0-7",
     "text": "- Bots read where they belong. A bot can read the messages of its own projects and groups when you ask it to.\n- Type stop. Write \"stop\" and the running turn ends, on every engine. A \"stop\" sent as a reply to a line stays an ordinary message.\n- Routines at No limits. Your own routines answer read-only commands on their follow-through turn without stopping for an approval card.\n- Routines in project rooms. Your own routines in a project room run at the level you set for the routine and its bot, and runs started from outside keep asking.\n- New bots in one step. A bot that cannot be created leaves nothing half made."
   },
   {
@@ -981,7 +981,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Voice in 1.0.7",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.7",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.7",
-    "url": "https://murage.app/docs/changelog/v1-0-7#voice-in-1-0-7",
+    "url": "https://murage.ai/docs/changelog/v1-0-7#voice-in-1-0-7",
     "text": "- ElevenLabs voices through Flux. With Flux connected, calls and voice replies can use the ElevenLabs voices Flux offers."
   },
   {
@@ -991,7 +991,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Engines in 1.0.7",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.7",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.7",
-    "url": "https://murage.app/docs/changelog/v1-0-7#engines-in-1-0-7",
+    "url": "https://murage.ai/docs/changelog/v1-0-7#engines-in-1-0-7",
     "text": "- Long tool runs keep going. A tool that reports progress keeps running, and the working indicator stays until the turn really ends.\n- Readable tool errors. Errors from apps reach your bot as readable text.\n- Engine versions for every engine. Murage reads the version of each installed engine."
   },
   {
@@ -1001,7 +1001,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Memory and data in 1.0.7",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.7",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.7",
-    "url": "https://murage.app/docs/changelog/v1-0-7#memory-and-data-in-1-0-7",
+    "url": "https://murage.ai/docs/changelog/v1-0-7#memory-and-data-in-1-0-7",
     "text": "- Back up now runs straight through. Backups finish on long histories, say which backup they are taking, and confirm the copy was saved and checked.\n- Your chat is saved at shutdown. Logging out or shutting down saves the chat in progress before Murage quits.\n- Checked context. A message sent while memory is still checking a line waits for the check, then goes out with the right context.\n- Steady opening. Murage opens steadily while another process is busy with its database."
   },
   {
@@ -1011,8 +1011,58 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Everyday use in 1.0.7",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.7",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.7",
-    "url": "https://murage.app/docs/changelog/v1-0-7#everyday-use-in-1-0-7",
+    "url": "https://murage.ai/docs/changelog/v1-0-7#everyday-use-in-1-0-7",
     "text": "- A phone layout. On a narrow screen the chat header and the composer fold into compact menus, with Stop, Attach and the approval level one tap away.\n- News from Murage. The first run asks once whether you want product news, and Settings > About keeps the choice.\n- Smoother on Linux. Murage uses the graphics card on Intel and AMD, and relaunches cleanly on Linux and WSL after a start from a terminal."
+  },
+  {
+    "id": "changelog/v1-0-8#fewer-interruptions-at-full-access-in-1-0-8",
+    "title": "What changed in Murage 1.0.8",
+    "description": "Fewer interruptions at Full access, a Stop that lands cleanly, backups you can count on, engines that cannot shut down your computer, and secrets masked in every error message.",
+    "heading": "Fewer interruptions at Full access in 1.0.8",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.8",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.8",
+    "url": "https://murage.ai/docs/changelog/v1-0-8#fewer-interruptions-at-full-access-in-1-0-8",
+    "text": "- Fewer approval cards. At Full access and No limits, your bots ask far less often before everyday commands, most of all on Windows.\n- Everyday commands keep flowing on Windows. They keep going even when Murage's check of your computer's setup is slow or doesn't finish.\n- One default for every conversation. Raise your default and Murage offers to apply it to your open conversations too, with a count of how many it will change.\n- No limits in project rooms. No limits in a project room stays on after Murage restarts."
+  },
+  {
+    "id": "changelog/v1-0-8#stop-in-1-0-8",
+    "title": "What changed in Murage 1.0.8",
+    "description": "Fewer interruptions at Full access, a Stop that lands cleanly, backups you can count on, engines that cannot shut down your computer, and secrets masked in every error message.",
+    "heading": "Stop in 1.0.8",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.8",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.8",
+    "url": "https://murage.ai/docs/changelog/v1-0-8#stop-in-1-0-8",
+    "text": "- Stop that lands cleanly. On Linux, Stop gives sandboxed engines a moment to finish up and tidy away their work, so the next turn picks up right where you left off."
+  },
+  {
+    "id": "changelog/v1-0-8#backups-in-1-0-8",
+    "title": "What changed in Murage 1.0.8",
+    "description": "Fewer interruptions at Full access, a Stop that lands cleanly, backups you can count on, engines that cannot shut down your computer, and secrets masked in every error message.",
+    "heading": "Backups in 1.0.8",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.8",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.8",
+    "url": "https://murage.ai/docs/changelog/v1-0-8#backups-in-1-0-8",
+    "text": "- Backups you can count on. If Murage can't save its backup state, it tells you exactly what to check (disk space and permissions), and Return to workspace takes you straight back once it's sorted."
+  },
+  {
+    "id": "changelog/v1-0-8#your-computer-and-your-secrets-in-1-0-8",
+    "title": "What changed in Murage 1.0.8",
+    "description": "Fewer interruptions at Full access, a Stop that lands cleanly, backups you can count on, engines that cannot shut down your computer, and secrets masked in every error message.",
+    "heading": "Your computer and your secrets in 1.0.8",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.8",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.8",
+    "url": "https://murage.ai/docs/changelog/v1-0-8#your-computer-and-your-secrets-in-1-0-8",
+    "text": "- Your computer stays yours. On Windows, macOS and Linux x64, engines Murage wraps cannot shut down or restart your computer.\n- Your secrets stay hidden. Keys, tokens and private key blocks are masked in the error messages Murage shows you, from engines, computers, checkpoints and updates.\n- Deleting a chat clears Fuigo's copy. On Ubuntu 22.04 and Debian 12, deleting a chat also clears the copy Fuigo keeps on that computer, in under a second."
+  },
+  {
+    "id": "changelog/v1-0-8#everyday-use-in-1-0-8",
+    "title": "What changed in Murage 1.0.8",
+    "description": "Fewer interruptions at Full access, a Stop that lands cleanly, backups you can count on, engines that cannot shut down your computer, and secrets masked in every error message.",
+    "heading": "Everyday use in 1.0.8",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.8",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.8",
+    "url": "https://murage.ai/docs/changelog/v1-0-8#everyday-use-in-1-0-8",
+    "text": "- The built-in browser is on for everyone. On Mac, Teach a skill is ready to use from the start.\n- Helper bots carry on. Approvals a helper bot asks for reach you and carry its work on once you answer.\n- One update control. The sidebar has a single update control: one spinner while a new version downloads, and a tap opens the update details.\n- Every reply explains itself. When a reply can't finish, or ends with nothing to show, Murage tells you why in one plain line."
   },
   {
     "id": "computers/cloud-and-vps#box-cloud-computer",
@@ -1021,7 +1071,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Box cloud computer",
     "breadcrumb": "Murage docs → Computers → Cloud computer and your own VPS",
     "where": "Murage docs → Computers → Cloud computer and your own VPS",
-    "url": "https://murage.app/docs/computers/cloud-and-vps#box-cloud-computer",
+    "url": "https://murage.ai/docs/computers/cloud-and-vps#box-cloud-computer",
     "text": "Add a Box API key in App Settings to provision an isolated hosted Linux desktop. The computer can sleep and wake, and supported sessions provide a live viewer for temporary human control. Trial accounts automatically retry creation with the provider's shorter auto-stop ceiling when required.\n\nBox is a third-party paid service after its trial. Murage stores the configured credential locally and does not expose it to the renderer."
   },
   {
@@ -1031,7 +1081,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Bring your own VPS",
     "breadcrumb": "Murage docs → Computers → Cloud computer and your own VPS",
     "where": "Murage docs → Computers → Cloud computer and your own VPS",
-    "url": "https://murage.app/docs/computers/cloud-and-vps#bring-your-own-vps",
+    "url": "https://murage.ai/docs/computers/cloud-and-vps#bring-your-own-vps",
     "text": "Murage can control Docker on an x86_64 Linux server through an SSH config alias. The agent process stays on your local machine; only Docker commands and the managed desktop container run on the VPS.\n\nYour SSH alias should include connection multiplexing, keepalives, and a connect timeout. Connect manually once to approve the host key, then verify:\n\nThe SSH user needs Docker access, which is root-equivalent on that server. Use a dedicated VPS and firewall inbound traffic to SSH only.\n\nThe managed container publishes no ports, has no host mounts, and is checked before every attach.…"
   },
   {
@@ -1040,7 +1090,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Choose the right desktop or isolated environment for a task.",
     "breadcrumb": "Murage docs → Give a bot a computer",
     "where": "Murage docs → Give a bot a computer",
-    "url": "https://murage.app/docs/computers",
+    "url": "https://murage.ai/docs/computers",
     "text": "A bot can work without a computer, use the computer running Murage, or work inside an isolated desktop.\n\n| Backend | Isolation | Best for |\n|---|---|---|\n| This computer | None | Working with local apps and files you explicitly approve |\n| Local VM | Containerized desktop | Repeatable browser and desktop work on your machine |\n| Box cloud computer | Hosted remote desktop | Always-available isolated Linux work |\n| Self-hosted VPS | Hardened container over SSH | Using infrastructure you own |"
   },
   {
@@ -1050,7 +1100,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Auto, local, and cloud selection",
     "breadcrumb": "Murage docs → Give a bot a computer",
     "where": "Murage docs → Give a bot a computer",
-    "url": "https://murage.app/docs/computers#auto-local-and-cloud-selection",
+    "url": "https://murage.ai/docs/computers#auto-local-and-cloud-selection",
     "text": "Computer selection is explicit per bot. Auto may reuse a ready, verified backend, but it does not silently provision every backend or turn on host control."
   },
   {
@@ -1060,7 +1110,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Preview and takeover",
     "breadcrumb": "Murage docs → Give a bot a computer",
     "where": "Murage docs → Give a bot a computer",
-    "url": "https://murage.app/docs/computers#preview-and-takeover",
+    "url": "https://murage.ai/docs/computers#preview-and-takeover",
     "text": "The Computer panel can show live frames while an agent works. Supported cloud desktops also provide an interactive viewer. Murage opens that viewer in the app when possible, with a browser fallback for external join flows.\n\nStarting a screen preview does not grant the bot control. Local input requires a separate opt-in and remains subject to the computer-use safety boundary."
   },
   {
@@ -1069,7 +1119,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Let a supported agent control the local desktop through the bundled CUA boundary.",
     "breadcrumb": "Murage docs → Computers → This computer",
     "where": "Murage docs → Computers → This computer",
-    "url": "https://murage.app/docs/computers/local-computer",
+    "url": "https://murage.ai/docs/computers/local-computer",
     "text": "Local control is off by default. The Electron main process owns the bundled CUA driver lifecycle so operating-system permissions are attributed to Murage rather than a background helper."
   },
   {
@@ -1079,7 +1129,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "macOS",
     "breadcrumb": "Murage docs → Computers → This computer",
     "where": "Murage docs → Computers → This computer",
-    "url": "https://murage.app/docs/computers/local-computer#macos",
+    "url": "https://murage.ai/docs/computers/local-computer#macos",
     "text": "The packaged app can request Accessibility and Screen Recording permission. After granting either permission, restart the control session when prompted so macOS applies the new grant."
   },
   {
@@ -1089,7 +1139,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Ubuntu",
     "breadcrumb": "Murage docs → Computers → This computer",
     "where": "Murage docs → Computers → This computer",
-    "url": "https://murage.app/docs/computers/local-computer#ubuntu",
+    "url": "https://murage.ai/docs/computers/local-computer#ubuntu",
     "text": "Ubuntu 24.04 GNOME host control is temporarily disabled while the real-seat input-safety blocker in issue #345 is resolved. Packaged builds retain the pinned runtime for reproducible review, but Murage does not start it and clears legacy opt-ins. Chat, screen preview, Cloud, and Local VM remain available. Do not start the bundled driver manually as a workaround."
   },
   {
@@ -1099,7 +1149,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Safety model",
     "breadcrumb": "Murage docs → Computers → This computer",
     "where": "Murage docs → Computers → This computer",
-    "url": "https://murage.app/docs/computers/local-computer#safety-model",
+    "url": "https://murage.ai/docs/computers/local-computer#safety-model",
     "text": "- On macOS, a bot left on Auto can use this computer once local control is installed, but it asks you once before it first acts on your screen. Choose Allow for this bot and Murage remembers it for that bot. Choose Don't allow and Auto keeps that bot off your screen. To change your answer, open the bot's Computer panel and choose Ask again.\n- Bots that already used this computer before this check existed keep working without the question: bots with Auto mode on, and bots you had already approved on this computer.\n- A bot you set to This computer is never asked, because choosing it is your answer. Set a bot to Off if it should never touch your screen.…"
   },
   {
@@ -1108,7 +1158,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Run desktop work inside an isolated Docker or Podman environment.",
     "breadcrumb": "Murage docs → Computers → Local VM",
     "where": "Murage docs → Computers → Local VM",
-    "url": "https://murage.app/docs/computers/local-vm",
+    "url": "https://murage.ai/docs/computers/local-vm",
     "text": "The Local VM gives each bot a containerized Linux desktop on the same machine as Murage. It is useful for browser work, downloads, and repeatable automation that should not run directly on your host desktop."
   },
   {
@@ -1118,7 +1168,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Requirements",
     "breadcrumb": "Murage docs → Computers → Local VM",
     "where": "Settings → Resources",
-    "url": "https://murage.app/docs/computers/local-vm#requirements",
+    "url": "https://murage.ai/docs/computers/local-vm#requirements",
     "text": "- Docker Desktop, Docker Engine, or a supported Podman setup\n- Enough local memory and disk for the desktop image\n- A healthy container runtime available to the Murage process\n\nOn Windows, Podman is the preferred Local VM runtime. Murage checks Podman before Docker and validates the exact Windows-to-VM workspace mount before reusing a container.\n\nBefore starting two desktops on Windows, confirm the Podman machine is running and has enough shared CPU, memory, and disk for both. Podman Desktop exposes that machine under Settings → Resources; both Murage desktops consume the same machine budget."
   },
   {
@@ -1128,7 +1178,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Run two bot desktops",
     "breadcrumb": "Murage docs → Computers → Local VM",
     "where": "App Settings → Computer & browser",
-    "url": "https://murage.app/docs/computers/local-vm#run-two-bot-desktops",
+    "url": "https://murage.ai/docs/computers/local-vm#run-two-bot-desktops",
     "text": "1. Open App Settings → Computer & browser, prepare the managed desktop image, and choose Per bot.\n2. Set Maximum per-bot desktops to 2.\n3. Give two bots Local VM as their computer and create each desktop from that bot's Computer panel.\n4. Choose Open two desktops from either bot to watch both in one workspace.\n\nBoth desktops may keep running, but only one pane can hold interactive control at a time. Switching control releases the previous pane first; opening the two-up workspace never creates or starts a VM.\n\nThe equivalent source configuration is:\n\nLocal VMs always run on the same physical host as the Murage desktop process.…"
   },
   {
@@ -1138,7 +1188,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Persistence",
     "breadcrumb": "Murage docs → Computers → Local VM",
     "where": "Murage docs → Computers → Local VM",
-    "url": "https://murage.app/docs/computers/local-vm#persistence",
+    "url": "https://murage.ai/docs/computers/local-vm#persistence",
     "text": "The bot's workspace and browser profile live in a durable mounted directory. Recreating the desktop can repair stale runtime state without deleting the durable workspace."
   },
   {
@@ -1148,7 +1198,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Ownership and reuse",
     "breadcrumb": "Murage docs → Computers → Local VM",
     "where": "Murage docs → Computers → Local VM",
-    "url": "https://murage.app/docs/computers/local-vm#ownership-and-reuse",
+    "url": "https://murage.ai/docs/computers/local-vm#ownership-and-reuse",
     "text": "Local VM ownership uses a renewable lease. Murage validates the resolved image and container safety contract before reuse instead of trusting only a mutable image tag."
   },
   {
@@ -1157,7 +1207,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Give bots secure, user-authorized tools for Gmail, GitHub, Slack, Notion, and hundreds more.",
     "breadcrumb": "Murage docs → Connected apps",
     "where": "Sidebar → Apps",
-    "url": "https://murage.app/docs/connected-apps",
+    "url": "https://murage.ai/docs/connected-apps",
     "text": "Open Connected apps from the sidebar (Sidebar → Apps, in the row under Needs you), choose a service, and complete its authorization in your normal browser. Murage turns the resulting connection into tools that supported agent engines can use."
   },
   {
@@ -1167,7 +1217,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Connecting an app",
     "breadcrumb": "Murage docs → Connected apps",
     "where": "Settings → Models",
-    "url": "https://murage.app/docs/connected-apps#connecting-an-app",
+    "url": "https://murage.ai/docs/connected-apps#connecting-an-app",
     "text": "Connected apps run through Flux Router. Add your Flux Router key under Settings → Models and the apps unlock. There is no separate key to find or paste.\n\n1. Open Connected apps.\n2. Search for Gmail, GitHub, Slack, Notion, or another toolkit.\n3. Select Connect.\n4. Finish OAuth in the browser window that opens.\n5. Return to the app and ask a bot to use the service.\n\nThe installation identity is stored using Electron's operating-system-backed secure storage. Provider sign-in tokens stay with the connected-apps service and are not written into bot prompts or the renderer."
   },
   {
@@ -1177,7 +1227,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "If you used a key of your own before",
     "breadcrumb": "Murage docs → Connected apps",
     "where": "Murage docs → Connected apps",
-    "url": "https://murage.app/docs/connected-apps#if-you-used-a-key-of-your-own-before",
+    "url": "https://murage.ai/docs/connected-apps#if-you-used-a-key-of-your-own-before",
     "text": "Connected apps no longer use a key you saved yourself. Your saved value is kept, untouched, but nothing reads it. Connect your apps again through Flux Router from the Connected apps page."
   },
   {
@@ -1187,7 +1237,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Letting a bot use connected apps",
     "breadcrumb": "Murage docs → Connected apps",
     "where": "Bot settings → Access → Allow this bot to use connected apps",
-    "url": "https://murage.app/docs/connected-apps#letting-a-bot-use-connected-apps",
+    "url": "https://murage.ai/docs/connected-apps#letting-a-bot-use-connected-apps",
     "text": "Each bot has a switch for connected apps: Bot settings → Access → Allow this bot to use connected apps. What shapes (bot name) shows whether connected apps are part of what the bot can use."
   },
   {
@@ -1197,7 +1247,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Bots stay connected",
     "breadcrumb": "Murage docs → Connected apps",
     "where": "Troubleshooting → Connected apps",
-    "url": "https://murage.app/docs/connected-apps#bots-stay-connected",
+    "url": "https://murage.ai/docs/connected-apps#bots-stay-connected",
     "text": "Each bot's turn checks the connected-apps service again before it starts, so a short network blip no longer leaves your bots without their apps until Murage restarts. This was fixed in 0.1.60. If a bot still says it has no connected apps, see Troubleshooting → Connected apps."
   },
   {
@@ -1207,7 +1257,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Multiple accounts",
     "breadcrumb": "Murage docs → Connected apps",
     "where": "Murage docs → Connected apps",
-    "url": "https://murage.app/docs/connected-apps#multiple-accounts",
+    "url": "https://murage.ai/docs/connected-apps#multiple-accounts",
     "text": "Connect more than one account for the same toolkit and give each a clear alias such as work, personal, or client-acme. When several accounts could perform an action, Murage requires explicit selection instead of silently replacing the first connection."
   },
   {
@@ -1217,7 +1267,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Disconnecting",
     "breadcrumb": "Murage docs → Connected apps",
     "where": "Murage docs → Connected apps",
-    "url": "https://murage.app/docs/connected-apps#disconnecting",
+    "url": "https://murage.ai/docs/connected-apps#disconnecting",
     "text": "Disconnecting an account revokes the upstream grant. It does not only hide the account in the local UI. Other accounts for the same toolkit remain connected.\n\nYour Flux Router key is all connected apps need."
   },
   {
@@ -1226,7 +1276,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Connect work and personal accounts without silently replacing either one.",
     "breadcrumb": "Murage docs → Connected apps → Multiple accounts",
     "where": "Murage docs → Connected apps → Multiple accounts",
-    "url": "https://murage.app/docs/connected-apps/multiple-accounts",
+    "url": "https://murage.ai/docs/connected-apps/multiple-accounts",
     "text": "Murage supports several labeled accounts for the same toolkit. This is useful for two Gmail inboxes, several Slack workspaces, or separate personal and work services."
   },
   {
@@ -1236,7 +1286,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Add an account",
     "breadcrumb": "Murage docs → Connected apps → Multiple accounts",
     "where": "Murage docs → Connected apps → Multiple accounts",
-    "url": "https://murage.app/docs/connected-apps/multiple-accounts#add-an-account",
+    "url": "https://murage.ai/docs/connected-apps/multiple-accounts#add-an-account",
     "text": "1. Open Connected apps.\n2. Find the toolkit you want to connect.\n3. Choose Connect (or Add account if you already have one).\n4. Enter a unique label such as work, personal, or the workspace name.\n5. Complete authorization in your browser.\n\nMurage asks for a label on every new account, including the first, before authorization starts, so the Connected tab shows your chosen name instead of a generated ID. Cancel closes the label form without starting authorization. When more than one account could execute a tool, explicit account selection is required. A new authorization does not silently become the default for the old one."
   },
   {
@@ -1246,7 +1296,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Disconnect safely",
     "breadcrumb": "Murage docs → Connected apps → Multiple accounts",
     "where": "Murage docs → Connected apps → Multiple accounts",
-    "url": "https://murage.app/docs/connected-apps/multiple-accounts#disconnect-safely",
+    "url": "https://murage.ai/docs/connected-apps/multiple-accounts#disconnect-safely",
     "text": "Each connected account appears separately with its alias and status. Disconnect removes only the chosen account and leaves the others active.\n\nMurage caps each toolkit at five usable accounts. If a provider policy prevents another authorization, use a separate Murage installation or configuration rather than reauthorizing over a working account."
   },
   {
@@ -1255,7 +1305,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Let a bot inspect and operate a physically connected Android phone.",
     "breadcrumb": "Murage docs → Devices → USB Android control",
     "where": "Murage docs → Devices → USB Android control",
-    "url": "https://murage.app/docs/devices/android-control",
+    "url": "https://murage.ai/docs/devices/android-control",
     "text": "Murage can expose a USB-connected Android device through its Phone Harness skill. A supported agent can inspect the screen, open apps, tap, type, swipe, scroll, and capture screenshots."
   },
   {
@@ -1265,7 +1315,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Requirements",
     "breadcrumb": "Murage docs → Devices → USB Android control",
     "where": "Murage docs → Devices → USB Android control",
-    "url": "https://murage.app/docs/devices/android-control#requirements",
+    "url": "https://murage.ai/docs/devices/android-control#requirements",
     "text": "- A physical Android device connected over USB\n- USB debugging enabled on the device\n- The computer trusted from the device's debugging prompt\n- The packaged Android platform tools or a compatible local ADB installation\n\nPhone access is a separate capability from desktop computer use. Keep the device unlocked and visible while testing, and review actions that may send messages, change accounts, or expose private content."
   },
   {
@@ -1275,7 +1325,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "What the phone app is",
     "breadcrumb": "Murage docs → Devices → The Murage phone app",
     "where": "Murage docs → Devices → The Murage phone app",
-    "url": "https://murage.app/docs/devices/phone-app#what-the-phone-app-is",
+    "url": "https://murage.ai/docs/devices/phone-app#what-the-phone-app-is",
     "text": "The Murage phone app is a companion for your computer. Your bots keep running on the computer, and the phone shows your conversations and lets you answer them. The computer must be on and running Murage for the phone to reach it."
   },
   {
@@ -1285,7 +1335,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Pair a phone",
     "breadcrumb": "Murage docs → Devices → The Murage phone app",
     "where": "Settings → Phone and other devices",
-    "url": "https://murage.app/docs/devices/phone-app#pair-a-phone",
+    "url": "https://murage.ai/docs/devices/phone-app#pair-a-phone",
     "text": "On the computer, open Settings → Phone and other devices and press Turn on. A card called \"Sign in on another device\" shows a QR code. Scan it with the Murage app on your phone, or with the phone's camera. A computer with no camera can type the six digit code instead. The code works once and expires after about two minutes. Press Create a new code if it ran out."
   },
   {
@@ -1295,7 +1345,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "How the phone reaches the computer",
     "breadcrumb": "Murage docs → Devices → The Murage phone app",
     "where": "Murage docs → Devices → The Murage phone app",
-    "url": "https://murage.app/docs/devices/phone-app#how-the-phone-reaches-the-computer",
+    "url": "https://murage.ai/docs/devices/phone-app#how-the-phone-reaches-the-computer",
     "text": "The recommended way is Tailscale, so the phone and the computer are on the same private network, which works from anywhere and is encrypted end to end. Pairing over Wi-Fi is off unless you ask for it with Pair on this Wi-Fi, and Murage warns you that Wi-Fi pairing is not encrypted. Use it only on a network you trust. The phone has to be signed in to the same Tailscale network as the computer."
   },
   {
@@ -1305,7 +1355,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "What the phone can do",
     "breadcrumb": "Murage docs → Devices → The Murage phone app",
     "where": "Murage docs → Devices → The Murage phone app",
-    "url": "https://murage.app/docs/devices/phone-app#what-the-phone-can-do",
+    "url": "https://murage.ai/docs/devices/phone-app#what-the-phone-can-do",
     "text": "From the phone you can read your conversations and send messages, answer approval cards and questions, and edit a message. You can make a voice call to a bot, add pictures to a message, and use your Inbox. You can run a routine now, make a new bot, and watch a bot's browser. For projects you can open the project, read and edit the brief, work on goals and Board cards, read Activity and usage, and stop, pause or resume a project."
   },
   {
@@ -1315,7 +1365,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "What stays on the computer",
     "breadcrumb": "Murage docs → Devices → The Murage phone app",
     "where": "Murage docs → Devices → The Murage phone app",
-    "url": "https://murage.app/docs/devices/phone-app#what-stays-on-the-computer",
+    "url": "https://murage.ai/docs/devices/phone-app#what-stays-on-the-computer",
     "text": "The phone cannot reach the computer's settings for keys, engines, apps, backups or the computer itself. On the phone, Settings shows only General, Usage and About. The phone can never switch on Full access or No limits, and it cannot change who a bot can talk to. Keys and credentials are never sent to the phone."
   },
   {
@@ -1325,7 +1375,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Computer view",
     "breadcrumb": "Murage docs → Devices → The Murage phone app",
     "where": "Murage docs → Devices → The Murage phone app",
-    "url": "https://murage.app/docs/devices/phone-app#computer-view",
+    "url": "https://murage.ai/docs/devices/phone-app#computer-view",
     "text": "Each paired phone has an Allow computer view switch, off by default. Turn it on to let that phone see and control a bot's cloud computer."
   },
   {
@@ -1335,7 +1385,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Paired devices",
     "breadcrumb": "Murage docs → Devices → The Murage phone app",
     "where": "Settings → Phone and other devices → Paired devices",
-    "url": "https://murage.app/docs/devices/phone-app#paired-devices",
+    "url": "https://murage.ai/docs/devices/phone-app#paired-devices",
     "text": "Settings → Phone and other devices → Paired devices lists every phone and device with when it was added and last seen. Press the bin to revoke one, which ends its sessions at once. Revoke a lost phone right away."
   },
   {
@@ -1345,7 +1395,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Other devices and browsers",
     "breadcrumb": "Murage docs → Devices → The Murage phone app",
     "where": "Murage docs → Devices → The Murage phone app",
-    "url": "https://murage.app/docs/devices/phone-app#other-devices-and-browsers",
+    "url": "https://murage.ai/docs/devices/phone-app#other-devices-and-browsers",
     "text": "A tablet or another laptop can scan the same code with its camera and open Murage in its browser. Turn on Allow remote access to reach Murage from another city over your tailnet."
   },
   {
@@ -1355,7 +1405,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "USB Android control",
     "breadcrumb": "Murage docs → Devices → The Murage phone app",
     "where": "Murage docs → Devices → The Murage phone app",
-    "url": "https://murage.app/docs/devices/phone-app#usb-android-control",
+    "url": "https://murage.ai/docs/devices/phone-app#usb-android-control",
     "text": "Controlling an Android phone from a bot over a USB cable is a different feature. See USB Android control."
   },
   {
@@ -1364,7 +1414,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "How approval levels work (Ask, Auto, Full access, No limits), the stop line, Allow once, Allow for this task, Always allow, and the Always allowed list.",
     "breadcrumb": "Murage docs → Features → Approvals and inspector",
     "where": "Murage docs → Features → Approvals and inspector",
-    "url": "https://murage.app/docs/features/approvals-and-inspector",
+    "url": "https://murage.ai/docs/features/approvals-and-inspector",
     "text": "Murage renders structured agent events as native conversation cards. Questions, choices, permission requests, tool activity, and failures remain attached to the task that produced them."
   },
   {
@@ -1374,7 +1424,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Approval cards",
     "breadcrumb": "Murage docs → Features → Approvals and inspector",
     "where": "Murage docs → Features → Approvals and inspector",
-    "url": "https://murage.app/docs/features/approvals-and-inspector#approval-cards",
+    "url": "https://murage.ai/docs/features/approvals-and-inspector#approval-cards",
     "text": "When a bot wants to do something that needs your permission, Murage shows an approval card in the conversation instead of hiding the request in terminal output. Read the requested action and where it applies before you answer. Deny sends control back to the bot so it can choose another way. Cancel turn stops the whole turn.\n\nThe same choices appear on the desktop, in the Inbox and on Telegram (where the first button reads Approve once). The Always allow buttons are offered in the desktop app only."
   },
   {
@@ -1384,7 +1434,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Approval levels: Ask, Auto, Full access and No limits",
     "breadcrumb": "Murage docs → Features → Approvals and inspector",
     "where": "Bot settings → Permissions → Approvals",
-    "url": "https://murage.app/docs/features/approvals-and-inspector#approval-levels-ask-auto-full-access-and-no-limits",
+    "url": "https://murage.ai/docs/features/approvals-and-inspector#approval-levels-ask-auto-full-access-and-no-limits",
     "text": "Choose how a conversation is approved from the permission chip beside the message box. The menu asks \"How should this bot's actions be approved?\" and offers four levels:\n- Ask (Ask for approval): ask before actions that need your permission.\n- Auto (Auto mode): keep going automatically; destructive and sensitive actions still ask.\n- Full access: keeps going without asking, but stops before deleting outside its folder, paying, messaging someone new, or reading your keys.\n- No limits: runs everything without asking, except reading your keys and passwords and commands Murage recognizes as able to wipe your computer, which ask first.\n\nThe chip changes the level for this conversation.…"
   },
   {
@@ -1394,7 +1444,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Full access and the stop line",
     "breadcrumb": "Murage docs → Features → Approvals and inspector",
     "where": "Murage docs → Features → Approvals and inspector",
-    "url": "https://murage.app/docs/features/approvals-and-inspector#full-access-and-the-stop-line",
+    "url": "https://murage.ai/docs/features/approvals-and-inspector#full-access-and-the-stop-line",
     "text": "Under Full access a bot runs commands, edits files and contacts other bots without asking. It still stops and asks at a few lines that matter:\n- deleting anything outside its own folder, including through Finder, scripts and code;\n- paying for anything;\n- messaging someone new or posting in public, such as a first comment, issue or release on a GitHub repository;\n- reading your keys and passwords.\n\nMessages to you, your own linked accounts and the person a channel conversation is with never stop. Engines under Full access send their permission asks to Murage, so these checks hold for Claude Code, Codex, Pi and ACP engines alike.…"
   },
   {
@@ -1404,7 +1454,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "No limits",
     "breadcrumb": "Murage docs → Features → Approvals and inspector",
     "where": "Bot settings → Permissions → Images",
-    "url": "https://murage.app/docs/features/approvals-and-inspector#no-limits",
+    "url": "https://murage.ai/docs/features/approvals-and-inspector#no-limits",
     "text": "No limits lets deleting, paying and messaging go ahead without asking. It still asks before reading your keys and passwords, and before a command Murage recognizes as able to wipe your computer. Choose it when you want the behaviour Full access had before 0.1.59.\n\nFull access and No limits can be switched on only in the desktop app. The first time for each bot you confirm a one-time warning (\"Give @bot full access?\" or \"Give @bot no limits?\", with Turn on full access or Turn on no limits). Switch back to Auto or Ask at any time.\n\nSome things still ask under Full access and No limits. A turn started by a webhook asks as it would under Auto.…"
   },
   {
@@ -1414,7 +1464,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Images",
     "breadcrumb": "Murage docs → Features → Approvals and inspector",
     "where": "Bot settings → Permissions → Images",
-    "url": "https://murage.app/docs/features/approvals-and-inspector#images",
+    "url": "https://murage.ai/docs/features/approvals-and-inspector#images",
     "text": "Images follow the level: under Full access and No limits they are made without asking in your own conversations and routines, with a record of each, unless you change Bot settings → Permissions → Images. A webhook, a contact or anyone else still gets the card. Your own messages from Telegram, Slack or Discord always show the card for images."
   },
   {
@@ -1424,7 +1474,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Allow once, Allow for this task, Always allow",
     "breadcrumb": "Murage docs → Features → Approvals and inspector",
     "where": "Murage docs → Features → Approvals and inspector",
-    "url": "https://murage.app/docs/features/approvals-and-inspector#allow-once-allow-for-this-task-always-allow",
+    "url": "https://murage.ai/docs/features/approvals-and-inspector#allow-once-allow-for-this-task-always-allow",
     "text": "A stop card offers up to three ways to say yes:\n- Allow once allows just this step.\n- Allow for this task allows the same kind of action in the same place (the same folder, recipient or payee) until the task ends.\n- Always allow remembers the yes for this bot, scoped to that same folder, recipient or payee, never to everything. For a command it reads \"Always allow any git command\" (naming the program).\n\nOn a conversation you started, you can also allow a place for the task in your own words in chat. The chat then notes exactly what was allowed."
   },
   {
@@ -1434,7 +1484,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Always allow this exact command",
     "breadcrumb": "Murage docs → Features → Approvals and inspector",
     "where": "Murage docs → Features → Approvals and inspector",
-    "url": "https://murage.app/docs/features/approvals-and-inspector#always-allow-this-exact-command",
+    "url": "https://murage.ai/docs/features/approvals-and-inspector#always-allow-this-exact-command",
     "text": "A card for a command also offers Always allow this exact command here. It is the narrowest remembered yes: that exact command, only in that folder, and only on that engine. The bot asks again for any other command, folder or engine."
   },
   {
@@ -1444,7 +1494,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "The Always allowed list",
     "breadcrumb": "Murage docs → Features → Approvals and inspector",
     "where": "Bot settings → Permissions → Always allowed",
-    "url": "https://murage.app/docs/features/approvals-and-inspector#the-always-allowed-list",
+    "url": "https://murage.ai/docs/features/approvals-and-inspector#the-always-allowed-list",
     "text": "Every Always allow a bot remembers is listed in Bot settings → Permissions → Always allowed. Exact-command grants show the command, the folder and the engine. Press Remove next to any item to take it back. The bot still asks before anything that looks destructive, reads your keys, deletes outside its folder, pays or messages someone new. The list, like granting one, is desktop only."
   },
   {
@@ -1454,7 +1504,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Engines that cannot ask",
     "breadcrumb": "Murage docs → Features → Approvals and inspector",
     "where": "Murage docs → Features → Approvals and inspector",
-    "url": "https://murage.app/docs/features/approvals-and-inspector#engines-that-cannot-ask",
+    "url": "https://murage.ai/docs/features/approvals-and-inspector#engines-that-cannot-ask",
     "text": "Some engines have no way to ask before acting when they run inside Murage. The permission menu says so on every level, for example \"Antigravity can't stop to ask, so it works without commands, teammates, memory or connected apps.\" At every level Murage runs such an engine with file edits only, rather than let it act with nobody asked."
   },
   {
@@ -1464,7 +1514,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Pi asks first",
     "breadcrumb": "Murage docs → Features → Approvals and inspector",
     "where": "Murage docs → Features → Approvals and inspector",
-    "url": "https://murage.app/docs/features/approvals-and-inspector#pi-asks-first",
+    "url": "https://murage.ai/docs/features/approvals-and-inspector#pi-asks-first",
     "text": "Bots on the Pi engine ask Murage before running commands, editing outside their folder or using connected apps, like every other engine. Pi follows the same levels, stop line and Always allow choices."
   },
   {
@@ -1474,7 +1524,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Only you can say yes",
     "breadcrumb": "Murage docs → Features → Approvals and inspector",
     "where": "Murage docs → Features → Approvals and inspector",
-    "url": "https://murage.app/docs/features/approvals-and-inspector#only-you-can-say-yes",
+    "url": "https://murage.ai/docs/features/approvals-and-inspector#only-you-can-say-yes",
     "text": "Only your own desktop app and paired devices can answer an approval card. A message whose sender Murage cannot confirm runs as an unattended turn, which asks the way a webhook turn does."
   },
   {
@@ -1484,7 +1534,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Fewer false stops",
     "breadcrumb": "Murage docs → Features → Approvals and inspector",
     "where": "Murage docs → Features → Approvals and inspector",
-    "url": "https://murage.app/docs/features/approvals-and-inspector#fewer-false-stops",
+    "url": "https://murage.ai/docs/features/approvals-and-inspector#fewer-false-stops",
     "text": "Auto does not treat deleting inside a bot's own folders and temporary files as dangerous. Text a command writes into a file, and scripts handed to Python or Node, are judged by what they actually delete, not by words that happen to appear in them. Stopping other programs still asks."
   },
   {
@@ -1494,7 +1544,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Inspector",
     "breadcrumb": "Murage docs → Features → Approvals and inspector",
     "where": "Murage docs → Features → Approvals and inspector",
-    "url": "https://murage.app/docs/features/approvals-and-inspector#inspector",
+    "url": "https://murage.ai/docs/features/approvals-and-inspector#inspector",
     "text": "Use Inspector when you need more detail than the conversation provides. It is useful for following tool calls, reconnect attempts, engine output, and long-running work."
   },
   {
@@ -1504,7 +1554,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "When a run disconnects",
     "breadcrumb": "Murage docs → Features → Approvals and inspector",
     "where": "Murage docs → Features → Approvals and inspector",
-    "url": "https://murage.app/docs/features/approvals-and-inspector#when-a-run-disconnects",
+    "url": "https://murage.ai/docs/features/approvals-and-inspector#when-a-run-disconnects",
     "text": "Murage retries short streaming failures. If retries end in an authentication or configuration error, fix the underlying engine rather than repeatedly retrying the task. See Agent engine troubleshooting."
   },
   {
@@ -1514,7 +1564,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Image attachments",
     "breadcrumb": "Murage docs → Features → Attachments, search, and message tools",
     "where": "Murage docs → Features → Attachments, search, and message tools",
-    "url": "https://murage.app/docs/features/attachments-and-search#image-attachments",
+    "url": "https://murage.ai/docs/features/attachments-and-search#image-attachments",
     "text": "Paste a screenshot directly into the composer or attach an image from disk. Add a short instruction explaining what the agent should inspect: the highlighted UI, an error message, a layout mismatch, or the whole image."
   },
   {
@@ -1524,7 +1574,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Search",
     "breadcrumb": "Murage docs → Features → Attachments, search, and message tools",
     "where": "Murage docs → Features → Attachments, search, and message tools",
-    "url": "https://murage.app/docs/features/attachments-and-search#search",
+    "url": "https://murage.ai/docs/features/attachments-and-search#search",
     "text": "The sidebar search finds bots and conversation content. Use distinctive project names, issue numbers, or exact error fragments to narrow results quickly."
   },
   {
@@ -1534,7 +1584,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Message actions",
     "breadcrumb": "Murage docs → Features → Attachments, search, and message tools",
     "where": "Murage docs → Features → Attachments, search, and message tools",
-    "url": "https://murage.app/docs/features/attachments-and-search#message-actions",
+    "url": "https://murage.ai/docs/features/attachments-and-search#message-actions",
     "text": "- Pin durable decisions or instructions.\n- Copy a response without selecting the message manually.\n- React to leave lightweight feedback in shared conversations.\n- Retry when a transient provider or connection failure interrupts a response.\n- Read aloud when voice output is configured.\n\nCrop tokens, email addresses, private repository names, and customer data before attaching an image to any cloud-backed model."
   },
   {
@@ -1544,7 +1594,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Routines",
     "breadcrumb": "Murage docs → Features → Routines and webhooks",
     "where": "Bot settings → Routines",
-    "url": "https://murage.app/docs/features/automation#routines",
+    "url": "https://murage.ai/docs/features/automation#routines",
     "text": "A routine runs a bot once or on a schedule you choose. Open Routines in the sidebar to see every routine on a calendar (day, three-day or week view, filtered by bot), or open Bot settings → Routines for that bot's own. Each run uses the bot's model, tools and computer.\n\nRun receipts distinguish queued, active, waiting on you, completed, missed, failed, and cancelled work. Murage must be running when a local routine becomes due."
   },
   {
@@ -1554,7 +1604,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "One conversation per routine",
     "breadcrumb": "Murage docs → Features → Routines and webhooks",
     "where": "Murage docs → Features → Routines and webhooks",
-    "url": "https://murage.app/docs/features/automation#one-conversation-per-routine",
+    "url": "https://murage.ai/docs/features/automation#one-conversation-per-routine",
     "text": "Each routine keeps one conversation, named after the routine. Every run happens in that same conversation, with a divider between runs, so runs no longer pile up as separate conversations. Open it to read what the routine did last time and what it is doing now."
   },
   {
@@ -1564,7 +1614,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Routine approval level",
     "breadcrumb": "Murage docs → Features → Routines and webhooks",
     "where": "Advanced → Approvals for this routine",
-    "url": "https://murage.app/docs/features/automation#routine-approval-level",
+    "url": "https://murage.ai/docs/features/automation#routine-approval-level",
     "text": "Each routine runs at its own approval level: Ask, Auto, Full access or No limits. Set it in the routine editor under Advanced → Approvals for this routine, or from the permission chip in the routine's own conversation: choosing a level there sets it for the routine.\n\nA routine you have not set shows \"Same as (bot name)\" and follows its bot's level at the moment each run starts. So a bot on No limits no longer stops its own routines to ask. The routine's conversation, its editor and its approval cards all show the level that actually applies. Reading your keys always asks, at every level."
   },
   {
@@ -1574,7 +1624,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Waiting on you",
     "breadcrumb": "Murage docs → Features → Routines and webhooks",
     "where": "Murage docs → Features → Routines and webhooks",
-    "url": "https://murage.app/docs/features/automation#waiting-on-you",
+    "url": "https://murage.ai/docs/features/automation#waiting-on-you",
     "text": "When a routine run hits a question or an approval, Murage tells you at once (\"(routine) is waiting on you\") and the run ends as Waiting on you instead of sitting until it times out. The card stays in the routine's conversation and can still be answered: open it with Review, answer the question or the approval, and the routine carries on from there.\n\nA run waiting on your answer stops its time limit clock and waits for you."
   },
   {
@@ -1584,7 +1634,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Always allow for this routine",
     "breadcrumb": "Murage docs → Features → Routines and webhooks",
     "where": "Murage docs → Features → Routines and webhooks",
-    "url": "https://murage.app/docs/features/automation#always-allow-for-this-routine",
+    "url": "https://murage.ai/docs/features/automation#always-allow-for-this-routine",
     "text": "An approval card raised by a routine run offers Always allow for this routine. It covers that same command or place for that routine only, and it holds across every later run, so the routine stops asking about it. Other routines and ordinary conversations with the same bot still ask.\n\nEverything a routine is always allowed to do is listed in its editor under Always allowed for this routine, each with Remove. Reading your keys still asks."
   },
   {
@@ -1594,7 +1644,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Overlapping runs",
     "breadcrumb": "Murage docs → Features → Routines and webhooks",
     "where": "Murage docs → Features → Routines and webhooks",
-    "url": "https://murage.app/docs/features/automation#overlapping-runs",
+    "url": "https://murage.ai/docs/features/automation#overlapping-runs",
     "text": "In the routine editor, \"If the last run is still going\" chooses what happens when a run is due while the last one is still running:\n- Skip this time: scheduled times are skipped while a run is still going.\n- Queue one run: one scheduled run waits until the current run finishes.\n\nRun now is separate from both. Skipped runs are counted and a streak of failures is shown. \"Stop if still running after\" sets an optional time limit for each run."
   },
   {
@@ -1604,7 +1654,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Routine problems",
     "breadcrumb": "Murage docs → Features → Routines and webhooks",
     "where": "Murage docs → Features → Routines and webhooks",
-    "url": "https://murage.app/docs/features/automation#routine-problems",
+    "url": "https://murage.ai/docs/features/automation#routine-problems",
     "text": "The problems count at the top of Routines counts failed and missed runs you have not opened yet. Press it to open Routine problems, a list of exactly those runs, with Mark all as read."
   },
   {
@@ -1614,7 +1664,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Webhook triggers",
     "breadcrumb": "Murage docs → Features → Routines and webhooks",
     "where": "Murage docs → Features → Routines and webhooks",
-    "url": "https://murage.app/docs/features/automation#webhook-triggers",
+    "url": "https://murage.ai/docs/features/automation#webhook-triggers",
     "text": "Webhooks start the same queued task executor from an external HTTP request. They are independent from schedules and use a dedicated receiver on 127.0.0.1:8800 by default. A turn started by a webhook asks for approvals the way Auto does, because someone other than you wrote its input.\n\nThe receiver exposes only health and secret hook routes. It does not expose the broader Murage API.\n\nBearer authentication is preferred because it keeps the secret out of URLs and most access logs. A capability URL is available for senders that cannot set headers."
   },
   {
@@ -1624,7 +1674,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Reaching a local webhook",
     "breadcrumb": "Murage docs → Features → Routines and webhooks",
     "where": "Murage docs → Features → Routines and webhooks",
-    "url": "https://murage.app/docs/features/automation#reaching-a-local-webhook",
+    "url": "https://murage.ai/docs/features/automation#reaching-a-local-webhook",
     "text": "To accept events from the public internet, proxy only the webhook receiver through a narrowly configured relay or tunnel. Do not expose the main harness port.\n\nLocal routines and webhook deliveries are not hosted jobs. Closing the desktop app stops the local executor and receiver."
   },
   {
@@ -1634,7 +1684,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "How bots use tools",
     "breadcrumb": "Murage docs → Features → What bots can do for themselves",
     "where": "Murage docs → Features → What bots can do for themselves",
-    "url": "https://murage.app/docs/features/bot-tools#how-bots-use-tools",
+    "url": "https://murage.ai/docs/features/bot-tools#how-bots-use-tools",
     "text": "Bots use these tools on their own while they work. You do not call them. Ask a bot what it can do, and it looks it up with murage_help, which answers from these docs only, on your computer, with no model call. Murage's tools sit beside the bot's own engine tools, and your approval level decides which ones ask first."
   },
   {
@@ -1644,7 +1694,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Finding out about Murage",
     "breadcrumb": "Murage docs → Features → What bots can do for themselves",
     "where": "Murage docs → Features → What bots can do for themselves",
-    "url": "https://murage.app/docs/features/bot-tools#finding-out-about-murage",
+    "url": "https://murage.ai/docs/features/bot-tools#finding-out-about-murage",
     "text": "murage_help answers questions about Murage itself from the shipped documentation. web_search is a backup for searching the web when the engine has no search of its own. tool_result_read reads the rest of a very long tool result."
   },
   {
@@ -1654,7 +1704,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Working with other bots",
     "breadcrumb": "Murage docs → Features → What bots can do for themselves",
     "where": "Murage docs → Features → What bots can do for themselves",
-    "url": "https://murage.app/docs/features/bot-tools#working-with-other-bots",
+    "url": "https://murage.ai/docs/features/bot-tools#working-with-other-bots",
     "text": "list_bots shows the bots a bot can reach. ask_bot asks one a quick question. delegate_bot hands one a task. check_delegation checks on a handed over task, and wait_delegation waits for one when you ask a bot to wait. See Bots working together."
   },
   {
@@ -1664,7 +1714,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Managing bots",
     "breadcrumb": "Murage docs → Features → What bots can do for themselves",
     "where": "Murage docs → Features → What bots can do for themselves",
-    "url": "https://murage.app/docs/features/bot-tools#managing-bots",
+    "url": "https://murage.ai/docs/features/bot-tools#managing-bots",
     "text": "get_bot reads a bot's profile and role. update_bot changes the name, role, instructions or model of a bot under it. create_bot adds a new specialist to a team, and the Chief of Staff can start a new team. get_permission_status shows what a bot is waiting on you for. request_bot_access asks you to give a bot access to connected apps. Nothing is granted until you approve it."
   },
   {
@@ -1674,7 +1724,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Allowing and asking",
     "breadcrumb": "Murage docs → Features → What bots can do for themselves",
     "where": "Murage docs → Features → What bots can do for themselves",
-    "url": "https://murage.app/docs/features/bot-tools#allowing-and-asking",
+    "url": "https://murage.ai/docs/features/bot-tools#allowing-and-asking",
     "text": "allow_for_task records something you just told a bot it may do for the rest of the task, such as delete in a folder you named, message a person you named, or pay a payee you named. request_browser_connection asks if the bot may use your signed-in browser. request_credential asks you for a login or key it needs. add_mcp_server saves a connected tool server you asked for, switched off: you turn it on with one click and enter any key on a card of its own, which the bot never sees."
   },
   {
@@ -1684,7 +1734,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Asking you",
     "breadcrumb": "Murage docs → Features → What bots can do for themselves",
     "where": "Murage docs → Features → What bots can do for themselves",
-    "url": "https://murage.app/docs/features/bot-tools#asking-you",
+    "url": "https://murage.ai/docs/features/bot-tools#asking-you",
     "text": "ask_user puts one to four questions on a card in the conversation, with options to pick and room for your own words, and your answer arrives as your next message. show_widget shows a form, a pick-one list, a confirmation or a short status in the conversation, such as a date and time picker. update_widget changes a widget the bot showed earlier, for example a progress bar moving, until you have answered it."
   },
   {
@@ -1694,7 +1744,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Routines",
     "breadcrumb": "Murage docs → Features → What bots can do for themselves",
     "where": "Murage docs → Features → What bots can do for themselves",
-    "url": "https://murage.app/docs/features/bot-tools#routines",
+    "url": "https://murage.ai/docs/features/bot-tools#routines",
     "text": "list_routines lists a bot's routines. propose_routine suggests a new routine for you to confirm. propose_routine_action suggests changing, pausing, resuming, running now or deleting one. A routine never starts until you confirm it."
   },
   {
@@ -1704,7 +1754,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Skills",
     "breadcrumb": "Murage docs → Features → What bots can do for themselves",
     "where": "Murage docs → Features → What bots can do for themselves",
-    "url": "https://murage.app/docs/features/bot-tools#skills",
+    "url": "https://murage.ai/docs/features/bot-tools#skills",
     "text": "skills_list lists the skills a bot has. skill_manage creates or updates a skill that the bot learned, where skill authoring is on. Skills a bot makes are checked before use."
   },
   {
@@ -1714,7 +1764,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Files, images and voice",
     "breadcrumb": "Murage docs → Features → What bots can do for themselves",
     "where": "Murage docs → Features → What bots can do for themselves",
-    "url": "https://murage.app/docs/features/bot-tools#files-images-and-voice",
+    "url": "https://murage.ai/docs/features/bot-tools#files-images-and-voice",
     "text": "register_artifact saves a finished report or file into Files. generate_image makes or edits pictures, after an approval card unless the bot may make images without asking. list_image_models shows the image models and their limits. resolve_image_reference prepares reference pictures. send_voice_note sends you a spoken answer."
   },
   {
@@ -1724,7 +1774,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Saved image parts",
     "breadcrumb": "Murage docs → Features → What bots can do for themselves",
     "where": "Murage docs → Features → What bots can do for themselves",
-    "url": "https://murage.app/docs/features/bot-tools#saved-image-parts",
+    "url": "https://murage.ai/docs/features/bot-tools#saved-image-parts",
     "text": "save_prompt_block saves a reusable part of an image prompt, and list_prompt_blocks and get_prompt_block read them. save_reference_pack saves a set of reference pictures, and list_reference_packs lists them. They are your saved library."
   },
   {
@@ -1734,7 +1784,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Project tools",
     "breadcrumb": "Murage docs → Features → What bots can do for themselves",
     "where": "Murage docs → Features → What bots can do for themselves",
-    "url": "https://murage.app/docs/features/bot-tools#project-tools",
+    "url": "https://murage.ai/docs/features/bot-tools#project-tools",
     "text": "In a project the lead has project_assign, project_accept, project_card_manage, project_review_assign, project_criteria, project_done, project_blocked, project_brief_update and project_summary_update. Members have project_card_update, project_review_result, project_read_messages, project_bring_in and project_suggest. Chief of Staff drafts a project with project_propose. See Projects."
   },
   {
@@ -1744,7 +1794,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Publishing sites",
     "breadcrumb": "Murage docs → Features → What bots can do for themselves",
     "where": "Murage docs → Features → What bots can do for themselves",
-    "url": "https://murage.app/docs/features/bot-tools#publishing-sites",
+    "url": "https://murage.ai/docs/features/bot-tools#publishing-sites",
     "text": "publish_site puts a site a bot built online on a hosting account you connected, after you approve it. take_down_site takes one of those sites down again. The Published sites list in a bot's settings shows them, and Publishing sites in Settings connects Netlify and other hosts."
   },
   {
@@ -1754,7 +1804,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Marking results",
     "breadcrumb": "Murage docs → Features → What bots can do for themselves",
     "where": "Murage docs → Features → What bots can do for themselves",
-    "url": "https://murage.app/docs/features/bot-tools#marking-results",
+    "url": "https://murage.ai/docs/features/bot-tools#marking-results",
     "text": "propose_outcome lets a bot suggest that a piece of work worked or did not work. You confirm or change it, and confirmed results feed what the bot learns. See Memory and learning."
   },
   {
@@ -1764,7 +1814,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Bots are persistent teammates",
     "breadcrumb": "Murage docs → Features → Bots and tasks",
     "where": "Murage docs → Features → Bots and tasks",
-    "url": "https://murage.app/docs/features/bots-and-tasks#bots-are-persistent-teammates",
+    "url": "https://murage.ai/docs/features/bots-and-tasks#bots-are-persistent-teammates",
     "text": "A bot keeps its own conversation, model, instructions, working folder, memory, connected tools, and computer preference. Create separate bots when the role, access, or project context should differ.\n- A coding bot attached to one repository\n- A research bot with browser and document tools\n- An operations bot with Gmail, Calendar, and Slack\n- A local-model bot for private or offline work"
   },
   {
@@ -1774,7 +1824,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Tasks are focused runs",
     "breadcrumb": "Murage docs → Features → Bots and tasks",
     "where": "Murage docs → Features → Bots and tasks",
-    "url": "https://murage.app/docs/features/bots-and-tasks#tasks-are-focused-runs",
+    "url": "https://murage.ai/docs/features/bots-and-tasks#tasks-are-focused-runs",
     "text": "Use Task when the work should have a clear beginning and result. Tasks are easier to track than mixing every request into the bot's main conversation, and scheduled runs create tasks automatically."
   },
   {
@@ -1784,7 +1834,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Rooms and teams",
     "breadcrumb": "Murage docs → Features → Bots and tasks",
     "where": "Murage docs → Features → Bots and tasks",
-    "url": "https://murage.app/docs/features/bots-and-tasks#rooms-and-teams",
+    "url": "https://murage.ai/docs/features/bots-and-tasks#rooms-and-teams",
     "text": "Rooms let multiple bots and people share context. Use a room when several specialists need the same brief or should hand work to one another. A chief-of-staff pattern works well: one bot receives the request, delegates focused tasks, and summarizes the result.\n\nA team is a group of bots that work together under one heading in the sidebar. To make one, press + in the sidebar and choose New Team: name it, tick its bots, and optionally pick a lead and write instructions that every bot on the team receives. To move a bot later, open its ⋯ menu and choose Move to team…."
   },
   {
@@ -1794,7 +1844,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Delegation",
     "breadcrumb": "Murage docs → Features → Bots and tasks",
     "where": "Murage docs → Features → Bots and tasks",
-    "url": "https://murage.app/docs/features/bots-and-tasks#delegation",
+    "url": "https://murage.ai/docs/features/bots-and-tasks#delegation",
     "text": "Delegation asks another bot to handle a bounded subtask. The delegated task keeps its own activity and returns a result to the originating conversation. Give each delegate a narrow outcome and avoid assigning two bots ownership of the same files.\n\n| Need | Use |\n|---|---|\n| Ongoing relationship and memory | Bot |\n| One deliverable with a status | Task |\n| Several participants sharing context | Room |\n| A specialist handling one branch of work | Delegation |\n| Repeated work at a known time | Schedule |"
   },
   {
@@ -1804,7 +1854,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "The four roles",
     "breadcrumb": "Murage docs → Features → Bots working together",
     "where": "Bot settings → Overview → Role",
-    "url": "https://murage.app/docs/features/bots-working-together#the-four-roles",
+    "url": "https://murage.ai/docs/features/bots-working-together#the-four-roles",
     "text": "Every bot has one role. Set it in Bot settings → Overview → Role. The Role card only shows once you have more than one bot.\n- Chief of Staff: runs the whole workspace. It hands each team's work to that team's lead and works with individual assistants directly. One per workspace.\n- Team lead: leads one team and coordinates its members. One per team.\n- Team member: works inside a team alongside the rest of it.\n- Individual assistant: works alone, with no team and no lead above it. It reports to the Chief of Staff.\n\nA bot needs an engine that can contact other bots (a Claude or ACP engine) to be a Chief of Staff or a team lead."
   },
   {
@@ -1814,7 +1864,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Who can reach whom",
     "breadcrumb": "Murage docs → Features → Bots working together",
     "where": "Murage docs → Features → Bots working together",
-    "url": "https://murage.app/docs/features/bots-working-together#who-can-reach-whom",
+    "url": "https://murage.ai/docs/features/bots-working-together#who-can-reach-whom",
     "text": "By default a bot can contact:\n- every bot on its own team (a bot with no team is in the General group),\n- its team lead, if it is a member,\n- the Chief of Staff, if it is a team lead or an individual assistant.\n\nThe Chief of Staff can reach every team lead and every individual assistant, plus its own team. It reaches an ordinary member of another team through that team's lead. A team member cannot reach another team's bots on its own."
   },
   {
@@ -1824,7 +1874,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "No switch for bot-to-bot contact",
     "breadcrumb": "Murage docs → Features → Bots working together",
     "where": "Murage docs → Features → Bots working together",
-    "url": "https://murage.app/docs/features/bots-working-together#no-switch-for-bot-to-bot-contact",
+    "url": "https://murage.ai/docs/features/bots-working-together#no-switch-for-bot-to-bot-contact",
     "text": "There is no switch to turn on for bot-to-bot contact or communication. Bots on the same team can already contact each other. If one bot cannot see or reach another, they are on different teams. Change the team, set Can talk to, or use a project. Do not tell an owner to look for a setting that is not described here."
   },
   {
@@ -1834,7 +1884,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "What list_bots shows",
     "breadcrumb": "Murage docs → Features → Bots working together",
     "where": "Murage docs → Features → Bots working together",
-    "url": "https://murage.app/docs/features/bots-working-together#what-list-bots-shows",
+    "url": "https://murage.ai/docs/features/bots-working-together#what-list-bots-shows",
     "text": "The tool list_bots lists the bots a bot can see, with each one's team, role and whether it is busy. A bot that is not in the list is out of its reach. Using its name with ask_bot or delegate_bot fails with a message that the bot is not on its roster. A lead or the Chief of Staff may see a bot it cannot message directly, marked \"coordinate through its team lead\"."
   },
   {
@@ -1844,7 +1894,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "ask_bot: ask a quick question",
     "breadcrumb": "Murage docs → Features → Bots working together",
     "where": "Murage docs → Features → Bots working together",
-    "url": "https://murage.app/docs/features/bots-working-together#ask-bot-ask-a-quick-question",
+    "url": "https://murage.ai/docs/features/bots-working-together#ask-bot-ask-a-quick-question",
     "text": "ask_bot asks another bot a short question and waits for the answer inside the same reply. If the other bot is busy or takes longer than about 15 seconds, the question turns into a hand over, and the answer arrives after the asking bot finishes its turn. Use it only when the answer is needed to write the reply."
   },
   {
@@ -1854,7 +1904,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "delegate_bot: hand over a task",
     "breadcrumb": "Murage docs → Features → Bots working together",
     "where": "Murage docs → Features → Bots working together",
-    "url": "https://murage.app/docs/features/bots-working-together#delegate-bot-hand-over-a-task",
+    "url": "https://murage.ai/docs/features/bots-working-together#delegate-bot-hand-over-a-task",
     "text": "delegate_bot hands a task to another bot and returns at once. The other bot starts after the current turn ends, and its result comes back into the conversation by itself. This is the normal way to assign work. Later, check_delegation shows whether a handed over task is queued, running or finished. wait_delegation waits for one, and is only for when you ask a bot to wait."
   },
   {
@@ -1864,7 +1914,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Bot-to-bot chats",
     "breadcrumb": "Murage docs → Features → Bots working together",
     "where": "Murage docs → Features → Bots working together",
-    "url": "https://murage.app/docs/features/bots-working-together#bot-to-bot-chats",
+    "url": "https://murage.ai/docs/features/bots-working-together#bot-to-bot-chats",
     "text": "When one bot contacts another, Murage keeps the exchange in a bot-to-bot channel. It shows in the sidebar like any room and keeps the full history. Both bots' own chats get a chip that opens it, so you can read what they said and chip in. These exchanges use the same engines as any chat, so they use your quota too."
   },
   {
@@ -1874,7 +1924,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Ask me before contacting other bots",
     "breadcrumb": "Murage docs → Features → Bots working together",
     "where": "Bot settings → Permissions → Ask me before contacting other bots",
-    "url": "https://murage.app/docs/features/bots-working-together#ask-me-before-contacting-other-bots",
+    "url": "https://murage.ai/docs/features/bots-working-together#ask-me-before-contacting-other-bots",
     "text": "Bot settings → Permissions → Ask me before contacting other bots adds an approval card. With it on, the bot stops and asks you before it contacts another bot (\"@Asker wants to contact @Helper\"). With it off, the bot contacts bots it can reach without asking. The card expires after 15 minutes without an answer. This switch does not widen who a bot can reach, it only decides whether you are asked first."
   },
   {
@@ -1884,7 +1934,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Full access and contacting bots",
     "breadcrumb": "Murage docs → Features → Bots working together",
     "where": "Murage docs → Features → Bots working together",
-    "url": "https://murage.app/docs/features/bots-working-together#full-access-and-contacting-bots",
+    "url": "https://murage.ai/docs/features/bots-working-together#full-access-and-contacting-bots",
     "text": "Under Full access or No limits, the card is skipped in conversations you start and in routines at that level, even if Ask me before contacting other bots is on. Webhook turns still stop and ask. Switch the bot to Auto to be asked every time."
   },
   {
@@ -1894,7 +1944,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Can talk to",
     "breadcrumb": "Murage docs → Features → Bots working together",
     "where": "Bot settings → Permissions → Can talk to",
-    "url": "https://murage.app/docs/features/bots-working-together#can-talk-to",
+    "url": "https://murage.ai/docs/features/bots-working-together#can-talk-to",
     "text": "Bot settings → Permissions → Can talk to decides which bots this bot may contact. It has three choices:\n- My team: the default. The reach rules above.\n- Everyone: any bot in the workspace.\n- Pick bots: your team as usual, plus the bots you tick.\n\nOnly you can change it, in the desktop app. A bot cannot change its own setting, a phone cannot, and a restore resets it. A bot told it cannot reach someone should tell you to open Can talk to, or hand the work to its team lead or the Chief of Staff."
   },
   {
@@ -1904,7 +1954,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Bots in a project",
     "breadcrumb": "Murage docs → Features → Bots working together",
     "where": "Murage docs → Features → Bots working together",
-    "url": "https://murage.app/docs/features/bots-working-together#bots-in-a-project",
+    "url": "https://murage.ai/docs/features/bots-working-together#bots-in-a-project",
     "text": "Members of the same project can ask each other for project work, whatever team each belongs to. This is the easy way to get bots from different teams to work together without changing their settings. See Projects."
   },
   {
@@ -1914,7 +1964,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Bots shared with other teams",
     "breadcrumb": "Murage docs → Features → Bots working together",
     "where": "Bot settings → Teams → Shared with",
-    "url": "https://murage.app/docs/features/bots-working-together#bots-shared-with-other-teams",
+    "url": "https://murage.ai/docs/features/bots-working-together#bots-shared-with-other-teams",
     "text": "A bot can also work for other teams while keeping its home team: Bot settings → Teams → Shared with, with No other team, These teams or All teams. A shared bot does one job for each team at a time."
   },
   {
@@ -1924,7 +1974,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Putting bots together: a quick guide",
     "breadcrumb": "Murage docs → Features → Bots working together",
     "where": "Murage docs → Features → Bots working together",
-    "url": "https://murage.app/docs/features/bots-working-together#putting-bots-together-a-quick-guide",
+    "url": "https://murage.ai/docs/features/bots-working-together#putting-bots-together-a-quick-guide",
     "text": "1. To let bots help one another on a team, put them on the same team (Manage team) and pick a lead.\n2. To let a few bots work across teams on one piece of work, make a project and add them as members.\n3. To let one bot talk to many, set its Can talk to to Everyone or Pick bots.\n4. If a bot should not contact others unasked, leave Ask me before contacting other bots on."
   },
   {
@@ -1933,7 +1983,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Connect an existing browser to Murage with explicit permissions and visible control.",
     "breadcrumb": "Murage docs → Features → Murage for Chrome browser extension",
     "where": "Murage docs → Features → Murage for Chrome browser extension",
-    "url": "https://murage.app/docs/features/browser-extension",
+    "url": "https://murage.ai/docs/features/browser-extension",
     "text": "Murage for Chrome is in the Chrome Web Store. A release build of Murage shows an Open Chrome Web Store button in the setup card and in a bot's Browser panel, so you can add it in one step. It has been exercised in isolated Chromium fixtures and fresh Windows Chrome, Edge and Brave profiles through the native helper."
   },
   {
@@ -1943,7 +1993,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Connect your browser",
     "breadcrumb": "Murage docs → Features → Murage for Chrome browser extension",
     "where": "Murage docs → Features → Murage for Chrome browser extension",
-    "url": "https://murage.app/docs/features/browser-extension#connect-your-browser",
+    "url": "https://murage.ai/docs/features/browser-extension#connect-your-browser",
     "text": "Ask a bot to use your browser. It can offer a setup card in the conversation with Set up and Not now. Your original request stays in that conversation. After connecting, choose Check connection and continue; reconnection by itself never repeats the task.\n\nYou can also choose Use my browser in a bot's Browser panel. This is optional. Your ordinary Murage browser remains available when you decline.\n\nDevelopment setup requires the unpacked extension and a registered local helper from the same build. The helper runs on the browser's computer. The browser and Murage run on the same computer.\n\nThe panel distinguishes a running helper from a connected browser profile.…"
   },
   {
@@ -1953,7 +2003,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Control a task",
     "breadcrumb": "Murage docs → Features → Murage for Chrome browser extension",
     "where": "Murage docs → Features → Murage for Chrome browser extension",
-    "url": "https://murage.app/docs/features/browser-extension#control-a-task",
+    "url": "https://murage.ai/docs/features/browser-extension#control-a-task",
     "text": "Bots use explicitly assigned tabs. A named group shows the bot's work area. Sharing a tab gives access to that tab; moving a tab into a group is not consent.\n\nUse Pause or Stop in the extension. Stop remains in effect after reconnection. Use the extension's owner controls to resume or share a tab. Unexpected typing or clicks in a controlled page pause the task. Use the explicit Pause control before private input; automatic detection cannot distinguish every input that coincides with automation.\n\nSite access and action approval are separate. Allowing a site does not approve purchases, messages or deletions. A page requesting an action is not your permission.…"
   },
   {
@@ -1963,7 +2013,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Other agents",
     "breadcrumb": "Murage docs → Features → Murage for Chrome browser extension",
     "where": "Murage docs → Features → Murage for Chrome browser extension",
-    "url": "https://murage.app/docs/features/browser-extension#other-agents",
+    "url": "https://murage.ai/docs/features/browser-extension#other-agents",
     "text": "Settings > Computer & browser > Browser access for other agents is off by default. Enable it and pair a named client with a connected profile. Murage creates a dedicated conversation and a private pairing file. Copy the displayed MCP configuration into your client. It contains a path to the pairing file rather than Murage's master credential.\n\nMurage must remain running. Revoking a client or disabling external access invalidates its authority. Purchases and other changes still require Murage approval."
   },
   {
@@ -1973,7 +2023,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Qualification so far",
     "breadcrumb": "Murage docs → Features → Murage for Chrome browser extension",
     "where": "Murage docs → Features → Murage for Chrome browser extension",
-    "url": "https://murage.app/docs/features/browser-extension#qualification-so-far",
+    "url": "https://murage.ai/docs/features/browser-extension#qualification-so-far",
     "text": "Windows native helper and branded-browser checks have passed in isolated profiles. The paired companion approval flow has passed in the actual app at phone width, including Allow, Deny and revoked-session rejection. This is not physical-device qualification. macOS Chrome, Edge and Brave also passed isolated native checks using a temporary internal launcher fixture. On macOS, Brave and Chrome share the native helper registration; removing it affects both browser choices. Isolated browser and native-backend process restart checks pass, including Stop persistence and no replay of an uncertain action.…"
   },
   {
@@ -1983,7 +2033,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Bots and tasks",
     "breadcrumb": "Murage docs → Features → Chat, tasks, rooms, and teams",
     "where": "Murage docs → Features → Chat, tasks, rooms, and teams",
-    "url": "https://murage.app/docs/features/chat-and-teams#bots-and-tasks",
+    "url": "https://murage.ai/docs/features/chat-and-teams#bots-and-tasks",
     "text": "A bot is a durable agent identity. A task is one conversation with that bot and has its own transcript, provider session, approvals, costs, and state.\n\nUse separate tasks when you want fresh context without duplicating the bot. Messages sent while a bot is busy are queued, and supported providers can be steered while they work. A direct message sent while the bot is busy in a channel waits its turn instead of failing."
   },
   {
@@ -1993,7 +2043,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Rooms",
     "breadcrumb": "Murage docs → Features → Chat, tasks, rooms, and teams",
     "where": "+ → New Channel",
-    "url": "https://murage.app/docs/features/chat-and-teams#rooms",
+    "url": "https://murage.ai/docs/features/chat-and-teams#rooms",
     "text": "Rooms (channels) bring several bots into one conversation. Make one from + → New Channel, name it, and pick its bots. Each participant keeps its own agent process and provider state, so bots in a room can run different engines and sound different. Room timeouts prevent a participant from blocking the whole group indefinitely.\n\nIn a room's details, Instructions are followed by every bot in it, Who answers decides where a plain message goes, and Folder is where every bot in it runs file and shell tools. Who answers is Lead (one named bot), Everyone responds, or Only when mentioned. Naming a bot with @ always beats this setting.\n\nA room can have its own team heading in the sidebar, or none.…"
   },
   {
@@ -2003,7 +2053,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Delegation",
     "breadcrumb": "Murage docs → Features → Chat, tasks, rooms, and teams",
     "where": "Murage docs → Features → Chat, tasks, rooms, and teams",
-    "url": "https://murage.app/docs/features/chat-and-teams#delegation",
+    "url": "https://murage.ai/docs/features/chat-and-teams#delegation",
     "text": "Bots can hand work to other bots, or ask them a quick question. Delegated runs carry explicit status back into the parent conversation, including completion, failure, and cancellation. Who can contact whom depends on teams and roles. See Bots working together."
   },
   {
@@ -2013,7 +2063,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Rewind and branches",
     "breadcrumb": "Murage docs → Features → Chat, tasks, rooms, and teams",
     "where": "Murage docs → Features → Chat, tasks, rooms, and teams",
-    "url": "https://murage.app/docs/features/chat-and-teams#rewind-and-branches",
+    "url": "https://murage.ai/docs/features/chat-and-teams#rewind-and-branches",
     "text": "Editing an earlier message creates a new conversation path. Murage avoids resuming stale provider sessions after a rewind, so the next turn follows the visible branch rather than hidden abandoned state."
   },
   {
@@ -2023,7 +2073,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Memory and working folders",
     "breadcrumb": "Murage docs → Features → Chat, tasks, rooms, and teams",
     "where": "Murage docs → Features → Chat, tasks, rooms, and teams",
-    "url": "https://murage.app/docs/features/chat-and-teams#memory-and-working-folders",
+    "url": "https://murage.ai/docs/features/chat-and-teams#memory-and-working-folders",
     "text": "Bot memory is visible and editable. A bot may also have a dedicated working folder; rooms can use a shared working folder. Cloud workspaces use a stable default so generated files remain discoverable across tasks."
   },
   {
@@ -2033,7 +2083,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Snooze a conversation",
     "breadcrumb": "Murage docs → Features → Chat, tasks, rooms, and teams",
     "where": "Murage docs → Features → Chat, tasks, rooms, and teams",
-    "url": "https://murage.app/docs/features/chat-and-teams#snooze-a-conversation",
+    "url": "https://murage.ai/docs/features/chat-and-teams#snooze-a-conversation",
     "text": "Snooze a conversation when you want it quiet for a while. Right-click a bot or channel in the sidebar and choose Snooze…, or press the clock next to a conversation in a conversation list (\"Snooze this conversation\"). Pick 1 hour, Tomorrow morning, Next week, or Pick a time (up to 30 days ahead).\n\nA snoozed conversation stays where it is, marked with a bell icon (\"Snoozed until ...\"). Its unread counts are ignored until the time comes, and then it comes back marked unread. Anything owed to you, such as an approval or a question, wakes it straight away. A conversation that is waiting on your answer cannot be snoozed until you answer it.…"
   },
   {
@@ -2043,7 +2093,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Question badge",
     "breadcrumb": "Murage docs → Features → Chat, tasks, rooms, and teams",
     "where": "Murage docs → Features → Chat, tasks, rooms, and teams",
-    "url": "https://murage.app/docs/features/chat-and-teams#question-badge",
+    "url": "https://murage.ai/docs/features/chat-and-teams#question-badge",
     "text": "A conversation with a question waiting for you shows a badge with the count, for example \"1 question for you\". It clears when you answer."
   },
   {
@@ -2053,7 +2103,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Manage a team",
     "breadcrumb": "Murage docs → Features → Chat, tasks, rooms, and teams",
     "where": "Bot settings → Overview → Role",
-    "url": "https://murage.app/docs/features/chat-and-teams#manage-a-team",
+    "url": "https://murage.ai/docs/features/chat-and-teams#manage-a-team",
     "text": "Open the team's options (the … on the team heading in the sidebar, \"Team options\") to Rename team, Manage members and lead, or Delete team. The same settings open from Manage (team) team on the About tab of a team channel's details.\n- Rename: type the new name and press Save name. Its bots, channels, instructions and team memory keep working under the new name.\n- Members: tick the bots on the team and press Save members. Bots on a team can ask and hand work to each other, but not to bots on other teams unless you change Can talk to, use a project, or share the bot. Bots you remove stay, without a team.\n- Team lead: pick one in the Team lead menu, or No lead.…"
   },
   {
@@ -2063,7 +2113,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Delete a team",
     "breadcrumb": "Murage docs → Features → Chat, tasks, rooms, and teams",
     "where": "Murage docs → Features → Chat, tasks, rooms, and teams",
-    "url": "https://murage.app/docs/features/chat-and-teams#delete-a-team",
+    "url": "https://murage.ai/docs/features/chat-and-teams#delete-a-team",
     "text": "Delete team removes the heading from the sidebar. No bot, channel or conversation is deleted. Murage asks, right there, what should happen to its bots and channels: Keep them as bots without a team, or Archive them (restore them later from Archived bots). Every conversation is kept. Press Delete (team name) to finish, or Cancel."
   },
   {
@@ -2073,7 +2123,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Deleting conversations and channels",
     "breadcrumb": "Murage docs → Features → Chat, tasks, rooms, and teams",
     "where": "Murage docs → Features → Chat, tasks, rooms, and teams",
-    "url": "https://murage.app/docs/features/chat-and-teams#deleting-conversations-and-channels",
+    "url": "https://murage.ai/docs/features/chat-and-teams#deleting-conversations-and-channels",
     "text": "Right-click a channel in the sidebar, or use the channel's More actions menu, and choose Delete. Type the name to confirm. Every message in it goes, but the bots stay. Deleting the last conversation in a channel leaves a fresh, empty one, and a channel shows an error instead of failing quietly when something goes wrong.\n\nWhen you delete a conversation, Murage removes its words from the coding engines' files on this computer. If an engine is using one of those files, Murage leaves that file alone, tells you, and finishes later. Murage never changes another conversation's words. Copies in backups or in an engine's online account are not removed by Murage.…"
   },
   {
@@ -2083,7 +2133,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Engine commands",
     "breadcrumb": "Murage docs → Features → Engine \"/\" commands",
     "where": "Murage docs → Features → Engine \"/\" commands",
-    "url": "https://murage.app/docs/features/engine-commands#engine-commands",
+    "url": "https://murage.ai/docs/features/engine-commands#engine-commands",
     "text": "Type / in the message box. The menu shows Murage's own commands first, then a group named after the bot's engine (Claude Code, Codex, Grok Build, Fuigo, OpenCode, or any other ACP engine under its own name) with the commands that engine offers, read live from the engine.\n\nPicking an engine command sends it straight to the bot's engine. A command that needs more input is put in the message box for you to finish. Codex's /review and /compact work, and Codex skills appear there too. If the group says \"Start a chat to load (engine) commands\", send the bot a message first.\n\nCommands never interrupt a turn that is already running."
   },
   {
@@ -2093,7 +2143,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Murage's own commands",
     "breadcrumb": "Murage docs → Features → Engine \"/\" commands",
     "where": "Murage docs → Features → Engine \"/\" commands",
-    "url": "https://murage.app/docs/features/engine-commands#murage-s-own-commands",
+    "url": "https://murage.ai/docs/features/engine-commands#murage-s-own-commands",
     "text": "- /learn: teach a reusable workflow from this conversation.\n- /setup: walk through setting up your bots, and pick up where you left off.\n- /goal (in channels): keep a team working until the goal is complete."
   },
   {
@@ -2103,7 +2153,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "House rules",
     "breadcrumb": "Murage docs → Features → House rules and About me",
     "where": "Settings → House rules",
-    "url": "https://murage.app/docs/features/house-rules-and-about-me#house-rules",
+    "url": "https://murage.ai/docs/features/house-rules-and-about-me#house-rules",
     "text": "Settings → House rules holds one set of rules that every bot follows. They go first in every bot's instructions: direct chats, the Chief, handed-over work, routines, channels and calls.\n\nMurage ships a default covering who the bot works for, how it sounds, telling the truth, speaking for you, not making promises in your name, saying it is an AI when asked, treating what it reads as information and not orders, correcting itself, not inventing results, checking fresh facts and time zones, stopping after two identical failures, sharing only what someone needs to know, and tidying up after itself."
   },
   {
@@ -2113,7 +2163,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Changing the house rules",
     "breadcrumb": "Murage docs → Features → House rules and About me",
     "where": "Murage docs → Features → House rules and About me",
-    "url": "https://murage.app/docs/features/house-rules-and-about-me#changing-the-house-rules",
+    "url": "https://murage.ai/docs/features/house-rules-and-about-me#changing-the-house-rules",
     "text": "Edit the rules in the rich editor and press Save. Bots use the new rules from their next reply. Undo changes throws away edits you have not saved. Reset to default puts back Murage's default wording after you confirm (Reset or Keep mine).\n\nThe switch at the top turns house rules On or Off. When they are off, bots don't read them, but you can still edit them.\n\nA word count shows below the editor. Every bot reads the rules on every reply, so shorter is better; past 1,000 words it warns that the length makes every reply slower."
   },
   {
@@ -2123,7 +2173,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Built-in protections",
     "breadcrumb": "Murage docs → Features → House rules and About me",
     "where": "Murage docs → Features → House rules and About me",
-    "url": "https://murage.app/docs/features/house-rules-and-about-me#built-in-protections",
+    "url": "https://murage.ai/docs/features/house-rules-and-about-me#built-in-protections",
     "text": "Murage's built-in protections are not part of the house rules text and always apply, even with house rules off. The page lists them under \"Always on, even with house rules off\":\n- In Ask and Auto, bots stop and ask you before they delete things, read your keys and passwords, move money or message people for you. They never ask you to paste a key into chat.\n- A message from a channel, a webhook or a web page can't approve anything or give a bot more access.\n\nTo leave house rules out for one bot, switch off the House rules row in What shapes (bot name)."
   },
   {
@@ -2133,7 +2183,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "About me",
     "breadcrumb": "Murage docs → Features → House rules and About me",
     "where": "Settings → About me",
-    "url": "https://murage.app/docs/features/house-rules-and-about-me#about-me",
+    "url": "https://murage.ai/docs/features/house-rules-and-about-me#about-me",
     "text": "Settings → About me holds a short profile of you: who you are, what you do, how you like to work, and anything every bot should know. Write it once and every bot can use it.\n\nThe first time you open it, Murage starts it with what it already knows about you. Change anything you like, then press Save. Bots use it from their next reply. Undo changes throws away unsaved edits; saving it empty clears it. There is a limit of 4,000 characters."
   },
   {
@@ -2143,7 +2193,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Who reads About me",
     "breadcrumb": "Murage docs → Features → House rules and About me",
     "where": "Murage docs → Features → House rules and About me",
-    "url": "https://murage.app/docs/features/house-rules-and-about-me#who-reads-about-me",
+    "url": "https://murage.ai/docs/features/house-rules-and-about-me#who-reads-about-me",
     "text": "Your bots read About me only on your own turns, when they are working for you. They never read it on turns started by other people (for example someone messaging your bot on Telegram, Slack or Discord), by webhooks, or by a message Murage cannot confirm came from you.\n\nTo leave it out for one bot, open What shapes (bot name) in that bot's settings and switch off the About me row."
   },
   {
@@ -2153,7 +2203,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "If something isn't possible",
     "breadcrumb": "Murage docs → Features → If something isn't possible",
     "where": "Murage docs → Features → If something isn't possible",
-    "url": "https://murage.app/docs/features/if-something-isnt-possible#if-something-isn-t-possible",
+    "url": "https://murage.ai/docs/features/if-something-isnt-possible#if-something-isn-t-possible",
     "text": "If a thing is not in these docs, or the docs say Murage cannot do it, say so plainly. Say that it is not available, then point to the nearest real setting or page that helps. Never invent a setting, a switch, a menu or a command, and never tell the owner to look for one by a name you are not sure of. When you are unsure, call murage_help and quote what it returns."
   },
   {
@@ -2163,7 +2213,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Examples of the nearest real setting",
     "breadcrumb": "Murage docs → Features → If something isn't possible",
     "where": "Bot settings → Permissions → Can talk to",
-    "url": "https://murage.app/docs/features/if-something-isnt-possible#examples-of-the-nearest-real-setting",
+    "url": "https://murage.ai/docs/features/if-something-isnt-possible#examples-of-the-nearest-real-setting",
     "text": "- Asked to turn on a switch that lets bots talk to each other: there is no such switch. Bots on the same team can already contact each other. To widen who a bot may contact, use Bot settings → Permissions → Can talk to. To be asked before bots contact each other, use Ask me before contacting other bots.\n- Asked for a setting the owner cannot find: check Settings search, or the list of settings pages in these docs.\n- Asked to do something only the owner can do in the desktop app, such as Full access or Can talk to: tell the owner where to find it. Do not try to change it yourself."
   },
   {
@@ -2173,7 +2223,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "When the owner needs something from you",
     "breadcrumb": "Murage docs → Features → If something isn't possible",
     "where": "Murage docs → Features → If something isn't possible",
-    "url": "https://murage.app/docs/features/if-something-isnt-possible#when-the-owner-needs-something-from-you",
+    "url": "https://murage.ai/docs/features/if-something-isnt-possible#when-the-owner-needs-something-from-you",
     "text": "Tell the owner what you tried and what stopped you, in plain words. Name the setting or person that can change it, such as the Chief of Staff, your team lead, or the owner's own Settings. Offer the nearest thing you can do right now."
   },
   {
@@ -2183,7 +2233,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Opening the Inbox",
     "breadcrumb": "Murage docs → Features → Inbox",
     "where": "Murage docs → Features → Inbox",
-    "url": "https://murage.app/docs/features/inbox#opening-the-inbox",
+    "url": "https://murage.ai/docs/features/inbox#opening-the-inbox",
     "text": "Press Needs you at the top of the sidebar. Its badge counts what is waiting on you. The tray menu's See all in Inbox opens the same place. The Inbox is in the desktop app.\n\nThe Inbox has views across the top: Needs you, Approvals, Decisions, Connections, Routines, Results and All. The first four show how many items they hold. Use Refresh to check again, and the search box (\"Search results or bots\") to find an item."
   },
   {
@@ -2193,7 +2243,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Answering approvals in the Inbox",
     "breadcrumb": "Murage docs → Features → Inbox",
     "where": "Murage docs → Features → Inbox",
-    "url": "https://murage.app/docs/features/inbox#answering-approvals-in-the-inbox",
+    "url": "https://murage.ai/docs/features/inbox#answering-approvals-in-the-inbox",
     "text": "An approval in the Inbox can be answered right there with Allow once, Allow for this task or Deny. Open the request to see exactly what the bot would run. Questions a bot asked you are answered inline, the same way as in the conversation."
   },
   {
@@ -2203,7 +2253,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Clear, Dismiss and Mark read",
     "breadcrumb": "Murage docs → Features → Inbox",
     "where": "Murage docs → Features → Inbox",
-    "url": "https://murage.app/docs/features/inbox#clear-dismiss-and-mark-read",
+    "url": "https://murage.ai/docs/features/inbox#clear-dismiss-and-mark-read",
     "text": "Each item has buttons for what it needs:\n- Open request, Open file or Open report takes you to it.\n- Mark read or Mark unread.\n- Clear removes a failure, missed request or report that owes nothing. A cleared item comes back only if it happens again. Clear all clears every item that needs nothing from you.\n- Dismiss removes an old connection request. Dismiss all dismisses every one at once.\n\nThese take effect straight away, and the list holds still while it refreshes."
   },
   {
@@ -2213,7 +2263,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Snoozing an Inbox item",
     "breadcrumb": "Murage docs → Features → Inbox",
     "where": "Murage docs → Features → Inbox",
-    "url": "https://murage.app/docs/features/inbox#snoozing-an-inbox-item",
+    "url": "https://murage.ai/docs/features/inbox#snoozing-an-inbox-item",
     "text": "Snooze 1 hour hides an item until later; it then shows \"Snoozed until (time)\". Tick Show snoozed items to see them, and use Return to Inbox to bring one back early. Snooze is not offered on the Needs you view, because those items are owed to you. Reading or snoozing an approval does not answer it."
   },
   {
@@ -2223,7 +2273,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Engines to sign in to",
     "breadcrumb": "Murage docs → Features → Inbox",
     "where": "Settings → Engines",
-    "url": "https://murage.app/docs/features/inbox#engines-to-sign-in-to",
+    "url": "https://murage.ai/docs/features/inbox#engines-to-sign-in-to",
     "text": "When an engine is installed but nobody is signed in to it, the Inbox lists it under Engines to sign in to with the sign-in command to run in a terminal. The Copy button copies the command.\n\nIf you don't use that engine, press I don't use (engine) and confirm with Turn it off. Bots stop using it. You can turn it back on in Settings → Engines."
   },
   {
@@ -2233,7 +2283,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Connections to restore and routines",
     "breadcrumb": "Murage docs → Features → Inbox",
     "where": "Murage docs → Features → Inbox",
-    "url": "https://murage.app/docs/features/inbox#connections-to-restore-and-routines",
+    "url": "https://murage.ai/docs/features/inbox#connections-to-restore-and-routines",
     "text": "Connections to restore lists connected apps that need signing in again. Routines shows one line per routine, not per run, with Open latest run or Open the run that failed."
   },
   {
@@ -2242,7 +2292,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "A map of the capabilities currently available in Murage.",
     "breadcrumb": "Murage docs → Feature overview",
     "where": "Murage docs → Feature overview",
-    "url": "https://murage.app/docs/features",
+    "url": "https://murage.ai/docs/features",
     "text": "Murage turns agent CLIs into a messaging-style workspace. The harness normalizes each provider into one event stream, so the interface can treat different agents consistently while preserving their native strengths."
   },
   {
@@ -2252,7 +2302,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Agents and conversations",
     "breadcrumb": "Murage docs → Feature overview",
     "where": "Settings → Skills",
-    "url": "https://murage.app/docs/features#agents-and-conversations",
+    "url": "https://murage.ai/docs/features#agents-and-conversations",
     "text": "- A separate bot for each role, model, personality, and working folder\n- Streaming responses with live tool activity\n- Multiple tasks per bot, with searchable, persistent transcript history\n- Edit, branch, rewind, pin, react, export, and share conversation content\n- Rooms for multi-agent collaboration and explicit bot-to-bot delegation\n- Roles (Chief of Staff, team lead, member, individual assistant) and who can reach whom: see Bots working together\n- Projects with a goal, a lead, a Board of cards and a budget\n- Learning from your feedback, with a chip under each reply and a Learning screen per bot\n- Telegram, Slack and Discord messages to your Chief of Staff, and a phone app…"
   },
   {
@@ -2262,7 +2312,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Computers and tools",
     "breadcrumb": "Murage docs → Feature overview",
     "where": "Murage docs → Feature overview",
-    "url": "https://murage.app/docs/features#computers-and-tools",
+    "url": "https://murage.ai/docs/features#computers-and-tools",
     "text": "- Local computer control with explicit opt-in and approval boundaries on supported hosts; Ubuntu currently fails closed under an input-safety hold\n- Isolated Local VM desktops through Docker or Podman\n- Hosted Box cloud computers\n- A self-hosted Linux VPS backend over Docker's SSH transport\n- Live previews and in-app desktop takeover where the backend supports it\n- USB Android control through the Phone Harness skill\n- Connected apps, including multiple labeled accounts per toolkit"
   },
   {
@@ -2272,7 +2322,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Automation",
     "breadcrumb": "Murage docs → Feature overview",
     "where": "Murage docs → Feature overview",
-    "url": "https://murage.app/docs/features#automation",
+    "url": "https://murage.ai/docs/features#automation",
     "text": "- One-time and recurring routines, each with its own approval level\n- Approval levels Ask, Auto, Full access and No limits, with Always allow choices you can review and remove\n- An Inbox for everything that needs you, and approvals from the tray menu\n- Webhook-triggered tasks with dedicated secret endpoints\n- Fresh task context and durable run receipts for each automated run\n- Notifications for work that needs attention"
   },
   {
@@ -2282,7 +2332,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Voice and access",
     "breadcrumb": "Murage docs → Feature overview",
     "where": "Murage docs → Feature overview",
-    "url": "https://murage.app/docs/features#voice-and-access",
+    "url": "https://murage.ai/docs/features#voice-and-access",
     "text": "- Real-time calls, voice notes and a voice per bot, through Flux by default\n- A voice picker with a play button on every voice\n- Native macOS dictation"
   },
   {
@@ -2292,7 +2342,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Desktop experience",
     "breadcrumb": "Murage docs → Feature overview",
     "where": "Murage docs → Feature overview",
-    "url": "https://murage.app/docs/features#desktop-experience",
+    "url": "https://murage.ai/docs/features#desktop-experience",
     "text": "- macOS, Windows, and Ubuntu packages\n- Theme switching and accessible contrast\n- Sidebar sections, compact headers, pinned messages, spoilers, and image attachments\n- Automatic updates on macOS and Windows\n\nmacOS has the broadest native integration. Ubuntu chat, preview, Cloud, and Local VM are available, while host control is temporarily disabled under an input-safety hold. Windows installers are not yet signed. Reaching your bots from a phone is on the roadmap, over your own tailnet in a browser; the iOS companion was retired before release."
   },
   {
@@ -2301,7 +2351,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Give your bots more tools by pasting a link, a command or a config snippet. Sign in or add an API key, and what each message from Test means.",
     "breadcrumb": "Murage docs → Features → MCP servers",
     "where": "Connected apps → MCP servers",
-    "url": "https://murage.app/docs/features/mcp-servers",
+    "url": "https://murage.ai/docs/features/mcp-servers",
     "text": "An MCP server gives your bots extra tools, such as running a workflow in ComfyUI or searching your notes. You add one in Connected apps → MCP servers. Tool calls still follow your normal approval settings, and new servers stay off until you turn them on."
   },
   {
@@ -2311,7 +2361,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Add a server",
     "breadcrumb": "Murage docs → Features → MCP servers",
     "where": "Murage docs → Features → MCP servers",
-    "url": "https://murage.app/docs/features/mcp-servers#add-a-server",
+    "url": "https://murage.ai/docs/features/mcp-servers#add-a-server",
     "text": "Press Add server and paste one of three things into the box, then press Continue.\n- A link. Most services give you one, for example https://cloud.comfy.org/mcp. Murage connects to it and works out what it needs.\n- A config snippet. Paste the JSON from the service's own instructions. Murage reads it and shows any secret it needs as a labelled field.\n- A command. Paste a command such as npx -y @scope/server. It runs on this computer.\n\nYou do not choose the type. Murage works it out from what you paste."
   },
   {
@@ -2321,7 +2371,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Sign in or use an API key",
     "breadcrumb": "Murage docs → Features → MCP servers",
     "where": "Murage docs → Features → MCP servers",
-    "url": "https://murage.app/docs/features/mcp-servers#sign-in-or-use-an-api-key",
+    "url": "https://murage.ai/docs/features/mcp-servers#sign-in-or-use-an-api-key",
     "text": "If a link needs you to sign in, Murage shows a \"Sign in to (site)\" button. It opens your browser, you sign in there, and Murage takes it from there. Murage keeps the sign-in, renews it when it can, and never gives it to a bot.\n\nIf the service takes an API key instead, press Use an API key instead, paste the key in the field and press Save and test. The key is kept by the Murage desktop app. Never paste a key into a chat."
   },
   {
@@ -2331,7 +2381,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Servers on this computer or your network",
     "breadcrumb": "Murage docs → Features → MCP servers",
     "where": "Murage docs → Features → MCP servers",
-    "url": "https://murage.app/docs/features/mcp-servers#servers-on-this-computer-or-your-network",
+    "url": "https://murage.ai/docs/features/mcp-servers#servers-on-this-computer-or-your-network",
     "text": "A link that points at this computer, or at a device on your local network, asks you to confirm first. Only continue if you started that server yourself or you know what runs there. Murage checks the address again on every connection."
   },
   {
@@ -2341,7 +2391,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "What Test tells you",
     "breadcrumb": "Murage docs → Features → MCP servers",
     "where": "Murage docs → Features → MCP servers",
-    "url": "https://murage.app/docs/features/mcp-servers#what-test-tells-you",
+    "url": "https://murage.ai/docs/features/mcp-servers#what-test-tells-you",
     "text": "Test connects and lists the tools it finds. When it cannot, it says why in plain words.\n- Needs you to sign in. Press Sign in.\n- Needs an API key, or did not accept it. Check the key and try again.\n- Sign-in has ended. Sign in again. Some services end a sign-in after a while.\n- Could not find it, or did not accept the connection. Check the link and your internet connection.\n- Nothing answers as an MCP server. Check that you copied the whole link.\n- Has moved. Murage offers the new link.\n- Did not answer in time. Try again in a moment.\n\nThe first time you run a command that downloads before it starts, such as npx or uvx, Test waits longer and shows how far it got.…"
   },
   {
@@ -2351,7 +2401,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Turn it on, and who can use it",
     "breadcrumb": "Murage docs → Features → MCP servers",
     "where": "Murage docs → Features → MCP servers",
-    "url": "https://murage.app/docs/features/mcp-servers#turn-it-on-and-who-can-use-it",
+    "url": "https://murage.ai/docs/features/mcp-servers#turn-it-on-and-who-can-use-it",
     "text": "When Test passes, press Turn on for my bots. Bots that can use your own MCP servers get the tools in your own chats: Fuigo, Claude, Codex and the other engines that mount tools. Each call asks you first unless the bot is on Full access.\n\nOnly you can use them. People who message your bots on Telegram, Slack or Discord never get your servers.\n\nIf a sign-in ends while a bot is working, the chat shows a Sign in card. On the computer running Murage the button signs you in and the bot carries on. On your phone the card says to finish sign-in on the computer running Murage."
   },
   {
@@ -2361,7 +2411,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Secrets in a command server",
     "breadcrumb": "Murage docs → Features → MCP servers",
     "where": "Murage docs → Features → MCP servers",
-    "url": "https://murage.app/docs/features/mcp-servers#secrets-in-a-command-server",
+    "url": "https://murage.ai/docs/features/mcp-servers#secrets-in-a-command-server",
     "text": "A command server's environment values, such as a token, are kept by the Murage desktop app, not in your settings file. If you change the command or its arguments, Murage asks whether to keep those saved values for the new command or clear them. It never decides for you. Do not put a key in a command's arguments: they are saved as plain text. If you paste one there, Murage warns you and offers to move it to an environment value."
   },
   {
@@ -2371,7 +2421,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Antigravity and your own servers",
     "breadcrumb": "Murage docs → Features → MCP servers",
     "where": "Murage docs → Features → MCP servers",
-    "url": "https://murage.app/docs/features/mcp-servers#antigravity-and-your-own-servers",
+    "url": "https://murage.ai/docs/features/mcp-servers#antigravity-and-your-own-servers",
     "text": "Antigravity reads its tools from one file shared by everything on this computer: the Antigravity config file in your home folder (.gemini/config/mcp_config.json). When Antigravity runs with full auto, Murage writes your servers into that file for the length of the turn, and that includes their environment values and the turn's own access token. Any Antigravity session you start yourself during that turn can read them. Murage puts the file back when the turn ends, and it removes anything it left behind if a turn ended in a crash. Entries of yours whose names start with murage-custom- are treated as Murage's and are not kept.…"
   },
   {
@@ -2381,7 +2431,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Script access for one bot",
     "breadcrumb": "Murage docs → Features → MCP servers",
     "where": "Murage docs → Features → MCP servers",
-    "url": "https://murage.app/docs/features/mcp-servers#script-access-for-one-bot",
+    "url": "https://murage.ai/docs/features/mcp-servers#script-access-for-one-bot",
     "text": "A script or an outside agent on your computer, such as the Murage MCP server or the control command line, can reach one of your bots when you make script access for it. In Settings, switch on \"Let scripts use a bot\", pick the bot, and choose whether it may also send. Murage shows the token once, so copy it then. Turn the switch off, or remove a single access, and that token stops working at once.\n\nScript access reaches only the bot you picked. It cannot open other bots, rooms or search."
   },
   {
@@ -2391,7 +2441,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Remove a server",
     "breadcrumb": "Murage docs → Features → MCP servers",
     "where": "Murage docs → Features → MCP servers",
-    "url": "https://murage.app/docs/features/mcp-servers#remove-a-server",
+    "url": "https://murage.ai/docs/features/mcp-servers#remove-a-server",
     "text": "Press Remove and confirm. Your bots lose its tools. Murage also signs you out of the service when the service allows it. When it does not, Murage forgets the sign-in on this computer and tells you how to cut access completely from the service's own account settings."
   },
   {
@@ -2401,7 +2451,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Memory and learning together",
     "breadcrumb": "Murage docs → Features → Memory and learning",
     "where": "Murage docs → Features → Memory and learning",
-    "url": "https://murage.app/docs/features/memory-and-learning#memory-and-learning-together",
+    "url": "https://murage.ai/docs/features/memory-and-learning#memory-and-learning-together",
     "text": "Memory is what a bot knows: facts, notes and past conversations. Learning is how a bot changes how it works after you correct it or praise it. Both show up in one place for each bot, and you can edit, forget or undo any of it."
   },
   {
@@ -2411,7 +2461,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Memory",
     "breadcrumb": "Murage docs → Features → Memory and learning",
     "where": "Settings → Memory",
-    "url": "https://murage.app/docs/features/memory-and-learning#memory",
+    "url": "https://murage.ai/docs/features/memory-and-learning#memory",
     "text": "Each bot keeps plain-text memory that you can read, correct and delete. Open Settings → Memory to search saved knowledge, see where each item came from and choose who can use it. Memory mode is Off, Capture only, Capture and recall, or Paused. Recalled context is sent to the engine you choose. Learning needs memory to be on."
   },
   {
@@ -2421,7 +2471,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Learning from your feedback",
     "breadcrumb": "Murage docs → Features → Memory and learning",
     "where": "Murage docs → Features → Memory and learning",
-    "url": "https://murage.app/docs/features/memory-and-learning#learning-from-your-feedback",
+    "url": "https://murage.ai/docs/features/memory-and-learning#learning-from-your-feedback",
     "text": "A bot learns from what you say and do. Plain feedback in a chat such as \"keep client emails under 120 words\" is noticed. So are your edits to its replies and your marks on them. It keeps a short lesson, such as \"Lead with the decision\", and uses it from the next turn. Lessons are added to the bot's instructions, so they work on every engine. Permissions still decide what a bot may do, and learning does not change them."
   },
   {
@@ -2431,7 +2481,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "The learned chip",
     "breadcrumb": "Murage docs → Features → Memory and learning",
     "where": "Murage docs → Features → Memory and learning",
-    "url": "https://murage.app/docs/features/memory-and-learning#the-learned-chip",
+    "url": "https://murage.ai/docs/features/memory-and-learning#the-learned-chip",
     "text": "When a bot keeps something from a reply, a small chip appears under that reply, for example \"Ember will remember that: the board meets on the first Tuesday\" or \"Ember will do this differently: lead with the decision\". Tap the chip to see what was kept. You can Edit it, Forget it, Undo it, or say Not quite. Undo does not change what was already sent."
   },
   {
@@ -2441,7 +2491,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "The Learning screen",
     "breadcrumb": "Murage docs → Features → Memory and learning",
     "where": "Bot settings → Learning",
-    "url": "https://murage.app/docs/features/memory-and-learning#the-learning-screen",
+    "url": "https://murage.ai/docs/features/memory-and-learning#the-learning-screen",
     "text": "Open Bot settings → Learning for one screen per bot. It shows the Learns from you switch (on by default), a This month line, Tell it something, What it learned, Remembers, Suggestions and Results. Every lesson is one line with Edit and Undo, and Undo can be reversed with Keep for a short time. The Overview card shows a line such as \"Learned 14 things this month\"."
   },
   {
@@ -2451,7 +2501,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Tell it something",
     "breadcrumb": "Murage docs → Features → Memory and learning",
     "where": "Murage docs → Features → Memory and learning",
-    "url": "https://murage.app/docs/features/memory-and-learning#tell-it-something",
+    "url": "https://murage.ai/docs/features/memory-and-learning#tell-it-something",
     "text": "Under Tell it something, type one line, such as \"Keep client emails under 120 words\", and press Add. It applies from the next turn. If the bot already knows it, the screen says so."
   },
   {
@@ -2461,7 +2511,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Marking wins and losses",
     "breadcrumb": "Murage docs → Features → Memory and learning",
     "where": "Murage docs → Features → Memory and learning",
-    "url": "https://murage.app/docs/features/memory-and-learning#marking-wins-and-losses",
+    "url": "https://murage.ai/docs/features/memory-and-learning#marking-wins-and-losses",
     "text": "You can mark a reply as won or lost for a sales bot, or good or bad for other bots. These marks feed the Results line. When a conversation looks finished, a bot may ask \"Looks like this closed. Won?\" and you answer Won, Lost or Not yet. When there are enough marked examples, Check for improvements looks for suggestions."
   },
   {
@@ -2471,7 +2521,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Suggestions",
     "breadcrumb": "Murage docs → Features → Memory and learning",
     "where": "Murage docs → Features → Memory and learning",
-    "url": "https://murage.app/docs/features/memory-and-learning#suggestions",
+    "url": "https://murage.ai/docs/features/memory-and-learning#suggestions",
     "text": "Bigger changes arrive as suggestions instead of applying by themselves. Each shows why it was suggested, and you choose Apply, Edit or Not now. They also show in your Inbox under Learning suggestions. Under More you can switch on Ask me before it changes anything."
   },
   {
@@ -2481,7 +2531,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Customers and audiences",
     "breadcrumb": "Murage docs → Features → Memory and learning",
     "where": "Murage docs → Features → Memory and learning",
-    "url": "https://murage.app/docs/features/memory-and-learning#customers-and-audiences",
+    "url": "https://murage.ai/docs/features/memory-and-learning#customers-and-audiences",
     "text": "Learn from customer and audience messages is off by default. When you turn it on you pick which chats to learn from. What it keeps stays on this computer and is not in backups."
   },
   {
@@ -2491,7 +2541,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Sharing a lesson with teammates",
     "breadcrumb": "Murage docs → Features → Memory and learning",
     "where": "Murage docs → Features → Memory and learning",
-    "url": "https://murage.app/docs/features/memory-and-learning#sharing-a-lesson-with-teammates",
+    "url": "https://murage.ai/docs/features/memory-and-learning#sharing-a-lesson-with-teammates",
     "text": "A bot can offer a lesson to a teammate or to its whole team. Teammates see it as a suggestion and decide. A lesson of your own for a bot wins over a shared one that disagrees."
   },
   {
@@ -2501,7 +2551,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Undo, restore and turn off",
     "breadcrumb": "Murage docs → Features → Memory and learning",
     "where": "Murage docs → Features → Memory and learning",
-    "url": "https://murage.app/docs/features/memory-and-learning#undo-restore-and-turn-off",
+    "url": "https://murage.ai/docs/features/memory-and-learning#undo-restore-and-turn-off",
     "text": "Switch off Learns from you to stop learning from your feedback. Under More, Recent changes shows what changed, each with Undo, and Restore original behavior undoes every lesson."
   },
   {
@@ -2511,7 +2561,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "What messaging apps do",
     "breadcrumb": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
     "where": "Settings → Messaging apps",
-    "url": "https://murage.app/docs/features/messaging-apps#what-messaging-apps-do",
+    "url": "https://murage.ai/docs/features/messaging-apps#what-messaging-apps-do",
     "text": "Messaging apps let you message your Chief of Staff from Telegram, Slack, Discord or WhatsApp. Set them up in Settings → Messaging apps. Murage must be running to receive messages. Approvals that matter stay in Murage."
   },
   {
@@ -2521,7 +2571,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "What you need first",
     "breadcrumb": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
     "where": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
-    "url": "https://murage.app/docs/features/messaging-apps#what-you-need-first",
+    "url": "https://murage.ai/docs/features/messaging-apps#what-you-need-first",
     "text": "Each connection pairs with your Chief of Staff, so pick one first. Every connection is private to you: only the owner account you name can pair and send messages. Tokens are stored encrypted on this computer and are never shown again."
   },
   {
@@ -2531,7 +2581,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Telegram: set up",
     "breadcrumb": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
     "where": "Settings → Messaging apps → Telegram",
-    "url": "https://murage.app/docs/features/messaging-apps#telegram-set-up",
+    "url": "https://murage.ai/docs/features/messaging-apps#telegram-set-up",
     "text": "1. Open BotFather in Telegram, send /newbot and follow the prompts. Copy the bot token.\n2. In Settings → Messaging apps → Telegram, paste the token and press Save token.\n3. Press Pair with Chief to get a code. Send /pair followed by the code to your new bot in a private Telegram chat.\n\nWhen it says Connected, message your bot to talk to your Chief. Messages share the Chief's current conversation. Owner-only buttons let you allow once or deny pending actions. Use Revoke to disconnect, or Replace token to move to a new token for the same bot."
   },
   {
@@ -2541,7 +2591,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Slack: set up",
     "breadcrumb": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
     "where": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
-    "url": "https://murage.app/docs/features/messaging-apps#slack-set-up",
+    "url": "https://murage.ai/docs/features/messaging-apps#slack-set-up",
     "text": "Use a private Slack app with Socket Mode on. The app-level token needs connections:write. The bot token needs im:history and chat:write, with the message.im event on. Add files:write if you want voice notes sent here.\n\n1. Save credentials: paste the App-level token and the Bot token.\n2. Choose your workspace and owner: enter the Workspace ID, App ID and your Owner member ID, then Save workspace details.\n3. Press Pair with Chief and send the code to your Slack app in a direct message from the owner."
   },
   {
@@ -2551,7 +2601,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Discord: set up",
     "breadcrumb": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
     "where": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
-    "url": "https://murage.app/docs/features/messaging-apps#discord-set-up",
+    "url": "https://murage.ai/docs/features/messaging-apps#discord-set-up",
     "text": "Create your own application and bot in the Discord Developer Portal. Murage reads only direct messages from the owner you name. Server messages and Discord approval buttons are not supported.\n\n1. Save credentials: paste the bot token.\n2. Choose your application and owner: enter the Application ID and your Owner user ID, then Save application details.\n3. Press Pair with Chief and send the code to your Discord app in a direct message.\n\nLong replies show as a preview, with the full result in Murage. Messages sent while Murage is stopped may not be recovered."
   },
   {
@@ -2561,7 +2611,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "WhatsApp: set up",
     "breadcrumb": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
     "where": "Settings → Channels → WhatsApp",
-    "url": "https://murage.app/docs/features/messaging-apps#whatsapp-set-up",
+    "url": "https://murage.ai/docs/features/messaging-apps#whatsapp-set-up",
     "text": "Murage links to WhatsApp the way WhatsApp Web does, from this computer, using your own number, by QR or phone code. WhatsApp does not offer this link officially, and it may restrict or remove a number it sees driven by other software, without notice. A spare number on a second SIM or eSIM, set up in the WhatsApp Business app, is the best way to use this; linking your main number is your number to risk. The session and its credentials stay on this computer. Only the linked number is the owner. Chosen contacts can chat after approval. Groups start disabled.\n\n1. In Settings → Channels → WhatsApp, read the note, then press Link WhatsApp.\n2.…"
   },
   {
@@ -2571,7 +2621,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "If a connection stops",
     "breadcrumb": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
     "where": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
-    "url": "https://murage.app/docs/features/messaging-apps#if-a-connection-stops",
+    "url": "https://murage.ai/docs/features/messaging-apps#if-a-connection-stops",
     "text": "The status line under each heading says what is happening, such as Connected to Chief, Waiting for your message, Pairing code expired or Connection needs attention. Use Refresh status, Retry connection, or Revoke connection and pair again. If you change your Chief of Staff, revoke the connection and pair with the new one."
   },
   {
@@ -2581,7 +2631,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Voice notes and Full access",
     "breadcrumb": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
     "where": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
-    "url": "https://murage.app/docs/features/messaging-apps#voice-notes-and-full-access",
+    "url": "https://murage.ai/docs/features/messaging-apps#voice-notes-and-full-access",
     "text": "A bot can send a voice note to these apps when you ask for one. Messages from these apps run at the bot's normal approval level. Full access applies to them only if you switch on the Full access option for channel messages."
   },
   {
@@ -2591,7 +2641,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "The + menu",
     "breadcrumb": "Murage docs → Features → New Bot and New Team",
     "where": "Murage docs → Features → New Bot and New Team",
-    "url": "https://murage.app/docs/features/new-bot-and-team#the-menu",
+    "url": "https://murage.ai/docs/features/new-bot-and-team#the-menu",
     "text": "Press + at the top of the sidebar (New or share). It offers New Bot, New Team, New Channel (a chat with some bots), New Project (a piece of work with its own goal, files and chat; see Projects) and Export bots…."
   },
   {
@@ -2601,7 +2651,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "New Bot and New Team chooser",
     "breadcrumb": "Murage docs → Features → New Bot and New Team",
     "where": "Murage docs → Features → New Bot and New Team",
-    "url": "https://murage.app/docs/features/new-bot-and-team#new-bot-and-new-team-chooser",
+    "url": "https://murage.ai/docs/features/new-bot-and-team#new-bot-and-new-team-chooser",
     "text": "New Bot and New Team each open one chooser that starts from what you want done. Under \"What should it do?\" type a sentence, for example \"chase unpaid invoices and follow up with clients\", and the best matching templates come up. Or browse one topic at a time under \"or browse:\".\n\nA template opens a preview of what it is: its bots (for a team), how many skills and routines it brings, and which apps it needs. Press Create to make it. A template you already have is marked \"You have this\"; creating it again makes a second copy."
   },
   {
@@ -2611,7 +2661,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Start blank, Pick from my bots, Open a file",
     "breadcrumb": "Murage docs → Features → New Bot and New Team",
     "where": "Murage docs → Features → New Bot and New Team",
-    "url": "https://murage.app/docs/features/new-bot-and-team#start-blank-pick-from-my-bots-open-a-file",
+    "url": "https://murage.ai/docs/features/new-bot-and-team#start-blank-pick-from-my-bots-open-a-file",
     "text": "Quiet links sit under the chooser:\n- Start blank → (New Bot) makes an empty bot. Add the skills it needs later from its Skills page.\n- Pick from my bots → (New Team) builds a team from bots you already have: give it a name, tick its bots, optionally pick a team lead and write team instructions every bot on the team receives, then press Create Team.\n- Open a file… imports a team or bot from a file, a folder or a GitHub link."
   },
   {
@@ -2621,7 +2671,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "What a project is",
     "breadcrumb": "Murage docs → Features → Projects",
     "where": "Murage docs → Features → Projects",
-    "url": "https://murage.app/docs/features/projects#what-a-project-is",
+    "url": "https://murage.ai/docs/features/projects#what-a-project-is",
     "text": "A project is a piece of work with its own chat, goal, files and memory. A channel is a place to talk. A project is a place to get something done. Several bots work on it together, and you can step in at any point."
   },
   {
@@ -2631,7 +2681,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Create a project",
     "breadcrumb": "Murage docs → Features → Projects",
     "where": "Murage docs → Features → Projects",
-    "url": "https://murage.app/docs/features/projects#create-a-project",
+    "url": "https://murage.ai/docs/features/projects#create-a-project",
     "text": "Press + at the top of the sidebar and choose New Project. In the New project form:\n- Purpose: what the project is for, in a sentence or two.\n- How will you use this project?: Get something done, Chat room, Ongoing work, or A group of bots on a thing.\n- Members: the bots on it. Pick at least one.\n- Lead: one member who plans and hands out the work, or No lead.\n- Optional: a deadline, a work folder, a goal and a budget.\n\nIf you have a Chief of Staff, \"Ask (name) to propose\" has it draft the brief and budget for you to edit. Press Create project."
   },
   {
@@ -2641,7 +2691,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Teams and projects",
     "breadcrumb": "Murage docs → Features → Projects",
     "where": "Murage docs → Features → Projects",
-    "url": "https://murage.app/docs/features/projects#teams-and-projects",
+    "url": "https://murage.ai/docs/features/projects#teams-and-projects",
     "text": "A project can belong to one of your existing teams, or to none. With no team it shows under Projects in the sidebar. With a team it shows under that team. A project never creates a new team."
   },
   {
@@ -2651,7 +2701,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "The lead",
     "breadcrumb": "Murage docs → Features → Projects",
     "where": "Murage docs → Features → Projects",
-    "url": "https://murage.app/docs/features/projects#the-lead",
+    "url": "https://murage.ai/docs/features/projects#the-lead",
     "text": "The lead turns the goal into a plan, hands out cards to members and reports to you. Members do the work and can suggest who should take a card. You can always talk to any member directly in the project chat."
   },
   {
@@ -2661,7 +2711,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Goals",
     "breadcrumb": "Murage docs → Features → Projects",
     "where": "Murage docs → Features → Projects",
-    "url": "https://murage.app/docs/features/projects#goals",
+    "url": "https://murage.ai/docs/features/projects#goals",
     "text": "A goal is what the project should deliver. It has a title, a description and done criteria. A goal moves through these states: Not started, Planning, The plan needs your OK, Working, Ready for your sign-off, Paused, Done, Stopped. Start the goal when you are ready, or choose Start now when you create the project."
   },
   {
@@ -2671,7 +2721,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Done criteria and sign-off",
     "breadcrumb": "Murage docs → Features → Projects",
     "where": "Murage docs → Features → Projects",
-    "url": "https://murage.app/docs/features/projects#done-criteria-and-sign-off",
+    "url": "https://murage.ai/docs/features/projects#done-criteria-and-sign-off",
     "text": "Done criteria are the checks a goal must meet. The lead can propose criteria, and you set or change them. When the work is finished the goal waits for your sign-off. You can Approve plan, Change plan, Sign off, Send back, Pause, Resume or Stop goal."
   },
   {
@@ -2681,7 +2731,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Cards and the Board",
     "breadcrumb": "Murage docs → Features → Projects",
     "where": "Murage docs → Features → Projects",
-    "url": "https://murage.app/docs/features/projects#cards-and-the-board",
+    "url": "https://murage.ai/docs/features/projects#cards-and-the-board",
     "text": "The work is split into cards. Each card has a title, an assignee, a state, a due date and a work folder. The Board tab shows cards in columns, and you can move them, add a card, edit the columns, filter by bot or by what needs you, and take over a card yourself. In the goal you can choose \"Another member reviews each card\" and \"Show me the plan first\"."
   },
   {
@@ -2691,7 +2741,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Project tabs",
     "breadcrumb": "Murage docs → Features → Projects",
     "where": "Murage docs → Features → Projects",
-    "url": "https://murage.app/docs/features/projects#project-tabs",
+    "url": "https://murage.ai/docs/features/projects#project-tabs",
     "text": "A project has tabs: Chat, Board, Overview, Files, Memory and Activity. Overview shows what the project is for, how it is going and who is on it. Activity lists what happened and can post a daily digest in the chat and in your Inbox."
   },
   {
@@ -2701,7 +2751,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Limits and budgets",
     "breadcrumb": "Murage docs → Features → Projects",
     "where": "Murage docs → Features → Projects",
-    "url": "https://murage.app/docs/features/projects#limits-and-budgets",
+    "url": "https://murage.ai/docs/features/projects#limits-and-budgets",
     "text": "In project settings you can set a work budget in minutes and tokens. Murage stops starting new work at your limit, and running turns finish. You can also choose how many cards run at once, and which work folders the project may change files in."
   },
   {
@@ -2711,7 +2761,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Closing a project",
     "breadcrumb": "Murage docs → Features → Projects",
     "where": "Murage docs → Features → Projects",
-    "url": "https://murage.app/docs/features/projects#closing-a-project",
+    "url": "https://murage.ai/docs/features/projects#closing-a-project",
     "text": "Close project asks the lead to summarise the work, asks members to save what they learned, pauses the project's routines and cancels open cards. You can reopen it later. End project stops the goal, makes the board read-only and turns the room into a channel."
   },
   {
@@ -2721,7 +2771,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Projects and other bots",
     "breadcrumb": "Murage docs → Features → Projects",
     "where": "Murage docs → Features → Projects",
-    "url": "https://murage.app/docs/features/projects#projects-and-other-bots",
+    "url": "https://murage.ai/docs/features/projects#projects-and-other-bots",
     "text": "Members of a project can ask each other for project work. See Bots working together. A project is also the easiest way to put bots from different teams on one task."
   },
   {
@@ -2731,7 +2781,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Two kinds of settings",
     "breadcrumb": "Murage docs → Features → Where to find things in Settings",
     "where": "Murage docs → Features → Where to find things in Settings",
-    "url": "https://murage.app/docs/features/settings-guide#two-kinds-of-settings",
+    "url": "https://murage.ai/docs/features/settings-guide#two-kinds-of-settings",
     "text": "Settings for the whole app open from your menu in the sidebar. Settings for one bot open from that bot, under Bot settings. If a setting is not on either list, it does not exist. See If something isn't possible."
   },
   {
@@ -2741,7 +2791,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "App settings: You and Bots",
     "breadcrumb": "Murage docs → Features → Where to find things in Settings",
     "where": "Murage docs → Features → Where to find things in Settings",
-    "url": "https://murage.app/docs/features/settings-guide#app-settings-you-and-bots",
+    "url": "https://murage.ai/docs/features/settings-guide#app-settings-you-and-bots",
     "text": "You: General (your profile, and how the app looks and behaves) and About me (what every bot should know about you). Bots: Bot defaults (how new bots start, and how bots take turns in channels and projects), House rules (rules every bot follows), Skills (know-how your bots can use) and Memory (what your bots remember between conversations)."
   },
   {
@@ -2751,7 +2801,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "App settings: Models and Tools",
     "breadcrumb": "Murage docs → Features → Where to find things in Settings",
     "where": "Murage docs → Features → Where to find things in Settings",
-    "url": "https://murage.app/docs/features/settings-guide#app-settings-models-and-tools",
+    "url": "https://murage.ai/docs/features/settings-guide#app-settings-models-and-tools",
     "text": "Models: Models (the AI models your bots think with, and their keys) and Engines (the programs on this computer that run your bots). Tools: Images (let bots make and edit pictures), Web search, Voice (turn speech into text for recorded skills), Connected apps (Gmail, Slack, Notion and others) and Computer & browser."
   },
   {
@@ -2761,8 +2811,28 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "App settings: Messaging and App",
     "breadcrumb": "Murage docs → Features → Where to find things in Settings",
     "where": "Murage docs → Features → Where to find things in Settings",
-    "url": "https://murage.app/docs/features/settings-guide#app-settings-messaging-and-app",
-    "text": "Messaging & phone: Messaging apps (Telegram, Slack and Discord, see Telegram, Slack and Discord) and Phone and other devices (see The Murage phone app). App: Backups, Usage (how much each bot has used), About & updates (where Get Murage news signs you up for Murage news by email: new releases, how-tos and tutorials), and Experimental (early features you can try, which may change)."
+    "url": "https://murage.ai/docs/features/settings-guide#app-settings-messaging-and-app",
+    "text": "Messaging & phone: Messaging apps (Telegram, Slack and Discord, see Telegram, Slack and Discord) and Phone and other devices (see The Murage phone app). App: Backups, Usage (how much each bot has used) and About & updates (where Get Murage news signs you up for Murage news by email: new releases, how-tos and tutorials)."
+  },
+  {
+    "id": "features/settings-guide#built-in-browser",
+    "title": "Where to find things in Settings",
+    "description": "Every Settings page and every bot settings section, with what each one is for, so a bot can point to the right place.",
+    "heading": "Built-in browser",
+    "breadcrumb": "Murage docs → Features → Where to find things in Settings",
+    "where": "Settings → Devices → Built-in browser",
+    "url": "https://murage.ai/docs/features/settings-guide#built-in-browser",
+    "text": "The built-in browser is on by default. Its workspace switch lives in Settings → Devices → Built-in browser. Each bot also has its own browser switch in Bot settings → Access. A switch you turned off stays off. Bots still hand steps such as entering credentials or agreeing to terms back to you."
+  },
+  {
+    "id": "features/settings-guide#teach-a-skill",
+    "title": "Where to find things in Settings",
+    "description": "Every Settings page and every bot settings section, with what each one is for, so a bot can point to the right place.",
+    "heading": "Teach a skill",
+    "breadcrumb": "Murage docs → Features → Where to find things in Settings",
+    "where": "Settings → Skills → Teach a skill",
+    "url": "https://murage.ai/docs/features/settings-guide#teach-a-skill",
+    "text": "Teach a skill is on by default in the desktop app. Record a workflow, review the result and choose which bots can use it. Find its switch in Settings → Skills → Teach a skill, and open the recorder from your menu in the sidebar. A switch you turned off stays off. Recording is available on your computer; Cloud homes keep the skills library without the recorder."
   },
   {
     "id": "features/settings-guide#bot-settings",
@@ -2771,7 +2841,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Bot settings",
     "breadcrumb": "Murage docs → Features → Where to find things in Settings",
     "where": "Murage docs → Features → Where to find things in Settings",
-    "url": "https://murage.app/docs/features/settings-guide#bot-settings",
+    "url": "https://murage.ai/docs/features/settings-guide#bot-settings",
     "text": "Open a bot, then Bot settings. Overview (profile, avatar and Role). Identity & instructions (name, title, description, personality). What shapes this bot (everything the bot reads, in order). Skills. Memory. Routines. Teams (sharing the bot with other teams). Access (computer, browser, connected apps, working folder)."
   },
   {
@@ -2781,7 +2851,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Bot settings: the rest",
     "breadcrumb": "Murage docs → Features → Where to find things in Settings",
     "where": "Murage docs → Features → Where to find things in Settings",
-    "url": "https://murage.app/docs/features/settings-guide#bot-settings-the-rest",
+    "url": "https://murage.ai/docs/features/settings-guide#bot-settings-the-rest",
     "text": "Model (engine and effort). Permissions (the approval level, Ask me before contacting other bots, Can talk to, Full access, and images). Voice & alerts (the bot's voice and notifications). History (tasks and conversations). Usage (turns and tokens). Learning (what the bot has learned from you)."
   },
   {
@@ -2791,7 +2861,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Places in the sidebar",
     "breadcrumb": "Murage docs → Features → Where to find things in Settings",
     "where": "Murage docs → Features → Where to find things in Settings",
-    "url": "https://murage.app/docs/features/settings-guide#places-in-the-sidebar",
+    "url": "https://murage.ai/docs/features/settings-guide#places-in-the-sidebar",
     "text": "The sidebar has Routines (things your bots do on a schedule), Files (everything your bots made or saved), Apps (connected apps) and Team map (who is on which team and which bots have handed work to which). Your own menu opens About me, What's new and Settings."
   },
   {
@@ -2800,7 +2870,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Find, import, read, edit and duplicate skills in Settings → Skills, add them to a bot, and what the Skill Guard results mean.",
     "breadcrumb": "Murage docs → Features → Skills and Skill Guard",
     "where": "Murage docs → Features → Skills and Skill Guard",
-    "url": "https://murage.app/docs/features/skills",
+    "url": "https://murage.ai/docs/features/skills",
     "text": "A skill is a set of instructions a bot can follow, such as how to run a weekly report or review a pull request. Every skill can be read in plain words before any bot uses it."
   },
   {
@@ -2810,7 +2880,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Settings → Skills",
     "breadcrumb": "Murage docs → Features → Skills and Skill Guard",
     "where": "Settings → Skills",
-    "url": "https://murage.app/docs/features/skills#settings-skills",
+    "url": "https://murage.ai/docs/features/skills#settings-skills",
     "text": "Open Settings → Skills to see every skill in one place. Search first (\"Search skills\"), then Your skills, then Built-in, then the Library. Browse the library by typing in the search box or by picking from the Topic dropdown beside it. Each row says which bots use it (\"Used by ...\") or \"Not used yet\".\n\nOpen any skill to read what it tells the bot, and switch it on for a bot under Use with. Skills in Settings are shown in the desktop app only."
   },
   {
@@ -2820,7 +2890,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Import a skill",
     "breadcrumb": "Murage docs → Features → Skills and Skill Guard",
     "where": "Settings → Skills",
-    "url": "https://murage.app/docs/features/skills#import-a-skill",
+    "url": "https://murage.ai/docs/features/skills#import-a-skill",
     "text": "In Settings → Skills press Import skill. Drop a skill's file, folder or zip on the drop zone, use Choose a file… or Choose a folder…, or paste a link to a skill on GitHub and press Import.\n\nThe skill is checked by Skill Guard first and is switched on for no bot until you choose. When it is done you see \"(name) is in your skills\" with Open it and Import another. If you already have a skill with that name, Murage asks whether to Replace it."
   },
   {
@@ -2830,7 +2900,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Skill Guard",
     "breadcrumb": "Murage docs → Features → Skills and Skill Guard",
     "where": "Murage docs → Features → Skills and Skill Guard",
-    "url": "https://murage.app/docs/features/skills#skill-guard",
+    "url": "https://murage.ai/docs/features/skills#skill-guard",
     "text": "Skill Guard checks every skill before a bot can use it: on import, on install, on every switch-on, after every edit, and again at startup for skills already switched on. A skill comes out one of three ways:\n- Checked, nothing risky found. A quiet green shield. Library skills that ship with Murage say Built-in instead.\n- Needs a look. The skill shows \"Worth a look before you use it:\" with what was found in plain words (Show the lines shows exactly where). It switches on only after you confirm \"Use it anyway\".\n- Blocked. \"This skill was blocked by the safety check and can't be switched on.\" It has no switch and no Add button. An imported skill can be deleted with Delete.…"
   },
   {
@@ -2840,7 +2910,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Edit and Duplicate a skill",
     "breadcrumb": "Murage docs → Features → Skills and Skill Guard",
     "where": "Murage docs → Features → Skills and Skill Guard",
-    "url": "https://murage.app/docs/features/skills#edit-and-duplicate-a-skill",
+    "url": "https://murage.ai/docs/features/skills#edit-and-duplicate-a-skill",
     "text": "The skill reader has Edit and Duplicate.\n- Edit changes the name, what it's for and what it tells the bot, in the rich editor. Saving checks it again with Skill Guard, and every bot that uses it gets the new version. Built-in skills can't be changed, so editing one edits your own copy and says so.\n- Duplicate makes a copy in Your skills, labelled with where it came from (\"Copied from ...\")."
   },
   {
@@ -2850,7 +2920,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Add a skill inside a bot",
     "breadcrumb": "Murage docs → Features → Skills and Skill Guard",
     "where": "Bot settings → Skills",
-    "url": "https://murage.app/docs/features/skills#add-a-skill-inside-a-bot",
+    "url": "https://murage.ai/docs/features/skills#add-a-skill-inside-a-bot",
     "text": "Open Bot settings → Skills and press Add a skill. A picker opens right there, titled \"Add a skill to (bot)\": search Your skills and the Library (\"What should it know how to do?\"), open one to read it, and press Add. It arrives switched on. You can also right-click a bot in the sidebar and choose Add a skill, which opens the same picker in that bot's window.\n\nEach skill in the bot's Skills panel can be read, switched off or removed at any time."
   },
   {
@@ -2860,7 +2930,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "The Chief of Staff guide",
     "breadcrumb": "Murage docs → Features → Skills and Skill Guard",
     "where": "Murage docs → Features → Skills and Skill Guard",
-    "url": "https://murage.app/docs/features/skills#the-chief-of-staff-guide",
+    "url": "https://murage.ai/docs/features/skills#the-chief-of-staff-guide",
     "text": "The Chief of Staff guide belongs to your workspace Chief only; no other bot gets it. It sits at the top of the Chief's Skills panel, tagged Built-in, with Read it and a switch to stop using it."
   },
   {
@@ -2870,7 +2940,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Voice through Flux",
     "breadcrumb": "Murage docs → Features → Voice, calls, notifications and memory",
     "where": "Murage docs → Features → Voice, calls, notifications and memory",
-    "url": "https://murage.app/docs/features/voice-and-memory#voice-through-flux",
+    "url": "https://murage.ai/docs/features/voice-and-memory#voice-through-flux",
     "text": "Calls, spoken replies and voice notes speak, listen and look things up through Flux by default, using the Flux key saved under Models. Your own keys (OpenAI, xAI, ElevenLabs and others) are optional and still work."
   },
   {
@@ -2880,7 +2950,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Default voices",
     "breadcrumb": "Murage docs → Features → Voice, calls, notifications and memory",
     "where": "Murage docs → Features → Voice, calls, notifications and memory",
-    "url": "https://murage.app/docs/features/voice-and-memory#default-voices",
+    "url": "https://murage.ai/docs/features/voice-and-memory#default-voices",
     "text": "Every bot starts with its own voice. A new bot is given a female Grok voice (xAI's voices, through Flux), chosen so that bots on your computer sound different from each other where it can. The voice picker marks it \"Default\". The default is yours to change at any time, and a voice you pick is never changed for you."
   },
   {
@@ -2890,7 +2960,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Change a bot's voice",
     "breadcrumb": "Murage docs → Features → Voice, calls, notifications and memory",
     "where": "Bot settings → Voice & alerts → Voice",
-    "url": "https://murage.app/docs/features/voice-and-memory#change-a-bot-s-voice",
+    "url": "https://murage.ai/docs/features/voice-and-memory#change-a-bot-s-voice",
     "text": "Each bot has its own voice. Open Bot settings → Voice & alerts → Voice. Under Voice engine pick the voice service for this bot: Flux, xAI, ElevenLabs, or the built-in Mac or Windows voices. Bots in one room can sound different. xAI voices work with your own xAI key or through Flux.\n\nSettings → Voice is different: it turns speech into text for recorded skills. A bot's own voice is set under Bot settings → Voice & alerts."
   },
   {
@@ -2900,7 +2970,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Voice picker",
     "breadcrumb": "Murage docs → Features → Voice, calls, notifications and memory",
     "where": "Murage docs → Features → Voice, calls, notifications and memory",
-    "url": "https://murage.app/docs/features/voice-and-memory#voice-picker",
+    "url": "https://murage.ai/docs/features/voice-and-memory#voice-picker",
     "text": "The voice picker lists every voice with its name, how it sounds and its accent, for example \"Kira: Upbeat, confident, American\". Flux offers 41 voices, and the Grok voices lead the list. Search voices, or narrow the list with the Female, Male and Neutral chips and the accent chips. Every voice speaks every language.\n\nEvery voice in the list has its own play button. Press it to hear a sample; it shows Loading while the sample is fetched and Stop while it plays.\n\nSwitch on Read replies aloud to have the bot speak its answers as they arrive."
   },
   {
@@ -2910,7 +2980,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Calls",
     "breadcrumb": "Murage docs → Features → Voice, calls, notifications and memory",
     "where": "Murage docs → Features → Voice, calls, notifications and memory",
-    "url": "https://murage.app/docs/features/voice-and-memory#calls",
+    "url": "https://murage.ai/docs/features/voice-and-memory#calls",
     "text": "A call starts speaking on the first sentence instead of waiting for the whole answer. A fast voice layer answers straight away, does quick lookups, and hands real work to the bot's own engine, with live status while the engine works.\n\nYou can talk over the bot on macOS, Windows and Linux; a spoken \"stop\" stops it at once. Mute mutes your microphone, and Hang up ends the call. Approvals are asked out loud in plain words: say yes, no, or \"yes for the rest of the call\", which covers ordinary requests until you hang up. Routines, skills and using the computer are still asked each time. A note of the call is left in the chat."
   },
   {
@@ -2920,7 +2990,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Voice notes",
     "breadcrumb": "Murage docs → Features → Voice, calls, notifications and memory",
     "where": "Murage docs → Features → Voice, calls, notifications and memory",
-    "url": "https://murage.app/docs/features/voice-and-memory#voice-notes",
+    "url": "https://murage.ai/docs/features/voice-and-memory#voice-notes",
     "text": "A bot can send an answer as a voice note in its own voice, in the chat and on Telegram, Slack and Discord. Ask it for a voice note or to hear something. If the turn ends while a voice note is being made, the voice note is dropped cleanly."
   },
   {
@@ -2930,7 +3000,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Notification sounds",
     "breadcrumb": "Murage docs → Features → Voice, calls, notifications and memory",
     "where": "Settings → General → Notifications",
-    "url": "https://murage.app/docs/features/voice-and-memory#notification-sounds",
+    "url": "https://murage.ai/docs/features/voice-and-memory#notification-sounds",
     "text": "To turn off notification sounds on this computer, open Settings → General → Notifications and switch off Play a sound. It applies to this computer only and changes right away, so you keep the banners without the sound, for example on a call. The same card chooses which notifications you get (Needs your attention, Task completed, Task failed) and quiet hours.\n\nEach bot also has Notifications under Bot settings → Voice & alerts."
   },
   {
@@ -2940,7 +3010,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Dictation",
     "breadcrumb": "Murage docs → Features → Voice, calls, notifications and memory",
     "where": "Murage docs → Features → Voice, calls, notifications and memory",
-    "url": "https://murage.app/docs/features/voice-and-memory#dictation",
+    "url": "https://murage.ai/docs/features/voice-and-memory#dictation",
     "text": "The composer microphone uses Apple's local speech recognition in the macOS desktop build. Linux and Windows dictation are not currently shipped."
   },
   {
@@ -2950,7 +3020,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Memory",
     "breadcrumb": "Murage docs → Features → Voice, calls, notifications and memory",
     "where": "Murage docs → Features → Voice, calls, notifications and memory",
-    "url": "https://murage.app/docs/features/voice-and-memory#memory",
+    "url": "https://murage.ai/docs/features/voice-and-memory#memory",
     "text": "Each bot can keep plain-text memory that you can inspect, correct, or delete. Memory is not a hidden remote profile; it lives with the local Murage data. How a bot learns from your feedback is on the Memory and learning page."
   },
   {
@@ -2960,7 +3030,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "What shapes a bot",
     "breadcrumb": "Murage docs → Features → What shapes a bot",
     "where": "Murage docs → Features → What shapes a bot",
-    "url": "https://murage.app/docs/features/what-shapes-a-bot#what-shapes-a-bot",
+    "url": "https://murage.ai/docs/features/what-shapes-a-bot#what-shapes-a-bot",
     "text": "Every bot's window has a section called What shapes (bot name), the third section in Bot settings. It lists everything that goes into that bot's instructions, grouped, in the order the model reads them. Desktop app only.\n\nThe groups are:\n- Your rules: House rules, which always come first.\n- Who it is: its description, personality, team brief, its notebook, and About me.\n- What it can use: its computer, connected apps, browser, web search and each skill.\n- This turn: routines, output folder, and the date and time."
   },
   {
@@ -2970,7 +3040,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Switching parts off",
     "breadcrumb": "Murage docs → Features → What shapes a bot",
     "where": "Murage docs → Features → What shapes a bot",
-    "url": "https://murage.app/docs/features/what-shapes-a-bot#switching-parts-off",
+    "url": "https://murage.ai/docs/features/what-shapes-a-bot#switching-parts-off",
     "text": "Parts you chose can be switched off from here: House rules, About me, the team brief, the Chief of Staff guide and each of the bot's own skills. A switched-off row says \"Off. (bot) doesn't read this now.\" Each row has View, and an Edit link that takes you to where the part is written (Edit in Settings for House rules and About me, Open in Skills for skills).\n\nRows with a lock are Murage's own rules. They say \"Always on\" and cannot be switched off."
   },
   {
@@ -2980,7 +3050,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Show exactly what it read",
     "breadcrumb": "Murage docs → Features → What shapes a bot",
     "where": "Murage docs → Features → What shapes a bot",
-    "url": "https://murage.app/docs/features/what-shapes-a-bot#show-exactly-what-it-read",
+    "url": "https://murage.ai/docs/features/what-shapes-a-bot#show-exactly-what-it-read",
     "text": "Press Show exactly what it read to see the bot's full instructions from its last reply, word for word, with the time it read them. If the bot has not replied yet, send it a message and look again."
   },
   {
@@ -2990,7 +3060,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "What's new",
     "breadcrumb": "Murage docs → Features → What's new and the tray",
     "where": "Murage docs → Features → What's new and the tray",
-    "url": "https://murage.app/docs/features/whats-new-and-tray#what-s-new",
+    "url": "https://murage.ai/docs/features/whats-new-and-tray#what-s-new",
     "text": "After an update, Murage shows What's new once: a few cards about what changed. Click any card to try that feature right away. Next moves through the cards, and Read the full release notes opens the notes for the release.\n\nTo see it again later, open the menu under your name at the bottom of the sidebar and choose What's new, or open Settings > About & updates. It is there in the desktop app whenever the current version has a What's new page."
   },
   {
@@ -3000,7 +3070,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Announcements",
     "breadcrumb": "Murage docs → Features → What's new and the tray",
     "where": "Settings → About & updates → Announcements",
-    "url": "https://murage.app/docs/features/whats-new-and-tray#announcements",
+    "url": "https://murage.ai/docs/features/whats-new-and-tray#announcements",
     "text": "Settings → About & updates → Announcements shows short notes from the Murage team: new features, a service problem, a fix to install. Switch off Show announcements to hide them. Security notices always show, even when this is off."
   },
   {
@@ -3010,7 +3080,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Tray and menu bar",
     "breadcrumb": "Murage docs → Features → What's new and the tray",
     "where": "Murage docs → Features → What's new and the tray",
-    "url": "https://murage.app/docs/features/whats-new-and-tray#tray-and-menu-bar",
+    "url": "https://murage.ai/docs/features/whats-new-and-tray#tray-and-menu-bar",
     "text": "The Murage icon in the menu bar (macOS) or system tray (Windows and Linux) shows what needs you. On macOS the count sits next to the icon; on Windows and Linux the icon changes to show that something is waiting.\n\nIts menu lists, from the top:\n- Needs you, with one row per approval or question. Ordinary approvals open a small menu with Open, Allow once and Deny, so you can answer right there. Sensitive ones open the full card in the app.\n- See all in Inbox.\n- Working now: what each bot is doing and for how long.\n- New message to…: pick a bot to message it.\n- Open Murage, Pause automations (or Resume automations), Check for updates and Quit Murage."
   },
   {
@@ -3019,7 +3089,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Understand engine paths, credentials, and the local configuration boundary.",
     "breadcrumb": "Murage docs → Getting started → Configuration",
     "where": "Murage docs → Getting started → Configuration",
-    "url": "https://murage.app/docs/getting-started/configuration",
+    "url": "https://murage.ai/docs/getting-started/configuration",
     "text": "Most users configure Murage from the app. The packaged desktop validates credentials before saving them and stores supported secrets with the operating system's secure storage."
   },
   {
@@ -3029,7 +3099,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Engine discovery",
     "breadcrumb": "Murage docs → Getting started → Configuration",
     "where": "Settings → Engines",
-    "url": "https://murage.app/docs/getting-started/configuration#engine-discovery",
+    "url": "https://murage.ai/docs/getting-started/configuration#engine-discovery",
     "text": "Murage checks the inherited process path, common install locations, and the login shell. If an engine is installed somewhere unusual, open Settings → Engines and choose its executable explicitly.\n\nExplicit paths are useful when you:\n- keep multiple CLI versions;\n- use a wrapper script;\n- installed an engine in a directory desktop apps cannot discover; or\n- launch Murage from a Windows shortcut or Linux application menu with a different environment from your terminal."
   },
   {
@@ -3039,7 +3109,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Optional credentials",
     "breadcrumb": "Murage docs → Getting started → Configuration",
     "where": "Murage docs → Getting started → Configuration",
-    "url": "https://murage.app/docs/getting-started/configuration#optional-credentials",
+    "url": "https://murage.ai/docs/getting-started/configuration#optional-credentials",
     "text": "| Credential | Enables |\n|---|---|\n| Flux Router key | Models and connected apps |\n| Box API key | Hosted Linux computers |\n| ElevenLabs API key | Spoken replies and voice mode |\n| OpenCode API key | Optional alternative to an existing OpenCode provider login |\n\nLocal agent chat works without these credentials."
   },
   {
@@ -3049,7 +3119,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Environment configuration",
     "breadcrumb": "Murage docs → Getting started → Configuration",
     "where": "Murage docs → Getting started → Configuration",
-    "url": "https://murage.app/docs/getting-started/configuration#environment-configuration",
+    "url": "https://murage.ai/docs/getting-started/configuration#environment-configuration",
     "text": "Source and headless runs can set supported environment variables before starting the harness. The app-level settings are preferable for normal packaged use because they validate inputs and keep secret values out of the renderer."
   },
   {
@@ -3059,7 +3129,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Per-instance Claude tool scope",
     "breadcrumb": "Murage docs → Getting started → Configuration",
     "where": "Murage docs → Getting started → Configuration",
-    "url": "https://murage.app/docs/getting-started/configuration#per-instance-claude-tool-scope",
+    "url": "https://murage.ai/docs/getting-started/configuration#per-instance-claude-tool-scope",
     "text": "Source and headless installations can give separate Claude instances different built-in tool sets in ~/.murage/config.json:\n\ntools selects Claude's available built-ins; an explicit empty array disables every built-in, while omitting it keeps Claude's default set. disallowedTools applies Claude tool-name patterns as an additional deny list. These settings do not grant or pre-approve MCP integrations, which remain controlled by the instance's mounted integrations and Murage permission flow.\n\nA prompt becomes conversation history and may be sent to an agent provider. Use App Settings or environment configuration for credentials."
   },
   {
@@ -3069,7 +3139,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Before you start",
     "breadcrumb": "Murage docs → Getting started → Create your first bot",
     "where": "App settings → Agent engines",
-    "url": "https://murage.app/docs/getting-started/first-bot#before-you-start",
+    "url": "https://murage.ai/docs/getting-started/first-bot#before-you-start",
     "text": "Install and sign in to at least one supported agent CLI. Murage detects installed engines during onboarding and again from App settings → Agent engines."
   },
   {
@@ -3079,7 +3149,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Create the bot",
     "breadcrumb": "Murage docs → Getting started → Create your first bot",
     "where": "Murage docs → Getting started → Create your first bot",
-    "url": "https://murage.app/docs/getting-started/first-bot#create-the-bot",
+    "url": "https://murage.ai/docs/getting-started/first-bot#create-the-bot",
     "text": "1. Select New or share in the sidebar.\n2. Choose New bot.\n3. Give the bot a clear name and purpose.\n4. Select its agent engine and model.\n5. Choose a working folder if it should edit files or work in a repository.\n\nThe working folder matters: it becomes the bot's starting context and limits accidental edits elsewhere. Use a dedicated project folder for coding, research, or content work."
   },
   {
@@ -3089,7 +3159,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Give it a useful first task",
     "breadcrumb": "Murage docs → Getting started → Create your first bot",
     "where": "Murage docs → Getting started → Create your first bot",
-    "url": "https://murage.app/docs/getting-started/first-bot#give-it-a-useful-first-task",
+    "url": "https://murage.ai/docs/getting-started/first-bot#give-it-a-useful-first-task",
     "text": "Start with a concrete outcome and the constraints that matter:\n\nOnce you trust the diagnosis, ask the bot to implement the change. This keeps review and mutation as separate, easy-to-check steps."
   },
   {
@@ -3099,7 +3169,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Tune the bot",
     "breadcrumb": "Murage docs → Getting started → Create your first bot",
     "where": "Murage docs → Getting started → Create your first bot",
-    "url": "https://murage.app/docs/getting-started/first-bot#tune-the-bot",
+    "url": "https://murage.ai/docs/getting-started/first-bot#tune-the-bot",
     "text": "Open Bot settings to change its name, avatar, instructions, engine, model, working folder, and computer setup. Different bots can use different engines and folders at the same time.\n\nMurage launches agent tools you installed. If an engine returns a 401 or asks you to sign in, finish that engine's own CLI login, then refresh detection in App settings."
   },
   {
@@ -3109,7 +3179,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Download a released build",
     "breadcrumb": "Murage docs → Getting started → Installation",
     "where": "More info → Run anyway",
-    "url": "https://murage.app/docs/getting-started/installation#download-a-released-build",
+    "url": "https://murage.ai/docs/getting-started/installation#download-a-released-build",
     "text": "Choose your computer below. Each link always downloads the latest published build.\n\n| Platform | Recommended package | Notes |\n|---|---|---|\n| macOS Apple silicon | Download .dmg | Signed and notarized. Drag to Applications. |\n| macOS Intel | Download .dmg | Signed and notarized. |\n| Windows x64 | Download installer | Per-user installer; Windows signing is not yet available. |\n| Ubuntu 24.04 x64 | Download .deb · AppImage | The .deb is recommended; the AppImage is portable. |\n\nThe Windows installer is not code-signed yet. Windows may show “Unknown publisher.” Verify that you downloaded it from the official Murage releases repository before choosing More info → Run anyway."
   },
   {
@@ -3119,7 +3189,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Install an agent CLI",
     "breadcrumb": "Murage docs → Getting started → Installation",
     "where": "Murage docs → Getting started → Installation",
-    "url": "https://murage.app/docs/getting-started/installation#install-an-agent-cli",
+    "url": "https://murage.ai/docs/getting-started/installation#install-an-agent-cli",
     "text": "Murage needs at least one supported agent engine installed and signed in. Claude and Codex are the most common starting points.\n\n1. Install the CLI from its official provider.\n2. Run it once in a terminal and complete sign-in.\n3. Restart Murage.\n4. Open the model picker. Available engines appear normally; unavailable engines explain what is missing.\n\nSee Agent engines for the complete list and explicit path overrides."
   },
   {
@@ -3129,7 +3199,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Build from source",
     "breadcrumb": "Murage docs → Getting started → Installation",
     "where": "Murage docs → Getting started → Installation",
-    "url": "https://murage.app/docs/getting-started/installation#build-from-source",
+    "url": "https://murage.ai/docs/getting-started/installation#build-from-source",
     "text": "Requirements: Node.js 24 or newer, pnpm 10.33.0, and at least one authenticated agent CLI.\n\nRun the harness, web UI, and Electron shell in separate terminals:"
   },
   {
@@ -3139,7 +3209,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Where data lives",
     "breadcrumb": "Murage docs → Getting started → Installation",
     "where": "Murage docs → Getting started → Installation",
-    "url": "https://murage.app/docs/getting-started/installation#where-data-lives",
+    "url": "https://murage.ai/docs/getting-started/installation#where-data-lives",
     "text": "Murage stores its application data under ~/.murage. Electron window and browser data use the normal per-platform application data directory."
   },
   {
@@ -3149,7 +3219,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "1. Sidebar",
     "breadcrumb": "Murage docs → Getting started → Quick tour",
     "where": "Murage docs → Getting started → Quick tour",
-    "url": "https://murage.app/docs/getting-started/quick-tour#1-sidebar",
+    "url": "https://murage.ai/docs/getting-started/quick-tour#1-sidebar",
     "text": "The sidebar holds your bots, groups, automations, connected apps, profile, and app settings. Search looks through bot names and message history. Use New or share to create a bot or start a shared room."
   },
   {
@@ -3159,7 +3229,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "2. Conversation",
     "breadcrumb": "Murage docs → Getting started → Quick tour",
     "where": "Murage docs → Getting started → Quick tour",
-    "url": "https://murage.app/docs/getting-started/quick-tour#2-conversation",
+    "url": "https://murage.ai/docs/getting-started/quick-tour#2-conversation",
     "text": "Messages are the work log. Agent replies, questions, approval requests, tool progress, attachments, and failures stay together in the conversation. You can pin, copy, react to, search, and retry messages."
   },
   {
@@ -3169,7 +3239,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "3. Task mode",
     "breadcrumb": "Murage docs → Getting started → Quick tour",
     "where": "Murage docs → Getting started → Quick tour",
-    "url": "https://murage.app/docs/getting-started/quick-tour#3-task-mode",
+    "url": "https://murage.ai/docs/getting-started/quick-tour#3-task-mode",
     "text": "The Task button starts a separate unit of work without losing the main conversation. A task keeps its own status and result, which is useful for parallel or delegated work."
   },
   {
@@ -3179,7 +3249,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "4. Model picker",
     "breadcrumb": "Murage docs → Getting started → Quick tour",
     "where": "Murage docs → Getting started → Quick tour",
-    "url": "https://murage.app/docs/getting-started/quick-tour#4-model-picker",
+    "url": "https://murage.ai/docs/getting-started/quick-tour#4-model-picker",
     "text": "Pick an agent engine and model per bot. The picker separates cloud-backed agent CLIs from local engines and shows what is installed on this machine."
   },
   {
@@ -3189,7 +3259,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "5. Computer and inspector",
     "breadcrumb": "Murage docs → Getting started → Quick tour",
     "where": "Murage docs → Getting started → Quick tour",
-    "url": "https://murage.app/docs/getting-started/quick-tour#5-computer-and-inspector",
+    "url": "https://murage.ai/docs/getting-started/quick-tour#5-computer-and-inspector",
     "text": "Open Bot's computer to choose where visual work runs. Open Inspector to follow lower-level activity when a task is executing."
   },
   {
@@ -3199,7 +3269,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "6. Connected apps and automations",
     "breadcrumb": "Murage docs → Getting started → Quick tour",
     "where": "Murage docs → Getting started → Quick tour",
-    "url": "https://murage.app/docs/getting-started/quick-tour#6-connected-apps-and-automations",
+    "url": "https://murage.ai/docs/getting-started/quick-tour#6-connected-apps-and-automations",
     "text": "Connected apps give bots authenticated tools. Automations turn a good prompt into scheduled or webhook-triggered work."
   },
   {
@@ -3208,7 +3278,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Build a team of AI agents that can talk, use tools, operate computers, and keep working on a schedule.",
     "breadcrumb": "Murage docs",
     "where": "Murage docs",
-    "url": "https://murage.app/docs",
+    "url": "https://murage.ai/docs",
     "text": "Local-first agent workspace\n\nMurage turns agent CLIs into a familiar desktop chat app. Each bot can have its own model, instructions, working folder, connected apps, computer, and recurring work.\n\nMany enginesClaude, Codex, Grok, Cursor, local models, and more\nReal toolsApps, files, terminals, browsers, VMs, and cloud desktops\nYour machineLocal data and bring-your-own agent subscriptions"
   },
   {
@@ -3218,7 +3288,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "How the pieces fit",
     "breadcrumb": "Murage docs",
     "where": "Murage docs",
-    "url": "https://murage.app/docs#how-the-pieces-fit",
+    "url": "https://murage.ai/docs#how-the-pieces-fit",
     "text": "| Layer | What it does | Where to configure it |\n|---|---|---|\n| Bot | Holds the identity, conversation, memory, and defaults | Bot settings |\n| Agent engine | Runs the reasoning loop and tools | Model picker and App settings |\n| Working folder | Gives the bot project context and a safe place to work | Bot settings |\n| Connected apps | Authorizes services such as Gmail or GitHub | Connected apps |\n| Computer | Gives visual control of a desktop environment | Computer panel |\n| Automation | Runs a task later, on a schedule, or from a webhook | Automations |"
   },
   {
@@ -3228,7 +3298,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Choose your path",
     "breadcrumb": "Murage docs",
     "where": "QR code from Settings → Phone and other devices.",
-    "url": "https://murage.app/docs#choose-your-path",
+    "url": "https://murage.ai/docs#choose-your-path",
     "text": "| I want to… | Start here |\n|---|---|\n| Understand the app in five minutes | Quick tour |\n| Pick Claude, Codex, Cursor, Grok, or a local model | Agent engines |\n| Organize bots, tasks, rooms, and delegations | Bots and tasks |\n| Control a browser or desktop | Computers |\n| Run work every morning | Automations |\n| Reach my bots from a phone | The Murage phone app: pair it with a QR code from Settings → Phone and other devices. |\n| Back up or move my data | Data and backups |\n| Build from source or contribute | Contributing |\n\nMurage moves quickly. The changelog records shipped releases; proposed or unfinished work stays on GitHub until it lands."
   },
   {
@@ -3237,7 +3307,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Use the agent subscriptions and CLIs you already have.",
     "breadcrumb": "Murage docs → Agent engines",
     "where": "Murage docs → Agent engines",
-    "url": "https://murage.app/docs/providers",
+    "url": "https://murage.ai/docs/providers",
     "text": "Murage does not proxy every message through its own model account. It starts supported agent CLIs on your computer and normalizes their output through the local harness."
   },
   {
@@ -3247,7 +3317,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Built-in engines",
     "breadcrumb": "Murage docs → Agent engines",
     "where": "Murage docs → Agent engines",
-    "url": "https://murage.app/docs/providers#built-in-engines",
+    "url": "https://murage.ai/docs/providers#built-in-engines",
     "text": "| Engine | Authentication shape | Notes |\n|---|---|---|\n| Claude | Claude CLI login | Strong support for tools, approvals, sessions, and local computer use |\n| Codex | Codex CLI login | Model discovery, approvals, steering, and computer tools |\n| Grok | Grok CLI login | ACP-based local model catalog and session support |\n| Cursor | Cursor Agent CLI login or API key | ACP driver with live model discovery |\n| Kimi | Kimi CLI login | ACP integration |\n| Droid | Factory Droid CLI login | ACP integration |\n| Antigravity | Google Antigravity CLI login | Default Google consumer engine |…"
   },
   {
@@ -3257,7 +3327,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Detection",
     "breadcrumb": "Murage docs → Agent engines",
     "where": "Settings → Engines",
-    "url": "https://murage.app/docs/providers#detection",
+    "url": "https://murage.ai/docs/providers#detection",
     "text": "Murage checks common installation directories and the login shell in the background. Restart the app after installing or authenticating a CLI.\n\nIf detection fails, use Settings → Engines to set an explicit executable path. This is supported for every engine and is the most reliable solution for version managers, wrappers, custom builds, and Windows installations outside the normal path."
   },
   {
@@ -3267,7 +3337,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Model selection",
     "breadcrumb": "Murage docs → Agent engines",
     "where": "Murage docs → Agent engines",
-    "url": "https://murage.app/docs/providers#model-selection",
+    "url": "https://murage.ai/docs/providers#model-selection",
     "text": "The model picker groups models by provider and marks defaults. Supported engines can refresh their model catalog from the installed CLI. Changing the model affects future turns; it does not rewrite earlier transcript history.\n\nYour existing CLI login or provider API key determines access and billing. Murage does not turn one subscription into access to another provider."
   },
   {
@@ -3277,7 +3347,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "“CLI not found”",
     "breadcrumb": "Murage docs → Providers → Engine troubleshooting",
     "where": "Settings → Engines",
-    "url": "https://murage.app/docs/providers/troubleshooting#cli-not-found",
+    "url": "https://murage.ai/docs/providers/troubleshooting#cli-not-found",
     "text": "1. Open a terminal and run the CLI directly.\n2. Confirm the command is an executable, not only a shell alias or function.\n3. Restart Murage after installation.\n4. Set the exact executable in Settings → Engines if automatic detection still fails.\n\nDesktop applications often inherit a different environment than a terminal. This is common on Windows shortcuts, macOS Finder launches, and Linux application menus."
   },
   {
@@ -3287,7 +3357,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Authentication failures",
     "breadcrumb": "Murage docs → Providers → Engine troubleshooting",
     "where": "Murage docs → Providers → Engine troubleshooting",
-    "url": "https://murage.app/docs/providers/troubleshooting#authentication-failures",
+    "url": "https://murage.ai/docs/providers/troubleshooting#authentication-failures",
     "text": "Run the provider's own status or login command in a terminal. Murage uses the CLI's authenticated session; installing the binary alone is not enough.\n\nA 401 Unauthorized response from api.openai.com means the launched Codex process did not receive valid authentication. Confirm codex login status, sign in again if needed, then restart Murage. Do not paste a ChatGPT password into Murage."
   },
   {
@@ -3297,7 +3367,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "A selected model fails",
     "breadcrumb": "Murage docs → Providers → Engine troubleshooting",
     "where": "Murage docs → Providers → Engine troubleshooting",
-    "url": "https://murage.app/docs/providers/troubleshooting#a-selected-model-fails",
+    "url": "https://murage.ai/docs/providers/troubleshooting#a-selected-model-fails",
     "text": "- Refresh the model picker after updating the CLI.\n- Choose a model actually available to that provider account.\n- Confirm a custom wrapper forwards the model argument and preserves the provider's expected environment.\n- Try the provider CLI directly with the same model to separate an account problem from an Murage integration problem."
   },
   {
@@ -3307,7 +3377,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Windows notes",
     "breadcrumb": "Murage docs → Providers → Engine troubleshooting",
     "where": "Murage docs → Providers → Engine troubleshooting",
-    "url": "https://murage.app/docs/providers/troubleshooting#windows-notes",
+    "url": "https://murage.ai/docs/providers/troubleshooting#windows-notes",
     "text": "Use a real .exe, .cmd, or resolvable command path in the engine override. If a CLI was installed in WSL, the Windows desktop app cannot treat that Linux binary as a native Windows executable without an explicit bridge or wrapper."
   },
   {
@@ -3316,7 +3386,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "The boundaries that keep agents, credentials, computers, and paired devices scoped.",
     "breadcrumb": "Murage docs → Security model",
     "where": "Murage docs → Security model",
-    "url": "https://murage.app/docs/security",
+    "url": "https://murage.ai/docs/security",
     "text": "Murage is designed around a local owner, explicit capabilities, and narrow process boundaries. Local-first does not mean risk-free: an agent with tool or computer access can still act on the resources you grant it."
   },
   {
@@ -3326,7 +3396,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Core boundaries",
     "breadcrumb": "Murage docs → Security model",
     "where": "Murage docs → Security model",
-    "url": "https://murage.app/docs/security#core-boundaries",
+    "url": "https://murage.ai/docs/security#core-boundaries",
     "text": "- The harness owns agent processes and listens on loopback.\n- The renderer receives configured-or-not credential state, not secret values.\n- Provider-specific credentials are injected only into the process that needs them.\n- Risky actions become approval cards rather than implicit permission.\n- Local computer control is a separate opt-in and per-bot selection.\n- Paired phones use a default-deny API allowlist and per-device bearer tokens.\n- Cloud and VPS backends are validated before reuse."
   },
   {
@@ -3336,7 +3406,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Your responsibility",
     "breadcrumb": "Murage docs → Security model",
     "where": "Settings → Phone and other devices.",
-    "url": "https://murage.app/docs/security#your-responsibility",
+    "url": "https://murage.ai/docs/security#your-responsibility",
     "text": "- Review approvals, especially shell commands, file writes, and actions in connected services.\n- Use dedicated environments for untrusted or destructive work.\n- Keep provider accounts and connected apps scoped to what a bot needs.\n- Revoke a lost phone or other paired device immediately, in Settings → Phone and other devices.\n- Keep Murage and agent CLIs updated.\n\nSecurity reports should be filed through the repository's documented security channel rather than disclosed in a public issue before a fix is available."
   },
   {
@@ -3346,7 +3416,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Approval cards",
     "breadcrumb": "Murage docs → Security → Permissions and secrets",
     "where": "Murage docs → Security → Permissions and secrets",
-    "url": "https://murage.app/docs/security/permissions-and-secrets#approval-cards",
+    "url": "https://murage.ai/docs/security/permissions-and-secrets#approval-cards",
     "text": "Supported providers emit permission requests and questions through the local harness. Murage displays these inline and records the outcome. Cancellation closes outstanding requests so stale approvals cannot be answered after a turn has ended.\n\n“Always allow” is narrow: it is tied to a server-issued key and a pending request rather than granting arbitrary execution from a paired device."
   },
   {
@@ -3356,7 +3426,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Operating-system permissions",
     "breadcrumb": "Murage docs → Security → Permissions and secrets",
     "where": "Murage docs → Security → Permissions and secrets",
-    "url": "https://murage.app/docs/security/permissions-and-secrets#operating-system-permissions",
+    "url": "https://murage.ai/docs/security/permissions-and-secrets#operating-system-permissions",
     "text": "Screen Recording and Accessibility permissions are controlled by the operating system. The desktop process owns local CUA lifecycle so grants are attributed to Murage."
   },
   {
@@ -3366,7 +3436,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Secret handling",
     "breadcrumb": "Murage docs → Security → Permissions and secrets",
     "where": "Murage docs → Security → Permissions and secrets",
-    "url": "https://murage.app/docs/security/permissions-and-secrets#secret-handling",
+    "url": "https://murage.ai/docs/security/permissions-and-secrets#secret-handling",
     "text": "- Do not paste API keys into chat.\n- Packaged builds use write-only settings and operating-system-backed encryption where supported.\n- Secret values are scrubbed from public configuration responses and mobile APIs.\n- Per-provider environment injection prevents unrelated agent processes from inheriting credentials they do not use.\n- OAuth provider tokens for connected apps stay with the connected-apps service."
   },
   {
@@ -3376,7 +3446,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Shared machines",
     "breadcrumb": "Murage docs → Security → Permissions and secrets",
     "where": "Murage docs → Security → Permissions and secrets",
-    "url": "https://murage.app/docs/security/permissions-and-secrets#shared-machines",
+    "url": "https://murage.ai/docs/security/permissions-and-secrets#shared-machines",
     "text": "Murage assumes the logged-in operating-system user is the workspace owner. On a shared machine, other administrators may be able to read application data or inspect processes. Use a dedicated OS account for stronger separation."
   },
   {
@@ -3385,7 +3455,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Know what Murage stores locally and what to preserve.",
     "breadcrumb": "Murage docs → Self hosting → Data and backups",
     "where": "Murage docs → Self hosting → Data and backups",
-    "url": "https://murage.app/docs/self-hosting/data-and-backups",
+    "url": "https://murage.ai/docs/self-hosting/data-and-backups",
     "text": "Murage keeps its application state under ~/.murage, including configuration, transcripts, message attachments, device pairing state, and the SQLite message store."
   },
   {
@@ -3395,7 +3465,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Back up",
     "breadcrumb": "Murage docs → Self hosting → Data and backups",
     "where": "Murage docs → Self hosting → Data and backups",
-    "url": "https://murage.app/docs/self-hosting/data-and-backups#back-up",
+    "url": "https://murage.ai/docs/self-hosting/data-and-backups#back-up",
     "text": "Close Murage before taking a filesystem-level backup so SQLite and configuration files are captured consistently. Preserve the entire .murage directory rather than selecting individual database files."
   },
   {
@@ -3405,7 +3475,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Turn on backups",
     "breadcrumb": "Murage docs → Self hosting → Data and backups",
     "where": "Murage docs → Self hosting → Data and backups",
-    "url": "https://murage.app/docs/self-hosting/data-and-backups#turn-on-backups",
+    "url": "https://murage.ai/docs/self-hosting/data-and-backups#turn-on-backups",
     "text": "In the Backups settings, choose Turn on backups. Murage asks you for one thing: the folder to keep the backups in. It then creates your recovery key itself, outside that folder, and asks you once to confirm the folder, the key and the one permission it needs: that Murage may close and reopen its own window when you are not using it, so it can take the backup. Murage does that itself; you never need to quit it. Daily backups are on as soon as you confirm.\n\nIf you already keep your own age key file, open I already have a recovery key and Murage will use that one instead of making a new one."
   },
   {
@@ -3415,7 +3485,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Keep a copy of your recovery key",
     "breadcrumb": "Murage docs → Self hosting → Data and backups",
     "where": "Murage docs → Self hosting → Data and backups",
-    "url": "https://murage.app/docs/self-hosting/data-and-backups#keep-a-copy-of-your-recovery-key",
+    "url": "https://murage.ai/docs/self-hosting/data-and-backups#keep-a-copy-of-your-recovery-key",
     "text": "Your recovery key is the only thing that can open your backups, and Murage never keeps a copy. Murage saves it outside both its own data folder and your backup folder, because a key stored beside the archives is lost with them. Use Save a copy… to put a second copy somewhere else, such as a USB drive, another computer or your password manager. Murage never replaces an existing file, and refuses any location inside its data folder or inside your backup folder."
   },
   {
@@ -3425,7 +3495,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Back up now",
     "breadcrumb": "Murage docs → Self hosting → Data and backups",
     "where": "Murage docs → Self hosting → Data and backups",
-    "url": "https://murage.app/docs/self-hosting/data-and-backups#back-up-now",
+    "url": "https://murage.ai/docs/self-hosting/data-and-backups#back-up-now",
     "text": "Once your backup folder and recovery key are chosen and you have allowed Murage to restart for backups, Back up now runs one backup straight away instead of waiting for the daily time. Murage closes its idle services, restarts to take the backup, then reopens. It will not start while a bot is working or another backup is in progress. The result shows as your latest verified backup, just like a scheduled one."
   },
   {
@@ -3435,7 +3505,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Keep an off-site copy",
     "breadcrumb": "Murage docs → Self hosting → Data and backups",
     "where": "Murage docs → Self hosting → Data and backups",
-    "url": "https://murage.app/docs/self-hosting/data-and-backups#keep-an-off-site-copy",
+    "url": "https://murage.ai/docs/self-hosting/data-and-backups#keep-an-off-site-copy",
     "text": "A backup on the same computer, or on a drive next to it, is lost with it. Under Off-site copy (optional) in the Backups settings, Murage can keep a second encrypted copy somewhere else. Choose where:\n- S3-compatible storage, such as Amazon S3, Backblaze B2, Cloudflare R2 or MinIO. Enter the endpoint, bucket, region and access keys from your storage provider. The bucket must already exist.\n- SFTP server (NAS, home server or VPS). Enter a name for the destination, the server name or IP address, the port (usually 22), the user name and a folder on the server. A folder without a leading slash is inside that user's home folder. Murage creates the folder if it is missing.…"
   },
   {
@@ -3445,7 +3515,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Setting up an SFTP server",
     "breadcrumb": "Murage docs → Self hosting → Data and backups",
     "where": "Murage docs → Self hosting → Data and backups",
-    "url": "https://murage.app/docs/self-hosting/data-and-backups#setting-up-an-sftp-server",
+    "url": "https://murage.ai/docs/self-hosting/data-and-backups#setting-up-an-sftp-server",
     "text": "Murage signs in to your SFTP server with its own SSH key, made for that destination only. It never asks for, or uses, the server password.\n\n1. After you save the destination, Murage shows its public key. Choose Copy key.\n2. On the server, add the key as a new line in .ssh/authorized_keys in the home folder of the user you entered.\n3. Choose Test connection. The first time, Murage shows the server's fingerprint (it starts with SHA256:) and asks you to trust it. If you can, compare it with the fingerprint the server itself reports, for example with ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub on the server.…"
   },
   {
@@ -3455,7 +3525,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "What stays private",
     "breadcrumb": "Murage docs → Self hosting → Data and backups",
     "where": "Murage docs → Self hosting → Data and backups",
-    "url": "https://murage.app/docs/self-hosting/data-and-backups#what-stays-private",
+    "url": "https://murage.ai/docs/self-hosting/data-and-backups#what-stays-private",
     "text": "The SSH key and any storage access keys are kept in your operating system's encrypted store, never in the Murage data folder, so they are not part of any backup. The key only exists as a file while Murage is talking to the server, in a private folder outside the data folder, and is removed straight after. Remove this destination forgets the destination's settings, its key and the trusted fingerprint. It does not delete copies already stored there; you can also remove Murage's key from the server's authorized keys."
   },
   {
@@ -3465,7 +3535,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Restore from the off-site copy",
     "breadcrumb": "Murage docs → Self hosting → Data and backups",
     "where": "Murage docs → Self hosting → Data and backups",
-    "url": "https://murage.app/docs/self-hosting/data-and-backups#restore-from-the-off-site-copy",
+    "url": "https://murage.ai/docs/self-hosting/data-and-backups#restore-from-the-off-site-copy",
     "text": "Open Restore and choose Find off-site backups, pick a backup and choose Download verified copy. Then open Backup mode, choose the downloaded file and your recovery key. On a new computer, add the same destination first: for SFTP, add the new key Murage shows to the server, choose the password file you kept with Choose a password file I already have, and choose Test connection. Murage opens the existing repository instead of creating a new one."
   },
   {
@@ -3475,7 +3545,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Do not copy secrets casually",
     "breadcrumb": "Murage docs → Self hosting → Data and backups",
     "where": "Murage docs → Self hosting → Data and backups",
-    "url": "https://murage.app/docs/self-hosting/data-and-backups#do-not-copy-secrets-casually",
+    "url": "https://murage.ai/docs/self-hosting/data-and-backups#do-not-copy-secrets-casually",
     "text": "Packaged desktop builds may protect credentials using operating-system secure storage. Copying the JSON directory to another machine does not necessarily make protected credentials usable there, and it should not be treated as a portable credential export."
   },
   {
@@ -3485,7 +3555,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Disposable computer filesystems",
     "breadcrumb": "Murage docs → Self hosting → Data and backups",
     "where": "Murage docs → Self hosting → Data and backups",
-    "url": "https://murage.app/docs/self-hosting/data-and-backups#disposable-computer-filesystems",
+    "url": "https://murage.ai/docs/self-hosting/data-and-backups#disposable-computer-filesystems",
     "text": "Local VM workspaces are mounted durably, but a self-hosted VPS container filesystem is intentionally disposable. Move important artifacts to a durable workspace, repository, or connected app before removing or upgrading a container."
   },
   {
@@ -3494,7 +3564,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Run the harness and desktop app on infrastructure you control.",
     "breadcrumb": "Murage docs → Self-hosting Murage",
     "where": "Murage docs → Self-hosting Murage",
-    "url": "https://murage.app/docs/self-hosting",
+    "url": "https://murage.ai/docs/self-hosting",
     "text": "Murage is local-first by default: the harness listens on loopback, agent CLIs run on your machine, and application state lives under ~/.murage."
   },
   {
@@ -3504,7 +3574,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Typical self-hosted setup",
     "breadcrumb": "Murage docs → Self-hosting Murage",
     "where": "Murage docs → Self-hosting Murage",
-    "url": "https://murage.app/docs/self-hosting#typical-self-hosted-setup",
+    "url": "https://murage.ai/docs/self-hosting#typical-self-hosted-setup",
     "text": "1. Run Murage on your personal macOS, Windows, or Ubuntu computer.\n2. Install and authenticate the agent CLIs you want to use.\n3. Add optional third-party keys only for the services you need.\n4. Keep the harness on loopback.\n5. Use the paired companion sidecar or Tailscale when another device needs access."
   },
   {
@@ -3514,7 +3584,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "What is still third party",
     "breadcrumb": "Murage docs → Self-hosting Murage",
     "where": "Murage docs → Self-hosting Murage",
-    "url": "https://murage.app/docs/self-hosting#what-is-still-third-party",
+    "url": "https://murage.ai/docs/self-hosting#what-is-still-third-party",
     "text": "Self-hosting Murage does not self-host every optional provider:\n- Agent providers authenticate and bill through their own CLI or API.\n- The connected-apps service owns connected-app OAuth grants.\n- Box owns managed cloud computers.\n- ElevenLabs synthesizes speech when voice is enabled.\n\nThese services are optional. Local chat through a locally installed agent CLI does not require them."
   },
   {
@@ -3524,7 +3594,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Run headless during development",
     "breadcrumb": "Murage docs → Self-hosting Murage",
     "where": "Murage docs → Self-hosting Murage",
-    "url": "https://murage.app/docs/self-hosting#run-headless-during-development",
+    "url": "https://murage.ai/docs/self-hosting#run-headless-during-development",
     "text": "The main harness listens on 127.0.0.1:8799 by default. Keep it private; it owns agent processes, approvals, computers, and workspace configuration."
   },
   {
@@ -3533,7 +3603,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Understand the harness, webhook, and companion network boundaries.",
     "breadcrumb": "Murage docs → Self hosting → Networking",
     "where": "Murage docs → Self hosting → Networking",
-    "url": "https://murage.app/docs/self-hosting/networking",
+    "url": "https://murage.ai/docs/self-hosting/networking",
     "text": "Murage separates its network surfaces by trust level.\n\n| Surface | Default bind | Purpose |\n|---|---|---|\n| Harness | 127.0.0.1:8799 | Full app API and event stream |\n| Webhook receiver | 127.0.0.1:8800 | Health and secret hook endpoints only |\n| Companion sidecar | 0.0.0.0:8810 when enabled | Paired-device, token-authenticated allowlist |\n| Companion control | 127.0.0.1:8811 | Pairing and device administration |"
   },
   {
@@ -3543,7 +3613,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Remote access",
     "breadcrumb": "Murage docs → Self hosting → Networking",
     "where": "Murage docs → Self hosting → Networking",
-    "url": "https://murage.app/docs/self-hosting/networking#remote-access",
+    "url": "https://murage.ai/docs/self-hosting/networking#remote-access",
     "text": "Use the companion sidecar rather than exposing the harness. Tailscale is the recommended remote route because it encrypts and authenticates the network path without making the machine public.\n\nFor webhook delivery, proxy only the dedicated webhook receiver. Never forward the main harness port to the public internet."
   },
   {
@@ -3553,7 +3623,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Port overrides",
     "breadcrumb": "Murage docs → Self hosting → Networking",
     "where": "Murage docs → Self hosting → Networking",
-    "url": "https://murage.app/docs/self-hosting/networking#port-overrides",
+    "url": "https://murage.ai/docs/self-hosting/networking#port-overrides",
     "text": "Source and advanced deployments can change documented ports with the relevant environment settings. When the default harness port is occupied, packaged builds may fall back to another local port and communicate the selected address internally."
   },
   {
@@ -3563,7 +3633,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Connected apps not working: a bot says it has no connected apps",
     "breadcrumb": "Murage docs → Troubleshooting → Connected apps",
     "where": "Sidebar → Apps",
-    "url": "https://murage.app/docs/troubleshooting/connected-apps#connected-apps-not-working-a-bot-says-it-has-no-connected-apps",
+    "url": "https://murage.ai/docs/troubleshooting/connected-apps#connected-apps-not-working-a-bot-says-it-has-no-connected-apps",
     "text": "If a bot says it has no connected apps, or cannot see an app you know is connected:\n\n1. Open Connected apps from the sidebar (Sidebar → Apps, in the row under Needs you).\n2. Press the refresh button at the top of the panel (Refresh connection status).\n3. Check the Connected tab: the account should be listed there.\n4. Send the bot your request again. Each new message checks the connection again, so it does not need a restart.\n5. Check that the bot is allowed to use connected apps: Bot settings → Access → Allow this bot to use connected apps.\n\nBefore 0.1.60, one failed check of the connected-apps service could leave every bot without its apps until Murage restarted.…"
   },
   {
@@ -3573,7 +3643,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Connection completes but the app still shows disconnected",
     "breadcrumb": "Murage docs → Troubleshooting → Connected apps",
     "where": "Murage docs → Troubleshooting → Connected apps",
-    "url": "https://murage.app/docs/troubleshooting/connected-apps#connection-completes-but-the-app-still-shows-disconnected",
+    "url": "https://murage.ai/docs/troubleshooting/connected-apps#connection-completes-but-the-app-still-shows-disconnected",
     "text": "1. Return to Murage after the browser confirms success.\n2. Open Connected apps and press the refresh button (Refresh connection status).\n3. Check the Connected tab for the account, including its alias.\n4. Retry from the original bot after the account appears active."
   },
   {
@@ -3583,7 +3653,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "The account is connected but the agent cannot use it",
     "breadcrumb": "Murage docs → Troubleshooting → Connected apps",
     "where": "Murage docs → Troubleshooting → Connected apps",
-    "url": "https://murage.app/docs/troubleshooting/connected-apps#the-account-is-connected-but-the-agent-cannot-use-it",
+    "url": "https://murage.ai/docs/troubleshooting/connected-apps#the-account-is-connected-but-the-agent-cannot-use-it",
     "text": "Start a new task after connecting the app so the engine receives a fresh tool catalog. Name the service and account explicitly in the request. If several accounts are connected, select or mention the intended alias.\n\nSome engines expose connected tools differently. Verify the chosen engine supports MCP or the connected-tool bridge used by the app."
   },
   {
@@ -3593,7 +3663,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Official build says the service is unavailable",
     "breadcrumb": "Murage docs → Troubleshooting → Connected apps",
     "where": "Murage docs → Troubleshooting → Connected apps",
-    "url": "https://murage.app/docs/troubleshooting/connected-apps#official-build-says-the-service-is-unavailable",
+    "url": "https://murage.ai/docs/troubleshooting/connected-apps#official-build-says-the-service-is-unavailable",
     "text": "Check internet connectivity and try again later before reconnecting every account. The packaged app preserves its installation identity across transient broker outages; rotating or deleting local credentials during an outage can separate existing grants from the installation."
   },
   {
@@ -3603,7 +3673,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "It says connected apps run through Flux Router",
     "breadcrumb": "Murage docs → Troubleshooting → Connected apps",
     "where": "Settings → Models",
-    "url": "https://murage.app/docs/troubleshooting/connected-apps#it-says-connected-apps-run-through-flux-router",
+    "url": "https://murage.ai/docs/troubleshooting/connected-apps#it-says-connected-apps-run-through-flux-router",
     "text": "If you used a key of your own in an earlier version, it is no longer used. Add your Flux Router key under Settings → Models, then connect your apps again from the Connected apps page. Nothing you saved was deleted."
   },
   {
@@ -3612,7 +3682,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Find the failing layer first, then apply the smallest safe fix.",
     "breadcrumb": "Murage docs → Troubleshooting",
     "where": "Murage docs → Troubleshooting",
-    "url": "https://murage.app/docs/troubleshooting",
+    "url": "https://murage.ai/docs/troubleshooting",
     "text": "Most Murage failures come from one of four layers: the desktop app, a local agent CLI, a connected service, or a computer backend."
   },
   {
@@ -3622,7 +3692,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Collect useful evidence",
     "breadcrumb": "Murage docs → Troubleshooting",
     "where": "Murage docs → Troubleshooting",
-    "url": "https://murage.app/docs/troubleshooting#collect-useful-evidence",
+    "url": "https://murage.ai/docs/troubleshooting#collect-useful-evidence",
     "text": "Before opening an issue, record:\n- Murage version and operating system;\n- selected engine and model;\n- the exact visible error, not only “it failed”;\n- whether the same agent CLI works directly in a terminal;\n- whether restarting only the affected task changes the result.\n\nNever post API keys, OAuth callback URLs, bearer tokens, or the contents of secure credential files."
   },
   {
@@ -3631,7 +3701,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Diagnose launch failures and local server conflicts.",
     "breadcrumb": "Murage docs → Troubleshooting → App startup and ports",
     "where": "Murage docs → Troubleshooting → App startup and ports",
-    "url": "https://murage.app/docs/troubleshooting/startup-and-ports",
+    "url": "https://murage.ai/docs/troubleshooting/startup-and-ports",
     "text": "The Electron app starts a local harness and serves the interface from the same machine. The normal port is 8799. If another process already owns it, packaged builds may select a fallback port automatically."
   },
   {
@@ -3641,7 +3711,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "App opens but never becomes ready",
     "breadcrumb": "Murage docs → Troubleshooting → App startup and ports",
     "where": "Murage docs → Troubleshooting → App startup and ports",
-    "url": "https://murage.app/docs/troubleshooting/startup-and-ports#app-opens-but-never-becomes-ready",
+    "url": "https://murage.ai/docs/troubleshooting/startup-and-ports#app-opens-but-never-becomes-ready",
     "text": "1. Quit every Murage window.\n2. Confirm no old Murage process remains.\n3. Start the app once and wait for the local harness.\n4. If it still fails, inspect the desktop log.\n\nOn macOS, packaged logs are under ~/Library/Logs/Murage. On Windows they are under the Murage log directory in %APPDATA%."
   },
   {
@@ -3651,7 +3721,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Development port overrides",
     "breadcrumb": "Murage docs → Troubleshooting → App startup and ports",
     "where": "Murage docs → Troubleshooting → App startup and ports",
-    "url": "https://murage.app/docs/troubleshooting/startup-and-ports#development-port-overrides",
+    "url": "https://murage.ai/docs/troubleshooting/startup-and-ports#development-port-overrides",
     "text": "Use MURAGE_PORT for a source-run harness. A packaged desktop build owns its server lifecycle and may choose a fallback if the preferred port is unavailable."
   },
   {
@@ -3661,7 +3731,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Isolate a test profile",
     "breadcrumb": "Murage docs → Troubleshooting → App startup and ports",
     "where": "Murage docs → Troubleshooting → App startup and ports",
-    "url": "https://murage.app/docs/troubleshooting/startup-and-ports#isolate-a-test-profile",
+    "url": "https://murage.ai/docs/troubleshooting/startup-and-ports#isolate-a-test-profile",
     "text": "Developers can set MURAGE_DATA_DIR to run against a clean Murage data directory. This is useful for reproduction and screenshots without touching a real workspace."
   },
   {
@@ -3670,7 +3740,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Recover from a stuck download or restart and understand supported update paths.",
     "breadcrumb": "Murage docs → Troubleshooting → Desktop updates",
     "where": "Murage docs → Troubleshooting → Desktop updates",
-    "url": "https://murage.app/docs/troubleshooting/updates",
+    "url": "https://murage.ai/docs/troubleshooting/updates",
     "text": "Murage checks for updates in the background and offers the download in a card at the bottom of the window. How the download is applied depends on what you installed.\n\n| Build | What the button does |\n|---|---|\n| macOS, Windows, Linux AppImage | Restart to update: the app replaces itself and reopens. An AppImage is always rewritten at the path you launch, so your launcher, symlink or dock pin keeps working. |\n| Ubuntu .deb (and rpm/pacman) | Install: Murage downloads and verifies the package, copies the install command, and opens a terminal for you to paste it into. The app never installs a system package itself, so it never asks for your administrator password. |…"
   },
   {
@@ -3680,7 +3750,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "The download keeps spinning",
     "breadcrumb": "Murage docs → Troubleshooting → Desktop updates",
     "where": "Murage docs → Troubleshooting → Desktop updates",
-    "url": "https://murage.app/docs/troubleshooting/updates#the-download-keeps-spinning",
+    "url": "https://murage.ai/docs/troubleshooting/updates#the-download-keeps-spinning",
     "text": "Leave the app open long enough for one complete attempt, then quit and reopen it. A failed differential update should fall back to the full package. If the same release remains stuck, download the current installer from the official releases repository and install it over the existing copy."
   },
   {
@@ -3690,7 +3760,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Restart to update does nothing",
     "breadcrumb": "Murage docs → Troubleshooting → Desktop updates",
     "where": "Murage docs → Troubleshooting → Desktop updates",
-    "url": "https://murage.app/docs/troubleshooting/updates#restart-to-update-does-nothing",
+    "url": "https://murage.ai/docs/troubleshooting/updates#restart-to-update-does-nothing",
     "text": "Quit Murage completely and launch it again. If the version did not change, install the latest release manually. Your conversations and settings live outside the application bundle and are not removed by replacing the app."
   },
   {
@@ -3700,7 +3770,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "No terminal opened",
     "breadcrumb": "Murage docs → Troubleshooting → Desktop updates",
     "where": "Murage docs → Troubleshooting → Desktop updates",
-    "url": "https://murage.app/docs/troubleshooting/updates#no-terminal-opened",
+    "url": "https://murage.ai/docs/troubleshooting/updates#no-terminal-opened",
     "text": "The install command is on your clipboard either way. Open a terminal yourself and paste it. If the clipboard was overwritten, the package is already downloaded and you can run:\n\nUse apt-get, not dpkg -i: only apt-get resolves dependencies, and on Ubuntu 24.04 ours are satisfied through virtual packages that dpkg alone will not follow."
   },
   {
@@ -3710,7 +3780,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "heading": "Verify the installed version",
     "breadcrumb": "Murage docs → Troubleshooting → Desktop updates",
     "where": "Murage docs → Troubleshooting → Desktop updates",
-    "url": "https://murage.app/docs/troubleshooting/updates#verify-the-installed-version",
+    "url": "https://murage.ai/docs/troubleshooting/updates#verify-the-installed-version",
     "text": "Open App settings and check the displayed version. A commit merged to main is not in the desktop app until a release workflow publishes a new version.\n\nDo not install update files forwarded through chat or uploaded to an unrelated repository. Use the Murage releases repository and its checksums."
   }
 ];

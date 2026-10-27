@@ -81,9 +81,14 @@ posixOnly("channel reply routing", () => {
     expect(queued.status).toBe(202);
     expect(queued.body.queued).toBe(true);
     writeFileSync(join(fixture.info.dataDir, "finish-fake", String(leadPrompt("lead holds this"))), "");
-    await expect.poll(async () => (await replies(room.threadId)).length, { timeout: 20000 }).toBe(3);
+    // 1.0.8: a released fixture turn ends with a short reply (fake-claude-cli,
+    // 2e4f70b9e; an empty turn now reads as a failed one), so the lead answers
+    // its own message first and the drained reply goes to the member after it.
+    await expect.poll(async () => (await replies(room.threadId)).length, { timeout: 20000 }).toBe(4);
     await expect.poll(idle, { timeout: 20000 }).toBe(true);
-    expect((await replies(room.threadId))[2].from.botId).toBe(member.id);
+    const after = await replies(room.threadId);
+    expect(after[2].from.botId).toBe(lead.id);
+    expect(after[3].from.botId).toBe(member.id);
     const thread = await messages(room.threadId);
     expect(thread.find(message => message.role === "user" && message.text === "and this one?")?.replyToId).toBe(memberMessage.id);
   }, 90000);

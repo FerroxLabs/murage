@@ -17,7 +17,7 @@ const DOCS = join(root, "apps", "docs", "content", "docs");
 const OUT = join(root, "shared", "help-index.ts");
 /** Public docs site. The only location a help answer may hand to the user:
  * a repo path is not something they can open. */
-const SITE = "https://murage.app/docs";
+const SITE = "https://murage.ai/docs";
 /** Each section is a quotable snippet, not a page. Long enough to answer,
  * short enough that a bot can paste it into chat without a wall of text. */
 const MAX_SECTION_CHARS = 700;

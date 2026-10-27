@@ -36,6 +36,7 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/linux-cage
       - name: Build the server bundle (production build)
         run: pnpm build:server
       - name: Restore the fixture
@@ -86,6 +87,7 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/linux-cage
       - name: Prepare the pinned model
         run: node --experimental-strip-types scripts/qualify-memory-runtime.ts --prepare-model --allow-download --destination "${{ github.workspace }}/.planning/memory-evidence/model"
       - name: Run the nightly parity test

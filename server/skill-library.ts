@@ -16,6 +16,11 @@ export interface SkillManifest {
   /** A built-in that belongs to one bot rather than to any message: it is
    *  never chosen by trigger terms, only by `attachedSkillsFor`. */
   attachedTo?: "workspace-chief";
+  /** Who an owner's own skill (a recording, or a folder they wrote) serves:
+   *  "owner" or absent keeps it to turns that answer the owner; "everyone"
+   *  is the owner sharing it with every audience. A skill Murage ships
+   *  ignores it. */
+  audience?: "owner" | "everyone";
 }
 
 export interface BundledSkill {
@@ -50,6 +55,7 @@ export function parseSkillManifest(value: unknown, directory: string): SkillMani
   if (!triggerTerms?.length) throw new Error(`${directory}/manifest.json has no trigger terms`);
   if (!requiredCapabilities) throw new Error(`${directory}/manifest.json has invalid capabilities`);
   if (raw.attachedTo !== undefined && raw.attachedTo !== "workspace-chief") throw new Error(`${directory}/manifest.json has an invalid attachedTo`);
+  if (raw.audience !== undefined && raw.audience !== "owner" && raw.audience !== "everyone") throw new Error(`${directory}/manifest.json has an invalid audience`);
   return {
     id,
     name: raw.name.trim(),
@@ -59,6 +65,7 @@ export function parseSkillManifest(value: unknown, directory: string): SkillMani
     triggerTerms,
     requiredCapabilities,
     ...(raw.attachedTo === "workspace-chief" ? { attachedTo: "workspace-chief" as const } : {}),
+    ...(raw.audience === "owner" || raw.audience === "everyone" ? { audience: raw.audience } : {}),
   };
 }
 
@@ -163,6 +170,17 @@ export function selectBundledSkills(
     manifest.requiredCapabilities.every((capability) => available.has(capability)) &&
     manifest.triggerTerms.some((term) => haystack.includes(term.toLowerCase())),
   );
+}
+
+/** The catalogue a turn may choose from by trigger terms. An owner's own
+ *  skill (a recording from Teach a skill: its narration, window titles and
+ *  control names are the owner's) rides only a turn that answers the owner
+ *  on a bot that takes the owner's own resources (`ownerTurn`), unless the
+ *  owner shared it with `"audience": "everyone"`. A skill Murage ships
+ *  (`shipped`, shippedSkillCheck) rides every audience as before. */
+export function skillsForAudience<T extends BundledSkill>(skills: readonly T[], ownerTurn: boolean, shipped: (skill: BundledSkill) => boolean): T[] {
+  if (ownerTurn) return [...skills];
+  return skills.filter((skill) => shipped(skill) || skill.manifest.audience === "everyone");
 }
 
 /** The skills a turn carries once its tools are mounted: a skill that

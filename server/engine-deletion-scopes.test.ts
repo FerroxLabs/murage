@@ -47,7 +47,10 @@ type Closed = typeof closed & {
 };
 const api = closed as Closed;
 const configure = (dir: string | null) => api.configureScopes?.(dir);
-const foreign = (name: string, argv: string[] = [name]) => ({ ...proc(`/usr/local/bin/${name}`, argv, 9000 + (++counter % 900)) });
+/** A fake pid that is never this test process or its parent: engineState skips its own pid, so a fake engine that drew the worker's
+ * pid (9000-9899 is a real worker pid range on CI runners) would be ignored and a scope it names would read closed. */
+const fakePid = (): number => { let pid: number; do pid = 9000 + (++counter % 900); while (pid === process.pid || pid === process.ppid); return pid; };
+const foreign = (name: string, argv: string[] = [name]) => ({ ...proc(`/usr/local/bin/${name}`, argv, fakePid()) });
 
 /** A data folder with one bot conversation (THREAD) and another of the same bot (OTHER_THREAD), and the owner's own ~/.codex. */
 function world(engine: "codex" | "grok" = "codex", extra: Record<string, unknown> = {}) {

@@ -1,3 +1,4 @@
+import { errorTextCases, errorLogTailCases, ERROR_TEXT_DIAGNOSTIC, ERROR_TEXT_LEAK } from "./testing/error-text-fixtures.ts";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -466,9 +467,43 @@ describe("containerComputerStatus", () => {
     expect(status.viewer_url).toContain("#autoconnect=true&resize=scale&password=secret123");
   });
 
+  for (const source of ["log", "probe"] as const) {
+    it.each(errorTextCases())(`redacts the container ${source} before the owner status cut: $name`, async ({ raw, name }) => {
+      const fake = runner({
+        "/usr/bin/which docker": "docker\n",
+        "/usr/bin/which podman": new Error("missing"),
+        "docker info --format {{.ServerVersion}}": "29\n",
+        [`docker image inspect ${IMAGE}`]: preparedImageInspect(),
+        [`docker inspect ${CONTAINER}`]: readyInspect(),
+        [versionProbe]: new Error(source === "probe" ? raw : "driver unavailable"),
+        [`docker exec ${CONTAINER} tail -c 262144 /var/log/supervisor/cua-driver.error.log`]: source === "log" ? raw : new Error("log missing"),
+      });
+      const status = await containerComputerStatus(fake.run, "linux");
+      expect(status.desktop_error).toBeTruthy();
+      expect(JSON.stringify([status.desktop_error, status.problem])).not.toMatch(ERROR_TEXT_LEAK);
+      if (name === "short diagnostic") expect(status.desktop_error).toBe(raw);
+      else expect(status.desktop_error).toContain("redacted");
+    });
+  }
+
+  it.each(errorLogTailCases())("shows the current container log error after redacting the tail: $name", async ({ raw }) => {
+    const fake = runner({
+      "/usr/bin/which docker": "docker\n",
+      "/usr/bin/which podman": new Error("missing"),
+      "docker info --format {{.ServerVersion}}": "29\n",
+      [`docker image inspect ${IMAGE}`]: preparedImageInspect(),
+      [`docker inspect ${CONTAINER}`]: readyInspect(),
+      [versionProbe]: new Error("driver unavailable"),
+      [`docker exec ${CONTAINER} tail -c 262144 /var/log/supervisor/cua-driver.error.log`]: Buffer.from(raw).subarray(-262144).toString(),
+    });
+    const status = await containerComputerStatus(fake.run, "linux");
+    expect(status.desktop_error).toContain(ERROR_TEXT_DIAGNOSTIC);
+    expect(JSON.stringify([status.desktop_error, status.problem])).not.toMatch(ERROR_TEXT_LEAK);
+  });
+
   it("reports the bounded desktop startup error instead of waiting forever", async () => {
     const errorProbe =
-      `docker exec ${CONTAINER} tail -n 4 /var/log/supervisor/cua-driver.error.log`;
+      `docker exec ${CONTAINER} tail -c 262144 /var/log/supervisor/cua-driver.error.log`;
     const fake = runner({
       "/usr/bin/which docker": "docker\n",
       "/usr/bin/which podman": new Error("missing"),
@@ -487,7 +522,7 @@ describe("containerComputerStatus", () => {
   });
 
   it("does not report ready when the driver's health contract fails", async () => {
-    const errorProbe = `docker exec ${CONTAINER} tail -n 4 /var/log/supervisor/cua-driver.error.log`;
+    const errorProbe = `docker exec ${CONTAINER} tail -c 262144 /var/log/supervisor/cua-driver.error.log`;
     const fake = runner({
       "/usr/bin/which docker": "docker\n",
       "/usr/bin/which podman": new Error("missing"),

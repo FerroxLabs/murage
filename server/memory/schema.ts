@@ -1,6 +1,6 @@
 import { beginIntegrityPass } from "./integrity-state.ts";
 import { seedScrubPassDone } from "./scrub-state.ts";
-import { APP_WRITE_REVISION_TABLE, DIRECT_TURN_INFLIGHT_TABLE, LEGACY_UPGRADE_TABLES, UPGRADE_104_TABLES, UPGRADE_APP_TABLES } from "./upgrade-app-tables.ts";
+import { APP_WRITE_REVISION_TABLE, DIRECT_TURN_INFLIGHT_TABLE, LEGACY_UPGRADE_TABLES, UPGRADE_104_TABLES, UPGRADE_108_TABLES, UPGRADE_APP_TABLES } from "./upgrade-app-tables.ts";
 import { dropWriteRevisionTriggers } from "../app-write-revision.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, closeSync, existsSync, fsyncSync, openSync, renameSync, rmSync, statfsSync } from "node:fs";
@@ -2721,7 +2721,7 @@ export function migrateMemorySchema(db: DatabaseSync, initialMode: "off" | "acti
 /** The branch, line and keyed indexes of the working context (branch-index.ts, keyed-cards.ts): derived from messages, filled per thread. */
 const TURNCTX_DERIVED_TABLES = ["thread_key", "seg", "msg_branch", "fill_pending", "line", "branch_change", "message_image", "attachment_name", "keyed_card"] as const;
 /** The tables of messages.db that only 1.0.2 writes, all derived from other rows or holding the place of derived work (so a downgrade loses nothing). */
-export const UPGRADE_DERIVED_TABLES = ["upgrade_integrity_pass", "browser_check_pending", "open_card", "turn_first", ...TURNCTX_DERIVED_TABLES, "transcript_index_state", ...UPGRADE_APP_TABLES, ...UPGRADE_104_TABLES, ...LEGACY_UPGRADE_TABLES.keys()] as const;
+export const UPGRADE_DERIVED_TABLES = ["upgrade_integrity_pass", "browser_check_pending", "open_card", "turn_first", ...TURNCTX_DERIVED_TABLES, "transcript_index_state", ...UPGRADE_APP_TABLES, ...UPGRADE_104_TABLES, ...UPGRADE_108_TABLES, ...LEGACY_UPGRADE_TABLES.keys()] as const;
 /** What a file going back to 1.0.2 or later (to >= 10) keeps of the above: the tables 1.0.2 itself makes on every open (message-tables.ts
  * initializeMessageTables, branch-index.ts, upgrade-app-tables.ts), with their rows, their indexes and their fill places in
  * transcript_index_state (1.0.3 keeps them with the same code; its one own place, the seq walk's row, leaves with the seq column:

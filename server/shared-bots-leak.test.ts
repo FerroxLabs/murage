@@ -178,7 +178,7 @@ it("Sales skill pin omits learned home revisions but retains owner-installed ski
     const installed=installSkill(f.iris.id,source,[{path:"SKILL.md",content:`---\nname: ${name}\ndescription: ${canary}\n---\n\n${canary}\n`}]); expect(installed).not.toHaveProperty("error");
     expect(setSkillEnabled(f.iris.id,name,true)).not.toHaveProperty("error");
   }
-  const pin=createProcedurePin(f.iris.id,f.work.threadId,[],[],undefined,{audienceKey:`bot:${f.iris.id}:team:${f.sales}:owner`,allowedScopeIds:[f.scopes.own]});
+  const pin=createProcedurePin(f.iris.id,f.work.threadId,[],[],undefined,{audienceKey:`bot:${f.iris.id}:team:${f.sales}:owner`,allowedScopeIds:[f.scopes.own]},{ownerTurn:true,shipped:()=>true});
   const text=readFileSync(join(DATA_DIR,"skill-state",f.iris.id,"task-bundles",f.work.threadId,pin.bundleId+".json"),"utf8");
   expect(text).not.toContain("CANARY_DESIGN_SKILL"); expect(text).toContain("CANARY_GENERAL_SKILL");
 });
@@ -211,7 +211,7 @@ it("card-boundary summaries validate copied source ancestry", async () => {
 it("a pre-share procedure pin cannot materialize learned home bytes into Sales", async () => {
   const f=fixture();const {installSkill,setSkillEnabled}=await import("./skills.ts");const {createProcedurePin,preparePinnedProcedures}=await import("./procedure-bundles.ts");
   installSkill(f.iris.id,"learn:conversation",[{path:"SKILL.md",content:"---\nname: secret-work\ndescription: CANARY_DESIGN_PIN\n---\n\nCANARY_DESIGN_PIN"}]);setSkillEnabled(f.iris.id,"secret-work",true);
-  const old=createProcedurePin(f.iris.id,f.work.threadId,[],[],undefined,{audienceKey:`bot:${f.iris.id}:owner`,allowedScopeIds:[f.scopes.home]});
+  const old=createProcedurePin(f.iris.id,f.work.threadId,[],[],undefined,{audienceKey:`bot:${f.iris.id}:owner`,allowedScopeIds:[f.scopes.home]},{ownerTurn:true,shipped:()=>true});
   expect(()=>preparePinnedProcedures(f.iris.id,f.work.threadId,old,false,{audienceKey:`bot:${f.iris.id}:team:${f.sales}:owner`,allowedScopeIds:[f.scopes.own]})).toThrow("AUDIENCE");
 });
 // A pin that no longer fits its audience (here: a pinned skill was removed)
@@ -226,7 +226,7 @@ it("a released Sales pin relinks its native skills and drops a removed skill's l
     expect(setSkillEnabled(f.iris.id,name,true)).not.toHaveProperty("error");
   }
   const sales={audienceKey:`bot:${f.iris.id}:team:${f.sales}:owner`,allowedScopeIds:[f.scopes.own]};
-  const old=f.store.pinTaskProcedures(f.iris.id,f.work.threadId,createProcedurePin(f.iris.id,f.work.threadId,[],[],undefined,sales));
+  const old=f.store.pinTaskProcedures(f.iris.id,f.work.threadId,createProcedurePin(f.iris.id,f.work.threadId,[],[],undefined,sales,{ownerTurn:true,shipped:()=>true}));
   preparePinnedProcedures(f.iris.id,f.work.threadId,old,true,sales);
   const desk=taskWorkspacePath(DATA_DIR,f.iris.id,f.work.threadId);
   expect(desk.startsWith(join(botWorkspacePath(DATA_DIR,f.iris.id),"threads"))).toBe(false);
@@ -235,7 +235,7 @@ it("a released Sales pin relinks its native skills and drops a removed skill's l
   // the dispatch path (index.ts): a pin that no longer fits is released, then the turn pins again
   expect(procedurePinFitsAudience(f.iris.id,f.work.threadId,old,sales)).toBe(false);
   f.store.releaseTaskProcedures(f.iris.id,f.work.threadId);
-  const pin=f.store.pinTaskProcedures(f.iris.id,f.work.threadId,createProcedurePin(f.iris.id,f.work.threadId,[],[],undefined,sales));
+  const pin=f.store.pinTaskProcedures(f.iris.id,f.work.threadId,createProcedurePin(f.iris.id,f.work.threadId,[],[],undefined,sales,{ownerTurn:true,shipped:()=>true}));
   expect(pin.bundleId).not.toBe(old.bundleId);
   expect(()=>preparePinnedProcedures(f.iris.id,f.work.threadId,pin,true,sales)).not.toThrow();
   for(const dir of [".claude",".agents",".grok"]){
@@ -316,7 +316,7 @@ it("contact grants cannot expose general or partition scopes",async()=>{
 it("memory-off non-home turns still pin only their allowed skills",async()=>{
   const f=fixture();database().exec("UPDATE memory_meta SET mode='off'");const {installSkill,setSkillEnabled}=await import("./skills.ts");const {createProcedurePin,preparePinnedProcedures}=await import("./procedure-bundles.ts");
   installSkill(f.iris.id,"learn:conversation",[{path:"SKILL.md",content:"---\nname: private-method\ndescription: CANARY_DESIGN_OFF\n---\n\nCANARY_DESIGN_OFF"}]);setSkillEnabled(f.iris.id,"private-method",true);
-  const pin=createProcedurePin(f.iris.id,f.work.threadId,[],[]);
+  const pin=createProcedurePin(f.iris.id,f.work.threadId,[],[],undefined,undefined,{ownerTurn:true,shipped:()=>true});
   expect(()=>preparePinnedProcedures(f.iris.id,f.work.threadId,pin,false)).not.toThrow();
 });
 it("room prompt consumption omits copied results from another partition",async()=>{

@@ -23,6 +23,7 @@
 // override and restore shape follow Gemini CLI's gitService, the sanitized
 // GIT_* env list and the exclude categories follow Roo-Code's checkpoint
 // service, and the snapshot-before-every-turn cadence follows Cline.
+import { engineStderrRedacted } from "./drivers/acp/core.ts";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
@@ -235,7 +236,7 @@ function runGit(args: string[], cwd: string, env: NodeJS.ProcessEnv): Promise<st
       args,
       { cwd, env, windowsHide: true, encoding: "utf8", timeout: 120_000, maxBuffer: 16 * 1024 * 1024 },
       (err, stdout, stderr) => {
-        if (err) rejectPromise(new Error(`git ${args[0]}: ${(stderr || err.message).trim().slice(0, 400)}`));
+        if (err) rejectPromise(new Error(`git ${args[0]}: ${engineStderrRedacted(stderr || err.message, false).trim().slice(0, 400)}`));
         else resolvePromise(stdout);
       },
     );
@@ -255,7 +256,7 @@ function hasStagedChanges(cwd: string, env: NodeJS.ProcessEnv): Promise<boolean>
       (err, _stdout, stderr) => {
         if (err === null) resolvePromise(false);
         else if (err.code === 1) resolvePromise(true);
-        else rejectPromise(new Error(`git diff: ${(stderr || err.message).trim().slice(0, 400)}`));
+        else rejectPromise(new Error(`git diff: ${engineStderrRedacted(stderr || err.message, false).trim().slice(0, 400)}`));
       },
     );
   });

@@ -39,6 +39,8 @@ const SAMPLES = [
   // 1.0.4 step-up routes (SL-K/SL-I chat permissions and limit backup, MCP-118-175 enable cards, SL-H attachment remove).
   ["POST", "/api/bots/b1/tasks/t1/permissions/refresh"], ["PUT", "/api/bots/b1/limit-backup"], ["DELETE", "/api/bots/b1/limit-backup"],
   ["POST", "/api/bots/b1/mcp-enable-cards/c1/enable"], ["POST", "/api/storage/attachments/remove"],
+  // 1.0.8 step-up route (A-UI: raising the default offers it to the bot's open chats).
+  ["POST", "/api/bots/b1/permissions/refresh"],
 ];
 
 describe("every step-up route has a human label", () => {

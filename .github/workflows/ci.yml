@@ -125,6 +125,8 @@ jobs:
         # Env-shape regression the tests never touch. Same job, same Node.
         run: pnpm broker:check
       - run: pnpm check:contrast
+      - uses: ./.github/actions/linux-cage
+        if: runner.os == 'Linux'
       - run: pnpm broker:test
       - name: Check the local catalog is not stale
         # library/catalog.json bakes profileReviewHash at build time and the
@@ -246,6 +248,24 @@ jobs:
         run: |
           dir="$RUNNER_TEMP/murage-test-tmp"; mkdir -p "$dir"; win=$(cygpath -w "$dir")
           { echo "TEMP=$win"; echo "TMP=$win"; } >> "$GITHUB_ENV"
+      - name: Provision required Windows command fixtures
+        if: matrix.os == 'windows-latest'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1) { throw 'Windows PowerShell 5.1 is required' }
+          $fixtureVersion = '7.4.13'
+          $fixturePowerShell = Join-Path $env:RUNNER_TEMP "pwsh-$fixtureVersion"
+          $fixtureArchive = Join-Path $env:RUNNER_TEMP "pwsh-$fixtureVersion.zip"
+          Invoke-WebRequest "https://github.com/PowerShell/PowerShell/releases/download/v$fixtureVersion/PowerShell-$fixtureVersion-win-x64.zip" -OutFile $fixtureArchive
+          Expand-Archive $fixtureArchive $fixturePowerShell -Force
+          $actual = & "$fixturePowerShell/pwsh.exe" -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion.ToString()'
+          if ($LASTEXITCODE -ne 0 -or $actual -ne $fixtureVersion) { throw 'Required pwsh version did not answer' }
+          $fixtureBash = Join-Path $env:ProgramFiles 'Git/bin'
+          & "$fixtureBash/bash.exe" --version
+          if ($LASTEXITCODE -ne 0) { throw 'Git Bash is required' }
+          $fixturePowerShell | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          $fixtureBash | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Run Vitest shard
         if: inputs.vitest_file == ''
         shell: bash
@@ -275,6 +295,39 @@ jobs:
           echo "Scoped Vitest confirmation only: $VITEST_FILE"
           test_paths=(); while IFS= read -r test_path; do test_paths+=("$test_path"); done <<< "$VITEST_FILE"
           pnpm exec vitest run "${test_paths[@]}"
+
+  host-power-arm64:
+    if: ${{ !inputs.windows_only && !inputs.human_files }}
+    name: S4 power block (Linux arm64)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install cage build prerequisites
+        run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libseccomp-dev binutils xz-utils apparmor
+      - run: pnpm install --frozen-lockfile
+      - name: Build the native arm64 cage
+        run: pnpm build:murage-cage
+      - name: Allow source-path bwrap user namespaces when AppArmor is present
+        shell: bash
+        run: |
+          if [ -d /sys/kernel/security/apparmor ]; then
+            cage_bwrap="$(realpath dist-native/cage/linux-arm64/bwrap)"
+            printf 'profile murage-src-cage-bwrap "%s" flags=(unconfined) { userns, }\n' "$cage_bwrap" | sudo apparmor_parser -r
+          fi
+      - name: Smoke the native bwrap user namespace
+        run: dist-native/cage/linux-arm64/bwrap --unshare-user --unshare-pid --ro-bind / / --proc /proc --dev /dev true
+      - name: Verify the arm64 power block
+        env:
+          MURAGE_TEST_REQUIRE_HOST_POWER_CAGE: "1"
+        run: pnpm exec vitest run server/host-power.test.ts server/procs.test.ts scripts/build-murage-cage.test.mjs scripts/power-seccomp.test.mjs
 
   human:
     if: ${{ !inputs.windows_only && !inputs.human_files }}
@@ -307,6 +360,8 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # the harness server prepares the Linux cage at start (1.0.8): build it first, as the Vitest jobs do
+      - uses: ./.github/actions/linux-cage
       - name: Install the Playwright browser
         run: pnpm exec playwright install --with-deps chromium
       - name: production UI build
@@ -391,7 +446,7 @@ jobs:
   required:
     if: ${{ always() && !inputs.windows_only && !inputs.vitest_file && !inputs.human_files }}
     name: required CI completion
-    needs: [quality, vitest, human, control-plane, mobile, package-linux]
+    needs: [quality, vitest, host-power-arm64, human, control-plane, mobile, package-linux]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -400,6 +455,7 @@ jobs:
         env:
           QUALITY: ${{ needs.quality.result }}
           VITEST: ${{ needs.vitest.result }}
+          HOST_POWER_ARM64: ${{ needs.host-power-arm64.result }}
           HUMAN: ${{ needs.human.result }}
           CONTROL_PLANE: ${{ needs.control-plane.result }}
           MOBILE: ${{ needs.mobile.result }}
@@ -407,6 +463,7 @@ jobs:
         run: |
           test "$QUALITY" = success
           test "$VITEST" = success
+          test "$HOST_POWER_ARM64" = success
           test "$HUMAN" = success
           test "$CONTROL_PLANE" = success
           test "$MOBILE" = success
@@ -449,6 +506,8 @@ jobs:
           console.log(`Human-only confirmation: ${files.join(', ')}; prior test, control-plane and package results are reused.`);
           EOF
       - run: pnpm install --frozen-lockfile
+      # the harness server prepares the Linux cage at start (1.0.8): build it first, as the Vitest jobs do
+      - uses: ./.github/actions/linux-cage
       - name: Install the Playwright browser
         run: pnpm exec playwright install --with-deps chromium
       - name: production UI build
@@ -486,7 +545,7 @@ jobs:
     if: ${{ !inputs.windows_only && !inputs.human_files }}
     name: control-plane check + workerd tests + dry run
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -498,6 +557,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm control-plane:check
+      - uses: ./.github/actions/linux-cage
       - run: pnpm control-plane:test
       - run: pnpm control-plane:dry-run
 
@@ -507,10 +567,10 @@ jobs:
     # apps/mobile is a standalone package with its own lockfile, outside the
     # workspace. Its Vitest suite pins what the iOS and Android shells agree
     # on (the shared fixtures, the channel scripts, the source guards) and the
-    # launcher; nothing else runs it. No native builds: Xcode and Gradle stay
+    # launcher; nothing else runs it. Xcode and Gradle stay
     # off CI, and the fixture oracles also run in the root suite.
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -526,6 +586,7 @@ jobs:
         run: pnpm install --frozen-lockfile --ignore-workspace
       - working-directory: apps/mobile
         run: pnpm typecheck
+      - uses: ./.github/actions/linux-cage
       - working-directory: apps/mobile
         run: pnpm vitest run
 
@@ -550,6 +611,7 @@ jobs:
           sudo apt-get update && sudo apt-get install -y
           at-spi2-core dbus-x11 desktop-file-utils libxi6 libxkbcommon0 squashfs-tools x11-utils xdotool xvfb
           build-essential binutils libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev libffi-dev liblzma-dev
+          pkg-config libseccomp-dev xz-utils python3 python3-pip git linux-libc-dev
       - run: pnpm install --frozen-lockfile
       - name: Stage the pinned CUA runtime
         run: pnpm build:cua:linux
@@ -565,6 +627,10 @@ jobs:
         run: |
           gepa_hash="$(node -e 'const fs=require("node:fs"); const m=JSON.parse(fs.readFileSync("qualification-evidence/gepa-package-metadata.json","utf8")); const h=m.extraMetadata.murageGepaManifests["linux-x64"]; if(!/^[a-f0-9]{64}$/.test(h))process.exit(1); process.stdout.write(h)')"
           pnpm package:linux:offline "--config.extraMetadata.murageGepaManifests.linux-x64=$gepa_hash"
+      - name: Enforce the Linux GLIBC floor on shipped artifacts
+        run: |
+          v="$(node -p 'require("./package.json").version')"
+          node scripts/check-linux-glibc-floor.mjs "release/Murage-$v-amd64.deb" "release/Murage-$v-x86_64.AppImage" dist-native/fuigo/linux-x64/fuigo
       - run: node scripts/verify-linux-package.mjs
       - name: Match a normal Ubuntu package parent on the ephemeral runner
         run: |
