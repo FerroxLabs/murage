@@ -51,6 +51,7 @@ const BOT_DEFAULTS: SettingsCard[] = [
 
 // ---- Skills (L1) ----
 const SKILLS: SettingsCard[] = [
+  card("recorder", "skills", "skill-recorder-heading", { keywords: ["teach", "teach a skill", "skill recorder", "record", "workflow", "learn", "early", "experimental"] }),
   card("library", "skills", "skills-settings-title", { keywords: ["skills", "skill", "import", "library", "instructions"] }),
   card("scan-rules", "skills", "skill-scan-rules-heading", { keywords: ["scan", "scan rules", "import check"], advanced: true }),
 ];
@@ -110,6 +111,7 @@ const REACH: SettingsCard[] = [
 
 // ---- Devices (L4) ----
 const DEVICES: SettingsCard[] = [
+  card("browser", "companion", "browser-settings-heading", { keywords: ["built-in browser", "browser", "browser switch", "browser access"] }),
   card("pairing", "companion", "companion-heading", { keywords: ["companion", "phone", "pair", "mobile", "devices", "tablet", "laptop", "browser", "webui", "qr", "code", "tailscale", "remote access"] }),
   card("script-access", "companion", "script-access-heading", { keywords: ["script access", "scripts", "script"], advanced: true }),
   card("vps", "companion", "vps-heading", { keywords: ["vps", "remote computer", "server", "ssh", "box", "cloud computer", "remote"], advanced: true }),
@@ -138,7 +140,6 @@ const ABOUT: SettingsCard[] = [
   card("setup", "about", "setup-heading", { keywords: ["setup", "first run", "get set up", "walkthrough"] }),
   card("shortcuts", "about", "shortcuts-heading", { keywords: ["keyboard", "shortcuts"], surface: "any" }),
   card("previous-version", "about", "previous-version-heading", { keywords: ["previous version", "go back", "downgrade", "older version", "reinstall", "roll back"] }),
-  card("experimental", "about", "experimental-settings", { keywords: ["early", "preview", "labs", "teach", "teach a skill", "skill recorder", "built-in browser"], advanced: true }),
 ];
 
 export const SETTINGS_CARDS: readonly SettingsCard[] = [

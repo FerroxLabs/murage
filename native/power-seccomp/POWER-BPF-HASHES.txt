@@ -1,0 +1,5 @@
+murage-power.bpf sha256, Ubuntu 24.04, libseccomp 2.5.5, cc -O2 -Wall -Wextra -Werror, source sha256 a37873941dd5c246fd7219288893c4b2b6eb7212a5ff0a1c3d1e0905459ce60f
+x86_64   72cf57db4cd8ff5ec32f5a477be727ac0cfa29d8a9b240515dc4fb2504aed4a6
+aarch64  ed3bd9b4e5761211665c25c00153aaf1de2c21851a414c5e76ef689c7eb06c3a
+x86_64 built on build-host (g108-native, 2026-10-26); the bubblewrap 0.13.1 rebuild emits the same bytes.
+aarch64 built on the build host cax11 Ubuntu 24.04, 2026-10-26, libseccomp 2.5.5, cc 13.3.0; two builds emit identical bytes.

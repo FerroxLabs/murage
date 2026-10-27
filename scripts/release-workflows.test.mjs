@@ -14,7 +14,7 @@
 //
 // Parsing, not grepping: an `if:` in the wrong place still greps fine.
 
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -97,6 +97,99 @@ describe("WhatsApp final release evidence", () => {
 const workflows = join(dirname(dirname(fileURLToPath(import.meta.url))), ".github", "workflows");
 const read = (name) => readFileSync(join(workflows, name), "utf8");
 const load = (name) => parse(read(name));
+
+describe("Linux Vitest cage preparation", () => {
+  const repo = dirname(workflows);
+  const action = name => parse(readFileSync(join(repo, "actions", name, "action.yml"), "utf8"));
+  const linuxStep = step => !/(?:runner\.os|matrix\.os)\s*==\s*['"](?:Windows|macOS|windows-[^'"]+|macos-[^'"]+)['"]/.test(step.if ?? "");
+  const expand = steps => steps.filter(linuxStep).flatMap(step => {
+    if (step.uses?.startsWith("./.github/actions/")) {
+      // The parent must run on Linux too; do not count a guarded build as a
+      // prerequisite for tests that run without that guard.
+      expect([undefined, "runner.os == 'Linux'"]).toContain(step.if);
+      expect(step["continue-on-error"]).toBeUndefined();
+      return expand(action(step.uses.split("/").at(-1)).runs.steps);
+    }
+    return [step];
+  });
+  // 1.0.8: the human specs' harness server prepares the cage at start too
+  const invokesVitest = run => /\bvitest(?:\s|\/vitest\.mjs)|\bpnpm (?:test(?:\s|$)|test:human(?:\s|$)|broker:test|control-plane:test)|run-isolated-human-specs|playwright test|scripts\/scale\/hz-vitest\.sh/.test(run ?? "");
+
+  it("builds before every Linux test invocation, including nested actions and remote perf", () => {
+    const covered = [];
+    for (const file of readdirSync(workflows).filter(name => /\.ya?ml$/.test(name))) {
+      for (const [name, job] of Object.entries(load(file).jobs ?? {})) {
+        if (!/ubuntu|linux/i.test(JSON.stringify([job["runs-on"], job.strategy?.matrix]))) continue;
+        let built = false;
+        for (const step of expand(job.steps ?? [])) {
+          if (step.run === "pnpm build:murage-cage") {
+            expect([undefined, "runner.os == 'Linux'"]).toContain(step.if);
+            expect(step["continue-on-error"]).toBeUndefined();
+            built = true;
+          }
+          if (invokesVitest(step.run)) {
+            expect(built, `${file}:${name} must build the cage before ${step.name ?? step.run}`).toBe(true);
+            covered.push(`${file}:${name}`);
+          }
+          if (/\bpnpm clean\b|rm -rf[^\n]*dist-native/.test(step.run ?? "")) built = false;
+        }
+      }
+    }
+    // nightly-perf.yml is private: the public tree's scrub removes it (pub/v100/scrub.sh), so it is expected only where it exists
+    expect(covered).toEqual(expect.arrayContaining([
+      "ci.yml:quality", "ci.yml:vitest", "ci.yml:extended", "ci.yml:control-plane", "ci.yml:mobile",
+      "ci.yml:human", "ci.yml:human-confirmation", "nightly.yml:slow", ...(existsSync(join(workflows, "nightly-perf.yml")) ? ["nightly-perf.yml:perf-budget"] : []), "package-linux.yml:package",
+      "memory-timing-nightly.yml:timing", "memory-timing-nightly.yml:wasm-parity", "flux-contract-daily.yml:contract",
+    ]));
+    for (const name of readdirSync(join(repo, "actions"))) {
+      let built = false;
+      for (const step of expand(action(name).runs.steps ?? [])) {
+        if (step.run === "pnpm build:murage-cage") built = true;
+        if (invokesVitest(step.run)) expect(built, name).toBe(true);
+      }
+    }
+  });
+
+  it("keeps preparation Linux-only and carries the cage into remote test checkouts", () => {
+    for (const step of action("linux-cage").runs.steps) {
+      expect(step.if).toBe("runner.os == 'Linux'");
+      expect(step.shell).toBe("bash");
+    }
+    expect(action("linux-cage").runs.steps[0].run).toContain("libseccomp-dev");
+    const remote = readFileSync(new URL("./scale/hz-vitest.sh", import.meta.url), "utf8");
+    const transfer = remote.indexOf('tar -C "$top" -czf - dist-native/cage/linux-x64');
+    expect(transfer).toBeGreaterThan(-1);
+    expect(transfer).toBeLessThan(remote.indexOf("pnpm exec vitest run"));
+  });
+
+  it("installs the source-path AppArmor profile after building and requires a bwrap smoke before tests", () => {
+    const steps = action("linux-cage").runs.steps;
+    const build = steps.findIndex(step => step.run === "pnpm build:murage-cage");
+    const install = steps.findIndex(step => step.run?.includes("pnpm cage:apparmor"));
+    const smoke = steps.findIndex(step => step.run?.includes('if ! "$bwrap" --unshare-user'));
+    expect(build).toBeGreaterThan(-1);
+    expect(install).toBeGreaterThan(build);
+    expect(smoke).toBeGreaterThan(install);
+    expect(steps[install].run).toContain('if [[ -d /sys/kernel/security/apparmor ]] && [[ "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || true)" == "1" ]]; then\n  ');
+    expect(steps[install].run).toMatch(/\n\s+pnpm cage:apparmor\nfi/);
+    // Follow the package command to the installer; comments alone do not prove
+    // that the profile is written or loaded with the required privilege.
+    const { scripts } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+    expect(scripts["cage:apparmor"]).toBe("node scripts/cage-apparmor.mjs");
+    const installer = readFileSync(new URL("./cage-apparmor.mjs", import.meta.url), "utf8");
+    expect(installer).toContain('"/etc/apparmor.d/murage-src-cage"');
+    expect(installer).toContain('exec("sudo", ["tee", SOURCE_CAGE_PROFILE]');
+    expect(installer).toContain('exec("sudo", ["apparmor_parser", "-r", SOURCE_CAGE_PROFILE]');
+    expect(steps[smoke].run).toContain('arch="$(node -p \'process.arch\')"');
+    expect(steps[smoke].run).toContain('bwrap="$PWD/dist-native/cage/linux-$arch/bwrap"');
+    expect(steps[smoke].run).toContain('if ! "$bwrap" --unshare-user --unshare-pid --ro-bind / / --proc /proc --dev /dev true; then');
+    expect(steps[smoke].run).toMatch(/::error::[^\n]+\n\s+exit 1\nfi/);
+    for (const step of steps) {
+      expect(step["continue-on-error"]).toBeUndefined();
+      expect(step.run).not.toMatch(/sysctl\s+(?:-w|--write)|apparmor_restrict_unprivileged_userns\s*=\s*0/);
+    }
+  });
+});
 
 // `on:` is YAML 1.1's boolean true. The yaml package parses 1.2 (string key),
 // but read both so this does not silently assert on `undefined`.
@@ -694,5 +787,38 @@ describe("only GATE tests block CI (ci/gate-tests.txt)", () => {
     expect(deriveOses("server/a.test.ts", 'describe.runIf(process.platform === "darwin")("a", () => {});')).toBe("mac");
     expect(deriveOses("server/a.test.ts", 'describe.skipIf(process.platform !== "linux")("a", () => {});\ndescribe("b", () => {});')).toBe("all");
     expect(deriveOses("server/a.test.ts", "const x = 1;")).toBe("all");
+  });
+});
+
+describe("native arm64 S4 power qualification", () => {
+  it("builds the cage, enables its source-path userns profile and smokes it before the focused tests", () => {
+    const ci = load("ci.yml");
+    const job = ci.jobs["host-power-arm64"];
+    expect(job["runs-on"]).toBe("ubuntu-24.04-arm");
+    expect(Object.values(ci.jobs).filter(job => job["runs-on"] === "ubuntu-24.04-arm")).toHaveLength(1);
+    expect(job.if).toBe('${{ !inputs.windows_only && !inputs.human_files }}');
+    expect(job["continue-on-error"]).toBeUndefined();
+    const steps = job.steps;
+    const install = steps.findIndex(step => step.run === "pnpm install --frozen-lockfile");
+    const build = steps.findIndex(step => step.run === "pnpm build:murage-cage");
+    const profile = steps.findIndex(step => step.run?.includes("sudo apparmor_parser -r"));
+    const smoke = steps.findIndex(step => step.run === "dist-native/cage/linux-arm64/bwrap --unshare-user --unshare-pid --ro-bind / / --proc /proc --dev /dev true");
+    const test = steps.findIndex(step => step.run === "pnpm exec vitest run server/host-power.test.ts server/procs.test.ts scripts/build-murage-cage.test.mjs scripts/power-seccomp.test.mjs");
+    expect(install).toBeGreaterThan(-1);
+    expect(build).toBeGreaterThan(install);
+    expect(profile).toBeGreaterThan(build);
+    expect(smoke).toBeGreaterThan(profile);
+    expect(test).toBeGreaterThan(smoke);
+    expect(steps[profile].run).toContain('[ -d /sys/kernel/security/apparmor ]');
+    expect(steps[profile].run).toContain('realpath dist-native/cage/linux-arm64/bwrap');
+    expect(steps[profile].run).toContain('profile murage-src-cage-bwrap "%s" flags=(unconfined) { userns, }');
+    expect(steps[test].env.MURAGE_TEST_REQUIRE_HOST_POWER_CAGE).toBe("1");
+    for (const step of steps.slice(install)) {
+      expect(step.if).toBeUndefined();
+      expect(step["continue-on-error"]).toBeUndefined();
+    }
+    expect(ci.jobs.required.needs).toContain("host-power-arm64");
+    expect(ci.jobs.required.steps[0].env.HOST_POWER_ARM64).toBe("${{ needs.host-power-arm64.result }}");
+    expect(ci.jobs.required.steps[0].run).toContain('test "$HOST_POWER_ARM64" = success');
   });
 });

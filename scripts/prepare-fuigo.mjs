@@ -320,6 +320,23 @@ export function stagedDirectory(root, target) {
   return join(root, "dist-native", "fuigo", target);
 }
 
+function applyTargetDirectoryModes(directory, target) {
+  if (!target.startsWith("win32-")) {
+    // mkdtemp and the manifest start private; the shipped tree must be
+    // readable and traversable by a different runtime user.
+    chmodSync(directory, 0o755);
+    chmodSync(join(directory, "manifest.json"), 0o644);
+    // copyFile preserves the source mode on Unix in current Node, but make
+    // the executable contract explicit instead of depending on that detail.
+    chmodSync(join(directory, fuigoExecutableName(target)), 0o755);
+  }
+}
+
+export function finalizeTargetDirectory(staging, finalDirectory, target) {
+  applyTargetDirectoryModes(staging, target);
+  renameSync(staging, finalDirectory);
+}
+
 async function stageTarget(root, target) {
   assertStageable(target);
   const asset = FUIGO_ASSETS[target];
@@ -329,6 +346,7 @@ async function stageTarget(root, target) {
   const binary = join(finalDirectory, executable);
   const manifestFile = join(finalDirectory, "manifest.json");
   if (executableIsCurrent(binary, manifestFile, target)) {
+    applyTargetDirectoryModes(finalDirectory, target);
     console.log(`fuigo ${FUIGO_VERSION} already staged for ${target}`);
     return;
   }
@@ -370,18 +388,13 @@ async function stageTarget(root, target) {
     const staging = mkdtempSync(join(parent, `.${target}-`));
     const stagedBinary = join(staging, executable);
     copyFileSync(candidate, stagedBinary);
-    if (!target.startsWith("win32-")) {
-      // copyFile preserves the source mode on Unix in current Node, but make
-      // the executable contract explicit instead of depending on that detail.
-      chmodSync(stagedBinary, 0o755);
-    }
     writeFileSync(
       join(staging, "manifest.json"),
       `${JSON.stringify(expectedManifest(target), null, 2)}\n`,
       { mode: 0o600 },
     );
     safeWipeSync(finalDirectory, { within: root });
-    renameSync(staging, finalDirectory);
+    finalizeTargetDirectory(staging, finalDirectory, target);
     console.log(`staged fuigo ${FUIGO_VERSION} for ${target}`);
   } finally {
     safeWipeSync(scratch);

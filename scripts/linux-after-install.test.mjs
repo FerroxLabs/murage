@@ -97,12 +97,13 @@ describe("Linux AppArmor profile", () => {
     expect(APPARMOR_PROFILE.startsWith("abi <abi/4.0>,\ninclude <tunables/global>\n")).toBe(true);
   });
 
-  it("names Murage and the bundled Chrome, each allowed user namespaces and nothing confined", () => {
+  it("names Murage, the bundled Chrome and bwrap, each allowed user namespaces and nothing confined", () => {
     const chrome = `/opt/Murage/resources/browser-engine/${browserBundleSpec("linux-x64").chrome.executable}`;
     expect(linuxDebChromePath()).toBe(chrome);
     expect(profiles(APPARMOR_PROFILE)).toEqual([
       { name: "murage", attach: "/opt/Murage/murage", flags: "unconfined", rules: ["userns,", "include if exists <local/murage>"] },
       { name: "murage-browser", attach: chrome, flags: "unconfined", rules: ["userns,", "include if exists <local/murage-browser>"] },
+      { name: "murage-cage-bwrap", attach: "/opt/Murage/resources/cage/bwrap", flags: "unconfined", rules: ["userns,", "include if exists <local/murage-cage-bwrap>"] },
     ]);
   });
 

@@ -32,9 +32,10 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { deleteEnvNames, PROVIDER_CREDENTIAL_ENV, stripRoutingEnv, stripWorkspaceCredentialEnv } from "../config.ts";
 import { computerProxyEnv } from "../container-computer.ts";
-import { augmentedPath } from "../env-path.ts";
-import { cliVersionReader, describeSpawnFailure, engineJob, killCliTree, spawnCli } from "../procs.ts";
-import { ProviderStopUnconfirmedError, providerCloseDeadlineMs, TurnTeardowns, type TeardownWait } from "./child-teardown.ts";
+import { augmentedPath, envGeneration } from "../env-path.ts";
+import { gitBashPath } from "../tool-discovery.ts";
+import { CLI_TERM_GRACE_MS, cliVersionReader, describeSpawnFailure, engineJob, killCliTree, spawnCli, HOST_POWER_CODE, HOST_POWER_MESSAGE, hostPowerRefused } from "../procs.ts";
+import { ProviderStopUnconfirmedError, stopBudget, TurnTeardowns, type TeardownWait } from "./child-teardown.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
 import { customMountEntries } from "../custom-mcp-mounts.ts";
 
@@ -72,7 +73,8 @@ import { PI_GATE_TITLE_PREFIX } from "./pi-permission-gate.ts";
 import { execEnvHanded, execEnvNow, handedEngineEnv } from "../engine-env.ts";
 import type { ExecEnv } from "../../shared/mount-identity.ts";
 import { createTodoBlockFilter, extractTodoBlocks, type TodoFilterOutput } from "../../shared/todo-block.ts";
-import { plainDuration } from "./stop-copy.ts";
+import { engineClosedLine, plainDuration } from "./stop-copy.ts";
+import { EngineStderrCapture } from "./acp/core.ts";
 import { redactSecretsInText } from "../redact.ts";
 import { toolFailureText } from "../../shared/tool-activity.ts";
 import { connectedAppsServerName } from "../../shared/connected-app-names.ts";
@@ -708,8 +710,24 @@ export function stampMcpServers(turn: SendTurnInput, servers: Record<string, unk
 /** Rule 74: Pi's bash tool runs `<shell> -c <command>` (bash from the engine
  * source: /bin/bash, else bash on PATH, `-c`; a login or interactive shell is
  * never used). */
-export function piShellForm(platform: NodeJS.Platform = process.platform): string[] {
-  return platform === "win32" ? ["bash.exe", "-c"] : [existsSync("/bin/bash") ? "/bin/bash" : "bash", "-c"];
+export async function piShellForm(handed: Readonly<Record<string, string>>, platform: NodeJS.Platform = process.platform): Promise<string[]> {
+  if (platform !== "win32") return [existsSync("/bin/bash") ? "/bin/bash" : "bash", "-c"];
+  const bash = await gitBashPath(handed, envGeneration());
+  return bash ? [bash, "-c"] : [];
+}
+
+/** The shell form Murage checks for a Pi command ask. Only Pi's Bash tool runs the pinned shell;
+ * its optional PowerShell tool finds PowerShell by itself, so no form can vouch for it and it keeps asking (U20). */
+export function piCheckForm(tool: string, shellForm: readonly string[]): string[] {
+  return tool === "Bash" ? [...shellForm] : [];
+}
+
+/** Pi's explicit extension replaces its Bash tool without changing the owner's settings. */
+export function piPinnedBashExtension(shellPath: string): string {
+  return `export default async function(pi) {
+  const { createBashTool } = await import("@earendil-works/pi-coding-agent").catch(() => import("@mariozechner/pi-coding-agent"));
+  pi.registerTool(createBashTool(process.cwd(), { shellPath: ${JSON.stringify(shellPath)} }));
+}\n`;
 }
 
 export const PiDriver: ProviderDriver<PiConfig> = {
@@ -774,14 +792,11 @@ export const PiDriver: ProviderDriver<PiConfig> = {
     // after a room claimed the bot). Such a Stop is kept and honoured as soon
     // as the turn has started, before its handshake and prompt.
     const starting = new Set<string>(), earlyStops = new Set<string>();
-    // settle() emits the terminal event and then requests termination; the
-    // child is owned until its close is observed (A2).
+    // Settlement emits the terminal event; Stop lets abort finish before
+    // termination. The child remains owned until close is confirmed (A2).
     const teardowns = new TurnTeardowns();
-    // pi requests the kill in the same tick as settlement, so no grace period.
-    const piStopBudget = (): TeardownWait => {
-      const closeMs = providerCloseDeadlineMs();
-      return { closeMs, maxMs: closeMs };
-    };
+    // Pi's abort response follows its session flush; the close budget starts after that bounded grace.
+    const piStopBudget = (): TeardownWait => stopBudget(CLI_TERM_GRACE_MS);
 
     const emit = (event: RuntimeEvent) => {
       for (const l of [...listeners]) l(event);
@@ -926,7 +941,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       // A turn names its bot (the launcher scopes per-bot state by it); the --version probe does not.
       const turnEnv = handed.env;
       cloudTurnBot(turnEnv, turn.warmIdentity?.botId);
-      const shellForm = piShellForm();
+      const shellForm = await piShellForm(handed.env);
 
       // spawnCli can throw synchronously (unresolvable CLI); if it does, the
       // 0600 temp file with the box token / composio key / comms token must
@@ -935,6 +950,12 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         try {
           // The pi whose --version gated piIsolationArgs (piProbeEnv: Murage's own PATH), not the handed PATH's first.
           const launchCli = engineLaunchFile(config.cli, piProbeEnv());
+          if (process.platform === "win32" && shellForm[0]) {
+            mcpTempDir ??= mkdtempSync(join(tmpdir(), "murage-pi-mcp-"));
+            const extension = join(mcpTempDir, "pinned-bash.ts");
+            writeFileSync(extension, piPinnedBashExtension(shellForm[0]), { mode: 0o600 });
+            childArgs.push("-e", extension);
+          }
           return spawnCli(launchCli, childArgs, {
             stdio: ["pipe", "pipe", "pipe"],
             cwd: turn.cwd,
@@ -1003,6 +1024,12 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", origin: "engine", text });
       };
 
+      let aborting = false;
+      const terminate = () => {
+        try { child.stdin.end(); } catch { /* already closed */ }
+        teardown.markStopRequested();
+        try { killCliTree(child); } catch { /* already gone */ }
+      };
       const settle = (ok: boolean, stopReason?: string | null, usage?: { input?: number; output?: number }) => {
         if (settled) return;
         settled = true;
@@ -1014,31 +1041,21 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           stopReason: stopReason ?? (ok ? "end_turn" : "failed"),
           ...(usage ? { usage: { input: usage.input ?? 0, output: usage.output ?? 0 } } : {}),
         });
-        try {
-          child.stdin.end();
-        } catch {
-          /* already closed */
-        }
-        teardown.markStopRequested();
-        try {
-          killCliTree(child);
-        } catch {
-          /* already gone */
-        }
+        if (!aborting) terminate();
         active.delete(threadId);
       };
 
       const stop = () => {
+        if (settled || aborting) return;
+        aborting = true;
+        // Register before writing. A turn_end can precede the abort response;
+        // it must not close stdin or kill Pi while its session is still flushing.
+        const completed = awaitResponse("abort", CLI_TERM_GRACE_MS);
+        void completed.catch(() => {}).then(terminate);
         try {
           send({ type: "abort" });
         } catch {
-          /* ignore */
-        }
-        teardown.markStopRequested();
-        try {
-          killCliTree(child);
-        } catch {
-          /* ignore */
+          rejectWaiters(new Error(`${ENGINE} stopped taking input.`));
         }
         settle(true, "cancelled");
       };
@@ -1221,7 +1238,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
               };
               // only the gate's command ask is checked (and so only a command card can carry U20); any other ask reports the
               // map as handed, unchecked
-              if (gate && !questions && (gate.tool === "Bash" || gate.tool === "PowerShell")) void execEnvNow(threadId, shellForm, handed, turn.cwd ?? process.cwd()).then(open);
+              if (gate && !questions && (gate.tool === "Bash" || gate.tool === "PowerShell")) void execEnvNow(threadId, piCheckForm(gate.tool, shellForm), handed, turn.cwd ?? process.cwd()).then(open);
               else open(execEnvHanded(handed, turn.cwd ?? process.cwd(), shellForm));
             }
             return;
@@ -1273,18 +1290,44 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           rejectWaiters(new Error(message));
         },
       });
+      // The last words pi wrote, for the line shown if it closes before its turn ended (a missing runtime, a crash).
+      const stderrTail = new EngineStderrCapture();
+      child.stderr?.on("data", (chunk: Buffer) => stderrTail.push(chunk));
+      let sessionReady = false;
+      const piClosedMessage = (code: number | null, signal: NodeJS.Signals | null) => {
+        // the capture is kept from its start and redacted whole before any cut (acp/core.ts EngineStderrCapture)
+        const lastWords = stderrTail.lastWords();
+        if (sessionReady) return engineClosedLine(ENGINE, code, signal, lastWords);
+        return `${ENGINE} could not start a session: it closed before it was ready${lastWords ? ` (${lastWords})` : ""}. Send your message again. If this keeps happening, check that ${ENGINE} is installed and runs, or choose another engine for this bot.`;
+      };
       child.stdout.on("data", (chunk: Buffer) => stdoutLines.push(chunk));
       registerIntake(threadId, child.stdout, child);
       child.on("error", (err) => {
         const fail = describeSpawnFailure(err as NodeJS.ErrnoException, config.cli);
+        // S4 power: a launch the block could not cover wrote no prompt (turn-attribution.ts notWritten).
+        if ((err as NodeJS.ErrnoException).code === HOST_POWER_CODE) turn.notWritten?.();
         rejectWaiters(new Error(fail.message));
         emit({ ...base(threadId, turnId), type: "runtime.error", message: fail.message, setup: fail.setup });
         settle(false);
       });
-      child.on("close", () => {
-        // a clean close without a terminal event is a failed turn, never a hang
-        rejectWaiters(new Error("pi process exited before replying"));
-        settle(false);
+      child.on("close", (code: number | null, signal: NodeJS.Signals | null) => {
+        // S4 power (design sections 2 and 8): bwrap or sandbox-exec refused before pi ran; nothing it was sent was delivered.
+        if (!settled && hostPowerRefused(child)) {
+          turn.notWritten?.();
+          rejectWaiters(new Error(HOST_POWER_MESSAGE));
+          emit({ ...base(threadId, turnId), type: "runtime.error", message: HOST_POWER_MESSAGE });
+          settle(false);
+          return;
+        }
+        // A close without a terminal event is a failed turn, never a hang, and never a silent one: a wrapper (bwrap,
+        // sandbox-exec) holds stdin open until it exits, so no EPIPE fires first, and a pi that crashes after the first
+        // write gets none either. Exactly one error, emitted and settled before the waiters are rejected, so a pending
+        // handshake step (failBeforePrompt) sees the turn is over and adds no second one.
+        if (!settled) {
+          emit({ ...base(threadId, turnId), type: "runtime.error", message: piClosedMessage(code, signal) });
+          settle(false);
+        }
+        rejectWaiters(new Error(`${ENGINE} stopped before replying.`));
       });
 
       emit({ ...base(threadId, turnId), type: "turn.started" });
@@ -1314,6 +1357,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         send(sessionPath ? { type: "switch_session", sessionPath } : { type: "new_session" });
         const hs = (await hsPromise) as { sessionFile?: string; sessionId?: string } | undefined;
         if (hs?.sessionFile) sessionFile = hs.sessionFile;
+        sessionReady = true;
         emit({
           ...base(threadId, turnId),
           type: "session.started",
@@ -1370,7 +1414,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       try {
         send({ type: "prompt", message });
       } catch {
-        settle(false);
+        failBeforePrompt(`${ENGINE} stopped before it took this message. Send your message again.`);
       }
 
       return { turnId };
@@ -1466,8 +1510,8 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           effortLevels: EFFORT_LEVELS,
         },
         sendTurn,
-        // Close-confirmed stop (A2): stop() settles and requests termination;
-        // resolve only after the child closed, reject at the deadline.
+        // Close-confirmed stop (A2): stop() settles, waits for abort, then
+        // requests termination; resolve on confirmed close or reject at the deadline.
         interruptTurn: async (threadId, turnId) => {
           const entry = active.get(threadId);
           if (entry) entry.stop();

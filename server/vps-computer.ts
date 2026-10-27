@@ -28,6 +28,7 @@ import { augmentedPath } from "./env-path.ts";
 import { ownServerChildEnv } from "./cloud-home/own-server.ts";
 import { awaitCliTreeStopped, spawnCli } from "./procs.ts";
 import { SPAWNED_PROXIES } from "./proxy-paths.ts";
+import { EngineStderrCapture, engineStderrRedacted, engineStderrTailRedacted, ENGINE_STDERR_CAPTURE_CHARS } from "./drivers/acp/core.ts";
 
 export const VPS_IMAGE = CUA_IMAGE;
 export const VPS_MANAGED_LABEL = "com.murage.vps";
@@ -241,6 +242,8 @@ export function defaultRunner(args: string[], options: VpsCommandOptions = {}): 
     }, undefined, { serverTool: "docker" });
     const stdout = tailCollector();
     const stderr = tailCollector();
+    // The failure detail reads the shared prefix capture, never the tail above (acp/core.ts EngineStderrCapture).
+    const stderrCapture = new EngineStderrCapture();
     let settled = false;
     let failure: Error | null = null;
     let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -288,6 +291,7 @@ export function defaultRunner(args: string[], options: VpsCommandOptions = {}): 
     });
     child.stderr.on("data", (chunk: string) => {
       stderr.push(chunk);
+      stderrCapture.push(chunk);
       arm();
     });
     child.stdin.on("error", (error) => {
@@ -300,7 +304,8 @@ export function defaultRunner(args: string[], options: VpsCommandOptions = {}): 
       if (failure) return;
       settle(() => {
         if (code === 0) return resolve({ stdout: stdout.text(), stderr: stderr.text() });
-        const detail = stderr.text().trim().slice(-1000);
+        // kept from its start and redacted whole before the shown 1,000 are cut
+        const detail = stderrCapture.redactedEnd(1000);
         reject(new Error(detail || `Docker-over-SSH exited ${code ?? signal ?? "without a status"}`));
       });
     });
@@ -561,17 +566,19 @@ async function computeVpsComputerStatus(
         status.desktopReady = true;
       } catch (error) {
         status.desktopReady = false;
-        status.desktop_error = error instanceof Error ? error.message.slice(0, 320) : null;
+        status.desktop_error = error instanceof Error ? engineStderrRedacted(error.message, false).slice(0, 320) : null;
         // Mirror the Local VM's probe: when the desktop fails, the
-        // supervisor's error log says WHY — a bounded tail turns an endless
+        // supervisor's error log says why. Redact a bounded tail before
+        // selecting its last lines, turning an endless
         // "not ready yet" into something the user can act on.
         try {
           const errorLog = await run(
-            ["exec", containerRef, "tail", "-n", "4", "/var/log/supervisor/cua-driver.error.log"],
+            ["exec", containerRef, "tail", "-c", String(ENGINE_STDERR_CAPTURE_CHARS), "/var/log/supervisor/cua-driver.error.log"],
             10_000,
           );
           status.desktop_error =
-            errorLog.stdout.replace(/\s+/g, " ").trim().slice(0, 320) || status.desktop_error;
+            engineStderrTailRedacted(errorLog.stdout, Buffer.byteLength(errorLog.stdout) >= ENGINE_STDERR_CAPTURE_CHARS)
+              .trimEnd().split("\n").slice(-4).join(" ").replace(/\s+/g, " ").trim().slice(0, 320) || status.desktop_error;
         } catch {
           // The log may not exist during the first seconds of container boot.
         }
@@ -935,11 +942,10 @@ export async function vpsComputerJoin(
     windowsHide: true,
   });
   let failure: string | null = null;
-  let stderr = "";
+  // kept from its start and redacted whole before the shown 1,000 are cut (acp/core.ts EngineStderrCapture)
+  const stderr = new EngineStderrCapture();
   child.stderr?.setEncoding("utf8");
-  child.stderr?.on("data", (chunk: string) => {
-    stderr = `${stderr}${chunk}`.slice(-1000);
-  });
+  child.stderr?.on("data", (chunk: string) => stderr.push(chunk));
   child.once("error", (error) => {
     failure = error.message;
   });
@@ -949,7 +955,7 @@ export async function vpsComputerJoin(
       clearTimeout(active.expiry);
       desktopTunnels.delete(botId);
     }
-    if (!failure) failure = stderr.trim() || `SSH viewer tunnel exited ${code ?? "without a status"}`;
+    if (!failure) failure = stderr.redactedEnd(1000) || `SSH viewer tunnel exited ${code ?? "without a status"}`;
   });
 
   const deadline = Date.now() + 10_000;
@@ -959,7 +965,7 @@ export async function vpsComputerJoin(
   }
   if (failure || !(await loopbackAnswers(localPort))) {
     if (child.exitCode === null && !child.killed) child.kill("SIGTERM");
-    const detail = failure || stderr.trim() || "the SSH port forward did not become ready";
+    const detail = failure || stderr.redactedEnd(1000) || "the SSH port forward did not become ready";
     throw Object.assign(new Error(`Could not open the VPS live desktop: ${detail}`), { status: 502 });
   }
 

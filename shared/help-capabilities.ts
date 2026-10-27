@@ -366,6 +366,12 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
   },
   {
     "kind": "settings-page",
+    "name": "experimental",
+    "term": "Teach a skill",
+    "source": "src/lib/settings-sections.ts"
+  },
+  {
+    "kind": "settings-page",
     "name": "memory",
     "term": "Memory",
     "source": "src/lib/settings-sections.ts"
@@ -446,12 +452,6 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
     "kind": "settings-page",
     "name": "about",
     "term": "About & updates",
-    "source": "src/lib/settings-sections.ts"
-  },
-  {
-    "kind": "settings-page",
-    "name": "experimental",
-    "term": "Experimental",
     "source": "src/lib/settings-sections.ts"
   },
   {
