@@ -82,8 +82,10 @@ import { ConfirmDelete } from "./ConfirmDelete";
 import { isMascotAnimated, stateForBot } from "@/lib/mascot";
 import { botUnreadThreadIds, markBotRead } from "@/lib/bot-read";
 import { useUpdaterState } from "@/lib/updater";
+import { openUpdateCard } from "@/lib/update-card";
 import { cn } from "@/lib/cn";
-import { skillRecorderEnabled } from "@/lib/feature-flags";
+import { skillRecorderAvailable } from "@/lib/feature-flags";
+import { isCloudOrigin } from "@/lib/cloud-workspace";
 import { nextRename } from "@/lib/rename";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { MIN_QUERY, SearchResults } from "./SearchResults";
@@ -392,7 +394,7 @@ function profileInitials(profile?: { name?: string; email?: string }): string {
 /** Manual update check, next to the settings gear. Packaged app only (no
  * bridge in dev/browser). One button, state-dependent: check → download →
  * restart, with a brief "up to date" tick when a check finds nothing so a
- * click is never silent. The bottom-left popup handles the loud cases. */
+ * click is never silent. States needing guidance open the update card. */
 function UpdateButton() {
   const s = useUpdaterState();
   const [checkedAt, setCheckedAt] = useState(0);
@@ -413,7 +415,14 @@ function UpdateButton() {
 
   const working =
     pending || status === "checking" || status === "downloading" || status === "installing";
-  const label =
+  const cardLabel = status === "error"
+    ? "Update needs attention, view details"
+    : status === "handed-off"
+      ? "Finish updating in a terminal, view instructions"
+      : status === "deferred"
+        ? "Update waiting for backup, view details"
+        : null;
+  const label = cardLabel ?? (
     status === "available"
       ? `Version ${s?.version ?? ""} available, download`
       : status === "downloading"
@@ -428,11 +437,12 @@ function UpdateButton() {
               ? "Checking for updates…"
               : upToDate
                 ? "You're up to date"
-                : "Check for updates";
+                : "Check for updates");
 
   return (
     <button
       onClick={() => {
+        if (cardLabel) return openUpdateCard();
         if (status === "downloaded") {
           setPending(true);
           return void updater.install();
@@ -445,6 +455,7 @@ function UpdateButton() {
         void updater.check();
       }}
       disabled={working}
+      data-testid="update-button"
       title={label}
       aria-label={label}
       className="relative flex size-10 items-center justify-center rounded-md text-accent hover:bg-raised disabled:opacity-60"
@@ -463,6 +474,11 @@ function UpdateButton() {
       )}
     </button>
   );
+}
+
+/** The footer has one update control at every sidebar density. */
+export function SidebarUpdateControl({ density }: { density: SidebarDensity }) {
+  return density === "icons" ? <UpdateIndicator /> : <UpdateButton />;
 }
 
 /** The one-line reading of an activity line: a host stop, a send notice, a folder trust note, a failed turn's plain sentence, else the tool. */
@@ -2759,7 +2775,7 @@ export function Sidebar({ open, onClose, onReturnFocus }: { open: boolean; onClo
     ...(whatsNew.available ? [{ key: "whats-new", label: t("settings.about.whatsNewTitle"), icon: <Megaphone size={17} />, onSelect: whatsNew.reopen }] : []),
     { key: "version", label: t("nav.versionItem", { version: APP_VERSION }), icon: <Info size={17} />, onSelect: () => openSettings("about") },
     { key: "keyboard-shortcuts", label: t("settings.about.shortcutsTitle"), icon: <Keyboard size={17} />, onSelect: () => setShortcutsOpen(true) },
-    ...(skillRecorderEnabled(state.config)
+    ...(skillRecorderAvailable(state.config, desktop, isCloudOrigin(), capabilities.host.platform)
       ? [{ key: "skill-recorder", label: t("nav.teachSkill"), icon: <Sparkles size={17} />, onSelect: () => { dispatch({ type: "showSkillRecorder" }); onNavigate(); } }]
       : []),
     ...(desktop === true ? [{ key: "get-set-up", label: t("nav.getSetUp"), icon: <Compass size={17} />, onSelect: () => { onNavigate(); openFirstRun(); } }] : []),
@@ -3190,7 +3206,6 @@ export function Sidebar({ open, onClose, onReturnFocus }: { open: boolean; onClo
             items={youItems}
             triggerRef={youTriggerRef}
           />
-          <UpdateIndicator />
           {/* The only thing this button does is open Settings → Phone, and that
               section does not exist on a phone — it is the setup screen for
               getting Murage ONTO one. A dot that opens an empty pane is worse
@@ -3202,7 +3217,7 @@ export function Sidebar({ open, onClose, onReturnFocus }: { open: boolean; onClo
               onOpen={() => dispatch(phoneSettingsAction())}
             />
           )}
-          {density !== "icons" && <UpdateButton />}
+          <SidebarUpdateControl density={density} />
           <button
             type="button"
             onClick={() => dispatch({ type: "toggleAppSettings", open: true })}

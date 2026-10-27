@@ -35,6 +35,7 @@ import {
   splitPiModel,
 } from "./pi.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
+import { CLI_TERM_GRACE_MS } from "../procs.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-pi-cli.ts");
 const MODELS_LINE =
@@ -338,6 +339,41 @@ describe("PiDriver turns (fake CLI)", () => {
     const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
     expect(done).toMatchObject({ ok: false, stopReason: "failed" });
     expect(instance.adapter.hasSession("t-exit")).toBe(false);
+  });
+
+  // S4 power gate (1.0.8): under bwrap or sandbox-exec the wrapper holds stdin open, so no EPIPE fires before the close;
+  // a pi that exits before its turn ended must still show the owner exactly one error.
+  const exitCase = async (mode: string, threadId: string) => {
+    await create(mode);
+    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "hi" });
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const errors = recorder.events.filter((e) => e.type === "runtime.error" && e.turnId === turnId) as Array<{ message: string }>;
+    expect(done).toMatchObject({ ok: false });
+    expect(errors).toHaveLength(1);
+    expect(recorder.events.filter((e) => e.type === "turn.completed" && e.turnId === turnId)).toHaveLength(1);
+    return errors[0].message;
+  };
+
+  it("shows one error when pi closes before answering the handshake", async () => {
+    const message = await exitCase("close-before-ready", "t-close-ready");
+    expect(message).toMatch(/^pi Test could not start a session: it closed before it was ready \(pi could not load its settings\)\. Send your message again\./);
+  });
+
+  it("shows one error when pi exits 127 at launch", async () => {
+    const message = await exitCase("exit-127", "t-exit-127");
+    // the close (no EPIPE yet) or the handshake write's EPIPE may win; either way one start-up error, never two
+    expect(message).toMatch(/^pi Test could not start a session: /);
+  });
+
+  it("shows one error when pi exits at launch", async () => {
+    const message = await exitCase("exit-early", "t-exit-once");
+    expect(message).toMatch(/^pi Test could not start a session: /);
+  });
+
+  it("shows one error when pi crashes after the prompt", async () => {
+    const message = await exitCase("crash-mid-turn", "t-crash-mid");
+    expect(message).toMatch(/^pi Test closed \(exit code 1\) before it finished its reply: .*pi crashed while answering/);
   });
 
   it("surfaces a pi turn error instead of reporting an empty success", async () => {
@@ -1066,6 +1102,40 @@ describe("PiDriver turns (fake CLI)", () => {
       removeTempDirSync(scratch);
     }
   });
+
+  it("waits for the abort reply and the engine's session flush even when turn_end arrives first", async () => {
+    const scratch = mkdtempSync(join(tmpdir(), "murage-pi-abort-"));
+    try {
+      const marker = join(scratch, "flushed");
+      const commands = join(scratch, "commands.jsonl");
+      await create("permission", { FAKE_PI_ABORT_MS: "250", FAKE_PI_ABORT_MARKER: marker, FAKE_PI_COMMAND_LOG: commands });
+      const threadId = "t-abort-flush";
+      const { turnId } = await instance.adapter.sendTurn({ threadId, text: "go" });
+      await recorder.until(e => e.type === "request.opened");
+      const stopped = instance.adapter.interruptTurn(threadId);
+      const joined = instance.adapter.interruptTurn(threadId);
+      const done = await recorder.until(e => e.type === "turn.completed" && e.turnId === turnId);
+      expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
+      expect(existsSync(marker)).toBe(false);
+      await expect(stopped).resolves.toEqual({ closeConfirmed: true });
+      await expect(joined).resolves.toEqual({ closeConfirmed: true });
+      expect(readFileSync(marker, "utf8")).toBe("session flushed");
+      expect(readFileSync(commands, "utf8").trim().split("\n").map(line => JSON.parse(line)).filter(command => command.type === "abort")).toHaveLength(1);
+      expect(recorder.events.filter(e => e.type === "turn.completed" && e.turnId === turnId)).toHaveLength(1);
+      expect(recorder.events.filter(e => e.type === "runtime.error")).toEqual([]);
+    } finally { await instance?.dispose(); removeTempDirSync(scratch); }
+  });
+
+  it("bounds a silent abort reply before requesting termination", async () => {
+    await create("permission", { FAKE_PI_ABORT_SILENT: "1" });
+    const threadId = "t-abort-timeout";
+    await instance.adapter.sendTurn({ threadId, text: "go" });
+    await recorder.until(e => e.type === "request.opened");
+    const start = Date.now();
+    await expect(instance.adapter.interruptTurn(threadId)).resolves.toEqual({ closeConfirmed: true });
+    expect(Date.now() - start).toBeGreaterThanOrEqual(CLI_TERM_GRACE_MS - 50);
+    expect(recorder.events.filter(e => e.type === "runtime.error")).toEqual([]);
+  }, 15_000);
 
   it("writes models.json and set_model for a host::model inject pick", async () => {
     const home = mkdtempSync(join(tmpdir(), "murage-pi-turn-inject-"));

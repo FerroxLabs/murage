@@ -88,7 +88,7 @@ const WORKER = `
   if (process.env.LEASE_TEST_PS !== undefined) {
     const table = JSON.parse(process.env.LEASE_TEST_PS);
     const native = {
-      version: () => 9,
+      version: () => 10,
       processStart(pid) {
         probes.push({ mode: 'sync', pid });
         const entry = pid === process.pid && table.self !== undefined ? table.self.replace('SELF_PID', String(process.pid)) : table[String(pid)];

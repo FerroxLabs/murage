@@ -2,13 +2,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // A spy over node:child_process.execFile and spawn (execCli runs the check on spawn, to start a new session) that counts Rule 74d's consistency checks (the pinned form running
-// `env -0; printf '\0'; pwd`) and can hold their answers, so a test sees how many checks ran and can change the
+// the fixed /usr/bin/env or /bin/env helper, or the PowerShell probe) and can hold their answers, so a test sees how many checks ran and can change the
 // environment generation while one is awaiting. Install it in a test file with:
 //   vi.mock("node:child_process", async (original) => (await import("<path>/exec-check-spy.ts")).withExecCheckSpy(await original()));
 // Every other execFile or spawn call passes through untouched.
 import { promisify } from "node:util";
 
-const CHECK_SCRIPT = "env -0; printf";
+// Match engine-env.ts's pinned helper script at the existing child-process seam.
+// The real absolute shell/helper still runs; no handed-PATH shadow is needed.
+const CHECK_SCRIPT = "if [ -f /usr/bin/env ]; then /usr/bin/env -0; elif [ -f /bin/env ]; then /bin/env -0; else exit 1; fi && printf '\\0' && pwd";
 
 export const execChecks: {
   /** checks started since the last reset */
@@ -38,7 +40,7 @@ export function gate(): { promise: Promise<void>; open: () => void } {
 function isCheck(args: unknown[]): boolean {
   const argv = args[1];
   const last = Array.isArray(argv) ? argv[argv.length - 1] : undefined;
-  return typeof last === "string" && last.startsWith(CHECK_SCRIPT);
+  return typeof last === "string" && (last === CHECK_SCRIPT || last.startsWith("$ErrorActionPreference='Stop'; $pairs="));
 }
 
 export function withExecCheckSpy<T extends Record<string, unknown>>(real: T): T {

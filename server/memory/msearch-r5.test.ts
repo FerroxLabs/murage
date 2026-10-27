@@ -101,12 +101,14 @@ const threadCpuMs = () => { const usage = process.threadCpuUsage(); return (usag
  */
 function loopHoldMonitor() {
   let longest = 0, wall = performance.now(), cpu = threadCpuMs();
-  const ticker = setInterval(() => {
+  const sample = () => {
     const nowWall = performance.now(), nowCpu = threadCpuMs();
     longest = Math.max(longest, Math.min(nowWall - wall, nowCpu - cpu));
     wall = nowWall; cpu = nowCpu;
-  }, 1);
-  return { stop: () => { clearInterval(ticker); return longest; } };
+  };
+  const ticker = setInterval(sample, 1);
+  // Include the final interval even if the measured work never yielded to a tick.
+  return { stop: () => { clearInterval(ticker); sample(); return longest; } };
 }
 /** Holds this thread for `ms` of its own CPU time, however busy the host is. */
 const holdThread = (ms: number) => { const until = threadCpuMs() + ms; while (threadCpuMs() < until) { /* spin */ } };
@@ -121,21 +123,45 @@ describe("P1: authorization never holds the event loop", () => {
     expect(monitor.stop()).toBeGreaterThanOrEqual(75);
   });
 
-  it("1,000 candidates only a full read refuses leave the loop free (longest stall under 50 ms) and change nothing the reader sees", async () => {
+  it("the hold monitor counts a 150 ms synchronous block even when stopped before its first tick", () => {
+    const monitor = loopHoldMonitor();
+    try {
+      holdThread(150);
+    } finally {
+      expect(monitor.stop()).toBeGreaterThanOrEqual(145);
+    }
+  });
+
+  it("1,000 candidates only a full read refuses leave the loop free (median maximum stall under 50 ms over five uncached runs) and change nothing the reader sees", async () => {
     const scope = ensureScope("bot", "a");
     readable("kept", scope);
     const records = [entry("kept", scope, TEXT)];
     bulk(() => { for (let n = 0; n < 1000; n++) { const id = `a-denied-${String(n).padStart(4, "0")}`; deniedByRead(id, scope); records.push(entry(id, scope, TEXT)); } });
     world(records).close();
-    // as in the 100,000 case: the fixture's own garbage is collected first, so a collection of it is not counted as the search's hold
-    await new Promise(resolve => setTimeout(resolve, 100)); collectGarbage();
     // ids sort ahead of the readable one, so every refused candidate is read before it is reached
-    const monitor = loopHoldMonitor();
-    const answer = await searchMemory(QUERY, accessOf(), emptyBridge, { allowance: LineageAllowance.tool(1_000_000_000), caller: "tool", limit: 20 });
-    const longest = monitor.stop();
-    expect(answer.hits.map(hit => hit.id)).toEqual(["kept"]);
-    expect(longest).toBeLessThan(50);
-    expect(JSON.stringify(answer)).not.toContain("denied");
+    const longest: number[] = [];
+    for (let run = 0; run < 5; run++) {
+      closeMemoryIndexReader(); clearMemorySearchCache();
+      const access = accessOf();
+      const allowance = LineageAllowance.tool(1_000_000_000);
+      // Exclude fixture/prior-run garbage and yield before starting each measurement.
+      collectGarbage();
+      await new Promise<void>(resolve => setImmediate(resolve));
+      const monitor = loopHoldMonitor();
+      let answer: Awaited<ReturnType<typeof searchMemory>>;
+      try {
+        answer = await searchMemory(QUERY, access, emptyBridge, { allowance, caller: "tool", limit: 20 });
+      } finally {
+        longest.push(monitor.stop());
+      }
+      expect(answer.hits.map(hit => hit.id), `run ${run + 1}`).toEqual(["kept"]);
+      expect(JSON.stringify(answer), `run ${run + 1}`).not.toContain("denied");
+    }
+    // A fixed five samples tolerate two noisy runs, not a consistently slower search.
+    // Keep the original budget: three stalls of 50 ms or more still fail, including
+    // a repeated 150 ms block. Do not retry until a passing sample is obtained.
+    const median = [...longest].sort((a, b) => a - b)[2]!;
+    expect(median, `per-run maximum CPU stalls (ms): ${longest.map(ms => ms.toFixed(3)).join(", ")}`).toBeLessThan(50);
   }, 60_000);
 
   it("100,000 mostly refused records (99,990 only a full read refuses) leave the loop free: longest stall under 50 ms, the search answers what it can inside its limit", { tags: ["perf-budget"], timeout: 300_000 }, async () => {

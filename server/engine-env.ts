@@ -12,13 +12,14 @@
 // The finished map is passed as the explicit `env` of the spawn; no engine
 // inherits Murage's own environment by omission.
 
-import { createHash } from "node:crypto";
-import { delimiter } from "node:path";
+import { createHash, randomBytes } from "node:crypto";
+import { existsSync } from "node:fs";
+import { delimiter, win32 } from "node:path";
 import { ABSENT_PINS, ENV_PINS, isPowerShellProgram, resolvePins, valuePins, type PinRun, type SshResolution } from "../shared/arg-vocabulary.ts";
 import type { PromptFacts } from "../shared/prompt-capable.ts";
-import { CHECK_BYTES, CHECK_MS } from "../shared/scan-limits.ts";
+import { CHECK_BYTES, CHECK_MS, CHECK_WINDOWS_MS } from "../shared/scan-limits.ts";
 import type { EnvCapture, ExecEnv } from "../shared/mount-identity.ts";
-import { captureOwnerEnv, envGeneration, installPathTail, invalidateEnvCapture, onEnvInvalidate, type OwnerEnv } from "./env-path.ts";
+import { captureOwnerEnv, environmentProbeProgram, envGeneration, installPathTail, invalidateEnvCapture, onEnvInvalidate, type OwnerEnv } from "./env-path.ts";
 import { execCli } from "./procs.ts";
 import { askTouchesStartup, ownerStartupOf, rememberHand } from "./startup-files.ts";
 
@@ -49,7 +50,7 @@ let lastSsh: SshResolution | undefined;
  *  engine's own F12 record the HOME it was handed and what its hand did with the owner's ssh setting. Never another
  *  session's hand: a record without a usable HOME (none, or U20) gives no facts, and only the git rows hold. */
 export function promptFactsOf(execEnv: ExecEnv | undefined, cwd: string | undefined): PromptFacts | undefined {
-  const home = execEnv && !execEnv.unread ? execEnv.env.HOME : undefined;
+  const home = execEnv && !execEnv.unread && !execEnv.unchecked ? execEnv.env.HOME : undefined;
   if (!cwd || !home) return undefined;
   return { cwd, home, ...(execEnv?.ssh ? { ssh: { source: execEnv.ssh.source, kept: execEnv.ssh.kept } } : {}) };
 }
@@ -134,27 +135,44 @@ export async function handedEngineEnv(options: Parameters<typeof handEnv>[1] = {
 
 const PER_PROCESS = new Set(["_", "SHLVL", "OLDPWD", "PWD"]);
 
+/** E1: only identified launch failures or our own timeout may retain the hand for an owner waiver. */
+export type WaivableEnvReason = "launch-failed" | "timeout";
+type HeldEnvReason = "did-not-finish" | "overflow" | "exit-or-stderr" | "changed-while-checked" | "unpinned-shell-path" | "cwd-disagreement" | "case-alias" | "invalid-envelope" | "nonce-version" | "cloud-home" | "no-shell-form" | "unpinned-shell-form";
+type EnvCheckReason = WaivableEnvReason | HeldEnvReason;
+const WAIVABLE: ReadonlySet<EnvCheckReason> = new Set<WaivableEnvReason>(["launch-failed", "timeout"]);
+function waivable(reason: EnvCheckReason): reason is WaivableEnvReason { return WAIVABLE.has(reason); }
+function failedCheck(reason: EnvCheckReason, why = "the shell environment check could not be read"): CheckResult {
+  return { ok: false, reason, why };
+}
+
 export type CheckResult =
   | { ok: true; env: Record<string, string>; absent: string[]; cwdKnown: boolean; unknown: string[] }
-  | { ok: false; why: string };
+  | { ok: false; reason: EnvCheckReason; why: string };
 
 /** Rule 74d's comparison, given what the pinned form printed. Names whose
  * printed value differs, that are missing, or that are new (past the
  * per-process names) are removed from `env`; a name of `absent` the print
  * holds is removed from `absent`. The check only ever removes. */
-export function compareCheck(handed: HandedEnv, cwd: string, printed: string): CheckResult {
+export function compareCheck(handed: HandedEnv, cwd: string, printed: string, platform: NodeJS.Platform = "linux"): CheckResult {
   const at = printed.lastIndexOf("\0\0");
-  if (at < 0) return { ok: false, why: "the check's output could not be read" };
+  if (at < 0) return failedCheck("invalid-envelope");
   const block = printed.slice(0, at + 1);
   let dir = printed.slice(at + 2);
   if (dir.endsWith("\n")) dir = dir.slice(0, dir.endsWith("\r\n") ? -2 : -1);
-  const map: Record<string, string> = {};
+  const map: Record<string, string> = Object.create(null);
   for (const pair of block.slice(0, -1).split("\0")) {
     if (pair === "") continue;
     const eq = pair.indexOf("=");
-    if (eq <= 0) return { ok: false, why: "the check's output could not be read" };
-    map[pair.slice(0, eq)] = pair.slice(eq + 1);
+    if (eq <= 0) return failedCheck("invalid-envelope");
+    const name = pair.slice(0, eq), value = pair.slice(eq + 1);
+    if (Object.hasOwn(map, name) && map[name] !== value) return failedCheck("case-alias");
+    map[name] = value;
   }
+  if (platform === "win32") {
+    const windowsDir = dir.replace(/^\/([a-zA-Z])\//, "$1:/");
+    return comparePowerShellCheck(handed, cwd, JSON.stringify({ version: 1, nonce: "posix", provider: "FileSystem", env: Object.entries(map), cwd: windowsDir, processCwd: windowsDir }), "posix");
+  }
+  if (dir !== cwd) return failedCheck("cwd-disagreement", "the shell environment check changed folders");
   const env = { ...handed.env };
   const unknown: string[] = [];
   for (const name of new Set([...Object.keys(handed.env), ...Object.keys(map)])) {
@@ -172,34 +190,124 @@ export function compareCheck(handed: HandedEnv, cwd: string, printed: string): C
   return { ok: true, env, absent, cwdKnown: dir === cwd, unknown: [...new Set(unknown)] };
 }
 
-const checks = new Map<string, Promise<CheckResult>>();
-// an invalidation (env-path.ts invalidateEnvCapture) drops every cached check
-onEnvInvalidate(() => checks.clear());
+/** Fixed PowerShell probe. Only a server-generated hexadecimal nonce is inserted. */
+export function powerShellEnvProbe(nonce: string): string {
+  if (!/^[a-f0-9]{32}$/.test(nonce)) throw new Error("Invalid environment probe nonce");
+  return `$ErrorActionPreference='Stop'; $pairs=@([Environment]::GetEnvironmentVariables('Process').GetEnumerator() | ForEach-Object { ,@([string]$_.Key,[string]$_.Value) }); $loc=Get-Location; $result=@{version=1;nonce='${nonce}';env=$pairs;provider=[string]$loc.Provider.Name;cwd=[string]$loc.ProviderPath;processCwd=[Environment]::CurrentDirectory}; $json=ConvertTo-Json -InputObject $result -Depth 4 -Compress; $bytes=[Text.Encoding]::UTF8.GetBytes($json); $out=[Console]::OpenStandardOutput(); $out.Write($bytes,0,$bytes.Length); $out.Flush()`;
+}
 
-/** Rule 74d: run the pinned form once per (generation, engine session, shell,
- * cwd, digest of env), with `env` as its environment, in `cwd`, stdin closed,
- * the one script `env -0; printf '\0'; pwd`, bounded by CHECK_MS and
- * CHECK_BYTES. Murage's own process, not a tool call. A failure is U20:
- * nothing resolves from `env` or `absent` for the turn. */
-function checkExecEnv(at: number, session: string, shell: readonly string[], handed: HandedEnv, cwd: string): Promise<CheckResult> {
+export function comparePowerShellCheck(handed: HandedEnv, cwd: string, printed: string, nonce: string): CheckResult {
+  const failed = failedCheck("invalid-envelope");
+  try {
+    const value = JSON.parse(printed);
+    if (!value || typeof value !== "object" || Array.isArray(value)
+      || Object.keys(value).sort().join(",") !== "cwd,env,nonce,processCwd,provider,version") return failed;
+    if (value.version !== 1 || value.nonce !== nonce) return failedCheck("nonce-version");
+    if (value.provider !== "FileSystem" || !Array.isArray(value.env)) return failed;
+    const path = (v: unknown) => typeof v === "string" && win32.isAbsolute(v) && !v.includes("::") ? win32.normalize(v).replace(/[\\/]+$/, "").toLowerCase() : undefined;
+    const expected = path(cwd);
+    if (!expected || path(value.cwd) !== expected || path(value.processCwd) !== expected) return failedCheck("cwd-disagreement", "the shell environment check changed folders");
+    let alias = false;
+    const fold = (pairs: unknown[]): Map<string, string> | undefined => {
+      const map = new Map<string, string>();
+      for (const pair of pairs) {
+        if (!Array.isArray(pair) || pair.length !== 2 || pair.some(v => typeof v !== "string") || !pair[0] || /[=\0]/.test(pair[0]) || pair[1].includes("\0")) return;
+        const key = pair[0].toUpperCase();
+        if (map.has(key) && map.get(key) !== pair[1]) { alias = true; return; }
+        map.set(key, pair[1]);
+      }
+      return map;
+    };
+    const observed = fold(value.env), original = fold(Object.entries(handed.env));
+    if (!observed || !original) return alias ? failedCheck("case-alias") : failed;
+    const env: Record<string, string> = Object.create(null), unknown: string[] = [];
+    for (const [name, val] of Object.entries(handed.env)) {
+      if (observed.get(name.toUpperCase()) === val) env[name] = val; else unknown.push(name);
+    }
+    for (const name of observed.keys()) if (!original.has(name)) unknown.push(name);
+    const absent = handed.absent.filter(name => !observed.has(name.toUpperCase()));
+    return { ok: true, env, absent, cwdKnown: true, unknown: [...new Set(unknown)] };
+  } catch { return failed; }
+}
+
+const checks = new Map<string, Promise<CheckResult>>();
+const failures = new Map<string, { until: number; repeated: boolean; reason: EnvCheckReason }>();
+let botOf: (session: string) => string | undefined = () => undefined;
+export function setExecEnvBotReader(read: typeof botOf): void { botOf = read; }
+function checkKey(at: number, session: string, shell: readonly string[], handed: HandedEnv, cwd: string): string {
   const digest = createHash("sha256").update(JSON.stringify([shell, cwd, Object.entries(handed.env).sort(), handed.absent])).digest("hex");
-  const key = `${at}\u0000${session}\u0000${digest}`;
+  return `${at}\u0000${session}\u0000${originOf(session)}\u0000${digest}`;
+}
+function rememberFailure(key: string, session: string, reason: EnvCheckReason): void {
+  const previous = failures.get(key);
+  if (previous && Date.now() < previous.until) return;
+  failures.set(key, { until: Date.now() + (previous ? 120_000 : 30_000), repeated: previous !== undefined, reason });
+  const bot = botOf(session);
+  if (waivable(reason) && bot) console.info(`approvals: environment unchecked bot=${/^[\w-]+$/.test(bot) ? bot : "unknown"} reason=${reason}`);
+}
+function operationalReason(error: unknown, executable: string | undefined, cwd: string): EnvCheckReason {
+  if (!(error instanceof Error)) return "did-not-finish";
+  const detail = error as Error & { code?: string | number; killed?: boolean };
+  if (detail.code === "EUNPINNEDPROBE") return "unpinned-shell-path";
+  if (detail.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") return "overflow";
+  if (typeof detail.code === "number") return "exit-or-stderr";
+  if (detail.killed === true) return "timeout";
+  if (detail.code === "ENOENT" || detail.code === "EACCES") {
+    // spawn's ENOENT also names a missing cwd supplied by the tool call.
+    if (executable && existsSync(executable) && !existsSync(cwd)) return "cwd-disagreement";
+    return "launch-failed";
+  }
+  return "did-not-finish";
+}
+function operationalFailure(error: unknown, executable: string | undefined, cwd: string): CheckResult {
+  const reason = operationalReason(error, executable, cwd);
+  return failedCheck(reason, reason === "cwd-disagreement"
+    ? "the shell environment check could not use the requested folder" : "the shell environment check did not finish");
+}
+// Server-derived origin, read when the command asks, never from tool arguments.
+let originOf: (session: string) => string = () => "other";
+export function setExecEnvOriginReader(read: (session: string) => string): void { originOf = read; }
+onEnvInvalidate(() => { checks.clear(); failures.clear(); });
+
+function checkExecEnv(at: number, session: string, shell: readonly string[], handed: HandedEnv, cwd: string): Promise<CheckResult> {
+  const key = checkKey(at, session, shell, handed, cwd);
   const known = checks.get(key);
   if (known) return known;
-  const run = new Promise<CheckResult>((resolve) => {
+  const previous = failures.get(key);
+  if (previous && Date.now() < previous.until) return Promise.resolve(failedCheck(previous.reason, "Murage will retry the shell check on a later command. You can review this command now."));
+  const executable = environmentProbeProgram(shell[0] ?? "");
+  const run: Promise<CheckResult> = new Promise<CheckResult>((resolve) => {
     const [program, ...args] = shell;
-    if (!program) return resolve({ ok: false, why: "no shell form" });
-    // A Cloud home's launcher builds the engine's environment itself (pinned names win, others dropped) and runs only
-    // manifest engines, so the server cannot run the pinned form there: the record is U20, never the hand read as checked.
-    // The check's script is a POSIX one (`env -0; printf; pwd`). PowerShell, the Windows shell form, cannot run it, so starting it only
-    // ever produced the same U20 after a hidden PowerShell start (murage-releases #1): the record is U20 without starting anything.
-    if (isPowerShellProgram(program)) return resolve({ ok: false, why: "the shell form is PowerShell, which the environment check cannot read" });
-    if (process.env.MURAGE_CLOUD_ROLE === "home") return resolve({ ok: false, why: "a Cloud home's launcher sets the engine's environment" });
-    // Through the shared launcher (Rule 74c): the engine's shell form runs with no controlling terminal.
-    execCli(program, [...args, "env -0; printf '\\0'; pwd"], { env: handed.env, cwd, timeout: CHECK_MS, maxBuffer: CHECK_BYTES }, (error, stdout) => {
-      if (error) return resolve({ ok: false, why: (error as { killed?: boolean }).killed ? "the check took too long" : "the check did not finish" });
-      resolve(compareCheck(handed, cwd, stdout));
+    if (!program) return resolve(failedCheck("no-shell-form", "no shell form"));
+    if (process.env.MURAGE_CLOUD_ROLE === "home") return resolve(failedCheck("cloud-home", "a Cloud home's launcher sets the engine's environment"));
+    const powershell = isPowerShellProgram(program);
+    const flags = args.map(arg => arg.toLowerCase());
+    if (powershell && !(flags.at(-1) === "-command" && flags.includes("-noprofile") && flags.slice(0, -1).every(flag => ["-noprofile", "-noninteractive", "-nologo"].includes(flag)))) return resolve(failedCheck("unpinned-shell-form", "the shell form cannot be checked"));
+    if (!powershell && !(args.length === 1 && args[0] === "-c")) return resolve(failedCheck("unpinned-shell-form", "the shell form cannot be checked"));
+    if (!executable) return resolve(failedCheck("unpinned-shell-path", "the shell executable is not pinned to an absolute path"));
+    const nonce = randomBytes(16).toString("hex");
+    // Only fixed system paths may print the environment; the remaining commands
+    // are shell builtins. A missing or failed trusted helper keeps the check at U20.
+    const script = powershell ? powerShellEnvProbe(nonce) : "if [ -f /usr/bin/env ]; then /usr/bin/env -0; elif [ -f /bin/env ]; then /bin/env -0; else exit 1; fi && printf '\\0' && pwd";
+    execCli(executable, [...args, script], { absoluteExecutable: true, env: handed.env, cwd, timeout: process.platform === "win32" ? CHECK_WINDOWS_MS : CHECK_MS, maxBuffer: CHECK_BYTES }, (error, stdout, stderr) => {
+      // An envelope, even partial/malformed, is evidence to check before an
+      // operational error. Never hide integrity findings behind stderr/exit.
+      const result = stdout.length > 0
+        ? powershell ? comparePowerShellCheck(handed, cwd, stdout, nonce) : compareCheck(handed, cwd, stdout, process.platform)
+        : undefined;
+      if (result && !result.ok) return resolve(result);
+      if (result?.ok && !result.cwdKnown) return resolve(failedCheck("cwd-disagreement", "the shell environment check changed folders"));
+      if (stderr?.length) return resolve(failedCheck("exit-or-stderr", "the shell environment check wrote to stderr"));
+      // Any comparison evidence forbids restoring the original handed pins.
+      if (error) return resolve(result ? failedCheck("did-not-finish", "the shell environment check did not finish") : operationalFailure(error, executable, cwd));
+      resolve(result ?? failedCheck("invalid-envelope"));
     });
+  }).catch((error): CheckResult => operationalFailure(error, executable, cwd)).then(result => {
+    if (checks.get(key) === run) {
+      if (result.ok) failures.delete(key);
+      else { checks.delete(key); rememberFailure(key, session, result.reason); }
+    }
+    return result;
   });
   checks.set(key, run);
   return run;
@@ -209,17 +317,20 @@ function checkExecEnv(at: number, session: string, shell: readonly string[], han
 function execEnvOf(handed: HandedEnv, cwd: string, shell: readonly string[], check?: CheckResult): ExecEnv {
   // this hand's own ssh resolution travels with its record, so a verdict never reads another session's
   const ssh = handed.ssh ? { ssh: { source: handed.ssh.source, kept: handed.ssh.kept } } : {};
+  if (check && !check.ok && waivable(check.reason)) return {
+    env: handed.env, absent: handed.absent, cwd, shell, capture: handed.capture, unchecked: { reason: check.reason }, ...ssh,
+  };
   if (check && !check.ok) return { env: {}, absent: [], cwd, shell, capture: handed.capture, unread: { code: "U20", cause: check.why }, ...ssh };
   return { env: check?.ok ? check.env : handed.env, absent: check?.ok ? check.absent : handed.absent, cwd, shell, capture: handed.capture, ...ssh };
 }
 
-/** Re-runs a check may take when the generation moves under it, before the ask is U20. */
+/** Bounded reruns before holding an unstable environment as U20. */
 const CHECK_RERUNS = 3;
 const CHANGED_WHILE_CHECKED = "the environment changed while it was being checked";
 
 /** The F12 record a driver reports on a command ask, computed when the card opens (Rule 74d): the check of the current
  *  generation, read again once it answers; a check the generation moved under is never reported, it runs again (at most
- *  three times, then U20 "the environment changed while it was being checked"). */
+ *  three times, then U20 with reason changed-while-checked). */
 export async function execEnvNow(session: string, shell: readonly string[], handed: HandedEnv, cwd: string): Promise<ExecEnv> {
   for (let run = 0; run <= CHECK_RERUNS; run++) {
     const at = envGeneration();
@@ -227,11 +338,13 @@ export async function execEnvNow(session: string, shell: readonly string[], hand
     try {
       check = await checkExecEnv(at, session, shell, handed, cwd);
     } catch {
-      check = { ok: false, why: "the check did not finish" };
+      check = failedCheck("did-not-finish", "the check did not finish");
+      rememberFailure(checkKey(at, session, shell, handed, cwd), session, "did-not-finish");
     }
     if (envGeneration() === at) return execEnvOf(handed, cwd, shell, check);
   }
-  return execEnvOf(handed, cwd, shell, { ok: false, why: CHANGED_WHILE_CHECKED });
+  rememberFailure(checkKey(envGeneration(), session, shell, handed, cwd), session, "changed-while-checked");
+  return execEnvOf(handed, cwd, shell, failedCheck("changed-while-checked", CHANGED_WHILE_CHECKED));
 }
 
 /** The F12 record of an ask that runs no command: the handed map, unchecked. A Claude PowerShell command on the inherit path

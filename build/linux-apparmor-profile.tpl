@@ -21,3 +21,8 @@ profile murage-browser /opt/Murage/resources/browser-engine/chrome/chrome-headle
 
   include if exists <local/murage-browser>
 }
+
+profile murage-cage-bwrap /opt/Murage/resources/cage/bwrap flags=(unconfined) {
+  userns,
+  include if exists <local/murage-cage-bwrap>
+}

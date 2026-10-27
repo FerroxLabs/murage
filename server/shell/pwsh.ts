@@ -19,7 +19,7 @@
 
 import { isPlain, literalText, MAX_TEXT_CHARS, Unreadable, type Part, type Quote, type Word } from "./lex.ts";
 import { loadsCodeFirst, markLoaderRunner, markLoaderVariable, mentionsLoaderVariable, pythonModuleLoads, rReadsProfile } from "./loaders.ts";
-import { attachedInlineCode, candidatesOf, expandWord, fork, fromFileWord, INLINE_CODE, interpreterKey, MAX_DEPTH, PHYSICAL_DRIVE, resolveName, resolveWritten, runnerOption, runsRemote, simpleCommand, takesValue, walkForeignExecutor, type Provenance, type Visitor, type WalkContext } from "./walk.ts";
+import { attachedInlineCode, candidatesOf, expandWord, fork, fromFileWord, INLINE_CODE, interpreterKey, MAX_DEPTH, PHYSICAL_DRIVE, resolveName, resolveWritten, runnerOption, runsRemote, scanInterpreterInline, simpleCommand, takesValue, walkForeignExecutor, type Provenance, type Visitor, type WalkContext } from "./walk.ts";
 
 export const POWERSHELLS = new Set(["powershell", "powershell.exe", "pwsh", "pwsh.exe"]);
 const CMDS = new Set(["cmd", "cmd.exe"]);
@@ -644,9 +644,9 @@ export function nestedProgram(program: string, args: Word[]): NestedProgram {
     if (raw === undefined) throw new Unreadable("expansion", `a value in the arguments of ${program}`);
     const text = raw.toLowerCase();
     if (text === "-") return { kind: "stdin", explicit: true };
-    if (!text.startsWith("-")) return name === "powershell" ? { kind: "text", words: args.slice(i) } : { kind: "file", word: args[i]! };
-    const option = text.replace(/:.*$/, "");
+    const option = text.replace(/^\//, "-").replace(/:.*$/, "");
     if (option === "-ec" || abbreviates(option, "-encodedcommand") || abbreviates(option, "-encodedarguments", 9) || option === "-ea") throw new Unreadable("pwsh", "-EncodedCommand");
+    if (!text.startsWith("-")) return name === "powershell" ? { kind: "text", words: args.slice(i) } : { kind: "file", word: args[i]! };
     // `-Command:<text>`, `-File:<path>`: the value after the colon is the
     // option's own value (1.0.3 A-b1-1), as the colon form of any parameter
     const glued: Word[] = /:./.test(text) ? [{ parts: [{ kind: "lit", text: raw.slice(raw.indexOf(":") + 1), quote: "single" }] }] : [];
@@ -864,14 +864,25 @@ function scriptFile(spelled: string, name: string, dialect: "pwsh" | "cmd"): boo
 
 /** Throws when a program, as the reader resolved it, is one it does not
  * model: a launcher, an interpreter running code, a script file. */
-function unmodelled(name: string, spelled: string, args: Word[], stdin: Provenance | undefined, dialect: "pwsh" | "cmd", ctx: WalkContext): void {
-  const runner = powershellRunner(name);
+function unmodelled<H>(name: string, spelled: string, args: Word[], stdin: Provenance | undefined, dialect: "pwsh" | "cmd", ctx: WalkContext, literalProgram: string | undefined, visitor: Visitor<H>): void {
+  // Drive-relative Bash still launches code, but cannot use the absolute-path exception.
+  const runner = powershellRunner(name) ?? (/^[a-z]:bash(?:\.exe)?$/i.test(name) ? "launcher" : undefined);
+  // Only a literal PATH name or absolute path, with exact literal argv the Bash reader supports.
+  const literalBash = literalProgram !== undefined && (/^bash(?:\.exe)?$/i.test(literalProgram)
+    || /^(?:[a-z]:[\\/]|\/|\\\\[^\\/]+[\\/][^\\/]+[\\/])/i.test(literalProgram));
+  if (runner === "launcher" && dialect === "pwsh" && ctx.windowsBash && literalBash && /^(bash|bash\.exe)$/i.test(name)
+      && !stdin && args.length === 2 && literalText(args[0]!) === "-c"
+      && args[1]!.parts.every(part => part.kind === "lit" && part.quote === "single")) {
+    const payload = literalText(args[1]!);
+    if (payload !== undefined) { ctx.windowsBash.push(payload); return; }
+  }
   if (runner === "launcher") throw new Unreadable(dialect, `${name} runs something the reader does not see`);
   if (runner === "interpreter") {
     // a loader variable this read set or named reaches it (1.0.5 r8)
     markLoaderRunner(ctx.loaders, name);
     const why = interpreterRuns(programBase(name), args, stdin);
-    if (why) throw new Unreadable(dialect, `${name}: ${why}`);
+    if (why === "inline code") scanInterpreterInline(programBase(name), args, ctx, visitor, stdin);
+    else if (why) throw new Unreadable(dialect, `${name}: ${why}`);
   }
   if (scriptFile(spelled, name, dialect)) throw new Unreadable(dialect, `${spelled} is a script file the reader does not see`);
 }
@@ -918,7 +929,13 @@ export function walkPwsh<H>(text: string, ctx: WalkContext, visitor: Visitor<H>)
     }
     // a .NET call (`[IO.Directory]::Delete(…)`, `$x.Delete()`) runs code the
     // reader does not model
-    if (words.some((word) => DOTNET_CALL.test(renderPwshWord(word)))) {
+    // Member-call syntax inside literal interpreter argv belongs to that
+    // language, not to PowerShell (.read(), console.log(), os.system()).
+    const invocation = literalText(words[0] ?? { parts: [] }) === "&" ? words.slice(1) : words;
+    const invoked = invocation[0] ? resolveName(invocation[0]) : undefined;
+    const inlineInterpreter = invoked !== undefined && powershellRunner(invoked) === "interpreter"
+      && interpreterRuns(programBase(invoked), invocation.slice(1), stdin) === "inline code";
+    if (!inlineInterpreter && words.some((word) => DOTNET_CALL.test(renderPwshWord(word)))) {
       // a .NET call that names a physical drive (`[IO.File]::WriteAllBytes('\\.\PhysicalDrive0', …)`) is a disk write
       if (words.some((word) => PHYSICAL_DRIVE.test(renderPwshWord(word)))) {
         const hit = visitor.command(simpleCommand(".net-call", words, ctx), ctx);
@@ -968,9 +985,16 @@ function pwshStatement<H>(words: Word[], stdin: Provenance | undefined, ctx: Wal
     const lead = call[0]!.parts[0];
     // `$_.Length -gt 1mb`, `(Get-Item x).Name`: an expression, not a call
     // (calling a value takes `&`, which is read below and asks)
-    if (lead && (lead.kind === "var" || lead.kind === "subst")) return null;
-    // `[int]$x`, `[void](…)`: a cast or a type, its subexpressions walked
-    if (lead?.kind === "lit" && lead.quote === "none" && lead.text.startsWith("[")) return null;
+    if (lead && (lead.kind === "var" || lead.kind === "subst")) {
+      if (call.length === 1 || EXPRESSION_OPERATOR.test(literalText(call[1]!) ?? "")) return null;
+      throw new Unreadable("dynamic-name", renderPwshWord(call[0]!));
+    }
+    // `[int]$x`, `[void](…)`: a cast or a type, its subexpressions walked.
+    // Additional command arguments cannot turn an expression into a literal executable.
+    if (lead?.kind === "lit" && lead.quote === "none" && lead.text.startsWith("[")) {
+      if (call.length === 1 || EXPRESSION_OPERATOR.test(literalText(call[1]!) ?? "")) return null;
+      throw new Unreadable("dynamic-name", renderPwshWord(call[0]!));
+    }
     // `1 + 2`, `-1`
     const text = literalText(call[0]!);
     if (text !== undefined && NUMBER.test(text)) return null;
@@ -989,7 +1013,15 @@ function pwshStatement<H>(words: Word[], stdin: Provenance | undefined, ctx: Wal
   const name = resolveName(call[0]!);
   if (name === undefined) throw new Unreadable("dynamic-name", renderPwshWord(call[0]!));
   let program = name.replace(/\.(exe|com|cmd|bat)$/, "");
-  if (EVALS.has(program)) throw new Unreadable("dynamic-eval", program);
+  if (EVALS.has(program)) {
+    // A literal here-string piped into iex is executable text, not an
+    // unknown value. Preserve any known wipe before the unreadable hold.
+    if (stdin?.kind === "literal" && call.length === 1) {
+      const hit = walkPwsh(stdin.text, fork(ctx, true), visitor);
+      if (hit) return hit;
+    }
+    throw new Unreadable("dynamic-eval", program);
+  }
   // `return Remove-Item x`: the keyword's operand is a pipeline of its own
   if (!called && PIPELINE_KEYWORDS.has(program)) return pwshStatement(call.slice(1), stdin, ctx, visitor, hops + 1);
   const args = splitCommas(call.slice(1));
@@ -1025,7 +1057,9 @@ function pwshStatement<H>(words: Word[], stdin: Provenance | undefined, ctx: Wal
     return walkNestedInput(pwsh, run, stdin, ctx, visitor);
   }
   // a launcher, an interpreter's code, a script file: not modelled, so it asks
-  unmodelled(name, renderPwshWord(call[0]!), args, stdin, "pwsh", ctx);
+  const literalProgram = call[0]!.parts.some(part => part.kind === "lit" && part.quote === "none" && /[(){}]/.test(part.text))
+    ? undefined : literalText(call[0]!);
+  unmodelled(name, renderPwshWord(call[0]!), args, stdin, "pwsh", ctx, literalProgram, visitor);
   if ((program === "foreach-object" || program === "%") && callsMember(args)) throw new Unreadable("pwsh", "ForEach-Object calls a member on every item");
   // `env …`, `sudo`-style wrappers: walked as the POSIX reader walks them,
   // reading what the pipe before them writes
@@ -1361,7 +1395,7 @@ export function walkCmd<H>(text: string, ctx: WalkContext, visitor: Visitor<H>):
       }
       const program = name === "rmdir" ? "rd" : name === "erase" ? "del" : name;
       // a launcher, an interpreter's code, a script file: not modelled, so it asks
-      unmodelled(resolved, renderCmdWord(rest[0]!), args, stdin, "cmd", state);
+      unmodelled(resolved, renderCmdWord(rest[0]!), args, stdin, "cmd", state, literalText(rest[0]!), visitor);
       // `cd /d C:\x`: `/d` also changes the drive; the folder is the operand after it
       const operands = CD_NAMES.has(program) ? args.filter((arg) => !/^\/d$/i.test(literalText(arg) ?? "")) : args;
       // `env …`, `sudo`-style wrappers: walked as the POSIX reader walks them

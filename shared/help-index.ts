@@ -2762,7 +2762,27 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → Where to find things in Settings",
     "where": "Murage docs → Features → Where to find things in Settings",
     "url": "https://murage.app/docs/features/settings-guide#app-settings-messaging-and-app",
-    "text": "Messaging & phone: Messaging apps (Telegram, Slack and Discord, see Telegram, Slack and Discord) and Phone and other devices (see The Murage phone app). App: Backups, Usage (how much each bot has used), About & updates (where Get Murage news signs you up for Murage news by email: new releases, how-tos and tutorials), and Experimental (early features you can try, which may change)."
+    "text": "Messaging & phone: Messaging apps (Telegram, Slack and Discord, see Telegram, Slack and Discord) and Phone and other devices (see The Murage phone app). App: Backups, Usage (how much each bot has used) and About & updates (where Get Murage news signs you up for Murage news by email: new releases, how-tos and tutorials)."
+  },
+  {
+    "id": "features/settings-guide#built-in-browser",
+    "title": "Where to find things in Settings",
+    "description": "Every Settings page and every bot settings section, with what each one is for, so a bot can point to the right place.",
+    "heading": "Built-in browser",
+    "breadcrumb": "Murage docs → Features → Where to find things in Settings",
+    "where": "Settings → Devices → Built-in browser",
+    "url": "https://murage.app/docs/features/settings-guide#built-in-browser",
+    "text": "The built-in browser is on by default. Its workspace switch lives in Settings → Devices → Built-in browser. Each bot also has its own browser switch in Bot settings → Access. A switch you turned off stays off. Bots still hand steps such as entering credentials or agreeing to terms back to you."
+  },
+  {
+    "id": "features/settings-guide#teach-a-skill",
+    "title": "Where to find things in Settings",
+    "description": "Every Settings page and every bot settings section, with what each one is for, so a bot can point to the right place.",
+    "heading": "Teach a skill",
+    "breadcrumb": "Murage docs → Features → Where to find things in Settings",
+    "where": "Settings → Skills → Teach a skill",
+    "url": "https://murage.app/docs/features/settings-guide#teach-a-skill",
+    "text": "Teach a skill is on by default in the desktop app. Record a workflow, review the result and choose which bots can use it. Find its switch in Settings → Skills → Teach a skill, and open the recorder from your menu in the sidebar. A switch you turned off stays off. Recording is available on your computer; Cloud homes keep the skills library without the recorder."
   },
   {
     "id": "features/settings-guide#bot-settings",

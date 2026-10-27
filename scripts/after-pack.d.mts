@@ -11,6 +11,7 @@ export interface GepaPackagingContext {
 export const GEPA_MANIFEST_UNAVAILABLE:"unavailable";
 export const GEPA_UNAVAILABLE_TARGETS:readonly ["darwin-x64"];
 export function validatePackagedGepa(resources:string,context:GepaPackagingContext):ReturnType<typeof verifyGepaBundle>|null|undefined;
+export function validatePackagedCage(resources:string,archValue:string|number,required?:boolean):Promise<void>;
 export function validatePackagedThumbnailRuntime(server:string,manifest:{packages?:{name:string;version:string;path:string}[]},platform:string,arch:string,required?:boolean):Promise<{available:true;package:"sharp";version:string;files:string[]}|{available:false;package:"sharp";missing:string}>;
 export const MEMORY_WASM_FILES:readonly string[];
 export function validatePackagedWasmBackend(server:string,manifest:Record<string,unknown>):Promise<Record<string,unknown>>;

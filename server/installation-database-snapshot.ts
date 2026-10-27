@@ -127,6 +127,7 @@ const APP_TABLES = new Map<string, { required: boolean; optional: string[] }>(Ob
   // required: false so an archive from before the release still restores
   team_identities: { required: false, optional: [] },
   project_settings: { required: false, optional: [] },
+  project_routine_authority: { required: false, optional: [] },
   room_requests: { required: false, optional: ["handoff", "shared_work"] },
   // every owner send, committed before it is acknowledged (server/send-store.ts), new in 1.0.2;
   // notice (the code of what the person was told) was appended by ALTER during 1.0.2, and so was turn_id (the turn a steer went into)
