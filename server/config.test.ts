@@ -39,6 +39,7 @@ import { customMcpServers, customMcpServerDescriptors,
   type AppConfig,
 } from "./config.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import type { JsonObject } from "./schema.ts";
 
 vi.mock("node:fs", async (original) => {
   const fs = await original<typeof import("node:fs")>();
@@ -667,15 +668,30 @@ describe("configuration boundaries", () => {
     expect(localVmMaxInstances({ localVm: { maxInstances: 3 } })).toBe(3);
   });
 
-  it("keeps experimental features off by default and accepts an explicit opt-in", () => {
-    expect(skillRecorderEnabled({})).toBe(false);
+  it.each<JsonObject>([{}, { features: {} }, { features: { showToolCalls: false } }])("enables both graduated features without materializing defaults: %j", (saved) => {
+    const cfg = parseStoredConfig(saved);
+    expect(skillRecorderEnabled(cfg)).toBe(true);
+    expect(builtInBrowserEnabled(cfg)).toBe(true);
+    expect(cfg.features ?? {}).not.toHaveProperty("browser");
+    expect(cfg.features ?? {}).not.toHaveProperty("skillRecorder");
+  });
+
+  it("preserves explicit on and off independently for both graduated features", () => {
+    for (const enabled of [false, true]) {
+      const recorder = parseStoredConfig({ features: { skillRecorder: enabled } });
+      expect(skillRecorderEnabled(recorder)).toBe(enabled);
+      expect(builtInBrowserEnabled(recorder)).toBe(true);
+      const browser = parseStoredConfig({ features: { browser: enabled } });
+      expect(builtInBrowserEnabled(browser)).toBe(enabled);
+      expect(skillRecorderEnabled(browser)).toBe(true);
+      expect(parseConfigPatch({ features: { browser: enabled, skillRecorder: enabled } })).toEqual({ features: { browser: enabled, skillRecorder: enabled } });
+    }
     expect(parseConfigPatch({ features: { skillRecorder: true } })).toEqual({
       features: { skillRecorder: true },
     });
     expect(skillRecorderEnabled({ features: { skillRecorder: true } })).toBe(true);
-    // the built-in browser is an independent explicit opt-in
-    expect(builtInBrowserEnabled({})).toBe(false);
-    expect(builtInBrowserEnabled({ features: { skillRecorder: true } })).toBe(false);
+    expect(builtInBrowserEnabled({})).toBe(true);
+    expect(builtInBrowserEnabled({ features: { skillRecorder: true } })).toBe(true);
     expect(parseConfigPatch({ features: { browser: false } })).toEqual({ features: { browser: false } });
     expect(builtInBrowserEnabled({ features: { browser: false } })).toBe(false);
     expect(builtInBrowserEnabled({ features: { browser: true } })).toBe(true);
@@ -695,6 +711,45 @@ describe("configuration boundaries", () => {
     expect(() => parseConfigPatch({ features: { skillRecorder: "yes" } })).toThrow(
       "features.skillRecorder",
     );
+  });
+
+  it("keeps Teach a skill opt-in on a Cloud home while this computer defaults it on", () => {
+    const home = { MURAGE_CLOUD_ROLE: "home" } as NodeJS.ProcessEnv;
+    const desktop = {} as NodeJS.ProcessEnv;
+    for (const saved of [{}, { features: {} }, { features: { browser: true } }] as JsonObject[]) {
+      const cfg = parseStoredConfig(saved);
+      expect(skillRecorderEnabled(cfg, home)).toBe(false);
+      expect(skillRecorderEnabled(cfg, desktop)).toBe(true);
+    }
+    expect(skillRecorderEnabled({ features: { skillRecorder: true } }, home)).toBe(true);
+    expect(skillRecorderEnabled({ features: { skillRecorder: false } }, home)).toBe(false);
+    expect(skillRecorderEnabled({ features: { skillRecorder: false } }, desktop)).toBe(false);
+  });
+
+  it("keeps absent switches absent across unrelated saves and persists each opt-out across reloads", () => {
+    const file = join(DATA_DIR, "config.json");
+    mkdirSync(DATA_DIR, { recursive: true });
+    const before = existsSync(file) ? readFileSync(file, "utf8") : undefined;
+    try {
+      rmSync(file, { force: true });
+      expect(skillRecorderEnabled(loadConfig())).toBe(true);
+      expect(builtInBrowserEnabled(loadConfig())).toBe(true);
+      saveConfig({ profile: { name: "Fixture" } });
+      expect(JSON.parse(readFileSync(file, "utf8"))).not.toHaveProperty("features");
+      saveConfig(parseConfigPatch({ features: { browser: false } }));
+      expect(builtInBrowserEnabled(loadConfig())).toBe(false);
+      expect(skillRecorderEnabled(loadConfig())).toBe(true);
+      saveConfig(parseConfigPatch({ features: { skillRecorder: false } }));
+      saveConfig({ profile: { name: "Fixture renamed" } });
+      expect(loadConfig().features).toEqual({ browser: false, skillRecorder: false });
+      expect(builtInBrowserEnabled(loadConfig())).toBe(false);
+      expect(skillRecorderEnabled(loadConfig())).toBe(false);
+      saveConfig(parseConfigPatch({ features: { browser: true } }));
+      expect(loadConfig().features).toEqual({ browser: true, skillRecorder: false });
+    } finally {
+      if (before === undefined) rmSync(file, { force: true });
+      else writeFileSync(file, before);
+    }
   });
 
   it("keeps tool-call chips off by default and accepts an explicit opt-in", () => {

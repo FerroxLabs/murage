@@ -5,14 +5,17 @@ import { describe, expect, it, vi } from "vitest";
 import { callTool } from "./drivers/browser-proxy.ts";
 import { createHeadlessBrowserProxy } from "./drivers/headless-browser-proxy.ts";
 import { BuiltinFloorGate, protectedDocumentTargeted } from "./browser-floor-builtin.ts";
+import { builtInBrowserEnabled, parseStoredConfig } from "./config.ts";
 
 const page = (elements: Array<{ ref: string; role: string; name: string }>, url = "https://site.example/page", title = "Page") => ({ url, title, elements, notes: [] });
 
 function harness(p: ReturnType<typeof page>) {
+  const config = parseStoredConfig({});
   const gate = new BuiltinFloorGate();
   const calls: Array<{ op: string; body?: object }> = [];
   const request = async (op: string, body?: object) => { calls.push({ op, body }); return p; };
   const run = async (name: string, args: unknown) => {
+    expect(builtInBrowserEnabled(config)).toBe(true);
     const res = await callTool(name, args, request, gate);
     return res.content.map((c: any) => c.text ?? "").join("\n");
   };
@@ -162,7 +165,11 @@ describe("T39 headless engine path end to end (fake engine)", () => {
       if (method === "tools/call") sent.push(params.name);
       return { content: [{ type: "text", text: params?.name === "agent_browser_snapshot" ? '- textbox "Password" [ref=e1]' : "ok" }] };
     });
-    const proxy = createHeadlessBrowserProxy({ authorize: async () => ({ spec, held: false }), start: () => ({ request, close: async () => {} }), closeSession: async () => {} });
+    const config = parseStoredConfig({});
+    const proxy = createHeadlessBrowserProxy({ authorize: async () => {
+      if (!builtInBrowserEnabled(config)) throw new Error("Browser disabled");
+      return { spec, held: false };
+    }, start: () => ({ request, close: async () => {} }), closeSession: async () => {} });
     await proxy.handle({ id: 1, method: "tools/call", params: { name: "agent_browser_snapshot", arguments: {} } });
     const out = await proxy.handle({ id: 2, method: "tools/call", params: { name: "agent_browser_fill", arguments: { selector: "@e1", text: "x" } } }) as any;
     expect(out.result.content[0].text).toMatch(/^YOUR TURN:/);

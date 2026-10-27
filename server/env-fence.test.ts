@@ -130,14 +130,14 @@ describe("the check fence (Rule 74d)", () => {
     expect(execChecks.runs).toBe(2);
   });
 
-  it("an environment that keeps changing is U20 after three re-runs", async () => {
+  it.skipIf(!posixShell)("an environment that keeps changing holds U20 after three re-runs", async () => {
     const map = handed();
     execChecks.onRun = () => invalidateEnvCapture("changed again");
     const result = await execEnvNow("s3", shell, map, dir);
     expect(execChecks.runs).toBe(4);
-    expect(result).toMatchObject({ env: {}, absent: [], cwd: dir, shell: [...shell], capture: "session" });
-    // the F12 record carries U20 and its cause, so the verdict can name it on the card
-    expect(result.unread).toEqual({ code: "U20", cause: "the environment changed while it was being checked" });
+    expect(result).toMatchObject({ env: {}, absent: [], cwd: dir, shell: [...shell], capture: "session",
+      unread: { code: "U20", cause: "the environment changed while it was being checked" } });
+    expect(result.unchecked).toBeUndefined();
     expect(isExecEnv(result)).toBe(true);
   });
 

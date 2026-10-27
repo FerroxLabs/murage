@@ -14,7 +14,7 @@ Brief your AI Chief of Staff. It assembles specialists, coordinates their work, 
 
 Start with the outcome: launch a product, research a market, review a codebase or build a content workflow.
 
-Murage brings together a **Chief of Staff, specialist teams, 2,237 skills, connected tools and durable memory** in one workspace. Use a prebuilt team or ask a capable Chief to assemble one for the job. Give agents a browser or computer where supported, follow their work, and make the decisions that need you.
+Murage™ brings together a **Chief of Staff, specialist teams, 2,237 skills, connected tools and durable memory** in one workspace. Use a prebuilt team or ask a capable Chief to assemble one for the job. Give agents a browser or computer where supported, follow their work, and make the decisions that need you.
 
 Work in the desktop app, continue through the responsive Web UI or PWA, or message your Chief from Telegram. **Fuigo is included, and multi-vendor choice is built in.**
 
@@ -210,6 +210,8 @@ pnpm install --frozen-lockfile
 
 Run `pnpm dev:server` and `pnpm dev` in separate terminals, then `pnpm dev:desktop` for the Electron shell. Use `pnpm typecheck` and `pnpm test` for validation. Native installer commands are `pnpm package:mac`, `pnpm package:win` and `pnpm package:linux`; packaging is separate from publication.
 
+On Linux (x64 or arm64), run `pnpm build:murage-cage` first, on the same architecture. It needs Docker running and the host packages `build-essential pkg-config libseccomp-dev binutils xz-utils` (libseccomp 2.5.5, as on Ubuntu 24.04). On Ubuntu 23.10 and later, run `pnpm cage:apparmor` once from this repository after the build to install its source-path AppArmor profile with sudo. The source launch commands build a missing cage automatically and check that it can launch; `pnpm start` also starts the server.
+
 Further guides: [custom engines](docs/custom-engines.md), [custom MCP servers](docs/custom-mcp-servers.md), [Murage MCP server](docs/mcp-server.md), [connected apps](docs/connected-apps.md), [Ubuntu](docs/linux-desktop.md), [recovery](docs/verification/installation-recovery.md), and [releasing](docs/releasing.md).
 
 ## About Ferrox Labs
@@ -228,4 +230,4 @@ Murage is made by **Ferrox Labs, LLC** in Austin, Texas, founded by Sean Donahoe
 
 Murage is developed and maintained by **Ferrox Labs**. It started from [OpenMausBot](https://github.com/milind-soni/OpenMausBot), created by Milind Soni and its contributors. Murage is independently maintained and is not affiliated with or endorsed by the upstream project.
 
-Licensed under the GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later). See [LICENSE](LICENSE) and [NOTICE](NOTICE). Murage builds on OpenMausBot; those portions remain under the Apache License 2.0 ([LICENSES/Apache-2.0.txt](LICENSES/Apache-2.0.txt)). Bundled third-party components retain their own licenses and attribution.
+Licensed under the GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later). See [LICENSE](LICENSE) and [NOTICE](NOTICE). Murage builds on OpenMausBot; those portions remain under the Apache License 2.0 ([LICENSES/Apache-2.0.txt](LICENSES/Apache-2.0.txt)). Bundled third-party components retain their own licenses and attribution. Murage is a trademark of Ferrox Labs, LLC (US application serial 50181085). The Murage and Ferrox Labs names and logos are not covered by the code license; see [TRADEMARKS.md](TRADEMARKS.md).

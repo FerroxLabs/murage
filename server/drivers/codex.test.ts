@@ -36,10 +36,6 @@ import { isMountRecord } from "../../shared/mount-identity.ts";
 import { autoVerdict } from "../auto-approve.ts";
 import { execChecks, gate, resetExecChecks } from "../testing/exec-check-spy.ts";
 import { approveStartupWrite } from "../testing/startup-write.ts";
-import { isPowerShellProgram } from "../../shared/arg-vocabulary.ts";
-
-// Rule 74d's check script is POSIX: a PowerShell shell form (Windows) is never started for it, and the record reads U20 (engine-env.ts).
-const checkable = (execEnv: { shell: string[] }): boolean => !isPowerShellProgram(execEnv.shell[0] ?? "");
 
 vi.mock("node:child_process", async (original) => (await import("../testing/exec-check-spy.ts")).withExecCheckSpy(await original()));
 
@@ -2580,11 +2576,6 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
       return { behavior: "allow" };
     });
     expect(r.opened.map((e) => e.tool)).toEqual(["shell", "shell"]);
-    if (!checkable(r.opened[1].execEnv)) {
-      expect(runsAtOpen).toEqual([0, 0]);
-      expect(r.opened[1].execEnv).toMatchObject({ cwd: scratch, env: {}, unread: { code: "U20" } });
-      return;
-    }
     expect(runsAtOpen).toEqual([1, 2]);
     expect(r.opened[1].execEnv).toMatchObject({ cwd: scratch, env: { PAGER: "cat" } });
   });
@@ -2602,11 +2593,6 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
       runsAtOpen.push(execChecks.runs);
       return { behavior: "allow" };
     });
-    if (!checkable(r.opened[0].execEnv)) {
-      expect(runsAtOpen).toEqual([0]);
-      expect(r.opened[0].execEnv).toMatchObject({ cwd: scratch, env: {}, unread: { code: "U20" } });
-      return;
-    }
     expect(runsAtOpen).toEqual([2]);
     expect(r.opened[0].execEnv).toMatchObject({ cwd: scratch, env: { PAGER: "cat" } });
   });
@@ -3030,10 +3016,11 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
     expect(shell).toMatchObject({ requestType: "permission", toolEngine: "codex", toolCall: { name: "shell", input: { command: "ls -la", cwd: scratch } } });
     expect(shell.mcpMounts).toEqual(expect.arrayContaining([expect.objectContaining({ engineName: "agents", mountId: "own:agents", provenance: "own" })]));
     // F12: the handed map with the pins and the absence set, from the delivery's cwd
-    if (checkable(shell.execEnv)) {
+    expect(shell.execEnv.unread).toBeUndefined();
+    {
       expect(shell.execEnv).toMatchObject({ cwd: scratch, env: { PAGER: "cat", GIT_TERMINAL_PROMPT: "0" } });
       expect(shell.execEnv.absent).toEqual(expect.arrayContaining(["PYTHONINSPECT", "BASH_ENV"]));
-    } else expect(shell.execEnv).toMatchObject({ cwd: scratch, env: {}, absent: [], unread: { code: "U20" } });
+    }
     expect(shell.execEnv.env.PYTHONINSPECT).toBeUndefined();
     expect(edit).toMatchObject({ tool: "edit", toolCall: { name: "edit", input: { paths: ["../outside.txt"] } } });
     expect(own).toMatchObject({ tool: "publish_site", toolCall: { name: "mcp__agents__publish_site", input: { site: "x" } } });

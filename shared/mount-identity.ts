@@ -6,6 +6,7 @@
 // (lanes/release103/APP-GRANT-DESIGN-FINAL.AGREED-r10.md Rules 27..29, 54, 59, 74).
 
 import { CONNECTED_APPS_SERVER, LEGACY_CONNECTED_APPS_SERVER } from "./connected-app-names.ts";
+import type { WaivableEnvReason } from "../server/engine-env.ts";
 import type { SshSource } from "./arg-vocabulary.ts";
 
 // ---------------------------------------------------------------------------
@@ -174,6 +175,8 @@ export interface ExecEnv {
   /** U20 (Rule 74d): the consistency check failed, so `env` and `absent` are empty and nothing resolves from them;
    *  `cause` says why, for the card. */
   unread?: { code: "U20"; cause: string };
+  /** Handed facts retained after an operational check failure, never claimed checked. */
+  unchecked?: { reason: WaivableEnvReason };
   /** What THIS engine's hand did with the owner's ssh setting (Rule 74c delta 5): the per-repository core.sshCommand row
    *  reads the requesting engine's own source, never another session's. */
   ssh?: { source: SshSource; kept: boolean };
@@ -204,6 +207,7 @@ export interface ExecEnvInfo {
   shell: readonly string[];
   capture: EnvCapture;
   unread?: "U20";
+  unchecked?: { reason: WaivableEnvReason };
   provenance?: ExecEnvProvenance;
   managedEnv?: readonly string[];
 }
@@ -216,6 +220,7 @@ export function envInfoOf(record: ExecEnv): ExecEnvInfo {
     shell: [...record.shell],
     capture: record.capture,
     ...(record.unread ? { unread: "U20" as const } : {}),
+    ...(record.unchecked ? { unchecked: { reason: record.unchecked.reason } } : {}),
     ...(record.provenance ? { provenance: { ...record.provenance, adds: [...record.provenance.adds], unenforceable: [...record.provenance.unenforceable], ...(record.provenance.ownerRouting ? { ownerRouting: [...record.provenance.ownerRouting] } : {}) } } : {}),
     ...(record.managedEnv ? { managedEnv: [...record.managedEnv] } : {}),
   };
@@ -237,6 +242,11 @@ export function isExecEnv(value: unknown): value is ExecEnv {
   if (record.unread !== undefined) {
     const unread = record.unread as Record<string, unknown> | null;
     if (!unread || typeof unread !== "object" || unread.code !== "U20" || typeof unread.cause !== "string" || !unread.cause) return false;
+  }
+  if (record.unchecked !== undefined) {
+    const unchecked = record.unchecked as Record<string, unknown> | null;
+    if (record.unread || !unchecked || typeof unchecked !== "object"
+      || !["launch-failed", "timeout"].includes(unchecked.reason as string)) return false;
   }
   if (record.ssh !== undefined) {
     const ssh = record.ssh as Record<string, unknown> | null;

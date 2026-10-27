@@ -224,7 +224,7 @@ describe("managed thread desk auto-trust on a real pinned bundle", () => {
       expect(installSkill(id, "fixture", [{ path: "SKILL.md", content: md }])).not.toHaveProperty("error");
       setSkillEnabled(id, "checked-method", true);
       const thread = "task-one";
-      const pin = createProcedurePin(id, thread, [], []);
+      const pin = createProcedurePin(id, thread, [], [],undefined,undefined,{ownerTurn:true,shipped:()=>true});
       const deskPath = ensureTaskWorkspace(id, thread);
       migrateSkillDiscoveryToTasks(id);
       preparePinnedProcedures(id, thread, pin, true);

@@ -24,7 +24,8 @@ const TEST_CONTROL_WORD = /^(?:TEST|E2E|SMOKE|QUAL|B\d+|EVIDENCE|DIAGNOSTIC|FIXT
 
 /** True for a key owned by the Murage runtime, which no test inherits. */
 export function isAmbientMurageKey(key) {
-  if (!key.startsWith(PREFIX)) return false;
+  // The corpus report destination controls the test run, not the application.
+  if (!key.startsWith(PREFIX) || key === "MURAGE_CORPUS_OUT") return false;
   return !key.slice(PREFIX.length).split("_").some(word => TEST_CONTROL_WORD.test(word));
 }
 

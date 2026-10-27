@@ -4,10 +4,16 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, beforeAll, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, expect, it, onTestFailed, vi } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 let fixture: VerificationServer;
+
+// A failed run prints the end of its fixture server's log, so a failure on a
+// CI runner can be read from the job log alone.
+beforeEach(() => onTestFailed(() => {
+  try { if (fixture?.info.logPath) console.error(`[fixture server log, last 12000 bytes]\n${readFileSync(fixture.info.logPath, "utf8").slice(-12000)}`); } catch { /* no log yet */ }
+}));
 let proof: string;
 let fixtureRoot: string;
 async function api(method: string, path: string, body?: unknown) {

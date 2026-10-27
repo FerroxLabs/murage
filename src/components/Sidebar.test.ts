@@ -1,7 +1,11 @@
 import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { UpdaterState } from "@/types/muragebox";
+
+const updaterState = vi.hoisted(() => ({ value: null as UpdaterState | null }));
+vi.mock("@/lib/updater", () => ({ useUpdaterState: () => updaterState.value }));
 
 // posthog-js boots on import and reaches for a real browser. Nothing under
 // test here reports anything, so the module is stubbed rather than shimmed.
@@ -21,7 +25,7 @@ vi.mock("@/lib/analytics", () => ({
 // A bare object is the honest answer: no shell, browser capabilities.
 (globalThis as unknown as { window?: unknown }).window ??= {};
 const { TeamFeedbackToast, teamImportFeedback, teamImportShortfall, teamUndoRestores, sidebarBotVisible, sidebarBotPreview, sidebarGroupPreview,
-  archivedBotDeleteDetail, archivedBotsDeleteDetail, botDeleteDetail, archivedBotsDeleteItems, archivedBotsDeletePhrase, SidebarRowMark, sidebarThreadOwed, sidebarSnoozedUntil } =
+  archivedBotDeleteDetail, archivedBotsDeleteDetail, botDeleteDetail, archivedBotsDeleteItems, archivedBotsDeletePhrase, SidebarRowMark, sidebarThreadOwed, sidebarSnoozedUntil, SidebarUpdateControl } =
   await import("./Sidebar");
 import type {
   ArchivedTeamBot,
@@ -32,6 +36,69 @@ import { botRole } from "@/lib/bot-role";
 import { visibleMessages, type Bot, type Group, type Message } from "@/state/store";
 import { sidebarLineOf } from "../../shared/sidebar-line";
 import { stateForBot } from "@/lib/mascot";
+
+describe("the sidebar footer has one update control", () => {
+  const densities = ["icons", "compact", "comfortable"] as const;
+  const html = (density: typeof densities[number]) =>
+    renderToStaticMarkup(createElement(SidebarUpdateControl, { density }));
+
+  beforeEach(() => {
+    vi.stubGlobal("window", { muragebox: { updater: {} } });
+  });
+  afterEach(() => {
+    updaterState.value = null;
+    vi.unstubAllGlobals();
+  });
+
+  it("mounts the shared update slot once in the real footer", () => {
+    const source = readFileSync(new URL("./Sidebar.tsx", import.meta.url), "utf8");
+    const footer = source.slice(source.indexOf("{/* Footer."), source.indexOf("{menu && ("));
+    expect(footer.match(/<SidebarUpdateControl density=\{density\} \/>/g)).toHaveLength(1);
+    expect(footer).not.toMatch(/<UpdateIndicator\b|<UpdateButton\b/);
+  });
+
+  it.each(densities)("renders only the appropriate update control at %s density", (density) => {
+    for (const status of ["available", "downloading", "downloaded", "installing", "error", "handed-off", "deferred"] as const) {
+      updaterState.value = { status, version: "1.0.8" };
+      const markup = html(density);
+      expect(markup.match(/<button\b/g)).toHaveLength(1);
+      expect(markup).toContain(`data-testid="${density === "icons" ? "update-indicator" : "update-button"}"`);
+      expect(markup).not.toContain(`data-testid="${density === "icons" ? "update-button" : "update-indicator"}"`);
+    }
+  });
+
+  it.each(densities)("renders exactly one spinning element while downloading at %s density", (density) => {
+    updaterState.value = { status: "downloading", version: "1.0.8", percent: 42 };
+    expect(html(density).match(/<[^>]+class="[^"]*\banimate-spin\b[^"]*"[^>]*>/g)).toHaveLength(1);
+  });
+
+  it.each(["compact", "comfortable"] as const)("keeps update guidance accessible at %s density", (density) => {
+    const labels = {
+      error: "Update needs attention, view details",
+      "handed-off": "Finish updating in a terminal, view instructions",
+      deferred: "Update waiting for backup, view details",
+    } as const;
+    for (const [status, label] of Object.entries(labels)) {
+      updaterState.value = { status: status as UpdaterState["status"] };
+      const markup = html(density);
+      expect(markup).toContain(`aria-label="${label}"`);
+      expect(markup).not.toContain("disabled=");
+      expect(markup).not.toContain("Check for updates");
+      expect(markup).not.toContain("—");
+    }
+    // Static rendering cannot click. Guard the real handler's early return
+    // so every guidance label opens the card before any updater action.
+    const source = readFileSync(new URL("./Sidebar.tsx", import.meta.url), "utf8");
+    const button = source.slice(source.indexOf("function UpdateButton()"), source.indexOf("export function SidebarUpdateControl"));
+    expect(source).toContain('import { openUpdateCard } from "@/lib/update-card"');
+    expect(button).toMatch(/onClick=\{\(\) => \{\s*if \(cardLabel\) return openUpdateCard\(\);/);
+  });
+
+  it.each(densities)("renders nothing without the desktop updater at %s density", (density) => {
+    vi.stubGlobal("window", {});
+    expect(html(density)).toBe("");
+  });
+});
 
 describe("plain-text sidebar message previews", () => {
   const message = (text: string, extra: Partial<Message> = {}): Message => ({

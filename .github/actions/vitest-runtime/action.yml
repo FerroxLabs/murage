@@ -8,6 +8,8 @@ description: Prepare the pinned memory model, Electron, backup fixtures, server 
 runs:
   using: composite
   steps:
+    - uses: ./.github/actions/linux-cage
+      if: runner.os == 'Linux'
     - name: Restore the pinned local memory test model
       # Keyed on the hash-pinned manifest; the prepare step below still
       # verifies every file's size and SHA-256 and downloads only what is missing.

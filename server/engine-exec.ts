@@ -149,9 +149,10 @@ export function allowOwnerWrites(directory: string): void {
 
 // ── exclusion ───────────────────────────────────────────────────────────
 
-/** Nothing of an engine's is changed unless the helper that takes exclusion is there. */
+/** Nothing of an engine's is changed unless the helper that takes exclusion is there. Not there is a load failure (engine-exclusion.ts
+ * loadExclusionAddon found no usable addon, and looks only once per process): it stays so on this system until Murage is updated. */
 function needHelper(): void {
-  if (!exclOps.available()) throw new HelperError();
+  if (!exclOps.available()) throw new HelperError("helper-unloadable");
 }
 
 const aside = (path: string): string => `${path}${ASIDE_SUFFIX}`;

@@ -44,7 +44,8 @@ describe("the card registry", () => {
       expect(card, alias).toBeDefined();
       expect(card!.section, alias).toBe(target.section);
     }
-    expect(cardForAnchor(SETTINGS_CARDS, SECTION_ALIASES.experimental.anchor)?.advanced).toBe(true);
+    expect(cardForAnchor(SETTINGS_CARDS, SECTION_ALIASES.experimental.anchor)).toMatchObject({ section: "skills", advanced: false });
+    expect(SETTINGS_CARDS.some((card) => card.id === "about.experimental")).toBe(false);
   });
 
   it("renders every anchor, or owes it to the lane that owns the page", () => {
@@ -67,6 +68,14 @@ describe("the card registry", () => {
 });
 
 describe("search lists cards and rows", () => {
+  it("finds the browser and recorder in their regular Settings homes", () => {
+    expect(searchSettingsCards("built-in browser", true)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ card: expect.objectContaining({ id: "companion.browser", anchor: "browser-settings-heading" }), page: "Devices", advanced: false }),
+    ]));
+    expect(searchSettingsCards("teach a skill", true)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ card: expect.objectContaining({ id: "skills.recorder", anchor: "skill-recorder-heading" }), page: "Skills", advanced: false }),
+    ]));
+  });
   it("finds Show tool calls under Bots first for 'tool'", () => {
     const hits = searchSettingsCards("tool", true);
     expect(hits[0]).toMatchObject({ label: "Show tool calls in the conversation", page: "Bots" });

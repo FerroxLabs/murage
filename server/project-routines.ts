@@ -7,7 +7,8 @@ import type { AutoApprover } from "./auto-approve.ts";
 import { effectiveRoutinePermissionMode, ROUTINE_PERMISSION_MODES, type RoutinePeerSource, type RoutinePermissionMode } from "./routine-permissions.ts";
 
 /** Caller owns the transaction; E1 dispatches the queued request. */
-export function recordProjectRoutine(db: DatabaseSync, input: { groupId: string; threadId: string; memberIds: string[]; runId: string; botId: string; name: string; prompt: string; now: number }): { requestId: string; created: boolean } {
+export function recordProjectRoutine(db: DatabaseSync, input: { groupId: string; threadId: string; memberIds: string[]; runId: string; botId: string; name: string; prompt: string; now: number; authority?: { routineId: string; ceiling: RoutinePeerSource; ownerBinding: string; audienceBinding: string } }): { requestId: string; created: boolean } {
+  if (input.authority && !db.isTransaction) throw new Error("Routine authority requires the request transaction");
   const admissionKey = `routine:${input.runId}`;
   const existing = roomRequestByAdmissionKey(db, admissionKey);
   if (existing) return { requestId: String(existing.id), created: false };
@@ -22,6 +23,14 @@ export function recordProjectRoutine(db: DatabaseSync, input: { groupId: string;
   }
   const requestId = insertRoomRequest(db, { groupId: input.groupId, verb: "routine", fromKind: "routine", origin: "server", admissionKey, payloadText: input.prompt, projectGoalId: goal?.id, workItemId: cardId, toBotId: goal ? settings.leadBotId : input.botId, rootThreadId: input.threadId, targetThreadId: input.threadId, unattended: true, now: input.now });
   if (!requestId) throw new Error("The routine could not be queued.");
+  if (input.authority) {
+    const a = input.authority;
+    if (!["manual", "schedule"].includes(a.ceiling.triggerSource ?? "") || !ROUTINE_PERMISSION_MODES.includes(a.ceiling.permissionMode)) throw new Error("Invalid routine authority");
+    db.prepare(`INSERT INTO project_routine_authority VALUES (?,1,?,?,?,?,?,?,?,?,?,?,?)`).run(
+      requestId, input.runId, a.routineId, input.botId, input.groupId, input.threadId,
+      goal ? settings.leadBotId! : input.botId, admissionKey, a.ownerBinding, a.audienceBinding,
+      a.ceiling.triggerSource!, a.ceiling.permissionMode);
+  }
   insertProjectActivity(db, { groupId: input.groupId, kind: "routine_run", actor: "server", workItemId: cardId, goalId: goal?.id, requestId, at: input.now, detail: { runId: input.runId, threadId: input.threadId } });
   return { requestId, created: true };
 }
@@ -45,8 +54,7 @@ export function projectMainThread(group: { threadId: string; tasks?: Array<{ thr
 // NOLIMITS-ROUTINE-WAKE-107). The mark stays, and everything it drives (the browser, peer contact, hand-offs, the decision log) is
 // unchanged; only the turn's tool approvals are judged as the routine's own turn, at the lowest of the routine's level, the routine
 // bot's level when the run was delivered, and (at admission) the level of the bot that runs it now. A webhook or channel run, a run
-// for an audience that is not the owner, and any request this process did not deliver itself (a restart, a replay) keep the
-// unattended judge: nothing is widened that cannot be shown to be the owner's own scheduled or manual run.
+// for an audience that is not the owner, and any request without a matching durable delivery row keep the unattended judge.
 
 /** The routine run as the room delivery sees it. */
 export interface ProjectRoutineRunFacts { id: string; routineId: string; manual: boolean; triggerSource?: string; notOwnerAudience?: true; humanPrincipal?: unknown }
@@ -62,28 +70,30 @@ export function projectRoutineCeiling(run: ProjectRoutineRunFacts, routine: { pe
   return { permissionMode: effectiveRoutinePermissionMode(routine, bot), triggerSource: trigger };
 }
 
-/** The ceilings of the project routine requests this process delivered, by request id (in memory only: after a restart a queued
- * request keeps the unattended judge). */
-export class ProjectRoutineCeilings {
-  private readonly byRequest = new Map<string, { routineId: string; ceiling: RoutinePeerSource }>();
-  private readonly limit: number;
-  constructor(limit = 1_000) { this.limit = limit; }
-  record(requestId: string, routineId: string, ceiling: RoutinePeerSource): void {
-    this.byRequest.delete(requestId);
-    if (this.byRequest.size >= this.limit) this.byRequest.delete(this.byRequest.keys().next().value!);
-    this.byRequest.set(requestId, { routineId, ceiling: { ...ceiling } });
-  }
-  forget(requestId: string): void { this.byRequest.delete(requestId); }
-  /** The turn options a dispatch of `request` adds: the routine ceiling (capped by the routine's level now, as `now` gives it for the
-   * routine id; undefined when the routine is gone) and the flag that its tool approvals are that routine's. Empty for any other
-   * request. */
-  turnOptions(request: Pick<RoomRequest, "id" | "verb" | "fromKind" | "origin" | "admissionKey" | "unattended" | "notOwnerAudience">, now: (routineId: string) => RoutinePermissionMode | undefined): { routineAuthority?: RoutinePeerSource; projectRoutine?: true } {
-    if (request.verb !== "routine" || request.fromKind !== "routine" || request.origin !== "server" || !request.admissionKey.startsWith("routine:")) return {};
-    if (!request.unattended || request.notOwnerAudience) return {};
-    const held = this.byRequest.get(request.id);
-    if (!held) return {};
-    const current = now(held.routineId);
-    if (!current) return {};
-    return { routineAuthority: { ...held.ceiling, permissionMode: lowerOf(held.ceiling.permissionMode, current) }, projectRoutine: true };
-  }
+/** Server-only facts revalidated at admission and on each command ask. */
+export interface ProjectRoutineAuthorityCurrent {
+  sourceBotId: string;
+  ownerBinding: string;
+  audienceBinding: string;
+  permissionMode: RoutinePermissionMode;
+  triggerSource: "manual" | "schedule";
+}
+export function persistedProjectRoutineOptions(db: DatabaseSync, request: RoomRequest,
+  current: (routineId: string, groupId: string, threadId: string, targetBotId: string, runId: string) => ProjectRoutineAuthorityCurrent | undefined,
+): { routineAuthority?: RoutinePeerSource; projectRoutine?: true } {
+  if (request.verb !== "routine" || request.fromKind !== "routine" || request.origin !== "server" || !request.unattended || request.notOwnerAudience
+      || !["queued", "running"].includes(request.state) || !request.toBotId || !request.targetThreadId) return {};
+  // Old archives may not have this optional table until initialization completes.
+  if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='project_routine_authority'").get()) return {};
+  const row = db.prepare("SELECT * FROM project_routine_authority WHERE request_id=?").get(request.id);
+  if (!row || row.version !== 1 || typeof row.run_id !== "string" || row.admission_key !== `routine:${row.run_id}`
+      || row.admission_key !== request.admissionKey || row.group_id !== request.groupId || row.thread_id !== request.targetThreadId
+      || row.thread_id !== request.rootThreadId || row.target_bot_id !== request.toBotId
+      || !["manual", "schedule"].includes(String(row.trigger)) || !ROUTINE_PERMISSION_MODES.includes(row.ceiling as RoutinePermissionMode)) return {};
+  let now: ProjectRoutineAuthorityCurrent | undefined;
+  try { now = current(String(row.routine_id), request.groupId, request.targetThreadId, request.toBotId, String(row.run_id)); }
+  catch { return {}; }
+  if (!now || now.sourceBotId !== row.source_bot_id || now.ownerBinding !== row.owner_binding || now.audienceBinding !== row.audience_binding || now.triggerSource !== row.trigger
+      || !ROUTINE_PERMISSION_MODES.includes(now.permissionMode)) return {};
+  return { projectRoutine: true, routineAuthority: { permissionMode: lowerOf(row.ceiling as RoutinePermissionMode, now.permissionMode), triggerSource: row.trigger as "manual" | "schedule" } };
 }
