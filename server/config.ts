@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { z } from "zod";
 
 import { writeFileAtomic } from "./atomic.ts";
+import { isCloudHome } from "./box-relay.ts";
 import { assertNoCloudPlaintext, withCloudCredentials, syncCloudCredentialMemory } from "./cloud-home/credentials.ts";
 import { DEFAULT_INSTANCES } from "./default-instances.ts";
 import { isCloudHiddenEngine } from "./cloud-home/runnable-engines.ts";
@@ -255,7 +256,7 @@ const featureConfigSchema = z.object({
   projectsWorkProfile: z.boolean().optional(),
   projectsBoard: z.boolean().optional(),
   projectsDigest: z.boolean().optional(),
-  /** Experimental desktop workflow recorder. Hidden unless explicitly enabled. */
+  /** Desktop workflow recorder. On unless explicitly disabled. */
   skillRecorder: z.boolean().optional(),
   /** Desktop "Sign in with Flux" button. Off until Flux's server side is live. */
   fluxDesktopSignin: z.boolean().optional(),
@@ -264,7 +265,7 @@ const featureConfigSchema = z.object({
   /** Cloud home only: let bots use a hosted computer (box). Off unless the
    * owner turns it on; turns reach it only through the home's box relay. */
   cloudBoxComputers: z.boolean().optional(),
-  /** Experimental built-in browser. Off until explicitly enabled; each bot
+  /** Built-in browser. On unless explicitly disabled; each bot
    * also has its own switch. */
   browser: z.boolean().optional(),
   /** Rollback switch (plan 8.1): connected apps show Featured and search
@@ -429,7 +430,7 @@ export interface AppConfig {
   /** Shared preserves the historical singleton. Per-bot gives every bot a
    * separate container, durable workspace, viewer and lease. */
   localVm?: { mode?: "shared" | "per-bot"; maxInstances?: number };
-  /** Opt-in product experiments. Every flag defaults to disabled. */
+  /** Product switches; each feature resolves its own default. */
   features?: {
     botsSharedAcrossTeams?: boolean;
     learningDefaultOn?: boolean;
@@ -585,8 +586,10 @@ export function localVmMaxInstances(cfg: AppConfig): number {
   return cfg.localVm?.maxInstances ?? DEFAULT_LOCAL_VM_MAX_INSTANCES;
 }
 
-export function skillRecorderEnabled(cfg: AppConfig): boolean {
-  return cfg.features?.skillRecorder === true;
+/** Teach a skill is on by default on this computer. A Cloud home has no recorder and no
+ * window that shows its switch, so there it stays off until the owner turns it on. */
+export function skillRecorderEnabled(cfg: AppConfig, env: NodeJS.ProcessEnv = process.env): boolean {
+  return isCloudHome(env) ? cfg.features?.skillRecorder === true : cfg.features?.skillRecorder !== false;
 }
 
 export function fluxDesktopSigninEnabled(cfg: AppConfig): boolean {
@@ -597,10 +600,10 @@ export function showToolCallsEnabled(cfg: AppConfig): boolean {
   return cfg.features?.showToolCalls === true;
 }
 
-/** Workspace-level gate for the experimental built-in browser. A bot's own
+/** Workspace-level gate for the built-in browser. A bot's own
  * switch sits under it, so either can withhold the browser. */
 export function builtInBrowserEnabled(cfg: AppConfig): boolean {
-  return cfg.features?.browser === true;
+  return cfg.features?.browser !== false;
 }
 
 /** Whether connected apps offer the paged "All apps" list (on unless the

@@ -39,6 +39,13 @@ pnpm package:mac   # DMG + ZIP; requires Swift/Xcode tools
 pnpm package:linux # Ubuntu x64 .deb + AppImage; no Swift required
 ```
 
+The Linux cage build needs Docker access, a C compiler (`build-essential`),
+`pkg-config`, `libseccomp-dev` (2.5.5), `binutils` and `xz-utils` on the host.
+Bubblewrap and static libcap build in the pinned AlmaLinux 8 container with a
+glibc 2.28 floor; both seccomp filter generators still build on the host.
+Set `MURAGE_CAGE_TARBALL` and `MURAGE_CAGE_LIBCAP_TARBALL` to use local source
+archives; the container image and RPMs must still be available to Docker.
+
 `pnpm dev:desktop` downloads and verifies the pinned Cloudflare Tunnel connector for the current
 platform and architecture before Electron starts. Later launches re-verify and reuse the staged
 binary. Packaging continues to use `pnpm build:cloudflared`, which stages every architecture the

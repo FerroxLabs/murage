@@ -1,8 +1,9 @@
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import afterPack from "./after-pack.mjs";
+import afterPack, { validatePackagedCage } from "./after-pack.mjs";
 import { LICENSE_FILES } from "./cua-linux-release.mjs";
 import { removeTempDirSync } from "../server/testing/cleanup.ts";
 
@@ -31,6 +32,64 @@ afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
     removeTempDirSync(directory);
   }
+});
+
+describe.skipIf(process.platform === "win32")("packaged cage resources", () => {
+  function cageFixture(arch = "x64") {
+    const fx = fixture();
+    const cage = path.join(fx.resources, "cage");
+    fs.mkdirSync(cage);
+    const hashes = {};
+    for (const name of ["bwrap", "murage-cage.bpf", "murage-power.bpf", "COPYING"]) {
+      const bytes = `fixture ${name}`;
+      fs.writeFileSync(path.join(cage, name), bytes, { mode: 0o664 });
+      hashes[name] = createHash("sha256").update(bytes).digest("hex");
+    }
+    const manifest = { schema: 1, target: `linux-${arch}`, executable: "bwrap", binarySha256: hashes.bwrap,
+      filters: { "murage-cage.bpf": { sha256: hashes["murage-cage.bpf"] }, "murage-power.bpf": { sha256: hashes["murage-power.bpf"] } } };
+    fs.writeFileSync(path.join(cage, "manifest.json"), JSON.stringify(manifest));
+    return { ...fx, cage, manifest };
+  }
+
+  it.each([["x64", 1], ["arm64", 3]])("checks %s hashes and restores executable mode in afterPack", async (arch, builderArch) => {
+    const { appOutDir, cage } = cageFixture(arch);
+    await afterPack({ appOutDir, electronPlatformName: "linux", arch: builderArch });
+    expect(fs.lstatSync(path.join(cage, "bwrap")).mode & 0o777).toBe(0o755);
+    for (const name of ["murage-cage.bpf", "murage-power.bpf", "manifest.json", "COPYING"]) expect(fs.lstatSync(path.join(cage, name)).mode & 0o777).toBe(0o644);
+  });
+
+  it("requires the cage directory for a real package", async () => {
+    await expect(validatePackagedCage(fixture().resources, "x64")).rejects.toThrow();
+  });
+
+  it.each(["bwrap", "murage-cage.bpf", "murage-power.bpf", "manifest.json", "COPYING"])("rejects a missing %s", async name => {
+    const { resources, cage } = cageFixture();
+    fs.unlinkSync(path.join(cage, name));
+    await expect(validatePackagedCage(resources, "x64")).rejects.toThrow();
+  });
+
+  it.each(["bwrap", "murage-cage.bpf", "murage-power.bpf"])("rejects changed bytes in %s", async name => {
+    const { resources, cage } = cageFixture();
+    fs.appendFileSync(path.join(cage, name), "changed");
+    await expect(validatePackagedCage(resources, "x64")).rejects.toThrow(`CAGE_RESOURCE_HASH_MISMATCH: ${name}`);
+  });
+
+  it.each(["link", "directory"])("rejects bwrap as a %s", async kind => {
+    const { resources, cage } = cageFixture();
+    const binary = path.join(cage, "bwrap");
+    fs.renameSync(binary, path.join(cage, "original"));
+    if (kind === "link") fs.symlinkSync(path.join(cage, "original"), binary);
+    else fs.mkdirSync(binary);
+    await expect(validatePackagedCage(resources, "x64")).rejects.toThrow("must be a regular file");
+  });
+
+  it("rejects another target and a missing digest", async () => {
+    const { resources, cage, manifest } = cageFixture();
+    await expect(validatePackagedCage(resources, "arm64")).rejects.toThrow("CAGE_RESOURCE_MANIFEST_MISMATCH");
+    delete manifest.binarySha256;
+    fs.writeFileSync(path.join(cage, "manifest.json"), JSON.stringify(manifest));
+    await expect(validatePackagedCage(resources, "x64")).rejects.toThrow("CAGE_RESOURCE_HASH_MISMATCH: bwrap");
+  });
 });
 
 describe.skipIf(process.platform === "win32")("Linux afterPack permissions", () => {

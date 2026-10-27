@@ -14,7 +14,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { accessSync, chmodSync, closeSync, constants, existsSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, statSync, readdirSync, writeFileSync } from "node:fs";
 import { CAPTURE_BYTES, CAPTURE_MS } from "../shared/scan-limits.ts";
 import { homedir, userInfo } from "node:os";
-import { basename, delimiter, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, delimiter, dirname, extname, isAbsolute, join, relative, resolve, posix, win32 } from "node:path";
 
 /** nvm keeps every node version's bin dir separately; newest first so a
  * CLI installed under the latest node wins. */
@@ -558,6 +558,25 @@ function isFile(p: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** Environment checks must not discover their shell on the handed PATH.
+ * Windows PowerShell belongs to the server's absolute SystemRoot. Other
+ * Windows shells must already be pinned by the engine launch (Git Bash is
+ * resolved from its Git installation there). POSIX accepts a pinned path
+ * or the fixed system sh/bash paths. No existence fallback or PATH search. */
+export function environmentProbeProgram(program: string, platform: NodeJS.Platform = process.platform): string | undefined {
+  if (platform === "win32") {
+    if (/^(?:.*[\\/])?powershell(?:\.exe)?$/i.test(program)) {
+      const root = process.env.SystemRoot ?? process.env.SYSTEMROOT;
+      if (!root || !win32.isAbsolute(root) || !/^(?:[a-z]:[\\/]|[\\/]{2}[^\\/]+[\\/][^\\/]+)/i.test(root)) return;
+      return win32.join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+    }
+    return win32.isAbsolute(program) && /^(?:[a-z]:[\\/]|[\\/]{2}[^\\/]+[\\/][^\\/]+)/i.test(program) ? program : undefined;
+  }
+  if (posix.isAbsolute(program)) return program;
+  if (program === "sh" || program === "bash") return `/bin/${program}`;
+  return undefined;
 }
 
 /** PATHEXT-aware `which`. A path-ish cli is probed where it points. A bare
