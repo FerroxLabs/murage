@@ -10,6 +10,7 @@ export const BOT_SETTINGS_SECTIONS = [
   { id: "routines", label: "Routines", keywords: "schedule calendar automation recurring" },
   { id: "teams", label: "Teams", keywords: "shared team sharing copy client general notes" },
   { id: "access", label: "Access", keywords: "computer browser connected apps accounts working folder workspace cloud sites published website online take down" },
+  { id: "email", label: "Email", keywords: "email address inbox mail trusted contacts never email activity pause sending" },
   { id: "model", label: "Model", keywords: "provider engine effort selection default" },
   { id: "permissions", label: "Permissions", keywords: "auto approval review safety contacting peers full access ask telegram slack discord setup images image generation" },
   { id: "voice", label: "Voice & alerts", keywords: "speech notifications sound speak replies" },
@@ -25,6 +26,8 @@ export function botSettingsSectionLabel(section: typeof BOT_SETTINGS_SECTIONS[nu
 }
 /** Sections that read or change desktop-only routes: not offered elsewhere. */
 export const DESKTOP_ONLY_BOT_SETTINGS: ReadonlySet<BotSettingsSection> = new Set(["shapes", "teams", "learning"]);
+/** Sections offered only while a server feature says it is on: `email` only while bot email's status route answers enabled (dark launch). */
+export const GATED_BOT_SETTINGS: ReadonlySet<BotSettingsSection> = new Set(["email"]);
 export function filterBotSettingsSections(query: string) {
   const words = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
   return BOT_SETTINGS_SECTIONS.filter(section => words.every(word => `${section.label} ${section.keywords}`.toLowerCase().includes(word)));

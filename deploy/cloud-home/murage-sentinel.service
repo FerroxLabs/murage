@@ -1,0 +1,61 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Murage Sentinel for a Cloud home (1.0.9, GAP-SENTINEL-109 sections 3.1, 10.1 and 10.3, docs/sentinel.md).
+# A separate, read-only observer of the home's health metadata, never a child of the home or its turn worker, and
+# never started as root. It sees exactly one input: /data/home/health, projected read-only into its own runtime
+# folder (the rest of /data is an empty read-only tmpfs). Its only write root is its own persistent StateDirectory.
+# No network of any kind, no container socket, no credentials, no Flux.
+#
+# Identity: the scanner accepts only inputs owned by the account that runs it (server/sentinel/paths.ts), so it runs
+# as the home's non-root app account with every privilege and every other path taken away. The id in the paths is
+# sentinelInstallationId("/data/home") (shared/sentinel-installation.mjs); server/cloud-home/sentinel-units.test.ts
+# checks it, and murage-sentinel-descriptor.mjs writes the descriptor before each run.
+[Unit]
+Description=Murage Sentinel health check
+After=data.mount murage-home.service
+RequiresMountsFor=/data
+ConditionPathIsDirectory=/data/home
+
+[Service]
+Type=oneshot
+User=murage
+Group=murage
+UMask=0077
+# The home server sets the same value (server/cloud-home/boot.ts), so both resolve one output root.
+Environment=MURAGE_SENTINEL_STATE_DIR=/var/lib/murage-sentinel
+Nice=19
+IOSchedulingClass=idle
+ExecStartPre=/usr/local/bin/node /usr/local/libexec/murage-sentinel-descriptor.mjs
+ExecStart=/usr/local/bin/node /opt/murage/dist-server/sentinel/cli.js /var/lib/murage-sentinel/MurageSentinel/adc75396f355b4b40051351a1cef5a6a/descriptor.json --once
+TimeoutStartSec=60
+StateDirectory=murage-sentinel murage-sentinel/MurageSentinel murage-sentinel/MurageSentinel/adc75396f355b4b40051351a1cef5a6a
+StateDirectoryMode=0700
+RuntimeDirectory=murage-sentinel murage-sentinel/home
+RuntimeDirectoryMode=0700
+TemporaryFileSystem=/data:ro
+BindReadOnlyPaths=-/data/home/health:/run/murage-sentinel/home/health
+InaccessiblePaths=-/run/docker.sock -/var/run/docker.sock -/run/podman -/run/containerd
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+LimitCORE=0
+MemoryMax=256M
+CPUQuota=50%

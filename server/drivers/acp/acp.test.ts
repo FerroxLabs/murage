@@ -651,6 +651,24 @@ describe("ACP turns (fake CLI)", () => {
     expect(recorder.events.some((e) => e.type === "session.started")).toBe(true);
   });
 
+  it("S13b: mounts phoneJobs with exactly the given args and env, and none without it", async () => {
+    await create();
+    const phoneJobs = { command: process.execPath, args: ["/fake/phone-jobs-proxy.js"], env: { MURAGE_PHONE_TOOLS: "calendar_read", MURAGE_PJ_GEN: "g1" } };
+    const withDump = join(scratch, "pj-with.json");
+    process.env.FAKE_ACP_DUMP = withDump;
+    await instance.adapter.sendTurn({ threadId: "t-pj-with", text: "go", integrations: { phoneJobs } });
+    await recorder.until((event) => event.type === "turn.completed" && event.threadId === "t-pj-with");
+    expect(JSON.parse(readFileSync(withDump, "utf8")).mcpServers).toContainEqual({
+      name: "phoneJobs", command: process.execPath, args: ["/fake/phone-jobs-proxy.js"],
+      env: [{ name: "MURAGE_PHONE_TOOLS", value: "calendar_read" }, { name: "MURAGE_PJ_GEN", value: "g1" }],
+    });
+    const withoutDump = join(scratch, "pj-without.json");
+    process.env.FAKE_ACP_DUMP = withoutDump;
+    await instance.adapter.sendTurn({ threadId: "t-pj-without", text: "go", integrations: { browser: { command: process.execPath, args: ["/fake/browser-proxy.js"], env: {} } } });
+    await recorder.until((event) => event.type === "turn.completed" && event.threadId === "t-pj-without");
+    expect((JSON.parse(readFileSync(withoutDump, "utf8")).mcpServers as Array<{ name: string }>).map((server) => server.name)).not.toContain("phoneJobs");
+  });
+
   it("mounts local CUA only on an approval-capable ACP instance", async () => {
     await create();
     const dump = join(scratch, "local-dump.json");
@@ -1391,6 +1409,22 @@ createInterface({ input: process.stdin }).on("line", line => {
     await instance.adapter.respondToRequest("t-question-tool", (opened as any).requestId, { behavior: "deny" });
     expect(await recorder.until((e) => e.type === "request.resolved")).toMatchObject({ behavior: "deny", source: "user" });
     expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
+  });
+
+  it("reports only the question tool's bare name as `tool`, never the model's whole title (L-r4)", async () => {
+    process.env.FAKE_ACP_MODE = "question-tool";
+    process.env.FAKE_ACP_QUESTION_TITLE = "Ask Sam at sam.example/AskUserQuestion";
+    try {
+      instance = await GrokAgentDriver.create({ instanceId: "acp-test", displayName: "ACP Test", environment: {}, enabled: true, config: { cli: FAKE_CLI, fullAuto: true } });
+      recorder = recordEvents(instance.adapter);
+      await instance.adapter.sendTurn({ threadId: "t-question-title", text: "go" });
+      const opened = await recorder.until((e) => e.type === "request.opened");
+      expect(opened).toMatchObject({ tool: "AskUserQuestion", questionTool: true });
+      expect(JSON.stringify((opened as any).tool)).not.toContain("sam.example");
+      await instance.adapter.respondToRequest("t-question-title", (opened as any).requestId, { behavior: "deny" });
+    } finally {
+      delete process.env.FAKE_ACP_QUESTION_TITLE;
+    }
   });
 
   it("advertises form and URL elicitation in initialize (ASK3)", async () => {
@@ -2415,7 +2449,11 @@ createInterface({ input: process.stdin }).on("line", line => {
     expect(errors).toHaveLength(1);
     const observed=variant==="valid"||variant==="terminal";
     expect(errors[0]).toMatchObject({ message: "fixture rejection [link removed]", details: "ACP request: session/prompt\nProvider response: HTTP 404"+(variant==="terminal"?"\nEngine error kind: max_tokens_truncation":"")+"\nEngine error code: -32603" + (observed ? "\nFuigo failure category observed during request: api\nFuigo retry state observed during request: failed" : "") });
-    const rows=lifecycleRows("t-fuigo-diagnostic").filter(row=>row.turnId===turnId),rejection=rows.find(row=>row.event==="rpc_rejected"&&row.method==="session/prompt")!;
+    // turn.completed alone does not prove the rejection row is in the log
+    // this test reads (ubuntu 4/10 on the 1.0.8 cut): wait for that row.
+    const promptRejected = (row: ReturnType<typeof lifecycleRows>[number]) => row.turnId === turnId && row.event === "rpc_rejected" && row.method === "session/prompt";
+    await expect.poll(() => lifecycleRows("t-fuigo-diagnostic").some(promptRejected), { timeout: 10_000 }).toBe(true);
+    const rows=lifecycleRows("t-fuigo-diagnostic").filter(row=>row.turnId===turnId),rejection=rows.find(promptRejected)!;
     expect(errors[0].diagnostic).toMatchObject({version:1,diagnosticId:errors[0].eventId,turnId,processGeneration:rejection.processGeneration,rpcId:rejection.rpcId,method:"session/prompt",rpcCode:-32603,httpStatus:404});
     expect(errors[0].diagnostic?.observedKind).toBe(observed?"api":undefined);expect(rejection.observedKind).toBe(observed?"api":undefined);
     expect(errors[0].diagnostic?.terminalKind).toBe(variant==="terminal"?"max_tokens_truncation":undefined);expect(rejection.terminalKind).toBe(variant==="terminal"?"max_tokens_truncation":undefined);

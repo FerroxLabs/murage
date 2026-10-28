@@ -312,6 +312,25 @@ export async function descendantIdentities(root: number): Promise<ProcessIdentit
   return new Map([...found].map((pid) => [pid, starts.get(pid)!]));
 }
 
+/** descendantIdentities, but a walked pid whose start could not be read is kept with "" (unknown) unless the OS says it is gone
+ * (ESRCH), so a caller that must confirm a whole tree gone can tell "no descendant" from "one it cannot identify" (OPENAI-TOOLS-109,
+ * Astra code-r3). Without a platform hook the ps listing already carries every start. */
+export async function descendantIdentitiesKeepingUnknown(root: number): Promise<ProcessIdentities | null> {
+  const platform = await platformListTree(root);
+  if (platform === undefined) return descendantIdentities(root);
+  if (!platform) return null;
+  const starts = await processStarts(platform);
+  if (!starts) return null;
+  const out: ProcessIdentities = new Map();
+  for (const pid of platform) {
+    if (!Number.isInteger(pid) || pid <= 0) continue;
+    const start = starts.get(pid);
+    if (start) { out.set(pid, start); continue; }
+    try { process.kill(pid, 0); out.set(pid, ""); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") out.set(pid, ""); }
+  }
+  return out;
+}
+
 /** Descendants of `root` measured against an identity baseline, from ONE
  * listing. A baseline entry is exempt only when its pid AND start time match
  * a live process in this listing (a recycled pid is new work). `fresh` holds
