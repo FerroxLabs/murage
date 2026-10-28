@@ -81,6 +81,8 @@ export interface WebhookManagerOptions {
     runOn: RoutineRunOn;
     deliveryId: string;
     receivedAt: number;
+    /** The event's name, kept on the run (bot calls 1.0.9: the webhook.event fact is derived from the committed run). */
+    eventType?: string;
   }) => { id: string };
   cancelQueued?: (webhookId: string, message: string) => void;
   pendingRuns?: (webhookId: string) => number;
@@ -578,6 +580,7 @@ export class WebhookManager {
       runOn: trigger.runOn,
       deliveryId,
       receivedAt: now,
+      ...(event.eventName ? { eventType: String(event.eventName) } : {}),
     });
     this.deliveries.push({ key: `${trigger.endpointId}:${deliveryId}`, runId: run.id, at: now });
     if (this.deliveries.length > MAX_DELIVERIES) {

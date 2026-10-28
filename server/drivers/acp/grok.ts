@@ -412,7 +412,19 @@ const support: AcpSupport = {
   // A cut MCP result is saved in this session's own `mcp/` folder; reading it
   // back is the bot reading its own output (server/own-tool-results.ts).
   toolResultDirs: ({ env, cwd, sessionId }) => fuigoToolResultDirs(grokHome(env), sessionFolders(cwd), sessionId),
-  images: false,
+  // Real grok 1.0.67 turn (grok-4.7, 2026-10-28): an inline ACP image block was
+  // read back word for word, and the same prompt without it was not. initialize
+  // also advertises promptCapabilities.image; this is the answer before that probe.
+  images: true,
+  // Grok Build's own names for the Fuigo contract, proven on a real 1.0.67 turn:
+  // `_x.ai/interject` mid-turn answered `{ result: { status: "queued" } }`, echoed
+  // `_x.ai/session/interjection` with the same interjectionId, and the reply
+  // followed it. `_fuigo/interject` is method-not-found there.
+  interjection: {
+    method: "_x.ai/interject",
+    echoes: ["_x.ai/session/interjection"],
+    queueChanged: ["_x.ai/queue/changed"],
+  },
   models: STATIC_GROK_MODELS,
   resolveModels: (env) => mergeLocalInject(readGrokModelCatalog(env), env),
   // Grok's accepted levels vary by model and the CLI validates lazily — a

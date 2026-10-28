@@ -144,6 +144,19 @@ describe("webhook signature and inbox", () => {
     expect((await send("/v1/billing/webhook", { raw: raw.replace("4900", "1"), headers: { "stripe-signature": good } })).status).toBe(400);
     expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM stripe_events").first<{ n: number }>())!.n).toBe(0);
   });
+  it("refuses a chunked body over the cap as it streams, without reading it whole (upstream 88060af8f)", async () => {
+    let pulled = 0;
+    const chunk = new Uint8Array(64 * 1024);
+    // 4 MB with no declared length; the cap is 256 KB
+    const stream = new ReadableStream<Uint8Array>({ pull(controller) { pulled += 1; if (pulled > 64) controller.close(); else controller.enqueue(chunk); } });
+    const ctx = createExecutionContext();
+    const response = await createWorker(fetch, fetch, { provider }, {}, deps()).fetch(new Request("https://admin.murage.test/v1/billing/webhook", {
+      method: "POST", body: stream, headers: { "content-type": "application/json", "stripe-signature": `t=${NOW / 1000},v1=${"0".repeat(64)}` }, duplex: "half" } as RequestInit), baseEnv(), ctx);
+    await waitOnExecutionContext(ctx);
+    expect(response.status).toBe(413);
+    expect(pulled).toBeLessThan(20);
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM stripe_events").first<{ n: number }>())!.n).toBe(0);
+  });
   it("accepts a body larger than the 16 KB API cap and is idempotent on event id", async () => {
     await reserveAndCheckout();
     const big = stripeEvent("checkout.session.completed", await boundSession({ object: "checkout.session", consent: { terms_of_service: "accepted" }, customer_details: { address: { country: "US" } }, id: "cs_test_1", mode: "subscription", payment_status: "paid",

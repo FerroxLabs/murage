@@ -28,6 +28,7 @@
 // ask how it is going or talk about something else; a soft pulse fills the
 // silence instead of narration. When the host is unavailable the call is
 // the engine-only call it always was.
+import { holdCallSession, sayOpener, takeBotCallOpener } from "@/lib/bot-call-session";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Loader2, Mic, MicOff, PhoneOff, X } from "lucide-react";
@@ -217,6 +218,8 @@ export function Call({
   /** Call speech waits until begin() has chosen where it is heard, so nothing
    *  said as the call opens goes to the wrong player (spec §4.3.5). */
   const outputReady = useRef(false);
+  /** Up while an answered call's opener plays (sayOpener): no recognition turn opens until it has ended. */
+  const openerPlaying = useRef(false);
   /** The microphone could not open on this attempt: prompts are said without opening a turn, which would clear the note. */
   const micUnavailable = useRef(false);
   /** True until the call's audio really opens: native open resolved and mic
@@ -496,6 +499,8 @@ export function Call({
     if (!alive.current || currentCall() !== bot.id || micLive.current) return;
     // nothing to hear before the microphone is open, or while the call is held
     if (!outputReady.current || heldRef.current) return;
+    // an answered call's opener is still playing: the owner's turn starts after its end (sayOpener)
+    if (openerPlaying.current) return;
     // the microphone could not open: no turn until the owner tries again (listen, retryOpen), whatever the phase
     if (micUnavailable.current) return;
     micLive.current = true;
@@ -663,6 +668,17 @@ export function Call({
 
   const sayThenListenRef = useRef(sayThenListen);
   sayThenListenRef.current = sayThenListen;
+  const sayRef = useRef(say);
+  sayRef.current = say;
+  // The call's server session (bot-call-session.ts), and an answered call's opener ("Hi Sean, it's Scout. ..."): the
+  // microphone is attached once the opener has been said (begin, below), so the owner's turn never comes first.
+  const opener = useRef<Promise<string | null> | null>(null);
+  useEffect(() => {
+    holdCallSession(bot.id, threadRef.current);
+    // taken once; StrictMode's second setup finds none and keeps the first
+    const taken = takeBotCallOpener(bot.id);
+    if (taken) opener.current = taken;
+  }, [bot.id]);
 
   /** Tell the engine's finished answer. A long one is told the way people
    *  do on the phone (each item in a sentence, then "details are in the chat")
@@ -1858,17 +1874,34 @@ export function Call({
         offAudio = audio.source.onEvent((event) => onCallAudio.current(event));
       }
       setAudioPath(audio.path);
-      attach(micRef.current!);
-      // Speech may start now. Anything owed or held back as the call opened
-      // (an approval already open, say) is asked first.
-      outputReady.current = true;
-      setConnecting(false);
-      // The 8 s note was a guess that this attempt was hanging; it wasn't.
-      setNote((prev) => (prev === CONNECT_TIMEOUT_NOTE ? null : prev));
-      // held (the effect re-ran mid-hold): resume decides what comes next
-      if (heldRef.current) return;
-      if (bot.busy && !approval && !question && !hostOn.current) move("working");
-      else listenOrCatchUp();
+      const ready = () => {
+        attach(micRef.current!);
+        // Speech may start now. Anything owed or held back as the call opened
+        // (an approval already open, say) is asked first.
+        outputReady.current = true;
+        setConnecting(false);
+        // The 8 s note was a guess that this attempt was hanging; it wasn't.
+        setNote((prev) => (prev === CONNECT_TIMEOUT_NOTE ? null : prev));
+        // held (the effect re-ran mid-hold): resume decides what comes next
+        if (heldRef.current) return;
+        if (bot.busy && !approval && !question && !hostOn.current) move("working");
+        else listenOrCatchUp();
+      };
+      // An answered bot call's opener is said before the microphone is attached (bot-call-session.ts).
+      const opening = opener.current;
+      opener.current = null;
+      if (!opening) return ready();
+      void opening.then(async (text) => {
+        if (cancelled || attempt !== openAttempt.current) return;
+        if (text && !heldRef.current) {
+          outputReady.current = true;
+          setConnecting(false);
+          // no recognition until the opener has ENDED (or the cap): the duplex effect would open a turn on "speaking"
+          await sayOpener(() => sayRef.current(text), openerPlaying);
+          if (cancelled || attempt !== openAttempt.current) return;
+        }
+        ready();
+      });
     };
     const openCall = () => {
       openAttempt.current += 1;

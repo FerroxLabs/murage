@@ -953,6 +953,27 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(argv.join(" ")).toContain("mcp_servers.browser.command");
   });
 
+  it("S13b: mounts phoneJobs with the given command, args and env names, and none without it", async () => {
+    await create();
+    const phoneJobs = { command: process.execPath, args: ["/fake/phone-jobs-proxy.js", "--x"], env: { MURAGE_PHONE_TOOLS: "calendar_read", MURAGE_PJ_OTHER: "b" } };
+    const withDump = join(scratch, "pj-with.json");
+    process.env.FAKE_CODEX_DUMP = withDump;
+    await instance.adapter.sendTurn({ threadId: "t-pj-with", text: "go", integrations: { phoneJobs } });
+    await recorder.until((event) => event.type === "turn.completed" && event.threadId === "t-pj-with");
+    const argv: string[] = JSON.parse(readFileSync(withDump, "utf8")).argv;
+    const flag = (key: string) => { const arg = argv.find((item) => item.startsWith(`mcp_servers.phoneJobs.${key}=`)); return arg ? JSON.parse(arg.slice(`mcp_servers.phoneJobs.${key}=`.length)) : undefined; };
+    expect(flag("command")).toBe(process.execPath);
+    expect(flag("args")).toEqual(phoneJobs.args);
+    expect([...(flag("env_vars") as string[])].sort()).toEqual(Object.keys(phoneJobs.env).sort());
+    // pre-approved (OWN_UNASKED): the authority, the grant and the phone's own card are the gate, so no desktop card
+    expect(argv.some((arg) => arg.startsWith("mcp_servers.phoneJobs.default_tools_approval_mode="))).toBe(true);
+    const withoutDump = join(scratch, "pj-without.json");
+    process.env.FAKE_CODEX_DUMP = withoutDump;
+    await instance.adapter.sendTurn({ threadId: "t-pj-without", text: "go", integrations: { browser: { command: process.execPath, args: ["/fake/browser-proxy.js"], env: {} } } });
+    await recorder.until((event) => event.type === "turn.completed" && event.threadId === "t-pj-without");
+    expect(JSON.parse(readFileSync(withoutDump, "utf8")).argv.some((arg: string) => arg.includes("phoneJobs"))).toBe(false);
+  });
+
   it("turns off Codex's own desktop browser and computer tools so the bot uses Murage's", async () => {
     await create();
     const dump = join(scratch, "tool-surface.json");

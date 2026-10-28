@@ -1,0 +1,7 @@
+"NSCalendarsFullAccessUsageDescription" = "Vos bots peuvent consulter votre calendrier et ajouter des événements lorsque vous le leur demandez.";
+"NSCalendarsWriteOnlyAccessUsageDescription" = "Vos bots peuvent ajouter des événements à votre calendrier lorsque vous le leur demandez.";
+"NSRemindersFullAccessUsageDescription" = "Vos bots peuvent lire et ajouter des rappels lorsque vous le leur demandez.";
+"NSContactsUsageDescription" = "Vos bots peuvent rechercher une personne que vous nommez pour préparer un SMS ou un appel pour vous.";
+"NSLocationWhenInUseUsageDescription" = "Vos bots peuvent voir votre position approximative lorsque vous cherchez quelque chose à proximité.";
+"NSAlarmKitUsageDescription" = "Vos bots peuvent régler des alarmes et des minuteurs lorsque vous le leur demandez.";
+"PhonePreciseLocation" = "Vos bots peuvent utiliser votre position précise lorsque vous activez Position précise.";

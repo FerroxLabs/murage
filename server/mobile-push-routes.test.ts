@@ -15,7 +15,7 @@ function setup(over: Partial<PushRouteDeps> = {}) {
   store.putBinding({ bindingId: B, deviceId: "d1", publisherToken: "murage_pt_x", createdAt: 1 });
   const row: PushEventRow = { eventRef: REF, bindingId: B, kind: "approval", category: "approval", botId: "lena", threadId: "t1", requestId: "req-1",
     messageId: "m1", collapseKey: "c".repeat(32), threadGroup: "g".repeat(16), revision: 1, timeSensitive: true, resolvedBy: null,
-    createdAt: 0, expiresAt: 10_000, holdUntil: 0, state: "sent", attempts: 1, nextAttemptAt: 0 };
+    createdAt: 0, expiresAt: 10_000, holdUntil: 0, state: "sent", attempts: 1, nextAttemptAt: 0, phoneUsed: false };
   store.insertEvent(row);
   const relay = { redeem: vi.fn(async () => ({ bindingId: "a1b2c3d4-e5f6-4a1b-8c2d-9e0f1a2b3c4d", publisherToken: "murage_pt_y" })), publish: vi.fn(), remove: vi.fn(async () => true) };
   const deps: PushRouteDeps = {

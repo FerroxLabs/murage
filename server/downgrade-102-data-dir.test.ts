@@ -72,6 +72,13 @@ describe("1.0.3 data-folder names after memory-downgrade --to 10", () => {
     writeFileSync(join(DATA_DIR, "cloud-computer-turns.json.unreadable"), "{");
     // the first-run news ask record (1.0.7 news-signup.ts; 1.0.2 never asks)
     writeFileSync(join(DATA_DIR, "news-signup.json"), JSON.stringify({ status: "declined" }), { mode: 0o600 });
+    // the health metadata folder (1.0.9 Sentinel producer input root; rebuilt from fresh observations, 1.0.2 never reads it)
+    mkdirSync(join(DATA_DIR, "health"), { recursive: true, mode: 0o700 });
+    writeFileSync(join(DATA_DIR, "health", "server.current.ndjson"), "{}\n", { mode: 0o600 });
+    // the health tokens' installation key beside it (1.0.9 publisher.ts; made again when absent)
+    writeFileSync(join(DATA_DIR, "health-key"), `${"0".repeat(64)}\n`, { mode: 0o600 });
+    // the Health notification receipts (1.0.9 server/sentinel/delivery.ts; runtime state, 1.0.2 never reads it)
+    writeFileSync(join(DATA_DIR, "sentinel-delivery.json"), JSON.stringify({ version: 1 }), { mode: 0o600 });
     expect(readdirSync(DATA_DIR).filter(name => !classifiedBy102(name)).sort()).toEqual([...DATA_DIR_NAMES_AFTER_102, ...DATA_DIR_OWNER_NOTES_AFTER_102].sort());
 
     expect(downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ status: "downgraded", to: 10 });

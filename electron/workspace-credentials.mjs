@@ -1,4 +1,5 @@
 import { MASK, splitSecretUrl } from "../shared/mcp-secret-url.mjs";
+import { emailSecretsEnv } from "./email-secrets.mjs";
 
 // Workspace credentials the desktop shell keeps OS-encrypted (credentials.bin
 // via safeStorage) instead of leaving in plaintext config.json — the same
@@ -83,6 +84,9 @@ export function workspaceCredentialEnv(credentials) {
   if (typeof credentials?.fluxConnectionAliases === "string") env.MURAGE_FLUX_CONNECTION_ALIASES = credentials.fluxConnectionAliases;
   const mcp = projectMcpServerSecrets(credentials?.mcpServerSecrets);
   if (Object.keys(mcp).length > 0) env.MURAGE_MCP_SERVER_SECRETS = JSON.stringify(mcp);
+  // Bot email keys and the email:owner token (email-secrets.mjs): the server reads and deletes this; no engine child inherits it.
+  const email = emailSecretsEnv(credentials);
+  if (email) env.MURAGE_EMAIL_SECRETS = email;
   return env;
 }
 
