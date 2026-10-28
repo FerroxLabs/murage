@@ -2,6 +2,7 @@ import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStor
 import { Loader2 } from "lucide-react";
 import { api, StoreProvider, useStore } from "@/state/store";
 import { CallOverlaySlot } from "@/components/CallControls";
+import { BotCallRing } from "@/components/BotCallRing";
 import { initAnalytics } from "@/lib/analytics";
 import { Sidebar } from "@/components/Sidebar";
 import { ChatView } from "@/components/ChatView";
@@ -509,6 +510,8 @@ function Shell() {
       {/* mounted after the modals: same z-50 tier, so DOM order keeps the
           palette on top when one of them is open underneath */}
       <CommandPaletteHost onOpenChange={setPaletteOpen} />
+      {/* Bot calls 1.0.9: the ring banner (call.ring hints re-read GET /api/calls/active) */}
+      <BotCallRing />
       <CallOverlaySlot
         state={state}
         dispatch={dispatch}

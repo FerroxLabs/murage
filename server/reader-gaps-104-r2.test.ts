@@ -44,6 +44,9 @@ const win = (): StopLinePlace => ({
 const stop = (command: string) => classifyStopLine("PowerShell", { command }, "", win());
 const nix = (): StopLinePlace => ({ cwd: CWD, roots: [CWD, "/tmp"], home: "/home/tester", knownRecipients: new Set(), realpath: (p: string) => posix.normalize(p) });
 
+// 1.0.9 (NOLIMITS-NODE-109-CUT section 9): every named path an ordinary file and every `cd` target a folder; the
+// on-disk cases are server/nolimits-node-109.test.ts
+const STUB = { realpath: (path: string) => path, stat: () => ({ isFile: () => true, isDirectory: () => true }) };
 const asksEverywhere = (cmd: string) => {
   expect(posixRule(cmd), cmd).not.toBeNull();
   for (const bot of [FULL, NO_LIMITS]) expect(autoVerdict(bot, "Bash", cmd), cmd).toMatchObject({ approve: null, source: "always-ask" });
@@ -51,10 +54,10 @@ const asksEverywhere = (cmd: string) => {
 /** 1.0.5: a script file on disk, named literally and not written by this
  * text, asks at Auto; Full access and No limits run it on the owner's turn. */
 const asksBelowFull = (cmd: string) => {
-  expect(alwaysAskCommand(cmd, CWD), cmd).toMatchObject({ rule: "unreadable", unseenScript: true });
+  expect(alwaysAskCommand(cmd, CWD, "command", undefined, undefined, undefined, { fs: STUB, platform: "posix" }), cmd).toMatchObject({ rule: "unreadable", unseenScript: true });
   expect(autoVerdict(AUTO, "Bash", cmd), cmd).toMatchObject({ approve: null, source: "always-ask" });
   // 1.0.5 r6: placed from the command's folder (every local turn has one)
-  for (const bot of [FULL, NO_LIMITS]) expect(autoVerdict(bot, "Bash", cmd, { commandText: cmd, commandCwd: CWD }).approve, cmd).toBeTruthy();
+  for (const bot of [FULL, NO_LIMITS]) expect(autoVerdict(bot, "Bash", cmd, { commandText: cmd, commandCwd: CWD, unseen: { fs: STUB, platform: "posix" } }).approve, cmd).toBeTruthy();
 };
 
 describe("deno run and bun run read the script after their options", () => {
@@ -107,16 +110,18 @@ describe("bash --rcfile and --init-file read the startup file", () => {
 
 describe("source and . read a file on disk as bash does", () => {
   it.each([
-    "source evil.sh",
-    ". evil.sh",
     ". ./env.sh",
-    "cd sub && . ./evil.sh",
+    // 1.0.9 (NOLIMITS-NODE-109-CUT R3): the `cd` names its folder `./…`
+    "cd ./sub && . ./evil.sh",
   ])("%s asks below Full access", (cmd) => {
     expect(posixRule(cmd)).toBe("unreadable");
     asksBelowFull(cmd);
   });
   it.each([
     "source -- evil.sh",
+    // 1.0.9 (Astra r5): a name with no `/` is looked up on PATH first
+    "source evil.sh",
+    ". evil.sh",
     "source \"$F\"",
     ". $F",
   ])("%s asks", (cmd) => {

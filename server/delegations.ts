@@ -2161,37 +2161,42 @@ let unreachableAgain = false;
 export function dropUnreachableDelegations(bus: CommsBus): Promise<number> {
   // a change that arrives while a sweep runs asks for one more pass after it, so the roster it saw is never stale
   if (unreachableSweep) { unreachableAgain = true; return unreachableSweep; }
-  unreachableSweep = (async () => {
+  const sweep = (async () => {
     let dropped = 0;
-    try {
-      do {
-        unreachableAgain = false;
-        const db = database();
-        const page = db.prepare(`SELECT rowid AS rid, ${COLUMNS} FROM pending_delegations WHERE rowid>? ORDER BY rowid LIMIT ${UNREACHABLE_PAGE}`);
-        for (let cursor = 0;;) {
-          const rows = page.all(cursor) as unknown as Array<StoredRow & { rid: number }>;
-          if (!rows.length) break;
-          cursor = rows[rows.length - 1]!.rid;
-          for (const row of rows) {
-            if (drainingThreads.has(row.source_thread_id)) continue;
-            const item = readable(row);
-            if (!item) continue;
-            const sender = (item.fromBotId ? bus.store.bot(item.fromBotId) : null) ?? bus.store.botByThread(row.source_thread_id);
-            const target = bus.store.bot(item.toBotId);
-            if (!sender || !target) continue;
-            if (!dropIfUnreachable(bus, sender, target, row.source_thread_id, item)) continue;
-            if (!removeItem(item.id)) continue;
-            clearWaitLine(bus, row.source_thread_id, item);
-            dropped += 1;
-          }
-          // the event loop is free between pages
-          await new Promise<void>((resolve) => setImmediate(resolve));
+    do {
+      unreachableAgain = false;
+      const db = database();
+      const page = db.prepare(`SELECT rowid AS rid, ${COLUMNS} FROM pending_delegations WHERE rowid>? ORDER BY rowid LIMIT ${UNREACHABLE_PAGE}`);
+      for (let cursor = 0;;) {
+        const rows = page.all(cursor) as unknown as Array<StoredRow & { rid: number }>;
+        if (!rows.length) break;
+        cursor = rows[rows.length - 1]!.rid;
+        for (const row of rows) {
+          if (drainingThreads.has(row.source_thread_id)) continue;
+          const item = readable(row);
+          if (!item) continue;
+          const sender = (item.fromBotId ? bus.store.bot(item.fromBotId) : null) ?? bus.store.botByThread(row.source_thread_id);
+          const target = bus.store.bot(item.toBotId);
+          if (!sender || !target) continue;
+          if (!dropIfUnreachable(bus, sender, target, row.source_thread_id, item)) continue;
+          if (!removeItem(item.id)) continue;
+          clearWaitLine(bus, row.source_thread_id, item);
+          dropped += 1;
         }
-      } while (unreachableAgain);
-    } finally { unreachableSweep = undefined; }
+        // the event loop is free between pages
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+    } while (unreachableAgain);
     return dropped;
   })();
-  return unreachableSweep;
+  // Cleared once the sweep has settled, never from inside it: a sweep that
+  // finds nothing reaches no await, so a `finally` in the body ran before this
+  // assignment and the slot kept a settled promise, and every later roster
+  // change got that promise back without a sweep (upstream fa0402dbc's class).
+  unreachableSweep = sweep;
+  const clear = () => { if (unreachableSweep === sweep) unreachableSweep = undefined; };
+  sweep.then(clear, clear);
+  return sweep;
 }
 
 /** Test helper: how many items remain queued for a thread. */

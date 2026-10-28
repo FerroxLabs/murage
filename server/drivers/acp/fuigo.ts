@@ -584,6 +584,13 @@ const support: AcpSupport = {
   // flag. Murage resolves authorized bytes; the transport fixture pins them.
   images: true,
 
+  // `_fuigo/interject` answers `{ status: "queued" }` and echoes `_fuigo/session/interjection`.
+  interjection: {
+    method: "_fuigo/interject",
+    echoes: ["_fuigo/session/interjection", "fuigo/session/interjection"],
+    queueChanged: ["_fuigo/queue/changed", "fuigo/queue/changed"],
+  },
+
   models: STATIC_FUIGO_MODELS,
   resolveModels,
   // A local pick (`host::model`) becomes Murage's own `[model.*]` entry and

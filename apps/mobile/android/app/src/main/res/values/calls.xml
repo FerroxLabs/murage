@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="push_call_title">Murage is calling</string>
+    <string name="push_call_body">Answer to hear what it is.</string>
+    <string name="push_call_note_body">Murage has a message for you.</string>
+    <string name="push_call_answer">Answer</string>
+    <string name="push_call_not_now">Not now</string>
+    <string name="push_calls_channel">Calls</string>
+</resources>

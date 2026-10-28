@@ -145,6 +145,7 @@ public final class ChannelScript {
           api.rePair = function () { return call("rePair"); };
           api.setRoute = function (route) { return call("setRoute", route); };
           api.showLauncher = function () { return call("showLauncher"); };
+          api.openPhoneForBots = function () { return call("openPhoneForBots"); };
           api.registerPush = function (options) { return call("registerPush", { fresh: !!(options && options.fresh === true) }); };
           api.pushStatus = function () { return call("pushStatus"); };
           api.issuePushTokens = function (tokens) { return call("issuePushTokens", tokens); };

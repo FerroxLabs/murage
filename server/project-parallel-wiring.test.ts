@@ -63,7 +63,9 @@ it("an interrupt never crosses a generation replacement during browser cleanup",
   let generation = "first"; const interruptTurn = vi.fn();
   const deps = { directRuns: { get: () => ({ generation }) }, internalTurnOwners: new Map(), botForDirectThread: () => ({ modelSelection: { instanceId: "fake" } }),
     cancelDirectTurnDispatch: () => ({ phase: "dispatching" }), releaseBrowserCapabilityForThread: async () => { generation = "replacement"; },
-    registry: { get: () => ({ adapter: { interruptTurn } }) }, closeOpenApprovals: vi.fn(), stopCloseConfirmed: () => true };
+    registry: { get: () => ({ adapter: { interruptTurn } }) }, closeOpenApprovals: vi.fn(), stopCloseConfirmed: () => true,
+    // bot email (4.5): the Stop hands the stopped generation to email's own withdraw rule (off here)
+    stopEmailForTurn: vi.fn(async () => undefined), emailRuntime: {}, emailGeneration: () => 0 };
   const interrupt = new Function(...Object.keys(deps), code + "return interruptDirectThread;")(...Object.values(deps));
   await interrupt("a", "desk", "first"); expect(interruptTurn).not.toHaveBeenCalled();
 });

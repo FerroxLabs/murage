@@ -14,13 +14,13 @@
         "34c511b1f6deaab9": "if (text === \"--%\") throw new Unreadable(\"pwsh\", \"--% stops parsing\");",
         "fd802efc925dde44": "if (parameter[2] !== undefined) throw new Unreadable(\"pwsh\", `${text}: a parameter with a ",
         "44dbaba2e814a529": "if (!value) throw new Unreadable(\"pwsh\", `${text} without a value`);",
-        "867f37075d51104e": "export function alwaysAskCommand(text: string | undefined, cwd?: string, mode: \"command\" |",
+        "87f5b759d65e9bb4": "export function alwaysAskCommand(text: string | undefined, cwd?: string, mode: \"command\" |",
         "856694841b5b0975": "function read(text: string, cwd: string | undefined, shell?: \"pwsh\", windowsBash?: string[",
         "69e7b0d4c190f105": "return (shell === \"pwsh\" ? walkPwsh(text, { ...newContext(cwd || undefined), windowsBash }",
-        "5224e533a4b1c64f": "export function alwaysAskRoutineCommand(text: string | undefined, cwd?: string, shell?: \"p",
-        "68c721502f46a59f": "function readWhole(text: string, cwd: string | undefined, shell?: \"pwsh\", windowsBash?: st",
-        "00dfe41692902268": "function unseenShapeAdmits(text: string, paths: string[], cwd: string | undefined, shell?:",
-        "a2686ec8e9bae1b7": "if (shell === \"pwsh\" || looksLikePowerShell(text) !== null || /^\\s*robocopy(\\.exe)?(?=\\s|$",
+        "9928c0bbc7789cbc": "export function alwaysAskRoutineCommand(text: string | undefined, cwd?: string, shell?: \"p",
+        "90d273ca2fc0b2b5": "function readWhole(text: string, cwd: string | undefined, shell?: \"pwsh\", windowsBash?: st",
+        "53b17291b37d0e87": "function unseenShapeAdmits(text: string, paths: string[], cwd: string | undefined, shell?:",
+        "497b7b04b60c1a26": "if (shell === \"pwsh\" || looksLikePowerShell(text) !== null || /^\\s*robocopy(\\.exe)?(?=\\s|$",
         "dc0d467803f91f89": "case \"pwsh\": return walkPwsh(text, ctx, visitor);"
       }
     },

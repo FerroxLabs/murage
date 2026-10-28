@@ -1,6 +1,8 @@
-// First: no schema may be built before Zod is told not to probe for eval.
+// First: crypto.randomUUID exists even on a plain-http private origin (phone over a tailnet name).
+import "./lib/random-uuid-polyfill";
+// Then: no schema may be built before Zod is told not to probe for eval.
 import "./lib/zod-config";
-// Second: the Cloud home requires Trusted Types, so the "murage" policy exists before anything writes markup.
+// Next: the Cloud home requires Trusted Types, so the "murage" policy exists before anything writes markup.
 import { installTrustedTypes, sanitizerReady } from "./lib/trusted-html";
 import { StrictMode, Suspense, lazy, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";

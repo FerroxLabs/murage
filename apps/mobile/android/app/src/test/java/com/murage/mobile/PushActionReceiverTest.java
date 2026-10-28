@@ -4,13 +4,44 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 import com.murage.mobile.shell.PushOutcome;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.function.BiConsumer;
 import org.json.JSONObject;
 import org.junit.Test;
 
 /** Spec §3.5 actions and §7's local notice: every path ends in one notice (review focus 4). */
 public class PushActionReceiverTest {
+    @Test public void notNowCancelsOnlyItsCollapseKeyAndIdOne() {
+        Map<String, Set<Integer>> notifications = new HashMap<>();
+        notifications.put("ring", new HashSet<>(Arrays.asList(1, 2)));
+        notifications.put("other-ring", new HashSet<>(Arrays.asList(1)));
+        List<String> cancelled = new ArrayList<>();
+        assertTrue(PushActionReceiver.dismissNotNow("NOT_NOW", "ring", (tag, id) -> {
+            cancelled.add(tag + "/" + id);
+            notifications.get(tag).remove(id);
+        }));
+        assertEquals(Collections.singletonList("ring/1"), cancelled);
+        assertEquals(Collections.singleton(2), notifications.get("ring"));
+        assertEquals(Collections.singleton(1), notifications.get("other-ring"));
+    }
+
+    @Test public void notNowWithoutATagNeverCancelsAnUnrelatedNotification() {
+        BiConsumer<String, Integer> never = (tag, id) -> fail("unexpected cancellation");
+        assertTrue(PushActionReceiver.dismissNotNow("NOT_NOW", null, never));
+        assertFalse(PushActionReceiver.dismissNotNow("ANSWER", "ring", never));
+        assertFalse(PushActionReceiver.dismissNotNow(null, "ring", never));
+    }
+
     private final LogCapture log = new LogCapture();
     private final FakePrefs prefs = new FakePrefs();
     private final SecureStore.Keys detailKey = PushFakes.memoryKey(), respondKey = PushFakes.memoryKey();

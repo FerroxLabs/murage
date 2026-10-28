@@ -1,20 +1,32 @@
+import { deriveStableToken, extractionAdmitted, extractionSettled, recordCounter, type ExtractionSettlement } from "../health/counters.ts";
+import { toEngineKind, type EngineKind } from "../../shared/health-protocol.mjs";
+
 /** Only these host-owned labels may reach extraction diagnostics. Never log errors or replies. */
 export const EXTRACTION_FAILURE_REASONS = ["empty-reply", "not-json", "schema-mismatch", "cut-off", "refusal", "transport-error"] as const;
 export type ExtractionFailureReason = typeof EXTRACTION_FAILURE_REASONS[number];
 export class ExtractionReplyError extends Error {
   readonly reason: ExtractionFailureReason;
-  constructor(code: string, reason: ExtractionFailureReason) { super(code); this.reason = reason; }
+  /** A finer health code where the reason groups several (a tool call is a schema mismatch for backoff, `tool-call` for health). */
+  readonly detail?: "tool-call";
+  constructor(code: string, reason: ExtractionFailureReason, detail?: "tool-call") { super(code); this.reason = reason; if (detail) this.detail = detail; }
 }
 export const EXTRACTION_SUMMARY_MS = 60 * 60_000;
+/** Murage's own extraction catalogue (extractor-connections.ts FLUX_EXTRACTORS). Any other model is reported as `custom`:
+ *  a provider's model string or alias never reaches a log line, a counter or a fact (GAP-SENTINEL-109 4.2). */
+export const EXTRACTION_CATALOGUE_MODELS: readonly string[] = Object.freeze(["flux-fast", "flux-standard", "flux-auto"]);
+export const catalogueModel = (model: unknown): string => (typeof model === "string" && EXTRACTION_CATALOGUE_MODELS.includes(model) ? model : "custom");
+/** Deferrals happen before any call and never enter a success rate. */
+export type ExtractionDeferral = "busy" | "unconfigured" | "budget";
 const MAX_IDENTITIES = 128;
 const counts = () => Object.fromEntries(EXTRACTION_FAILURE_REASONS.map(reason => [reason, 0])) as Record<ExtractionFailureReason, number>;
 interface Outcomes {
-  extractor: string; model: string; completed: number; deferred: number;
+  /** The opaque extractor key (health/counters.ts deriveStableToken, the same across restarts): never the connection id itself. */
+  extractor: string; engine: EngineKind; model: string; completed: number; deferred: number;
   unusable: Record<ExtractionFailureReason, number>; consecutive: number;
   backoffMs: number; retryAt: number; touched: number; dirty: boolean;
+  /** Settlements as the health contract counts them (a cancelled attempt is not unusable there), and when this summary began. */
+  health: { unusable: number; interrupted: number; since: number; partial: boolean };
 }
-// Values are configuration identifiers only. Bound them and prevent forged multi-line logs.
-const label = (value: string) => value.slice(0, 160).replace(/[^a-zA-Z0-9@/_.:+-]/g, "_");
 
 /** Process-local pacing survives resolver closures being recreated; no source text is retained.
  * One unref'd timer reports active pairs even if learning stops calling after a failure.
@@ -25,7 +37,7 @@ export class ExtractionOutcomes {
   private nextAnonymous = 0;
   private timer?: ReturnType<typeof setInterval>;
 
-  forExtractor(extractor: { learningConnection?: string; learningModel?: () => string | undefined }): Outcomes {
+  forExtractor(extractor: { learningConnection?: string; learningModel?: () => string | undefined; healthEngine?: EngineKind }): Outcomes {
     let model = "unknown";
     try { model = extractor.learningModel?.() || model; } catch { /* unavailable metadata */ }
     let id = extractor.learningConnection;
@@ -37,7 +49,13 @@ export class ExtractionOutcomes {
     let state = this.states.get(key);
     if (!state) {
       if (this.states.size >= MAX_IDENTITIES) this.states.delete(this.states.keys().next().value!);
-      state = { extractor: label(id), model: label(model), completed: 0, deferred: 0, unusable: counts(), consecutive: 0, backoffMs: 0, retryAt: 0, touched: Date.now(), dirty: false };
+      const now = Date.now();
+      state = {
+        extractor: deriveStableToken("extractor", id), engine: toEngineKind(extractor.healthEngine), model: catalogueModel(model),
+        completed: 0, deferred: 0, unusable: counts(), consecutive: 0, backoffMs: 0, retryAt: 0, touched: now, dirty: false,
+        // the first summary after this identity appeared covers less than its hour
+        health: { unusable: 0, interrupted: 0, since: now, partial: true },
+      };
     }
     this.states.delete(key); this.states.set(key, state);
     state.touched = Date.now();
@@ -48,9 +66,19 @@ export class ExtractionOutcomes {
     return state;
   }
 
-  deferred(state: Outcomes) { state.deferred++; state.dirty = true; }
+  deferred(state: Outcomes, why: ExtractionDeferral = "busy") { state.deferred++; state.dirty = true; recordCounter("extraction", `deferred-${why}`, state.engine, state.extractor); }
+  /** The call was admitted (its reservation committed): from here it settles exactly once. */
+  admitted(state: Outcomes) { extractionAdmitted(state.extractor, state.engine); }
   completed(state: Outcomes) {
     state.completed++; state.consecutive = 0; state.backoffMs = 0; state.retryAt = 0; state.dirty = true;
+    extractionSettled(state.extractor, state.engine, "complete");
+  }
+  /** The health contract's settlement of a failed attempt, beside the backoff bookkeeping below (which it never changes). */
+  settled(state: Outcomes, outcome: Exclude<ExtractionSettlement, "complete">, unusableCode?: string) {
+    if (outcome === "unusable") state.health.unusable++;
+    if (outcome === "interrupted") { state.health.interrupted++; state.health.partial = true; }
+    state.dirty = true;
+    extractionSettled(state.extractor, state.engine, outcome, unusableCode);
   }
   unusable(state: Outcomes, reason: ExtractionFailureReason) {
     state.unusable[reason]++; state.dirty = true;
@@ -62,16 +90,20 @@ export class ExtractionOutcomes {
       state.retryAt = Date.now() + state.backoffMs;
     }
   }
+  /** The hourly line, one per extractor identity with anything to say: counts, the opaque extractor key, the engine
+   *  category and a catalogue model id or `custom`. Coverage is partial when the summary spans less than its hour or an
+   *  attempt was interrupted. */
   private summarize() {
     const now = Date.now();
     for (const [key, state] of this.states) {
       if (state.dirty) {
-        const unusable = Object.values(state.unusable).reduce((sum, n) => sum + n, 0);
+        const coverage = state.health.partial || now - state.health.since < EXTRACTION_SUMMARY_MS ? "partial" : "complete";
         try {
-          console.info(`[memory] extraction outcomes completed=${state.completed} deferred=${state.deferred} unusable=${unusable} ${EXTRACTION_FAILURE_REASONS.map(reason => `${reason}=${state.unusable[reason]}`).join(" ")} extractor=${state.extractor} model=${state.model} consecutive=${state.consecutive} backoff_ms=${state.backoffMs} retry_in_ms=${Math.max(0, state.retryAt - now)}`);
+          console.info(`[memory] extraction outcomes complete=${state.completed} deferred=${state.deferred} unusable=${state.health.unusable} interrupted=${state.health.interrupted} extractor=${state.extractor} engine=${state.engine} model=${state.model} coverage=${coverage}`);
         } catch { /* logging is best effort */ }
         state.completed = 0; state.deferred = 0; state.unusable = counts(); state.dirty = false;
       }
+      state.health = { unusable: 0, interrupted: 0, since: now, partial: false };
       if (now - state.touched >= 24 * EXTRACTION_SUMMARY_MS) this.states.delete(key);
     }
     if (!this.states.size) this.clear();
