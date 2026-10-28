@@ -11,6 +11,10 @@ import {
 import { customMountEntries } from "../server/custom-mcp-mounts.ts";
 
 describe("nf and the Pi form (Rule 27)", () => {
+  it("accepts the camel-case own mount of the phone tools and still refuses a malformed own id", () => {
+    expect(isMountRecord({ engineName: "phoneJobs", mountId: "own:phoneJobs", provenance: "own" })).toBe(true);
+    for (const mountId of ["own:", "own:a_b", "own:a1", "own: x", "custom:phoneJobs"]) expect(isMountRecord({ engineName: "x", mountId, provenance: "own" }), mountId).toBe(false);
+  });
   it("folds case, runs and compatibility forms", () => {
     expect(nf("Murage-Connectors")).toBe("murage_connectors");
     expect(nf("ａｇｅｎｔｓ")).toBe("agents");
@@ -48,7 +52,7 @@ describe("Rule 28 refusals (T32..T36)", () => {
   });
 
   it("the reserved set is the union of every driver's built-ins under nf, and every driver's mount list reads it (T33)", () => {
-    for (const name of ["muragebox", "computer", "agents", "browser", "phone", "dweb", "murage_connectors", "murage_phone", "murage_memory"]) {
+    for (const name of ["muragebox", "computer", "agents", "browser", "phone", "phonejobs", "dweb", "murage_connectors", "murage_phone", "murage_memory"]) {
       expect(RESERVED_MOUNTS.has(name), name).toBe(true);
     }
     const mounted = customMountEntries({

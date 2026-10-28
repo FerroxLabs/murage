@@ -10,6 +10,20 @@ public final class OpenHash {
 
     private OpenHash() {}
 
+    /** Bot ids use the targets contract's bound and cannot introduce hash parameters. */
+    public static boolean validBot(String id) {
+        return id != null && id.matches("[A-Za-z0-9_-]{1,128}");
+    }
+
+    /** Empty means the bot list at the workspace root, never a remembered chat. */
+    public static String compose(String botId) {
+        return validBot(botId) ? "#open=bot:" + botId + "&compose=1" : "";
+    }
+
+    public static boolean isCompose(String hash) {
+        return hash != null && (hash.isEmpty() || hash.matches("#open=bot:[A-Za-z0-9_-]{1,128}&compose=1"));
+    }
+
     public static boolean valid(String id) {
         return id != null && !id.isEmpty() && id.length() <= MAX_ID_LENGTH;
     }

@@ -22,6 +22,8 @@ export function createCompanionAuthority(token: string | undefined, header = "x-
 // Consume before any later generic CLI/MCP spawn can copy process.env. This
 // closure survives config reloads; only a new trusted parent launch rotates it.
 const desktopCompanionAuthorized = createCompanionAuthority(launchToken);
+/** True when this process was launched with a well-formed launch proof (the value itself never leaves this module). */
+export const launchProofPresent: boolean = launchToken?.length === 64 && /^[a-f0-9]{64}$/.test(launchToken);
 export const companionAuthorized = (headers: IncomingHttpHeaders): boolean => process.env.MURAGE_CLOUD_ROLE === "home"
   ? ["owner-desktop","owner-phone"].includes(cloudIdentity(headers)?.scope ?? "") || isOwnerBrowser(cloudIdentity(headers))
   : desktopCompanionAuthorized(headers);

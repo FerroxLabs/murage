@@ -14,11 +14,13 @@ import { registerCloudTurnUnit } from "./cloud-home/cloud-process-hooks.ts";
 //      driver accidentally puts one back in argv.
 import {
   spawn,
+  spawnSync,
   execFile,
   type ChildProcess,
   type ChildProcessByStdio,
   type ExecFileOptions,
   type SpawnOptions,
+  type SpawnSyncReturns,
   type StdioOptions,
 } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
@@ -31,8 +33,8 @@ import { SPAWNED_PROXIES } from "./proxy-paths.ts";
 import { assignPipJob, closePipJob, createPipJob, PipJobRefusedError, stopWindowsJob } from "./memory/pip-job.ts";
 import { loadExclusionAddon, type NativeHandle } from "./engine-exclusion.ts";
 import {
-  closePowerFilter, HOST_POWER_CODE, HOST_POWER_MESSAGE, hostPowerPlatform, hostPowerStubMessage, hostPowerTestUnwrapped, openPowerFilter, planHostPower,
-  wrapperRefusalText, bwrapEngineStarted, bwrapEarlyExitMessage, BWRAP_ARGS_FD, BWRAP_SECCOMP_FD, BWRAP_STATUS_FD,
+  closePowerFilter, HOST_POWER_CODE, HOST_POWER_MESSAGE, HOST_POWER_PROBE_RUN, hostPowerPlatform, hostPowerProbeDeps, hostPowerStubMessage, hostPowerTestUnwrapped, openPowerFilter, planHostPower,
+  reprobeHostPowerEnvironment, type ProbeResult, usernsDenied, wrapperRefusalText, bwrapEngineStarted, bwrapEarlyExitMessage, BWRAP_ARGS_FD, BWRAP_SECCOMP_FD, BWRAP_STATUS_FD,
 } from "./host-power.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { resolveCliSpawn, type ResolvedSpawn } from "./env-path.ts";
@@ -340,9 +342,12 @@ export function spawnCli(
     console.warn(`[procs] engine launch refused for ${cli}: the shutdown privileges are still on this server's token`);
     return unstartedLaunch(command, launchArgs, hostPowerError());
   }
-  const posixPower = hostPower && process.platform !== "win32" && hostPowerPlatform() !== null && !hostPowerTestUnwrapped()
+  const planned = hostPower && process.platform !== "win32" && hostPowerPlatform() !== null && !hostPowerTestUnwrapped()
     ? planHostPower(command, launchArgs, opts.env, typeof opts.cwd === "string" ? opts.cwd : opts.cwd?.toString())
     : null;
+  // An environment gap (host-power.ts hostPowerGap: root, or a verified bwrap this computer refuses a user namespace): the engine
+  // runs as an ordinary spawn under the access level, the never-list and the command reader. The cause was logged once.
+  const posixPower = planned?.kind === "unwrapped" ? null : planned;
   if (posixPower?.kind === "refuse") {
     console.warn(`[procs] engine launch refused for ${cli}: ${posixPower.reason}`);
     return unstartedLaunch(command, launchArgs, hostPowerError(hostPowerStubMessage() ?? undefined));
@@ -530,6 +535,9 @@ export function spawnCli(
       if (ownership.stopRequested || ownership.stopped) return;
       ownership.hostPowerRefused = true;
       console.warn(`[procs] engine launch refused for ${cli}: ${bwrapEarlyExitMessage(signal ?? `exit ${String(code)}`, firstErr, posixPower.command)}`);
+      // bwrap said it was refused a user namespace (perhaps before the start-up probe answered). That stderr alone decides
+      // nothing: it asks for the same independent probe, and only the probe can record the gap so the next turn runs.
+      if (usernsDenied(firstErr)) void reprobeHostPowerEnvironment();
     });
   } else if (posixPower && child.stderr) {
     let prefix = "";
@@ -737,6 +745,40 @@ export function execCli(
     finish(error);
   });
 }
+
+/** The synchronous form of execCli for an already pinned absolute executable: a session of its own on posix (no controlling
+ *  terminal), a hidden console on win32 (never detached), all three stdio piped with stdin closed at once, output bounded by
+ *  maxBuffer, the run bounded by timeout. A relative path is refused unrun. */
+export function execCliSync(
+  command: string,
+  args: string[],
+  opts: { cwd?: string; env?: NodeJS.ProcessEnv | Readonly<Record<string, string>>; timeout: number; maxBuffer: number },
+): SpawnSyncReturns<Buffer> {
+  if (!(process.platform === "win32" ? windowsPath.isAbsolute(command) : isAbsolute(command))) {
+    const error = Object.assign(new Error("Probe executable is not absolute"), { code: "EUNPINNEDPROBE" });
+    return { pid: 0, output: [], stdout: Buffer.alloc(0), stderr: Buffer.alloc(0), status: null, signal: null, error };
+  }
+  return spawnSync(command, args, {
+    cwd: opts.cwd, env: { ...opts.env }, timeout: opts.timeout, maxBuffer: opts.maxBuffer, input: "", stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true, ...(process.platform === "win32" ? {} : { detached: true }),
+  });
+}
+
+// S4 power (1.0.9 environment gap): the probe's one bwrap run goes through the shared launcher. host-power.ts imports no process
+// launcher; its seam is filled here, at load, before any spawnCli or startup probe can run. A launch error, a timeout or an
+// overflow is a failed probe (judgeProbe), never a refused turn.
+hostPowerProbeDeps.run = (command: string, args: string[]): Promise<ProbeResult> => new Promise((resolve) => {
+  execCli(command, args, { ...HOST_POWER_PROBE_RUN, env: { ...HOST_POWER_PROBE_RUN.env }, absoluteExecutable: true }, (error, _stdout, stderr) => {
+    const failure = error as (NodeJS.ErrnoException & { code?: unknown; killed?: boolean }) | null;
+    const code = failure ? (typeof failure.code === "number" ? failure.code : null) : 0;
+    resolve({ code, stderr: String(stderr ?? ""), ...(failure?.killed ? { timedOut: true } : {}) });
+  });
+});
+hostPowerProbeDeps.runSync = (command: string, args: string[]): ProbeResult => {
+  const result = execCliSync(command, args, HOST_POWER_PROBE_RUN);
+  const timedOut = (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
+  return { code: result.error ? null : result.status, stderr: String(result.stderr ?? ""), ...(timedOut ? { timedOut: true } : {}) };
+};
 
 /** Concurrent probes on a busy machine can outlast the timeout, so a CLI that
  * answered before keeps its last version instead of reading as "not installed".

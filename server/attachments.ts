@@ -136,6 +136,10 @@ const FILE_MIMES: Readonly<Record<string, string>> = {
   "application/vnd.oasis.opendocument.presentation": ".odp",
 };
 
+/** Frozen key lists of IMAGE_MIMES and FILE_MIMES, in declaration order, for the share-and-ask fixtures (apps/mobile/contract/share-types.json). */
+export const SHARE_IMAGE_MIMES: readonly string[] = Object.freeze(Object.keys(IMAGE_MIMES));
+export const SHARE_FILE_MIMES: readonly string[] = Object.freeze(Object.keys(FILE_MIMES));
+
 export function extensionForMime(mime: string | undefined): string | null {
   if (!mime) return null;
   return IMAGE_MIMES[mime.split(";")[0]!.trim().toLowerCase()] ?? null;

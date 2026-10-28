@@ -5,14 +5,14 @@
 // applies it (`applyGoalEnvelopeV2`, server/project-envelope.ts) with a
 // strict shape check; this module only finds it.
 //
-// `<murage-goal>{...}</murage-goal>`, the last complete envelope wins, and
-// only in the project lead's own current turn. Everywhere the envelope is
+// `<murage-goal>{...}</murage-goal>`, the one that ends the reply outside a
+// code fence, and only in the project lead's own current turn. Everywhere the envelope is
 // private protocol: it is stripped from the visible text of every turn,
 // lead or not, and a non-lead turn's envelope is ignored. An envelope that
 // is not JSON, or whose `v` is not 2, is reported back to the lead in one
 // plain line ("Your plan could not be read: ...") and counts as a lead wake
 // without progress.
-import { GROUP_GOAL_CONTROL_CLOSE, GROUP_GOAL_CONTROL_OPEN } from "./group-goal-run.ts";
+import { GROUP_GOAL_CONTROL_CLOSE, GROUP_GOAL_CONTROL_OPEN, closingGoalEnvelope } from "./group-goal-run.ts";
 
 export interface ParsedGoalEnvelope {
   /** The reply with every envelope (and a dangling half of one) removed. */
@@ -39,14 +39,13 @@ export function stripGoalEnvelopes(text: string): string {
   return visible.trim();
 }
 
-/** The last complete envelope in a lead's reply (SPEC-P 9). */
+/** The envelope that ends a lead's reply, outside a code fence (SPEC-P 9; upstream e13d3aea0's rule). A complete one
+ * anywhere else is never used, and the lead is told where it must go. */
 export function parseGoalEnvelopeV2(text: string): ParsedGoalEnvelope {
   const visibleText = stripGoalEnvelopes(text);
-  const closeAt = text.lastIndexOf(GROUP_GOAL_CONTROL_CLOSE);
-  if (closeAt < 0) return { visibleText };
-  const openAt = text.lastIndexOf(GROUP_GOAL_CONTROL_OPEN, closeAt);
-  if (openAt < 0) return { visibleText };
-  const raw = text.slice(openAt + GROUP_GOAL_CONTROL_OPEN.length, closeAt).trim();
+  const closing = closingGoalEnvelope(text);
+  if (!("payload" in closing)) return closing.quoted ? { visibleText, error: "it must end your reply, outside a code block" } : { visibleText };
+  const raw = closing.payload;
   let parsed: unknown;
   try { parsed = JSON.parse(raw); } catch { return { visibleText, error: "it is not valid JSON" }; }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { visibleText, error: "it is not a JSON object" };

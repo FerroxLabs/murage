@@ -32,7 +32,7 @@ export function piForm(name: string): string {
  * the legacy connector name and the ACP memory mount included. Every
  * driver's built-in check reads this set (server/custom-mcp-mounts.ts). */
 export const RESERVED_MOUNTS: ReadonlySet<string> = new Set(
-  ["muragebox", "computer", "agents", "browser", "phone", "dweb", CONNECTED_APPS_SERVER, "murage_phone", LEGACY_CONNECTED_APPS_SERVER, "murage-memory"].map(nf),
+  ["muragebox", "computer", "agents", "browser", "phone", "phoneJobs", "dweb", CONNECTED_APPS_SERVER, "murage_phone", LEGACY_CONNECTED_APPS_SERVER, "murage-memory"].map(nf),
 );
 
 /** Whether a name collides with a reserved mount under `nf`: equal, or one a
@@ -97,7 +97,8 @@ export function isMountRecord(value: unknown): value is McpMountRecord {
   const { engineName, mountId, provenance } = record;
   if (typeof engineName !== "string" || !engineName || engineName.includes("__")) return false;
   if (typeof mountId !== "string" || typeof provenance !== "string") return false;
-  if (provenance === "own") return /^own:[a-z]+$/.test(mountId);
+  // builtin ids are lower camel case (own:phoneJobs): a regex that stopped at [a-z] made every ask of a turn mounting the phone tools unreadable
+  if (provenance === "own") return /^own:[a-zA-Z]+$/.test(mountId);
   if (provenance === "custom") return mountId.startsWith("custom:") && mountId.length > "custom:".length;
   if (provenance === "external") return /^external:[^:]+:[0-9a-f]{16}:.+$/.test(mountId);
   return false;

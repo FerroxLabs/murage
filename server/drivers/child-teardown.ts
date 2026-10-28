@@ -152,6 +152,10 @@ export class ChildTeardown {
   markStopRequested(): void {
     if (this.#stopRequested) return;
     this.#stopRequested = true;
+    // A wait that began before the request (a stop with a grace) starts the confirmation now, as wait() does once it was requested.
+    // A microtask later, so the caller's own kill (which registers its stop-route observer) goes out first and the confirmation
+    // joins that route instead of starting one without it.
+    if (this.#waiters.size) queueMicrotask(() => this.#confirm());
     for (const waiter of this.#waiters) this.#armClose(waiter);
   }
 
@@ -320,7 +324,7 @@ export class TurnTeardowns {
   }
 }
 
-async function combine(teardowns: ChildTeardown[], budget: TeardownWait): Promise<ProviderStopResult> {
+export async function combine(teardowns: ChildTeardown[], budget: TeardownWait): Promise<ProviderStopResult> {
   if (!teardowns.length) return CONFIRMED;
   const results = await Promise.all(teardowns.map((teardown) => teardown.wait(budget)));
   return results.every((result) => result.closeConfirmed) ? CONFIRMED : timedOut();

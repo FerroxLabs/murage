@@ -3669,5 +3669,18 @@
   "learnAboutMe.error.conflict": "この行は別の内容ですでに保持されています。もう一度貼り付けて、改めて確認してください。",
   "learnAboutMe.importedFrom": "{provider} からインポート（{date}）",
   "learnAboutMe.importedFromUndated": "{provider} からインポート（日付なし）",
-  "memoryReview.forgottenWords": "忘れました。その言葉は消えました。"
+  "memoryReview.forgottenWords": "忘れました。その言葉は消えました。",
+  "settings.bot.phoneForBots.title": "ボットが使えるスマートフォンの機能",
+  "settings.bot.phoneForBots.description": "このスマートフォンでボットが使えるものを選びます。",
+  "settings.bot.phoneForBots.open": "開く",
+  "phone.ask.fromPhone": "スマートフォンから",
+  "phone.ask.askAgain": "もう一度質問する",
+  "phone.ask.settingTitle": "このスマートフォンから共有して質問",
+  "phone.ask.settingOff": "このスマートフォンでは共有と質問がオフです。",
+  "phone.ask.errorGone": "そのチャットは利用できなくなりました。別のチャットを選んでください。",
+  "phone.ask.errorUpdate": "この機能を使うには、コンピューターのMurageを更新してください。",
+  "phone.ask.errorSetup": "共有をもう一度設定するには、Murageを開いてください。",
+  "phone.removal.pending": "削除待ち",
+  "phone.removal.pendingBody": "Murageはこのスマートフォンの削除を引き続き試みます。",
+  "phone.removal.retry": "もう一度試す"
 }

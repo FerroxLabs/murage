@@ -72,6 +72,8 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   // startup if missing, so it is never backed up or restored.
   // Hashes and scopes of the script-access grants the owner made (mcp-grants.ts).
   "mcp-grants.json": excluded("Script access grants, switched on again by the owner after a restore; not restored"),
+  // The note that the owner was told once that this computer runs bots without the power block (host-power.ts hostPowerGapNoticeDue).
+  "power-guard-notice.json": excluded("Start-up note saying the one-time line about this computer's protections was shown; not restored"),
   "send-ledger.json": excluded("Retired: sends are rows of messages.db now (owner_sends). A leftover file is deleted at startup, not restored"),
   "mcp-access.token": excluded("Local tool access key, created again at startup; not restored"),
   // CLOUD-COMPUTER-BOOT-105 (cloud-computer-turns.ts): the prompts this installation has handed to its bots' cloud computers until each is known to
@@ -246,6 +248,17 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   // The root-owned scratch directory murage-control's data-write readiness check writes one temp file in and removes
   // (cloud-home/supervisor.ts prepareHealthProbeDir). Empty between checks; made again on every home start.
   ".murage-health": excluded("Readiness check scratch directory, made again on every home start; not restored"),
+  // Sentinel's producer input root (1.0.9, GAP-SENTINEL-109 section 3.3): minute counter windows, sealed database
+  // statistics, the backup status manifest and their temporary or rotated children, all below this one folder. Every
+  // child is rebuilt from fresh observations, so a backup leaves the whole tree out and a restore never writes it back.
+  "health": excluded("Runtime health metadata, rebuilt from minute counters, periodic statistics and committed receipts; not backed up or restored"),
+  // Sentinel's delivery ledger (server/sentinel/delivery.ts): which Health pages this installation already showed, held
+  // back or could not confirm, and the last daily digest. A restore never brings it back, and a missing ledger starts
+  // after everything already committed, so no page is ever shown twice.
+  "sentinel-delivery.json": excluded("Health notification receipts and the last daily health summary; runtime state, not restored, so no page repeats"),
+  // The key Sentinel's producer makes its opaque installation-local tokens with (health/publisher.ts loadTokenKey): kept beside
+  // health/, never inside it, so the scanner never reads it. Made again when absent; tokens made after that are new ones.
+  "health-key": excluded("Key for the opaque tokens in the health metadata, made again when absent; not backed up or restored"),
   "secrets": excluded(CREDENTIAL), "server-home": excluded(CREDENTIAL), "proxy": excluded(RUNTIME),
   // A Cloud home's connection to the owner's own server (cloud-home/own-server.ts): its ssh key, ssh config, known hosts and the
   // connection record. Connected again on the restored home.
@@ -319,7 +332,7 @@ export const DATA_DIR_PATTERNS: ReadonlyArray<{ pattern: RegExp; entry: DataDirE
   { pattern: /^[^/\\]+\.package-[\w-]+\.tmp$/, entry: excluded(LEFTOVER), example: "bots.json.package-0f8e2b1a.tmp" },
   // A memory index that failed its integrity check is set aside and rebuilt
   // (memory/index.ts). The copy is derived from messages.db.
-  { pattern: /^memory-index\.db\.corrupt-\d+$/, entry: excluded("Damaged memory search index set aside and rebuilt from messages.db; not restored"), example: "memory-index.db.corrupt-1790000000000" },
+  { pattern: /^memory-index\.db\.corrupt-\d+(?:-wal|-shm)?$/, entry: excluded("Damaged memory search index set aside and rebuilt from messages.db; not restored"), example: "memory-index.db.corrupt-1790000000000" },
   // An unreadable handoff-budget file set aside at startup (coordination-budget.ts).
   { pattern: /^coordination-roots\.json\.invalid-\d+$/, entry: excluded("Unreadable handoff-budget file set aside; not restored"), example: "coordination-roots.json.invalid-1790000000000" },
   // A consistent copy of messages.db taken before the boot-time project-row

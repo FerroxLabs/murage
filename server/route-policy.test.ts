@@ -183,8 +183,8 @@ describe("route policy (strict)", () => {
             const method = methodProperty && ts.isStringLiteral(methodProperty.initializer) ? methodProperty.initializer.text : "GET";
             const route = text.replace(/[?#].*$/, "");
             // desktop and companion routes both answer 404 to a bare fetch from
-            // the desktop (callRouteHeaders, voice-host.ts, carries the proof)
-            if (route.startsWith("/api/") && ["desktop", "companion"].includes(routeClass(method, route)) && !/x-murage-surface|desktopSurfaceHeaders|callRouteHeaders/.test(options?.getText(sf) ?? ""))
+            // the desktop (callRouteHeaders, voice-host.ts, and desktopCallerHeaders, live-events.ts, carry the proof)
+            if (route.startsWith("/api/") && ["desktop", "companion"].includes(routeClass(method, route)) && !/x-murage-surface|desktopSurfaceHeaders|desktopCallerHeaders|callRouteHeaders/.test(options?.getText(sf) ?? ""))
               found.push(`${path.slice(root.length + 1)}:${sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1}: ${method} ${route}`);
           }
           ts.forEachChild(node, visit);

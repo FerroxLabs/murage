@@ -60,7 +60,7 @@ describe("splash", () => {
 
   it("Android: the launcher's WebView is the canvas, not WebView white, when the splash hands over", () => {
     const main = read("../android/app/src/main/java/com/murage/mobile/MainActivity.java");
-    const created = main.indexOf("super.onCreate(state);\n        // Capacitor always loads");
+    const created = main.indexOf("super.onCreate(state);\n        PhoneJobServices.get(this).attach(this, new PhonePermissions(this));\n        // Capacitor always loads");
     expect(created).toBeGreaterThan(-1);
     expect(main.indexOf("getBridge().getWebView().setBackgroundColor(getColor(R.color.murage_canvas));")).toBeGreaterThan(created);
   });
