@@ -294,8 +294,9 @@ posixOnly("R6 the Chief proposal on every engine that can call Murage tools", ()
     for (const secret of ["quarterly report", "Fixture proposal", "Forged", "Ada leads"]) expect(log).not.toContain(secret);
   }, 90000);
 
-  it("N2 the API engines and the Box engine cannot hold a Chief at all (no Murage delegation), so they never reach the proposal", async () => {
-    for (const id of ["api-openai-compat", "api-grok", "api-minimax", "api-boxAgent"]) {
+  // OPENAI-TOOLS-109: the OpenAI-chat engines (openai-compat, grok, minimax) now mount Murage's agents tools, so they can hold a Chief
+  it("N2 the Box engine cannot hold a Chief at all (no Murage delegation), so it never reaches the proposal", async () => {
+    for (const id of ["api-boxAgent"]) {
       const moved = await api("PATCH", `/api/bots/${chiefId}`, { modelSelection: { instanceId: id, model: models.get(id) } });
       expect(moved.status, `${id} ${JSON.stringify(moved.body)}`).toBe(409);
       expect(moved.body.error).toContain("cannot coordinate bots");

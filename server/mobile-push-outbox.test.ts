@@ -27,6 +27,88 @@ function setup(world: Partial<OutboxWorld> = {}, send: PushSender["publish"] = a
 }
 const approval = { kind: "approval" as const, botId: "scout", threadId: "t1", requestId: "req-1", messageId: "m1" };
 
+describe("PushOutbox device-job", () => {
+  const job = { bindingId: B2, botId: "scout", threadId: "t1", operationId: "00000000-0000-4000-8000-000000000001", expiresAt: 1_000_000 + 120_000 };
+  it("inserts exactly one row, for that binding only, with no hold even at the desk", () => {
+    const t = setup({ present: () => true });
+    expect(t.outbox.enqueueDeviceJob(job)).toBe(1);
+    expect(t.store.latestForRequest(B1, job.operationId)).toBeNull();
+    const row = t.store.latestForRequest(B2, job.operationId)!;
+    expect(row).toMatchObject({
+      kind: "device-job", category: "device-job", state: "pending", requestId: job.operationId, messageId: null, expiresAt: job.expiresAt,
+      collapseKey: collapseKey(t.store.keySecret(B2)!, job.operationId), timeSensitive: false, resolvedBy: null,
+    });
+    expect(row.holdUntil).toBe(t.now());
+  });
+  it("sends the relay contract with the generic category and nothing of the job", async () => {
+    const t = setup();
+    t.outbox.enqueueDeviceJob(job);
+    await t.outbox.flush();
+    expect(t.sender.publish).toHaveBeenCalledTimes(1);
+    const [binding, event] = t.sender.publish.mock.calls[0];
+    expect(binding.bindingId).toBe(B2);
+    expect(parseRelayEvent(event)).toEqual(event);
+    expect(event.category).toBe("device-job");
+    expect(JSON.stringify(event)).not.toMatch(/scout|t1|00000000-0000/);
+  });
+  it("skips an unknown binding, a thread the device cannot see, and a device that cannot run jobs", () => {
+    expect(setup().outbox.enqueueDeviceJob({ ...job, bindingId: "9f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3" })).toBe(0);
+    expect(setup({ visible: () => false }).outbox.enqueueDeviceJob(job)).toBe(0);
+    expect(setup({ deviceJobCapable: () => false }).outbox.enqueueDeviceJob(job)).toBe(0);
+  });
+  it("resolve withdraws a row that was never sent, and replaces one that was", async () => {
+    const t = setup();
+    t.outbox.enqueueDeviceJob(job);
+    expect(t.outbox.resolve("t1", job.operationId, "elsewhere")).toBe(0);
+    expect(t.store.latestForRequest(B2, job.operationId)!.state).toBe("dropped");
+    await t.outbox.flush();
+    expect(t.sender.publish).not.toHaveBeenCalled();
+    const u = setup();
+    u.outbox.enqueueDeviceJob(job);
+    await u.outbox.flush();
+    expect(u.outbox.resolve("t1", job.operationId, "elsewhere")).toBe(1);
+    expect(u.store.latestForRequest(B2, job.operationId)).toMatchObject({ category: "resolved", state: "pending" });
+  });
+  it("is not offered as a push the phone can answer", () => {
+    const t = setup();
+    t.outbox.enqueueDeviceJob(job);
+    expect(t.outbox.pending(B2).items.map((i) => i.category)).toEqual(["device-job"]);
+  });
+});
+
+describe("PushOutbox phoneUsed (X1)", () => {
+  it("every row of enqueue carries the thread's mark at insert time, and an unmarked thread stays false", () => {
+    const marked = setup({ phoneMarked: (threadId: string) => threadId === "t1" });
+    expect(marked.outbox.enqueue({ kind: "done", botId: "scout", threadId: "t1" })).toBe(2);
+    const rows = marked.store.due(marked.now(), 10);
+    expect(rows.length).toBe(2);
+    expect(rows.every((r) => r.phoneUsed === true)).toBe(true);
+    const plain = setup({ phoneMarked: () => false });
+    plain.outbox.enqueue({ kind: "done", botId: "scout", threadId: "t1" });
+    expect(plain.store.due(plain.now(), 10).every((r) => r.phoneUsed === false)).toBe(true);
+  });
+  it("a world with no phoneMarked, or one that throws, writes true only when it throws (fail closed)", () => {
+    const none = setup();
+    none.outbox.enqueue({ kind: "done", botId: "scout", threadId: "t1" });
+    expect(none.store.due(none.now(), 10).every((r) => r.phoneUsed === false)).toBe(true);
+    const bad = setup({ phoneMarked: () => { throw new Error("closed"); } });
+    bad.outbox.enqueue({ kind: "done", botId: "scout", threadId: "t1" });
+    expect(bad.store.due(bad.now(), 10).every((r) => r.phoneUsed === true)).toBe(true);
+  });
+  it("a device-job row is flagged from the same mark", () => {
+    const t = setup({ phoneMarked: () => true });
+    t.outbox.enqueueDeviceJob({ bindingId: B2, botId: "scout", threadId: "t1", operationId: "00000000-0000-4000-8000-000000000001", expiresAt: 1_000_000 + 120_000 });
+    expect(t.store.latestForRequest(B2, "00000000-0000-4000-8000-000000000001")!.phoneUsed).toBe(true);
+  });
+  it("resolve copies the flag onto the replacement row", async () => {
+    const t = setup({ phoneMarked: () => true });
+    t.outbox.enqueue(approval);
+    await t.outbox.flush();
+    t.outbox.resolve("t1", "req-1", "desktop");
+    expect(t.store.latestForRequest(B1, "req-1")).toMatchObject({ category: "resolved", phoneUsed: true });
+  });
+});
+
 describe("PushOutbox", () => {
   // RES-009: the server's own record of when a binding's token pair expires.
   it("does not publish to a binding whose token pair has expired, and does not retry it", async () => {
@@ -357,5 +439,35 @@ describe("PushOutbox", () => {
     t.outbox.enqueue(approval);
     await t.outbox.flush();
     expect(t.outbox.pending(B1)).toEqual({ badge: 2, items: [{ collapseKey: collapseKey(t.store.keySecret(B1)!, "req-1"), revision: 1, category: "approval" }] });
+  });
+});
+
+describe("PushOutbox ask turn done (S39)", () => {
+  const done = { kind: "done" as const, botId: "scout", threadId: "t1" };
+  it("present and an ask turn: exactly one row, for the asking device, pending and not held", () => {
+    const t = setup({ present: () => true });
+    expect(t.outbox.enqueue({ ...done, askDeviceId: "d2" })).toBe(1);
+    const rows = t.store.due(t.now(), 10);
+    expect(rows.length).toBe(1);
+    expect(rows[0]).toMatchObject({ bindingId: B2, state: "pending", kind: "done" });
+  });
+  it("present and no askDeviceId: zero rows as today; an unknown asking device writes none", () => {
+    const t = setup({ present: () => true });
+    expect(t.outbox.enqueue(done)).toBe(0);
+    expect(t.outbox.enqueue({ ...done, askDeviceId: "d-gone" })).toBe(0);
+  });
+  it("not present: every binding, askDeviceId or not", () => {
+    const t = setup({ present: () => false });
+    expect(t.outbox.enqueue({ ...done, askDeviceId: "d2" })).toBe(2);
+  });
+  it("a question raised in an ask turn keeps the attention path (held for every binding)", () => {
+    const t = setup({ present: () => true });
+    expect(t.outbox.enqueue({ kind: "question", botId: "scout", threadId: "t1", requestId: "q1", askDeviceId: "d2" })).toBe(2);
+    expect(t.store.due(t.now() + 10 * 60_000, 10).every((r) => r.state === "held" || r.state === "pending")).toBe(true);
+  });
+  it("a marked thread's ask row is flagged, so its detail is the generic text", () => {
+    const t = setup({ present: () => true, phoneMarked: () => true });
+    t.outbox.enqueue({ ...done, askDeviceId: "d1" });
+    expect(t.store.due(t.now(), 10)[0]!.phoneUsed).toBe(true);
   });
 });

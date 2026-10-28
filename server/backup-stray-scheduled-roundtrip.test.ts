@@ -20,12 +20,15 @@ import { installationRecoveryCommand } from "./installation-recovery-command.ts"
 import { restoreEncryptedInstallationNew } from "./installation-encrypted-backup.ts";
 import { backupFixture, testAgeKeys } from "./testing/backup-fixture.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { HEALTH_FILES } from "../shared/health-protocol.mjs";
+import { HealthPublisher } from "./health/publisher.ts";
 
 const sha256 = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
 // Built at run time so no key-shaped literal sits in the source.
 const STRAY_KEY = ["sk", "stray", "fixture0123456789abcdef"].join("-");
 const STRAYS = ["config.json.bak-20260918-openaicompat", "config.json.bak-xxx"];
 const STAMP = Date.parse("2026-10-23T13:30:00Z");
+const HEALTH_MARKER = ["health", "metadata", "canary", "7f3a"].join("-");
 
 // A pinned host without MURAGE_BACKUP_TEST_AGE_DIR fails loudly in testAgeKeys, never skips.
 it.skipIf(!backupAgePinForTarget(process.platform, process.arch))("a data folder with old config.json.bak copies backs up on schedule, is verified, names them once in the log, and restores", { timeout: 120_000 }, async () => {
@@ -33,6 +36,18 @@ it.skipIf(!backupAgePinForTarget(process.platform, process.arch))("a data folder
   try {
     const strayBody = JSON.stringify({ instances: { openaiCompat: { driver: "openaiCompat", config: { apiKey: STRAY_KEY } } } }) + "\n";
     for (const name of STRAYS) writeFileSync(path.join(fixture.data, name), strayBody);
+    // 1.0.9 Sentinel: the producer root, initialized by the data owner before capture, with synthetic metadata in every
+    // kind of child. It is runtime metadata: never in the archive, never restored, never touched by the backup.
+    const health = new HealthPublisher({ dataDir: fixture.data });
+    expect(health.initialize()).toBe("ready");
+    const healthChildren: Record<string, string> = {
+      [HEALTH_FILES.serverCurrent]: `${HEALTH_MARKER} current\n`, [HEALTH_FILES.serverPrevious]: `${HEALTH_MARKER} previous\n`,
+      [HEALTH_FILES.desktopCurrent]: `${HEALTH_MARKER} desktop\n`, "db-stats-1793000000.sqlite": `${HEALTH_MARKER} sealed`,
+      [HEALTH_FILES.dbStatsManifest]: `{"marker":"${HEALTH_MARKER}"}`, ".tmp-0123456789abcdef.sqlite": `${HEALTH_MARKER} interrupted`,
+    };
+    for (const [name, body] of Object.entries(healthChildren)) writeFileSync(path.join(fixture.data, "health", name), body, { mode: 0o600 });
+    expect(health.replaceManifest(HEALTH_FILES.backupStatus, JSON.stringify({ marker: HEALTH_MARKER }))).toBe(true);
+    healthChildren[HEALTH_FILES.backupStatus] = JSON.stringify({ marker: HEALTH_MARKER });
     fixture.db.close();
     const destination = path.join(fixture.parent, "backups"), keyFile = path.join(fixture.parent, "recovery-key.txt");
     mkdirSync(destination);
@@ -124,5 +139,12 @@ it.skipIf(!backupAgePinForTarget(process.platform, process.arch))("a data folder
     for (const name of STRAYS) expect(existsSync(path.join(restored, name)), name).toBe(false);
     const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap(entry => entry.isDirectory() ? walk(path.join(dir, entry.name)) : [path.join(dir, entry.name)]);
     for (const file of walk(restored)) expect(readFileSync(file).includes(STRAY_KEY), file).toBe(false);
+
+    // No health metadata entered the backup or came back: the restore creates no health files, and the data folder's own
+    // copies are exactly as they were.
+    expect(existsSync(path.join(restored, "health"))).toBe(false);
+    for (const file of walk(restored)) expect(readFileSync(file).includes(HEALTH_MARKER), file).toBe(false);
+    expect(lines.some(line => line.includes(HEALTH_MARKER) || /"health"/.test(line))).toBe(false);
+    for (const [name, body] of Object.entries(healthChildren)) expect(readFileSync(path.join(fixture.data, "health", name), "utf8"), name).toBe(body);
   } finally { removeTempDirSync(fixture.parent); }
 });

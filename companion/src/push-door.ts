@@ -3,6 +3,7 @@
 // the tokens) and tokens (mint again). Three bearer routes it checks and
 // forwards: the detail read, the pending list and the respond action.
 // The harness trusts the ids below only with the launch proof.
+import { createReadStream } from "node:fs";
 import { request as httpRequest, type IncomingMessage } from "node:http";
 import { bearerToken, PUSH_BINDING, PUSH_TOKEN } from "./devices.ts";
 
@@ -29,7 +30,7 @@ export function isPushSessionRoute(method: string, path: string): boolean {
     || (method === "GET" || method === "POST") && path === "/api/mobile/push/preferences";
 }
 
-export type HarnessCall = (req: { method: string; path: string; headers: Record<string, string>; body: Buffer | null }) => Promise<{ status: number; body: unknown }>;
+export type HarnessCall = (req: { method: string; path: string; headers: Record<string, string>; body: Buffer | null; signal?: AbortSignal }) => Promise<{ status: number; body: unknown }>;
 export interface PushDoorDevices {
   issuePushTokens(deviceId: string, bindingId: string): { detail: string; respond: string; expiresAt: number } | null;
   pushBinding(deviceId: string): string | null;
@@ -151,6 +152,28 @@ const HARNESS_DEADLINE_MS = 15_000;
 const MAX_ANSWER = 1024 * 1024;
 const NOT_ANSWERING = { status: 502, body: { error: "Murage is not answering on this computer." } };
 
+/** The response half shared by every loopback call: collects the whole answer (capped at
+ * `MAX_ANSWER`), parses it as JSON, and settles as a 502 on any cut-off. */
+function answerReader(settle: (a: { status: number; body: unknown }) => void, request: () => { destroy(): unknown }): (res: IncomingMessage) => void {
+  return (res) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    res.on("data", (c: Buffer) => {
+      size += c.byteLength;
+      if (size > MAX_ANSWER) { settle(NOT_ANSWERING); request().destroy(); return; }
+      chunks.push(c);
+    });
+    res.on("end", () => {
+      let parsed: unknown = {};
+      try { parsed = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}"); } catch { parsed = { error: "unavailable" }; }
+      settle({ status: res.statusCode ?? 502, body: parsed });
+    });
+    res.on("error", () => settle(NOT_ANSWERING));
+    res.on("aborted", () => settle(NOT_ANSWERING));
+    res.on("close", () => { if (!res.complete) settle(NOT_ANSWERING); });
+  };
+}
+
 /** One loopback call to the harness. Always settles, exactly once: on the
  * whole answer, or as a 502 when the connection fails, the answer is cut
  * off mid-body (the harness died or restarted), it runs past `MAX_ANSWER`,
@@ -158,34 +181,54 @@ const NOT_ANSWERING = { status: 502, body: { error: "Murage is not answering on 
  * that never settled would hang the phone's request and wedge the
  * revocation queue behind it. */
 export function createHarnessCall(port: number, o: { deadlineMs?: number } = {}): HarnessCall {
-  return ({ method, path, headers, body }) => new Promise((resolve) => {
+  return ({ method, path, headers, body, signal }) => new Promise((resolve) => {
     let settled = false;
     const settle = (answer: { status: number; body: unknown }) => {
       if (settled) return;
       settled = true;
       clearTimeout(deadline);
+      signal?.removeEventListener("abort", cancel);
       resolve(answer);
     };
-    const out = httpRequest({ hostname: "127.0.0.1", port, path, method, headers: body ? { ...headers, "content-length": String(body.byteLength) } : headers }, (res) => {
-      const chunks: Buffer[] = [];
-      let size = 0;
-      res.on("data", (c: Buffer) => {
-        size += c.byteLength;
-        if (size > MAX_ANSWER) { settle(NOT_ANSWERING); out.destroy(); return; }
-        chunks.push(c);
-      });
-      res.on("end", () => {
-        let parsed: unknown = {};
-        try { parsed = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}"); } catch { parsed = { error: "unavailable" }; }
-        settle({ status: res.statusCode ?? 502, body: parsed });
-      });
-      res.on("error", () => settle(NOT_ANSWERING));
-      res.on("aborted", () => settle(NOT_ANSWERING));
-      res.on("close", () => { if (!res.complete) settle(NOT_ANSWERING); });
-    });
+    // A revoke aborts the request: the socket is dropped, so the harness stops hearing it, and the call settles as not answering.
+    const cancel = () => { settle(NOT_ANSWERING); out.destroy(); };
+    if (signal?.aborted) { resolve(NOT_ANSWERING); return; }
+    const out: ReturnType<typeof httpRequest> = httpRequest({ hostname: "127.0.0.1", port, path, method, headers: body ? { ...headers, "content-length": String(body.byteLength) } : headers }, answerReader(settle, () => out));
     const deadline = setTimeout(() => { settle(NOT_ANSWERING); out.destroy(); }, o.deadlineMs ?? HARNESS_DEADLINE_MS);
     deadline.unref?.();
     out.on("error", () => settle(NOT_ANSWERING));
+    signal?.addEventListener("abort", cancel, { once: true });
     out.end(body ?? undefined);
+  });
+}
+
+export type HarnessStreamCall = (req: { method: string; path: string; headers: Record<string, string>; file: string; bytes: number; signal: AbortSignal }) => Promise<{ status: number; body: unknown }>;
+
+/** A loopback call whose body is a file on disk, piped and never held in memory (plan B17). Settles
+ * once, like `createHarnessCall`: on the answer, or as a 502 on a failed connection, an unreadable
+ * file, the deadline, or `signal` aborting (the in-flight request is destroyed). */
+export function createHarnessStream(port: number, o: { deadlineMs: number }): HarnessStreamCall {
+  return ({ method, path, headers, file, bytes, signal }) => new Promise((resolve) => {
+    let settled = false;
+    let out: ReturnType<typeof httpRequest> | undefined;
+    let source: ReturnType<typeof createReadStream> | undefined;
+    const settle = (answer: { status: number; body: unknown }) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
+      signal.removeEventListener("abort", onAbort);
+      resolve(answer);
+    };
+    const stop = () => { source?.destroy(); out?.destroy(); };
+    const onAbort = () => { settle(NOT_ANSWERING); stop(); };
+    const deadline = setTimeout(() => { settle(NOT_ANSWERING); stop(); }, o.deadlineMs);
+    deadline.unref?.();
+    if (signal.aborted) { onAbort(); return; }
+    signal.addEventListener("abort", onAbort, { once: true });
+    out = httpRequest({ hostname: "127.0.0.1", port, path, method, headers: { ...headers, "content-length": String(bytes) } }, answerReader(settle, () => out as { destroy(): unknown }));
+    out.on("error", () => { settle(NOT_ANSWERING); stop(); });
+    source = createReadStream(file);
+    source.on("error", () => { settle(NOT_ANSWERING); stop(); });
+    source.pipe(out);
   });
 }

@@ -85,6 +85,7 @@ final class Shell {
 
     private Shell(Context app) {
         this.app = app;
+        PhoneAskSetup.retryRemovals(app);
         CacheSink.sweep(app); // once per process, before any save exists
         secure = new SecureStore(app);
         routes = new RouteMemory(new PrefsStore(app.getSharedPreferences("murage_routes", Context.MODE_PRIVATE)));
@@ -141,6 +142,7 @@ final class Shell {
         }
         long now = System.currentTimeMillis();
         if (!update(book -> book.signedIn(origin, name, now))) ShellLog.i("book not updated after sign-in");
+        PhoneShareServices.get(app).paired(origin);
     }
 
     /**
@@ -278,7 +280,7 @@ final class Shell {
         live = null;
         WorkspaceOrigin origin = workspace.origin;
         if (reason == CloseReason.SIGN_OUT) forget(origin, workspace.webView());
-        else if (reason == CloseReason.SIGNED_OUT) ApprovalKeys.remove(origin); // a 401 or re-pair takes the approval key, as on iOS
+        else if (reason == CloseReason.SIGNED_OUT) { PhoneJobServices.get(app).forget(origin); PhoneAskSetup.forget(app, origin); ApprovalKeys.remove(origin); } // a 401 or re-pair takes the approval key, as on iOS
         Listener current = listener;
         if (current != null) current.closed(origin.serialized(), reason.wire);
         else pendingClose = new String[] {origin.serialized(), reason.wire};
@@ -300,6 +302,7 @@ final class Shell {
      * when the list cannot be read. Returns false if the list could not be updated.
      */
     boolean forget(WorkspaceOrigin origin, WebView using) {
+        PhoneJobServices.get(app).forget(origin); PhoneAskSetup.forget(app, origin);
         boolean removed = update(book -> book.remove(origin));
         if (!removed) ShellLog.i("book not updated after forget");
         routes.forget(origin);

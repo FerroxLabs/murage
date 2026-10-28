@@ -10,6 +10,11 @@
 // client already splits text into utterances and fetches the next while the
 // current one plays, which gets the same perceived latency with far fewer
 // moving parts — and no socket to leak when a turn is interrupted.
+//
+// EVERY REQUEST HERE CARRIES THE KEY, SO NONE FOLLOWS A REDIRECT. fetch keeps
+// a custom header like xi-api-key across a redirect, even to another origin,
+// and a 307 or 308 also replays the body (the words being spoken). Each call
+// below sets `redirect: "error"`, so a redirect fails the request instead.
 import { RateLimitedError, retryAfterMs } from "./rate-limit.ts";
 const API = process.env.MURAGE_ELEVENLABS_API || "https://api.elevenlabs.io/v1";
 const MODEL = "eleven_flash_v2_5";
@@ -100,6 +105,7 @@ export async function verifyKey(key: string): Promise<VerifyResult> {
   try {
     const res = await fetch(`${API}/voices`, {
       headers: { "xi-api-key": key },
+      redirect: "error",
       signal: AbortSignal.timeout(20_000),
     });
     if (res.ok) return { ok: true };
@@ -112,6 +118,7 @@ export async function verifyKey(key: string): Promise<VerifyResult> {
 export async function listVoices(key: string): Promise<Voice[]> {
   const res = await fetch(`${API}/voices`, {
     headers: { "xi-api-key": key },
+    redirect: "error",
     signal: AbortSignal.timeout(20_000),
   });
   const body = await safeJson(res);
@@ -136,6 +143,7 @@ export async function synthesizeClip(text: string, voiceId: string, key: string,
     method: "POST",
     headers: { "xi-api-key": key, "content-type": "application/json", accept: "audio/mpeg" },
     body: JSON.stringify({ text, model_id: MODEL }),
+    redirect: "error",
     signal: AbortSignal.timeout(60_000),
   });
   if (res.status === 429) throw new RateLimitedError(message(429, "speaking", await safeJson(res)), retryAfterMs(res.headers.get("retry-after")));

@@ -23,6 +23,7 @@ import {
   type CompanionBridge,
   type CompanionRemoteAccess,
   type CompanionState,
+  type PhoneDevice,
   type PhoneSetupController,
   usePhoneSetupController,
 } from "./PhoneSetupFlow";
@@ -30,6 +31,7 @@ import { t } from "@/lib/i18n";
 import { companionPairingMode } from "../lib/phone-setup";
 import { tailnetHttpsHelp } from "../lib/tailnet-https";
 import { useDesktopSurface } from "../lib/use-surface";
+import { api } from "@/state/store";
 import { Card, Switch } from "./SettingsPrimitives";
 import { KeepAwakeOffer } from "./KeepAwakeOffer";
 import { LanPairing } from "./LanPairing";
@@ -470,10 +472,82 @@ function QrLogin({ c }: { c: PhoneSetupController }) {
   );
 }
 
+/** The per-phone row shows only when this computer offers share and ask (independent of phone tools) and the sidecar reports the phone's state. */
+/** Shown on a device row whose removal has not finished. The row stays until the computer confirms the removal. */
+export function RemovalPendingNote({ name, busy, onRetry }: { name: string; busy: boolean; onRetry: () => void }) {
+  return (
+    <div role="status" className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-hairline/40 bg-control/40 p-3">
+      <div className="min-w-0">
+        <div className="text-[13px] font-medium text-ink">{t("phone.removal.pending")}</div>
+        <p className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">{t("phone.removal.pendingBody")}</p>
+      </div>
+      <button
+        type="button"
+        disabled={busy}
+        onClick={onRetry}
+        aria-label={`${t("phone.removal.retry")}: ${name}`}
+        className="shrink-0 rounded-lg border border-hairline/50 px-3 py-1.5 text-[12.5px] text-ink hover:bg-control disabled:opacity-40"
+      >
+        {t("phone.removal.retry")}
+      </button>
+    </div>
+  );
+}
+
+export function shareAskRowVisible(offered: boolean | null, shareAsk: PhoneDevice["shareAsk"]): boolean {
+  return offered === true && shareAsk !== undefined;
+}
+
+/** "Share and ask from this phone". The off line appears only once Murage has answered "off"; a phone that was never set up shows the switch off and disabled. */
+export function ShareAskRow({
+  name,
+  shareAsk,
+  busy,
+  onChange,
+}: {
+  name: string;
+  shareAsk: NonNullable<PhoneDevice["shareAsk"]>;
+  busy: boolean;
+  onChange: (allowed: boolean) => void;
+}) {
+  const checked = shareAsk === "on" || shareAsk === "turning-off";
+  return (
+    <div className="mt-3 border-t border-hairline/30 pt-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-[12px] text-ink">{t("phone.ask.settingTitle")}</div>
+        <Switch
+          checked={checked}
+          aria-label={`${t("phone.ask.settingTitle")}: ${name}`}
+          disabled={busy || shareAsk === "not-set-up" || shareAsk === "turning-off"}
+          onClick={() => onChange(!checked)}
+        />
+      </div>
+      {shareAsk === "off" && (
+        <div className="mt-0.5 text-[11px] text-ink-secondary">{t("phone.ask.settingOff")}</div>
+      )}
+    </div>
+  );
+}
+
 export function CompanionSection({ profileEmail = "" }: { profileEmail?: string }) {
   const desktop = useDesktopSurface();
   const c = usePhoneSetupController(profileEmail);
   const state = c.state;
+  // Share and ask has its own offer; it does not follow phone tools.
+  const [shareAskOffered, setShareAskOffered] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (desktop !== true) return;
+    let active = true;
+    void (async () => {
+      try {
+        const answer = await api("/api/phones/offered");
+        if (active) setShareAskOffered(answer?.shareAsk === true);
+      } catch {
+        if (active) setShareAskOffered(false);
+      }
+    })();
+    return () => { active = false; };
+  }, [desktop]);
   // "both": the main switch (the door and remote access). "remote": the
   // separate remote-access switch below, with the door already on.
   const [confirming, setConfirming] = useState<"both" | "remote" | null>(null);
@@ -706,15 +780,24 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
                       {connected.has(device.id) ? " · connected now" : ""}
                     </div>
                   </div>
-                  <button
-                    disabled={c.busy}
-                    onClick={() => setRevoking(device.id)}
-                    aria-label={`Revoke ${device.name}`}
-                    className="shrink-0 rounded px-2 py-1.5 text-[11.5px] text-ink-secondary hover:bg-control hover:text-danger disabled:opacity-40"
-                  >
-                    <Trash2 size={14} />
-                  </button>
+                  {!device.removalPending && (
+                    <button
+                      disabled={c.busy}
+                      onClick={() => setRevoking(device.id)}
+                      aria-label={`Revoke ${device.name}`}
+                      className="shrink-0 rounded px-2 py-1.5 text-[11.5px] text-ink-secondary hover:bg-control hover:text-danger disabled:opacity-40"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  )}
                 </div>
+                {device.removalPending && (
+                  <RemovalPendingNote
+                    name={device.name}
+                    busy={c.busy}
+                    onRetry={() => void c.act((companion) => companion.revoke(device.id))}
+                  />
+                )}
                 {revoking === device.id && (
                   <RevokeDeviceConfirm
                     name={device.name}
@@ -726,6 +809,8 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
                     }}
                   />
                 )}
+                {!device.removalPending && (
+                  <>
                 <div className="mt-3 flex items-center justify-between gap-3 border-t border-hairline/30 pt-3">
                   <div>
                     <div className="text-[12px] text-ink">Allow computer view</div>
@@ -742,6 +827,16 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
                     }
                   />
                 </div>
+                {shareAskRowVisible(shareAskOffered, device.shareAsk) && (
+                  <ShareAskRow
+                    name={device.name}
+                    shareAsk={device.shareAsk!}
+                    busy={c.busy}
+                    onChange={(allowed) => void c.act((companion) => companion.shareAsk(device.id, allowed))}
+                  />
+                )}
+                  </>
+                )}
               </li>
             ))}
           </ul>
