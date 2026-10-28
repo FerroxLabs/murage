@@ -83,8 +83,9 @@ posixOnly("a turn refused at acceptance releases the workspace writer lease", ()
     expect(dumpRows().some(row => row.setModel !== undefined || row.prompt !== undefined || row.thinkingLevel !== undefined)).toBe(true);
     expect(dumpRows().filter(row => row.prompt)).toHaveLength(promptCountBefore + 1);
     expect(dumpRows().filter(row => row.action)).toHaveLength(promptCountBefore + 1);
-    const refusedPid = Number(readFileSync(`${gate}.waiting`, "utf8"));
-    expect(dumpRows().filter(row => row.pid === refusedPid && (row.prompt || row.action))).toEqual([]);
+    const refusedLaunch = readFileSync(`${gate}.waiting`, "utf8");
+    expect(dumpRows().some(row => row.argv && row.launchId === refusedLaunch)).toBe(true);
+    expect(dumpRows().filter(row => row.launchId === refusedLaunch && (row.prompt || row.action))).toEqual([]);
 
     // The owner's save over an existing file in that bot's workspace is
     // admitted: the refused turn released its writer lease through its
@@ -165,8 +166,9 @@ posixOnly("a turn refused at acceptance releases the workspace writer lease", ()
       expect((await replies()).at(-1)?.text).toBe("Hello from pi");
       expect(dumpRows().filter(row => row.prompt)).toHaveLength(promptCountBefore + 1);
       expect(dumpRows().filter(row => row.action)).toHaveLength(promptCountBefore + 1);
-      const refusedPid = Number(readFileSync(`${gate}.waiting`, "utf8"));
-      expect(dumpRows().filter(row => row.pid === refusedPid && (row.prompt || row.action))).toEqual([]);
+      const refusedLaunch = readFileSync(`${gate}.waiting`, "utf8");
+      expect(dumpRows().some(row => row.argv && row.launchId === refusedLaunch)).toBe(true);
+      expect(dumpRows().filter(row => row.launchId === refusedLaunch && (row.prompt || row.action))).toEqual([]);
       expect(thread.some(message => typeof message.tool?.name === "string" && message.tool.name.startsWith("error:"))).toBe(false);
       expect(thread.some(message => typeof message.tool?.name === "string" && message.tool.name.includes("MEMORY_CONTEXT_REVOKED"))).toBe(false);
       // The reply ran on a disclosure prepared and delivered under the new
@@ -254,8 +256,9 @@ posixOnly("a turn refused at acceptance releases the workspace writer lease", ()
       expect(reply.text).toBe("Hello from pi");
       expect(dumpRows().filter(row => row.prompt)).toHaveLength(promptCountBefore + 1);
       expect(dumpRows().filter(row => row.action)).toHaveLength(promptCountBefore + 1);
-      const refusedPid = Number(readFileSync(`${gate}.waiting`, "utf8"));
-      expect(dumpRows().filter(row => row.pid === refusedPid && (row.prompt || row.action))).toEqual([]);
+      const refusedLaunch = readFileSync(`${gate}.waiting`, "utf8");
+      expect(dumpRows().some(row => row.argv && row.launchId === refusedLaunch)).toBe(true);
+      expect(dumpRows().filter(row => row.launchId === refusedLaunch && (row.prompt || row.action))).toEqual([]);
       expect(reply.from.botId).toBe(member.id);
       expect(chips(thread)).toEqual([]);
       expect(thread.some(message => typeof message.tool?.name === "string" && message.tool.name.includes("MEMORY_CONTEXT_REVOKED"))).toBe(false);

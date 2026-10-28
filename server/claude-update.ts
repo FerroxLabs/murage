@@ -3,6 +3,7 @@
 //
 // Adapted from OpenMausBot 95a94daa (#1840, Apache-2.0): run Claude Code's
 // own updater when a turn failed because the CLI is too old for the model.
+import { engineStderrRedacted } from "./drivers/acp/core.ts";
 import type { ExecFileOptions } from "node:child_process";
 
 import { describeSpawnFailure, execCli } from "./procs.ts";
@@ -38,7 +39,7 @@ function updateFailure(error: unknown, cli: string): Error {
   if (processError.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") return new Error(`Claude update printed too much output. ${FALLBACK}`);
   if (typeof processError.code === "string") return new Error(`${describeSpawnFailure(processError, cli).message}. ${FALLBACK}`);
   if (processError.killed) return new Error(`Claude update did not finish within 3 minutes. ${FALLBACK}`);
-  const detail = (stderrOf(err).trim() || err.message).split("\n")[0].slice(0, 400);
+  const detail = engineStderrRedacted(stderrOf(err).trim() || err.message, false).split("\n")[0].slice(0, 400);
   return new Error(`Claude update failed${detail ? `: ${detail}` : ""}. ${FALLBACK}`);
 }
 

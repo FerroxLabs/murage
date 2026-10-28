@@ -148,6 +148,21 @@ describe("the shipped index", () => {
     expect(page.map((entry) => entry.where).join(" ")).toContain("Connected apps → MCP servers");
   });
 
+  it("places the graduated browser and recorder in regular Settings with their defaults", () => {
+    for (const [id, where] of [
+      ["built-in-browser", "Settings → Devices → Built-in browser"],
+      ["teach-a-skill", "Settings → Skills → Teach a skill"],
+    ]) {
+      const entry = HELP_INDEX.find((item) => item.id === `features/settings-guide#${id}`);
+      expect(entry?.where).toBe(where);
+      expect(entry?.text).toContain("on by default");
+      expect(entry?.text).toContain("A switch you turned off stays off.");
+    }
+    const guide = HELP_INDEX.filter((entry) => entry.id.startsWith("features/settings-guide#"));
+    expect(guide.map((entry) => entry.text).join(" ")).not.toContain("Experimental");
+    expect(guide.find((entry) => entry.id.endsWith("#teach-a-skill"))?.text).toContain("Cloud homes keep the skills library without the recorder.");
+  });
+
   it("is regenerated from the docs, never edited by hand", () => {
     const script = fileURLToPath(new URL("../scripts/build-help-index.mjs", import.meta.url));
     expect(() => execFileSync(process.execPath, [script, "--check"], { stdio: "pipe" })).not.toThrow();

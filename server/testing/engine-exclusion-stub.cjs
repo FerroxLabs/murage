@@ -37,5 +37,5 @@ module.exports = {
   // no other process has any file open for writing; a sync is a plain fsync, reported as the full barrier
   writers: () => ({ writers: [], unreadable: [] }),
   fullSync: (fd) => { fs.fsyncSync(fd); return "full"; },
-  version: () => 9,
+  version: () => 10,
 };

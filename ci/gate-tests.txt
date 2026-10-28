@@ -62,11 +62,11 @@ electron/companion-stale.test.mjs	all	phone-to-desktop door and its auth
 electron/composio-legacy-claim.test.mjs	all	protects user-visible behaviour in core flows
 electron/composio-lifecycle-policy.test.mjs	all	protects user-visible behaviour in core flows
 electron/control-plane-client.test.mjs	all	cloud home, enrolment and key custody
+electron/crash-dumps.test.mjs	all	crash dumps stay local, pruned, and join a report only when chosen
 electron/cua-linux-bundle.test.mjs	linux+mac	packaging, upgrade and release integrity
 electron/cua-linux-runtime.test.mjs	all	security boundary or path/file access
 electron/cua-linux.test.mjs	linux	security boundary or path/file access
 electron/diagnostics.test.mjs	all	protects user-visible behaviour in core flows
-electron/crash-dumps.test.mjs	all	crash dumps stay local, pruned, and join a report only when chosen
 electron/flux-composio-token.test.mjs	all	cloud home, enrolment and key custody
 electron/harness-resources.test.mjs	all	protects user-visible behaviour in core flows
 electron/incident-export.test.mjs	all	protects user-visible behaviour in core flows
@@ -87,19 +87,29 @@ scripts/after-pack-windows-signing.test.mjs	all	packaging, upgrade and release i
 scripts/after-pack.test.mjs	linux+mac	packaging, upgrade and release integrity
 scripts/browser-extension-batch1.test.mjs	all	unapproved site tab kept private (approval boundary)
 scripts/browser-extension-chromereal.test.mjs	all	no input reaches a document changed after approval (approval)
+scripts/browser-extension-late-download.test.mjs	all	a page download saved while the bot is told it was blocked (including after a kept file, or a removal no fresh look confirms); the owner's own download deleted on a late page announcement, or told to the bot when it was idle
 scripts/browser-extension-opus-review.test.mjs	all	screenshots never capture cross-site payment frames (security)
 scripts/browser-extension-release-config.test.mjs	all	packaging, upgrade and release integrity
 scripts/browser-extension-runtime.test.mjs	all	pauses on unapproved navigation (approval boundary)
+scripts/build-murage-cage.test.mjs	linux	engines on Linux get a verified, pinned cage
 scripts/bundle-server-runtime-files.test.mjs	all	packaging, upgrade and release integrity
+scripts/cage-apparmor.test.mjs	linux	Linux engines from source can launch under the power block on Ubuntu 23.10 and later
+server/full-access-env-win-108.test.ts	windows	Bounded real PowerShell checks and process-tree cleanup before conversation approvals
+server/thread-permissions-bulk-108.test.ts	all	Owner-only previewed raises persist one roster and leave higher levels and grants intact
+server/full-access-driver-108.test.ts	all	Fake Codex, Fuigo and Grok asks carry checked environments into approval verdicts
+scripts/check-linux-glibc-floor.test.mjs	linux	the Linux app starts on older supported distros
 scripts/check-packaged-shared-imports.test.mjs	all	packaging, upgrade and release integrity
 scripts/cua-linux-release.test.mjs	all	packaging, upgrade and release integrity
 scripts/dependency-floors.test.mjs	all	patched dependencies ship (supply chain)
 scripts/linux-after-install.test.mjs	linux	packaging, upgrade and release integrity
+scripts/linux-floor.test.mjs	linux	the Linux app starts on older supported distros
 scripts/packaged-prod-pin.test.mjs	all	packaged app refused without the live production Cloud signing pin
+scripts/power-seccomp.test.mjs	linux	engines cannot shut down or restart the computer
 scripts/prepare-browser.test.mjs	all	packaging, upgrade and release integrity
 scripts/prepare-fuigo.test.mjs	all	packaging, upgrade and release integrity
 scripts/release-ci-gate.test.mjs	all	packaging, upgrade and release integrity
 scripts/release-guard.test.mjs	all	packaging, upgrade and release integrity
+scripts/release-notes.test.mjs	all	the update card shows a pull-request list instead of curated notes, or a Release run without notes fails only after every build
 scripts/release-workflows.test.mjs	all	packaging, upgrade and release integrity
 scripts/runtime-sibling-mode.test.mjs	all	protects user-visible behaviour in core flows
 scripts/smoke-whatsapp-packaged.test.mjs	all	packaging, upgrade and release integrity
@@ -111,6 +121,7 @@ scripts/whatsapp-release.test.mjs	all	packaging, upgrade and release integrity
 scripts/windows-native-imports.test.mjs	all	a Windows build whose native addon imports a DLL beyond system DLLs (the /MT addon failing to load on a clean Windows)
 scripts/windows-sandbox-acl.test.mjs	all	packaging, upgrade and release integrity
 scripts/windows-upgrade-staging.test.mjs	all	packaging, upgrade and release integrity
+scripts/workflow-action-pins.test.mjs	all	third-party actions pinned to commits (the root-key job included)
 server/about-me-api.test.ts	all	owner-only about-me never reaches webhook runs
 server/about-me-channels.test.ts	linux+mac	About me never leaks into another person's turn
 server/added-table-lifecycle.test.ts	all	deleted requests must not leave rows behind
@@ -163,11 +174,7 @@ server/attachments-http.test.ts	all	uploads stream, retry and serve correct byte
 server/attachments.test.ts	all	attachment mime refusal and safe storage
 server/authorize-work.test.ts	all	Partitioned bots refuse cross-person work
 server/auto-approve-own-always-ask.test.ts	all	a remembered, task or routine grant never runs publish_site and the other always-ask own tools
-server/browser-document-guard-scope.test.ts	all	the page check looks at the bot's own tabs, so owners with many tabs can use their Chrome
-server/handoff-partition.test.ts	all	a partitioned bot never sees a copy or hand-off whose source is outside its partition
-server/memory/extraction-span-anchor.test.ts	all	learning keeps a slice whose quote is right even when the model miscounts byte offsets
-server/memory/quote-evidence.test.ts	all	a bot can save a memory from quoted words, not only from source ids it is never given
-server/own-tools-unasked.test.ts	all	Claude and Codex ask the owner to approve the bot's own past-conversation search on nearly every turn at Ask
+server/auto-approve-reason-log.test.ts	all	Asked verdict reason logs are value-free and rate-limited per bot tool class with suppressed counts
 server/auto-approve-prompt.test.ts	all	prompt-capable commands hold ahead of standing answers
 server/auto-approve-u20.test.ts	all	failed environment check holds ask at every level
 server/auto-approve.test.ts	all	Auto mode stops destructive and sensitive commands
@@ -211,8 +218,9 @@ server/backup-stray-files.test.ts	all	a stray file in the data folder never fail
 server/backup-stray-scheduled-roundtrip.test.ts	all	old config.json.bak copies never stop a scheduled backup; it verifies, logs them once and restores
 server/backup-zip-classification.test.ts	all	zip recovery file keeps bot data
 server/boot-hold.test.ts	linux+mac	start with held writes never blocks serving thread
+server/boot-settle-108.crash.test.ts	all	a crash during startup loses no data and the app opens
+server/boot-settle-108.test.ts	all	the app opens and answers promptly after an update
 server/bot-access.test.ts	all	bot access grants need owner approval
-server/draft-only-bot.test.ts	all	a draft-only bot such as Ticket Triage never sends, whatever its access level
 server/bot-cwd.test.ts	all	bot working folder validation
 server/bot-deletion-ledger.test.ts	all	bot removal reaches desktop and phone rosters
 server/bot-deletion-numbered.e2e.test.ts	all	Bot deletion ordering, retries and restore
@@ -231,6 +239,7 @@ server/bot-package.test.ts	all	package parse strips authority fields
 server/bot-profile.test.ts	all	profile patch refuses privilege-bearing fields
 server/bot-read.test.ts	all	One classification of engine versus Murage output
 server/bot-standing-context-api.test.ts	all	Memory and briefs reach right bots only
+server/box-error-text-route.test.ts	all	secrets in cloud computer errors never reach the owner (credentials)
 server/box-exec.test.ts	all	cloud box commands complete and report activity
 server/box-relay.test.ts	all	relay rejects wrong tokens
 server/branch-store.test.ts	all	branch index stays exact through edits and restarts
@@ -243,6 +252,12 @@ server/browser-control-takectl.test.ts	all	take control owner-input wait is boun
 server/browser-control.test.ts	all	browser ownership boundary human versus bot
 server/browser-document-guard-chromereal.test.ts	all	Private inputs detected by label and password
 server/browser-document-guard-dialog.test.ts	all	accepts an alert and a beforeunload, and dismisses a confirm and a prompt, while a call is in flight
+server/browser-document-guard-scope.test.ts	all	the page check looks at the bot's own tabs, so owners with many tabs can use their Chrome
+server/full-access-corpus-108.test.ts	all	Owner command ask counts, U20 recovery cache and stale conversation defaults
+server/full-access-env-probe-path-108.test.ts	all	Environment probes use pinned absolute executables and reject handed PATH shadows
+server/full-access-env-unchecked-108.test.ts	all	E1 operational environment waiver is explicit-owner only and preserves integrity, pins and cooldown provenance
+server/full-access-launchers-win-108.test.ts	windows	Literal Git Bash argv keeps its exception while unreadable Windows launchers ask
+server/full-access-unreadable-d-108.test.ts	all	Deferred D keeps unreadable commands, wipes and secrets asking at every level
 server/browser-engine-policy.test.ts	all	headless browser rejects forged scope and destinations
 server/browser-engine.test.ts	all	browser install verified signed with no fallback
 server/browser-extension-activity.test.ts	all	refuses path escapes; served behind mayApprove (path, access)
@@ -262,6 +277,7 @@ server/browser-extension-corefix8.test.ts	all	incomplete facts on activating act
 server/browser-extension-corefix9.test.ts	all	phone and handle values classified sensitive
 server/browser-extension-decide.test.ts	all	Floor, rules, checker decision order
 server/browser-extension-durable.test.ts	all	Restart resumes no grants from disk
+server/browser-extension-engine-close.test.ts	all	turning sharing off mid-start leaves no engine process
 server/browser-extension-engine-read.test.ts	all	denied destinations unfetchable; no browser credentials; revoke drops read
 server/browser-extension-engine.test.ts	all	no navigation when destination approval denied (approval)
 server/browser-extension-executor.test.ts	all	Executor refuses arbitrary evaluation
@@ -306,28 +322,27 @@ server/browser-unavailable-turn-api.test.ts	all	turn completes without browser t
 server/browser-untrusted.test.ts	all	untrusted page text fenced against injection
 server/browser-windows-identity-admission.test.ts	all	a signed or tampered Windows browser image admitted or refused on the wrong path, so the browser fails to start or runs unverified
 server/browser-windows-identity.test.ts	all	Windows browser binary identity pinned
+server/bwrap-process.test.ts	all	Stop lets a caged engine finish cleanly
 server/calendar-calls.test.ts	all	scheduled call fires once and persists
 server/can-talk-to-api.test.ts	all	bot-to-bot messaging grants correct and narrowable
 server/cancel-tree-104-repro.test.ts	all	cancelled or failed work never starts again under the request that ended
-server/cancel-tree-104-sites.test.ts	all	a hand-off or card wake left open by an older version never starts once its asker ended
-server/cancel-tree-104-setup.test.ts	all	a cancel during a hand-off's setup ends it: refused hand-over, cancelled settle, one closing line
-server/cancel-tree-104-wakes.test.ts	all	a cancelled wake keeps the results that belong to other work
 server/cancel-tree-104-setup-row-api.test.ts	linux+mac	a cancel while a room turn is still being set up, or before its engine took it, sends nothing to the engine
-server/cloud-computer-boot-105.test.ts	all	a prompt cut off by a restart is confirmed done on the cloud computer or fenced, with one owner line
-server/cloud-computer-boot-105-settle.test.ts	all	a handed or held hand-off whose request ended settles as cancelled, never held or interrupted
-server/cloud-computer-boot-105-r2.test.ts	all	the record of cloud computer prompts is never missing, and a turn reads only its own prompt's work
-server/cloud-computer-boot-105-failed-asker.test.ts	all	a hand-off under an asker that failed is never closed as cancelled; only a cancel closes it
-server/cloud-computer-boot-105-shared-stop.test.ts	all	a Stop of one turn on a shared cloud computer never interrupts the other turn; the box is cleared once it is free
+server/cancel-tree-104-setup.test.ts	all	a cancel during a hand-off's setup ends it: refused hand-over, cancelled settle, one closing line
+server/cancel-tree-104-sites.test.ts	all	a hand-off or card wake left open by an older version never starts once its asker ended
+server/cancel-tree-104-wakes.test.ts	all	a cancelled wake keeps the results that belong to other work
 server/card-result-source.test.ts	all	withdrawn or gone result never copied
 server/channel-archive.test.ts	all	archived channel keeps members, messages and tasks
 server/channel-project-api.test.ts	all	Channel archive loses nothing, unchanged otherwise
 server/channel-queue.test.ts	all	queued channel messages drain one at a time
+server/channels/approval-labels.test.ts	all	a language pack relabels Approve as Deny on a channel approval and the owner taps the wrong one
 server/channels/discord/event.test.ts	all	owner-only DM authority, approval-like text never authority
 server/channels/discord/service.test.ts	all	owner pairing, revoke fences, no model work from strangers
 server/channels/discord/transport.test.ts	all	reply goes to exact recipient, approval buttons verified
 server/channels/durable-delivery.test.ts	all	reply admitted once, survives restart, no duplicate send
 server/channels/permission-approvals.test.ts	all	approval card resolves once, wrong author rejected
 server/channels/permission-service.test.ts	all	permission callbacks fenced across Discord and Slack
+server/channels/reply-locale.test.ts	all	an owner who picks Portuguese on a computer set to another language gets channel reply times from a bare "pt" locale tag instead of pt-BR, the pack the app shows
+server/channels/reply-text.test.ts	all	a chat owner whose app is set to another language gets limit, routine, pairing, approval and voice note lines from Murage in English only
 server/channels/slack/event.test.ts	all	only authenticated owner DM accepted
 server/channels/slack/runtime.test.ts	all	owner provenance and restart reuse of Slack identity
 server/channels/slack/service.test.ts	all	owner pairing, ACK-before-run, wrong DM rejected
@@ -353,10 +368,16 @@ server/chat-list.test.ts	all	the chat list shows every chat with its newest acti
 server/chat-widgets-api.test.ts	all	a widget press is one owner message even on a double press or retry, never in rooms or for a turn that is not the owner's, and stays pressable after Stop and restart
 server/chat-widgets.test.ts	all	a widget is answered once and changes only while open
 server/chats-api.test.ts	all	/api/chats answers owners only and a Cloud phone as a phone
+server/checkpoints-error-text.test.ts	all	secrets in checkpoint errors never reach the owner (credentials)
 server/checkpoints.test.ts	all	checkpoints never touch user's folder
 server/child-pipe-quiet.test.ts	linux+mac	child pipe cannot kill the server
 server/claude-accounts.test.ts	all	Claude account environments isolated, no inherited credentials
 server/cloud-auth-api.test.ts	all	cloud sign-in gates admin and write routes
+server/cloud-computer-boot-105-failed-asker.test.ts	all	a hand-off under an asker that failed is never closed as cancelled; only a cancel closes it
+server/cloud-computer-boot-105-r2.test.ts	all	the record of cloud computer prompts is never missing, and a turn reads only its own prompt's work
+server/cloud-computer-boot-105-settle.test.ts	all	a handed or held hand-off whose request ended settles as cancelled, never held or interrupted
+server/cloud-computer-boot-105-shared-stop.test.ts	all	a Stop of one turn on a shared cloud computer never interrupts the other turn; the box is cleared once it is free
+server/cloud-computer-boot-105.test.ts	all	a prompt cut off by a restart is confirmed done on the cloud computer or fenced, with one owner line
 server/cloud-home/admission-launcher.test.ts	linux	turn locks refuse release, tombstones
 server/cloud-home/apparmor-service-hardening.test.ts	linux	AppArmor profiles deny secrets and host state (sandbox)
 server/cloud-home/auth-startup.test.ts	linux	home refuses to start without auth
@@ -444,15 +465,20 @@ server/computer-proxy-exec.test.ts	linux	cloud box shell command runs and return
 server/computer-proxy.test.ts	all	never exposes browser credentials or URL secrets
 server/config.test.ts	all	config persistence, key rotation and clearing
 server/connected-app-action-classes.test.ts	all	connected app actions carry correct risk classes
+server/connected-app-health.test.ts	all	a connected app whose sign-in stopped working is shown and told as needing reconnection
 server/connected-app-ledger-backup.test.ts	all	backup restore keeps unresolved app action records
 server/connected-app-operations.test.ts	all	Connected app requests validated, never forwarded unsafe
 server/connected-app-receipts.test.ts	all	real connected-app send records receipt per engine
 server/connected-apps-agents.test.ts	all	engine search and connect long-tail apps
 server/connected-apps-flux-only.test.ts	all	old own key retired; never travels
+server/connected-apps-vendor-name.test.ts	all	the connected-apps vendor name stays out of user-facing text
 server/connector-cache.test.ts	all	Windows tool-list cache trusts only verified folders
+server/connector-card-label.test.ts	all	a chat connect card signs in under the confirmed label, never the bot suggestion
 server/connector-proxy.test.ts	all	Connector bridge authorization and account handling
 server/container-computer.test.ts	all	container hardening checks reject extra capabilities
 server/conversation-deletion-api.test.ts	all	deleted conversation removed from engines too
+server/conversation-deletion-helper-unloadable.test.ts	all	deleted chats are removed even when a helper cannot load
+server/conversation-deletion-probe.test.ts	all	a deletion whose engine is held open no longer re-plans every 10 minutes (machine load, routines paused)
 server/conversation-deletion.test.ts	all	Conversation deletion removes engine history correctly
 server/conversation-gate-matrix.test.ts	all	unproven callers denied conversation routes
 server/credential-request.test.ts	all	Credential requests limited to declared ids
@@ -463,15 +489,16 @@ server/data-dir-inventory-guard.test.ts	all	Unclassified data-folder writes caug
 server/data-dir-inventory.test.ts	all	every data-dir name classified for backup
 server/data-dir-ownership.e2e.test.ts	all	second data writer refused
 server/data-writers-gate.test.ts	all	writers stop releases lease safely
+server/database-open-wait.test.ts	all	Murage opens while another process holds the database: it waits instead of failing to start with 'database is locked'
 server/database.test.ts	all	background write budget never blocks owner path
 server/decider/privacy-and-budget.test.ts	all	no-retain echo required before room text sent
 server/decider/room-routing.integration.test.ts	all	auto room reply reaches the right bot
 server/decision-log-deleted.test.ts	all	decision log keeps approval but not content
 server/decision-log.test.ts	all	credential content kept out; corrupt line does not lose rows
 server/default-engine.test.ts	all	new bot lands on right engine
+server/delegated-reply-check.test.ts	all	a delegated reply still being checked is waited for and delivered, never replaced by a placeholder that reads like silence
 server/delegation-forget.test.ts	all	Forgotten conversation drops handoff results
 server/delegation-nohold.test.ts	all	delegated replies reach the owner without a hold after a revoke or flip
-server/delegated-reply-check.test.ts	all	a delegated reply still being checked is waited for and delivered, never replaced by a placeholder that reads like silence
 server/delegation-owner-record-api.test.ts	linux+mac	handoff survives restart and runs once
 server/delegation-routine-sites-api.test.ts	linux+mac	Routine hand-offs stay unattended
 server/delegation-unattended-restart-api.test.ts	linux+mac	unattended handoff keeps Full access card after restart
@@ -487,19 +514,27 @@ server/destructive-inside.test.ts	all	Auto guard on deletes inside roots
 server/direct-late-close-api.test.ts	all	retained run released when engine closes later (API)
 server/direct-late-close.test.ts	all	retained run released once when engine closes later
 server/direct-owner-integrations-api.test.ts	all	Integrations mount only for owner words
+server/direct-rebuild-hold-api.test.ts	linux+mac	Protects deleted conversations: a delete, bot delete, Stop, second send or restart while a refused turn waits to be rebuilt
+server/direct-rebuild-hold-late-api.test.ts	linux+mac	Protects Stop and replies: a routine Stop while a refused turn waits, and a turn refused at a late write rebuilt once, freed quietly or answered before a queued send
+server/direct-rebuild-hold.test.ts	all	Protects Stop and deletes: a refused direct turn keeps its thread working until its rebuild takes it over, and a Stop ends it
 server/direct-replay-without-memory.test.ts	all	reply using forgotten memory is withheld
 server/direct-run-late-close.test.ts	all	message after Stop runs despite late close
 server/discord-api.test.ts	all	Discord owner binding, restart, revocation
 server/discord-config.test.ts	all	Discord token, owner identity and private authority
 server/downgrade-102-data-dir.test.ts	all	downgrade to 1.0.2 handles new data folders
 server/downgrade-102-schema.test.ts	all	Downgrade leaves exact 1.0.2 schema
+server/draft-only-bot.test.ts	all	a draft-only bot such as Ticket Triage never sends, whatever its access level
+server/draft-only-sends.api.test.ts	all	a draft-only bot lifted past Ask, or its direct, room or Chief proposal turn starting Claude with tools, a broker, extra folders or Murage servers beyond its connected apps
+server/draft-only.test.ts	all	a draft-only bot running on an engine that runs tools, hooks or fetches of its own, or at any access level reaching a send path
 server/drafts.test.ts	all	rejected send restored into draft (data loss)
 server/drivers/acp-launch-binary.test.ts	linux+mac	ACP engine turns ran an older CLI from the shell PATH than the one Murage version-checked
 server/drivers/acp/acp.test.ts	all	ACP engine turn lifecycle
+server/drivers/acp/approval-delivery-108.test.ts	all	ACP approval write failures remain answerable, retry within a bound, and visibly stop on engine loss
 server/drivers/acp/cline.test.ts	all	Cline engine turn behaviour
 server/drivers/acp/cursor-win-junction.win32.test.ts	windows	a Cursor turn on Windows as a standard user failing with EPERM when it links its sessions folder
 server/drivers/acp/droid-host-computer.test.ts	all	Droid host-computer actions are asked by Murage, not skipped
 server/drivers/acp/engine-isolation.test.ts	all	OpenCode personal setup isolated from bot
+server/drivers/acp/engine-pid-sites.test.ts	all	ACP tree probes look at the engine CLI behind the Windows job launcher, not the launcher
 server/drivers/acp/engine-tree-stop.test.ts	linux+mac	Stop on an ACP engine ends the whole process tree, so no engine keeps running after Stop
 server/drivers/acp/fuigo-1032.test.ts	all	Fuigo 1.0.32: no acceptEdits, only the turn credential
 server/drivers/acp/fuigo-memory-permission.test.ts	all	Fuigo memory permission exact identity
@@ -510,6 +545,7 @@ server/drivers/acp/grok-ask.test.ts	linux+mac	Grok at Ask runs shell commands an
 server/drivers/acp/grok-isolation.test.ts	all	Grok personal plugins and compat closed
 server/drivers/acp/grok-own-tools.test.ts	all	Murage own tools on Grok Build never hold an approval card at Auto or Full access
 server/drivers/acp/grok-provider.test.ts	all	Grok provider identity and history replay
+server/drivers/acp/grok-steer.test.ts	all	a message sent mid-reply reaches Grok once, or is queued
 server/drivers/acp/hermes-own-tools.test.ts	linux+mac	Hermes runs Murage's own unasked tools with no card; a look-alike server still asks
 server/drivers/acp/hermes.test.ts	all	routeAsks overrides skip-all permissions; bearer token private; upgrade pin
 server/drivers/acp/hook-isolation-106.test.ts	all	a Fuigo or Grok bot turn or reflection on Windows runs the owner's personal hooks or plugins
@@ -527,11 +563,14 @@ server/drivers/antigravity-denied.test.ts	linux+mac	a command denied in accept-e
 server/drivers/antigravity-scope.test.ts	all	scoped home never writes owner files
 server/drivers/antigravity.test.ts	all	skips agy permissions only with the relay hook (Auto/Full), never at Ask; strips credentials
 server/drivers/ask-stop.test.ts	all	at Ask, Cursor/OpenClaw/agy refuse every change before it runs; Auto unchanged
+server/drivers/browser-extension-mcp-cancel.test.ts	all	a browser request the bot's engine cancelled still running, or one slow browser call holding every other request behind it
 server/drivers/browser-extension-mcp-deadline.test.ts	all	owner approval card answerable after wait
 server/drivers/browser-extension-mcp.test.ts	all	does not forward approval or identity methods
 server/drivers/captured-env-routing.test.ts	all	subscription turn not routed to shell provider
+server/drivers/chat-draft-only.test.ts	all	a draft-only turn on a connected chat model sending a tools field or the caller's integrations
 server/drivers/child-teardown.test.ts	all	engine child processes torn down confirmed
 server/drivers/claude-cli-tables.test.ts	all	Claude turns on a newer CLI than Murage's version tables losing the pins and allowlists of the newest known version
+server/drivers/claude-draft-only.test.ts	all	a draft-only Claude turn launching with built-in tools, the broker or a workspace folder, or despite a credential helper, managed hook or cowork_settings.json helper, on any launch or relaunch
 server/drivers/claude-emptypin.test.ts	all	Claude without Git Bash: an owner's unset routing name pinned to "" breaking instance-role sign-in
 server/drivers/claude-launch-binary.test.ts	linux+mac	Claude turns ran an older claude from the shell PATH than the one Murage version-checked
 server/drivers/claude-ng.test.ts	all	Claude without Git Bash: one empty-pin rule from the CLI's settings-env allowlist; the sign-in card remembers
@@ -549,6 +588,7 @@ server/drivers/codex-launch-binary.test.ts	linux+mac	Codex turns refused the def
 server/drivers/codex-mcp-env-launcher.test.ts	windows	a custom MCP server gets its own secret without it appearing in a process listing
 server/drivers/codex-warm.test.ts	all	Codex warm app-server turns
 server/drivers/codex.test.ts	all	Codex engine turn behaviour
+server/drivers/engine-stderr-capture.test.ts	all	secrets in engine output never reach the owner (credentials)
 server/drivers/flux-header-matrix.test.ts	all	Flux headers identity, user headers never ride
 server/drivers/flux-memory-at-send.test.ts	all	memory kill switch honoured at every send
 server/drivers/grok.test.ts	all	Grok turn, redirect into Flux never followed
@@ -556,6 +596,7 @@ server/drivers/headless-browser-proxy.test.ts	all	headless MCP refuses human-hel
 server/drivers/headless-claude-env.test.ts	all	the reflection Claude child losing the Flux privacy headers its route set (credentials and headers)
 server/drivers/headless-text-only.credfix.test.ts	all	a text-only Claude turn uses the owner's credentials without leaking them
 server/drivers/headless-text-only.test.ts	all	headless runner argv, env allowlist, credentials
+server/drivers/helper-error-text.test.ts	all	secrets in engine errors never reach the owner (credentials)
 server/drivers/host-computer-proxy.test.ts	all	Stop withdraws in-flight host action
 server/drivers/lifecycle-diagnostic.test.ts	all	refuses secret-shaped identity in diagnostics (secrets)
 server/drivers/local-inject-matrix.test.ts	all	host credentials in settings.env, not model rows or argv
@@ -576,12 +617,13 @@ server/drivers/turn-credentials-win32.test.ts	all	Windows credential write fallb
 server/drivers/turn-credentials.test.ts	all	turn credential file 0600, secrets split
 server/drivers/turn-refusal.test.ts	all	refusal denies every later allow
 server/engine-change-and-close.test.ts	all	engine change or app close mid-wait handled
+server/engine-closed-106-matching.test.ts	all	a path naming an engine package reads as that engine open; a reused parent pid does not pass for Murage's own; the log compares every holder
+server/engine-closed-scope-real.test.ts	all	a deleted conversation's engine files wait only for engines on that home (real addon reads the home)
+server/engine-closed-scope.test.ts	all	a deleted conversation stays pending forever while the owner's own CLI runs on another home
 server/engine-deletion-preexisting.test.ts	all	a bot's deletion removes only its own engine scopes and never the owner's
 server/engine-deletion-scopes-real.test.ts	all	a bot's deletion removes only its own engine scopes and never the owner's
 server/engine-deletion-scopes-win.test.ts	all	a bot's deletion removes only its own engine scopes and never the owner's
 server/engine-deletion-scopes.test.ts	all	a bot's deletion removes only its own engine scopes and never the owner's
-server/engine-closed-scope-real.test.ts	all	a deleted conversation's engine files wait only for engines on that home (real addon reads the home)
-server/engine-closed-scope.test.ts	all	a deleted conversation stays pending forever while the owner's own CLI runs on another home
 server/engine-env-pins.test.ts	all	credential prompts and askpass pinned off
 server/engine-env.test.ts	all	Engine environment capture keeps last valid map
 server/engine-exclusion-called-exports.test.ts	all	packaged native addon missing a call the app makes (removeTree) is refused at build
@@ -596,14 +638,18 @@ server/engine-exclusion-r26.test.ts	all	fallback journal dropped only when safe
 server/engine-exclusion-win.test.ts	all	Windows addon handles keep openers out
 server/engine-exclusion.test.ts	all	real addon lock and process detection
 server/engine-history-deletion.test.ts	all	engine history removed on delete
+server/engine-history-foreign-106.test.ts	all	while the owner's own Claude Code is open, every deletion retry closes Murage's idle engines, pauses background runs and logs a line
 server/engine-history-invariant.test.ts	all	engine history deletion complete and retried
 server/engine-history-offthread.test.ts	all	History worker timeout and stop handling
+server/engine-history-open-pass-107.test.ts	linux+mac	while the owner's own CLI is open, a deleted conversation's own files go only when no process has them open or works in its folder, and links wait
 server/engine-history-plan.test.ts	all	history deletion refuses unreadable or corrupt rollouts
 server/engine-history-r15.test.ts	all	every JSONL file blanked in place
 server/engine-history-r16.test.ts	all	dropped rows keep shape, no handle leaks
 server/engine-legacy-aside-inplace.test.ts	all	Legacy aside merges into index without loss
 server/engine-management-fuigo.test.ts	all	engine update activation and custom CLI opt-in
 server/engine-management.test.ts	all	managed engine install verifies before activation
+server/engine-open-proof-107.test.ts	all	the open-home pass removes nothing unless every process on the home is read and shown clear of the files
+server/engine-open-proof-win-107.test.ts	windows	on Windows the open-home pass reads every holder's working folder and refuses a file another process has open, so a CLI working in the deleted conversation keeps its files until it is closed
 server/engine-questions-api.test.ts	all	engine questions shown as cards, never auto-approved
 server/engine-redo-r20.test.ts	all	torn write or power cut never corrupts history
 server/engine-swap-audit.test.ts	all	Held actions excluded from replay after engine swap
@@ -620,6 +666,7 @@ server/execution-audience-hotpath.test.ts	all	a task's audience being wrong or r
 server/execution-audience-lineage.test.ts	all	Child turns inherit parent audience
 server/execution-audience.test.ts	all	work task audience and home thread selection
 server/external-context-delivery.test.ts	all	context delivered to live session
+server/failed-turn-line.test.ts	all	a turn that ends with no reply tells the owner why
 server/feature-route-seams-api.test.ts	all	workspace file save refuses stale writes
 server/first-run-business-crew.test.ts	all	Business job installs expected bots and routine
 server/first-run-email-trust.test.ts	all	remembered approval narrowing for email
@@ -633,6 +680,7 @@ server/flux-key-info.test.ts	all	Flux key validity check and caching
 server/flux-key-leak.test.ts	all	non-Flux values never sent as key
 server/flux-key-shape.test.ts	all	only valid Flux keys handed out
 server/flux-memory-direct-calls.test.ts	all	Direct Flux calls send memory off
+server/flux-memory-envelope.test.ts	all	openai-chat Flux turns keep Murage recall and send no envelope Flux ignores
 server/flux-memory-headers.test.ts	all	Who gets which Flux memory headers
 server/flux-routing.test.ts	all	Flux surface mapping denies by default
 server/folder-trust-api.test.ts	all	folder trust card before engine starts
@@ -643,8 +691,8 @@ server/fuigo-grok-egress.test.ts	all	Fuigo egress guard to api.x.ai
 server/fuigo-native-update.test.ts	all	Native update verifies bytes, rollback
 server/fuigo-steer-api.test.ts	all	Fuigo steer delivered once and recorded
 server/fuigo-turn-logs.test.ts	all	kept logs drop auth files
-server/fuigo-windows-launch.test.ts	all	Fuigo starts on Windows from every install shape; a shim target outside its folder never runs
 server/fuigo-windows-exact-file.test.ts	all	Fuigo on Windows launches the exact fuigo.exe it checked, never a .com or .cmd beside it
+server/fuigo-windows-launch.test.ts	all	Fuigo starts on Windows from every install shape; a shim target outside its folder never runs
 server/full-access-api.test.ts	linux+mac	Full access only from desktop with warning
 server/full-access-options-api.test.ts	linux+mac	Full access default options desktop only
 server/full-access-options.test.ts	all	Full access owner channel behaviour
@@ -658,12 +706,16 @@ server/group-member-checkpoint-roll-api.test.ts	all	Member turn reply kept repla
 server/handoff-binding.test.ts	all	reply belongs to its handoff
 server/handoff-copy-source.test.ts	all	handoff copy sources persisted at queue time
 server/handoff-dispatch.matrix.test.ts	all	Migration hold stops hand-off admission
+server/handoff-partition.test.ts	all	a partitioned bot never sees a copy or hand-off whose source is outside its partition
+server/handoff-partitioned-start.api.test.ts	linux+mac	a hand-off to a partitioned project teammate starts
 server/handoff-r10.test.ts	all	was DELETE: has live tests incl. withheld result left out of card summary
 server/handoff-r12.test.ts	all	turn sources bounded so secrets do not leak
 server/handoff-r8.test.ts	all	Withheld answers never enter wake prompt
 server/handoff-r9.test.ts	all	teammate notes released only where quoted
 server/handoff-replay.test.ts	all	stored answer replay respects revoked sharing
+server/handoff-start-reason.test.ts	all	every hand-off start failure names its reason
 server/harness/bus.test.ts	all	event bus stamps and driver-kind invariant
+server/harness/draft-only-adapter.test.ts	all	a draft-only turn, steer or prewarm reaching Codex, an ACP agent, pi, Antigravity or the cloud computer, or a new engine call site skipping the gate
 server/harness/event-log-jobs.test.ts	all	forgotten message removed from event log
 server/harness/event-log-matcher.test.ts	all	forget matcher finds escaped text
 server/harness/event-log.test.ts	all	event log writes capped and rotated
@@ -671,6 +723,7 @@ server/hermes-profiles.test.ts	all	backup/restore carry profile; 0.1.61 upgrade 
 server/hook-selfguard.test.ts	all	a bot rewriting Murage's own engine hooks at Full access or No limits, so later calls skip the approval check
 server/host-computer-broker.test.ts	all	Host computer operations admitted safely
 server/host-computer-consent.test.ts	all	consent card for computer use on Auto
+server/host-power.test.ts	linux+mac	engines cannot shut down or restart the computer
 server/host-stop-api.test.ts	all	connection off stops turn with notice
 server/house-rules-api.test.ts	all	House Rules reach every turn when on
 server/http-boundary.test.ts	all	malformed request targets stay in boundary
@@ -723,8 +776,12 @@ server/installation-windows-backup-operations.test.ts	all	Windows encrypted back
 server/installation-windows-backup-transport.test.ts	all	Windows backup helper verified before spawn
 server/internal-capabilities.test.ts	all	turn capability claims forged or expired refused
 server/internal-route-authority.test.ts	all	internal routes refuse channel people
+server/io-budget-log-noise.test.ts	all	I/O watchdog diagnostic bursts filling logs; one capped line per minute with suppressed counts
+server/io-budget-planned.test.ts	all	the revoke marker's budgeted writes no longer trip the io watchdog and slow every poller
+server/job-launcher.test.ts	all	the Windows job launcher starts the engine only once it is in the job
 server/key-rejections.test.ts	all	credentials, pairing and access control
 server/kill-tree.test.ts	all	CLI process trees reaped on stop
+server/late-close-copy.test.ts	all	the retained-run line tells people to restart when the conversation carries on by itself
 server/launch-no-tty.behaviour.test.ts	all	engine processes have no controlling terminal
 server/launch-secret.test.ts	all	Launch secret passed privately, not in env
 server/learning-destination.test.ts	all	learning scope and approval rules
@@ -745,6 +802,7 @@ server/mcp-bot-add-api.test.ts	all	security boundary or path/file access
 server/mcp-bot-add.test.ts	all	security boundary or path/file access
 server/mcp-bridge.test.ts	all	broken held-check fails closed on tools/call (permissions)
 server/mcp-env-edit-api.test.ts	all	Command edit never keeps saved env silently
+server/mcp-error-result.test.ts	all	a text-only MCP tool error reaches the bot as a readable error, never a broken turn
 server/mcp-grants.test.ts	all	MCP grants hashed, expiring, owner-readable file
 server/mcp-link.e2e.test.ts	all	MCP sign-in flow stores token
 server/mcp-registry.test.ts	all	Custom MCP names refused, new commands disabled
@@ -781,6 +839,7 @@ server/memory/continuation-churn.test.ts	all	forget/withhold resets the shown se
 server/memory/controller-lane-restore.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/correction-approval.test.ts	all	owner approval of memory corrections, stale pin refused (approval)
 server/memory/deny-read.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
+server/memory/dispatch-frame-checking.test.ts	all	a turn whose context is still being checked after a revoke is refused as revoked, never sent with that text
 server/memory/dispatch-preparation.test.ts	all	revocation of disclosed checkpoints stays fail-closed (revoke)
 server/memory/dispatch-prepare-limit-107.test.ts	all	a memory re-proof that runs out of time at dispatch never fails a turn or routine run
 server/memory/dispatch-rebuild.test.ts	all	a long chat refused at setup ends in the last resort, not a card
@@ -788,7 +847,10 @@ server/memory/door-epoch-session.test.ts	all	Protects forget/revoke, upgrade or 
 server/memory/downgrade-102-objects.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/early-dispatch-access.test.ts	all	forget during mounts cancels the early bundle (forget)
 server/memory/evolution-forgetting.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
+server/memory/excluded-thread-history.test.ts	all	a thread excluded from memory still read back through historical search
 server/memory/extract-flux-headers.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
+server/memory/extract-unusable-108.test.ts	all	memory extraction failure reasons, hourly outcomes, bounded backoff and token cut-offs
+server/memory/extraction-span-anchor.test.ts	all	learning keeps a slice whose quote is right even when the model miscounts byte offsets
 server/memory/extractor-connections.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/feedback.test.ts	all	secrets redacted from stored corrections; owner text only
 server/memory/first-start-work.test.ts	all	fast upgrade of a used data dir (upgrade)
@@ -803,6 +865,7 @@ server/memory/identity-warm.test.ts	all	Protects forget/revoke, upgrade or priva
 server/memory/identity.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/idle-lane-fairness.test.ts	all	forget completes while owner is in a turn (forget)
 server/memory/index-upsert.test.ts	all	forget batch writes its deletions (forget)
+server/memory/inherit-hold-104.test.ts	all	fresh memory while a forget is walked
 server/memory/keepall-fence.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/keepall-unwedge-upgrade.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/lam-forget-r5.test.ts	all	a forgotten Learn about me line has no words from the Forget click on
@@ -827,6 +890,7 @@ server/memory/lineage-turn-scale.test.ts	all	forgotten root fails kept check in 
 server/memory/lineage-write.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/long-thread-replay.test.ts	all	forgotten memory withheld across long session (withheld)
 server/memory/lookup-receipt.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
+server/memory/memory-changed-reset-106.test.ts	all	pinning, keeping or remembering a memory drops the warm engine session and the next reply starts cold
 server/memory/memory-gate.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/memory-moments.test.ts	all	Forget archives the entry and stops it (forget)
 server/memory/memreplay-review.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
@@ -870,12 +934,16 @@ server/memory/pip-paid-calls.test.ts	all	Protects forget/revoke, upgrade or priv
 server/memory/pip-result-held.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/pip-result-revoked.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/procedure-review.test.ts	all	no owner approval granted without explicit authority (approval)
+server/memory/quote-evidence.test.ts	all	a bot can save a memory from quoted words, not only from source ids it is never given
 server/memory/r5-fixes.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/range-proof.test.ts	all	forget-bounded ranges withheld correctly (withheld)
 server/memory/read-mask.test.ts	all	the engine bundle and recall read an unscrubbed record masked
+server/memory/reader-rule-default.test.ts	all	a recall path with no reader rule still keeps a person's withheld lines out
 server/memory/readtime-retired.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/recall-both-ways.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
+server/memory/recall-hydration-107.test.ts	all	recall comes back empty while any revoke is in flight, or shows a record or source made after a pending revoke began
 server/memory/recall-journey.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
+server/memory/recall-proof-allowance-107.test.ts	all	recall drops every proven memory once its search ran out of time, or shows a memory its own re-proof refused
 server/memory/receipt-sequence.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/record-write.test.ts	all	only record-write.ts spells an insert into memory_records
 server/memory/remember.test.ts	all	a kept line is stored once and outlives Forget
@@ -885,16 +953,17 @@ server/memory/restore-scrub.test.ts	all	a restored forgotten record comes back w
 server/memory/resume-after-recall.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/resume-race-renewal.test.ts	all	a bot forgetting the conversation on its first turn after a restart (resume race reset)
 server/memory/reveal-capture.test.ts	all	does not resurrect forgotten canon (forget)
-server/memory/roster-scoped-revokes.test.ts	all	a bot, task or notebook change resets only the threads it withdrew (every warm bot used to lose its session)
+server/memory/reveal-recheck-backoff.test.ts	all	the reveal sweep no longer saturates on ineligible receipts
 server/memory/revocation-index.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/revoke-bounded.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/revoke-cover.test.ts	all	Protects forget/revoke: a revoke that relies on another's walk withholds the same as walking alone
+server/memory/revoke-deletion-cover.test.ts	all	Protects forget/revoke: N conversation deletions withhold the same as walking each alone, at one walk's cost
 server/memory/revoke-fold-roundtrip.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
-server/memory/u29-bindings-brief.test.ts	all	forget reaches every binding through its scope index, and the owner brief is never silently left out
 server/memory/revoke-fold-t5.test.ts	all	Protects forget/revoke: a fold bulk walks with its members' cap
 server/memory/revoke-fold.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/revoke-late-child.test.ts	all	Protects forget/revoke: a late child of a deleted conversation is withheld on every job-row path, across restart and downgrade
 server/memory/revoke-marker.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
+server/memory/revoke-narrow-18-107.test.ts	all	a revoked line held every thread that ever read its conversation, or a thread that read the line after the revoke read it as shown
 server/memory/revoke-storm-holes.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/revoke-storm.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/revoke-targeted.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
@@ -904,12 +973,14 @@ server/memory/room-checkpoint-recall.test.ts	all	Protects forget/revoke, upgrade
 server/memory/room-member-memory.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/root-set-reclaim-early.test.ts	all	downgrade-then-upgrade reads lines as unprovable (downgrade)
 server/memory/root-set-v7.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
+server/memory/roster-scoped-revokes.test.ts	all	a bot, task or notebook change resets only the threads it withdrew (every warm bot used to lose its session)
 server/memory/routes.test.ts	all	held correction cannot be activated via generic save (approval)
 server/memory/schema-shape-marker.test.ts	all	old schema marker accepted and upgraded (upgrade)
 server/memory/schema-upgrade-safety.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/schema-v11.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/schema-v12-door-epoch.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/schema-v12-real-v11.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
+server/memory/schema-v13-source-lsn.test.ts	all	a source made after a pending revoke began read as shown after an upgrade, downgrade or re-upgrade; an older build refusing the downgraded file
 server/memory/schema-v2-to-v5.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/schema-v2.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/schema-v3.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
@@ -920,11 +991,14 @@ server/memory/scope-cap.test.ts	all	semantic recall for a reader with hundreds o
 server/memory/scrub-pass.test.ts	all	a new file owes no scrub; a file 1.0.3 left owes it, as a background job after the proofs
 server/memory/search-authorization.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/search-tool-recall.test.ts	all	keyword fallback keeps every access check (privacy)
+server/memory/send-fence-room-copy.test.ts	all	a room copy of a forgotten or withheld line never reaches another bot's turn
 server/memory/separate-restore-forget.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/stale-lease-requeue.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
+server/memory/status-scan-content-stamp.test.ts	all	status scans no longer re-walk the whole store on every marker write
 server/memory/thread-delete-forget.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/thread-delete-single-revoke.test.ts	all	Protects forget/revoke: one revoke per conversation deletion, never zero, content gone on every delete path
 server/memory/u2-forget-bound.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
+server/memory/u29-bindings-brief.test.ts	all	forget reaches every binding through its scope index, and the owner brief is never silently left out
 server/memory/upgrade-contract.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/upgrade-fast.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/upgrade-fix-r1.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
@@ -940,7 +1014,6 @@ server/memory/writetime-integration.test.ts	all	every revoke path reaches the li
 server/memory/writetime-readers.test.ts	all	denied replies withheld; send fence refuses denied quotes (withheld)
 server/memory/writetime-schema.test.ts	all	v10 to v9 downgrade (downgrade)
 server/memory/xthread-audience-recall.test.ts	all	memory never crosses audiences
-server/memory/reader-rule-default.test.ts	all	a recall path with no reader rule still keeps a person's withheld lines out
 server/message-allow.test.ts	all	message allow reach rules
 server/message-automation.test.ts	all	Automated runs stamped by true origin
 server/message-db.test.ts	all	message persistence and legacy import
@@ -958,12 +1031,16 @@ server/mobile-push-routes.test.ts	all	preview consent only for proven phone
 server/mobile-push-store.test.ts	all	push store migrations; host-only key secrets (migration, secrets)
 server/mobile-push-wiring.test.ts	all	lock-screen Allow refused for destructive permission (permissions)
 server/model-gateway.test.ts	all	sign-in tokens held in memory, never listed
+server/news-signup.test.ts	all	News signup: asked once, queued from the server, retried quietly, address deleted once settled
 server/no-powershell-spawn.test.ts	all	Murage starting PowerShell by itself on Windows (an antivirus notice and a visible window on every launch, murage-releases #1)
+server/notebook-save-race.test.ts	all	a bot write during a notebook save is kept and the editor is told
+server/notebook-save-revision.test.ts	all	a notebook save never replaces words the bot wrote after the editor opened
 server/openai-compat-endpoint-switch.test.ts	all	Replacement key never reaches previous endpoint
 server/openclaw-delegation.test.ts	all	delegate to OpenClaw teammate reply folds back
 server/output-destination.test.ts	all	task output reaches correct room or desk
 server/output-publication.test.ts	all	Reports from turns published verified
 server/own-tool-results-wiring.test.ts	all	engine reading own tool result still asks otherwise
+server/own-tools-unasked.test.ts	all	Claude and Codex ask the owner to approve the bot's own past-conversation search on nearly every turn at Ask
 server/own-workspace-approval-wiring.test.ts	linux+mac	bot's own bookkeeping edits answered correctly
 server/own-workspace-approval.test.ts	all	Paths approved from structured args only
 server/owner-audience.test.ts	all	owner audience predicate for privacy
@@ -982,6 +1059,7 @@ server/peer-approval.test.ts	all	routine peer turn capped, payment held
 server/per-bot-browser-computer.test.ts	all	Per-bot browser and computer assignment honored
 server/perf-stores.test.ts	all	routines.json migration and crash recovery lose no runs
 server/permission-pipe.test.ts	all	a Windows Ask with Git installed denied with no approval card (broker pipe path lost through Git Bash)
+server/permission-proxy-path.test.ts	all	the approval proxy only talks to Murage's own permission socket
 server/persisted-state.test.ts	all	Only ENOENT is absent; other errors need recovery
 server/person-handoff-memory.test.ts	all	a linked person reads a hand-off result made only with their own memory, never the owner's
 server/person-handoff-result.test.ts	all	a linked person's hand-off result reaches them; withheld, checking or deleted results never show as words
@@ -1017,11 +1095,12 @@ server/private-screen-capture.test.ts	all	no capture while person is driving
 server/procedure-bundles.test.ts	all	migration preserves unknown native files (migration, data loss)
 server/procedure-landing.test.ts	all	automatic skill change undoable; routines contained
 server/procedure-migration-busy-api.test.ts	all	new bot answers concurrent asks
+server/procs-bwrap.test.ts	linux	Stop lets a caged engine finish cleanly
 server/procs-force-stop.test.ts	linux+mac	forced stop kills CLI process tree
 server/procs-job-launcher.test.ts	all	a Windows engine stop ends everything the engine started (job launcher, taskkill cap, one quit budget)
-server/job-launcher.test.ts	all	the Windows job launcher starts the engine only once it is in the job
-server/drivers/acp/engine-pid-sites.test.ts	all	ACP tree probes look at the engine CLI behind the Windows job launcher, not the launcher
+server/procs-stderr-capture.test.ts	all	secrets in engine output never reach the owner (credentials)
 server/procs.test.ts	all	Process tree kill signals
+server/project-activity-handoff.test.ts	all	project Activity lists each hand-off
 server/project-audit-3.test.ts	all	Restore preserves blocked waits
 server/project-audit-4.test.ts	all	lead retry and restore repair bound links
 server/project-budget-routes.test.ts	all	budget writes desktop only
@@ -1044,6 +1123,7 @@ server/project-prompt.test.ts	all	teammate results fenced against prompt injecti
 server/project-proposal-api.test.ts	all	Proposal turn stops on unasked tool
 server/project-restore-admission.test.ts	all	restore admission for projects
 server/project-review-engine-api.test.ts	linux+mac	Review always ends in verdict
+server/project-routine-approval-107.test.ts	all	the owner's own routine in a project room is approved at the lowest of its routine's and bot's levels, and webhook, channel or other-audience runs keep asking
 server/project-tables.test.ts	all	project tables created idempotently, one-active-goal
 server/project-tool-routing.test.ts	all	Project tools restricted by role
 server/project-tools.test.ts	all	project tool audience and role gates
@@ -1051,6 +1131,7 @@ server/project-turn-engine.test.ts	all	Project turn context and engine flow
 server/project-turn-leases.test.ts	all	writer leases released at terminal evidence
 server/project-usage-dispatch.test.ts	all	project usage settles once against budget
 server/project-work-profile.test.ts	all	work roots reject home and data folders
+server/prompt-copy.test.ts	all	every text a bot reads follows the copy rules, the ask rules row included
 server/protected-folders.test.ts	all	protected OS folders recognized on Windows
 server/provider-bank-fence-api.test.ts	all	dispatch refused while bank fence uncertain
 server/provider-connections.http.test.ts	all	Provider connections bound to endpoint
@@ -1064,13 +1145,13 @@ server/publish/site-files.test.ts	all	site files exclude secrets, symlinks refus
 server/question-normalize.test.ts	all	secret questions dropped; question vs permission told apart
 server/rc3f-downgrade.test.ts	all	pending branch change finished before downgrade
 server/rc4a2-session-cursors.test.ts	all	downgrade leaves no stale provider sessions
-server/reader-gaps-104.test.ts	all	an unread script on disk, lua os.execute, a PowerShell member assignment or cmd /r slipping past Always ask or the stop line, and ENV leaking a value into Bash (approval boundary)
-server/reader-gaps-104-r2.test.ts	all	deno/bun run options, bash --rcfile, source of an unread file, lua os.execute by index or long string, or a dynamic PowerShell assignment target slipping past Always ask or the stop line; nothing that asked before is allowed (approval boundary)
-server/reader-hang-105.test.ts	all	a command text that freezes Murage: the stop line or another command reader never returning on the server thread (approval boundary)
 server/reader-asks-105.test.ts	all	No limits and Full access asking for every ordinary script or sourced file, or a written file, a value or a catastrophe past one slipping through (approval boundary)
-server/reader-loaders-105.test.ts	all	an interpreter or shell running code it loads first (ruby -I, NODE_OPTIONS, BASH_ENV, python -m runpy) with no card, under the POSIX and the PowerShell reader
-server/reader-gaps-104-r3.test.ts	all	deno/bun run options that load code first, or a PowerShell $x.(…) assignment target, slipping past Always ask or the stop line (approval boundary)
 server/reader-attached-forms-103.test.ts	all	an interpreter's attached inline code or a PowerShell compound assignment slipping past Always ask or the stop line (approval boundary)
+server/reader-gaps-104-r2.test.ts	all	deno/bun run options, bash --rcfile, source of an unread file, lua os.execute by index or long string, or a dynamic PowerShell assignment target slipping past Always ask or the stop line; nothing that asked before is allowed (approval boundary)
+server/reader-gaps-104-r3.test.ts	all	deno/bun run options that load code first, or a PowerShell $x.(…) assignment target, slipping past Always ask or the stop line (approval boundary)
+server/reader-gaps-104.test.ts	all	an unread script on disk, lua os.execute, a PowerShell member assignment or cmd /r slipping past Always ask or the stop line, and ENV leaking a value into Bash (approval boundary)
+server/reader-hang-105.test.ts	all	a command text that freezes Murage: the stop line or another command reader never returning on the server thread (approval boundary)
+server/reader-loaders-105.test.ts	all	an interpreter or shell running code it loads first (ruby -I, NODE_OPTIONS, BASH_ENV, python -m runpy) with no card, under the POSIX and the PowerShell reader
 server/recovery-engine-discovery.test.ts	all	restore never resurrects default engine fleet
 server/redact.test.ts	all	secrets masked in logs and sessions
 server/remote-computer.test.ts	all	checksummed driver, no command injection via bot name
@@ -1135,6 +1216,7 @@ server/routine-requests.test.ts	all	routine requests need durable owner card
 server/routine-run-broadcast.e2e.test.ts	all	Run broadcast omits bot transcript
 server/routine-run-permissions.test.ts	all	routine pins approval level at creation
 server/routine-runs-journal-compact.test.ts	all	journal compaction crash loses nothing
+server/routine-wake-approval.test.ts	all	at No limits, the owner's own routine answers a read-only command on its follow-through turn instead of stalling on an approval card
 server/routine-watch-file.test.ts	all	File watch refuses path escapes
 server/routine-watch-flow.test.ts	all	watch confirmation, caps, pause and revoke
 server/routine-write-gate.e2e.test.ts	all	routine writes desktop-only
@@ -1156,10 +1238,10 @@ server/send-state-r6.test.ts	all	Unsent words kept until owner dismisses
 server/send-steer-r7.test.ts	all	failed send without line becomes visible chip
 server/send-steer-r8.test.ts	all	deleted conversation words stay deleted
 server/send-store.test.ts	all	accepted send is one committed row
-server/news-signup.test.ts	all	News signup: asked once, queued from the server, retried quietly, address deleted once settled
 server/sends-lookup-api.test.ts	all	a reloaded draft can ask whether its send arrived (no duplicate, no lost words)
 server/server-child-crash.test.ts	all	server child records fatal cause
 server/session-audience.test.ts	all	cursor resumed only for its audience
+server/session-end-flush.test.ts	all	logging out or shutting down saves the chat in progress before Murage quits
 server/setup-api.test.ts	all	first run seats Chief on fresh install
 server/setup-backup.test.ts	all	Setup completes only after first backup
 server/setup-conversation.test.ts	all	first-run Chief conversation
@@ -1205,6 +1287,7 @@ server/steer-queue.test.ts	all	queued steers drain in order with images
 server/steer-receiver.test.ts	all	steer attributed to right attempt
 server/stop-line-state.test.ts	all	Task allowances end on conversation reset
 server/stop-line.test.ts	all	stop-line commands always stop; grants not reused
+server/store-create-bot-atomic.test.ts	all	a bot that fails to create leaves no half-made bot in the roster or bots.json
 server/store.test.ts	all	core store data behaviour
 server/tasks.test.ts	all	Task creation per bot and project
 server/team-identities.test.ts	all	team identity DDL frozen and journal blocks lookup
@@ -1237,6 +1320,7 @@ server/tool-results.test.ts	all	tool result cache refuses other bot's reads
 server/transcript-backfill.test.ts	all	Backfill resumable, damaged rows skipped
 server/transcript-seq.server.test.ts	all	transcript sequence column and migration
 server/tray-summary.test.ts	all	secrets and destructive commands stay on the full card (approval)
+server/tts/flux-eleven.test.ts	all	the ElevenLabs voices Flux offers show up when Flux is connected, and not where only an own OpenAI key can speak
 server/turn-attribution-engines.e2e.test.ts	all	Each sentence names answering turn on every engine
 server/turn-dispatch-guard.test.ts	all	turn retried only when safe
 server/turn-hold-api.test.ts	all	no background work before engine starts
@@ -1248,8 +1332,11 @@ server/turn-outcome.test.ts	all	user Stop settles cancelled on every engine
 server/turn-refused-at-acceptance-api.test.ts	all	refused turn then next turn runs
 server/turn-refused-late-terminal-api.test.ts	all	refused turn re-dispatched runs exactly once
 server/turn-resources.test.ts	all	Shared resources held per generation
+server/turn-rows-bounded.test.ts	all	per-turn work stays bounded as history grows
 server/turn-watchdog.test.ts	all	silent turn stalled once and surfaced
 server/turnctx-r3-repros.test.ts	all	Turn context regression reproductions
+server/typed-stop-api.test.ts	all	a typed 'stop' stops the running turn (steering and queueing engines) and a 'stop' sent as a reply stays an ordinary message
+server/typed-stop.test.ts	all	a typed 'stop' is told apart from ordinary messages that mention stopping
 server/unattended.test.ts	all	Approval cards kept while attention notifications vary
 server/upgrade-fast-readers.test.ts	all	upgrade fast readers still find pending approvals
 server/usage-ledger.test.ts	all	usage banks once per turn
@@ -1260,6 +1347,8 @@ server/user-chrome-proxy.test.ts	all	no local program reaches the owner's Chrome
 server/user-stop-api.test.ts	all	Stop leaves stopped state, drops queued delegation
 server/venue-awareness.partition.test.ts	all	bot sees only its own team's venues
 server/venue-awareness.test.ts	all	bot knows the projects and channels it is in
+server/venue-read-api.test.ts	all	the venue reader mounts only for the owner's turn; revoked or forged claims are refused
+server/venue-read.test.ts	all	a bot reading a project or group never sees another partition's rows, ids or sources; linked rows stay bare
 server/voice-call-api.test.ts	all	voice call desktop-only, leaves one note
 server/voice/call-access.test.ts	all	phone calls only bots sidebar shows
 server/voice/cleanup-names.test.ts	all	no workspace names for unproven caller
@@ -1280,15 +1369,13 @@ server/windows-backup-resources.test.ts	all	Windows backup helper signature pinn
 server/work-admission.test.ts	all	same thread never runs two turns
 server/working-context-door.test.ts	all	Reply quoted only when door shows it
 server/working-context-fresh.test.ts	all	shown reply withheld later is not reused
+server/working-context-reader-104.test.ts	all	room reader quote refused by the fence is left out of the next build
 server/working-context.test.ts	all	working context omits withheld replies
 server/workspace-files-write-stopped-turn.test.ts	all	Stopped turn file writes handled
 server/workspace-files-write.test.ts	all	workspace file read/write safety checks
 server/workspace-files.test.ts	all	workspace root resolution path safety
 server/workspace-revision.test.ts	all	same-tick rewrite never overwrites file
 server/workspace.test.ts	all	Workspace file access boundaries
-server/notebook-save-revision.test.ts	all	a notebook save never replaces words the bot wrote after the editor opened
-server/notebook-save-race.test.ts	all	a bot write during a notebook save is kept and the editor is told
-src/components/notebook-save-gate.test.ts	all	the notebook Save waits for a loaded revision
 server/writer-roots.test.ts	all	one writer per work root
 server/writetime-r11c.test.ts	all	short secret copied into note withheld
 server/writetime-s2.test.ts	all	Read messages recorded for revoke tracking
@@ -1300,6 +1387,7 @@ shared/chief-handover.test.ts	all	keeps the former Chief leading its team when i
 shared/exact-command.test.ts	all	protects user-visible behaviour in core flows
 shared/financial-ids.test.ts	all	the vectors are for this rule version
 shared/guarded-http.test.ts	all	security boundary or path/file access
+shared/help-search.test.ts	all	in-app help search finds what the shipped docs say, the newest changelog included
 shared/in-project.test.ts	all	security boundary or path/file access
 shared/in-project.win32.test.ts	windows	a bot on Windows writing a Murage hook file through a spelling Win32 reads as that file (trailing dot, stream suffix, \\?\ or a loopback share)
 shared/installation-backup.test.ts	all	protects user-visible behaviour in core flows
@@ -1321,23 +1409,28 @@ shared/sensitive-paths.test.ts	all	credentials, pairing and access control
 shared/widget.test.ts	all	a bot widget is normalised one way: no password fields, no remote images, links only http or https, a press reads as the owner said it
 src/components/AllChatsPage.test.ts	all	All chats lists, searches and opens every chat, also at 30,000 chats
 src/components/ApprovalCard.test.ts	all	approval card hold/deny/settled state shown correctly
+src/components/BotPermissionDefault.offer.test.ts	all	raising the bot default offers existing chats a reviewed apply, with a count and dismissal
 src/components/BrowserCards.test.ts	all	browser approval cards; never Allow always
+src/components/ChatHeader.phone.test.ts	all	on a phone the chat header keeps back, name, model, profile and the bot's computer reachable from the ... menu
 src/components/ChoiceWithOther.test.ts	all	choosing Other sends the words typed, an empty Other cannot be confirmed, and question cards still answer the same way
 src/components/ClaudeAccountsSettings.test.ts	all	Claude account list and credential handling
+src/components/ComposerPlusMenu.test.ts	all	on a phone the composer + menu keeps Attach, Finish together and the approval level reachable
 src/components/DiscordSettings.test.ts	all	status strips undeclared secret fields
 src/components/ExportPasteNote.test.ts	all	says the paste was left out of memory and offers Review and keep on the desktop
 src/components/FirstRunCard.test.ts	all	first run card flow dispatch
 src/components/FirstRunChrome.test.ts	all	setup poll stops and keeps asking correctly
 src/components/FirstRunHelloCard.test.ts	all	first run hello step profile save
-src/components/NewsSignupSettings.test.ts	all	Settings news signup posts only to the local server
 src/components/FluxKeyCard.test.ts	all	Flux key editor never holds or writes key
 src/components/GroupViewWithheld.test.ts	all	owner sees withheld and forgotten replies
 src/components/InboxRequest.test.ts	all	permission card title and command not from chat text
 src/components/MemoryReview.test.ts	all	approve request only from explicit valid choice (approval)
 src/components/MurageMessageRow.test.ts	all	a repeat or nudge notice in a project chat reads as a plain line, never its stored loop-notice key
+src/components/NewsSignupSettings.test.ts	all	Settings news signup posts only to the local server
 src/components/PasteKeys.test.ts	all	pasted keys never reach the screen
+src/components/PluginsPanel.test.ts	all	a connected app is authorized, Reconnect included, only from the confirmed label form
 src/components/ProviderErrorCard.test.ts	all	payment error copy; no way to buy past limit
 src/components/QuestionCard.test.ts	all	never posts a secret answer into the conversation (secrets)
+src/components/ReconnectAppsBanner.test.ts	all	the chat says which connected app needs reconnecting
 src/components/RoutineSchedulerNotice.test.ts	all	late routine scheduler warning shown
 src/components/ServerLifecycleBanner.test.ts	all	banner when engine not running
 src/components/SettingsSurface.test.ts	all	credential panes withheld from phone surface
@@ -1349,9 +1442,13 @@ src/components/approval-queue-83b.test.ts	all	approval queue stable identity by 
 src/components/approval-queue-83c.test.ts	all	spoken queue commands never read as a decision
 src/components/cloud/Door.test.ts	all	cloud door sign-in routing
 src/components/composer-key-guard.test.ts	all	pasted key stripped before message is sent
+src/components/connect-label-collisions.test.ts	all	the label form fills in a free label, says a taken one on the form, and the chat card asks for it too
+src/components/first-run-label-form.test.ts	all	first-run cards connect an app only from the confirmed label form, filled in
 src/components/first-run-settled.test.ts	all	first run card settled state from server
+src/components/notebook-save-gate.test.ts	all	the notebook Save waits for a loaded revision
 src/components/routine-grant-82.test.ts	all	grant card describes operations in plain words
 src/components/settings-panel-locale.test.ts	all	bot settings stays in English after the owner picks another language
+src/components/settings-search-keeps-page.test.ts	all	a Settings search throws away an unsaved skill draft, or Tab leaves the Settings dialog through the hidden page
 src/components/widget/WidgetMessage.test.ts	all	a bot widget draws its form, sends what the owner filled and folds once answered
 src/lib/all-chats.test.ts	all	All chats asks, pages, groups and matches messages correctly, at any scale
 src/lib/analytics.test.ts	all	analytics opt-in/out honoured (privacy)
@@ -1370,12 +1467,15 @@ src/lib/composer-uploads.test.ts	all	send waits for uploads; no cross-thread lea
 src/lib/connect-app.test.ts	all	connect app only on desktop, waits for the account under the confirmed label
 src/lib/connected-apps-cache.test.ts	all	cache never holds a credential (secrets)
 src/lib/conversation-cache.test.ts	all	withheld/forgotten message carries its new state (withheld)
+src/lib/deletion-notes-quiet.test.ts	all	no banner on every chat while an engine stays open; one quiet line in Settings
+src/lib/deletion-notes-unloadable.test.ts	all	the owner sees what a deletion still owes
 src/lib/desktop-proof-guard.test.ts	all	every harness request carries desktop proof
 src/lib/document-session.test.ts	all	document edit dirty/revision tracking, no lost edits
 src/lib/drafts-ack.test.ts	all	draft cleared only after acknowledgement
 src/lib/drafts-chip.test.ts	all	refused send restores draft, no loss
 src/lib/drafts-outbox.test.ts	all	failed send kept across reload
 src/lib/drafts-record.test.ts	all	draft and send state: no duplicate send, no lost or wiped words (F1-F46)
+src/lib/drafts-reload-ack.test.ts	all	a reload retry clears attachments added to a still-open composer
 src/lib/engine-login-terminal.test.ts	all	terminal swallows OSC clipboard writes
 src/lib/engines-off.test.ts	all	restored install keeps engines off (restore)
 src/lib/first-run-crew.test.ts	all	business crew import reviewed then installed
@@ -1387,6 +1487,7 @@ src/lib/flux-key-paste.test.ts	all	Flux key recognised on paste, sentences rejec
 src/lib/fresh-auth.test.ts	all	fresh auth signs challenge before sensitive answer
 src/lib/group-call.test.ts	all	spoken message routed to correct room member
 src/lib/group-routing.test.ts	all	room message routes to the right bot
+src/lib/i18n-intl-locale.test.ts	all	an owner who picks Portuguese sees app dates and numbers from a bare "pt" tag, a "pt_BR" setting falls back to English, or the voice cue cache and send-key default change key with the date format
 src/lib/live-events.test.ts	all	live events replay delivers without dropping
 src/lib/local-vm-viewer.test.ts	all	is removed from the status a page keeps
 src/lib/markdown-drafts.test.ts	all	markdown drafts bounds and persistence
@@ -1396,6 +1497,7 @@ src/lib/media-resolve.test.ts	all	only files inside conversation root resolve
 src/lib/memory-integrity-feed.test.ts	all	memory health feed shared reader
 src/lib/open-external.test.ts	all	external links open via safe bridge
 src/lib/permission-mode.test.ts	all	refused Full access change explained
+src/lib/project-activity-handoff.test.ts	all	Activity hand-off line names the teammate
 src/lib/question-fence-display.test.ts	all	a fence hides only when its card exists, streaming fences never show raw JSON
 src/lib/remote-sign-out.test.ts	all	sign out removes this device by DELETE
 src/lib/session-check.test.ts	all	only real 401 means signed out
@@ -1407,10 +1509,12 @@ src/lib/terms.test.ts	all	terms accepted once, reprompt on version change
 src/lib/trusted-html.test.ts	all	Trusted Types policy restricts script URLs
 src/lib/webhook-message.test.ts	all	untrusted webhook data cannot forge task markers
 src/lib/workspace-links.test.ts	all	relative link cannot climb out of folder
+src/locales/locale-copy.test.ts	all	German or French copy addresses the reader formally (Sie, vous imperatives) beside informal lines
 src/mermaid-frame/protocol.test.ts	all	mermaid frame accepts only three message shapes
 src/no-engines-gate.test.ts	all	no-engines setup gate needs usable model
 src/state/all-chats-view.test.ts	all	the All chats view keeps its state while you search and open chats
 src/state/bot-patch-queue.test.ts	all	profile edits serialized, no stale resurrect
+src/state/config-frame-decider.test.ts	all	the channel auto-routing switch reads off after a live config change and its click saves it back on
 src/state/conversation-switch.test.ts	all	withheld/forgotten message shows as withheld (withheld)
 src/state/deletion-dismiss-race.test.ts	all	dismissing the deletion banner keeps a deletion owed meanwhile
 src/state/send-delivery.test.ts	all	send outbox persists until server answers
@@ -1425,73 +1529,5 @@ src/state/store.test.ts	all	core store: stream, transcript, delivery state
 src/state/surface-refusal.test.ts	all	surface stops after permanent refusal
 src/state/thread-settings-writes.test.ts	all	send waits for thread settings, safe retry
 src/state/transcript-seq.test.ts	all	transcript ordering keeps every message in place
-server/handoff-partitioned-start.api.test.ts	linux+mac	a hand-off to a partitioned project teammate starts
-server/handoff-start-reason.test.ts	all	every hand-off start failure names its reason
-server/project-activity-handoff.test.ts	all	project Activity lists each hand-off
-src/lib/project-activity-handoff.test.ts	all	Activity hand-off line names the teammate
-server/connected-app-health.test.ts	all	a connected app whose sign-in stopped working is shown and told as needing reconnection
-src/components/ReconnectAppsBanner.test.ts	all	the chat says which connected app needs reconnecting
-server/prompt-copy.test.ts	all	every text a bot reads follows the copy rules, the ask rules row included
-shared/help-search.test.ts	all	in-app help search finds what the shipped docs say, the newest changelog included
-src/components/PluginsPanel.test.ts	all	a connected app is authorized, Reconnect included, only from the confirmed label form
-server/connected-apps-vendor-name.test.ts	all	the connected-apps vendor name stays out of user-facing text
-server/flux-memory-envelope.test.ts	all	openai-chat Flux turns keep Murage recall and send no envelope Flux ignores
-server/draft-only.test.ts	all	a draft-only bot running on an engine that runs tools, hooks or fetches of its own, or at any access level reaching a send path
-server/draft-only-sends.api.test.ts	all	a draft-only bot lifted past Ask, or its direct, room or Chief proposal turn starting Claude with tools, a broker, extra folders or Murage servers beyond its connected apps
-server/harness/draft-only-adapter.test.ts	all	a draft-only turn, steer or prewarm reaching Codex, an ACP agent, pi, Antigravity or the cloud computer, or a new engine call site skipping the gate
-server/drivers/claude-draft-only.test.ts	all	a draft-only Claude turn launching with built-in tools, the broker or a workspace folder, or despite a credential helper, managed hook or cowork_settings.json helper, on any launch or relaunch
-server/drivers/chat-draft-only.test.ts	all	a draft-only turn on a connected chat model sending a tools field or the caller's integrations
-server/memory/inherit-hold-104.test.ts	all	fresh memory while a forget is walked
-server/working-context-reader-104.test.ts	all	room reader quote refused by the fence is left out of the next build
-src/components/first-run-label-form.test.ts	all	first-run cards connect an app only from the confirmed label form, filled in
-src/components/connect-label-collisions.test.ts	all	the label form fills in a free label, says a taken one on the form, and the chat card asks for it too
-server/connector-card-label.test.ts	all	a chat connect card signs in under the confirmed label, never the bot suggestion
-server/permission-proxy-path.test.ts	all	the approval proxy only talks to Murage's own permission socket
-server/conversation-deletion-probe.test.ts	all	a deletion whose engine is held open no longer re-plans every 10 minutes (machine load, routines paused)
-server/io-budget-planned.test.ts	all	the revoke marker's budgeted writes no longer trip the io watchdog and slow every poller
-server/memory/revoke-deletion-cover.test.ts	all	Protects forget/revoke: N conversation deletions withhold the same as walking each alone, at one walk's cost
-server/memory/status-scan-content-stamp.test.ts	all	status scans no longer re-walk the whole store on every marker write
-server/memory/reveal-recheck-backoff.test.ts	all	the reveal sweep no longer saturates on ineligible receipts
-src/state/config-frame-decider.test.ts	all	the channel auto-routing switch reads off after a live config change and its click saves it back on
-src/lib/drafts-reload-ack.test.ts	all	a reload retry clears attachments added to a still-open composer
-src/components/settings-search-keeps-page.test.ts	all	a Settings search throws away an unsaved skill draft, or Tab leaves the Settings dialog through the hidden page
-scripts/release-notes.test.mjs	all	the update card shows a pull-request list instead of curated notes, or a Release run without notes fails only after every build
-server/late-close-copy.test.ts	all	the retained-run line tells people to restart when the conversation carries on by itself
-server/channels/reply-text.test.ts	all	a chat owner whose app is set to another language gets limit, routine, pairing, approval and voice note lines from Murage in English only
-server/channels/reply-locale.test.ts	all	an owner who picks Portuguese on a computer set to another language gets channel reply times from a bare "pt" locale tag instead of pt-BR, the pack the app shows
-src/lib/i18n-intl-locale.test.ts	all	an owner who picks Portuguese sees app dates and numbers from a bare "pt" tag, a "pt_BR" setting falls back to English, or the voice cue cache and send-key default change key with the date format
-server/channels/approval-labels.test.ts	all	a language pack relabels Approve as Deny on a channel approval and the owner taps the wrong one
-src/locales/locale-copy.test.ts	all	German or French copy addresses the reader formally (Sie, vous imperatives) beside informal lines
-server/memory/memory-changed-reset-106.test.ts	all	pinning, keeping or remembering a memory drops the warm engine session and the next reply starts cold
-server/engine-history-foreign-106.test.ts	all	while the owner's own Claude Code is open, every deletion retry closes Murage's idle engines, pauses background runs and logs a line
-server/engine-closed-106-matching.test.ts	all	a path naming an engine package reads as that engine open; a reused parent pid does not pass for Murage's own; the log compares every holder
-server/direct-rebuild-hold.test.ts	all	Protects Stop and deletes: a refused direct turn keeps its thread working until its rebuild takes it over, and a Stop ends it
-server/direct-rebuild-hold-api.test.ts	linux+mac	Protects deleted conversations: a delete, bot delete, Stop, second send or restart while a refused turn waits to be rebuilt
-server/direct-rebuild-hold-late-api.test.ts	linux+mac	Protects Stop and replies: a routine Stop while a refused turn waits, and a turn refused at a late write rebuilt once, freed quietly or answered before a queued send
-server/drivers/browser-extension-mcp-cancel.test.ts	all	a browser request the bot's engine cancelled still running, or one slow browser call holding every other request behind it
-scripts/browser-extension-late-download.test.mjs	all	a page download saved while the bot is told it was blocked (including after a kept file, or a removal no fresh look confirms); the owner's own download deleted on a late page announcement, or told to the bot when it was idle
-server/memory/excluded-thread-history.test.ts	all	a thread excluded from memory still read back through historical search
-server/database-open-wait.test.ts	all	Murage opens while another process holds the database: it waits instead of failing to start with 'database is locked'
-server/memory/dispatch-frame-checking.test.ts	all	a turn whose context is still being checked after a revoke is refused as revoked, never sent with that text
-server/memory/send-fence-room-copy.test.ts	all	a room copy of a forgotten or withheld line never reaches another bot's turn
-server/session-end-flush.test.ts	all	logging out or shutting down saves the chat in progress before Murage quits
-server/store-create-bot-atomic.test.ts	all	a bot that fails to create leaves no half-made bot in the roster or bots.json
-server/tts/flux-eleven.test.ts	all	the ElevenLabs voices Flux offers show up when Flux is connected, and not where only an own OpenAI key can speak
-server/typed-stop-api.test.ts	all	a typed 'stop' stops the running turn (steering and queueing engines) and a 'stop' sent as a reply stays an ordinary message
-server/typed-stop.test.ts	all	a typed 'stop' is told apart from ordinary messages that mention stopping
-server/venue-read-api.test.ts	all	the venue reader mounts only for the owner's turn; revoked or forged claims are refused
-server/venue-read.test.ts	all	a bot reading a project or group never sees another partition's rows, ids or sources; linked rows stay bare
-src/components/ChatHeader.phone.test.ts	all	on a phone the chat header keeps back, name, model, profile and the bot's computer reachable from the ... menu
-src/components/ComposerPlusMenu.test.ts	all	on a phone the composer + menu keeps Attach, Finish together and the approval level reachable
-server/routine-wake-approval.test.ts	all	at No limits, the owner's own routine answers a read-only command on its follow-through turn instead of stalling on an approval card
-server/mcp-error-result.test.ts	all	a text-only MCP tool error reaches the bot as a readable error, never a broken turn
 src/state/turn-status.test.ts	all	the working mascot stays for the whole turn and a late frame of an older turn never ends the newer one
-server/project-routine-approval-107.test.ts	all	the owner's own routine in a project room is approved at the lowest of its routine's and bot's levels, and webhook, channel or other-audience runs keep asking
-server/memory/recall-hydration-107.test.ts	all	recall comes back empty while any revoke is in flight, or shows a record or source made after a pending revoke began
-server/memory/schema-v13-source-lsn.test.ts	all	a source made after a pending revoke began read as shown after an upgrade, downgrade or re-upgrade; an older build refusing the downgraded file
-server/memory/recall-proof-allowance-107.test.ts	all	recall drops every proven memory once its search ran out of time, or shows a memory its own re-proof refused
-server/memory/revoke-narrow-18-107.test.ts	all	a revoked line held every thread that ever read its conversation, or a thread that read the line after the revoke read it as shown
-server/engine-history-open-pass-107.test.ts	linux+mac	while the owner's own CLI is open, a deleted conversation's own files go only when no process has them open or works in its folder, and links wait
-server/engine-open-proof-107.test.ts	all	the open-home pass removes nothing unless every process on the home is read and shown clear of the files
-server/engine-open-proof-win-107.test.ts	windows	on Windows the open-home pass reads every holder's working folder and refuses a file another process has open, so a CLI working in the deleted conversation keeps its files until it is closed
-src/lib/deletion-notes-quiet.test.ts	all	no banner on every chat while an engine stays open; one quiet line in Settings
+server/compound-read-109.test.ts	all	new compound spellings get their existing twin's verdict at every level; other shapes still ask

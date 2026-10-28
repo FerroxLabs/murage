@@ -46,6 +46,10 @@ function nextJson(lines: readline.Interface) {
   });
 }
 
+async function waitUntil(condition: () => boolean, description: string, timeout = 8_000) {
+  await expect.poll(condition, { timeout, interval: 20, message: `Timed out waiting for ${description}` }).toBe(true);
+}
+
 afterEach(async () => {
   child?.kill("SIGKILL");
   child = null;
@@ -1021,6 +1025,8 @@ describe("connector MCP bridge", () => {
 
     it("a retried or concurrent list awaits the discovery already in flight: one upstream request answers both, each under its own id", async () => {
       let asked = 0;
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
       const url = await listen((request, response) => {
         let body = "";
         request.on("data", (chunk) => { body += chunk; });
@@ -1028,16 +1034,26 @@ describe("connector MCP bridge", () => {
           const message = JSON.parse(body);
           if (message.method !== "tools/list") { response.writeHead(200, { "content-type": "application/json" }); response.end("{}"); return; }
           asked += 1;
-          setTimeout(() => { response.writeHead(200, { "content-type": "application/json" }); response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { tools: realTools("ONCE") } })); }, 1_500);
+          void gate.then(() => {
+            if (response.destroyed) return;
+            response.writeHead(200, { "content-type": "application/json" });
+            response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { tools: realTools("ONCE") } }));
+          });
         });
       });
       const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_BOT_ID: "bot-a" });
       const seen: Record<string, any>[] = [];
       lines.on("line", (line) => { try { seen.push(JSON.parse(line)); } catch { /* ignore */ } });
       child!.stdin.write(listReq(1));
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      await waitUntil(() => asked === 1, "the first upstream tools/list request");
       child!.stdin.write(listReq(2));
-      await new Promise((resolve) => setTimeout(resolve, 2_500));
+      // The local initialize reply is a barrier: the child has handled the second
+      // list request while the first discovery is still held by the fixture.
+      child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 3, method: "initialize", params: {} })}\n`);
+      await waitUntil(() => seen.some((m) => m.id === 3), "the barrier after the concurrent tools/list request", 4_000);
+      expect(seen.some((m) => m.id === 1 || m.id === 2)).toBe(false);
+      release();
+      await waitUntil(() => [1, 2].every((id) => seen.some((m) => m.id === id)), "both concurrent tools/list replies", 4_000);
       expect(asked).toBe(1);
       for (const id of [1, 2]) expect(names(seen.find((m) => m.id === id)!)).toEqual(["REAL_ONCE"]);
     }, 20_000);
@@ -1394,8 +1410,8 @@ describe("the first tools/list is never an error or an empty list", () => {
     "tool-without-schema": { tools: [{ name: "COMPOSIO_SEARCH_TOOLS" }] },
     "tool-without-name": { tools: [{ description: "d", inputSchema: { type: "object" } }] },
   };
-  /** The first tools/list fails in `mode`; later ones (after `realAfterMs`) return the real seven tools. */
-  const upstream = (mode: Mode, realAfterMs = 0) => {
+  /** The first tools/list fails in `mode`; later ones wait for a delay or an explicit release. */
+  const upstream = (mode: Mode, realAfter: number | Promise<void> = 0) => {
     let listed = 0;
     return listen((request, response) => {
       let body = "";
@@ -1411,7 +1427,13 @@ describe("the first tools/list is never an error or an empty list", () => {
           response.end(mode === "rpc-error" ? JSON.stringify({ jsonrpc: "2.0", id: message.id, error: { code: -32000, message: "broker unavailable" } }) : "");
           return;
         }
-        setTimeout(() => { response.writeHead(200, { "content-type": "application/json" }); response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { tools: SEVEN } })); }, realAfterMs);
+        const reply = () => {
+          if (response.destroyed) return;
+          response.writeHead(200, { "content-type": "application/json" });
+          response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { tools: SEVEN } }));
+        };
+        if (typeof realAfter === "number") setTimeout(reply, realAfter);
+        else void realAfter.then(reply);
       });
     });
   };
@@ -1420,7 +1442,9 @@ describe("the first tools/list is never an error or an empty list", () => {
 
   it.each<Mode>(["http500", "rpc-error", "unreadable", "result-empty", "tools-not-a-list", "result-null", "tool-without-schema", "tool-without-name"])("%s: the engine gets the fallback list, the mount is incomplete, then list_changed and the real list", async (mode) => {
     const dir = mkdtempSync(join(tmpdir(), "murage-first-list-")); dirs.push(dir);
-    const url = await upstream(mode, 700);
+    let releaseReal!: () => void;
+    const realReady = new Promise<void>((resolve) => { releaseReal = resolve; });
+    const url = await upstream(mode, realReady);
     const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: url, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_BOT_ID: "bot-a", MURAGE_CONNECTOR_IDENTITY: ID, MURAGE_CONNECTOR_REVISION: "rev-1" });
     let stderr = "";
     child!.stderr.on("data", (chunk) => { stderr += String(chunk); });
@@ -1428,22 +1452,25 @@ describe("the first tools/list is never an error or an empty list", () => {
     lines.on("line", (line) => { try { seen.push(JSON.parse(line)); } catch { /* ignore */ } });
     child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 0, method: "initialize", params: { protocolVersion: "2024-11-05" } })}\n`);
     child!.stdin.write(listReq(1));
-    await new Promise((resolve) => setTimeout(resolve, 400));
+    await waitUntil(() => [0, 1].every((id) => seen.some((m) => m.id === id)), `${mode}: initialize and fallback tools/list replies`);
     const first = seen.find((m) => m.id === 1)!;
     expect(seen.find((m) => m.id === 0)!.result.capabilities.tools.listChanged).toBe(true);
     expect(first.error).toBeUndefined();
     expect(toolNames(first)).toEqual(expect.arrayContaining(["APPS_REMOTE_WORKBENCH", "APPS_REMOTE_BASH_TOOL", "APPS_WAIT_FOR_CONNECTIONS", "APPS_MULTI_EXECUTE_TOOL"]));
     expect(first.result._meta["murage/provisional"]).toBe(true);
     expect(markerOf(dir)).toMatchObject({ revision: "rev-1" }); // the mount is marked incomplete
-    await new Promise((resolve) => setTimeout(resolve, 2_500));
-    expect(seen.some((m) => m.method === "notifications/tools/list_changed")).toBe(true);
+    expect(seen.some((m) => m.method === "notifications/tools/list_changed")).toBe(false);
+    releaseReal();
+    await waitUntil(() => seen.some((m) => m.method === "notifications/tools/list_changed"), `${mode}: list_changed after recovery`);
     child!.stdin.write(listReq(2));
-    await new Promise((resolve) => setTimeout(resolve, 600));
+    await waitUntil(() => seen.some((m) => m.id === 2), `${mode}: recovered tools/list reply with id 2`);
     const second = seen.find((m) => m.id === 2)!;
     expect(toolNames(second)).toEqual(expect.arrayContaining(SEVEN.map((t) => exposedToolName(t.name))));
     expect(second.result._meta?.["murage/provisional"]).toBeUndefined();
     expect(markerOf(dir)).toBeNull(); // the engine now holds the real list
     // One log line per list: outcome, count and status; nothing else.
+    // stderr and stdout are separate pipes, so the reply alone does not drain the logs.
+    await waitUntil(() => /tools\/list outcome=remembered tools=\d+/.test(stderr), `${mode}: recovered list log`, 4_000);
     expect(stderr).toMatch(/tools\/list outcome=standin tools=\d+/);
     if (mode === "http500") expect(stderr).toContain("http=500");
     expect(stderr).toMatch(/tools\/list outcome=remembered tools=\d+/);

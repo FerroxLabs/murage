@@ -86,6 +86,8 @@ const isOpen = (status: RoutineRunStatus) => OPEN_RUN_STATUSES.includes(status);
 export const isOpenRoutineRunStatus = (status: RoutineRunStatus): boolean => isOpen(status);
 /** Running, waiting, or waiting on you: the run owns a live turn. */
 export const isLiveRoutineRunStatus = (status: RoutineRunStatus): boolean => isLive(status);
+/** The one line a routine's chat gets when a run completes after a failed one, so the failure is not its newest word. */
+export const routineRecoveredLine = (routineName: string): string => `Recovered: ${routineName.trim().slice(0, 120) || "this routine"} finished OK.`;
 
 /** The untouched routines.json from before routine ceilings were pinned. */
 export function routinesPrePinFile(routinesFile: string): string {
@@ -538,6 +540,8 @@ export interface RoutineManagerOptions {
    * conversation is reused only while it does. Without it, every run gets a
    * new task as before. */
   taskExists?: (botId: string, threadId: string) => boolean;
+  /** Whether a room task (a room goal's thread) still exists in its room. */
+  goalTaskExists?: (groupId: string, threadId: string) => boolean;
   /** A bot routine run is about to start in its conversation; `reused` says
    * an earlier run (or the owner) already worked there. */
   onRunDispatch?: (run: RoutineRun, reused: boolean) => void;
@@ -580,6 +584,9 @@ export interface RoutineManagerOptions {
   /** Projects every durable transition into the source conversation. */
   onRunChanged?: (run: RoutineRun) => void;
   onRunFailed?: (run: RoutineRun) => void;
+  /** A run completed and the routine's run before it had failed: the failure is no longer the newest word (upstream
+   *  84b63940c). Called once per recovery, with the failed run it answers. */
+  onRunRecovered?: (run: RoutineRun, failed: RoutineRun) => void;
   /** The run limit came while a card was waiting on the owner. */
   onRunNeedsYou?: (run: RoutineRun) => void;
   /** F2 (1.0.4): false when this group is a project that is closed or ended. Run now refuses such a project's routine. */
@@ -956,6 +963,10 @@ export class RoutineManager {
   private gateForced = false;
   private lastCatchUpAt: number | null = null;
   private readonly heldByStartup = new Set<string>();
+  /** The task a run's start opened when that start could not be saved, by run id. The run went back to queued; its next
+   *  start uses this task instead of opening another one (upstream f4f2e3d8b + 22bfaa817, every target). In memory only: the
+   *  failed save is exactly what did not record it. */
+  private readonly unsavedStartTasks = new Map<string, string>();
   private readonly deferrals = new Map<string, { attempts: number; notBefore: number }>();
   private readonly file: string;
   private readonly now: () => number;
@@ -2082,6 +2093,8 @@ export class RoutineManager {
   async cancelRun(id: string, interruptGeneration?: string): Promise<RoutineRun | null> {
     const run = this.runs.find((r) => r.id === id);
     if (!run || !isOpen(run.status)) return null;
+    // a cancelled run never starts again: the task an unsaved start kept for it is not kept
+    this.unsavedStartTasks.delete(run.id);
     this.commitMutation(() => {
       run.status = "cancelled";
       if (run.target === "room-goal") run.goalStatus = "stopped";
@@ -2594,7 +2607,14 @@ export class RoutineManager {
         let releaseStart: () => void = () => {};
         try { releaseStart = this.options.beginStart?.() ?? releaseStart; } catch { /* no gate: nothing held */ }
         try {
-        const task = run.target === "room-goal"
+        const unsaved = !reusable && !sharedChannel ? this.unsavedStartTasks.get(run.id) : undefined;
+        const keptTask = unsaved && (run.target === "room-goal"
+          ? Boolean(run.groupId && this.options.goalTaskExists?.(run.groupId, unsaved))
+          : !this.options.taskExists || this.options.taskExists(run.botId, unsaved)) ? unsaved : undefined;
+        if (unsaved && !keptTask) this.unsavedStartTasks.delete(run.id);
+        const task = keptTask
+          ? { threadId: keptTask }
+          : run.target === "room-goal"
           ? run.groupId
             ? this.options.createGoalTask?.(run.groupId, run.routineName) ?? null
             : null
@@ -2628,11 +2648,15 @@ export class RoutineManager {
         if (adopted) owner.threadId = task.threadId;
         try {
           this.save({ runs: [run], routines: adopted ? [owner] : [] });
+          this.unsavedStartTasks.delete(run.id);
         } catch (error) {
           // No engine turn has started: a run that could not be recorded as running goes back to queued, so it is
           // retried or failed by the guard below instead of sitting as a running run no engine is working on.
           run.status = "queued";
           run.threadId = before.threadId; run.startedAt = before.startedAt; run.slotAt = before.slotAt; run.attention = before.attention;
+          // The task this start opened is kept for the run's next start: restoring the old thread alone orphaned it, and
+          // every later pass opened another one.
+          if (!reusable && !sharedChannel) this.unsavedStartTasks.set(run.id, task.threadId);
           if (adopted && owner) owner.threadId = before.ownerThreadId;
           if (!wasLiveRoutine) liveRoutines.delete(run.routineId);
           if (!wasLiveThread) liveThreads.delete(task.threadId);
@@ -2885,8 +2909,25 @@ export class RoutineManager {
     }
     this.save({ runs: [run] });
     this.emitRun(run);
+    if (run.status === "completed") this.noteRecovery(run);
     if (event.type === "turn.completed") queueMicrotask(() => void this.tick());
     return cloneRun(run);
+  }
+
+  /** The routine's last finished run before `run` failed: say the routine recovered. Best-effort, never throws. */
+  private noteRecovery(run: RoutineRun) {
+    if (!this.options.onRunRecovered) return;
+    let previous: RoutineRun | undefined;
+    for (const other of this.runs) {
+      if (other.id === run.id || other.routineId !== run.routineId || other.finishedAt === undefined) continue;
+      if (other.status !== "failed" && other.status !== "completed") continue;
+      if (other.finishedAt > (run.finishedAt ?? Infinity)) continue;
+      // runs are kept in creation order: on a tie the later one is the newer word
+      if (!previous || other.finishedAt >= previous.finishedAt!) previous = other;
+    }
+    if (previous?.status !== "failed") return;
+    try { this.options.onRunRecovered(cloneRun(run), cloneRun(previous)); }
+    catch (error) { console.error("routine: recovery note failed", error); }
   }
 
   failThread(threadId: string, message: string) {
@@ -2929,6 +2970,7 @@ export class RoutineManager {
       if (status !== "stopped") run.output = safeDetail.slice(0, 2_000) || undefined;
       this.save({ runs: [run] });
       this.emitRun(run);
+      if (run.status === "completed") this.noteRecovery(run);
     }
     queueMicrotask(() => void this.tick());
     return cloneRun(run);
@@ -2962,6 +3004,7 @@ export class RoutineManager {
    * restart the run reloads as it was last saved and is evaluated afresh. Owner notification is best-effort. */
   private failRun(run: RoutineRun, message: string) {
     this.requiredToolCalls.delete(run.id);
+    this.unsavedStartTasks.delete(run.id);
     run.status = "failed";
     run.attention = undefined;
     run.error = redactSecretsInText(message).slice(0, 500);

@@ -5,8 +5,9 @@
 // when silence stops a command, and how a Stop or a lost box ends one. The
 // box-side shell runs for real at the end of this file (Linux, as the box
 // is) and through the whole proxy in computer-proxy-exec.test.ts.
+import { errorTextCases, ERROR_TEXT_LEAK } from "./testing/error-text-fixtures.ts";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -24,6 +25,7 @@ import {
   type BoxRun,
 } from "./box-exec.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { engineStderrRedacted } from "./drivers/acp/core.ts";
 
 const OPTS: BoxExecOptions = { firstWaitSec: 20, pollSec: 15, leaseSec: 600, outputCapBytes: 1 << 20 };
 const status = (state: string, bytes: number, cpu: number, extra = "") =>
@@ -65,6 +67,24 @@ function rig(answers: Array<string | Error>, turnSilenceMs = 20 * 60_000, stopAn
 }
 
 describe("computer_exec on the box: silence, not a clock", () => {
+  for (const phase of ["start", "poll"] as const) {
+    it.each(errorTextCases())(`redacts ${phase} failure text before its MCP cut: $name`, async ({ raw, name }) => {
+      let now = 0;
+      const deps: BoxExecDeps = {
+        run: async (command) => ({ ok: false, exitCode: 1,
+          stdout: phase === "poll" && isStart(command) ? status("running", 0, 0) : "", stderr: raw }),
+        newId: () => "0123456789abcdef0123", now: () => now,
+        sleep: async (ms) => { now += ms; }, turnSilenceMs: () => 60_000, progress: () => {},
+      };
+      const outcome = await runBoxExec("fixture", deps, { ...OPTS, leaseSec: 1 }, new AbortController().signal);
+      expect(outcome.kind).toBe("failed");
+      if (outcome.kind !== "failed") throw new Error("expected a command failure");
+      expect(outcome.detail).not.toMatch(ERROR_TEXT_LEAK);
+      if (name === "short diagnostic") expect(outcome.detail).toBe(raw);
+      else expect(outcome.detail).toContain("redacted");
+    });
+  }
+
   it("a quick command answers from the start request alone", async () => {
     const { deps, scripts } = rig([done(0, "hi\n")]);
     const outcome = await runBoxExec("echo hi", deps, OPTS, new AbortController().signal);
@@ -245,6 +265,31 @@ describe.skipIf(process.platform !== "linux")("computer_exec's box-side records 
   };
   const opts: BoxExecOptions = { firstWaitSec: 1, pollSec: 1, leaseSec: 600, outputCapBytes: 1 << 20 };
   afterAll(() => removeTempDirSync(home));
+
+  it("retains only the original prefix after more than 32 MiB on each stream", () => {
+    const id = "aa00000000000009";
+    const command = "{ printf '%s\\n' '-----BEGIN PRIVATE KEY-----'; head -c 34603008 /dev/zero | tr '\\0' Q; printf '\\n%s\\n' '-----END PRIVATE KEY-----' 'later-output'; } | tee /dev/stderr";
+    let result = sh(startScript(id, command, { ...opts, firstWaitSec: 10, outputCapBytes: 32 * 1024 * 1024 }));
+    for (let poll = 0; result.state === "running" && poll < 20; poll++) result = sh(pollScript(id, 1));
+    expect(result).toMatchObject({ state: "done", exitCode: 0, dropped: true });
+    expect(result.bytes).toBeGreaterThan(2 * 32 * 1024 * 1024);
+    const dir = join(home, ".cache", "murage-exec", id);
+    for (const stream of ["out", "err"]) {
+      expect(statSync(join(dir, stream)).size).toBe(262144);
+      expect(existsSync(join(dir, `${stream}.keep`))).toBe(false);
+      const captured = readFileSync(join(dir, stream), "utf8");
+      expect(captured).toMatch(/^-----BEGIN PRIVATE KEY-----/);
+      expect(captured).not.toContain("later-output");
+    }
+    for (const output of [result.stdout, result.stderr]) {
+      expect(Buffer.byteLength(output)).toBe(262144);
+      expect(output).toMatch(/^-----BEGIN PRIVATE KEY-----/);
+      const shown = engineStderrRedacted(output, true);
+      expect(shown).not.toContain("QQ");
+      expect(shown).toContain("redacted");
+    }
+    sh(cleanupScript(id));
+  }, 60_000);
 
   it("a poll whose answer was lost can be asked again; cleanup removes the record", () => {
     const id = "aa00000000000001";

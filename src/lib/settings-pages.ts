@@ -67,7 +67,8 @@ export const SECTION_ALIASES: Readonly<Record<SettingsAlias, { section: Settings
   images: { section: "webSearch", anchor: "image-settings-heading" },
   voice: { section: "webSearch", anchor: "voice-settings-heading" },
   computer: { section: "companion", anchor: "computer-settings-heading" },
-  experimental: { section: "about", anchor: "experimental-settings" },
+  // Keep published links working after the controls moved into regular Settings.
+  experimental: { section: "skills", anchor: "skill-recorder-heading" },
   // 1.0.3 attachment storage (fix/103-attachment-cap): the Storage card sits on the Backups page
   storage: { section: "backups", anchor: "storage-heading" },
 };

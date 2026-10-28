@@ -106,6 +106,13 @@
  },
  {
   "file": "server/backup-coordinator.ts",
+  "function": "handoffFailure",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/backup-coordinator.ts",
   "function": "lastSkipped",
   "callee": "readFileSync",
   "root": "data-dir",
@@ -466,6 +473,13 @@
   "function": "windowsBrowserImageState",
   "callee": "readFileSync",
   "root": "browser",
+  "count": 1
+ },
+ {
+  "file": "server/bwrap-process.ts",
+  "function": "read",
+  "callee": "readFileSync",
+  "root": "engine-home",
   "count": 1
  },
  {
@@ -1734,6 +1748,34 @@
   "callee": "readFileSync",
   "root": "data-dir",
   "count": 1
+ },
+ {
+  "file": "server/host-power.ts",
+  "function": "cageDigests",
+  "callee": "openSync",
+  "root": "app-resources",
+  "count": 1
+ },
+ {
+  "file": "server/host-power.ts",
+  "function": "fileSha256",
+  "callee": "openSync",
+  "root": "app-resources",
+  "count": 1
+ },
+ {
+  "file": "server/host-power.ts",
+  "function": "openPowerFilter",
+  "callee": "openSync",
+  "root": "app-resources",
+  "count": 1
+ },
+ {
+  "file": "server/host-power.ts",
+  "function": "readWholeFd",
+  "callee": "readSync",
+  "root": "app-resources",
+  "count": 2
  },
  {
   "file": "server/house-rules.ts",

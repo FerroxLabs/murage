@@ -16,6 +16,26 @@ function gate(options: { overloaded?: () => boolean; random?: () => number } = {
 }
 
 describe("owner-first admission gate", () => {
+  it("routine admission ignores starts while still yielding to owner turns, typing and load", () => {
+    let overloaded = false;
+    const { g, advance } = gate({ overloaded: () => overloaded });
+    g.beginStart();
+    const admit = () => g.admit("routine", { waitedMs: 0, ignoreStarts: true });
+    expect(admit()).toEqual({ admitted: true, forced: false });
+    expect(g.pressure()).toBe("work-starting");
+    const endTurn = g.beginOwnerTurn();
+    expect(admit()).toMatchObject({ admitted: false, reason: "owner-turn" });
+    endTurn();
+    g.noteOwnerInteraction();
+    expect(admit()).toMatchObject({ admitted: false, reason: "owner-typing" });
+    advance(OWNER_INTERACTION_HOLD_MS);
+    overloaded = true;
+    expect(admit()).toMatchObject({ admitted: false, reason: "system-load" });
+    overloaded = false;
+    expect(admit()).toEqual({ admitted: true, forced: false });
+    expect(g.pressure()).toBe("work-starting");
+  });
+
   it("admits when the owner is idle and the computer is not overloaded", () => {
     const { g, lines } = gate();
     expect(g.admit("memory-extract")).toEqual({ admitted: true, forced: false });

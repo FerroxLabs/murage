@@ -314,7 +314,7 @@ function lexPwsh(s: string): Lexed {
       const hashtable = c === "{" && last?.kind === "lit" && last.quote === "none" && last.text.endsWith("@");
       nested.push(hashtable ? body.replace(/(^|[;\n])\s*('[^']*'|"[^"]*"|[\w.-]+)\s*=(?!=)/g, "$1") : body);
       if (parts.length === 0) {
-        parts.push({ kind: "subst", text: s.slice(i + 1, end), quote: "none" });
+        parts.push(c === "{" ? { kind: "subst", text: body, quote: "none", block: true } : { kind: "subst", text: body, quote: "none" });
       } else {
         // inside a word (`[void](…)`, `.Delete(…)`, `@{a=…}`): its body is
         // walked as a script, and the word keeps the text as written so a
@@ -604,7 +604,9 @@ export function walkShellInput<H>(pwsh: boolean, stdin: Provenance, ctx: WalkCon
       // the input is the program: its commands have nothing left to read
       const inner = fork(ctx, true);
       delete inner.stdin;
-      return pwsh ? walkPwsh(stdin.text, inner, visitor) : walkCmd(stdin.text, inner, visitor);
+      const hit = pwsh ? walkPwsh(stdin.text, inner, visitor) : walkCmd(stdin.text, inner, visitor);
+      if (!hit) keepBranchWrites(ctx, inner);
+      return hit;
     }
     case "file": { const written = ctx.written.get(resolveWritten(ctx, stdin.path)); return written ? walkShellInput(pwsh, written, ctx, visitor, hops + 1) : null; }
     case "remote": runsRemote(!!ctx.elevated); return null;
@@ -644,9 +646,9 @@ export function nestedProgram(program: string, args: Word[]): NestedProgram {
     if (raw === undefined) throw new Unreadable("expansion", `a value in the arguments of ${program}`);
     const text = raw.toLowerCase();
     if (text === "-") return { kind: "stdin", explicit: true };
-    if (!text.startsWith("-")) return name === "powershell" ? { kind: "text", words: args.slice(i) } : { kind: "file", word: args[i]! };
-    const option = text.replace(/:.*$/, "");
+    const option = text.replace(/^\//, "-").replace(/:.*$/, "");
     if (option === "-ec" || abbreviates(option, "-encodedcommand") || abbreviates(option, "-encodedarguments", 9) || option === "-ea") throw new Unreadable("pwsh", "-EncodedCommand");
+    if (!text.startsWith("-")) return name === "powershell" ? { kind: "text", words: args.slice(i) } : { kind: "file", word: args[i]! };
     // `-Command:<text>`, `-File:<path>`: the value after the colon is the
     // option's own value (1.0.3 A-b1-1), as the colon form of any parameter
     const glued: Word[] = /:./.test(text) ? [{ parts: [{ kind: "lit", text: raw.slice(raw.indexOf(":") + 1), quote: "single" }] }] : [];
@@ -864,13 +866,25 @@ function scriptFile(spelled: string, name: string, dialect: "pwsh" | "cmd"): boo
 
 /** Throws when a program, as the reader resolved it, is one it does not
  * model: a launcher, an interpreter running code, a script file. */
-function unmodelled(name: string, spelled: string, args: Word[], stdin: Provenance | undefined, dialect: "pwsh" | "cmd", ctx: WalkContext): void {
-  const runner = powershellRunner(name);
+function unmodelled(name: string, spelled: string, args: Word[], stdin: Provenance | undefined, dialect: "pwsh" | "cmd", ctx: WalkContext, literalProgram: string | undefined): void {
+  // Drive-relative Bash still launches code, but cannot use the absolute-path exception.
+  const runner = powershellRunner(name) ?? (/^[a-z]:bash(?:\.exe)?$/i.test(name) ? "launcher" : undefined);
+  // Only a literal PATH name or absolute path, with exact literal argv the Bash reader supports.
+  const literalBash = literalProgram !== undefined && (/^bash(?:\.exe)?$/i.test(literalProgram)
+    || /^(?:[a-z]:[\\/]|\/|\\\\[^\\/]+[\\/][^\\/]+[\\/])/i.test(literalProgram));
+  if (runner === "launcher" && dialect === "pwsh" && ctx.windowsBash && literalBash && /^(bash|bash\.exe)$/i.test(name)
+      && !stdin && args.length === 2 && literalText(args[0]!) === "-c"
+      && args[1]!.parts.every(part => part.kind === "lit" && part.quote === "single")) {
+    const payload = literalText(args[1]!);
+    if (payload !== undefined) { ctx.windowsBash.push(payload); return; }
+  }
   if (runner === "launcher") throw new Unreadable(dialect, `${name} runs something the reader does not see`);
   if (runner === "interpreter") {
     // a loader variable this read set or named reaches it (1.0.5 r8)
     markLoaderRunner(ctx.loaders, name);
     const why = interpreterRuns(programBase(name), args, stdin);
+    // 1.0.8 (fallback, as 1.0.7): inline code PowerShell or cmd hands an
+    // interpreter is not read; it asks
     if (why) throw new Unreadable(dialect, `${name}: ${why}`);
   }
   if (scriptFile(spelled, name, dialect)) throw new Unreadable(dialect, `${spelled} is a script file the reader does not see`);
@@ -895,8 +909,10 @@ export function walkPwsh<H>(text: string, ctx: WalkContext, visitor: Visitor<H>)
   if (loader) markLoaderVariable(ctx.loaders, loader);
   const { statements, nested } = lexPwsh(text);
   for (const inner of nested) {
-    const hit = walkPwsh(inner, fork(ctx, true), visitor);
+    const branch = fork(ctx, true);
+    const hit = walkPwsh(inner, branch, visitor);
     if (hit) return hit;
+    keepBranchWrites(ctx, branch);
   }
   // what the statement before writes down the pipe, when one joins them
   let carried: Provenance | undefined;
@@ -926,10 +942,103 @@ export function walkPwsh<H>(text: string, ctx: WalkContext, visitor: Visitor<H>)
       }
       throw new Unreadable("pwsh", "a .NET call");
     }
+    // 1.0.9 D2: `& { … }` that is the whole text runs only its block, which
+    // was walked above (`nested`) from this same place. Beside other
+    // statements its folder changes would reach them, so there it still asks.
+    if (statements.length === 1 && !statement.piped && blockCall(words)) continue;
     const hit = pwshStatement(words, stdin, ctx, visitor, 0);
     if (hit) return hit;
+    recordPwshWrites(words, ctx);
+    // `$null = Set-Content c.txt …`: the right side's command writes too
+    if (rhs) recordPwshWrites(rhs, ctx);
   }
   return null;
+}
+
+/** cmd commands that write a file a later command can name. */
+const CMD_WRITES = new Set(["copy", "xcopy", "robocopy", "move", "ren", "rename", "curl", "certutil", "expand", "tar"]);
+
+/** As recordPwshWrites, for cmd: a `>`/`>>` redirect's literal target and
+ * every literal word a write command is given (switches aside). */
+function recordCmdWrites(program: string, args: Word[], redirects: Array<{ op: string; target: Word }>, ctx: WalkContext): void {
+  const record = (text: string | undefined) => { if (text) ctx.written.set(resolveWritten(ctx, text), UNREAD_WRITE); };
+  for (const { op, target } of redirects) if (op !== "<") record(literalText(target));
+  if (!CMD_WRITES.has(program)) return;
+  for (const arg of args) { const text = literalText(arg); if (text !== undefined && !text.startsWith("/") && !text.startsWith("-")) record(text); }
+}
+
+/** Cmdlets (and their aliases) that write a file a later statement can name. */
+const WRITE_CMDLETS = new Set(["set-content", "sc", "add-content", "ac", "out-file", "tee-object", "tee", "new-item", "ni", "copy-item", "copy", "cp", "cpi",
+  "move-item", "move", "mv", "mi", "rename-item", "ren", "rni", "invoke-webrequest", "iwr", "curl", "wget", "invoke-restmethod", "irm", "expand-archive",
+  "export-csv", "epcsv", "export-clixml", "start-bitstransfer"]);
+const UNREAD_WRITE: Provenance = { kind: "value", why: "a file a PowerShell statement wrote" };
+
+/** 1.0.8: a file written inside a block, a group, a nested shell or a cmd
+ * `if`/`for` body (each walked on a fork) stays written for what follows, so
+ * inline code that later runs or deletes it asks. Only adds asks: a name the
+ * branch wrote differently is held as a value. */
+function keepBranchWrites(ctx: WalkContext, branch: WalkContext): void {
+  for (const [path, provenance] of branch.written) {
+    const known = ctx.written.get(path);
+    if (!known) ctx.written.set(path, provenance);
+    else if (known !== provenance && JSON.stringify(known) !== JSON.stringify(provenance)) ctx.written.set(path, UNREAD_WRITE);
+  }
+}
+
+/** 1.0.8 (inline code read as the POSIX reader reads it): the files a
+ * statement may have written are recorded, so inline code that later runs or
+ * deletes with one of their names asks, as on the POSIX reader. A redirect's
+ * literal target, and every literal word a write cmdlet is given (its value
+ * words too: an extra name only adds an ask). Their content is never read:
+ * a script run from one stays one the reader does not see. */
+function recordPwshWrites(words: Word[], ctx: WalkContext): void {
+  const record = (text: string | undefined) => { if (text) ctx.written.set(resolveWritten(ctx, text), UNREAD_WRITE); };
+  for (const target of redirectTargets(words)) record(literalText(target));
+  let call = literalText(words[0] ?? { parts: [] }) === "&" ? words.slice(1) : words;
+  // `return Set-Content x …`: the keyword's operand is the command
+  while (call.length > 1 && PIPELINE_KEYWORDS.has(literalText(call[0]!)?.toLowerCase() ?? "")) call = call.slice(1);
+  const program = call[0] ? literalText(call[0])?.toLowerCase().replace(/\.exe$/, "") : undefined;
+  if (program === undefined || !WRITE_CMDLETS.has(program)) return;
+  for (const word of call.slice(1)) {
+    const text = literalText(word);
+    if (text === undefined) continue;
+    record(text.startsWith("-") ? (text.includes(":") ? text.slice(text.indexOf(":") + 1) : undefined) : text);
+  }
+}
+
+/** `& { … }`: the call operator and one literal script block, nothing else. */
+function blockCall(words: Word[]): boolean {
+  const block = words[1]?.parts;
+  return words.length === 2 && literalText(words[0]!) === "&" && block?.length === 1 && block[0]!.kind === "subst" && block[0]!.block === true;
+}
+
+/** The statement's words without its output redirects (`> f`, `>> f`,
+ * `2> f`, `*>f`, `2>&1`), whose targets `walkPwsh` checks on its own.
+ * Undefined when a `>` sits inside a word the reader does not split. */
+function withoutRedirects(words: Word[]): Word[] | undefined {
+  const kept: Word[] = [];
+  for (let w = 0; w < words.length; w++) {
+    const word = words[w]!;
+    const text = literalText(word);
+    const unquoted = word.parts.every((part) => part.kind !== "lit" || part.quote === "none");
+    const op = text !== undefined && unquoted ? /^([1-6*]?>>?)(&[1-6])?(.*)$/s.exec(text) : null;
+    if (op) {
+      // `> f` takes the next word as its target; `>f` and `2>&1` carry their own
+      if (!op[2] && !op[3]) { if (!words[w + 1]) return undefined; w++; }
+      else if (op[2] && op[3]) return undefined;
+      continue;
+    }
+    if (word.parts.some((part) => part.kind === "lit" && part.quote === "none" && part.text.includes(">"))) return undefined;
+    kept.push(word);
+  }
+  return kept;
+}
+
+/** Text PowerShell only prints: quoted literals and plain variables
+ * (`'a'`, `"label: $env:X"`, a here-string). No subexpression, no member. */
+function printedString(word: Word): boolean {
+  return word.parts.length > 0 && word.parts.some((part) => part.kind === "lit")
+    && word.parts.every((part) => (part.kind === "lit" && part.quote !== "none") || (part.kind === "var" && part.op === undefined && part.quote === "double"));
 }
 
 /** One statement: an assignment, an expression, or a call. */
@@ -968,12 +1077,24 @@ function pwshStatement<H>(words: Word[], stdin: Provenance | undefined, ctx: Wal
     const lead = call[0]!.parts[0];
     // `$_.Length -gt 1mb`, `(Get-Item x).Name`: an expression, not a call
     // (calling a value takes `&`, which is read below and asks)
-    if (lead && (lead.kind === "var" || lead.kind === "subst")) return null;
-    // `[int]$x`, `[void](…)`: a cast or a type, its subexpressions walked
-    if (lead?.kind === "lit" && lead.quote === "none" && lead.text.startsWith("[")) return null;
+    if (lead && (lead.kind === "var" || lead.kind === "subst")) {
+      if (call.length === 1 || EXPRESSION_OPERATOR.test(literalText(call[1]!) ?? "")) return null;
+      throw new Unreadable("dynamic-name", renderPwshWord(call[0]!));
+    }
+    // `[int]$x`, `[void](…)`: a cast or a type, its subexpressions walked.
+    // Additional command arguments cannot turn an expression into a literal executable.
+    if (lead?.kind === "lit" && lead.quote === "none" && lead.text.startsWith("[")) {
+      if (call.length === 1 || EXPRESSION_OPERATOR.test(literalText(call[1]!) ?? "")) return null;
+      throw new Unreadable("dynamic-name", renderPwshWord(call[0]!));
+    }
     // `1 + 2`, `-1`
     const text = literalText(call[0]!);
     if (text !== undefined && NUMBER.test(text)) return null;
+    // 1.0.9 D2: a printed string, alone or redirected to a file (`'hi' > f`,
+    // `@"…$env:X…"@ | Out-File f`): it runs nothing; the redirect target was
+    // checked in walkPwsh
+    const printed = withoutRedirects(call);
+    if (printed?.length === 1 && printedString(printed[0]!)) return null;
     if (stringExpression(call[0]!)) {
       // `'text'`, `"a" -f $x`: a string expression, written down the pipe
       if (call.length === 1 || EXPRESSION_OPERATOR.test(literalText(call[1]!) ?? "")) return null;
@@ -989,7 +1110,15 @@ function pwshStatement<H>(words: Word[], stdin: Provenance | undefined, ctx: Wal
   const name = resolveName(call[0]!);
   if (name === undefined) throw new Unreadable("dynamic-name", renderPwshWord(call[0]!));
   let program = name.replace(/\.(exe|com|cmd|bat)$/, "");
-  if (EVALS.has(program)) throw new Unreadable("dynamic-eval", program);
+  if (EVALS.has(program)) {
+    // A literal here-string piped into iex is executable text, not an
+    // unknown value. Preserve any known wipe before the unreadable hold.
+    if (stdin?.kind === "literal" && call.length === 1) {
+      const hit = walkPwsh(stdin.text, fork(ctx, true), visitor);
+      if (hit) return hit;
+    }
+    throw new Unreadable("dynamic-eval", program);
+  }
   // `return Remove-Item x`: the keyword's operand is a pipeline of its own
   if (!called && PIPELINE_KEYWORDS.has(program)) return pwshStatement(call.slice(1), stdin, ctx, visitor, hops + 1);
   const args = splitCommas(call.slice(1));
@@ -1019,13 +1148,17 @@ function pwshStatement<H>(words: Word[], stdin: Provenance | undefined, ctx: Wal
       const inner = run.words.map(renderPwshWord).join(" ");
       const nestedCtx = fork(ctx, true);
       if (stdin) nestedCtx.stdin = stdin;
-      return pwsh ? walkPwsh(inner, nestedCtx, visitor) : walkCmd(inner, nestedCtx, visitor);
+      const hit = pwsh ? walkPwsh(inner, nestedCtx, visitor) : walkCmd(inner, nestedCtx, visitor);
+      if (!hit) keepBranchWrites(ctx, nestedCtx);
+      return hit;
     }
     // `-Command -`, `-File`, or nothing to run: its input or its script
     return walkNestedInput(pwsh, run, stdin, ctx, visitor);
   }
   // a launcher, an interpreter's code, a script file: not modelled, so it asks
-  unmodelled(name, renderPwshWord(call[0]!), args, stdin, "pwsh", ctx);
+  const literalProgram = call[0]!.parts.some(part => part.kind === "lit" && part.quote === "none" && /[(){}]/.test(part.text))
+    ? undefined : literalText(call[0]!);
+  unmodelled(name, renderPwshWord(call[0]!), args, stdin, "pwsh", ctx, literalProgram);
   if ((program === "foreach-object" || program === "%") && callsMember(args)) throw new Unreadable("pwsh", "ForEach-Object calls a member on every item");
   // `env …`, `sudo`-style wrappers: walked as the POSIX reader walks them,
   // reading what the pipe before them writes
@@ -1204,6 +1337,19 @@ function renderCmdWord(word: Word): string {
   return word.parts.map((part) => (part.kind === "lit" ? part.text : part.kind === "var" ? (part.name.startsWith("%") ? part.name : part.name.startsWith("!") ? `${part.name}!` : `%${part.name}%`) : "")).join("");
 }
 
+/** The variables a cmd `set` may name and still be read past: names that
+ * only change how a program reports, never which program or code runs
+ * (Grok r1: a denylist missed `GIT_EXTERNAL_DIFF`, `npm_config_*` and
+ * caret spellings of pinned names). The name is the lexed one. */
+const CMD_SET_INERT = new Set(["NODE_ENV", "CI", "FORCE_COLOR", "NO_COLOR", "TZ", "LANG", "LANGUAGE", "LC_ALL"]);
+
+/** `NAME=value` with a literal name and value and an inert name. */
+function plainCmdSet(word: Word): boolean {
+  const text = literalText(word);
+  const set = text === undefined ? null : /^([A-Za-z_][A-Za-z0-9_]*)=([^\r\n]*)$/.exec(text);
+  return set !== null && CMD_SET_INERT.has(set[1]!.toUpperCase());
+}
+
 const bareCmd = (token: CmdToken | undefined): string | undefined => (token?.kind === "word" ? literalText(token.word)?.toLowerCase() : undefined);
 
 /** Walk cmd text: every statement, `for` bodies with the loop variable bound
@@ -1296,7 +1442,9 @@ export function walkCmd<H>(text: string, ctx: WalkContext, visitor: Visitor<H>):
     const values = items.flatMap((item) => expandWord(item, state));
     const literal = !unknown && values.every((value) => value.parts.every((part) => part.kind !== "var" && part.kind !== "subst"));
     body.bound.set(variable, literal ? values : null);
-    return statement(body);
+    const hit = statement(body);
+    if (!hit) keepBranchWrites(state, body);
+    return hit;
   };
 
   const ifStatement = (state: WalkContext): H | null => {
@@ -1311,9 +1459,17 @@ export function walkCmd<H>(text: string, ctx: WalkContext, visitor: Visitor<H>):
       if (next !== undefined && /^(==|equ|neq|lss|leq|gtr|geq)$/.test(next)) { pos++; word(); }
       else if (!renderCmdWord(left).includes("==")) throw new Unreadable("cmd", "if condition");
     }
-    const hit = statement(fork(state));
+    const then = fork(state);
+    const hit = statement(then);
     if (hit) return hit;
-    if (bareCmd(tokens[pos]) === "else") { pos++; return statement(fork(state)); }
+    keepBranchWrites(state, then);
+    if (bareCmd(tokens[pos]) === "else") {
+      pos++;
+      const otherwise = fork(state);
+      const other = statement(otherwise);
+      if (!other) keepBranchWrites(state, otherwise);
+      return other;
+    }
     return null;
   };
 
@@ -1329,6 +1485,12 @@ export function walkCmd<H>(text: string, ctx: WalkContext, visitor: Visitor<H>):
       const resolved = resolveName(rest[0]!);
       if (resolved === undefined) throw new Unreadable("dynamic-name", renderCmdWord(rest[0]!));
       const name = resolved.replace(/\.(exe|com|bat|cmd)$/, "");
+      // 1.0.9 D2: `set NAME=value` (`set "NAME=value"`), all literal, sets a
+      // plain variable and runs nothing. `%NAME%` later on the same line is
+      // still the value cmd read before it ran, a value the reader does not
+      // follow. Switches (`/a`, `/p`), listing, and any name outside
+      // CMD_SET_INERT still ask.
+      if (name === "set" && rest.length === 2 && plainCmdSet(rest[1]!)) return null;
       if (CMD_UNMODELED.has(name)) throw new Unreadable("cmd", name);
       if (name === "call") { rest = rest.slice(1); continue; }
       if (name === "start") {
@@ -1357,11 +1519,13 @@ export function walkCmd<H>(text: string, ctx: WalkContext, visitor: Visitor<H>):
         const innerText = inner.map(renderCmdWord).join(" ");
         const nested = fork(state, true);
         if (stdin) nested.stdin = stdin;
-        return pwsh ? walkPwsh(innerText, nested, visitor) : walkCmd(innerText, nested, visitor);
+        const hit = pwsh ? walkPwsh(innerText, nested, visitor) : walkCmd(innerText, nested, visitor);
+        if (!hit) keepBranchWrites(state, nested);
+        return hit;
       }
       const program = name === "rmdir" ? "rd" : name === "erase" ? "del" : name;
       // a launcher, an interpreter's code, a script file: not modelled, so it asks
-      unmodelled(resolved, renderCmdWord(rest[0]!), args, stdin, "cmd", state);
+      unmodelled(resolved, renderCmdWord(rest[0]!), args, stdin, "cmd", state, literalText(rest[0]!));
       // `cd /d C:\x`: `/d` also changes the drive; the folder is the operand after it
       const operands = CD_NAMES.has(program) ? args.filter((arg) => !/^\/d$/i.test(literalText(arg) ?? "")) : args;
       // `env …`, `sudo`-style wrappers: walked as the POSIX reader walks them
@@ -1371,7 +1535,9 @@ export function walkCmd<H>(text: string, ctx: WalkContext, visitor: Visitor<H>):
         if (foreign !== undefined) return foreign;
       }
       const spelled = literalText(rest[0]!);
-      return visitor.command(simpleCommand(program, operands.map((arg) => forItemWord(arg, state)), state, spelled !== undefined ? { program: { text: spelled, dialect: "windows" } } : {}), state);
+      const hit = visitor.command(simpleCommand(program, operands.map((arg) => forItemWord(arg, state)), state, spelled !== undefined ? { program: { text: spelled, dialect: "windows" } } : {}), state);
+      if (!hit) recordCmdWrites(program, args, redirects, state);
+      return hit;
     }
   };
 
