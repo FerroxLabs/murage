@@ -85,7 +85,8 @@ public class MurageMessagingServiceTest {
         assertTrue(fetched.isEmpty());
         assertEquals(1, posted.size());
         assertNull(posted.get(0).target);
-        assertTrue(store.ledger().bindingIds().isEmpty()); // nothing recorded for a binding the ledger does not hold
+        assertTrue(store.ledger().bindingIds().isEmpty()); // no workspace adopted by notification delivery
+        assertEquals(Integer.valueOf(1), store.ledger().revision(PushFakes.KEY));
         // Not pending: still the removed computer's silent drop.
         assertFalse(MurageMessagingService.deliver(store, payload(2, 1), fetch(), (q, d, t) -> posted.add(d), id -> false));
         assertEquals(1, posted.size());

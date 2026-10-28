@@ -15,21 +15,39 @@
 //   tab both kept reading three. It goes into `decisions`, the umbrella the
 //   badge and the Needs you tab read. It is not an approval, a question or a
 //   connection, so no segment count changes.
+//
+// HEALTH (1.0.9 Sentinel). An owner's read may also carry its Health
+// summary (`health`). When Sentinel's backup issue (S01, detector "backup")
+// is open in it, the stopped-backup row is shown inside the Health card
+// (`backupFailed.inHealth`), with the same sentence and the same action, and
+// it is still counted once: the Health card itself never adds to `decisions`.
+// Without an owner Health summary the separate card stays exactly as it was,
+// and Health data is never attached to a read that did not prove the owner.
 import type { BackupWaiting } from "../shared/backup-waiting.ts";
+import type { HealthInbox } from "../shared/sentinel-view.ts";
 
 export interface BackupNotices {
   backupWaiting?: BackupWaiting | null;
-  backupFailed?: { sentence: string; at: number } | null;
+  backupFailed?: { sentence: string; at: number; inHealth?: true } | null;
+  /** The owner's Health summary: pass it only for a read that proved the owner (owner-api.ts sentinelOwner). */
+  health?: HealthInbox | null;
+}
+
+/** Whether Sentinel's backup issue is open in this Health summary. */
+export function healthCoversBackup(health: HealthInbox | null | undefined): boolean {
+  return Boolean(health && health.status === "ready" && health.rows.some(row => row.detectorId === "backup" && row.state !== "resolved"));
 }
 
 /** The Inbox read with the backup rows attached and the owed one counted.
- *  Returns the body unchanged when there is neither. */
+ *  Returns the body unchanged when there is nothing to attach. */
 export function withBackupNotices<T extends { decisions?: number }>(body: T, notices: BackupNotices): T & BackupNotices {
-  const { backupWaiting, backupFailed } = notices;
-  if (!backupWaiting && !backupFailed) return body;
+  const { backupWaiting, backupFailed, health } = notices;
+  if (!backupWaiting && !backupFailed && !health) return body;
+  const failed = backupFailed ? (healthCoversBackup(health) ? { ...backupFailed, inHealth: true as const } : backupFailed) : null;
   return {
     ...body,
     ...(backupWaiting ? { backupWaiting } : {}),
-    ...(backupFailed ? { backupFailed, ...(typeof body.decisions === "number" ? { decisions: body.decisions + 1 } : {}) } : {}),
+    ...(failed ? { backupFailed: failed, ...(typeof body.decisions === "number" ? { decisions: body.decisions + 1 } : {}) } : {}),
+    ...(health ? { health } : {}),
   };
 }

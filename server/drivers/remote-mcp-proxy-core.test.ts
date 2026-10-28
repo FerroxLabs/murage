@@ -2,13 +2,37 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-import { classifyFrame, failureFrame, failureText, rewriteInitializeCapabilities, serverRequestReply, splitUpstreamFrames } from "./remote-mcp-proxy-core.ts";
+import { classifyFrame, failureFrame, failureText, isElicitationRequest, rewriteInitializeCapabilities, serverRequestReply, splitUpstreamFrames, SseFrameReader } from "./remote-mcp-proxy-core.ts";
 
-describe("rewriteInitializeCapabilities (decision D10)", () => {
-  it("replaces whatever the engine announced with nothing, and keeps the rest", () => {
-    const message = { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: { sampling: {}, elicitation: {}, roots: { listChanged: true } }, clientInfo: { name: "claude", version: "1" } } };
-    expect(rewriteInitializeCapabilities(message)).toEqual({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "claude", version: "1" } } });
-    expect(message.params.capabilities).toEqual({ sampling: {}, elicitation: {}, roots: { listChanged: true } }); // input untouched
+describe("rewriteInitializeCapabilities (decision D10, MCP-ELICITATION-109)", () => {
+  it("keeps only the engine's own elicitation; sampling and roots are never announced", () => {
+    const message = { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: { sampling: {}, elicitation: { form: { x: 1 }, url: {}, extra: {} }, roots: { listChanged: true } }, clientInfo: { name: "claude", version: "1" } } };
+    expect(rewriteInitializeCapabilities(message)).toEqual({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: { elicitation: { form: {}, url: {} } }, clientInfo: { name: "claude", version: "1" } } });
+    expect(message.params.capabilities).toEqual({ sampling: {}, elicitation: { form: { x: 1 }, url: {}, extra: {} }, roots: { listChanged: true } }); // input untouched
+    // a bare `elicitation: {}` (form, 2025-06-18) stays bare
+    expect(rewriteInitializeCapabilities({ jsonrpc: "2.0", id: 1, method: "initialize", params: { capabilities: { elicitation: {} } } })).toMatchObject({ params: { capabilities: { elicitation: {} } } });
+  });
+  it("announces nothing when the engine announced no elicitation, or for a legacy SSE server", () => {
+    const message = { jsonrpc: "2.0", id: 1, method: "initialize", params: { capabilities: { sampling: {}, roots: {} } } };
+    expect(rewriteInitializeCapabilities(message)).toMatchObject({ params: { capabilities: {} } });
+    expect(rewriteInitializeCapabilities({ jsonrpc: "2.0", id: 1, method: "initialize", params: { capabilities: { elicitation: {} } } }, { elicitation: false })).toMatchObject({ params: { capabilities: {} } });
+    expect(rewriteInitializeCapabilities({ jsonrpc: "2.0", id: 1, method: "initialize", params: { capabilities: { elicitation: true } } })).toMatchObject({ params: { capabilities: {} } });
+  });
+  it("tells an elicitation request from anything else", () => {
+    expect(isElicitationRequest({ jsonrpc: "2.0", id: 3, method: "elicitation/create" })).toBe(true);
+    expect(isElicitationRequest({ jsonrpc: "2.0", method: "elicitation/create" })).toBe(false);
+    expect(isElicitationRequest({ jsonrpc: "2.0", id: 3, method: "sampling/createMessage" })).toBe(false);
+  });
+});
+
+describe("SseFrameReader", () => {
+  it("returns each frame as soon as its event is complete, across chunk boundaries", () => {
+    const reader = new SseFrameReader();
+    expect(reader.push('event: message\ndata: {"id":')).toEqual([]);
+    expect(reader.push('1,"method":"elicitation/create"}\r\n')).toEqual([]);
+    expect(reader.push("\r\n")).toEqual([{ id: 1, method: "elicitation/create" }]);
+    expect(reader.push('data: [DONE]\n\ndata: junk\n\ndata: {"id":2}')).toEqual([]);
+    expect(reader.end()).toEqual([{ id: 2 }]);
   });
   it("adds empty capabilities when the engine sent none, and leaves other methods alone", () => {
     expect(rewriteInitializeCapabilities({ jsonrpc: "2.0", id: 1, method: "initialize" })).toMatchObject({ params: { capabilities: {} } });

@@ -41,6 +41,7 @@
 // Running this process *is* the opt-in. There is no toggle, because a toggle
 // inside a process you chose to start would be ceremony: stopping it is the
 // off switch, and it is a more honest one than a flag in a file.
+import { rmSync } from "node:fs";
 import { createServer } from "node:http";
 import { join } from "node:path";
 
@@ -81,10 +82,12 @@ import {
 } from "./mdns.ts";
 import { createDeviceStreamUpgrade, createProxyHandler } from "./proxy.ts";
 import { doorForwardHeaders } from "./routes.ts";
-import { rejectUpgrade } from "./stream-upgrade.ts";
+import { closeStreamUpgrades, rejectUpgrade } from "./stream-upgrade.ts";
 import { companionOriginSocket, listenCompanionOrigin } from "./origin.ts";
 import { answerDoorChallenge, takeDoorIdentity } from "./door-identity.ts";
 import { createHarnessCall } from "./push-door.ts";
+import { abortAskForwardsOnRemoval, AskForwards, phoneHarnessRevoke, revokeShareAsk } from "./phone-door.ts";
+import { askRevokeSender, createAskRevocations } from "./ask-revocations.ts";
 import { createPushRevocations, revokeDeviceSender, watchDeviceRemovals } from "./push-revocations.ts";
 import { DATA_DIR } from "./state.ts";
 import { takeLaunchSecret } from "./launch-secret.ts";
@@ -467,6 +470,19 @@ const managedOrigin = PRIVATE_ORIGIN ? createServer(proxy) : null;
  * anything bolted onto `proxy` above is on the device port *and* the
  * tunnel-fronted managed origin by default, which is the exact failure this
  * separation exists to prevent. */
+// Share uploads are spooled here and deleted when each forward ends; a crash leaves files behind,
+// so the folder is cleared at boot. The forwards map is shared with the revoke path (S28).
+const askSpoolDir = join(DATA_DIR, "ask-spool");
+try { rmSync(askSpoolDir, { recursive: true, force: true }); } catch { /* the next upload recreates it */ }
+const askForwards = new AskForwards();
+// Signing out, re-pairing or removing a phone also ends the ask forwards it has running.
+abortAskForwardsOnRemoval(devices, askForwards);
+// A switch-off or removal reaches the harness as { deviceId, through } before the computer says it is off; a harness that is
+// down, or a restart of this process, keeps the entry on disk and sends it again.
+const askRevocations = createAskRevocations({
+  file: join(DATA_DIR, "ask-revocations.json"),
+  send: askRevokeSender(createHarnessCall(HARNESS_PORT), companionToken),
+});
 const browserOptions: Parameters<typeof createBrowserHandler>[0] = {
   harnessPort: HARNESS_PORT,
   companionToken,
@@ -480,6 +496,8 @@ const browserOptions: Parameters<typeof createBrowserHandler>[0] = {
   disconnectDevice: connectedDevices.disconnect,
   // An enrolment that lands for a device removed meanwhile drops its binding.
   pushRevoked: (deviceId) => pushRevocations.add(deviceId),
+  askSpoolDir,
+  askForwards,
   // The same instance the device door got. A lockout earned at either door
   // is spent at both, which is the only reading of "locked out" that means
   // anything when one credential opens two doors.
@@ -527,6 +545,10 @@ const control = createControlServer({
   deviceDoor: () => ({ mode: deviceDoorMode(deviceDoorHost ?? null), unencrypted: deviceDoorHost === "0.0.0.0" }),
   connectedDeviceIds: connectedDevices.ids,
   disconnectDevice: connectedDevices.disconnect,
+  revokePush: (deviceId) => pushRevocations.add(deviceId),
+  revokePhoneJobs: (id) => phoneHarnessRevoke(createHarnessCall(HARNESS_PORT), companionToken, id, "removed"),
+  revokeShareAsk: (id) => revokeShareAsk(id, { devices, revocations: askRevocations, forwards: askForwards }),
+  shareAskPending: (id) => askRevocations.pending().some((e) => e.deviceId === id),
   // The startup probe below is not the last word. Tailscale brought up after
   // this process started would otherwise read as absent for the lifetime of
   // the app; `refreshTailnetName` coalesces, so a click during the startup
@@ -780,6 +802,8 @@ const shutdown = async (signal: string): Promise<void> => {
   // own — drop the sockets so "stop" means stopped, now.
   companion.closeAllConnections?.();
   control.closeAllConnections?.();
+  // ...and a call's voice stream, which closeAllConnections() skips once upgraded
+  closeStreamUpgrades();
   browser.closeAllConnections?.();
   managedOrigin?.closeAllConnections?.();
   await Promise.all([

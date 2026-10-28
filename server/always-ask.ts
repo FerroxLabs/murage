@@ -43,6 +43,7 @@ import {
   candidatesOf, deviceInWord, deviceReadPosition, fork, HOME, HOME_PARENT, homeSpelled, interpreterKey, isAnchored, isDeviceWrite, newContext, normalizePath, REMOTE_ELEVATED, resolveFrom,
   UNKNOWN_MARK, unmarked, walkScript, type Candidate, type SimpleCommand, type Visitor, type WalkContext,
 } from "./shell/walk.ts";
+import { closeSync, openSync, readSync, realpathSync, statSync } from "node:fs";
 import { posix as posixPath } from "node:path";
 import { parse, type Redirect } from "./shell/parse.ts";
 
@@ -64,6 +65,10 @@ export interface AlwaysAskHit {
    * the rest of the text was read whole. It asks at Ask and Auto; Full access
    * and No limits, on a turn they cover, run it (server/auto-approve.ts). */
   unseenScript?: true;
+  /** `unreadable` only (1.0.9, NOLIMITS-NODE-109-CUT R10): the text runs an
+   * unseen script Full access and No limits would run, but for this reader
+   * limit; the card names the fix. */
+  unseenWhy?: UnseenWhy;
 }
 
 const WHAT: Record<AlwaysAskRule, string> = {
@@ -87,8 +92,29 @@ const PROTECTED_WHAT: Record<ProtectedClass, string> = {
 
 /** The sentence a held card shows: what it would do, and why it asks. */
 export function alwaysAskNote(hit: AlwaysAskHit): string {
-  return `${hit.what} Murage always asks before a command like this, at every access level.`;
+  const fix = hit.unseenWhy ? ` ${UNSEEN_FIX[hit.unseenWhy]}` : "";
+  return `${hit.what} Murage always asks before a command like this, at every access level.${fix}`;
 }
+
+/** 1.0.9 (R10): the one line a card adds for each reader limit on an unseen
+ * script: what runs unasked, and how to write it so it does. */
+const UNSEEN_FIX: Record<UnseenWhy, string> = {
+  "no-extension": "Full access and No limits run a script unasked when the command names its file exactly, extension included: node ./tool.mjs.",
+  "no-slash": "Full access and No limits run a shell script unasked when the command gives its path: bash ./build.sh, source ./env.sh.",
+  "dot-dot": "Full access and No limits run a script unasked when no path in the command steps up with ..: cd ~/Documents/b, not cd ../b.",
+  "cd-form": "Full access and No limits run a script unasked when each cd names its folder as /..., ~/... or ./... and the steps are joined with &&: cd ./app && node tool.mjs.",
+  "cd-missing": "Full access and No limits run a script unasked when each folder the command moves to is already there.",
+  "or-join": "Full access and No limits run a script unasked when the command's steps are joined with && or ;, with no ||, & or !.",
+  "file-missing": "Full access and No limits run a script unasked when its file is already on disk where the command names it.",
+  "not-regular": "Full access and No limits run a script unasked when it is an ordinary file, not a folder, pipe or device.",
+  "device": "Full access and No limits run a script unasked when it and its folders sit outside the system's device and process folders.",
+  "tilde-escape": "Full access and No limits run a script unasked when ~ is written plainly, with no backslash: ~/Documents.",
+  "no-home": "Full access and No limits run a script unasked when ~ stands for a home folder Murage knows; the full path works too.",
+  "relayed": "A script on a computer Murage reaches through the Cloud asks, because Murage checks the file on the computer that runs it.",
+  "windows": "On Windows, Murage asks before a script it cannot read runs, at every access level; on Mac and Linux, Full access and No limits run it unasked.",
+  "windows-path": "On Windows, Full access and No limits run a script unasked when its path starts with its drive (C:/Users/me/tool.mjs) or is relative (./tool.mjs), with ~ only in cd ~/...",
+  "windows-link": "On Windows, Full access and No limits run a script unasked when it is an ordinary file, not a Git Bash link or socket file.",
+};
 
 const hit = (rule: AlwaysAskRule): AlwaysAskHit => ({ rule, what: WHAT[rule] });
 
@@ -1200,10 +1226,10 @@ function foreignExecutorIn(text: string, powerShell: boolean): boolean {
  * `shell: "pwsh"` is for an engine's PowerShell tool: its text is
  * PowerShell's whatever it starts with. Foreign execution markers are a
  * reader failure and keep asking at every access level. */
-export function alwaysAskCommand(text: string | undefined, cwd?: string, mode: "command" | "text" = "command", shell?: "pwsh", windowsBash?: string[]): AlwaysAskHit | null {
+export function alwaysAskCommand(text: string | undefined, cwd?: string, mode: "command" | "text" = "command", shell?: "pwsh", windowsBash?: string[], home?: string, options: UnseenOptions = {}): AlwaysAskHit | null {
   if (!text) return null;
   try {
-    const found = readWhole(text, cwd, shell, windowsBash);
+    const found = readWhole(text, cwd, shell, windowsBash, home, options);
     // Keep foreign executors held without mistaking Elixir iex for PowerShell.
     const foreignExecutor = foreignExecutorIn(text, shell !== undefined);
     return !found && mode === "command" && foreignExecutor
@@ -1241,12 +1267,12 @@ function read(text: string, cwd: string | undefined, shell?: "pwsh", windowsBash
  * the read goes on, and when nothing else asks, `valueTarget` names each
  * tool and target expression passed over so the run can record them. Every other rule, a literal
  * catastrophe, a protected path, and every other unreadable text still ask. */
-export function alwaysAskRoutineCommand(text: string | undefined, cwd?: string, shell?: "pwsh"): { hit: AlwaysAskHit | null; valueTarget?: CarvedTarget[] } {
+export function alwaysAskRoutineCommand(text: string | undefined, cwd?: string, shell?: "pwsh", home?: string, options: UnseenOptions = {}): { hit: AlwaysAskHit | null; valueTarget?: CarvedTarget[] } {
   if (!text) return { hit: null };
   carved = [];
   carveScope = null;
   try {
-    const found = readWhole(text, cwd, shell);
+    const found = readWhole(text, cwd, shell, undefined, home, options);
     if (found) return { hit: found };
     return carved.length > 0 ? { hit: null, valueTarget: carved } : { hit: null };
   } catch (error) {
@@ -1261,12 +1287,19 @@ export function alwaysAskRoutineCommand(text: string | undefined, cwd?: string, 
 /** `read`, then the unseen script files when nothing else asked: they may go
  * ahead at Full access and No limits only in a text of the allowed shape
  * (`unseenShapeAdmits`); any other text with one asks at every level. */
-function readWhole(text: string, cwd: string | undefined, shell?: "pwsh", windowsBash?: string[]): AlwaysAskHit | null {
+/** `home` (1.0.9): the HOME the requesting engine's shell was handed, from
+ * its own environment record (server/engine-env.ts promptFactsOf); without
+ * it, a `~` keeps the text outside the allowed shape. */
+function readWhole(text: string, cwd: string | undefined, shell?: "pwsh", windowsBash?: string[], home?: string, options: UnseenOptions = {}): AlwaysAskHit | null {
   try {
     const found = read(text, cwd, shell, windowsBash);
     if (found || !unseen || unseen.paths.length === 0) return found;
+    // a `bash -c` payload PowerShell hands on (Codex and ACP engines on
+    // Windows) keeps the 1.0.5 ask; Git Bash's own text is read below
     if (windowsBash) return hit("unreadable");
-    return unseenShapeAdmits(text, unseen.paths, cwd, shell) ? { ...hit("unreadable"), unseenScript: true } : hit("unreadable");
+    const admits = unseenShapeAdmits(text, unseen.paths, cwd, shell, home, options);
+    if (admits === true) return { ...hit("unreadable"), unseenScript: true };
+    return admits === null ? hit("unreadable") : { ...hit("unreadable"), unseenWhy: admits };
   } finally {
     unseen = null;
   }
@@ -1280,69 +1313,394 @@ const SHAPE_SHELLS = new Set(["bash", "sh"]);
 const SHAPE_INTERPRETERS = new Set(["python", "python3", "node", "ruby", "php", "perl"]);
 const SHAPE_SOURCES = new Set(["source", "."]);
 const SHAPE_PRINTS = new Set(["pwd", "ls", "true", "deactivate", "which", "echo"]);
-/** A literal path with no option shape. */
-const SHAPE_PATH = /^(?!-)[A-Za-z0-9_./@+-]+$/;
-const baseName = (path: string): string => path.split("/").pop() ?? path;
-/** The device or process folder, or a file in it, however it is spelled
- * (`/dev`, `/dev/`, `//dev/stdin`, `/./proc/self/fd/0`, `/tmp/../dev`). */
-const deviceOrProcess = (path: string): boolean => /^\/(?:dev|proc)(?:\/|$)/.test(posixPath.normalize(path.replace(/\/+/g, "/")));
-/** A literal path of the allowed shape that is not the device or process folder. */
-const shapePath = (path: string | undefined): path is string => path !== undefined && SHAPE_PATH.test(path) && !deviceOrProcess(path);
-/** An absolute path, POSIX or with a drive. */
-const anchored = (path: string): boolean => /^(?:\/|[A-Za-z]:\/)/.test(path);
+/** 1.0.9: the filters a script's output may be piped through
+ * (`node tool.mjs | head -c 3000`), each read by `stdinFilter`: only the
+ * options listed there, so each reads its own input and prints, and never
+ * opens a file, writes one, runs a program or takes code (`sort` is out: `-o`
+ * writes and `--compress-program` runs one; `tee`, `xargs`, `awk`, `sed` and
+ * every shell are out). Only after a pipe, never first. */
+const SHAPE_FILTERS = new Set(["head", "tail", "wc", "grep", "cut", "tr"]);
+/** A count (`3000`, `+5`, `-5`, `10K`). */
+const FILTER_COUNT = /^[+-]?\d+[A-Za-z]{0,3}$/;
+/** A `cut` list (`1,3-5`). */
+const FILTER_LIST = /^[\d,-]+$/;
 
-/** 1.0.5 r8: every folder each command of the shape may run from, given the
- * command's own folder and that any `cd` may fail (`cd /no/such; bash
- * proc/self/fd/0` runs from where it started), and every script path from
- * each of them: absolute, and never the device or process folder. With no
- * folder for the command, a relative script path is not placed and asks. */
-function everyFolderPlaces(commands: string[][], cwd: string | undefined): boolean {
-  const start = cwd?.replace(/\\/g, "/");
-  // with no folder for the command, the folder it started in stays one the
-  // text may still be in: a `cd` that fails does not leave it
-  const unknown = start === undefined || !anchored(start);
-  let folders: string[] = unknown || start === undefined ? [] : [start];
-  const from = (folder: string, path: string): string => (anchored(path) ? path : posixPath.join(folder, path));
-  for (const words of commands) {
-    const [name, path] = words as [string, string | undefined];
-    if (name === "cd" && path !== undefined) {
-      folders = [...new Set([...folders, ...(anchored(path) ? [path] : folders.map((folder) => from(folder, path)))])];
+/** Reads `args` as options only: each `flags` word is a cluster of these
+ * letters, each `valued` option takes the next word (or its own tail, or
+ * `--long=`) checked by its test, and `positional` decides each other word.
+ * Any other word, `--` included, is outside the shape. */
+function filterOptions(args: string[], flags: RegExp, valued: Record<string, (value: string) => boolean>, longs: Record<string, ((value: string) => boolean) | true>, positional: (word: string) => boolean): boolean {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg.startsWith("--")) {
+      const [long, ...rest] = arg.slice(2).split("=");
+      const test = longs[long!];
+      if (test === undefined) return false;
+      if (test === true) { if (rest.length) return false; continue; }
+      if (!rest.length || !test(rest.join("="))) return false;
       continue;
     }
-    const script = shapeScript(words);
-    if (!script) continue;
-    if (anchored(script)) { if (deviceOrProcess(script)) return false; continue; }
-    if (unknown || folders.map((folder) => from(folder, script)).some(deviceOrProcess)) return false;
+    if (arg.startsWith("-") && arg.length > 1) {
+      if (flags.test(arg)) continue;
+      const test = valued[arg[1]!];
+      if (!test) return false;
+      const value = arg.length > 2 ? arg.slice(2) : args[++i];
+      if (value === undefined || !test(value)) return false;
+      continue;
+    }
+    if (!positional(arg)) return false;
   }
   return true;
 }
 
+/** 1.0.9 (Astra r1 item 3): a filter that reads only its own input, never a
+ * file it names (`head -c 4096 /proc/1234/environ` reads another process's
+ * environment): `head`, `tail` and `wc` take no operand, `cut` none, `tr` its
+ * one or two sets, `grep` its one pattern. */
+function stdinFilter(words: string[]): boolean {
+  const [name, ...args] = words as [string, ...string[]];
+  const count = (value: string): boolean => FILTER_COUNT.test(value);
+  const list = (value: string): boolean => FILTER_LIST.test(value);
+  const any = (): boolean => true;
+  const none = (): boolean => false;
+  switch (name) {
+    case "head":
+    case "tail":
+      return filterOptions(args, /^-(?:[qv]+|\d+)$/, { n: count, c: count }, { lines: count, bytes: count, quiet: true, silent: true, verbose: true }, none);
+    case "wc":
+      return filterOptions(args, /^-[clmwL]+$/, {}, { bytes: true, chars: true, lines: true, words: true, "max-line-length": true }, none);
+    case "cut":
+      return filterOptions(args, /^-[sz]+$/, { d: any, f: list, c: list, b: list }, { delimiter: any, fields: list, characters: list, bytes: list, complement: true, "only-delimited": true, "output-delimiter": any }, none);
+    case "tr": {
+      let sets = 0;
+      return filterOptions(args, /^-[cdsCt]+$/, {}, { complement: true, delete: true, "squeeze-repeats": true, truncate: true }, () => ++sets <= 2) && sets >= 1;
+    }
+    case "grep": {
+      let patterns = 0;
+      const pattern = (): boolean => ++patterns <= 1;
+      return filterOptions(args, /^-[ivcnowxEFGqshHz]+$/, { e: pattern, m: count, A: count, B: count, C: count },
+        { regexp: pattern, "max-count": count, "after-context": count, "before-context": count, context: count, "ignore-case": true, "invert-match": true, count: true, "line-number": true, "only-matching": true, "word-regexp": true, "line-regexp": true, "fixed-strings": true, "extended-regexp": true, "basic-regexp": true, quiet: true, silent: true, "no-messages": true, "no-filename": true, "with-filename": true },
+        pattern) && patterns === 1;
+    }
+    default:
+      return false;
+  }
+}
+
+/** 1.0.9: the home folder an unquoted `~` names, as a mark; `placeScript`
+ * reads it as the engine's own HOME (R5). No shell text holds a NUL. */
+const HOME_MARK = "/\u0000home";
+/** A literal path with no option shape. 1.0.9 (Windows parity): `\` and a
+ * drive's `:` are spelled here too; `spelledPath` keeps them to Windows. */
+const SHAPE_PATH = /^(?!-)[A-Za-z0-9_./@+\\:-]+$/;
+const baseName = (path: string): string => path.split(/[\\/]/).pop() ?? path;
+/** The device or process folder, or a file in it, however it is spelled
+ * (`/dev`, `/dev/`, `//dev/stdin`, `/./proc/self/fd/0`, `/tmp/../dev`). */
+const deviceOrProcess = (path: string): boolean => /^\/(?:dev|proc)(?:\/|$)/i.test(posixPath.normalize(path.replace(/\/+/g, "/")));
+/** A literal path of the allowed shape that is not the device or process folder. */
+const shapePath = (path: string | undefined): path is string => {
+  if (path === undefined) return false;
+  if (!path.startsWith(HOME_MARK)) return SHAPE_PATH.test(path) && !deviceOrProcess(path);
+  const tail = path.slice(HOME_MARK.length);
+  return tail === "" || (tail.startsWith("/") && SHAPE_PATH.test(tail));
+};
+
+/** 1.0.9 (NOLIMITS-NODE-109-CUT R10): why an unseen script still asks at
+ * Full access and No limits, each a reader limit with its fix on the card. */
+export type UnseenWhy = "no-extension" | "no-slash" | "dot-dot" | "cd-form" | "cd-missing" | "or-join" | "file-missing" | "not-regular" | "device" | "tilde-escape" | "no-home" | "relayed" | "windows-path" | "windows-link" | "windows";
+
+/** The two disk reads the unseen-script check makes (R4, R7): both throw on
+ * any failure. Injectable, so the corpus runs on a stub and a relay could
+ * answer for another computer later. */
+export interface UnseenFs {
+  realpath(path: string): string;
+  stat(path: string): { isFile(): boolean; isDirectory(): boolean };
+  /** Windows only (section 12 W6): the file's first `bytes` bytes (at most 10). */
+  head?(path: string, bytes: number): Uint8Array;
+}
+export interface UnseenOptions {
+  fs?: UnseenFs;
+  /** The shell the text runs in: a POSIX shell, or Git Bash on Windows.
+   * Unset, Windows when the server runs there or the folder has a drive. */
+  platform?: "posix" | "win32";
+}
+const DISK: UnseenFs = {
+  realpath: (path) => realpathSync.native(path),
+  stat: (path) => statSync(path),
+  head: (path, bytes) => {
+    const buffer = new Uint8Array(Math.min(bytes, 10));
+    const fd = openSync(path, "r");
+    try { return buffer.subarray(0, readSync(fd, buffer, 0, buffer.length, 0)); } finally { closeSync(fd); }
+  },
+};
+
+/** Section 12 W6: the start of a file the Cygwin runtime under Git Bash may
+ * read as a link or a socket (`!<symlink>`, `!<socket >`, Interix
+ * `IntxLNK`, a Windows shortcut's `4C 00 00 00` header), whatever its name
+ * or attributes: a superset, so it only adds asks. */
+function cygwinSpecial(head: Uint8Array): boolean {
+  const text = String.fromCharCode(...head);
+  return text.startsWith("!<") || text.startsWith("IntxLNK") || text.startsWith("L\u0000\u0000\u0000");
+}
+
+/** A Windows name that is a device whatever folder or extension it has
+ * (`con.mjs`, `NUL`, `com1.txt`). */
+const WINDOWS_DEVICE = /^(?:con|prn|aux|nul|com[0-9]|lpt[0-9]|conin\$|conout\$)(?:\.|$)/i;
+
+/** A path as written, read with no lookup (R2), or why it is not one. `abs`
+ * is a fixed root (`/x`; on Windows `C:/x`, `C:\x`, `/c/x`), `home` starts
+ * at `~`, `dot` at `./`, `bare` is a name the program may look up. `rest` is
+ * the path after its root, with `/` separators. */
+type Spelled = { kind: "abs" | "home" | "dot" | "bare"; root: string; rest: string };
+function spelledPath(path: string, win: boolean): Spelled | UnseenWhy | null {
+  let kind: Spelled["kind"];
+  let root = "";
+  let rest: string;
+  // a POSIX name with a `\` or `:` was never in the 1.0.8 shape; Git Bash
+  // hands a `\` on to Windows as a separator
+  if (!win && /[\\:]/.test(path)) return null;
+  if (path.startsWith(HOME_MARK)) {
+    kind = "home";
+    rest = path.slice(HOME_MARK.length);
+    if (win && /[\\:]/.test(rest)) return "windows-path";
+  } else if (!win) {
+    if (path.startsWith("/")) { kind = "abs"; root = "/"; rest = path; }
+    else if (path.startsWith("./")) { kind = "dot"; rest = path.slice(1); }
+    else { kind = "bare"; rest = path; }
+  } else {
+    const p = path.replace(/\\/g, "/");
+    const drive = /^([A-Za-z]):\//.exec(p);
+    // section 12 W3: a backslash only in a drive path (`'C:\x\tool.mjs'`)
+    if (!drive && path.includes("\\")) return "windows-path";
+    if (drive) {
+      // `C:/x` or `C:\x`: the drive, fixed; `/c/x` needs MSYS conversion
+      // or the mount table, so it is a `/`-rooted path below
+      kind = "abs";
+      root = `${drive[1]!.toUpperCase()}:/`;
+      rest = p.slice(drive[0].length);
+    } else if (p.startsWith("/") || /^[A-Za-z]:/.test(p)) {
+      // `/c/x`, `/tmp`, `//server/share`: MSYS rewrites them or Git Bash
+      // mounts them, which the reader does not model; `C:x` is the drive's
+      // own current folder
+      return "windows-path";
+    } else if (p.startsWith("./")) { kind = "dot"; rest = p.slice(1); }
+    else { kind = "bare"; rest = p; }
+    // a stream (`a.mjs:x`), or a name Windows trims (`a.mjs.`, `a.mjs `)
+    if (rest.includes(":")) return "windows-path";
+  }
+  const segments = rest.split("/").filter((segment) => segment !== "");
+  if (segments.some((segment) => segment === ".." || segment === ".")) return "dot-dot";
+  if (win) {
+    if (segments.some((segment) => /[. ]$/.test(segment))) return "windows-path";
+    if (segments.some((segment) => WINDOWS_DEVICE.test(segment))) return "device";
+  }
+  return { kind, root, rest };
+}
+
+/** The engine's HOME as a folder `~` may stand for (R5): absolute, not the
+ * root, no `.` or `..` step, not the device or process folder; on Windows a
+ * drive path (`C:\Users\me`, `C:/Users/me`; section 12 W4). Spaces are fine:
+ * HOME is a value, never split. */
+function homeFolder(home: string | undefined, win: boolean): string | undefined {
+  if (!home || home.includes("\u0000")) return undefined;
+  let root: string;
+  let rest: string;
+  if (win) {
+    const p = home.replace(/\\/g, "/");
+    const drive = /^([A-Za-z]):\//.exec(p);
+    if (!drive) return undefined;
+    root = `${drive[1]!.toUpperCase()}:/`;
+    rest = p.slice(drive[0].length);
+  } else {
+    if (!home.startsWith("/")) return undefined;
+    root = "/";
+    rest = home;
+  }
+  const segments = rest.split("/").filter((segment) => segment !== "");
+  if (segments.length === 0 || segments.some((segment) => segment === "." || segment === "..")) return undefined;
+  // a name Windows trims (`C:\Users\me.`, a trailing space) is another folder to Git Bash
+  if (win && segments.some((segment) => /[. ]$/.test(segment))) return undefined;
+  const folder = `${root}${segments.join("/")}`;
+  return !win && deviceOrProcess(folder) ? undefined : folder;
+}
+
+/** Is the text read as Git Bash on Windows reads it? */
+const gitBash = (cwd: string | undefined, options: UnseenOptions): boolean =>
+  options.platform ? options.platform === "win32" : process.platform === "win32" || /^[A-Za-z]:[\\/]/.test(cwd ?? "");
+
+/** The folder the engine says the command runs in, absolute, `/` separated. */
+function startFolder(cwd: string | undefined, win: boolean): string | undefined {
+  if (!cwd) return undefined;
+  // a POSIX folder is checked as itself: `\` is an ordinary name character
+  // there (`/tmp/a\b` is not `/tmp/a/b`)
+  if (!win) return cwd.startsWith("/") ? posixPath.normalize(cwd) : undefined;
+  // section 12 W2: a drive path only (`/c/x` needs the mount table)
+  const p = cwd.replace(/\\/g, "/");
+  const drive = /^([A-Za-z]):\//.exec(p);
+  if (!drive) return undefined;
+  const rest = p.slice(drive[0].length);
+  // a name Windows trims (`C:\work.`, `C:\work `) is another folder to Git Bash
+  if (rest.split("/").some((segment) => /[. ]$/.test(segment))) return undefined;
+  return posixPath.normalize(`${drive[1]!.toUpperCase()}:/${rest}`);
+}
+
+/** A real path on the device or process folder, or on Windows another
+ * machine's share or a device namespace (`\\server\x`, `\\.\pipe\x`). */
+function deviceReal(real: string, win: boolean): boolean {
+  const p = real.replace(/\\/g, "/");
+  if (win) return p.startsWith("//") || WINDOWS_DEVICE.test(baseName(p));
+  return deviceOrProcess(p);
+}
+
+/** 1.0.9 (NOLIMITS-NODE-109-CUT R2-R5): does every `cd` and the one script
+ * name exactly the folder or file it reaches, with no lookup by any shell or
+ * interpreter, and are they on disk now as a folder and an ordinary file?
+ * Null when they are; else why not ("shape" when it is no named limit).
+ * `win` reads Git Bash on Windows by section 12: drive and relative paths,
+ * `~` only as a `cd` target, no drive-path `cd`, no Cygwin special file. */
+function placeScript(commands: string[][], cwd: string | undefined, home: string | undefined, win: boolean, fs: UnseenFs): UnseenWhy | "shape" | null {
+  const homeDir = homeFolder(home, win);
+  let folder = startFolder(cwd, win);
+  const place = (spelled: Spelled): string | UnseenWhy | "shape" => {
+    if (spelled.kind === "abs") return posixPath.normalize(`${spelled.root}${spelled.rest}`);
+    if (spelled.kind === "home") return homeDir === undefined ? "no-home" : posixPath.normalize(`${homeDir}${spelled.rest}`);
+    return folder === undefined ? "shape" : posixPath.join(folder, spelled.rest);
+  };
+  const real = (path: string): string | undefined => { try { return fs.realpath(path); } catch { return undefined; } };
+  for (const words of commands) {
+    const [name, path] = words as [string, string | undefined];
+    if (name === "cd") {
+      const spelled = spelledPath(path ?? "", win);
+      if (spelled === null) return "shape";
+      if (typeof spelled === "string") return spelled;
+      // R3: `/…`, `~…` or `./…` only, which no shell searches CDPATH or the
+      // directory stack for (`cd app`, `cd +0` ask)
+      if (spelled.kind === "bare") return "cd-form";
+      // section 12 W4: on Windows `./…` and `~…` only
+      if (win && spelled.kind === "abs") return "cd-form";
+      const target = place(spelled);
+      if (target === "shape" || target === "no-home") return target;
+      const landed = real(target);
+      if (landed === undefined) return "cd-missing";
+      if (deviceReal(landed, win)) return "device";
+      try { if (!fs.stat(landed).isDirectory()) return "cd-missing"; } catch { return "cd-missing"; }
+      folder = target;
+      continue;
+    }
+    if (SHAPE_PRINTS.has(name)) {
+      // a path a printing command names: no `..`, and not placed in the
+      // device or process folder (`cd / && ls proc/self/environ`)
+      for (const word of words.slice(1)) {
+        if (!word.includes("/") && !word.startsWith(HOME_MARK)) continue;
+        const spelled = spelledPath(word, win);
+        if (spelled === "dot-dot") return "dot-dot";
+        // on Windows a print path is read by the Windows rules (Grok r5 Low)
+        if (win && typeof spelled === "string") return spelled;
+        if (spelled === null || typeof spelled === "string") continue;
+        if (win && spelled.kind === "home") return "windows-path";
+        const at = place(spelled);
+        if (at === "no-home") return at;
+        if (at !== "shape" && !win && deviceOrProcess(at)) return "device";
+      }
+      continue;
+    }
+    const script = shapeScript(words);
+    if (!script) continue;
+    // R2: a shell or `source` searches PATH for a name with no `/`; an
+    // interpreter completes a name with no extension (`node ./runner` may
+    // run runner.js, Python `app/__main__.py`)
+    const spelled = spelledPath(script, win);
+    if (spelled === null) return "shape";
+    if (typeof spelled === "string") return spelled;
+    // section 12 W3: on Windows `~` only as a `cd` target
+    if (win && spelled.kind === "home") return "windows-path";
+    // section 12 W6: a shortcut Git Bash follows as a link
+    if (win && /\.lnk$/i.test(script)) return "windows-link";
+    if (SHAPE_SHELLS.has(name) || SHAPE_SOURCES.has(name)) {
+      // a literal `/`: bash and `source` search PATH for a name with none,
+      // and a backslash is not one to them
+      if (!script.includes("/")) return "no-slash";
+    } else if (!/\.[A-Za-z0-9]{1,10}$/.test(baseName(script))) return "no-extension";
+    const at = place(spelled);
+    if (at === "shape" || at === "no-home") return at;
+    // R4: the exact file, an ordinary file on disk now, after its links
+    const landed = real(at);
+    if (landed === undefined) return "file-missing";
+    if (deviceReal(landed, win)) return "device";
+    try { if (!fs.stat(landed).isFile()) return "not-regular"; } catch { return "file-missing"; }
+    if (win) {
+      // section 12 W6: a file Git Bash reads as a link or a socket
+      if (!fs.head) return "file-missing";
+      try { if (cygwinSpecial(fs.head(landed, 10))) return "windows-link"; } catch { return "file-missing"; }
+    }
+  }
+  return null;
+}
+
 /** The text as a flat list of simple commands' literal words, or null when
- * it holds anything else: a background job, a pipe, a negation, a compound
- * command, an assignment, a redirect other than to /dev/null or `2>&1`, a
- * word that is not one fixed string, or an unquoted glob or brace. */
-function shapeCommands(text: string): string[][] | null {
+ * it holds anything else: a compound command, an assignment, a redirect
+ * other than to /dev/null or `2>&1`, a word that is not one fixed string, an
+ * unquoted glob or brace, or a pipe into anything but the filters. `piped`
+ * says a pipe was there. How the commands are joined is read apart
+ * (`joinWhy`), so the card can name it. */
+function shapeCommands(text: string): { commands: string[][]; piped: boolean } | null {
   let script;
   try { script = parse(text); } catch (error) { if (error instanceof Unreadable) return null; throw error; }
   const out: string[][] = [];
+  let piped = false;
   for (const item of script.items) {
-    if (item.background) return null;
     for (const pipeline of item.andOr.pipelines) {
-      if (pipeline.negated || pipeline.commands.length !== 1) return null;
-      const command = pipeline.commands[0]!;
-      if (command.kind !== "simple" || command.assigns.length > 0 || command.words.length === 0) return null;
-      if (!command.redirects.every(quietRedirect)) return null;
-      const words: string[] = [];
-      for (const word of command.words) {
-        const literal = literalText(word);
-        if (literal === undefined) return null;
-        if (word.parts.some((part) => part.kind === "lit" && part.quote === "none" && /[*?[\]{}]/.test(part.text))) return null;
-        words.push(literal);
+      if (pipeline.commands.length > 1) piped = true;
+      for (const [at, command] of pipeline.commands.entries()) {
+        if (command.kind !== "simple" || command.assigns.length > 0 || command.words.length === 0) return null;
+        if (!command.redirects.every(quietRedirect)) return null;
+        const words: string[] = [];
+        for (const word of command.words) {
+          const literal = shapeWord(word);
+          if (literal === undefined) return null;
+          if (word.parts.some((part) => part.kind === "lit" && part.quote === "none" && /[*?[\]{}]/.test(part.text))) return null;
+          words.push(literal);
+        }
+        // 1.0.9: a pipe only into the filters (`node tool.mjs | head -c 3000`);
+        // the first command is never a filter or a `cd` (a `cd` in a pipe
+        // changes no folder), and nothing else may follow it
+        if (pipeline.commands.length > 1 && (at === 0 ? words[0] === "cd" || SHAPE_FILTERS.has(words[0]!) : !SHAPE_FILTERS.has(words[0]!))) return null;
+        out.push(words);
       }
-      out.push(words);
     }
   }
-  return out;
+  return { commands: out, piped };
+}
+
+/** R1, R3: how the commands are joined. With a `cd`, only `&&` (a `cd` that
+ * failed never leaves a script running from the folder before it); without
+ * one, `&&` or `;`. A `||`, `&` or `!` asks either way. */
+function joinWhy(text: string, commands: string[][]): UnseenWhy | null {
+  const script = parse(text);
+  const orJoin = script.items.some((item) => item.background || item.andOr.ops.includes("||") || item.andOr.pipelines.some((pipeline) => pipeline.negated));
+  if (commands.some((words) => words[0] === "cd") && (orJoin || script.items.length > 1)) return "cd-form";
+  return orJoin ? "or-join" : null;
+}
+
+/** A word of the allowed shape as the one string it stands for: literal
+ * text, or 1.0.9 a home folder spelled with an unquoted `~` at its start
+ * (`cd ~/Documents/app`), written from the home mark. The shell fills in `~`
+ * only when nothing up to the first unquoted `/` is quoted (`~"/../x"` is
+ * the folder named `~`), so the `/` after it must be unquoted. `~user` and
+ * a `~` anywhere else are outside the shape; a quoted `'~'` spells a folder
+ * name, outside SHAPE_PATH. */
+function shapeWord(word: Word): string | undefined {
+  const [first, ...rest] = word.parts;
+  if (first?.kind !== "tilde") {
+    const literal = literalText(word);
+    return literal?.includes("\u0000") ? undefined : literal;
+  }
+  if (first.user !== "") return undefined;
+  const slash = rest[0];
+  if (slash && !(slash.kind === "lit" && slash.quote === "none" && slash.text.startsWith("/"))) return undefined;
+  const tail = literalText({ ...word, parts: rest });
+  if (tail === undefined || tail.includes("\u0000")) return undefined;
+  return `${HOME_MARK}${tail}`;
 }
 
 /** `>/dev/null`, `1>/dev/null`, `2>/dev/null`, `2>&1`. */
@@ -1358,7 +1716,10 @@ function quietRedirect(redirect: Redirect): boolean {
 function shapeScript(words: string[]): string | null {
   const [name, path] = words as [string, string | undefined];
   if (name === "cd") return words.length === 2 && shapePath(path) ? "" : null;
-  if (SHAPE_PRINTS.has(name)) return "";
+  // 1.0.9 (Grok r2 Low): a printing command names no device or process file
+  // (`ls /proc/1/environ`); it prints names only, but stays outside those folders
+  if (SHAPE_PRINTS.has(name)) return words.slice(1).some((word) => !word.startsWith(HOME_MARK) && deviceOrProcess(word)) ? null : "";
+  if (SHAPE_FILTERS.has(name)) return stdinFilter(words) ? "" : null;
   if (!SHAPE_SOURCES.has(name) && !SHAPE_SHELLS.has(name) && !SHAPE_INTERPRETERS.has(name)) return null;
   if (!shapePath(path)) return null;
   // php reads its own options after the script too (`php app.php -r code`,
@@ -1377,21 +1738,29 @@ function spelledOnce(commands: string[][], scripts: string[], paths: string[]): 
 
 /** 1.0.5: may the unseen script file in this text run at Full access and
  * No limits? Only when the whole text is of the allowed shape, so the file
- * was on disk before it ran and nothing else runs unread. A POSIX text
- * only: PowerShell and cmd keep asking. */
-function unseenShapeAdmits(text: string, paths: string[], cwd: string | undefined, shell?: "pwsh"): boolean {
-  if (shell === "pwsh" || looksLikePowerShell(text) !== null || /^\s*robocopy(\.exe)?(?=\s|$)/i.test(text)) return false;
+ * was on disk before it ran and nothing else runs unread, and 1.0.9
+ * (NOLIMITS-NODE-109-CUT) only when no program has to look for it. True,
+ * or why not (null: outside the shape, no named limit). A POSIX text, or
+ * Git Bash on Windows by section 12; PowerShell and cmd keep asking. */
+function unseenShapeAdmits(text: string, paths: string[], cwd: string | undefined, shell: "pwsh" | undefined, home: string | undefined, options: UnseenOptions): true | UnseenWhy | null {
+  if (shell === "pwsh" || looksLikePowerShell(text) !== null || /^\s*robocopy(\.exe)?(?=\s|$)/i.test(text)) return null;
   // never a device or process file as the walk resolved it (`//dev/stdin`)
-  if (paths.some(deviceOrProcess)) return false;
-  const commands = shapeCommands(text);
-  if (!commands || commands.length === 0) return false;
-  // every script placed from every folder the text may be in (`cd / && bash
-  // proc/self/fd/0`, a `cd` that failed); a relative one with no folder asks
-  if (!everyFolderPlaces(commands, cwd)) return false;
-  // a `cd` with a `||` in the text: which folder a script runs from turns on
-  // what failed (`cd /no/such || cd /work && bash build.sh`), so it asks
-  if (commands.some((words) => words[0] === "cd") && parse(text).items.some((item) => item.andOr.ops.includes("||"))) return false;
-  return coreShape(commands, paths) || venvShape(commands, paths);
+  if (paths.some(deviceOrProcess)) return "device";
+  // R5: a backslash where it can touch `~` leaves it literal (`~\/x`), and
+  // the lexer does not keep that escape; a backslash elsewhere is data
+  if (/\\~|~[^\s/]*\\/.test(text)) return "tilde-escape";
+  const shaped = shapeCommands(text);
+  if (!shaped || shaped.commands.length === 0) return null;
+  const { commands, piped } = shaped;
+  const win = gitBash(cwd, options);
+  const core = coreShape(commands, paths);
+  if (!core && !venvShape(commands, paths, piped)) return null;
+  // section 12 W5: the venv shape (R9) is not extended to Windows
+  if (!core && win) return "windows";
+  const joined = joinWhy(text, commands);
+  if (joined) return joined;
+  const placed = placeScript(commands, cwd, home, win, options.fs ?? DISK);
+  return placed === null ? true : placed === "shape" ? null : placed;
 }
 
 /** One script file run by a shell, an interpreter or `source`, beside `cd`
@@ -1410,10 +1779,13 @@ function coreShape(commands: string[][], paths: string[]): boolean {
  * `cd app && . .venv/bin/activate && python -m pytest`). Zero or more `cd`,
  * then the one activate script with nothing run before it (so the text
  * cannot have written it), then only `cd`, the printing commands, `pip`,
- * `pytest` and `python -m pip|pytest|unittest`: none of them runs a script file of its
- * own, takes code inline or loads code first. The activate is the only
- * unseen file. Every word was read by the reader, which found nothing. */
-function venvShape(commands: string[][], paths: string[]): boolean {
+ * `pytest` and `python -m pip|pytest|unittest`. The activate is the only
+ * unseen file. Every word was read by the reader, which found nothing.
+ * 1.0.9 (NOLIMITS-NODE-109-CUT R9, section 8): accepted inherited trust, as
+ * 1.0.5 shipped it: pytest and pip load the project's own code and build
+ * backends, which no level reads. Not widened: no pipe and no `~`. */
+function venvShape(commands: string[][], paths: string[], piped: boolean): boolean {
+  if (piped || commands.flat().some((word) => word.startsWith(HOME_MARK))) return false;
   let at = 0;
   while (at < commands.length && commands[at]![0] === "cd") {
     if (shapeScript(commands[at]!) !== "") return false;
@@ -1422,7 +1794,7 @@ function venvShape(commands: string[][], paths: string[]): boolean {
   const source = commands[at];
   if (!source || source.length !== 2 || !SHAPE_SOURCES.has(source[0]!)) return false;
   const activate = source[1]!;
-  if (!shapePath(activate) || !(activate === "bin/activate" || activate.endsWith("/bin/activate"))) return false;
+  if (!shapePath(activate) || !/(?:^|\/)bin\/activate$/.test(activate)) return false;
   if (!commands.slice(at + 1).every(venvTool)) return false;
   return paths.length === 1 && spelledOnce(commands, [activate], paths);
 }

@@ -1,5 +1,9 @@
 import { enforceProxyLaunchGuard } from "./proxy-launch-guard.mjs";
-import { FluxSigninError, assertFluxDesktopSigninEnabled, cancelFluxDesktopSignin, runFluxDesktopSignin } from "./flux-desktop-signin.mjs";
+// 1.0.9 Sentinel: right after the guard module (which only defines the guard), so a Windows Sentinel task launch runs
+// its one scan and exits before any other module of the app evaluates.
+import "./sentinel-trampoline-entry.mjs";
+import { createSentinelHost } from "./sentinel-host.mjs";
+import { FluxSigninError, assertFluxDesktopSigninEnabled, cancelFluxDesktopSignin, readEmailOwnerToken, runFluxDesktopSignin } from "./flux-desktop-signin.mjs";
 import { writeCallTrace } from "./call-trace.mjs";
 import { createProviderBankReconciliation, fenceProviderDocumentUpdate, mutateProviderCredentials } from "./provider-connection-control.mjs";
 import { closedVolumeProblem } from "./backup-closed-volume.mjs";
@@ -87,6 +91,7 @@ import {
   readSafeLogTail,
 } from "./diagnostics.mjs";
 import { migrateMcpServerSecrets, migrateWorkspaceCredentials, workspaceCredentialEnv } from "./workspace-credentials.mjs";
+import { EMAIL_OWNER_MESSAGE, EMAIL_OWNER_SCOPE, isEmailSecretsSave, withEmailOwner, withEmailSecrets } from "./email-secrets.mjs";
 import { assertIncidentExportSender, prepareSelectedIncidentReport, saveDiagnosticsReport, validateIncidentSelection } from "./incident-export.mjs";
 import { activateExistingWindow } from "./single-instance.mjs";
 import { pollServerIdentity } from "./server-boot-probe.mjs";
@@ -352,6 +357,27 @@ if (cloudHome?.client) registerEngineLoginIpc({ ipcMain, active: () => cloudHome
   createSocket: (url, options) => new EngineLoginWebSocket(url, options), openExternal: (url) => shell.openExternal(url), log: slog }) });
 let backgroundLifecycle=null;
 let backupScheduleHost=null;
+// 1.0.9 Sentinel host (electron/sentinel-host.mjs): the health/ producer root, the desktop producer and the OS schedule.
+let sentinelHost=null;
+const SENTINEL_CAPTURE_PHASES=new Set(["claiming","capturing","handoff-prepared","handoff-armed","offline-claimed"]);
+/** The data owner's health/ initialization boundary: after the lease, before any backup capture is admitted. */
+async function initializeSentinelHost({closed=false}={}){
+  if(!app.isPackaged||!desktopDataOwner||sentinelHost)return;
+  try{
+    sentinelHost=createSentinelHost({
+      dataDir:ownedDesktopDataDir(),resourcesPath:process.resourcesPath,closed,
+      executable:fs.realpathSync.native(process.env.APPIMAGE??app.getPath("exe")),
+      home:app.getPath("home"),userData:app.getPath("userData"),env:process.env,
+      configHome:path.isAbsolute(process.env.XDG_CONFIG_HOME??"")?process.env.XDG_CONFIG_HOME:undefined,
+      captureActive:()=>{try{return SENTINEL_CAPTURE_PHASES.has(backupScheduleHost?.internalStatus().phase);}catch{return true;}},
+      Notification,log:line=>slog(line),
+      // S01: the live folder/key check of the backup host (created later); unknown only until it exists.
+      bindingCurrent:async()=>backupScheduleHost?backupScheduleHost.bindingCurrent():null,
+      onPageClick:()=>{const win=mainWindow;if(!win||win.isDestroyed())return;if(win.isMinimized())win.restore();win.show();win.focus();},
+    });
+    await sentinelHost.initialize();
+  }catch{slog("[sentinel] health checks are waiting: the host did not start");}
+}
 let backupRemoteHost=null;
 let backupProgress=null; // the "Backing up your workspace" window while the offline capture runs
 // The one way back from a backup-mode capture (backup-offline-return.mjs). Defined
@@ -1351,6 +1377,7 @@ import {
   reconcileCompanionHttps,
   BROWSER_LOOPBACK_TARGET,
   companionCloudDesktopAccess,
+  companionShareAskAccess,
   companionRevoke,
   companionLanPairingAtRest,
   companionRunning,
@@ -1951,6 +1978,7 @@ async function gatherDiagnostics() {
     channelSummary,
     desktopLogTail: desktopLog?.tail ?? "",
     logTail: log?.tail ?? "",
+    sentinelSummary: sentinelHost?.diagnosticsSummary() ?? null,
   });
 }
 
@@ -2209,6 +2237,14 @@ async function startServerOn(port) {
       // A server was renamed and nothing else changed: its encrypted secrets move to the new name.
       if (message?.type === "murage:mcp-secrets-renamed") {
         void mcpServers.handleSecretsRenamed(message);
+        return;
+      }
+      // Bot email (2.3, 2.4): the server minted, rotated or revoked an email key; the whole sanitized doc replaces the stored copy.
+      if (isEmailSecretsSave(message)) {
+        if (!credentialStoreUnavailable) {
+          void updateSecureCredentialDocument((current) => withEmailSecrets(current, message.doc), undefined, { skipUnchanged: true })
+            .catch((error) => slog(`bot email keys not saved: ${error?.message ?? error}`));
+        }
         return;
       }
       // A link server answered 401 to its access token: refresh it here (the
@@ -4029,6 +4065,9 @@ ipcMain.handle("companion:pairing", (_event, open, expectedToken) =>
 ipcMain.handle("companion:cloud-desktop", (_event, deviceId, allowed) =>
   companionCloudDesktopAccess(deviceId, Boolean(allowed)).then(() => desktopCompanionState()),
 );
+ipcMain.handle("companion:share-ask", (_event, deviceId, allowed) =>
+  companionShareAskAccess(deviceId, Boolean(allowed)).then(() => desktopCompanionState()),
+);
 ipcMain.handle("companion:revoke", (_event, deviceId) =>
   companionRevoke(deviceId).then(() => desktopCompanionState()),
 );
@@ -4166,6 +4205,26 @@ ipcMain.handle("flux-signin:start", async (_event, input) => {
   }
 });
 ipcMain.handle("flux-signin:cancel", () => { cancelFluxDesktopSignin(); });
+
+// Bot email (BOT-EMAIL-MURAGE-109 2.4): the owner act of turning email on obtains the email:owner token from the same PKCE desktop flow,
+// stores it encrypted and hands it to the server over the private port. The token never reaches the renderer, an engine or config.flux.
+ipcMain.handle("email-owner-signin:start", async () => {
+  const gate = await modelSignInGate();
+  if (gate) return { ok: false, code: gate.error, message: "Murage could not keep the sign-in on this computer." };
+  try {
+    let config = null;
+    try { config = JSON.parse(fs.readFileSync(path.join(ownedDesktopDataDir(), "config.json"), "utf8")); } catch { /* unreadable config means the switch is off */ }
+    assertFluxDesktopSigninEnabled(config);
+    const { key: owner } = await runFluxDesktopSignin({ openExternal: (url) => shell.openExternal(url), scope: EMAIL_OWNER_SCOPE, readToken: readEmailOwnerToken });
+    await updateSecureCredentialDocument((current) => withEmailOwner(current, owner), undefined, { skipUnchanged: true });
+    serverProc?.postMessage({ type: EMAIL_OWNER_MESSAGE, owner });
+    return { ok: true };
+  } catch (error) {
+    if (error instanceof FluxSigninError) return { ok: false, code: error.code, message: error.message };
+    throw error;
+  }
+});
+ipcMain.handle("email-owner-signin:cancel", () => { cancelFluxDesktopSignin(); });
 
 // The consent button in Connected apps. It is the ONLY trigger for a shared
 // (team) FluxRouter account, because every holder of that account's keys would
@@ -4541,7 +4600,8 @@ async function initializeBackupScheduleHost(){
   const {BackupCoordinator}=await import(pathToFileURL(path.join(process.resourcesPath,"server","backup-coordinator.js")).href);
   closedTrace("coordinator imported");
   const stateDirectory=closedControlDirectory(installation);
-  const coordinator=new BackupCoordinator({stateDirectory});
+  // 1.0.9 Sentinel: the backup-status manifest follows each durable commit of this coordinator (never ahead of it).
+  const coordinator=new BackupCoordinator({stateDirectory,onCommitted:state=>sentinelHost?.backupCommitted(state)});
   closedTrace("coordinator ready");
   const provider=createNativeClosedBackupProvider({home:app.getPath("home")});
   closedBackupController=createClosedBackupController({
@@ -4648,6 +4708,9 @@ async function initializeBackupScheduleHost(){
       if(mode==="backup")args.push(BACKUP_MODE_ARGUMENT);relaunchDesktop({app,args});app.quit();
     },
   });
+  // 1.0.9 Sentinel: publish the committed backup state once, now that the folder/key check exists, so a restart or an
+  // upgrade states it again (before the first backup: on or off and when one is due, never a verification).
+  try{sentinelHost?.backupCommitted(coordinator.committedState());}catch{/* Health metadata never changes a backup. */}
 }
 // The OS ending the session is heard from the first moment, before any window (session-end.mjs): Linux/macOS through powerMonitor,
 // Windows through a hidden stand-in window until the first real one. Queued ahead of the boot block, like the sleep hook below.
@@ -4667,7 +4730,7 @@ const desktopStartup = app.whenReady().then(async () => {
   desktopMark("app.ready");
   assertDesktopStartupActive();
   if(closedBackupRequested){
-    closedTrace("ready");acquireDesktopDataOwner();closedTrace("owner");await initializeBackupScheduleHost();closedTrace("host");desktopRecoveryMode=true;
+    closedTrace("ready");acquireDesktopDataOwner();closedTrace("owner");await initializeSentinelHost({closed:true});await initializeBackupScheduleHost();closedTrace("host");desktopRecoveryMode=true;
     // The worker waits for desktopStartup; never await it from this callback.
     void desktopStartup.then(()=>desktopBackupTool.waitReady().catch(()=>{})).then(()=>{closedTrace("run");return backupScheduleHost.runClosedDue();}).then(result=>{closedTrace(`result ${result?.status}${result?.reason?" "+result.reason:""}`);return finishClosedBackup(result);}).catch(()=>{closedTrace("failed");return finishClosedBackup({status:"unavailable"});});
     return;
@@ -4695,7 +4758,7 @@ const desktopStartup = app.whenReady().then(async () => {
     if (helpItem?.submenu) { helpItem.submenu.append(new MenuItem(prepareItem)); Menu.setApplicationMenu(currentMenu); }
     else if (currentMenu) { currentMenu.append(new MenuItem({ label: "Help", submenu: [prepareItem] })); Menu.setApplicationMenu(currentMenu); }
   }
-  if (app.isPackaged) acquireDesktopDataOwner();
+  if (app.isPackaged) { acquireDesktopDataOwner(); await initializeSentinelHost(); }
   await initializeBackupScheduleHost();
   desktopMark("backup-host.ready");
   if(backupScheduleHost?.internalStatus().phase==="handoff-armed"){
@@ -4927,6 +4990,10 @@ void androidDevice.reclaimOrphan().catch(() => {});
   if(cloudHome?.client?.settleUnfinished)void cloudHome.client.settleUnfinished().catch(()=>console.log("[cloud] door: settle-failed"));
   powerMonitor.on("suspend",()=>backgroundLifecycle?.setSuspended(true));
   powerMonitor.on("resume",()=>backgroundLifecycle?.setSuspended(false));
+  // 1.0.9 Sentinel: sleep pauses sampling (no missed-window catch-up); registration and proof run in the background.
+  powerMonitor.on("suspend",()=>sentinelHost?.suspend());
+  powerMonitor.on("resume",()=>sentinelHost?.resume());
+  sentinelHost?.startBackground();
   // Cloud Door v2: silent reattach after sleep. A revoked computer closes its Cloud window; the Connect panel then shows.
   powerMonitor.on("resume",()=>{
     const client=cloudHome?.client;
@@ -5079,6 +5146,8 @@ function startDeskPresenceReporting(){
 
 function cleanupDesktopForExit() {
   stopDeskPresence();stopDeskPresence=()=>{};
+  // 1.0.9 Sentinel: flush the desktop producer. Quitting never unregisters Sentinel or stops its scanner.
+  void sentinelHost?.shutdown().catch(()=>{});
   stopAutomaticRemoteBackups();
   backupScheduleHost?.stopPolling();
   desktopShutdownStarted = true;

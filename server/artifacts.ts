@@ -96,6 +96,9 @@ export {
   directory as safeArtifactDirectory,
   sourceFile as verifiedArtifactSource,
   fingerprint as artifactSourceFingerprint,
+  // 1.0.9 bot email attachments (server/email/attachments.ts) run registerArtifact's whole verified read, not a copy of it
+  readVerified as readVerifiedArtifactFile,
+  same as sameArtifactStat,
 };
 function readVerified(path: string, limit: number, expected?: Stats) {
   const before = expected ?? lstatSync(path);

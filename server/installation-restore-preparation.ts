@@ -28,6 +28,7 @@ import { isReservedBotId } from "../shared/bot-identity.ts";
 import { mapRoutineRuns, routinesCommit } from "./routine-runs-journal.ts";
 import { bumpWriteEpoch } from "./app-write-revision.ts";
 import { neutralizeRestoredSends } from "./send-store.ts";
+import { prepareRestoredEmail } from "./email/restore.ts";
 import { queuedDelegationsByThread } from "./pending-delegations-schema.ts";
 import { fenceRestoredContinuations, fenceRestoredSql } from "./restore-fence.ts";
 
@@ -397,6 +398,9 @@ export async function prepareInstallationRestore(archive: string, outputParent: 
         // emptied here and rebuilt from the restored messages on first open.
         discardInboxProjection(db);
         if (pauseRestoredMemory(db)) modifications.push({component:"messages.db",action:"Memory paused; worker leases and provider disclosures invalidated; indexes require rebuild"});
+        // bot email (section 7): every binding waits for the owner's Reconnect; nothing polls, mounts or sends before it
+        const emailBindings = prepareRestoredEmail(db);
+        if (emailBindings) modifications.push({ component: "messages.db", action: `${emailBindings} bot email address${emailBindings === 1 ? "" : "es"} will reconnect when you choose Reconnect email` });
         db.exec("COMMIT");
       } catch (error) { try { db.exec("ROLLBACK"); } catch { /* already rolled back */ } throw error; }
       finally { db.close(); }

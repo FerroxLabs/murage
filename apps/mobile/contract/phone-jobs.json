@@ -1,0 +1,1142 @@
+{
+  "version": 1,
+  "notes": [
+    "keyId = base64url(SHA-256 of the 65 decoded bytes of the uncompressed P-256 point). Never hash the base64url string: notKeyId lists that wrong value per point and every implementation must refuse to match it.",
+    "Signed mint message: UTF-8 of tag, origin, keyId, nonce and decimal expiresAt joined by LF, no trailing newline. The nonce is signed as its base64url string, never decoded. origin is scheme://host[:port] with no trailing slash.",
+    "Signature: ECDSA P-256 over SHA-256 of that message, ASN.1 DER, then base64url. High-S is accepted and raw r||s is refused, exactly as in approval-proof.json; Swift and Java must send whatever the platform signs and never normalise S.",
+    "Result bodies: ok true carries an optional result and no error or code; ok false carries a code, an optional short error and no result. The JSON of the result is at most 262144 bytes (job.oversize); larger is refused with 413 and the phone may send code too_large instead.",
+    "Registration: the device id comes from the bearer, never the body. A phone sends only the keys shown; any other key, protocol other than 1 or capability value outside the catalog is refused with 400."
+  ],
+  "keyId": {
+    "vectors": [
+      {
+        "point": "BKDuw7UcSRJVx-_liZ4eqItubf-ptrSn8vJl0GX7vzW0CQiGeVQ4ST8kmZHKulsynn5OCbxLOMNVp-4IA6tTBgc",
+        "keyId": "CRs0hRJp6cqo5r7XjQQDl05-6Km4X1ufbyIxN-hPGfg"
+      },
+      {
+        "point": "BKUxAjlCrEBAOFGD-Ar-XmswIfhN-QgvG84-5UKpqrdjXT7q4CZ7w5QQE5KBd52r65QqfiD1shLQk-tkvWNusDA",
+        "keyId": "uKPOHBWkguhHvte8KXDdHFe5GppjcNu_8Ld61Aqpk1c"
+      }
+    ],
+    "notKeyId": {
+      "BKDuw7UcSRJVx-_liZ4eqItubf-ptrSn8vJl0GX7vzW0CQiGeVQ4ST8kmZHKulsynn5OCbxLOMNVp-4IA6tTBgc": "X23PfGNd48w7Oodq5nt5Ui6iVm-qBPSdX5moX6MErNg",
+      "BKUxAjlCrEBAOFGD-Ar-XmswIfhN-QgvG84-5UKpqrdjXT7q4CZ7w5QQE5KBd52r65QqfiD1shLQk-tkvWNusDA": "vrx1NBRDXvZP86XZcuedeb1nQmA6P0NO23sO4rJdxTs"
+    }
+  },
+  "mint": {
+    "tag": "murage-phone-jobs/1",
+    "ttlMs": 60000,
+    "vector": {
+      "origin": "https://desk.example.test",
+      "keyId": "CRs0hRJp6cqo5r7XjQQDl05-6Km4X1ufbyIxN-hPGfg",
+      "nonce": "OkuxfhZAnhsXOW6cLSuQ-lVZ5eu3vfIb0uFyyqOALB8",
+      "expiresAt": 1700000060000,
+      "message": "murage-phone-jobs/1\nhttps://desk.example.test\nCRs0hRJp6cqo5r7XjQQDl05-6Km4X1ufbyIxN-hPGfg\nOkuxfhZAnhsXOW6cLSuQ-lVZ5eu3vfIb0uFyyqOALB8\n1700000060000",
+      "point": "BKDuw7UcSRJVx-_liZ4eqItubf-ptrSn8vJl0GX7vzW0CQiGeVQ4ST8kmZHKulsynn5OCbxLOMNVp-4IA6tTBgc",
+      "signature": "MEYCIQCZFIEc_hjZMdlvinVmzj02cUlCBU57xDyPStjM9bwfYQIhAJDjgbW7MAKHBV7C_x6Ifrb2lg11X8I1Sl1wGWk0hVl0"
+    }
+  },
+  "token": {
+    "pattern": "^murage_pj_[A-Za-z0-9_-]{43}$",
+    "valid": [
+      "murage_pj_v7x01OCV2cEBcEveHDm-9blHuwmnsBwn1cjVgIhOgIs",
+      "murage_pj_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    ],
+    "invalid": [
+      "murage_pj_O1yqSmPVcgaMXOLMJhVdxKJuzcdEjdf5mVaow1B4dM",
+      "murage_pj_Db6zO3Ksa4xEiIflroTUrIPCjHMswKbuQzJhecHcxYgA",
+      "murage_pa_g8ztnY2gIfh2ybLRAomEoGQxjpPC4mCu4BJw_EYM6yY",
+      "pj_3R1bqwf9D8eNy_umuV5VcvsGqODFBWN_zNLJw-j2mis",
+      "murage_pj_swdcj47B-BtzuxPGCQFrH7WB2nkaFaNapDc4tH5xJO+"
+    ]
+  },
+  "capabilities": [
+    "calendar",
+    "reminders",
+    "contacts",
+    "location",
+    "alarms",
+    "messages",
+    "calls"
+  ],
+  "registration": {
+    "valid": {
+      "name": "Sean's iPhone",
+      "platform": "ios",
+      "osVersion": "26.0",
+      "appVersion": "1.0.9",
+      "timeZone": "America/Los_Angeles",
+      "protocol": 1,
+      "capabilities": {
+        "calendar": "full",
+        "reminders": true,
+        "contacts": "full",
+        "location": "precise",
+        "alarms": true,
+        "messages": true,
+        "calls": true
+      }
+    },
+    "alsoValid": [
+      {
+        "name": "Pixel",
+        "platform": "android",
+        "osVersion": "16",
+        "appVersion": "1.0.9",
+        "timeZone": "UTC",
+        "protocol": 1,
+        "capabilities": {}
+      },
+      {
+        "name": "Sean's iPhone",
+        "platform": "ios",
+        "osVersion": "26.0",
+        "appVersion": "1.0.9",
+        "timeZone": "America/Los_Angeles",
+        "protocol": 1,
+        "capabilities": {
+          "calendar": "write-only",
+          "location": "approximate"
+        }
+      }
+    ],
+    "invalid": [
+      {
+        "why": "unknown key",
+        "body": {
+          "name": "Sean's iPhone",
+          "platform": "ios",
+          "osVersion": "26.0",
+          "appVersion": "1.0.9",
+          "timeZone": "America/Los_Angeles",
+          "protocol": 1,
+          "capabilities": {
+            "calendar": "full",
+            "reminders": true,
+            "contacts": "full",
+            "location": "precise",
+            "alarms": true,
+            "messages": true,
+            "calls": true
+          },
+          "extra": 1
+        }
+      },
+      {
+        "why": "protocol 2",
+        "body": {
+          "name": "Sean's iPhone",
+          "platform": "ios",
+          "osVersion": "26.0",
+          "appVersion": "1.0.9",
+          "timeZone": "America/Los_Angeles",
+          "protocol": 2,
+          "capabilities": {
+            "calendar": "full",
+            "reminders": true,
+            "contacts": "full",
+            "location": "precise",
+            "alarms": true,
+            "messages": true,
+            "calls": true
+          }
+        }
+      },
+      {
+        "why": "protocol as text",
+        "body": {
+          "name": "Sean's iPhone",
+          "platform": "ios",
+          "osVersion": "26.0",
+          "appVersion": "1.0.9",
+          "timeZone": "America/Los_Angeles",
+          "protocol": "1",
+          "capabilities": {
+            "calendar": "full",
+            "reminders": true,
+            "contacts": "full",
+            "location": "precise",
+            "alarms": true,
+            "messages": true,
+            "calls": true
+          }
+        }
+      },
+      {
+        "why": "capability value outside the catalog",
+        "body": {
+          "name": "Sean's iPhone",
+          "platform": "ios",
+          "osVersion": "26.0",
+          "appVersion": "1.0.9",
+          "timeZone": "America/Los_Angeles",
+          "protocol": 1,
+          "capabilities": {
+            "calendar": "everything"
+          }
+        }
+      },
+      {
+        "why": "unknown capability name",
+        "body": {
+          "name": "Sean's iPhone",
+          "platform": "ios",
+          "osVersion": "26.0",
+          "appVersion": "1.0.9",
+          "timeZone": "America/Los_Angeles",
+          "protocol": 1,
+          "capabilities": {
+            "photos": true
+          }
+        }
+      },
+      {
+        "why": "reminders as text",
+        "body": {
+          "name": "Sean's iPhone",
+          "platform": "ios",
+          "osVersion": "26.0",
+          "appVersion": "1.0.9",
+          "timeZone": "America/Los_Angeles",
+          "protocol": 1,
+          "capabilities": {
+            "reminders": "yes"
+          }
+        }
+      },
+      {
+        "why": "platform outside ios/android",
+        "body": {
+          "name": "Sean's iPhone",
+          "platform": "windows",
+          "osVersion": "26.0",
+          "appVersion": "1.0.9",
+          "timeZone": "America/Los_Angeles",
+          "protocol": 1,
+          "capabilities": {
+            "calendar": "full",
+            "reminders": true,
+            "contacts": "full",
+            "location": "precise",
+            "alarms": true,
+            "messages": true,
+            "calls": true
+          }
+        }
+      },
+      {
+        "why": "missing name",
+        "body": {
+          "platform": "ios",
+          "osVersion": "26.0",
+          "appVersion": "1.0.9",
+          "timeZone": "America/Los_Angeles",
+          "protocol": 1,
+          "capabilities": {
+            "calendar": "full",
+            "reminders": true,
+            "contacts": "full",
+            "location": "precise",
+            "alarms": true,
+            "messages": true,
+            "calls": true
+          }
+        }
+      },
+      {
+        "why": "deviceId in the body (comes from the bearer)",
+        "body": {
+          "name": "Sean's iPhone",
+          "platform": "ios",
+          "osVersion": "26.0",
+          "appVersion": "1.0.9",
+          "timeZone": "America/Los_Angeles",
+          "protocol": 1,
+          "capabilities": {
+            "calendar": "full",
+            "reminders": true,
+            "contacts": "full",
+            "location": "precise",
+            "alarms": true,
+            "messages": true,
+            "calls": true
+          },
+          "deviceId": "d1"
+        }
+      }
+    ]
+  },
+  "job": {
+    "offers": [
+      {
+        "operationId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3",
+        "offerId": "7b0e4d2a-61c9-4f58-8a3d-2e9c1b5f6a47",
+        "workspace": "Home",
+        "bot": {
+          "id": "bot-lena",
+          "name": "Lena"
+        },
+        "capability": "calendar",
+        "action": "calendar.read",
+        "args": {
+          "start": "2026-10-27T00:00:00-07:00",
+          "end": "2026-10-28T00:00:00-07:00"
+        },
+        "say": "read your calendar for today",
+        "provider": {
+          "id": "anthropic",
+          "name": "Anthropic"
+        },
+        "expiresAt": 1700000120000,
+        "leaseMs": 45000
+      },
+      {
+        "operationId": "a1b2c3d4-0000-4000-8000-000000000001",
+        "offerId": "a1b2c3d4-0000-4000-8000-000000000002",
+        "workspace": "Home",
+        "bot": {
+          "id": "bot-lena",
+          "name": "Lena"
+        },
+        "capability": "messages",
+        "action": "messages.compose",
+        "args": {
+          "to": ["Sam"],
+          "body": "Running ten minutes late"
+        },
+        "say": "start a text to Sam",
+        "provider": {
+          "id": "anthropic",
+          "name": "Anthropic"
+        },
+        "expiresAt": 1700000120000,
+        "leaseMs": 180000
+      },
+      {
+        "operationId": "a1b2c3d4-0000-4000-8000-000000000003",
+        "offerId": "a1b2c3d4-0000-4000-8000-000000000004",
+        "workspace": "Home",
+        "bot": {
+          "id": "bot-lena",
+          "name": "Lena"
+        },
+        "capability": "location",
+        "action": "location.get",
+        "args": { "precision": "approximate" },
+        "say": "check where you are",
+        "provider": {
+          "id": "anthropic",
+          "name": "Anthropic"
+        },
+        "expiresAt": 1700000120000,
+        "leaseMs": 45000
+      }
+    ],
+    "invalidOffers": [
+      {
+        "why": "operationId not a v4 uuid",
+        "body": {
+          "operationId": "not-a-uuid",
+          "offerId": "7b0e4d2a-61c9-4f58-8a3d-2e9c1b5f6a47",
+          "workspace": "Home",
+          "bot": {
+            "id": "bot-lena",
+            "name": "Lena"
+          },
+          "capability": "calendar",
+          "action": "calendar.read",
+          "args": {
+            "start": "2026-10-27T00:00:00-07:00",
+            "end": "2026-10-28T00:00:00-07:00"
+          },
+          "say": "read your calendar for today",
+          "provider": {
+            "id": "anthropic",
+            "name": "Anthropic"
+          },
+          "expiresAt": 1700000120000,
+          "leaseMs": 45000
+        }
+      },
+      {
+        "why": "v1 uuid (version nibble 1)",
+        "body": {
+          "operationId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3",
+          "offerId": "7b0e4d2a-61c9-1f58-8a3d-2e9c1b5f6a47",
+          "workspace": "Home",
+          "bot": {
+            "id": "bot-lena",
+            "name": "Lena"
+          },
+          "capability": "calendar",
+          "action": "calendar.read",
+          "args": {
+            "start": "2026-10-27T00:00:00-07:00",
+            "end": "2026-10-28T00:00:00-07:00"
+          },
+          "say": "read your calendar for today",
+          "provider": {
+            "id": "anthropic",
+            "name": "Anthropic"
+          },
+          "expiresAt": 1700000120000,
+          "leaseMs": 45000
+        }
+      },
+      {
+        "why": "capability outside the catalog",
+        "body": {
+          "operationId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3",
+          "offerId": "7b0e4d2a-61c9-4f58-8a3d-2e9c1b5f6a47",
+          "workspace": "Home",
+          "bot": {
+            "id": "bot-lena",
+            "name": "Lena"
+          },
+          "capability": "photos",
+          "action": "calendar.read",
+          "args": {
+            "start": "2026-10-27T00:00:00-07:00",
+            "end": "2026-10-28T00:00:00-07:00"
+          },
+          "say": "read your calendar for today",
+          "provider": {
+            "id": "anthropic",
+            "name": "Anthropic"
+          },
+          "expiresAt": 1700000120000,
+          "leaseMs": 45000
+        }
+      },
+      {
+        "why": "leaseMs not 45000 or 180000",
+        "body": {
+          "operationId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3",
+          "offerId": "7b0e4d2a-61c9-4f58-8a3d-2e9c1b5f6a47",
+          "workspace": "Home",
+          "bot": {
+            "id": "bot-lena",
+            "name": "Lena"
+          },
+          "capability": "calendar",
+          "action": "calendar.read",
+          "args": {
+            "start": "2026-10-27T00:00:00-07:00",
+            "end": "2026-10-28T00:00:00-07:00"
+          },
+          "say": "read your calendar for today",
+          "provider": {
+            "id": "anthropic",
+            "name": "Anthropic"
+          },
+          "expiresAt": 1700000120000,
+          "leaseMs": 60000
+        }
+      },
+      {
+        "why": "extra key",
+        "body": {
+          "operationId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3",
+          "offerId": "7b0e4d2a-61c9-4f58-8a3d-2e9c1b5f6a47",
+          "workspace": "Home",
+          "bot": {
+            "id": "bot-lena",
+            "name": "Lena"
+          },
+          "capability": "calendar",
+          "action": "calendar.read",
+          "args": {
+            "start": "2026-10-27T00:00:00-07:00",
+            "end": "2026-10-28T00:00:00-07:00"
+          },
+          "say": "read your calendar for today",
+          "provider": {
+            "id": "anthropic",
+            "name": "Anthropic"
+          },
+          "expiresAt": 1700000120000,
+          "leaseMs": 45000,
+          "extra": true
+        }
+      },
+      {
+        "why": "expiresAt as text",
+        "body": {
+          "operationId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3",
+          "offerId": "7b0e4d2a-61c9-4f58-8a3d-2e9c1b5f6a47",
+          "workspace": "Home",
+          "bot": {
+            "id": "bot-lena",
+            "name": "Lena"
+          },
+          "capability": "calendar",
+          "action": "calendar.read",
+          "args": {
+            "start": "2026-10-27T00:00:00-07:00",
+            "end": "2026-10-28T00:00:00-07:00"
+          },
+          "say": "read your calendar for today",
+          "provider": {
+            "id": "anthropic",
+            "name": "Anthropic"
+          },
+          "expiresAt": "1700000120000",
+          "leaseMs": 45000
+        }
+      },
+      {
+        "why": "action without a dot",
+        "body": {
+          "operationId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3",
+          "offerId": "7b0e4d2a-61c9-4f58-8a3d-2e9c1b5f6a47",
+          "workspace": "Home",
+          "bot": {
+            "id": "bot-lena",
+            "name": "Lena"
+          },
+          "capability": "calendar",
+          "action": "read",
+          "args": {
+            "start": "2026-10-27T00:00:00-07:00",
+            "end": "2026-10-28T00:00:00-07:00"
+          },
+          "say": "read your calendar for today",
+          "provider": {
+            "id": "anthropic",
+            "name": "Anthropic"
+          },
+          "expiresAt": 1700000120000,
+          "leaseMs": 45000
+        }
+      },
+      {
+        "why": "missing say",
+        "body": {
+          "operationId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3",
+          "offerId": "7b0e4d2a-61c9-4f58-8a3d-2e9c1b5f6a47",
+          "workspace": "Home",
+          "bot": {
+            "id": "bot-lena",
+            "name": "Lena"
+          },
+          "capability": "calendar",
+          "action": "calendar.read",
+          "args": {
+            "start": "2026-10-27T00:00:00-07:00",
+            "end": "2026-10-28T00:00:00-07:00"
+          },
+          "provider": {
+            "id": "anthropic",
+            "name": "Anthropic"
+          },
+          "expiresAt": 1700000120000,
+          "leaseMs": 45000
+        }
+      }
+    ],
+    "poll": {
+      "answers": [
+        {
+          "jobs": [
+            {
+              "operationId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3",
+              "offerId": "7b0e4d2a-61c9-4f58-8a3d-2e9c1b5f6a47",
+              "workspace": "Home",
+              "bot": {
+                "id": "bot-lena",
+                "name": "Lena"
+              },
+              "capability": "calendar",
+              "action": "calendar.read",
+              "args": {
+                "start": "2026-10-27T00:00:00-07:00",
+                "end": "2026-10-28T00:00:00-07:00"
+              },
+              "say": "read your calendar for today",
+              "provider": {
+                "id": "anthropic",
+                "name": "Anthropic"
+              },
+              "expiresAt": 1700000120000,
+              "leaseMs": 45000
+            }
+          ]
+        },
+        {
+          "jobs": []
+        }
+      ],
+      "invalid": [
+        { "why": "handled is only a targeted answer", "body": { "handled": true } }
+      ]
+    },
+    "targeted": {
+      "note": "Answer of GET /api/phones/self/jobs?eventRef=<64 hex> and GET /api/phones/self/jobs/:operationId. Exactly one member of the union. handled with reason unknown is also the answer for an id or eventRef of another device (no leak). The long poll keeps job.poll.",
+      "answers": [
+        {
+          "jobs": [
+            {
+              "operationId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3",
+              "offerId": "7b0e4d2a-61c9-4f58-8a3d-2e9c1b5f6a47",
+              "workspace": "Home",
+              "bot": { "id": "bot-lena", "name": "Lena" },
+              "capability": "calendar",
+              "action": "calendar.read",
+              "args": { "start": "2026-10-27T00:00:00-07:00", "end": "2026-10-28T00:00:00-07:00" },
+              "say": "read your calendar for today",
+              "provider": { "id": "anthropic", "name": "Anthropic" },
+              "expiresAt": 1700000120000,
+              "leaseMs": 45000
+            }
+          ]
+        },
+        { "leased": true, "expiresAt": 1700000090000 },
+        { "handled": true, "reason": "done" },
+        { "handled": true, "reason": "revoked" },
+        { "handled": true, "reason": "ended" },
+        { "handled": true, "reason": "unknown" }
+      ],
+      "invalid": [
+        { "why": "handled without a reason", "body": { "handled": true } },
+        { "why": "reason outside the list", "body": { "handled": true, "reason": "gone" } },
+        { "why": "handled false", "body": { "handled": false, "reason": "done" } },
+        { "why": "leased without expiresAt", "body": { "leased": true } },
+        { "why": "leased false", "body": { "leased": false, "expiresAt": 1700000090000 } },
+        { "why": "expiresAt as text", "body": { "leased": true, "expiresAt": "1700000090000" } },
+        { "why": "empty jobs", "body": { "jobs": [] } },
+        { "why": "extra key", "body": { "handled": true, "reason": "done", "x": 1 } },
+        { "why": "two members at once", "body": { "leased": true, "expiresAt": 1700000090000, "handled": true, "reason": "done" } }
+      ]
+    },
+    "lease": {
+      "request": {
+        "offerId": "7b0e4d2a-61c9-4f58-8a3d-2e9c1b5f6a47"
+      },
+      "invalidRequests": [
+        {
+          "why": "extra key",
+          "body": {
+            "offerId": "7b0e4d2a-61c9-4f58-8a3d-2e9c1b5f6a47",
+            "x": 1
+          }
+        },
+        {
+          "why": "offerId not a v4 uuid",
+          "body": {
+            "offerId": "nope"
+          }
+        },
+        {
+          "why": "offerId missing",
+          "body": {}
+        }
+      ],
+      "answers": [
+        {
+          "active": true,
+          "leaseToken": "YdPFFal_9PPr92JtGN-Z3IDRKNcoHkdE2ak2RwbSrsc"
+        },
+        {
+          "active": false
+        }
+      ],
+      "invalidAnswers": [
+        {
+          "why": "active true without a token",
+          "body": {
+            "active": true
+          }
+        },
+        {
+          "why": "active false with a token",
+          "body": {
+            "active": false,
+            "leaseToken": "YdPFFal_9PPr92JtGN-Z3IDRKNcoHkdE2ak2RwbSrsc"
+          }
+        },
+        {
+          "why": "token 42 characters",
+          "body": {
+            "active": true,
+            "leaseToken": "YdPFFal_9PPr92JtGN-Z3IDRKNcoHkdE2ak2RwbSrs"
+          }
+        }
+      ]
+    },
+    "results": [
+      {
+        "name": "ok",
+        "body": {
+          "leaseToken": "YdPFFal_9PPr92JtGN-Z3IDRKNcoHkdE2ak2RwbSrsc",
+          "ok": true,
+          "result": {
+            "events": [
+              {
+                "title": "Standup",
+                "start": "2026-10-27T09:00:00-07:00",
+                "end": "2026-10-27T09:15:00-07:00"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "name": "ok without result",
+        "body": {
+          "leaseToken": "YdPFFal_9PPr92JtGN-Z3IDRKNcoHkdE2ak2RwbSrsc",
+          "ok": true
+        }
+      },
+      {
+        "name": "denied",
+        "body": {
+          "leaseToken": "YdPFFal_9PPr92JtGN-Z3IDRKNcoHkdE2ak2RwbSrsc",
+          "ok": false,
+          "code": "denied",
+          "error": "The phone permission was not granted."
+        }
+      },
+      {
+        "name": "unsupported",
+        "body": {
+          "leaseToken": "YdPFFal_9PPr92JtGN-Z3IDRKNcoHkdE2ak2RwbSrsc",
+          "ok": false,
+          "code": "unsupported",
+          "error": "This phone cannot do that."
+        }
+      },
+      {
+        "name": "too_large",
+        "body": {
+          "leaseToken": "YdPFFal_9PPr92JtGN-Z3IDRKNcoHkdE2ak2RwbSrsc",
+          "ok": false,
+          "code": "too_large",
+          "error": "The answer was too large to send."
+        }
+      },
+      {
+        "name": "invalid_result",
+        "body": {
+          "leaseToken": "YdPFFal_9PPr92JtGN-Z3IDRKNcoHkdE2ak2RwbSrsc",
+          "ok": false,
+          "code": "invalid_result",
+          "error": "The phone could not read its own answer."
+        }
+      },
+      {
+        "name": "declined",
+        "body": {
+          "leaseToken": "YdPFFal_9PPr92JtGN-Z3IDRKNcoHkdE2ak2RwbSrsc",
+          "ok": false,
+          "code": "declined"
+        }
+      }
+    ],
+    "invalidResults": [
+      {
+        "why": "extra key",
+        "body": {
+          "leaseToken": "YdPFFal_9PPr92JtGN-Z3IDRKNcoHkdE2ak2RwbSrsc",
+          "ok": true,
+          "extra": 1
+        }
+      },
+      {
+        "why": "code outside the list",
+        "body": {
+          "leaseToken": "YdPFFal_9PPr92JtGN-Z3IDRKNcoHkdE2ak2RwbSrsc",
+          "ok": false,
+          "code": "timeout"
+        }
+      },
+      {
+        "why": "ok true with a code",
+        "body": {
+          "leaseToken": "YdPFFal_9PPr92JtGN-Z3IDRKNcoHkdE2ak2RwbSrsc",
+          "ok": true,
+          "code": "denied"
+        }
+      },
+      {
+        "why": "ok true with an error",
+        "body": {
+          "leaseToken": "YdPFFal_9PPr92JtGN-Z3IDRKNcoHkdE2ak2RwbSrsc",
+          "ok": true,
+          "error": "x"
+        }
+      },
+      {
+        "why": "ok false without a code",
+        "body": {
+          "leaseToken": "YdPFFal_9PPr92JtGN-Z3IDRKNcoHkdE2ak2RwbSrsc",
+          "ok": false,
+          "error": "x"
+        }
+      },
+      {
+        "why": "ok false with a result",
+        "body": {
+          "leaseToken": "YdPFFal_9PPr92JtGN-Z3IDRKNcoHkdE2ak2RwbSrsc",
+          "ok": false,
+          "code": "denied",
+          "result": {}
+        }
+      },
+      {
+        "why": "ok missing",
+        "body": {
+          "leaseToken": "YdPFFal_9PPr92JtGN-Z3IDRKNcoHkdE2ak2RwbSrsc",
+          "result": {}
+        }
+      },
+      {
+        "why": "leaseToken missing",
+        "body": {
+          "ok": true
+        }
+      },
+      {
+        "why": "leaseToken 42 characters",
+        "body": {
+          "leaseToken": "YdPFFal_9PPr92JtGN-Z3IDRKNcoHkdE2ak2RwbSrs",
+          "ok": true
+        }
+      },
+      {
+        "why": "leaseToken with a character outside base64url",
+        "body": {
+          "leaseToken": "YdPFFal_9PPr92JtGN-Z3IDRKNcoHkdE2ak2RwbSrs+",
+          "ok": true
+        }
+      }
+    ],
+    "oversize": {
+      "maxBytes": 262144,
+      "status": 413,
+      "note": "Too big to store here: build a result whose JSON is one byte over maxBytes (a string of 262144 a characters in a 'text' field is enough); resultSchema and the route refuse it."
+    }
+  },
+  "actions": {
+    "note": "Per-action args and result (when ok is true). Every object is strict: an unknown key is refused. Times are ISO 8601 strings with an offset. A fixture entry with a repeat field has a body whose array at repeat.path holds one element; expand it to repeat.count copies of that element before use (it keeps the over-limit vectors short).",
+    "calendar.read": {
+      "tool": "phone_calendar_read",
+      "capability": "calendar",
+      "validArgs": [
+        { "start": "2026-10-27T00:00:00-07:00", "end": "2026-10-28T00:00:00-07:00" },
+        { "start": "2026-10-01T00:00:00Z", "end": "2026-10-31T00:00:00Z", "includeNotes": true, "limit": 200 }
+      ],
+      "invalidArgs": [
+        { "why": "extra key", "body": { "start": "2026-10-27T00:00:00-07:00", "end": "2026-10-28T00:00:00-07:00", "x": 1 } },
+        { "why": "span over 31 days", "body": { "start": "2026-10-01T00:00:00Z", "end": "2026-11-02T00:00:00Z" } },
+        { "why": "limit over 200", "body": { "start": "2026-10-27T00:00:00-07:00", "end": "2026-10-28T00:00:00-07:00", "limit": 201 } },
+        { "why": "end not after start", "body": { "start": "2026-10-28T00:00:00-07:00", "end": "2026-10-27T00:00:00-07:00" } },
+        { "why": "time without an offset", "body": { "start": "2026-10-27T00:00:00", "end": "2026-10-28T00:00:00" } },
+        { "why": "wrong type", "body": { "start": "2026-10-27T00:00:00-07:00", "end": "2026-10-28T00:00:00-07:00", "includeNotes": "yes" } }
+      ],
+      "validResults": [
+        { "events": [], "truncated": false },
+        { "events": [{ "id": "ev-1", "title": "Standup", "start": "2026-10-27T09:00:00-07:00", "end": "2026-10-27T09:15:00-07:00", "allDay": false, "calendar": "Work", "location": "Room 4", "notes": "Bring the numbers" }], "truncated": true }
+      ],
+      "invalidResults": [
+        { "why": "extra key", "body": { "events": [], "truncated": false, "x": 1 } },
+        { "why": "event with an extra key", "body": { "events": [{ "id": "ev-1", "title": "Standup", "start": "2026-10-27T09:00:00-07:00", "end": "2026-10-27T09:15:00-07:00", "allDay": false, "calendar": "Work", "x": 1 }], "truncated": false } },
+        { "why": "201 events", "body": { "events": [{ "id": "ev-1", "title": "Standup", "start": "2026-10-27T09:00:00-07:00", "end": "2026-10-27T09:15:00-07:00", "allDay": false, "calendar": "Work" }], "truncated": true }, "repeat": { "path": "events", "count": 201 } },
+        { "why": "truncated missing", "body": { "events": [] } }
+      ]
+    },
+    "calendar.free_time": {
+      "tool": "phone_calendar_find_free_time",
+      "capability": "calendar",
+      "validArgs": [
+        { "start": "2026-10-27T00:00:00-07:00", "end": "2026-10-28T00:00:00-07:00", "durationMinutes": 30 },
+        { "start": "2026-10-27T00:00:00-07:00", "end": "2026-11-10T00:00:00-07:00", "durationMinutes": 480, "limit": 20 }
+      ],
+      "invalidArgs": [
+        { "why": "extra key", "body": { "start": "2026-10-27T00:00:00-07:00", "end": "2026-10-28T00:00:00-07:00", "durationMinutes": 30, "x": 1 } },
+        { "why": "duration under 5", "body": { "start": "2026-10-27T00:00:00-07:00", "end": "2026-10-28T00:00:00-07:00", "durationMinutes": 4 } },
+        { "why": "span over 14 days", "body": { "start": "2026-10-27T00:00:00-07:00", "end": "2026-11-11T00:00:00-07:00", "durationMinutes": 30 } },
+        { "why": "limit over 20", "body": { "start": "2026-10-27T00:00:00-07:00", "end": "2026-10-28T00:00:00-07:00", "durationMinutes": 30, "limit": 21 } },
+        { "why": "duration as text", "body": { "start": "2026-10-27T00:00:00-07:00", "end": "2026-10-28T00:00:00-07:00", "durationMinutes": "30" } }
+      ],
+      "validResults": [
+        { "slots": [] },
+        { "slots": [{ "start": "2026-10-27T10:00:00-07:00", "end": "2026-10-27T11:00:00-07:00" }] }
+      ],
+      "invalidResults": [
+        { "why": "extra key", "body": { "slots": [], "x": 1 } },
+        { "why": "slot with an extra key", "body": { "slots": [{ "start": "2026-10-27T10:00:00-07:00", "end": "2026-10-27T11:00:00-07:00", "x": 1 }] } },
+        { "why": "21 slots", "body": { "slots": [{ "start": "2026-10-27T10:00:00-07:00", "end": "2026-10-27T11:00:00-07:00" }] }, "repeat": { "path": "slots", "count": 21 } }
+      ]
+    },
+    "calendar.add": {
+      "tool": "phone_calendar_add",
+      "capability": "calendar",
+      "validArgs": [
+        { "title": "Dentist", "start": "2026-10-29T15:00:00-07:00", "end": "2026-10-29T16:00:00-07:00" },
+        { "title": "Offsite", "start": "2026-10-30T00:00:00-07:00", "end": "2026-10-31T00:00:00-07:00", "allDay": true, "location": "Lake house", "notes": "Pack warm clothes" }
+      ],
+      "invalidArgs": [
+        { "why": "extra key", "body": { "title": "Dentist", "start": "2026-10-29T15:00:00-07:00", "end": "2026-10-29T16:00:00-07:00", "x": 1 } },
+        { "why": "empty title", "body": { "title": "", "start": "2026-10-29T15:00:00-07:00", "end": "2026-10-29T16:00:00-07:00" } },
+        { "why": "end not after start", "body": { "title": "Dentist", "start": "2026-10-29T16:00:00-07:00", "end": "2026-10-29T15:00:00-07:00" } },
+        { "why": "allDay as text", "body": { "title": "Dentist", "start": "2026-10-29T15:00:00-07:00", "end": "2026-10-29T16:00:00-07:00", "allDay": "yes" } }
+      ],
+      "validResults": [
+        { "id": "ev-9", "writeOnly": false },
+        { "id": "write-only", "writeOnly": true }
+      ],
+      "invalidResults": [
+        { "why": "extra key", "body": { "id": "ev-9", "writeOnly": false, "x": 1 } },
+        { "why": "writeOnly as text", "body": { "id": "ev-9", "writeOnly": "no" } }
+      ]
+    },
+    "calendar.change": {
+      "tool": "phone_calendar_change",
+      "capability": "calendar",
+      "validArgs": [
+        { "id": "ev-9", "title": "Dentist (moved)" },
+        { "id": "ev-9", "start": "2026-10-29T16:00:00-07:00", "end": "2026-10-29T17:00:00-07:00", "location": "Main St", "notes": "Bring forms" }
+      ],
+      "invalidArgs": [
+        { "why": "no field to change", "body": { "id": "ev-9" } },
+        { "why": "extra key", "body": { "id": "ev-9", "title": "x", "y": 1 } },
+        { "why": "empty id", "body": { "id": "", "title": "x" } },
+        { "why": "start as a number", "body": { "id": "ev-9", "start": 5 } }
+      ],
+      "validResults": [
+        { "id": "ev-9" }
+      ],
+      "invalidResults": [
+        { "why": "extra key", "body": { "id": "ev-9", "x": 1 } },
+        { "why": "id missing", "body": {} }
+      ]
+    },
+    "reminders.read": {
+      "tool": "phone_reminders_read",
+      "capability": "reminders",
+      "validArgs": [
+        {},
+        { "includeCompleted": true, "limit": 50 }
+      ],
+      "invalidArgs": [
+        { "why": "extra key", "body": { "x": 1 } },
+        { "why": "limit 0", "body": { "limit": 0 } },
+        { "why": "includeCompleted as text", "body": { "includeCompleted": "yes" } }
+      ],
+      "validResults": [
+        { "reminders": [], "truncated": false },
+        { "reminders": [{ "id": "r-1", "title": "Call the plumber", "due": "2026-10-28T09:00:00-07:00", "completed": false, "list": "Home" }, { "id": "r-2", "title": "Buy milk", "completed": true, "list": "Errands" }], "truncated": true }
+      ],
+      "invalidResults": [
+        { "why": "extra key", "body": { "reminders": [], "truncated": false, "x": 1 } },
+        { "why": "reminder with an extra key", "body": { "reminders": [{ "id": "r-1", "title": "Buy milk", "completed": false, "list": "Errands", "x": 1 }], "truncated": false } },
+        { "why": "201 reminders", "body": { "reminders": [{ "id": "r-1", "title": "Buy milk", "completed": false, "list": "Errands" }], "truncated": true }, "repeat": { "path": "reminders", "count": 201 } }
+      ]
+    },
+    "reminders.add": {
+      "tool": "phone_reminders_add",
+      "capability": "reminders",
+      "validArgs": [
+        { "title": "Buy milk" },
+        { "title": "Call the plumber", "due": "2026-10-28T09:00:00-07:00", "notes": "Ask about the leak" }
+      ],
+      "invalidArgs": [
+        { "why": "extra key", "body": { "title": "Buy milk", "x": 1 } },
+        { "why": "empty title", "body": { "title": "" } },
+        { "why": "title as a number", "body": { "title": 5 } }
+      ],
+      "validResults": [
+        { "id": "r-3" }
+      ],
+      "invalidResults": [
+        { "why": "extra key", "body": { "id": "r-3", "x": 1 } },
+        { "why": "id missing", "body": {} }
+      ]
+    },
+    "reminders.complete": {
+      "tool": "phone_reminders_complete",
+      "capability": "reminders",
+      "validArgs": [
+        { "id": "r-1" }
+      ],
+      "invalidArgs": [
+        { "why": "extra key", "body": { "id": "r-1", "x": 1 } },
+        { "why": "empty id", "body": { "id": "" } },
+        { "why": "id as a number", "body": { "id": 1 } }
+      ],
+      "validResults": [
+        { "id": "r-1", "completed": true }
+      ],
+      "invalidResults": [
+        { "why": "extra key", "body": { "id": "r-1", "completed": true, "x": 1 } },
+        { "why": "completed false", "body": { "id": "r-1", "completed": false } }
+      ]
+    },
+    "contacts.search": {
+      "tool": "phone_contacts_search",
+      "capability": "contacts",
+      "validArgs": [
+        { "query": "Sam" },
+        { "query": "Sam", "limit": 25 }
+      ],
+      "invalidArgs": [
+        { "why": "extra key", "body": { "query": "Sam", "x": 1 } },
+        { "why": "empty query", "body": { "query": "" } },
+        { "why": "limit over 25", "body": { "query": "Sam", "limit": 26 } },
+        { "why": "query as a number", "body": { "query": 5 } }
+      ],
+      "validResults": [
+        { "contacts": [], "limited": false },
+        { "contacts": [{ "id": "c-1", "name": "Sam Rivera", "phones": [{ "label": "mobile", "number": "+1 555 555 0100" }], "emails": [{ "address": "sam@example.test" }] }], "limited": true }
+      ],
+      "invalidResults": [
+        { "why": "extra key", "body": { "contacts": [], "limited": false, "x": 1 } },
+        { "why": "contact with an extra key", "body": { "contacts": [{ "id": "c-1", "name": "Sam", "phones": [], "emails": [], "x": 1 }], "limited": false } },
+        { "why": "26 contacts", "body": { "contacts": [{ "id": "c-1", "name": "Sam", "phones": [], "emails": [] }], "limited": false }, "repeat": { "path": "contacts", "count": 26 } }
+      ]
+    },
+    "contacts.get": {
+      "tool": "phone_contacts_get",
+      "capability": "contacts",
+      "validArgs": [
+        { "id": "c-1" }
+      ],
+      "invalidArgs": [
+        { "why": "extra key", "body": { "id": "c-1", "x": 1 } },
+        { "why": "empty id", "body": { "id": "" } },
+        { "why": "id as a number", "body": { "id": 1 } }
+      ],
+      "validResults": [
+        { "contact": null, "limited": false },
+        { "contact": { "id": "c-1", "name": "Sam Rivera", "phones": [{ "number": "+1 555 555 0100" }], "emails": [{ "label": "home", "address": "sam@example.test" }] }, "limited": false }
+      ],
+      "invalidResults": [
+        { "why": "extra key", "body": { "contact": null, "limited": false, "x": 1 } },
+        { "why": "contact missing", "body": { "limited": false } },
+        { "why": "11 phones", "body": { "contact": { "id": "c-1", "name": "Sam", "phones": [{ "number": "+1 555 555 0100" }], "emails": [] }, "limited": false }, "repeat": { "path": "contact.phones", "count": 11 } }
+      ]
+    },
+    "location.get": {
+      "tool": "phone_location_get",
+      "capability": "location",
+      "validArgs": [
+        { "precision": "approximate" },
+        { "precision": "precise" }
+      ],
+      "invalidArgs": [
+        { "why": "precision missing", "body": {} },
+        { "why": "extra key", "body": { "precision": "precise", "x": 1 } },
+        { "why": "precision outside the list", "body": { "precision": "exact" } },
+        { "why": "precision as a number", "body": { "precision": 1 } }
+      ],
+      "validResults": [
+        { "lat": 37.7749, "lon": -122.4194, "accuracyMeters": 12.5, "precision": "precise", "at": "2026-10-27T09:00:00-07:00" }
+      ],
+      "invalidResults": [
+        { "why": "extra key", "body": { "lat": 37.7749, "lon": -122.4194, "accuracyMeters": 12.5, "precision": "precise", "at": "2026-10-27T09:00:00-07:00", "x": 1 } },
+        { "why": "lat over 90", "body": { "lat": 91, "lon": -122.4194, "accuracyMeters": 12.5, "precision": "precise", "at": "2026-10-27T09:00:00-07:00" } },
+        { "why": "negative accuracy", "body": { "lat": 37.7749, "lon": -122.4194, "accuracyMeters": -1, "precision": "precise", "at": "2026-10-27T09:00:00-07:00" } }
+      ]
+    },
+    "alarms.set": {
+      "tool": "phone_alarm_set",
+      "capability": "alarms",
+      "validArgs": [
+        { "hour": 7, "minute": 30 },
+        { "hour": 23, "minute": 59, "label": "Wake up" }
+      ],
+      "invalidArgs": [
+        { "why": "extra key", "body": { "hour": 7, "minute": 30, "x": 1 } },
+        { "why": "hour 24", "body": { "hour": 24, "minute": 0 } },
+        { "why": "minute 60", "body": { "hour": 7, "minute": 60 } },
+        { "why": "hour as text", "body": { "hour": "7", "minute": 30 } }
+      ],
+      "validResults": [
+        { "outcome": "set" },
+        { "outcome": "clock_app_opened" }
+      ],
+      "invalidResults": [
+        { "why": "extra key", "body": { "outcome": "set", "x": 1 } },
+        { "why": "outcome outside the list", "body": { "outcome": "done" } }
+      ]
+    },
+    "alarms.timer": {
+      "tool": "phone_timer_set",
+      "capability": "alarms",
+      "validArgs": [
+        { "seconds": 600 },
+        { "seconds": 86400, "label": "Pasta" }
+      ],
+      "invalidArgs": [
+        { "why": "extra key", "body": { "seconds": 600, "x": 1 } },
+        { "why": "zero seconds", "body": { "seconds": 0 } },
+        { "why": "over a day", "body": { "seconds": 86401 } },
+        { "why": "seconds as text", "body": { "seconds": "600" } }
+      ],
+      "validResults": [
+        { "outcome": "set" },
+        { "outcome": "clock_app_opened" }
+      ],
+      "invalidResults": [
+        { "why": "extra key", "body": { "outcome": "set", "x": 1 } },
+        { "why": "outcome outside the list", "body": { "outcome": "done" } }
+      ]
+    },
+    "messages.compose": {
+      "tool": "phone_text_compose",
+      "capability": "messages",
+      "validArgs": [
+        { "to": ["Sam"], "body": "Running ten minutes late" },
+        { "to": ["+1 555 555 0100", "+1 555 555 0101"], "body": "On my way" }
+      ],
+      "invalidArgs": [
+        { "why": "extra key", "body": { "to": ["Sam"], "body": "Hi", "x": 1 } },
+        { "why": "empty recipient list", "body": { "to": [], "body": "Hi" } },
+        { "why": "11 recipients", "body": { "to": ["Sam"], "body": "Hi" }, "repeat": { "path": "to", "count": 11 } },
+        { "why": "recipient as a string", "body": { "to": "Sam", "body": "Hi" } }
+      ],
+      "validResults": [
+        { "outcome": "opened_for_you_to_send" }
+      ],
+      "invalidResults": [
+        { "why": "extra key", "body": { "outcome": "opened_for_you_to_send", "x": 1 } },
+        { "why": "outcome outside the list", "body": { "outcome": "sent" } }
+      ]
+    },
+    "calls.dial": {
+      "tool": "phone_call_dial",
+      "capability": "calls",
+      "validArgs": [
+        { "number": "+1 555 555 0100" },
+        { "number": "5555550100" }
+      ],
+      "invalidArgs": [
+        { "why": "extra key", "body": { "number": "5555550100", "x": 1 } },
+        { "why": "empty number", "body": { "number": "" } },
+        { "why": "41 characters", "body": { "number": "55555555555555555555555555555555555555555" } },
+        { "why": "number as a number", "body": { "number": 5555550100 } }
+      ],
+      "validResults": [
+        { "outcome": "dialer_opened" }
+      ],
+      "invalidResults": [
+        { "why": "extra key", "body": { "outcome": "dialer_opened", "x": 1 } },
+        { "why": "outcome outside the list", "body": { "outcome": "called" } }
+      ]
+    }
+  },
+  "push": {
+    "categoryEntry": {
+      "kind": "device-job",
+      "risk": "unrated",
+      "category": "device-job"
+    },
+    "iosCategory": {
+      "device-job": "DEVICE_JOB"
+    },
+    "androidChannel": {
+      "device-job": "requests"
+    },
+    "note": "S15 copies categoryEntry into push.json categories and the two name maps into iosCategory and androidChannel. No action buttons."
+  }
+}

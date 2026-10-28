@@ -16,7 +16,7 @@ import { copyOriginUnavailable, copyOriginVerdict } from "./memory/replay-lineag
 import { LineageAllowance } from "./memory/lineage-allowance.ts";
 import { drainRevokeMarker } from "./memory/memory-revocation.ts";
 import { storedAnswerText, type StoredAnswerDeps } from "./handoff-replay.ts";
-import { BOT_VISIBLE_STATUS, botName, cardTitle, outboundWords, status, statusRecordOf, storedStatusShapeOk, type StatusKey } from "./murage-status.ts";
+import { BOT_VISIBLE_STATUS, botName, emailRefOf, cardTitle, outboundWords, status, statusRecordOf, storedStatusShapeOk, type StatusKey } from "./murage-status.ts";
 import { RowSink, writeActivityRow, writeBotRow } from "./bot-egress.ts";
 import { mirrorActivity, mirrorMurageLine, mirrorReply, type CommsBus } from "./comms-visibility.ts";
 import type { BotRecord, GroupRecord } from "./store.ts";
@@ -339,7 +339,11 @@ describe("16: every bot-facing read goes through the door", () => {
  *   reads (seq and rowid keys) and the branch walk's next-row read. They are the store's own loaders under Store.messagesFor and the page
  *   reads; every bot-facing caller reads their rows through botRows. */
 const RAW_READS: Record<string, number> = {
-  "backup-waiting.ts": 1, "bot-egress.expect-errors.ts": 2, "boundary-ports.ts": 9, "branch-fill.ts": 5, "branch-index.ts": 7, "branch-store.ts": 4,
+  "backup-waiting.ts": 1,
+  // 1.0.9 bot calls: settleArmedAtBoot reads only a thread's newest message time (MAX(at)); matchChannelOwed reads one inbound row's json,
+  // time and role to match a sender rule and keeps only the sender id and message id. Server-side admission, never handed to a bot.
+  "bot-calls-machine.ts": 2,
+  "bot-egress.expect-errors.ts": 2, "boundary-ports.ts": 9, "branch-fill.ts": 5, "branch-index.ts": 7, "branch-store.ts": 4,
   "browser-extension-approvals.ts": 3, "browser-extension-setup.ts": 1, "card-summary.ts": 3, "conversation-deletion.ts": 3,
   // 1.0.4 QW Q4 (0bc0c7c28): findWidget reads the one row whose id is the widget id, in the calling turn's own thread, and only while it holds
   // that widget (the WidgetStore interface line counts as the second). update_widget answers the bot with ids and a fixed line, never the row.
@@ -349,8 +353,10 @@ const RAW_READS: Record<string, number> = {
   "frozen-replies.ts": 5,
   "handoff-boundary.ts": 1, "handoff-dispatch.ts": 1, "handoff-evidence.ts": 1, "handoff-reply.ts": 1, "harness/event-log.ts": 5, "held-replies.ts": 1, "host-computer-consent.ts": 1,
   "human-principals.ts": 1, "image-operations.ts": 2, "inbox-fill-worker.ts": 1, "inbox.base-reference.ts": 4, "inbox.legacy-reference.ts": 1,
+  // 1.0.9 share and ask (S37): index.ts adds the share-orphan reclaim's messageNames probe, `SELECT 1 FROM messages WHERE json LIKE ? LIMIT 1`:
+  // it answers only whether a saved file's name appears in some message, and returns no row or words to anyone.
   // 1.0.4 QW (20acb3e0d): roomAnswerReceipt reads the owner's own landed answer row back for the owner's client (the room answer's receipt)
-  "inbox.ts": 6, "index.ts": 75, "installation-activation.ts": 1, "installation-database-snapshot.ts": 6, "installation-restore-preparation.ts": 1,
+  "inbox.ts": 6, "index.ts": 76, "installation-activation.ts": 1, "installation-database-snapshot.ts": 6, "installation-restore-preparation.ts": 1,
   // 1.0.4: index.ts adds the limit-failover resend (the owner's own user row, through acceptBotSend), the turn's sendIds, and the two owner-only MCP card routes
   // (dismissMcpCards, mcp-enable-cards); mcp-bot-cards.ts reads only the ids of open cards. None hands a stored row to a bot.
   "mcp-bot-cards.ts": 2, "mcp-signin-card.ts": 1, "memory/branch-change.ts": 3, "murage-anchor.ts": 1, "memory/bring-in.ts": 1, "memory/capture.ts": 3, "memory/deny-read.ts": 1,
@@ -384,13 +390,14 @@ describe("18a: raw reads of stored rows only in the allowlist", () => {
 const statusRow = (id: string, murage: unknown, at = 1): Message => ({ id, role: "bot", kind: "activity", tool: { name: `stored secret words ${id}`, ok: true }, actorKind: "murage", murage, at } as Message);
 
 describe("rule 14: BOT_VISIBLE_STATUS", () => {
-  it("is exactly the ten keys, and a row can keep every one of them", () => {
-    expect([...BOT_VISIBLE_STATUS].sort()).toEqual(["call_ended", "card_result_line", "checking", "criteria_claim_corrected", "no_answer_check_timed_out", "no_answer_checking", "request_finished", "result_unavailable", "setup_confirmed", "withheld"]);
+  it("is exactly the eleven keys, and a row can keep every one of them", () => {
+    expect([...BOT_VISIBLE_STATUS].sort()).toEqual(["call_ended", "card_result_line", "checking", "criteria_claim_corrected", "email_outcome", "no_answer_check_timed_out", "no_answer_checking", "request_finished", "result_unavailable", "setup_confirmed", "withheld"]);
     const made: Record<string, ReturnType<typeof status>> = {
       withheld: status("withheld"), checking: status("checking"), no_answer_checking: status("no_answer_checking"), request_finished: status("request_finished"), result_unavailable: status("result_unavailable"),
       card_result_line: status("card_result_line", { desk: botName({ name: "Desk" }), lead: botName({ name: "Lead" }), card: cardTitle({ title: "Card" }) }),
       criteria_claim_corrected: status("criteria_claim_corrected", { met: 2, total: 3 }), call_ended: status("call_ended", { minutes: 4 }), setup_confirmed: status("setup_confirmed"),
       no_answer_check_timed_out: status("no_answer_check_timed_out", { name: botName({ name: "Worker" }) }),
+      email_outcome: status("email_outcome", { ref: emailRefOf("E-AB12CD")!, outcome: "sent" }),
     };
     for (const key of BOT_VISIBLE_STATUS) {
       const kept = statusRecordOf(made[key]!);

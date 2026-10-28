@@ -16,6 +16,7 @@ import { LOOPBACK_HOST, runLoopback } from "./oauth/loopback.mjs";
 import { isFluxKeyShape } from "./provider-connections.mjs";
 
 import { fluxDesktopSigninOn } from "../shared/flux-desktop-signin-default.mjs";
+import { emailOwnerFromTokenResponse, emailOwnerScopeGranted } from "./email-secrets.mjs";
 
 export const FLUX_DESKTOP_CLIENT_ID = "murage-desktop";
 export const FLUX_DESKTOP_AUTHORIZE_URL = "https://fluxrouter.ai/desktop/authorize";
@@ -49,9 +50,18 @@ const MESSAGES = Object.freeze({
   exchange: "Flux Router did not complete the sign-in. Try again, or paste your key instead.",
   bad_key: "Flux Router returned something that is not a key. Paste your key instead.",
   busy: "Sign-in is already open in your browser.",
+  // bot email (contract r2.5): the token came back without email:owner, so bot email is not open on this Flux account yet
+  email_dark: "Bot email opens on your Flux account soon. Everything else stays as it is.",
   FLUX_SIGNIN_UNAVAILABLE: "Sign in with Flux is not available yet. Paste your key instead.",
 });
 const fail = (code) => new FluxSigninError(code, MESSAGES[code] ?? MESSAGES.rejected);
+
+/** readToken for the bot email owner sign-in (contract r2.5): a token that came back without email:owner (scopes [] while Flux's bot key
+ *  switch is off) ends the sign-in with the calm `email_dark` line and stores nothing; otherwise the email:owner credential, or null. */
+export function readEmailOwnerToken(body) {
+  if (body && typeof body === "object" && typeof body.api_key === "string" && body.api_key.trim() && !emailOwnerScopeGranted(body)) throw fail("email_dark");
+  return emailOwnerFromTokenResponse(body);
+}
 
 export function buildAuthorizeUrl({ authorizeUrl = FLUX_DESKTOP_AUTHORIZE_URL, redirectUri, challenge, state }) {
   const url = new URL(authorizeUrl);
@@ -74,10 +84,12 @@ export function interpretOutcome(outcome) {
   throw fail(MESSAGES[outcome?.error] ? outcome.error : "rejected");
 }
 
-export function tokenRequest({ code, verifier, redirectUri }) {
+/** Bot email (contract r2.5, BOT-EMAIL-MURAGE-109 2.4): the owner act of turning email on asks the token route for `scope: "email:owner"`
+ *  (the only value Flux accepts). Absent for the plain sign-in. */
+export function tokenRequest({ code, verifier, redirectUri, scope }) {
   return {
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ code, code_verifier: verifier, redirect_uri: redirectUri }),
+    body: JSON.stringify({ code, code_verifier: verifier, redirect_uri: redirectUri, ...(scope ? { scope } : {}) }),
   };
 }
 
@@ -114,6 +126,10 @@ export async function runFluxDesktopSignin({
   exchangeTimeoutMs = FLUX_DESKTOP_EXCHANGE_TIMEOUT_MS,
   makeServer = createServer,
   pkce = createPkce(),
+  /** Requested token scope (bot email: "email:owner"); the plain Flux key sign-in sends none. */
+  scope,
+  /** Reads the token response; resolves the value returned as `key`, or null (bad_key). Default: an sk-flux- account key. */
+  readToken = keyFromTokenResponse,
 } = {}) {
   if (active) throw fail("busy");
   let finishFlow = () => {};
@@ -132,14 +148,14 @@ export async function runFluxDesktopSignin({
       },
     });
     const code = interpretOutcome(outcome);
-    const request = tokenRequest({ code, verifier: pkce.verifier, redirectUri: redirectUriFor(outcome.port) });
+    const request = tokenRequest({ code, verifier: pkce.verifier, redirectUri: redirectUriFor(outcome.port), scope });
     let response;
     try {
       response = await fetchImpl(tokenUrl, { method: "POST", ...request, redirect: "error", signal: AbortSignal.timeout(exchangeTimeoutMs) });
     } catch { throw fail("exchange"); }
     const body = await response.json().catch(() => null);
     if (!response.ok) throw fail("exchange");
-    const key = keyFromTokenResponse(body);
+    const key = await readToken(body);
     if (!key) throw fail("bad_key");
     return { key };
   } finally {
