@@ -1,4 +1,5 @@
 import { useSlashSkills } from "@/lib/use-slash-skills";
+import { CallMeWhenDone } from "./CallMeWhenDone";
 import { track } from "@/lib/analytics";
 import { closedComposerLine } from "@/lib/shared-teams";
 import { dictationDisabledNote, isDictationDisabled } from "@/lib/dictation-notes";
@@ -1610,6 +1611,8 @@ export function Composer({
               drain the same queue, so it yields while a send is waiting.
               Cancelling the queued composer card brings Stop back. */}
           {canInject && <ComposerInjectNow onInject={injectQueued} />}
+          {/* Bot calls 1.0.9: "Call me when this finishes" on a running turn in a direct conversation (turn-end) */}
+          {busy && !locked && !canInject && bot && !group && threadId && <CallMeWhenDone threadId={threadId} botName={bot.name} />}
           {busy && !locked && !canInject && (
           <button
             onClick={interruptTurn}

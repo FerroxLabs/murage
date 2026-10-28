@@ -7,7 +7,7 @@ import WebSocket, { WebSocketServer } from "ws";
 import { companionMarked } from "../../server/sse-visibility.ts";
 import { createCompanionAuthority } from "../../server/companion-authority.ts";
 import { upgradeAdmitted, upgradePrincipalFor } from "../../server/voice/stream-route.ts";
-import { forwardStreamUpgrade, redactStreamQuery, rejectUpgrade } from "../src/stream-upgrade.ts";
+import { closeStreamUpgrades, forwardStreamUpgrade, redactStreamQuery, rejectUpgrade } from "../src/stream-upgrade.ts";
 
 let harness: Server;
 let companion: Server;
@@ -45,6 +45,27 @@ afterEach(async () => {
 const url = (path: string) => `ws://127.0.0.1:${(companion.address() as AddressInfo).port}${path}`;
 
 describe("forwardStreamUpgrade", () => {
+  it("shutdown ends an open call stream, so close() does not wait for the call (upstream af449299b)", async () => {
+    const ws = new WebSocket(url("/api/voice/stream?ticket=abc"));
+    ws.on("error", () => {});
+    await new Promise<void>((r) => ws.once("open", () => r()));
+    const wsClosed = new Promise<void>((r) => ws.once("close", () => r()));
+    // closeAllConnections() skips an upgraded socket: without closeStreamUpgrades() close() waits for the call
+    companion.closeAllConnections();
+    expect(closeStreamUpgrades()).toBe(1);
+    const closed = await Promise.race([
+      new Promise<boolean>((r) => companion.close(() => r(true))),
+      new Promise<boolean>((r) => setTimeout(() => r(false), 2_000)),
+    ]);
+    expect(closed).toBe(true);
+    await wsClosed;
+    expect(slots.get("companion:dev-1:sess-1")).toBe(0);
+    expect(closeStreamUpgrades()).toBe(0);
+    // afterEach closes it again
+    companion = createServer();
+    await new Promise<void>((r) => companion.listen(0, "127.0.0.1", () => r()));
+  });
+
   it("forwards with a loopback Host, the launch proof and the principal, and never the Origin or cookie", async () => {
     const ws = new WebSocket(url("/api/voice/stream?ticket=abc"), { headers: { cookie: "s=secret-cookie" } });
     await new Promise<void>((r) => ws.once("open", () => r()));

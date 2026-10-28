@@ -29,8 +29,13 @@ describe("Plan 3b A3: the messaging service builds the notification itself", () 
     expect(read("android/app/src/main/java/com/murage/mobile/PushDetailFetch.java")).toMatch(/DEADLINE_MS = 5000;/);
   });
   it("demands an unlock for lock-screen answers, and only from API 31", () => {
-    expect(service()).toMatch(/if \(plan\.authRequired\) a\.setAuthenticationRequired\(true\);/);
-    expect(read("android/app/src/main/java/com/murage/mobile/shell/NotificationPlan.java")).toMatch(/lockScreenActions && sdk >= 31/);
+    const service_ = service();
+    expect(service_).toMatch(/if \(plan\.authRequired && Build\.VERSION\.SDK_INT >= 31\) a\.setAuthenticationRequired\(true\);/);
+    expect(service_).not.toMatch(/if \(plan\.authRequired\) a\.setAuthenticationRequired/);
+    const plan = read("android/app/src/main/java/com/murage/mobile/shell/NotificationPlan.java");
+    expect(plan).toMatch(/lockScreenActions && sdk >= 31/);
+    // Call Answer and Not now act from the lock screen, so below API 31 a call offers Open only.
+    expect(plan).toMatch(/case CALL: return new Plan\([^;]*actions \? Arrays\.asList\("ANSWER", "NOT_NOW"\) : Collections\.singletonList\("OPEN"\)/);
   });
   it("logs nothing from the payload or the detail", () => {
     for (const f of ["MurageMessagingService.java", "PushDetailFetch.java", "PushHttp.java"]) {
@@ -277,7 +282,7 @@ describe("Plan 3b re-register fix: Android never replaces a working binding on a
   it("a dropped install, or a forgotten computer, takes its pending replaces with it; a pending binding shows generic text", () => {
     expect(java("PushEnrolment.java")).toMatch(/private void drop\(String failingSecret, int status\) \{\s*if \(!store\.dropInstall\(failingSecret\)\) return;[\s\S]*?pending\.clear\(\);/);
     expect(java("PushServices.java")).toMatch(/void forget\(WorkspaceOrigin origin\) \{\s*PushRegistrar\.get\(app\)\.cancelPending\(origin\);/);
-    expect(java("MurageMessagingService.java")).toMatch(/this::post, PushRegistrar\.get\(this\)::isPending\)/);
+    expect(java("MurageMessagingService.java")).toMatch(/this::post, PushRegistrar\.get\(this\)::isPending[,)]/);
   });
   it("putTokens seals respond before touching detail, so a locked respond key keeps the old pair", () => {
     const body = java("PushStore.java").match(/boolean putTokens\(String bindingId, String detail, String respond\) \{([\s\S]*?)\n {4}\}/)?.[1] ?? "";
@@ -311,5 +316,48 @@ describe("privacy data minimisation: the last workspace going releases the FCM t
     const release = read(dir + "DeviceRelease.java");
     expect(release).toContain("getClass().getSimpleName()");
     expect(release).not.toContain("getMessage()");
+  });
+});
+
+// 1.0.9 share and ask S43 (U1, U2, U14, U21): the Android manifest and build.
+describe("1.0.9 share and ask: Android manifest and build guards", () => {
+  const manifest = () => read("android/app/src/main/AndroidManifest.xml");
+  const tag = (kind: string, name: string) =>
+    manifest().match(new RegExp(`<${kind}\\s[^>]*android:name="${name.replace(".", "\\.")}"[^>]*?(?:/>|>[\\s\\S]*?</${kind}>)`))?.[0] ?? "";
+
+  it("never declares the overlay, foreground-service, boot, voice-interaction, SMS or call-log permissions", () => {
+    const declared = [...manifest().matchAll(/<uses-permission[^>]*android:name="([^"]+)"/g)].map((m) => m[1]);
+    expect(declared.length).toBeGreaterThan(5);
+    for (const name of declared) {
+      expect(name, name).not.toMatch(
+        /SYSTEM_ALERT_WINDOW|FOREGROUND_SERVICE|RECEIVE_BOOT_COMPLETED|BIND_VOICE_INTERACTION|SMS|MMS|CALL_LOG|READ_PHONE|CALL_PHONE|ANSWER_PHONE/,
+      );
+    }
+  });
+
+  it("AssistActivity is exported for ASSIST only and never shows over the lock screen", () => {
+    const activity = tag("activity", ".AssistActivity");
+    expect(activity).toContain('android:exported="true"');
+    expect(activity).not.toMatch(/showWhenLocked|turnScreenOn/i);
+    const actions = [...activity.matchAll(/<action android:name="([^"]+)"/g)].map((m) => m[1]);
+    expect(actions).toEqual(["android.intent.action.ASSIST"]);
+    expect(manifest()).not.toMatch(/showWhenLocked|turnScreenOn/i);
+  });
+
+  it("the shortcut aliases are not exported and carry no intent filter", () => {
+    for (const [name, target] of [
+      [".AssistShortcut", ".AssistActivity"],
+      [".OutboxShortcut", ".ShareOutboxActivity"],
+    ]) {
+      const alias = tag("activity-alias", name);
+      expect(alias, name).not.toBe("");
+      expect(alias, name).toContain('android:exported="false"');
+      expect(alias, name).toContain(`android:targetActivity="${target}"`);
+      expect(alias, name).not.toContain("<intent-filter");
+    }
+  });
+
+  it("app/build.gradle does not use androidx.work", () => {
+    expect(read("android/app/build.gradle")).not.toMatch(/androidx\.work/);
   });
 });

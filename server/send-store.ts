@@ -64,6 +64,8 @@
 //                              gone, expiry, could not start, restart).         startup recovery makes any
 //                              Not the owner's own cancel.                      that was missed
 //   unconfirmed   queued       queue(): the engine proved it never took them   this row + the transcript line
+//   started       queued       requeueStarted(): a drained start found its     this row + the transcript line
+//                              thread taken and never ran; same seq
 //   unconfirmed   delivered    settle(): the engine confirmed late             the transcript line
 //   unconfirmed   failed       settle(failed, line): a later message passed it the transcript line
 //   unconfirmed   (scrubbed)   scrub(): late answer over, line committed       the transcript line
@@ -101,6 +103,9 @@ import { SEND_NOTICE_ENGLISH, sendNoticeActivityName, type SendNoticeCode } from
 
 export type SendStatus = "sending" | "queued" | "dispatched" | "started" | "delivered" | "unconfirmed" | "failed" | "refused" | "cancelled";
 export type SendKind = "bot" | "group";
+
+export type SendVia = "share" | "ask-intent";
+export interface SendAttachment { kind: "image" | "file"; path: string; mime: string }
 
 export interface SendRow {
   seq: number;
@@ -140,6 +145,16 @@ export interface SendRow {
   /** A steer the engine took: the provider turn it went into (BOTADDED-DESIGN-V3 r6 §5). A line written later by recovery
    * carries it as `dispatchedIn`. Null for every other row. */
   turnId: string | null;
+  /** A row born from a share or an ask-intent (third-party words): null on every owner row. */
+  via: SendVia | null;
+  /** Waiting words that never run as an owner turn by themselves; re-read at the drain, not only at admission. */
+  queueOnly: boolean;
+  /** The phone that made a via row. */
+  viaDevice: string | null;
+  /** Files a via row carries; null when none or when the stored column is malformed (such a row is refused at the drain, never run with a guess). */
+  attachments: SendAttachment[] | null;
+  /** True when the stored attachments column holds something that does not parse: the drain refuses such a row. */
+  attachmentsMalformed: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -173,6 +188,11 @@ export interface AcceptInput {
   actionId?: string;
   /** This chip was made from work a restore expired (a room request): it is held like a neutralized send. */
   restoreHeld?: boolean;
+  /** A share or ask-intent row. Needs `queueOnly` and origin "unproven" (a programming error otherwise); a replaced via row carries all of it forward. */
+  via?: SendVia;
+  queueOnly?: true;
+  viaDevice?: string;
+  attachments?: SendRow["attachments"];
   now?: number;
 }
 
@@ -243,7 +263,11 @@ const DDL = `CREATE TABLE IF NOT EXISTS owner_sends (
   stopped INTEGER NOT NULL DEFAULT 0,
   stop_gen TEXT,
   action_id TEXT,
-  turn_id TEXT
+  turn_id TEXT,
+  via TEXT,
+  queue_only INTEGER NOT NULL DEFAULT 0,
+  via_device TEXT,
+  attachments TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS owner_sends_send ON owner_sends(thread_id, send_id);
 CREATE INDEX IF NOT EXISTS owner_sends_open ON owner_sends(thread_id, status, seq);
@@ -307,6 +331,11 @@ function addMissingColumns(db: DatabaseSync): void {
   if (!columns.some((column) => column.name === "action_id")) db.exec("ALTER TABLE owner_sends ADD COLUMN action_id TEXT");
   // 1.0.1 never reads turn_id: owner_sends is a 1.0.2 table in the downgrade manifest (APP_SCHEMA_102_ADDITIONS), dropped whole on the way back.
   if (!columns.some((column) => column.name === "turn_id")) db.exec("ALTER TABLE owner_sends ADD COLUMN turn_id TEXT");
+  // Same table, same downgrade: the 1.0.9 via columns go with it when owner_sends is dropped whole.
+  if (!columns.some((column) => column.name === "via")) db.exec("ALTER TABLE owner_sends ADD COLUMN via TEXT");
+  if (!columns.some((column) => column.name === "queue_only")) db.exec("ALTER TABLE owner_sends ADD COLUMN queue_only INTEGER NOT NULL DEFAULT 0");
+  if (!columns.some((column) => column.name === "via_device")) db.exec("ALTER TABLE owner_sends ADD COLUMN via_device TEXT");
+  if (!columns.some((column) => column.name === "attachments")) db.exec("ALTER TABLE owner_sends ADD COLUMN attachments TEXT");
 }
 
 /**
@@ -329,6 +358,8 @@ export function recoveredSteerLine(row: SendRow, steerId: string) {
     ...(row.replyToId ? { replyToId: row.replyToId } : {}),
     ...(row.sendId ? { sendId: row.sendId } : {}),
     queueId: row.queueId,
+    // a phone's line keeps its standing: without `via` the owner could edit it into an owner turn
+    ...(row.via ? { via: row.via } : {}),
     steered: true, steerUnconfirmed: true, steerId,
     ...(row.turnId ? { dispatchedIn: row.turnId } : {}),
   };
@@ -353,6 +384,23 @@ export function initializeOwnerSends(db: DatabaseSync): void {
 const yieldToEventLoop = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 
 const OPEN: ReadonlySet<SendStatus> = new Set<SendStatus>(["sending", "queued", "dispatched"]);
+
+/** The stored attachments, or null when absent or malformed in any way. */
+function parseAttachments(raw: unknown): SendAttachment[] | null {
+  if (typeof raw !== "string" || !raw) return null;
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (!Array.isArray(value)) return null;
+    const out: SendAttachment[] = [];
+    for (const item of value) {
+      if (!item || typeof item !== "object") return null;
+      const { kind, path, mime } = item as Record<string, unknown>;
+      if ((kind !== "image" && kind !== "file") || typeof path !== "string" || !path || typeof mime !== "string") return null;
+      out.push({ kind, path, mime });
+    }
+    return out;
+  } catch { return null; }
+}
 
 function toRow(r: Record<string, unknown>): SendRow {
   return {
@@ -380,6 +428,11 @@ function toRow(r: Record<string, unknown>): SendRow {
     stopGen: (r.stop_gen as string | null) ?? null,
     actionId: (r.action_id as string | null) ?? null,
     turnId: (r.turn_id as string | null) ?? null,
+    via: r.via === "share" || r.via === "ask-intent" ? r.via : null,
+    queueOnly: Number(r.queue_only) === 1,
+    viaDevice: (r.via_device as string | null) ?? null,
+    attachments: parseAttachments(r.attachments),
+    attachmentsMalformed: typeof r.attachments === "string" && r.attachments !== "" && parseAttachments(r.attachments) === null,
     createdAt: Number(r.created_at),
     updatedAt: Number(r.updated_at),
   };
@@ -453,6 +506,9 @@ export class SendStore {
       try { this.observer?.(threadId); } catch { /* a chip refresh never fails a send */ }
     });
   }
+
+  /** The connection the store writes on: the phone receipts table shares it, so a receipt and its row commit together. */
+  database(): DatabaseSync { return this.db(); }
 
   private db(): DatabaseSync {
     const db = this.getDb();
@@ -528,6 +584,12 @@ export class SendStore {
     const now = input.now ?? Date.now();
     const fingerprint = fingerprintHash(input.fingerprint);
     let typedAt = now;
+    if (input.via && (input.queueOnly !== true || input.origin !== "unproven")) throw new Error("a via send is queue-only and unproven");
+    let via: SendVia | null = input.via ?? null;
+    let queueOnly = input.queueOnly === true;
+    let viaDevice: string | null = input.viaDevice ?? null;
+    let attachments: SendRow["attachments"] = input.attachments ?? null;
+    let origin: string | null = input.origin ?? null;
     const result = this.atomically((db): AcceptResult => {
       // The check and the insert share this transaction: no chip for a conversation that is gone.
       if (input.status === "refused" && this.gate && !this.gate(input.threadId, input.ownerId, input.kind)) throw new ThreadGoneError();
@@ -545,6 +607,11 @@ export class SendStore {
           if (!stoppedResendRuns(prior, input)) return { kind: "existing", row: prior };
           // A replay of the very press that made this row (its acknowledgement was lost) never runs it a second time.
           if (input.resend && input.actionId && prior.actionId === input.actionId) return { kind: "existing", row: prior };
+          if (prior.via !== null) {
+            // A via row keeps its standing and its files across the replacement, whatever the press says: third-party words never become an owner turn here.
+            if (input.via && input.via !== prior.via) throw new Error("a resend cannot change a send's via");
+            via = prior.via; queueOnly = true; viaDevice = prior.viaDevice; attachments = prior.attachments; origin = "unproven";
+          }
           db.prepare("DELETE FROM owner_sends WHERE seq=?").run(prior.seq);
           // Send again on a chip: the message is still the one the owner typed, at the time they typed it
           typedAt = prior.createdAt;
@@ -556,12 +623,13 @@ export class SendStore {
       }
       const queueId = input.queueId ?? randomUUID();
       const heldGeneration = input.restoreHeld ? (currentRestoreGeneration(db) ?? issueRestoreGeneration(db)) : null;
-      db.prepare(`INSERT INTO owner_sends (kind, owner_id, thread_id, send_id, queue_id, fingerprint, text, prompt, reply_to_id, origin, mode, responder_id, status, notice, dispatched, created_at, updated_at, restore_held, restore_gen, action_id)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?,?,?,?)`).run(
+      db.prepare(`INSERT INTO owner_sends (kind, owner_id, thread_id, send_id, queue_id, fingerprint, text, prompt, reply_to_id, origin, mode, responder_id, status, notice, dispatched, created_at, updated_at, restore_held, restore_gen, action_id, via, queue_only, via_device, attachments)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,?,?)`).run(
         input.kind, input.ownerId, input.threadId, input.sendId ?? null, queueId, fingerprint, input.text, input.prompt ?? null,
-        input.replyToId ?? null, input.origin ?? null, input.mode ?? null, input.responderId ?? null,
+        input.replyToId ?? null, origin, input.mode ?? null, input.responderId ?? null,
         input.status ?? "sending", input.status === "refused" ? (input.notice ?? "refused") : null, typedAt, now,
         input.restoreHeld ? 1 : 0, heldGeneration, input.resend && input.actionId ? input.actionId : null,
+        via, queueOnly ? 1 : 0, viaDevice, attachments ? JSON.stringify(attachments) : null,
       );
       return { kind: "new", row: this.one(db, "SELECT * FROM owner_sends WHERE queue_id=?", queueId)! };
     });
@@ -614,6 +682,18 @@ export class SendStore {
   queue(seq: number, existingMessageId?: string, prompt?: string): void {
     this.update(seq, "status='queued', dispatched=0, existing_message_id=COALESCE(?, existing_message_id), prompt=COALESCE(?, prompt)", [existingMessageId ?? null, prompt ?? null]);
     this.lateOpen.delete(seq);
+  }
+
+  /** A drained row whose start never ran (the thread was taken): back to waiting in its own place (seq, via, device and origin
+   * unchanged), running from the transcript line it already has, with its words kept for the chip until it starts again. Only a
+   * "started" row moves; anything else throws and stays as it is. */
+  requeueStarted(seq: number, messageId: string, text: string, prompt?: string): void {
+    const info = this.db().prepare("UPDATE owner_sends SET status='queued', dispatched=0, existing_message_id=?, text=?, prompt=COALESCE(?, prompt), updated_at=? WHERE seq=? AND status='started'")
+      .run(messageId, text, prompt ?? null, Date.now(), seq);
+    if (Number(info.changes) !== 1) throw new Error("send record is not started");
+    this.lateOpen.delete(seq);
+    const row = this.bySeq(seq);
+    if (row) this.notify(row.threadId);
   }
 
   /**
