@@ -49,6 +49,16 @@ describe("help covers what the code can do", () => {
   }
 });
 
+describe("help never names a gated section while it is dark", () => {
+  it("leaves every GATED_BOT_SETTINGS section (bot email's Email) out of the capabilities list", async () => {
+    const { GATED_BOT_SETTINGS } = await import("../src/components/bot-settings-sections.ts");
+    expect([...GATED_BOT_SETTINGS]).toContain("email");
+    const named = HELP_CAPABILITIES.filter((capability) => capability.kind === "bot-settings").map((capability) => capability.name);
+    for (const gated of GATED_BOT_SETTINGS) expect(named).not.toContain(gated);
+    expect(named).toContain("access");
+  });
+});
+
 describe("help does not invent settings", () => {
   it("never mentions the bot-to-bot setting a bot once made up", () => {
     expect(searchable).not.toContain("bot-to-bot communications");

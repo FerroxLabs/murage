@@ -157,7 +157,7 @@ export async function descendantBaseline(root: number, initAtMs: number): Promis
   }
   return new Promise((resolve) => {
     // SIGKILL on timeout: a ps that ignores SIGTERM must not outlive the wait.
-    execFile("ps", PS_ETIME_ARGS, { timeout: 5_000, killSignal: "SIGKILL", maxBuffer: 4 * 1024 * 1024 }, (error, stdout) => {
+    execFile("ps", PS_ETIME_ARGS, { timeout: 5_000, killSignal: "SIGKILL", maxBuffer: 4 * 1024 * 1024, env: PS_LOOKUP_ENV }, (error, stdout) => {
       if (error) return resolve(null);
       // The listing's ages were read while ps ran; "now" is after that, so
       // start = now - age can only be late. Late is the right direction: a
@@ -176,7 +176,13 @@ export type ProcessIdentities = Map<number, string>;
 // goes before comm/args, which may hold spaces.
 const LSTART = String.raw`(\S+\s+\S+\s+\d+\s+\d+:\d+:\d+\s+\d+)`;
 const PS_ID_ARGS = ["-A", "-o", "pid=,ppid=,lstart=,comm="];
-const PS_ENV = { ...process.env, LC_ALL: "C", LANG: "C" };
+/** `ps` is looked up in the system folders first, whatever PATH the server inherited. A launcher that passes an empty or minimal
+ *  PATH left every probe here unanswered (ENOENT), which a teardown that must confirm a whole tree gone reads as "cannot confirm"
+ *  for good (the chat MCP client then never settled its turn), and a PATH entry ahead of them could answer in place of ps. The
+ *  inherited PATH stays as the fallback, for a system whose ps lives elsewhere. */
+const PS_PATH = ["/usr/bin", "/bin", "/usr/sbin", "/sbin", ...(process.env.PATH ? [process.env.PATH] : [])].join(":");
+const PS_LOOKUP_ENV = { ...process.env, PATH: PS_PATH };
+const PS_ENV = { ...PS_LOOKUP_ENV, LC_ALL: "C", LANG: "C" };
 const normStart = (text: string) => text.trim().replace(/\s+/g, " ");
 
 /** Exported for tests: parse `ps -o pid=,ppid=,lstart=,<comm|args>=` lines. */
@@ -310,6 +316,25 @@ export async function descendantIdentities(root: number): Promise<ProcessIdentit
   if (!found) return null;
   const starts = new Map(rows.map((row) => [row.pid, row.start]));
   return new Map([...found].map((pid) => [pid, starts.get(pid)!]));
+}
+
+/** descendantIdentities, but a walked pid whose start could not be read is kept with "" (unknown) unless the OS says it is gone
+ * (ESRCH), so a caller that must confirm a whole tree gone can tell "no descendant" from "one it cannot identify" (OPENAI-TOOLS-109,
+ * Astra code-r3). Without a platform hook the ps listing already carries every start. */
+export async function descendantIdentitiesKeepingUnknown(root: number): Promise<ProcessIdentities | null> {
+  const platform = await platformListTree(root);
+  if (platform === undefined) return descendantIdentities(root);
+  if (!platform) return null;
+  const starts = await processStarts(platform);
+  if (!starts) return null;
+  const out: ProcessIdentities = new Map();
+  for (const pid of platform) {
+    if (!Number.isInteger(pid) || pid <= 0) continue;
+    const start = starts.get(pid);
+    if (start) { out.set(pid, start); continue; }
+    try { process.kill(pid, 0); out.set(pid, ""); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") out.set(pid, ""); }
+  }
+  return out;
 }
 
 /** Descendants of `root` measured against an identity baseline, from ONE
@@ -511,7 +536,7 @@ async function processTreeWalk(root: number, stopAt: ReadonlySet<number> | null,
     return walk(winWalkLines(rows), root, exact, layout)?.found ?? null;
   }
   return new Promise((resolve) => {
-    execFile("ps", PS_ARGS, { timeout: 5_000, maxBuffer: 4 * 1024 * 1024 }, (error, stdout) => {
+    execFile("ps", PS_ARGS, { timeout: 5_000, maxBuffer: 4 * 1024 * 1024, env: PS_LOOKUP_ENV }, (error, stdout) => {
       if (error) return resolve(null);
       resolve(walk(stdout, root, stopAt, layout)?.found ?? null);
     });
@@ -618,7 +643,7 @@ export function processNames(pids: Iterable<number>): Promise<string[]> {
   const list = [...pids].filter((pid) => Number.isInteger(pid) && pid > 0).slice(0, 8);
   if (!list.length || process.platform === "win32") return Promise.resolve([]);
   return new Promise((resolve) => {
-    execFile("ps", ["-o", "comm=", "-p", list.join(",")], { timeout: 2_000, killSignal: "SIGKILL" }, (error, stdout) => {
+    execFile("ps", ["-o", "comm=", "-p", list.join(",")], { timeout: 2_000, killSignal: "SIGKILL", env: PS_LOOKUP_ENV }, (error, stdout) => {
       if (error && !stdout) return resolve([]);
       resolve(String(stdout).split("\n").map((line) => line.trim().split("/").pop() ?? "").filter(Boolean));
     });

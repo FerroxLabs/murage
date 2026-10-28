@@ -46,6 +46,9 @@ const NO_REQUEST_OF_THEIR_OWN: Record<string, string> = {
   "index.ts": "wiring: passes the key to the modules above and to the engines, makes no Flux request itself",
   "memory/extractor-connections.ts": "hands FLUX_OPENAI_BASE to memory/extract.ts, which calls fluxCallHeaders('memory-extraction')",
   "flux-key-health.ts": "key validity GET /key/info: no model turn, nothing to capture or recall",
+  "email/email-secrets.ts": "bot email key storage; names fluxKey() in a comment, makes no request",
+  "email/flux-email-client.ts": "bot email /v1/email/* (BOT-EMAIL-MURAGE-109): inbox, send and read routes, no model turn, nothing to capture or recall",
+  "email/runtime.ts": "bot email wiring: hands the Flux base to email/flux-email-client.ts, makes no request itself",
 };
 /** Call-site ids whose code is owned by another lane. They may be unused until that lane lands. */
 const PENDING_OTHER_LANE: readonly FluxCallSiteId[] = [];

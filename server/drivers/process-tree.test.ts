@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { setPlatformProcessHooks } from "../platform-process-hooks.ts";
 import { baselineFromListing, descendantBaseline, descendantIdentities, descendantPids, isBrowserPath, parseEtime, settleArgsProbe, startedBeforeFromListing, untrackedDescendants, untrackedIdentified, walk, type ExemptLayout } from "./process-tree.ts";
@@ -288,5 +288,33 @@ describe.skipIf(process.platform === "win32")("untrackedIdentified", () => {
     const forged = (await untrackedIdentified(cli.pid!, new Map([[sleeper, LONG_AGO], [999_999, LONG_AGO]])))!;
     expect(forged.fresh.has(sleeper)).toBe(true);
     expect(forged.alive.size).toBe(0);
+  }, 20_000);
+});
+
+// A server started with an empty PATH (the verification fixture does this, as some launchers do) still gets answers: ps is found
+// in the system folders, so a teardown that must confirm a tree gone is not left blind and its turn settles.
+describe.skipIf(process.platform === "win32")("ps lookup under an empty PATH", () => {
+  it("lists a live child and reads its identity", async () => {
+    const saved = process.env.PATH;
+    let tree: typeof import("./process-tree.ts");
+    try {
+      process.env.PATH = "";
+      vi.resetModules();
+      tree = await import("./process-tree.ts");
+    } finally {
+      process.env.PATH = saved;
+    }
+    const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], { stdio: "ignore" });
+    try {
+      const pid = child.pid!;
+      const found = await tree.descendantIdentitiesKeepingUnknown(process.pid);
+      expect(found).not.toBeNull();
+      expect(found!.has(pid)).toBe(true);
+      expect(found!.get(pid)).not.toBe("");
+      const rows = await tree.processParentsAndArgs([pid]);
+      expect(rows?.get(pid)?.start).toBeTruthy();
+    } finally {
+      child.kill("SIGKILL");
+    }
   }, 20_000);
 });

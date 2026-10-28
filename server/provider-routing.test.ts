@@ -58,10 +58,10 @@ describe('bound provider routes',()=>{
    finally{events.stop();await instance.dispose();removeTempDirSync(home);}
   });
  }
- it('routes Grok API to the exact selected provider with chat-only capabilities',async()=>{
+ it('routes Grok API to the exact selected provider; its MCP set is the chat-tools set (OPENAI-TOOLS-109: agents yes, browser no)',async()=>{
   let received:any;const server=createServer(async(req,res)=>{let body='';for await(const chunk of req)body+=chunk;received={url:req.url,auth:req.headers.authorization,body:JSON.parse(body)};res.setHeader('content-type','text/event-stream');res.end('data: '+JSON.stringify({choices:[{delta:{content:'fixture answer'}}]})+'\n\ndata: [DONE]\n\n');});await new Promise<void>(done=>server.listen(0,'127.0.0.1',done));
   const chosen={...route,baseUrl:`http://127.0.0.1:${(server.address()as{port:number}).port}/v1`};const instance=await GrokDriver.create({instanceId:'fixture-grok',displayName:'Grok API',enabled:true,environment:{},config:GrokDriver.decodeConfig({})});const events=recordEvents(instance.adapter);
-  try{await instance.adapter.sendTurn({threadId:'grok-selected',text:'fake only',model:chosen.model,providerRoute:chosen});await events.until(e=>e.type==='turn.completed');expect(received).toMatchObject({url:'/v1/chat/completions',auth:'Bearer '+route.apiKey,body:{model:route.model}});expect(instance.adapter.capabilities.agentsMcp).not.toBe(true);expect(instance.adapter.capabilities.browserMcp).not.toBe(true);}
+  try{await instance.adapter.sendTurn({threadId:'grok-selected',text:'fake only',model:chosen.model,providerRoute:chosen});await events.until(e=>e.type==='turn.completed');expect(received).toMatchObject({url:'/v1/chat/completions',auth:'Bearer '+route.apiKey,body:{model:route.model}});expect(instance.adapter.capabilities.agentsMcp).toBe(true);expect(instance.adapter.capabilities.browserMcp).not.toBe(true);}
   finally{events.stop();await instance.dispose();await new Promise<void>(done=>server.close(()=>done()));}
  });
 

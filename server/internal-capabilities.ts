@@ -1,8 +1,9 @@
 import { assertHumanPrincipal, type HumanPrincipal } from "./human-principals.ts";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { forgetAllVenueReadTurns, forgetVenueReadTurn } from "./venue-read-turns.ts";
+import { forgetAllEmailTurns, forgetEmailTurn } from "./email/email-turns.ts";
 
-export type InternalCapabilityKind = "agents" | "connectors" | "computer" | "memory" | "mcp";
+export type InternalCapabilityKind = "agents" | "connectors" | "computer" | "memory" | "mcp" | "device";
 export type InternalCapability = Readonly<{
   botId: string;
   threadId: string;
@@ -33,6 +34,7 @@ export function requiredInternalKind(path: string): InternalCapabilityKind {
   if (path.startsWith("/api/internal/connectors/")) return "connectors";
   if (path.startsWith("/api/internal/mcp-remote/")) return "mcp";
   if (path.startsWith("/api/internal/box/v1/")) return "computer";
+  if (path.startsWith("/api/internal/device/")) return "device";
   if (["/api/internal/computer-control", "/api/internal/computer-activity", "/api/internal/headless-browser", "/api/internal/unified-browser", "/api/internal/host-computer"].includes(path)) return "computer";
   return "agents";
 }
@@ -79,7 +81,7 @@ export class InternalCapabilities {
     if (!owner || owner.id !== input.generation || owner.botId !== input.botId
       || JSON.stringify(owner.humanPrincipal) !== JSON.stringify(input.humanPrincipal)
       || !Number.isInteger(input.depth) || input.depth < 0
-      || !["agents", "connectors", "computer", "memory", "mcp"].includes(input.kind)
+      || !["agents", "connectors", "computer", "memory", "mcp", "device"].includes(input.kind)
       || typeof input.skillAuthoring !== "boolean") throw new Error("invalid internal capability owner");
     const claim: InternalCapability = Object.freeze({ ...input, expiresAt: this.#now() + this.#orphanMs });
     const token = randomBytes(24).toString("hex");
@@ -103,7 +105,7 @@ export class InternalCapabilities {
   }
 
   isActive(claim: InternalCapability): boolean {
-    if (claim.expiresAt <= this.#now()) forgetVenueReadTurn(claim.generation);
+    if (claim.expiresAt <= this.#now()) { forgetVenueReadTurn(claim.generation); forgetEmailTurn(claim.generation); }
     if(claim.humanPrincipal){try{assertHumanPrincipal(claim.humanPrincipal);}catch{return false;}}
     const owner = this.#generations.get(claim.threadId);
     return Boolean(owner && owner.id === claim.generation && owner.botId === claim.botId
@@ -176,6 +178,8 @@ export class InternalCapabilities {
   revokeGeneration(threadId: string, generation: string): void {
     // the generation's venue-read record goes with its claims (BOT-VENUE-AWARENESS-106 4.2)
     forgetVenueReadTurn(generation);
+    // and its email-mount record (BOT-EMAIL-MURAGE-109 3.1)
+    forgetEmailTurn(generation);
     for (const [token, claim] of this.#tokens) {
       if (claim.threadId === threadId && claim.generation === generation) this.#tokens.delete(token);
     }
@@ -196,6 +200,7 @@ export class InternalCapabilities {
 
   revokeAll(): void {
     forgetAllVenueReadTurns();
+    forgetAllEmailTurns();
     this.#tokens.clear();
     this.#generations.clear();
     this.#providers.clear();
