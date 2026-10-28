@@ -60,7 +60,7 @@ describe("P2: the iOS app target builds only the shell", () => {
 
   it("targets iOS 17, where WKDownload, isInspectable and callAsyncJavaScript all exist", () => {
     const targets = read("ios/App/App.xcodeproj/project.pbxproj").match(/IPHONEOS_DEPLOYMENT_TARGET = [\d.]+;/g) ?? [];
-    expect(targets.length).toBe(6); // project, app and (Plan 3b I1) the notification extension, Debug and Release each
+    expect(targets.length).toBe(10); // project, app, the notification extension (Plan 3b I1) and the share/intents targets, Debug and Release each
     expect(targets.every((line) => line.includes("17.0"))).toBe(true);
   });
 
@@ -787,8 +787,19 @@ describe("SEC-006 P6: Android fresh authentication", () => {
     expect(keys).toMatch(/SDK_INT >= 30[\s\S]*setUserAuthenticationValidityDurationSeconds\(5\)/);
   });
   it("signs only Request.message()", () => {
-    expect(keys).toContain("update(request.message())");
-    expect(keys).not.toMatch(/\.update\((?!request\.message\(\))/);
+    // 1.0.9 phone tools: one private primitive signs a `message` parameter; the only two callers are the
+    // approveWithDevice entry (ApprovalProof.Request) and the native-only phone-jobs entry, both passing request.message().
+    expect(keys).toContain("signer.update(message);");
+    expect(keys.match(/\.update\(/g)).toHaveLength(1);
+    expect(keys).not.toMatch(/\.update\((?!message\))/);
+    expect(keys).toContain("private static CancellationSignal signPresent(Activity activity, WorkspaceOrigin origin, byte[] message, String reason, Callback target)");
+    const calls = keys.match(/\bsignPresent\(activity, [^;]*;/g) ?? [];
+    expect(calls).toHaveLength(3);
+    expect(calls.sort()).toEqual([
+      "signPresent(activity, origin, request.message(), request.reason, target);",
+      'signPresent(activity, request.origin, request.message(), "Enable phone tools for your bots", target);',
+      "signPresent(activity, request.origin, request.message(), activity.getString(R.string.ask_setup_title), target);",
+    ].sort());
   });
   it("maps a biometric cancel to cancelled and never logs", () => {
     expect(keys).toMatch(/BIOMETRIC_ERROR_USER_CANCELED[\s\S]*callback\.error\("cancelled"\)/);
@@ -1075,7 +1086,12 @@ describe("Final review fixes", () => {
     // The launcher and the icon re-entry. (The A5 review moved the notification-tap
     // trampoline off the launcher into PushOpenActivity, which builds no bridge.)
     expect(calls.length).toBe(2);
-    // Each super.onCreate is followed by the reset before anything returns or reads the book.
+    // The native outbox shortcut no longer passes through the exported launcher: it starts the
+    // non-exported OutboxShortcut alias straight to ShareOutboxActivity, so MainActivity has no OUTBOX route.
+    expect(create).not.toContain("ACTION_OUTBOX");
+    expect(create).not.toContain("ShareOutboxActivity");
+    expect(read("android/app/src/main/AndroidManifest.xml")).toContain('<activity-alias android:name=".OutboxShortcut" android:targetActivity=".ShareOutboxActivity" android:exported="false" />');
+    // Every other super.onCreate is followed by the reset before anything returns or reads the book.
     for (const after of calls) {
       const reset = after.indexOf("CookieHandler.setDefault(null);");
       expect(reset).toBeGreaterThan(-1);
@@ -1127,7 +1143,13 @@ describe("Final review fixes", () => {
 
   it("trims launcher input and scanned codes with the shared rule, never Foundation's whitespace set (M4)", () => {
     const ios = [...files("ios/App/MurageShell/Sources"), ...files("ios/App/App")].filter((path) => path.endsWith(".swift"));
-    for (const path of ios) expect(read(path).replace(/\/\/.*$/gm, ""), path).not.toContain(".whitespacesAndNewlines");
+    // Named exception: PhoneDataSharingText trims a provider or workspace display label for a consent card. It never
+    // touches an origin or a scanned code, so it must not reference WorkspaceOrigin at all.
+    const displayLabel = "ios/App/MurageShell/Sources/MurageShell/PhoneDataSharingText.swift";
+    for (const path of ios.filter((p) => p !== displayLabel)) expect(read(path).replace(/\/\/.*$/gm, ""), path).not.toContain(".whitespacesAndNewlines");
+    const label = read(displayLabel).replace(/\/\/.*$/gm, "");
+    expect(label.match(/\.whitespacesAndNewlines/g)).toHaveLength(1);
+    expect(label).not.toContain("WorkspaceOrigin");
     const coordinator = swift("ShellCoordinator.swift");
     expect(coordinator.match(/WorkspaceOrigin\(string: WorkspaceOrigin\.trimInput\(originString\)\)/g)).toHaveLength(2);
   });
@@ -1143,7 +1165,11 @@ describe("Final review fixes", () => {
 
   it("runs native events through the scripts that check the origin inside (M6)", () => {
     expect(swift("WorkspaceViewController.swift")).toContain('ChannelScript.iosEmit,\n            arguments: ["name": name, "detail": detail ?? NSNull(), "origin": origin.serialized]');
-    expect(swift("WorkspaceViewController.swift").match(/callAsyncJavaScript\(/g)).toHaveLength(1);
+    // N13 adds one more call: the App Intents hash route. Its script is a constant and the hash travels only as an argument value.
+    const vc = swift("WorkspaceViewController.swift");
+    expect(vc.match(/callAsyncJavaScript\(/g)).toHaveLength(2);
+    expect(vc).toContain('webView.callAsyncJavaScript("window.location.hash = hash", arguments: ["hash": hash],');
+    expect(vc).not.toMatch(/callAsyncJavaScript\("[^"]*\\\(/);
     const activity = java("WorkspaceActivity.java");
     expect(activity).toContain("webView.evaluateJavascript(ChannelScript.emit(name, detail, origin.serialized()), value -> {");
     expect(activity.replace(/\/\*\*.*\*\//g, "")).not.toContain("__murageNativeEmit");
@@ -1192,7 +1218,9 @@ describe("Tailscale follow-up (P27 on the iPhone)", () => {
 
   it("lists exactly the tailscale scheme for canOpenURL", () => {
     const plist = read("ios/App/App/Info.plist");
-    expect(plist).toMatch(/<key>LSApplicationQueriesSchemes<\/key>\s*<array>\s*<string>tailscale<\/string>\s*<\/array>/);
+    expect(plist).toMatch(/<key>LSApplicationQueriesSchemes<\/key>\s*<array>\s*<string>tailscale<\/string>\s*<string>tel<\/string>\s*<\/array>/);
+    // tel is the phone-tools dial probe: canOpenURL("tel:123") in PhoneCallsExecutor and PhonePermissions.
+    expect(read("ios/App/MurageShell/Sources/MurageShell/PhoneCallsExecutor.swift")).toContain('canOpenURL(URL(string: "tel:123")!)');
   });
 
   it("opens Tailscale itself when iOS can, and its App Store page otherwise or when that open fails", () => {
@@ -1210,7 +1238,16 @@ describe("Tailscale follow-up (P27 on the iPhone)", () => {
     expect(shell).toContain("if (!each.isUp()) continue;");
     expect(shell).toContain("TailscaleStatus.android(installed, interfaceAddresses())");
     expect(shell).toContain("getPackageInfo(TAILSCALE, 0)");
-    expect(read("android/app/src/main/AndroidManifest.xml")).toMatch(/<queries>\s*<package android:name="com\.tailscale\.ipn" \/>\s*<\/queries>/);
+    // 1.0.9 phone tools add exactly the intents the plan lists beside the Tailscale package: smsto, tel, https and the two clock actions.
+    const queries = read("android/app/src/main/AndroidManifest.xml").match(/<queries>([\s\S]*?)<\/queries>/)?.[1] ?? "";
+    expect(queries.match(/<package android:name="[^"]+" \/>/g)).toEqual(['<package android:name="com.tailscale.ipn" />']);
+    expect((queries.match(/<intent>[\s\S]*?<\/intent>/g) ?? []).map((i) => i.replace(/\s+/g, " "))).toEqual([
+      '<intent><action android:name="android.intent.action.SENDTO" /><data android:scheme="smsto" /></intent>',
+      '<intent><action android:name="android.intent.action.DIAL" /><data android:scheme="tel" /></intent>',
+      '<intent><action android:name="android.intent.action.VIEW" /><data android:scheme="https" /></intent>',
+      '<intent><action android:name="android.intent.action.SET_ALARM" /></intent>',
+      '<intent><action android:name="android.intent.action.SET_TIMER" /></intent>',
+    ]);
   });
 });
 
@@ -1315,9 +1352,12 @@ describe("Plan 3b I3: the extension always answers", () => {
 describe("Plan 3b I4: iOS categories and registration", () => {
   const categories = () => read("ios/App/MurageShell/Sources/MurageShell/PushCategories.swift");
   it("every lock-screen action needs the phone unlocked", () => {
-    const actions = categories().match(/UNNotificationAction\([^)]*\)/g) ?? [];
-    expect(actions.length).toBe(3);
-    for (const a of actions) expect(a).toContain(".authenticationRequired");
+    const src = categories();
+    // Each action up to the end of its statement; the call actions span two lines and nest a call.
+    const actions = src.split("UNNotificationAction(").slice(1).map((s) => s.slice(0, s.indexOf(")\n")));
+    expect(actions.length).toBe(4);
+    for (const a of actions) expect(a).toMatch(/\[\.authenticationRequired|options: options$/);
+    expect(src).toContain("var options: UNNotificationActionOptions = [.authenticationRequired]");
   });
   it("a risky approval offers Deny and Open only", () => {
     expect(categories()).toMatch(/"APPROVAL_OPEN", actions: actions \? \[deny, open\] : \[open\]/);
@@ -1489,7 +1529,16 @@ describe("SEC-006: iOS fresh authentication", () => {
     expect(keys.lastIndexOf("#if targetEnvironment(simulator)", software)).toBeGreaterThan(-1);
   });
   it("signs only ApprovalRequest.message", () => {
-    expect(keys).toContain("signature(for: request.message)");
+    // 1.0.9 phone tools: one private primitive signs a `message` parameter; its only two callers pass request.message.
+    expect(keys).toContain("signature(for: message)");
+    expect(keys.match(/signature\(for:/g)).toHaveLength(1);
+    expect(keys).toContain("private static func signPresent(origin: WorkspaceOrigin, message: Data, reason: String) async -> Result<String, Failure>");
+    const calls = keys.match(/await signPresent\([^\n]*/g) ?? [];
+    expect(calls).toEqual([
+      "await signPresent(origin: origin, message: request.message, reason: request.reason)",
+      'await signPresent(origin: request.origin, message: request.message, reason: "Enable phone tools for your bots")',
+      'await signPresent(origin: request.origin, message: request.message, reason: PhoneJobStrings.text("ask_setup_title"))',
+    ]);
   });
   it("never logs key material, signatures or nonces", () => {
     expect(keys).not.toMatch(/ShellLog|print\(|NSLog|os_log|Logger/);
@@ -1575,5 +1624,216 @@ describe("minimum host capability before desktop loading", () => {
     expect(java).toContain("if (hostCapabilityChecked) load(path);\n        else probeBeforeLoading(path);");
     expect(java).toContain("if (closing || webView == null || !hostCapabilityChecked) return;");
     expect(java).toContain("if (!verdict.hostCapabilityOk()) { close(CloseReason.UPDATE_REQUIRED); return; }");
+  });
+});
+
+// 1.0.9 phone tools S22 (F11, F12): what the native projects must never
+// declare, and the exact text of the phone-tools usage strings (design §7).
+// These pass before Track N and are the gate its native work must satisfy.
+describe("1.0.9 phone tools: forbidden permissions and bridge surface", () => {
+  const manifest = () => read("android/app/src/main/AndroidManifest.xml").replace(/<!--[\s\S]*?-->/g, "");
+  const plist = () => read("ios/App/App/Info.plist");
+  const entitlements = () => read("ios/App/App/App.entitlements");
+
+  const FORBIDDEN_ANDROID = [
+    "SEND_SMS",
+    "CALL_PHONE",
+    "READ_SMS",
+    "READ_CALL_LOG",
+    "QUERY_ALL_PACKAGES",
+    "ACCESS_BACKGROUND_LOCATION",
+    "USE_FULL_SCREEN_INTENT",
+    "WRITE_CONTACTS",
+  ];
+
+  it("the Android manifest never declares a forbidden permission", () => {
+    const text = manifest();
+    for (const name of FORBIDDEN_ANDROID) expect(text, name).not.toMatch(new RegExp(`\\b${name}\\b`));
+  });
+
+  it("the Android manifest declares no foreground service permission, service type or declaration", () => {
+    const text = manifest();
+    expect(text).not.toMatch(/FOREGROUND_SERVICE/);
+    expect(text).not.toMatch(/foregroundServiceType/);
+  });
+
+  it("every uses-permission name is a plain android.permission or the alarm permission", () => {
+    const names = [...manifest().matchAll(/<uses-permission(?:-sdk-23)?\s[^>]*android:name="([^"]+)"/g)].map((m) => m[1]);
+    expect(names.length).toBeGreaterThan(0);
+    for (const name of names) expect(name).toMatch(/^(android\.permission\.[A-Z_]+|com\.android\.alarm\.permission\.SET_ALARM)$/);
+  });
+
+  it("the iOS Info.plist declares no location or processing background mode", () => {
+    const text = plist();
+    const modes = text.match(/<key>UIBackgroundModes<\/key>\s*<array>([\s\S]*?)<\/array>/)?.[1] ?? "";
+    const entries = [...modes.matchAll(/<string>([^<]*)<\/string>/g)].map((m) => m[1]);
+    expect(entries).not.toContain("location");
+    expect(entries).not.toContain("processing");
+    expect(entries).not.toContain("fetch");
+  });
+
+  it("the iOS project never asks for always-on location", () => {
+    expect(plist()).not.toContain("NSLocationAlwaysAndWhenInUseUsageDescription");
+    expect(plist()).not.toContain("NSLocationAlwaysUsageDescription");
+    expect(entitlements()).not.toMatch(/location/i);
+  });
+
+  it("when a phone-tools usage string exists it equals the design text exactly", () => {
+    const expected: Record<string, string> = {
+      NSCalendarsFullAccessUsageDescription: "Your bots can check your calendar and add events when you ask them to.",
+      NSCalendarsWriteOnlyAccessUsageDescription: "Your bots can add events to your calendar when you ask them to.",
+      NSRemindersFullAccessUsageDescription: "Your bots can read and add reminders when you ask them to.",
+      NSContactsUsageDescription: "Your bots can look up a person you name, to start a text or a call for you.",
+      NSLocationWhenInUseUsageDescription: "Your bots can see roughly where you are when you ask for something nearby.",
+      NSAlarmKitUsageDescription: "Your bots can set alarms and timers when you ask them to.",
+    };
+    const text = plist();
+    for (const [key, value] of Object.entries(expected)) {
+      const found = text.match(new RegExp(`<key>${key}</key>\\s*<string>([^<]*)</string>`))?.[1];
+      if (found !== undefined) expect(found, key).toBe(value);
+    }
+  });
+
+  it("neither native channel script exposes a phone, job or token method", () => {
+    const surface = (source: string) => [...source.matchAll(/\bapi\.(\w+)\s*=/g)].map((m) => m[1]);
+    const swift = surface(read("ios/App/MurageShell/Sources/MurageShellCore/ChannelScript.swift"));
+    const java = surface(read("android/app/src/main/java/com/murage/mobile/shell/ChannelScript.java"));
+    expect(swift.length).toBeGreaterThan(5);
+    expect(java.length).toBeGreaterThan(5);
+    // issuePushTokens is the existing push-token method; openPhoneForBots is the no-argument row that opens the
+    // phone-tools screen. Both are excepted by name, and openPhoneForBots is pinned to carry no argument or payload.
+    for (const name of [...swift, ...java].filter((n) => n !== "issuePushTokens" && n !== "openPhoneForBots"))
+      expect(name, name).not.toMatch(/phone|job|murage_pj|token/i);
+    for (const source of ["ios/App/MurageShell/Sources/MurageShellCore/ChannelScript.swift", "android/app/src/main/java/com/murage/mobile/shell/ChannelScript.java"])
+      expect(read(source)).toContain('api.openPhoneForBots = function () { return call("openPhoneForBots"); };');
+  });
+});
+
+// 1.0.9 share and ask S43 (U1, U2, U14, U21): entitlement, plist and extension
+// guards. Each reads the native source as text; none loosens when native code moves.
+describe("1.0.9 share and ask: iOS entitlements, plists and targets", () => {
+  const strings = (text: string, key: string): string[] => {
+    const array = text.match(new RegExp(`<key>${key}</key>\\s*<array>([\\s\\S]*?)</array>`))?.[1] ?? "";
+    return [...array.matchAll(/<string>([^<]*)<\/string>/g)].map((m) => m[1]);
+  };
+  const infoPlists = () => files("ios").filter((path) => path.endsWith("Info.plist"));
+
+  it("NotificationService keeps exactly the shared keychain group", () => {
+    const text = read("ios/App/NotificationService/NotificationService.entitlements");
+    expect(strings(text, "keychain-access-groups")).toEqual(["$(AppIdentifierPrefix)com.murage.mobile.shared"]);
+  });
+
+  it("the Share extension lists only the app group and the ask keychain group", () => {
+    const dir = "ios/App/ShareExtension";
+    const entitlements = files(dir).filter((path) => path.endsWith(".entitlements"));
+    expect(entitlements.length).toBeGreaterThan(0);
+    for (const path of entitlements) {
+      const text = read(path);
+      expect(strings(text, "com.apple.security.application-groups"), path).toEqual(["group.com.murage.mobile"]);
+      expect(strings(text, "keychain-access-groups"), path).toEqual(["$(AppIdentifierPrefix)com.murage.mobile.ask"]);
+      expect([...text.matchAll(/<key>([^<]*)<\/key>/g)].map((m) => m[1]).sort(), path).toEqual([
+        "com.apple.security.application-groups",
+        "keychain-access-groups",
+      ]);
+    }
+  });
+
+  it("App.entitlements keeps the app-only keychain group first", () => {
+    const groups = strings(read("ios/App/App/App.entitlements"), "keychain-access-groups");
+    expect(groups[0]).toBe("$(AppIdentifierPrefix)com.murage.mobile");
+    // the whole list, in order: the app's own group, then Ask, then the shared push group; a fourth group fails here
+    expect(groups).toEqual([
+      "$(AppIdentifierPrefix)com.murage.mobile",
+      "$(AppIdentifierPrefix)com.murage.mobile.ask",
+      "$(AppIdentifierPrefix)com.murage.mobile.shared",
+    ]);
+  });
+
+  it("no Info.plist under ios uses TRUEPREDICATE", () => {
+    const plists = infoPlists();
+    expect(plists.length).toBeGreaterThan(3);
+    for (const path of plists) expect(read(path), path).not.toContain("TRUEPREDICATE");
+  });
+
+  it("no Info.plist under ios asks for Siri usage", () => {
+    for (const path of infoPlists()) expect(read(path), path).not.toContain("NSSiriUsageDescription");
+  });
+
+  it("the Share activation rule admits a url only when it is not a file url", () => {
+    const path = "ios/App/ShareExtension/Info.plist";
+    expect(existsSync(join(ROOT, path))).toBe(true);
+    const rule = read(path).match(/<key>NSExtensionActivationRule<\/key>\s*<string>([\s\S]*?)<\/string>/)?.[1] ?? "";
+    expect(rule.length).toBeGreaterThan(100);
+    // Every occurrence of a token must sit inside a NOT ( ... ) group.
+    const insideNot = (token: string): boolean => {
+      let at = rule.indexOf(token);
+      if (at < 0) return false;
+      while (at >= 0) {
+        const open = rule.lastIndexOf("NOT (", at);
+        if (open < 0) return false;
+        let depth = 0;
+        let closed = false;
+        for (let i = open + 4; i < at; i++) {
+          if (rule[i] === "(") depth++;
+          else if (rule[i] === ")") {
+            depth--;
+            if (depth === 0) closed = true;
+          }
+        }
+        if (closed) return false;
+        at = rule.indexOf(token, at + 1);
+      }
+      return true;
+    };
+    expect(insideNot('"public.file-url"')).toBe(true);
+  });
+
+  it("the Share activation rule refuses audio and video", () => {
+    const rule = read("ios/App/ShareExtension/Info.plist").match(/<key>NSExtensionActivationRule<\/key>\s*<string>([\s\S]*?)<\/string>/)?.[1] ?? "";
+    expect(rule).toMatch(/AND NOT \(ANY \$a\.registeredTypeIdentifiers UTI-CONFORMS-TO "public\.audiovisual-content"\)/);
+  });
+
+  it("the Share activation rule names every UTType in share-types.json", () => {
+    const rule = read("ios/App/ShareExtension/Info.plist");
+    const table = JSON.parse(read("contract/share-types.json")) as {
+      imageUtis: Record<string, string>;
+      files: { uti: string }[];
+    };
+    const utis = [...Object.values(table.imageUtis), ...table.files.map((f) => f.uti)];
+    expect(utis.length).toBeGreaterThan(15);
+    for (const uti of utis) expect(rule, uti).toContain(`"${uti}"`);
+  });
+
+  it("AskControl has a privacy manifest", () => {
+    const path = "ios/App/AskControl/PrivacyInfo.xcprivacy";
+    expect(existsSync(join(ROOT, path))).toBe(true);
+    const text = read(path);
+    expect(text).toMatch(/<key>NSPrivacyTracking<\/key>\s*<false\/>/);
+    expect(text).toMatch(/<key>NSPrivacyCollectedDataTypes<\/key>\s*<array\/>/);
+    expect(text).toMatch(/<key>NSPrivacyAccessedAPITypes<\/key>\s*<array\/>/);
+  });
+
+  it("AskControl holds no keychain group and no app group", () => {
+    const dir = "ios/App/AskControl";
+    const entitlements = files(dir).filter((p) => p.endsWith(".entitlements"));
+    // AskControl ships no entitlements file, so a loop over files alone would pass with nothing to check. The
+    // target's own build settings are the real source: both configurations are found, and either name no
+    // entitlements file at all, or name one that exists here and is checked below.
+    const project = read("ios/App/App.xcodeproj/project.pbxproj");
+    const list = project.match(/ABCDEFA00000000000000042 \/\* [^*]*\*\/ = \{[\s\S]*?buildConfigurations = \(([\s\S]*?)\);/)?.[1] ?? "";
+    const ids = [...list.matchAll(/(ABCDEFA\w{17})\b/g)].map((m) => m[1]);
+    expect(ids.length).toBe(2);
+    for (const id of ids) {
+      const block = project.match(new RegExp(`\\n\\t\\t${id} /\\* \\w+ \\*/ = \\{[\\s\\S]*?\\n\\t\\t\\};`))?.[0] ?? "";
+      expect(block, id).toContain("PRODUCT_BUNDLE_IDENTIFIER = com.murage.mobile.AskControl");
+      const named = block.match(/CODE_SIGN_ENTITLEMENTS = ([^;]+);/)?.[1];
+      if (named) expect(entitlements.map((p) => p.replace(/^ios\/App\//, "")), id).toContain(named);
+      else expect(entitlements, id).toEqual([]);
+    }
+    for (const path of entitlements) {
+      const text = read(path);
+      expect(text, path).not.toContain("keychain-access-groups");
+      expect(text, path).not.toContain("com.apple.security.application-groups");
+    }
   });
 });

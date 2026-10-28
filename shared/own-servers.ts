@@ -9,6 +9,8 @@
 // ACP's hosted tools, Pi's unasked rows are its exact mount/tool pairs). A
 // tool on an own mount that is NOT in OWN_UNASKED asks.
 
+import { PHONE_TOOL_NAMES } from "./phone-jobs-contract.ts";
+
 /** The built-in own mounts, by the `mountId` suffix of Rule 54
  * (`own:<builtin>`), with the server name each driver mounts them under. */
 export const OWN_BUILTINS = {
@@ -19,6 +21,7 @@ export const OWN_BUILTINS = {
   computer: "computer",
   browser: "browser",
   phone: "phone",
+  phoneJobs: "phoneJobs",
   dweb: "dweb",
 } as const;
 
@@ -47,9 +50,9 @@ export const OWN_UNASKED: readonly OwnUnaskedRow[] = [
     tools: [
       "list_bots", "get_bot", "check_delegation", "wait_delegation", "get_permission_status", "list_routines", "skills_list",
       "list_reference_packs", "list_prompt_blocks", "get_prompt_block", "list_image_models", "tool_result_read", "murage_help",
-      "project_read_messages", "venue_read_messages",
+      "project_read_messages", "venue_read_messages", "email_list", "email_read",
     ],
-    boundary: "read handlers over Murage's own records for this bot's permitted roster; bot_id resolves against the roster",
+    boundary: "read handlers over Murage's own records for this bot's permitted roster; bot_id resolves against the roster; email_list and email_read read only the bot's own inbox with its own key, on a turn the email mount admitted, every sender-written field fenced (server/email/tools.ts)",
   },
   {
     mount: "own:agents",
@@ -91,6 +94,11 @@ export const OWN_UNASKED: readonly OwnUnaskedRow[] = [
   },
   {
     mount: "own:agents",
+    tools: ["email_send", "email_reply", "email_trust_offer"],
+    boundary: "the handler applies the bot's email setting (3.3) and holds every send that policy does not clear on Murage's own Send / Don't send card before any request leaves; Flux enforces the same inbox policy server-side; email_trust_offer only files a proposal the owner answers (server/email/tools.ts)",
+  },
+  {
+    mount: "own:agents",
     tools: ["save_prompt_block", "save_reference_pack"],
     boundary: "writes only this bot's image library on an owner-audience turn (/api/internal/image-prompt-block, image-library-audience.ts); leaves are a name, text, reference ids and a version",
   },
@@ -98,6 +106,11 @@ export const OWN_UNASKED: readonly OwnUnaskedRow[] = [
     mount: "own:dweb",
     tools: ["dweb_status", "dweb_repo_status", "dweb_opencode_models"],
     boundary: "reads of Murage's own dweb state",
+  },
+  {
+    mount: "own:phoneJobs",
+    tools: PHONE_TOOL_NAMES,
+    boundary: "1.0.9 phone tools (ruling in the ledger): the live phone authority, the grant intersection and the phone's own confirmation card are the gate; the owner started the turn directly",
   },
 ];
 
@@ -114,6 +127,30 @@ export const OWN_ALWAYS_ASK: readonly { mount: `own:${OwnBuiltin}`; tool: string
   { mount: "own:agents", tool: "register_artifact" },
   { mount: "own:agents", tool: "web_search" },
 ];
+
+/** Own tools whose handler is the only place they are cleared or held (BOT-EMAIL-MURAGE-109 3.2): every engine reaches the handler at
+ *  every access level, with no engine card in front of Murage's own email card. Each is also an OWN_UNASKED row. */
+export const OWN_HANDLER_CARDED: readonly { mount: `own:${OwnBuiltin}`; tool: string }[] = [
+  { mount: "own:agents", tool: "email_send" },
+  { mount: "own:agents", tool: "email_reply" },
+  { mount: "own:agents", tool: "email_trust_offer" },
+];
+
+/** Whether an own tool is handler-carded: its mount and exact name are an OWN_HANDLER_CARDED row (and so also an OWN_UNASKED one). */
+export function isOwnHandlerCarded(mountId: string, tool: string): boolean {
+  return OWN_HANDLER_CARDED.some((row) => row.mount === mountId && row.tool === tool) && isOwnUnasked(mountId, tool);
+}
+
+/** Bot email (1.0.9, BOT-EMAIL-MURAGE-109 3.1): the email tools exist on a turn only when its email mount listed them, so an engine is
+ *  handed them on a pre-allow list or an ask-free matcher only then: mode "send" lists all five, "read" lists email_list and email_read,
+ *  and with no mode (the probe off, or a turn email does not mount on) none, so every engine's lists equal the build without email. */
+const OWN_EMAIL_READ_TOOLS: readonly string[] = ["email_list", "email_read"];
+const OWN_EMAIL_TOOLS: readonly string[] = [...OWN_EMAIL_READ_TOOLS, "email_send", "email_reply", "email_trust_offer"];
+export function ownToolListedOnTurn(tool: string, emailMode: string | undefined): boolean {
+  if (!OWN_EMAIL_TOOLS.includes(tool)) return true;
+  if (emailMode === "send") return true;
+  return emailMode === "read" && OWN_EMAIL_READ_TOOLS.includes(tool);
+}
 
 /** Whether an own tool runs unasked: its mount and its exact name are a row. */
 export function isOwnUnasked(mountId: string, tool: string): boolean {
@@ -159,6 +196,19 @@ export const OWN_READS: readonly { mount: `own:${OwnBuiltin}`; tools: readonly s
   { mount: "own:agents", tools: OWN_UNASKED.find((row) => row.mount === "own:agents")!.tools },
   { mount: "own:dweb", tools: ["dweb_status", "dweb_repo_status", "dweb_opencode_models"] },
 ];
+
+/** The owner's phone tools, run with no desktop card at every level on every engine. Not reads: add, change, compose
+ * and dial act, but the live phone authority, the grant intersection and the phone's own confirmation card are the gate
+ * (OWN_UNASKED ruling). Kept apart from OWN_READS so that set stays read-only. */
+export const PHONE_PREALLOWED: readonly { mount: "own:phoneJobs"; tools: readonly string[] }[] = [
+  { mount: "own:phoneJobs", tools: PHONE_TOOL_NAMES },
+];
+
+/** Whether an own tool runs with no desktop card as a read or as a phone tool: an OWN_READS or PHONE_PREALLOWED row,
+ * and an OWN_UNASKED one. */
+export function isOwnQuiet(mountId: string, tool: string): boolean {
+  return (isOwnRead(mountId, tool) || PHONE_PREALLOWED.some((row) => row.mount === mountId && row.tools.includes(tool))) && isOwnUnasked(mountId, tool);
+}
 
 /** Whether an own tool only reads: its mount and exact name are an OWN_READS row (and so also an OWN_UNASKED one). */
 export function isOwnRead(mountId: string, tool: string): boolean {

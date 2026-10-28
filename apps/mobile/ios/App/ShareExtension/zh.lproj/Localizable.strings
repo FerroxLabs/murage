@@ -1,0 +1,22 @@
+// PHONE-UNIFY-110 section 9. %@ is the chosen bot name.
+"share_title" = "发送到 Murage";
+"share_to" = "收件人";
+"share_from" = "来自";
+"share_note" = "添加备注";
+"share_send" = "发送";
+"share_sending" = "正在发送...";
+"share_sent" = "已发送给 %@";
+"share_open_chat" = "打开聊天";
+"share_recent" = "最近的聊天";
+"share_new" = "与 %@ 开始新聊天";
+"share_setup" = "请先打开一次 Murage 以设置共享。";
+"share_pair" = "此手机尚未与电脑配对。请打开 Murage 进行配对。";
+"share_photo_large" = "这张照片太大。照片最大可为 10 MB。";
+"share_file_large" = "这个文件太大。文件最大可为 25 MB。";
+"share_ten" = "每次最多可发送 10 个项目。";
+"share_type" = "Murage 暂时无法发送此类文件。";
+"share_offline" = "目前无法连接到你的电脑。连接恢复后，Murage 会发送此内容。";
+"share_passcode" = "请先在此手机上设置锁屏密码，然后打开 Murage。";
+"share_again" = "请打开 Murage 重新设置共享。";
+"share_update" = "请更新电脑上的 Murage 以使用此功能。";
+"share_done" = "完成";

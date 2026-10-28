@@ -158,6 +158,7 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
       return withLocal(catalog);
     };
 
+    let textOnlyCatalog = new Set<string>();
     const fetchModels = async () => {
       await refreshLocal();
       if (!apiKey) return;
@@ -167,14 +168,17 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
           signal: AbortSignal.timeout(8_000),
         });
         if (!response.ok) return;
-        const json = await response.json() as { data?: Array<{ id?: unknown; name?: unknown }> } | Array<{ id?: unknown; name?: unknown }>;
+        const json = await response.json() as { data?: Array<{ id?: unknown; name?: unknown; supported_parameters?: unknown }> } | Array<{ id?: unknown; name?: unknown; supported_parameters?: unknown }>;
         const rows = Array.isArray(json) ? json : Array.isArray(json.data) ? json.data : [];
         const seen = new Set<string>();
         const options: ModelCatalog["options"] = [];
+        const toolless = new Set<string>();
         for (const row of rows) {
           const id = typeof row.id === "string" ? row.id : "";
           if (!id || seen.has(id)) continue;
           seen.add(id);
+          // OPENAI-TOOLS-109 s2: a catalog that lists the model's parameters without "tools" (OpenRouter /models) starts it text-only.
+          if (Array.isArray(row.supported_parameters) && row.supported_parameters.length && !row.supported_parameters.includes("tools")) toolless.add(id);
           options.push({
             id,
             label: typeof row.name === "string" && row.name.trim() ? row.name : id,
@@ -186,6 +190,7 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
           options.unshift({ id: config.model, label: config.model, custom: true });
         }
         catalog = { default: config.model ?? options[0].id, options };
+        textOnlyCatalog = toolless;
       } catch {
         // Catalog refresh is opportunistic; keep the seeded options.
       }
@@ -200,6 +205,7 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
       models: currentModels,
       refreshModels: fetchModels,
       localEndpoint,
+      textOnlyHint: (model) => textOnlyCatalog.has(model),
       requestBody: (model, messages, stream) => ({
         model,
         messages,

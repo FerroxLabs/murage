@@ -1638,11 +1638,15 @@ describe("internal capability authority", () => {
     } finally {
       // The source has two tasks, so a Stop that names no thread is refused (thread_required) and the turn would run on,
       // holding the engine: every later deletion then waits on it and holds new turns back. The bot-level Stop reaches it.
+      // The idle poll is part of the test: a turn that keeps running after the Stop fails it (the bots are still deleted).
       await api("POST", `/api/bots/${source.id}/interrupt`, { all: true });
-      await expect.poll(async () => (await api("GET", "/api/bots?messages=0")).body.bots
-        .find((item: { id: string }) => item.id === source.id)?.busy, { timeout: 10_000 }).toBe(false).catch(() => {});
-      await desktopApi("DELETE", `/api/bots/${source.id}`);
-      await desktopApi("DELETE", `/api/bots/${other.id}`);
+      try {
+        await expect.poll(async () => (await api("GET", "/api/bots?messages=0")).body.bots
+          .find((item: { id: string }) => item.id === source.id)?.busy, { timeout: 10_000 }).toBe(false);
+      } finally {
+        await desktopApi("DELETE", `/api/bots/${source.id}`);
+        await desktopApi("DELETE", `/api/bots/${other.id}`);
+      }
     }
   });
 

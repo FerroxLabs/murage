@@ -20,7 +20,7 @@ public final class ChannelGate {
     public static final List<String> ADVERTISED = Collections.unmodifiableList(
         Arrays.asList("ready", "saveFile", "openExternal", "haptic", "signOut", "rePair", "setRoute", "showLauncher",
             "registerPush", "pushStatus", "issuePushTokens", "setBadgeCount", "callSessionOpen", "callSessionClose", "diagLine",
-            "approveWithDevice"));
+            "approveWithDevice", "openPhoneForBots"));
     /** One 1 MiB chunk as base64 (1,398,104 chars) plus its envelope. */
     public static final int MAX_MESSAGE_CHARS = 1_500_000;
 
@@ -64,6 +64,7 @@ public final class ChannelGate {
         Object args = message.opt("args");
         if (args == null || args == JSONObject.NULL) return new Request(replyId, (String) method, new JSONObject());
         if (!(args instanceof JSONObject)) throw new ChannelException("bad_args", replyId);
+        if ("openPhoneForBots".equals(method) && ((JSONObject) args).length() != 0) throw new ChannelException("bad_args", replyId);
         return new Request(replyId, (String) method, (JSONObject) args);
     }
 

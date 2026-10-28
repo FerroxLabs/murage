@@ -676,6 +676,14 @@ export async function companionRevoke(deviceId) {
   return companionState();
 }
 
+/** Switch share and ask on or off for one paired phone. Off waits for Murage to acknowledge before the state says so. */
+export async function companionShareAskAccess(deviceId, allowed) {
+  if (!proc) return companionState();
+  if (!/^[\w-]{1,64}$/.test(String(deviceId ?? ""))) return companionState();
+  await control(allowed ? "POST" : "DELETE", `/devices/${deviceId}/share-ask`).catch(() => {});
+  return companionState();
+}
+
 /** Enable or remove interactive cloud-desktop access for one paired phone. */
 export async function companionCloudDesktopAccess(deviceId, allowed) {
   if (!proc) return companionState();
