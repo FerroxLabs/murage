@@ -41,13 +41,16 @@ const win = (): StopLinePlace => ({
 });
 const stop = (command: string) => classifyStopLine("PowerShell", { command }, "", win());
 
+// 1.0.9 (NOLIMITS-NODE-109-CUT section 9): every named path an ordinary file and every `cd` target a folder; the
+// on-disk cases are server/nolimits-node-109.test.ts
+const STUB = { realpath: (path: string) => path, stat: () => ({ isFile: () => true, isDirectory: () => true }) };
 describe("U17: a script on disk the reader does not see asks, as under PowerShell", () => {
   const ASKS = [
-    "bash script.sh",
+    "bash ./script.sh",
     "bash -x ./deploy.sh",
     "sh ./deploy.sh",
     "zsh tools/run.zsh",
-    "bash script.sh arg1 arg2",
+    "bash ./script.sh arg1 arg2",
     "node scripts/gen.js",
     "node x.js",
     "cd tools && python3 build.py --fast",
@@ -83,14 +86,15 @@ describe("U17: a script on disk the reader does not see asks, as under PowerShel
   // interpreter with no option before the script, `cd`, nothing else. Every
   // other row still asks at every level: an option, another shell or runner,
   // script bytes on its input, a value, a copy.
-  const BELOW_FULL = new Set(["bash script.sh", "sh ./deploy.sh", "bash script.sh arg1 arg2", "node scripts/gen.js", "node x.js", "cd tools && python3 build.py --fast", "ruby tool.rb", "perl tool.pl", "php artisan migrate"]);
+  const BELOW_FULL = new Set(["bash ./script.sh", "sh ./deploy.sh", "bash ./script.sh arg1 arg2", "node scripts/gen.js", "node x.js", "ruby tool.rb", "perl tool.pl"]);
+  // 1.0.9 (NOLIMITS-NODE-109-CUT): `cd tools` (a bare `cd`) and `php artisan` (no extension) now ask at every level
   it.each(ASKS)("%s raises a card at Auto, and under Full access and No limits outside the allowed shape", (cmd) => {
     expect(autoVerdict(AUTO, "Bash", cmd)).toMatchObject({ approve: null, source: "always-ask", rule: "unreadable" });
     for (const bot of [FULL, NO_LIMITS]) {
       // 1.0.5 r6: the script path is placed from the command's folder (every
       // local turn has one); with no folder a relative path asks
       if (BELOW_FULL.has(cmd)) {
-        expect(autoVerdict(bot, "Bash", cmd, { commandText: cmd, commandCwd: "/work/project" }).approve, cmd).toBeTruthy();
+        expect(autoVerdict(bot, "Bash", cmd, { commandText: cmd, commandCwd: "/work/project", unseenFs: STUB }).approve, cmd).toBeTruthy();
         expect(autoVerdict(bot, "Bash", cmd)).toMatchObject({ approve: null, source: "always-ask", rule: "unreadable" });
       } else expect(autoVerdict(bot, "Bash", cmd)).toMatchObject({ approve: null, source: "always-ask", rule: "unreadable" });
     }

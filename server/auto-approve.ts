@@ -14,7 +14,7 @@ import { CONNECTED_APPS_SERVER, sameToolGrant } from "../shared/connected-app-na
 import { actionGrantKey, actionGrantRead, actionGrantSet, commandArgument, placeArgumentScan, resolveCall, type GrantCall, type ResolvedCall } from "../shared/app-action-grant.ts";
 import { isStopLineKey, stopFindings, stopLineKey, stopLineKeyCovers, type StopHit } from "./stop-line.ts";
 import { redactSecretsInText } from "./redact.ts";
-import { alwaysAskCommand, alwaysAskNote, alwaysAskRoutineCommand, type CarvedTarget, unreadableHit, type AlwaysAskHit } from "./always-ask.ts";
+import { alwaysAskCommand, alwaysAskNote, alwaysAskRoutineCommand, type CarvedTarget, unreadableHit, type AlwaysAskHit, type UnseenFs } from "./always-ask.ts";
 import { commandCwdFromToolInput, commandFromToolInput, exactCommandKey, isExactCommandKey, routineExactGrantCovers, type ExactCommand } from "../shared/exact-command.ts";
 import { approvalSummaryIsCut } from "../shared/approval-summary.ts";
 import { SENSITIVE_RULES } from "../shared/sensitive-paths.ts";
@@ -25,7 +25,7 @@ import { braceCandidates } from "./shell/walk.ts";
 import { requiredFields } from "./drivers/contracts.ts";
 import { homedir } from "node:os";
 import { realPathInOrder, win32Canonical, type PlaceOptions } from "../shared/in-project.ts";
-import { isOwnAlwaysAsk, isOwnComputerRead, isOwnRead, isOwnUnasked, ownAlwaysAskByName } from "../shared/own-servers.ts";
+import { isOwnAlwaysAsk, isOwnComputerRead, isOwnHandlerCarded, isOwnQuiet, isOwnUnasked, ownAlwaysAskByName } from "../shared/own-servers.ts";
 import { APP_LOOKUPS, ownAppTool } from "../shared/app-action-words.ts";
 import { pinOverrideIn, promptVerdict, type PromptFacts } from "../shared/prompt-capable.ts";
 
@@ -493,8 +493,8 @@ export type AutoVerdictSource =
   | "project-work-roots"
   /** One of Murage's own tools that runs unasked on Claude and Codex
    * (shared/own-servers.ts OWN_UNASKED), asked for by an ACP engine whose
-   * dispatcher files every MCP call as a permission. A read (OWN_READS, or a
-   * connected-app lookup) is answered at every level, Ask included; any other
+   * dispatcher files every MCP call as a permission. A read (OWN_READS, a phone tool
+   * in PHONE_PREALLOWED, or a connected-app lookup) is answered at every level, Ask included; any other
    * row whenever the bot is at Auto, on every turn, unattended ones (a
    * routine, a webhook, a channel event) included, as Claude and Codex run
    * them. Only when the grant gate proved the call runs on one of
@@ -610,6 +610,9 @@ export interface AutoContext {
   unattended?: boolean;
   /** the request controls the user's active desktop */
   scope?: "local-computer";
+  /** 1.0.9: the disk reads the unseen-script check makes (always-ask.ts
+   * UnseenFs); unset, this computer's own disk. Tests and the corpus pass a stub. */
+  unseenFs?: UnseenFs;
   /** the driver's trusted signal that this ask is a question to the owner
    * even though it is filed as a permission (Pi `select`, whose title is
    * extension-composed text and so cannot be matched by name) */
@@ -851,8 +854,22 @@ function logAsked(bot: AutoApprover, tool: string, verdict: AutoVerdict): void {
 }
 
 export function autoVerdict(bot: AutoApprover, tool: string, summary: string, context?: AutoContext): AutoVerdict {
-  const verdict = autoVerdictOf(bot, tool, summary, context);
-  logAsked(bot, tool, verdict);
+  let verdict: AutoVerdict;
+  try {
+    verdict = autoVerdictOf(bot, tool, summary, context);
+  } catch (error) {
+    // 1.0.9 (Sean's log, 10-28): a reader that throws must never drop the
+    // request. Thrown out of the approval listener, it raised no card and
+    // answered nothing, so the engine waited on a card that never came. A
+    // fault here asks, at every level, as an unreadable command does.
+    // the ask is set first; the log line is best-effort and never undoes it.
+    // The error's own message may carry the command's text: only its kind and where it was thrown
+    verdict = { approve: null, source: "always-ask", rule: "unreadable", note: alwaysAskNote(unreadableHit()) };
+    try {
+      console.error(`auto-approve: verdict failed (${error instanceof Error ? error.name : typeof error}), asking${error instanceof Error && error.stack ? `\n${error.stack.split("\n").slice(1, 6).join("\n")}` : ""}`);
+    } catch { /* the ask stands */ }
+  }
+  try { logAsked(bot, tool, verdict); } catch { /* the verdict stands */ }
   return verdict;
 }
 
@@ -880,6 +897,11 @@ function autoVerdictOf(
   const shell = isPowerShellTool(tool) || (commandTool && context?.call?.commandShell === "pwsh") ? "pwsh" : undefined;
   const text = context?.commandText ?? context?.exactCommand?.command;
   const cwd = context?.commandCwd ?? context?.exactCommand?.cwd;
+  // 1.0.9: the HOME the requesting engine's shell was handed, from its own
+  // environment record; a `~` in an unseen-script text needs it (always-ask.ts)
+  const home = context?.promptFacts?.home;
+  // the disk reads of the unseen-script check (tests and the corpus pass a stub)
+  const unseen = context?.unseenFs ? { fs: context.unseenFs } : {};
   // The owner's routine carve-out (1.0.3): on a scheduled or manual routine
   // run, with the engine's own whole command in hand, a write or delete whose
   // target is held in a value does not hold the turn. Everything else the
@@ -892,13 +914,13 @@ function autoVerdictOf(
   let valueTarget: CarvedTarget[] | undefined;
   const resolvedCall = resolveCall(context?.call);
   if (routineCarve) {
-    ({ hit: catastrophe, valueTarget } = alwaysAskRoutineCommand(text, cwd, shell));
+    ({ hit: catastrophe, valueTarget } = alwaysAskRoutineCommand(text, cwd, shell, home, unseen));
   } else {
     catastrophe = text !== undefined
-      ? alwaysAskCommand(text, cwd, "command", shell, windowsBash)
+      ? alwaysAskCommand(text, cwd, "command", shell, windowsBash, home, unseen)
       : commandTool && approvalSummaryIsCut(summary)
         ? unreadableHit()
-        : alwaysAskCommand(summary, cwd, commandTool ? "command" : "text", shell, windowsBash);
+        : alwaysAskCommand(summary, cwd, commandTool ? "command" : "text", shell, windowsBash, home, unseen);
   }
   if (!catastrophe || catastrophe.unseenScript === true || catastrophe.rule === "unreadable") {
     // A command a wrapper or an MCP tool carries (Fuigo's `use_tool` around the cloud computer's exec) is judged like
@@ -907,7 +929,7 @@ function autoVerdictOf(
     // unless it too is only an unseen script.
     const innerCommand = commandArgument(resolvedCall.kind === "engine" || resolvedCall.kind === "mcp" ? resolvedCall.input : context?.call?.toolCall?.input);
     if (innerCommand !== undefined && innerCommand !== text) {
-      const inner = alwaysAskCommand(innerCommand, cwd, "command", shell, windowsBash);
+      const inner = alwaysAskCommand(innerCommand, cwd, "command", shell, windowsBash, home, unseen);
       if (inner && (!catastrophe || inner.unseenScript !== true)) catastrophe = inner;
     }
   }
@@ -915,6 +937,10 @@ function autoVerdictOf(
   // literally and not written by this text, asks at Ask and Auto. Full access
   // and No limits, on a turn they cover, run it as `./build.sh` runs: the
   // owner chose no cards there, and the stop line and key guard still read it.
+  // 1.0.9 (NOLIMITS-NODE-109-CUT R7): the file was checked on this computer;
+  // a command relayed to the owner's own computer runs on another disk, so
+  // its unseen script asks there, as in 1.0.8
+  if (catastrophe?.unseenScript === true && context?.scope === "local-computer") catastrophe = { ...unreadableHit(), unseenWhy: "relayed" };
   const unseenCovered = catastrophe?.unseenScript === true && fullAccessCovers(bot, fullAccessOriginOf(context));
   if (catastrophe && !unseenCovered) return { approve: null, source: "always-ask", rule: catastrophe.rule, note: alwaysAskNote(catastrophe) };
   // a carved command is guarded on its whole text too, so a key or a
@@ -1152,8 +1178,10 @@ function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, con
     // A connected-app lookup is a read on an ordinary turn. On a routine's own run the four lookups are what the
     // routine remembers (Rule 76a): each is answered only by its own saved key (the routine grants, below), so a
     // remembered search never answers a schema read or any other lookup.
-    const read = app !== undefined ? APP_LOOKUPS[app] !== undefined && context?.routineLevel !== true : isOwnRead(resolved.mountId, resolved.tool);
-    if (read || (bot.autoApprove && isOwnUnasked(resolved.mountId, resolved.tool))) {
+    const read = app !== undefined ? APP_LOOKUPS[app] !== undefined && context?.routineLevel !== true : isOwnQuiet(resolved.mountId, resolved.tool);
+    // a handler-carded own tool (bot email's send tools) reaches its handler at every level: the handler applies the bot's email setting and
+    // holds on Murage's own card, so no engine card stands in front of it (BOT-EMAIL-MURAGE-109 3.2)
+    if (read || (app === undefined && isOwnHandlerCarded(resolved.mountId, resolved.tool)) || (bot.autoApprove && isOwnUnasked(resolved.mountId, resolved.tool))) {
       return { approve: `auto-approved ${resolved.name} (Murage's own tool)`, source: "own-unasked", rule: `${resolved.mountId}/${resolved.tool}` };
     }
   }

@@ -26,9 +26,12 @@ const NO_LIMITS = { autoApprove: true, fullAccess: true, noLimits: true };
 const LEVELS = { Ask: ASK, Auto: AUTO, "Full access": FULL, "No limits": NO_LIMITS } as const;
 type Level = keyof typeof LEVELS;
 
+// 1.0.9 (NOLIMITS-NODE-109-CUT section 9): every named path an ordinary file and every `cd` target a folder; the
+// on-disk cases are server/nolimits-node-109.test.ts
+const STUB = { realpath: (path: string) => path, stat: () => ({ isFile: () => true, isDirectory: () => true }) };
 const nix = (cwd: string) => ({ cwd, roots: [cwd, "/tmp"], home: "/home/tester", knownRecipients: new Set<string>(), realpath: (p: string) => posix.normalize(p) });
 const verdict = (level: Level, cmd: string, cwd = CWD) =>
-  autoVerdict(LEVELS[level], "Bash", cmd, { commandText: cmd, commandCwd: cwd, stopLine: classifyStopLine("Bash", { command: cmd }, "", nix(cwd)) });
+  autoVerdict(LEVELS[level], "Bash", cmd, { commandText: cmd, commandCwd: cwd, stopLine: classifyStopLine("Bash", { command: cmd }, "", nix(cwd)), unseenFs: STUB });
 const pwshVerdict = (level: Level, cmd: string) =>
   autoVerdict(LEVELS[level], "PowerShell", cmd, { commandText: cmd, commandCwd: "C:\\work" });
 const everywhere = (cmd: string, cwd = CWD) => {
@@ -164,8 +167,9 @@ describe("what stays as it was", () => {
     expect(alwaysAskCommand(cmd, CWD)).toBeNull();
   });
   // Sean's relief: one script on disk, and the venv shapes, after a cd joined by `;` too
-  it.each(["cd app; python manage.py runserver", "cd app && bash build.sh", "cd app; source .venv/bin/activate && python -m pytest", "bash build.sh"])("`%s` runs at Full access and No limits", (cmd) => {
-    expect(alwaysAskCommand(cmd, CWD)).toMatchObject({ rule: "unreadable", unseenScript: true });
+  // 1.0.9: the `cd` names its folder `./…` and is joined with `&&` (NOLIMITS-NODE-109-CUT R3)
+  it.each(["cd ./app && python manage.py runserver", "cd ./app && bash ./build.sh", "cd ./app && source .venv/bin/activate && python -m pytest", "bash ./build.sh"])("`%s` runs at Full access and No limits", (cmd) => {
+    expect(alwaysAskCommand(cmd, CWD, "command", undefined, undefined, undefined, { fs: STUB })).toMatchObject({ rule: "unreadable", unseenScript: true });
     expect(verdict("Full access", cmd).approve).toBeTruthy();
     expect(verdict("No limits", cmd).approve).toBeTruthy();
   });
@@ -173,17 +177,17 @@ describe("what stays as it was", () => {
   it("an unseen script outside never covers a wipe inside Fuigo's use_tool wrapper", () => {
     const wrapped = (command: string) => ({
       tool: "other",
-      summary: "bash build.sh",
+      summary: "bash ./build.sh",
       toolKind: "other",
       toolIdentity: { namespace: "fuigo_build", name: "use_tool", kind: "use_tool" },
-      toolCall: { name: "bash build.sh", input: { variant: "UseTool", tool_name: "computer__computer_exec", tool_input: { command } } },
+      toolCall: { name: "bash ./build.sh", input: { variant: "UseTool", tool_name: "computer__computer_exec", tool_input: { command } } },
       mcpMounts: [{ engineName: "computer", mountId: "own:computer", provenance: "own" as const }],
     });
     for (const level of ["Full access", "No limits"] as const) {
-      const held = autoVerdict(LEVELS[level], "other", "bash build.sh", { commandText: "bash build.sh", commandCwd: CWD, call: wrapped("sudo rm -rf /home") });
+      const held = autoVerdict(LEVELS[level], "other", "bash ./build.sh", { commandText: "bash ./build.sh", commandCwd: CWD, call: wrapped("sudo rm -rf /home") });
       expect(held, level).toMatchObject({ approve: null, source: "always-ask" });
       expect(held.rule, level).not.toBe("unreadable");
-      const ok = autoVerdict(LEVELS[level], "other", "bash build.sh", { commandText: "bash build.sh", commandCwd: CWD, call: wrapped("ls -la") });
+      const ok = autoVerdict(LEVELS[level], "other", "bash ./build.sh", { commandText: "bash ./build.sh", commandCwd: CWD, call: wrapped("ls -la"), unseenFs: STUB });
       expect(ok.source, level).not.toBe("always-ask");
     }
   });

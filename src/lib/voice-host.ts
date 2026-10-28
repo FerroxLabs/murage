@@ -5,11 +5,13 @@
 // ordinary send path, so the engine turn, the approvals and the transcript
 // are the same ones a typed message gets. This file just carries the events.
 import { desktopSurfaceHeaders } from "@/lib/live-events";
+import { botCallHeaders } from "@/lib/bot-call-session";
 
 /** The call routes read the owner's thread and inbox, so the harness serves
  *  them to the desktop app only: every request carries its per-launch proof. */
 export function callRouteHeaders(): Record<string, string> {
-  return { "content-type": "application/json", "x-murage-surface": "desktop", ...desktopSurfaceHeaders() };
+  // an answered bot call: every call request carries its call id (design 5.7), which is also traffic for the session
+  return { "content-type": "application/json", "x-murage-surface": "desktop", ...desktopSurfaceHeaders(), ...botCallHeaders() };
 }
 
 export type HostEvent =

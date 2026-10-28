@@ -31,4 +31,7 @@ export interface InstalledPackageMetadata {
   name: string;
   release: string;
   requiredApps: InstalledPackageRequiredApp[];
+  /** Bot email (BOT-EMAIL-MURAGE-109 section 7): the package said this bot had an address where it came from. Never an address, never
+   *  a grant: email starts off and the bot's Email section offers to give it one. */
+  emailIntent?: "was-on";
 }

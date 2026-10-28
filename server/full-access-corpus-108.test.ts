@@ -354,6 +354,7 @@ function native(sample: CorpusCase, dialect: typeof dialects[number]): boolean {
     || sample.family === "pwsh" && dialect.dialect === "windows-pwsh"
     || sample.family === "posix" && dialect.dialect !== "windows-pwsh";
 }
+const CORPUS_FS = { realpath: (path: string) => path, stat: () => ({ isFile: () => true, isDirectory: () => true }) };
 function evaluate(sample: CorpusCase, level: string, bot: AutoApprover, dialect: typeof dialects[number], scenario: string, env?: ExecEnv): void {
   if (sample.dialectOnly && sample.dialectOnly !== dialect.dialect) return;
   const tool = "shell";
@@ -369,6 +370,9 @@ function evaluate(sample: CorpusCase, level: string, bot: AutoApprover, dialect:
     commandText: sample.command, commandCwd: dialect.cwd, call,
     stopLine: classifyAsk({ ...call, tool, summary: sample.command }, place),
     handedPins: new Map([["GIT_TERMINAL_PROMPT", "0"], ["GCM_INTERACTIVE", "never"], ["PAGER", "cat"]]),
+    // 1.0.9 (NOLIMITS-NODE-109-CUT section 9): every named path is an ordinary file and every `cd` target a folder, real
+    // paths as spelled. It proves the shape only; absence, FIFOs and links are server/nolimits-node-109.test.ts on disk.
+    unseenFs: CORPUS_FS,
     // Same request.opened mapping as index.ts:8264, using production ExecEnv.
     ...(env?.unread ? { envUnread: env.unread.cause } : {}),
     ...(env?.unchecked ? { envUnchecked: env.unchecked } : {}),

@@ -30,15 +30,18 @@ type Level = keyof typeof LEVELS;
 
 const nix = () => ({ cwd: CWD, roots: [CWD, "/tmp"], home: "/home/tester", knownRecipients: new Set<string>(), realpath: (p: string) => posix.normalize(p) });
 const verdict = (level: Level, cmd: string, extra: Record<string, unknown> = {}) =>
-  autoVerdict(LEVELS[level], "Bash", cmd, { commandText: cmd, commandCwd: CWD, stopLine: classifyStopLine("Bash", { command: cmd }, "", nix()), ...extra });
+  autoVerdict(LEVELS[level], "Bash", cmd, { commandText: cmd, commandCwd: CWD, stopLine: classifyStopLine("Bash", { command: cmd }, "", nix()), unseenFs: STUB, ...extra });
 
+// 1.0.9 (NOLIMITS-NODE-109-CUT section 9): every named path an ordinary file and every `cd` target a folder; the
+// on-disk cases are server/nolimits-node-109.test.ts
+const STUB = { realpath: (path: string) => path, stat: () => ({ isFile: () => true, isDirectory: () => true }) };
 // 1.0.5 r4: an allow-list of the whole text's shape (server/always-ask.ts
 // unseenShapeAdmits): only these commands, no pipe, no `&`, no assignment, no
 // redirect but /dev/null, every word literal
 const ORDINARY = [
   "source venv/bin/activate",
   ". ./env.sh",
-  "bash build.sh",
+  "bash ./build.sh",
   "sh ./scripts/test.sh --fast",
   "python manage.py migrate",
   "python3 tools/gen.py --out build",
@@ -46,16 +49,17 @@ const ORDINARY = [
   "ruby tool.rb",
   "perl tool.pl",
   "php app.php",
-  "cd app && bash build.sh",
-  "cd app; python manage.py runserver",
-  "bash build.sh 2>/dev/null",
-  "bash build.sh > /dev/null 2>&1",
-  "pwd && ls && bash build.sh || echo failed",
+  // 1.0.9: a `cd` names its folder `./…`, `/…` or `~…`, joined with `&&`
+  "cd ./app && bash ./build.sh",
+  "cd ./app && python manage.py runserver",
+  "bash ./build.sh 2>/dev/null",
+  "bash ./build.sh > /dev/null 2>&1",
+  "pwd && ls && bash ./build.sh; echo done",
 ];
 
 describe("an ordinary script file on disk", () => {
   it.each(ORDINARY)("`%s` asks at Ask and Auto, runs at Full access and No limits", (cmd) => {
-    expect(alwaysAskCommand(cmd, CWD)).toMatchObject({ rule: "unreadable", unseenScript: true });
+    expect(alwaysAskCommand(cmd, CWD, "command", undefined, undefined, undefined, { fs: STUB })).toMatchObject({ rule: "unreadable", unseenScript: true });
     expect(verdict("Ask", cmd)).toMatchObject({ approve: null });
     expect(verdict("Auto", cmd)).toMatchObject({ approve: null, source: "always-ask" });
     expect(verdict("Full access", cmd)).toMatchObject({ source: "full-access" });
@@ -70,7 +74,7 @@ describe("an ordinary script file on disk", () => {
 const VENV = [
   "source venv/bin/activate && pip install -r requirements.txt",
   ". .venv/bin/activate && pip3 install -e .",
-  "cd app && source .venv/bin/activate && python -m pytest",
+  "cd ./app && source .venv/bin/activate && python -m pytest",
   ". venv/bin/activate && pytest -q",
   "source venv/bin/activate && python3 -m pip install --upgrade pip && deactivate",
   "source .venv/bin/activate && python -m unittest discover -s tests",
@@ -79,7 +83,7 @@ const VENV = [
 
 describe("a virtual environment, then its Python tools", () => {
   it.each(VENV)("`%s` asks at Ask and Auto, runs at Full access and No limits", (cmd) => {
-    expect(alwaysAskCommand(cmd, CWD)).toMatchObject({ rule: "unreadable", unseenScript: true });
+    expect(alwaysAskCommand(cmd, CWD, "command", undefined, undefined, undefined, { fs: STUB })).toMatchObject({ rule: "unreadable", unseenScript: true });
     expect(verdict("Ask", cmd)).toMatchObject({ approve: null });
     expect(verdict("Auto", cmd)).toMatchObject({ approve: null, source: "always-ask" });
     expect(verdict("Full access", cmd).approve).toBeTruthy();
@@ -98,7 +102,7 @@ describe("a folder the reader does not know", () => {
     }
   });
   it("an absolute script path still runs at No limits with no folder", () => {
-    expect(alwaysAskCommand("bash /work/project/build.sh")).toMatchObject({ unseenScript: true });
+    expect(alwaysAskCommand("bash /work/project/build.sh", undefined, "command", undefined, undefined, undefined, { fs: STUB })).toMatchObject({ unseenScript: true });
   });
 });
 

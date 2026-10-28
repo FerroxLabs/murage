@@ -9,6 +9,7 @@
 import { describe, expect, it } from "vitest";
 
 import { acpRequestTimeoutMessage, acpStopReasonMessage } from "./acp/core.ts";
+import { antigravityResultFailure } from "./antigravity.ts";
 import { codexRpcTimeoutMessage } from "./codex.ts";
 import { engineClosedLine, plainDuration } from "./stop-copy.ts";
 
@@ -46,6 +47,21 @@ describe("stop line copy", () => {
     expect(acpStopReasonMessage("Grok", "max_turn_requests")).toBe("Grok reached its limit of steps for one turn, so this turn ended early.");
     expect(acpStopReasonMessage("Grok", "refusal")).toBe("Grok declined to continue, so this turn ended early.");
     for (const reason of [undefined, null, "something_new"]) expect(acpStopReasonMessage("Grok", reason)).toBe("Grok stopped before it finished, so this turn ended early.");
+  });
+
+  it("says why Antigravity ended a turn in plain words, never a bare \"Model turn failed: <status>\" (upstream d67c1b335)", () => {
+    expect(antigravityResultFailure({ status: "MAX_TOKENS" })).toBe("Antigravity reached its reply length limit, so this turn ended early.");
+    expect(antigravityResultFailure({ status: "MAX_TURNS" })).toBe("Antigravity reached its limit of steps for one turn, so this turn ended early.");
+    expect(antigravityResultFailure({ status: "REFUSAL" })).toBe("Antigravity declined to continue, so this turn ended early.");
+    for (const status of [undefined, "", "ERROR", "SOMETHING_NEW"]) {
+      const line = antigravityResultFailure({ status });
+      expect(line).toBe("Antigravity stopped before it finished, so this turn ended early.");
+      expect(line).not.toMatch(INTERNAL);
+      expect(line).not.toContain("Model turn failed");
+    }
+    // agy's own words win when it gave any
+    expect(antigravityResultFailure({ status: "ERROR", message: "Quota exceeded for this account." })).toBe("Quota exceeded for this account.");
+    expect(antigravityResultFailure({ status: "ERROR", error: "Sign in again." })).toBe("Sign in again.");
   });
 
   it("names the step and a plain duration when a Codex request times out", () => {

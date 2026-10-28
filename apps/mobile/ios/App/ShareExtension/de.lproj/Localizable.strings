@@ -1,0 +1,22 @@
+// PHONE-UNIFY-110 section 9. %@ is the chosen bot name.
+"share_title" = "An Murage senden";
+"share_to" = "An";
+"share_from" = "Von";
+"share_note" = "Notiz hinzufügen";
+"share_send" = "Senden";
+"share_sending" = "Wird gesendet...";
+"share_sent" = "An %@ gesendet";
+"share_open_chat" = "Chat öffnen";
+"share_recent" = "Letzte Chats";
+"share_new" = "Neuer Chat mit %@";
+"share_setup" = "Öffne Murage einmal, um das Teilen einzurichten.";
+"share_pair" = "Dieses Telefon ist noch nicht mit einem Computer gekoppelt. Öffne Murage, um es zu koppeln.";
+"share_photo_large" = "Das Foto ist zu groß. Fotos dürfen bis zu 10 MB groß sein.";
+"share_file_large" = "Die Datei ist zu groß. Dateien dürfen bis zu 25 MB groß sein.";
+"share_ten" = "Du kannst bis zu 10 Elemente gleichzeitig senden.";
+"share_type" = "Murage kann diese Art von Datei noch nicht senden.";
+"share_offline" = "Dein Computer ist gerade nicht erreichbar. Murage sendet dies, sobald er erreichbar ist.";
+"share_passcode" = "Lege einen Code für dieses Telefon fest und öffne dann Murage.";
+"share_again" = "Öffne Murage, um das Teilen erneut einzurichten.";
+"share_update" = "Aktualisiere Murage auf deinem Computer, um dies zu nutzen.";
+"share_done" = "Fertig";

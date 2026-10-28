@@ -22,6 +22,7 @@ import { initializeInbox } from "./inbox.ts";
 import { initializeThreadSnooze } from "./thread-snooze.ts";
 import { initializeTeamIdentityTables } from "./team-identities.ts";
 import { initializeMobilePush } from "./mobile-push-store.ts";
+import { initializeBotCalls } from "./bot-calls-schema.ts";
 import { initializeSharedRequestProvenance } from "./shared-provenance-schema.ts";
 import { initializeProjectCardDelivery } from "./project-card-delivery-schema.ts";
 import { createProjectGoal } from "./project-goals.ts";
@@ -276,7 +277,7 @@ function bootConsumers(): Located[] {
 function everyTableDb() {
   const db = new DatabaseSync(":memory:"); dbs.push(db);
   initializeMessageTables(db); initializeInbox(db); initializeArtifacts(db); initializeImageOperations(db); initializeImageLibrary(db); initializeThreadSnooze(db);
-  initializeProjectTables(db); initializeTeamIdentityTables(db); initializeMobilePush(db); initializeSharedRequestProvenance(db); initializeProjectCardDelivery(db); initializeOwnerSends(db);
+  initializeProjectTables(db); initializeTeamIdentityTables(db); initializeMobilePush(db); initializeSharedRequestProvenance(db); initializeProjectCardDelivery(db); initializeOwnerSends(db); initializeBotCalls(db);
   return db;
 }
 const tablesOf = (db: DatabaseSync) => (db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all() as Array<{ name: string }>).map(row => row.name);

@@ -3669,5 +3669,18 @@
   "learnAboutMe.error.conflict": "यह पंक्ति पहले ही अन्य शब्दों के साथ रखी जा चुकी है। नए सिरे से समीक्षा करने के लिए फिर से पेस्ट करें।",
   "learnAboutMe.importedFrom": "{provider} से इम्पोर्ट किया गया, {date}",
   "learnAboutMe.importedFromUndated": "{provider} से इम्पोर्ट किया गया, बिना दिनांक",
-  "memoryReview.forgottenWords": "भुला दिया गया। इसके शब्द मिट चुके हैं।"
+  "memoryReview.forgottenWords": "भुला दिया गया। इसके शब्द मिट चुके हैं।",
+  "settings.bot.phoneForBots.title": "आपके बॉट के लिए फ़ोन",
+  "settings.bot.phoneForBots.description": "चुनें कि आपके बॉट इस फ़ोन पर क्या इस्तेमाल कर सकते हैं।",
+  "settings.bot.phoneForBots.open": "खोलें",
+  "phone.ask.fromPhone": "आपके फ़ोन से",
+  "phone.ask.askAgain": "फिर से पूछें",
+  "phone.ask.settingTitle": "इस फ़ोन से शेयर करें और पूछें",
+  "phone.ask.settingOff": "इस फ़ोन के लिए शेयर करना और पूछना बंद है।",
+  "phone.ask.errorGone": "वह चैट अब उपलब्ध नहीं है। कोई दूसरी चुनें।",
+  "phone.ask.errorUpdate": "इसे इस्तेमाल करने के लिए अपने कंप्यूटर पर Murage अपडेट करें।",
+  "phone.ask.errorSetup": "शेयरिंग फिर से सेट करने के लिए Murage खोलें।",
+  "phone.removal.pending": "हटाना बाकी है",
+  "phone.removal.pendingBody": "Murage इस फ़ोन को हटाने की कोशिश करता रहेगा।",
+  "phone.removal.retry": "फिर से कोशिश करें"
 }

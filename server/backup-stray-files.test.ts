@@ -118,3 +118,26 @@ it("the skipped-item wording never says the current file is backed up and has on
   expect(text).toMatch(/credentials\.bin\.copy \(not recognised by Murage, so the backup leaves it out/);
   expect(text).not.toMatch(/current file is backed up|older copy of a settings file/);
 });
+
+// 1.0.9 Sentinel: DATA_DIR/health holds rebuildable runtime metadata. A capture with it present completes, stores none of it,
+// reports it as an intentional exclusion with its own reason, and never lists it among the unrecognised items.
+it("a present health metadata root is left out intentionally: capture completes, nothing stored, not listed as unrecognised", async () => {
+  const f = backupFixture();
+  try {
+    mkdirSync(join(f.data, "health"), { mode: 0o700 });
+    for (const name of ["server.current.ndjson", "server.previous.ndjson", "desktop.current.ndjson", "backup-status.json", "db-stats-current.json", "db-stats-0001.sqlite", "backup-status.json.4242.tmp"]) writeFileSync(join(f.data, "health", name), "{}\n", { mode: 0o600 });
+    await withOfflineInstallation(f.data, async installation => {
+      const stage = await stageInstallationStateWhileOwned(installation, f.parent);
+      const inventory = await inventoryFidelity(installation, stage, selection);
+      inventory.assertUnchanged();
+      const stored = [...stage.manifest.files.map(file => file.path), ...inventory.sources.map(file => file.path)];
+      expect(stored.filter(path => path === "health" || path.startsWith("health/"))).toEqual([]);
+      const component = inventory.coverage.components.find(item => item.path === "health");
+      expect(component?.status).toBe("excluded");
+      expect(component?.reason).toBe(DATA_DIR_ENTRIES.health!.why);
+      expect((stage.manifest.skipped ?? []).map(item => item.path)).not.toContain("health");
+      expect(inventory.sources.find(file => file.path === "config.json")).toBeTruthy();
+    });
+    expect(existsSync(join(f.data, "health", "backup-status.json"))).toBe(true); // never deleted or touched
+  } finally { f.db.close(); removeTempDirSync(f.parent); }
+});
