@@ -196,17 +196,20 @@ export class BrowserExtensionEngine {
       const server=createServer((_req,res)=>{res.writeHead(404);res.end();});this.server=server;
       const sockets=new WebSocketServer({noServer:true,maxPayload:1024*1024});this.sockets=sockets;
       await new Promise<void>((resolve,reject)=>{server.once("error",reject);server.listen(0,"127.0.0.1",resolve)});
+      // A close() (sharing turned off) or a lost grant during any await below ends the start here: dispose() already ran and saw no
+      // engine, so one spawned after it would be owned by nothing (upstream 4a6a9c4e1).
+      this.authorized();
       const address=server.address();if(!address||typeof address==="string")throw Error("Browser relay unavailable.");
       server.on("upgrade",(req,socket,head)=>{
         const valid= !req.headers.origin&&req.headers.host===`127.0.0.1:${address.port}`&&typeof req.url==="string"&&Buffer.byteLength(req.url)===Buffer.byteLength(route)&&timingSafeEqual(Buffer.from(req.url),Buffer.from(route))&&!this.socket;
         if(!valid){socket.destroy();return;}sockets.handleUpgrade(req,socket,head,ws=>{this.socket=ws;ws.on("message",raw=>{this.dispatchWire(raw.toString(),()=>ws.close(1013));});ws.on("error",()=>{});ws.on("close",()=>{if(this.socket===ws)this.socket=undefined;});});
       });
-      const status=await settledBrowserEngineStatus({dataDir:this.options.dataDir});if(status.kind!=="ready")throw Error(status.reason);
+      const status=await settledBrowserEngineStatus({dataDir:this.options.dataDir});this.authorized();if(status.kind!=="ready")throw Error(status.reason);
       const spec=agentBrowserIntegration({binaryPath:status.binaryPath,session:`mbe-${createHash("sha256").update(this.options.bindingId).digest("hex").slice(0,28)}`,encryptionKey:browserEngineEncryptionKey(this.options.dataDir),dataDir:this.options.dataDir,realmId:this.options.realmId,attachCdpUrl:`ws://127.0.0.1:${address.port}${route}`,persistent:false});
-      await verifyAgentBrowserBinary(spec.command,spec.env);
+      await verifyAgentBrowserBinary(spec.command,spec.env);this.authorized();
       // Supported pinned engine target record: avoid creating an unrelated blank tab
       // when the owner explicitly selected an already-shared tab.
-      const selected=await this.options.transport.selected();
+      const selected=await this.options.transport.selected();this.authorized();
       this.targetFile=join(spec.env.AGENT_BROWSER_SOCKET_DIR!,`${spec.env.AGENT_BROWSER_SESSION}.target`);
       writeFileAtomic(this.targetFile,JSON.stringify({targetId:targetId(selected.tabId),url:selected.url,pinned:true}),{mode:0o600});
       this.client=(this.options.engineFactory??startHeadlessEngine)(spec);

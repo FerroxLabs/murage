@@ -1,0 +1,4 @@
+"Ask ${applicationName}" = "询问${applicationName}";
+"Ask ${applicationName} something" = "向${applicationName}提问";
+"Ask ${bot} in ${applicationName}" = "在${applicationName}中询问${bot}";
+"Open my chat in ${applicationName}" = "在${applicationName}中打开我的聊天";

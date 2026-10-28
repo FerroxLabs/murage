@@ -32,7 +32,7 @@ import { assignPipJob, closePipJob, createPipJob, PipJobRefusedError, stopWindow
 import { loadExclusionAddon, type NativeHandle } from "./engine-exclusion.ts";
 import {
   closePowerFilter, HOST_POWER_CODE, HOST_POWER_MESSAGE, hostPowerPlatform, hostPowerStubMessage, hostPowerTestUnwrapped, openPowerFilter, planHostPower,
-  wrapperRefusalText, bwrapEngineStarted, bwrapEarlyExitMessage, BWRAP_ARGS_FD, BWRAP_SECCOMP_FD, BWRAP_STATUS_FD,
+  reprobeHostPowerEnvironment, usernsDenied, wrapperRefusalText, bwrapEngineStarted, bwrapEarlyExitMessage, BWRAP_ARGS_FD, BWRAP_SECCOMP_FD, BWRAP_STATUS_FD,
 } from "./host-power.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { resolveCliSpawn, type ResolvedSpawn } from "./env-path.ts";
@@ -340,9 +340,12 @@ export function spawnCli(
     console.warn(`[procs] engine launch refused for ${cli}: the shutdown privileges are still on this server's token`);
     return unstartedLaunch(command, launchArgs, hostPowerError());
   }
-  const posixPower = hostPower && process.platform !== "win32" && hostPowerPlatform() !== null && !hostPowerTestUnwrapped()
+  const planned = hostPower && process.platform !== "win32" && hostPowerPlatform() !== null && !hostPowerTestUnwrapped()
     ? planHostPower(command, launchArgs, opts.env, typeof opts.cwd === "string" ? opts.cwd : opts.cwd?.toString())
     : null;
+  // An environment gap (host-power.ts hostPowerGap: root, or a verified bwrap this computer refuses a user namespace): the engine
+  // runs as an ordinary spawn under the access level, the never-list and the command reader. The cause was logged once.
+  const posixPower = planned?.kind === "unwrapped" ? null : planned;
   if (posixPower?.kind === "refuse") {
     console.warn(`[procs] engine launch refused for ${cli}: ${posixPower.reason}`);
     return unstartedLaunch(command, launchArgs, hostPowerError(hostPowerStubMessage() ?? undefined));
@@ -530,6 +533,9 @@ export function spawnCli(
       if (ownership.stopRequested || ownership.stopped) return;
       ownership.hostPowerRefused = true;
       console.warn(`[procs] engine launch refused for ${cli}: ${bwrapEarlyExitMessage(signal ?? `exit ${String(code)}`, firstErr, posixPower.command)}`);
+      // bwrap said it was refused a user namespace (perhaps before the start-up probe answered). That stderr alone decides
+      // nothing: it asks for the same independent probe, and only the probe can record the gap so the next turn runs.
+      if (usernsDenied(firstErr)) void reprobeHostPowerEnvironment();
     });
   } else if (posixPower && child.stderr) {
     let prefix = "";

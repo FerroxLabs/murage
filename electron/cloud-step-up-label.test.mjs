@@ -41,6 +41,9 @@ const SAMPLES = [
   ["POST", "/api/bots/b1/mcp-enable-cards/c1/enable"], ["POST", "/api/storage/attachments/remove"],
   // 1.0.8 step-up route (A-UI: raising the default offers it to the bot's open chats).
   ["POST", "/api/bots/b1/permissions/refresh"],
+  // 1.0.9 bot email owner routes.
+  ["POST", "/api/email/account"], ["POST", "/api/email/other-setups/inbox-1/remove"], ["POST", "/api/email/bots/b1/setup"],
+  ["POST", "/api/email/bots/b1/trusted-add"], ["GET", "/api/email/status"],
 ];
 
 describe("every step-up route has a human label", () => {
@@ -71,6 +74,12 @@ describe("every step-up route has a human label", () => {
     }
     expect(cloudRouteDecision("PATCH", "/api/bots/b1", "owner-desktop", { fullAccess: true }, false)).toBe("step-up required");
     expect(cloudRouteDecision("POST", "/api/cloud/pairing", "owner-desktop", {}, false)).toBe("step-up required");
+  });
+
+  it("a bot email action names the bot it changes (1.0.9)", () => {
+    const described = describeStepUp({ method: "POST", path: "/api/email/bots/ember-1/pause", body: {}, botName: "Ember" });
+    expect(JSON.stringify(described)).toContain("Change a bot's email address or who can email it");
+    expect(JSON.stringify(described)).toContain("Ember (ember-1)");
   });
 
   it("no two table entries disagree about a sample (first match wins, and it is the intended one)", () => {
