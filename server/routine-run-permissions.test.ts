@@ -217,6 +217,9 @@ describe("a run waiting on you at its run limit", () => {
     await h.manager.enforceRunLimits();
     expect(run()).toMatchObject({ status: "needs-you", attention: "pkill -f x; rm -f /tmp/dax/a.txt" });
     expect(run().error).toBeUndefined();
+    // bot calls 1.0.9 (Grok p5 r1 G1): the run records the instant it began waiting on you, and keeps it on disk
+    const needsYouAt = h.now();
+    expect(run().needsYouAt).toBe(needsYouAt);
     expect(h.interrupted).toEqual([]);
     expect(h.failed).toEqual([]);
     expect(h.needsYou.map((item) => item.status)).toEqual(["needs-you"]);
@@ -225,6 +228,8 @@ describe("a run waiting on you at its run limit", () => {
     await h.manager.enforceRunLimits();
     expect(run().status).toBe("needs-you");
     expect(h.needsYou).toHaveLength(1);
+    expect(run().needsYouAt).toBe(needsYouAt);
+    expect(new RoutineManager({ ...h.options }).listRuns().find((item) => item.id === run().id)?.needsYouAt).toBe(needsYouAt);
     // it is not a failure for the routine's health either
     expect(h.manager.listRoutines()[0]).not.toHaveProperty("failureStreak");
   });

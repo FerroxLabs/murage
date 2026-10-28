@@ -47,6 +47,7 @@ final class WorkspaceBookStore {
             ShellLog.event("book save failed")
             return false
         }
+        if let root = ShareContainer.root { try? ShareWorkspaceStore(root: root).write(book) }
         return true
     }
 

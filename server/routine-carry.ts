@@ -35,3 +35,20 @@ export function priorReplyCarryable(threadId: string, from: number, to: number):
     return false;
   }
 }
+
+/** Bot email (BOT-EMAIL-MURAGE-109 5.4): whether a bot text row written in [from, to] in the thread is marked (written after reading outside
+ *  mail): the carried report is then handed on fenced, kind email-derived. Anything unreadable answers true (fenced is the careful side). */
+export function priorReplyEmailDerived(threadId: string, from: number, to: number): boolean {
+  try {
+    let marked = false;
+    scanTextLinesNewest(threadId, (message) => {
+      if (message.at < from) return true;
+      if (message.at > to || message.role !== "bot" || message.kind !== "text") return false;
+      if (message.externalContent === "email") { marked = true; return true; }
+      return false;
+    });
+    return marked;
+  } catch {
+    return true;
+  }
+}

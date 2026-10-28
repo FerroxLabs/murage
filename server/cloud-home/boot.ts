@@ -26,7 +26,7 @@ export const HOME_SERVER_ENV_KEYS = [
   "PATH", "HOME", "LANG", "TZ", "NODE_ENV", "MURAGE_CLOUD_ROLE", "MURAGE_CLOUD_MACHINE_ID",
   "MURAGE_CLOUD_ADMIN_URL", "MURAGE_PUBLIC_ORIGIN", "MURAGE_CLOUD_SECRETS_FD", "MURAGE_DATA_DIR",
   "MURAGE_PORT", "MURAGE_WEBHOOK_PORT", "WEBHOOK_PORT", "MURAGE_NO_DEV_DESKTOP_SECRET", "MURAGE_RESOURCES_PATH",
-  "MURAGE_TRUSTED_PROXY", "MURAGE_WARM_POOL_BUDGET_MB", "MURAGE_STATIC_DIR",
+  "MURAGE_TRUSTED_PROXY", "MURAGE_WARM_POOL_BUDGET_MB", "MURAGE_STATIC_DIR", "MURAGE_SENTINEL_STATE_DIR",
 ] as const;
 /** Set only when the home starts in safe mode (start-home.sh consumes /run/murage-safe-mode, written by murage-commands). */
 export const HOME_SERVER_OPTIONAL_ENV_KEYS = ["MURAGE_SAFE_MODE", "MURAGE_SITE_ORIGIN"] as const;
@@ -47,6 +47,9 @@ export function homeServerEnvironment(contract: HomeBootContract, timeZone: stri
     MURAGE_WARM_POOL_BUDGET_MB: "1200",
     // The built web app (build-image.sh writes /opt/murage/dist); without it the home serves no UI at all.
     MURAGE_STATIC_DIR: "/opt/murage/dist",
+    // Where murage-sentinel.service keeps its output (the same line is in that unit), so owner reads and delivery
+    // find the scanner's descriptor, store and view (server/sentinel/paths.ts defaultOutputRoot).
+    MURAGE_SENTINEL_STATE_DIR: "/var/lib/murage-sentinel",
     ...(safeMode ? { MURAGE_SAFE_MODE: "1" } : {}),
     ...(contract.siteOrigin ? { MURAGE_SITE_ORIGIN: contract.siteOrigin } : {}),
   };

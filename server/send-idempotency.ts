@@ -74,3 +74,12 @@ export class SendSequencer {
 export function sendFingerprint(text: string, replyToId?: string, channelMode?: "chat" | "goal", responderBotId?: string): string {
   return JSON.stringify([text, replyToId ?? null, channelMode ?? null, responderBotId ?? null]);
 }
+
+const phoneSendIdSchema = z.string().regex(/^phone:(share|ask):[A-Za-z0-9_-]{43}$/);
+
+/** The id a phone share or ask line is stored under. Only the route's lookup of an existing `via` row may accept one; a client never makes one for a fresh send. */
+export function parsePhoneSendId(value: string | null | undefined): string {
+  const parsed = phoneSendIdSchema.safeParse(value);
+  if (!parsed.success) throw Object.assign(new Error("sendId must be a client-generated id"), { status: 400 });
+  return parsed.data;
+}

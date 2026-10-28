@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "categories": [
     { "kind": "approval", "risk": "low", "category": "approval" },
     { "kind": "approval", "risk": "risky", "category": "approval-open" },
@@ -10,13 +10,25 @@
     { "kind": "turn-failed", "risk": "unrated", "category": "question" },
     { "kind": "backup-waiting", "risk": "unrated", "category": "question" },
     { "kind": "memories-waiting", "risk": "unrated", "category": "question" },
-    { "kind": "done", "risk": "low", "category": "done" }
+    { "kind": "done", "risk": "low", "category": "done" },
+    { "kind": "device-job", "risk": "unrated", "category": "device-job" },
+    { "kind": "call", "risk": "unrated", "category": "call" },
+    { "kind": "call-note", "risk": "unrated", "category": "call-note" }
   ],
-  "iosCategory": { "approval": "APPROVAL", "approval-open": "APPROVAL_OPEN", "question": "QUESTION", "done": "DONE", "resolved": "DONE" },
-  "androidChannel": { "approval": "approvals", "approval-open": "approvals", "question": "questions", "done": "finished", "resolved": "finished" },
+  "iosCategory": { "approval": "APPROVAL", "approval-open": "APPROVAL_OPEN", "question": "QUESTION", "done": "DONE", "resolved": "DONE", "device-job": "DEVICE_JOB", "call": "CALL", "call-note": "CALL_NOTE" },
+  "androidChannel": { "approval": "approvals", "approval-open": "approvals", "question": "questions", "done": "finished", "resolved": "finished", "device-job": "requests", "call": "calls", "call-note": "questions" },
+  "iosActions": {
+    "CALL": [
+      { "id": "ANSWER", "title": "Answer", "options": ["foreground", "authenticationRequired"] },
+      { "id": "NOT_NOW", "title": "Not now", "options": ["authenticationRequired"] }
+    ]
+  },
+  "callSound": { "ios": "murage-call.caf", "android": "murage_call", "seconds": 10 },
+  "expiringCategories": ["call", "call-note"],
   "payloads": [
     { "value": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "approval", "revision": 1, "workspaceBadge": 2, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17" }, "valid": true },
     { "value": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "resolved", "revision": 2, "workspaceBadge": 0, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17" }, "valid": true },
+    { "value": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "device-job", "revision": 1, "workspaceBadge": 0, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17" }, "valid": true },
     { "value": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "approval", "revision": 1, "workspaceBadge": 2, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17", "threadId": "t1" }, "valid": false },
     { "value": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "chat", "revision": 1, "workspaceBadge": 2, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17" }, "valid": false },
     { "value": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9B1F", "category": "done", "revision": 1, "workspaceBadge": 0, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17" }, "valid": false },
@@ -25,19 +37,32 @@
     { "value": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "done", "revision": 1, "workspaceBadge": -1, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17" }, "valid": false },
     { "value": { "bindingId": "not-a-uuid", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "done", "revision": 1, "workspaceBadge": 0, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17" }, "valid": false },
     { "value": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "done", "revision": 1, "workspaceBadge": 0, "collapseKey": "short" }, "valid": false },
+    { "value": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "call", "revision": 1, "workspaceBadge": 1, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17", "expiresAt": 1790000045000 }, "valid": true },
+    { "value": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "call-note", "revision": 1, "workspaceBadge": 1, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17", "expiresAt": 1790043200000 }, "valid": true },
+    { "value": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "call", "revision": 1, "workspaceBadge": 1, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17" }, "valid": false },
+    { "value": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "call", "revision": 1, "workspaceBadge": 1, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17", "expiresAt": 0 }, "valid": false },
+    { "value": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "call", "revision": 1, "workspaceBadge": 1, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17", "expiresAt": 1790000045000.5 }, "valid": false },
+    { "value": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "approval", "revision": 1, "workspaceBadge": 1, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17", "expiresAt": 1790000045000 }, "valid": false },
+    { "value": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "resolved", "revision": 2, "workspaceBadge": 0, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17", "expiresAt": 1790000045000 }, "valid": false },
     { "value": "approval", "valid": false },
     { "value": null, "valid": false }
   ],
   "fcmData": [
     { "data": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "approval", "revision": "1", "workspaceBadge": "2", "collapseKey": "be753ac14d84299e2b22e52b6dba3a17", "threadGroup": "46af17e29b1130f0" }, "valid": true },
     { "data": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "approval", "revision": "01", "workspaceBadge": "2", "collapseKey": "be753ac14d84299e2b22e52b6dba3a17", "threadGroup": "46af17e29b1130f0" }, "valid": false },
-    { "data": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "approval", "revision": "1", "workspaceBadge": "two", "collapseKey": "be753ac14d84299e2b22e52b6dba3a17", "threadGroup": "46af17e29b1130f0" }, "valid": false }
+    { "data": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "approval", "revision": "1", "workspaceBadge": "two", "collapseKey": "be753ac14d84299e2b22e52b6dba3a17", "threadGroup": "46af17e29b1130f0" }, "valid": false },
+    { "data": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "call", "revision": "1", "workspaceBadge": "1", "collapseKey": "be753ac14d84299e2b22e52b6dba3a17", "threadGroup": "46af17e29b1130f0", "expiresAt": "1790000045000" }, "valid": true },
+    { "data": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "call", "revision": "1", "workspaceBadge": "1", "collapseKey": "be753ac14d84299e2b22e52b6dba3a17", "threadGroup": "46af17e29b1130f0" }, "valid": false },
+    { "data": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "call", "revision": "1", "workspaceBadge": "1", "collapseKey": "be753ac14d84299e2b22e52b6dba3a17", "threadGroup": "46af17e29b1130f0", "expiresAt": "01790000045000" }, "valid": false },
+    { "data": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "question", "revision": "1", "workspaceBadge": "1", "collapseKey": "be753ac14d84299e2b22e52b6dba3a17", "threadGroup": "46af17e29b1130f0", "expiresAt": "1790000045000" }, "valid": false }
   ],
   "relayEvents": [
     { "value": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "approval", "revision": 1, "workspaceBadge": 2, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17", "threadGroup": "46af17e29b1130f0", "timeSensitive": true, "expiresAt": 1790000000000 }, "valid": true },
     { "value": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "approval", "revision": 1, "workspaceBadge": 2, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17", "threadGroup": "scout", "timeSensitive": true, "expiresAt": 1790000000000 }, "valid": false },
     { "value": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "approval", "revision": 1, "workspaceBadge": 2, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17", "threadGroup": "46af17e29b1130f0", "timeSensitive": "yes", "expiresAt": 1790000000000 }, "valid": false },
-    { "value": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "approval", "revision": 1, "workspaceBadge": 2, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17", "threadGroup": "46af17e29b1130f0", "timeSensitive": true, "expiresAt": 1790000000000, "title": "Scout needs approval" }, "valid": false }
+    { "value": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "approval", "revision": 1, "workspaceBadge": 2, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17", "threadGroup": "46af17e29b1130f0", "timeSensitive": true, "expiresAt": 1790000000000, "title": "Scout needs approval" }, "valid": false },
+    { "value": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "call", "revision": 1, "workspaceBadge": 1, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17", "threadGroup": "46af17e29b1130f0", "timeSensitive": true, "expiresAt": 1790000045000 }, "valid": true },
+    { "value": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "call-note", "revision": 3, "workspaceBadge": 1, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17", "threadGroup": "46af17e29b1130f0", "timeSensitive": false, "expiresAt": 1790043200000 }, "valid": true }
   ],
   "collapseKeys": [
     { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "secret": "7c1e9a4b2f6d8053e1a7c49b0d2f6e8a3b5c7d9e1f2a4b6c8d0e2f4a6b8c0d2e", "key": "req-1", "collapseKey": "e9232c2374c355becf4ddbb8085fd50b" },
@@ -82,9 +107,43 @@
     "approval-open": { "title": "Murage", "body": "Your attention is needed." },
     "question": { "title": "Murage", "body": "Your attention is needed." },
     "done": { "title": "Murage", "body": "A task has finished." },
-    "resolved": { "title": "Murage", "body": "No longer waiting." }
+    "resolved": { "title": "Murage", "body": "No longer waiting." },
+    "device-job": { "title": "Murage", "body": "A bot is asking to use your phone" },
+    "call": { "title": "Murage is calling", "body": "Answer to hear what it is." },
+    "call-note": { "title": "Murage", "body": "Murage has a message for you." }
   },
+  "callDetail": [
+    { "kind": "call", "previewContent": true, "detail": { "title": "Murage is calling", "body": "Answer to hear what it is." } },
+    { "kind": "call", "previewContent": false, "detail": { "title": "Murage is calling", "body": "Answer to hear what it is." } },
+    { "kind": "call-note", "previewContent": true, "detail": { "title": "Murage", "body": "Murage has a message for you." } },
+    { "kind": "call-note", "previewContent": false, "detail": { "title": "Murage", "body": "Murage has a message for you." } }
+  ],
+  "callDisplay": [
+    { "case": "a ring before its expiry rings", "payload": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "call", "revision": 1, "workspaceBadge": 1, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17", "expiresAt": 1790000045000 }, "now": 1790000010000, "shown": [], "action": "ring" },
+    { "case": "a ring at or after its expiry is silent", "payload": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "call", "revision": 1, "workspaceBadge": 1, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17", "expiresAt": 1790000045000 }, "now": 1790000045000, "shown": [], "action": "silent" },
+    { "case": "a resolved revision for a ring on screen replaces it and stops the sound", "payload": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "resolved", "revision": 2, "workspaceBadge": 0, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17" }, "now": 1790000020000, "shown": ["be753ac14d84299e2b22e52b6dba3a17"], "action": "replace" },
+    { "case": "a resolved revision for a collapse key not on screen is silent", "payload": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "resolved", "revision": 2, "workspaceBadge": 0, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17" }, "now": 1790000020000, "shown": [], "action": "silent" },
+    { "case": "a note before its expiry is shown", "payload": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "call-note", "revision": 3, "workspaceBadge": 1, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17", "expiresAt": 1790043200000 }, "now": 1790000050000, "shown": [], "action": "show" },
+    { "case": "an expired note is silent", "payload": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "call-note", "revision": 3, "workspaceBadge": 1, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17", "expiresAt": 1790043200000 }, "now": 1790043200001, "shown": [], "action": "silent" }
+  ],
   "resolvedText": { "desktop": "Answered on desktop.", "elsewhere": "Answered on another device.", "expired": "No longer waiting.", "dismissed": "No longer waiting." },
+  "providerCall": {
+    "event": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "call", "revision": 1, "workspaceBadge": 1, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17", "threadGroup": "46af17e29b1130f0", "timeSensitive": true, "expiresAt": 1790000045000 },
+    "now": 1790000000000,
+    "deviceBadge": 1,
+    "apns": {
+      "path": "/3/device/TOKEN",
+      "headers": { "apns-topic": "com.murage.mobile", "apns-push-type": "alert", "apns-priority": "10", "apns-expiration": "1790000045", "apns-collapse-id": "be753ac14d84299e2b22e52b6dba3a17" },
+      "body": { "aps": { "alert": { "title": "Murage is calling", "body": "Answer to hear what it is." }, "mutable-content": 1, "category": "CALL", "thread-id": "46af17e29b1130f0", "badge": 1, "interruption-level": "time-sensitive", "sound": "murage-call.caf" }, "murage": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "call", "revision": 1, "workspaceBadge": 1, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17", "expiresAt": 1790000045000 } }
+    },
+    "fcm": {
+      "message": {
+        "token": "TOKEN",
+        "data": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "call", "revision": "1", "workspaceBadge": "1", "collapseKey": "be753ac14d84299e2b22e52b6dba3a17", "threadGroup": "46af17e29b1130f0", "expiresAt": "1790000045000" },
+        "android": { "priority": "HIGH", "ttl": "45s", "restricted_package_name": "com.murage.mobile" }
+      }
+    }
+  },
   "provider": {
     "event": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "approval", "revision": 1, "workspaceBadge": 2, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17", "threadGroup": "46af17e29b1130f0", "timeSensitive": true, "expiresAt": 1790000000000 },
     "now": 1789999100000,
