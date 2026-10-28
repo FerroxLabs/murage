@@ -212,6 +212,8 @@ export const FIRST_RUN_COPY = {
       namePlaceholder: "What should I call you?",
       emailLabel: "Your email (optional)",
       emailPlaceholder: "you@example.com",
+      /** Shown once the email box is left, or Continue or Enter is pressed, with an address that is not one. */
+      emailInvalid: "That email address doesn't look right. Fix it, or clear the box to continue without one.",
       submit: "Continue",
       working: "Saving",
       skip: "Skip",

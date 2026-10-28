@@ -1,4 +1,5 @@
 import { ThreadLinkProvider } from "@/components/ThreadLinkMenu";
+import { EmailSendCard, EmailTrustOfferCard } from "./EmailSendCard";
 import { BrowserSetupCard, McpEnableCard, McpSignInCard, PublishCard } from "./LazyChatCards";
 import { loopNoticeLabel } from "@/lib/loop-notice";
 import { isLimitOfferCard, LimitOfferCard } from "./ThreadFollowControls";
@@ -119,6 +120,7 @@ import { SpeakButton } from "./SpeakButton";
 import { isReading, readAloudLabel, toggleReadAloud } from "@/lib/read-aloud";
 import { registerCallSlot } from "@/lib/call-slot";
 import { CallBarStrip } from "./CallControls";
+import { BotCallCard } from "./BotCallCard";
 import { speaker } from "@/lib/tts";
 import { useSpeech } from "@/lib/tts/useSpeech";
 import { cn } from "@/lib/cn";
@@ -128,6 +130,8 @@ import { AccessLinkProvider, ChipsProvider, MessageChip } from "./LearnedChip";
 import { MessageOutcome, OutcomeRailButtons, OutcomesProvider, ProposedOutcomeCard, outcomeSheetActions, useOutcomes } from "./OutcomeMark";
 import { useFocusMessage } from "@/lib/focus-message";
 import { ExportPasteNote } from "./ExportPasteNote";
+import { FromPhoneLine } from "./FromPhoneLine";
+import { canEditLine } from "@/lib/compose-link";
 import { groupTranscript, itemKeyHolding, transcriptItemKey } from "@/lib/activity-runs";
 import { TranscriptTail } from "./TranscriptTail";
 import { tailOf } from "@/lib/transcript-tail";
@@ -579,6 +583,9 @@ function Bubble({
   const collapsible =
     user && !webhookView && !expanded && (visibleText.length > USER_COLLAPSE_CHARS || visibleText.split("\n").length > USER_COLLAPSE_LINES);
 
+  // Bot calls 1.0.9: the row is a call card (server/bot-calls-card.ts); its buttons and receipt live in BotCallCard
+  if (message.botCall) return <div className="flex w-full justify-start"><BotCallCard bot={bot} message={message} /></div>;
+
   if (user && editing && !webhookView) {
     return (
       <div className="flex w-full justify-end">
@@ -605,7 +612,7 @@ function Bubble({
     ? [
         { id: "copy", label: "Copy message", icon: <Copy size={18} />, onSelect: () => void copyOrReport(visibleText, (message) => raiseTransientError(dispatch, message)) },
         { id: "reply", label: "Reply", icon: <MessageSquareReply size={18} />, onSelect: onReply },
-        ...(message.kind === "text" && !webhookView && !bot.busy
+        ...(message.kind === "text" && !webhookView && !bot.busy && canEditLine(message)
           ? [{ id: "edit", label: "Edit message", icon: <Pencil size={18} />, onSelect: onStartEdit }]
           : []),
         { id: "pin", label: pinned ? "Unpin message" : "Pin message", icon: pinned ? <PinOff size={18} /> : <Pin size={18} />, onSelect: togglePin },
@@ -663,7 +670,7 @@ function Bubble({
         <div className="max-md:hidden md:contents">
         {/* editing rewinds the thread, so it waits for the turn to end -
             same rule as the version switcher below */}
-        {user && message.kind === "text" && !webhookView && !bot.busy && (
+        {user && message.kind === "text" && !webhookView && !bot.busy && canEditLine(message) && (
           <button
             onClick={onStartEdit}
             aria-label="Edit message"
@@ -881,6 +888,7 @@ function Bubble({
         actions={actions}
       />
       {user && message.memoryNote === "export-paste" && <ExportPasteNote message={message} />}
+      {user && <FromPhoneLine message={message} botId={bot.id} threadId={bot.threadId} />}
       {!user && <MessageOutcome messageId={message.id} />}
       {!user && <MessageChip messageId={message.id} botName={bot.name} />}
       {versions.length > 1 && (
@@ -1070,7 +1078,7 @@ const MessagesList = memo(function MessagesList({
   onCancelEdit: (id: string) => void;
   onSubmitEdit: (id: string, text: string) => void;
   onDraftEdit: (id: string, text: string) => void;
-  onRegenerate: () => void;
+  onRegenerate?: () => void;
   onReply: (message: Message) => void;
   /** The transcript scroller and its follow state: only the rows in view mount. */
   scrollRef: RefObject<HTMLDivElement | null>;
@@ -1235,6 +1243,9 @@ const MessagesList = memo(function MessagesList({
               // quiz drops out once they talk.
               // the engine hit its limit: another engine for this message, or wait (1.0.4 SL-I I5)
               if (isLimitOfferCard(m)) return <LimitOfferCard threadId={bot.threadId} message={m} />;
+              // bot email (1.0.9): the email card carries its own Send / Edit / Don't send
+              if (m.card?.emailSend) return <EmailSendCard threadId={bot.threadId} message={m} />;
+              if (m.card?.emailTrustOffer) return <EmailTrustOfferCard threadId={bot.threadId} message={m} />;
               if (m.card?.requestId && m.card.tool) {
                 return <ApprovalCard bot={bot} message={m} />;
               }
@@ -1548,7 +1559,11 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
     setEditingId(Object.keys(editDraftStore.get(bot.id))[0] ?? null);
   }, [bot.id]);
   // stable handler identities - MessagesList is memo'd on them
-  const startEdit = useCallback((id: string) => setEditingId(id), []);
+  const startEdit = useCallback((id: string) => {
+    // a line from the phone is not editable (the server answers 409); Ask again is the way back to it
+    if (messagesRef.current.find((candidate) => candidate.id === id && !canEditLine(candidate))) return;
+    setEditingId(id);
+  }, []);
   const cancelEdit = useCallback((id: string) => {
     const botId = bot.id;
     if (editDraftStore.get(botId)[id]?.saving) {
@@ -1662,7 +1677,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
   // regenerate = fork the last user message with the same text - reuses the
   // existing branch machinery, so the old answer stays reachable via ‹ ›
   const regenerate = useCallback(() => {
-    if (lastUserMessage?.text && !bot.busy) {
+    if (lastUserMessage?.text && !bot.busy && canEditLine(lastUserMessage)) {
       dispatch({ type: "editMessage", botId: bot.id,threadId:bot.threadId, messageId: lastUserMessage.id, text: lastUserMessage.text });
     }
   }, [lastUserMessage, bot.busy, bot.id, dispatch]);
@@ -2016,13 +2031,13 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
             editDrafts={editDrafts}
             lastBotTextId={lastBotTextId}
             emergingId={popping?.id}
-            canRetryLast={!bot.busy && Boolean(lastUserMessage)}
+            canRetryLast={!bot.busy && Boolean(lastUserMessage) && canEditLine(lastUserMessage!)}
             engine={state.instances.find((i) => i.instanceId === bot.modelSelection.instanceId)}
             onStartEdit={startEdit}
             onCancelEdit={cancelEdit}
             onSubmitEdit={submitEdit}
             onDraftEdit={draftEdit}
-            onRegenerate={regenerate}
+            onRegenerate={lastUserMessage && canEditLine(lastUserMessage) ? regenerate : undefined}
             onReply={selectReply}
             scrollRef={scrollRef}
             followRef={followRef}
@@ -2117,7 +2132,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
         onClearReply={clearReply}
         onConsumeReply={consumeReply}
         onRestoreReply={restoreReply}
-        onEditLast={lastUserMessage && !bot.busy ? () => setEditingId(lastUserMessage.id) : undefined}
+        onEditLast={lastUserMessage && canEditLine(lastUserMessage) && !bot.busy ? () => setEditingId(lastUserMessage.id) : undefined}
       />
       </div>
       </div>

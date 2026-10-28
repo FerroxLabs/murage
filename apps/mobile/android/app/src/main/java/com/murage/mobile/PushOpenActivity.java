@@ -36,7 +36,21 @@ public class PushOpenActivity extends Activity {
         if (intent == null || !PushIntents.OPEN.equals(intent.getAction())) return;
         Shell shell = Shell.get(this);
         WorkspaceOrigin origin = PushServices.get(this).store.canonicalOrigin(intent.getStringExtra("murage.bindingId"));
+        if (origin != null && "device-job".equals(intent.getStringExtra("murage.category"))) {
+            PhoneJobServices.get(this).runner.open(origin, intent.getStringExtra("murage.eventRef"));
+            if (shell.live() != null) shell.openFromNotification(this, origin, null, null);
+            else {
+                shell.handPushTap(new Shell.PushTap(origin, null, null));
+                startActivity(launcher(this));
+                overridePendingTransition(0, 0);
+            }
+            return;
+        }
         String threadId = intent.getStringExtra("murage.threadId"), messageId = intent.getStringExtra("murage.messageId");
+        if (intent.getBooleanExtra("murage.callAnswer", false)) {
+            threadId = CallAnswerRoute.thread(threadId);
+            messageId = null;
+        }
         boolean live = shell.live() != null;
         if (origin == null) ShellLog.i("notification for a removed computer");
         if (live) {

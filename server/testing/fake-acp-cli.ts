@@ -2209,7 +2209,7 @@ function handle(msg: any) {
               : mode === "question-tool"
               ? {
                   kind: "other",
-                  title: "AskUserQuestion",
+                  title: process.env.FAKE_ACP_QUESTION_TITLE || "AskUserQuestion",
                   rawInput: {
                     questions: [{
                       question: "Which branch should I use?",

@@ -34,17 +34,19 @@ export function errorResponse(status: number, code: string, extra?: { [key: stri
   return json({ ...extra, error: code }, status);
 }
 
-function validateDeclaredBodyLength(request: Request) {
+function validateDeclaredBodyLength(request: Request, maxBytes: number) {
   const contentLength = request.headers.get("content-length");
   if (contentLength !== null) {
     const declared = Number(contentLength);
     if (!Number.isSafeInteger(declared) || declared < 0) throw new HTTPError(400, "invalid_request");
-    if (declared > MAX_API_BODY_BYTES) throw new HTTPError(413, "request_too_large");
+    if (declared > maxBytes) throw new HTTPError(413, "request_too_large");
   }
 }
 
-async function readBoundedBody(request: Request): Promise<Uint8Array<ArrayBuffer>> {
-  validateDeclaredBodyLength(request);
+/** Reads a request body without ever holding more than `maxBytes`: the declared length is only advisory, so a chunked or
+ *  dishonest body is counted as it streams and the read is cancelled once it passes the cap. */
+export async function readBoundedBody(request: Request, maxBytes = MAX_API_BODY_BYTES): Promise<Uint8Array<ArrayBuffer>> {
+  validateDeclaredBodyLength(request, maxBytes);
   if (!request.body) return new Uint8Array();
 
   const reader = request.body.getReader();
@@ -55,7 +57,7 @@ async function readBoundedBody(request: Request): Promise<Uint8Array<ArrayBuffer
       const { done, value } = await reader.read();
       if (done) break;
       length += value.byteLength;
-      if (length > MAX_API_BODY_BYTES) {
+      if (length > maxBytes) {
         await reader.cancel();
         throw new HTTPError(413, "request_too_large");
       }

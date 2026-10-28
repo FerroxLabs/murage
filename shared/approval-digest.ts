@@ -10,6 +10,9 @@ export interface DigestCard {
   skillRequest?: unknown;
   /** The displayed routine proposal: only its operation is bound. */
   routineRequest?: unknown;
+  /** The displayed email card (BOT-EMAIL-MURAGE-109 4.3): its payload hash, held-id set and row revision are bound, so a phone Send proves
+   *  the exact message. Appended only for email cards: every other card hashes exactly as before. */
+  emailSend?: unknown;
 }
 const text = (value: unknown): string | null => (typeof value === "string" ? value : null);
 
@@ -38,13 +41,23 @@ const routineOperation = (card: DigestCard): string | null => {
   return request && typeof request === "object" ? canonicalJson((request as Record<string, unknown>).operation) : null;
 };
 
+const emailBinding = (card: DigestCard): [string | null, string[] | null, number | null] | null => {
+  const email = card.emailSend;
+  if (!email || typeof email !== "object") return null;
+  const record = email as Record<string, unknown>;
+  const held = Array.isArray(record.heldIds) && record.heldIds.every((id) => typeof id === "string") ? [...(record.heldIds as string[])].sort() : null;
+  return [text(record.payloadHash), held, typeof record.revision === "number" ? record.revision : null];
+};
+
 export function approvalDigestInput(threadId: string, requestId: string, card: DigestCard): string {
+  const email = emailBinding(card);
   return JSON.stringify([
     "murage-approval-digest/2", threadId, requestId,
     text(card.tool), text(card.title), text(card.subtitle), text(card.summary), text(card.held),
     card.toolInputTruncated === true, text(card.approvalScope), text(card.taskAllowKey),
     skillField(card, "source"), skillField(card, "preview"), skillField(card, "sha256"),
     skillField(card, "name"), skillField(card, "action"), skillWarnings(card), routineOperation(card),
+    ...(email ? [email] : []),
   ]);
 }
 

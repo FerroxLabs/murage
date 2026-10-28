@@ -11,7 +11,7 @@
 // save that silently did not save would have the Chief using a name it does
 // not have, all week.
 
-import { useState } from "react";
+import { useId, useState } from "react";
 
 import { setEmailGateDone } from "@/lib/analytics";
 import { FIRST_RUN_COPY, greetingLine } from "@/lib/first-run-copy";
@@ -53,6 +53,29 @@ export function helloAnswerReady(name: string, email: string): boolean {
   // O16 (0.1.61): the email is optional on Continue, as Skip already proved
   // it was. A typed one still has to be a real address.
   return name.trim().length > 0 && (!email.trim() || EMAIL.test(email.trim()));
+}
+
+/** An email typed that is not an address. Empty is fine: the email is optional. */
+function emailWrong(email: string): boolean {
+  return email.trim().length > 0 && !EMAIL.test(email.trim());
+}
+
+/**
+ * What Continue (the button or Enter in either box) does with what is typed.
+ *
+ * A WRONG EMAIL SAYS WHY. It used to only hold Continue back, so pressing it,
+ * or Enter, did nothing and said nothing (upstream 7f61ed1fc). Now it asks
+ * for the email to be checked, which shows the note below the box.
+ */
+export function helloContinue(name: string, email: string): "save" | "check-email" | "need-name" {
+  if (emailWrong(email)) return "check-email";
+  return helloAnswerReady(name, email) ? "save" : "need-name";
+}
+
+/** The note under the email box: said once the box was left or Continue was
+ *  tried, never while the first characters are still being typed. */
+export function helloEmailNote(email: string, checked: boolean): string {
+  return checked && emailWrong(email) ? copy.emailInvalid : "";
 }
 
 /** What the hello step talks to. The live versions are below; a test hands
@@ -152,6 +175,9 @@ export async function skipHelloAnswer(
 export function FirstRunHelloCard({ settled }: { settled: boolean }) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  // Set when the email box is left, or Continue or Enter is pressed.
+  const [emailChecked, setEmailChecked] = useState(false);
+  const emailNoteId = useId();
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState("");
   const [failure, setFailure] = useState("");
@@ -171,11 +197,15 @@ export function FirstRunHelloCard({ settled }: { settled: boolean }) {
   const done = acted || settled;
 
   const valid = helloAnswerReady(name, email);
+  const emailNote = helloEmailNote(email, emailChecked);
 
   // Nothing but the form state lives here: the answer itself is
   // `saveHelloAnswer` above, which a test runs.
   const save = async () => {
-    if (busy || !valid) return;
+    if (busy) return;
+    const next = helloContinue(name, email);
+    if (next === "check-email") setEmailChecked(true);
+    if (next !== "save") return;
     setBusy(true);
     setFailure("");
     try {
@@ -242,7 +272,10 @@ export function FirstRunHelloCard({ settled }: { settled: boolean }) {
               placeholder={copy.emailPlaceholder}
               value={email}
               disabled={busy}
+              aria-invalid={emailNote ? true : undefined}
+              aria-describedby={emailNoteId}
               onChange={(event) => setEmail(event.target.value)}
+              onBlur={() => setEmailChecked(true)}
               onKeyDown={(event) => {
                 if (event.key === "Enter") {
                   event.preventDefault();
@@ -252,8 +285,20 @@ export function FirstRunHelloCard({ settled }: { settled: boolean }) {
               className={`mt-1.5 ${FIRST_RUN_INPUT} ${FIRST_RUN_FOCUS}`}
             />
           </label>
+          {/* Always in the page, so a screen reader hears the note when it appears. */}
+          <p id={emailNoteId} aria-live="polite" className="text-[12.5px] leading-snug text-danger empty:hidden">
+            {emailNote}
+          </p>
           <div className="mt-1 flex flex-wrap items-center gap-2">
-            <button type="button" disabled={busy || !valid} onClick={() => void save()} className={`${FIRST_RUN_PRIMARY} ${FIRST_RUN_FOCUS}`}>
+            {/* A wrong email holds Continue (dimmed, aria-disabled) yet leaves it
+                pressable, so pressing it says why. No name, and it is off. */}
+            <button
+              type="button"
+              disabled={busy || !name.trim()}
+              aria-disabled={!valid || undefined}
+              onClick={() => void save()}
+              className={`${FIRST_RUN_PRIMARY} ${FIRST_RUN_FOCUS} aria-disabled:opacity-50`}
+            >
               {busy ? copy.working : copy.submit}
             </button>
             <button type="button" disabled={busy} onClick={() => void skip()} className={`${FIRST_RUN_QUIET} ${FIRST_RUN_FOCUS}`}>
