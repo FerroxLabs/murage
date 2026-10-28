@@ -1,13 +1,18 @@
 // Spec §3.5 "Relay changes". Pure: the event in, the provider request out.
 // The only text is the generic sentence; the phone fetches the real one.
-import { GENERIC_TEXT, type PushCategory, type RelayEvent } from "../../../shared/mobile-push";
+import { CALL_SOUND, GENERIC_TEXT, isExpiringCategory, type PushCategory, type RelayEvent } from "../../../shared/mobile-push";
+
+export { PUSH_CONTRACT_VERSION } from "../../../shared/mobile-push";
 
 export const IOS_CATEGORY: Record<PushCategory, string> = {
-  approval: "APPROVAL", "approval-open": "APPROVAL_OPEN", question: "QUESTION", done: "DONE", resolved: "DONE",
+  approval: "APPROVAL", "approval-open": "APPROVAL_OPEN", question: "QUESTION", done: "DONE", resolved: "DONE", "device-job": "DEVICE_JOB", call: "CALL", "call-note": "CALL_NOTE",
 };
 
+// Contract v2: the call kinds also carry their expiry, so a phone stays
+// silent for a ring that arrives after it ended.
 const payload = (e: RelayEvent) => ({
   bindingId: e.bindingId, eventRef: e.eventRef, category: e.category, revision: e.revision, workspaceBadge: e.workspaceBadge, collapseKey: e.collapseKey,
+  ...(isExpiringCategory(e.category) ? { expiresAt: e.expiresAt } : {}),
 });
 
 export function apnsRequest(e: RelayEvent, deviceBadge: number, token: string, topic: string) {
@@ -18,9 +23,9 @@ export function apnsRequest(e: RelayEvent, deviceBadge: number, token: string, t
     category: IOS_CATEGORY[e.category],
     "thread-id": e.threadGroup,
     badge: deviceBadge,
-    "interruption-level": resolved ? "passive" : e.timeSensitive ? "time-sensitive" : "active",
+    "interruption-level": resolved ? "passive" : e.timeSensitive || e.category === "call" ? "time-sensitive" : "active",
   };
-  if (!resolved) aps.sound = "default";
+  if (!resolved) aps.sound = e.category === "call" ? CALL_SOUND.ios : "default";
   return {
     path: `/3/device/${token}`,
     headers: {

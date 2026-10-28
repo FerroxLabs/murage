@@ -2,6 +2,17 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>en</string>
+		<string>de</string>
+		<string>es</string>
+		<string>fr</string>
+		<string>hi</string>
+		<string>ja</string>
+		<string>pt-BR</string>
+		<string>zh</string>
+	</array>
 	<key>CAPACITOR_DEBUG</key>
 	<string>$(CAPACITOR_DEBUG)</string>
 	<key>CFBundleDevelopmentRegion</key>
@@ -25,7 +36,22 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>MurageAppGroup</key><string>group.com.murage.mobile</string>
+	<key>MurageAskKeychainGroup</key><string>$(AppIdentifierPrefix)com.murage.mobile.ask</string>
 	<key>MurageKeychainGroup</key><string>$(AppIdentifierPrefix)com.murage.mobile.shared</string>
+	<key>NSCalendarsWriteOnlyAccessUsageDescription</key>
+    <string>Your bots can add events to your calendar when you ask them to.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+    <string>Your bots can check your calendar and add events when you ask them to.</string>
+    <key>NSRemindersFullAccessUsageDescription</key>
+    <string>Your bots can read and add reminders when you ask them to.</string>
+    <key>NSContactsUsageDescription</key>
+    <string>Your bots can look up a person you name, to start a text or a call for you.</string>
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>Your bots can see roughly where you are when you ask for something nearby.</string>
+    <key>NSLocationTemporaryUsageDescriptionDictionary</key>
+    <dict><key>PhonePreciseLocation</key><string>Your bots can use your precise location when you turn on Precise location.</string></dict>
+    <key>NSAlarmKitUsageDescription</key>
+    <string>Your bots can set alarms and timers when you ask them to.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Scan the pairing code from Murage on your computer, and use the camera in a chat when you choose to.</string>
 	<key>NSFaceIDUsageDescription</key>
@@ -84,6 +110,7 @@
 	<key>LSApplicationQueriesSchemes</key>
 	<array>
 		<string>tailscale</string>
+        <string>tel</string>
 	</array>
 	<key>AppAttestEnvironment</key>
 	<string>$(APP_ATTEST_ENVIRONMENT)</string>

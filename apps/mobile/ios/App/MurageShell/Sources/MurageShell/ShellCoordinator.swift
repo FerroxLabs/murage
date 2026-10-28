@@ -35,6 +35,7 @@ public final class ShellCoordinator {
 
     public weak var launcher: UIViewController?
     public var launcherRequested = false
+    public var shareOutboxRequested = false
     /// Set by the plugin. Without a listener, a close waits for `snapshot()`.
     public var onClosed: ((ClosedWorkspace) -> Void)?
 
@@ -47,6 +48,7 @@ public final class ShellCoordinator {
     /// A notification tap that arrived before the launcher could present
     /// (a cold start): launchIfNeeded opens this computer instead of the last one.
     private var notificationOrigin: WorkspaceOrigin?
+    private var pendingAskOpen: (origin: WorkspaceOrigin, hash: String)?
     /// B6: a different computer's notification held because the current
     /// workspace has a call open, delivered by `deliverPendingCrossComputerOpen()`.
     private var pendingCrossComputerOpen: (origin: WorkspaceOrigin, threadId: String?, messageId: String?, heldAt: Date)?
@@ -59,12 +61,15 @@ public final class ShellCoordinator {
     /// One open at a time: the probe is awaited, and a second tap must not present twice.
     private var opening = false
 
-    private init() {}
+    private init() { _ = PhoneJobServices.shared }
 
     private func currentInstallId() -> String? {
         if installIdValue == nil { installIdValue = InstallIdentity.value() }
         return installIdValue
     }
+
+    public func phoneJobsBecameVisible() { PhoneJobServices.shared.becameVisible(); PhoneShareTargets.foreground() }
+    public func phoneJobsBackgrounded() { PhoneJobServices.shared.backgrounded() }
 
     // MARK: opening
 
@@ -72,10 +77,19 @@ public final class ShellCoordinator {
     /// An unreadable list opens nothing; the launcher's state() then asks to unlock.
     public func launchIfNeeded() {
         defer { autoOpened = true }
+        if shareOutboxRequested { showShareOutbox(); return }
         #if DEBUG
         if !autoOpened, let launcher, presentDebugScreen(on: launcher) { return }
         #endif
         guard let book = books.load() else { return }
+        if let pending = pendingAskOpen, book.entry(for: pending.origin) != nil {
+            if present(origin: pending.origin, credential: nil, verdict: nil, installId: nil) == nil {
+                current?.openIntentHash(pending.hash)
+                pendingAskOpen = nil
+            }
+            return
+        }
+        PhoneShareTargets.foreground()
         PushServices.shared.sweep(knownOrigins: Set(book.workspaces.map(\.origin)))
         let tapped = notificationOrigin.flatMap { book.entry(for: $0) != nil ? $0 : nil }
         notificationOrigin = nil
@@ -153,6 +167,7 @@ public final class ShellCoordinator {
             path = routes.startPath(for: origin)
         }
         let workspace = WorkspaceViewController(origin: origin, startPath: path, verdict: verdict, routes: routes, debugProbe: debugProbe)
+        workspace.pairedAtOpen = credential == nil && books.load()?.entry(for: origin) != nil
         workspace.onClose = { [weak self, weak workspace] reason in
             guard let self, let workspace else { return }
             self.closed(workspace, reason: reason)
@@ -203,12 +218,13 @@ public final class ShellCoordinator {
         let origin = workspace.origin
         ShellLog.closed(reason)
         if reason == .signOut { forget(origin) }
+        else if reason == .signedOut { PhoneJobServices.shared.forget(origin) }
         if reason == .signOut || reason == .signedOut { ApprovalKeys.remove(origin: origin) }
         if reason == .launcher { launcherRequested = true }
         // B6: a deliberate trip back to the launcher drops a held open (the
         // person chose where to go); any other close delivers it, but only once
         // the old workspace is fully dismissed, so present() never races it.
-        if reason == .launcher { pendingCrossComputerOpen = nil }
+        if reason == .launcher { pendingCrossComputerOpen = nil; pendingAskOpen = nil }
         workspace.dismiss(animated: false) { [weak self] in
             self?.deliver(ClosedWorkspace(origin: origin.serialized, reason: reason))
             self?.deliverPendingCrossComputerOpen()
@@ -225,6 +241,7 @@ public final class ShellCoordinator {
     /// list could not be updated.
     @discardableResult
     private func forget(_ origin: WorkspaceOrigin) -> Bool {
+        PhoneJobServices.shared.forget(origin)
         ApprovalKeys.remove(origin: origin)
         let removed = books.update { $0.remove(origin) }
         if !removed { ShellLog.event("book not updated after forget") }
@@ -292,8 +309,40 @@ public final class ShellCoordinator {
     }
 
     public func showLauncher() {
+        pendingAskOpen = nil
         launcherRequested = true
         current?.closeFromShell(.launcher)
+    }
+
+    public func showShareOutbox() {
+        guard var presenter = (current as UIViewController?) ?? launcher else { shareOutboxRequested = true; return }
+        while let presented = presenter.presentedViewController { presenter = presented }
+        guard presenter.viewIfLoaded?.window != nil, !presenter.isBeingDismissed else { shareOutboxRequested = true; return }
+        shareOutboxRequested = false
+        presenter.present(UINavigationController(rootViewController: ShareOutboxViewController()), animated: true)
+    }
+
+    /// Intent navigation contains ids only. The existing paired workspace owns
+    /// the web session; no bearer or question is carried through this handoff.
+    public func openFromAskIntent(origin: WorkspaceOrigin, hash: String) {
+        guard books.load()?.entry(for: origin) != nil,
+              hash.hasPrefix("#open="), !hash.contains("\n"), !hash.contains("\r") else {
+            showLauncher()
+            return
+        }
+        if let current, current.origin == origin {
+            pendingAskOpen = nil
+            current.openIntentHash(hash)
+            return
+        }
+        pendingAskOpen = (origin, hash)
+        guard autoOpened, launcher?.viewIfLoaded?.window != nil else { return }
+        // Keep an ongoing call intact. Deliver after it ends or its workspace closes.
+        guard current?.hasOpenCall != true else { return }
+        if present(origin: origin, credential: nil, verdict: nil, installId: nil) == nil {
+            current?.openIntentHash(hash)
+            pendingAskOpen = nil
+        }
     }
 
     private static let tailscaleApp = URL(string: "tailscale://")!
@@ -423,6 +472,10 @@ public final class ShellCoordinator {
     /// gone for some other reason. Re-run the same open now that nothing
     /// blocks it; a no-op if nothing was held.
     private func deliverPendingCrossComputerOpen() {
+        if let pending = pendingAskOpen {
+            openFromAskIntent(origin: pending.origin, hash: pending.hash)
+            if pendingAskOpen == nil { return }
+        }
         guard let pending = pendingCrossComputerOpen else { return }
         pendingCrossComputerOpen = nil
         // held for long enough that the person has moved on: drop it (review M2)

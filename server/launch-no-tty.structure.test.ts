@@ -85,6 +85,9 @@ const ALLOWLIST: Record<string, string> = {
   "memory/pip-transport.ts": "macOS defaults read of a managed setting",
   "memory/worker-controller.ts": "fork of Murage's own memory worker",
   "channels/whatsapp/bridge-host.ts": "fork of Murage's own WhatsApp bridge",
+  // 1.0.9 Sentinel (GAP-SENTINEL-109): the health checker runs no engine; these are its own scanner and an ACL read.
+  "sentinel/supervisor.ts": "the health checker's own scan child (Murage's scanner entry, allowlisted env, stdio ignored, 5 s deadline), not an engine",
+  "sentinel/win-acl.ts": "System32 whoami.exe (current user SID) and icacls.exe (read, and owner-only restrict of the health folder and its key) by absolute path, stdin ignored, 2 s timeout, hidden window; not an engine",
 };
 
 /** Files that must reach a process only through spawnCli or execCli (the inventory's raw spawns, moved). */

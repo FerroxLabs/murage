@@ -1,6 +1,7 @@
 import { parseBotPackage, type BotPackageDefinition, type BotPackagePlaybook, type ParsedBotPackage } from "./bot-package.ts";
 import type { Routine } from "./routines.ts";
 import type { BotRecord, GroupRecord, InstalledPlaybook } from "./store.ts";
+import { boundEmailAddress, scrubEmailAddress, scrubOptional } from "./email/export-scrub.ts";
 
 export function botExportRole(bot: BotRecord): "individual" | "member" | "leader" | "chief" {
   return bot.chiefOfStaff ? bot.chiefScope === "workspace" ? "chief" : "leader" : bot.individual ? "individual" : "member";
@@ -131,17 +132,17 @@ function buildBotPackageExport(input: BotPackageExportInput) {
     const agent = idToKey.get(routine.botId);
     // 1.0.4 SL-I I3: a limit_reset schedule names an engine of this computer, which a package cannot carry
     if (routine.target === "room-goal" || !agent || routine.schedule.type === "limit_reset") {
-      routineCandidates.push({ id: routine.id, key: null, name: routine.name, botId: routine.botId, supported: false, prompt: routine.prompt, schedule: routine.schedule });
+      routineCandidates.push({ id: routine.id, key: null, name: routine.name, botId: routine.botId, supported: false, prompt: scrubEmailAddress(routine.prompt, boundEmailAddress(routine.botId)), schedule: routine.schedule });
       return [];
     }
     const key = portableKey(routine.name, `routine-${index + 1}`, routineKeys);
-    routineCandidates.push({ id: routine.id, key, name: routine.name, botId: routine.botId, supported: true, prompt: routine.prompt, schedule: routine.schedule });
+    routineCandidates.push({ id: routine.id, key, name: routine.name, botId: routine.botId, supported: true, prompt: scrubEmailAddress(routine.prompt, boundEmailAddress(routine.botId)), schedule: routine.schedule });
     if ((routineIds && !routineIds.has(routine.id)) || (botIds && !botIds.has(routine.botId))) return [];
     return [{
       key,
       name: routine.name,
       agent,
-      prompt: routine.prompt,
+      prompt: scrubEmailAddress(routine.prompt, boundEmailAddress(routine.botId)),
       runOn: routine.runOn,
       schedule: routine.schedule.type === "once"
         ? { type: "once", at: routine.schedule.at }
@@ -167,10 +168,12 @@ function buildBotPackageExport(input: BotPackageExportInput) {
       key: idToKey.get(bot.id)!,
       name: bot.name,
       title: bot.title,
-      description: bot.description,
+      description: scrubOptional(bot.description, boundEmailAddress(bot.id)),
       role: botExportRole(bot),
       team: bot.section,
       appearance,
+      // section 7: the binding is never exported; the package only says this bot had email where it came from
+      ...(boundEmailAddress(bot.id) ? { emailIntent: "was-on" as const } : {}),
     };
     // a draft-only bot stays draft-only wherever the package is installed (bot-package.ts outbound)
     if (bot.draftOnly) agent.outbound = "draft-only";
@@ -205,7 +208,7 @@ function buildBotPackageExport(input: BotPackageExportInput) {
   });
   return { parsed, candidates: {
     bots: bots.map(bot => ({ id: bot.id, key: idToKey.get(bot.id)!, name: bot.name, title: bot.title,
-      description: bot.description, role: botExportRole(bot), team: bot.section?.trim() || "General",
+      description: scrubOptional(bot.description, boundEmailAddress(bot.id)), role: botExportRole(bot), team: bot.section?.trim() || "General",
       playbookKeys: agentPlaybooks.get(bot.id) ?? [],
       requiredApps: (bot.installedPackage?.requiredApps ?? []).map(app => ({ label: app.label, reason: app.reason })),
     })),

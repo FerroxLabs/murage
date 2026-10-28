@@ -141,7 +141,8 @@ export const hiddenTurnRunner = (live: ProviderInstance): MemorySessionRunner =>
     else if (event.type === "item.completed" && event.itemType === "assistant_text") { pending = ""; if (size <= ANSWER_TEXT_LIMIT) { items.push(event.text); size += event.text.length; } }
     else if (event.type === "runtime.error") state.failure ??= engineFailure(event.message, event.details ?? "");
     else if (event.type === "turn.completed") { if (!event.ok) state.failure ??= new Error("MEMORY_EXTRACTION_REQUEST_FAILED"); finish(); }
-    else if (event.type === "session.exited") { if (!items.length && !pending) state.failure ??= new Error("MEMORY_EXTRACTION_REQUEST_FAILED"); finish(); }
+    // The engine's session ended under the attempt with nothing said: its outcome is unknown (health counts it interrupted).
+    else if (event.type === "session.exited") { if (!items.length && !pending) state.failure ??= Object.assign(new Error("MEMORY_EXTRACTION_REQUEST_FAILED"), { interrupted: true }); finish(); }
   });
   const onAbort = () => finish();
   signal.addEventListener("abort", onAbort, { once: true });
