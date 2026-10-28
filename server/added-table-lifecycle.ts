@@ -45,6 +45,11 @@ export const ADDED_TABLE_LIFECYCLE: Readonly<Record<string, Lifecycle>> = {
   turn_source_holds: { kind: "marker", reason: "one small row per line withheld, forgotten or replaced; kept so every turn's starting entry in the log stays exact" },
   pending_delegations: { kind: "marker", reason: "a row lives until its hand-off finishes and is removed with it" },
   pending_delegations_import: { kind: "marker", reason: "one row: the one-time import of the older queue file" },
+  // 1.0.9 phone tools and share and ask (server/phones/): small tables made only while the flag is on
+  phone_registrations: { kind: "marker", reason: "one row per phone, replaced by its next report and removed when the phone is removed" },
+  phone_revocations: { kind: "marker", reason: "one small row per removed or switched-off phone, kept so it stays refused" },
+  phone_ask_revocations: { kind: "marker", reason: "one row per phone: the highest ask generation refused, which only ever grows" },
+  phone_receipts: { kind: "retained", by: "RETAIN_MS" },
   restore_holds: { kind: "marker", reason: "holds a restore keeps until the owner decides, cleared by that decision" },
   send_restore_generation: { kind: "marker", reason: "one counter row" },
   room_request_backfills: { kind: "marker", reason: "one marker per upgrade step" },
@@ -55,6 +60,16 @@ export const ADDED_TABLE_LIFECYCLE: Readonly<Record<string, Lifecycle>> = {
   // follow, and the drain sweep's one position row
   shared_ready_teams: trigger("shared_ready"),
   shared_drain_sweep: { kind: "marker", reason: "one row: where the sweep of waiting teams goes on from" },
+  // bot email (server/email/email-store.ts), 1.0.9: created only when email is in use
+  email_bindings: { kind: "marker", reason: "one row per bot with an email address; replaced by a tombstone when the address is removed" },
+  email_sends: { kind: "marker", reason: "one row per email a bot wrote; settled rows are pruned by EmailStore.pruneSettledSends, open rows never" },
+  email_payloads: { kind: "marker", reason: "the frozen bytes of an email, removed by EmailStore.pruneSettledSends 30 days after the send settles" },
+  email_events: { kind: "marker", reason: "a cache of Flux email events for dedupe and reconcile, pruned by EmailStore.pruneEvents" },
+  email_event_cursor: { kind: "marker", reason: "one row per event stream: where the long-poll reader goes on from" },
+  email_policy_sync: { kind: "marker", reason: "one row per bot: the email setting still to be written to Flux, confirmed in place" },
+  email_trust: { kind: "marker", reason: "one row per (bot, address) the owner sent to: the earned-trust counter, a bounded list of times" },
+  email_trusted: { kind: "marker", reason: "the owner's exact-address trusted list and block list per bot, changed only by the owner" },
+  email_tombstones: { kind: "marker", reason: "removal intents and tombstones of email addresses; removed ones are pruned after 30 days by EmailStore.pruneTombstones" },
   shared_request_events: {
     kind: "child", parent: "room_requests", column: "request_id",
     ddl: "CREATE TABLE IF NOT EXISTS shared_request_events (request_id TEXT PRIMARY KEY REFERENCES room_requests(id) ON DELETE CASCADE, event_id TEXT NOT NULL)",

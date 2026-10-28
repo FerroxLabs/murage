@@ -54,13 +54,20 @@ public final class PushLedger {
         while (seen.size() > SEEN_LIMIT) seen.removeFirst();
     }
 
+    public Integer revision(String key) { Object[] at = find(key); return at == null ? null : (Integer) at[1]; }
+
     public Accept accept(String bindingId, String collapseKey, int revision, int workspaceBadge) {
+        return accept(bindingId, collapseKey, revision, workspaceBadge, false);
+    }
+
+    /** A confirmed pending replacement remembers revisions without inventing a binding or badge. */
+    public Accept accept(String bindingId, String collapseKey, int revision, int workspaceBadge, boolean pendingReplace) {
         Entry e = bindings.get(bindingId);
-        if (e == null) return Accept.UNKNOWN;
+        if (e == null && !pendingReplace) return Accept.UNKNOWN;
         Object[] at = find(collapseKey);
         if (at != null && (int) at[1] >= revision) return Accept.STALE;
         remember(collapseKey, revision);
-        e.badge = Math.max(0, workspaceBadge);
+        if (e != null) e.badge = Math.max(0, workspaceBadge);
         return Accept.SHOW;
     }
     public void setBadge(String bindingId, int count) { Entry e = bindings.get(bindingId); if (e != null) e.badge = Math.max(0, count); }

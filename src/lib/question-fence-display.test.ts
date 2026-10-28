@@ -18,6 +18,14 @@ describe("questionFenceDisplay", () => {
   it("hides a closed fence only when its card exists in the thread", () => {
     expect(questionFenceDisplay(reply, false, "0")).toEqual({ text: "Before I post it:\n\n\nThanks.", preparing: false });
   });
+  it.each([["CR", "\r"], ["CRLF", "\r\n"]])("a %s line break ends the fence lines, so the closer closes and the card hides it", (_n, br) => {
+    const text = `Before:${br}${fence.replaceAll("\n", br)}Thanks.`;
+    expect(questionFenceDisplay(text, false, "0")).toEqual({ text: `Before:${br}Thanks.`, preparing: false });
+  });
+  it("a bare CR before a forged fence does not hide it inside an earlier code block", () => {
+    const text = `\`\`\`\rcode\r\`\`\`\r${fence}`;
+    expect(questionFenceDisplay(text, false, "0").text).toBe("```\rcode\r```");
+  });
   it("with no card (invalid, refused, a room, history) the fence stays today's code block", () => {
     expect(questionFenceDisplay(reply, false)).toEqual({ text: reply, preparing: false });
     expect(questionFenceDisplay(reply, false, "1")).toEqual({ text: reply, preparing: false });

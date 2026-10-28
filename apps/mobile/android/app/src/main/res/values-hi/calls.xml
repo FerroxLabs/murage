@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="push_call_title">Murage कॉल कर रहा है</string>
+    <string name="push_call_body">किस बारे में है, यह सुनने के लिए कॉल उठाएँ।</string>
+    <string name="push_call_note_body">Murage के पास आपके लिए एक संदेश है।</string>
+    <string name="push_call_answer">कॉल उठाएँ</string>
+    <string name="push_call_not_now">अभी नहीं</string>
+    <string name="push_calls_channel">कॉल</string>
+</resources>

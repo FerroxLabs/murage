@@ -42,6 +42,7 @@ import { initializeMessageTables } from "./message-tables.ts";
 import { startTranscriptBackfill, transcriptBackfillWorking, yieldTranscriptBackfillTo } from "./transcript-backfill.ts";
 import { txScopeBegin, txScopeEnd } from "./tx-scope.ts";
 import { initializeOwnerSends } from "./send-store.ts";
+import { initializeBotCalls } from "./bot-calls-schema.ts";
 import { prepareMessageSearchBackfill } from "./message-search-index.ts";
 import { startupMark } from "./startup-trace.ts";
 import { initializeProjectTables } from "./project-tables.ts";
@@ -377,7 +378,7 @@ export function database(): DatabaseSync {
     initializeInbox(db);
     initializeThreadSnooze(db);
     initializeArtifacts(db);
-    initializeProjectTables(db); initializeTeamIdentityTables(db); initializeMobilePush(db); initializeSharedRequestProvenance(db); initializeProjectCardDelivery(db); initializeOwnerSends(db); initializePendingDelegations(db); if (firstOpen) startupMark("database.tablesAll");
+    initializeProjectTables(db); initializeTeamIdentityTables(db); initializeMobilePush(db); initializeSharedRequestProvenance(db); initializeProjectCardDelivery(db); initializeOwnerSends(db); initializePendingDelegations(db); initializeBotCalls(db); if (firstOpen) startupMark("database.tablesAll");
     runOwnerHandoffMigration(db);   // admission of hand-offs is held until it succeeds (pending-delegations-schema.ts)
     // Every counted write from here on moves the counter the upgrade screen's figures are keyed to (app-write-revision.ts).
     installWriteRevisionTriggers(db);
@@ -500,6 +501,21 @@ export function storageLine(db: DatabaseSync, file: string): string {
     freelist = pages * size;
   } catch { /* closed or busy: report 0 */ }
   return `[sqlite] storage file=${megabytes(fileBytes(file))} wal=${megabytes(fileBytes(`${file}-wal`))} freelist=${megabytes(freelist)}`;
+}
+/** 1.0.9 Sentinel: the open messages.db's storage figures for a sealed stats generation (server/health/stats-publisher.ts).
+ *  Short metadata reads on the ALREADY-OPEN connection plus two file sizes: no new connection, no row count, no
+ *  checkpoint. Unknown values are null, never zero. Null when no database is open. */
+export function storageObservation(now = Date.now()): { role: "messages"; sampled_at: number; page_size: number | null; page_count: number | null; freelist_pages: number | null; db_bytes: number | null; wal_bytes: number | null; pending_revocations: null; oldest_pending_at: null } | null {
+  const db = handle, file = handlePath;
+  if (!db || !file) return null;
+  const pragma = (name: string): number | null => {
+    try { const value = Number((db.prepare(`PRAGMA ${name}`).get() as Record<string, unknown> | undefined)?.[name]); return Number.isFinite(value) && value >= 0 ? value : null; } catch { return null; }
+  };
+  const size = (path: string): number | null => { try { return statSync(path).size; } catch { return null; } };
+  return {
+    role: "messages", sampled_at: now, page_size: pragma("page_size"), page_count: pragma("page_count"), freelist_pages: pragma("freelist_count"),
+    db_bytes: size(file), wal_bytes: size(`${file}-wal`) ?? 0, pending_revocations: null, oldest_pending_at: null,
+  };
 }
 let storageTimer: ReturnType<typeof setInterval> | undefined;
 const WAL_REPORT_BYTES = 256 * 1024 * 1024;

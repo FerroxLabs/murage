@@ -11,7 +11,10 @@ import { join } from "node:path";
 import { EVENTS_DIR } from "../config.ts";
 import { redactSecrets } from "../redact.ts";
 import { loggedRuntimeEvent } from "../runtime-event-out.ts";
+import { isPhoneRequest } from "../phones/withhold.ts";
+import { createHash } from "node:crypto";
 import { IntakeValve } from "./intake.ts";
+import { observeTurnEvent } from "../health/turn-observer.ts";
 import { boundedRecord, markLogCovered, persistsEvent, flushSessionLines, markSessionsPending, recordSessionLine, rotateIfFull, sweepAfterWrite, threadLogClosed } from "./event-log.ts";
 import { newId, type ProviderInstance, type RuntimeEvent, type RuntimeEventListener } from "../contracts.ts";
 
@@ -50,6 +53,132 @@ function eventBytes(event: RuntimeEvent): number {
   try { return JSON.stringify(event).length; } catch { return 4_096; }
 }
 
+export const PHONE_TEXT_WITHHELD = "[phone turn text withheld]";
+export const PHONE_RESULT_WITHHELD = "[phone result withheld]";
+export interface PhoneWithholdPolicy {
+  thread(threadId: string): boolean;
+  phoneTool(event: RuntimeEvent): { summary: string } | null;
+}
+
+const REQUEST_WITHHELD_FIELDS = ["toolInput", "toolCall", "questions", "choices", "reason", "filePaths", "folderTrust"] as const;
+
+function withheldRequest(e: Record<string, unknown>): RuntimeEvent {
+  const out: Record<string, unknown> = { ...e, summary: PHONE_RESULT_WITHHELD };
+  delete out.raw;
+  for (const key of REQUEST_WITHHELD_FIELDS) delete out[key];
+  return out as unknown as RuntimeEvent;
+}
+
+/** The model picks Codex question ids, so the log keeps a stable non-reversible stand-in; rows still line up. Live delivery keeps the real id. */
+function standInQuestionId(id: unknown): string | undefined {
+  if (typeof id !== "string") return undefined;
+  return `q-${createHash("sha256").update(id).digest("hex").slice(0, 16)}`;
+}
+
+/** A marked thread's question keeps its shape (ids, counts, flags) and none of its words. */
+function withheldQuestions(e: Record<string, unknown>): RuntimeEvent {
+  const { raw: _raw, ...rest } = e;
+  const questions = Array.isArray(e.questions)
+    ? e.questions.map((q) => ({ id: standInQuestionId((q as { id?: string }).id), question: PHONE_RESULT_WITHHELD, options: [], multiSelect: Boolean((q as { multiSelect?: boolean }).multiSelect), allowOther: Boolean((q as { allowOther?: boolean }).allowOther) }))
+    : [];
+  return { ...rest, questions } as unknown as RuntimeEvent;
+}
+
+function withheldByType(policy: PhoneWithholdPolicy, event: RuntimeEvent): RuntimeEvent {
+  try {
+    const e = event as unknown as Record<string, unknown>;
+    const marked = policy.thread(event.threadId);
+    if (e.type === "request.opened") {
+      if (marked || isPhoneRequest(e)) return withheldRequest(e);
+      return event;
+    }
+    if (e.type === "item.completed" || e.type === "item.started") {
+      if (e.itemType === "tool") {
+        const phone = policy.phoneTool(event);
+        if (!phone && !marked) return event;
+        // the raw engine frame can carry the same arguments and result
+        const { raw: _raw, detail: _detail, title: _title, ...rest } = e;
+        const summary = phone ? phone.summary : PHONE_RESULT_WITHHELD;
+        return (e.type === "item.completed"
+          ? { ...rest, result: PHONE_RESULT_WITHHELD, summary }
+          : { ...rest, input: PHONE_RESULT_WITHHELD, summary }) as unknown as RuntimeEvent;
+      }
+      if (e.type === "item.started" && e.itemType === "reasoning" && marked) {
+        const { raw: _raw, ...rest } = e;
+        return { ...rest, title: PHONE_RESULT_WITHHELD, summary: PHONE_RESULT_WITHHELD, input: PHONE_RESULT_WITHHELD } as unknown as RuntimeEvent;
+      }
+      if (e.type === "item.completed" && e.itemType === "assistant_text" && marked) {
+        const { raw: _raw, ...rest } = e;
+        return { ...rest, text: PHONE_TEXT_WITHHELD } as unknown as RuntimeEvent;
+      }
+    }
+    if (e.type === "question.async" && marked) return withheldQuestions(e);
+    return event;
+  } catch {
+    // fail closed: a policy that throws writes the shape and none of the words
+    const e = event as unknown as Record<string, unknown>;
+    if (e.type === "request.opened") return withheldRequest(e);
+    if (e.type === "question.async") return withheldQuestions(e);
+    if (e.type === "item.started" && e.itemType === "reasoning") return { ...e, raw: undefined, title: PHONE_RESULT_WITHHELD, summary: PHONE_RESULT_WITHHELD, input: PHONE_RESULT_WITHHELD } as unknown as RuntimeEvent;
+    if (e.type === "item.completed" && e.itemType === "assistant_text") return { ...e, raw: undefined, text: PHONE_TEXT_WITHHELD } as unknown as RuntimeEvent;
+    if ((e.type === "item.completed" || e.type === "item.started") && e.itemType === "tool") return { ...e, raw: undefined, detail: undefined, title: undefined, summary: PHONE_RESULT_WITHHELD, result: e.type === "item.completed" ? PHONE_RESULT_WITHHELD : undefined, input: e.type === "item.started" ? PHONE_RESULT_WITHHELD : undefined } as unknown as RuntimeEvent;
+    return event;
+  }
+}
+
+/** Marked threads are deny-by-default: every string at any depth becomes the withheld marker except these structural fields
+ * (ids, event type, kind, status, timestamps, tool name, item type). Numbers, booleans and null always stay. An event type
+ * nobody listed here gets every string withheld. */
+const STRUCTURAL_STRING_KEYS: ReadonlySet<string> = new Set([
+  "eventId", "provider", "providerInstanceId", "threadId", "turnId", "itemId", "requestId", "interjectionId", "sessionId", "id",
+  "createdAt", "type", "kind", "itemType", "requestType", "streamKind", "status", "origin", "behavior", "source", "stopReason",
+  "approvalScope", "toolKind", "tool", "toolEngine", "mcpReadiness",
+]);
+/** `name` and `namespace` are structural only inside a tool identity (a tool's name, never display text). */
+const TOOL_IDENTITY_KEYS: ReadonlySet<string> = new Set(["name", "namespace", "kind"]);
+const WITHHOLD_MAX_DEPTH = 12;
+
+function isMarker(value: string): boolean {
+  return value === PHONE_TEXT_WITHHELD || value === PHONE_RESULT_WITHHELD;
+}
+
+function withholdAllStrings(value: unknown, key: string, parent: string, keep: ReadonlySet<string>, depth: number): unknown {
+  if (typeof value === "string") {
+    if (isMarker(value)) return value;
+    if (STRUCTURAL_STRING_KEYS.has(key) || keep.has(key) || (parent === "toolIdentity" && TOOL_IDENTITY_KEYS.has(key))) return value;
+    return PHONE_RESULT_WITHHELD;
+  }
+  if (value === null || typeof value !== "object") return value;
+  if (depth >= WITHHOLD_MAX_DEPTH) return PHONE_RESULT_WITHHELD;
+  if (Array.isArray(value)) return value.map((item) => withholdAllStrings(item, key, parent, keep, depth + 1));
+  const out: Record<string, unknown> = {};
+  for (const [k, item] of Object.entries(value as Record<string, unknown>)) out[k] = withholdAllStrings(item, k, key, keep, depth + 1);
+  return out;
+}
+
+/** A marked thread's raw engine frame never reaches the log: its keys are the engine's, so the structural allowlist means nothing there. */
+function withoutRaw(event: RuntimeEvent): RuntimeEvent {
+  const { raw: _raw, ...rest } = event as RuntimeEvent & { raw?: unknown };
+  return rest as RuntimeEvent;
+}
+
+const NO_KEYS: ReadonlySet<string> = new Set();
+const PHONE_ROW_KEYS: ReadonlySet<string> = new Set(["summary"]);
+
+function withheldForLog(policy: PhoneWithholdPolicy | null, event: RuntimeEvent): RuntimeEvent {
+  if (!policy) return event;
+  const typed = withheldByType(policy, event);
+  try {
+    if (!policy.thread(event.threadId)) return typed;
+    // a phone tool row's summary is Murage's own line, not model text
+    const keep = policy.phoneTool(event) ? PHONE_ROW_KEYS : NO_KEYS;
+    return withholdAllStrings(withoutRaw(typed), "", "", keep, 0) as RuntimeEvent;
+  } catch {
+    return withholdAllStrings(withoutRaw(typed), "", "", NO_KEYS, 0) as RuntimeEvent;
+  }
+}
+
+
 export class EventBus {
   private listeners = new Set<RuntimeEventListener>();
   private unsubscribes: Array<{ instanceId: string; unsubscribe: () => void }> = [];
@@ -79,6 +208,8 @@ export class EventBus {
   private draining = false;
   /** Threads whose events are delivered but never written to events/. */
   private omitThread: (threadId: string) => boolean = () => false;
+  /** 1.0.9 phone tools: what the canonical log may not keep of a phone thread (see withholdText). */
+  private withhold: PhoneWithholdPolicy | null = null;
 
   constructor(appendLog: typeof appendFileSync = appendFileSync) {
     this.appendLog = appendLog;
@@ -103,15 +234,22 @@ export class EventBus {
   /** The Chief's hidden New project proposal turns leave no event log. */
   omitLog(predicate: (threadId: string) => boolean) { this.omitThread = predicate; }
 
+  /** A thread that used the phone tools keeps its words out of events/ (the Inspector reads that file), and a phone tool's input and
+   * result are never written for any thread. Live delivery is untouched: the owner's chat keeps the words. Runs before boundedRecord, so
+   * an over-limit record is withheld too. Never gated on the feature flag (a mark outlives the flag). */
+  withholdText(policy: PhoneWithholdPolicy) { this.withhold = policy; }
+
   publish(event: RuntimeEvent) {
     if (this.omitThread(event.threadId)) return this.deliver(event);
+    // Sentinel: every engine's turn outcomes through this one common path (observe only, O(1), never throws)
+    observeTurnEvent(event);
     // Live-only events (each streamed chunk, each progress tick) and events of a
     // conversation already deleted are delivered and never written
     // (harness/event-log.ts says which and why).
     if (!persistsEvent(event) || threadLogClosed(event.threadId)) return this.deliver(event);
     const pendingWarning = this.pendingLogWarnings.get(event.threadId);
     // the F12 record (the map handed to the engine process) is never written (runtime-event-out.ts)
-    const loggable = redactSecrets(withoutImageBytes(loggedRuntimeEvent(event)));
+    const loggable = withheldForLog(this.withhold, redactSecrets(withoutImageBytes(loggedRuntimeEvent(event))) as RuntimeEvent);
     const persistedEvents = pendingWarning ? [pendingWarning, loggable] : [loggable];
     try {
       // the canonical log is a file people paste into bug reports; scrub

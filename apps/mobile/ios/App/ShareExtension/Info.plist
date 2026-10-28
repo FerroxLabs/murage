@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDisplayName</key>
+	<string>Murage</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>MurageAppGroup</key>
+	<string>group.com.murage.mobile</string>
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.share-services</string>
+		<key>NSExtensionPrincipalClass</key>
+		<string>$(PRODUCT_MODULE_NAME).ShareViewController</string>
+		<key>NSExtensionAttributes</key>
+		<dict>
+			<key>NSExtensionActivationRule</key>
+			<string>SUBQUERY(extensionItems, $item, SUBQUERY($item.attachments, $a, (ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "com.adobe.pdf" OR ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "com.compuserve.gif" OR ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "com.microsoft.excel.xls" OR ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "com.microsoft.powerpoint.ppt" OR ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "com.microsoft.word.doc" OR ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "net.daringfireball.markdown" OR ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "org.oasis-open.opendocument.presentation" OR ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "org.oasis-open.opendocument.spreadsheet" OR ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "org.oasis-open.opendocument.text" OR ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "org.openxmlformats.presentationml.presentation" OR ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "org.openxmlformats.spreadsheetml.sheet" OR ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "org.openxmlformats.wordprocessingml.document" OR ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "org.webmproject.webp" OR ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "public.comma-separated-values-text" OR ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "public.heic" OR ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "public.heif" OR ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "public.jpeg" OR ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "public.json" OR ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "public.plain-text" OR ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "public.png" OR ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "public.rtf" OR ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "public.tab-separated-values-text" OR (ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "public.url" AND NOT (ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "public.file-url"))) AND NOT (ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "public.audiovisual-content")).@count == $item.attachments.@count).@count == extensionItems.@count AND SUBQUERY(extensionItems, $item, $item.attachments.@count &gt; 0).@count &gt;= 1</string>
+			<key>IntentsSupported</key>
+			<array>
+				<string>INSendMessageIntent</string>
+			</array>
+		</dict>
+	</dict>
+	<key>MurageAskKeychainGroup</key>
+	<string>$(AppIdentifierPrefix)com.murage.mobile.ask</string>
+</dict>
+</plist>

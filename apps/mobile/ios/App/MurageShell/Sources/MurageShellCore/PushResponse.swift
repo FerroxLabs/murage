@@ -11,11 +11,13 @@ public enum PushResponse {
     /// tap (the default action) and OPEN open the chat.
     public enum Action: Equatable, Sendable {
         case answer(decision: String)
-        case open
+        case open, callAnswer, notNow
     }
 
     public static func action(_ identifier: String) -> Action {
         switch identifier {
+        case "ANSWER": .callAnswer
+        case "NOT_NOW": .notNow
         case "APPROVE": .answer(decision: "allow")
         case "DENY": .answer(decision: "deny")
         default: .open
@@ -123,6 +125,26 @@ public enum PushResponse {
             return (key, revision)
         }
         return (badge, pending)
+    }
+
+    /// A call resolution removes only older rings of this binding and key.
+    /// APNs collapse ids coalesce pending pushes, not notifications already shown.
+    public static func resolvedCallNotifications(_ payload: PushPayload, delivered: [Delivered]) -> [String] {
+        guard PushContract.callDisplayAction(payload, now: 0, shown: deliveredCallKeys(delivered)) == .replace else { return [] }
+        return delivered.compactMap { item in
+            guard let prior = PushPayload.parse(item.userInfo["murage"]), prior.category == .call,
+                  prior.bindingId == payload.bindingId, prior.collapseKey == payload.collapseKey,
+                  prior.revision < payload.revision else { return nil }
+            return item.identifier
+        }
+    }
+
+    /// Use payload categories, since quiet delivered calls intentionally have no action category.
+    public static func deliveredCallKeys(_ delivered: [Delivered]) -> [String] {
+        delivered.compactMap { item in
+            guard let payload = PushPayload.parse(item.userInfo["murage"]), payload.category == .call else { return nil }
+            return payload.collapseKey
+        }
     }
 
     public struct Delivered {
