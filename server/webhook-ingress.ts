@@ -88,10 +88,37 @@ function eventName(req: IncomingMessage): string | undefined {
   )?.trim() || undefined;
 }
 
+/** What the server log keeps of a failure nobody planned for: its kind and
+ *  code, never its message, which can carry payload or path text. */
+function failureLabel(error: unknown): string {
+  if (!(error instanceof Error)) return typeof error;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" && /^[A-Z0-9_]{1,40}$/.test(code) ? `${error.name} ${code}` : error.name;
+}
+
+/** The answer for a failure nobody planned for. Its own words stay on the server. */
+function receiverFailed(res: ServerResponse, error: unknown): void {
+  console.error(`webhooks: receiver failed (${failureLabel(error)})`);
+  if (res.headersSent) res.destroy();
+  else json(res, 500, { error: "Webhook receiver failed" });
+}
+
 export function createWebhookIngressHandler(manager: WebhookManager) {
+  const handle = createWebhookRequestHandler(manager);
+  // THE LAST-RESORT CATCH. The handler is async and node's HTTP server never
+  // looks at the promise it returns, so anything thrown outside its own
+  // try (the rejection log in its catch, a write after the client left)
+  // was an unhandled rejection. It now ends as a 500 for this request only.
+  return (req: IncomingMessage, res: ServerResponse): Promise<void> =>
+    handle(req, res).catch((error: unknown) => {
+      try { receiverFailed(res, error); } catch { res.destroy(); }
+    });
+}
+
+function createWebhookRequestHandler(manager: WebhookManager) {
   const home = process.env.MURAGE_CLOUD_ROLE === "home";
   const buckets = new Map<string, { at: number; count: number }>();
-  return async (req: IncomingMessage, res: ServerResponse) => {
+  return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     let url: URL;
     try {
       url = new URL(req.url ?? "/", "http://localhost");
@@ -142,6 +169,9 @@ export function createWebhookIngressHandler(manager: WebhookManager) {
     } catch (error) {
       const parsedError = statusErrorSchema.safeParse(error);
       const status = parsedError.success ? parsedError.data.status ?? 500 : 500;
+      // A status-carrying error is one of ours, worded for the sender. Any
+      // other failure answers with fixed words; its own stay on the server.
+      if (status >= 500) return receiverFailed(res, error);
       const message = error instanceof Error ? error.message : String(error);
       // Manager-level validation records its own rejection with the parsed
       // payload. Receiver-level failures happen earlier, so record metadata

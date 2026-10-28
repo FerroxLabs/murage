@@ -3,10 +3,12 @@ import { learningWriteDecision, learningSourceBot, learningEvidenceScopes, type 
 import { recordLearningEvent } from "./learning-ledger.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { readMemoryLearning } from "./learning-policy.ts";
+import { recordEmailDerived } from "./email-derived.ts";
 
 export function learningReviewReason(reason:string):string {
   const reasons:Record<string,string>={
     "needs-owner-approval":"This memory needs you before it is used.",
+    "external-mail":"This came from a reply written after reading email from outside your workspace. Review it before using it.",
     "private-into-shared":"This memory came from a private chat. Review it before sharing it here.",
     "cross-partition":"The cited sources belong to different audiences. Review this memory before using it.",
     "cross-scope":"The source belongs to another audience. Review this memory before using it.",
@@ -83,6 +85,9 @@ export function activateGroundedMemory(db: DatabaseSync, id: string, claimType?:
     JOIN memory_source_versions v ON v.source_id=s.id AND v.revision=s.revision
     WHERE e.record_id=? AND e.record_version=1`).all(id).filter(row=>!invitedCanon||row.id!==support?.ownerInvitationSourceId);
   const handles=db.prepare("SELECT source_id,source_revision FROM memory_evidence WHERE record_id=? AND record_version=1").all(id).map(row=>({sourceId:String(row.source_id),revision:Number(row.source_revision)}));
+  // bot email (5.4): a candidate resting on a source written after reading outside mail waits for the owner, never activates on its own
+  // (also a memory the bot saved during a marked turn: its record-origin binding, email-derived.ts)
+  if(recordEmailDerived(db,id,1))return holdMemoryCandidate(db,id,"external-mail");
   const invitation=invitedCanon?handles.find(h=>h.sourceId===support?.ownerInvitationSourceId):undefined;
   const reason=invitedCanon?(invitation?invitedCanonRefusal(db,handles,invitation,run?.botId):"not-active"):ownerLearningRefusal(db,handles);
   if(reason)return holdMemoryCandidate(db,id,reason);

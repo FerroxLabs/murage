@@ -3669,5 +3669,18 @@
   "learnAboutMe.error.conflict": "This line was already kept with other words. Paste again to review it fresh.",
   "learnAboutMe.importedFrom": "Imported from {provider}, {date}",
   "learnAboutMe.importedFromUndated": "Imported from {provider}, undated",
-  "memoryReview.forgottenWords": "Forgotten. Its words are gone."
+  "memoryReview.forgottenWords": "Forgotten. Its words are gone.",
+  "settings.bot.phoneForBots.title": "Phone for your bots",
+  "settings.bot.phoneForBots.description": "Choose what your bots can use on this phone.",
+  "settings.bot.phoneForBots.open": "Open",
+  "phone.ask.fromPhone": "From your phone",
+  "phone.ask.askAgain": "Ask again",
+  "phone.ask.settingTitle": "Share and ask from this phone",
+  "phone.ask.settingOff": "Sharing and asking are off for this phone.",
+  "phone.ask.errorGone": "That chat is no longer available. Pick another.",
+  "phone.ask.errorUpdate": "Update Murage on your computer to use this.",
+  "phone.ask.errorSetup": "Open Murage to set up sharing again.",
+  "phone.removal.pending": "Removal pending",
+  "phone.removal.pendingBody": "Murage will keep trying to remove this phone.",
+  "phone.removal.retry": "Try again"
 }

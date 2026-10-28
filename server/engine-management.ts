@@ -3,7 +3,7 @@ import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { ManagedNpmUnavailable, verifiedWindowsCodexPath, windowsNpmCommand } from "./codex-managed-windows.ts";
-import { FUIGO_TARGETS, latestFuigoVersion, managedFuigoReceipt, nativeFuigoTarget, probeNativeFuigo, stageNativeFuigo, supportedFuigoVersion, verifyManagedFuigo, type FuigoProbe } from "./fuigo-native-update.ts";
+import { FUIGO_TARGETS, fuigoVersionNewer, latestFuigoVersion, managedFuigoReceipt, nativeFuigoTarget, offeredFuigoVersion, probeNativeFuigo, qualifiedFuigoVersion, stageNativeFuigo, supportedFuigoVersion, verifyManagedFuigo, type FuigoProbe } from "./fuigo-native-update.ts";
 
 export interface ManagedEngineInstance {
   instanceId: string; driverKind: string; cli?: string;
@@ -81,6 +81,7 @@ export class EngineManager {
         rollbackAvailable: !!(receipt?.previousManagedCli && await managedFuigoReceipt(this.deps.root, id, receipt.previousManagedCli)),
         bundledAvailable: !!instance.bundledCli,
         message: !supported ? "Native Fuigo update isolation is not qualified on this platform. The selected engine is unchanged."
+          : latestVersion && installedVersion && newer(installedVersion, latestVersion) ? `You have Fuigo ${installedVersion}, which is newer than this Murage version offers. It stays as it is.`
           : releaseSupported === false ? "The latest Fuigo release is outside this Murage version’s compatibility range. Keep the current engine."
           : source === "custom" || source === "path" || source === "unknown" ? "Your existing Fuigo selection is preserved. Choose Use managed Fuigo to opt in to verified native updates; no Node.js or npm is required."
           : "Fuigo updates independently of Murage. Native downloads are checksum, architecture and ACP-compatibility checked before use; no Node.js or npm is required." };
@@ -123,7 +124,9 @@ export class EngineManager {
     this.lookUp(kind).catch(() => { /* kept: the last known release */ });
   }
   private async fetchLatest(kind: string): Promise<string> {
-    if (kind === "fuigo") return latestFuigoVersion(this.deps.fetch);
+    // Capped at the release this Murage version is qualified for: a newer
+    // registry latest is offered as the cap, so an owner on it sees up to date.
+    if (kind === "fuigo") return offeredFuigoVersion(await latestFuigoVersion(this.deps.fetch));
     const packageName = "@openai%2Fcodex";
     const response = await (this.deps.fetch ?? fetch)(`https://registry.npmjs.org/${packageName}/latest`, { signal: AbortSignal.timeout(15_000), redirect: "error" });
     if (!response.ok) throw new Error("Could not check for engine updates. Try again.");
@@ -143,7 +146,11 @@ export class EngineManager {
         if (!options.allowCustom && status.source !== "managed" && status.source !== "bundled") throw new Error("Choose Use managed Fuigo explicitly to replace the current custom or PATH selection.");
         await this.check(id, { fresh: true });
         const version = this.versions.get("fuigo")!;
-        if (!supportedFuigoVersion(version)) throw new Error("This Fuigo release is not supported by this Murage version.");
+        if (!qualifiedFuigoVersion(version)) throw new Error("This Fuigo release is not supported by this Murage version.");
+        // An owner already on a newer Fuigo keeps it: never a downgrade. A
+        // managed install's receipt names its version when the probe did not.
+        const current = status.installedVersion ?? (await managedFuigoReceipt(this.deps.root, id, instance.cli))?.version ?? null;
+        if (current && fuigoVersionNewer(current, version)) { this.running = false; return this.status(id); }
         let cli: string;
         try {
           cli = await stageNativeFuigo({ root: this.deps.root, id, version, target: `${this.deps.platform ?? process.platform}-${this.deps.arch ?? process.arch}`, fetcher: this.deps.fetch, probe: this.deps.fuigoProbe,
