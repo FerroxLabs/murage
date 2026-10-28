@@ -3,27 +3,30 @@ import { X } from "lucide-react";
 import { useStore, type Bot } from "@/state/store";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { SettingsPanel } from "./SettingsPanel";
-import { BOT_SETTINGS_SECTIONS, DESKTOP_ONLY_BOT_SETTINGS, LEARNING_BADGE_SECTION, botSettingsSectionLabel, filterBotSettingsSections, type BotSettingsSection } from "./bot-settings-sections";
+import { BOT_SETTINGS_SECTIONS, DESKTOP_ONLY_BOT_SETTINGS, GATED_BOT_SETTINGS, LEARNING_BADGE_SECTION, botSettingsSectionLabel, filterBotSettingsSections, type BotSettingsSection } from "./bot-settings-sections";
 import { BotSettingsDraftContext, BotSettingsNavigationContext, type BotSettingsDraft } from "./bot-settings-drafts";
 import { returnFocus } from "@/lib/return-focus";
 import { lastBotSection, rememberBotSection } from "@/lib/last-bot-section";
 import { badgeLabel, badgeText, useLearningBadge } from "@/lib/learning-counts";
+import { emailSectionOffered, useEmailStatus } from "@/lib/bot-email";
 
 export function BotSettingsDialog({ bot, onClose }: { bot: Bot; onClose?: () => void }) {
   const { state, dispatch } = useStore(), dialog = useRef<HTMLDialogElement>(null), content = useRef<HTMLDivElement>(null);
   const opener = useRef<HTMLElement | null>(null);
   const desktop = useDesktopSurface();
+  // bot email (1.0.9): the Email section is offered only while the server says email is on (dark launch)
+  const emailOn = emailSectionOffered(useEmailStatus());
   // A deep link (intent) wins; otherwise the profile reopens where the person last was.
   const [section, setSection] = useState<BotSettingsSection>(() =>
     state.botSettingsIntent?.section
-    ?? lastBotSection(BOT_SETTINGS_SECTIONS.map(item => item.id).filter(id => desktop === true || !DESKTOP_ONLY_BOT_SETTINGS.has(id)), [LEARNING_BADGE_SECTION])
+    ?? lastBotSection(BOT_SETTINGS_SECTIONS.map(item => item.id).filter(id => (desktop === true || !DESKTOP_ONLY_BOT_SETTINGS.has(id)) && !GATED_BOT_SETTINGS.has(id)), [LEARNING_BADGE_SECTION])
     ?? "overview");
   const [query, setQuery] = useState("");
   const chooseSection = (id: BotSettingsSection) => { setSection(id); rememberBotSection(id); };
   const [drafts, setDrafts] = useState<Record<string, BotSettingsDraft>>({}), [notice, setNotice] = useState<string | null>(null);
   // "What shapes" and Teams read desktop-only routes; elsewhere they would be
   // empty pages, so the sections are not offered at all.
-  const matches = useMemo(() => filterBotSettingsSections(query).filter(item => desktop || !DESKTOP_ONLY_BOT_SETTINGS.has(item.id)), [query, desktop]);
+  const matches = useMemo(() => filterBotSettingsSections(query).filter(item => (desktop || !DESKTOP_ONLY_BOT_SETTINGS.has(item.id)) && (emailOn || !GATED_BOT_SETTINGS.has(item.id))), [query, desktop, emailOn]);
   const selected = BOT_SETTINGS_SECTIONS.find(item => item.id === section)!;
   // What was learned since the owner last looked: a count on the row, gone once the section is opened.
   const newLearning = useLearningBadge(bot.id, section === LEARNING_BADGE_SECTION);

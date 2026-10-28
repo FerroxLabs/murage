@@ -996,6 +996,20 @@ describe("Store", () => {
     expect(store.branchMessage(bot.threadId, "nope", "x")).toBeNull();
   });
 
+  it("branchMessage copies via onto the fork, loaded or not, and a plain line forks without one", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const phone = store.appendMessage(bot.threadId, { role: "user", kind: "text", text: "from the phone", origin: "unproven", via: "share" });
+    const plain = store.appendMessage(bot.threadId, { role: "user", kind: "text", text: "typed" });
+    const loaded = store.branchMessage(bot.threadId, phone.id, "words v2", "desktop")!;
+    expect(loaded.via).toBe("share");
+    expect(store.branchMessage(bot.threadId, plain.id, "typed v2", "desktop")!.via).toBeUndefined();
+    const cold = new Store(selection);
+    const unloaded = cold.branchMessage(bot.threadId, phone.id, "words v3", "desktop")!;
+    expect(unloaded.via).toBe("share");
+    expect(new Store(selection).messageById(bot.threadId, unloaded.id)?.via).toBe("share");
+  });
+
   it("setActiveLeaf switches branches and descends to the newest leaf", () => {
     const store = new Store(selection);
     const bot = store.createBot();

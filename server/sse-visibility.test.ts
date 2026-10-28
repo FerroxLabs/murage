@@ -528,3 +528,29 @@ describe("routine and webhook frames (04-A1)", () => {
     }
   });
 });
+
+describe("bot call hints (1.0.9 bot calls follow-up M1)", () => {
+  it("call.answered and call.ended follow their conversation, and a call hint without a threadId never reaches a phone", () => {
+    const store = world();
+    for (const type of ["call.ring", "call.answered", "call.ended"]) {
+      expect(frameSubject({ kind: "call", type, intentId: "i1", callId: "c1", threadId: "t-secret" })).toEqual({ scope: "thread", threadId: "t-secret" });
+      expect(visibleToCompanion(store, frameSubject({ kind: "call", type, intentId: "i1", threadId: "t-secret" }))).toBe(false);
+      expect(visibleToCompanion(store, frameSubject({ kind: "call", type, intentId: "i1", threadId: "t-open" }))).toBe(true);
+      expect(frameSubject({ kind: "call", type, intentId: "i1", callId: "c1", device: "phone:abc" })).toEqual({ scope: "desktop" });
+      expect(visibleToCompanion(store, frameSubject({ kind: "call", type, callId: "c1" }))).toBe(false);
+    }
+  });
+});
+
+// 1.0.9 Sentinel: an installation-wide Health page reaches the owner's own stream only.
+describe("Health page frames (1.0.9 Sentinel)", () => {
+  it("are addressed to the desktop audience, never a scoped stream", () => {
+    const subject = frameSubject({ kind: "notify", notification: { kind: "health-page", installationId: "0123456789abcdef0123456789abcdef", deliveryId: "ab".repeat(16), titleKey: "health.backup.not-protected", bodyKey: "health.page.body", route: "health", title: "Murage", body: "x" } });
+    expect(subject).toEqual({ scope: "desktop" });
+    expect(frameAudience(subject, false)).toBe(true);
+    expect(frameAudience(subject, true)).toBe(false);
+  });
+  it("leave ordinary bot notifications scoped by their thread", () => {
+    expect(frameSubject({ kind: "notify", notification: { kind: "done", threadId: "t-1", botId: "b" } })).toEqual({ scope: "thread", threadId: "t-1" });
+  });
+});

@@ -195,10 +195,10 @@ it("a room member turn resets the engine session before its bundle and never res
   expect(resend).toBeGreaterThan(0);
   expect(callers.filter(at => at > resend && at < source.indexOf("\n}\n", resend))).toHaveLength(1);
   // the failover's thread is a task of the bot it fails over (failOverThread resolves it before the resend)
-  expect(source).toContain("function failOverThread(turn: { botId: string; threadId: string; selection: ModelSelection; sourceMessageId: string }, to: ModelSelection, resetsAt: number | null, now: number): FailoverRow | null {\n  const task = store.taskByThread(turn.botId, turn.threadId);\n  if (!task) return null;");
+  expect(source).toContain("function failOverThread(turn: { botId: string; threadId: string; selection: ModelSelection; sourceMessageId: string; phoneHeld?: boolean }, to: ModelSelection, resetsAt: number | null, now: number): FailoverRow | null {\n  const task = store.taskByThread(turn.botId, turn.threadId);\n  if (!task) return null;");
   // QW Q1: acceptBotSend admits through admitDirectSend, which holds the one steer (an ask_user answer shares it)
   const accept = source.indexOf("async function acceptBotSend(");
-  const admit = source.indexOf("return admitDirectSend({ bot, threadId, row, text, replyTo, sendId, origin, unprovenSend });", accept);
+  const admit = source.indexOf("return admitDirectSend({ bot, threadId, row, text, replyTo, sendId, origin, unprovenSend, ownerActs: ownerActsFact, ...(phoneCarry ? { phoneCarry } : {}) });", accept);
   const admitter = source.indexOf("function admitDirectSend(");
   const steer = source.indexOf("steerWithQuoteLineage(", admitter);
   expect(accept).toBeGreaterThan(0);

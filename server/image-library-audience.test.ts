@@ -195,6 +195,12 @@ describe("the image skill on a contact turn", () => {
     expect(contact).toContain("Send the lock first, then the scene");
     expect(contact).toContain("resolve_image_reference");
     expect(contact).toContain("generate_image");
+    // the no-keys rule covers the image request only, for either audience
+    for (const text of [owner, contact]) {
+      expect(text).toContain("Never paste keys, provider URLs or local file paths into the image prompt");
+      expect(text).toContain("This rule covers image requests only; another API the owner asks");
+      expect(text).not.toContain("into a prompt or a tool");
+    }
   });
   it("the direct and room turns pass the turn's owner audience to the skills", () => {
     const source = readFileSync(join(import.meta.dirname, "index.ts"), "utf8");

@@ -263,7 +263,14 @@ export async function closeAllStreams(): Promise<number> {
 
 /** Returns false for any other path, so the caller destroys the socket. */
 export function handleStreamUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer, deps: StreamRouteDeps): boolean {
-  const url = new URL(req.url ?? "/", "http://127.0.0.1");
+  // A request target URL() rejects (`//[`) is not this path. Parsing it runs in
+  // the server's `upgrade` listener, where a throw would end the process.
+  let url: URL;
+  try {
+    url = new URL(req.url ?? "/", "http://127.0.0.1");
+  } catch {
+    return false;
+  }
   if (url.pathname !== STREAM_WS_PATH) return false;
   if (deps.admitUpgrade && !deps.admitUpgrade(req)) return false;
   const principal = deps.upgradePrincipal(req);
