@@ -21,9 +21,9 @@ const notifyBody = source.slice(source.indexOf("function notify(notification"), 
 describe("push wiring in the harness", () => {
   it("enqueues after applyNotificationPreferences, inside notify, and never lets push fail chat", () => {
     expect(notifyBody.indexOf("applyNotificationPreferences")).toBeGreaterThan(-1);
-    expect(notifyBody.indexOf("pushOutbox.enqueue(selected)")).toBeGreaterThan(notifyBody.indexOf("applyNotificationPreferences"));
+    expect(notifyBody.indexOf("pushOutbox.enqueue(selected")).toBeGreaterThan(notifyBody.indexOf("applyNotificationPreferences"));
     // enqueue, the none-queued diagnostic and flush all sit inside one try whose catch only warns
-    expect(notifyBody).toMatch(/try \{\s*const queued = pushOutbox\.enqueue\(selected\);[\s\S]*?\} catch \(error\) \{ pushWarn\("notify", error\); \}/);
+    expect(notifyBody).toMatch(/try \{\s*const queued = pushOutbox\.enqueue\(selected[^;]*;[\s\S]*?\} catch \(error\) \{ pushWarn\("notify", error\); \}/);
   });
   it("rates every engine permission it could push, from the stop line and the credential check", () => {
     // the engine's own tool input and the workspace go in too (device finding 2026-09-27)
@@ -70,9 +70,15 @@ describe("push wiring in the harness", () => {
   });
   it("flushes the outbox and sweeps relay removals on one tick that nothing can stop", () => {
     expect(source).toContain('const sweepPushRemovals = relayRemovalSweeper(pushStore, pushRelay, Date.now, pushFailed("sweep"));');
-    const tick = source.slice(source.indexOf("const pushTimer = setInterval("), source.indexOf("pushTimer.unref();"));
+    const tick = source.slice(source.indexOf("  pushTimer = setInterval("), source.indexOf("  pushTimer.unref();"));
+    expect(tick.length).toBeGreaterThan(0);
     expect(tick).toMatch(/try \{ void pushOutbox\.flush\(\)\.catch\(pushFailed\("flush"\)\); \} catch \(error\) \{ pushWarn\("flush", error\); \}/);
     expect(tick).toContain("void sweepPushRemovals();");
+  });
+  it("starts the outbox timer only from bot calls' boot, after its reconcile (BOT-CALLS-109 5.5, 5.8)", () => {
+    expect(source.match(/startPushTimer\b/g)).toHaveLength(2); // the definition and startOutbox
+    expect(source).toContain("startOutbox: startPushTimer,");
+    expect(source).toMatch(/\{ name: "botCalls", run: \(\) => \{\s+botCalls\.boot\(\);/);
   });
   it("keeps the push routes out of the desktop-only inventory", async () => {
     const { requiresDesktopAuthority } = await import("./desktop-policy.ts");

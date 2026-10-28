@@ -20,6 +20,8 @@ import { memoryRefKey, type LineageVerdict } from "./lineage-types.ts";
 import { inheritEdge } from "./revoke-commit.ts";
 import { insertMemoryRecord } from "./record-write.ts";
 import { redactSecretsInText } from "../redact.ts";
+import { evidenceEmailDerived } from "./email-derived.ts";
+import { fenceEmailDerived } from "../email/external-marks.ts";
 
 type Handle={sourceId:string;revision:number;startByte:number;endByte:number};
 /** Write-time (S4): what the consolidator may read of a source now. The source by its marks (deny_memory, tombstones, denied place, the
@@ -336,7 +338,9 @@ export async function consolidateMemorySource(completedJobId:string,extractor:Te
   // Each queued owner retry gets one admitted call through reply backoff. Budget/busy deferrals do not consume it;
   // persisted extractionAttempts does, so later automatic attempts (including after a restart) respect backoff.
   const ownerRetry=!!state!.retries?.length&&(state!.extractionAttempts??0)===0;
-  const result=text!.trim()?await extractCandidates(text!,extractor,signal,readMemoryEvolutionPolicy(state!.evolutionPolicyRevision),charge(true),{ownerRetry}):{status:"complete" as const,candidates:[]};
+  // bot email (5.4): a slice of a source captured from a marked row reaches the extractor fenced, kind email-derived
+  const shown=text!.trim()&&evidenceEmailDerived(db,[{sourceId:source.id,revision:source.revision}])?fenceEmailDerived(text!,`source-${String(source.id)}`):text!;
+  const result=text!.trim()?await extractCandidates(text!,extractor,signal,readMemoryEvolutionPolicy(state!.evolutionPolicyRevision),charge(true),{ownerRetry,shown}):{status:"complete" as const,candidates:[]};
   const corrections=new Map<object,{id:string;version:number}>();
   const support=new Map<object,{supported:boolean;reason:string}>();
   // One grounding call per candidate: with a correction target the same call answers the correction and the support check.

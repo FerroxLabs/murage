@@ -349,6 +349,7 @@ export const KNOWN_FRAME_KINDS = [
   "webhook",
   "webhook.attempt",
   "webhook.deleted",
+  "call",
 ] as const;
 
 /** Read the conversation a frame is about out of its payload.
@@ -374,6 +375,9 @@ export function frameSubject(payload: Record<string, unknown>): FrameSubject {
       return threadId ? { scope: "thread", threadId } : WORKSPACE;
     }
     case "notify": {
+      // An installation-wide Health page (1.0.9 Sentinel) is the owner's alone: the desktop audience only, never a
+      // companion, a browser door or a scoped Cloud stream.
+      if (nested(payload, "notification")?.kind === "health-page") return { scope: "desktop" };
       const threadId = id(nested(payload, "notification")?.threadId);
       return threadId ? { scope: "thread", threadId } : WORKSPACE;
     }
@@ -455,6 +459,13 @@ export function frameSubject(payload: Record<string, unknown>): FrameSubject {
     case "webhook.attempt":
     case "webhook.deleted":
       return { scope: "desktop" };
+    // Bot calls 1.0.9 (calls-109.yaml sse): content-free hints (ids and a deadline). call.ring, call.answered and
+    // call.ended each name their conversation and go only where that conversation is visible. A call hint without a
+    // threadId stays on the owner's desktop: never workspace, which would reach a phone that hid the bot.
+    case "call": {
+      const threadId = id(payload.threadId);
+      return threadId ? { scope: "thread", threadId } : { scope: "desktop" };
+    }
     case "sidebar.order":
       return payload.audience === "remote" ? { scope: "remote" } : { scope: "desktop" };
     default: {

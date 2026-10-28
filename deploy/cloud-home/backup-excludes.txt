@@ -44,3 +44,8 @@ credentials.json
 /data/.murage-reset
 /data/.murage-export
 /data/.murage-health
+# Health checks (1.0.9 Sentinel): runtime health files, the token key and the page ledger are rebuilt on the home
+# and never restored (server/data-dir-inventory.ts excludes the same names from in-app captures).
+/data/home/health
+/data/home/health-key
+/data/home/sentinel-delivery.json
