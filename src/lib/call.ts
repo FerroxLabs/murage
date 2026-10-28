@@ -18,6 +18,13 @@ function notify() {
   for (const fn of [...watchers]) fn();
 }
 
+/** Runs on every change of the call or the call request; returns the unsubscribe. A call's server session follows the
+ * call this way (bot-call-session.ts), so ending or switching a call here ends its session. */
+export function onCallChange(fn: () => void): () => void {
+  watchers.add(fn);
+  return () => { watchers.delete(fn); };
+}
+
 /** Tells native a call session opened or closed, if it listens at all
  * (Android only today — callbar-rereview.md M4). Fire-and-forget: an
  * unsupported or absent bridge (iOS, desktop, an older app) throws
@@ -84,10 +91,7 @@ export function takeCallRequest(targetId: string): boolean {
 
 export function useCallRequest(): string | null {
   return useSyncExternalStore(
-    (fn) => {
-      watchers.add(fn);
-      return () => watchers.delete(fn);
-    },
+    onCallChange,
     () => requested,
     () => requested,
   );
@@ -95,10 +99,7 @@ export function useCallRequest(): string | null {
 
 export function useOnCall(): string | null {
   return useSyncExternalStore(
-    (fn) => {
-      watchers.add(fn);
-      return () => watchers.delete(fn);
-    },
+    onCallChange,
     () => current,
     () => current,
   );

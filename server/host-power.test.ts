@@ -29,7 +29,9 @@ vi.mock("./cloud-home/turn-process.ts", async (original) => {
 import {
   BWRAP_ARGS_FD, BWRAP_ENVIRONMENT, BWRAP_STATUS_FD, bwrapEngineStarted, HOST_POWER_CODE, HOST_POWER_MESSAGE, HOST_POWER_MESSAGE_LINUX_MAC, HOST_POWER_MESSAGE_WINDOWS, HOST_POWER_TEST_UNWRAPPED, POWER_FILTER_SHA256, SEATBELT_POWER_PROFILE,
   bwrapOptions, bwrapEarlyExitMessage, closePowerFilter, HOST_POWER_MESSAGE_LONG_TMPDIR, hostPowerDeps, hostPowerStubBase, openPowerFilter, planHostPower, sessionBusPaths, startHostPowerStub, stopHostPowerStubForTests,
+  HOST_POWER_GAP_NOTICE, HOST_POWER_UNWRAPPED_DRIVERS, hostPowerGap, hostPowerGapNoticeDue, hostPowerProbeDeps, markHostPowerGapNoticeShown, noteHostPowerGap, probeHostPowerEnvironment, probeOptions, resetHostPowerGapForTests, usernsDenied, usernsGapCause,
 } from "./host-power.ts";
+import { DRAFT_ONLY_ENGINE_LINE, draftOnlyQualifies } from "./draft-only.ts";
 import { awaitCliTreeStopped, cliTreeConfirmedStopped, cliTreeStoppedSignal, dropServerShutdownPrivileges, engineJob, engineProcessPid, engineWrapsHostPower, forceCliTreeStopped, hostPowerKeyField, hostPowerMessage, hostPowerRefused, killCliTree, resetShutdownDropForTests, spawnCli } from "./procs.ts";
 import { diffWarmKey, warmKey } from "./drivers/warm-key.ts";
 import { codexTurnPolicy } from "./drivers/codex-isolation.ts";
@@ -75,8 +77,11 @@ const optionsOf = (data: Buffer): string[] => { const text = data.toString("utf8
 beforeEach(() => {
   (globalThis as Record<symbol, unknown>)[HOST_POWER_TEST_UNWRAPPED] = false;
 });
+const realProbeDeps = { ...hostPowerProbeDeps };
 afterEach(() => {
   Object.assign(hostPowerDeps, realDeps);
+  Object.assign(hostPowerProbeDeps, realProbeDeps);
+  resetHostPowerGapForTests();
   (globalThis as Record<symbol, unknown>)[HOST_POWER_TEST_UNWRAPPED] = true;
   vi.restoreAllMocks();
 });
@@ -294,13 +299,14 @@ describe("Linux plan (section 4)", () => {
     expect(openPowerFilter(join(dir, "missing.bpf"), FAKE_PIN)).toBeNull();
   });
 
-  it.skipIf(process.platform === "win32")("refuses before spawn: missing or writable helper, euid 0, abstract session bus, argv over 1 MiB, unbound stub, other architecture", () => {
+  it.skipIf(process.platform === "win32")("refuses before spawn: missing or writable helper, abstract session bus, argv over 1 MiB, unbound stub, other architecture", () => {
     const dir = fakeCage("exit 0");
     const refused = (env: NodeJS.ProcessEnv = {}, args: string[] = []) => planHostPower("/usr/bin/engine", args, env, "/").kind === "refuse";
     linux(null); expect(refused()).toBe(true);
     linux(dir); expect(refused()).toBe(false);
     linux(dir); hostPowerDeps.writable = () => true; expect(refused()).toBe(true);
-    linux(dir); hostPowerDeps.geteuid = () => 0; expect(refused()).toBe(true);
+    // 1.0.9: root is wrapped like any other server (its helper must be root's own, othersMayWrite), never refused for being root.
+    linux(dir); hostPowerDeps.geteuid = () => 0; hostPowerDeps.othersMayWrite = () => false; expect(refused()).toBe(false); expect(planHostPower("/usr/bin/engine", [], {}, "/").kind).toBe("bwrap");
     linux(dir); expect(refused({ DBUS_SESSION_BUS_ADDRESS: "unix:abstract=/tmp/dbus-x" })).toBe(true);
     linux(dir); expect(refused({}, ["x".repeat(1024 * 1024)])).toBe(true);
     linux(dir); hostPowerDeps.arch = () => "ia32"; expect(refused()).toBe(true);
@@ -1031,5 +1037,208 @@ describe("the stub socket under a long TMPDIR", () => {
     expect(hostPowerMessage()).toBe(HOST_POWER_MESSAGE_LONG_TMPDIR);
     expect(HOST_POWER_MESSAGE_LONG_TMPDIR).not.toMatch(/\u2014|safe/i);
     await stopHostPowerStubForTests();
+  });
+});
+
+// 1.0.9 (House rules v2, rules 1 and 8): a computer that cannot give an engine the block is an environment gap, and the turn runs
+// on the harness. Reproduced on stock Ubuntu 24.04 with the 1.0.8 AppImage: "bwrap: setting up uid map: Permission denied".
+describe("environment gap: the turn runs without the block (1.0.9)", () => {
+  const UID_MAP = "bwrap: setting up uid map: Permission denied";
+  const linux = (dir: string | null, euid = 1000) => Object.assign(hostPowerDeps, {
+    platform: () => "linux" as const, geteuid: () => euid, getegid: () => 1000, helperDir: () => dir, writable: () => false,
+  });
+  const collect = (child: ReturnType<typeof spawnCli>) => new Promise<{ errors: NodeJS.ErrnoException[]; code: number | null; out: string }>((resolve) => {
+    const errors: NodeJS.ErrnoException[] = [];
+    let out = "", done = false;
+    const end = (code: number | null) => { if (!done) { done = true; resolve({ errors, code, out }); } };
+    child.on("error", (error) => { errors.push(error); if (child.pid === undefined) setTimeout(() => end(null), 200); });
+    child.stdout.on("data", (chunk) => { out += chunk; });
+    child.on("close", (code) => end(code));
+    try { child.stdin.end(); } catch { /* a refused launch's stand-in pipe */ }
+  });
+  const denying = (line: string) => fakeCage(`echo "${line}" >&2; exit 1`);
+
+  it("names each environment class from the kernel and container facts; the label never decides what runs", () => {
+    const read = (values: Record<string, string>) => (file: string) => values[file] ?? null;
+    const none = () => false;
+    expect(usernsGapCause(read({}), (file) => file === "/.dockerenv")).toBe("container");
+    expect(usernsGapCause(read({}), (file) => file === "/run/.containerenv")).toBe("container");
+    expect(usernsGapCause(read({ "/proc/1/cgroup": "0::/system.slice/docker-1234.scope" }), none)).toBe("container");
+    expect(usernsGapCause(read({ "/proc/sys/kernel/unprivileged_userns_clone": "0" }), none)).toBe("userns-off");
+    expect(usernsGapCause(read({ "/proc/sys/user/max_user_namespaces": "0" }), none)).toBe("userns-off");
+    expect(usernsGapCause(read({ "/proc/sys/kernel/apparmor_restrict_unprivileged_userns": "1" }), none)).toBe("userns-restricted");
+    expect(usernsGapCause(read({ "/proc/sys/kernel/apparmor_restrict_unprivileged_userns": "0" }), none)).toBe("userns-denied");
+  });
+
+  it("reads bwrap's own namespace refusals, and nothing else, as the environment", () => {
+    for (const line of [UID_MAP, "bwrap: setting up uid map: Operation not permitted", "bwrap: No permissions to create a new namespace, likely because the kernel does not allow non-privileged user namespaces",
+      "bwrap: Creating new namespace failed: Operation not permitted",
+      "bwrap: Creating new namespace failed, likely because the kernel does not support user namespaces.  bwrap must be installed setuid on such systems.", "bwrap: unshare user ns: Permission denied", `${UID_MAP}\nmore`]) expect(usernsDenied(line), line).toBe(true);
+    for (const line of ["", "bwrap: execvp true: No such file or directory", "/opt/cage/bwrap: /lib/libc.so.6: version `GLIBC_2.38' not found", "engine: setting up uid map: Permission denied", `prefix ${UID_MAP}`,
+      // bwrap prints a chdir failure's path unescaped: a turn-chosen cwd can put the words on a later line, never the first.
+      `bwrap: Can't chdir to /work/x\n${UID_MAP}`, `${UID_MAP} and more`]) expect(usernsDenied(line), line).toBe(false);
+    // ENOSPC is the environment only with user namespaces off (max 0); otherwise it is a used-up count any process could cause.
+    for (const line of ["bwrap: Creating new namespace failed: nesting depth or /proc/sys/user/max_*_namespaces exceeded (ENOSPC)", "bwrap: Creating new namespace failed: No space left on device"]) {
+      expect(usernsDenied(line, (file) => (file === "/proc/sys/user/max_user_namespaces" ? "0" : null)), line).toBe(true);
+      expect(usernsDenied(line, (file) => (file === "/proc/sys/user/max_user_namespaces" ? "62126" : null)), line).toBe(false);
+      expect(usernsDenied(line, () => null), line).toBe(false);
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("root: probed and wrapped like any server; a root container the probe finds refused is a gap; root never excuses tampering", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    linux(fakeCage("exit 0"), 0);
+    hostPowerDeps.othersMayWrite = () => false;
+    await startHostPowerStub();
+    expect(await probeHostPowerEnvironment()).toBeNull();
+    expect(planHostPower("/usr/bin/engine", [], {}, "/").kind).toBe("bwrap");
+    resetHostPowerGapForTests();
+    const dir = denying("bwrap: Creating new namespace failed: Operation not permitted");
+    linux(dir, 0);
+    hostPowerDeps.othersMayWrite = () => false;
+    expect(await probeHostPowerEnvironment()).toMatchObject({ detail: "bwrap: Creating new namespace failed: Operation not permitted" });
+    expect(planHostPower("/usr/bin/engine", [], {}, "/").kind).toBe("unwrapped");
+    expect(warn.mock.calls.filter(([line]) => String(line).startsWith("[host-power] this computer cannot apply the power block"))).toHaveLength(1);
+    // A helper root does not own alone is refused, gap or not, and is not probed.
+    hostPowerDeps.othersMayWrite = (file) => file === join(dir, "bwrap");
+    expect(planHostPower("/usr/bin/engine", [], {}, "/")).toEqual({ kind: "refuse", reason: `${join(dir, "bwrap")} is writable by a user other than root` });
+    resetHostPowerGapForTests();
+    const run = vi.fn(realProbeDeps.run);
+    hostPowerProbeDeps.run = run;
+    expect(await probeHostPowerEnvironment()).toBeNull();
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it.skipIf(process.platform === "win32")("AppArmor-restricted, container and userns-off refusals of the verified bwrap: the probe finds the gap and the plan is unwrapped", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    for (const line of [UID_MAP, "bwrap: No permissions to create a new namespace, likely because the kernel does not allow non-privileged user namespaces", "bwrap: Creating new namespace failed, likely because the kernel does not support user namespaces.  bwrap must be installed setuid on such systems."]) {
+      resetHostPowerGapForTests();
+      const dir = denying(line);
+      linux(dir);
+      const seen: string[][] = [];
+      hostPowerProbeDeps.run = async (command, args) => { seen.push([command, ...args]); return realProbeDeps.run(command, args); };
+      const gap = await probeHostPowerEnvironment();
+      expect(gap?.detail).toBe(line);
+      expect(["container", "userns-off", "userns-restricted", "userns-denied"]).toContain(gap?.cause);
+      // The probe ran the verified helper with the block's namespaces and nothing else.
+      expect(seen).toEqual([[join(dir, "bwrap"), ...probeOptions(1000, 1000)]]);
+      expect(probeOptions(1000, 1000).slice(0, 10)).toEqual(["--unshare-user", "--uid", "1000", "--gid", "1000", "--unshare-pid", "--cap-drop", "ALL", "--die-with-parent", "--new-session"]);
+      expect(planHostPower("/usr/bin/engine", [], {}, "/")).toEqual({ kind: "unwrapped", reason: line });
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("a bwrap that makes its namespaces is no gap; any other bwrap failure is no gap either", async () => {
+    await startHostPowerStub();
+    linux(fakeCage("exit 0"));
+    expect(await probeHostPowerEnvironment()).toBeNull();
+    expect(planHostPower("/usr/bin/engine", [], {}, "/").kind).toBe("bwrap");
+    resetHostPowerGapForTests();
+    linux(denying("bwrap: execvp true: No such file or directory"));
+    expect(await probeHostPowerEnvironment()).toBeNull();
+    expect(hostPowerGap()).toBeNull();
+    expect(planHostPower("/usr/bin/engine", [], {}, "/").kind).toBe("bwrap");
+  });
+
+  it.skipIf(process.platform === "win32")("tampering is never a gap: a writable or swapped helper is not probed and stays refused even when a gap is known", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const run = vi.fn(realProbeDeps.run);
+    hostPowerProbeDeps.run = run;
+    const dir = denying(UID_MAP);
+    linux(dir);
+    hostPowerDeps.writable = (file) => file === join(dir, "bwrap");
+    expect(await probeHostPowerEnvironment()).toBeNull();
+    expect(run).not.toHaveBeenCalled();
+    noteHostPowerGap("userns-restricted", UID_MAP);
+    expect(planHostPower("/usr/bin/engine", [], {}, "/")).toEqual({ kind: "refuse", reason: `${join(dir, "bwrap")} is writable by this user` });
+    hostPowerDeps.writable = () => false;
+    writeFileSync(join(dir, "murage-power.bpf"), Buffer.alloc(16));
+    expect(planHostPower("/usr/bin/engine", [], {}, "/")).toEqual({ kind: "refuse", reason: `${join(dir, "murage-power.bpf")} is not the pinned power filter` });
+    writeFileSync(join(dir, "murage-power.bpf"), FAKE_BPF);
+    writeFileSync(join(dir, "bwrap"), "#!/bin/sh\nexit 0\n");
+    expect(planHostPower("/usr/bin/engine", [], {}, "/")).toEqual({ kind: "refuse", reason: `${join(dir, "bwrap")} is not the shipped bwrap` });
+    linux(null);
+    expect(planHostPower("/usr/bin/engine", [], {}, "/").kind).toBe("refuse");
+  });
+
+  it.skipIf(process.platform !== "linux")("spawnCli: with a gap the engine runs as an ordinary spawn (a pid, its own output, no EPOWER), the same for every wrapped engine", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await startHostPowerStub();
+    linux(denying(UID_MAP));
+    await probeHostPowerEnvironment();
+    for (const job of [engineJob(), engineJob({ posixHostPower: true }), { hostPower: true } as const]) {
+      const child = spawnCli("/bin/echo", ["engine ran"], { stdio: ["pipe", "pipe", "pipe"] }, job);
+      expect(child.pid).toBeGreaterThan(0);
+      const result = await collect(child);
+      expect(result.errors).toEqual([]);
+      expect(result.code).toBe(0);
+      expect(result.out).toBe("engine ran\n");
+      expect(hostPowerRefused(child)).toBe(false);
+    }
+  });
+
+  it.skipIf(process.platform !== "linux")("a refusal seen before the probe answered: that turn is refused, the gap is learned and the next turn runs", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await startHostPowerStub();
+    linux(denying(UID_MAP));
+    const first = spawnCli("/bin/echo", ["engine ran"], { stdio: ["pipe", "pipe", "pipe"] }, { hostPower: true });
+    const one = await collect(first);
+    expect(one.out).toBe("");
+    expect(hostPowerRefused(first)).toBe(true);
+    // The refusal only asked for the independent probe; the probe recorded the gap.
+    expect(await probeHostPowerEnvironment()).toMatchObject({ detail: UID_MAP });
+    const second = spawnCli("/bin/echo", ["engine ran"], { stdio: ["pipe", "pipe", "pipe"] }, { hostPower: true });
+    const two = await collect(second);
+    expect(two.out).toBe("engine ran\n");
+    expect(hostPowerRefused(second)).toBe(false);
+  });
+
+  it.skipIf(process.platform !== "linux")("a turn cannot forge the gap: words a launch prints are checked by the probe, and a working bwrap keeps the block", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await startHostPowerStub();
+    // The probe (its first option is --unshare-user) succeeds; a launch (bwrap --args) fails before exec, printing the denial
+    // words as a crafted cwd could make it (first line, and a later line).
+    for (const said of [UID_MAP, `bwrap: Can't chdir to /x\n${UID_MAP}`]) {
+      resetHostPowerGapForTests();
+      linux(fakeCage(`[ "$1" = "--unshare-user" ] && exit 0; ${said.split("\n").map((line) => `echo "${line}" >&2`).join("; ")}; exit 1`));
+      const first = spawnCli("/bin/echo", ["engine ran"], { stdio: ["pipe", "pipe", "pipe"] }, { hostPower: true });
+      expect((await collect(first)).out).toBe("");
+      expect(hostPowerRefused(first)).toBe(true);
+      expect(await probeHostPowerEnvironment()).toBeNull();
+      expect(hostPowerGap()).toBeNull();
+      expect(planHostPower("/bin/echo", [], {}, "/").kind).toBe("bwrap");
+    }
+  });
+
+  it("the owner line: once, never without a gap, owed again if it did not reach the thread, not again after a restart; plain copy", () => {
+    const marker = join(scratch(), "power-guard-notice.json");
+    expect(hostPowerGapNoticeDue(marker)).toBe(false);
+    noteHostPowerGap("userns-restricted", UID_MAP);
+    expect(hostPowerGapNoticeDue(marker)).toBe(true);
+    // Not marked (the append failed): still owed.
+    expect(hostPowerGapNoticeDue(marker)).toBe(true);
+    markHostPowerGapNoticeShown(marker);
+    expect(hostPowerGapNoticeDue(marker)).toBe(false);
+    expect(existsSync(marker)).toBe(true);
+    resetHostPowerGapForTests();
+    noteHostPowerGap("userns-restricted", UID_MAP);
+    expect(hostPowerGapNoticeDue(marker)).toBe(false);
+    expect(HOST_POWER_GAP_NOTICE).toBe("On this computer your bots are protected by their access level, and Murage checks their commands before they run.");
+    expect(HOST_POWER_GAP_NOTICE).not.toMatch(/—|–|sandbox|cage|bwrap|namespace|AppArmor|could not|cannot|can't|unable|fail|refus|reinstall|unsafe|risk/i);
+    expect(HOST_POWER_GAP_NOTICE.split("\n")).toHaveLength(1);
+  });
+
+  it("the drivers the block does not wrap are exactly the ones that pass posixHostPower false", () => {
+    expect([...HOST_POWER_UNWRAPPED_DRIVERS].sort()).toEqual(["claudeAgent", "codex", "fuigoAgent"]);
+    expect(source("drivers/claude.ts")).toContain("engineJob({ posixHostPower: false })");
+    expect(source("drivers/codex.ts")).toContain("engineJob({ posixHostPower: false })");
+    expect(source("drivers/acp/core.ts")).toContain('{ posixHostPower: support.driverKind !== "fuigoAgent" }');
+    expect(source("index.ts")).toContain("!HOST_POWER_UNWRAPPED_DRIVERS.has(instance.driverKind) && hostPowerGapNoticeDue(");
+  });
+
+  it("draft-only bots keep their promise: every wrapped engine is refused with a next step before any spawn", () => {
+    for (const driverKind of ["kimiAgent", "grokAgent", "antigravityAgent", "piAgent", "hermesAgent", "clineAgent", "qwenAgent", "droidAgent", "cursorAgent", "opencodeGo", "boxAgent", "fuigoAgent", "codex"]) {
+      expect(draftOnlyQualifies({ driverKind }), driverKind).toEqual({ ok: false, line: DRAFT_ONLY_ENGINE_LINE });
+    }
+    expect(DRAFT_ONLY_ENGINE_LINE).toMatch(/Choose one of those in this bot's settings/);
   });
 });

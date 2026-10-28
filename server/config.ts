@@ -248,6 +248,10 @@ const browserProfilesSchema = z.array(browserProfileSchema).max(20).superRefine(
 });
 const featureConfigSchema = z.object({
   botsSharedAcrossTeams: z.boolean().optional(),
+  /** 1.0.9 phone tools. Off unless explicitly true; also needs a desktop host, the launch proof and an unshared workspace (server/phones/offered.ts). */
+  phoneTools: z.boolean().optional(),
+  /** 1.0.9 share and ask. Its own flag, independent of phoneTools; same host conditions (server/phones/offered.ts shareAskOffered). */
+  phoneShareAsk: z.boolean().optional(),
   /** Unset: on when a Flux key is present (index.ts learningDefaultOn); an explicit false keeps the activation hold. */
   learningDefaultOn: z.boolean().optional(),
   projectsLead: z.boolean().optional(),
@@ -433,6 +437,8 @@ export interface AppConfig {
   /** Product switches; each feature resolves its own default. */
   features?: {
     botsSharedAcrossTeams?: boolean;
+    phoneTools?: boolean;
+    phoneShareAsk?: boolean;
     learningDefaultOn?: boolean;
     projectsLead?: boolean; projectsGoals?: boolean; projectsBudgets?: boolean; projectsWorkProfile?: boolean; projectsBoard?: boolean; projectsDigest?: boolean; skillRecorder?: boolean; fluxDesktopSignin?: boolean; showToolCalls?: boolean; cloudBoxComputers?: boolean; browser?: boolean; catalogFeaturedOnly?: boolean;
     roomsThreadAdmission?: boolean; roomsQueue?: boolean; roomsMentionChain?: boolean; projectsAutonomy?: boolean; projectsAutoWake?: boolean; projectsParallelCards?: boolean;
@@ -807,6 +813,8 @@ export const WORKSPACE_CREDENTIAL_ENV = [
   // process ever inherits it (spec MCP-LINK 3.4).
   "MURAGE_MCP_SERVER_SECRETS",
   "MURAGE_MCP_COMMIT_TOKEN",
+  // The email keys and the email:owner token (server/email/email-secrets.ts): read once at boot and deleted.
+  "MURAGE_EMAIL_SECRETS",
   // Harness-private filesystem hints are not credentials themselves, but
   // exposing them to a shell-capable agent points straight at app-owned
   // state. The built-in browser master is delivered privately in memory.

@@ -18,6 +18,7 @@ public enum ChannelMethod: String, CaseIterable, Sendable {
     case diagLine
     // SEC-006: native fresh authentication for a high-risk Allow. Shared with
     // Android; dispatch is added with the iOS and Android handlers.
+    case openPhoneForBots
     case approveWithDevice
     // iPhone native call audio (spec §4.1). iOS only: Android's ChannelGate
     // never learns these names, so an Android page sending one gets
@@ -53,7 +54,7 @@ public enum ChannelGate {
     /// never called.
     public static let advertised: [ChannelMethod] = [.ready, .saveFile, .openExternal, .haptic, .signOut, .rePair, .setRoute, .showLauncher,
                                                      .registerPush, .pushStatus, .issuePushTokens, .setBadgeCount,
-                                                     .callSessionOpen, .callSessionClose, .diagLine, .approveWithDevice,
+                                                     .callSessionOpen, .callSessionClose, .diagLine, .approveWithDevice, .openPhoneForBots,
                                                      .callAudioOpen, .callAudioClose, .callAudioPlay, .callAudioControl]
 
     /// Spec §2: main frame only, and the frame's origin must be the saved one.
@@ -66,6 +67,7 @@ public enum ChannelGate {
         guard let method = ChannelMethod(rawValue: name) else { return .failure(.unknownMethod) }
         guard let raw = object["args"], !(raw is NSNull) else { return .success(ChannelRequest(method: method, args: [:])) }
         guard let args = raw as? [String: Any] else { return .failure(.badArgs) }
+        if method == .openPhoneForBots && !args.isEmpty { return .failure(.badArgs) }
         return .success(ChannelRequest(method: method, args: args))
     }
 

@@ -24,6 +24,7 @@ enum ApprovalKeys {
 
     /// The new key's public point (base64url), or nil with no passcode or no Secure Enclave.
     static func enrol(origin: WorkspaceOrigin) -> String? {
+        PhoneAskSetup.forget(origin)
         var policyError: NSError?
         guard LAContext().canEvaluatePolicy(.deviceOwnerAuthentication, error: &policyError) else { return nil }
         #if targetEnvironment(simulator)
@@ -41,10 +42,47 @@ enum ApprovalKeys {
         #endif
     }
 
-    static func remove(origin: WorkspaceOrigin) { _ = item(origin).delete() }
+    static func remove(origin: WorkspaceOrigin) {
+        PhoneAskSetup.forget(origin)
+        _ = item(origin).delete()
+    }
 
     /// DER signature (base64url) over the request's exact message bytes.
     static func sign(origin: WorkspaceOrigin, request: ApprovalRequest) async -> Result<String, Failure> {
+        await signPresent(origin: origin, message: request.message, reason: request.reason)
+    }
+
+    /// Public half of the already-enrolled key. Never enrols or prompts.
+    static func phoneJobsPoint(origin: WorkspaceOrigin) -> String? {
+        guard case .found(let blob) = item(origin).read() else { return nil }
+        do {
+            #if targetEnvironment(simulator)
+            let key = try P256.Signing.PrivateKey(rawRepresentation: blob)
+            #else
+            let context = LAContext()
+            context.interactionNotAllowed = true
+            defer { context.invalidate() }
+            let key = try SecureEnclave.P256.Signing.PrivateKey(dataRepresentation: blob, authenticationContext: context)
+            #endif
+            return ApprovalProof.base64url(key.publicKey.x963Representation)
+        } catch { return nil }
+    }
+
+    /// Native-only typed entry. No bridge method calls this purpose.
+    static func signPhoneJobs(request: PhoneJobsSigner.Request) async -> Result<String, Failure> {
+        guard let point = phoneJobsPoint(origin: request.origin),
+              PhoneJobsContract.approvalKeyId(point: point) == request.keyId else { return .failure(.noKey) }
+        return await signPresent(origin: request.origin, message: request.message, reason: "Enable phone tools for your bots")
+    }
+
+    static func signPhoneAsk(request: PhoneAskSigner.Request) async -> Result<String, Failure> {
+        guard let point = phoneJobsPoint(origin: request.origin),
+              PhoneJobsContract.approvalKeyId(point: point) == request.keyId else { return .failure(.noKey) }
+        return await signPresent(origin: request.origin, message: request.message, reason: PhoneJobStrings.text("ask_setup_title"))
+    }
+
+    // Only typed purpose-specific entries reach this primitive.
+    private static func signPresent(origin: WorkspaceOrigin, message: Data, reason: String) async -> Result<String, Failure> {
         let context = LAContext()
         context.touchIDAuthenticationAllowableReuseDuration = 0
         var policy: NSError?
@@ -54,13 +92,13 @@ enum ApprovalKeys {
         guard case .found(let blob) = item(origin).read() else { return .failure(.noKey) }
         defer { context.invalidate() }
         do {
-            try await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: request.reason)
+            try await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason)
             #if targetEnvironment(simulator)
             let key = try P256.Signing.PrivateKey(rawRepresentation: blob)
             #else
             let key = try SecureEnclave.P256.Signing.PrivateKey(dataRepresentation: blob, authenticationContext: context)
             #endif
-            return .success(ApprovalProof.base64url(try key.signature(for: request.message).derRepresentation))
+            return .success(ApprovalProof.base64url(try key.signature(for: message).derRepresentation))
         } catch let error as LAError where [.userCancel, .appCancel, .systemCancel, .userFallback].contains(error.code) {
             return .failure(.cancelled)
         } catch let error as LAError where error.code == .passcodeNotSet {
