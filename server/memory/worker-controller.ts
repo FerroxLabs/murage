@@ -23,8 +23,9 @@ import { turnTraceEnabled } from "../turn-trace.ts";
 import { logSwallowed, makeStderrForwarder, type WorkerSubsystem } from "./worker-log.ts";
 import { flushMemoryCounters, stepHealthScan } from "./health.ts";
 import { stepRetentionScan } from "./retention.ts";
-import { blockMemoryIndexReader, closeMemoryIndexReader, setWalCheckpointRequester, unblockMemoryIndexReader } from "./index-reader.ts";
+import { blockMemoryIndexReader, closeMemoryIndexReader, indexScrubOwed, setWalCheckpointRequester, unblockMemoryIndexReader } from "./index-reader.ts";
 import { ownerFirst } from "../owner-first.ts";
+import { scrubWalAfterDelete } from "../wal-maintenance.ts";
 import { forgetTurnCaptureJob, turnCaptureJobId } from "./turn-capture-jobs.ts";
 import { CATCH_UP_WINDOW_MS } from "./recent.ts";
 import { heldStep } from "../observe.ts";
@@ -94,6 +95,11 @@ export class MemoryWorkerController {
   /** Checkpoint requests the index reader sent to the helper and has not seen answered. */
   private checkpoints=new Map<string,(ok:boolean)=>void>();
   private indexSent=new Map<string,string>();
+  /** Records the batch in flight sent as rollovers: their deleted acknowledgement never clears an owner forget's receipt. */
+  private indexRolled=new Set<string>();
+  /** The index owes a deletion scrub (index.ts scrubDeleted): a helper is kept running for it with nothing else to do. Read at start,
+   * then told by the helper (initialised, index-result, scrub-done); the durable debt itself is the index's own marker. */
+  private scrubOwed=false;
   private queries=new Map<string,{input:MemorySearchInput;sent:boolean;resolve:(value:MemorySearchResult)=>void;reject:(error:Error)=>void;cleanup:()=>void}>();
   /** One entry per subsystem, so one clean tick of the capture loop cannot hide a failing index and the reverse. The
    * newest entry is what `error` reports. */
@@ -285,6 +291,8 @@ export class MemoryWorkerController {
     if(this.started) return;
     this.started=true;
     this.stopping=false;
+    // unknown (the index could not be read just now) is owed: the helper reads the marker itself and says (memdel r2 High #3)
+    this.scrubOwed=indexScrubOwed()!==false;
     if(this.consolidationAbort.signal.aborted)this.consolidationAbort=new AbortController();
     // Failed jobs whose cause says nothing about the conversation (the helper died, a timeout) get their attempts back, once.
     try{ioBudget.withSource("memory-worker",()=>{const n=redriveTransientFailedJobs();if(n)console.log(`[memory-worker] subsystem=capture redriven=${n}`);});}
@@ -295,7 +303,7 @@ export class MemoryWorkerController {
     ioBudget.setOnMemoryWork(notifyMemoryWork);
     this.unsubscribe=onMemoryWork(()=>this.wake());
     try {
-      if(hasClaimableMemoryJob()||this.pendingProjection())this.wake();
+      if(hasClaimableMemoryJob()||this.pendingProjection()||this.scrubOwed)this.wake();
       else this.schedule(Math.min(MEMORY_IDLE_SWEEP_MS,nextMemoryJobDelay()??MEMORY_IDLE_SWEEP_MS));
     }catch{this.schedule(MEMORY_IDLE_SWEEP_MS);}
   }
@@ -359,8 +367,10 @@ export class MemoryWorkerController {
         if(Date.now()>this.deadline) { this.failWork("MEMORY_WORKER_TIMEOUT");this.child?.kill("SIGKILL"); }
         return;
       }
-      // Memory off: no consolidation is owed (the next wake or idle sweep looks again).
-      if(!["capture","active"].includes(memoryState().mode)){this.consolidationDue=false;return;}
+      // Memory off or paused: no consolidation, claim or capture projection is owed (the next wake or idle sweep looks again), but an owner
+      // deletion still is: its index removals and the scrub the index owes run in every mode (memdel r2 High #2).
+      const memoryOn=["capture","active"].includes(memoryState().mode);
+      if(!memoryOn){this.consolidationDue=false;if(!this.scrubOwed&&!hasPendingProjection(database(),true))return;}
       // A notified tick that lands before the pacing deadline only moves to it: the arrival stays a
       // notification, so the I/O budget's deferral of unrequested polls does not strand it until the idle sweep.
       if(paced){if(requested)this.requested=true;return;}
@@ -385,7 +395,7 @@ export class MemoryWorkerController {
         this.nextBacklogTrace=Date.now()+5000;
         traceBacklog(Number(database().prepare("SELECT count(*) AS n FROM memory_jobs WHERE status IN ('pending','partial','deferred')").get()?.n??0));
       }
-      if(this.options.onIdleConsolidation && !this.idleTask && Date.now()>=this.nextConsolidationPoll && !ioBudget.shouldDefer("memory-idle") && !this.idleHeld() && !this.idleUpgradeHeld() && this.idleTurn() && this.idleAdmitted()){
+      if(memoryOn && this.options.onIdleConsolidation && !this.idleTask && Date.now()>=this.nextConsolidationPoll && !ioBudget.shouldDefer("memory-idle") && !this.idleHeld() && !this.idleUpgradeHeld() && this.idleTurn() && this.idleAdmitted()){
         this.nextConsolidationPoll=Date.now()+1000;
         this.consolidationWake=false;this.consolidationDue=false;this.idleBlockedSince=null;
         let worked=false;
@@ -409,23 +419,26 @@ export class MemoryWorkerController {
       }
       if(!requested&&ioBudget.shouldDefer("memory-worker"))return;
       if(this.resetPending&&!this.applyIndexReset()){this.schedule(BUSY_RETRY_MS);return;}
-      const projection=this.pendingProjection(),job=hasClaimableMemoryJob();
-      // Nothing else to do: one bounded parking maintenance step (no helper is needed for it).
-      if(!projection&&!job){this.maintain(false);return;}
+      const projection=memoryOn?this.pendingProjection():hasPendingProjection(database(),true),job=memoryOn&&hasClaimableMemoryJob();
+      // Nothing else to do: one bounded parking maintenance step (no helper is needed for it, unless the index owes a scrub).
+      if(!projection&&!job&&!this.scrubOwed){if(memoryOn)this.maintain(false);return;}
       if(!this.child) { if(Date.now()>=this.respawnAt)this.spawn(); return; }
       if(!this.ready) { if(Date.now()>this.initDeadline)this.failInit("MEMORY_WORKER_INIT_TIMEOUT"); return; }
-      const records=projection?pendingProjectionRecords(database(),16):[];
+      // No cursor: every batch is read from the durable receipts, delete-pending first. Each batch is acknowledged when its rows are
+      // written or removed (the scrub a forget owes is the index's own durable debt), so a batch never reselects the one before it.
+      const records=projection?pendingProjectionRecords(database(),16,!memoryOn):[];
       if(records.length){
         this.indexing=true;this.indexDeadline=Date.now()+60000;
         this.indexRequestId=randomUUID();
         // What each record was projected as, so its acknowledgement can be fenced against what it is when the ack lands.
         this.indexSent=new Map(records.map(r=>[`${String(r.id)}\u0000${Number(r.version)}`,String(r.state)]));
+        this.indexRolled=new Set(records.filter(r=>Number(r.rolled)===1).map(r=>`${r.id}\u0000${r.version}`));
         this.child.send({type:"index",requestId:this.indexRequestId,records:records.map(r=>({id:String(r.id),version:Number(r.version),scopeId:String(r.scopeId),text:r.state==="deleted"?"":String(r.text),deleted:r.state==="deleted",archived:r.state!=="active",...Number(r.rolled)===1?{rolled:true}:{},ageKey:r.ageKey===null||r.ageKey===undefined?null:Number(r.ageKey)}))});
-        this.maintain(true);return;
+        if(memoryOn)this.maintain(true);return;
       }
       const work=job?claimMemoryJob(this.owner):null;
       if(work) {this.work=work;this.deadline=Date.now()+60000;this.child.send(work);this.scheduleHeartbeat(this.child);}
-      this.maintain(!!work);
+      if(memoryOn)this.maintain(!!work);
     } catch(error) {
       clean=false;
       // A held write lock is "try again shortly": no error state, no attempt spent.
@@ -746,7 +759,7 @@ export class MemoryWorkerController {
     const handlerStart=performance.now();
     {
       if(!message||typeof message!=="object")return;
-      const event=message as {type?:string;result?:unknown;requestId?:string;reset?:boolean;records?:Array<{id:string;version:number;deleted:boolean}>;embeddingStatus?:string;fsWriteBlocks?:unknown};
+      const event=message as {type?:string;result?:unknown;requestId?:string;reset?:boolean;records?:Array<{id:string;version:number;deleted:boolean}>;embeddingStatus?:string;scrubOwed?:boolean;fsWriteBlocks?:unknown};
       // the helper's own write count rides on its index acknowledgements and its maintenance reports (worker.ts reportIo)
       if("fsWriteBlocks" in event)this.noteWorkerBlocks(child,event.fsWriteBlocks);
       if(event.type==="io")return;
@@ -760,8 +773,11 @@ export class MemoryWorkerController {
         return;
       }
       if(event.type==="model-ready"){if(this.child===child)this.modelReady=true;return;}
+      // The helper's own deletion-scrub debt: messages arrive in order, so the newest says whether any is left.
+      if(event.type==="scrub-done"){this.scrubOwed=false;return;}
       if(event.type==="initialised"){
         this.wasmHelper=(event as {wasm?:boolean}).wasm===true;
+        this.scrubOwed=event.scrubOwed===true;
         // The index was rebuilt: every record is owed to it again. If the database is locked just now the owing is kept and applied by the next tick
         // (before any indexing starts), not lost and not thrown into the message handler.
         if(event.reset)this.resetPending=true;
@@ -783,12 +799,13 @@ export class MemoryWorkerController {
       if(event.type==="checkpoint-result"&&event.requestId){const done=this.checkpoints.get(event.requestId);if(done){this.checkpoints.delete(event.requestId);done((event as {ok?:boolean}).ok===true);}return;}
       if(event.type==="query-result"&&event.requestId){const pending=this.queries.get(event.requestId);if(pending){this.queries.delete(event.requestId);pending.cleanup();pending.resolve(event.result as MemorySearchResult);}return;}
       if(event.type==="index-result"){
+        if(typeof event.scrubOwed==="boolean")this.scrubOwed=event.scrubOwed;
         if(event.requestId!==this.indexRequestId)return;
         // The receipt writes (a synchronous transaction, one fsync) run on the next turn of the event loop, not
         // inside the IPC handler: `indexing` stays set until they are done, so no tick starts other work meanwhile.
         // They are written in slices of at most WORKER_SLICE_MS of row work, each its own transaction (every row's update is
         // fenced on its own), with a turn of the event loop between slices, so a large batch never holds the loop.
-        const records=event.records??[],embeddingStatus=event.embeddingStatus,requestId=event.requestId,sent=this.indexSent;
+        const records=event.records??[],embeddingStatus=event.embeddingStatus,requestId=event.requestId,sent=this.indexSent,rolled=this.indexRolled;
         let next=0;
         const writeReceipts=()=>{
           if(this.indexRequestId!==requestId)return;
@@ -796,7 +813,9 @@ export class MemoryWorkerController {
           try{
             transaction(()=>{while(next<records.length){
               const row=records[next++]!;
-              if(row.deleted) database().prepare(`UPDATE memory_projection_receipts SET lexical_status='deleted',embedding_status='deleted' WHERE record_id=? AND record_version=? AND EXISTS(SELECT 1 FROM memory_records r WHERE r.id=record_id AND r.version=record_version AND (r.state='deleted' OR ${rolledCheckpointSql("r")}))`).run(row.id,row.version);
+              // An ordinary rollover can race an owner deletion while in flight: its acknowledgement (no scrub owed for it) must not
+              // clear the new delete-pending receipt, which goes in a later batch as a forget.
+              if(row.deleted) database().prepare(`UPDATE memory_projection_receipts SET lexical_status='deleted',embedding_status='deleted' WHERE record_id=? AND record_version=? AND EXISTS(SELECT 1 FROM memory_records r WHERE r.id=record_id AND r.version=record_version AND ((r.state='deleted' AND ?=1) OR (r.state!='deleted' AND lexical_status!='delete-pending' AND ${rolledCheckpointSql("r")})))`).run(row.id,row.version,rolled.has(`${row.id}\u0000${row.version}`)?0:1);
               // Fenced: the receipt says "indexed" only while the record still projects as what was sent. A record that
               // changed while the batch was in flight (a checkpoint rolled over: active -> pending-archive) keeps its
               // pending receipt and is projected again; a late ack never overwrites it (msearch review round 2).
@@ -815,7 +834,10 @@ export class MemoryWorkerController {
             next=records.length;
           }
           if(next<records.length){this.later(writeReceipts);return;}
-          this.indexing=false;this.indexRequestId=null;this.indexSent=new Map();this.scheduleTick(started);
+          // Revocation erased these records' text in the main database after the chat's own log scrub: its log cleanup is owed again,
+          // with its own bounded retries, apart from this batch.
+          if(records.some(row=>row.deleted&&!rolled.has(`${row.id}\u0000${row.version}`)))void scrubWalAfterDelete().catch(()=>{});
+          this.indexing=false;this.indexRequestId=null;this.indexSent=new Map();this.indexRolled=new Set();this.scheduleTick(started);
         };
         this.later(writeReceipts);
         return;

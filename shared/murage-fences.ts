@@ -27,11 +27,16 @@ export interface MurageFence {
 }
 
 export interface MurageFenceScan {
+  /** Every code fence, including ordinary and unclosed blocks. Ranges include the fence lines; `end` is exclusive. */
+  codeRanges: { start: number; end: number }[];
   /** Every closed murage fence, in order. */
   closed: MurageFence[];
   /** A murage fence opened and never closed (the reply is still streaming, or the bot never closed it): from `start` to the end. */
   open?: { kind: MurageFenceKind; index: number; start: number };
 }
+
+/** A line break is CR, CRLF or LF (CommonMark): a bare CR ends a line too, so it cannot hide a closer or an opener. */
+const LINE_BREAK = /\r\n|\r|\n/g;
 
 const OPENING = /^ {0,3}(`{3,}|~{3,})(.*)$/;
 
@@ -42,14 +47,17 @@ function kindOf(info: string): MurageFenceKind | null {
 
 /** Scan a bot's text for its murage fences. */
 export function scanMurageFences(text: string): MurageFenceScan {
+  const codeRanges: MurageFenceScan["codeRanges"] = [];
   const closed: MurageFence[] = [];
   const counts: Record<MurageFenceKind, number> = { [QUESTION_FENCE]: 0, [WIDGET_FENCE]: 0 };
   let fence: { char: string; length: number; kind: MurageFenceKind | null; start: number; bodyStart: number } | null = null;
   let at = 0;
   while (at <= text.length) {
-    const lineEnd = text.indexOf("\n", at);
-    const next = lineEnd === -1 ? text.length + 1 : lineEnd + 1;
-    const line = text.slice(at, lineEnd === -1 ? text.length : lineEnd).replace(/\r$/, "");
+    LINE_BREAK.lastIndex = at;
+    const lineBreak = LINE_BREAK.exec(text);
+    const lineEnd = lineBreak ? lineBreak.index : -1;
+    const next = lineBreak ? lineBreak.index + lineBreak[0].length : text.length + 1;
+    const line = text.slice(at, lineEnd === -1 ? text.length : lineEnd);
     if (!fence) {
       const opening = OPENING.exec(line);
       // a backtick fence's info string never holds a backtick (CommonMark)
@@ -59,6 +67,7 @@ export function scanMurageFences(text: string): MurageFenceScan {
     } else {
       const closing = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(line);
       if (closing && closing[1]![0] === fence.char && closing[1]!.length >= fence.length) {
+        codeRanges.push({ start: fence.start, end: Math.min(next, text.length) });
         if (fence.kind) {
           closed.push({ kind: fence.kind, index: counts[fence.kind]++, body: text.slice(fence.bodyStart, at), start: fence.start, end: Math.min(next, text.length) });
         }
@@ -68,7 +77,8 @@ export function scanMurageFences(text: string): MurageFenceScan {
     if (lineEnd === -1) break;
     at = next;
   }
-  return { closed, ...(fence?.kind ? { open: { kind: fence.kind, index: counts[fence.kind], start: fence.start } } : {}) };
+  if (fence) codeRanges.push({ start: fence.start, end: text.length });
+  return { codeRanges, closed, ...(fence?.kind ? { open: { kind: fence.kind, index: counts[fence.kind], start: fence.start } } : {}) };
 }
 
 /** The closed fences of one kind. */

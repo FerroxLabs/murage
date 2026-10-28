@@ -94,6 +94,11 @@ export const STEP_UP_LABELS = Object.freeze([
   { methods: ["PATCH"], path: rx(String.raw`/api/instances/[\w.-]+`), label: "Change how an engine starts", summary: "settings" },
   { methods: ["POST"], path: rx(String.raw`/api/instances/[\w.-]+/claude-update`), label: "Update Claude Code" },
   { methods: ["POST"], path: rx("/api/hermes/profiles/import"), label: "Add Hermes profiles as engines" },
+  // 1.0.9 bot email owner routes (server/email/owner-routes.ts); route-policy marks all of /api/email/ step-up.
+  { methods: ["POST"], path: rx("/api/email/account"), label: "Turn bot email on or off for this account", summary: "none" },
+  { methods: ["POST"], path: rx(`/api/email/other-setups/${ID}/remove`), label: "Remove an email address from another setup", summary: "none" },
+  { methods: ["POST"], path: rx(`/api/email/bots/${ID}/[a-z-]+`), label: "Change a bot's email address or who can email it", summary: "none" },
+  { methods: ANY, path: /^\/api\/email(?:\/.*)?$/, label: "Change bot email", summary: "none" },
   // 1.0.4 SL-H: route-policy denies this on every Cloud home; the label is here so the sentence is never the fallback.
   { methods: ["POST"], path: rx("/api/storage/attachments/remove"), label: "Remove attachment files for good" },
   { methods: ["POST"], path: rx("/api/publish/netlify/check"), label: "Check a Netlify connection", summary: "none" },
@@ -136,7 +141,7 @@ export function findStepUpLabel(method, path) {
 
 /** The bot id in a /api/bots/<id>... path, or null. */
 export function botIdOfPath(path) {
-  return /^\/api\/bots\/([\w-]+)(?:\/|$)/.exec(stripQuery(path))?.[1] ?? null;
+  return /^\/api\/(?:email\/)?bots\/([\w-]+)(?:\/|$)/.exec(stripQuery(path))?.[1] ?? null;
 }
 
 function elevatedFrom(body) {

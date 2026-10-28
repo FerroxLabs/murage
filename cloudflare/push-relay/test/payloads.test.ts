@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { apnsRequest, fcmMessage, IOS_CATEGORY } from "../src/payloads";
+import { PUSH_CONTRACT_VERSION, apnsRequest, fcmMessage, IOS_CATEGORY } from "../src/payloads";
 import { GENERIC_TEXT, PUSH_CATEGORIES, type RelayEvent } from "../../../shared/mobile-push";
 
 const push = JSON.parse(readFileSync(join(import.meta.dirname, "../../../apps/mobile/contract/push.json"), "utf8"));
@@ -40,12 +40,38 @@ describe("provider requests match the contract byte for byte", () => {
     }
   });
   it("uses the contract's iOS categories", () => {
+    expect(PUSH_CONTRACT_VERSION).toBe(push.version);
     expect(IOS_CATEGORY).toEqual(push.iosCategory);
   });
 });
 
+describe("device-job", () => {
+  const job = { ...p.event, category: "device-job" as const, timeSensitive: false };
+  it("APNs uses only the generic text and DEVICE_JOB", () => {
+    const { body } = apnsRequest(job, 1, "TOKEN", "com.murage.mobile");
+    const aps = body.aps as Record<string, unknown>;
+    expect(aps.alert).toEqual({ title: "Murage", body: "A bot is asking to use your phone" });
+    expect(aps.category).toBe("DEVICE_JOB");
+    expect(IOS_CATEGORY["device-job"]).toBe("DEVICE_JOB");
+  });
+});
+
+describe("bot call requests (contract v2)", () => {
+  const c = push.providerCall as { event: RelayEvent; now: number; deviceBadge: number; apns: { path: string; headers: Record<string, string>; body: unknown }; fcm: unknown };
+  it("APNs: the closed ring text, CALL, always time-sensitive, the call sound, and the expiry in the payload", () => {
+    const request = apnsRequest(c.event, c.deviceBadge, "TOKEN", "com.murage.mobile");
+    expect(request.path).toBe(c.apns.path);
+    expect(request.headers).toEqual(c.apns.headers);
+    expect(request.body).toEqual(c.apns.body);
+  });
+  it("FCM: the expiry rides in data as a string, TTL to the ring's end", () => {
+    expect(fcmMessage(c.event, "TOKEN", "com.murage.mobile", c.now)).toEqual(c.fcm);
+  });
+});
+
 describe("provider requests carry nothing outside the contract", () => {
-  const payloadKeys = Object.keys(push.payloads[0].value).sort();
+  const baseKeys = Object.keys(push.payloads[0].value).sort();
+  const payloadKeysFor = (category: string) => (push.expiringCategories as string[]).includes(category) ? [...baseKeys, "expiresAt"].sort() : baseKeys;
   // The contract's event plus a field a careless host might add: none of it may leak.
   const leaky = { ...p.event, title: "Scout wants to delete prod", threadId: "thread-42" } as RelayEvent;
   for (const category of PUSH_CATEGORIES) {
@@ -55,14 +81,14 @@ describe("provider requests carry nothing outside the contract", () => {
       const aps = body.aps as Record<string, unknown>;
       for (const key of Object.keys(aps)) expect(["alert", "mutable-content", "category", "thread-id", "badge", "interruption-level", "sound"]).toContain(key);
       expect(aps.alert).toEqual(GENERIC_TEXT[category]);
-      expect(Object.keys(body.murage as object).sort()).toEqual(payloadKeys);
+      expect(Object.keys(body.murage as object).sort()).toEqual(payloadKeysFor(category));
       expect(Object.keys(headers).sort()).toEqual(Object.keys(p.apns.headers).sort());
       expect(JSON.stringify({ body, headers })).not.toMatch(/Scout|thread-42|title":"Scout|threadId/);
     });
     it(`FCM ${category}: data-only strings of the payload fields plus threadGroup`, () => {
       const message = (fcmMessage({ ...leaky, category }, "TOKEN", "com.murage.mobile", p.now) as unknown as { message: Record<string, Record<string, unknown>> }).message;
       expect(Object.keys(message).sort()).toEqual(["android", "data", "token"]);
-      expect(Object.keys(message.data).sort()).toEqual([...payloadKeys, "threadGroup"].sort());
+      expect(Object.keys(message.data).sort()).toEqual([...payloadKeysFor(category), "threadGroup"].sort());
       expect(Object.values(message.data).every((v) => typeof v === "string")).toBe(true);
       expect(Object.keys(message.android).sort()).toEqual(["priority", "restricted_package_name", "ttl"]);
       expect(JSON.stringify(message)).not.toMatch(/Scout|thread-42|threadId|"notification"/);

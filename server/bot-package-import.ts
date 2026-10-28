@@ -203,7 +203,8 @@ function prepare(intake: Intake, inspected: ReturnType<typeof inspect>, options:
       section: teamSection(agent.team),
       ...(playbooks.length ? { playbooks: structuredClone(playbooks) } : {}),
       installedPackage: { id: pkg.id, name: pkg.name, release: pkg.release, requiredApps: pkg.requirements.apps.map((app) => ({ ...app })),
-        sourceRole: agent.role ?? (agent.key === pkg.chiefOfStaff ? "chief" : "member"), sourceTeam: agent.team },
+        sourceRole: agent.role ?? (agent.key === pkg.chiefOfStaff ? "chief" : "member"), sourceTeam: agent.team,
+        ...(agent.emailIntent === "was-on" ? { emailIntent: "was-on" as const } : {}) },
     };
     result.bots.push(bot); ids.set(agent.key, id);
     if (leadKeys.has(agent.key)) result.leadBotIds.push(id);

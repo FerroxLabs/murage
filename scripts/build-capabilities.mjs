@@ -46,8 +46,14 @@ for (const match of read("src/lib/settings-sections.ts").matchAll(/^ {2}\{ id: "
   add("settings-page", match[1], label, "src/lib/settings-sections.ts");
 }
 
-// 3. Bot settings sections.
-for (const match of read("src/components/bot-settings-sections.ts").matchAll(/\{ id: "([a-z]+)", label: "([^"]+)"/g)) {
+// 3. Bot settings sections. A GATED section (GATED_BOT_SETTINGS: shown only while a server feature says it is on, e.g. bot email's dark
+// launch) is left out, so the help never names a section the product does not show yet.
+const botSections = read("src/components/bot-settings-sections.ts");
+const gatedMatch = /export const GATED_BOT_SETTINGS[^=]*= new Set\(\[([^\]]*)\]\)/.exec(botSections);
+if (!gatedMatch) throw new Error("bot-settings-sections.ts: cannot find GATED_BOT_SETTINGS");
+const gatedSections = new Set([...gatedMatch[1].matchAll(/"([a-z]+)"/g)].map((match) => match[1]));
+for (const match of botSections.matchAll(/\{ id: "([a-z]+)", label: "([^"]+)"/g)) {
+  if (gatedSections.has(match[1])) continue;
   add("bot-settings", match[1], match[2], "src/components/bot-settings-sections.ts");
 }
 
@@ -75,6 +81,8 @@ const ROUTE_TERMS = {
   "backup-restart": "backups",
   "backup-waiting": "backups",
   bots: "bots",
+  // /api/sentinel/summary and /api/sentinel/issues: the owner's Health card (1.0.9 Sentinel)
+  sentinel: "health checks",
   cloud: "your own server",
   // /api/browser/linux-sandbox/enable: the Linux "Enable browser" button (1505df2ae)
   browser: "browser",
@@ -105,6 +113,8 @@ const ROUTE_TERMS = {
   news: "Murage news",
   owner: "time zone",
   packages: "templates",
+  // /api/phones: the phone tools card, Share to Murage targets and Ask Murage (1.0.9 phone tools, 9f6b1e18f)
+  phones: "phone tools",
   projects: "projects",
   "provider-connections": "engines",
   "routine-runs": "routines",

@@ -1,5 +1,6 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { PHONE_TOOL_NAMES } from "../../shared/phone-jobs-contract.ts";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -133,6 +134,17 @@ describe("Rule 14: three trusted sets, nothing else", () => {
     expect(gate.asked).toHaveLength(3);
     expect(GATE_UNASKED.flatMap(([mount, tools]) => tools.map((tool) => `${mount}/${tool}`)).sort())
       .toEqual(OWN_UNASKED.flatMap((row) => row.tools.map((tool) => `${row.mount}/${tool}`)).filter((v, i, all) => all.indexOf(v) === i).sort());
+  });
+
+  it("S13b: every phone tool of the phoneJobs mount runs unasked on Pi (no desktop card)", async () => {
+    const table = holder[MCP_TABLE_KEY] as Map<string, McpToolEntry>;
+    for (const tool of PHONE_TOOL_NAMES) table.set(`phoneJobs_${tool}`, { piName: `phoneJobs_${tool}`, mount: "phoneJobs", mcpTool: tool, mountId: "own:phoneJobs" });
+    table.set("custom_phone_calendar_read", { piName: "custom_phone_calendar_read", mount: "custom", mcpTool: "phone_calendar_read", mountId: "custom:custom" });
+    const gate = rig();
+    for (const tool of PHONE_TOOL_NAMES) expect(await gate.call({ toolName: `phoneJobs_${tool}`, input: {} })).toBeUndefined();
+    expect(gate.asked).toHaveLength(0);
+    await gate.call({ toolName: "custom_phone_calendar_read", input: {} });
+    expect(gate.asked).toHaveLength(1);
   });
 
   it("the proposal-only turn runs only its one tool and asks for everything else, reads included", async () => {
