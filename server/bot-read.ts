@@ -10,6 +10,7 @@
 // The viewer axis is presentation, not lineage: only { kind: "human" } (the owner's HTTP and UI routes) sees rows as stored. A bot
 // answering an owner-audience turn is { kind: "bot" } and reads with full withholding. The door decides on every build; nothing it
 // decides is cached across turns (rule 19).
+import { emailDerivedText } from "./email/external-marks.ts";
 import type { DatabaseSync } from "node:sqlite";
 import type { Message } from "./store.ts";
 import { isMurageVoice } from "./murage-voice.ts";
@@ -376,7 +377,13 @@ export function botMessages(db: DatabaseSync, viewer: Viewer, threadId: string, 
 /** The admitted rows as a renderer reads them (an unclassified row as stored, a classified one as its projection), each recorded as the door's
  * latest decision for this viewer (botRowOf). */
 function shownRows(viewer: Viewer, judged: readonly Message[], admitted: readonly Admitted[]): Message[] {
-  const shown = admitted.map(({ row, projection }) => projection === undefined ? { row, text: row.text ?? "" } : { row: projectionRow(row, projection), text: projection });
+  // 5.4: a bot reads a marked row (written after reading outside mail) fenced, kind email-derived
+  const shown = admitted.map(({ row, projection }) => {
+    if (projection !== undefined) return { row: projectionRow(row, projection), text: projection };
+    if (viewer.kind !== "bot" || row.externalContent !== "email" || !row.text) return { row, text: row.text ?? "" };
+    const text = emailDerivedText(row, row.text);
+    return { row: { ...row, text } as Message, text };
+  });
   decided(viewer, judged, shown);
   return shown.map(({ row }) => row);
 }

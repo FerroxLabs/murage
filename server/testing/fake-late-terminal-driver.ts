@@ -54,6 +54,9 @@
 //                            cursor when it resumes, a new session otherwise (a long chat on an engine that keeps its session).
 //   FAKE_LATE_DUMP_CONTEXT   "1": each dump line also says whether the turn carried a memory frame (`memoryContext`), the memory mount
 //                            (`memory`), a session reset (`sessionReset`) and a resume cursor (`resumed`).
+//   FAKE_LATE_TEARDOWN       "1": the adapter has awaitTurnTeardown, confirming the close 50 ms after the terminal event.
+//   FAKE_LATE_TOOL_FIRST     "1" (with FAKE_LATE_HANDBACK): a tool starts and completes before the late write (a later round's
+//                            submission, as openai-chat runs one per round), so a refusal there must card the turn, never rebuild it.
 // An uninterrupted turn replies "Hello from late" and completes on its own.
 import { appendFileSync, existsSync, rmSync, writeFileSync } from "node:fs";
 import type {
@@ -143,6 +146,11 @@ export function makeLateTerminalDriver(): AnyProviderDriver {
                   emit({ type: "turn.completed", ok: false, stopReason: "submission_refused", threadId: turn.threadId, turnId });
                   return;
                 }
+                if (input.environment.FAKE_LATE_TOOL_FIRST === "1") {
+                  if (dump) appendFileSync(dump, `${JSON.stringify({ tool: true, turnId, threadId: turn.threadId })}\n`);
+                  emit({ type: "item.started", itemType: "tool", origin: "engine", itemId: `tool-${turnId}`, title: "write_file", threadId: turn.threadId, turnId });
+                  emit({ type: "item.completed", itemType: "tool", itemId: `tool-${turnId}`, ok: true, result: "written", threadId: turn.threadId, turnId });
+                }
                 try { turn.beforeSubmit?.(); } catch {
                   active.delete(turn.threadId);
                   emit({ type: "turn.completed", ok: false, stopReason: "submission_refused", threadId: turn.threadId, turnId });
@@ -195,6 +203,11 @@ export function makeLateTerminalDriver(): AnyProviderDriver {
               if (terminalGate) writeFileSync(`${terminalGate}.emitted`, entry.turnId);
             })();
           },
+          // FAKE_LATE_TEARDOWN: the engine ends a turn by closing its child, confirmed a moment after the terminal event.
+          ...(input.environment.FAKE_LATE_TEARDOWN === "1" ? { awaitTurnTeardown: async () => {
+            await new Promise(resolve => setTimeout(resolve, 50));
+            return { closeConfirmed: true as const };
+          } } : {}),
           respondToRequest: async () => "unavailable" as const,
           hasSession: () => false,
           stopAll: async () => { active.clear(); },

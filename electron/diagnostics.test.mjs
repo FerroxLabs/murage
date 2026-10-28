@@ -16,6 +16,7 @@ const {
   createRendererMemorySampler,
   readSafeLogTail,
   redactSecretsInLine,
+  summarizeSentinel,
   CREDENTIAL_ENV_NAMES,
 } = require("./diagnostics.mjs");
 
@@ -451,5 +452,31 @@ describe("diagnosticsFileName", () => {
     expect(diagnosticsFileName(new Date(2026, 7, 22, 16, 5, 9))).toBe(
       "murage-diagnostics-20260822-160509.txt",
     );
+  });
+});
+
+describe("Sentinel self-health in diagnostics", () => {
+  it("lists only the closed states and bounded counts, never a path, name or free text", () => {
+    const report = buildDiagnosticsReport({
+      sentinelSummary: {
+        available: true, rootState: "ready", registration: "proven", mechanism: "launchd", heartbeat: "fresh",
+        rootDeferred: 2, revision: 4, pagesShown: 1, heartbeatAgeMinutes: 12,
+        installationRoot: "/Users/someone/.murage", reason: "sk-ant-secret", outputRoot: "C:\\Users\\someone",
+      },
+    });
+    expect(report).toContain("## Health checks: states and counts only");
+    for (const line of ["sentinel.available=true", "sentinel.rootState=ready", "sentinel.registration=proven", "sentinel.mechanism=launchd", "sentinel.heartbeat=fresh", "sentinel.rootDeferred=2", "sentinel.revision=4", "sentinel.pagesShown=1", "sentinel.heartbeatAgeMinutes=12"]) {
+      expect(report).toContain(line);
+    }
+    expect(report).not.toContain("someone");
+    expect(report).not.toContain("sk-ant");
+  });
+
+  it("drops values outside the closed sets and counts outside their bounds", () => {
+    expect(summarizeSentinel({ available: true, rootState: "/etc/passwd", registration: "hacked", heartbeat: "stale", revision: -1, pagesShown: 1.5, rootDeferred: 1_000_001, heartbeatAgeMinutes: "none" }))
+      .toEqual({ available: true, heartbeat: "stale", heartbeatAgeMinutes: "none" });
+    expect(summarizeSentinel(null)).toEqual({ available: false });
+    expect(summarizeSentinel({ available: "yes", rootState: "ready" })).toEqual({ available: false });
+    expect(buildDiagnosticsReport({})).toContain("sentinel.available=false");
   });
 });

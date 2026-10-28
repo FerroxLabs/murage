@@ -9,6 +9,8 @@ import type { MemoryEvidenceHandle } from "../../shared/memory.ts";
 import { groundMemoryClaim, type TextOnlyExtractor } from "./extract.ts";
 import { readMemoryLearning } from "./learning-policy.ts";
 import { activateGroundedMemory, holdMemoryCandidate, ownerLearningRefusal, invitedCanonRefusal, type MemoryClaimType } from "./automatic-learning.ts";
+import { evidenceEmailDerived, markRecordEmailDerived, recordEmailDerived } from "./email-derived.ts";
+import { turnEmailDerived } from "../email/external-marks.ts";
 import { assertMemoryAccess, type MemoryAccess, type MemoryRoster } from "./policy.ts";
 import { enqueueProcedureCorrectionReview } from "./procedure-review.ts";
 import { isPipKind } from "./pip-kinds.ts";
@@ -89,6 +91,9 @@ function saveCandidate(text: string, evidence: MemoryEvidenceHandle[], key: stri
     }
     insertMemoryRecord(db,{id,version:1,scopeId:String(scope),kind:"fact",text:safeText,assertion:"assistant-inference",state:"candidate",validFrom:Date.now(),createdAt:Date.now()});
     for (const h of evidence) { db.prepare("INSERT INTO memory_evidence VALUES(?,1,?,?,?,?)").run(id,h.sourceId,h.revision,h.startByte,h.endByte); inheritEdge(db,{kind:"record",id,version:1},{kind:"source",id:h.sourceId}); }
+    // bot email (5.4): a memory saved during a marked turn (it read outside mail or carried a marked row), or quoting a marked row,
+    // carries the external-mail origin: held for the owner (automatic-learning.ts) and fenced wherever it is shown later
+    if (turnEmailDerived(access.threadId) || evidenceEmailDerived(db,evidence)) { markRecordEmailDerived(db,id,String(scope)); holdMemoryCandidate(db,id,"external-mail"); }
     if (!candidateScope) activateGroundedMemory(db,id,claimType);
     return id;
   });
@@ -117,6 +122,8 @@ export async function saveGroundedMemory(text:string,evidence:MemoryEvidenceHand
   const cited=ownerInvitation?[...evidence,ownerInvitation]:evidence;
   assertMemoryCaptureComplete(cited,access);
   const id=saveMemoryCandidate(text,cited,key,access);
+  // an external-mail memory is already held for the owner (saveCandidate): no grounding, no other reason in its place
+  if(recordEmailDerived(database(),id,1))return id;
   if(!claimType||database().prepare("SELECT state FROM memory_records WHERE id=? AND version=1").get(id)?.state==="active")return id;
   const db=database(),learningRevision=readMemoryLearning(db).revision;
   if(db.prepare("SELECT supersedes_id FROM memory_records WHERE id=? AND version=1").get(id)?.supersedes_id){transaction(()=>holdMemoryCandidate(db,id,"correction-review"));return id;}

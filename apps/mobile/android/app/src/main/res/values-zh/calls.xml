@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="push_call_title">Murage 来电</string>
+    <string name="push_call_body">接听以了解详情。</string>
+    <string name="push_call_note_body">Murage 有一条消息给你。</string>
+    <string name="push_call_answer">接听</string>
+    <string name="push_call_not_now">暂不接听</string>
+    <string name="push_calls_channel">通话</string>
+</resources>

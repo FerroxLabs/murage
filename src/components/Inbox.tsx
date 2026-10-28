@@ -2,6 +2,8 @@ import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "rea
 import { RefreshCw } from "lucide-react";
 import { api } from "@/state/store";
 import { LearningPausedCard } from "./LearningPausedCard";
+import { HealthCard } from "./HealthCard";
+import type { NextAction } from "../../shared/sentinel-view";
 import type { OptionCardData } from "@/state/store";
 import type { InboxItem, InboxLink, InboxPage, InboxStateUpdate, InboxView, RoutineRollup } from "../../shared/inbox";
 import { InboxRequestAnswer, inlineAnswerKind, requestHeadline } from "./InboxRequest";
@@ -219,7 +221,7 @@ function InboxSection({ label, aside, children }: { label: string; aside?: React
   </section>;
 }
 
-export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMemory, refreshKey = 0, initialView = "decisions" }: { onOpen: (link: InboxLink) => void; onClose?: () => void; onOpenBackups?: () => void; onOpenLearning?: (botId: string) => void; onOpenMemory?: (subject: { kind: "bot" | "room" | "other"; id: string; name: string }) => void; refreshKey?: number; initialView?: InboxView }) {
+export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMemory, onOpenHealthAction, refreshKey = 0, initialView = "decisions" }: { onOpen: (link: InboxLink) => void; onClose?: () => void; onOpenBackups?: () => void; onOpenLearning?: (botId: string) => void; onOpenMemory?: (subject: { kind: "bot" | "room" | "other"; id: string; name: string }) => void; onOpenHealthAction?: (action: NextAction) => void; refreshKey?: number; initialView?: InboxView }) {
   const [view, setView] = useState<InboxView>(initialView);
   const [draft, setDraft] = useState("");
   const [query, setQuery] = useState("");
@@ -363,6 +365,11 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
   // shown with the decisions and the things to read. Backups stay paused
   // until it is cleared, so the server counts it in `decisions`.
   const backupFailed = view === "decisions" || view === "to-read" || view === "all" ? result?.backupFailed ?? null : null;
+  // The owner's Health card (1.0.9 Sentinel). The server attaches `health` to owner reads only. When Sentinel's backup
+  // issue covers the stopped backup, that notice is shown inside the card (same sentence, same action) and not again
+  // as its own card; the server counts it once either way.
+  const health = view === "decisions" || view === "to-read" || view === "all" ? result?.health ?? null : null;
+  const backupInHealth = Boolean(health && backupFailed?.inHealth);
   // Lessons a bot suggested, waiting for the owner's yes: the only learning the Inbox shows.
   const suggestionRows = view === "decisions" || view === "all" ? result?.learningSuggestions ?? [] : [];
   // Memories the bots would like to keep: one card per bot, counted per item in `decisions` (server/inbox-memory-waiting.ts).
@@ -397,7 +404,7 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
   }, [waitingKey]);
   const owed = INBOX_OWED_VIEWS.includes(view);
   const tally = result ? inboxTally(result.total - result.items.filter(item => gone.has(item.id)).length, result.unread) : "";
-  const sections = signedOut.length + restoreRows.length + (backupWaiting ? 1 : 0) + (backupFailed ? 1 : 0) + (learningPaused ? 1 : 0) + suggestionRows.length + memoryRows.length + (view === "routines" ? routineRows.length : 0) > 0;
+  const sections = signedOut.length + restoreRows.length + (health ? 1 : 0) + (backupWaiting ? 1 : 0) + (backupFailed ? 1 : 0) + (learningPaused ? 1 : 0) + suggestionRows.length + memoryRows.length + (view === "routines" ? routineRows.length : 0) > 0;
   return <section aria-labelledby="inbox-title" aria-busy={loading} className="mx-auto flex h-full w-full max-w-4xl flex-col overflow-y-auto bg-panel p-4 text-ink sm:p-6">
     <header className="flex items-center justify-between gap-3"><h1 id="inbox-title" className="text-[22px] font-semibold">Inbox</h1>
       <div className="flex gap-2">
@@ -439,7 +446,12 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
         owner cannot survive that, so the backup waits. Ask cards wait
         indefinitely, so this says so here instead of backups quietly
         stopping. It clears itself the moment the card is answered. */}
-    {backupFailed && (
+    {health && (
+      <InboxSection label="Health">
+        <HealthCard health={health} backupNotice={backupInHealth ? backupFailed : null} onOpenBackups={onOpenBackups} onNavigate={onOpenHealthAction} />
+      </InboxSection>
+    )}
+    {backupFailed && !backupInHealth && (
       <InboxSection label="Backups">
         <div role="status" className="rounded-xl border border-danger/30 bg-danger/[0.06] p-4 text-[13px]">
           <p className="font-medium text-ink">The last backup didn't finish</p>
