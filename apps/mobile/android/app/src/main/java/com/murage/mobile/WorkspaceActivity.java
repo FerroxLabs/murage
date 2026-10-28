@@ -59,6 +59,7 @@ import com.murage.mobile.shell.MainDocument;
 import com.murage.mobile.shell.NavigationFailure;
 import com.murage.mobile.shell.NavigationPolicy;
 import com.murage.mobile.shell.OriginReturn;
+import com.murage.mobile.shell.OpenHash;
 import com.murage.mobile.shell.PairingLink;
 import com.murage.mobile.shell.PendingOpen;
 import com.murage.mobile.shell.ProbeVerdict;
@@ -77,6 +78,8 @@ public class WorkspaceActivity extends AppCompatActivity {
     static final String EXTRA_ORIGIN = "murage.origin";
     static final String EXTRA_CREDENTIAL = "murage.credential";
     static final String EXTRA_MODE = "murage.mode";
+    static final String EXTRA_ASK_HASH = "murage.askHash";
+    private String askStartPath;
     /** True only when the launcher's probe already passed the mobileFeatures >= 1 gate. */
     static final String EXTRA_HOST_OK = "murage.hostOk";
     /** True only when the launcher's probe saw approvalProof >= 1 (SEC-006). */
@@ -117,6 +120,9 @@ public class WorkspaceActivity extends AppCompatActivity {
     private String mode;
     /** SEC-006: a device approval is waiting on the prompt. */
     private boolean approving;
+    private PhoneForBotsScreen phoneForBots;
+    private PhoneAskSetup phoneAskSetup;
+    private boolean askSetupPairing;
     private android.os.CancellationSignal approvalCancel;
     /** SEC-006: this pairing's approval public point (base64url), sent with its relay statement; null when none was made. */
     private boolean pairWithApprovalKey;
@@ -205,6 +211,8 @@ public class WorkspaceActivity extends AppCompatActivity {
             finish();
             return;
         }
+        phoneForBots = new PhoneForBotsScreen(this, origin);
+        phoneAskSetup = new PhoneAskSetup(this, origin);
         mode = getIntent().getStringExtra(EXTRA_MODE);
         if (mode == null || state != null) mode = "unknown";
         // Set only by Shell.finishOpen, after hostCapabilityOk(); a restored activity probes again.
@@ -212,7 +220,12 @@ public class WorkspaceActivity extends AppCompatActivity {
         // A pairing code is single-use. The system keeps its own copy of the intent, so a
         // restored activity (state != null) ignores the extra rather than replay a spent code.
         String credential = state == null ? getIntent().getStringExtra(EXTRA_CREDENTIAL) : null;
+        askSetupPairing = credential != null;
         getIntent().removeExtra(EXTRA_CREDENTIAL);
+        if (OpenHash.isCompose(getIntent().getStringExtra(EXTRA_ASK_HASH))) {
+            WorkspaceActivity previous = shell.live();
+            if (previous != null && previous != this) previous.closeFromShell();
+        }
         shell.attach(this);
 
         WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
@@ -254,6 +267,12 @@ public class WorkspaceActivity extends AppCompatActivity {
 
         createWebView();
         String path = credential != null ? enterPath(credential) : shell.routes.startPath(origin);
+        String askHash = getIntent().getStringExtra(EXTRA_ASK_HASH);
+        if (credential == null && OpenHash.isCompose(askHash)) {
+            shell.routes.clearPending(origin);
+            askStartPath = "/" + askHash;
+            path = askStartPath;
+        }
         if (path == null) {
             close(CloseReason.SIGNED_OUT);
             return;
@@ -364,6 +383,7 @@ public class WorkspaceActivity extends AppCompatActivity {
      * already read (and cached) the id, so this is a second check, not a first.
      */
     private String enterPath(String credential) {
+        PhoneAskSetup.forget(this, origin);
         pairWithApprovalKey = false;
         if (!"full".equals(mode)) {
             ApprovalKeys.remove(origin); // a basic door pairs keyless: an older key goes (SEC-006)
@@ -430,7 +450,7 @@ public class WorkspaceActivity extends AppCompatActivity {
 
     private void reloadRoute() {
         beginProgress();
-        String path = shell.routes.startPath(origin);
+        String path = askStartPath != null ? askStartPath : shell.routes.startPath(origin);
         if (hostCapabilityChecked) load(path);
         else probeBeforeLoading(path);
     }
@@ -468,6 +488,8 @@ public class WorkspaceActivity extends AppCompatActivity {
         // A late ready() after sign-out must not put the computer back on the list.
         if (closing) return;
         ready = true;
+        askStartPath = null;
+        getIntent().removeExtra(EXTRA_ASK_HASH);
         reveal();
         PendingOpen open = queuedOpen;
         queuedOpen = null;
@@ -479,8 +501,11 @@ public class WorkspaceActivity extends AppCompatActivity {
     }
 
     private void signedIn() {
+        boolean first = !signedInSeen;
         signedInSeen = true;
         shell.signedIn(origin);
+        if (first && phoneForBots != null) phoneForBots.refresh();
+        if (phoneAskSetup != null && !closing) phoneAskSetup.foreground();
     }
 
     /**
@@ -497,6 +522,7 @@ public class WorkspaceActivity extends AppCompatActivity {
     private void loadedInUse() {
         signedInSeen = true;
         stillInUse();
+        if (phoneAskSetup != null && !closing) phoneAskSetup.foreground();
     }
 
     /** Kept for a lowered gate: with mobileFeatures >= 1 required, only a lowered gate reaches basic here. */
@@ -658,6 +684,14 @@ public class WorkspaceActivity extends AppCompatActivity {
     /** Every branch replies exactly once, including saveFile, whose controller owns the reply. */
     private void onChannel(ChannelGate.Request request, ChannelBridge.Reply reply) {
         switch (request.method) {
+            case "openPhoneForBots":
+                runOnUiThread(() -> {
+                    try {
+                        com.murage.mobile.shell.PhoneForBotsEntry.open(request.args, signedInSeen && !closing, phoneForBots::present);
+                        reply.ok(null);
+                    } catch (com.murage.mobile.shell.ChannelException e) { reply.error(e.code); }
+                });
+                break;
             case "hello":
                 reply.ok(ChannelGate.hello());
                 break;
@@ -831,12 +865,44 @@ public class WorkspaceActivity extends AppCompatActivity {
         startActivity(intent);
     }
 
+    private boolean askSetupPaired() {
+        return signedInSeen || (!askSetupPairing && shell != null && shell.book() != null && shell.book().entry(origin) != null);
+    }
+
+    @Override public void onWindowFocusChanged(boolean focused) {
+        super.onWindowFocusChanged(focused);
+        if (focused && askSetupPaired() && !closing && phoneAskSetup != null) phoneAskSetup.foreground();
+    }
+
     @Override protected void onResume() {
         super.onResume();
+        PhoneJobServices.get(this).resumed(this);
+        PhoneShareServices.get(this).foreground();
+        if (phoneForBots != null && !closing && shell.book() != null && shell.book().entry(origin) != null) phoneForBots.refresh();
+        if (askSetupPaired() && !closing && phoneAskSetup != null) phoneAskSetup.foreground();
         PushReconciler.run(this); // A5: clears what was answered elsewhere, off the main thread
         PushRegistrar.get(this).refreshIfDue(); // at most daily: keeps the relay from sweeping an idle registration
         if (resumedOnce) emit("resume", null, null);
         resumedOnce = true;
+    }
+
+    private PhoneJobCardDialog phoneJobCard;
+    void showPhoneJobCard(PhoneJobCardModel model) {
+        if (phoneJobCard == null) {
+            phoneJobCard = new PhoneJobCardDialog(this, model);
+            phoneJobCard.show();
+        } else phoneJobCard.replace(model);
+    }
+    void dismissPhoneJobCard() {
+        if (phoneJobCard != null) phoneJobCard.dismiss();
+        phoneJobCard = null;
+    }
+
+    void phoneJobsStateChanged() { if (phoneForBots != null) phoneForBots.render(); }
+
+    @Override protected void onStop() {
+        PhoneJobServices.get(this).stopped(this);
+        super.onStop();
     }
 
     @Override protected void onPause() {
@@ -847,6 +913,8 @@ public class WorkspaceActivity extends AppCompatActivity {
     }
 
     @Override protected void onDestroy() {
+        if (phoneForBots != null) phoneForBots.close();
+        if (phoneAskSetup != null) phoneAskSetup.close();
         if (approvalCancel != null) approvalCancel.cancel();
         main.removeCallbacksAndMessages(null);
         io.shutdownNow();

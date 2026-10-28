@@ -774,6 +774,12 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
   },
   {
     "kind": "route",
+    "name": "/api/phones",
+    "term": "phone tools",
+    "source": "server/index.ts"
+  },
+  {
+    "kind": "route",
     "name": "/api/projects",
     "term": "projects",
     "source": "server/index.ts"
@@ -812,6 +818,12 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
     "kind": "route",
     "name": "/api/section-context",
     "term": "team instructions",
+    "source": "server/index.ts"
+  },
+  {
+    "kind": "route",
+    "name": "/api/sentinel",
+    "term": "health checks",
     "source": "server/index.ts"
   },
   {

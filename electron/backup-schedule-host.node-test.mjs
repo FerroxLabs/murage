@@ -1187,3 +1187,45 @@ test("1.0.7 RC6: a give-up that cannot set the job aside throws, so the app does
     const host=f.create({coordinator});assert.throws(()=>host.abandonOffline(),/BACKUP_STATE_UNWRITABLE/);
   }finally{f.cleanup();}
 });
+// 1.0.9 Sentinel (GAP-SENTINEL-109 section 4.2): the health publisher hears about a backup outcome only after the
+// coordinator committed it, so a published verification always has its receipt on disk.
+test("1.0.9 Sentinel: a verified backup is published to health only after its receipt is committed",async()=>{
+  const f=fixture();try{
+    await f.arm();const published=[];
+    const host=f.create({publishBackupStatus:event=>{const s=f.coordinator().status();published.push({...event,phase:s.phase,receipt:Boolean(s.lastVerified&&s.lastVerified.jobId===s.job?.id)});}});
+    await host.resumeOffline();
+    assert.deepEqual(published,[{result:"verified",code:"verified",phase:"return-pending",receipt:true}]);
+  }finally{f.cleanup();}
+});
+test("1.0.9 Sentinel: a failed capture is published after the review state is committed; a throwing publisher changes nothing",async()=>{
+  const f=fixture(()=>({capture:async()=>{throw Error("BACKUP_UNCLASSIFIED_COMPONENT");}}));try{
+    await f.arm();const published=[];
+    const host=f.create({publishBackupStatus:event=>{published.push({...event,phase:f.coordinator().status().phase});throw Error("health unavailable");}});
+    await assert.rejects(host.resumeOffline(),/BACKUP_SCHEDULE_REVIEW_REQUIRED/);
+    assert.deepEqual(published,[{result:"failed",code:"failed",phase:"needs-review"}]);
+    assert.equal(f.coordinator().status().captureFailure.code,"BACKUP_UNCLASSIFIED_COMPONENT");
+  }finally{f.cleanup();}
+});
+test("1.0.9 Sentinel: a run given up at its ceiling is published as the failed capture the coordinator stored, after it is set aside",async()=>{
+  const f=fixture();let finish,running;try{
+    await f.arm();const published=[];
+    const host=f.create({capture:async()=>{await new Promise((_resolve,reject)=>{finish=reject;});},publishBackupStatus:event=>published.push({...event,phase:f.coordinator().status().phase})});
+    running=host.resumeOffline();void running.catch(()=>{});
+    for(let attempt=0;attempt<100&&!finish;attempt++)await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(host.abandonOffline(),true);
+    assert.deepEqual(published[0],{result:"failed",code:"capture-failed",phase:"needs-review"});
+  }finally{finish?.(Error("done"));await running?.catch(()=>{});f.cleanup();}
+});
+test("1.0.9 Sentinel S01: bindingCurrent answers the live folder/key check, null only when it cannot be checked",async()=>{
+  const f=fixture();try{
+    assert.equal(await f.create().bindingCurrent(),false,"nothing set up: not current");
+    await f.arm();await f.create().resumeOffline();
+    assert.ok(f.coordinator().status().lastVerified,"a verified receipt");
+    assert.equal(await f.create().bindingCurrent(),true,"the verified folder and key are the ones in use");
+    assert.equal(await f.create({readProtected:async()=>{throw Error("BACKUP_BINDINGS_UNAVAILABLE");}}).bindingCurrent(),null,"an unreadable saved choice is unknown");
+    writeFileSync(f.keyFile+".new",fakeKey,{mode:0o600});renameSync(f.keyFile+".new",f.keyFile);
+    assert.equal(await f.create().bindingCurrent(),false,"a replaced key file is not the verified one");
+    rmSync(f.keyFile);
+    assert.equal(await f.create().bindingCurrent(),false,"a missing key file is not current");
+  }finally{f.cleanup();}
+});

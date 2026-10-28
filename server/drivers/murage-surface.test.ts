@@ -68,7 +68,21 @@ it.each(cases)("$driver.driverKind renders the mounted MCP names in lead/member/
   } finally { recorder.stop(); await instance.dispose(); removeTempDirSync(dir); }
 }, 60000);
 
-it.each([OpenAICompatDriver, BoxAgentDriver])("$driverKind declares no mounted MCP tools", async driver => {
+// OPENAI-TOOLS-109: the OpenAI-chat engines mount MCP tools (Pi's set, no browser), so only the Box engine declares none.
+it("openai-compat declares the chat-tools MCP set", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pf-chat-mcp-"));
+  const instance = await OpenAICompatDriver.create({ instanceId: "pf-chat", displayName: "PF", enabled: true,
+    config: OpenAICompatDriver.decodeConfig({ url: "http://127.0.0.1:1", key: "fixture-only", model: "fixture" }) as never,
+    environment: { HOME: dir, USERPROFILE: dir } });
+  try {
+    expect(instance.adapter.mcpToolSurface).not.toEqual({ kind: "none" });
+    expect(instance.adapter.capabilities.agentsMcp).toBe(true);
+    expect(instance.adapter.capabilities.memoryMcp).toBe(true);
+    expect(instance.adapter.capabilities.browserMcp).not.toBe(true);
+  } finally { await instance.dispose(); removeTempDirSync(dir); }
+});
+
+it.each([BoxAgentDriver])("$driverKind declares no mounted MCP tools", async driver => {
   const dir = mkdtempSync(join(tmpdir(), "pf-no-mcp-"));
   const instance = await driver.create({ instanceId: "pf-none", displayName: "PF", enabled: true,
     config: driver.decodeConfig({ url: "http://127.0.0.1:1", key: "fixture-only", model: "fixture" }) as never,

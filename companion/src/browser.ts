@@ -33,7 +33,10 @@ import { isIP } from "node:net";
 import type { Duplex } from "node:stream";
 
 import { bearerToken, cleanDeviceName, PAIRING_REPLAY_MS, type PublicDevice } from "./devices.ts";
-import { createHarnessCall, handlePushBearer, handlePushSession, isPushSessionRoute, pushBearerExempt, pushBearerScope, readLimited } from "./push-door.ts";
+import { AskForwards, handlePhoneAsk, handlePhoneBearer, handlePhoneBootstrap, isPhoneSelfPath, phoneAskExempt, phoneAskRoute, phoneBearerExempt, phoneJobRoute, PhoneChallenges, phoneBootstrapExempt } from "./phone-door.ts";
+import { tmpdir } from "node:os";
+import { join as joinPath } from "node:path";
+import { createHarnessCall, createHarnessStream, handlePushBearer, handlePushSession, isPushSessionRoute, pushBearerExempt, pushBearerScope, readLimited } from "./push-door.ts";
 import { approvalDeviceHeaders, hasLaunchCredential, BROWSER_STATIC, MERMAID_FRAME_FILE, denyReason, isCloudDesktopJoin, isImageUpload, isInboxRoute, isPresenceRoute, doorForwardHeaders, isRoutineWrite, isStreamTicket, browserProofHeaders, isScriptAccessRoute, needsLaunchProof } from "./routes.ts";
 import { STREAM_UPGRADE_PATH, forwardStreamUpgrade, redactedRequest, rejectUpgrade } from "./stream-upgrade.ts";
 import { createSseScrubber, isJson, scrub } from "./wire.ts";
@@ -103,7 +106,19 @@ export interface BrowserDeviceStore {
   pushBinding(deviceId: string): string | null;
   /** SEC-006: what the harness is told about a device answering a card. */
   approvalIdentity(deviceId: string): { id: string; cls: "app" | "browser"; key?: string } | null;
+  /** Phone jobs (plan S3): the bootstrap's two registry calls. Optional so a
+   * store without them simply cannot mint (the routes then refuse). */
+  deviceByApprovalKeyId?(keyId: string): { ok: true; deviceId: string; point: string } | { ok: false; reason: string };
+  issuePhoneJobsToken?(deviceId: string): string | null;
   authenticatePush(token: string | undefined, scope: "detail" | "respond"): { deviceId: string; bindingId: string } | null;
+  /** Phone jobs (plan S4): resolve a murage_pj_ bearer to its device. Optional: without it every job route is 403. */
+  authenticatePhoneJobs?(token: string | undefined): { deviceId: string } | null;
+  /** Phone jobs (plan S5): drop the device's token after the harness has revoked its jobs. */
+  clearPhoneJobsToken?(deviceId: string, onlyToken?: string): boolean;
+  /** Share and ask (plan S26): the ask bearer's mint, check and undo. Optional: without them scope "ask" is refused. */
+  issuePhoneAskToken?(deviceId: string): { token: string; generation: number } | null;
+  authenticatePhoneAsk?(token: string | undefined): { deviceId: string; generation: number } | null;
+  clearPhoneAskToken?(deviceId: string, onlyToken?: string): boolean;
   /** True when `redeem` returned this result as a replay of an earlier
    * request (`DeviceRegistry.wasReplay`). Left out, nothing is a replay. */
   wasReplay?(result: object): boolean;
@@ -148,6 +163,18 @@ export interface BrowserDoorOptions {
    * workspace the launcher saved and the pairing agree on what to call it.
    * Optional: a door without one answers "Murage". */
   serverName?: () => string;
+  /** Whether the harness offers phone tools right now. Default: ask the
+   * harness (`GET /api/phones/offered`) with the launch proof, cached a few
+   * seconds; any failure is "not offered". Tests inject it. */
+  phonesOffered?: () => Promise<boolean>;
+  /** Whether the harness offers share and ask (`features.phoneShareAsk`), same source and cache as `phonesOffered`. Tests inject it. */
+  shareAskOffered?: () => Promise<boolean>;
+  /** Where an in-flight share upload is spooled (mode 0600, deleted when the forward ends). Default: a folder under the OS temp dir. */
+  askSpoolDir?: string;
+  /** The live share-and-ask forwards, so a revoke can abort them. The caller keeps the instance. */
+  askForwards?: AskForwards;
+  /** Tests only: the challenge clock and nonce source. */
+  phoneChallengeDeps?: { now(): number; random(): string };
 }
 
 /** Headers only. Once they arrive the clock is off and the body may take as
@@ -351,6 +378,19 @@ function originGateInner(
   // shape, so a cookie-borne cross-site request to the same path — or one
   // carrying any other Authorization — still meets rules 2 to 4.
   if (pushBearerExempt(method, path, req.headers.authorization as string | undefined)) return null;
+
+  // Phone jobs (plan S3, Grok G2): an exact allowlist of method + path pairs
+  // skips the rest of the gate (native sends no Origin and no Sec-Fetch-*).
+  // Anything else at or under /api/phones/self is refused here, before cookie
+  // auth, whatever bearer or cookie it carries; it never reaches the generic
+  // forward.
+  if (phoneBootstrapExempt(method, path)) return null;
+  // S4: a listed job route with a bearer-shaped Authorization skips the rest of the gate; the handler
+  // verifies the bearer against the registry before any body is read. Everything else under /self is 403.
+  if (phoneBearerExempt(method, path, req.headers.authorization as string | undefined)) return null;
+  // S27: the same for the three share-and-ask routes with a murage_pa_ shaped bearer.
+  if (phoneAskExempt(method, path, req.headers.authorization as string | undefined)) return null;
+  if (isPhoneSelfPath(path)) return { status: 403, error: "forbidden" };
 
   // 2. Sec-Fetch-Site. Sent by every browser that can run this app, on every
   //    request including EventSource and no-cors images. Absent means the
@@ -1567,6 +1607,49 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
     res.setHeader("connection", "close");
     return { status: 413, body: { error: "too large" } };
   };
+  const phoneChallenges = new PhoneChallenges(options.phoneChallengeDeps ?? { now: Date.now, random: () => randomBytes(32).toString("base64url") });
+  const harnessCall = createHarnessCall(options.harnessPort);
+  // The long poll holds the harness for 20 s; the native timeout is 25 s.
+  const phoneBearerDoor = {
+    devices: {
+      authenticatePhoneJobs: (t: string | undefined) => options.devices.authenticatePhoneJobs?.(t) ?? null,
+      clearPhoneJobsToken: (id: string, onlyToken?: string) => { if (!options.devices.clearPhoneJobsToken) throw new Error("no store"); return options.devices.clearPhoneJobsToken(id, onlyToken); },
+    },
+    harness: harnessCall, jobsHarness: createHarnessCall(options.harnessPort, { deadlineMs: 22_000 }), doorToken: options.companionToken,
+  };
+  const mintedHarness = createHarnessCall(options.harnessPort, { deadlineMs: 8_000 });
+  const phoneAskDoor = {
+    devices: { authenticatePhoneAsk: (t: string | undefined) => options.devices.authenticatePhoneAsk?.(t) ?? null },
+    harness: harnessCall,
+    stream: createHarnessStream(options.harnessPort, { deadlineMs: 60_000 }),
+    doorToken: options.companionToken,
+    spoolDir: options.askSpoolDir ?? joinPath(tmpdir(), "murage-door-ask-spool"),
+    forwards: options.askForwards ?? new AskForwards(),
+  };
+  // One harness question answers both flags; any failure is "not offered".
+  let offeredCache: { at: number; phones: boolean; shareAsk: boolean } | null = null;
+  let offeredInFlight: Promise<{ phones: boolean; shareAsk: boolean }> | null = null;
+  const askOffered = (): Promise<{ phones: boolean; shareAsk: boolean }> => {
+    const now = Date.now();
+    if (offeredCache && now - offeredCache.at < 5000) return Promise.resolve(offeredCache);
+    offeredInFlight ??= fetchOffered().finally(() => { offeredInFlight = null; });
+    return offeredInFlight;
+  };
+  const fetchOffered = async (): Promise<{ phones: boolean; shareAsk: boolean }> => {
+    const now = Date.now();
+    let phones = false;
+    let shareAsk = false;
+    if (typeof options.companionToken === "string" && /^[a-f0-9]{64}$/.test(options.companionToken)) {
+      const answer = await harnessCall({ method: "GET", path: "/api/phones/offered", body: null, headers: { accept: "application/json", "x-murage-companion": "1", "x-murage-companion-token": options.companionToken } });
+      const body = answer.body as { offered?: unknown; shareAsk?: unknown } | null;
+      phones = answer.status === 200 && body?.offered === true;
+      shareAsk = answer.status === 200 && body?.shareAsk === true;
+    }
+    offeredCache = { at: now, phones, shareAsk };
+    return offeredCache;
+  };
+  const phonesOffered = options.phonesOffered ?? (async () => (await askOffered()).phones);
+  const shareAskOffered = options.shareAskOffered ?? (async () => (await askOffered()).shareAsk);
   const handle = function handle(req: IncomingMessage, res: ServerResponse): void {
     const identity = options.identity();
     const path = (req.url ?? "/").split("?")[0];
@@ -1574,6 +1657,65 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
 
     const gate = originGate(req, identity);
     if (gate) return sendJson(res, gate.status, { error: gate.error });
+
+    // ── phone jobs bootstrap (plan S3) ───────────────────────────────────
+    //
+    // Above the cookie and above everything else: no cookie is read or set,
+    // and no bearer is needed (the phone has none yet). The gate has already
+    // refused every other /api/phones/self path.
+    if (phoneBootstrapExempt(method, path)) {
+      const origin = expectedOrigin(req, identity);
+      const devices = options.devices;
+      if (!origin || !devices.deviceByApprovalKeyId || !devices.issuePhoneJobsToken) return sendJson(res, 403, { error: "phone sign-in refused" });
+      const phoneDevices = { deviceByApprovalKeyId: devices.deviceByApprovalKeyId.bind(devices), issuePhoneJobsToken: devices.issuePhoneJobsToken.bind(devices), authenticatePhoneJobs: devices.authenticatePhoneJobs?.bind(devices), clearPhoneJobsToken: devices.clearPhoneJobsToken?.bind(devices), issuePhoneAskToken: devices.issuePhoneAskToken?.bind(devices), authenticatePhoneAsk: devices.authenticatePhoneAsk?.bind(devices), clearPhoneAskToken: devices.clearPhoneAskToken?.bind(devices) };
+      const query = new URL(req.url ?? "/", "http://door.invalid").searchParams;
+      const source = req.socket.remoteAddress ?? "unknown";
+      (method === "POST" ? readLimited(req, 4096) : (req.resume(), Promise.resolve(null))).then(
+        (body) => handlePhoneBootstrap({ method, path, query, body, source, origin }, { devices: phoneDevices, challenges: phoneChallenges, offered: phonesOffered, offeredAsk: shareAskOffered, harness: mintedHarness, doorToken: options.companionToken }),
+        tooLarge(res),
+      ).then((answer) => { res.setHeader("cache-control", "no-store"); sendJson(res, answer.status, answer.body); }, () => sendJson(res, 500, { error: "Could not reach Murage. Try again." }));
+      return;
+    }
+
+    // ── share and ask routes (plan S27) ──────────────────────────────────
+    //
+    // Only a murage_pa_ bearer the registry resolves. The body is read (and, for a share, spooled to
+    // disk) only after that, and the bearer is checked again before anything is forwarded.
+    if (phoneAskRoute(method, path)) {
+      const declared = Number(req.headers["content-length"]);
+      handlePhoneAsk({
+        method, path, authorization: req.headers.authorization as string | undefined, body: req,
+        declaredLength: Number.isFinite(declared) ? declared : undefined,
+        contentType: typeof req.headers["content-type"] === "string" ? req.headers["content-type"] : undefined,
+      }, phoneAskDoor).then((answer) => {
+        if (answer.status !== 200) res.setHeader("connection", "close");
+        res.setHeader("cache-control", "no-store");
+        sendJson(res, answer.status, answer.body);
+      }, () => sendJson(res, 500, { error: "Could not reach Murage. Try again." }));
+      return;
+    }
+
+    // ── phone job routes (plan S4, Grok G2) ──────────────────────────────
+    //
+    // The bearer is resolved before a byte of body is read. A cookie, an
+    // owner-phone session, a page-door token or a body field never counts;
+    // an unlisted path or an unverified bearer is a 403 that reaches nothing
+    // and never falls through to the generic forward.
+    if (isPhoneSelfPath(path)) {
+      const route = phoneJobRoute(method, path);
+      let auth: { deviceId: string } | null = null;
+      try { auth = route ? options.devices.authenticatePhoneJobs?.(bearerToken(req.headers.authorization as string | undefined)) ?? null : null; } catch { auth = null; }
+      if (!route || !auth) {
+        res.setHeader("connection", "close");
+        return sendJson(res, 403, { error: "forbidden" });
+      }
+      const query = new URL(req.url ?? "/", "http://door.invalid").searchParams;
+      (route.maxBody > 0 ? readLimited(req, route.maxBody) : (req.resume(), Promise.resolve(null))).then(
+        (body) => handlePhoneBearer({ method, path, query, authorization: req.headers.authorization as string, body }, phoneBearerDoor),
+        tooLarge(res),
+      ).then((answer) => { res.setHeader("cache-control", "no-store"); sendJson(res, answer.status, answer.body); }, () => sendJson(res, 500, { error: "Could not reach Murage. Try again." }));
+      return;
+    }
 
     // ── the launcher's probe ─────────────────────────────────────────────
     //
@@ -1599,7 +1741,13 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
       const name = [...(options.serverName?.() || "Murage")].slice(0, 200).join("");
       // `mobile` stays the integer 1 (the door handshake, a strict-equality identity, never a version);
       // `mobileFeatures` and `approvalProof` are additive capability levels phones read with >=, bump them for new phone features.
-      return sendJson(res, 200, { ok: true, name, mobile: 1, mobileFeatures: 1, approvalProof: 1 });
+      // `phoneJobs` is additive and present only while the harness offers phone tools, so the app can tell
+      // "update Murage on your computer" from a 403.
+      // `phoneAsk` is additive too, present only while the harness offers share and ask (its own flag, independent of phoneJobs).
+      const hello = (phoneJobs: boolean, phoneAsk: boolean) => sendJson(res, 200, { ok: true, name, mobile: 1, mobileFeatures: 1, approvalProof: 1, ...(phoneJobs ? { phoneJobs: 1 } : {}), ...(phoneAsk ? { phoneAsk: 1 } : {}) });
+      if (method === "HEAD") return hello(false, false);
+      Promise.all([phonesOffered().then((v) => v === true, () => false), shareAskOffered().then((v) => v === true, () => false)]).then(([jobs, ask]) => hello(jobs, ask));
+      return;
     }
 
     // ── push bearer routes (spec §3.3) ───────────────────────────────────

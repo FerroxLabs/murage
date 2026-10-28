@@ -160,7 +160,17 @@ export class ImageGenerationError extends Error {
   readonly code: string;
   readonly outcome: ImageAttemptOutcome;
   readonly correctablePreflight: boolean;
+  /** The provider's HTTP status when it answered with an error; for the failure log line only. */
+  httpStatus?: number;
+  /** Which wall a request with no reply hit (dns, timeout, reset, ...); for the failure log line only. */
+  transport?: string;
   constructor(code: string, message: string, outcome: ImageAttemptOutcome = "not-dispatched", correctablePreflight = false) { super(message); this.code = code; this.outcome = outcome; this.correctablePreflight = correctablePreflight; }
+}
+/** The same error with its log-only facts (status, transport) carried over. */
+function withFacts(error: ImageGenerationError, from: { httpStatus?: number; transport?: string }): ImageGenerationError {
+  if (from.httpStatus !== undefined) error.httpStatus = from.httpStatus;
+  if (from.transport !== undefined) error.transport = from.transport;
+  return error;
 }
 const LOCAL_PREFLIGHT_CODES = new Set(["invalid-request", "invalid-references", "model-required", "unsupported-model", "unsupported-edit", "unsupported-quality", "unsupported-size", "unsupported-parameter", "prompt-too-long", "connection-unavailable"]);
 /** What a running render must not see change: the image settings, less the
@@ -261,7 +271,9 @@ async function providerErrorDetail(response: Response): Promise<string> {
     const error = record(body) && record(body.error) ? body.error : record(body) ? body : null;
     if (!error) return "";
     const clean = (value: unknown, max: number) => typeof value === "string" && value.trim() ? redactSecretsInText(value.replace(/\s+/g, " ").trim()).slice(0, max) : "";
-    const code = clean(error.code, 80), message = clean(error.message, 300);
+    // xAI answers {"code": "<gRPC status words>", "error": "<what was wrong>"}:
+    // its why is a string under error, not an object.
+    const code = clean(error.code, 80), message = clean(error.message, 300) || clean(record(body) ? body.error : undefined, 300);
     if (!code && !message) return "";
     return `: ${[code, message].filter(Boolean).join(": ")}`;
   } catch { return ""; }
@@ -275,17 +287,17 @@ async function providerErrorDetail(response: Response): Promise<string> {
  * carry the request URL, a header or a key, so it is matched against and
  * never echoed; an unrecognized failure keeps the plain sentence it always
  * had rather than repeating something private back to the screen. */
-const TRANSPORT_REASONS: ReadonlyArray<readonly [RegExp, string]> = [
-  [/ENOTFOUND|EAI_AGAIN|ERR_NAME_NOT_RESOLVED/, "its address could not be looked up"],
-  [/ECONNREFUSED/, "it refused the connection"],
-  [/ETIMEDOUT|CONNECT_TIMEOUT|HEADERS_TIMEOUT|BODY_TIMEOUT|TimeoutError/, "it did not answer in time"],
-  [/ECONNRESET|EPIPE|SOCKET|ERR_STREAM_PREMATURE/, "the connection dropped before the image arrived"],
-  [/CERT|TLS|SSL|EPROTO|SELF_SIGNED|UNABLE_TO_VERIFY/, "a secure connection could not be established"],
-  [/ENETUNREACH|EHOSTUNREACH|ENETDOWN/, "there is no route to it from this computer"],
-  [/redirect|ERR_FR_REDIRECTION|ERR_TOO_MANY_REDIRECTS/i, "it redirected the request somewhere that could not be followed"],
-  [/AbortError/, "the request was stopped before it answered"],
+const TRANSPORT_REASONS: ReadonlyArray<readonly [RegExp, string, string]> = [
+  [/ENOTFOUND|EAI_AGAIN|ERR_NAME_NOT_RESOLVED/, "its address could not be looked up", "dns"],
+  [/ECONNREFUSED/, "it refused the connection", "refused"],
+  [/ETIMEDOUT|CONNECT_TIMEOUT|HEADERS_TIMEOUT|BODY_TIMEOUT|TimeoutError/, "it did not answer in time", "timeout"],
+  [/ECONNRESET|EPIPE|SOCKET|ERR_STREAM_PREMATURE/, "the connection dropped before the image arrived", "reset"],
+  [/CERT|TLS|SSL|EPROTO|SELF_SIGNED|UNABLE_TO_VERIFY/, "a secure connection could not be established", "tls"],
+  [/ENETUNREACH|EHOSTUNREACH|ENETDOWN/, "there is no route to it from this computer", "no-route"],
+  [/redirect|ERR_FR_REDIRECTION|ERR_TOO_MANY_REDIRECTS/i, "it redirected the request somewhere that could not be followed", "redirect"],
+  [/AbortError/, "the request was stopped before it answered", "aborted"],
 ];
-export function describeTransportFailure(error: unknown): { code: string; message: string } {
+export function describeTransportFailure(error: unknown): { code: string; message: string; transport: string } {
   const seen = new Set<unknown>();
   const parts: string[] = [];
   for (let node: unknown = error, depth = 0; node && depth < 5; depth++) {
@@ -295,10 +307,10 @@ export function describeTransportFailure(error: unknown): { code: string; messag
     for (const field of [value.name, value.code, value.message]) if (typeof field === "string") parts.push(field);
     node = value.cause ?? (Array.isArray(value.errors) ? value.errors[0] : undefined);
   }
-  const known = TRANSPORT_REASONS.find(([pattern]) => pattern.test(parts.join(" ")))?.[1];
+  const known = TRANSPORT_REASONS.find(([pattern]) => pattern.test(parts.join(" ")));
   return known
-    ? { code: "provider-unreachable", message: `The image provider could not be reached: ${known}.` }
-    : { code: "request-failed", message: "Image generation could not complete." };
+    ? { code: "provider-unreachable", message: `The image provider could not be reached: ${known[1]}.`, transport: known[2] }
+    : { code: "request-failed", message: "Image generation could not complete.", transport: "unknown" };
 }
 
 async function boundedJson(response: Response, limit: number): Promise<unknown> {
@@ -597,6 +609,18 @@ export interface ImageGenerationServiceOptions {
   answerDeadlineMs?: number; connectTimeoutMs?: number; uploadStallMs?: number;
   /** Job polling clock, for tests. */
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>; now?: () => number;
+  /** Where the one line per failed image request goes; defaults to the server log (stderr). */
+  log?: (line: string) => void;
+}
+/** A model id as the failure log may print it: an id shape, never free text. */
+const loggableModel = (value: unknown) => typeof value === "string" ? /^[\w.:/@-]{1,180}$/.test(value) && redactSecretsInText(value) === value ? value : "invalid" : "default";
+/** One line per failed image request: provider, model, HTTP status and error
+ * code, plus which wall a request with no reply hit. Never the prompt, a
+ * reference, a key or the provider's message text. */
+export function imageFailureLogLine(provider: string, model: unknown, error: unknown): string {
+  const failure = error instanceof ImageGenerationError ? error : null;
+  const transport = failure ? failure.transport : describeTransportFailure(error).transport;
+  return `[images] request failed provider=${provider} model=${loggableModel(model)} status=${failure?.httpStatus ?? "none"} code=${failure?.code ?? "unexpected"}${transport ? ` transport=${transport}` : ""}${failure ? ` outcome=${failure.outcome}` : ""}`;
 }
 export class ImageGenerationService {
   private readonly fetcher: typeof fetch;
@@ -758,6 +782,18 @@ export class ImageGenerationService {
     }
   }
   async generate<T>(raw: unknown, hooks: ImageGenerationHooks<T>, references: readonly ImageReference[] = [], assembly: ImagePromptAssembly = {}): Promise<{ artifact: T; artifacts: T[]; metadata: GeneratedImageMetadata }> {
+    try { return await this.generateOnce(raw, hooks, references, assembly); }
+    catch (error) {
+      try {
+        const asked = record(raw) ? raw : {};
+        let provider = "unknown";
+        try { provider = typeof asked.connectionId === "string" ? this.options.resolveConnection(asked.connectionId)?.provider ?? "unknown" : "unknown"; } catch { /* the line still goes out */ }
+        (this.options.log ?? (line => console.error(line)))(imageFailureLogLine(provider, asked.model, error));
+      } catch { /* logging never changes the answer */ }
+      throw error;
+    }
+  }
+  private async generateOnce<T>(raw: unknown, hooks: ImageGenerationHooks<T>, references: readonly ImageReference[] = [], assembly: ImagePromptAssembly = {}): Promise<{ artifact: T; artifacts: T[]; metadata: GeneratedImageMetadata }> {
     const parsed = imageGenerationRequestSchema.safeParse(raw);
     if (!parsed.success) {
       const field = parsed.error!.issues[0]?.path.join(".");
@@ -795,7 +831,7 @@ export class ImageGenerationService {
       const catalog = await this.getCatalog(connection.id, { signal, discoverEdits: false }); active();
       const modelId = request.model ?? catalog.defaultModel;
       if (connection.provider === "flux" && ["flux-image-gpt2-high", "flux-image-gpt2-xl"].includes(modelId ?? "")) fail("unsupported-model", "This Flux GPT Image 2 alias is unavailable. Choose flux-image-gpt25-xhigh or flux-image-gpt25-xl explicitly; your selection was not changed.");
-      if (!modelId) fail("model-required", "This connection does not offer GPT Image 2. Explicitly choose an available image model.");
+      if (!modelId) { const offered = catalog.models.filter(item => item.generate && !item.disabledReason).map(item => item.id); fail("model-required", `This image connection has no default model, so a model must be named. Nothing was sent. ${offered.length ? `Pass model: ${offered.join(", ")}, or choose` : "Choose"} a model in Settings → Images.`); }
       const model = catalog.models.find(item => item.id === modelId);
       if (!model?.generate) fail("unsupported-model", "This model is not available for supported raster image generation.");
       const caps = model!.capabilities;
@@ -1005,8 +1041,8 @@ export class ImageGenerationService {
             // Throwing it away left the person with only the status number.
             const detail = outcome === "failed" ? await providerErrorDetail(response) : (void response.body?.cancel(), "");
             // 524: the provider's edge stopped waiting while the render ran on.
-            if (response.status === 524) fail("provider-timeout", "The image provider's edge stopped waiting for the render (HTTP 524). The render may still have finished on its side. Check before trying again; no automatic retry was attempted.", outcome);
-            fail("provider-error", `The selected image provider rejected the request (HTTP ${response.status})${detail}. No fallback or automatic retry was attempted.`, outcome);
+            if (response.status === 524) throw withFacts(new ImageGenerationError("provider-timeout", "The image provider's edge stopped waiting for the render (HTTP 524). The render may still have finished on its side. Check before trying again; no automatic retry was attempted.", outcome), { httpStatus: 524 });
+            throw withFacts(new ImageGenerationError("provider-error", `The selected image provider rejected the request (HTTP ${response.status})${detail}. No fallback or automatic retry was attempted.`, outcome), { httpStatus: response.status });
           }
           const type = response.headers.get("content-type") ?? "";
           if (type.includes("text/event-stream") && response.body) result = await readImageEventStream(response.body, { onActivity: idle?.touch, maxEventBytes: imageResponseCap(count), maxTotalBytes: IMAGE_RESPONSE_MAX_BYTES, expected: count });
@@ -1029,7 +1065,7 @@ export class ImageGenerationService {
           if (answer?.fired()) fail("provider-timeout", `${imageProviderName(connection.provider)} did not send the image within ${Math.round(FLUX_ANSWER_DEADLINE_MS / 1000)} seconds, so Murage stopped waiting. The render may still have finished on its side. Check before trying again; no automatic retry was attempted.`, "uncertain");
           if (retried && !(error instanceof ImageGenerationError)) {
             const transport = describeTransportFailure(error);
-            throw new ImageGenerationError(transport.code, `${transport.message} The first connection could not be opened, so Murage tried once more on a new connection; no further retry was attempted.`, outcome);
+            throw withFacts(new ImageGenerationError(transport.code, `${transport.message} The first connection could not be opened, so Murage tried once more on a new connection; no further retry was attempted.`, outcome), transport);
           }
           if (idle?.fired()) fail("provider-idle", `The image provider sent nothing for ${Math.round(idleMs / 1000)} seconds, so Murage stopped waiting. The render may still finish on the provider's side. Check before trying again; no automatic retry was attempted.`, "uncertain");
           throw error;
@@ -1093,7 +1129,7 @@ export class ImageGenerationService {
         // are just as local: nothing was sent, so they stay correctable too.
         if (!reservationStarted && LOCAL_PREFLIGHT_CODES.has(error.code) && (!externalReadStarted || CATALOGUE_CHECK_CODES.has(error.code))) {
           active();
-          throw new ImageGenerationError(error.code, error.message, error.outcome, true);
+          throw withFacts(new ImageGenerationError(error.code, error.message, error.outcome, true), error);
         }
         throw error;
       }
@@ -1101,7 +1137,7 @@ export class ImageGenerationService {
       // same courtesy for a request that never got a reply at all: which wall
       // it hit, in words, instead of one sentence that fits every failure.
       const transport = describeTransportFailure(error);
-      throw new ImageGenerationError(transport.code, `${transport.message} No fallback or automatic retry was attempted.`, outcome);
+      throw withFacts(new ImageGenerationError(transport.code, `${transport.message} No fallback or automatic retry was attempted.`, outcome), transport);
     } finally {
       if (reservation) {
         try { await reservation.finish(outcome); }

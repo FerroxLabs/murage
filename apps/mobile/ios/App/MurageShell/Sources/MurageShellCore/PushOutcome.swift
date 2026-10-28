@@ -36,6 +36,13 @@ public enum PushOutcome {
 
     public static func detail(status: Int?, body: Any?, category: PushCategory) -> PushDetail {
         let generic = PushDetail(title: category.generic.title, body: category.generic.body, target: nil)
+        if category.isExpiring {
+            // Only ids may come from detail for call kinds. Preview text is never read.
+            guard status == 200, let b = body as? [String: Any],
+                  let t = b["target"] as? [String: Any], let thread = id(t["threadId"]) else { return generic }
+            return PushDetail(title: generic.title, body: generic.body,
+                              target: PushTarget(threadId: thread, messageId: id(t["messageId"]), requestId: id(t["requestId"])))
+        }
         guard status == 200, let b = body as? [String: Any],
               let title = b["title"] as? String, (1...200).contains(title.utf16.count),
               let text = b["body"] as? String, text.utf16.count <= 2000,
