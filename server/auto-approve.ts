@@ -416,6 +416,8 @@ export function exactCommandForRequest(input: {
 }
 
 export interface AutoApprover {
+  /** Server-owned identity for value-free approval diagnostics. */
+  id?: string;
   autoApprove?: boolean;
   /** Full access, the level above Auto. It counts only while `autoApprove`
    * is on too, so every path that switches Auto off ends it as well. */
@@ -573,6 +575,8 @@ export function approvalHoldNote(verdict: AutoVerdict | null | undefined): strin
  * rule decided without the call site re-deriving (and eventually
  * mis-deriving) the match. */
 export interface AutoContext {
+  /** Existing server turn-origin fact, never taken from engine input. */
+  fullAccessOrigin?: FullAccessOrigin;
   /** the engine's whole command, uncapped, for the always-ask reader (the
    * 4,000-character `exactCommand` copy exists for the exact grant, which
    * must stay bounded; a catastrophe after the cut must still be read) */
@@ -601,6 +605,7 @@ export interface AutoContext {
   /** U20 (Rule 74d): the F12 record says the environment check failed, with this cause. The command is unread: held
    *  with the cause at every level, as any call that could not be read whole. */
   envUnread?: string;
+  envUnchecked?: import("../shared/mount-identity.ts").ExecEnv["unchecked"];
   /** the turn was started by an outside event, with nobody at the keyboard */
   unattended?: boolean;
   /** the request controls the user's active desktop */
@@ -809,7 +814,49 @@ function findingCover(
   return null;
 }
 
-export function autoVerdict(
+const askedWindows = new Map<string, { at: number; suppressed: number }>();
+const ASK_LOG_MS = 60_000;
+const ALWAYS_ASK_LOG_RULES = new Set(["delete-root", "delete-home", "delete-system-folder", "disk-erase", "fork-bomb", "unknown-target", "protected-path"]);
+
+/** No free-text rule, note, argument, path or grant key enters a log line. */
+function askReasonClass(verdict: AutoVerdict): string {
+  if (verdict.source === "always-ask") {
+    if (verdict.rule === "unreadable") return "unreadable";
+    return ALWAYS_ASK_LOG_RULES.has(verdict.rule ?? "") ? `always-ask:${verdict.rule}` : "always-ask:own-tool";
+  }
+  if (verdict.source === "unread-call") {
+    const rule = verdict.rule ?? "";
+    if (rule.startsWith(U20_WORDS)) return "unread-call:U20";
+    if (rule.startsWith(U19_WORDS)) return "unread-call:U19";
+    if (rule === "the call was cut before it could be checked") return "unread-call:truncated";
+    if (rule === "the call's arguments run past what the key guard reads") return "unread-call:scan";
+    if (rule.startsWith("the tool this runs cannot be proven:")) return "unread-call:identity";
+    if (rule.startsWith("the call does not carry what this tool needs")) return "unread-call:contract";
+    return "unread-call:actions";
+  }
+  if (verdict.source === "stop-line") return ["delete", "pay", "message"].includes(verdict.rule ?? "") ? `stop-line:${verdict.rule}` : "stop-line:other";
+  return verdict.source;
+}
+
+/** One ask line per bot/tool/class/minute; the next line reports suppressed repeats. */
+function logAsked(bot: AutoApprover, tool: string, verdict: AutoVerdict): void {
+  if (verdict.approve !== null) return;
+  const botId = bot.id && /^[\w-]{1,128}$/.test(bot.id) ? bot.id : "unknown";
+  const toolName = /^[a-zA-Z][\w.:-]{0,127}$/.test(tool) ? tool : "unknown";
+  const reason = askReasonClass(verdict), key = JSON.stringify([botId, toolName, reason]), now = Date.now();
+  const previous = askedWindows.get(key);
+  if (previous && now - previous.at < ASK_LOG_MS && now >= previous.at) { previous.suppressed++; return; }
+  askedWindows.set(key, { at: now, suppressed: 0 });
+  console.info(`approvals: asked bot=${botId} tool=${toolName} reason=${reason} suppressed=${previous?.suppressed ?? 0}`);
+}
+
+export function autoVerdict(bot: AutoApprover, tool: string, summary: string, context?: AutoContext): AutoVerdict {
+  const verdict = autoVerdictOf(bot, tool, summary, context);
+  logAsked(bot, tool, verdict);
+  return verdict;
+}
+
+function autoVerdictOf(
   bot: AutoApprover,
   tool: string,
   summary: string,
@@ -840,26 +887,27 @@ export function autoVerdict(
   // webhook, a channel event, host control and the owner's own turns never
   // get here.
   const routineCarve = commandTool && text !== undefined && context?.routineLevel === true && context.routineCarveOut === true && !context.unattended && context.inputCut !== true && context.scope === undefined;
+  const windowsBash = shell === "pwsh" && fullAccessOriginOf(context) === "owner" && fullAccessCovers(bot, "owner") ? [] as string[] : undefined;
   let catastrophe: AlwaysAskHit | null;
   let valueTarget: CarvedTarget[] | undefined;
+  const resolvedCall = resolveCall(context?.call);
   if (routineCarve) {
     ({ hit: catastrophe, valueTarget } = alwaysAskRoutineCommand(text, cwd, shell));
   } else {
     catastrophe = text !== undefined
-      ? alwaysAskCommand(text, cwd, "command", shell)
+      ? alwaysAskCommand(text, cwd, "command", shell, windowsBash)
       : commandTool && approvalSummaryIsCut(summary)
         ? unreadableHit()
-        : alwaysAskCommand(summary, cwd, commandTool ? "command" : "text", shell);
+        : alwaysAskCommand(summary, cwd, commandTool ? "command" : "text", shell, windowsBash);
   }
-  if (!catastrophe || catastrophe.unseenScript === true) {
+  if (!catastrophe || catastrophe.unseenScript === true || catastrophe.rule === "unreadable") {
     // A command a wrapper or an MCP tool carries (Fuigo's `use_tool` around the cloud computer's exec) is judged like
     // the engine's own shell tool asking: the card title is the model's, the command inside is what runs.
     // An unseen script in the outer text never stands in for that read: whatever the inner command hits wins,
     // unless it too is only an unseen script.
-    const resolvedCall = resolveCall(context?.call);
     const innerCommand = commandArgument(resolvedCall.kind === "engine" || resolvedCall.kind === "mcp" ? resolvedCall.input : context?.call?.toolCall?.input);
     if (innerCommand !== undefined && innerCommand !== text) {
-      const inner = alwaysAskCommand(innerCommand, cwd, "command", shell);
+      const inner = alwaysAskCommand(innerCommand, cwd, "command", shell, windowsBash);
       if (inner && (!catastrophe || inner.unseenScript !== true)) catastrophe = inner;
     }
   }
@@ -871,7 +919,7 @@ export function autoVerdict(
   if (catastrophe && !unseenCovered) return { approve: null, source: "always-ask", rule: catastrophe.rule, note: alwaysAskNote(catastrophe) };
   // a carved command is guarded on its whole text too, so a key or a
   // destructive step past the card's cut summary still holds
-  const verdict = verdictPastAlwaysAsk(bot, tool, summary, context, valueTarget !== undefined ? text : undefined);
+  const verdict = verdictPastAlwaysAsk(bot, tool, summary, context, windowsBash?.length ? [text ?? summary, ...windowsBash].join("\n") : valueTarget !== undefined ? text : undefined, windowsBash);
   return valueTarget !== undefined && verdict.approve ? { ...verdict, valueTarget } : verdict;
 }
 
@@ -886,25 +934,27 @@ const OWN_ALWAYS_ASK_CARDS: ReadonlySet<AutoVerdictSource> = new Set<AutoVerdict
  * allowance, no routine grant. Auto mode's own answer is the same as for any
  * tool. A card it raises offers no grant (source always-ask); a guard keeps its
  * name. Full access keeps its contract and its grants. */
-function verdictPastAlwaysAsk(bot: AutoApprover, tool: string, summary: string, context: AutoContext | undefined, wholeText?: string): AutoVerdict {
+function verdictPastAlwaysAsk(bot: AutoApprover, tool: string, summary: string, context: AutoContext | undefined, wholeText?: string, windowsBash?: readonly string[]): AutoVerdict {
   const own = fullAccessCovers(bot, fullAccessOriginOf(context)) ? undefined : ownAlwaysAskOf(tool, resolveCall(context?.call), context?.call);
-  if (!own) return verdictWithGrants(bot, tool, summary, context, wholeText);
+  if (!own) return verdictWithGrants(bot, tool, summary, context, wholeText, windowsBash);
   const ungranted: AutoApprover = { ...bot, alwaysAllow: undefined };
   const stripped: AutoContext | undefined = context && { ...context, taskAllowanceKeys: undefined, stopAllowedForTask: undefined, routineAllow: undefined };
-  const verdict = verdictWithGrants(ungranted, tool, summary, stripped, wholeText);
+  const verdict = verdictWithGrants(ungranted, tool, summary, stripped, wholeText, windowsBash);
   if (verdict.approve || !OWN_ALWAYS_ASK_CARDS.has(verdict.source)) return verdict;
   return { approve: null, source: "always-ask", rule: `own-always-ask ${own}`, note: OWN_ALWAYS_ASK_NOTE };
 }
 
 /** Who started this turn, as Full access reads it. */
 function fullAccessOriginOf(context: AutoContext | undefined): FullAccessOrigin {
+  if (context?.routineLevel && !context.unattended && !context.channelOwner) return "routine";
+  if (context?.fullAccessOrigin) return context.fullAccessOrigin;
   return context?.unattended || context?.automated
     ? context.channelOwner === true ? "owner-channel"
       : context.routineLevel === true && !context.unattended ? "routine" : "other"
     : "owner";
 }
 
-function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, context: AutoContext | undefined, wholeText?: string): AutoVerdict {
+function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, context: AutoContext | undefined, wholeText?: string, windowsBash?: readonly string[]): AutoVerdict {
   // Full access raises almost no card — not the destructive guard, not the
   // host-control guard — for a turn the owner started. It still stops at the
   // stop line and the key guard (below). A turn started by a webhook, a
@@ -935,13 +985,14 @@ function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, con
   const grantRead = context?.call?.truncated ? undefined : actionGrantRead(tool, context?.call);
   // Rule 68f case 1 (U19): the command the engine reported, or the shell line its arguments carry, sets a pinned name to
   // anything but the hand's pin, or carries an option that overrides one. Read before every standing answer.
-  const commandParts = [context?.exactCommand?.command, innerCommand].filter((part): part is string => part !== undefined);
+  const commandParts = [context?.exactCommand?.command, innerCommand, wholeText].filter((part): part is string => part !== undefined);
   const promptText = commandParts.length ? commandParts.join("\n") : isCommandTool(tool) ? summary : undefined;
   // Section 11 D2: PowerShell's own spellings (`$env:PAGER='x'`, `Set-Item env:GIT_EDITOR`, ...) on a PowerShell tool and on a
   // command a driver runs under PowerShell (Codex and the ACP engines on Windows)
   const pinShell = isPowerShellTool(tool) || (isCommandTool(tool) && context?.call?.commandShell === "pwsh") ? "pwsh" : undefined;
-  const pinUnknown = promptText === undefined ? null : pinOverrideIn(promptText, context?.handedPins ?? NO_PINS, pinShell);
+  const pinUnknown = promptText === undefined ? null : pinOverrideIn(promptText, context?.handedPins ?? NO_PINS, pinShell) ?? windowsBash?.map(payload => pinOverrideIn(payload, context?.handedPins ?? NO_PINS)).find(Boolean) ?? null;
   const unread = context?.envUnread ? `${U20_WORDS}: ${context.envUnread}`
+    : context?.envUnchecked && !(context.fullAccessOrigin === "owner" && hasFullAccess(bot)) ? `${U20_WORDS}: ${context.envUnchecked.reason === "launch-failed" ? "Murage could not start the shell to check its environment" : "the environment check took too long"}`
     : pinUnknown ? `${U19_WORDS}: ${pinUnknown}`
     : context?.call?.truncated ? "the call was cut before it could be checked"
     : scan.cut ? "the call's arguments run past what the key guard reads"
@@ -957,9 +1008,9 @@ function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, con
   const commandGlobText = isCommandTool(tool) || commandParts.length || wholeText !== undefined ? [isCommandTool(tool) ? summary : "", ...commandParts, wholeText ?? "", context?.commandText ?? ""].join("\n") : "";
   // 1.0.7: the same rows over the command as bash hands it on (quotes removed, braces multiplied out), and a glob
   // or brace that picks a home folder entry, which no reader can name
-  const dequoted = pinShell === "pwsh" || !commandGlobText.trim() ? undefined : (() => {
+  const dequoted = pinShell === "pwsh" && !windowsBash?.length || !commandGlobText.trim() ? undefined : (() => {
     // each text on its own: a card summary cut mid-quote must not hide the engine's whole command
-    const reads = [isCommandTool(tool) ? summary : "", ...commandParts, wholeText ?? "", context?.commandText ?? ""].filter((part) => part.trim()).map((part) => dequotedShellText(part));
+    const reads = (pinShell === "pwsh" ? windowsBash ?? [] : [isCommandTool(tool) ? summary : "", ...commandParts, wholeText ?? "", context?.commandText ?? ""]).filter((part) => part.trim()).map((part) => dequotedShellText(part));
     const read = reads.filter((one): one is NonNullable<typeof one> => one !== undefined);
     return read.length ? { text: read.map((one) => one.text).join("\n"), globText: read.map((one) => one.globText).join("\n"), homeGlob: read.find((one) => one.homeGlob)?.homeGlob } : undefined;
   })();

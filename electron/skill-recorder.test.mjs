@@ -187,6 +187,8 @@ describe("skill recorder compiler", () => {
     expect(recording).not.toContain("base64");
     expect(recording).toContain('"provider": "assemblyai"');
     expect(existsSync(path.join(result.path, "references", "step-001.webp"))).toBe(true);
+    // A recording serves the owner's turns only (skill-library.ts skillsForAudience).
+    expect(JSON.parse(readFileSync(path.join(result.path, "manifest.json"), "utf8")).audience).toBe("owner");
   });
 
   it("refuses a missing, relative or absent data root before creating anything (B1)", () => {

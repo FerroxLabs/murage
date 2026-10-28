@@ -389,10 +389,17 @@ export async function launchVerificationServer(
   // under that, so neither fits there; a short private runtime folder gives the server the fallback a real Mac has.
   const runtimeRoot = process.platform !== "win32" && Buffer.byteLength(join(dataDir, "bx-run", "browser-0123456789abcdef.sock")) > 103
     ? mkdtempSync(join(realpathSync("/tmp"), "mbe-scratch-")) : undefined; // "scratch" admits it to removeTempDir outside tmpdir()
+  // Linux Full access binds a bus stub socket at $TMPDIR/murage-power-XXXXXX/bus.sock (host-power.ts). A fixture data
+  // folder under a long checkout path (a CI runner's /home/runner/work/<repo>/<repo>/server/...) puts that past the
+  // 108-byte socket limit, the bind fails and every engine launch is refused; a short private temp folder fits.
+  const shortTemp = process.platform === "linux" && Buffer.byteLength(join(fixtureTemp, "murage-power-XXXXXX", "bus.sock")) > 107
+    ? mkdtempSync(join(realpathSync("/tmp"), "mbt-scratch-")) : undefined;
+  const childTemp = shortTemp ?? fixtureTemp;
   const removeFixtureDirs = async () => {
     await removeTempDir(dataDir);
     if (home !== dataDir) await removeTempDir(home);
     if (runtimeRoot) await removeTempDir(runtimeRoot);
+    if (shortTemp) await removeTempDir(shortTemp);
   };
   const fixtureDumpPath = join(dataDir, "fake-claude-dump.json");
   const fixtureTurnLogPath = join(dataDir, "fake-claude-turns.jsonl");
@@ -429,9 +436,9 @@ export async function launchVerificationServer(
     XDG_CONFIG_HOME: join(home, ".config"),
     XDG_CACHE_HOME: join(home, ".cache"),
     XDG_DATA_HOME: join(home, ".local", "share"),
-    TEMP: fixtureTemp,
-    TMP: fixtureTemp,
-    TMPDIR: fixtureTemp,
+    TEMP: childTemp,
+    TMP: childTemp,
+    TMPDIR: childTemp,
     HERMES_HOME: join(home, ".hermes"),
     MURAGE_DATA_DIR: dataDir,
     ...(runtimeRoot ? { XDG_RUNTIME_DIR: runtimeRoot } : {}),

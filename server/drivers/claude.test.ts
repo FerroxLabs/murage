@@ -1654,6 +1654,95 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await expect(instance.adapter.steer!("t-steer", "late")).resolves.toBe(false);
   });
 
+  it("a message sent during the final answer is answered in the same turn, not lost", async () => {
+    // Claude Code runs input that arrives during its final answer as a turn of
+    // its own, right after `result` (probed on 2.1.309). The driver used to
+    // settle at that result, then close the process for "late frames".
+    await create("final-steer");
+    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-final-steer", text: "first" });
+    await recorder.until((e) => e.type === "content.delta" && (e as { delta?: string }).delta === "Writing the final answer");
+    await expect(instance.adapter.steer!("t-final-steer", "and also this")).resolves.toBe(true);
+    await recorder.until((e) => e.type === "item.completed" && e.itemType === "assistant_text" && (e as { text: string }).text === "reply to: and also this");
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ turnId, ok: true });
+    expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+    const texts = recorder.events.filter((e) => e.type === "item.completed" && e.itemType === "assistant_text").map((e) => (e as { text: string }).text);
+    expect(texts).toEqual(expect.arrayContaining(["reply to: first", "reply to: and also this"]));
+    expect(recorder.events.every((e) => e.turnId === turnId)).toBe(true);
+    // both results' tokens are this turn's
+    expect((done as { usage?: { input: number } }).usage?.input).toBeGreaterThan(12);
+  });
+
+  it("two messages sent during the final answer are answered together in the same turn", async () => {
+    process.env.FAKE_CLAUDE_FINAL_STEERS = "2";
+    try {
+      await create("final-steer");
+      const { turnId } = await instance.adapter.sendTurn({ threadId: "t-final-two", text: "first" });
+      await recorder.until((e) => e.type === "content.delta" && (e as { delta?: string }).delta === "Writing the final answer");
+      await expect(instance.adapter.steer!("t-final-two", "one")).resolves.toBe(true);
+      await expect(instance.adapter.steer!("t-final-two", "two")).resolves.toBe(true);
+      await recorder.until((e) => e.type === "item.completed" && e.itemType === "assistant_text" && (e as { text: string }).text === "reply to: one\ntwo");
+      expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ turnId, ok: true });
+      expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+    } finally {
+      delete process.env.FAKE_CLAUDE_FINAL_STEERS;
+    }
+  });
+
+  it("a background task's own result during the wait neither ends it nor is taken for the follow-up", async () => {
+    process.env.FAKE_CLAUDE_FOLLOWUP_NOTICE = "1";
+    process.env.FAKE_CLAUDE_FOLLOWUP_DELAY_MS = "300";
+    try {
+      await create("final-steer");
+      const { turnId } = await instance.adapter.sendTurn({ threadId: "t-final-notice", text: "first" });
+      await recorder.until((e) => e.type === "content.delta" && (e as { delta?: string }).delta === "Writing the final answer");
+      await expect(instance.adapter.steer!("t-final-notice", "and also this")).resolves.toBe(true);
+      const done = await recorder.until((e) => e.type === "turn.completed");
+      expect(done).toMatchObject({ turnId, ok: true });
+      const replyAt = recorder.events.findIndex((e) => e.type === "item.completed" && e.itemType === "assistant_text" && (e as { text: string }).text === "reply to: and also this");
+      expect(replyAt).toBeGreaterThanOrEqual(0);
+      expect(replyAt).toBeLessThan(recorder.events.indexOf(done));
+      expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+    } finally {
+      delete process.env.FAKE_CLAUDE_FOLLOWUP_NOTICE;
+      delete process.env.FAKE_CLAUDE_FOLLOWUP_DELAY_MS;
+    }
+  });
+
+  it("a message accepted while the turn waits for a follow-up starts the wait over, so a late follow-up still counts", async () => {
+    // the follow-up starts 3 s after the first result: past the first 2 s wait, inside the one the second message restarts
+    process.env.FAKE_CLAUDE_FOLLOWUP_DELAY_MS = "3000";
+    try {
+      await create("final-steer");
+      const { turnId } = await instance.adapter.sendTurn({ threadId: "t-final-extend", text: "first" });
+      await recorder.until((e) => e.type === "content.delta" && (e as { delta?: string }).delta === "Writing the final answer");
+      await expect(instance.adapter.steer!("t-final-extend", "one")).resolves.toBe(true);
+      await recorder.until((e) => e.type === "item.completed" && e.itemType === "assistant_text" && (e as { text: string }).text === "reply to: first");
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      await expect(instance.adapter.steer!("t-final-extend", "two")).resolves.toBe(true);
+      const done = await recorder.until((e) => e.type === "turn.completed", 8_000);
+      expect(done).toMatchObject({ turnId, ok: true });
+      const replyAt = recorder.events.findIndex((e) => e.type === "item.completed" && e.itemType === "assistant_text" && (e as { text: string }).text === "reply to: one\ntwo");
+      expect(replyAt).toBeGreaterThanOrEqual(0);
+      expect(replyAt).toBeLessThan(recorder.events.indexOf(done));
+    } finally {
+      delete process.env.FAKE_CLAUDE_FOLLOWUP_DELAY_MS;
+    }
+  }, 15_000);
+
+  it("a Stop while the turn waits for a steer's follow-up ends it as cancelled, never as the earlier success", async () => {
+    // `slow` folds a steer written after its tool result into the reply, so no follow-up comes: the turn waits up to 2 s
+    await create("slow");
+    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-hold-stop", text: "first" });
+    await recorder.until((e) => e.type === "item.completed" && e.itemType === "tool");
+    await expect(instance.adapter.steer!("t-hold-stop", "and also this")).resolves.toBe(true);
+    await recorder.until((e) => e.type === "item.completed" && e.itemType === "assistant_text" && (e as { text: string }).text.includes("steered: and also this"));
+    await instance.adapter.interruptTurn("t-hold-stop");
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ turnId, stopReason: "cancelled" });
+    expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+  });
+
   it("reuses the live process for the next compatible turn", async () => {
     await create();
     const dump = join(scratch, "dump.json");
@@ -3959,6 +4048,60 @@ describe("ClaudeDriver background tasks (fake CLI)", () => {
     expect(subs[subs.length - 1].subtasks.every((s: any) => s.status === "failed")).toBe(true);
   });
 
+  it("re-arms the background cap after a steer hold adopts a follow-up with new helpers", async () => {
+    const childProcess = await import("node:child_process");
+    const spawns = vi.spyOn(childProcess, "spawn");
+    const timers = vi.spyOn(globalThis, "setTimeout");
+    const clears = vi.spyOn(globalThis, "clearTimeout");
+    const capMs = 1_000;
+    const capTimers = () => timers.mock.calls.flatMap((args, i) => typeof args[0] === "function" && args[0].name === "endAtCap" && args[1] === capMs ? [timers.mock.results[i].value] : []);
+    try {
+      await create({ backgroundTaskCapMs: capMs });
+      process.env.FAKE_CLAUDE_BG_HOLD = "1";
+      process.env.FAKE_CLAUDE_BG_ASKS = "0";
+      const threadId = "t-bg-steer-cap";
+      const { turnId } = await instance.adapter.sendTurn({ threadId, text: "__fixture_background__" });
+      await recorder.until((e) => e.type === "turn.subtask" && e.subtask.id === "bgtask3");
+      await expect.poll(() => readFileSync(log, "utf8")).toContain("held");
+      expect(capTimers()).toHaveLength(1);
+      const firstCap = capTimers()[0];
+
+      // The held fake emits no more frames. Replay the remaining protocol on
+      // its stdout so each transition is observed without racing another reply.
+      const child = spawns.mock.results.find((result) => result.type === "return"
+        && result.value.spawnargs.some((arg: string) => arg.includes("--input-format")))?.value;
+      expect(child?.stdout).toBeTruthy();
+      const frame = (value: unknown) => child!.stdout!.emit("data", Buffer.from(`${JSON.stringify(value)}\n`));
+      const result = { type: "result", is_error: false, stop_reason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 } };
+      await expect(instance.adapter.steer!(threadId, "Start one more helper after these finish.")).resolves.toBe(true);
+      for (const task_id of ["bgtask1", "bgtask2", "bgtask3"]) {
+        frame({ type: "system", subtype: "task_notification", task_id, status: "completed" });
+      }
+      frame(result);
+      expect(clears).toHaveBeenCalledWith(firstCap);
+      expect(capTimers()).toHaveLength(1);
+      expect(recorder.events.some((e) => e.type === "turn.completed")).toBe(false);
+
+      frame({ type: "system", subtype: "init", session_id: "fake-bg-session", model: "fake" });
+      frame({ type: "assistant", message: { content: [{ type: "text", text: "Starting the follow-up helper." }] } });
+      frame({ type: "system", subtype: "task_started", task_id: "followup-helper", description: "Follow-up helper", task_type: "local_agent", is_backgrounded: true });
+      frame(result);
+      expect(capTimers()).toHaveLength(2);
+      expect(capTimers()[1]).not.toBe(firstCap);
+      expect(recorder.events.find((e) => e.type === "item.completed" && e.itemType === "assistant_text" && e.text === "Starting the follow-up helper.")).toMatchObject({ turnId });
+
+      const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+      expect(done).toMatchObject({ ok: true, stopReason: "background_wait_cap" });
+      expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+      expect(recorder.events.find((e) => e.type === "turn.subtask" && e.subtask.id === "followup-helper" && e.subtask.status === "failed")).toMatchObject({ turnId });
+      expect(recorder.events.filter((e) => e.type === "runtime.error")).toEqual([]);
+    } finally {
+      clears.mockRestore();
+      timers.mockRestore();
+      spawns.mockRestore();
+    }
+  });
+
   it("settles on the first result when no background task is open (unchanged)", async () => {
     await create();
     process.env.FAKE_CLAUDE_BG_TASKS = "0";
@@ -4117,6 +4260,7 @@ describe("claudeIsolation", () => {
 
   it("falls back to the file name for front matter it cannot read, and logs a traversal bound instead of refusing", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
     try {
       const h = temp();
       const dir = join(h, ".claude");
@@ -4125,12 +4269,26 @@ describe("claudeIsolation", () => {
       write(join(dir, "agents", ...Array.from({ length: 10 }, (_, i) => `d${i}`), "deep.md"), "---\nname: deep\n---\n");
       const settings = settingsOf(claudeIsolation({ CLAUDE_CONFIG_DIR: dir }, join(h, "w")));
       expect(settings.permissions.deny).toEqual(["Agent(broken)", "Agent(long)"]);
-      const said = warn.mock.calls.map((c) => String(c[0]));
+      const said = info.mock.calls.map((c) => String(c[0]));
       expect(said.some((m) => m.includes("front matter longer than"))).toBe(true);
       expect(said.some((m) => m.includes("does not parse"))).toBe(true);
-      expect(said.some((m) => m.includes("nested deeper than"))).toBe(true);
+      expect(info).toHaveBeenCalledTimes(2);
+      expect(warn.mock.calls.some((c) => String(c[0]).includes("nested deeper than"))).toBe(true);
+      expect(warn.mock.calls.some((c) => String(c[0]).includes("front matter"))).toBe(false);
+      // Repeated scans in this launch, even with a different failure for the same file, stay quiet.
+      claudeIsolation({ CLAUDE_CONFIG_DIR: dir }, join(h, "w"));
+      write(join(dir, "agents", "broken.md"), `---\nname: hidden\ndescription: ${"x".repeat(70 * 1024)}\n---\n`);
+      claudeIsolation({ CLAUDE_CONFIG_DIR: dir }, join(h, "w"));
+      expect(info).toHaveBeenCalledTimes(2);
+      // A different file still gets its own notice; valid edits are still read after a notice.
+      write(join(dir, "agents", "another.md"), "---\nname: [unclosed\n---\n");
+      write(join(dir, "agents", "broken.md"), "---\nname: repaired\n---\n");
+      const repaired = settingsOf(claudeIsolation({ CLAUDE_CONFIG_DIR: dir }, join(h, "w")));
+      expect(repaired.permissions.deny).toContain("Agent(repaired)");
+      expect(info).toHaveBeenCalledTimes(3);
     } finally {
       warn.mockRestore();
+      info.mockRestore();
     }
   });
 

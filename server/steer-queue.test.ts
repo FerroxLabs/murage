@@ -3,7 +3,8 @@
 // Unit: the steer-queue module against a fake store — queue bookkeeping,
 // the drain-once property, and the joined single-prompt shape.
 //
-// e2e: the real harness server with the grokAgent driver on the fake ACP
+// e2e: the real harness server with an engine that cannot take a line mid-turn
+// (customAcp; Grok and Fuigo steer instead) on the fake ACP
 // CLI in echo-gated mode, whose turns stay open until a gate file exists —
 // a deterministic busy window. The echo reply carries the FULL prompt
 // (system + turn text), which pins both what a drained turn was sent (the
@@ -356,7 +357,7 @@ describe("steer-queue e2e (fake ACP fleet)", () => {
       JSON.stringify({
         instances: {
           steer: {
-            driver: "grokAgent",
+            driver: "customAcp",
             environment: { ...GROK_MCP_READY, FAKE_ACP_MODE: "echo-gated", FAKE_ACP_GATE_FILE: drainGate },
             config: { cli: FAKE_CLI, fullAuto: true },
           },
@@ -364,7 +365,7 @@ describe("steer-queue e2e (fake ACP fleet)", () => {
           // be in flight — interrupting earlier would be a no-op on a turn
           // the driver has not registered yet
           steerStop: {
-            driver: "grokAgent",
+            driver: "customAcp",
             environment: { ...GROK_MCP_READY,
               FAKE_ACP_MODE: "echo-gated",
               FAKE_ACP_GATE_FILE: stopGate,
@@ -374,7 +375,7 @@ describe("steer-queue e2e (fake ACP fleet)", () => {
           },
           // a room turn held open by its own gate while a 1:1 message arrives
           steerRoom: {
-            driver: "grokAgent",
+            driver: "customAcp",
             environment: { ...GROK_MCP_READY, FAKE_ACP_MODE: "echo-gated", FAKE_ACP_GATE_FILE: roomGate },
             config: { cli: FAKE_CLI, fullAuto: true },
           },

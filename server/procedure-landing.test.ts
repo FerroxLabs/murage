@@ -81,12 +81,12 @@ const events = (kind: string) => database().prepare("SELECT * FROM memory_learni
 const undo = (id: string) => changeLearningEvent(database(), id, "undo");
 function pinSkill(f: ReturnType<typeof fixture>) {
   install(f);
-  const pin = createProcedurePin(f.bot.id, f.threadId, [], [], undefined, context(f)); f.store.pinTaskProcedures(f.bot.id, f.threadId, pin);
+  const pin = createProcedurePin(f.bot.id, f.threadId, [], [], undefined, context(f),{ownerTurn:true,shipped:()=>true}); f.store.pinTaskProcedures(f.bot.id, f.threadId, pin);
   preparePinnedProcedures(f.bot.id, f.threadId, pin, true, context(f));
 }
 function pinRoutine(f: ReturnType<typeof fixture>, prompt: string, permissionMode: "ask" | "auto" = "ask") {
   const routine = f.manager.create({ name: "Weekly job", botId: f.bot.id, prompt, target: "bot", enabled: false, runOn: "ember", permissionMode, schedule: { type: "interval", everyMinutes: 5, anchorAt: Date.now() } });
-  const pin = createProcedurePin(f.bot.id, f.threadId, [], [], { id: routine.id, instructionRevision: routineInstructionRevision(routine) }, context(f)); f.store.pinTaskProcedures(f.bot.id, f.threadId, pin);
+  const pin = createProcedurePin(f.bot.id, f.threadId, [], [], { id: routine.id, instructionRevision: routineInstructionRevision(routine) }, context(f),{ownerTurn:true,shipped:()=>true}); f.store.pinTaskProcedures(f.bot.id, f.threadId, pin);
   return routine;
 }
 const promptOf = (f: ReturnType<typeof fixture>) => f.manager.listRoutines()[0].prompt;

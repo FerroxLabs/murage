@@ -147,6 +147,7 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["GET", "POST"], path: re(`/api/bots/${ID}/tasks`), class: "conversation", cloudWrite: "ordinary", why: "start a separate task conversation, or page back through the older ones the roster window leaves out" },
   { methods: ["GET", "POST", "PATCH"], path: re(`/api/bots/${ID}/tasks/${ID}`), class: "conversation", cloudWrite: "body", why: "read, open or rename a task conversation; its settings stay on the desktop" },
   // 1.0.4 SL-K / SL-I: conversation class so a paired device gets the plain 404 from the route's own desktop check (as the task settings PATCH)
+  { methods: ["POST"], path: re(`/api/bots/${ID}/permissions/refresh`), class: "desktop", cloudWrite: "step-up", why: "raise owner open conversations after a preview" },
   { methods: ["POST"], path: re(`/api/bots/${ID}/tasks/${ID}/permissions/refresh`), class: "desktop", cloudWrite: "step-up", why: "copy the bot's permissions onto one chat after a preview" },
   { methods: ["POST"], path: re(`/api/bots/${ID}/threads/follow-model`), class: "desktop", cloudWrite: "ordinary", why: "chats with a model of their own go back to the bot's model" },
   { methods: ["PUT", "DELETE"], path: re(`/api/bots/${ID}/limit-backup`), class: "desktop", cloudWrite: "step-up", why: "the engine that takes over when the bot's engine hits its limit" },

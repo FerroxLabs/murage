@@ -141,7 +141,7 @@
 //                        handed, for the one test that must call Murage
 //                        with the turn's own capability; never a dump
 //   FAKE_ACP_UNIQUE_SESSIONS=1  every session/new opens its own session id
-//                        (`fake-acp-session-<pid>-<n>`), the way a real engine does
+//                        (`fake-acp-session-<launch-id>-<n>`), the way a real engine does
 //   FAKE_ACP_LATE_FRAMES_MS  N: N ms after this process's FIRST prompt completes,
 //                        send that session's late output (an agent_message_chunk
 //                        "LATE FRAME FROM THE EARLIER SESSION") and a
@@ -156,6 +156,9 @@
 //                        servers actually changed
 //   FAKE_ACP_MCP_READY_DELAY_MS  announce that long after the servers were
 //                        handed over (a real engine announces once they settle)
+//   FAKE_ACP_MCP_READY_GATE_FILE  also wait for this file before announcing
+//                        readiness, so a test can inspect the real process tree
+//                        before a reused turn reconciles its replacement servers
 //   FAKE_ACP_MCP_LIST_READY_AFTER_MS  with FAKE_ACP_MCP_LIST "all:<status>",
 //                        report every server "initializing" until that long
 //                        after the servers were handed over
@@ -247,6 +250,7 @@
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
 import { execFileSync, spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { appendFileSync, closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync, renameSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { once } from "node:events";
 import { homedir } from "node:os";
@@ -257,6 +261,9 @@ import { fakeReviewByTool, fakeReviewReply, fakeReviewToolArgs } from "./fake-re
 import { callFirstCustomTool, customToolReply, customToolServer } from "./fake-custom-tool.ts";
 
 const mode = process.env.FAKE_ACP_MODE ?? "happy";
+// Separate cages may both call their engine PID 2. Files and session identities
+// must distinguish launches independently of the PID namespace.
+const launchId = randomUUID();
 // permission modes: the command the approval asks about (default "echo hi")
 const permissionCommand = process.env.FAKE_ACP_PERMISSION_COMMAND || "echo hi";
 // A whole tool call (JSON) for a permission-mode ask, verbatim, so a test can
@@ -466,23 +473,25 @@ const fixtureRequested = (text: string, marker: string) => {
   return (lines.pop() ?? "").includes(marker);
 };
 const result = (id: unknown, res: unknown) => out({ jsonrpc: "2.0", id, result: res });
-// `_fuigo/interject`, Fuigo's steer into a running prompt. FAKE_ACP_INTERJECT:
+// `_fuigo/interject`, Fuigo's steer into a running prompt (Grok Build: `_x.ai/interject`,
+// answered on its own `_x.ai/` rail). FAKE_ACP_INTERJECT:
 // "fallback" answers queued and echoes it, then runs it as its own
 // `interject-fallback-` turn after the prompt result (a steer that missed the
 // turn's final drain); "silent" answers nothing and echoes it after
 // FAKE_ACP_LATE_ECHO_MS. Unset: method not found, as other engines answer.
-const strandedInterjections: string[] = [];
+const strandedInterjections: Array<{ text: string; ns: string }> = [];
 let fallbackTurns = 0;
 const runStrandedInterjection = () => {
-  const text = strandedInterjections.shift();
-  if (text === undefined) return;
+  const stranded = strandedInterjections.shift();
+  if (stranded === undefined) return;
+  const { text, ns } = stranded;
   const promptId = `interject-fallback-${++fallbackTurns}`;
   setTimeout(() => {
-    out({ jsonrpc: "2.0", method: "_fuigo/queue/changed", params: { entries: [], runningPromptId: promptId, runningText: text, runningKind: "prompt" } });
+    out({ jsonrpc: "2.0", method: `${ns}/queue/changed`, params: { entries: [], runningPromptId: promptId, runningText: text, runningKind: "prompt" } });
     out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: ` fallback reply #${fallbackTurns}` } } } });
     setTimeout(() => {
-      out({ jsonrpc: "2.0", method: "_fuigo/session_notification", params: { update: { sessionUpdate: "turn_completed", prompt_id: promptId, stop_reason: "end_turn" } } });
-      out({ jsonrpc: "2.0", method: "_fuigo/queue/changed", params: { entries: [] } });
+      out({ jsonrpc: "2.0", method: `${ns}/session_notification`, params: { update: { sessionUpdate: "turn_completed", prompt_id: promptId, stop_reason: "end_turn" } } });
+      out({ jsonrpc: "2.0", method: `${ns}/queue/changed`, params: { entries: [] } });
     }, 300);
   }, 100);
 };
@@ -661,6 +670,11 @@ const announceMcpReady = (sessionId: string, servers: unknown) => {
   if (process.env.FAKE_ACP_MCP_READY !== "1" || !Array.isArray(servers) || !servers.length) return;
   // Grok Build announces the same thing under its own name (FAKE_ACP_MCP_READY_METHOD).
   const announce = () => {
+    const gate = process.env.FAKE_ACP_MCP_READY_GATE_FILE;
+    if (gate && !existsSync(gate)) {
+      setTimeout(announce, 10).unref();
+      return;
+    }
     mcpTimeline("ready");
     out({ jsonrpc: "2.0", method: process.env.FAKE_ACP_MCP_READY_METHOD || "_fuigo/mcp_initialized", params: { sessionId, mcpToolCount: servers.length, elapsedMs: 1 } });
   };
@@ -1083,7 +1097,7 @@ function handle(msg: any) {
       }
       const opts = configOptions();
       const mdls = sessionModels();
-      const newSessionId = process.env.FAKE_ACP_UNIQUE_SESSIONS ? `fake-acp-session-${process.pid}-${++sessionSeq}` : "fake-acp-session";
+      const newSessionId = process.env.FAKE_ACP_UNIQUE_SESSIONS ? `fake-acp-session-${launchId}-${++sessionSeq}` : "fake-acp-session";
       liveSession = newSessionId;
       liveServers = JSON.stringify(servers);
       startMcpChild(servers);
@@ -1205,7 +1219,7 @@ function handle(msg: any) {
       }
       // A marker is observable before the held prompt has a terminal message.
       if (process.env.FAKE_ACP_ACCEPT_DIR && ["parallel-card", "parallel-card-retry", "cancel-ack"].includes(mode)) {
-        writeFileSync(join(process.env.FAKE_ACP_ACCEPT_DIR, `${process.pid}-${msg.id}.accepted`), String(Date.now()));
+        writeFileSync(join(process.env.FAKE_ACP_ACCEPT_DIR, `${launchId}-${msg.id}.accepted`), String(Date.now()));
       }
       if (process.env.FAKE_ACP_PROMPT_DUMP) writeFileSync(process.env.FAKE_ACP_PROMPT_DUMP, JSON.stringify(msg.params?.prompt ?? null));
       // FAKE_CUSTOM_TOOL_SERVER (fake-custom-tool.ts): call the first tool of
@@ -2265,13 +2279,15 @@ function handle(msg: any) {
       result(msg.id, { servers: Object.entries(states).map(([name, status]) => ({ name, session: { enabled: true, status } })) });
       break;
     }
-    case "_fuigo/interject": {
+    case "_fuigo/interject":
+    case "_x.ai/interject": {
       const interjectMode = process.env.FAKE_ACP_INTERJECT;
-      const echo = () => out({ jsonrpc: "2.0", method: "_fuigo/session/interjection", params: { sessionId: msg.params?.sessionId, text: msg.params?.text, interjectionId: msg.params?.interjectionId } });
+      const ns = msg.method === "_x.ai/interject" ? "_x.ai" : "_fuigo";
+      const echo = () => out({ jsonrpc: "2.0", method: `${ns}/session/interjection`, params: { sessionId: msg.params?.sessionId, text: msg.params?.text, interjectionId: msg.params?.interjectionId } });
       if (interjectMode === "fallback") {
         result(msg.id, { result: { status: "queued" } });
         echo();
-        strandedInterjections.push(String(msg.params?.text ?? ""));
+        strandedInterjections.push({ text: String(msg.params?.text ?? ""), ns });
       } else if (interjectMode === "silent") {
         setTimeout(echo, Number(process.env.FAKE_ACP_LATE_ECHO_MS ?? 1000));
       } else if (msg.id !== undefined) out({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "method not found" } });
