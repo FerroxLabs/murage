@@ -3669,5 +3669,18 @@
   "learnAboutMe.error.conflict": "Esta línea ya se conservó con otras palabras. Vuelve a pegar para revisarla de nuevo.",
   "learnAboutMe.importedFrom": "Importado de {provider}, {date}",
   "learnAboutMe.importedFromUndated": "Importado de {provider}, sin fecha",
-  "memoryReview.forgottenWords": "Olvidado. Sus palabras ya no están."
+  "memoryReview.forgottenWords": "Olvidado. Sus palabras ya no están.",
+  "settings.bot.phoneForBots.title": "Teléfono para tus bots",
+  "settings.bot.phoneForBots.description": "Elige qué pueden usar tus bots en este teléfono.",
+  "settings.bot.phoneForBots.open": "Abrir",
+  "phone.ask.fromPhone": "Desde tu teléfono",
+  "phone.ask.askAgain": "Preguntar de nuevo",
+  "phone.ask.settingTitle": "Compartir y preguntar desde este teléfono",
+  "phone.ask.settingOff": "Compartir y preguntar están desactivados para este teléfono.",
+  "phone.ask.errorGone": "Ese chat ya no está disponible. Elige otro.",
+  "phone.ask.errorUpdate": "Actualiza Murage en tu ordenador para usar esto.",
+  "phone.ask.errorSetup": "Abre Murage para configurar de nuevo el uso compartido.",
+  "phone.removal.pending": "Eliminación pendiente",
+  "phone.removal.pendingBody": "Murage seguirá intentando quitar este teléfono.",
+  "phone.removal.retry": "Intentar de nuevo"
 }

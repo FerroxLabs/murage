@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useStore } from "@/state/store";
 import { openInboxLink } from "@/lib/open-inbox-link";
 import { Inbox } from "./Inbox";
+import { healthDestination } from "./HealthCard";
 import { openFiles } from "./Files";
 import type { InboxLink, InboxView } from "../../shared/inbox";
 import { t } from "@/lib/i18n";
@@ -27,6 +28,7 @@ export function InboxDialog({ onClose, initialView }: { onClose: () => void; ini
     {error && <p role="alert" className="px-4 pt-3 text-[13px] text-danger">{error}</p>}
     <Inbox initialView={initialView} onOpen={link => { void openSource(link); }} onClose={onClose} refreshKey={state.routineRuns.length}
       onOpenBackups={() => { onClose(); dispatch({ type: "toggleAppSettings", open: true, section: "backups" }); }}
+      onOpenHealthAction={action => { const to = healthDestination(action); if (!to) return; onClose(); dispatch({ type: "toggleAppSettings", open: true, section: to.section, ...(to.anchor ? { anchor: to.anchor } : {}) }); }}
       onOpenLearning={botId => { onClose(); dispatch({ type: "select", id: botId }); dispatch({ type: "toggleSettings", open: true, intent: { section: "learning" } }); }}
       onOpenMemory={subject => {
         onClose();

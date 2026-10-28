@@ -52,6 +52,7 @@ final class PushContractTests: XCTestCase {
     }
 
     func testCategoriesChannelsAndWords() {
+        XCTAssertEqual(PushContract.version, push["version"] as? Int)
         let ios = push["iosCategory"] as? [String: String] ?? [:]
         let android = push["androidChannel"] as? [String: String] ?? [:]
         let generic = push["generic"] as? [String: [String: String]] ?? [:]
@@ -61,6 +62,23 @@ final class PushContractTests: XCTestCase {
             XCTAssertEqual(category.generic.title, generic[category.rawValue]?["title"])
             XCTAssertEqual(category.generic.body, generic[category.rawValue]?["body"])
         }
+    }
+
+    func testDeviceJobCategoryAndBothPayloadTransports() throws {
+        let fixture = try XCTUnwrap(Fixtures.json("push.json") as? [String: Any])
+        let categories = try XCTUnwrap(fixture["categories"] as? [[String: String]])
+        XCTAssertTrue(categories.contains { $0["kind"] == "device-job" && $0["category"] == "device-job" })
+        let payloads = try XCTUnwrap(fixture["payloads"] as? [[String: Any]])
+        let vector = try XCTUnwrap(payloads.first { ($0["value"] as? [String: Any])?["category"] as? String == "device-job" })
+        let value = try XCTUnwrap(vector["value"] as? [String: Any])
+        let payload = try XCTUnwrap(PushPayload.parse(value))
+        XCTAssertEqual(payload.category, .deviceJob)
+        XCTAssertEqual(payload.category.iosCategory, "DEVICE_JOB")
+        XCTAssertEqual(payload.category.androidChannel, "requests")
+        var data = value.mapValues { String(describing: $0) }
+        let fcm = try XCTUnwrap(fixture["fcmData"] as? [[String: Any]])
+        data["threadGroup"] = (try XCTUnwrap(fcm.first?["data"] as? [String: String]))["threadGroup"]
+        XCTAssertEqual(PushPayload.parse(fcmData: data)?.category, .deviceJob)
     }
 
     func testFeatureSwitchesMatchTheFile() throws {

@@ -27,6 +27,25 @@ export function cardTitle(record: { title: string }, shown: (record: { title: st
 export { FAILURE_CODES, START_FAILURE_CODES, failureCodeFrom, startFailureCodeFrom, type FailureCode, type StartFailureCode };
 export type StopReasonCode = FailureCode;
 
+/** Bot email outcomes (4.6) and the Murage reference they name: "E-" and six capitals or digits, so a stored copy stays code-shaped. */
+export const EMAIL_OUTCOME_CODES = ["sent", "declined", "not_sent", "unknown", "expired", "withdrawn"] as const;
+export type EmailOutcomeCode = typeof EMAIL_OUTCOME_CODES[number];
+export const EMAIL_REF_PATTERN = /^E-[A-Z0-9]{6}$/;
+export type EmailRef = string & { readonly __emailRef: true };
+export function emailRefOf(value: string): EmailRef | null { return EMAIL_REF_PATTERN.test(value) ? value as EmailRef : null; }
+/** A bare, lower-cased addr-spec (no display name, no sender words): the one sender detail an arrival notice names (5.2). */
+const EMAIL_ADDR_PATTERN = /^[a-z0-9!#$%&'*+/=?^_`{|}~.-]{1,64}@[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?)+$/;
+export type EmailAddr = string & { readonly __emailAddr: true };
+export function emailAddrOf(value: string): EmailAddr | null { return value.length <= 254 && EMAIL_ADDR_PATTERN.test(value) ? value as EmailAddr : null; }
+const EMAIL_OUTCOME_WORDS: Record<EmailOutcomeCode, string> = {
+  sent: "Your email went out",
+  declined: "The owner chose not to send your email",
+  not_sent: "Your email did not reach anyone",
+  unknown: "Murage could not confirm yet whether your email went out; it keeps checking",
+  expired: "Your email waited too long for the owner and was not sent",
+  withdrawn: "Your email was withdrawn and not sent",
+};
+
 const FAILURE_WORDS: Record<FailureCode, string> = {
   rate_limit: "the provider is limiting requests right now",
   auth: "it is not signed in to its provider",
@@ -207,6 +226,10 @@ const TABLE = {
   call_ended: (p: { minutes: number }) => `The voice call ended after ${p.minutes} min.`,
   // the owner confirmed a first-run setup step
   setup_confirmed: () => "That setup step is saved.",
+  // bot email (BOT-EMAIL-MURAGE-109 4.6): a code-shaped reference and one of six outcomes, never an address, a subject or a text
+  email_outcome: (p: { ref: EmailRef; outcome: EmailOutcomeCode }) => `${EMAIL_OUTCOME_WORDS[p.outcome]} (${p.ref}).`,
+  // bot email arrival (5.2): the owner's only (never in BOT_VISIBLE_STATUS); the bare sender address in Murage's words, never a subject
+  email_arrived: (p: { name: BotName; from: EmailAddr; more: number }) => `New email for ${p.name} from ${p.from}${p.more > 0 ? ` and ${p.more} more` : ""}`,
   // a row of a running delegation's recent activity (the words inside were released by the gate)
   activity_name: (p: { name: Outbound }) => { const name = wordsOf(p.name).trim(); return hostStoppedDisplayName(name) ?? sendNoticeDisplayName(name) ?? loopNoticeDisplayName(name) ?? folderTrustDisplayName(name) ?? `tool: ${name}`; },
   activity_text: (p: { text: Outbound }) => {
@@ -235,7 +258,7 @@ export const TABLE_TAKES_NO_RAW_STRINGS: [OffendingKeys] extends [never] ? true 
 /** The keys a stored record (a receipt, a request's ending) may keep, and the exact parameters each keeps. A kept line is written again only when
  * its parameters match this schema: a bot's name must be the name of a bot on the roster now, a code one of the five, a count a small whole
  * number. Anything else reads as no line at all, so nothing kept can carry words that are not Murage's. */
-type ParamKind = "bot" | "card" | "code" | "start" | "count" | "close";
+type ParamKind = "bot" | "card" | "code" | "start" | "count" | "close" | "eref" | "eoutcome" | "eaddr";
 const KEPT: Readonly<Record<string, Readonly<Record<string, ParamKind>>>> = {
   no_such_bot: {}, receipt_cancelled: {}, receipt_owner_stopped: {}, receipt_turn_unfinished: {}, receipt_denied: {}, receipt_draft_only: {}, receipt_expired: {}, receipt_not_approved: {},
   receipt_deleted: {}, receipt_restart: {}, receipt_dismissed: {}, receipt_unreadable: {}, receipt_request_gone: {}, receipt_uncertain: { name: "bot" }, receipt_held_busy: { name: "bot" }, receipt_held_didnotstart: { name: "bot" },
@@ -247,12 +270,14 @@ const KEPT: Readonly<Record<string, Readonly<Record<string, ParamKind>>>> = {
   queue_paused_steps: { steps: "count" }, queue_closed: { name: "bot", why: "close" },
   withheld: {}, checking: {}, no_answer_checking: {}, no_answer_check_timed_out: { name: "bot" }, card_result_line: { desk: "bot", lead: "bot", card: "card" }, criteria_claim_corrected: { met: "count", total: "count" }, call_ended: { minutes: "count" },
   setup_confirmed: {},
+  email_outcome: { ref: "eref", outcome: "eoutcome" },
+  email_arrived: { name: "bot", from: "eaddr", more: "count" },
 };
 const PERSISTABLE = new Set<string>(Object.keys(KEPT));
 
 /** The status lines a bot may read (LINEAGE-DESIGN-S6 rule 14), each rendered fresh from what its row keeps. Every other line in the table is
  * the owner's only: a bot reading a row that carries one reads nothing there. Each key here is one a row keeps (KEPT). */
-export const BOT_VISIBLE_STATUS: ReadonlySet<StatusKey> = new Set<StatusKey>(["withheld", "checking", "no_answer_checking", "no_answer_check_timed_out", "request_finished", "result_unavailable", "card_result_line", "criteria_claim_corrected", "call_ended", "setup_confirmed"]);
+export const BOT_VISIBLE_STATUS: ReadonlySet<StatusKey> = new Set<StatusKey>(["withheld", "checking", "no_answer_checking", "no_answer_check_timed_out", "request_finished", "result_unavailable", "card_result_line", "criteria_claim_corrected", "call_ended", "setup_confirmed", "email_outcome"]);
 
 /** Is this a bot on the roster now? Supplied once by the server; with none, no kept line naming a bot is written again (fail closed). */
 let rosterHas: ((name: string) => boolean) | undefined;
@@ -338,6 +363,9 @@ function keptParams(key: string, data: unknown, roster: boolean): Record<string,
     if (kind === "code") { if (typeof value !== "string" || !(FAILURE_CODES as readonly string[]).includes(value)) return undefined; }
     else if (kind === "start") { if (typeof value !== "string" || !([...START_FAILURE_CODES, "other"] as readonly string[]).includes(value)) return undefined; }
     else if (kind === "count") { if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 1000) return undefined; }
+    else if (kind === "eref") { if (typeof value !== "string" || !EMAIL_REF_PATTERN.test(value)) return undefined; }
+    else if (kind === "eaddr") { if (typeof value !== "string" || !emailAddrOf(value)) return undefined; }
+    else if (kind === "eoutcome") { if (typeof value !== "string" || !(EMAIL_OUTCOME_CODES as readonly string[]).includes(value)) return undefined; }
     else if (kind === "close") { if (typeof value !== "string" || !(QUEUE_CLOSE_CODES as readonly string[]).includes(value)) return undefined; }
     else if (kind === "bot") {
       if (typeof value !== "string" || value.length < 1 || value.length > 80 || /[\p{Cc}\u2028\u2029]/u.test(value)) return undefined;

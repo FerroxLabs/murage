@@ -7,6 +7,7 @@ it("turns Zod's JIT (and its eval probe) off before anything else loads", async 
   await import("./zod-config");
   expect(globalConfig.jitless).toBe(true);
   const main = readFileSync(new URL("../main.tsx", import.meta.url), "utf8");
-  const firstImport = main.split("\n").find((line) => line.startsWith("import "));
+  // Only the dependency-free randomUUID polyfill (it builds no schema) may come first.
+  const firstImport = main.split("\n").find((line) => line.startsWith("import ") && line !== 'import "./lib/random-uuid-polyfill";');
   expect(firstImport).toBe('import "./lib/zod-config";');
 });

@@ -13,18 +13,22 @@ public final class ProbeVerdict {
     public final String name;
     public final Long hostCapability;
     public final Long approvalProof;
+    public final Long phoneJobs;
+    public final Long phoneAsk;
 
     private ProbeVerdict(Kind kind, String name) {
         this(kind, name, null);
     }
 
     private ProbeVerdict(Kind kind, String name, Long hostCapability) {
-        this(kind, name, hostCapability, null);
+        this(kind, name, hostCapability, null, null, null);
     }
 
-    private ProbeVerdict(Kind kind, String name, Long hostCapability, Long approvalProof) {
+    private ProbeVerdict(Kind kind, String name, Long hostCapability, Long approvalProof, Long phoneJobs, Long phoneAsk) {
         this.hostCapability = hostCapability;
         this.approvalProof = approvalProof;
+        this.phoneJobs = phoneJobs;
+        this.phoneAsk = phoneAsk;
         this.kind = kind;
         this.name = name;
     }
@@ -47,7 +51,11 @@ public final class ProbeVerdict {
             Object raw = json.opt("name");
             Object proof = json.opt("approvalProof");
             Long approvalProof = proof instanceof Integer || proof instanceof Long ? ((Number) proof).longValue() : null;
-            return new ProbeVerdict(Kind.FULL, raw instanceof String ? WorkspaceBook.cleanName((String) raw) : null, hostCapability, approvalProof);
+            Object jobs = json.opt("phoneJobs");
+            Long phoneJobs = jobs instanceof Integer || jobs instanceof Long ? ((Number) jobs).longValue() : null;
+            Object ask = json.opt("phoneAsk");
+            Long phoneAsk = ask instanceof Integer || ask instanceof Long ? ((Number) ask).longValue() : null;
+            return new ProbeVerdict(Kind.FULL, raw instanceof String ? WorkspaceBook.cleanName((String) raw) : null, hostCapability, approvalProof, phoneJobs, phoneAsk);
         }
         // Only a refused handshake or certificate gets HTTPS guidance (twin of NavigationFailure.isCertificate);
         // a reset or bad record is a network failure, so the automatic retry still applies.
@@ -62,6 +70,12 @@ public final class ProbeVerdict {
     /** The computer's /healthz says it keeps a phone's approval key (SEC-006). */
     public boolean approvalProofOk() {
         return approvalProof != null && approvalProof >= 1;
+    }
+
+    public boolean phoneAskOk() { return kind == Kind.FULL && phoneAsk != null && phoneAsk >= 1; }
+
+    public boolean phoneJobsOk() {
+        return kind == Kind.FULL && phoneJobs != null && phoneJobs >= 1;
     }
 
     public String mode() {

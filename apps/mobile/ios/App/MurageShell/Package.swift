@@ -11,6 +11,7 @@ import PackageDescription
 // MurageShell depends on it; the notification extension never links it.
 let package = Package(
     name: "MurageShell",
+    defaultLocalization: "en",
     platforms: [.iOS(.v17), .macOS(.v14)],
     products: [
         .library(name: "MurageShell", targets: ["MurageShell", "MurageShellCore"]),
@@ -18,12 +19,13 @@ let package = Package(
         .library(name: "MurageShellCore", targets: ["MurageShellCore"]),
     ],
     targets: [
-        .target(name: "MurageShellCore"),
+        .target(name: "MurageShellCore", resources: [.process("Resources")]),
         .target(
             name: "MurageCallAudioCore",
             linkerSettings: [.linkedFramework("AVFAudio"), .linkedFramework("AudioToolbox")]
         ),
-        .target(name: "MurageShell", dependencies: ["MurageShellCore", "MurageCallAudioCore"]),
+        .target(name: "MurageShell", dependencies: ["MurageShellCore", "MurageCallAudioCore"], resources: [.process("Resources")],
+                linkerSettings: [.unsafeFlags(["-weak_framework", "AlarmKit"], .when(platforms: [.iOS]))]),
         .testTarget(name: "MurageShellCoreTests", dependencies: ["MurageShellCore"]),
         // iOS simulator only (`xcodebuild test` on this package): drives
         // CallAudioEngine with posted notifications. Empty on the Mac.

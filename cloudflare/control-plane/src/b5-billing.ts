@@ -14,7 +14,7 @@ import { b3Enabled } from "./b3-config";
 import { accountSession, type ControlPlaneAuth } from "./auth";
 import { accountContactEmail } from "./cloud-accounts";
 import { transactionalSender } from "./email";
-import { HTTPError, json, readBoundedJSON } from "./http";
+import { HTTPError, json, readBoundedBody, readBoundedJSON } from "./http";
 import {
   addMonthUtc, archiveCurrentDocs, archivedSnapshot, attachSessionToConsent, buildConfirmationEmail, CLOUD_MEMBERS_PATH, retentionDaysText, buildReminderEmail, buildTermsChangeEmail, buildTermsReminderEmail, changedSince, clientMeta,
   acceptanceCounts, consentIsEu, consentSchema, queueServerReady, serverReadyData, declaredCountryOf, expireExportRequests, htmlOf, isoDate, type AcceptanceRow, getConsent, IncludedCreditUnavailable, latestAcceptance, loadAcceptedDocs,
@@ -2292,11 +2292,10 @@ const MAX_WEBHOOK_BYTES = 256 * 1024;
 const eventSchema = z.object({ id: z.string().regex(/^evt_[\w]{4,120}$/), type: z.string().max(100), created: z.number().int().positive(),
   data: z.object({ object: z.record(z.string(), z.unknown()) }).loose() }).loose();
 
+// The webhook route is served before the API's own bounded body (index.ts), so it bounds its body itself: a chunked body
+// with no declared length is counted as it streams, never buffered whole before the size check (upstream 88060af8f's class).
 async function readRaw(request: Request): Promise<string> {
-  const declared = Number(request.headers.get("content-length") ?? "0");
-  if (declared > MAX_WEBHOOK_BYTES) throw new HTTPError(413, "request_too_large");
-  const bytes = new Uint8Array(await request.arrayBuffer());
-  if (bytes.byteLength > MAX_WEBHOOK_BYTES) throw new HTTPError(413, "request_too_large");
+  const bytes = await readBoundedBody(request, MAX_WEBHOOK_BYTES);
   return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
 }
 

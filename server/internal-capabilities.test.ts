@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { InternalCapabilities, type InternalCapabilityKind } from "./internal-capabilities.ts";
+import { InternalCapabilities, requiredInternalKind, type InternalCapabilityKind } from "./internal-capabilities.ts";
 
 function mint(registry: InternalCapabilities, threadId = "thread", generation = "generation", kind: InternalCapabilityKind = "agents") {
   const token = registry.mint({ botId: "bot", threadId, generation, kind, depth: 0, skillAuthoring: false });
@@ -221,5 +221,33 @@ describe("internal turn capabilities", () => {
     expect(() => registry.mint({ ...a.claim, threadId: "thread-b" })).toThrow();
     registry.revokeGeneration("thread-b", "gen-b");
     expect(registry.resolve(`Bearer ${a.token}`)).toBe(a.claim);
+  });
+});
+
+describe("the device kind (1.0.9 phone tools, S13)", () => {
+  it("maps /api/internal/device/ paths to device and nothing else does", () => {
+    expect(requiredInternalKind("/api/internal/device/call")).toBe("device");
+    expect(requiredInternalKind("/api/internal/device/")).toBe("device");
+    expect(requiredInternalKind("/api/internal/agents")).toBe("agents");
+    expect(requiredInternalKind("/api/internal/devices")).toBe("agents");
+    expect(requiredInternalKind("/api/internal/memory/search")).toBe("memory");
+  });
+
+  it("mints a device claim, and a claim of any other kind does not match the device path", () => {
+    const registry = new InternalCapabilities();
+    registry.begin("bot", "thread", "generation");
+    const device = mint(registry, "thread", "generation", "device");
+    expect(device.claim.kind).toBe("device");
+    expect(device.claim.kind === requiredInternalKind("/api/internal/device/call")).toBe(true);
+    for (const kind of ["agents", "connectors", "computer", "memory", "mcp"] as const) {
+      const other = mint(registry, "thread", "generation", kind);
+      expect(other.claim.kind === requiredInternalKind("/api/internal/device/call"), kind).toBe(false);
+    }
+  });
+
+  it("refuses a claim with an unknown kind", () => {
+    const registry = new InternalCapabilities();
+    registry.begin("bot", "thread", "generation");
+    expect(() => registry.mint({ botId: "bot", threadId: "thread", generation: "generation", kind: "phone" as never, depth: 0, skillAuthoring: false })).toThrow();
   });
 });

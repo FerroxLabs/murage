@@ -187,14 +187,14 @@ test("actual startup fences closed invocation before normal writers and selected
   const calls=[];
   const traced=[];
   const context=vm.createContext({cloudLive:{start(){},probeOnFocus(){}},takeLaunchCloudLink:async()=>false,closedTrace:stage=>traced.push(stage),desktopMark:()=>{},app:{whenReady:()=>Promise.resolve()},assertDesktopStartupActive:()=>{},closedBackupRequested:true,desktopRecoveryMode:false,
-    acquireDesktopDataOwner:()=>calls.push("owner"),initializeBackupScheduleHost:async()=>calls.push("host"),
+    acquireDesktopDataOwner:()=>calls.push("owner"),initializeSentinelHost:async()=>calls.push("sentinel"),initializeBackupScheduleHost:async()=>calls.push("host"),
     // A slow first tool check must not turn the closed-app run into "unavailable".
     desktopBackupTool:{waitReady:async()=>{calls.push("tool");}},
     backupScheduleHost:{runClosedDue:async()=>{calls.push("capture");return{status:"verified"};}},finishClosedBackup:result=>calls.push(result.status),
     createServerConnections:()=>assert.fail("normal startup must not run"),
   });
   vm.runInContext(declaration.getText(parsed),context);await vm.runInContext("desktopStartup",context);for(let i=0;i<5;i++)await new Promise(resolve=>setImmediate(resolve));
-  assert.deepEqual(calls,["owner","host","tool","capture","verified"]);assert.equal(context.desktopRecoveryMode,true);
+  assert.deepEqual(calls,["owner","sentinel","host","tool","capture","verified"]);assert.equal(context.desktopRecoveryMode,true);
   assert.deepEqual(traced,["ready","owner","host","run","result verified"]);
   let handler,focused=0;const secondStatement=parsed.statements.find(node=>node.getText(parsed).startsWith('app.on("second-instance"'));
   vm.runInNewContext(secondStatement.getText(parsed),{app:{on:(_event,callback)=>{handler=callback;}},CLOSED_DUE_FLAG:"--murage-backup-due",CLOSED_DESCRIPTOR_FLAG:"--murage-backup-descriptor",activateExistingWindow:()=>focused++});

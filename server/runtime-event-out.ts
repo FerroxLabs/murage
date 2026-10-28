@@ -88,7 +88,16 @@ export function windowRuntimeEvent(event: RuntimeEvent): RuntimeEvent {
  * never the map handed to the engine process (its value-free projection
  * instead, Astra #9). */
 export function loggedRuntimeEvent<T>(event: T): T {
-  if (!event || typeof event !== "object" || (event as { type?: unknown }).type !== "request.opened" || !Object.hasOwn(event, "execEnv")) return event;
-  const { execEnv: handed, envInfo: _given, ...rest } = event as T & { execEnv?: unknown; envInfo?: unknown };
+  if (!event || typeof event !== "object" || (event as { type?: unknown }).type !== "request.opened") return event;
+  // OPENAI-TOOLS-109 s8 (b): the exact, unscrubbed call the handler judges (`toolCall.input`) is never written to the log, for
+  // every engine; the bounded, scrubbed `toolInput` is the logged text. Only the call's name stays.
+  let reduced: T = event as T;
+  if (Object.hasOwn(event, "toolCall")) {
+    const { toolCall, ...withoutCall } = event as T & { toolCall?: unknown };
+    const name = toolCall && typeof toolCall === "object" ? (toolCall as { name?: unknown }).name : undefined;
+    reduced = (typeof name === "string" ? { ...withoutCall, toolCall: { name } } : withoutCall) as T;
+  }
+  if (!Object.hasOwn(reduced as object, "execEnv")) return reduced;
+  const { execEnv: handed, envInfo: _given, ...rest } = reduced as T & { execEnv?: unknown; envInfo?: unknown };
   return (isExecEnv(handed) ? { ...rest, envInfo: envInfoOf(handed) } : rest) as T;
 }

@@ -846,3 +846,11 @@ describe("widget rows are not read aloud", () => {
     expect(group).toMatch(/message\.kind === "text" && !message\.widget && message\.text\?\.trim\(\)/);
   });
 });
+
+describe("bot calls: no recognition during the opener (Astra r3 Medium)", () => {
+  it("openTurn stands down while the opener plays, and begin says it through sayOpener", () => {
+    const openTurn = slice("const openTurn = useCallback(", "const listen = useCallback(");
+    expect(openTurn).toMatch(/if \(openerPlaying\.current\) return;/);
+    expect(source).toMatch(/await sayOpener\(\(\) => sayRef\.current\(text\), openerPlaying\);/);
+  });
+});
