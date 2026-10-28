@@ -8,7 +8,8 @@ import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { ensureDirs, NATIVE_DIR } from "../config.ts";
-const { appendNative } = await import(process.env.MURAGE_NATIVE_LOG_CONTROL_ENTRY ?? "./native.ts") as typeof import("./native.ts");
+const { appendNative, withholdNativeThread } = await import(process.env.MURAGE_NATIVE_LOG_CONTROL_ENTRY ?? "./native.ts") as typeof import("./native.ts");
+import { renderDriverReplay } from "../turn-context.ts";
 
 beforeAll(() => ensureDirs());
 
@@ -154,5 +155,60 @@ describe("appendNative", () => {
     const cyclic: Record<string, unknown> = {};
     cyclic.self = cyclic;
     expect(() => appendNative("t-cyclic", { dir: "in", source: "acp", msg: cyclic })).not.toThrow();
+  });
+
+  describe("1.0.9 phone tools S19: a marked thread keeps no text in the native trace", () => {
+    const WITHHELD = "[phone thread text withheld]";
+    const rows = (thread: string) => readFileSync(join(NATIVE_DIR, `${thread}.ndjson`), "utf8").trimEnd().split("\n").map((line) => JSON.parse(line));
+    const SECRET_WORDS = "Dr Lee at 9 in Room 4, bring the numbers";
+    beforeAll(() => withholdNativeThread((threadId) => threadId.startsWith("t-marked-")));
+
+    it("an out frame carrying a replay prompt with Assistant lines is written without the phone text", () => {
+      const prompt = renderDriverReplay([{ role: "user", text: "what is on my calendar" }, { role: "assistant", text: SECRET_WORDS }]);
+      appendNative("t-marked-replay", { dir: "out", source: "claude", msg: { type: "user", prompt, turn: 3, flag: true } });
+      const log = readFileSync(join(NATIVE_DIR, "t-marked-replay.ndjson"), "utf8");
+      expect(log).not.toContain("Dr Lee");
+      expect(log).not.toContain("what is on my calendar");
+      const row = rows("t-marked-replay")[0];
+      expect(row.msg).toEqual({ type: WITHHELD, prompt: WITHHELD, turn: 3, flag: true });
+      expect(row.dir).toBe("out");
+      expect(row.source).toBe("claude");
+      expect(typeof row.at).toBe("string");
+    });
+
+    it("an in raw claude SDK frame and every driver source label are withheld at any depth, numbers kept", () => {
+      for (const source of ["claude", "codex", "boxagent", "antigravity"]) {
+        const thread = `t-marked-${source}`;
+        appendNative(thread, { dir: "in", source, msg: { type: "assistant", usage: { input_tokens: 12, output_tokens: 34 }, message: { content: [{ type: "text", text: SECRET_WORDS }, { type: "tool_use", input: { q: SECRET_WORDS } }] }, list: [SECRET_WORDS, 7, null] } });
+        expect(readFileSync(join(NATIVE_DIR, `${thread}.ndjson`), "utf8")).not.toContain("Dr Lee");
+        const row = rows(thread)[0];
+        expect(row.source).toBe(source);
+        expect(row.msg.usage).toEqual({ input_tokens: 12, output_tokens: 34 });
+        expect(row.msg.message.content[0]).toEqual({ type: WITHHELD, text: WITHHELD });
+        expect(row.msg.list).toEqual([WITHHELD, 7, null]);
+      }
+    });
+
+    it("numeric size fields survive, lifecycle rows are unchanged, and an unmarked thread is unchanged", () => {
+      appendNative("t-marked-sizes", { dir: "in", source: "codex", msg: { bytes: 1234, ok: false, text: "x" } });
+      expect(rows("t-marked-sizes")[0].msg).toEqual({ bytes: 1234, ok: false, text: WITHHELD });
+      appendNative("t-marked-life", { dir: "lifecycle", source: "murage.engine-lifecycle", msg: { event: "mcp_ready_own", turnId: "fb296783-4baa-4128-831c-b46042fa7ced" } });
+      expect(rows("t-marked-life")[0].msg).toEqual({ event: "mcp_ready_own", turnId: "fb296783-4baa-4128-831c-b46042fa7ced" });
+      appendNative("t-open-thread", { dir: "in", source: "claude", msg: { type: "assistant", text: SECRET_WORDS } });
+      expect(rows("t-open-thread")[0].msg).toEqual({ type: "assistant", text: SECRET_WORDS });
+    });
+
+    it("the first phone call is withheld before any mark exists: a tool_use naming a phone tool, and its streamed argument fragments", () => {
+      const thread = "t-first-call";
+      appendNative(thread, { dir: "in", source: "claude", msg: { type: "assistant", message: { content: [{ type: "tool_use", name: "mcp__phoneJobs__phone_calendar_read", input: { start: "2026-10-26", note: "CANARY-ONE" } }] } } });
+      appendNative(thread, { dir: "in", source: "claude", msg: { type: "stream_event", event: { type: "content_block_start", index: 2, content_block: { type: "tool_use", name: "phone_location_get", input: {} } } } });
+      appendNative(thread, { dir: "in", source: "claude", msg: { type: "stream_event", event: { type: "content_block_delta", index: 2, delta: { type: "input_json_delta", partial_json: "{\"precision\":\"CANARY-TWO\"}" } } } });
+      appendNative(thread, { dir: "in", source: "claude", msg: { type: "stream_event", event: { type: "content_block_stop", index: 2 } } });
+      appendNative(thread, { dir: "in", source: "codex", msg: { item: { type: "mcp_tool_call", server: "phoneJobs", tool: "phone_contacts_search", arguments: { query: "CANARY-THREE" } } } });
+      appendNative(thread, { dir: "in", source: "claude", msg: { type: "stream_event", event: { type: "content_block_delta", index: 2, delta: { type: "text_delta", text: "ordinary text after the block closed" } } } });
+      const log = readFileSync(join(NATIVE_DIR, `${thread}.ndjson`), "utf8");
+      for (const canary of ["CANARY-ONE", "CANARY-TWO", "CANARY-THREE"]) expect(log).not.toContain(canary);
+      expect(log).toContain("ordinary text after the block closed");
+    });
   });
 });

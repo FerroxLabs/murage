@@ -1,6 +1,7 @@
 package com.murage.mobile.shell;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import java.util.Arrays;
@@ -8,6 +9,28 @@ import java.util.Collections;
 import org.junit.Test;
 
 public class NotificationPlanTest {
+    @Test public void callOnApi30OffersOnlyOpenWithoutAnswerCredentials() {
+        NotificationPlan.Plan p = NotificationPlan.of(PushContract.Category.CALL, 30, true);
+        assertEquals(Collections.singletonList("OPEN"), p.actions);
+        assertFalse(p.authRequired);
+        assertFalse(p.silent);
+        assertEquals("calls", p.channel);
+    }
+
+    @Test public void callOnApi31OffersAuthenticatedAnswerAndNotNow() {
+        NotificationPlan.Plan p = NotificationPlan.of(PushContract.Category.CALL, 31, true);
+        assertEquals(Arrays.asList("ANSWER", "NOT_NOW"), p.actions);
+        assertTrue(p.authRequired);
+    }
+
+    @Test public void callWithLockScreenActionsOffOffersOnlyOpenOnBothApis() {
+        for (int sdk : new int[] {30, 31}) {
+            NotificationPlan.Plan p = NotificationPlan.of(PushContract.Category.CALL, sdk, false);
+            assertEquals(Collections.singletonList("OPEN"), p.actions);
+            assertFalse(p.authRequired);
+        }
+    }
+
     @Test public void approvalOnApi31OffersApproveDenyOpenBehindAuthentication() {
         NotificationPlan.Plan p = NotificationPlan.of(PushContract.Category.APPROVAL, 31, true);
         assertEquals("approvals", p.channel);

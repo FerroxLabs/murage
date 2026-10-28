@@ -1,6 +1,9 @@
 // The opt-out has one job that matters: an install that turned analytics off
 // must not talk to PostHog at all. optAction pins the decision, and the
 // storage round-trip pins that the choice survives a restart.
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { analyticsAllowed, analyticsEnabled, optAction, setAnalyticsEnabled } from "./analytics";
@@ -120,5 +123,25 @@ describe("analyticsAllowed", () => {
   it("stays off without a build token or after an opt-out", () => {
     expect(analyticsAllowed({ token: "", enabled: true, nativeShell: false })).toBe(false);
     expect(analyticsAllowed({ token: "phc_test", enabled: false, nativeShell: false })).toBe(false);
+  });
+});
+
+// NO EMAIL, EVER (upstream 8d8d22f5b). The first run stopped identifying
+// the person with their email in 1.0.7, yet the identify export stayed,
+// ready to be wired back. It is gone, and so is any PostHog identify call.
+describe("what analytics can never send", () => {
+  it("has no way to link an email or a name to usage events", async () => {
+    const module = await import("./analytics");
+    expect(Object.keys(module).filter((name) => /identify|email_submitted/i.test(name))).toEqual([]);
+    const source = readFileSync(fileURLToPath(new URL("./analytics.ts", import.meta.url)), "utf8");
+    expect(source).not.toMatch(/\.identify\(/);
+    expect(source).not.toMatch(/\.alias\(|\$set\b|\bpeople\.set\b/);
+    expect(source).not.toContain("email_submitted");
+  });
+
+  it("is described in Settings as never carrying a name or email", () => {
+    const settings = readFileSync(fileURLToPath(new URL("../components/SettingsModal.tsx", import.meta.url)), "utf8");
+    expect(settings).not.toContain("Your email is only attached");
+    expect(settings).toContain("never your name or email");
   });
 });

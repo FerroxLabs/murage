@@ -118,7 +118,7 @@ export class ProviderRegistry {
    * Each named instance is disposed, then re-created from `configs`; one that
    * is no longer configured is dropped. A kept id keeps its position in the
    * map, because the first entry is load-bearing for selection. */
-  async reload(instanceIds: ReadonlySet<InstanceId>, configs: InstanceConfigMap) {
+  async reload(instanceIds: ReadonlySet<InstanceId>, configs: InstanceConfigMap): Promise<ProviderInstance[]> {
     const retiring = [...instanceIds].flatMap(id => {
       const live = this.byId.get(id)?.live;
       return live ? [live] : [];
@@ -144,6 +144,8 @@ export class ProviderRegistry {
     for (const result of disposed) {
       if (result.status === "rejected") console.warn("engine reload: an engine's earlier process could not be confirmed stopped yet", result.reason);
     }
+    // the retired instances whose children are still watched: the caller keeps their threads' leases until the close (rev 5, H2)
+    return unconfirmedDisposals(retiring, disposed);
   }
 
   private async resolveEntry([instanceId, entry]: [string, InstanceConfigMap[string]]): Promise<[string, RegistryEntry]> {
@@ -383,11 +385,21 @@ export class ProviderRegistry {
     ));
   }
 
-  async disposeAll() {
-    await Promise.allSettled(this.instances().map(instance => this.catalogRefreshes.get(instance)?.pending));
-    await Promise.allSettled(this.instances().map((i) => i.dispose()));
+  /** Dispose every engine. Resolves with the instances whose dispose rejected (a child not yet seen closed, ProviderStopUnconfirmedError):
+   * their adapters still watch those children, so the caller keeps each affected thread's leases until the adapter's awaitTurnClose
+   * confirms the close (OPENAI-TOOLS-109 rev 5, H2). The fleet is cleared either way. */
+  async disposeAll(): Promise<ProviderInstance[]> {
+    const retiring = this.instances();
+    await Promise.allSettled(retiring.map(instance => this.catalogRefreshes.get(instance)?.pending));
+    const disposed = await Promise.allSettled(retiring.map((i) => i.dispose()));
     this.epoch++;
     this.byId.clear();
     this.cliByInstance.clear();
+    return unconfirmedDisposals(retiring, disposed);
   }
+}
+
+/** The instances whose dispose rejected, in order. */
+function unconfirmedDisposals(retiring: ProviderInstance[], disposed: PromiseSettledResult<unknown>[]): ProviderInstance[] {
+  return retiring.filter((_, index) => disposed[index]?.status === "rejected");
 }

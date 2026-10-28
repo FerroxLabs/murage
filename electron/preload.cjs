@@ -242,6 +242,7 @@ contextBridge.exposeInMainWorld("muragebox", {
     pairing: (open, expectedToken) => ipcRenderer.invoke("companion:pairing", open, expectedToken),
     cloudDesktop: (deviceId, allowed) => ipcRenderer.invoke("companion:cloud-desktop", deviceId, allowed),
     revoke: (deviceId) => ipcRenderer.invoke("companion:revoke", deviceId),
+    shareAsk: (deviceId, allowed) => ipcRenderer.invoke("companion:share-ask", deviceId, allowed),
   },
   /** Optional account-backed HTTPS access for Companion. Secrets stay in the
    * main process; the renderer sees only status and narrow user actions. */
@@ -429,6 +430,11 @@ contextBridge.exposeInMainWorld("muragebox", {
   fluxSignin: {
     start: (input) => ipcRenderer.invoke("flux-signin:start", input),
     cancel: () => ipcRenderer.invoke("flux-signin:cancel"),
+  },
+  /** Bot email: the email:owner sign-in on the owner act of turning email on. Resolves { ok } or { ok:false, code, message }; never a token. */
+  emailOwnerSignin: {
+    start: () => ipcRenderer.invoke("email-owner-signin:start"),
+    cancel: () => ipcRenderer.invoke("email-owner-signin:cancel"),
   },
   /** Plan sign-in (ChatGPT, Grok). Results and status never carry a token. */
   modelSignIn: {

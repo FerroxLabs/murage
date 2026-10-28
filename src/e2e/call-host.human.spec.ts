@@ -1804,6 +1804,31 @@ test.describe("the call survives a selection change (callbar-review.md I1, I3, I
   let wiringOrigin: string;
   let wiringCache: string;
 
+  // 1.0.9 bot calls: a bot call never runs without a server session (bot-call-session.ts holdCallSession), so this
+  // harness answers the session routes the way the server does: open -> callId, ticket -> ticket, end -> ok, and the
+  // live channel echoes each numbered call.alive as call.live. Without it the open 404s and the call ends at once.
+  test.beforeEach(async ({ page }) => {
+    let opened = 0;
+    await page.route("**/api/calls/sessions**", async (route: Route) => {
+      const path = new URL(route.request().url()).pathname;
+      if (route.request().method() !== "POST") return route.fulfill({ status: 405 });
+      if (path === "/api/calls/sessions") {
+        opened += 1;
+        return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ callId: `call-${opened}` }) });
+      }
+      if (path.endsWith("/ticket")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ticket: "ticket" }) });
+      if (path.endsWith("/end")) return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+      return route.fulfill({ status: 404 });
+    });
+    await page.routeWebSocket(/\/api\/calls\/sessions\/[^/]+\/live/, (ws) => {
+      ws.onMessage((message) => {
+        let frame: { type?: unknown; seq?: unknown } = {};
+        try { frame = JSON.parse(String(message)); } catch { return; }
+        if (frame.type === "call.alive") ws.send(JSON.stringify({ type: "call.live", seq: frame.seq }));
+      });
+    });
+  });
+
   test.beforeAll(async () => {
     const root = fileURLToPath(new URL("../../", import.meta.url));
     wiringCache = mkdtempSync(join(tmpdir(), "murage-call-wiring-"));

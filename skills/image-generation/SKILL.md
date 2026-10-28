@@ -140,5 +140,7 @@ would change next time. Never call a render on-model without checking it.
 - Never retry a render after a timeout or an uncertain result without first
   checking whether the first one landed; repeat the same `request_id` to
   resume it.
-- Never paste keys, provider URLs or local file paths into a prompt or a tool
-  call.
+- Never paste keys, provider URLs or local file paths into the image prompt
+  or the `generate_image` call: Murage holds the connection and sends the
+  request. This rule covers image requests only; another API the owner asks
+  you to call takes the key the owner gave you.

@@ -205,6 +205,23 @@ export function closeMemoryIndexReader(): void {
   for (const scan of scanPool.splice(0)) try { scan.db.close(); } catch { /* idempotent */ }
 }
 export function memoryIndexReaderState(): IndexReaderState { return lastState; }
+/** Whether the index owes a deletion scrub (index.ts scrubDeleted), read when the controller starts so a helper drains that durable debt
+ * even with no other memory work (MEMDEL-SIMPLIFY-109). False only when there is no index file (ENOENT/ENOTDIR), or the index was read
+ * and holds no marker; null when it could not be read now (any other stat error, locked, being replaced): unknown is not clean, so the caller starts the helper, which reads the
+ * marker itself and says (memdel r2 High #3). */
+export function indexScrubOwed(): boolean | null {
+  try { statSync(indexPath()); } catch (error) {
+    // Only a missing file means no debt: any other stat error (permission, I/O) is unknown, and unknown is owed (memdel r3 High).
+    const code = (error as NodeJS.ErrnoException | null)?.code;
+    return code === "ENOENT" || code === "ENOTDIR" ? false : null;
+  }
+  try {
+    const db = handle()?.db;
+    if (!db) return null;
+    if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='index_meta'").get()) return false;
+    return Boolean(db.prepare("SELECT 1 FROM index_meta WHERE key='delete_scrub_owed'").get());
+  } catch { return null; }
+}
 /** How many times this process opened the index (tests: owner search and recall reuse the one handle). */
 let readerOpens = 0;
 export function memoryIndexReaderOpens(): number { return readerOpens; }

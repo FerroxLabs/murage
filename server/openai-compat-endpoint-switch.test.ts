@@ -72,7 +72,11 @@ async function startMurage(seed: (config: Record<string, unknown>) => Record<str
     const earlier = new Set(sse.frames);
     await api("POST", `/api/bots/${target.id}/messages`, { text: "Reply briefly for the endpoint test.", threadId: target.threadId });
     const replyFrame = await sse.until((frame) => !earlier.has(frame) && frame.kind === "message" && frame.threadId === target.threadId
-      && frame.message?.role === "bot" && typeof frame.message?.text === "string" && frame.message.text.includes("provider reply"), 15_000);
+      && frame.message?.role === "bot" && typeof frame.message?.text === "string" && frame.message.text.includes("provider reply"), 15_000).catch((error) => {
+      console.log("DEBUGDUMP frames", JSON.stringify(sse.frames.filter((f: any) => f.kind === "message" || f.kind === "message.patch").map((f: any) => ({ k: f.kind, t: f.threadId, m: f.message ?? f.patch ?? f })), null, 0).slice(0, 6000));
+      try { console.log("DEBUGDUMP log", readFileSync(fixture.info.logPath, "utf8").slice(-20000)); } catch (e) { console.log("DEBUGDUMP nolog", String(e)); }
+      throw error;
+    });
     expect(replyFrame.message.text).toBe(expectedReply);
     const { bots } = await api("GET", "/api/bots?messages=10");
     const current = bots.find((candidate: { id: string }) => candidate.id === target.id);
