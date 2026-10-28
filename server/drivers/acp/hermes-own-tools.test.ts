@@ -21,8 +21,8 @@ describe("Hermes ask hook and Murage's own tools", () => {
     expect(asks(m, "mcp__murage_memory__memory_search")).toBe(false);
   });
 
-  it.each([false, true])("runs every OWN_UNASKED tool without a card (host computer %s)", (host) => {
-    const m = hermesAskMatcher(host);
+  it.each([false, true])("runs every OWN_UNASKED tool without a card on a turn email mounts for sending (host computer %s)", (host) => {
+    const m = hermesAskMatcher(host, true, "send");
     const names = OWN_UNASKED.flatMap((row) => row.tools.map((tool) => hermesName(row.mount, tool)));
     expect(names.length).toBeGreaterThan(40);
     expect(names.filter((name) => asks(m, name))).toEqual([]);

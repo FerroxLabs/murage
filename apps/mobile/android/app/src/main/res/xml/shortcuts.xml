@@ -3,6 +3,11 @@
      launches with NEW_TASK|CLEAR_TASK, so the launcher starts fresh and
      LaunchPolicy sees ACTION_SWITCH and stays on the list. -->
 <shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut android:shortcutId="ask" android:enabled="true" android:icon="@drawable/ic_tile_ask"
+        android:shortcutShortLabel="@string/ask_shortcut">
+        <intent android:action="android.intent.action.ASSIST" android:targetPackage="com.murage.mobile"
+            android:targetClass="com.murage.mobile.AssistShortcut" />
+    </shortcut>
     <shortcut
         android:shortcutId="switch"
         android:enabled="true"
@@ -13,5 +18,10 @@
             android:action="com.murage.mobile.SWITCH"
             android:targetPackage="com.murage.mobile"
             android:targetClass="com.murage.mobile.MainActivity" />
+    </shortcut>
+    <shortcut android:shortcutId="outbox" android:enabled="true"
+        android:icon="@mipmap/ic_launcher" android:shortcutShortLabel="@string/share_outbox_waiting">
+        <intent android:action="com.murage.mobile.OUTBOX" android:targetPackage="com.murage.mobile"
+            android:targetClass="com.murage.mobile.OutboxShortcut" />
     </shortcut>
 </shortcuts>

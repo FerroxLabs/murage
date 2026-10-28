@@ -234,10 +234,20 @@ describe("relayMcpCall over streamable HTTP", () => {
     expect(note).toMatchObject({ ok: true, status: 202 });
   });
 
-  it("an SSE framed answer keeps its content type", async () => {
+  it("an SSE framed answer keeps its content type and is streamed through (MCP-ELICITATION-109)", async () => {
     fake = await startFakeRemoteMcp({ auth: "none", respondWith: "sse" });
     const result = await relayMcpCall(context(rpc("tools/list", 1)));
     expect(result).toMatchObject({ ok: true, contentType: "text/event-stream" });
+    if (!result.ok) return;
+    expect(typeof result.body === "string" || Buffer.isBuffer(result.body)).toBe(false);
+    let text = "";
+    for await (const chunk of result.body as AsyncIterable<Buffer>) text += chunk.toString();
+    expect(text).toContain('"id":1');
+  });
+  it("an engine's elicitation capability reaches a streamable HTTP server; sampling and roots never do", async () => {
+    fake = await startFakeRemoteMcp({ auth: "none" });
+    await relayMcpCall(context(rpc("initialize", 1, { protocolVersion: "2025-06-18", capabilities: { sampling: {}, roots: {}, elicitation: {} }, clientInfo: { name: "c", version: "1" } })));
+    expect(JSON.parse(fake.requests.at(-1)!.body).params.capabilities).toEqual({ elicitation: {} });
   });
 
   it("sends the stored key and the stored bearer, only to the server's own origin", async () => {

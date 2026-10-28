@@ -145,7 +145,7 @@ posixOnly("mid-turn steering e2e", () => {
             config: { cli: FAKE_CLAUDE, permissionMode: "bypassPermissions" },
           },
           // no live session: a message while busy uses the server-side queue
-          acp: { driver: "grokAgent", environment: { FAKE_ACP_MODE: "hang" }, config: { cli: FAKE_ACP, fullAuto: true } },
+          acp: { driver: "customAcp", environment: { FAKE_ACP_MODE: "hang" }, config: { cli: FAKE_ACP, fullAuto: true } },
         },
       }),
     );
@@ -342,7 +342,7 @@ posixOnly("mid-turn steering e2e", () => {
     const queued = await desktopApi("POST", `/api/bots/${created.id}/messages`, { text: "second" });
     expect(queued.status).toBe(202);
     expect(queued.body.queued).toBe(true);
-    // An engine that cannot take a line mid-turn (Grok) queues it without the
+    // An engine that cannot take a line mid-turn (a custom ACP CLI) queues it without the
     // steer's memory check, so a line sent while a long tool call runs is
     // never logged as a refused steer or counted as a continuation reset.
     expect(stderr).not.toMatch(/steer-refused/);

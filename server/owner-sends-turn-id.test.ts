@@ -85,13 +85,17 @@ describe("owner_sends.turn_id is additive", () => {
     db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES (?,?,?,?,?,?,?)").run("t", "m", 1, "bot", "goal.run", null, JSON.stringify({ id: "m", at: 1, role: "bot", kind: "goal.run", goalRun: { status: "completed", detail: "Receipt canary" } }));
     db.exec("INSERT INTO thread_state VALUES ('t','m')");
     initializeOwnerSends(db);
-    // an earlier 1.0.2 build: everything but turn_id
+    // a 1.0.8 build: turn_id but none of the 1.0.9 via columns
+    for (const column of ["attachments", "via_device", "queue_only", "via"]) db.exec(`ALTER TABLE owner_sends DROP COLUMN ${column}`);
+    expect(await snapshotInstallationDatabase(data, join(root, "prior.db"))).toMatchObject({ status: "copied" });
+    // an earlier 1.0.2 build: everything but turn_id (and the via columns)
     db.exec("ALTER TABLE owner_sends DROP COLUMN turn_id");
     expect(await snapshotInstallationDatabase(data, join(root, "older.db"))).toMatchObject({ status: "copied" });
     // the current build adds it on open, and that archive restores too
     initializeOwnerSends(db);
     const columns = (db.prepare("PRAGMA table_info(owner_sends)").all() as Array<{ name: string }>).map((column) => column.name);
-    expect(columns.at(-1)).toBe("turn_id");
+    // turn_id comes back first, then the 1.0.9 via columns, all appended by ALTER in that order (an earlier archive keeps restoring)
+    expect(columns.slice(-5)).toEqual(["turn_id", "via", "queue_only", "via_device", "attachments"]);
     expect(await snapshotInstallationDatabase(data, join(root, "current.db"))).toMatchObject({ status: "copied" });
   });
 

@@ -103,8 +103,8 @@ it("reports transport failures without opening reply backoff", async () => {
   }
   expect(extractor).toHaveBeenCalledTimes(7);
   vi.advanceTimersByTime(EXTRACTION_SUMMARY_MS - 60_000);
-  expect(console.info).toHaveBeenLastCalledWith(expect.stringContaining("transport-error=7"));
-  expect(console.info).toHaveBeenLastCalledWith(expect.stringContaining("consecutive=0 backoff_ms=0 retry_in_ms=0"));
+  // 1.0.9 Sentinel: the hourly line is the health contract's (counts, opaque extractor, engine, catalogue model, coverage)
+  expect(console.info).toHaveBeenLastCalledWith(expect.stringContaining("complete=0 deferred=0 unusable=7 interrupted=0 "));
 });
 
 it.each([0, 1])("omits expired retryAfter on transport failure %s ms after backoff expires", async elapsed => {
@@ -141,13 +141,12 @@ it("backs off after five failures, doubles to one hour, skips reservations, and 
     vi.advanceTimersByTime(1);
     expect(await attempt()).toMatchObject({ reason: "extraction-incomplete" }); calls++;
   }
-  expect(console.info).toHaveBeenCalledWith(expect.stringContaining("backoff_ms=3600000"));
   vi.advanceTimersByTime(EXTRACTION_SUMMARY_MS);
   reply = "[]"; expect(await attempt()).toMatchObject({ status: "complete", candidates: [] });
   reply = "bad"; expect(await attempt()).toMatchObject({ reason: "extraction-incomplete" });
   expect(await attempt()).toMatchObject({ reason: "extraction-incomplete" }); // first failure after success did not re-open backoff
   vi.advanceTimersByTime(EXTRACTION_SUMMARY_MS);
-  expect(console.info).toHaveBeenLastCalledWith(expect.stringContaining("consecutive=2 backoff_ms=0 retry_in_ms=0"));
+  expect(console.info).toHaveBeenLastCalledWith(expect.stringContaining("complete=1 deferred=0 unusable=2 interrupted=0 "));
 });
 
 it("keeps backoff across fresh resolver closures and isolates other models and extractors", async () => {
@@ -175,15 +174,17 @@ it("logs one hourly summary per pair, including successes, each failure reason a
   expect(console.info).not.toHaveBeenCalled();
   vi.advanceTimersByTime(1);
   expect(console.info).toHaveBeenCalledTimes(2);
-  const failed = vi.mocked(console.info).mock.calls.map(call => String(call[0])).find(line => line.includes("extractor=@murage/flux-fast"))!;
-  expect(failed).toContain("completed=0 deferred=1 unusable=6");
-  for (const reason of EXTRACTION_FAILURE_REASONS) expect(failed).toContain(`${reason}=1`);
-  expect(failed).toContain("consecutive=5 backoff_ms=60000");
-  expect(console.info).toHaveBeenCalledWith(expect.stringContaining("completed=1 deferred=0 unusable=0"));
+  // 1.0.9 Sentinel: per-reason counts moved to the health counters (health/extraction-health.test.ts); the line names no
+  // connection id, only an opaque key, the engine category and a catalogue model
+  const lines = vi.mocked(console.info).mock.calls.map(call => String(call[0]));
+  expect(lines).toContainEqual(expect.stringMatching(/^\[memory\] extraction outcomes complete=0 deferred=1 unusable=6 interrupted=0 extractor=[0-9a-f]{32} engine=other model=flux-fast coverage=partial$/));
+  expect(lines.join("\n")).not.toContain("@murage/flux-fast");
+  expect(EXTRACTION_FAILURE_REASONS).toHaveLength(6);
+  expect(console.info).toHaveBeenCalledWith(expect.stringContaining("complete=1 deferred=0 unusable=0"));
   // Counters reset for the next window; an idle pair emits no repetitive zero line.
   await run(success); vi.advanceTimersByTime(EXTRACTION_SUMMARY_MS);
   expect(console.info).toHaveBeenCalledTimes(3);
-  expect(console.info).toHaveBeenLastCalledWith(expect.stringContaining("completed=1 deferred=0 unusable=0"));
+  expect(console.info).toHaveBeenLastCalledWith(expect.stringContaining("complete=1 deferred=0 unusable=0"));
   expectReason("transport-error");
 });
 
