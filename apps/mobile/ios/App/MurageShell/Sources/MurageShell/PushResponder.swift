@@ -13,8 +13,11 @@ import MurageShellCore
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
                                             withCompletionHandler completion: @escaping (UNNotificationPresentationOptions) -> Void) {
-        let resolved = PushPayload.parse(notification.request.content.userInfo["murage"])?.category == .resolved
-        completion(resolved ? [.list, .badge] : [.banner, .list, .badge, .sound])
+        let content = notification.request.content
+        let payload = PushPayload.parse(content.userInfo["murage"])
+        let quiet = content.userInfo["murageSilent"] as? Bool == true || payload?.category == .resolved ||
+            payload.map { PushContract.callDisplayAction($0, now: Int64(Date().timeIntervalSince1970 * 1000), shown: []) == .silent } == true
+        completion(quiet ? [.list, .badge] : [.banner, .list, .badge, .sound])
     }
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
@@ -26,6 +29,8 @@ import MurageShellCore
     }
 
     private func handle(_ response: UNNotificationResponse) async {
+        // Complete without a workspace lookup, network request, notice or navigation.
+        if PushResponse.action(response.actionIdentifier) == .notNow { return }
         let info = response.notification.request.content.userInfo
         guard let payload = PushPayload.parse(info["murage"]) else { ShellLog.event("push tap unreadable", persist: true); return }
         let ledger = PushServices.shared.ledger.read()
@@ -51,7 +56,18 @@ import MurageShellCore
             ShellLog.event("push action answered", persist: true)
             await postNotice(notice, for: response.notification)
             if task != .invalid { UIApplication.shared.endBackgroundTask(task) }
+        case .notNow: return
+        case .callAnswer:
+            guard payload.category == .call else { return }
+            let target = await CallAnswerRoute.target(payload: payload, origin: origin, userInfo: info,
+                                                      detailToken: detailToken, send: Self.send)
+            ShellCoordinator.shared.openFromNotification(origin: origin, threadId: target?.threadId, messageId: nil)
         case .open:
+            if payload.category == .deviceJob {
+                PhoneJobServices.shared.open(workspace: origin, eventRef: payload.eventRef)
+                ShellCoordinator.shared.openFromNotification(origin: origin, threadId: nil, messageId: nil)
+                return
+            }
             let target = await PushResponse.open(payload: payload, origin: origin, userInfo: info, detailToken: detailToken, send: Self.send)
             ShellLog.event(target == nil ? "push tap open without thread" : "push tap open thread", persist: true)
             ShellCoordinator.shared.openFromNotification(origin: origin, threadId: target?.threadId, messageId: target?.messageId)

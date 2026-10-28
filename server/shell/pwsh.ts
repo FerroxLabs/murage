@@ -314,7 +314,7 @@ function lexPwsh(s: string): Lexed {
       const hashtable = c === "{" && last?.kind === "lit" && last.quote === "none" && last.text.endsWith("@");
       nested.push(hashtable ? body.replace(/(^|[;\n])\s*('[^']*'|"[^"]*"|[\w.-]+)\s*=(?!=)/g, "$1") : body);
       if (parts.length === 0) {
-        parts.push({ kind: "subst", text: s.slice(i + 1, end), quote: "none" });
+        parts.push(c === "{" ? { kind: "subst", text: body, quote: "none", block: true } : { kind: "subst", text: body, quote: "none" });
       } else {
         // inside a word (`[void](…)`, `.Delete(…)`, `@{a=…}`): its body is
         // walked as a script, and the word keeps the text as written so a
@@ -950,6 +950,10 @@ export function walkPwsh<H>(text: string, ctx: WalkContext, visitor: Visitor<H>)
       }
       throw new Unreadable("pwsh", "a .NET call");
     }
+    // 1.0.9 D2: `& { … }` that is the whole text runs only its block, which
+    // was walked above (`nested`) from this same place. Beside other
+    // statements its folder changes would reach them, so there it still asks.
+    if (statements.length === 1 && !statement.piped && blockCall(words)) continue;
     const hit = pwshStatement(words, stdin, ctx, visitor, 0);
     if (hit) return hit;
     recordPwshWrites(words, ctx);
@@ -1010,6 +1014,41 @@ function recordPwshWrites(words: Word[], ctx: WalkContext): void {
   }
 }
 
+/** `& { … }`: the call operator and one literal script block, nothing else. */
+function blockCall(words: Word[]): boolean {
+  const block = words[1]?.parts;
+  return words.length === 2 && literalText(words[0]!) === "&" && block?.length === 1 && block[0]!.kind === "subst" && block[0]!.block === true;
+}
+
+/** The statement's words without its output redirects (`> f`, `>> f`,
+ * `2> f`, `*>f`, `2>&1`), whose targets `walkPwsh` checks on its own.
+ * Undefined when a `>` sits inside a word the reader does not split. */
+function withoutRedirects(words: Word[]): Word[] | undefined {
+  const kept: Word[] = [];
+  for (let w = 0; w < words.length; w++) {
+    const word = words[w]!;
+    const text = literalText(word);
+    const unquoted = word.parts.every((part) => part.kind !== "lit" || part.quote === "none");
+    const op = text !== undefined && unquoted ? /^([1-6*]?>>?)(&[1-6])?(.*)$/s.exec(text) : null;
+    if (op) {
+      // `> f` takes the next word as its target; `>f` and `2>&1` carry their own
+      if (!op[2] && !op[3]) { if (!words[w + 1]) return undefined; w++; }
+      else if (op[2] && op[3]) return undefined;
+      continue;
+    }
+    if (word.parts.some((part) => part.kind === "lit" && part.quote === "none" && part.text.includes(">"))) return undefined;
+    kept.push(word);
+  }
+  return kept;
+}
+
+/** Text PowerShell only prints: quoted literals and plain variables
+ * (`'a'`, `"label: $env:X"`, a here-string). No subexpression, no member. */
+function printedString(word: Word): boolean {
+  return word.parts.length > 0 && word.parts.some((part) => part.kind === "lit")
+    && word.parts.every((part) => (part.kind === "lit" && part.quote !== "none") || (part.kind === "var" && part.op === undefined && part.quote === "double"));
+}
+
 /** One statement: an assignment, an expression, or a call. */
 function pwshStatement<H>(words: Word[], stdin: Provenance | undefined, ctx: WalkContext, visitor: Visitor<H>, hops: number): H | null {
   if (hops > MAX_DEPTH) throw new Unreadable("depth");
@@ -1059,6 +1098,11 @@ function pwshStatement<H>(words: Word[], stdin: Provenance | undefined, ctx: Wal
     // `1 + 2`, `-1`
     const text = literalText(call[0]!);
     if (text !== undefined && NUMBER.test(text)) return null;
+    // 1.0.9 D2: a printed string, alone or redirected to a file (`'hi' > f`,
+    // `@"…$env:X…"@ | Out-File f`): it runs nothing; the redirect target was
+    // checked in walkPwsh
+    const printed = withoutRedirects(call);
+    if (printed?.length === 1 && printedString(printed[0]!)) return null;
     if (stringExpression(call[0]!)) {
       // `'text'`, `"a" -f $x`: a string expression, written down the pipe
       if (call.length === 1 || EXPRESSION_OPERATOR.test(literalText(call[1]!) ?? "")) return null;
@@ -1301,6 +1345,19 @@ function renderCmdWord(word: Word): string {
   return word.parts.map((part) => (part.kind === "lit" ? part.text : part.kind === "var" ? (part.name.startsWith("%") ? part.name : part.name.startsWith("!") ? `${part.name}!` : `%${part.name}%`) : "")).join("");
 }
 
+/** The variables a cmd `set` may name and still be read past: names that
+ * only change how a program reports, never which program or code runs
+ * (Grok r1: a denylist missed `GIT_EXTERNAL_DIFF`, `npm_config_*` and
+ * caret spellings of pinned names). The name is the lexed one. */
+const CMD_SET_INERT = new Set(["NODE_ENV", "CI", "FORCE_COLOR", "NO_COLOR", "TZ", "LANG", "LANGUAGE", "LC_ALL"]);
+
+/** `NAME=value` with a literal name and value and an inert name. */
+function plainCmdSet(word: Word): boolean {
+  const text = literalText(word);
+  const set = text === undefined ? null : /^([A-Za-z_][A-Za-z0-9_]*)=([^\r\n]*)$/.exec(text);
+  return set !== null && CMD_SET_INERT.has(set[1]!.toUpperCase());
+}
+
 const bareCmd = (token: CmdToken | undefined): string | undefined => (token?.kind === "word" ? literalText(token.word)?.toLowerCase() : undefined);
 
 /** Walk cmd text: every statement, `for` bodies with the loop variable bound
@@ -1436,6 +1493,12 @@ export function walkCmd<H>(text: string, ctx: WalkContext, visitor: Visitor<H>):
       const resolved = resolveName(rest[0]!);
       if (resolved === undefined) throw new Unreadable("dynamic-name", renderCmdWord(rest[0]!));
       const name = resolved.replace(/\.(exe|com|bat|cmd)$/, "");
+      // 1.0.9 D2: `set NAME=value` (`set "NAME=value"`), all literal, sets a
+      // plain variable and runs nothing. `%NAME%` later on the same line is
+      // still the value cmd read before it ran, a value the reader does not
+      // follow. Switches (`/a`, `/p`), listing, and any name outside
+      // CMD_SET_INERT still ask.
+      if (name === "set" && rest.length === 2 && plainCmdSet(rest[1]!)) return null;
       if (CMD_UNMODELED.has(name)) throw new Unreadable("cmd", name);
       if (name === "call") { rest = rest.slice(1); continue; }
       if (name === "start") {

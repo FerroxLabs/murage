@@ -1,0 +1,22 @@
+// PHONE-UNIFY-110 section 9. %@ is the chosen bot name.
+"share_title" = "Envoyer à Murage";
+"share_to" = "À";
+"share_from" = "Depuis";
+"share_note" = "Ajouter une note";
+"share_send" = "Envoyer";
+"share_sending" = "Envoi en cours...";
+"share_sent" = "Envoyé à %@";
+"share_open_chat" = "Ouvrir la discussion";
+"share_recent" = "Discussions récentes";
+"share_new" = "Nouvelle discussion avec %@";
+"share_setup" = "Ouvrez Murage une fois pour configurer le partage.";
+"share_pair" = "Ce téléphone n’est pas encore associé à un ordinateur. Ouvrez Murage pour l’associer.";
+"share_photo_large" = "Cette photo est trop volumineuse. Les photos peuvent faire jusqu’à 10 Mo.";
+"share_file_large" = "Ce fichier est trop volumineux. Les fichiers peuvent faire jusqu’à 25 Mo.";
+"share_ten" = "Vous pouvez envoyer jusqu’à 10 éléments à la fois.";
+"share_type" = "Murage ne peut pas encore envoyer ce type de fichier.";
+"share_offline" = "Votre ordinateur est injoignable pour le moment. Murage enverra ceci dès qu’il sera joignable.";
+"share_passcode" = "Définissez un code sur ce téléphone, puis ouvrez Murage.";
+"share_again" = "Ouvrez Murage pour configurer à nouveau le partage.";
+"share_update" = "Mettez à jour Murage sur votre ordinateur pour utiliser cette fonction.";
+"share_done" = "Terminé";

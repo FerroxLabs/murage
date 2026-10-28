@@ -70,6 +70,18 @@ describe("a permission ask leaving the server", () => {
     expect(JSON.stringify(windowRuntimeEvent(rest as RuntimeEvent))).not.toContain(FAKE_PROVIDER_KEY);
   });
 
+  it("OPENAI-TOOLS-109: the log keeps the call's name only, never its exact input (every engine)", () => {
+    const secret = "tok-ordinary-field-7f3a9c2e";
+    const event = { ...ask(), toolCall: { name: "mcp__custom__note", input: { note: secret } } } as unknown as RuntimeEvent;
+    const out = loggedRuntimeEvent(event) as RuntimeEvent & { toolCall?: { name: string; input?: unknown } };
+    expect(out.toolCall).toEqual({ name: "mcp__custom__note" });
+    expect(JSON.stringify(out)).not.toContain(secret);
+    // the live event is untouched: the handler still judges the exact call
+    expect((event as unknown as { toolCall: { input: { note: string } } }).toolCall.input.note).toBe(secret);
+    const { toolCall: _drop, ...noCall } = event as RuntimeEvent & { toolCall?: unknown };
+    expect(Object.hasOwn(loggedRuntimeEvent(noCall as RuntimeEvent), "toolCall")).toBe(false);
+  });
+
   it("leaves other frames as they were", () => {
     const text: RuntimeEvent = { eventId: "e-2", provider: "claudeAgent", threadId: "t", createdAt: "x", type: "item.completed", itemType: "assistant_text", origin: "engine", text: "hello" };
     expect(windowRuntimeEvent(text)).toBe(text);

@@ -66,6 +66,11 @@ describe("G1: only the owner's send route can ask for a typed stop (F7)", () => 
     const calls = [...source.matchAll(/acceptBotSend\(\{[^}]*\}/g)].map((match) => match[0]);
     expect(calls.length).toBeGreaterThanOrEqual(2);
     expect(calls.filter((call) => call.includes("typedStop"))).toEqual([expect.stringContaining("typedStop: true")]);
+    // share and ask: the Send again on a phone's via line (queue-only third-party words) is a caller that passes no typedStop, so a shared "stop" is queued text
+    const viaCalls = calls.filter((call) => call.includes("viaStanding"));
+    expect(viaCalls).toHaveLength(1);
+    expect(viaCalls[0]).not.toContain("typedStop");
+    expect(calls.filter((call) => call.includes("queueOnly") && call.includes("typedStop"))).toEqual([]);
     // the card answer, the late answer and acceptBotSend's ordinary path all reach admitDirectSend, which has no typed-stop branch
     expect([...source.matchAll(/admitDirectSend\(\{[^}]*\}/g)].filter((match) => match[0].includes("typedStop"))).toEqual([]);
   });

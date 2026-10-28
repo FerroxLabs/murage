@@ -4,7 +4,13 @@
 // scripted session. Failure modes are toggled by env var, mirroring how
 // the real thing misbehaves:
 //
-//   FAKE_CLAUDE_MODE   happy (default) | exit-early | hang | malformed
+//   FAKE_CLAUDE_MODE   happy (default) | exit-early | hang | malformed | final-steer
+//   FAKE_CLAUDE_ELICIT JSON array of control `request` objects the CLI sends the HOST
+//                      before its first turn plays (an MCP elicitation, or any other
+//                      subtype); the turn waits until each one has a control_response,
+//                      and every response line goes to FAKE_CLAUDE_ELICIT_LOG.
+//                      FAKE_CLAUDE_ELICIT_WITHDRAW=1 withdraws the first one at once
+//                      (control_cancel_request), as the CLI does when the server cancels.
 //                      | stream (partial-message text deltas before the
 //                        whole-message frame, plus subagent noise to drop)
 //                      | ask-user-question (also: a prompt whose last line
@@ -35,6 +41,8 @@
 //   FAKE_CLAUDE_REPLY_STATE Optional counter file shared by fresh CLI
 //                      processes so scripted replies keep their order.
 //   FAKE_CLAUDE_REPLY_GATE Optional file whose creation releases slow replies.
+//   FAKE_CLAUDE_SLOW_REPLY_LAST=1 slow mode adds no closing "reply to:" text
+//                      after the scripted reply unless a steer was folded in.
 //   FAKE_CLAUDE_HOLD_MARKER / FAKE_CLAUDE_HOLD_GATE a turn whose prompt contains
 //                      the marker waits until the gate file exists, then plays
 //                      normally, scripted reply included; FAKE_CLAUDE_HOLD_SEEN
@@ -321,6 +329,13 @@ const model = argAfter("--model") ?? "claude-fake";
 let dumped = false;
 let turnRunning = false;
 let steered: string[] = [];
+// `final-steer`: the turn's final answer is being written. Input that arrives
+// now is not read by it; Claude Code (2.1.309, probed on a real sign-in)
+// answers it in a turn of its own, started with `init` right after `result`,
+// with every message queued by then joined into that one turn.
+let foldOpen = true;
+let followUpTurn = false;
+const queuedPrompts: JsonValue[] = [];
 // the running cost behind total_cost_usd and modelUsage; a --resume launch
 // starts from the session's saved one (FAKE_CLAUDE_COST_STATE)
 type FakeModelUsage = { inputTokens: number; outputTokens: number; cacheReadInputTokens: number; cacheCreationInputTokens: number; costUSD: number };
@@ -662,8 +677,30 @@ const playBackground = async (): Promise<void> => {
 };
 
 let exitGateTimer: ReturnType<typeof setInterval> | undefined;
+// FAKE_CLAUDE_FOLLOWUP_DELAY_MS: the follow-up starts this long after `result`
+// (input arriving meanwhile joins it); FAKE_CLAUDE_FOLLOWUP_NOTICE=1: a
+// background task's synthetic result comes first.
+let followUpTimer: ReturnType<typeof setTimeout> | undefined;
 const finishIfDone = () => {
-  if (!stdinEnded || turnRunning) return;
+  if (!turnRunning && queuedPrompts.length) {
+    if (followUpTimer) return;
+    const startFollowUp = () => {
+      followUpTimer = undefined;
+      // every message queued by now becomes one follow-up turn, joined (as the real CLI does)
+      followUpTurn = true;
+      const joined = queuedPrompts.splice(0).map((queued) => promptText(queued)).join("\n");
+      playTurn({ type: "user", message: { role: "user", content: joined } });
+    };
+    if (process.env.FAKE_CLAUDE_FOLLOWUP_NOTICE === "1") {
+      out({ type: "result", subtype: "success", is_error: false, origin: { kind: "task-notification" }, result: "background task done",
+        usage: { input_tokens: 1, output_tokens: 1 } });
+    }
+    const delay = Number(process.env.FAKE_CLAUDE_FOLLOWUP_DELAY_MS) || 0;
+    if (delay > 0) followUpTimer = setTimeout(startFollowUp, delay);
+    else startFollowUp();
+    return;
+  }
+  if (!stdinEnded || turnRunning || followUpTimer) return;
   const exitGateDir = process.env.FAKE_CLAUDE_EXIT_GATE_DIR;
   if (exitGateDir && !existsSync(join(exitGateDir, String(process.pid)))) {
     // Hold EOF independently of turn completion so replacement-broker tests
@@ -696,9 +733,13 @@ const credTurnId = (): string | null => {
   return typeof content?.agents?.MURAGE_TURN_ID === "string" ? content.agents.MURAGE_TURN_ID : null;
 };
 
+let elicitSent = false;
+const elicitWaiting = new Set<string>();
+let elicitResume: (() => void) | null = null;
 const playTurn = (prompt: JsonValue) => {
   turnRunning = true;
   steered = [];
+  foldOpen = true;
   if ((!dumped || process.env.FAKE_CLAUDE_DUMP_EACH_TURN === "1") && process.env.FAKE_CLAUDE_DUMP) {
     dumped = true;
     const configPath = argAfter("--mcp-config");
@@ -747,6 +788,24 @@ const playTurn = (prompt: JsonValue) => {
       depth: agents.MURAGE_TURN_DEPTH ?? null, skillAuthoring: agents.MURAGE_SKILL_AUTHORING_ENABLED ?? null, prompt: promptText(prompt), credFile: readCredFile(),
       turnId: credTurnId(),
     })}\n`);
+  }
+
+  // FAKE_CLAUDE_ELICIT: the host is asked first, and the turn waits for every answer.
+  if (process.env.FAKE_CLAUDE_ELICIT && !elicitSent) {
+    elicitSent = true;
+    const requests = JSON.parse(process.env.FAKE_CLAUDE_ELICIT) as Array<Record<string, unknown>>;
+    requests.forEach((request, index) => {
+      const id = `cli-ctl-${index + 1}`;
+      elicitWaiting.add(id);
+      out({ type: "control_request", request_id: id, request });
+    });
+    if (process.env.FAKE_CLAUDE_ELICIT_WITHDRAW === "1" && requests.length) {
+      elicitWaiting.delete("cli-ctl-1");
+      out({ type: "control_cancel_request", request_id: "cli-ctl-1" });
+    }
+    elicitResume = () => playTurn(prompt);
+    if (elicitWaiting.size === 0) { const resume = elicitResume; elicitResume = null; setTimeout(resume, 50); }
+    return;
   }
 
   // A turn whose prompt carries FAKE_CLAUDE_HOLD_MARKER waits for
@@ -1098,13 +1157,30 @@ const playTurn = (prompt: JsonValue) => {
     turnRunning = false;
     finishIfDone();
   };
-  if (mode === "slow") {
+  if (mode === "final-steer" && followUpTurn) {
+    out({ type: "assistant", message: { content: [{ type: "text", text: `reply to: ${promptText(prompt)}` }] } });
+    finish();
+  } else if (mode === "final-steer") {
+    foldOpen = false;
+    out({ type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: "Writing the final answer" } } });
+    // the answer ends once a message has arrived during it (or after 3 s)
+    const startedAt = Date.now();
+    const timer = setInterval(() => {
+      if (queuedPrompts.length < (Number(process.env.FAKE_CLAUDE_FINAL_STEERS) || 1) && Date.now() - startedAt < 3_000) return;
+      clearInterval(timer);
+      out({ type: "assistant", message: { content: [{ type: "text", text: `reply to: ${promptText(prompt)}` }] } });
+      finish();
+    }, 10);
+  } else if (mode === "slow") {
     // a gap a test can steer into; the closing reply carries anything that
     // was folded in, the way the real CLI includes a mid-turn message in
     // the same turn's next model call
     const finishSlow = () => {
       const tail = steered.length ? ` + steered: ${steered.join(" | ")}` : "";
-      out({ type: "assistant", message: { content: [{ type: "text", text: `reply to: ${promptText(prompt)}${tail}` }] } });
+      // FAKE_CLAUDE_SLOW_REPLY_LAST=1: the scripted reply stays the turn's last text (a goal lead's closing envelope)
+      if (process.env.FAKE_CLAUDE_SLOW_REPLY_LAST !== "1" || steered.length) {
+        out({ type: "assistant", message: { content: [{ type: "text", text: `reply to: ${promptText(prompt)}${tail}` }] } });
+      }
       finish();
     };
     const gate = process.env.FAKE_CLAUDE_REPLY_GATE;
@@ -1204,6 +1280,17 @@ const drainStdin = () => {
       continue;
     }
     const control = prompt as { type?: string; request_id?: string; request?: { subtype?: string; serverName?: string } } | null;
+    // The host's answer to a request this CLI sent it (FAKE_CLAUDE_ELICIT).
+    if ((control as { type?: string } | null)?.type === "control_response") {
+      if (process.env.FAKE_CLAUDE_ELICIT_LOG) appendFileSync(process.env.FAKE_CLAUDE_ELICIT_LOG, `${line}\n`);
+      const answered = (control as { response?: { request_id?: string } }).response?.request_id;
+      if (answered && elicitWaiting.delete(answered) && elicitWaiting.size === 0 && elicitResume) {
+        const resume = elicitResume;
+        elicitResume = null;
+        resume();
+      }
+      continue;
+    }
     if (control?.type === "control_request") {
       if (process.env.FAKE_CLAUDE_CONTROL_LOG) appendFileSync(process.env.FAKE_CLAUDE_CONTROL_LOG, `${JSON.stringify({ ...control, at: Date.now() - mcpStartedAt })}\n`);
       // FAKE_CLAUDE_MCP_STATUS: "error" refuses mcp_status as an unknown
@@ -1253,7 +1340,8 @@ const drainStdin = () => {
         : { type: "control_response", response: { subtype: "error", request_id: control.request_id, error: "unsupported" } });
       continue;
     }
-    if (turnRunning) {
+    if ((turnRunning && !foldOpen) || followUpTimer) queuedPrompts.push(prompt);
+    else if (turnRunning) {
       steered.push(promptText(prompt));
       // a steer line names the turn it went into, so a spec can tell it from a launch
       if (process.env.FAKE_CLAUDE_DUMP_LOG) appendFileSync(process.env.FAKE_CLAUDE_DUMP_LOG, `${JSON.stringify({ turnId: credTurnId(), steer: promptText(prompt) })}\n`);

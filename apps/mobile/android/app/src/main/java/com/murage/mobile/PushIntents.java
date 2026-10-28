@@ -22,6 +22,7 @@ final class PushIntents {
     static Intent fill(Intent i, PushContract.Payload p, PushOutcome.Target target) {
         i.putExtra("murage.bindingId", p.bindingId).putExtra("murage.eventRef", p.eventRef).putExtra("murage.category", p.category.wire)
             .putExtra("murage.revision", p.revision).putExtra("murage.collapseKey", p.collapseKey).putExtra("murage.threadGroup", p.threadGroup);
+        if (p.expiresAt != null) i.putExtra("murage.expiresAt", p.expiresAt.longValue());
         if (target != null) {
             i.putExtra("murage.threadId", target.threadId);
             if (target.messageId != null) i.putExtra("murage.messageId", target.messageId);

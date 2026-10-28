@@ -1,10 +1,15 @@
-// PostHog usage analytics + the email → person identity link.
-// The phc_ token is a write-only public key (safe to ship in the client).
-// Only the named events below are sent — autocapture is OFF on purpose:
-// it would ship the $el_text of clicked elements, and the sidebar/option
-// cards render model output and message previews, so it would leak fragments
-// of private conversations to a third party. Email submissions call
-// identify(), which links the address to the person record.
+// PostHog usage analytics: anonymous product events, and nothing that names
+// the person. The phc_ token is a write-only public key (safe to ship in the
+// client). Only the named events below are sent — autocapture is OFF on
+// purpose: it would ship the $el_text of clicked elements, and the
+// sidebar/option cards render model output and message previews, so it would
+// leak fragments of private conversations to a third party.
+//
+// NO EMAIL, EVER (1.0.7, Sean: "no analytics, no device id"). The address a
+// person gives on the first run goes to the news list only. The old
+// identifyEmail(), which linked an address to a PostHog person record, had no
+// caller left and was removed (upstream 8d8d22f5b), so there is no path here
+// that sends a personal identifier to be rewired by mistake.
 //
 // The token is injected at build time and has NO default. An unconfigured
 // build sends nothing at all: initAnalytics() returns before init(), so the
@@ -140,16 +145,6 @@ function start(posthog: PostHog) {
 export function track(event: string, props?: Record<string, unknown>) {
   if (!ready || !analyticsEnabled()) return;
   client?.capture(event, props);
-}
-
-// Checked here as well as in track(): this is the one call that would send a
-// personal identifier, so it must not depend on opt_out_capturing() alone.
-// The address is still stored locally in the profile either way — opting out
-// stops it from being reported, not from being used.
-export function identifyEmail(email: string) {
-  if (!ready || !analyticsEnabled()) return;
-  client?.identify(email, { email });
-  client?.capture("email_submitted");
 }
 
 // first-run email gate state
