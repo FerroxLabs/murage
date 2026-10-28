@@ -711,6 +711,7 @@ server/remote-mcp-sse-sessions.test.ts	extended
 server/repeat-detector.test.ts	extended
 server/replies.test.ts	extended
 server/reply-speaker-guard.test.ts	extended
+server/report-unread-chat.test.ts	extended
 server/room-clock.test.ts	extended
 server/room-context-pinned.test.ts	extended
 server/room-cwd.test.ts	extended
@@ -812,7 +813,9 @@ server/transcript-seq.rig.test.ts	extended
 server/tts/clause.test.ts	extended
 server/tts/flux-speech.test.ts	extended
 server/tts/grok-default.test.ts	extended
+server/tts/speech-redirects.test.ts	extended
 server/tts/speech-text.test.ts	extended
+server/tts/system-voices.test.ts	extended
 server/tts/tts.test.ts	extended
 server/tts/windows-voices.test.ts	extended
 server/tts/xai-speech.test.ts	extended
@@ -1030,6 +1033,7 @@ src/components/OpenBotListButton.test.ts	extended
 src/components/OptionCard.test.ts	extended
 src/components/OutcomeMark.test.ts	extended
 src/components/PermissionModeMenu.test.ts	extended
+src/components/PhoneAccessCard.test.tsx	extended
 src/components/PhoneSetupFlow.test.ts	extended
 src/components/PreviousVersionRow.test.ts	extended
 src/components/ProcedureEvaluationAdmissions.test.ts	extended
@@ -1440,8 +1444,27 @@ server/memory/record-keys-budget.test.ts	the record-keys backfill write budget (
 server/browser-engine-windows-signed-real.test.ts	real signed Windows browser images from a packaged installer (needs WIN_SIGNED_BROWSER_RESOURCES; skipped otherwise)
 server/lee-phantom-scenario.test.ts	extended
 src/components/LearnAboutMe.test.ts	extended
+src/components/PhoneForBotsRow.test.tsx	extended
 server/memory/recall-realdata-bench.test.ts	extended
 server/memory/schema-v13-realdata-roundtrip.test.ts	extended
+electron/email-secrets.test.mjs	extended
 scripts/build-fuigo-probe.test.mjs	extended
 server/boot-settle-108.perf.test.ts	extended
+server/bot-calls-card.test.ts	extended
+server/email/backup-restore-export.test.ts	extended
+server/email/billing-518.test.ts	extended
+server/email/binding-service.test.ts	extended
+server/email/boot-reconcile.test.ts	extended
+server/email/cards.test.ts	extended
+server/email/email-client.test.ts	extended
+server/email/email-index.test.ts	extended
+server/email/event-reader.test.ts	extended
+server/email/external-marks.test.ts	extended
+server/email/flux-519-520.test.ts	extended
+server/email/trust-offer.test.ts	extended
+server/email/turn-marks.test.ts	extended
+src/components/EmailSendCard.test.ts	extended
 src/components/WorkspaceFeatureRow.test.ts	extended
+src/lib/bot-calls.test.ts	extended
+src/lib/bot-email.test.ts	extended
+server/drivers/openai-chat-tools-real.test.ts	extended

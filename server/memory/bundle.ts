@@ -21,6 +21,8 @@ import { turnTrace } from "../turn-trace.ts";
 import { rateLimited } from "../observe.ts";
 import { scopeRow } from "./scope-id.ts";
 import { maskFinancialIdentifiers } from "../../shared/financial-ids.ts";
+import { fenceEmailDerivedLine, recordEmailDerived } from "./email-derived.ts";
+import { markTurnEmailDerived } from "../email/external-marks.ts";
 
 // Moved to checkpoints.ts (replay-lineage.ts reads it without importing this module).
 export { supersededThreadCheckpoint };
@@ -32,6 +34,8 @@ export interface BundleRecord {
   pipTier?: PipTier; pipImported?: true;
   /** Set only when the bundle cut a too-long brief at a sentence boundary: `text` is then the first `cutBytes` bytes of the stored text. */
   cutBytes?: number;
+  /** Bot email (5.4): the record carries the external-mail origin; its frame line is fenced kind email-derived. */
+  emailDerived?: true;
 }
 export interface BoundedMemoryBundle extends MemoryBundle {
   evolutionPolicyRevision:string;
@@ -102,7 +106,7 @@ function hydrateInPass(id: string, version: number, access: MemoryAccess, allowS
 function bundleRecordOf(id: string, version: number, row: Record<string, unknown>, details: {partition?: unknown; confidence_basis?: unknown} | undefined, evidence: MemoryEvidenceHandle[], sourceOutcome: "failed" | undefined): BundleRecord {
   const pipTier=details?.partition==="identity"?pipTierOf(details.confidence_basis):undefined;
   // Masked at read too, so a row the scrub has not reached yet never hands an engine its digits (scrub-pass.ts).
-  return {id,version,scopeId:String(row.scope_id),text:maskFinancialIdentifiers(String(row.text)),assertion:String(row.assertion),pinned:row.owner_pinned===1,kind:String(row.kind),...(details?.partition==="identity"?{identityBasis:String(details.confidence_basis??"Unverified identity context")}:{ }),...(pipTier?{pipTier}:{}),...(pipTier&&String(details!.confidence_basis).includes("imported from ")?{pipImported:true as const}:{}),...(sourceOutcome?{sourceOutcome}:{}),evidence};
+  return {id,version,scopeId:String(row.scope_id),text:maskFinancialIdentifiers(String(row.text)),assertion:String(row.assertion),pinned:row.owner_pinned===1,kind:String(row.kind),...(details?.partition==="identity"?{identityBasis:String(details.confidence_basis??"Unverified identity context")}:{ }),...(pipTier?{pipTier}:{}),...(pipTier&&String(details!.confidence_basis).includes("imported from ")?{pipImported:true as const}:{}),...(sourceOutcome?{sourceOutcome}:{}),...(recordEmailDerived(database(),id,version)?{emailDerived:true as const}:{}),evidence};
 }
 
 /** Engine-facing rendering: attributed remembered words only. Record ids, scopes
@@ -130,7 +134,8 @@ export function referenceLine(record: BundleRecord, position: number): string {
   // the closing tag or the current-request boundary. Angle brackets are
   // escaped so the frame's tags never appear inside remembered text.
   const quoted = JSON.stringify(record.text).replace(/</g, "\\u003c").replace(/>/g, "\\u003e");
-  return `- ${memoryHandle(position)} (${attribution}; ${kind}${record.pinned ? "; pinned by the owner" : ""}) ${quoted}`;
+  const line = `- ${memoryHandle(position)} (${attribution}; ${kind}${record.pinned ? "; pinned by the owner" : ""}) ${quoted}`;
+  return record.emailDerived ? fenceEmailDerivedLine(line, record.id, record.version) : line;
 }
 function render(records: BundleRecord[]) {
   if (!records.length) return "";
@@ -603,6 +608,8 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
     }
   });
   const text = render(selected);
+  // bot email (5.4): marks are transitive, so a turn whose frame carries an email-derived memory marks its own replies
+  if (selected.some(record => record.emailDerived)) markTurnEmailDerived(access.threadId);
   // Not part of the model text: the owner is told how much of it was brought.
   const continuity = options.continuity && !room ? {brought: identity.filter(record => isPipOwnerKind(record.kind)).length, total: continuityTotal} : undefined;
   const sourceVersions = [...new Map(selected.flatMap(r=>r.evidence).map(e=>[JSON.stringify([e.sourceId,e.revision]),{id:e.sourceId,revision:e.revision}])).values()];

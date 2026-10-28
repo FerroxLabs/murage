@@ -216,9 +216,15 @@ describe("token drift", () => {
     const inbox = readFileSync(join(root, "src/components/Inbox.tsx"), "utf8");
     const INBOX_VIEW_IDS = ["read"];
     for (const id of INBOX_VIEW_IDS) expect(inbox, id).toContain(`"to-${id}"`);
+    // And the bot call ring's action `"text-instead"` (BotCallRing), the route
+    // POST /api/calls/{intentId}/text-instead in the calls contract: a path
+    // segment, never a className. It must still be in the contract.
+    const callsContract = readFileSync(join(root, "docs/contracts/calls-109.yaml"), "utf8");
+    const CALL_ROUTE_IDS = ["instead"];
+    for (const id of CALL_ROUTE_IDS) expect(callsContract, id).toContain(`/text-${id}"`);
     // `border-color` / `background-color` inside an arbitrary transition-[...]
     // property list (ApprovalFeedback PRESSED) are CSS property names, not utilities.
-    const NOT_A_CLASS = new Set([...PROBE_OUTCOME_IDS, ...INBOX_VIEW_IDS, "color"]);
+    const NOT_A_CLASS = new Set([...PROBE_OUTCOME_IDS, ...INBOX_VIEW_IDS, ...CALL_ROUTE_IDS, "color"]);
     // Tailwind's built-in palette. TeamLibraryPanel paints four categorical bot
     // glyphs from it on purpose — they are identity colours like the mascot's,
     // not theme surfaces, and Tailwind does generate them.

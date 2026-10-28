@@ -1,9 +1,9 @@
 import { expect, it } from "vitest";
-import { activeSettingsRole, BOT_SETTINGS_SECTIONS, DESKTOP_ONLY_BOT_SETTINGS, LEARNING_BADGE_SECTION, botSettingsSectionLabel, filterBotSettingsSections, settingsRoleLabel } from "./bot-settings-sections";
+import { activeSettingsRole, BOT_SETTINGS_SECTIONS, DESKTOP_ONLY_BOT_SETTINGS, GATED_BOT_SETTINGS, LEARNING_BADGE_SECTION, botSettingsSectionLabel, filterBotSettingsSections, settingsRoleLabel } from "./bot-settings-sections";
 
 it("keeps the approved sections distinct and finds controls by their familiar names", () => {
-  expect(BOT_SETTINGS_SECTIONS).toHaveLength(14);
-  expect(new Set(BOT_SETTINGS_SECTIONS.map(section => section.id)).size).toBe(14);
+  expect(BOT_SETTINGS_SECTIONS).toHaveLength(15);
+  expect(new Set(BOT_SETTINGS_SECTIONS.map(section => section.id)).size).toBe(15);
   expect(filterBotSettingsSections("house rules").map(section => section.id)).toEqual(["shapes"]);
   expect(filterBotSettingsSections("what it reads").map(section => section.id)).toEqual(["shapes"]);
   expect(filterBotSettingsSections("working folder").map(section => section.id)).toEqual(["access"]);
@@ -40,4 +40,10 @@ it("finds Appearance and Avatar in Identity & instructions, not Overview", () =>
     expect(filterBotSettingsSections(word).map(section => section.id), word).toContain("identity");
     expect(filterBotSettingsSections(word).map(section => section.id), word).not.toContain("overview");
   }
+});
+it("puts bot email right after Access, gated on the server's email status (dark launch)", () => {
+  const ids = BOT_SETTINGS_SECTIONS.map(section => section.id) as string[];
+  expect(ids[ids.indexOf("access") + 1]).toBe("email");
+  expect(GATED_BOT_SETTINGS.has("email")).toBe(true);
+  expect(filterBotSettingsSections("trusted contacts").map(section => section.id)).toEqual(["email"]);
 });
