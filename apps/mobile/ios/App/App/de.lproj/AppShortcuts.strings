@@ -1,0 +1,4 @@
+"Ask ${applicationName}" = "Frage ${applicationName}";
+"Ask ${applicationName} something" = "Frage ${applicationName} etwas";
+"Ask ${bot} in ${applicationName}" = "Frage ${bot} in ${applicationName}";
+"Open my chat in ${applicationName}" = "Öffne meinen Chat in ${applicationName}";

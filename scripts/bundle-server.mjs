@@ -20,6 +20,7 @@
 import { build } from "esbuild";
 import { chmodSync, copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { checkRuntimeSibling } from "./runtime-sibling-mode.mjs";
+import { assertSentinelBundles } from "./sentinel-bundle-check.mjs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative } from "node:path";
 
@@ -76,10 +77,17 @@ const ENTRY_POINTS = [
   "drivers/remote-mcp-proxy.ts",
   "drivers/dweb-proxy.ts",
   "drivers/phone-proxy.ts",
+  "drivers/phone-jobs-proxy.ts",
   "drivers/browser-proxy.ts",
   "drivers/headless-browser-proxy.ts",
   "drivers/unified-browser-proxy.ts",
   "drivers/host-computer-proxy.ts",
+  // 1.0.9 Sentinel: the scanner service entry, run by the installed executable with ELECTRON_RUN_AS_NODE=1 (desktop)
+  // or the pinned Node (Cloud/self-host), and the one producer boundary the Electron host imports. Both are checked
+  // below (scripts/sentinel-bundle-check.mjs): the scanner never inlines server startup, the database opener, a
+  // driver, config, memory, the producers or any package, and imports no network module.
+  "sentinel/cli.ts",
+  "health/host-boundary.ts",
 ];
 
 // Files a bundled module reads at run time from beside itself (`join(dirname(fileURLToPath(import.meta.url)), name)`),
@@ -108,6 +116,8 @@ const main = await build({
   plugins: [yamlEsmPlugin],
   external: ["@huggingface/transformers"],
 });
+
+assertSentinelBundles(main.metafile);
 
 for (const { reader, file, mode } of RUNTIME_SIBLINGS) {
   const readerPath = relative(process.cwd(), join(server, reader)).split("\\").join("/");

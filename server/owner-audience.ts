@@ -77,6 +77,7 @@ export const OWNER_AUDIENCE_SURFACES = Object.freeze({
   "joining-brief": { label: "Joining brief", builtIn: "server/project-layers.ts" },
   "project-roster-apps": { label: "Connected app names in the roster", builtIn: "server/project-roster.ts" },
   "shared-load": { label: "Shared work", builtIn: "server/shared-bots-roster.ts" },
+  "email-primer": { label: "Bot email tools line", builtIn: "server/capabilities-primer.ts" },
 } as const);
 export type OwnerAudienceSurface = keyof typeof OWNER_AUDIENCE_SURFACES;
 

@@ -451,6 +451,10 @@ export async function launchVerificationServer(
     PATH: "",
     // A verification server never asks the real announcements feed.
     MURAGE_ANNOUNCEMENTS_URL: "off",
+    // Nor the deployed push relay: a fixture's binding carries a made-up publisher token, the relay answers 401, and the
+    // outbox then removes the binding with its queued rows (mobile-push-outbox.ts "gone"). Pushes stay queued here, where
+    // a test reads them. A test with its own relay sets MURAGE_PUSH_RELAY_URL in options.env, which comes after.
+    MURAGE_PUSH_RELAY_URL: "off",
     // The suite's stand-in for the companion door's launch secret (audit C5):
     // only a test run carries it, so a launcher outside one adds nothing.
     ...(parentEnv.MURAGE_TEST_DOOR_TOKEN ? { MURAGE_COMPANION_TOKEN: parentEnv.MURAGE_TEST_DOOR_TOKEN } : {}),
