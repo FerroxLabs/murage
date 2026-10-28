@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		ABCDEF700000000000000002 /* murage-call.caf in Resources */ = {isa = PBXBuildFile; fileRef = ABCDEF700000000000000001 /* murage-call.caf */; };
 		ABCDEF400000000000000011 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABCDEF400000000000000001 /* NotificationService.swift */; };
 		ABCDEF400000000000000012 /* MurageShellCore in Frameworks */ = {isa = PBXBuildFile; productRef = ABCDEF400000000000000022 /* MurageShellCore */; };
 		ABCDEF400000000000000013 /* NotificationService.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = ABCDEF400000000000000005 /* NotificationService.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -24,6 +25,24 @@
 		ABCDEF500000000000000002 /* spike-voice.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = ABCDEF500000000000000001 /* spike-voice.mp3 */; };
 		ABCDEF600000000000000011 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = ABCDEF600000000000000001 /* PrivacyInfo.xcprivacy */; };
 		ABCDEF600000000000000012 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = ABCDEF600000000000000002 /* PrivacyInfo.xcprivacy */; };
+		ABCDEF700000000000000002 /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = ABCDEF700000000000000001 /* InfoPlist.strings */; };
+		ABCDEF800000000000000011 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABCDEF800000000000000001 /* ShareViewController.swift */; };
+		ABCDEF800000000000000012 /* MurageShellCore in Frameworks */ = {isa = PBXBuildFile; productRef = ABCDEF800000000000000022 /* MurageShellCore */; };
+		ABCDEF800000000000000013 /* ShareExtension.appex in Embed Share Extension */ = {isa = PBXBuildFile; fileRef = ABCDEF800000000000000005 /* ShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		ABCDEF800000000000000014 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = ABCDEF800000000000000006 /* PrivacyInfo.xcprivacy */; };
+		ABCDEF800000000000000015 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = ABCDEF800000000000000007 /* Localizable.strings */; };
+		ABCDEF800000000000000016 /* share-types.json in Resources */ = {isa = PBXBuildFile; fileRef = ABCDEF800000000000000008 /* share-types.json */; };
+		ABCDEF900000000000000011 /* AskIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABCDEF900000000000000001; };
+		ABCDEF900000000000000012 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = ABCDEF900000000000000002; };
+		ABCDEF900000000000000013 /* AppShortcuts.strings in Resources */ = {isa = PBXBuildFile; fileRef = ABCDEF900000000000000003; };
+		ABCDEFA00000000000000011 /* AskControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABCDEFA00000000000000001 /* AskControl.swift */; };
+		ABCDEFA00000000000000012 /* OpenAskControlIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABCDEFA00000000000000003 /* OpenAskControlIntent.swift */; };
+		ABCDEFA00000000000000013 /* AskControl.appex in Embed Ask Control */ = {isa = PBXBuildFile; fileRef = ABCDEFA00000000000000005 /* AskControl.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		ABCDEFA00000000000000014 /* OpenAskControlIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABCDEFA00000000000000003 /* OpenAskControlIntent.swift */; };
+		ABCDEFA00000000000000015 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = ABCDEFA00000000000000007 /* Localizable.strings */; };
+		ABCDEFA00000000000000016 /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = ABCDEFA00000000000000008 /* InfoPlist.strings */; };
+		ABCDEFA00000000000000017 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = ABCDEFA00000000000000009 /* WidgetKit.framework */; settings = {ATTRIBUTES = (Weak, ); }; };
+		ABCDEFA00000000000000018 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = ABCDEFA00000000000000006 /* PrivacyInfo.xcprivacy */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -33,6 +52,20 @@
 			proxyType = 1;
 			remoteGlobalIDString = ABCDEF400000000000000041;
 			remoteInfo = NotificationService;
+		};
+		ABCDEF800000000000000048 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 504EC2FC1FED79650016851F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = ABCDEF800000000000000041;
+			remoteInfo = ShareExtension;
+		};
+		ABCDEFA00000000000000048 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 504EC2FC1FED79650016851F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = ABCDEFA00000000000000041;
+			remoteInfo = AskControl;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -48,9 +81,32 @@
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		ABCDEF800000000000000046 /* Embed Share Extension */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				ABCDEF800000000000000013 /* ShareExtension.appex in Embed Share Extension */,
+			);
+			name = "Embed Share Extension";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		ABCDEFA00000000000000046 /* Embed Ask Control */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				ABCDEFA00000000000000013 /* AskControl.appex in Embed Ask Control */,
+			);
+			name = "Embed Ask Control";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		ABCDEF700000000000000001 /* murage-call.caf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "murage-call.caf"; sourceTree = "<group>"; };
 		ABCDEF400000000000000001 /* NotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationService.swift; sourceTree = "<group>"; };
 		ABCDEF400000000000000002 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		ABCDEF400000000000000003 /* NotificationService.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NotificationService.entitlements; sourceTree = "<group>"; };
@@ -71,6 +127,67 @@
 		ABCDEF000000000000000003 /* MobileViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileViewController.swift; sourceTree = "<group>"; };
 		ABCDEF600000000000000001 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		ABCDEF600000000000000002 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		ABCDEF700000000000000100 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "en"; path = "en.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
+		ABCDEF700000000000000101 /* de */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "de"; path = "de.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
+		ABCDEF700000000000000102 /* es */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "es"; path = "es.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
+		ABCDEF700000000000000103 /* fr */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "fr"; path = "fr.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
+		ABCDEF700000000000000104 /* hi */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "hi"; path = "hi.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
+		ABCDEF700000000000000105 /* ja */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "ja"; path = "ja.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
+		ABCDEF700000000000000106 /* pt-BR */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "pt-BR"; path = "pt-BR.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
+		ABCDEF700000000000000107 /* zh */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh"; path = "zh.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
+		ABCDEF800000000000000001 /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
+		ABCDEF800000000000000002 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		ABCDEF800000000000000003 /* ShareExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ShareExtension.entitlements; sourceTree = "<group>"; };
+		ABCDEF800000000000000005 /* ShareExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		ABCDEF800000000000000006 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		ABCDEF800000000000000008 /* share-types.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = "share-types.json"; path = "../../contract/share-types.json"; sourceTree = SOURCE_ROOT; };
+		ABCDEF800000000000000100 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "en"; path = "en.lproj/Localizable.strings"; sourceTree = "<group>"; };
+		ABCDEF800000000000000101 /* de */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "de"; path = "de.lproj/Localizable.strings"; sourceTree = "<group>"; };
+		ABCDEF800000000000000102 /* es */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "es"; path = "es.lproj/Localizable.strings"; sourceTree = "<group>"; };
+		ABCDEF800000000000000103 /* fr */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "fr"; path = "fr.lproj/Localizable.strings"; sourceTree = "<group>"; };
+		ABCDEF800000000000000104 /* hi */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "hi"; path = "hi.lproj/Localizable.strings"; sourceTree = "<group>"; };
+		ABCDEF800000000000000105 /* ja */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "ja"; path = "ja.lproj/Localizable.strings"; sourceTree = "<group>"; };
+		ABCDEF800000000000000106 /* pt-BR */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "pt-BR"; path = "pt-BR.lproj/Localizable.strings"; sourceTree = "<group>"; };
+		ABCDEF800000000000000107 /* zh */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh"; path = "zh.lproj/Localizable.strings"; sourceTree = "<group>"; };
+		ABCDEF900000000000000001 /* AskIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AskIntents.swift; sourceTree = "<group>"; };
+		ABCDEF900000000000000200 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "en"; path = "en.lproj/Localizable.strings"; sourceTree = "<group>"; };
+		ABCDEF900000000000000201 /* de */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "de"; path = "de.lproj/Localizable.strings"; sourceTree = "<group>"; };
+		ABCDEF900000000000000202 /* es */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "es"; path = "es.lproj/Localizable.strings"; sourceTree = "<group>"; };
+		ABCDEF900000000000000203 /* fr */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "fr"; path = "fr.lproj/Localizable.strings"; sourceTree = "<group>"; };
+		ABCDEF900000000000000204 /* hi */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "hi"; path = "hi.lproj/Localizable.strings"; sourceTree = "<group>"; };
+		ABCDEF900000000000000205 /* ja */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "ja"; path = "ja.lproj/Localizable.strings"; sourceTree = "<group>"; };
+		ABCDEF900000000000000206 /* pt-BR */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "pt-BR"; path = "pt-BR.lproj/Localizable.strings"; sourceTree = "<group>"; };
+		ABCDEF900000000000000207 /* zh */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh"; path = "zh.lproj/Localizable.strings"; sourceTree = "<group>"; };
+		ABCDEF900000000000000300 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "en"; path = "en.lproj/AppShortcuts.strings"; sourceTree = "<group>"; };
+		ABCDEF900000000000000301 /* de */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "de"; path = "de.lproj/AppShortcuts.strings"; sourceTree = "<group>"; };
+		ABCDEF900000000000000302 /* es */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "es"; path = "es.lproj/AppShortcuts.strings"; sourceTree = "<group>"; };
+		ABCDEF900000000000000303 /* fr */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "fr"; path = "fr.lproj/AppShortcuts.strings"; sourceTree = "<group>"; };
+		ABCDEF900000000000000304 /* hi */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "hi"; path = "hi.lproj/AppShortcuts.strings"; sourceTree = "<group>"; };
+		ABCDEF900000000000000305 /* ja */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "ja"; path = "ja.lproj/AppShortcuts.strings"; sourceTree = "<group>"; };
+		ABCDEF900000000000000306 /* pt-BR */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "pt-BR"; path = "pt-BR.lproj/AppShortcuts.strings"; sourceTree = "<group>"; };
+		ABCDEF900000000000000307 /* zh */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh"; path = "zh.lproj/AppShortcuts.strings"; sourceTree = "<group>"; };
+		ABCDEFA00000000000000001 /* AskControl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AskControl.swift; sourceTree = "<group>"; };
+		ABCDEFA00000000000000002 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		ABCDEFA00000000000000003 /* OpenAskControlIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAskControlIntent.swift; sourceTree = "<group>"; };
+		ABCDEFA00000000000000005 /* AskControl.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = AskControl.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		ABCDEFA00000000000000006 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		ABCDEFA00000000000000009 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
+		ABCDEFA00000000000000100 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "en"; path = "en.lproj/Localizable.strings"; sourceTree = "<group>"; };
+		ABCDEFA00000000000000101 /* de */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "de"; path = "de.lproj/Localizable.strings"; sourceTree = "<group>"; };
+		ABCDEFA00000000000000102 /* es */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "es"; path = "es.lproj/Localizable.strings"; sourceTree = "<group>"; };
+		ABCDEFA00000000000000103 /* fr */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "fr"; path = "fr.lproj/Localizable.strings"; sourceTree = "<group>"; };
+		ABCDEFA00000000000000104 /* hi */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "hi"; path = "hi.lproj/Localizable.strings"; sourceTree = "<group>"; };
+		ABCDEFA00000000000000105 /* ja */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "ja"; path = "ja.lproj/Localizable.strings"; sourceTree = "<group>"; };
+		ABCDEFA00000000000000106 /* pt-BR */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "pt-BR"; path = "pt-BR.lproj/Localizable.strings"; sourceTree = "<group>"; };
+		ABCDEFA00000000000000107 /* zh */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh"; path = "zh.lproj/Localizable.strings"; sourceTree = "<group>"; };
+		ABCDEFA00000000000000200 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "en"; path = "en.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
+		ABCDEFA00000000000000201 /* de */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "de"; path = "de.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
+		ABCDEFA00000000000000202 /* es */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "es"; path = "es.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
+		ABCDEFA00000000000000203 /* fr */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "fr"; path = "fr.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
+		ABCDEFA00000000000000204 /* hi */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "hi"; path = "hi.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
+		ABCDEFA00000000000000205 /* ja */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "ja"; path = "ja.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
+		ABCDEFA00000000000000206 /* pt-BR */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "pt-BR"; path = "pt-BR.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
+		ABCDEFA00000000000000207 /* zh */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh"; path = "zh.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -88,6 +205,22 @@
 			files = (
 				4D22ABE92AF431CB00220026 /* CapApp-SPM in Frameworks */,
 				ABCDEF300000000000000001 /* MurageShell in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		ABCDEF800000000000000044 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				ABCDEF800000000000000012 /* MurageShellCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		ABCDEFA00000000000000044 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				ABCDEFA00000000000000017 /* WidgetKit.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -109,6 +242,8 @@
 			isa = PBXGroup;
 			children = (
 				ABCDEF400000000000000031 /* NotificationService */,
+				ABCDEF800000000000000031 /* ShareExtension */,
+				ABCDEFA00000000000000031 /* AskControl */,
 				958DCC722DB07C7200EA8C5F /* debug.xcconfig */,
 				504EC3061FED79650016851F /* App */,
 				504EC3051FED79650016851F /* Products */,
@@ -119,6 +254,8 @@
 			isa = PBXGroup;
 			children = (
 				ABCDEF400000000000000005 /* NotificationService.appex */,
+				ABCDEF800000000000000005 /* ShareExtension.appex */,
+				ABCDEFA00000000000000005 /* AskControl.appex */,
 				504EC3041FED79650016851F /* App.app */,
 			);
 			name = Products;
@@ -127,6 +264,11 @@
 		504EC3061FED79650016851F /* App */ = {
 			isa = PBXGroup;
 			children = (
+				ABCDEF900000000000000001 /* AskIntents.swift */,
+				ABCDEFA00000000000000003 /* OpenAskControlIntent.swift */,
+				ABCDEF900000000000000002 /* Localizable.strings */,
+				ABCDEF900000000000000003 /* AppShortcuts.strings */,
+				ABCDEF700000000000000001 /* InfoPlist.strings */,
 				ABCDEF600000000000000001 /* PrivacyInfo.xcprivacy */,
 				ABCDEF400000000000000004 /* App.entitlements */,
 				9582B6822FE993A50072D4E8 /* SceneDelegate.swift */,
@@ -140,8 +282,35 @@
 				2FAD9762203C412B000D30F8 /* config.xml */,
 				50B271D01FEDC1A000F3C39B /* public */,
 				ABCDEF500000000000000001 /* spike-voice.mp3 */,
+				ABCDEF700000000000000001 /* murage-call.caf */,
 			);
 			path = App;
+			sourceTree = "<group>";
+		};
+		ABCDEF800000000000000031 /* ShareExtension */ = {
+			isa = PBXGroup;
+			children = (
+				ABCDEF800000000000000007 /* Localizable.strings */,
+				ABCDEF800000000000000008 /* share-types.json */,
+				ABCDEF800000000000000006 /* PrivacyInfo.xcprivacy */,
+				ABCDEF800000000000000001 /* ShareViewController.swift */,
+				ABCDEF800000000000000002 /* Info.plist */,
+				ABCDEF800000000000000003 /* ShareExtension.entitlements */,
+			);
+			path = ShareExtension;
+			sourceTree = "<group>";
+		};
+		ABCDEFA00000000000000031 /* AskControl */ = {
+			isa = PBXGroup;
+			children = (
+				ABCDEFA00000000000000001 /* AskControl.swift */,
+				ABCDEFA00000000000000002 /* Info.plist */,
+				ABCDEFA00000000000000006 /* PrivacyInfo.xcprivacy */,
+				ABCDEFA00000000000000007 /* Localizable.strings */,
+				ABCDEFA00000000000000008 /* InfoPlist.strings */,
+				ABCDEFA00000000000000009 /* WidgetKit.framework */,
+			);
+			path = AskControl;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -175,11 +344,15 @@
 				504EC3011FED79650016851F /* Frameworks */,
 				504EC3021FED79650016851F /* Resources */,
 				ABCDEF400000000000000046 /* Embed Foundation Extensions */,
+				ABCDEF800000000000000046 /* Embed Share Extension */,
+				ABCDEFA00000000000000046 /* Embed Ask Control */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 				ABCDEF400000000000000047 /* PBXTargetDependency */,
+				ABCDEF800000000000000047 /* PBXTargetDependency */,
+				ABCDEFA00000000000000047 /* PBXTargetDependency */,
 			);
 			name = App;
 			packageProductDependencies = (
@@ -190,6 +363,45 @@
 			productReference = 504EC3041FED79650016851F /* App.app */;
 			productType = "com.apple.product-type.application";
 		};
+		ABCDEF800000000000000041 /* ShareExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = ABCDEF800000000000000042 /* Build configuration list for PBXNativeTarget "ShareExtension" */;
+			buildPhases = (
+				ABCDEF800000000000000043 /* Sources */,
+				ABCDEF800000000000000044 /* Frameworks */,
+				ABCDEF800000000000000045 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ShareExtension;
+			packageProductDependencies = (
+				ABCDEF800000000000000022 /* MurageShellCore */,
+			);
+			productName = ShareExtension;
+			productReference = ABCDEF800000000000000005 /* ShareExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		ABCDEFA00000000000000041 /* AskControl */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = ABCDEFA00000000000000042 /* Build configuration list for PBXNativeTarget "AskControl" */;
+			buildPhases = (
+				ABCDEFA00000000000000043 /* Sources */,
+				ABCDEFA00000000000000044 /* Frameworks */,
+				ABCDEFA00000000000000045 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = AskControl;
+			packageProductDependencies = (
+			);
+			productName = AskControl;
+			productReference = ABCDEFA00000000000000005 /* AskControl.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -199,6 +411,8 @@
 				LastSwiftUpdateCheck = 0920;
 				LastUpgradeCheck = 0920;
 				TargetAttributes = {
+					ABCDEF800000000000000041 = { CreatedOnToolsVersion = 16.0; };
+					ABCDEFA00000000000000041 = { CreatedOnToolsVersion = 16.0; };
 					ABCDEF400000000000000041 = {
 						CreatedOnToolsVersion = 16.0;
 					};
@@ -216,6 +430,13 @@
 			knownRegions = (
 				en,
 				Base,
+				"de",
+				"es",
+				"fr",
+				"hi",
+				"ja",
+				"pt-BR",
+				"zh",
 			);
 			mainGroup = 504EC2FB1FED79650016851F;
 			packageReferences = (
@@ -228,6 +449,8 @@
 			targets = (
 				504EC3031FED79650016851F /* App */,
 				ABCDEF400000000000000041 /* NotificationService */,
+				ABCDEF800000000000000041 /* ShareExtension */,
+				ABCDEFA00000000000000041 /* AskControl */,
 			);
 		};
 /* End PBXProject section */
@@ -245,6 +468,9 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				ABCDEF900000000000000012 /* Localizable.strings in Resources */,
+				ABCDEF900000000000000013 /* AppShortcuts.strings in Resources */,
+				ABCDEF700000000000000002 /* InfoPlist.strings in Resources */,
 				ABCDEF600000000000000011 /* PrivacyInfo.xcprivacy in Resources */,
 				504EC3121FED79650016851F /* LaunchScreen.storyboard in Resources */,
 				50B271D11FEDC1A000F3C39B /* public in Resources */,
@@ -252,6 +478,27 @@
 				50379B232058CBB4000EE86E /* capacitor.config.json in Resources */,
 				2FAD9763203C412B000D30F8 /* config.xml in Resources */,
 				ABCDEF500000000000000002 /* spike-voice.mp3 in Resources */,
+				ABCDEF700000000000000002 /* murage-call.caf in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		ABCDEF800000000000000045 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				ABCDEF800000000000000015 /* Localizable.strings in Resources */,
+				ABCDEF800000000000000016 /* share-types.json in Resources */,
+				ABCDEF800000000000000014 /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		ABCDEFA00000000000000045 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				ABCDEFA00000000000000015 /* Localizable.strings in Resources */,
+				ABCDEFA00000000000000016 /* InfoPlist.strings in Resources */,
+				ABCDEFA00000000000000018 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -270,10 +517,29 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				ABCDEF900000000000000011 /* AskIntents.swift in Sources */,
+				ABCDEFA00000000000000014 /* OpenAskControlIntent.swift in Sources */,
 				504EC3081FED79650016851F /* AppDelegate.swift in Sources */,
 				ABCDEF100000000000000003 /* MobileViewController.swift in Sources */,
 				ABCDEF100000000000000000 /* ShellPlugin.swift in Sources */,
 				9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		ABCDEF800000000000000043 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				ABCDEF800000000000000011 /* ShareViewController.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		ABCDEFA00000000000000043 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				ABCDEFA00000000000000011 /* AskControl.swift in Sources */,
+				ABCDEFA00000000000000012 /* OpenAskControlIntent.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -285,6 +551,16 @@
 			target = ABCDEF400000000000000041 /* NotificationService */;
 			targetProxy = ABCDEF400000000000000048 /* PBXContainerItemProxy */;
 		};
+		ABCDEF800000000000000047 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = ABCDEF800000000000000041 /* ShareExtension */;
+			targetProxy = ABCDEF800000000000000048 /* PBXContainerItemProxy */;
+		};
+		ABCDEFA00000000000000047 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = ABCDEFA00000000000000041 /* AskControl */;
+			targetProxy = ABCDEFA00000000000000048 /* PBXContainerItemProxy */;
+		};
 /* End PBXTargetDependency section */
 
 /* Begin PBXVariantGroup section */
@@ -294,6 +570,82 @@
 				504EC3111FED79650016851F /* Base */,
 			);
 			name = LaunchScreen.storyboard;
+			sourceTree = "<group>";
+		};
+		ABCDEF700000000000000001 /* InfoPlist.strings */ = {
+			isa = PBXVariantGroup;
+			children = (
+				ABCDEF700000000000000100 /* en */,
+				ABCDEF700000000000000101 /* de */,
+				ABCDEF700000000000000102 /* es */,
+				ABCDEF700000000000000103 /* fr */,
+				ABCDEF700000000000000104 /* hi */,
+				ABCDEF700000000000000105 /* ja */,
+				ABCDEF700000000000000106 /* pt-BR */,
+				ABCDEF700000000000000107 /* zh */,
+			);
+			name = InfoPlist.strings;
+			sourceTree = "<group>";
+		};
+		ABCDEF800000000000000007 /* Localizable.strings */ = {isa = PBXVariantGroup; children = (ABCDEF800000000000000100, ABCDEF800000000000000101, ABCDEF800000000000000102, ABCDEF800000000000000103, ABCDEF800000000000000104, ABCDEF800000000000000105, ABCDEF800000000000000106, ABCDEF800000000000000107,); name = Localizable.strings; sourceTree = "<group>"; };
+		ABCDEF900000000000000002 /* Localizable.strings */ = {
+			isa = PBXVariantGroup;
+			children = (
+				ABCDEF900000000000000200,
+				ABCDEF900000000000000201,
+				ABCDEF900000000000000202,
+				ABCDEF900000000000000203,
+				ABCDEF900000000000000204,
+				ABCDEF900000000000000205,
+				ABCDEF900000000000000206,
+				ABCDEF900000000000000207,
+			);
+			name = Localizable.strings;
+			sourceTree = "<group>";
+		};
+		ABCDEF900000000000000003 /* AppShortcuts.strings */ = {
+			isa = PBXVariantGroup;
+			children = (
+				ABCDEF900000000000000300,
+				ABCDEF900000000000000301,
+				ABCDEF900000000000000302,
+				ABCDEF900000000000000303,
+				ABCDEF900000000000000304,
+				ABCDEF900000000000000305,
+				ABCDEF900000000000000306,
+				ABCDEF900000000000000307,
+			);
+			name = AppShortcuts.strings;
+			sourceTree = "<group>";
+		};
+		ABCDEFA00000000000000007 /* Localizable.strings */ = {
+			isa = PBXVariantGroup;
+			children = (
+				ABCDEFA00000000000000100 /* en */,
+				ABCDEFA00000000000000101 /* de */,
+				ABCDEFA00000000000000102 /* es */,
+				ABCDEFA00000000000000103 /* fr */,
+				ABCDEFA00000000000000104 /* hi */,
+				ABCDEFA00000000000000105 /* ja */,
+				ABCDEFA00000000000000106 /* pt-BR */,
+				ABCDEFA00000000000000107 /* zh */,
+			);
+			name = Localizable.strings;
+			sourceTree = "<group>";
+		};
+		ABCDEFA00000000000000008 /* InfoPlist.strings */ = {
+			isa = PBXVariantGroup;
+			children = (
+				ABCDEFA00000000000000200 /* en */,
+				ABCDEFA00000000000000201 /* de */,
+				ABCDEFA00000000000000202 /* es */,
+				ABCDEFA00000000000000203 /* fr */,
+				ABCDEFA00000000000000204 /* hi */,
+				ABCDEFA00000000000000205 /* ja */,
+				ABCDEFA00000000000000206 /* pt-BR */,
+				ABCDEFA00000000000000207 /* zh */,
+			);
+			name = InfoPlist.strings;
 			sourceTree = "<group>";
 		};
 /* End PBXVariantGroup section */
@@ -506,6 +858,103 @@
 			};
 			name = Release;
 		};
+		ABCDEF800000000000000049 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = ShareExtension/ShareExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				INFOPLIST_FILE = ShareExtension/Info.plist;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.murage.mobile.ShareExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		ABCDEF80000000000000004A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = ShareExtension/ShareExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				INFOPLIST_FILE = ShareExtension/Info.plist;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.murage.mobile.ShareExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		ABCDEFA00000000000000049 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				INFOPLIST_FILE = AskControl/Info.plist;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.murage.mobile.AskControl;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) DEBUG ASK_CONTROL_EXTENSION";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		ABCDEFA0000000000000004A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				INFOPLIST_FILE = AskControl/Info.plist;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.murage.mobile.AskControl;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) ASK_CONTROL_EXTENSION";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -532,6 +981,24 @@
 			buildConfigurations = (
 				504EC3171FED79650016851F /* Debug */,
 				504EC3181FED79650016851F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		ABCDEF800000000000000042 /* Build configuration list for PBXNativeTarget "ShareExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				ABCDEF800000000000000049 /* Debug */,
+				ABCDEF80000000000000004A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		ABCDEFA00000000000000042 /* Build configuration list for PBXNativeTarget "AskControl" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				ABCDEFA00000000000000049 /* Debug */,
+				ABCDEFA0000000000000004A /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -564,6 +1031,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = ABCDEF300000000000000003 /* XCLocalSwiftPackageReference "MurageShell" */;
 			productName = MurageShell;
+		};
+		ABCDEF800000000000000022 /* MurageShellCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = ABCDEF300000000000000003 /* XCLocalSwiftPackageReference "MurageShell" */;
+			productName = MurageShellCore;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

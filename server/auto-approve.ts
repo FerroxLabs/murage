@@ -25,7 +25,7 @@ import { braceCandidates } from "./shell/walk.ts";
 import { requiredFields } from "./drivers/contracts.ts";
 import { homedir } from "node:os";
 import { realPathInOrder, win32Canonical, type PlaceOptions } from "../shared/in-project.ts";
-import { isOwnAlwaysAsk, isOwnComputerRead, isOwnRead, isOwnUnasked, ownAlwaysAskByName } from "../shared/own-servers.ts";
+import { isOwnAlwaysAsk, isOwnComputerRead, isOwnHandlerCarded, isOwnQuiet, isOwnUnasked, ownAlwaysAskByName } from "../shared/own-servers.ts";
 import { APP_LOOKUPS, ownAppTool } from "../shared/app-action-words.ts";
 import { pinOverrideIn, promptVerdict, type PromptFacts } from "../shared/prompt-capable.ts";
 
@@ -493,8 +493,8 @@ export type AutoVerdictSource =
   | "project-work-roots"
   /** One of Murage's own tools that runs unasked on Claude and Codex
    * (shared/own-servers.ts OWN_UNASKED), asked for by an ACP engine whose
-   * dispatcher files every MCP call as a permission. A read (OWN_READS, or a
-   * connected-app lookup) is answered at every level, Ask included; any other
+   * dispatcher files every MCP call as a permission. A read (OWN_READS, a phone tool
+   * in PHONE_PREALLOWED, or a connected-app lookup) is answered at every level, Ask included; any other
    * row whenever the bot is at Auto, on every turn, unattended ones (a
    * routine, a webhook, a channel event) included, as Claude and Codex run
    * them. Only when the grant gate proved the call runs on one of
@@ -1152,8 +1152,10 @@ function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, con
     // A connected-app lookup is a read on an ordinary turn. On a routine's own run the four lookups are what the
     // routine remembers (Rule 76a): each is answered only by its own saved key (the routine grants, below), so a
     // remembered search never answers a schema read or any other lookup.
-    const read = app !== undefined ? APP_LOOKUPS[app] !== undefined && context?.routineLevel !== true : isOwnRead(resolved.mountId, resolved.tool);
-    if (read || (bot.autoApprove && isOwnUnasked(resolved.mountId, resolved.tool))) {
+    const read = app !== undefined ? APP_LOOKUPS[app] !== undefined && context?.routineLevel !== true : isOwnQuiet(resolved.mountId, resolved.tool);
+    // a handler-carded own tool (bot email's send tools) reaches its handler at every level: the handler applies the bot's email setting and
+    // holds on Murage's own card, so no engine card stands in front of it (BOT-EMAIL-MURAGE-109 3.2)
+    if (read || (app === undefined && isOwnHandlerCarded(resolved.mountId, resolved.tool)) || (bot.autoApprove && isOwnUnasked(resolved.mountId, resolved.tool))) {
       return { approve: `auto-approved ${resolved.name} (Murage's own tool)`, source: "own-unasked", rule: `${resolved.mountId}/${resolved.tool}` };
     }
   }

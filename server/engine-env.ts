@@ -43,7 +43,8 @@ export interface HandedEnv {
  *  PATH). Every other platform: the map unchanged. */
 export function envAsSpawned(env: Readonly<Record<string, string>>, platform: NodeJS.Platform = process.platform): Record<string, string> {
   if (platform !== "win32") return { ...env };
-  const out: Record<string, string> = {};
+  // null prototype: a variable named __proto__ is an ordinary name here, not the object's prototype
+  const out: Record<string, string> = Object.create(null) as Record<string, string>;
   const seen = new Set<string>();
   for (const name of Object.keys(env).sort()) {
     const key = name.toUpperCase();
@@ -272,13 +273,13 @@ export function comparePowerShellCheck(handed: HandedEnv, cwd: string, printed: 
       }
       return map;
     };
-    const observed = fold(value.env);
-    if (!observed) return alias ? failedCheck("case-alias") : failed;
     // The HANDED side is the map the probe was spawned with: on win32 the child received one spelling per name (envAsSpawned),
-    // so two spellings in the hand are not an alias the shell made. The case-alias check above stays on what the shell printed.
+    // so two spellings in the hand are not an alias the shell made; the case-alias check stays on what the shell printed.
+    // Both sides are folded before either is judged, as before 1.0.8: off win32 a doubled hand reads case-alias even when
+    // the print is also malformed.
     const sent = platform === "win32" ? envAsSpawned(handed.env, platform) : handed.env;
-    const original = fold(Object.entries(sent));
-    if (!original) return alias ? failedCheck("case-alias") : failed;
+    const observed = fold(value.env), original = fold(Object.entries(sent));
+    if (!observed || !original) return alias ? failedCheck("case-alias") : failed;
     const env: Record<string, string> = Object.create(null), unknown: string[] = [];
     for (const [name, val] of Object.entries(sent)) {
       if (observed.get(name.toUpperCase()) === val) env[name] = val; else unknown.push(name);

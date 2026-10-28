@@ -26,6 +26,9 @@ describe("harnessEnvAllowed and ownerEnvIsRefused", () => {
 });
 
 describe("customMountEntries", () => {
+  it("N1: an owner's custom server can never be named phoneJobs", () => {
+    expect(customMountEntries({ phoneJobs: { command: "x", args: [], env: {} }, PhoneJobs: { command: "x", args: [], env: {} } })).toEqual([]);
+  });
   it("merges the harness's environment AFTER the owner's check, and owner names can never forge it", () => {
     const mounts = customMountEntries({
       svc: { command: "node", args: ["p", "--server", "svc"], env: {}, harnessEnv: { MURAGE_MCP_TOKEN: "t", ELECTRON_RUN_AS_NODE: "1" } },

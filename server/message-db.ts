@@ -10,6 +10,7 @@
 // Legacy JSON thread files import lazily: the first read of a thread with
 // no rows pulls the old file in, after which the DB is the source of
 // truth (the JSON file is left behind as a one-time backup).
+import { stampEmailDerived } from "./email/external-marks.ts";
 import { noteThreadChanged, threadActivitySeq, threadsChangedSince } from "./thread-activity.ts";
 import { bumpForMessage, bumpMessagesVersion } from "./inbox-version.ts";
 import { initializeOwnerSends } from "./send-store.ts";
@@ -1058,6 +1059,7 @@ function assertStillClassified(database: DatabaseSync, threadId: string, message
 /** `lineage`: what the line rests on besides its thread and running turn (a copy's or hand-off result's originals, an event replay's
  * lines, a room card's result), DESIGN-WRITETIME 2.4. */
 export function insertMessage(threadId: string, message: Message, reply?: ProviderReply, lineage?: readonly LineageRef[]): void {
+  stampEmailDerived(threadId, message);
   assertStillClassified(db(), threadId, message);
   transaction(() => writeMessage(threadId, message, recordLineage(threadId, message, lineage), reply));
   observeCommitted(threadId, message);
@@ -1065,6 +1067,7 @@ export function insertMessage(threadId: string, message: Message, reply?: Provid
 
 /** Persist a new message and the branch head as one crash-safe mutation. */
 export function appendMessage(threadId: string, message: Message, within?: () => void, reply?: ProviderReply, lineage?: readonly LineageRef[]): void {
+  stampEmailDerived(threadId, message);
   assertStillClassified(db(), threadId, message);
   transaction(() => {
     const previous = db().prepare("SELECT active_leaf_id FROM thread_state WHERE thread_id=?").get(threadId)?.active_leaf_id;
@@ -1094,6 +1097,7 @@ let splicing = false;
 
 /** `within` runs in the same transaction as the update (a change to another row that must commit or roll back with this message); if it throws, nothing is written. */
 export function updateMessage(threadId: string, message: Message, within?: () => void): void {
+  stampEmailDerived(threadId, message);
   assertStillClassified(db(), threadId, message);
   transaction(database => {
     const prior = database.prepare(

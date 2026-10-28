@@ -33,8 +33,23 @@ test.beforeAll(async () => {
     },
     plugins: [{
       name: "http-send-fixture",
-      resolveId(id) { if (id === "/__send.js") return "\0http-send-fixture"; },
+      resolveId(id) {
+        if (id === "/__send.js") return "\0http-send-fixture";
+        if (id === "/__uuid.js") return "\0http-uuid-fixture";
+      },
       load(id) {
+        // The entry's import order (main.tsx): the polyfill first, then a screen
+        // that calls crypto.randomUUID() directly while it mounts.
+        if (id === "\0http-uuid-fixture") return `
+          import '/src/lib/random-uuid-polyfill.ts';
+          import React from 'react';
+          import { createRoot } from 'react-dom/client';
+          import { StoreProvider } from '/src/state/store.tsx';
+          import NewProjectDialog from '/src/components/NewProjectDialog.tsx';
+          createRoot(document.getElementById('root')).render(React.createElement(StoreProvider, {},
+            React.createElement('output', {}, 'ready'),
+            React.createElement(NewProjectDialog, { onClose: () => {} })));
+        `;
         if (id !== "\0http-send-fixture") return;
         return `
           import React from 'react';
@@ -71,9 +86,9 @@ test.beforeAll(async () => {
             res.setHeader("content-type", "application/json");
             res.end(JSON.stringify(body));
           };
-          if (path === "/__send") {
+          if (path === "/__send" || path === "/__uuid") {
             res.setHeader("content-type", "text/html");
-            res.end('<div id="root"></div><script type="module" src="/__send.js"></script>');
+            res.end(`<div id="root"></div><script type="module" src="${path}.js"></script>`);
           } else if (path === "/api/desktop-secret") json({ error: "Not found" }, 404);
           else if (path === "/api/events") { res.statusCode = 204; res.end(); }
           else if (path === "/api/bots") json({ bots: [{ ...bot, unread: true }], groups: [{ ...group, unread: true }] });
@@ -81,6 +96,7 @@ test.beforeAll(async () => {
           else if (path === "/api/instances") json({ instances: [] });
           else if (path === "/api/routines") json({ routines: [], runs: [] });
           else if (path === "/api/webhooks") json({ webhooks: [], attempts: [] });
+          else if (path === "/api/projects/new-options") { requests.push({ path }); json({ members: [{ id: bot.id, name: bot.name }], chief: { id: bot.id, name: bot.name } }); }
           else if (/^\/api\/(bots|groups)\/[^/]+\/read$/.test(path) && req.method === "POST") {
             let body = "";
             req.on("data", (chunk) => { body += chunk; });
@@ -199,3 +215,13 @@ for (const target of ["bot", "room"]) {
     if (target === "room") await expectFinishTogether(page, false);
   });
 }
+
+test("HTTP screen that calls crypto.randomUUID directly mounts with the entry's polyfill", async ({ page }) => {
+  await page.goto(`${origin}/__uuid`);
+  await expect(page.locator("output")).toHaveText("ready");
+  expect(await page.evaluate(() => ({ secure: isSecureContext, uuid: typeof crypto.randomUUID, id: crypto.randomUUID() })))
+    .toEqual({ secure: false, uuid: "function", id: expect.stringMatching(UUID_V4) });
+  // NewProjectDialog creates its client ID in useState before it asks for its options.
+  await expect.poll(() => requests.some((request) => request.path === "/api/projects/new-options")).toBe(true);
+  await expect(page.locator("output")).toHaveText("ready");
+});

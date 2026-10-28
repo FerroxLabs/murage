@@ -324,9 +324,13 @@ describe("Linux plan (section 4)", () => {
 
 describe("macOS plan (section 5)", () => {
   it("runs sandbox-exec -p with the fixed profile, the engine argv unchanged; a missing sandbox-exec is refused", () => {
-    Object.assign(hostPowerDeps, { platform: () => "darwin" as const, sandboxExec: "/bin/sh" });
+    // A regular file the test makes stands in for /usr/bin/sandbox-exec, so the plan is checked on every OS the file runs on
+    // (a fixed POSIX path like /bin/sh does not exist on Windows).
+    const sandboxExec = join(scratch(), "sandbox-exec");
+    writeFileSync(sandboxExec, "");
+    Object.assign(hostPowerDeps, { platform: () => "darwin" as const, sandboxExec });
     const plan = planHostPower("/usr/local/bin/engine", ["a", "echo reboot"], {}, "/");
-    expect(plan).toEqual({ kind: "seatbelt", command: "/bin/sh", args: ["-p", SEATBELT_POWER_PROFILE, "/usr/local/bin/engine", "a", "echo reboot"] });
+    expect(plan).toEqual({ kind: "seatbelt", command: sandboxExec, args: ["-p", SEATBELT_POWER_PROFILE, "/usr/local/bin/engine", "a", "echo reboot"] });
     hostPowerDeps.sandboxExec = join(scratch(), "no-sandbox-exec");
     expect(planHostPower("/usr/local/bin/engine", [], {}, "/").kind).toBe("refuse");
     expect(SEATBELT_POWER_PROFILE).not.toMatch(/\/Users|\/home|\/tmp/);
@@ -1013,8 +1017,9 @@ describe("the stub socket under a long TMPDIR", () => {
   it("falls back to the runtime folder, then /tmp, when the temp folder path is too long", () => {
     Object.assign(hostPowerDeps, { tmpdir: () => long, runtimeDir: () => "/run/user/1000" });
     expect(hostPowerStubBase()).toBe("/run/user/1000");
-    Object.assign(hostPowerDeps, { tmpdir: () => long, runtimeDir: () => long });
-    expect(["/tmp", realpathSync("/tmp")]).toContain(hostPowerStubBase());
+    // "/tmp" fits as written, so it is returned without being resolved (and without needing to exist, as on Windows).
+    Object.assign(hostPowerDeps, { tmpdir: () => long, runtimeDir: () => long, fallbackTmp: () => "/tmp" });
+    expect(hostPowerStubBase()).toBe("/tmp");
   });
   it.skipIf(process.platform !== "linux")("binds the stub from a long TMPDIR, and refuses with the TMPDIR sentence when nothing fits", async () => {
     await stopHostPowerStubForTests();
