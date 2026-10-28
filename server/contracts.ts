@@ -484,6 +484,9 @@ export interface SendTurnInput {
       serverName?: string };
     /** Physical Android phone tools over authorized USB debugging. */
     phone?: { command: string; args: string[]; env: Record<string, string> };
+    /** The owner's own phone (calendar, reminders, ...) through the harness, only for a turn that holds a live phone authority (1.0.9).
+     * Mounted under the server name "phoneJobs"; never the ADB "phone" server above. */
+    phoneJobs?: { command: string; args: string[]; env: Record<string, string> };
     /** The app's built-in browser: an MCP proxy (server/drivers/browser-proxy)
      * that forwards to the Electron-owned WebContentsView the Browser tab
      * shows. One tab per bot, in its own persistent session partition. */

@@ -7,7 +7,8 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 const read = (path: string) => readFileSync(root + path, "utf8");
 const plist = (path: string) => JSON.parse(execFileSync("python3", ["-c", "import json,plistlib,sys; print(json.dumps(plistlib.load(open(sys.argv[1], 'rb'))))", root + path], { encoding: "utf8" }));
 
-const appData = ["DeviceID", "AudioData", "EmailsOrTextMessages", "PhotosorVideos", "OtherUserContent"];
+// Phone tools add Contacts and Location; Calendar and Reminders are declared under OtherUserContent (see the plist comment).
+const appData = ["DeviceID", "AudioData", "EmailsOrTextMessages", "PhotosorVideos", "OtherUserContent", "Contacts", "CoarseLocation", "PreciseLocation"];
 const extensionData = ["DeviceID", "OtherUserContent"];
 
 describe("SEC-010: shipped privacy declarations", () => {
@@ -16,7 +17,7 @@ describe("SEC-010: shipped privacy declarations", () => {
     expect(manifest.NSPrivacyTracking).toBe(false);
     expect(manifest.NSPrivacyTrackingDomains).toEqual([]);
     expect(manifest.NSPrivacyAccessedAPITypes).toEqual(target === "App" ? [
-      { NSPrivacyAccessedAPIType: "NSPrivacyAccessedAPICategoryUserDefaults", NSPrivacyAccessedAPITypeReasons: ["CA92.1"] },
+      { NSPrivacyAccessedAPIType: "NSPrivacyAccessedAPICategoryUserDefaults", NSPrivacyAccessedAPITypeReasons: ["CA92.1", "1C8F.1"] },
       { NSPrivacyAccessedAPIType: "NSPrivacyAccessedAPICategoryFileTimestamp", NSPrivacyAccessedAPITypeReasons: ["C617.1"] },
       { NSPrivacyAccessedAPIType: "NSPrivacyAccessedAPICategorySystemBootTime", NSPrivacyAccessedAPITypeReasons: ["35F9.1"] },
     ] : []);
@@ -26,6 +27,27 @@ describe("SEC-010: shipped privacy declarations", () => {
       NSPrivacyCollectedDataTypeTracking: false,
       NSPrivacyCollectedDataTypePurposes: ["NSPrivacyCollectedDataTypePurposeAppFunctionality"],
     })));
+  });
+
+  // 1.0.9 share and ask: the Share extension reads the shared app-group defaults and its outbox files' timestamps,
+  // and uploads what the owner shares; the Ask control only opens the app.
+  it("pins the Share extension's and the Ask control's manifests", () => {
+    const declared = (types: string[]) => types.map((type) => ({
+      NSPrivacyCollectedDataType: `NSPrivacyCollectedDataType${type}`,
+      NSPrivacyCollectedDataTypeLinked: true,
+      NSPrivacyCollectedDataTypeTracking: false,
+      NSPrivacyCollectedDataTypePurposes: ["NSPrivacyCollectedDataTypePurposeAppFunctionality"],
+    }));
+    const share = plist("ios/App/ShareExtension/PrivacyInfo.xcprivacy");
+    expect(share.NSPrivacyTracking).toBe(false);
+    expect(share.NSPrivacyTrackingDomains).toEqual([]);
+    expect(share.NSPrivacyAccessedAPITypes).toEqual([
+      { NSPrivacyAccessedAPIType: "NSPrivacyAccessedAPICategoryUserDefaults", NSPrivacyAccessedAPITypeReasons: ["1C8F.1"] },
+      { NSPrivacyAccessedAPIType: "NSPrivacyAccessedAPICategoryFileTimestamp", NSPrivacyAccessedAPITypeReasons: ["C617.1"] },
+    ]);
+    expect(share.NSPrivacyCollectedDataTypes).toEqual(declared(["EmailsOrTextMessages", "PhotosorVideos", "OtherUserContent"]));
+    const control = plist("ios/App/AskControl/PrivacyInfo.xcprivacy");
+    expect(control).toEqual({ NSPrivacyTracking: false, NSPrivacyTrackingDomains: [], NSPrivacyAccessedAPITypes: [], NSPrivacyCollectedDataTypes: [] });
   });
 
   it("resolves each target's resource phase through its own group, file reference and build file", () => {

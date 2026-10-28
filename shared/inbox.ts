@@ -71,6 +71,7 @@ export const INBOX_TO_READ_STATUSES = ["blocked", "limit-reached", "failed", "mi
 import type { ConnectionToRestore, RoutineRollup } from "../server/inbox-rollup.ts";
 export type { ConnectionToRestore, RoutineRollup };
 import type { BackupWaiting } from "./backup-waiting.ts";
+import type { HealthInbox } from "./sentinel-view.ts";
 
 export interface InboxLink { threadId: string; messageId: string; runId?: string; artifactId?: string }
 export interface InboxItem {
@@ -182,7 +183,10 @@ export interface InboxPage {
    *  Desktop only, counted in `decisions` (backups stay paused until it is
    *  cleared, so it is owed) and in no segment, gone once the review is
    *  cleared. See server/inbox-backup-notices.ts. */
-  backupFailed?: { sentence: string; at: number };
+  backupFailed?: { sentence: string; at: number; inHealth?: true };
+  /** The owner's Health summary (1.0.9 Sentinel): only on a read that proved the owner. When `backupFailed.inHealth`
+   *  is set, the stopped backup is shown inside the Health card instead of as its own card, and counted once. */
+  health?: HealthInbox;
   /** Lessons a bot suggested that wait for the owner's yes (Apply / Edit / Not now in the bot's
    *  Learning section). The only learning the Inbox shows. Desktop only; counted in `decisions`
    *  and in no segment. See server/inbox-learning-suggestions.ts. */

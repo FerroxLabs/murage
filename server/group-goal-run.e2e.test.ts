@@ -114,6 +114,7 @@ beforeAll(async () => {
         environment: {
           FAKE_CLAUDE_MODE: "slow",
           FAKE_CLAUDE_REPLY_GATE: join(home, "release-busy-goal"),
+          FAKE_CLAUDE_SLOW_REPLY_LAST: "1",
           FAKE_CLAUDE_REPLIES: JSON.stringify([
             "The unrelated direct task is complete.",
             "The queued team goal is complete.\n<murage-goal>{\"status\":\"completed\",\"detail\":\"Waited for the lead, then completed normally.\"}</murage-goal>",
@@ -163,6 +164,7 @@ beforeAll(async () => {
           ]),
           FAKE_CLAUDE_REPLY_STATE: join(home, "stop-scoped-lead-replies.txt"),
           FAKE_CLAUDE_REPLY_GATE: join(home, "release-stop-scoped-lead"),
+          FAKE_CLAUDE_SLOW_REPLY_LAST: "1",
         },
         config: { cli: FAKE_CLAUDE },
       },
@@ -195,6 +197,7 @@ beforeAll(async () => {
             "The scheduled review is complete.\n<murage-goal>{\"status\":\"completed\",\"detail\":\"Scheduled team review completed.\"}</murage-goal>",
           ]),
           FAKE_CLAUDE_REPLY_STATE: join(home, "routine-goal-replies.txt"),
+          FAKE_CLAUDE_SLOW_REPLY_LAST: "1",
         },
         config: { cli: FAKE_CLAUDE },
       },

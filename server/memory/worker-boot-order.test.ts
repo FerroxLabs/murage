@@ -11,7 +11,11 @@ it("memoryWorker.start() for boot is inside the server.listen callback", () => {
   // A Cloud home starts it only while its execution gate is open, so the boot call may carry that one guard.
   const starts = [...source.matchAll(/^[ \t]*(?:if \(!homeExecutionGate \|\| homeExecutionGate\.open\(\)\) )?memoryWorker\.start\(\);/gm)].map(match => match.index!);
   // one at boot (in the listen callback, within its first lines) and the settings route's restart after "configure"
-  const before = starts.filter(at => at < listen);
+  // The settings route's restart (memory configured, any mode: off or paused boots the deletion-only worker) is a request handler,
+  // not module level, and sits above listen in the file; only a start outside it would run before the port opens.
+  const configureRoute = (at: number) => source.slice(Math.max(0, at - 600), at).includes('body.action==="configure"');
+  expect(starts.filter(configureRoute)).toHaveLength(1);
+  const before = starts.filter(at => at < listen && !configureRoute(at));
   expect(before).toEqual([]);
   const first = starts.find(at => at > listen)!;
   expect(first).toBeGreaterThan(listen);

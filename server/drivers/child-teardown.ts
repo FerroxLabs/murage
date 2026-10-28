@@ -320,7 +320,7 @@ export class TurnTeardowns {
   }
 }
 
-async function combine(teardowns: ChildTeardown[], budget: TeardownWait): Promise<ProviderStopResult> {
+export async function combine(teardowns: ChildTeardown[], budget: TeardownWait): Promise<ProviderStopResult> {
   if (!teardowns.length) return CONFIRMED;
   const results = await Promise.all(teardowns.map((teardown) => teardown.wait(budget)));
   return results.every((result) => result.closeConfirmed) ? CONFIRMED : timedOut();

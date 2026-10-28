@@ -1,4 +1,5 @@
 import { ProjectLifecycleBanner } from "./ProjectLifecycleBanner";
+import { EmailSendCard, EmailTrustOfferCard } from "./EmailSendCard";
 import { loopNoticeLabel } from "@/lib/loop-notice";
 import { Suspense } from "react";
 import { LazyBoundary, retryableLazy } from "./LazyBoundary";
@@ -441,6 +442,11 @@ const Transcript = memo(function Transcript({
             <div className="flex justify-start">
               <QuestionCard message={m} threadId={group.threadId} groupId={group.id} botName={memberOf(m.from?.botId)?.name} />
             </div>
+          ) : m.kind === "options" && m.card?.emailSend ? (
+            // bot email (1.0.9): the email card answers with its own Send / Edit / Don't send, never the generic approval box
+            <div className="flex justify-start"><EmailSendCard threadId={group.threadId} message={m} /></div>
+          ) : m.kind === "options" && m.card?.emailTrustOffer ? (
+            <div className="flex justify-start"><EmailTrustOfferCard threadId={group.threadId} message={m} /></div>
           ) : m.kind === "options" && m.card?.requestId && m.card.tool ? (
             <div className="flex justify-start">
               <ApprovalCard bot={memberOf(m.from?.botId)} message={m} />

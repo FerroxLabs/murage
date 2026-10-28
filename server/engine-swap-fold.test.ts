@@ -31,6 +31,7 @@ import { closedFences, WIDGET_FENCE } from "../shared/murage-fences.ts";
 import { QUESTION_FENCE } from "../shared/ask-wording.ts";
 import { fromQuestionFence } from "./question-normalize.ts";
 import { showWidget } from "./chat-widgets.ts";
+import { RetainedCloses } from "./reload-retain.ts";
 
 /** Every name index.ts imports (a value, not a type) that the fold reads, bound to the module index.ts imports it from: the fold runs
  * with the same helpers production hands it, so a new import in index.ts needs no edit here. The fixture's own scope entries below
@@ -67,6 +68,8 @@ function foldFixture() {
     noteStartupFileEvent, handedPinsOf, promptFactsOf, commandCwdFromToolInput, commandFromToolInput, turnCwdByThread: new Map(), routineCardFields, grantRequestFor,
     // the window's copy of every runtime event (runtime-event-out.ts), the real one, as in production
     windowRuntimeEvent,
+    // turns that started a tool (OPENAI-TOOLS-109 s5.2: never rebuilt after a late memory refusal)
+    toolStartedTurns: new Set(), TOOL_STARTED_TURNS_MAX: 4096,
     // which tools are shell commands (auto-approve.ts), the real one, as in production
     isCommandTool,
     fluxFirstTokenProbe: { observe: noop, begin: noop },
@@ -479,7 +482,9 @@ describe("provider reload retires hosted-row anchors", () => {
       store: { bots: [{ id: "bot", threadId: "room-thread", busy: false }] },
       directRuns: { forBot: () => [run], current: () => false },
       directRunInstanceId: (entry: typeof run) => entry.snapshot.modelSelection.instanceId,
-      projectTurnLeases: { generations: () => [], generationsForThreads: () => [], disposed: () => undefined },
+      projectTurnLeases: { generations: () => [], generationsForThreads: () => [], disposed: () => undefined, threadIds: () => [] },
+      // rev 5, H2: no engine left a child open here, so nothing is retained
+      unconfirmedCloses: async () => new Map(), reloadRetained: new RetainedCloses(), threadsWithWorkInFlight: () => new Map(), localVmThreadTargets: new Map(), Map,
       bus: { detachAll: () => undefined, detach: () => undefined, attach: () => undefined },
       registry: { disposeAll: async () => undefined, load: async () => undefined, reload: scopedReload, instances: () => [] },
       scopedReloadUnsafe: () => false, Set, Promise,

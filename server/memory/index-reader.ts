@@ -20,6 +20,7 @@ import { DATA_DIR } from "../config.ts";
 import { instrumentDatabase } from "../io-budget.ts";
 import { walBytes, WAL_DRAIN_BYTES, type IndexHit } from "./index.ts";
 import { logSwallowed } from "./worker-log.ts";
+import { indexFilesRegular } from "./index-quarantine.ts";
 import { POSTINGS_BELOW, wordTerms } from "./postings.ts";
 import { before, pageByRank } from "./rank-ties.ts";
 import { CURRENT_MEMORY, HISTORICAL_MEMORY, REACHABLE_RECORD } from "./eligibility.ts";
@@ -205,6 +206,23 @@ export function closeMemoryIndexReader(): void {
   for (const scan of scanPool.splice(0)) try { scan.db.close(); } catch { /* idempotent */ }
 }
 export function memoryIndexReaderState(): IndexReaderState { return lastState; }
+/** Whether the index owes a deletion scrub (index.ts scrubDeleted), read when the controller starts so a helper drains that durable debt
+ * even with no other memory work (MEMDEL-SIMPLIFY-109). False only when there is no index file (ENOENT/ENOTDIR), or the index was read
+ * and holds no marker; null when it could not be read now (any other stat error, locked, being replaced): unknown is not clean, so the caller starts the helper, which reads the
+ * marker itself and says (memdel r2 High #3). */
+export function indexScrubOwed(): boolean | null {
+  try { statSync(indexPath()); } catch (error) {
+    // Only a missing file means no debt: any other stat error (permission, I/O) is unknown, and unknown is owed (memdel r3 High).
+    const code = (error as NodeJS.ErrnoException | null)?.code;
+    return code === "ENOENT" || code === "ENOTDIR" ? false : null;
+  }
+  try {
+    const db = handle()?.db;
+    if (!db) return null;
+    if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='index_meta'").get()) return false;
+    return Boolean(db.prepare("SELECT 1 FROM index_meta WHERE key='delete_scrub_owed'").get());
+  } catch { return null; }
+}
 /** How many times this process opened the index (tests: owner search and recall reuse the one handle). */
 let readerOpens = 0;
 export function memoryIndexReaderOpens(): number { return readerOpens; }
@@ -233,6 +251,8 @@ function handle(): Open | null {
   closeMemoryIndexReader();
   let db: DatabaseSync | null = null;
   try {
+    // A link (or anything but a regular file) as the index or its log is never opened, not even read-only (MEMINDEX-BUSY-109).
+    if (!indexFilesRegular(path)) throw new Error("UNSAFE_MEMORY_INDEX");
     db = new DatabaseSync(path, { readOnly: true });
     db.exec(`PRAGMA busy_timeout=${BUSY_MS}; PRAGMA cache_size=-${READER_CACHE_KIB}`);
     // A file the helper has not finished creating has no word table yet.
@@ -393,6 +413,7 @@ function borrowScan(current: Open): Scan | null {
   if (idle) return idle;
   let db: DatabaseSync | null = null;
   try {
+    if (!indexFilesRegular(current.path)) throw new Error("UNSAFE_MEMORY_INDEX");
     db = new DatabaseSync(current.path, { readOnly: true });
     db.exec(`PRAGMA busy_timeout=${BUSY_MS}; PRAGMA cache_size=-${READER_CACHE_KIB}`);
     return { db, ino: current.ino, dev: current.dev, authIno: current.authIno, eligible: current.eligible && attachAuthority(db), statements: new Map(), epoch };
