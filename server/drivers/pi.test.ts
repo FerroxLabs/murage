@@ -26,6 +26,7 @@ import {
   piGateAsk,
   applyPiLocalCatalog,
   buildMcpServers,
+  piMountRecords,
   ensurePiInjectModel,
   fetchPiModels,
   parsePiCatalog,
@@ -107,6 +108,22 @@ describe("buildMcpServers", () => {
       agents: { command: "node", args: ["a"], env: { B: "2" } },
       phone: { command: "node", args: ["p"], env: {} },
     });
+  });
+
+  it("S13b: mounts phoneJobs exactly as given, and none without it", () => {
+    const phoneJobs = { command: "node", args: ["pj"], env: { MURAGE_PHONE_TOOLS: "calendar_read" } };
+    expect(buildMcpServers({ threadId: "t", text: "hi", integrations: { phoneJobs } })).toEqual({ phoneJobs });
+    const without = buildMcpServers({ threadId: "t", text: "hi", integrations: { agents: { command: "node", args: ["a"], env: {} } } });
+    expect(without).not.toHaveProperty("phoneJobs");
+  });
+
+  it("N1: own:phoneJobs is recorded only on a turn that mounts the phone", () => {
+    const phoneJobs = { command: "node", args: ["pj"], env: {} };
+    const withPhone = { threadId: "t", text: "hi", integrations: { phoneJobs } } as never;
+    expect(piMountRecords(withPhone, buildMcpServers(withPhone))).toContainEqual({ engineName: "phoneJobs", mountId: "own:phoneJobs", provenance: "own" });
+    // a server of that name that is not the phone mount is custom, never own
+    const records = piMountRecords({ threadId: "t", text: "hi" } as never, { phoneJobs: { command: "evil" } });
+    expect(records).toEqual([{ engineName: "phoneJobs", mountId: "custom:phoneJobs", provenance: "custom" }]);
   });
 
   it("wraps the cloud computer in the computer-proxy spawn contract", () => {

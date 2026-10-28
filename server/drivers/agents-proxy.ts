@@ -1,5 +1,6 @@
 import { murageToolOnThisServer } from "../murage-tool-surface.ts";
 import { PROJECT_TOOLS, VENUE_READ_TOOL, venueReadBody } from "./project-tool-schemas.ts";
+import { EMAIL_TOOLS_ENV, emailToolBody, emailToolsFor, isEmailToolName } from "./email-tool-schemas.ts";
 // Agent-to-agent comms MCP proxy — spawned as an MCP server inside a bot's
 // agent process (via the "agents" integration). Exposes peer, routine, and
 // skill tools routed back through the harness so the harness stays the
@@ -66,6 +67,12 @@ const PROJECT_ROLE = process.env.MURAGE_PROJECT_ROLE === "lead" || process.env.M
 /** Bot venue awareness (lane 106): venue_read_messages is listed on the owner's direct turns the harness mounted it for, never with a
  * project role. Listing is presentation; the harness's generation-bound record decides every call (server/venue-read.ts). */
 const VENUE_READ = process.env.MURAGE_VENUE_READ === "1" && !PROJECT_ROLE;
+// bot calls 1.0.9 (5.10): listed only when the harness says this bot has a needs_owner_now rule and may call
+const NEEDS_OWNER_NOW = process.env.MURAGE_NEEDS_OWNER_NOW === "1" && PROJECT_ROLE !== "proposal";
+const NEEDS_OWNER_NOW_TOOL = { name: "needs_owner_now", description: "Tell the owner you need them now, when something you are working on cannot wait for them to read their messages. Murage leaves them a message first and may ring them later if they have not seen it, within the rules the owner set. Give one short, plain line (at most 140 characters) saying what needs them. It returns \"Noted.\"; it does not tell you whether a call happens.", inputSchema: { type: "object", required: ["line"], additionalProperties: false, properties: { line: { type: "string", minLength: 1, maxLength: 140, description: "What needs the owner now, in one plain sentence." } } } };
+/** Bot email (1.0.9, BOT-EMAIL-MURAGE-109 3.1): "send" or "read" on the turns the harness mounted email for, never with a project role.
+ * Listing is presentation; the harness's generation-bound record and the binding decide every call (server/email/admission.ts). */
+const EMAIL_MODE = PROJECT_ROLE ? undefined : process.env[EMAIL_TOOLS_ENV];
 const MAX_CREATED_PER_TURN = 4;
 /** Attached to every murage_help answer. Documentation is data: it describes
  * the product, it does not extend this bot's permissions or override the
@@ -791,6 +798,8 @@ const AVAILABLE_TOOLS = PROJECT_ROLE === "proposal" ? [PROJECT_PROPOSE_TOOL] : [
   ...(IMAGE_LIBRARY_ON ? LISTED_TOOLS : withoutImageLibrary(LISTED_TOOLS)),
   ...(PROJECT_ROLE ? PROJECT_TOOLS.filter((tool) => PROJECT_TOOLS_FOR[PROJECT_ROLE]!.includes(tool.name)) : []),
   ...(VENUE_READ ? [VENUE_READ_TOOL] : []),
+  ...(NEEDS_OWNER_NOW ? [NEEDS_OWNER_NOW_TOOL] : []),
+  ...emailToolsFor(EMAIL_MODE),
 ];
 
 type Json = Record<string, unknown>;
@@ -1007,6 +1016,11 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
   if (name === "venue_read_messages" && VENUE_READ) {
     return jsonToolResult(await api("/api/internal/venue/read-messages", { method: "POST", body: JSON.stringify(venueReadBody(args)) }));
   }
+  // the email tools answer with one bounded text the harness already fenced (5.3): it is passed through as text, not re-encoded as JSON
+  if (isEmailToolName(name) && emailToolsFor(EMAIL_MODE).some((tool) => tool.name === name)) {
+    const result = await api(`/api/internal/email/${name}`, { method: "POST", body: JSON.stringify(emailToolBody(args)) });
+    return typeof result.text === "string" ? { text: result.text, ...(result.isError === true ? { isError: true } : {}) } : jsonToolResult(result);
+  }
   const project = PROJECT_TOOL_ROUTES[name];
   if (project) {
     const body = Object.fromEntries(Object.entries(project.body(args)).filter(([, value]) => value !== undefined));
@@ -1026,6 +1040,11 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     const clean = Object.fromEntries(Object.entries(body).filter(([, value]) => value !== undefined));
     // The harness holds this request open while the owner's card waits, then while it uploads.
     return jsonToolResult(await apiLong(takeDown ? "/api/internal/take-down-site" : "/api/internal/publish-site", JSON.stringify(clean), AbortSignal.timeout(PUBLISH_WAIT_MS), PUBLISH_NO_ANSWER));
+  }
+  if (name === "needs_owner_now" && NEEDS_OWNER_NOW) {
+    // "Noted." whatever happens next: the model never learns whether a call follows (5.10)
+    try { await api("/api/internal/needs-owner-now", { method: "POST", signal: AbortSignal.timeout(10_000), body: JSON.stringify({ line: typeof args.line === "string" ? args.line : "" }) }); } catch { /* still noted */ }
+    return { text: "Noted." };
   }
   if (name === "send_voice_note") {
     const result = await api("/api/internal/voice-note", { method: "POST", body: JSON.stringify({ text: args.text, ...(args.title === undefined ? {} : { title: args.title }) }) });

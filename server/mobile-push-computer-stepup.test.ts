@@ -20,7 +20,7 @@ function fresh() {
   store.putBinding({ bindingId: BINDING, deviceId: "d1", publisherToken: "murage_pt_x", createdAt: 1 });
   store.insertEvent({ eventRef: "a".repeat(64), bindingId: BINDING, kind: "approval", category: "approval", botId: "lena", threadId: "t1", requestId: "req-1",
     messageId: "m1", collapseKey: "c".repeat(32), threadGroup: "g".repeat(16), revision: 1, timeSensitive: true, resolvedBy: null,
-    createdAt: 0, expiresAt: 10_000, holdUntil: 0, state: "sent", attempts: 1, nextAttemptAt: 0 });
+    createdAt: 0, expiresAt: 10_000, holdUntil: 0, state: "sent", attempts: 1, nextAttemptAt: 0, phoneUsed: false });
   return store;
 }
 const allow = (store: PushStore, card: () => unknown) => respondFromPush(

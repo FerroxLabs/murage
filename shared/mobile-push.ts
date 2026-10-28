@@ -2,9 +2,16 @@
 // the harness and the relay Worker all load this file. The phone's twins are
 // PushContract.swift and PushContract.java (Plan 3b C1).
 
-export const PUSH_CATEGORIES = ["approval", "approval-open", "question", "done", "resolved"] as const;
+export const PUSH_CONTRACT_VERSION = 2;
+export const PUSH_CATEGORIES = ["approval", "approval-open", "question", "done", "resolved", "device-job", "call", "call-note"] as const;
 export type PushCategory = (typeof PUSH_CATEGORIES)[number];
-export type PushKind = "approval" | "question" | "done" | "routine-failed" | "turn-failed" | "takeover" | "backup-waiting" | "memories-waiting";
+export type PushKind = "approval" | "question" | "done" | "routine-failed" | "turn-failed" | "takeover" | "backup-waiting" | "memories-waiting" | "device-job" | "call" | "call-note" | "email-digest" | "email-status";
+/** Contract v2 (bot calls, 1.0.9): the call kinds carry their own expiry in
+ *  the phone payload, so a phone can stay silent for a ring that arrives late. */
+export const EXPIRING_CATEGORIES = ["call", "call-note"] as const;
+export const isExpiringCategory = (category: string): boolean => (EXPIRING_CATEGORIES as readonly string[]).includes(category);
+/** The ring's sound, bundled by each app: about 10 s. */
+export const CALL_SOUND = { ios: "murage-call.caf", android: "murage_call", seconds: 10 } as const;
 export type PushRisk = "low" | "risky" | "unrated";
 
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -23,8 +30,10 @@ export const TOKEN_PATTERNS = {
 /** R2 and R4: a risky or unrated approval offers only Open and Deny; every
  *  other kind but "done" asks for a person and goes to Questions. */
 export function pushCategory(kind: PushKind, risk: PushRisk): PushCategory {
+  if (kind === "device-job") return "device-job";
   if (kind === "approval") return risk === "low" ? "approval" : "approval-open";
   if (kind === "done") return "done";
+  if (kind === "call" || kind === "call-note") return kind;
   return "question";
 }
 
@@ -40,8 +49,10 @@ export interface PushPayload {
   revision: number;
   workspaceBadge: number;
   collapseKey: string;
+  /** Present exactly on the call kinds (contract v2). */
+  expiresAt?: number;
 }
-export interface RelayEvent extends PushPayload {
+export interface RelayEvent extends Omit<PushPayload, "expiresAt"> {
   threadGroup: string;
   timeSensitive: boolean;
   expiresAt: number;
@@ -69,7 +80,23 @@ function payloadFields(value: Record<string, unknown>): PushPayload | null {
 
 export function parsePushPayload(value: unknown): PushPayload | null {
   const object = record(value);
-  return object && exactKeys(object, PAYLOAD_KEYS) ? payloadFields(object) : null;
+  if (!object) return null;
+  if (!isExpiringCategory(String(object.category))) return exactKeys(object, PAYLOAD_KEYS) ? payloadFields(object) : null;
+  if (!exactKeys(object, [...PAYLOAD_KEYS, "expiresAt"])) return null;
+  const payload = payloadFields(object);
+  const { expiresAt } = object;
+  if (!payload || typeof expiresAt !== "number" || !Number.isSafeInteger(expiresAt) || expiresAt <= 0) return null;
+  return { ...payload, expiresAt };
+}
+
+/** What a phone does with a call-kind push (contract v2 `callDisplay`):
+ *  an expired ring or note is silent, and a resolution for a collapse key the
+ *  phone is not showing is silent too. */
+export type CallDisplayAction = "ring" | "show" | "replace" | "silent";
+export function callDisplayAction(payload: PushPayload, now: number, shown: readonly string[]): CallDisplayAction {
+  if (payload.category === "resolved") return shown.includes(payload.collapseKey) ? "replace" : "silent";
+  if (payload.expiresAt !== undefined && now >= payload.expiresAt) return "silent";
+  return payload.category === "call" ? "ring" : "show";
 }
 
 export function parseRelayEvent(value: unknown): RelayEvent | null {
@@ -114,6 +141,11 @@ export const GENERIC_TEXT: Record<PushCategory, { title: string; body: string }>
   question: { title: "Murage", body: "Your attention is needed." },
   done: { title: "Murage", body: "A task has finished." },
   resolved: { title: "Murage", body: "No longer waiting." },
+  "device-job": { title: "Murage", body: "A bot is asking to use your phone" },
+  // Bot calls (contract v2): closed text at every preview setting, on every
+  // phone, and from the detail route too.
+  call: { title: "Murage is calling", body: "Answer to hear what it is." },
+  "call-note": { title: "Murage", body: "Murage has a message for you." },
 };
 
 /** R6. */

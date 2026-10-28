@@ -13,7 +13,15 @@ public final class PushOutcome {
     public static final class Detail {
         public final String title, body;
         public final Target target;
-        Detail(String title, String body, Target target) { this.title = title; this.body = body; this.target = target; }
+        public final boolean silent;
+        Detail(String title, String body, Target target) { this(title, body, target, false); }
+        private Detail(String title, String body, Target target, boolean silent) {
+            this.title = title; this.body = body; this.target = target; this.silent = silent;
+        }
+        public Detail withSilent(boolean silent) { return new Detail(title, body, target, silent); }
+        public Detail closed(PushContract.Category category) {
+            return new Detail(category.genericTitle(), category.genericBody(), target, silent);
+        }
     }
     public enum Notice {
         APPROVED("approved", "Approved."), DENIED("denied", "Denied."), STEP_UP("stepUp", "Open Murage to allow this."),
@@ -34,6 +42,11 @@ public final class PushOutcome {
         Detail generic = new Detail(category.genericTitle(), category.genericBody(), null);
         if (status == null || status != 200 || !(body instanceof JSONObject)) return generic;
         JSONObject b = (JSONObject) body;
+        if (category.isExpiring()) {
+            JSONObject t = b.optJSONObject("target");
+            if (t == null || id(t.opt("threadId")) == null) return generic;
+            return new Detail(generic.title, generic.body, new Target(id(t.opt("threadId")), id(t.opt("messageId")), id(t.opt("requestId"))));
+        }
         Object title = b.opt("title"), text = b.opt("body");
         JSONObject t = b.optJSONObject("target");
         if (!(title instanceof String) || ((String) title).isEmpty() || ((String) title).length() > 200) return generic;
