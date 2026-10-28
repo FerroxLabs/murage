@@ -10,6 +10,7 @@
 // before it acts. restore-fence.test.ts fails when a table with a state/status/stage column is neither listed
 // here nor declared not-pending-work, so a store added later cannot skip the fence.
 import type { DatabaseSync } from "node:sqlite";
+import { fenceRestoredBotCalls } from "./bot-calls-schema.ts";
 
 export const RESTORE_HOLDS_DDL = "CREATE TABLE IF NOT EXISTS restore_holds (kind TEXT NOT NULL, row_id TEXT NOT NULL, generation TEXT NOT NULL, PRIMARY KEY (kind, row_id))";
 
@@ -79,6 +80,15 @@ export const RESTORE_FENCED_STORES: readonly RestoreFencedStore[] = [
     proof: ["SELECT COUNT(*) AS n FROM push_events WHERE state IN ('held','pending')"] },
   { store: "phone push relay removals", medium: "sqlite", tables: ["push_relay_removals"], mode: "held", consumers: ["relayRemovalSweeper", "dueRelayRemovals"],
     note: "a removal owed to the relay is quarantined with a restore hold and not invoked; the owner's own device removal after the restore (enqueueRelayRemoval) releases it" },
+  // 1.0.9 bot calls (design BOT-CALLS-109 5.9): nothing rings until the owner re-arms with the current restore generation
+  { store: "bot calls", medium: "sqlite", tables: ["bot_calls", "bot_call_sessions"], mode: "terminalized", consumers: ["boot reconcile", "call deadline timer", "answer route"],
+    note: "intents not done end done(restored) with the active slot freed; open call sessions end 'restore'",
+    proof: ["SELECT COUNT(*) AS n FROM bot_calls WHERE state <> 'done'", "SELECT COUNT(*) AS n FROM bot_call_sessions WHERE ended_at IS NULL"] },
+  { store: "call admissions owed", medium: "sqlite", tables: ["bot_call_owed"], mode: "dropped", consumers: ["drainOwed"], note: "owed call admissions are dropped: the facts they name happened before the backup",
+    proof: ["SELECT COUNT(*) AS n FROM bot_call_owed"] },
+  { store: "call rules", medium: "sqlite", tables: ["bot_call_rules"], mode: "paused", consumers: ["call admission", "decide()"],
+    note: "every rule is restore-held with the restore generation (restore_held, restore_gen); a rule written later is born held; only Turn calls back on with the current generation clears them",
+    proof: ["SELECT COUNT(*) AS n FROM bot_call_rules WHERE restore_held=0"] },
   { store: "phone push bindings, risk, decisions", medium: "sqlite", tables: ["push_bindings", "push_risk", "push_decisions"], mode: "request-driven", consumers: ["phone response route"], note: "read only when a phone answers a request; nothing reads them at boot" },
   { store: "messages and cards", medium: "sqlite", tables: ["messages", "open_card", "thread_state", "thread_snooze", "turns", "turn_first", "inbox_item_state"], mode: "terminalized", consumers: ["card answer routes"], note: "waiting cards expire and are dismissed, goal runs block, queued flags clear" },
   { store: "image operations and output receipts", medium: "sqlite", tables: ["image_operations", "output_publications"], mode: "held",
@@ -113,6 +123,8 @@ export const RESTORE_NOT_PENDING_WORK: Readonly<Record<string, string>> = Object
   shared_ready_teams: "which teams of the shared queue may start now (shared-ready.ts): an index of queued room_requests, which a restore expires; a team with nothing queued is dropped from it the first time it is looked at",
   shared_drain_sweep: "when each bot's backstop sweep of waiting shared teams is next due: a schedule only, it holds no work",
   room_request_retry: "the next-look times of parked queued requests: a restore expires every queued request, and the database removes its retry row in the same statement",
+  bot_call_watch_threads: "the channel threads of the enabled sender rules (bot-calls-schema.ts), derived from bot_call_rules and rewritten with them",
+  bot_call_settings: "call settings (the bot switch, calls off for today, the last re-armed restore generation), no work",
   team_identities: "a rename journal; restore preparation (reconcileTeamJournalFiles) completes or rolls it back, so boot finds none, and it runs no bot work",
 });
 
@@ -168,6 +180,12 @@ export function fenceRestoredSql(db: DatabaseSync, generation: string): Array<{ 
   if (hasTable(db, "push_events")) {
     const dropped = Number(db.prepare("UPDATE push_events SET state='dropped' WHERE state IN ('held','pending')").run().changes);
     if (dropped > 0) notes.push({ component: "messages.db", action: `${dropped} phone notification(s) that were waiting to be sent were dropped` });
+  }
+  {
+    const calls = fenceRestoredBotCalls(db, generation);
+    if (calls.calls + calls.sessions > 0) notes.push({ component: "messages.db", action: `${calls.calls} bot call(s) and ${calls.sessions} call session(s) were ended by the restore` });
+    if (calls.owed > 0) notes.push({ component: "messages.db", action: `${calls.owed} call admission(s) that were waiting were dropped` });
+    if (calls.rules > 0) notes.push({ component: "messages.db", action: `${calls.rules} call rule(s) are paused after the restore: turn calls back on to use them` });
   }
   if (hasTable(db, "push_relay_removals")) {
     let kept = 0;

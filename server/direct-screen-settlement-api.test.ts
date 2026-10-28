@@ -192,12 +192,14 @@ it.each(CASES)("settles $tool into the transcript only when it touched the scree
   // frame itself, which must be the one this bot's box handed back.
   const image = await fetch(`${fixture!.info.url}/api/threads/${bot.threadId}/messages/${screens[0].id}/image`, { headers });
   expect(image.status).toBe(200);
+  // a protected screen capture is never kept in a cache (upstream 46975aac0)
+  expect(image.headers.get("cache-control")).toBe("private, no-store");
   expect(Buffer.from(await image.arrayBuffer()).equals(frameFor(boxId))).toBe(true);
   // `?w=`: this synthetic frame is not a raster image, so it is the frame
-  // itself, cached as final like the unsized route
+  // itself, and kept out of any cache like the unsized route
   const thumb = await fetch(`${fixture!.info.url}/api/threads/${bot.threadId}/messages/${screens[0].id}/image?w=320`, { headers });
   expect(thumb.status).toBe(200);
-  expect(thumb.headers.get("cache-control")).toBe("private, max-age=31536000, immutable");
+  expect(thumb.headers.get("cache-control")).toBe("private, no-store");
   expect(thumb.headers.get("content-type")).toBe(image.headers.get("content-type"));
   expect(Buffer.from(await thumb.arrayBuffer()).equals(frameFor(boxId))).toBe(true);
   const refused = await fetch(`${fixture!.info.url}/api/threads/${bot.threadId}/messages/${screens[0].id}/image?w=321`, { headers });

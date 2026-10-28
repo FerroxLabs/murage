@@ -13,11 +13,13 @@ import * as routineExports from "./routines.ts";
 import {
   nextOccurrence,
   routineInstructionRevision,
+  routineRecoveredLine,
   RoutineManager,
   type RoutineManagerOptions,
   type RoutineRun,
   type RoutineSchedule,
 } from "./routines.ts";
+import { DatabaseBusyError } from "./db-busy.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const dirs: string[] = [];
@@ -1967,6 +1969,61 @@ describe("RoutineManager", () => {
     const reloaded = new Map(new RoutineManager(h.options).listRuns().map((run) => [run.routineName, run]));
     expect(reloaded.get("Broken report")!.seenAt).toBe(stampAt);
     expect(reloaded.get("Stale check")!.seenAt).toBe(stampAt);
+  });
+
+  it.each(["bot", "room-goal"] as const)("a %s run whose start could not be saved starts next time in the task that start opened (upstream f4f2e3d8b + 22bfaa817)", async (target) => {
+    const h = harness();
+    const routine = h.manager.create({ name: "Unsaved start", prompt: "Do it", botId: "chief-1", ...(target === "room-goal" ? { target, groupId: "room-1" } : {}),
+      schedule: { type: "daily", time: "23:59", weekdays: [1] } });
+    if (target === "room-goal") h.options.goalTaskExists = (groupId, threadId) => groupId === "room-1" && threadId.startsWith("goal-thread-");
+    const run = h.manager.runNow(routine.id)!;
+    const manager = h.manager as unknown as { save(options?: { runs?: readonly { status: string }[] }): void };
+    const original = manager.save.bind(h.manager);
+    let failed = 0;
+    vi.spyOn(manager, "save").mockImplementation((options) => {
+      // a locked database: contention, so the run stays queued and is retried (a disk fault fails the run instead)
+      if (!failed && options?.runs?.some((saved) => saved.status === "running")) { failed += 1; throw new DatabaseBusyError("routines.save", 0); }
+      original(options);
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await h.manager.tick().catch(() => {});
+    expect(failed).toBe(1);
+    // runNow's own queued tick may already have retried it; otherwise the next pass does
+    const status = () => h.manager.listRuns().find((candidate) => candidate.id === run.id)?.status;
+    if (status() === "queued") await h.manager.tick();
+    expect(status()).toBe("running");
+    if (target === "room-goal") {
+      expect(h.goalTasks).toHaveLength(1);
+      expect(h.startedGoals.map((goal) => goal.threadId)).toEqual(["goal-thread-1"]);
+    } else {
+      expect(h.taskActivations).toHaveLength(1);
+      expect(h.started.map((turn) => turn.threadId)).toEqual(["thread-1"]);
+    }
+  });
+
+  it("a run that completes after a failed one says the routine recovered, once (upstream 84b63940c)", async () => {
+    const h = harness();
+    const recovered: Array<{ run: string; failed: string }> = [];
+    h.options.onRunRecovered = (run, failed) => recovered.push({ run: run.id, failed: failed.id });
+    const routine = h.manager.create({ name: "Morning brief", prompt: "Write it", botId: "ember-a", schedule: { type: "daily", time: "23:59", weekdays: [1] } });
+    const finish = async (ok: boolean) => {
+      const run = h.manager.runNow(routine.id)!;
+      await h.manager.tick();
+      const threadId = h.manager.listRuns().find((candidate) => candidate.id === run.id)!.threadId!;
+      h.setNow(h.nowValue() + 60_000);
+      h.manager.handleRuntimeEvent({ eventId: `end-${run.id}`, provider: "fake", threadId, createdAt: new Date().toISOString(), type: "turn.completed", ok, ...(ok ? {} : { stopReason: "provider crashed" }) });
+      expect(h.manager.listRuns().find((candidate) => candidate.id === run.id)?.status).toBe(ok ? "completed" : "failed");
+      return run.id;
+    };
+    const first = await finish(true);
+    expect(recovered).toEqual([]);
+    const broken = await finish(false);
+    const fixed = await finish(true);
+    expect(recovered).toEqual([{ run: fixed, failed: broken }]);
+    await finish(true);
+    expect(recovered).toHaveLength(1);
+    expect(first).not.toBe(fixed);
+    expect(routineRecoveredLine("Morning brief")).toBe("Recovered: Morning brief finished OK.");
   });
 
   it("rolls the mark-all sweep back when its save fails", async () => {

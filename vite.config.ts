@@ -26,6 +26,8 @@ export default defineConfig({
       "server/**/*.test.ts",
       "electron/**/*.test.mjs",
       "src/**/*.test.ts",
+      "src/components/PhoneAccessCard.test.tsx",
+      "src/components/PhoneForBotsRow.test.tsx",
       "shared/**/*.test.ts",
       "tools/**/*.test.ts",
       "companion/**/*.test.ts",

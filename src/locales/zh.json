@@ -3669,5 +3669,18 @@
   "learnAboutMe.error.conflict": "此行已以其他措辞保留。请重新粘贴以重新查看。",
   "learnAboutMe.importedFrom": "导入自 {provider}，{date}",
   "learnAboutMe.importedFromUndated": "导入自 {provider}，无日期",
-  "memoryReview.forgottenWords": "已忘记。其中的文字已删除。"
+  "memoryReview.forgottenWords": "已忘记。其中的文字已删除。",
+  "settings.bot.phoneForBots.title": "机器人的手机功能",
+  "settings.bot.phoneForBots.description": "选择你的机器人可以在这部手机上使用什么。",
+  "settings.bot.phoneForBots.open": "打开",
+  "phone.ask.fromPhone": "来自你的手机",
+  "phone.ask.askAgain": "再问一次",
+  "phone.ask.settingTitle": "从这部手机分享并提问",
+  "phone.ask.settingOff": "这部手机已关闭分享和提问。",
+  "phone.ask.errorGone": "该聊天已不可用，请另选一个。",
+  "phone.ask.errorUpdate": "请在你的电脑上更新 Murage 以使用此功能。",
+  "phone.ask.errorSetup": "请打开 Murage，重新设置分享。",
+  "phone.removal.pending": "移除待处理",
+  "phone.removal.pendingBody": "Murage 会继续尝试移除这部手机。",
+  "phone.removal.retry": "重试"
 }

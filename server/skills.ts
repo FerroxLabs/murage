@@ -1,4 +1,5 @@
 import { removeLink } from "./link-removal.ts";
+import { boundEmailAddress, scrubEmailBytes } from "./email/export-scrub.ts";
 import { scanSkill } from "./skill-guard/scan.ts";
 import { skillContentHash } from "./skill-guard/content-hash.ts";
 import { SKILL_SCANNER_VERSION, type SkillScan } from "./skill-guard/types.ts";
@@ -879,7 +880,10 @@ function snapshotSkillSource(botId:string,name:string,source:Readonly<{directory
       if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) throw new Error("A skill support file must be one plain file");
       return Boolean(stat.mode & 0o111);
     }));
-    return { key: name, name, license: metadata.license, dependencies: null, payloads: snapshot.payloads, executablePaths, warnings: snapshot.warnings };
+    // section 7: the bot's own bound address never leaves in skill bytes
+    const address = boundEmailAddress(botId);
+    const payloads = address ? new Map([...snapshot.payloads].map(([path, bytes]) => [path, scrubEmailBytes(bytes, address)] as const)) : snapshot.payloads;
+    return { key: name, name, license: metadata.license, dependencies: null, payloads, executablePaths, warnings: snapshot.warnings };
   } catch { throw new Error("Selected installed skill could not be exported"); }
 }
 

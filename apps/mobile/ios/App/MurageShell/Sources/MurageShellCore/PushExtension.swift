@@ -9,12 +9,18 @@ public struct PushRewrite: Equatable, Sendable {
     /// stale or repeated revision. Deliver it quietly (no sound, passive) with
     /// the generic text; the app's next reconcile fixes the badge.
     public var silent: Bool = false
+
+    public init(title: String, body: String, badge: Int?, target: PushTarget?, silent: Bool = false) {
+        self.title = title; self.body = body; self.badge = badge; self.target = target; self.silent = silent
+    }
 }
 
 /// Spec §3.5 "Rich but private text", as a function the extension calls:
 /// every failure is the generic text, which is a complete outcome.
 public enum PushExtension {
     public static func rewrite(userInfo: [AnyHashable: Any], ledger: LedgerAccess, detailToken: (String) -> String?,
+                               shown: [String] = [],
+                               now: () -> Int64 = { Int64(Date().timeIntervalSince1970 * 1000) },
                                fetch: (URL, String) async -> (Int?, Any?)) async -> PushRewrite {
         guard let payload = PushPayload.parse(userInfo["murage"]) else {
             return PushRewrite(title: "Murage", body: "Your attention is needed.", badge: nil, target: nil)
@@ -26,14 +32,32 @@ public enum PushExtension {
         }) else {
             // nil is "locked since boot" (generic, still alerts) or a lock wait that
             // timed out (N-8: quiet, since a stale or repeat event cannot be told apart)
-            return PushRewrite(title: generic.title, body: generic.body, badge: nil, target: nil, silent: ledger.lockTimedOut)
+            let action = PushContract.callDisplayAction(payload, now: now(), shown: shown)
+            return PushRewrite(title: generic.title, body: generic.body, badge: nil, target: nil, silent: ledger.lockTimedOut || action == .replace || action == .silent)
         }
-        let plain = PushRewrite(title: generic.title, body: generic.body, badge: total, target: nil)
-        guard verdict == .show, PushFeatures.richText, let origin, let token = detailToken(payload.bindingId),
+        let action = PushContract.callDisplayAction(payload, now: now(), shown: shown)
+        let quiet = action == .replace || action == .silent ||
+            (payload.category.isExpiring && verdict != .show)
+        let plain = PushRewrite(title: generic.title, body: generic.body, badge: total, target: nil, silent: quiet)
+        guard !quiet, verdict == .show, PushFeatures.richText, let origin, let token = detailToken(payload.bindingId),
               let url = detailURL(origin: origin, eventRef: payload.eventRef) else { return plain }
         let (status, body) = await fetch(url, token)
+        // A ring may end while the detail request is in flight, including a
+        // resolved revision delivered by a second extension process.
+        if callNeedsQuietDelivery(payload, ledger: ledger, now: now(), shown: shown) {
+            return PushRewrite(title: generic.title, body: generic.body, badge: ledger.read()?.total ?? total, target: nil, silent: true)
+        }
         let detail = PushOutcome.detail(status: status, body: body, category: payload.category)
         return PushRewrite(title: detail.title, body: detail.body, badge: total, target: detail.target)
+    }
+
+    /// Recheck at delivery, including the synchronous extension-timeout path
+    /// where no delivered-call snapshot or rewrite may be available yet.
+    public static func callNeedsQuietDelivery(_ payload: PushPayload, ledger: LedgerAccess,
+                                              now: Int64, shown: [String] = []) -> Bool {
+        payload.category.isExpiring &&
+            (PushContract.callDisplayAction(payload, now: now, shown: shown) == .silent ||
+             (ledger.read()?.revision(for: payload.collapseKey) ?? payload.revision) > payload.revision)
     }
 
     /// Defence in depth, though the payload and the ledger were checked

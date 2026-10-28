@@ -27,7 +27,7 @@ function row(overrides: Partial<PushEventRow> = {}): PushEventRow {
     eventRef: "a".repeat(64), bindingId: B, kind: "approval", category: "approval", botId: "scout", threadId: "t1",
     requestId: "req-1", messageId: "m1", collapseKey: "be753ac14d84299e2b22e52b6dba3a17", threadGroup: "46af17e29b1130f0",
     revision: 1, timeSensitive: true, resolvedBy: null, createdAt: 1000, expiresAt: 100_000, holdUntil: 1000,
-    state: "pending", attempts: 0, nextAttemptAt: 1000, ...overrides,
+    state: "pending", attempts: 0, nextAttemptAt: 1000, phoneUsed: false, ...overrides,
   };
 }
 
@@ -42,6 +42,13 @@ describe("PushStore", () => {
     initializeMobilePush(db);
     const store = new PushStore(db);
     expect(store.binding(B)?.previewContent).toBe(false);
+    // 1.0.9: "Rings for calls" is on for a binding from before it, persists off, and is null for an unknown binding
+    expect(store.ringsForCalls(B)).toBe(true);
+    expect(store.setRingsForCalls(B, false)).toBe(true);
+    expect(store.ringsForCalls(B)).toBe(false);
+    expect(store.setRingsForCalls("missing", true)).toBe(false);
+    expect(store.ringsForCalls("missing")).toBeNull();
+    store.setRingsForCalls(B, true);
     store.setPreviewContent(B, true);
     db.close();
     const reopened = new DatabaseSync(file);
@@ -305,5 +312,28 @@ describe("PushStore", () => {
       expect(store.dueRelayRemovals(Number.MAX_SAFE_INTEGER, 10)).toEqual([]);
       expect(store.relayRemovalFailed(other, 2)).toBe("gone");
     });
+  });
+
+  it("persists phoneUsed per row, and an older database without the column opens, gains it, and reads old rows as false (X1)", () => {
+    const db = new DatabaseSync(":memory:");
+    opened.push(db);
+    db.exec("PRAGMA foreign_keys=ON");
+    initializeMobilePush(db);
+    const store = new PushStore(db);
+    store.putBinding({ bindingId: B, deviceId: "d1", publisherToken: "t", createdAt: 1 });
+    store.insertEvent(row({ phoneUsed: true }));
+    store.insertEvent(row({ eventRef: "b".repeat(64), revision: 2 }));
+    expect(store.event(B, "a".repeat(64))!.phoneUsed).toBe(true);
+    expect(store.event(B, "b".repeat(64))!.phoneUsed).toBe(false);
+    // a patch (state change) keeps the flag
+    store.update("a".repeat(64), { state: "sent" });
+    expect(store.event(B, "a".repeat(64))!.phoneUsed).toBe(true);
+    // the column an older database lacks
+    db.exec("ALTER TABLE push_events DROP COLUMN phone_used");
+    expect((db.prepare("PRAGMA table_info(push_events)").all() as Array<{ name: string }>).some((c) => c.name === "phone_used")).toBe(false);
+    initializeMobilePush(db);
+    initializeMobilePush(db);
+    expect((db.prepare("PRAGMA table_info(push_events)").all() as Array<{ name: string }>).filter((c) => c.name === "phone_used")).toHaveLength(1);
+    expect(store.event(B, "a".repeat(64))!.phoneUsed).toBe(false);
   });
 });
