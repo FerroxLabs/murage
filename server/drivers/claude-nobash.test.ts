@@ -143,7 +143,7 @@ describe("3.4 / 11 D1: the overlay env restates the hand over every settings env
     expect(overlay.env.BASH_ENV).toBe("/dev/null");
     for (const name of ["ENV", "CLAUDE_ENV_FILE", "PYTHONINSPECT"]) expect(overlay.env[name], name).toBe("");
     for (const name of ["POSIXLY_CORRECT", "GIT_SSH"]) expect(name in overlay.env, name).toBe(false);
-    expect(ABSENT_PINS.length).toBe(6);
+    expect(ABSENT_PINS.length).toBe(8);
     // the Bash path restates its own names
     const bash = mod.claudeOverlayEnv("win32", { kind: "murage-exec", shell: WIN_BASH }, { ...hand, CLAUDE_CODE_SHELL_PREFIX: PREFIX, CLAUDE_CODE_SHELL: WIN_BASH, CLAUDE_CODE_GIT_BASH_PATH: WIN_BASH, MURAGE_EXEC_ENV_FILE: "C:\\env" }, []);
     expect(bash.env).toMatchObject({ CLAUDE_CODE_SHELL_PREFIX: PREFIX, CLAUDE_CODE_SHELL: WIN_BASH, CLAUDE_CODE_GIT_BASH_PATH: WIN_BASH, MURAGE_EXEC_ENV_FILE: "C:\\env" });

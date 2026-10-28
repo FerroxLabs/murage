@@ -21,12 +21,17 @@ import { initializeSharedRequestProvenance } from "./shared-provenance-schema.ts
 import { initializePendingDelegations } from "./pending-delegations-schema.ts";
 import { initializeProjectCardDelivery } from "./project-card-delivery-schema.ts";
 import { initializeOwnerSends } from "./send-store.ts";
+import { initializeBotCalls } from "./bot-calls-schema.ts";
 import { initializeTurnSourceHolds } from "./turn-source-holds.ts";
+import { initializeEmailTables } from "./email/email-store.ts";
 
 import { ensureIntegrityPassTable } from "./memory/integrity-state.ts";
 import { LEGACY_UPGRADE_TABLES, ensureUpgradeAppTables } from "./memory/upgrade-app-tables.ts";
 import { InstallationSnapshotError } from "./installation-snapshot-error.ts";
 import { flushCoalesced } from "./atomic.ts";
+import { initializeAskRevocations } from "./phones/ask-revocations.ts";
+import { initializePhoneReceipts } from "./phones/receipts.ts";
+import { initializePhones } from "./phones/registry.ts";
 import { ADDED_TABLE_LIFECYCLE } from "./added-table-lifecycle.ts";
 import { APP_SCHEMA_102_ADDITIONS } from "./installation-app-schema-downgrade.ts";
 export { InstallationSnapshotError } from "./installation-snapshot-error.ts";
@@ -130,8 +135,8 @@ const APP_TABLES = new Map<string, { required: boolean; optional: string[] }>(Ob
   project_routine_authority: { required: false, optional: [] },
   room_requests: { required: false, optional: ["handoff", "shared_work"] },
   // every owner send, committed before it is acknowledged (server/send-store.ts), new in 1.0.2;
-  // notice (the code of what the person was told) was appended by ALTER during 1.0.2, and so was turn_id (the turn a steer went into)
-  owner_sends: { required: false, optional: ["notice", "restore_held", "restore_gen", "stopped", "stop_gen", "action_id", "turn_id"] },
+  // notice (the code of what the person was told) was appended by ALTER during 1.0.2, and so was turn_id (the turn a steer went into); via, queue_only, via_device and attachments (a phone's share or ask line) were appended in 1.0.9
+  owner_sends: { required: false, optional: ["notice", "restore_held", "restore_gen", "stopped", "stop_gen", "action_id", "turn_id", "via", "queue_only", "via_device", "attachments"] },
   // the owner's deletion record and the restore generation (server/owner-deletions.ts, server/send-store.ts), new in 1.0.2
   owner_deleted_threads: { required: false, optional: [] },
   send_restore_generation: { required: false, optional: [] },
@@ -151,8 +156,8 @@ const APP_TABLES = new Map<string, { required: boolean; optional: string[] }>(Ob
   // owed (H8). An archive from before these landed simply lacks the tables;
   // nothing here is required.
   // Appended by ALTER: key_secret (M2), then per-phone preview consent.
-  push_bindings: { required: false, optional: ["key_secret", "preview_content", "token_expires_at"] },
-  push_events: { required: false, optional: [] },
+  push_bindings: { required: false, optional: ["key_secret", "preview_content", "token_expires_at", "rings_for_calls"] },
+  push_events: { required: false, optional: ["phone_used"] },
   // revision appended by ALTER in H9 fix round 1
   push_risk: { required: false, optional: ["revision"] },
   push_decisions: { required: false, optional: ["outcome"] },
@@ -164,6 +169,13 @@ const APP_TABLES = new Map<string, { required: boolean; optional: string[] }>(Ob
   // later, so it is named above too).
   // forgotten messages whose lines are still to leave the event log (harness/event-log.ts), new in 1.0.2
   event_log_forgets: { required: false, optional: [] },
+  // bot calls (server/bot-calls-schema.ts), new in 1.0.9; an older archive lacks them. The owed trigger on messages is created with them.
+  bot_call_rules: { required: false, optional: [] },
+  bot_calls: { required: false, optional: [] },
+  bot_call_sessions: { required: false, optional: [] },
+  bot_call_owed: { required: false, optional: [] },
+  bot_call_watch_threads: { required: false, optional: [] },
+  bot_call_settings: { required: false, optional: [] },
 }));
 
 type SchemaRow = { type: string; name: string; tbl_name: string; sql: string | null };
@@ -195,7 +207,7 @@ function referenceSchema(): Map<string, ReferenceObject> {
   try {
     initializeMessageTables(db); initializeTurnSourceHolds(db); ensureBrowserCheckIndex(db); ensureIntegrityPassTable(db); ensureScrubPassTable(db); ensureUpgradeAppTables(db); initializeInbox(db); initializeArtifacts(db);
     for (const { schema } of LEGACY_UPGRADE_TABLES.values()) db.exec(schema);
-    initializeImageOperations(db); initializeImageLibrary(db); initializeThreadSnooze(db); initializeProjectTables(db); ensureForgetTable(db); initializeTeamIdentityTables(db); initializeMobilePush(db); initializeSharedRequestProvenance(db); initializeProjectCardDelivery(db); initializeOwnerSends(db); initializePendingDelegations(db);
+    initializeImageOperations(db); initializeImageLibrary(db); initializeThreadSnooze(db); initializeProjectTables(db); ensureForgetTable(db); initializeTeamIdentityTables(db); initializeMobilePush(db); initializeSharedRequestProvenance(db); initializeProjectCardDelivery(db); initializePhones(db); initializeAskRevocations(db); initializePhoneReceipts(db); initializeOwnerSends(db); initializePendingDelegations(db); initializeBotCalls(db); initializeEmailTables(db);
     const objects = new Map<string, ReferenceObject>();
     const rows = db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema").all() as SchemaRow[];
     const tables = new Map(APP_TABLES);
@@ -395,6 +407,7 @@ async function snapshotSqliteWhileOwned<T extends object>(dataDir: string, desti
     await backup(source, staged, { rate: 128 });
     source.close();
     source = undefined;
+    if (component === "messages.db") sanitizeStagedEmail(staged);
     const copied = new DatabaseSync(staged, { readOnly: true, timeout: 1000 });
     let counts;
     try { counts = inspect(copied); }
@@ -417,6 +430,32 @@ async function snapshotSqliteWhileOwned<T extends object>(dataDir: string, desti
       if (scratch) rmSync(scratch, { recursive: true, force: true });
     }
   }
+}
+
+/** Bot email (BOT-EMAIL-MURAGE-109 section 7): mail bodies, frozen send payloads and inbound events never leave in a backup. After the
+ * copy and before `inspect`, every row of email_payloads and email_events is deleted from the STAGED file (normal and fidelity archives
+ * share this path) with secure_delete on and a VACUUM, so no freed page keeps the bytes. The tables stay (registered app tables, schema
+ * validation unchanged); bindings and send receipts are carried so a restored install can reconcile. Email send cards in the transcript
+ * keep their header lines (To, Cc, Subject, contacts) but lose the mail text: the subtitle is cut at its first blank line (the body
+ * follows it) and the draft text is emptied, the same view a restored card shows once its payload is gone (Astra r2 Medium). A database
+ * without the tables (email never on) is not touched. */
+export function sanitizeStagedEmail(path: string): { payloads: number; events: number; cards: number } {
+  const db = new DatabaseSync(path);
+  try {
+    const has = (name: string) => Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name));
+    if (!has("email_payloads") && !has("email_events")) return { payloads: 0, events: 0, cards: 0 };
+    db.exec("PRAGMA secure_delete=ON");
+    const payloads = has("email_payloads") ? Number(db.prepare("DELETE FROM email_payloads").run().changes) : 0;
+    const events = has("email_events") ? Number(db.prepare("DELETE FROM email_events").run().changes) : 0;
+    // a row with damaged JSON is left as it is (json_valid first): sanitizing never fails a backup over one bad row
+    const subtitle = "json_extract(json,'$.card.subtitle')";
+    const cards = has("messages") ? Number(db.prepare(
+      `UPDATE messages SET json=json_set(json, '$.card.subtitle', CASE WHEN instr(${subtitle}, char(10)||char(10))>0 THEN substr(${subtitle}, 1, instr(${subtitle}, char(10)||char(10))-1) ELSE '' END, '$.card.emailSend.draft.text', '') ` +
+      `WHERE instr(json, '"emailSend"')>0 AND (CASE WHEN json_valid(json) THEN json_extract(json,'$.card.kind') END)='email-send'`,
+    ).run().changes) : 0;
+    db.exec("VACUUM");
+    return { payloads, events, cards };
+  } finally { db.close(); }
 }
 
 function snapshotDatabaseWhileOwned(dataDir: string, destination: string) {

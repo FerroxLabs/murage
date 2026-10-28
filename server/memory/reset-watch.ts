@@ -8,6 +8,8 @@
 // resets per thread and warns once per thread when they pass the limit
 // inside the window, with the reasons seen, ids and reasons only.
 
+import { observeReset } from "../health/turn-observer.ts";
+
 export const RESET_LOOP_WINDOW_MS = 10 * 60_000;
 export const RESET_LOOP_LIMIT = 3;
 
@@ -15,6 +17,7 @@ const seen = new Map<string, { at: number[]; reasons: string[]; warned: boolean 
 
 /** Count one reset; returns the warning line when this reset crosses the limit (once per thread). */
 export function noteContinuationReset(threadId: string, engine: string, reason: string, now = Date.now()): string | undefined {
+  observeReset(threadId, engine, reason); // Sentinel S08: an automatic reset, per opaque scope (observe only)
   const entry = seen.get(threadId) ?? { at: [], reasons: [], warned: false };
   entry.at.push(now); entry.reasons.push(reason);
   while (entry.at.length && now - entry.at[0]! > RESET_LOOP_WINDOW_MS) { entry.at.shift(); entry.reasons.shift(); }

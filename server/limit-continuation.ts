@@ -46,6 +46,8 @@ export interface LimitTurn {
   errorKind?: string;
   engineCode?: string;
   errorResetsAt?: number;
+  /** 1.0.9 X2: this turn minted a phone authority (set by markPhoneHeld right after the mint). */
+  phoneHeld?: boolean;
 }
 
 const TEXT_CAP = 1001;
@@ -63,6 +65,11 @@ export class LimitTurns {
   begin(turn: LimitTurn): void { this.turns.set(turn.threadId, turn); }
   get(threadId: string): LimitTurn | undefined { return this.turns.get(threadId); }
   end(threadId: string): void { this.turns.delete(threadId); }
+  /** Marks the thread's current record as having minted a phone authority, only when it is the record of that source message. */
+  markPhoneHeld(threadId: string, sourceMessageId: string): void {
+    const turn = this.turns.get(threadId);
+    if (turn && turn.sourceMessageId === sourceMessageId) turn.phoneHeld = true;
+  }
   /** The turn settled: end its record and hand it back. Another provider turn's event leaves the record alone.
    * A routine run's record is read by the routine's own handler during the same event (synchronously), so
    * the caller settles after that: a routine turn that never hit a limit does not linger. */

@@ -16,7 +16,8 @@ import { DATA_DIR } from "../../config.ts";
 import type { ModelCatalog, ProviderErrorCode, SendTurnInput } from "../../contracts.ts";
 import { execCli } from "../../procs.ts";
 import { removeLink } from "../../link-removal.ts";
-import { OWN_BUILTINS, OWN_READS } from "../../../shared/own-servers.ts";
+import { OWN_BUILTINS, OWN_HANDLER_CARDED, OWN_READS } from "../../../shared/own-servers.ts";
+import { EMAIL_TOOLS_ENV } from "../email-tool-schemas.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 
 /** Translate an argv `--model` slug into the id this ACP session will accept.
@@ -375,6 +376,12 @@ export function cursorOwnReadAllow(turn: Pick<SendTurnInput, "integrations">): s
   };
   if (turn.integrations?.agents) add(turn.integrations.agents.serverName ?? OWN_BUILTINS.agents, "own:agents");
   if (turn.integrations?.memory) add(OWN_BUILTINS.memory, "own:memory");
+  // Bot email (BOT-EMAIL-MURAGE-109 3.2 adapter admission): the handler-carded send tools, by exact name on this turn's own agents mount,
+  // only on a turn the email mount admitted for sending. Their handler applies the bot's email setting and holds on Murage's own card.
+  const agents = turn.integrations?.agents as { serverName?: string; env?: Record<string, string | undefined> } | undefined;
+  if (agents?.env?.[EMAIL_TOOLS_ENV] === "send") {
+    for (const row of OWN_HANDLER_CARDED) if (row.mount === "own:agents") allow.push(`Mcp(${agents.serverName ?? OWN_BUILTINS.agents}:${row.tool})`);
+  }
   return allow;
 }
 

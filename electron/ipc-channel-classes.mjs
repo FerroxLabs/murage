@@ -131,6 +131,7 @@ export const LOCAL_ONLY_CHANNELS = Object.freeze([
   "companion:refresh-tailscale",
   "companion:remote-access",
   "companion:revoke",
+  "companion:share-ask",
   "companion:start",
   "companion:state",
   "companion:stop",
@@ -178,6 +179,9 @@ export const LOCAL_ONLY_CHANNELS = Object.freeze([
   "desktop:workspace-file-action",
   // dialog
   "dialog:confirm",
+  // email-owner-signin (1.0.9 bot email): the owner act of turning email on; PKCE in main, owner-gated by modelSignInGate, token never reaches the renderer
+  "email-owner-signin:cancel",
+  "email-owner-signin:start",
   // engine
   "engine:open-setup-terminal",
   "engine:open-terminal",

@@ -58,7 +58,7 @@ it("preserves the supported explicit Flux GPT2 aliases and their quality and siz
  for(const[model,quality,size] of [["flux-image-gpt2","medium","1024x1024"],["flux-image-gpt2-low","low","1024x1024"]]){const f=fixture("flux");const result=await f.service.generate({...f.request,model},f.hooks);expect(JSON.parse(String(f.fetcher.mock.calls[0]![1]?.body))).toMatchObject({model,size});expect(result.metadata).toMatchObject({model,quality,size});}
 });
 it("requires explicit Imagine selection for xAI rather than silently substituting for GPT2",async()=>{
- const f=fixture("xai");await expect(f.service.generate(f.request,f.hooks)).rejects.toThrow("Explicitly choose");expect(f.fetcher).not.toHaveBeenCalled();
+ const f=fixture("xai");await expect(f.service.generate(f.request,f.hooks)).rejects.toThrow("This image connection has no default model, so a model must be named. Nothing was sent. Pass model: grok-imagine-image-2.0, or choose a model in Settings → Images.");expect(f.fetcher).not.toHaveBeenCalled();
  await f.service.generate({...f.request,model:"grok-imagine-image-2.0"},f.hooks);expect(JSON.parse(String(f.fetcher.mock.calls[0]![1]?.body))).toEqual({model:"grok-imagine-image-2.0",prompt:f.request.prompt,n:1,quality:"low",response_format:"b64_json"});
 });
 it("discovers OpenRouter raster models and pins a compatible endpoint without fallback",async()=>{

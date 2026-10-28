@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="push_call_title">Murageから着信です</string>
+    <string name="push_call_body">応答して用件をお聞きください。</string>
+    <string name="push_call_note_body">Murageからメッセージがあります。</string>
+    <string name="push_call_answer">応答</string>
+    <string name="push_call_not_now">今はしない</string>
+    <string name="push_calls_channel">通話</string>
+</resources>
