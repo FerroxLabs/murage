@@ -225,6 +225,8 @@ export function buildMcpServers(turn: SendTurnInput, options: { askBeforeCustom?
   if (turn.integrations?.memory) servers["murage-memory"] = { ...turn.integrations.memory };
   if (turn.integrations?.agents) servers.agents = { ...turn.integrations.agents };
   if (turn.integrations?.phone) servers.phone = { ...turn.integrations.phone };
+  // 1.0.9 S13b: the owner's phone; asks on every call like any non-listed own mount.
+  if (turn.integrations?.phoneJobs) servers.phoneJobs = { ...turn.integrations.phoneJobs };
   if (turn.integrations?.dweb) {
     servers.dweb = {
       command: process.execPath,
@@ -254,6 +256,8 @@ export function buildMcpServers(turn: SendTurnInput, options: { askBeforeCustom?
  * extension. No external records. */
 export function piMountRecords(turn: SendTurnInput, servers: Record<string, unknown> | null): McpMountRecord[] {
   const own = new Map<string, string>([["murage-memory", "own:memory"], ["agents", "own:agents"], ["phone", "own:phone"], ["dweb", "own:dweb"], ["computer", "own:computer"]]);
+  // only a turn that mounts the phone owns that name; no other server may claim `own:phoneJobs`
+  if (turn.integrations?.phoneJobs) own.set("phoneJobs", "own:phoneJobs");
   if (turn.integrations?.composio) own.set(connectedAppsServerName(turn.integrations.composio.env), "own:connector");
   const records: McpMountRecord[] = [];
   for (const name of Object.keys(servers ?? {})) {

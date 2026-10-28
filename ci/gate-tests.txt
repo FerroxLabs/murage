@@ -23,6 +23,15 @@ companion/test/door-identity.test.ts	all	cloud home, enrolment and key custody
 companion/test/origin.test.ts	all	phone-to-desktop door and its auth
 companion/test/pair-limiter.test.ts	all	credentials, pairing and access control
 companion/test/pair-malformed.test.ts	all	credentials, pairing and access control (a bad device name never spends the pairing window)
+companion/test/phone-ask-shape.test.ts	all	security boundary or path/file access
+companion/test/phone-ask-mint.test.ts	all	the ask bearer mints only for a proven approval key and a revoke kills it
+companion/test/phone-door-bootstrap.test.ts	all	phone-to-desktop door and its auth
+companion/test/phone-door-forward.test.ts	all	phone-to-desktop door and its auth
+companion/test/phone-ask-forward.test.ts	all	the share and ask bearer gate, spool and second check
+companion/test/phone-door-mint-barrier.test.ts	all	credentials, pairing and access control
+companion/test/phone-door-revoke.test.ts	all	a revoked phone loses door access at once
+companion/test/phone-jobs-registry.test.ts	all	credentials, pairing and access control
+companion/test/phone-jobs-shape.test.ts	all	security boundary or path/file access
 companion/test/proxy-response.test.ts	all	phone-to-desktop door and its auth
 companion/test/proxy.test.ts	all	phone-to-desktop door and its auth
 companion/test/push-door.test.ts	all	push delivery and approval integrity
@@ -34,6 +43,7 @@ companion/test/session-secret.test.ts	all	credentials, pairing and access contro
 companion/test/shared-lockout.test.ts	all	credentials, pairing and access control
 companion/test/stream-upgrade-device.test.ts	all	phone-to-desktop door and its auth
 companion/test/stream-upgrade.test.ts	all	phone-to-desktop door and its auth
+companion/test/strip-types-guard.test.ts	all	the phone door failing to start because the sidecar uses syntax node cannot strip
 companion/test/terms-door.test.ts	all	cloud home, enrolment and key custody
 companion/test/upstream-failure.test.ts	all	phone-to-desktop door and its auth
 companion/test/wire.test.ts	all	phone-to-desktop door and its auth
@@ -94,7 +104,38 @@ scripts/browser-extension-runtime.test.mjs	all	pauses on unapproved navigation (
 scripts/build-murage-cage.test.mjs	linux	engines on Linux get a verified, pinned cage
 scripts/bundle-server-runtime-files.test.mjs	all	packaging, upgrade and release integrity
 scripts/cage-apparmor.test.mjs	linux	Linux engines from source can launch under the power block on Ubuntu 23.10 and later
+scripts/sentinel-bundle-check.test.mjs	all	the health checker ships as a small standalone file that never loads the app, its data or the network
+server/cloud-home/sentinel-units.test.ts	linux	the Cloud health checker runs without root, without network and sees only the health folder
 server/full-access-env-win-108.test.ts	windows	Bounded real PowerShell checks and process-tree cleanup before conversation approvals
+server/sentinel/types.test.ts	all	health issues group by a fixed fingerprint that carries no owner text
+server/health/counters.test.ts	all	health counters stay bounded and never publish a raw thread or message id
+server/health/publisher.test.ts	all	health metadata stays in its own owner-only folder and never appears mid-backup
+server/health/stats-publisher.test.ts	all	database health figures come from a sealed copy, never the live database
+server/health/backup-status.test.ts	all	backup health says due until a checked backup lands, never earlier
+server/health/extraction-health.test.ts	all	learning health counts every extraction attempt the same way on every engine and never reports a reply or model name
+server/health/producer-hooks.test.ts	all	turn, deletion and setup health reports stay counts only and never change what the app decides
+server/memory/revocation-health.test.ts	all	forgetting reports its write work and pending jobs without changing what it removes
+server/io-budget-health.test.ts	all	disk write reports cover quiet minutes without changing the write watchdog
+server/sentinel/lifecycle.test.ts	all	health issues open, recover and page exactly once per episode within the 3-per-day cap
+server/sentinel/detectors/backup.test.ts	all	an unverified backup pages the owner, and turning backups off is never shown as recovered
+server/sentinel/detectors/io-pressure.test.ts	all	sustained idle database writes page the owner at the exact threshold and recover only on calm minutes
+server/sentinel/detectors/extraction.test.ts	all	memory learning failures are reported only from real counts, never guessed from missing lines
+server/sentinel/detectors/engine-holds.test.ts	all	a held engine home is reported by awake time, never by sleep
+server/sentinel/detectors/deletion.test.ts	all	a deletion still pending after a day is reported until a fresh snapshot shows it ended
+server/sentinel/detectors/send-fence.test.ts	all	repeated send-fence rebuilds are reported without duplicating an exhausted-turn card
+server/sentinel/detectors/dispatch.test.ts	all	exhausted turns are counted once each and only from their final outcome
+server/sentinel/detectors/resets.test.ts	all	reset loops are reported per engine and resolve only when every looping thread recovers
+server/sentinel/detectors/isolation-noise.test.ts	all	repeated skill front-matter fallback is reported at the exact count and retires with its launch
+server/sentinel/detectors/coverage.test.ts	all	health checks that lose their inputs say so instead of showing all clear
+server/sentinel/detectors/index.test.ts	all	health detectors keep fixed-size state however long the history grows
+server/sentinel/paths.test.ts	all	health checks read only their own fixed files and never follow a link into another folder
+server/sentinel/sources.test.ts	all	health checks read each new record once, survive rotation and truncation, and never open a live database
+server/sentinel/store.test.ts	all	health issue history survives crashes and upgrades and is never silently discarded
+server/sentinel/budget.test.ts	all	health checks stay within fixed read, CPU and daily write limits
+server/sentinel/publication.test.ts	all	the Health list stays small and consistent and never mixes two checks
+server/sentinel/scan.test.ts	all	a health check that crashes or overlaps another never counts or pages twice
+server/sentinel/supervisor.test.ts	all	a stuck health check is stopped within 5 seconds and runs without app credentials
+server/sentinel/cli.test.ts	all	the health checker never loads the app, its database, engines or network code
 server/thread-permissions-bulk-108.test.ts	all	Owner-only previewed raises persist one roster and leave higher levels and grants intact
 server/full-access-driver-108.test.ts	all	Fake Codex, Fuigo and Grok asks carry checked environments into approval verdicts
 scripts/check-linux-glibc-floor.test.mjs	linux	the Linux app starts on older supported distros
@@ -121,6 +162,7 @@ scripts/whatsapp-release.test.mjs	all	packaging, upgrade and release integrity
 scripts/windows-native-imports.test.mjs	all	a Windows build whose native addon imports a DLL beyond system DLLs (the /MT addon failing to load on a clean Windows)
 scripts/windows-sandbox-acl.test.mjs	all	packaging, upgrade and release integrity
 scripts/windows-upgrade-staging.test.mjs	all	packaging, upgrade and release integrity
+scripts/workflow-action-pins.test.mjs	all	third-party actions pinned to commits (the root-key job included)
 server/about-me-api.test.ts	all	owner-only about-me never reaches webhook runs
 server/about-me-channels.test.ts	linux+mac	About me never leaks into another person's turn
 server/added-table-lifecycle.test.ts	all	deleted requests must not leave rows behind
@@ -155,6 +197,7 @@ server/approval-text.test.ts	all	approval card shows full tool input, never cuts
 server/artifacts-disk.test.ts	all	disk-full refusal when saving artifacts
 server/artifacts.test.ts	all	artifact schema upgrade and history survive restart
 server/ask-origin-wait.test.ts	all	Ask reply delivers once its row arrives
+server/ask-turn-device.test.ts	all	a reply goes to the phone that asked for that turn, and queued starts run in order, one at a time
 server/ask-user-answer-api.test.ts	all	a bot question answered by the owner next message: one claim, steered only into its own turn, queued otherwise, at most once after a crash
 server/ask-user-normalize.test.ts	all	bot questions keep their limits, secrets refused, answers cannot forge a question
 server/ask-user-question-api.test.ts	all	question cards answered, expired and delivered to engine
@@ -174,6 +217,16 @@ server/attachments.test.ts	all	attachment mime refusal and safe storage
 server/authorize-work.test.ts	all	Partitioned bots refuse cross-person work
 server/auto-approve-own-always-ask.test.ts	all	a remembered, task or routine grant never runs publish_site and the other always-ask own tools
 server/auto-approve-reason-log.test.ts	all	Asked verdict reason logs are value-free and rate-limited per bot tool class with suppressed counts
+server/bot-calls-schema.test.ts	all	bot call tables, rule writes, restore fence and the step back to 1.0.8 keep their data
+server/browser-document-guard-scope.test.ts	all	the page check looks at the bot's own tabs, so owners with many tabs can use their Chrome
+server/drivers/acp/phone-jobs-preallow.test.ts	all	security boundary or path/file access
+server/drivers/phone-jobs-proxy.test.ts	all	security boundary or path/file access
+server/handoff-partition.test.ts	all	a partitioned bot never sees a copy or hand-off whose source is outside its partition
+server/harness/bus-phone-withhold.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
+server/limit-continuation.test.ts	all	protects user-visible behaviour in core flows
+server/memory/extraction-span-anchor.test.ts	all	learning keeps a slice whose quote is right even when the model miscounts byte offsets
+server/memory/quote-evidence.test.ts	all	a bot can save a memory from quoted words, not only from source ids it is never given
+server/own-tools-unasked.test.ts	all	Claude and Codex ask the owner to approve the bot's own past-conversation search on nearly every turn at Ask
 server/auto-approve-prompt.test.ts	all	prompt-capable commands hold ahead of standing answers
 server/auto-approve-u20.test.ts	all	failed environment check holds ask at every level
 server/auto-approve.test.ts	all	Auto mode stops destructive and sensitive commands
@@ -185,6 +238,7 @@ server/automations-chat.test.ts	all	a webhook from chat or an Undo that makes a 
 server/b11-destination-api.test.ts	all	Resumed engine requests land in correct desk
 server/backup-after-restore.test.ts	all	Restored installation can be backed up again
 server/backup-bot-folder.test.ts	all	bot folder backup keeps real work, lists omissions
+server/backup-card-kinds-108.test.ts	all	A chat holding question, approval or widget cards still backs up instead of refusing the whole backup
 server/backup-channel-run.test.ts	all	backup runs after channel messages and routine runs
 server/backup-coordinator.test.ts	all	backup scheduling, handoff and enablement rules
 server/backup-ebusy.test.ts	all	Locked files skipped, own records stop backup
@@ -251,7 +305,6 @@ server/browser-control-takectl.test.ts	all	take control owner-input wait is boun
 server/browser-control.test.ts	all	browser ownership boundary human versus bot
 server/browser-document-guard-chromereal.test.ts	all	Private inputs detected by label and password
 server/browser-document-guard-dialog.test.ts	all	accepts an alert and a beforeunload, and dismisses a confirm and a prompt, while a call is in flight
-server/browser-document-guard-scope.test.ts	all	the page check looks at the bot's own tabs, so owners with many tabs can use their Chrome
 server/full-access-corpus-108.test.ts	all	Owner command ask counts, U20 recovery cache and stale conversation defaults
 server/full-access-env-probe-path-108.test.ts	all	Environment probes use pinned absolute executables and reject handed PATH shadows
 server/full-access-env-unchecked-108.test.ts	all	E1 operational environment waiver is explicit-owner only and preserves integrity, pins and cooldown provenance
@@ -276,6 +329,7 @@ server/browser-extension-corefix8.test.ts	all	incomplete facts on activating act
 server/browser-extension-corefix9.test.ts	all	phone and handle values classified sensitive
 server/browser-extension-decide.test.ts	all	Floor, rules, checker decision order
 server/browser-extension-durable.test.ts	all	Restart resumes no grants from disk
+server/browser-extension-engine-close.test.ts	all	turning sharing off mid-start leaves no engine process
 server/browser-extension-engine-read.test.ts	all	denied destinations unfetchable; no browser credentials; revoke drops read
 server/browser-extension-engine.test.ts	all	no navigation when destination approval denied (approval)
 server/browser-extension-executor.test.ts	all	Executor refuses arbitrary evaluation
@@ -568,6 +622,7 @@ server/drivers/chat-draft-only.test.ts	all	a draft-only turn on a connected chat
 server/drivers/child-teardown.test.ts	all	engine child processes torn down confirmed
 server/drivers/claude-cli-tables.test.ts	all	Claude turns on a newer CLI than Murage's version tables losing the pins and allowlists of the newest known version
 server/drivers/claude-draft-only.test.ts	all	a draft-only Claude turn launching with built-in tools, the broker or a workspace folder, or despite a credential helper, managed hook or cowork_settings.json helper, on any launch or relaunch
+server/drivers/claude-elicitation.test.ts	linux+mac	a tool server's confirmation (a price, a form, a link) never reaching the owner on the Claude engine, or a Claude turn hanging on it
 server/drivers/claude-emptypin.test.ts	all	Claude without Git Bash: an owner's unset routing name pinned to "" breaking instance-role sign-in
 server/drivers/claude-launch-binary.test.ts	linux+mac	Claude turns ran an older claude from the shell PATH than the one Murage version-checked
 server/drivers/claude-ng.test.ts	all	Claude without Git Bash: one empty-pin rule from the CLI's settings-env allowlist; the sign-in card remembers
@@ -704,7 +759,6 @@ server/group-member-checkpoint-roll-api.test.ts	all	Member turn reply kept repla
 server/handoff-binding.test.ts	all	reply belongs to its handoff
 server/handoff-copy-source.test.ts	all	handoff copy sources persisted at queue time
 server/handoff-dispatch.matrix.test.ts	all	Migration hold stops hand-off admission
-server/handoff-partition.test.ts	all	a partitioned bot never sees a copy or hand-off whose source is outside its partition
 server/handoff-partitioned-start.api.test.ts	linux+mac	a hand-off to a partitioned project teammate starts
 server/handoff-r10.test.ts	all	was DELETE: has live tests incl. withheld result left out of card summary
 server/handoff-r12.test.ts	all	turn sources bounded so secrets do not leak
@@ -848,7 +902,6 @@ server/memory/evolution-forgetting.test.ts	all	Protects forget/revoke, upgrade o
 server/memory/excluded-thread-history.test.ts	all	a thread excluded from memory still read back through historical search
 server/memory/extract-flux-headers.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/extract-unusable-108.test.ts	all	memory extraction failure reasons, hourly outcomes, bounded backoff and token cut-offs
-server/memory/extraction-span-anchor.test.ts	all	learning keeps a slice whose quote is right even when the model miscounts byte offsets
 server/memory/extractor-connections.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/feedback.test.ts	all	secrets redacted from stored corrections; owner text only
 server/memory/first-start-work.test.ts	all	fast upgrade of a used data dir (upgrade)
@@ -932,7 +985,6 @@ server/memory/pip-paid-calls.test.ts	all	Protects forget/revoke, upgrade or priv
 server/memory/pip-result-held.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/pip-result-revoked.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/procedure-review.test.ts	all	no owner approval granted without explicit authority (approval)
-server/memory/quote-evidence.test.ts	all	a bot can save a memory from quoted words, not only from source ids it is never given
 server/memory/r5-fixes.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/range-proof.test.ts	all	forget-bounded ranges withheld correctly (withheld)
 server/memory/read-mask.test.ts	all	the engine bundle and recall read an unscrubbed record masked
@@ -953,6 +1005,7 @@ server/memory/resume-race-renewal.test.ts	all	a bot forgetting the conversation 
 server/memory/reveal-capture.test.ts	all	does not resurrect forgotten canon (forget)
 server/memory/reveal-recheck-backoff.test.ts	all	the reveal sweep no longer saturates on ineligible receipts
 server/memory/revocation-index.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
+server/memory/revocation-rewalk-108.test.ts	all	a pending conversation deletion replayed on start rewrites already-cleaned memory and grows the WAL
 server/memory/revoke-bounded.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/revoke-cover.test.ts	all	Protects forget/revoke: a revoke that relies on another's walk withholds the same as walking alone
 server/memory/revoke-deletion-cover.test.ts	all	Protects forget/revoke: N conversation deletions withhold the same as walking each alone, at one walk's cost
@@ -1038,7 +1091,6 @@ server/openclaw-delegation.test.ts	all	delegate to OpenClaw teammate reply folds
 server/output-destination.test.ts	all	task output reaches correct room or desk
 server/output-publication.test.ts	all	Reports from turns published verified
 server/own-tool-results-wiring.test.ts	all	engine reading own tool result still asks otherwise
-server/own-tools-unasked.test.ts	all	Claude and Codex ask the owner to approve the bot's own past-conversation search on nearly every turn at Ask
 server/own-workspace-approval-wiring.test.ts	linux+mac	bot's own bookkeeping edits answered correctly
 server/own-workspace-approval.test.ts	all	Paths approved from structured args only
 server/owner-audience.test.ts	all	owner audience predicate for privacy
@@ -1061,6 +1113,25 @@ server/permission-proxy-path.test.ts	all	the approval proxy only talks to Murage
 server/persisted-state.test.ts	all	Only ENOENT is absent; other errors need recovery
 server/person-handoff-memory.test.ts	all	a linked person reads a hand-off result made only with their own memory, never the owner's
 server/person-handoff-result.test.ts	all	a linked person's hand-off result reaches them; withheld, checking or deleted results never show as words
+server/phone-apps-api.test.ts	all	credentials, pairing and access control
+server/phone-authority-api.test.ts	all	credentials, pairing and access control
+server/phone-jobs-api.test.ts	all	credentials, pairing and access control
+server/phone-jobs-engines.test.ts	all	protects user-visible behaviour in core flows
+server/phone-push-detail-restart.test.ts	all	push delivery and approval integrity
+server/phone-thread-mark-api.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
+server/phones-e2e.test.ts	all	protects user-visible behaviour in core flows
+server/phones/ask-revocations.test.ts	all	credentials, pairing and access control
+server/phones/authority-wiring.test.ts	all	credentials, pairing and access control
+server/phones/authority.test.ts	all	credentials, pairing and access control
+server/phones/copy.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
+server/phones/direct-thread.test.ts	all	credentials, pairing and access control
+server/phones/gate.test.ts	all	security boundary or path/file access
+server/phones/job-push.test.ts	all	push delivery and approval integrity
+server/phones/jobs.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
+server/phones/offered.test.ts	all	protects user-visible behaviour in core flows
+server/phones/registry.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
+server/phones/rpc.test.ts	all	phone-to-desktop door and its auth
+server/phones/target.test.ts	all	credentials, pairing and access control
 server/pm-sends-102-r14.test.ts	all	upgrade backfill; older archives accept the dropped index (downgrade)
 server/pm-sends-102-r15.test.ts	all	owed backfill under upgrade reporter
 server/pm-sends-102-r16.test.ts	all	Owed backfill under heartbeat on slow SQL
@@ -1198,6 +1269,7 @@ server/room-withheld-audit.test.ts	all	withheld copies stay withheld
 server/room-withheld-recall.test.ts	all	withheld room reply never recalled
 server/route-policy-api.test.ts	all	unproven callers refused on desktop routes
 server/route-policy.test.ts	all	Every cloud write has reviewed policy
+server/routes/phones.test.ts	all	credentials, pairing and access control
 server/routine-approval-hold-api.test.ts	linux+mac	routine approval card stays open and answerable
 server/routine-authority.test.ts	all	routine authority levels
 server/routine-brief-approval-diagnosis.test.ts	all	scheduled routine approvals not unattended
@@ -1235,6 +1307,7 @@ server/send-idempotency.test.ts	all	repeated send never duplicates message
 server/send-state-r6.test.ts	all	Unsent words kept until owner dismisses
 server/send-steer-r7.test.ts	all	failed send without line becomes visible chip
 server/send-steer-r8.test.ts	all	deleted conversation words stay deleted
+server/send-store-via.test.ts	all	via columns carry over a replaced row; Message.via is server-written
 server/send-store.test.ts	all	accepted send is one committed row
 server/sends-lookup-api.test.ts	all	a reloaded draft can ask whether its send arrived (no duplicate, no lost words)
 server/server-child-crash.test.ts	all	server child records fatal cause
@@ -1374,6 +1447,12 @@ server/workspace-files-write.test.ts	all	workspace file read/write safety checks
 server/workspace-files.test.ts	all	workspace root resolution path safety
 server/workspace-revision.test.ts	all	same-tick rewrite never overwrites file
 server/workspace.test.ts	all	Workspace file access boundaries
+shared/phone-ai-provider.test.ts	all	protects user-visible behaviour in core flows
+shared/phone-apps.test.ts	all	protects user-visible behaviour in core flows
+shared/phone-ask-contract.test.ts	all	security boundary or path/file access
+shared/phone-jobs-contract.test.ts	all	security boundary or path/file access
+shared/web-safe-imports.test.ts	all	the web app failing to load because it imports server-only code
+src/components/notebook-save-gate.test.ts	all	the notebook Save waits for a loaded revision
 server/writer-roots.test.ts	all	one writer per work root
 server/writetime-r11c.test.ts	all	short secret copied into note withheld
 server/writetime-s2.test.ts	all	Read messages recorded for revoke tracking
@@ -1385,6 +1464,7 @@ shared/chief-handover.test.ts	all	keeps the former Chief leading its team when i
 shared/exact-command.test.ts	all	protects user-visible behaviour in core flows
 shared/financial-ids.test.ts	all	the vectors are for this rule version
 shared/guarded-http.test.ts	all	security boundary or path/file access
+shared/health-protocol.test.ts	all	health records reject free text and unbounded values, and stay within their caps
 shared/help-search.test.ts	all	in-app help search finds what the shipped docs say, the newest changelog included
 shared/in-project.test.ts	all	security boundary or path/file access
 shared/in-project.win32.test.ts	windows	a bot on Windows writing a Murage hook file through a spelling Win32 reads as that file (trailing dot, stream suffix, \\?\ or a loopback share)
@@ -1443,7 +1523,6 @@ src/components/composer-key-guard.test.ts	all	pasted key stripped before message
 src/components/connect-label-collisions.test.ts	all	the label form fills in a free label, says a taken one on the form, and the chat card asks for it too
 src/components/first-run-label-form.test.ts	all	first-run cards connect an app only from the confirmed label form, filled in
 src/components/first-run-settled.test.ts	all	first run card settled state from server
-src/components/notebook-save-gate.test.ts	all	the notebook Save waits for a loaded revision
 src/components/routine-grant-82.test.ts	all	grant card describes operations in plain words
 src/components/settings-panel-locale.test.ts	all	bot settings stays in English after the owner picks another language
 src/components/settings-search-keeps-page.test.ts	all	a Settings search throws away an unsaved skill draft, or Tab leaves the Settings dialog through the hidden page
@@ -1497,6 +1576,7 @@ src/lib/open-external.test.ts	all	external links open via safe bridge
 src/lib/permission-mode.test.ts	all	refused Full access change explained
 src/lib/project-activity-handoff.test.ts	all	Activity hand-off line names the teammate
 src/lib/question-fence-display.test.ts	all	a fence hides only when its card exists, streaming fences never show raw JSON
+src/lib/random-uuid-polyfill.test.ts	all	phone page over plain http crashes when a screen creates an ID
 src/lib/remote-sign-out.test.ts	all	sign out removes this device by DELETE
 src/lib/session-check.test.ts	all	only real 401 means signed out
 src/lib/settings-drafts.test.ts	all	are kept while they differ from the saved text and forgotten when they match it
@@ -1528,3 +1608,53 @@ src/state/surface-refusal.test.ts	all	surface stops after permanent refusal
 src/state/thread-settings-writes.test.ts	all	send waits for thread settings, safe retry
 src/state/transcript-seq.test.ts	all	transcript ordering keeps every message in place
 src/state/turn-status.test.ts	all	the working mascot stays for the whole turn and a late frame of an older turn never ends the newer one
+companion/test/ask-forwards-removal.test.ts	all	phone-to-desktop door and its auth
+companion/test/ask-revocations.test.ts	all	phone-to-desktop door and its auth
+companion/test/devices-ask-floor.test.ts	all	credentials, pairing and access control
+companion/test/devices-ask-persist-fail.test.ts	all	credentials, pairing and access control
+companion/test/phone-ask-revoke.test.ts	all	phone-to-desktop door and its auth
+companion/test/phone-removal-pending.test.ts	all	credentials, pairing and access control
+companion/test/phone-revoke-clears-jobs.test.ts	all	credentials, pairing and access control
+server/backup-restore-phone-tables.test.ts	all	a backup with the phone tables restores and the downgrade drops them
+server/bot-calls-calendar.test.ts	all	the calendar check asks only free/busy, logs no reply content, and any doubt reads as unsure rather than free
+server/bot-calls-facts.test.ts	all	a bot calls only for a fact a rule the owner set matches, and a restart neither loses nor repeats it
+server/bot-calls-machine.test.ts	all	a bot call rings, escalates, is answered, missed or ended once, and never twice for one fact
+server/bot-calls-policy.test.ts	all	no bot call rings in quiet hours, while calls are off or while the owner's calendar says busy, unless the rule allows it
+server/bot-calls-runtime.test.ts	all	call routes are owner-only, a ring is sent once and never after a restart or while calls are off
+server/compound-read-109.test.ts	all	new compound spellings get their existing twin's verdict at every level; other shapes still ask
+server/drain-via.test.ts	all	via rows drain alone; a share line never joins an owner turn
+server/drivers/agents-proxy-needs-owner-now.test.ts	all	the needs-owner-now tool is offered only when the harness allows it and never on a proposal turn
+server/email/dark-lists.test.ts	all	with email off no engine is handed an email tool on a pre-allow list or an ask-free matcher
+server/email/email-api.test.ts	all	bot email stays dark: with the capability probe off nothing mounts, shows or polls, and an email card answers over HTTP only when on
+server/email/key-health.test.ts	all	a revoked email key unmounts the tools and Reconnect rotates it; a pause is never read as a key problem
+server/email/memory-origin.test.ts	all	a memory a bot saves after reading outside mail is held for the owner and stays fenced in later turns
+server/email/owner-routes.test.ts	all	a bot or engine credential never reaches an email owner route; phone acts need a fresh device proof
+server/email/send-service.test.ts	all	an email is never sent twice or without the owner's Send when the setting asks; a lost answer is reconciled, never replayed
+server/email/spawn-env.test.ts	all	no engine env ever holds an email key or the email:owner token; key changes reach the shell's encrypted store
+server/email/tools.test.ts	all	email tools mount only on the owner's own turn and engine; a forged or stale claim never reaches Flux
+server/memory/delete-scrub.test.ts	all	chat removal finishes, deletions are acknowledged while the index scrub stays durably owed, and retries erase database and WAL bytes
+server/memory/memdel-scheduler-109.test.ts	all	a bulk deletion costs one index merge plus one follow-up, and a helper killed mid-scrub resumes it after restart
+server/memory/worker-delete-scrub.test.ts	all	the worker acknowledges a forget at once and its scrub timer erases raw index bytes, with blocked scrubs retried
+server/mobile-push-outbox-calls.test.ts	all	a call ring reaches the phone once, and an answered or ended call stops ringing every device
+server/phone-ask-flags-api.test.ts	all	the share and ask flag stands alone: its mint report is answered, and the commit reads the offer fresh
+server/phone-ask-targets-api.test.ts	all	the ask paths answer only to the ask envelope; a jobs token is refused there and an ask token on jobs paths
+server/phone-downgrade-atomic.test.ts	all	a failed phone downgrade keeps the file 1.0.9 with every revocation, and a pending phone line is refused
+server/phone-share-ask-e2e.test.ts	all	the flag-on share and ask matrix: both flags, every scenario of the plan, through the real server and the fake engine
+server/phone-share-restart.test.ts	all	a restart removes only the files a failed share saved that nothing names, and never follows a link out of the folder
+server/phones/commit.test.ts	all	a phone line is committed, or refused, in one step: a hidden bot or a revoked phone never gets a queued line
+server/phones/multipart.test.ts	all	the share body reader accepts one exact shape and refuses everything else, streaming and capped
+server/phones/receipts.test.ts	all	a phone share or ask retried after a dropped answer gets the first answer; receipts share the send store connection
+server/phones/revocation-tombstone-durability.test.ts	all	credentials, pairing and access control
+server/phones/revocation-tombstone.test.ts	all	credentials, pairing and access control
+server/routes/phone-ask-ask.test.ts	all	a phone ask reaches the chosen bot once as an unproven line and answers status only, never the reply
+server/routes/phone-ask-share.test.ts	all	a shared file or photo reaches the chosen chat once, as a path or an image, and a revoked phone or hidden bot gets nothing
+server/routes/phone-ask-targets.test.ts	all	the targets route lists only bots and threads a phone may reach, with no message text
+server/sentinel/delivery.test.ts	all	a Health page shows once, respects quiet hours and is never sent twice after a crash; one daily summary
+server/sentinel/owner-api.test.ts	all	only the installation owner can read Health, with fixed filters and no raw evidence
+server/sentinel/server-host.test.ts	all	health checks start before any backup can begin and never stop Murage from starting
+server/via-standing.test.ts	all	via lines keep their standing: no failover, no engine command, Send again stays queue-only and unproven
+src/components/FromPhoneLine.test.ts	all	a phone line cannot be edited or regenerated; Ask again is the one path
+src/components/HealthCard.test.ts	all	the Health card says plainly what was checked and shows a stopped backup once
+src/lib/bot-call-session.test.ts	all	a call screen ends when the server ends its session, never while the server holds it, and never runs without one
+src/lib/compose-link.test.ts	all	a phone line can only prefill the composer, never send (compose links, Ask again)
+server/memory/scrub-owed-stat-109.test.ts	all	a stat error on the memory index never strands deletion debt: unknown counts as owed, so the scrub still runs

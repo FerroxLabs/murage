@@ -1,0 +1,15 @@
+"What do you want to ask?" = "何を聞きたいですか？";
+"What do you want to ask %@?" = "%@に何を聞きたいですか？";
+"Sent to %@. I'll let you know when it answers." = "%@に送信しました。返答があったらお知らせします。";
+"Sent to %@. The answer will be in your chat." = "%@に送信しました。返答はチャットに届きます。";
+"Murage can't reach your computer right now." = "現在、Murageはコンピュータに接続できません。";
+"Open Murage to set up asking." = "Murageを開いて質問の設定をしてください。";
+"Update Murage on your computer to use this." = "この機能を使うには、コンピュータのMurageを更新してください。";
+"That chat is no longer available. Open Murage to pick another." = "そのチャットは利用できなくなりました。Murageを開いて別のチャットを選んでください。";
+"Say open Murage to continue." = "続けるには「Murageを開いて」と言ってください。";
+"Open in Murage" = "Murageで開く";
+"Ask in Murage" = "Murageで質問する";
+"Ask Murage" = "Murageに聞く";
+"Ask a bot" = "ボットに聞く";
+"Open my chat" = "自分のチャットを開く";
+"From" = "送信元";

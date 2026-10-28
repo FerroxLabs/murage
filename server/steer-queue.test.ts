@@ -18,12 +18,17 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
   cancelSteeredMessage,
+  drainBatch,
   drainSteeredMessages,
   queuedSteeredMessage,
   queueSteeredMessage,
   _queuedCount,
+  _resetQueuedStarts,
+  queuedStartPending,
+  START_REQUEUE,
   type SteerStore,
 } from "./steer-queue.ts";
+import { sendStore, type SendRow } from "./send-store.ts";
 import type { BotRecord, Message } from "./store.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
@@ -276,6 +281,187 @@ describe("steer-queue module", () => {
     expect(_queuedCount("thread-d")).toBe(0);
   });
 
+});
+
+// ── S30: a via row (share, ask-intent) drains alone ───────────────────
+describe("via rows drain alone", () => {
+  const IMG = { kind: "image" as const, path: "/d/attachments/s.png", mime: "image/png" };
+  let n = 0;
+  const accept = (text: string, extra: Record<string, unknown> = {}): SendRow => {
+    n += 1;
+    const r = sendStore.accept({ kind: "bot", ownerId: "bot-v", threadId: "thread-v", fingerprint: `f${n}`, text, status: "queued", ...extra } as never);
+    if (r.kind !== "new") throw new Error("not new");
+    return r.row;
+  };
+  const via = (text: string, v: "share" | "ask-intent", extra: Record<string, unknown> = {}) => accept(text, { origin: "unproven", via: v, queueOnly: true, viaDevice: "dev1", ...extra });
+  const setup = () => { sendStore.reset(); return fakeStore([fakeBot("bot-v", "thread-v", false)]); };
+
+  it("an owner line, a share, an owner line and an ask run as four turns in order, never joined", () => {
+    const store = setup();
+    const runs: Array<{ prompt: string; via: string | null }> = [];
+    accept("o1"); via("s1", "share"); accept("o2"); via("a1", "ask-intent");
+    for (let i = 0; i < 4; i++) drainSteeredMessages(store, (_b, _t, prompt, _m, _x, batch) => { runs.push({ prompt, via: batch.via }); });
+    expect(runs).toEqual([{ prompt: "o1", via: null }, { prompt: "s1", via: "share" }, { prompt: "o2", via: null }, { prompt: "a1", via: "ask-intent" }]);
+  });
+
+  describe("a start in flight holds its own thread until it settles", () => {
+    const hang = () => new Promise<void>(() => { /* startTurn still before admission */ });
+    const setupBot = () => { sendStore.reset(); _resetQueuedStarts(); const bot = fakeBot("bot-v", "thread-v", false); return { bot, store: fakeStore([bot, fakeBot("bot-w", "thread-w", false)]) }; };
+
+    it("the line behind an unsettled start waits however long (never admitted ahead of it), and another thread still drains", () => {
+      vi.useFakeTimers();
+      try {
+        const { bot, store } = setupBot();
+        const prompts: string[] = [];
+        const run = (_b: string, _t: string, prompt: string) => { prompts.push(prompt); return prompt === "s1" ? hang() : undefined; };
+        via("s1", "share"); accept("o2");
+        drainSteeredMessages(store, run);
+        bot.busy = true; // another turn takes the thread and ends: its end drains
+        vi.advanceTimersByTime(1000);
+        bot.busy = false;
+        drainSteeredMessages(store, run);
+        vi.advanceTimersByTime(600_000);
+        drainSteeredMessages(store, run);
+        expect(prompts).toEqual(["s1"]);
+        expect(queuedStartPending("thread-v")).toBe(true);
+        const other = sendStore.accept({ kind: "bot", ownerId: "bot-w", threadId: "thread-w", fingerprint: "w1", text: "w1", status: "queued" } as never);
+        expect(other.kind).toBe("new");
+        drainSteeredMessages(store, run);
+        expect(prompts).toEqual(["s1", "w1"]);
+        expect(vi.getTimerCount()).toBe(0);
+      } finally { vi.useRealTimers(); _resetQueuedStarts(); }
+    });
+
+    it("a start that resolves START_REQUEUE puts its rows back in place, tries again, and leaves no timer once it starts", async () => {
+      vi.useFakeTimers();
+      try {
+        const { store: base } = setupBot();
+        // the server's store finds a line by id: a re-queued row runs from its line, never a copy
+        const store = Object.assign(base, { messageById: (_t: string, id: string) => base.messages.find((m) => m.id === id) });
+        const prompts: string[] = [];
+        let refuse = 2;
+        const run = (_b: string, _t: string, prompt: string) => { prompts.push(prompt); return Promise.resolve(prompt === "s1" && refuse-- > 0 ? START_REQUEUE : "started"); };
+        const s1 = via("s1", "share"); accept("o2");
+        drainSteeredMessages(store, run);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(sendStore.bySeq(s1.seq)?.status).toBe("queued");
+        expect(sendStore.bySeq(s1.seq)?.existingMessageId).toBe(store.messages[0]!.id);
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(prompts).toEqual(["s1", "s1", "s1", "o2"]);
+        expect(store.messages.filter((m) => m.role === "user").map((m) => m.text)).toEqual(["s1", "o2"]);
+        expect(vi.getTimerCount()).toBe(0);
+      } finally { vi.useRealTimers(); _resetQueuedStarts(); }
+    });
+
+    it("a start that settles in time still holds until then and drains right after, with no timer left behind", async () => {
+      vi.useFakeTimers();
+      try {
+        const { store } = setupBot();
+        const prompts: string[] = [];
+        let finish!: () => void;
+        const run = (_b: string, _t: string, prompt: string) => { prompts.push(prompt); return prompt === "s1" ? new Promise<void>((r) => { finish = r; }) : undefined; };
+        via("s1", "share"); accept("o2");
+        drainSteeredMessages(store, run);
+        drainSteeredMessages(store, run);
+        expect(prompts).toEqual(["s1"]);
+        finish();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(prompts).toEqual(["s1", "o2"]);
+        expect(vi.getTimerCount()).toBe(0);
+      } finally { vi.useRealTimers(); }
+    });
+  });
+
+  it("two owner lines still join, as today", () => {
+    const store = setup();
+    const prompts: string[] = [];
+    accept("o1"); accept("o2");
+    drainSteeredMessages(store, (_b, _t, prompt) => { prompts.push(prompt); });
+    expect(prompts).toEqual(["o1\no2"]);
+  });
+
+  it("drainBatch is the leading run of plain rows, or exactly the first via row", () => {
+    const store = setup(); void store;
+    const rows = [accept("o1"), accept("o2"), via("s1", "share"), accept("o3")];
+    expect(drainBatch(rows).map((r) => r.text)).toEqual(["o1", "o2"]);
+    expect(drainBatch(rows.slice(2)).map((r) => r.text)).toEqual(["s1"]);
+    expect(drainBatch([])).toEqual([]);
+  });
+
+  it("the batch names the via and the device", () => {
+    const store = setup();
+    const seen: Array<{ via: string | null; viaDevice: string | null }> = [];
+    via("s1", "share");
+    drainSteeredMessages(store, (_b, _t, _p, _m, _x, batch) => { seen.push(batch); });
+    expect(seen).toEqual([{ via: "share", viaDevice: "dev1" }]);
+    expect(store.messages[0]).toMatchObject({ via: "share", origin: "unproven" });
+  });
+
+  it("a via row whose persisted queueOnly was cleared is refused, not run", () => {
+    const store = setup();
+    const row = via("s1", "share");
+    (sendStore as unknown as { db(): { prepare(s: string): { run(...a: unknown[]): unknown } } }).db().prepare("UPDATE owner_sends SET queue_only=0 WHERE seq=?").run(row.seq);
+    const run = vi.fn();
+    drainSteeredMessages(store, run);
+    expect(run).not.toHaveBeenCalled();
+    expect(store.messages).toHaveLength(0);
+    expect(sendStore.bySeq(row.seq)?.status).toBe("refused");
+  });
+
+  it("a via row whose origin is no longer unproven is refused, not run", () => {
+    const store = setup();
+    const row = via("s1", "share");
+    (sendStore as unknown as { db(): { prepare(s: string): { run(...a: unknown[]): unknown } } }).db().prepare("UPDATE owner_sends SET origin='desktop' WHERE seq=?").run(row.seq);
+    const run = vi.fn();
+    drainSteeredMessages(store, run);
+    expect(run).not.toHaveBeenCalled();
+    expect(sendStore.bySeq(row.seq)?.status).toBe("refused");
+  });
+
+  it("a share row's stored image is bound with no pending registration (restart)", () => {
+    const store = setup();
+    via("look", "share", { attachments: [IMG] });
+    const bind = vi.fn(() => [] as NonNullable<Message["attachments"]>);
+    drainSteeredMessages(store, vi.fn(), undefined, bind);
+    expect(bind).not.toHaveBeenCalled();
+    expect(store.messages[0]!.attachments).toEqual([IMG]);
+  });
+
+  it("a via row whose attachments column is malformed is refused, not run without them", () => {
+    const store = setup();
+    const row = via("look", "share", { attachments: [IMG] });
+    (sendStore as unknown as { db(): { prepare(s: string): { run(...a: unknown[]): unknown } } }).db().prepare("UPDATE owner_sends SET attachments=? WHERE seq=?").run("{not json", row.seq);
+    const run = vi.fn();
+    drainSteeredMessages(store, run);
+    expect(run).not.toHaveBeenCalled();
+    expect(store.messages).toHaveLength(0);
+    expect(sendStore.bySeq(row.seq)?.status).toBe("refused");
+  });
+
+  it("a via row with a stored file attachment is refused, never run with the file dropped", () => {
+    const store = setup();
+    const row = via("see file", "share", { attachments: [IMG, { kind: "file", path: "/d/attachments/x.pdf", mime: "application/pdf" }] });
+    const run = vi.fn();
+    drainSteeredMessages(store, run);
+    expect(run).not.toHaveBeenCalled();
+    expect(store.messages).toHaveLength(0);
+    expect(sendStore.bySeq(row.seq)?.status).toBe("refused");
+  });
+
+  it("a share line waits while the bot is busy, then runs alone as its own unattended batch", () => {
+    sendStore.reset();
+    const bot = fakeBot("bot-v", "thread-v", true);
+    const store = fakeStore([bot]);
+    via("s1", "share");
+    const runs: Array<{ prompt: string; via: string | null }> = [];
+    const run = (_b: string, _t: string, prompt: string, _m: Message, _x: string[], batch: { via: string | null }) => { runs.push({ prompt, via: batch.via }); };
+    drainSteeredMessages(store, run);
+    expect(runs).toEqual([]);
+    expect(store.messages).toHaveLength(0);
+    bot.busy = false;
+    drainSteeredMessages(store, run);
+    expect(runs).toEqual([{ prompt: "s1", via: "share" }]);
+  });
 });
 
 // ── e2e: the real server on the gated fake ACP fleet ───────────────────
@@ -606,6 +792,6 @@ describe("steer-queue: authoritative pending list and ordering", () => {
     const run = vi.fn();
     drainSteeredMessages(store, run);
     expect(store.messages).toHaveLength(1);
-    expect(run).toHaveBeenCalledWith("bot-q", "thread-q", "do the thing", already, [already.id]);
+    expect(run).toHaveBeenCalledWith("bot-q", "thread-q", "do the thing", already, [already.id], { via: null, viaDevice: null });
   });
 });

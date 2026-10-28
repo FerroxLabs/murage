@@ -1,0 +1,7 @@
+"NSCalendarsFullAccessUsageDescription" = "あなたが依頼したときに、ボットがカレンダーを確認して予定を追加できます。";
+"NSCalendarsWriteOnlyAccessUsageDescription" = "あなたが依頼したときに、ボットがカレンダーに予定を追加できます。";
+"NSRemindersFullAccessUsageDescription" = "あなたが依頼したときに、ボットがリマインダーを読み取って追加できます。";
+"NSContactsUsageDescription" = "ボットがあなたの指定した人を探して、メッセージや通話を始める準備ができます。";
+"NSLocationWhenInUseUsageDescription" = "あなたが近くのものについて尋ねたときに、ボットがおおよその位置を確認できます。";
+"NSAlarmKitUsageDescription" = "あなたが依頼したときに、ボットがアラームやタイマーを設定できます。";
+"PhonePreciseLocation" = "「正確な位置情報」をオンにすると、ボットがあなたの正確な位置情報を使用できます。";

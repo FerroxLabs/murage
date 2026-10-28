@@ -1,0 +1,22 @@
+// PHONE-UNIFY-110 section 9. %@ is the chosen bot name.
+"share_title" = "Murageに送信";
+"share_to" = "送信先";
+"share_from" = "送信元";
+"share_note" = "メモを追加";
+"share_send" = "送信";
+"share_sending" = "送信中...";
+"share_sent" = "%@に送信しました";
+"share_open_chat" = "チャットを開く";
+"share_recent" = "最近のチャット";
+"share_new" = "%@との新しいチャット";
+"share_setup" = "共有を設定するには、Murageを一度開いてください。";
+"share_pair" = "この電話はまだコンピュータとペアリングされていません。Murageを開いてペアリングしてください。";
+"share_photo_large" = "この写真は大きすぎます。写真は10 MBまで送信できます。";
+"share_file_large" = "このファイルは大きすぎます。ファイルは25 MBまで送信できます。";
+"share_ten" = "一度に送信できるのは10項目までです。";
+"share_type" = "Murageはこの種類のファイルをまだ送信できません。";
+"share_offline" = "現在コンピュータに接続できません。接続できるようになったらMurageが送信します。";
+"share_passcode" = "この電話にパスコードを設定してから、Murageを開いてください。";
+"share_again" = "Murageを開いて共有を再設定してください。";
+"share_update" = "この機能を使うには、コンピュータのMurageを更新してください。";
+"share_done" = "完了";

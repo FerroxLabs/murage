@@ -12,7 +12,7 @@ function setup(over: Partial<RespondDeps> = {}, row: Partial<PushEventRow> = {})
   store.putBinding({ bindingId: B, deviceId: "d1", publisherToken: "murage_pt_x", createdAt: 1 });
   store.insertEvent({ eventRef: "a".repeat(64), bindingId: B, kind: "approval", category: "approval", botId: "lena", threadId: "t1", requestId: "req-1",
     messageId: "m1", collapseKey: "c".repeat(32), threadGroup: "g".repeat(16), revision: 1, timeSensitive: true, resolvedBy: null,
-    createdAt: 0, expiresAt: 10_000, holdUntil: 0, state: "sent", attempts: 1, nextAttemptAt: 0, ...row });
+    createdAt: 0, expiresAt: 10_000, holdUntil: 0, state: "sent", attempts: 1, nextAttemptAt: 0, phoneUsed: false, ...row });
   const deps: RespondDeps = { store, now: () => 5000, visible: () => true, card: () => ({ pending: true }), liveRating: () => "low", answer: vi.fn(async (_t, _r, d) => (d === "allow" ? "allowed-once" : "rejected")), ...over };
   return { db, store, deps };
 }
@@ -186,7 +186,7 @@ describe("respondFromPush", () => {
     expect((await respond(deps, body("allow", 1))).status).toBe(502);
     store.insertEvent({ eventRef: "b".repeat(64), bindingId: B, kind: "approval", category: "approval", botId: "lena", threadId: "t1", requestId: "req-1",
       messageId: "m1", collapseKey: "c".repeat(32), threadGroup: "g".repeat(16), revision: 2, timeSensitive: true, resolvedBy: null,
-      createdAt: 0, expiresAt: 10_000, holdUntil: 0, state: "sent", attempts: 1, nextAttemptAt: 0 });
+      createdAt: 0, expiresAt: 10_000, holdUntil: 0, state: "sent", attempts: 1, nextAttemptAt: 0, phoneUsed: false });
     store.rateRisk("t1", "req-1", "low", 1, 2);
     expect(await respond(deps, body("allow", 2))).toMatchObject({ status: 409, body: { code: "unfinished" } });
     expect(answer).toHaveBeenCalledTimes(1);
@@ -201,7 +201,7 @@ describe("respondFromPush", () => {
     expect((await respond(deps, body("allow", 1), "d1")).status).toBe(502);
     store.insertEvent({ eventRef: "b".repeat(64), bindingId: B, kind: "approval", category: "approval", botId: "lena", threadId: "t1", requestId: "req-1",
       messageId: "m1", collapseKey: "c".repeat(32), threadGroup: "g".repeat(16), revision: 2, timeSensitive: true, resolvedBy: null,
-      createdAt: 0, expiresAt: 10_000, holdUntil: 0, state: "sent", attempts: 1, nextAttemptAt: 0 });
+      createdAt: 0, expiresAt: 10_000, holdUntil: 0, state: "sent", attempts: 1, nextAttemptAt: 0, phoneUsed: false });
     expect(await respond(deps, body("deny", 2), "d2")).toEqual({ status: 200, body: { ok: true, outcome: "rejected" } });
     expect(db.prepare("SELECT decision, device_id, revision FROM push_decisions").get()).toEqual({ decision: "deny", device_id: "d2", revision: 2 });
   });

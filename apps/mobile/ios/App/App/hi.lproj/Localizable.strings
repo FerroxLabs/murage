@@ -1,0 +1,15 @@
+"What do you want to ask?" = "आप क्या पूछना चाहते हैं?";
+"What do you want to ask %@?" = "आप %@ से क्या पूछना चाहते हैं?";
+"Sent to %@. I'll let you know when it answers." = "%@ को भेज दिया। जवाब आने पर मैं आपको बता दूँगा।";
+"Sent to %@. The answer will be in your chat." = "%@ को भेज दिया। जवाब आपकी चैट में होगा।";
+"Murage can't reach your computer right now." = "Murage अभी आपके कंप्यूटर से कनेक्ट नहीं हो पा रहा है।";
+"Open Murage to set up asking." = "पूछने की सुविधा सेट अप करने के लिए Murage खोलें।";
+"Update Murage on your computer to use this." = "इसका इस्तेमाल करने के लिए अपने कंप्यूटर पर Murage अपडेट करें।";
+"That chat is no longer available. Open Murage to pick another." = "वह चैट अब उपलब्ध नहीं है। दूसरी चुनने के लिए Murage खोलें।";
+"Say open Murage to continue." = "जारी रखने के लिए कहें, Murage खोलो।";
+"Open in Murage" = "Murage में खोलें";
+"Ask in Murage" = "Murage में पूछें";
+"Ask Murage" = "Murage से पूछें";
+"Ask a bot" = "बॉट से पूछें";
+"Open my chat" = "मेरी चैट खोलें";
+"From" = "से";

@@ -131,6 +131,7 @@ export const LOCAL_ONLY_CHANNELS = Object.freeze([
   "companion:refresh-tailscale",
   "companion:remote-access",
   "companion:revoke",
+  "companion:share-ask",
   "companion:start",
   "companion:state",
   "companion:stop",

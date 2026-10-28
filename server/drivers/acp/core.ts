@@ -1738,6 +1738,11 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         if (browser) {
           servers.push({ name: "browser", command: browser.command, args: browser.args, env: acpEnv(browser.env) });
         }
+        // 1.0.9 S13b: the owner's phone, under the same name every engine uses. The phone confirms each call itself.
+        const phoneJobs = turn.integrations?.phoneJobs;
+        if (phoneJobs) {
+          servers.push({ name: "phoneJobs", command: phoneJobs.command, args: phoneJobs.args, env: acpEnv(phoneJobs.env) });
+        }
         // The bot's computer, mounted exactly like the Claude driver does.
         // Cloud boxes use the REST adapter; host and sandbox Cua connections
         // expose Cua Driver's official MCP server directly.
@@ -1779,6 +1784,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         if (turn.integrations?.memory) own.set(memoryName, "own:memory");
         if (turn.integrations?.composio) own.set(connectedAppsServerName(turn.integrations.composio.env), "own:connector");
         if (turn.integrations?.browser) own.set("browser", "own:browser");
+        if (turn.integrations?.phoneJobs) own.set("phoneJobs", "own:phoneJobs");
         if (turn.integrations?.computer || turn.integrations?.localComputer) own.set("computer", "own:computer");
         const records: McpMountRecord[] = [];
         for (const server of servers) {
@@ -3101,7 +3107,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           // would answer the question with nothing — and the harness receives
           // the tool's own name so its policy recognizes it too.
           const title = String(toolCall.title ?? "");
-          const questionTool = isQuestionTool(title) ? title : isQuestionTool(kind) ? kind : undefined;
+          const questionTool = isQuestionTool(title) ? bareQuestionToolName(title) : isQuestionTool(kind) ? bareQuestionToolName(kind) : undefined;
           if (ownedMemoryAlias && !turnConfig.fullAuto && !questionTool && state.promptSent &&
             sessionId && params.sessionId === sessionId && !state.settled && !state.cancelRequested &&
             Array.from(rpcPending.values()).some(pending => pending.method === "session/prompt")) {
@@ -5325,4 +5331,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
       });
     },
   };
+}
+
+/** The question tool's own name (the last `.` or `/` segment, minus an `mcp__server__` prefix), never the model's whole title. */
+function bareQuestionToolName(raw: string): string {
+  const trimmed = raw.trim().replace(/^mcp__.+__/i, "");
+  return trimmed.split(/[./]/).pop() || trimmed;
 }
