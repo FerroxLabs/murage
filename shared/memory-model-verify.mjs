@@ -38,8 +38,11 @@ export async function modelSizesMatch(directory, manifest) {
 /** The first component of `directory`, from the filesystem root down, that is a symbolic link; null if none (or if it cannot be read). */
 export async function linkedPathComponent(directory) {
   const resolved = path.resolve(directory);
-  const parts = resolved.split(path.sep).filter(Boolean);
-  let current = path.parse(resolved).root;
+  // Walk below the root only: on Windows the root is a drive (C:\) or a UNC share, and splitting the whole path would make
+  // the drive letter a component, so the first lstat (of C:\C:) fails and every link above the model would pass unseen.
+  const root = path.parse(resolved).root;
+  const parts = resolved.slice(root.length).split(path.sep).filter(Boolean);
+  let current = root;
   for (const part of parts) {
     current = path.join(current, part);
     try { if ((await lstat(current)).isSymbolicLink()) return current; }

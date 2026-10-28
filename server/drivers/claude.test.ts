@@ -23,6 +23,7 @@ import { brokerSocketCandidates, ClaudeDriver, CLAUDE_BUILT_IN_AGENTS, CLAUDE_IS
 import { resolveCall } from "../../shared/app-action-grant.ts";
 import { autoVerdict } from "../auto-approve.ts";
 import { bashTargetsOf, claudeExecShell, claudeInProjectAllow, claudeInProjectHold, claudeMountRecords, stripCapturedCredentialNames, claudeShellRefusal } from "./claude.ts";
+import { PHONE_TOOL_NAMES } from "../../shared/phone-jobs-contract.ts";
 import { OWN_ALWAYS_ASK, OWN_BUILTINS, OWN_UNASKED, type OwnBuiltin } from "../../shared/own-servers.ts";
 import { installMurageExec, murageExecPrefix, WRAPPER_SOURCE, writeExecEnvFile } from "./murage-exec.ts";
 import { inProjectCheck } from "../../shared/in-project.ts";
@@ -1458,6 +1459,25 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(browser).not.toHaveProperty("alwaysLoad");
   });
 
+  it("S13b: mounts phoneJobs exactly as given, pre-allows exactly its tools (no desktop card), and mounts none without it", async () => {
+    await create();
+    const phoneJobs = { command: process.execPath, args: ["/fake/phone-jobs-proxy.js"], env: { MURAGE_PHONE_TOOLS: "calendar_read", MURAGE_PJ_GEN: "g1" } };
+    const withDump = join(scratch, "phonejobs-with.json");
+    process.env.FAKE_CLAUDE_DUMP = withDump;
+    await instance.adapter.sendTurn({ threadId: "t-pj-with", text: "go", integrations: { phoneJobs } });
+    await recorder.until(event => event.type === "turn.completed" && event.threadId === "t-pj-with");
+    const seen = JSON.parse(readFileSync(withDump, "utf8"));
+    // the Claude launcher adds only its own MURAGE_EXEC_KEEP list of the names it keeps
+    expect(seen.mcpConfig.mcpServers.phoneJobs).toEqual({ ...phoneJobs, env: withWinStanzaPath({ ...phoneJobs.env, MURAGE_EXEC_KEEP: "MURAGE_PHONE_TOOLS,MURAGE_PJ_GEN" }) });
+    for (const tool of PHONE_TOOL_NAMES) expect(seen.argv.join(" ")).toContain(`mcp__phoneJobs__${tool}`);
+    expect(seen.argv.join(" ")).not.toMatch(/mcp__phoneJobs(?!__)/);
+    const withoutDump = join(scratch, "phonejobs-without.json");
+    process.env.FAKE_CLAUDE_DUMP = withoutDump;
+    await instance.adapter.sendTurn({ threadId: "t-pj-without", text: "go", integrations: { browser: { command: process.execPath, args: ["/fake/browser-proxy.js"], env: {} } } });
+    await recorder.until(event => event.type === "turn.completed" && event.threadId === "t-pj-without");
+    expect(JSON.parse(readFileSync(withoutDump, "utf8")).mcpConfig.mcpServers).not.toHaveProperty("phoneJobs");
+  });
+
   it("mounts local CUA without pre-allowing its computer namespace", async () => {
     await create();
     const dump = join(scratch, "local-dump.json");
@@ -1652,6 +1672,95 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(reply.text).toContain("steered: and also this");
     expect(recorder.events.every((e) => e.turnId === turnId)).toBe(true);
     await expect(instance.adapter.steer!("t-steer", "late")).resolves.toBe(false);
+  });
+
+  it("a message sent during the final answer is answered in the same turn, not lost", async () => {
+    // Claude Code runs input that arrives during its final answer as a turn of
+    // its own, right after `result` (probed on 2.1.309). The driver used to
+    // settle at that result, then close the process for "late frames".
+    await create("final-steer");
+    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-final-steer", text: "first" });
+    await recorder.until((e) => e.type === "content.delta" && (e as { delta?: string }).delta === "Writing the final answer");
+    await expect(instance.adapter.steer!("t-final-steer", "and also this")).resolves.toBe(true);
+    await recorder.until((e) => e.type === "item.completed" && e.itemType === "assistant_text" && (e as { text: string }).text === "reply to: and also this");
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ turnId, ok: true });
+    expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+    const texts = recorder.events.filter((e) => e.type === "item.completed" && e.itemType === "assistant_text").map((e) => (e as { text: string }).text);
+    expect(texts).toEqual(expect.arrayContaining(["reply to: first", "reply to: and also this"]));
+    expect(recorder.events.every((e) => e.turnId === turnId)).toBe(true);
+    // both results' tokens are this turn's
+    expect((done as { usage?: { input: number } }).usage?.input).toBeGreaterThan(12);
+  });
+
+  it("two messages sent during the final answer are answered together in the same turn", async () => {
+    process.env.FAKE_CLAUDE_FINAL_STEERS = "2";
+    try {
+      await create("final-steer");
+      const { turnId } = await instance.adapter.sendTurn({ threadId: "t-final-two", text: "first" });
+      await recorder.until((e) => e.type === "content.delta" && (e as { delta?: string }).delta === "Writing the final answer");
+      await expect(instance.adapter.steer!("t-final-two", "one")).resolves.toBe(true);
+      await expect(instance.adapter.steer!("t-final-two", "two")).resolves.toBe(true);
+      await recorder.until((e) => e.type === "item.completed" && e.itemType === "assistant_text" && (e as { text: string }).text === "reply to: one\ntwo");
+      expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ turnId, ok: true });
+      expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+    } finally {
+      delete process.env.FAKE_CLAUDE_FINAL_STEERS;
+    }
+  });
+
+  it("a background task's own result during the wait neither ends it nor is taken for the follow-up", async () => {
+    process.env.FAKE_CLAUDE_FOLLOWUP_NOTICE = "1";
+    process.env.FAKE_CLAUDE_FOLLOWUP_DELAY_MS = "300";
+    try {
+      await create("final-steer");
+      const { turnId } = await instance.adapter.sendTurn({ threadId: "t-final-notice", text: "first" });
+      await recorder.until((e) => e.type === "content.delta" && (e as { delta?: string }).delta === "Writing the final answer");
+      await expect(instance.adapter.steer!("t-final-notice", "and also this")).resolves.toBe(true);
+      const done = await recorder.until((e) => e.type === "turn.completed");
+      expect(done).toMatchObject({ turnId, ok: true });
+      const replyAt = recorder.events.findIndex((e) => e.type === "item.completed" && e.itemType === "assistant_text" && (e as { text: string }).text === "reply to: and also this");
+      expect(replyAt).toBeGreaterThanOrEqual(0);
+      expect(replyAt).toBeLessThan(recorder.events.indexOf(done));
+      expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+    } finally {
+      delete process.env.FAKE_CLAUDE_FOLLOWUP_NOTICE;
+      delete process.env.FAKE_CLAUDE_FOLLOWUP_DELAY_MS;
+    }
+  });
+
+  it("a message accepted while the turn waits for a follow-up starts the wait over, so a late follow-up still counts", async () => {
+    // the follow-up starts 3 s after the first result: past the first 2 s wait, inside the one the second message restarts
+    process.env.FAKE_CLAUDE_FOLLOWUP_DELAY_MS = "3000";
+    try {
+      await create("final-steer");
+      const { turnId } = await instance.adapter.sendTurn({ threadId: "t-final-extend", text: "first" });
+      await recorder.until((e) => e.type === "content.delta" && (e as { delta?: string }).delta === "Writing the final answer");
+      await expect(instance.adapter.steer!("t-final-extend", "one")).resolves.toBe(true);
+      await recorder.until((e) => e.type === "item.completed" && e.itemType === "assistant_text" && (e as { text: string }).text === "reply to: first");
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      await expect(instance.adapter.steer!("t-final-extend", "two")).resolves.toBe(true);
+      const done = await recorder.until((e) => e.type === "turn.completed", 8_000);
+      expect(done).toMatchObject({ turnId, ok: true });
+      const replyAt = recorder.events.findIndex((e) => e.type === "item.completed" && e.itemType === "assistant_text" && (e as { text: string }).text === "reply to: one\ntwo");
+      expect(replyAt).toBeGreaterThanOrEqual(0);
+      expect(replyAt).toBeLessThan(recorder.events.indexOf(done));
+    } finally {
+      delete process.env.FAKE_CLAUDE_FOLLOWUP_DELAY_MS;
+    }
+  }, 15_000);
+
+  it("a Stop while the turn waits for a steer's follow-up ends it as cancelled, never as the earlier success", async () => {
+    // `slow` folds a steer written after its tool result into the reply, so no follow-up comes: the turn waits up to 2 s
+    await create("slow");
+    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-hold-stop", text: "first" });
+    await recorder.until((e) => e.type === "item.completed" && e.itemType === "tool");
+    await expect(instance.adapter.steer!("t-hold-stop", "and also this")).resolves.toBe(true);
+    await recorder.until((e) => e.type === "item.completed" && e.itemType === "assistant_text" && (e as { text: string }).text.includes("steered: and also this"));
+    await instance.adapter.interruptTurn("t-hold-stop");
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ turnId, stopReason: "cancelled" });
+    expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
   });
 
   it("reuses the live process for the next compatible turn", async () => {
@@ -3382,6 +3491,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     agents: { command: process.execPath, args: ["fixture-agents"], env: { MURAGE_HARNESS_URL: "http://127.0.0.1:1", MURAGE_BOT_ID: "b1", MURAGE_COMMS_TOKEN: "tok", MURAGE_TURN_DEPTH: "0" } },
     memory: { command: process.execPath, args: ["fixture-memory"], env: { MURAGE_HARNESS_URL: "http://127.0.0.1:1" } },
     phone: { command: process.execPath, args: ["fixture-phone"], env: {} },
+    phoneJobs: { command: process.execPath, args: ["fixture-phone-jobs"], env: {} },
     browser: { command: process.execPath, args: ["fixture-browser"], env: {} },
     dweb: { url: "http://127.0.0.1:49737" },
     computer: { kind: "box" as const, boxId: "box-1", token: "box-token" },
@@ -3393,15 +3503,24 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     "mcp__agents__web_search", "mcp__dweb__dweb_opencode_run", "mcp__agents__register_artifact",
   ];
 
-  for (const [level, flags] of [["Ask/Auto (routeAsks)", { routeAsks: true as const }], ["Full (stopLine)", { stopLine: true as const }], ["plain", {}]] as const) {
-    it(`pre-allows only OWN_UNASKED tools, never a whole own server, on a ${level} turn (B1/B2)`, async () => {
+  // Bot email (1.0.9, BOT-EMAIL-MURAGE-109 3.1/3.2): the five email tools are OWN_UNASKED rows of own:agents, but they are listed
+  // (and so pre-allowed) only when the turn's email mount lists them in the agents env: none with no mount (dark launch),
+  // email_list/email_read on "read", all five on "send".
+  const EMAIL_READ = ["mcp__agents__email_list", "mcp__agents__email_read"];
+  const EMAIL_ALL = [...EMAIL_READ, "mcp__agents__email_send", "mcp__agents__email_reply", "mcp__agents__email_trust_offer"];
+  const emailCases = [["no email mount", undefined, []], ["email mount read", "read", EMAIL_READ], ["email mount send", "send", EMAIL_ALL]] as const;
+  const turnCases = [["Ask/Auto (routeAsks)", { routeAsks: true as const }], ["Full (stopLine)", { stopLine: true as const }], ["plain", {}]] as const;
+  for (const [level, flags] of turnCases) for (const [emailLabel, emailMode, emailListed] of emailCases) {
+    it(`pre-allows only OWN_UNASKED tools, never a whole own server, on a ${level} turn, ${emailLabel} (B1/B2)`, async () => {
       await create(undefined, {}, { permissionMode: "default" });
-      const dump = join(scratch, `dump-own-allow-${Object.keys(flags).join("") || "plain"}.json`);
+      const key = `${Object.keys(flags).join("") || "plain"}-${emailMode ?? "none"}`;
+      const dump = join(scratch, `dump-own-allow-${key}.json`);
       process.env.FAKE_CLAUDE_DUMP = dump;
-      const sent = await instance.adapter.sendTurn({ threadId: `t-own-allow-${Object.keys(flags).join("") || "plain"}`, text: "my phone", ...flags, integrations: ownMounts } as never);
+      const mounts = emailMode ? { ...ownMounts, agents: { ...ownMounts.agents, env: { ...ownMounts.agents.env, MURAGE_EMAIL: emailMode } } } : ownMounts;
+      const sent = await instance.adapter.sendTurn({ threadId: `t-own-allow-${key}`, text: "my phone", ...flags, integrations: mounts } as never);
       await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
       const seen = JSON.parse(readFileSync(dump, "utf8"));
-      for (const server of ["agents", "murage-memory", "phone", "browser", "dweb", "computer"]) expect(seen.mcpConfig.mcpServers[server]).toBeDefined();
+      for (const server of ["agents", "murage-memory", "phone", "phoneJobs", "browser", "dweb", "computer"]) expect(seen.mcpConfig.mcpServers[server]).toBeDefined();
       const allowed: string[] = seen.argv[seen.argv.indexOf("--allowedTools") + 1].split(",");
       for (const server of Object.values(OWN_BUILTINS)) expect(allowed).not.toContain(`mcp__${server}`);
       for (const tool of ALWAYS_ASK_PHONE_AND_OWN) expect(preAllowedByCli(allowed, tool), tool).toBe(false);
@@ -3409,10 +3528,13 @@ describe("ClaudeDriver turns (fake CLI)", () => {
         const tool = `mcp__${OWN_BUILTINS[row.mount.slice("own:".length) as OwnBuiltin]}__${row.tool}`;
         expect(preAllowedByCli(allowed, tool), tool).toBe(false);
       }
-      // every OWN_UNASKED tool of a mounted own server stays pre-allowed, by its exact name
-      const expected = OWN_UNASKED.filter((row) => row.mount !== "own:connector").flatMap((row) => row.tools.map((tool) => `mcp__${OWN_BUILTINS[row.mount.slice("own:".length) as OwnBuiltin]}__${tool}`));
+      // every OWN_UNASKED tool of a mounted own server stays pre-allowed, by its exact name; the email tools only as the mount lists them
+      const ownUnasked = OWN_UNASKED.filter((row) => row.mount !== "own:connector").flatMap((row) => row.tools.map((tool) => `mcp__${OWN_BUILTINS[row.mount.slice("own:".length) as OwnBuiltin]}__${tool}`));
+      expect(ownUnasked).toEqual(expect.arrayContaining(EMAIL_ALL));
+      const expected = ownUnasked.filter((tool) => !EMAIL_ALL.includes(tool) || (emailListed as readonly string[]).includes(tool));
       expect(expected.length).toBeGreaterThan(40);
       expect(allowed).toEqual(expect.arrayContaining(expected));
+      expect(allowed.filter((tool) => EMAIL_ALL.includes(tool)).sort()).toEqual([...emailListed].sort());
       // the broker's own two tools, and nothing else that is not an OWN_UNASKED name
       expect(allowed.filter((tool) => tool.startsWith("mcp__") && !expected.includes(tool)).sort()).toEqual(["mcp__muragebox__approve", "mcp__muragebox__ask_user"]);
     });
@@ -3957,6 +4079,60 @@ describe("ClaudeDriver background tasks (fake CLI)", () => {
     expect(note.turnId).toBe(turnId);
     const subs = recorder.events.filter((e) => e.type === "turn.subtask") as any[];
     expect(subs[subs.length - 1].subtasks.every((s: any) => s.status === "failed")).toBe(true);
+  });
+
+  it("re-arms the background cap after a steer hold adopts a follow-up with new helpers", async () => {
+    const childProcess = await import("node:child_process");
+    const spawns = vi.spyOn(childProcess, "spawn");
+    const timers = vi.spyOn(globalThis, "setTimeout");
+    const clears = vi.spyOn(globalThis, "clearTimeout");
+    const capMs = 1_000;
+    const capTimers = () => timers.mock.calls.flatMap((args, i) => typeof args[0] === "function" && args[0].name === "endAtCap" && args[1] === capMs ? [timers.mock.results[i].value] : []);
+    try {
+      await create({ backgroundTaskCapMs: capMs });
+      process.env.FAKE_CLAUDE_BG_HOLD = "1";
+      process.env.FAKE_CLAUDE_BG_ASKS = "0";
+      const threadId = "t-bg-steer-cap";
+      const { turnId } = await instance.adapter.sendTurn({ threadId, text: "__fixture_background__" });
+      await recorder.until((e) => e.type === "turn.subtask" && e.subtask.id === "bgtask3");
+      await expect.poll(() => readFileSync(log, "utf8")).toContain("held");
+      expect(capTimers()).toHaveLength(1);
+      const firstCap = capTimers()[0];
+
+      // The held fake emits no more frames. Replay the remaining protocol on
+      // its stdout so each transition is observed without racing another reply.
+      const child = spawns.mock.results.find((result) => result.type === "return"
+        && result.value.spawnargs.some((arg: string) => arg.includes("--input-format")))?.value;
+      expect(child?.stdout).toBeTruthy();
+      const frame = (value: unknown) => child!.stdout!.emit("data", Buffer.from(`${JSON.stringify(value)}\n`));
+      const result = { type: "result", is_error: false, stop_reason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 } };
+      await expect(instance.adapter.steer!(threadId, "Start one more helper after these finish.")).resolves.toBe(true);
+      for (const task_id of ["bgtask1", "bgtask2", "bgtask3"]) {
+        frame({ type: "system", subtype: "task_notification", task_id, status: "completed" });
+      }
+      frame(result);
+      expect(clears).toHaveBeenCalledWith(firstCap);
+      expect(capTimers()).toHaveLength(1);
+      expect(recorder.events.some((e) => e.type === "turn.completed")).toBe(false);
+
+      frame({ type: "system", subtype: "init", session_id: "fake-bg-session", model: "fake" });
+      frame({ type: "assistant", message: { content: [{ type: "text", text: "Starting the follow-up helper." }] } });
+      frame({ type: "system", subtype: "task_started", task_id: "followup-helper", description: "Follow-up helper", task_type: "local_agent", is_backgrounded: true });
+      frame(result);
+      expect(capTimers()).toHaveLength(2);
+      expect(capTimers()[1]).not.toBe(firstCap);
+      expect(recorder.events.find((e) => e.type === "item.completed" && e.itemType === "assistant_text" && e.text === "Starting the follow-up helper.")).toMatchObject({ turnId });
+
+      const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+      expect(done).toMatchObject({ ok: true, stopReason: "background_wait_cap" });
+      expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+      expect(recorder.events.find((e) => e.type === "turn.subtask" && e.subtask.id === "followup-helper" && e.subtask.status === "failed")).toMatchObject({ turnId });
+      expect(recorder.events.filter((e) => e.type === "runtime.error")).toEqual([]);
+    } finally {
+      clears.mockRestore();
+      timers.mockRestore();
+      spawns.mockRestore();
+    }
   });
 
   it("settles on the first result when no background task is open (unchanged)", async () => {

@@ -216,6 +216,7 @@ const INTERNAL_ONLY: Record<string, string> = {
   "server/cloud-home/credential-projection.ts": "credential keys a Cloud home projects from the supervisor",
   "server/cloud-home/credentials.ts": "a config section id and an environment name",
   "server/cloud-home/supervisor-port.ts": "supervisor IPC event types",
+  "server/bot-calls-calendar.ts": "the service's batch-execute tool id the free/busy read sends",
   "server/composio-standard-tools.ts": "the service's tool ids; the bridge shows engines the plain names",
   "server/composio.ts": "event types, log tags, the service's host and error codes",
   "server/config.ts": "environment names",
