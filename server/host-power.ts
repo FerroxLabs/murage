@@ -7,7 +7,8 @@
 // default-allow profile (section 5). Windows is the privilege removal on the server's own token (procs.ts, section 6), not here.
 // This module plans the launch; procs.ts spawnCli runs it. It imports nothing of procs.ts.
 import { createHash } from "node:crypto";
-import { accessSync, closeSync, constants as fsConstants, existsSync, fstatSync, lstatSync, mkdtempSync, openSync, readSync, realpathSync, rmSync, statSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { accessSync, closeSync, constants as fsConstants, existsSync, fstatSync, lstatSync, mkdtempSync, openSync, readFileSync, readSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -188,6 +189,9 @@ export async function stopHostPowerStubForTests(): Promise<void> {
 
 export type HostPowerPlan =
   | { kind: "refuse"; reason: string }
+  /** This computer cannot give an engine the block (an environment gap, hostPowerGap): the engine runs as an unwrapped spawn,
+   *  under the access level, the never-list and the command reader. Never for a helper that failed its checks (tampering). */
+  | { kind: "unwrapped"; reason: string }
   | { kind: "seatbelt"; command: string; args: string[] }
   /** `args` is bwrap's visible argv (`--args <fd> -- <engine argv>`); `argsData` is every bwrap option, the turn environment's
    *  --setenv pairs among them, NUL-separated for the --args pipe. `bpfSha256` is the pin openPowerFilter checks. */
@@ -205,6 +209,120 @@ function helperProblem(file: string): string | null {
   if (hostPowerDeps.writable(file)) return `${file} is writable by this user`;
   return null;
 }
+
+/** The shipped helper after its checks (section 4): bwrap and the filter present, real paths, not symlinks, not writable by this
+ *  user, bwrap the binary the cage manifest names and the manifest naming this server's filter pin. A problem is tampering or a
+ *  broken install, never the environment. */
+function verifiedHelper(arch: string, bpfSha256: string): { helperDir: string; bwrap: string; bpf: string } | { problem: string } {
+  const dir = hostPowerDeps.helperDir();
+  if (!dir) return { problem: "the shipped bwrap is missing: run `pnpm build:murage-cage` (needs Docker and the Linux build tools)" };
+  let helperDir: string;
+  try { helperDir = realpathSync(dir); } catch { return { problem: `${dir} could not be resolved` }; }
+  const bwrap = join(helperDir, "bwrap"), bpf = join(helperDir, "murage-power.bpf");
+  for (const file of [bwrap, bpf]) { const problem = helperProblem(file); if (problem) return { problem }; }
+  // The bytes: bwrap must be the binary the cage manifest names, and the manifest must name this server's filter pin (the filter's
+  // own bytes are hashed through the fd bwrap is handed, openPowerFilter).
+  const digests = cageDigests(helperDir, arch, bpfSha256);
+  if ("problem" in digests) return { problem: digests.problem };
+  if (fileSha256(bwrap, 64 * 1024 * 1024) !== digests.bwrap) return { problem: `${bwrap} is not the shipped bwrap` };
+  return { helperDir, bwrap, bpf };
+}
+
+// ── The environment gap (1.0.9) ─────────────────────────────────────────────
+// House rules v2, rules 1 and 8: a local check never leaves an owner unable to run their bots. Where this computer cannot give
+// an engine the block (the server runs as root; the verified bwrap may not create a user namespace: Ubuntu 23.10+ AppArmor
+// restricting unprivileged user namespaces for an AppImage, a container's seccomp profile, a kernel with them turned off), a
+// wrapped engine runs as an ordinary spawn under the access level, the never-list and the command reader. The cause is logged
+// once and the owner is told once (HOST_POWER_GAP_NOTICE). A helper that fails its checks is never a gap.
+
+export type HostPowerGapCause = "root" | "container" | "userns-off" | "userns-restricted" | "userns-denied";
+export type HostPowerGap = { cause: HostPowerGapCause; detail: string };
+/** The one owner-facing line, shown once (hostPowerGapNoticeDue). Says what protects the bots; no sandbox words. */
+export const HOST_POWER_GAP_NOTICE = "On this computer your bots work under their access level and Murage's never-list, which checks every command before it runs.";
+
+/** The driver kinds whose spawns are not under the block on Linux and macOS (section 2, revision 4.1): they pass
+ *  `posixHostPower: false` (claude.ts, codex.ts, acp/core.ts for fuigoAgent). Every other engine is wrapped. */
+export const HOST_POWER_UNWRAPPED_DRIVERS: ReadonlySet<string> = new Set(["claudeAgent", "codex", "fuigoAgent"]);
+
+const gapState: { gap: HostPowerGap | null; probing: Promise<HostPowerGap | null> | null } = { gap: null, probing: null };
+
+/** The environment gap this server found, or null when the block applies (or the probe has not answered yet). */
+export function hostPowerGap(): HostPowerGap | null { return gapState.gap; }
+
+/** Record the gap once, with its reason in the app log. A later cause does not replace the first. */
+export function noteHostPowerGap(cause: HostPowerGapCause, detail: string): HostPowerGap {
+  if (gapState.gap) return gapState.gap;
+  gapState.gap = { cause, detail };
+  console.warn(`[host-power] this computer cannot apply the power block (${cause}: ${detail}); wrapped engines run under the access level, the never-list and the command reader`);
+  return gapState.gap;
+}
+
+/** bwrap's own words when the kernel or a security module refused it a user namespace (bwrap 0.13.1). */
+export function usernsDenied(stderr: string): boolean {
+  return /^bwrap: (?:setting up uid map: (?:Permission denied|Operation not permitted)|(?:unshare user ns|Creating new namespace failed): (?:Permission denied|Operation not permitted|No space left on device)|No permissions to create a new namespace)/m.test(stderr);
+}
+
+const readKernelSetting = (file: string): string | null => { try { return readFileSync(file, "utf8").trim(); } catch { return null; } };
+/** Why a verified bwrap was refused a user namespace, for the log: a container, user namespaces off, the AppArmor restriction, or
+ *  (none of those visible) a plain denial. The label never changes what runs. */
+export function usernsGapCause(read: (file: string) => string | null = readKernelSetting, present: (file: string) => boolean = existsSync): HostPowerGapCause {
+  if (present("/.dockerenv") || present("/run/.containerenv") || /(?:docker|containerd|kubepods|libpod|lxc)/.test(read("/proc/1/cgroup") ?? "")) return "container";
+  if (read("/proc/sys/kernel/unprivileged_userns_clone") === "0" || read("/proc/sys/user/max_user_namespaces") === "0") return "userns-off";
+  if (read("/proc/sys/kernel/apparmor_restrict_unprivileged_userns") === "1") return "userns-restricted";
+  return "userns-denied";
+}
+
+/** The probe's bwrap options: the block's user and pid namespace with nothing else, so a refusal can only be the namespace. */
+export function probeOptions(euid: number, egid: number): string[] {
+  return ["--unshare-user", "--uid", String(euid), "--gid", String(egid), "--unshare-pid", "--cap-drop", "ALL", "--die-with-parent", "--new-session",
+    "--bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--", "true"];
+}
+
+/** Seam for the probe's one bwrap run. */
+export const hostPowerProbeDeps = {
+  run: (command: string, args: string[]): Promise<{ code: number | null; stderr: string }> => new Promise((resolve) => {
+    execFile(command, args, { env: { ...BWRAP_ENVIRONMENT }, timeout: 10_000, maxBuffer: 64 * 1024 }, (error, _stdout, stderr) => {
+      const code = error ? (typeof (error as NodeJS.ErrnoException & { code?: unknown }).code === "number" ? (error as unknown as { code: number }).code : null) : 0;
+      resolve({ code, stderr: String(stderr ?? "") });
+    });
+  }),
+};
+
+/** At server startup (Linux, desktop): find out once whether this computer lets the verified bwrap make the block's namespaces.
+ *  Root is a gap without a probe. A helper that fails its checks is not probed (its launches stay refused). Any other failure is
+ *  not a gap. */
+export function probeHostPowerEnvironment(): Promise<HostPowerGap | null> {
+  if (gapState.probing) return gapState.probing;
+  gapState.probing = (async () => {
+    if (hostPowerDeps.platform() !== "linux") return null;
+    const arch = hostPowerDeps.arch();
+    const pin = hostPowerDeps.powerFilterSha256(arch);
+    if (!["x64", "arm64"].includes(arch) || !pin) return null;
+    const euid = hostPowerDeps.geteuid();
+    if (euid === 0) return noteHostPowerGap("root", "the server runs as root");
+    const helper = verifiedHelper(arch, pin);
+    if ("problem" in helper) return null;
+    const result = await hostPowerProbeDeps.run(helper.bwrap, probeOptions(euid, hostPowerDeps.getegid()));
+    if (result.code === 0 || !usernsDenied(result.stderr)) return gapState.gap;
+    return noteHostPowerGap(usernsGapCause(), result.stderr.split("\n")[0].trim().slice(0, 200));
+  })();
+  return gapState.probing;
+}
+
+/** Whether the owner is still owed the one gap line: true once, the first time it is asked while a gap is known, and never again
+ *  on this computer (`marker`, the data folder's power-guard-notice.json, data-dir-inventory.ts). A marker that cannot be written still answers true only once
+ *  per run. */
+export function hostPowerGapNoticeDue(marker: string): boolean {
+  if (!gapState.gap || noticeState.shown) return false;
+  noticeState.shown = true;
+  if (existsSync(marker)) return false;
+  try { writeFileSync(marker, JSON.stringify({ shownAt: new Date().toISOString(), cause: gapState.gap.cause }) + "\n", { mode: 0o600 }); } catch { /* still once per run */ }
+  return true;
+}
+const noticeState = { shown: false };
+
+/** Tests: forget the gap, the probe and the notice. */
+export function resetHostPowerGapForTests(): void { gapState.gap = null; gapState.probing = null; noticeState.shown = false; }
 
 /** The pathname of each `unix:path=` entry in a D-Bus address; `abstract` when any entry is an abstract socket. */
 export function sessionBusPaths(address: string | undefined): { paths: string[]; abstract: boolean } {
@@ -362,18 +480,17 @@ export function planHostPower(command: string, args: string[], env: NodeJS.Proce
   const bpfSha256 = hostPowerDeps.powerFilterSha256(arch);
   if (!["x64", "arm64"].includes(arch) || !bpfSha256) return { kind: "refuse", reason: `architecture ${arch} has no power filter` };
   const euid = hostPowerDeps.geteuid();
-  if (euid === 0) return { kind: "refuse", reason: "the server runs as root" };
-  const dir = hostPowerDeps.helperDir();
-  if (!dir) return { kind: "refuse", reason: "the shipped bwrap is missing: run `pnpm build:murage-cage` (needs Docker and the Linux build tools)" };
-  let helperDir: string;
-  try { helperDir = realpathSync(dir); } catch { return { kind: "refuse", reason: `${dir} could not be resolved` }; }
-  const bwrap = join(helperDir, "bwrap"), bpf = join(helperDir, "murage-power.bpf");
-  for (const file of [bwrap, bpf]) { const problem = helperProblem(file); if (problem) return { kind: "refuse", reason: problem }; }
-  // The bytes: bwrap must be the binary the cage manifest names, and the manifest must name this server's filter pin (the filter's
-  // own bytes are hashed through the fd bwrap is handed, openPowerFilter).
-  const digests = cageDigests(helperDir, arch, bpfSha256);
-  if ("problem" in digests) return { kind: "refuse", reason: digests.problem };
-  if (fileSha256(bwrap, 64 * 1024 * 1024) !== digests.bwrap) return { kind: "refuse", reason: `${bwrap} is not the shipped bwrap` };
+  // A server running as root (a VPS self-host, a root container): bwrap's user namespace maps root to root, so the block adds
+  // nothing an owner could rely on there. The turn runs on the harness; the reason is logged once (noteHostPowerGap).
+  if (euid === 0) { noteHostPowerGap("root", "the server runs as root"); return { kind: "unwrapped", reason: "the server runs as root" }; }
+  const helper = verifiedHelper(arch, bpfSha256);
+  if ("problem" in helper) return { kind: "refuse", reason: helper.problem };
+  const { helperDir, bwrap, bpf } = helper;
+  // Only after the helper passed every check above: a writable, swapped or unpinned helper is tampering and stays refused. A
+  // verified bwrap that this computer does not let create a user namespace (Ubuntu 24.04 AppArmor, a container, user namespaces
+  // turned off) is the environment, and the turn runs without the block.
+  const known = hostPowerGap();
+  if (known) return { kind: "unwrapped", reason: known.detail };
   const stubPath = hostPowerDeps.stubSocket();
   if (!stubPath) return { kind: "refuse", reason: stub.problem ? `Murage could not set up its power-control socket: ${stub.problem}` : "the bus stub is not bound" };
   const turnEnv = turnEnvironment(env);
@@ -409,7 +526,7 @@ export function bwrapEarlyExitMessage(status: string, stderr: string, command: s
   const message = `the bundled bwrap ended (${status}) before the engine started, so the power block was not in place${said ? `: ${said}` : ""}`;
   const sourceRun = hostPowerDeps.platform() === "linux" && !env.MURAGE_PACKAGED && !env.MURAGE_RESOURCES_PATH && !env.OMB_RESOURCES_PATH
     && command.endsWith(`/dist-native/cage/linux-${hostPowerDeps.arch()}/bwrap`);
-  const usernsDenial = /^bwrap: (?:setting up uid map: (?:Permission denied|Operation not permitted)|(?:unshare user ns|Creating new namespace failed): (?:Permission denied|Operation not permitted)|No permissions to create a new namespace)/m.test(stderr);
+  const usernsDenial = usernsDenied(stderr);
   return sourceRun && usernsDenial
     ? `${message}. Run \`pnpm cage:apparmor\` once from this repository (it asks for your sudo password one time) to install the source cage AppArmor profile, then try again.`
     : message;

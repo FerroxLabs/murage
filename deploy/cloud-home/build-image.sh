@@ -384,6 +384,10 @@ install -m 0755 deploy/cloud-home/murage-backup /usr/local/libexec/murage-backup
 install -m 0644 deploy/cloud-home/backup-excludes.txt /etc/murage-home/backup-excludes.txt
 install -m 0644 deploy/cloud-home/murage-backup.service /etc/systemd/system/murage-backup.service
 install -m 0644 deploy/cloud-home/murage-backup.timer /etc/systemd/system/murage-backup.timer
+# 1.0.9 Sentinel: a separate, non-root, network-less observer of /data/home/health only (docs/sentinel.md).
+install -m 0755 deploy/cloud-home/murage-sentinel-descriptor.mjs /usr/local/libexec/murage-sentinel-descriptor.mjs
+install -m 0644 deploy/cloud-home/murage-sentinel.service /etc/systemd/system/murage-sentinel.service
+install -m 0644 deploy/cloud-home/murage-sentinel.timer /etc/systemd/system/murage-sentinel.timer
 install -m 0755 deploy/cloud-home/start-home.sh /usr/local/libexec/murage-home-start
 install -m 0755 deploy/cloud-home/murage-enroll /usr/local/libexec/murage-enroll
 cc -std=c11 -O2 -Wall -Wextra -Werror deploy/cloud-home/murage-clock.c -o "$stage/murage-clock"
@@ -452,6 +456,7 @@ systemctl enable murage-home-recover.timer
 systemctl enable murage-miner-watch.service
 # Nightly encrypted backup of /data (restic over SFTP). Inert until /etc/murage-home/backup.json exists.
 systemctl enable murage-backup.timer
+systemctl enable murage-sentinel.timer
 systemctl enable murage-commands.service
 # First boot: install the backup public key on the Storage Box, then destroy every on-disk copy of the cloud-init
 # user-data (it carried the enrollment token and backup credentials; the metadata service is also root-only in nft).

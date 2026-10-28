@@ -45,6 +45,7 @@ import {
   setupPaths,
 } from "../lib/service-account.mjs";
 import { stageUnit } from "../lib/systemd.mjs";
+import { prepareSentinel, sentinelPayload, sentinelWatchSpec } from "../lib/sentinel.mjs";
 import * as ts from "../lib/tailscale.mjs";
 import { ask, askSecret, c, closeRl, confirm, fail, heading, ok, qrBlock, refuseInteractivePrompts, warn } from "../lib/ui.mjs";
 import {
@@ -1166,15 +1167,18 @@ async function start(argv = []) {
   const startup = new AbortController();
   let harness;
   let sidecar;
+  let sentinel = null;
   let starting = Promise.resolve();
   let stopping = false;
   let shuttingDown;
-  const shutdown = (code, signal = "SIGTERM") => {
+  // An explicit stop (a signal to `murage start`) ends the health checks too; a crash of the harness or the sidecar leaves
+  // them running, detached, so the failure itself is observed. The next start's watcher replaces them.
+  const shutdown = (code, signal = "SIGTERM", explicit = false) => {
     if (stopping) return shuttingDown;
     stopping = true;
     startup.abort();
     shuttingDown = (async () => {
-      const results = await Promise.allSettled([harness?.stop(signal), sidecar?.stop(signal), starting]);
+      const results = await Promise.allSettled([harness?.stop(signal), sidecar?.stop(signal), explicit ? sentinel?.stop(signal) : undefined, starting]);
       const failed = results.find(result => result.status === "rejected");
       if (failed) fail(`startup or shutdown failed: ${failed.reason?.message ?? failed.reason}`);
       // These are the exact owned children. Exit only after their departure
@@ -1184,8 +1188,8 @@ async function start(argv = []) {
     return shuttingDown;
   };
   // Register before the first spawn, not after potentially slow startup work.
-  process.on("SIGINT", () => { void shutdown(130, "SIGINT"); });
-  process.on("SIGTERM", () => { void shutdown(143); });
+  process.on("SIGINT", () => { void shutdown(130, "SIGINT", true); });
+  process.on("SIGTERM", () => { void shutdown(143, "SIGTERM", true); });
   try {
     harness = ownChild(spawn(process.execPath, args, { env: { ...env, ...launchSecretVia("MURAGE_COMPANION_TOKEN", "stdin") }, stdio: ["pipe", "inherit", "inherit"] }));
     feedLaunchSecretStdin(harness.child, launchToken);
@@ -1211,9 +1215,45 @@ async function start(argv = []) {
       },
     });
     await starting;
+    // Health checks (lib/sentinel.mjs): the independent watch supervisor, detached. Coverage only: it never stops the
+    // start, its exit never takes the harness down, and a harness crash never takes it down.
+    if (!stopping) {
+      const started = await startSentinel(env, found.entry);
+      if (stopping) await started?.stop();
+      else sentinel = started;
+    }
   } catch (error) {
     if (!stopping) fail(`could not start Murage: ${error.message}`);
     await shutdown(1);
+  }
+}
+
+/**
+ * Starts this deployment's health checks (GAP-SENTINEL-109 section 10.1, headless/self-host): writes the descriptor,
+ * then runs the scanner's watch supervisor detached, so it outlives a crash of this process. Answers the child with its
+ * explicit stop, or null with one warning line.
+ * Never throws.
+ * @param {Record<string,string|undefined>} env the harness's resolved env (MURAGE_DATA_DIR set)
+ * @param {string} serverEntry
+ */
+export async function startSentinel(env, serverEntry, deps = {}) {
+  const say = deps.warn ?? warn;
+  try {
+    const payload = (deps.payload ?? sentinelPayload)(serverEntry);
+    // A payload without the scanner (an older build, or a TypeScript entry in a checkout) simply has no health checks.
+    if (!payload) return null;
+    const prepared = await (deps.prepare ?? prepareSentinel)({ payload, dataDir: env.MURAGE_DATA_DIR, env });
+    if (!prepared.ok) { say(`health checks are waiting (${prepared.reason}); Murage runs as usual.`); return null; }
+    const spec = sentinelWatchSpec({ execPath: deps.execPath ?? process.execPath, entry: payload.entry, descriptorPath: prepared.descriptorPath, env });
+    const child = (deps.spawn ?? spawn)(spec.command, spec.args, { env: spec.env, stdio: ["ignore", "ignore", "inherit"], detached: true });
+    child.unref?.();
+    const owned = ownChild(child);
+    owned.child.once("error", error => say(`health checks could not start: ${error.message}; Murage runs as usual.`));
+    owned.child.once("exit", code => { if (code !== 0 && code !== null) say(`health checks stopped (code ${code}); Murage runs as usual.`); });
+    return owned;
+  } catch (error) {
+    say(`health checks could not start: ${error?.message ?? error}; Murage runs as usual.`);
+    return null;
   }
 }
 

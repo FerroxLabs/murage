@@ -388,6 +388,8 @@ describe("CF-5 history is fixed (I-24)", () => {
       .filter((file) => /\b(?:patchMessage|updateMessage|deleteMessage|removeMessage)\(/.test(source(file)))
       .sort();
     expect(writers).toEqual([
+      // a bot call's own card row (BOT-CALLS-109 8): each transition rewrites that call's card, never another row
+      "bot-calls-card.ts",
       // the compile-time guard's own examples of a write that must not compile, and the boundary's one non-text link to a row (never its words)
       "bot-egress.expect-errors.ts",
       "boundary-ports.ts",

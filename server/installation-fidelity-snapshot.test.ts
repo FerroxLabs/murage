@@ -7,6 +7,9 @@ import { stageInstallationStateWhileOwned } from "./installation-state-snapshot.
 import { inventoryFidelity } from "./installation-fidelity-snapshot.ts";
 import { backupFixture } from "./testing/backup-fixture.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { HEALTH_FILES, HEALTH_LIMITS } from "../shared/health-protocol.mjs";
+import { HealthPublisher } from "./health/publisher.ts";
+import { StatsPublisher } from "./health/stats-publisher.ts";
 const selection={scope:"application-data",credentialPolicy:"preserve-in-encrypted-fidelity"} as const;
 it("keeps fidelity metadata under the same lease and detects later component changes",async()=>{
   const f=backupFixture();try{await withOfflineInstallation(f.data,async installation=>{
@@ -206,6 +209,69 @@ it("leaves the retired own connected-apps key out of the raw config copy and kee
       expect(JSON.parse(copy).profile.name).toBe("A");
       expect(readFileSync(join(f.data,"config.json"),"utf8")).toBe(config);
       stage.assertSourceUnchanged();inventory.assertUnchanged();
+    });
+  }finally{f.db.close();removeTempDirSync(f.parent);}
+});
+
+// 1.0.9 Sentinel (GAP-SENTINEL-109 section 13, SENTINEL-PRODUCERS): DATA_DIR/health is runtime metadata. A capture with it
+// present (segments, sealed stats generations, manifests, an interrupted temporary child) completes and stores none of it;
+// publishing below the root during a capture keeps the capture's membership; a capture that began without the root keeps
+// that membership because the publisher defers instead of creating it; an outside change to the top level still stops it.
+const healthWindow=(seq:number)=>({schemaVersion:1 as const,installationId:"e".repeat(32),producer:"server" as const,epoch:7,seq,startAt:1_793_000_000_000+seq*60_000,endAt:1_793_000_060_000+seq*60_000,activeMs:60_000,complete:true,omitted:0,coverageByDetector:{backup:"complete" as const},counters:[],facts:[],lifecycle:"running" as const});
+async function populatedHealth(data:string){
+  let now=1_793_000_000_000;const publisher=new HealthPublisher({dataDir:data,now:()=>now});
+  expect(publisher.initialize()).toBe("ready");
+  await publisher.appendWindow("server",healthWindow(0));await publisher.appendWindow("desktop",{...healthWindow(0),producer:"desktop"});
+  writeFileSync(join(data,"health",HEALTH_FILES.serverPrevious),"{}\n",{mode:0o600});
+  const stats=new StatsPublisher({publisher,installationId:"e".repeat(32),now:()=>now});
+  expect(await stats.publishStatsGeneration({at:now,rows:[{role:"messages",page_size:4096,page_count:10}]})).not.toBeNull();
+  now+=1000;expect(await stats.publishStatsGeneration({at:now,rows:[{role:"messages",page_size:4096,page_count:11}]})).not.toBeNull();
+  expect(publisher.replaceManifest(HEALTH_FILES.backupStatus,JSON.stringify({placeholder:true}))).toBe(true);
+  writeFileSync(join(data,"health",".tmp-0123456789abcdef.sqlite"),"interrupted",{mode:0o600});
+  return {publisher,advance:(ms:number)=>{now+=ms;}};
+}
+const healthStored=(paths:string[])=>paths.filter(path=>path==="health"||path.startsWith("health/"));
+it("captures with health/ present, stores none of it, and publication below it during the capture keeps membership",async()=>{
+  const f=backupFixture();try{
+    const {publisher,advance}=await populatedHealth(f.data);
+    await withOfflineInstallation(f.data,async installation=>{
+      const stage=await stageInstallationStateWhileOwned(installation,f.parent);
+      const inventory=await inventoryFidelity(installation,stage,selection);
+      expect(healthStored([...stage.manifest.files.map(file=>file.path),...inventory.sources.map(file=>file.path)])).toEqual([]);
+      expect(inventory.coverage.components).toContainEqual(expect.objectContaining({path:"health",status:"excluded"}));
+      expect((stage.manifest.skipped??[]).map(item=>item.path)).not.toContain("health");
+      // Child rotation, a new window and a manifest replacement while the capture runs.
+      writeFileSync(join(f.data,"health",HEALTH_FILES.serverCurrent),"x".repeat(HEALTH_LIMITS.producerSegmentBytes)+"\n",{mode:0o600});
+      const again=new HealthPublisher({dataDir:f.data,deferWhileCaptureActive:()=>true});expect(again.initialize()).toBe("ready");
+      advance(60_000);expect(await again.appendWindow("server",healthWindow(1))).toBe(true);
+      expect(publisher.replaceManifest(HEALTH_FILES.backupStatus,JSON.stringify({placeholder:2}))).toBe(true);
+      stage.assertSourceUnchanged();inventory.assertUnchanged();
+    });
+    expect(readFileSync(join(f.data,"health",".tmp-0123456789abcdef.sqlite"),"utf8")).toBe("interrupted"); // never touched by the backup
+  }finally{f.db.close();removeTempDirSync(f.parent);}
+});
+it("a capture that began without health/ keeps its membership: the publisher defers instead of creating the root",async()=>{
+  const f=backupFixture();let capturing=false;try{
+    await withOfflineInstallation(f.data,async installation=>{
+      capturing=true;
+      const stage=await stageInstallationStateWhileOwned(installation,f.parent);
+      const publisher=new HealthPublisher({dataDir:f.data,deferWhileCaptureActive:()=>capturing});
+      expect(publisher.initialize()).toBe("publication-deferred");
+      expect(publisher.replaceManifest(HEALTH_FILES.backupStatus,"{}")).toBe(false);
+      expect(await publisher.appendWindow("server",healthWindow(0))).toBe(false);
+      expect(existsSync(join(f.data,"health"))).toBe(false);
+      stage.assertSourceUnchanged();
+      capturing=false;
+    });
+    expect(new HealthPublisher({dataDir:f.data}).initialize()).toBe("ready"); // the next owned boundary creates it
+  }finally{f.db.close();removeTempDirSync(f.parent);}
+});
+it("an outside change to the top level during a capture still stops it with SOURCE_CHANGED",async()=>{
+  const f=backupFixture();try{
+    await withOfflineInstallation(f.data,async installation=>{
+      const stage=await stageInstallationStateWhileOwned(installation,f.parent);
+      mkdirSync(join(f.data,"health"),{mode:0o700}); // not through the publisher, mid-capture
+      expect(stage.assertSourceUnchanged).toThrow(/SOURCE_CHANGED/);
     });
   }finally{f.db.close();removeTempDirSync(f.parent);}
 });

@@ -55,19 +55,39 @@ final class SecureStore {
     private static final int IV_BYTES = 12;
     private final SharedPreferences prefs;
     private final Keys keys;
+    private final String entryKey;
 
     SecureStore(Context context) {
         this(context.getSharedPreferences("murage_secure", Context.MODE_PRIVATE), KEYSTORE);
     }
 
-    SecureStore(SharedPreferences prefs, Keys keys) {
+    SecureStore(Context context, String entryKey) {
+        this(context.getSharedPreferences("murage_secure", Context.MODE_PRIVATE), KEYSTORE, entryKey);
+    }
+
+    SecureStore(Context context, String entryKey, Keys keys) {
+        this(context.getSharedPreferences("murage_secure", Context.MODE_PRIVATE), keys, entryKey);
+    }
+
+    SecureStore(SharedPreferences prefs, Keys keys) { this(prefs, keys, KEY); }
+
+    SecureStore(SharedPreferences prefs, Keys keys, String entryKey) {
         this.prefs = prefs;
         this.keys = keys;
+        this.entryKey = entryKey;
+    }
+
+    boolean remove() { return prefs.edit().remove(entryKey).commit(); }
+
+    // The existing book encoding stays compatible. Named secrets bind their
+    // ciphertext to the entry name so it cannot be moved between origins.
+    private void bindEntry(Cipher cipher) {
+        if (!KEY.equals(entryKey)) cipher.updateAAD(entryKey.getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
 
     /** EMPTY only when the pref is absent. Never mints a key. */
     Read read() {
-        String sealed = prefs.getString(KEY, null);
+        String sealed = prefs.getString(entryKey, null);
         if (sealed == null) return Read.EMPTY;
         try {
             SecretKey key = keys.existing();
@@ -78,6 +98,7 @@ final class SecureStore {
             byte[] all = Base64.getDecoder().decode(sealed);
             Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
             cipher.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(128, all, 0, IV_BYTES));
+            bindEntry(cipher);
             return new Read(Read.State.OK, cipher.doFinal(all, IV_BYTES, all.length - IV_BYTES));
         } catch (Exception unreadable) {
             ShellLog.i("book unreadable error=" + unreadable.getClass().getSimpleName());
@@ -93,11 +114,12 @@ final class SecureStore {
             Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
             cipher.init(Cipher.ENCRYPT_MODE, key); // a fresh random IV every time
             byte[] iv = cipher.getIV();
+            bindEntry(cipher);
             byte[] sealed = cipher.doFinal(plain);
             byte[] all = new byte[iv.length + sealed.length];
             System.arraycopy(iv, 0, all, 0, iv.length);
             System.arraycopy(sealed, 0, all, iv.length, sealed.length);
-            if (prefs.edit().putString(KEY, Base64.getEncoder().encodeToString(all)).commit()) return true;
+            if (prefs.edit().putString(entryKey, Base64.getEncoder().encodeToString(all)).commit()) return true;
             ShellLog.i("book write failed: commit");
             return false;
         } catch (Exception failed) {
@@ -107,24 +129,28 @@ final class SecureStore {
     }
 
     /** The AndroidKeyStore alias. Synchronized so two first writers cannot each mint a key. */
-    static final Keys KEYSTORE = new Keys() {
+    static final Keys KEYSTORE = keyStore(ALIAS, false);
+    static final Keys ASK_KEYSTORE = keyStore("murage.ask.v1", true);
+
+    private static Keys keyStore(String alias, boolean unlockedOnly) { return new Keys() {
         @Override public synchronized SecretKey existing() throws Exception {
             KeyStore store = KeyStore.getInstance("AndroidKeyStore");
             store.load(null);
-            if (!store.containsAlias(ALIAS)) return null;
-            return ((KeyStore.SecretKeyEntry) store.getEntry(ALIAS, null)).getSecretKey();
+            if (!store.containsAlias(alias)) return null;
+            return ((KeyStore.SecretKeyEntry) store.getEntry(alias, null)).getSecretKey();
         }
 
         @Override public synchronized SecretKey create() throws Exception {
             SecretKey raced = existing();
             if (raced != null) return raced;
             KeyGenerator generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore");
-            generator.init(new KeyGenParameterSpec.Builder(ALIAS, KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT)
+            KeyGenParameterSpec.Builder spec = new KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT)
                 .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
                 .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                .setKeySize(256)
-                .build());
+                .setKeySize(256);
+            if (unlockedOnly) spec.setUnlockedDeviceRequired(true);
+            generator.init(spec.build());
             return generator.generateKey();
         }
-    };
+    }; }
 }

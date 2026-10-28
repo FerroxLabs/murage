@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { NATIVE_DIR } from "../config.ts";
 import { redactSecrets, redactSecretsInText } from "../redact.ts";
 import { redactPageOutputDeep } from "../browser-output-redaction.ts";
+import { PHONE_TOOL_NAMES } from "../../shared/phone-jobs-contract.ts";
 
 const RECORD_BYTES = 64 * 1024;
 const SEGMENT_BYTES = 4 * 1024 * 1024;
@@ -101,6 +102,62 @@ function capExisting(file: string): number {
 let omitThread: (threadId: string) => boolean = () => false;
 export function omitNativeLog(predicate: (threadId: string) => boolean): void { omitThread = predicate; }
 
+/** 1.0.9 phone tools S19: a thread that used the phone tools keeps every text value of its engine protocol out of this log. Read
+ * from the persisted mark and never gated on the feature flag (a mark outlives the flag, Astra AS9). */
+let withholdThread: (threadId: string) => boolean = () => false;
+export function withholdNativeThread(predicate: (threadId: string) => boolean): void { withholdThread = predicate; }
+const NATIVE_WITHHELD = "[phone thread text withheld]";
+const MAX_DEPTH = 40;
+
+/** Every string value at any depth becomes the marker; keys, numbers, booleans and null stay. Depth-limited so a cyclic value cannot recurse. */
+function withholdStrings(value: unknown, depth = 0): unknown {
+  if (typeof value === "string") return NATIVE_WITHHELD;
+  if (value === null || typeof value !== "object") return value;
+  if (depth >= MAX_DEPTH) return NATIVE_WITHHELD;
+  if (Array.isArray(value)) return value.map((item) => withholdStrings(item, depth + 1));
+  const out: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) out[key] = withholdStrings(item, depth + 1);
+  return out;
+}
+
+/** The first phone call's frames are written before the mark exists (the mark is set when the call reaches the harness), so
+ * a frame that names a phone tool is withheld on any thread, and so are the streamed argument fragments of that block. */
+const PHONE_NAMES = new Set<string>(PHONE_TOOL_NAMES);
+const PHONE_NAME_IN = /phone_[a-z0-9_]+/g;
+const NAME_KEYS = new Set(["name", "tool", "toolName", "tool_name", "server", "namespace", "title", "kind", "toolKind"]);
+function isPhoneName(text: string): boolean {
+  if (/phoneJobs/.test(text)) return true;
+  for (const hit of text.match(PHONE_NAME_IN) ?? []) if (PHONE_NAMES.has(hit)) return true;
+  return false;
+}
+function namesPhoneTool(value: unknown, depth = 0): boolean {
+  if (value === null || typeof value !== "object" || depth >= MAX_DEPTH) return false;
+  if (Array.isArray(value)) return value.some((item) => namesPhoneTool(item, depth + 1));
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof item === "string" ? NAME_KEYS.has(key) && isPhoneName(item) : namesPhoneTool(item, depth + 1)) return true;
+  }
+  return false;
+}
+const openPhoneBlocks = new Map<string, Set<number>>();
+function phoneFrame(threadId: string, msg: unknown): boolean {
+  if (!msg || typeof msg !== "object") return false;
+  const event = (msg as { event?: unknown }).event;
+  const inner = event && typeof event === "object" ? event as { type?: unknown; index?: unknown; content_block?: unknown } : null;
+  if (inner && typeof inner.index === "number") {
+    const open = openPhoneBlocks.get(threadId);
+    if (inner.type === "content_block_start" && namesPhoneTool(inner.content_block)) {
+      if (openPhoneBlocks.size >= STREAM_TAIL_THREADS && !open) openPhoneBlocks.delete(openPhoneBlocks.keys().next().value!);
+      (open ?? openPhoneBlocks.set(threadId, new Set()).get(threadId)!).add(inner.index);
+      return true;
+    }
+    if (open?.has(inner.index)) {
+      if (inner.type === "content_block_stop") open.delete(inner.index);
+      return true;
+    }
+  }
+  return namesPhoneTool(msg);
+}
+
 /** 09-A5: a streamed reply reaches this log a few characters per frame. A credential the model echoes arrives as a
  * short prefix in one frame and the rest in the next, and each frame alone is too short or too plain to match. So
  * each text-bearing delta is read together with the unmasked text that came just before it on the same
@@ -139,6 +196,7 @@ function maskStreamDelta(threadId: string, msg: unknown): unknown {
 export function appendNative(threadId: string, entry: { dir: "in" | "out" | "lifecycle"; source: string; msg: unknown }) {
   if (omitThread(threadId)) return;
   try {
+    if (entry.dir !== "lifecycle" && (withholdThread(threadId) || phoneFrame(threadId, entry.msg))) entry = { ...entry, msg: withholdStrings(entry.msg) };
     // The session-setup messages carry the credentials the agent is handed —
     // the box and comms tokens ride inside session/new's mcpServers env, and
     // an MCP header can carry a Composio key. People paste these diagnostic

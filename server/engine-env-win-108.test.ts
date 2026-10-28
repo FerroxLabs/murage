@@ -60,11 +60,46 @@ describe("1.0.8 Windows environment check reads the real envelopes", () => {
     expect(comparePowerShellCheck(hand(handedMap), CWD, psOut, NONCE, "linux")).toMatchObject({ ok: false, reason: "case-alias" });
     expect(envAsSpawned({ Path: "a", PATH: "b" }, "darwin")).toEqual({ Path: "a", PATH: "b" });
   });
+
+  it("a malformed print with a doubled hand: case-alias off win32, as before 1.0.8; invalid-envelope on win32", () => {
+    const printed = JSON.parse(psOut) as { env: unknown[] };
+    printed.env.push(["X", 3]);
+    const malformed = JSON.stringify(printed);
+    expect(comparePowerShellCheck(hand(handedMap), CWD, malformed, NONCE, "linux")).toMatchObject({ ok: false, reason: "case-alias" });
+    expect(comparePowerShellCheck(hand(handedMap), CWD, malformed, NONCE, "darwin")).toMatchObject({ ok: false, reason: "case-alias" });
+    // win32 folds the hand to the one spelling the child received, so only the print is wrong
+    expect(comparePowerShellCheck(hand(handedMap), CWD, malformed, NONCE, "win32")).toMatchObject({ ok: false, reason: "invalid-envelope" });
+    // a single-spelling hand with the same print is invalid-envelope everywhere
+    const single = { ...handedMap }; delete single.Path;
+    for (const platform of ["linux", "win32"] as const) expect(comparePowerShellCheck(hand(single), CWD, malformed, NONCE, platform)).toMatchObject({ ok: false, reason: "invalid-envelope" });
+  });
 });
 
 describe("1.0.8 the Windows hand is the map the child receives", () => {
   it("envAsSpawned keeps the first spelling in sorted order, as Node's win32 spawn does", () => {
     expect(envAsSpawned({ Path: "registry", PATH: "augmented", windir: "C:\\Windows" }, "win32")).toEqual({ PATH: "augmented", windir: "C:\\Windows" });
+  });
+
+  it("envAsSpawned keeps a variable named __proto__ on win32 (a null-prototype map) and leaves the map as is elsewhere", () => {
+    const env = JSON.parse('{"__proto__":"kept","Path":"registry","PATH":"augmented"}') as Record<string, string>;
+    expect(Object.hasOwn(env, "__proto__")).toBe(true);
+    const spawned = envAsSpawned(env, "win32");
+    expect(Object.getPrototypeOf(spawned)).toBe(null);
+    expect(Object.hasOwn(spawned, "__proto__")).toBe(true);
+    expect(spawned["__proto__"]).toBe("kept");
+    expect(Object.keys(spawned).sort()).toEqual(["PATH", "__proto__"]);
+    const posix = envAsSpawned(env, "linux");
+    expect(Object.getPrototypeOf(posix)).toBe(Object.prototype);
+    expect(Object.keys(posix)).toEqual(["__proto__", "Path", "PATH"]);
+    expect(Object.hasOwn(posix, "__proto__")).toBe(true);
+  });
+
+  it("handEnv on win32 hands a variable named __proto__ through", async () => {
+    const owner = JSON.parse('{"__proto__":"kept"}') as Record<string, string>;
+    Object.assign(owner, handedMap);
+    const handed = await handEnv({ env: owner, capture: "session" }, { platform: "win32", run: noRun, cwd: CWD });
+    expect(Object.hasOwn(handed.env, "__proto__")).toBe(true);
+    expect(handed.env["__proto__"]).toBe("kept");
   });
 
   it("handEnv on win32 hands one PATH spelling, and pins replace a name in any spelling", async () => {
