@@ -3,12 +3,17 @@ import { SEARCH_LIST_DEPTH, UNVECTORED_LIMIT, type RankedRef } from "./worker-pr
 import { byScore, compareRefs } from "./ref-order.ts";
 import { DatabaseSync } from "node:sqlite";
 import { pageByRank } from "./rank-ties.ts";
-import { lstatSync, existsSync, renameSync, statSync } from "node:fs";
+import { lstatSync, existsSync, statSync } from "node:fs";
+import { checkIndex, indexDamaged, prepareIndexOpen, quarantineIndex, removeIndexQuarantines } from "./index-quarantine.ts";
 import { checkpointTruncate } from "../sqlite-checkpoint.ts";
 import { POSTINGS_BELOW, POSTINGS_SCHEMA, POSTINGS_TODO_UPGRADE, postingFiller } from "./postings.ts";
 
 /** A write-ahead log over this size is checkpointed after the batch that grew it, and scans wait for that (index-reader.ts). */
 export const WAL_DRAIN_BYTES = 64 * 1024 * 1024;
+/** How long opening the index waits for another connection's lock or WAL recovery before the start fails (and is retried). */
+export const INDEX_OPEN_BUSY_MS = 5_000;
+/** One FTS command per scrub turn, including when the age table is present. */
+export const DELETE_SCRUB_MERGE_PAGES = 1;
 export function walBytes(path: string): number { try { return statSync(`${path}-wal`).size; } catch { return 0; } }
 
 /** `rolled`: a deletion that only retires an old checkpoint version (its words re-quote sources that stay indexed), as against
@@ -51,9 +56,18 @@ export class MemoryIndex {
     this.path=path;
     let rebuilt=!existsSync(path);
     if(existsSync(path)&&(!lstatSync(path).isFile()||lstatSync(path).isSymbolicLink()))throw new Error("UNSAFE_MEMORY_INDEX");
-    let db=new DatabaseSync(path);
-    try {if(db.prepare("PRAGMA quick_check").get()?.quick_check!=="ok")throw new Error("corrupt");}
-    catch {db.close();renameSync(path,`${path}.corrupt-${Date.now()}`);db=new DatabaseSync(path);rebuilt=true;}
+    // The check waits out another connection's lock or WAL recovery (a backup snapshot, a reader opening the file) instead of reading it
+    // as damage. Busy, locked or any other fault is thrown: the helper's start fails and is tried again with backoff (worker-controller.ts
+    // backOffStart). Only a damaged file is set aside (MEMINDEX-BUSY-109).
+    // A log file that is a link or not a regular file stops the start; one left without its index file is removed first (index-quarantine.ts).
+    prepareIndexOpen(path);
+    let db=new DatabaseSync(path,{timeout:INDEX_OPEN_BUSY_MS});
+    // Any throw past here closes the handle it opened, so a failed start leaves no connection on the file.
+    try {
+    try {checkIndex(db);}
+    catch(error){db.close();if(!indexDamaged(error))throw error;quarantineIndex(path);prepareIndexOpen(path);db=new DatabaseSync(path,{timeout:INDEX_OPEN_BUSY_MS});rebuilt=true;}
+    // Past the check the handle keeps the wait it always had (none): the helper's steps meet a held lock at once and retry.
+    db.exec("PRAGMA busy_timeout=0");
     const hadLexicalKeys=Boolean(db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='lexical_keys'").get());
     this.rebuilt=rebuilt;
     this.db=db;
@@ -68,11 +82,8 @@ export class MemoryIndex {
     this.purge.merging=Boolean(db.prepare("SELECT 1 FROM index_meta WHERE key='merge_owed' AND value='1'").get());
     // One TRUNCATE before traffic gives back a log left large by an earlier run (PROPOSAL-v2 10.3).
     try{db.exec("PRAGMA wal_checkpoint(TRUNCATE)");}catch{/* a reader holds it; the next checkpoint takes it */}
-    // FTS5 keeps a deleted document's terms in its index segments until they
-    // are merged, so secure_delete alone left a forgotten memory's words in
-    // the file (0.1.60 low). A write that deletes merges the index
-    // (`optimize`) in the same transaction, and secure_delete zeroes the
-    // pages the merge frees.
+    // FTS5 keeps deleted terms until a merge. Owner deletions owe both that
+    // merge and a truncated log; rolled checkpoint versions use stepped maintenance.
     if(!hadLexicalKeys){
       // Backfill once, atomically, including legacy FTS rowids that do not
       // match entries.rowid. Subsequent writes use the keyed rowid lookup.
@@ -105,6 +116,15 @@ export class MemoryIndex {
       try { db.exec(POSTINGS_TODO_UPGRADE); db.exec("COMMIT"); }
       catch(error){db.exec("ROLLBACK");db.close();throw error;}
     }
+    // Resume a completed scrub's checkpoint. A legacy marker without a generation takes at most
+    // one merge step here; all remaining work stays owed to the worker.
+    if(db.prepare("SELECT 1 FROM index_meta WHERE key='delete_scrub_owed' AND value='truncate'").get()){
+      try{this.scrubDeleted();}catch{/* the durable debt and pending receipts remain */}
+    }
+    // The new index is open and complete: a copy set aside now or by an earlier start is never read again, and it still holds the words
+    // of deleted conversations, so it goes (index-quarantine.ts). Messages.db's own quarantines are never touched here.
+    removeIndexQuarantines(path);
+    } catch(error){try{db.close();}catch{/* already closed on the path that threw */}throw error;}
   }
   /** Whether `lexical` holds every row at its age key (age-index.ts), and whether the second word table exists (the fill is under way). */
   private aged=false;
@@ -258,26 +278,28 @@ export class MemoryIndex {
   /** Whether entries are still waiting for their postings. */
   postingsOwed():boolean{return this.postingsBelow()!==null||Boolean(this.db.prepare("SELECT 1 FROM posting_todo LIMIT 1").get());}
   upsert(records: IndexedMemory[]) {
-    const deletions=records.filter(row=>row.deleted).length;
+    const forgetting=records.some(row=>row.deleted&&!row.rolled);
+    let removed=false;
     // a record written again over its own key (an owner's edit, the 1.0.4 number scrub) leaves its old words in the FTS5 segments just as a
     // deletion does: it owes the same merge (PASTE-CAPTURE-FIX r2.6)
-    let rewritten=0;
     this.db.exec("BEGIN IMMEDIATE");
     try {
       for(const row of records){
         const previous=this.db.prepare("SELECT fts_rowid FROM lexical_keys WHERE id=? AND version=?").get(row.id,row.version);
-        if(previous){this.db.prepare("DELETE FROM lexical WHERE rowid=?").run(previous.fts_rowid);if(!row.deleted)rewritten++;}
+        if(previous)removed=true;
+        if(previous)this.db.prepare("DELETE FROM lexical WHERE rowid=?").run(previous.fts_rowid);
         this.db.prepare("DELETE FROM lexical_keys WHERE id=? AND version=?").run(row.id,row.version);
         if(this.ageTables){
           // the second word table (age-index.ts) is kept in step while the fill runs: one row per record there too, at its key
           const aged=this.db.prepare("SELECT fts_rowid FROM lexical_age_keys WHERE id=? AND version=?").get(row.id,row.version);
+          if(aged)removed=true;
           if(aged)this.db.prepare("DELETE FROM lexical_age WHERE rowid=?").run(aged.fts_rowid);
           this.db.prepare("DELETE FROM lexical_age_keys WHERE id=? AND version=?").run(row.id,row.version);
         }
         if(this.db.prepare("DELETE FROM vectors WHERE id=? AND version=?").run(row.id,row.version).changes&&this.matrix){
           for(const [key,entry] of this.matrix.rows)if(entry.id===row.id&&entry.version===row.version)this.matrix.rows.delete(key);
         }
-        if(row.deleted){this.db.prepare("DELETE FROM entries WHERE id=? AND version=?").run(row.id,row.version);continue;}
+        if(row.deleted){const changed=this.db.prepare("DELETE FROM entries WHERE id=? AND version=?").run(row.id,row.version).changes;if(changed)removed=true;continue;}
         this.db.prepare("INSERT OR REPLACE INTO entries VALUES(?,?,?,?)").run(row.id,row.version,row.scopeId,row.text);
         const ageKey=typeof row.ageKey==="number"&&Number.isSafeInteger(row.ageKey)?row.ageKey:null;
         if(this.aged&&ageKey!==null)placeLexicalRow(this.db,"lexical",row.id,row.version,row.text,ageKey);
@@ -288,16 +310,25 @@ export class MemoryIndex {
           if(this.ageTables&&ageKey!==null)placeLexicalRow(this.db,"lexical_age",row.id,row.version,row.text,ageKey);
         }
       }
-      // The obligation to merge a deletion out of the word index is written in the same transaction as the deletion.
-      if(deletions||rewritten)this.setMergeOwed(true);
+      // Every physical retirement advances the durable generation, including rollovers and rewrites.
+      // A later forget of a rolled-out row therefore cannot reuse an older completed scrub.
+      if(removed){this.setMergeOwed(true);this.bumpDeletionGeneration();}
+      // An owner forget owes a scrub reaching this generation (its target), written with the removal: the durable debt the helper
+      // drains on its own timer, so the batch is acknowledged at once (MEMDEL-SIMPLIFY-109). Rollovers advance the generation but
+      // set no target, so they never restart a merge. Replaying an absent row neither advances the generation nor restarts a merge,
+      // and a completed generation survives a lost acknowledgement, so replay can acknowledge without merging again.
+      if(forgetting&&this.meta("delete_scrub_completed")!==String(this.scrubGeneration())){
+        if(!this.deletionScrubPending())this.db.exec("INSERT OR REPLACE INTO index_meta VALUES('delete_scrub_owed','merge')");
+        this.db.prepare("INSERT OR REPLACE INTO index_meta VALUES('delete_scrub_target',?)").run(String(this.scrubGeneration()));
+      }
       this.db.exec("COMMIT");
     }catch(error){this.rollback();throw error;}
     // A deletion (a forget, or a rolled checkpoint version) leaves the index with its words still in the FTS5 segments until a
-    // merge removes them, and secure_delete then zeroes the pages the merge frees. That merge is not whole-index work per batch:
-    // the stepped maintenance (purgeRolledCheckpoints) pays it in short steps while the helper is idle, and never later than
+    // merge removes them, and secure_delete then zeroes the pages the merge frees. Owner forgets are scrubbed before the helper
+    // acknowledges them (scrubDeleted). For rolled versions the stepped maintenance (purgeRolledCheckpoints) pays in short steps, never later than
     // MAINTENANCE_MAX_DEFER_MS under sustained load. (1.0.3 rehearsal 2: a whole-index merge and log truncation per batch with a
     // forget wrote about 47 MB per 16 deletions on the owner's index, 240 MB/min for as long as a drain queued deletions.)
-    if(deletions||rewritten){this.purge.merging=true;this.deletionGen++;}
+    if(removed){this.purge.merging=true;this.deletionGen++;}
     // The old pages stay in the write-ahead log until it is checkpointed.
     this.checkpointIfLarge();
   }
@@ -361,7 +392,87 @@ export class MemoryIndex {
     this.db.exec("INSERT INTO lexical(lexical) VALUES('optimize')");
     if(this.db.prepare("SELECT 1 FROM sqlite_schema WHERE name='lexical_age'").get())this.db.exec("INSERT INTO lexical_age(lexical_age) VALUES('optimize')");
     this.purge.merging=false;this.purge.since=0;this.mergeStarted=false;this.setMergeOwed(false);
-    try{const result=this.db.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get();return Number(result?.busy??1)===0;}catch{return false;}
+    // The metadata write belongs before the final checkpoint too. A blocked
+    // checkpoint keeps a durable obligation for the next attempt or restart.
+    if(!checkpointTruncate(this.db,"memory-rewrite",Number(this.db.prepare("PRAGMA busy_timeout").get()?.timeout??0))){
+      this.setMergeOwed(true);this.purge.merging=true;return false;
+    }
+    return true;
+  }
+  /** Durable physical deletion debt, separate from ordinary stepped merges. No schema or FTS format change. */
+  deletionScrubPending():boolean{return Boolean(this.db.prepare("SELECT 1 FROM index_meta WHERE key='delete_scrub_owed'").get());}
+  /** Last step was blocked on a lock or reader, as opposed to making merge progress. */
+  scrubBlocked=false;
+  private meta(key:string):string|undefined{
+    const row=this.db.prepare("SELECT value FROM index_meta WHERE key=?").get(key);
+    return row?String(row.value):undefined;
+  }
+  private scrubGeneration():number{return Number(this.meta("delete_generation")??0);}
+  /** The generation the newest owed forget needs a merge to reach (a marker without one needs the current generation). */
+  private scrubTarget():number{return Number(this.meta("delete_scrub_target")??this.scrubGeneration());}
+  private bumpDeletionGeneration():void{
+    this.db.prepare("INSERT OR REPLACE INTO index_meta VALUES('delete_generation',?)").run(String(this.scrubGeneration()+1));
+  }
+  /** One committed FTS merge command, or one bounded checkpoint attempt. A negative page count opens
+   * a merge over every existing segment; subsequent positive steps continue it. FTS5's <2-change
+   * completion signal covers only the generation captured at that first step, never later deletes.
+   * Progress and its generation commit together, so a restart resumes with a positive page count.
+   * Only index_meta rows are added; older binaries can still open the FTS tables. */
+  scrubDeleted():boolean{
+    this.scrubBlocked=false;
+    const owed=this.meta("delete_scrub_owed");
+    if(!owed)return true;
+    type Merge={generation:number;table:"lexical"|"lexical_age";started:boolean};
+    const saved=this.meta("delete_scrub_merge");
+    let merge:Merge=saved?JSON.parse(saved):{generation:this.scrubGeneration(),table:"lexical",started:false};
+    // A legacy truncate marker has no generation proof. Start a bounded merge before acknowledging it.
+    if(owed==='truncate'&&saved&&merge.generation>=this.scrubTarget()){
+      if(!checkpointTruncate(this.db,"memory-delete",Number(this.db.prepare("PRAGMA busy_timeout").get()?.timeout??0))){
+        this.scrubBlocked=true;return false;
+      }
+      // Only metadata is written after truncation; every page with retired text has already been drained.
+      this.db.exec("BEGIN IMMEDIATE");
+      try{
+        this.db.prepare("INSERT OR REPLACE INTO index_meta VALUES('delete_scrub_completed',?)").run(String(merge.generation));
+        this.db.exec("DELETE FROM index_meta WHERE key IN ('delete_scrub_owed','delete_scrub_merge','delete_scrub_target'); COMMIT");
+      }catch(error){this.rollback();throw error;}
+      return true;
+    }
+    if(owed==='truncate')merge={generation:this.scrubGeneration(),table:"lexical",started:false};
+    try{
+      this.beginStep();
+      try{
+        // No age cutover runs while scrub debt exists (worker.ts). A removed age table after an older
+        // binary opened this file is handled by starting again against the current lexical table.
+        if(merge.table==='lexical_age'&&!ageTablesPresent(this.db))merge={generation:this.scrubGeneration(),table:"lexical",started:false};
+        // Merge starts are counted (diagnostics; tests): one start covers every row removed before it.
+        if(!merge.started&&merge.table==='lexical')this.db.prepare("INSERT OR REPLACE INTO index_meta VALUES('delete_scrub_merges',?)").run(String(Number(this.meta("delete_scrub_merges")??0)+1));
+        const before=Number(this.db.prepare("SELECT total_changes() AS n").get()!.n);
+        this.db.prepare(`INSERT INTO ${merge.table}(${merge.table},rank) VALUES('merge',?)`).run(merge.started?DELETE_SCRUB_MERGE_PAGES:-DELETE_SCRUB_MERGE_PAGES);
+        const done=Number(this.db.prepare("SELECT total_changes() AS n").get()!.n)-before<2;
+        merge.started=true;
+        let phase='merge';
+        if(done){
+          if(merge.table==='lexical'&&ageTablesPresent(this.db))merge={...merge,table:"lexical_age",started:false};
+          // A forget removed after this merge began needs one more; rollovers since then do not.
+          else if(merge.generation<this.scrubTarget())merge={generation:this.scrubGeneration(),table:"lexical",started:false};
+          else phase='truncate';
+        }
+        this.db.prepare("INSERT OR REPLACE INTO index_meta VALUES('delete_scrub_merge',?)").run(JSON.stringify(merge));
+        this.db.prepare("INSERT OR REPLACE INTO index_meta VALUES('delete_scrub_owed',?)").run(phase);
+        // Rollovers removed after this merge began stay owed to the stepped maintenance.
+        const settled=phase==='truncate'&&merge.generation===this.scrubGeneration();
+        if(settled)this.setMergeOwed(false);
+        this.endStep(true);
+        // Ordinary maintenance must not continue a merge state superseded by this run.
+        this.mergeStarted=false;
+        if(settled){this.purge.merging=false;this.purge.since=0;}
+      }catch(error){try{this.endStep(false);}catch{/* already rolled back */}throw error;}
+    }catch(error){
+      if(/database is locked|SQLITE_BUSY/i.test(error instanceof Error?error.message:String(error))){this.scrubBlocked=true;return false;}
+      throw error;
+    }
+    return false;
   }
   /** Whether the current merge run has opened its incremental merge (the first step is negative, the rest continue it). */
   private mergeStarted=false;
@@ -383,6 +494,7 @@ export class MemoryIndex {
       const chunk=JSON.stringify(ids.slice(start,start+200));
       this.db.exec("BEGIN IMMEDIATE");
       try {
+        const before=removed;
         const rowids=this.db.prepare("SELECT fts_rowid FROM lexical_keys WHERE id IN (SELECT value FROM json_each(?))").all(chunk);
         for(const row of rowids)this.db.prepare("DELETE FROM lexical WHERE rowid=?").run(row.fts_rowid);
         removed+=rowids.length;
@@ -390,7 +502,7 @@ export class MemoryIndex {
         removed+=Number(this.db.prepare("DELETE FROM entries WHERE id IN (SELECT value FROM json_each(?))").run(chunk).changes);
         removed+=Number(this.db.prepare("DELETE FROM vectors WHERE id IN (SELECT value FROM json_each(?))").run(chunk).changes);
         // Deleted words stay in FTS5 segments until merged: the debt is written with the deletion, not after it.
-        this.setMergeOwed(true);
+        if(removed>before){this.setMergeOwed(true);this.bumpDeletionGeneration();}
         this.db.exec("COMMIT");
       }catch(error){this.rollback();throw error;}
     }
@@ -421,6 +533,9 @@ export class MemoryIndex {
    * The walk then starts again from the beginning on the next pass. */
   purgeRolledCheckpoints(options: {maxExamined?: number; maxMs?: number; mergePages?: number; mergeFraction?: number} = {}): {removed: number; examined: number; merged: boolean; done: boolean} {
     const maxExamined=Math.max(1,options.maxExamined??2048),maxMs=options.maxMs??10,mergePages=Math.max(1,options.mergePages??8),mergeFraction=options.mergeFraction??0.1;
+    // The deletion scrub owns both word tables until its generation is checkpointed.
+    // Direct maintenance callers still make one bounded step; pending debt is never a completed pass.
+    if(this.deletionScrubPending())return {removed:0,examined:0,merged:false,done:this.scrubDeleted()&&this.purge.cursor===null};
     if(this.purge.merging){
       const before=Number(this.db.prepare("SELECT total_changes() AS n").get()!.n);
       // A negative count starts the incremental merge; repeating it opens a fresh output segment each step until FTS5's
@@ -460,7 +575,7 @@ export class MemoryIndex {
       }
       // The obligation to merge what this walk deleted is written in the transaction that deleted it, whether or not the
       // walk has yet removed enough to start merging: a stop below the threshold must not forget the debt.
-      if(removedKeys.length)this.setMergeOwed(true);
+      if(removedKeys.length){this.setMergeOwed(true);this.bumpDeletionGeneration();}
       this.db.exec("COMMIT");
     }catch(error){this.rollback();throw error;}
     if(removedKeys.length&&this.matrix){const gone=new Set(removedKeys);for(const [key,entry] of this.matrix.rows)if(gone.has(entry.key))this.matrix.rows.delete(key);}

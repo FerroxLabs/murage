@@ -1359,6 +1359,36 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "From the phone you can read your conversations and send messages, answer approval cards and questions, and edit a message. You can make a voice call to a bot, add pictures to a message, and use your Inbox. You can run a routine now, make a new bot, and watch a bot's browser. For projects you can open the project, read and edit the brief, work on goals and Board cards, read Activity and usage, and stop, pause or resume a project."
   },
   {
+    "id": "devices/phone-app#phone-tools",
+    "title": "The Murage phone app",
+    "description": "Pair the Murage phone app with your computer, what it can do, what stays on the computer, and how to unpair a phone.",
+    "heading": "Phone tools",
+    "breadcrumb": "Murage docs → Devices → The Murage phone app",
+    "where": "Murage docs → Devices → The Murage phone app",
+    "url": "https://murage.ai/docs/devices/phone-app#phone-tools",
+    "text": "With phone tools, your bots can use your phone when you ask them to. They can check your calendar and add events, read and add reminders, set alarms and timers, find a contact to start a text or a call, and see roughly where you are for things nearby. A bot only uses phone tools when you ask it for something. Each request shows a card on the phone, and you approve it there. Reading calendar details, contacts and reminders always asks first."
+  },
+  {
+    "id": "devices/phone-app#share-to-murage-and-ask-murage",
+    "title": "The Murage phone app",
+    "description": "Pair the Murage phone app with your computer, what it can do, what stays on the computer, and how to unpair a phone.",
+    "heading": "Share to Murage and Ask Murage",
+    "breadcrumb": "Murage docs → Devices → The Murage phone app",
+    "where": "Murage docs → Devices → The Murage phone app",
+    "url": "https://murage.ai/docs/devices/phone-app#share-to-murage-and-ask-murage",
+    "text": "Share links, photos and files from any app straight into a chat with your bots. Pick Murage in the phone's share sheet, then choose the bot. Ask Murage lets you ask your bots from anywhere on the phone, by voice or with one tap. On Android you can make Murage your phone's assistant app. Sending a new message needs the phone unlocked. A send you already started may finish uploading after the phone locks."
+  },
+  {
+    "id": "devices/phone-app#bot-calls",
+    "title": "The Murage phone app",
+    "description": "Pair the Murage phone app with your computer, what it can do, what stays on the computer, and how to unpair a phone.",
+    "heading": "Bot calls",
+    "breadcrumb": "Murage docs → Devices → The Murage phone app",
+    "where": "Settings → Notifications → Calls",
+    "url": "https://murage.ai/docs/devices/phone-app#bot-calls",
+    "text": "Your bots can call you on the phone when something needs you. The lock screen only shows that Murage is calling, never what the message says. Answer to hear what it is, or choose Not now to dismiss that call. To stop calls for the rest of the day, turn on Calls off for today in Settings → Notifications → Calls in Murage on the computer, and turn it off there when you want calls again."
+  },
+  {
     "id": "devices/phone-app#what-stays-on-the-computer",
     "title": "The Murage phone app",
     "description": "Pair the Murage phone app with your computer, what it can do, what stays on the computer, and how to unpair a phone.",
@@ -2285,6 +2315,16 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "where": "Murage docs → Features → Inbox",
     "url": "https://murage.ai/docs/features/inbox#connections-to-restore-and-routines",
     "text": "Connections to restore lists connected apps that need signing in again. Routines shows one line per routine, not per run, with Open latest run or Open the run that failed."
+  },
+  {
+    "id": "features/inbox#health-checks",
+    "title": "Inbox",
+    "description": "Everything that needs you in one place, approvals, questions, engines to sign in to, connections to restore and routine results, with Clear, Dismiss and Snooze.",
+    "heading": "Health checks",
+    "breadcrumb": "Murage docs → Features → Inbox",
+    "where": "Murage docs → Features → Inbox",
+    "url": "https://murage.ai/docs/features/inbox#health-checks",
+    "text": "The Health card in the Inbox, and beside Diagnostics in Settings, shows what Murage's health checks found. Once a day at 09:00 your time, the Inbox gets one short health summary when something is open, changed or recovered. Only two things send a notification on their own: backups that are switched on but have no checked backup, and heavy disk writes that keep going for five minutes while Murage is idle. Your notification settings and quiet hours apply, and the notification only ever says that a health check needs your attention.\n\nA small checker runs on its own every two minutes, even while the app is closed.…"
   },
   {
     "id": "features#overview",
@@ -3437,7 +3477,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Security → Permissions and secrets",
     "where": "Murage docs → Security → Permissions and secrets",
     "url": "https://murage.ai/docs/security/permissions-and-secrets#secret-handling",
-    "text": "- Do not paste API keys into chat.\n- Packaged builds use write-only settings and operating-system-backed encryption where supported.\n- Secret values are scrubbed from public configuration responses and mobile APIs.\n- Per-provider environment injection prevents unrelated agent processes from inheriting credentials they do not use.\n- OAuth provider tokens for connected apps stay with the connected-apps service."
+    "text": "- For a provider Murage supports, save its key in Settings or on the secure card your bot shows, rather than pasting it into chat.\n- For any other service, give your bot the key, or put it in a file git does not track, such as a .env in the project, and tell the bot where it is. The bot keeps it only where you say, sends it only to that service, and never saves it to its memory, its replies or committed files.\n- Packaged builds use write-only settings and operating-system-backed encryption where supported.\n- Secret values are scrubbed from public configuration responses and mobile APIs.…"
   },
   {
     "id": "security/permissions-and-secrets#shared-machines",

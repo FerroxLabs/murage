@@ -14,6 +14,8 @@ import { appendFileSync, chmodSync, readFileSync, lstatSync, statSync } from "no
 import { join } from "node:path";
 
 import { pinnedStatementKeys, verifyApprovalStatement, type ApprovalAttestation } from "./relay-statement.ts";
+import { approvalKeyId, PHONE_TOKEN } from "./phone-jobs-shape.ts";
+import { PHONE_ASK_TOKEN } from "./phone-ask-shape.ts";
 import { loadSessionSecret } from "./session-secret.ts";
 import { DATA_DIR, ensureDataDir, writeFileAtomic } from "./state.ts";
 
@@ -142,6 +144,19 @@ export interface DeviceRecord {
    * Absent on every record that predates it: such a device keeps working but
    * cannot approve a high-risk action from the phone until it pairs again. */
   approvalKey?: ApprovalKey;
+  /** The phone-jobs bearer: sha256 of the token only, never the token. Absent
+   * until the phone proves its approval key to the door. */
+  phoneJobs?: { tokenHash: string; issuedAt: number };
+  /** The share-and-ask bearer (murage_pa_): sha256 only, never the token. Absent until the phone proves its approval key with scope "ask". */
+  ask?: { tokenHash: string; issuedAt: number };
+  /** Counts ask mints and revokes; only grows (absent reads 0). The harness refuses any ask line from an older generation. */
+  askGeneration?: number;
+  /** The owner switched share and ask off for this phone: no ask token is issued until it is switched back on. */
+  shareAskOff?: true;
+  /** The owner asked to remove this phone and the removal has not finished (the harness did not answer, or the write failed). Saved before
+   * the first removal step. While set, the phone-jobs and share-and-ask bearers do not authenticate and none is minted. Cleared only by
+   * `revoke`, which drops the whole record. */
+  removalPending?: true;
   /** Paired with the fixed demo code on a marked demo host. Bookkeeping for
    * the demo device cap only: it grants nothing and changes no permission. */
   demo?: true;
@@ -156,7 +171,12 @@ export interface DeviceRecord {
  * install id and the generation are bookkeeping the page has no use for
  * either. Same for `push`: a scope hash is not a credential either, but the
  * page has nothing to show for it. */
-export type PublicDevice = Omit<DeviceRecord, "tokenHash" | "sessions" | "installId" | "sessionGeneration" | "push" | "approvalKey">;
+export type PublicDevice = Omit<DeviceRecord, "tokenHash" | "sessions" | "installId" | "sessionGeneration" | "push" | "approvalKey" | "phoneJobs" | "ask" | "askGeneration" | "shareAskOff"> & {
+  /** Derived: the device holds an approval key, so it can be offered phone jobs. Not the key, not the token hash. */
+  phoneJobsReady: boolean;
+  /** Derived: "off" when the owner switched it off, "on" while the phone holds an ask token, else "not-set-up". Never the hash. */
+  shareAsk: "on" | "off" | "not-set-up";
+};
 
 /** A pairing window: two short-lived credentials, deliberately single-use.
  *
@@ -265,6 +285,8 @@ interface PairingReplay {
 export const PAIRING_REPLAY_MS = 5 * 60_000;
 
 const DEVICES_FILE = join(DATA_DIR, "devices.json");
+/** Per device, the highest ask generation ever revoked. Its own 0600 file so a restored older devices.json cannot undo a revoke. */
+const ASK_FLOOR_FILE = join(DATA_DIR, "ask-floor.json");
 export /** How long a pairing window stays open.
  *
  * It was 2 * 60_000 once, and that was measured against a flow that does not
@@ -493,9 +515,9 @@ export function cleanInstallId(raw: unknown): string | undefined {
 
 /** A device as the page may see it. One place, so a new private field cannot
  * leak through one of the three call sites that used to strip by hand. */
-function publicDevice(device: DeviceRecord): PublicDevice {
-  const { tokenHash, sessions, installId, sessionGeneration, push, approvalKey, ...rest } = device;
-  return rest;
+function publicDevice(device: DeviceRecord, askRefused = false): PublicDevice {
+  const { tokenHash, sessions, installId, sessionGeneration, push, approvalKey, phoneJobs, ask, askGeneration, shareAskOff, ...rest } = device;
+  return { ...rest, phoneJobsReady: approvalKey !== undefined, shareAsk: shareAskOff ? "off" : ask && !askRefused ? "on" : "not-set-up" };
 }
 
 /** What a renewal hands the door: the value to set as the cookie, and the cap
@@ -605,6 +627,19 @@ function storedPush(raw: unknown): PushCredentials | undefined {
   return undefined;
 }
 
+function storedPhoneJobs(raw: unknown): { tokenHash: string; issuedAt: number } | undefined {
+  const p = raw as { tokenHash?: unknown; issuedAt?: unknown } | null | undefined;
+  if (p && typeof p.tokenHash === "string" && HEX_DIGEST.test(p.tokenHash) && Number.isSafeInteger(p.issuedAt)) {
+    return { tokenHash: p.tokenHash, issuedAt: p.issuedAt as number };
+  }
+  return undefined;
+}
+
+/** A stored ask generation: a whole count, never negative. Anything else reads 0. */
+function storedAskGeneration(raw: unknown): number {
+  return typeof raw === "number" && Number.isSafeInteger(raw) && raw > 0 ? raw : 0;
+}
+
 /** Complete a stored record, whatever shape the file had. `lastSeenAt` falls
  * back to `createdAt` rather than to the clock: a device we have never heard
  * from since pairing was last seen when it paired. */
@@ -630,6 +665,14 @@ function normalizeDevice(record: Partial<DeviceRecord> & { id: string; tokenHash
   if (approvalKey && attestation) device.approvalKey = { point: approvalKey, addedAt: timestamp(record.approvalKey?.addedAt, createdAt), attestation };
   const push = storedPush(record.push);
   if (push) device.push = push;
+  const phoneJobs = storedPhoneJobs(record.phoneJobs);
+  if (phoneJobs) device.phoneJobs = phoneJobs;
+  const ask = storedPhoneJobs(record.ask);
+  if (ask) device.ask = ask;
+  const askGeneration = storedAskGeneration(record.askGeneration);
+  if (askGeneration > 0) device.askGeneration = askGeneration;
+  if (record.shareAskOff === true) device.shareAskOff = true;
+  if (record.removalPending === true) device.removalPending = true;
   const sessions = Array.isArray(record.sessions) ? record.sessions : [];
   // A hand-edited or partly restored file can hold a successor from a later
   // generation than the device says. Never derive at or below one that
@@ -808,6 +851,8 @@ export class DeviceRegistry {
   /** Why the file on disk could not be used, or null when it could. */
   private unavailable: string | null = null;
   private lastLoadAttempt = 0;
+  /** Highest askGeneration this process has seen per device; a lower value read from disk never replaces it. */
+  private readonly askFloor = new Map<string, number>();
   /** Loaded on the first renewal that needs it, not at construction: a
    * registry that never renews anything never needs the file. */
   private secret: Buffer | null = null;
@@ -960,6 +1005,8 @@ export class DeviceRegistry {
    * reader to doubt the type. */
   private load(): boolean {
     this.lastLoadAttempt = Date.now();
+    // askGeneration only grows: remember what this process already knew, so a lower value read back from a hand-edited or restored file never wins.
+    for (const d of this.devices) if (d.askGeneration) this.askFloor.set(d.id, Math.max(this.askFloor.get(d.id) ?? 0, d.askGeneration));
     let text: string;
     try {
       text = readFileSync(DEVICES_FILE, "utf8");
@@ -992,9 +1039,109 @@ export class DeviceRegistry {
           typeof (d as DeviceRecord)?.tokenHash === "string",
       )
       .map(normalizeDevice);
+    // The persisted floor decides first, so nothing in memory can lift a revoked token back above it.
+    const { state: floor, corrupt } = this.readAskFloor();
+    let stripped = false;
+    if (corrupt && !this.askFloorCorruptLogged) {
+      this.askFloorCorruptLogged = true;
+      console.error("companion: the share-and-ask revoke record is unreadable; every phone's share-and-ask access was reset and must be set up again");
+    }
+    for (const d of this.devices) {
+      const disk = d.askGeneration ?? 0;
+      const through = floor.through.get(d.id);
+      if (floor.off.has(d.id) && !d.shareAskOff) { d.shareAskOff = true; stripped = true; }
+      const known = this.askFloor.get(d.id) ?? 0;
+      // Fail closed: a corrupt floor, a hash at or below a revoked generation, a switched-off phone, or a file older than what
+      // this process already saw (its hash cannot be told from a revoked one) all lose the hash.
+      const drop = d.ask && (corrupt || d.shareAskOff || (through !== undefined && disk <= through) || known > disk);
+      if (drop) { delete d.ask; stripped = true; }
+      let next = disk;
+      if (drop) next = Math.max(disk + 1, known, through !== undefined ? through + 1 : 0);
+      else {
+        if (through !== undefined && disk <= through) next = through + 1;
+        if (known > next) next = known;
+      }
+      if (next !== disk) { d.askGeneration = next; stripped = true; }
+      if (next > 0) this.askFloor.set(d.id, Math.max(known, next));
+    }
+    // The strip is written down before anything is served; if it cannot be, the registry is unavailable rather than serving.
     this.unavailable = null;
+    if (stripped || corrupt) {
+      try {
+        this.persist();
+        if (corrupt) this.writeAskFloor(this.rebuiltAskFloor());
+      } catch {
+        return this.markUnavailable("the share-and-ask reset could not be saved");
+      }
+    }
     if (this.demoCode === null) this.purgeDemoDevices();
     return true;
+  }
+
+  private askFloorCorruptLogged = false;
+
+  /** The persisted ask floor: `{ v: 1, through: { id: n }, off: { id: true } }`. Absent is a first run (empty); present but
+   * unreadable or in any other shape (any unexpected entry at all) is `corrupt`. */
+  private readAskFloor(): { state: { through: Map<string, number>; off: Set<string> }; corrupt: boolean } {
+    const state = { through: new Map<string, number>(), off: new Set<string>() };
+    let raw: unknown;
+    try {
+      raw = JSON.parse(readFileSync(ASK_FLOOR_FILE, "utf8"));
+    } catch (error) {
+      return { state, corrupt: (error as NodeJS.ErrnoException)?.code !== "ENOENT" };
+    }
+    const bad = { state: { through: new Map<string, number>(), off: new Set<string>() }, corrupt: true };
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return bad;
+    const o = raw as { v?: unknown; through?: unknown; off?: unknown };
+    if (Object.keys(o).length !== 3 || o.v !== 1) return bad;
+    for (const [field, kind] of [[o.through, "through"], [o.off, "off"]] as const) {
+      if (!field || typeof field !== "object" || Array.isArray(field)) return bad;
+      for (const [id, value] of Object.entries(field)) {
+        if (kind === "through") {
+          if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) return bad;
+          state.through.set(id, value);
+        } else {
+          if (value !== true) return bad;
+          state.off.add(id);
+        }
+      }
+    }
+    return { state, corrupt: false };
+  }
+
+  private writeAskFloor(state: { through: Map<string, number>; off: Set<string> }): void {
+    ensureDataDir();
+    writeFileAtomic(ASK_FLOOR_FILE, JSON.stringify({
+      v: 1,
+      through: Object.fromEntries(state.through),
+      off: Object.fromEntries([...state.off].map((id) => [id, true])),
+    }));
+  }
+
+  /** A corrupt floor rebuilt from the stripped state: every generation below the one now on a device is refused, and a phone
+   * that is switched off stays off. The most that is known, nothing lower. */
+  private rebuiltAskFloor(): { through: Map<string, number>; off: Set<string> } {
+    const through = new Map<string, number>();
+    const off = new Set<string>();
+    for (const d of this.devices) {
+      const g = d.askGeneration ?? 0;
+      if (g > 0) through.set(d.id, g - 1);
+      if (d.shareAskOff) off.add(d.id);
+    }
+    return { through, off };
+  }
+
+  /** Record that every ask token up to and including `through` is revoked, and optionally the off bit. Monotonic for `through`.
+   * Throws, writing nothing, when the file cannot be written or is corrupt (it is never overwritten); the caller changes nothing.
+   * Called before devices.json loses the hash. */
+  private raiseAskRevokedFloor(deviceId: string, through: number, off?: boolean): void {
+    const { state, corrupt } = this.readAskFloor();
+    if (corrupt) throw new Error("the share-and-ask revoke record is unreadable; restart the companion to repair it");
+    let changed = false;
+    if ((state.through.get(deviceId) ?? -1) < through) { state.through.set(deviceId, through); changed = true; }
+    if (off === true && !state.off.has(deviceId)) { state.off.add(deviceId); changed = true; }
+    if (off === false && state.off.delete(deviceId)) changed = true;
+    if (changed) this.writeAskFloor(state);
   }
 
   private markUnavailable(problem: string): false {
@@ -1037,7 +1184,7 @@ export class DeviceRegistry {
   /** Every paired device, without the hash — this is what the page renders. */
   list(): PublicDevice[] {
     this.recover();
-    return this.devices.map(publicDevice);
+    return this.devices.map((d) => publicDevice(d, this.askRefused(d)));
   }
 
   /** How many phones are paired, against MAX_DEVICES. */
@@ -1203,6 +1350,7 @@ export class DeviceRegistry {
     if (
       requestId &&
       this.replay &&
+      !this.devices.some((d) => d.id === this.replay?.deviceId && d.removalPending) &&
       sameCredential(this.replay.requestId, requestId) &&
       sameDigest(this.replay.credentialHash, sha256(presented)) &&
       this.replay.installId === (cleanInstallId(installId) ?? null)
@@ -1434,7 +1582,8 @@ export class DeviceRegistry {
     this.recover();
     const hash = sha256(token);
     const device = this.devices.find((d) => sameDigest(d.tokenHash, hash));
-    if (!device) return null;
+    // A removal is under way: nothing on this device is live until the registry has dropped it or the owner pairs it afresh.
+    if (!device || device.removalPending) return null;
     const now = Date.now();
     if (now - (this.lastSeenWrites.get(device.id) ?? 0) > LAST_SEEN_WRITE_MS) {
       device.lastSeenAt = now;
@@ -1605,7 +1754,8 @@ export class DeviceRegistry {
   openSession(deviceId: string, label: unknown, now = Date.now()): { value: string; session: BrowserSession } | null {
     this.recover();
     const device = this.devices.find((candidate) => candidate.id === deviceId);
-    if (!device) return null;
+    // A removal is under way: no new browser sign-in on this device.
+    if (!device || device.removalPending) return null;
     const value = `murage_browser_${randomBytes(32).toString("base64url")}`;
     const session: BrowserSession = {
       id: randomUUID(),
@@ -1657,6 +1807,7 @@ export class DeviceRegistry {
     this.recover();
     const hash = sha256(value);
     for (const device of this.devices) {
+      if (device.removalPending) continue;
       for (const session of device.sessions ?? []) {
         const which = this.match(session, hash);
         if (!which) continue;
@@ -1833,6 +1984,23 @@ export class DeviceRegistry {
     return true;
   }
 
+  /** Record that this phone's removal has started, in one write, before any harness step. False for an unknown device; throws, having
+   * changed nothing, when the write fails. Idempotent. The flag leaves only with the record, in `revoke`. */
+  markRemovalPending(id: string): boolean {
+    this.recover();
+    const device = this.devices.find((d) => d.id === id);
+    if (!device) return false;
+    if (device.removalPending) return true;
+    device.removalPending = true;
+    try {
+      this.persist();
+    } catch (error) {
+      delete device.removalPending;
+      throw error;
+    }
+    return true;
+  }
+
   /** "Sign out this phone", asked by the phone. Revokes the DEVICE the
    * presented session belongs to — every session on it, its bearer and its
    * push binding — because a phone that signs out and leaves
@@ -1888,7 +2056,7 @@ export class DeviceRegistry {
   ): { detail: string; respond: string; expiresAt: number } | null {
     this.recover();
     const device = this.devices.find((d) => d.id === deviceId);
-    if (!device || !PUSH_BINDING.test(bindingId)) return null;
+    if (!device || device.removalPending || !PUSH_BINDING.test(bindingId)) return null;
     const detail = `murage_pd_${randomBytes(32).toString("base64url")}`;
     const respond = `murage_pr_${randomBytes(32).toString("base64url")}`;
     const previous = device.push;
@@ -1908,14 +2076,15 @@ export class DeviceRegistry {
    * none. */
   pushBinding(deviceId: string): string | null {
     this.recover();
-    return this.devices.find((d) => d.id === deviceId)?.push?.bindingId ?? null;
+    const device = this.devices.find((d) => d.id === deviceId);
+    return device && !device.removalPending ? (device.push?.bindingId ?? null) : null;
   }
 
   /** What the doors tell the harness about a device answering a card. */
   approvalIdentity(deviceId: string): { id: string; cls: "app" | "browser"; key?: string } | null {
     this.recover();
     const device = this.devices.find((d) => d.id === deviceId);
-    if (!device) return null;
+    if (!device || device.removalPending) return null;
     return { id: device.id, cls: device.installId ? "app" : "browser", ...(device.approvalKey ? { key: device.approvalKey.point } : {}) };
   }
 
@@ -1934,8 +2103,207 @@ export class DeviceRegistry {
     const device = this.devices.find(
       (d) => d.push && sameDigest(scope === "detail" ? d.push.detailHash : d.push.respondHash, hash),
     );
-    if (!device?.push || device.push.expiresAt <= now) return null;
+    // A pending removal can outlast the harness for a long while: the notification code and its answers stay shut meanwhile.
+    if (!device?.push || device.removalPending || device.push.expiresAt <= now) return null;
     return { deviceId: device.id, bindingId: device.push.bindingId };
+  }
+
+  /** Find the one app-class device whose approval key hashes to `keyId`.
+   * "many" (two devices on one key) writes one line with device ids only. */
+  deviceByApprovalKeyId(keyId: string): { ok: true; deviceId: string; point: string } | { ok: false; reason: "none" | "many" | "browser" } {
+    this.recover();
+    const hits = this.devices.filter((d) => !d.removalPending && d.approvalKey && approvalKeyId(d.approvalKey.point) === keyId);
+    if (hits.length === 0) return { ok: false, reason: "none" };
+    if (hits.length > 1) {
+      console.warn(`companion: phone jobs key matches more than one device ${JSON.stringify(hits.map((d) => d.id))}`);
+      return { ok: false, reason: "many" };
+    }
+    const device = hits[0];
+    if (!device.installId || !device.approvalKey) return { ok: false, reason: "browser" };
+    return { ok: true, deviceId: device.id, point: device.approvalKey.point };
+  }
+
+  /** Mint this device's phone-jobs token, replacing any it had. Digest only
+   * reaches disk. Null for an unknown device; throws, having changed nothing,
+   * when the write fails. */
+  issuePhoneJobsToken(deviceId: string, now = Date.now()): string | null {
+    this.recover();
+    const device = this.devices.find((d) => d.id === deviceId);
+    if (!device || device.removalPending) return null;
+    const token = `murage_pj_${randomBytes(32).toString("base64url")}`;
+    const previous = device.phoneJobs;
+    device.phoneJobs = { tokenHash: sha256(token), issuedAt: now };
+    try {
+      this.persist();
+    } catch (error) {
+      if (previous) device.phoneJobs = previous;
+      else delete device.phoneJobs;
+      throw error;
+    }
+    return token;
+  }
+
+  authenticatePhoneJobs(token: string | undefined): { deviceId: string } | null {
+    if (!token || !PHONE_TOKEN.test(token)) return null;
+    this.recover();
+    const hash = sha256(token);
+    const device = this.devices.find((d) => d.phoneJobs && sameDigest(d.phoneJobs.tokenHash, hash));
+    return device && !device.removalPending ? { deviceId: device.id } : null;
+  }
+
+  /** Mint this device's share-and-ask token ("murage_pa_" + 43), replacing any it had, and spend one generation. Digest only reaches
+   * disk. Null for an unknown device or one the owner switched off; throws, having changed nothing, when the write fails. */
+  issuePhoneAskToken(deviceId: string, now = Date.now()): { token: string; generation: number } | null {
+    this.recover();
+    const device = this.devices.find((d) => d.id === deviceId);
+    if (!device || device.shareAskOff || device.removalPending) return null;
+    const token = `murage_pa_${randomBytes(32).toString("base64url")}`;
+    const previous = device.ask;
+    const previousGeneration = device.askGeneration;
+    const generation = (device.askGeneration ?? 0) + 1;
+    device.ask = { tokenHash: sha256(token), issuedAt: now };
+    device.askGeneration = generation;
+    try {
+      this.persist();
+    } catch (error) {
+      if (previous) device.ask = previous;
+      else delete device.ask;
+      if (previousGeneration) device.askGeneration = previousGeneration;
+      else delete device.askGeneration;
+      throw error;
+    }
+    this.askFloor.set(deviceId, Math.max(this.askFloor.get(deviceId) ?? 0, generation));
+    return { token, generation };
+  }
+
+  authenticatePhoneAsk(token: string | undefined): { deviceId: string; generation: number } | null {
+    if (!token || !PHONE_ASK_TOKEN.test(token)) return null;
+    this.recover();
+    const hash = sha256(token);
+    const device = this.devices.find((d) => d.ask && sameDigest(d.ask.tokenHash, hash));
+    return device && !device.removalPending && !this.askRefused(device) ? { deviceId: device.id, generation: device.askGeneration ?? 0 } : null;
+  }
+
+  /** True when this process already knows a newer generation than the device record holds: the floor was raised but the record could not be
+   * saved, so its ask token is refused now, the same answer a restart gives (load drops a hash older than what was seen). */
+  private askRefused(device: DeviceRecord): boolean {
+    return (this.askFloor.get(device.id) ?? 0) > (device.askGeneration ?? 0);
+  }
+
+  /** Drop the device's ask token only (no generation spent): the door's own undo of a mint the harness did not accept. With
+   * `onlyToken`, only while the device still holds that exact token. */
+  clearPhoneAskToken(deviceId: string, onlyToken?: string): boolean {
+    this.recover();
+    const device = this.devices.find((d) => d.id === deviceId);
+    if (!device?.ask) return false;
+    if (onlyToken !== undefined && !sameDigest(device.ask.tokenHash, sha256(onlyToken))) return false;
+    const previous = device.ask;
+    delete device.ask;
+    try {
+      this.persist();
+    } catch (error) {
+      device.ask = previous;
+      throw error;
+    }
+    return true;
+  }
+
+  /** Revoke share and ask for this device in one registry write: the generation moves on and the hash goes. Returns the generation
+   * the revoked token carried (the harness refuses everything up to it). Null for an unknown device; throws, having changed nothing. */
+  revokePhoneAsk(deviceId: string): { through: number } | null {
+    this.recover();
+    const device = this.devices.find((d) => d.id === deviceId);
+    if (!device) return null;
+    const through = device.askGeneration ?? 0;
+    const previous = device.ask;
+    if (this.unavailable) throw new RegistryUnavailableError(this.unavailable);
+    this.raiseAskRevokedFloor(deviceId, through);
+    device.askGeneration = through + 1;
+    delete device.ask;
+    try {
+      this.persist();
+    } catch (error) {
+      if (previous) device.ask = previous;
+      if (through) device.askGeneration = through;
+      else delete device.askGeneration;
+      // The floor file was already raised and never goes down. Fail closed: refuse the token in memory now, as a restart would.
+      this.askFloor.set(deviceId, Math.max(this.askFloor.get(deviceId) ?? 0, through + 1));
+      throw error;
+    }
+    this.askFloor.set(deviceId, Math.max(this.askFloor.get(deviceId) ?? 0, through + 1));
+    return { through };
+  }
+
+  /** Per-device share-and-ask switch. Off also revokes (one write); on only clears the flag. False for an unknown device. */
+  setShareAskAllowed(deviceId: string, allowed: boolean): boolean {
+    this.recover();
+    const device = this.devices.find((d) => d.id === deviceId);
+    if (!device) return false;
+    if (allowed) {
+      if (!device.shareAskOff) return true;
+      // The off bit in the floor file is cleared only after devices.json is saved. A failed save leaves it set.
+      if (this.readAskFloor().corrupt) throw new Error("the share-and-ask revoke record is unreadable; restart the companion to repair it");
+      delete device.shareAskOff;
+      try {
+        this.persist();
+      } catch (error) {
+        device.shareAskOff = true;
+        throw error;
+      }
+      try {
+        this.raiseAskRevokedFloor(deviceId, -1, false);
+      } catch (error) {
+        device.shareAskOff = true;
+        try { this.persist(); } catch { /* the floor bit is still set, so minting stays refused */ }
+        throw error;
+      }
+      return true;
+    }
+    const through = device.askGeneration ?? 0;
+    const previous = { ask: device.ask, off: device.shareAskOff };
+    if (this.unavailable) throw new RegistryUnavailableError(this.unavailable);
+    this.raiseAskRevokedFloor(deviceId, through, true);
+    device.shareAskOff = true;
+    device.askGeneration = through + 1;
+    delete device.ask;
+    try {
+      this.persist();
+    } catch (error) {
+      if (previous.ask) device.ask = previous.ask;
+      if (through) device.askGeneration = through;
+      else delete device.askGeneration;
+      // The floor file now holds the revoke and the off bit and never goes down. Fail closed: refuse the token and keep the phone off in
+      // memory now, as a restart would; the caller still sees the error because the device record did not change.
+      device.shareAskOff = true;
+      this.askFloor.set(deviceId, Math.max(this.askFloor.get(deviceId) ?? 0, through + 1));
+      throw error;
+    }
+    this.askFloor.set(deviceId, Math.max(this.askFloor.get(deviceId) ?? 0, through + 1));
+    return true;
+  }
+
+  /** True when the device holds a phone-jobs token (plan S5: only such a device has a harness job map). */
+  hasPhoneJobsToken(deviceId: string): boolean {
+    this.recover();
+    return this.devices.find((d) => d.id === deviceId)?.phoneJobs !== undefined;
+  }
+
+  /** Drop the device's phone-jobs token. True when one was removed. With `onlyToken`, drop it only while the device still holds
+   * that exact token (its hash matches): a newer mint's token is never cleared by an older request's failure. */
+  clearPhoneJobsToken(deviceId: string, onlyToken?: string): boolean {
+    this.recover();
+    const device = this.devices.find((d) => d.id === deviceId);
+    if (!device?.phoneJobs) return false;
+    if (onlyToken !== undefined && !sameDigest(device.phoneJobs.tokenHash, sha256(onlyToken))) return false;
+    const previous = device.phoneJobs;
+    delete device.phoneJobs;
+    try {
+      this.persist();
+    } catch (error) {
+      device.phoneJobs = previous;
+      throw error;
+    }
+    return true;
   }
 
   /** Allow or stop this device's browser sessions making script access

@@ -1,0 +1,58 @@
+[
+ {
+  "bot": "b1",
+  "hash": "#open=bot:b1&compose=1"
+ },
+ {
+  "threadId": "t1",
+  "again": "m1",
+  "hash": "#open=t1&compose=1&again=m1"
+ },
+ {
+  "threadId": "t1",
+  "hash": "#open=t1&compose=1"
+ },
+ {
+  "bot": "bot-lena",
+  "hash": "#open=bot:bot-lena&compose=1"
+ },
+ {
+  "bot": "b_2.x-3",
+  "hash": "#open=bot:b_2.x-3&compose=1"
+ },
+ {
+  "why": "empty bot id",
+  "hash": "#open=bot:&compose=1",
+  "parses": null
+ },
+ {
+  "why": "bot id over 512 chars",
+  "hash": "#open=bot:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&compose=1",
+  "parses": null
+ },
+ {
+  "why": "thread id over 512 chars",
+  "hash": "#open=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&compose=1",
+  "parses": null
+ },
+ {
+  "why": "again without compose",
+  "hash": "#open=t1&again=m1",
+  "parses": null
+ },
+ {
+  "why": "again empty",
+  "hash": "#open=t1&compose=1&again=",
+  "parses": null
+ },
+ {
+  "why": "compose value other than 1",
+  "hash": "#open=t1&compose=2",
+  "parses": null
+ },
+ {
+  "why": "no open",
+  "hash": "#compose=1",
+  "parses": null
+ }
+]

@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { modelSignature } from "../../shared/memory-model-verify.mjs";
+import { linkedPathComponent, modelSignature } from "../../shared/memory-model-verify.mjs";
 import { bundledModelDirectory, bundledModelState, resetBundledModelVerdicts, resolveMemoryModelDirectory, setBundledModelVerifiedHook } from "./model-location.ts";
 
 import { removeTempDirSync } from "../testing/cleanup.ts";
@@ -99,6 +99,21 @@ it("rejects a bundled directory reached through a symbolic link, at the root or 
   symlinkSync(join(real, "memory-model"), join(root, "root-link"));
   for (const bundled of [join(root, "ancestor-link", "memory-model"), join(root, "root-link")])
     expect((await resolveMemoryModelDirectory(manifest, { dataDir: root, bundled })).source).toBe("downloaded");
+});
+
+// Windows junctions need no privilege, so they are the link a non-admin process (or an installer) can make most easily.
+it.skipIf(process.platform !== "win32")("rejects a bundled directory reached through a Windows junction, at the root or an ancestor", async () => {
+  const real = join(root, "real"); write(join(real, "memory-model"));
+  symlinkSync(real, join(root, "ancestor-junction"), "junction");
+  symlinkSync(join(real, "memory-model"), join(root, "root-junction"), "junction");
+  for (const bundled of [join(root, "ancestor-junction", "memory-model"), join(root, "root-junction")])
+    expect((await resolveMemoryModelDirectory(manifest, { dataDir: root, bundled })).source).toBe("downloaded");
+});
+
+it("treats a path component that cannot be inspected as untrusted, and finds no link on a plain path", async () => {
+  const bundled = join(root, "bundled"); write(bundled);
+  expect(await linkedPathComponent(bundled)).toBeNull();
+  expect(await linkedPathComponent(join(root, "missing", "memory-model"))).toBe(join(root, "missing"));
 });
 
 it("rejects a bundled model whose internal directory is a symbolic link", async () => {

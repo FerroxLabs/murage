@@ -3669,5 +3669,18 @@
   "learnAboutMe.error.conflict": "Diese Zeile wurde bereits mit anderem Wortlaut behalten. Füge die Antwort erneut ein, um die Zeile neu zu prüfen.",
   "learnAboutMe.importedFrom": "Importiert aus {provider}, {date}",
   "learnAboutMe.importedFromUndated": "Importiert aus {provider}, ohne Datum",
-  "memoryReview.forgottenWords": "Vergessen. Die Worte sind weg."
+  "memoryReview.forgottenWords": "Vergessen. Die Worte sind weg.",
+  "settings.bot.phoneForBots.title": "Telefon für deine Bots",
+  "settings.bot.phoneForBots.description": "Lege fest, was deine Bots auf diesem Telefon nutzen dürfen.",
+  "settings.bot.phoneForBots.open": "Öffnen",
+  "phone.ask.fromPhone": "Von deinem Telefon",
+  "phone.ask.askAgain": "Noch einmal fragen",
+  "phone.ask.settingTitle": "Teilen und fragen von diesem Telefon",
+  "phone.ask.settingOff": "Teilen und Fragen sind für dieses Telefon deaktiviert.",
+  "phone.ask.errorGone": "Dieser Chat ist nicht mehr verfügbar. Wähle einen anderen.",
+  "phone.ask.errorUpdate": "Aktualisiere Murage auf deinem Computer, um das zu nutzen.",
+  "phone.ask.errorSetup": "Öffne Murage, um das Teilen erneut einzurichten.",
+  "phone.removal.pending": "Entfernung ausstehend",
+  "phone.removal.pendingBody": "Murage versucht weiter, dieses Telefon zu entfernen.",
+  "phone.removal.retry": "Erneut versuchen"
 }

@@ -16,7 +16,8 @@
     "callSessionOpen",
     "callSessionClose",
     "diagLine",
-    "approveWithDevice"
+    "approveWithDevice",
+    "openPhoneForBots"
   ],
   "chunkBytes": 1048576,
   "maxBytes": 26214400,

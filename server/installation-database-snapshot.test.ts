@@ -177,15 +177,21 @@ it("accepts push_bindings before and after key secrets and preview consent, with
   // by ALTER TABLE (the host-only HMAC key for collapseKey and threadGroup).
   const older = fixture();
   initializeInbox(older.db); initializeThreadSnooze(older.db); initializeArtifacts(older.db); initializeMobilePush(older.db);
-  older.db.exec("ALTER TABLE push_bindings DROP COLUMN preview_content; ALTER TABLE push_bindings DROP COLUMN key_secret; ALTER TABLE push_bindings DROP COLUMN token_expires_at");
+  older.db.exec("ALTER TABLE push_bindings DROP COLUMN rings_for_calls; ALTER TABLE push_bindings DROP COLUMN preview_content; ALTER TABLE push_bindings DROP COLUMN key_secret; ALTER TABLE push_bindings DROP COLUMN token_expires_at");
   older.db.exec("INSERT INTO push_bindings VALUES ('b1','d1','murage_pt_x',1)");
   expect(inspectInstallationDatabase(older.db)).toMatchObject({ messages: 1, threads: 1 });
   expect(await snapshotInstallationDatabase(older.data, older.target)).toMatchObject({ status: "copied" });
 
   const beforeConsent = fixture();
   initializeInbox(beforeConsent.db); initializeThreadSnooze(beforeConsent.db); initializeArtifacts(beforeConsent.db); initializeMobilePush(beforeConsent.db);
-  beforeConsent.db.exec("ALTER TABLE push_bindings DROP COLUMN token_expires_at; ALTER TABLE push_bindings DROP COLUMN preview_content");
+  beforeConsent.db.exec("ALTER TABLE push_bindings DROP COLUMN rings_for_calls; ALTER TABLE push_bindings DROP COLUMN token_expires_at; ALTER TABLE push_bindings DROP COLUMN preview_content");
   expect(inspectInstallationDatabase(beforeConsent.db)).toMatchObject({ messages: 1, threads: 1 });
+
+  // 1.0.9 appended rings_for_calls: a 1.0.8 archive (every earlier column, not that one) is accepted
+  const beforeCalls = fixture();
+  initializeInbox(beforeCalls.db); initializeThreadSnooze(beforeCalls.db); initializeArtifacts(beforeCalls.db); initializeMobilePush(beforeCalls.db);
+  beforeCalls.db.exec("ALTER TABLE push_bindings DROP COLUMN rings_for_calls");
+  expect(inspectInstallationDatabase(beforeCalls.db)).toMatchObject({ messages: 1, threads: 1 });
 
   const upgraded = fixture();
   upgraded.db.exec(`CREATE TABLE push_bindings (
@@ -465,4 +471,36 @@ it("accepts the pending_delegations table with its indexes, accepts an older arc
   const badTable = fixture();
   badTable.db.exec("CREATE TABLE pending_delegations (id TEXT PRIMARY KEY NOT NULL, item TEXT NOT NULL)");
   expect(() => inspectInstallationDatabase(badTable.db)).toThrow();
+});
+
+it("bot email (section 7): payloads and events are emptied in the staged copy, bindings and send receipts carried, tables kept", async () => {
+  const { EmailStore } = await import("./email/email-store.ts");
+  const f = fixture();
+  const store = new EmailStore(f.db);
+  store.insertBinding({ botId: "b1", inboxId: "ibx_1", address: "juniper@murage.email", username: "juniper", displayName: "Juniper", emailKeyRef: "key_b1", fluxAccountId: null, state: "active", step: null, opId: null, opStartedAt: null, policy: "auto", failure: null, updatedAt: 1 });
+  store.putPayload("snd-1", [{ part: 0, name: null, contentType: "text/plain", size: 26, sha256: "0".repeat(64), data: new TextEncoder().encode("Frozen body canary 7Q2Z") }]);
+  store.recordEvent({ eventId: "eev_1", type: "email.message.received", inboxId: "ibx_1", botId: "b1", clientReference: null, heldId: null, created: null, data: { subject: "Inbound canary 9K4W" } }, 1);
+  // Astra r2 Medium: the send card in the transcript carries the mail text in its subtitle and draft; the backup keeps only the headers
+  const card = { kind: "email-send", tool: "email_send", requestId: "email:snd-1", title: "Send this email?", subtitle: "To: a@x.test\nSubject: Hello\n\nCard body canary 3HX8\n\nAttachments:\nf.txt (1 KB, SHA-256 00)", pushBody: "Juniper wants to send an email", options: ["Send"], emailSend: { sendId: "snd-1", draft: { to: ["a@x.test"], cc: [], subject: "Hello", text: "Draft text canary 5PV1" } } };
+  f.db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES (?,?,?,?,?,?,?)").run("t", "card", 3, "bot", "options", null, JSON.stringify({ id: "card", at: 3, role: "bot", kind: "options", card }));
+  f.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+  expect(await snapshotInstallationDatabase(f.data, f.target)).toMatchObject({ status: "copied" });
+  const copied = new DatabaseSync(f.target, { readOnly: true });
+  databases.push(copied);
+  const count = (table: string) => (copied.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
+  expect([count("email_payloads"), count("email_events"), count("email_bindings")]).toEqual([0, 0, 1]);
+  const bytes = readFileSync(f.target).toString("latin1");
+  expect(bytes).not.toContain("Frozen body canary 7Q2Z");
+  expect(bytes).not.toContain("Inbound canary 9K4W");
+  expect(bytes).not.toContain("Card body canary 3HX8");
+  expect(bytes).not.toContain("Draft text canary 5PV1");
+  const kept = JSON.parse((copied.prepare("SELECT json FROM messages WHERE id='card'").get() as { json: string }).json);
+  expect(kept.card.subtitle).toBe("To: a@x.test\nSubject: Hello");
+  expect(kept.card.emailSend.draft).toEqual({ to: ["a@x.test"], cc: [], subject: "Hello", text: "" });
+  // the source is untouched: only the staged copy is sanitized
+  expect((f.db.prepare("SELECT COUNT(*) AS n FROM email_payloads").get() as { n: number }).n).toBe(1);
+  // the fidelity archive takes messages.db from this same sanitized projection, never from the raw file
+  const fidelity = readFileSync(join(import.meta.dirname, "installation-fidelity-snapshot.ts"), "utf8");
+  expect(fidelity).toContain('file.path!=="messages.db"');
+  expect(fidelity).toContain('path==="messages.db"?join(stage.directory,"state",file.path)');
 });

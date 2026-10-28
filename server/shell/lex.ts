@@ -35,8 +35,9 @@ export type Part =
   /** `$NAME`, `${NAME}` and the `${NAME<op>word}` family; `word` is the
    * operand, lexed as a nested word. */
   | { kind: "var"; name: string; quote: Quote; op?: string; word?: Word }
-  /** `$(…)` or `` `…` ``: the raw inner text */
-  | { kind: "subst"; text: string; quote: Quote }
+  /** `$(…)` or `` `…` ``: the raw inner text. `block`: PowerShell's `{…}`
+   * script block, as opposed to its `(…)` expression. */
+  | { kind: "subst"; text: string; quote: Quote; block?: true }
   /** `$((…))`: kept so the word is not literal; the text is not executed */
   | { kind: "arith"; text: string; quote: Quote }
   /** `<(…)` or `>(…)`: the inner text runs as a script */
