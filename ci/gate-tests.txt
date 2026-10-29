@@ -1668,3 +1668,9 @@ server/drivers/openai-chat-tools.test.ts	all	chat engine tool calls ask before t
 server/memory-late-tool-started-api.test.ts	linux+mac	a turn that ran a tool is never re-run after a memory refusal
 server/reload-retain.test.ts	all	engine reload keeps a folder lease while an engine child still runs
 server/memory/memindex-busy-109.test.ts	all	a backup or reader holding the memory index during start-up no longer gets a healthy index set aside, and a set-aside copy holding deleted conversations' words is removed once the new index is open
+server/app-trigger-delivery.test.ts	all	connected-app events are saved before they are acknowledged and run once, billed once
+server/app-trigger-store.test.ts	all	one connected-app event starts at most one run; event handling does not slow as history grows
+server/app-trigger-zero.test.ts	all	a connected-app event run never creates, asks or hands work to other bots
+server/routines-app-event.test.ts	all	a connected-app routine never runs on a clock or turns into a scheduled routine
+shared/app-trigger-canonical.test.ts	all	connected-app event digests match Flux byte for byte
+shared/app-triggers.test.ts	all	connected-app event content cannot carry routing, billing or a child ceiling

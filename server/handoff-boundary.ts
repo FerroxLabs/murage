@@ -39,6 +39,7 @@ import { type IncomingMessage, type ServerResponse } from "node:http";
 import { type ExecutionAudience } from "./work-admission.ts";
 import { type HumanPrincipal } from "./human-principals.ts";
 import { type ProjectCard } from "./project-records.ts";
+import { APP_CHILD_NOT_ALLOWED, assertNotAppChild, refuseAppChild } from "./app-trigger-zero.ts";
 
 export type EventReply = { status: number; body: unknown };
 
@@ -584,6 +585,8 @@ function draftOnlyRefusesTarget<T extends Parameters<typeof resolveCoordinationT
 
 export async function askBotRoute(bx: AskBotRouteContext): Promise<void> {
   const { ASK_BOT_TIMEOUT_MS, MAX_COMMS_DEPTH, approvalBus, askerWake, askBotAndWait, beginRoomAsk, comms, connectorThread, coordinationBudget, coordinationHasCapacity, delegationWatch, eventAction, fullAccessSkipsPeerCard, internalCapabilities, internalClaim, internalEventId, internalOwner, isUnattended, ownerSurfacesByThread, readInternalBody, requireActiveInternal, res, roomAskDuplicate, roomAskKey, roomAskParent, roomAskRefused, routinePeerSource, settleRoomAsk, sharedApprovedRequests, sourceExecutionAudience, store, syncAskRequests, waitSharedRequest , rows } = bx;
+  // The hard zero (app-trigger-zero.ts): an app-origin ask is refused before its body, any card, ledger or queue.
+  if (refuseAppChild({ threadId: internalClaim.threadId, generation: internalClaim.generation }, "ask")) return sendBot(res, 403, botBody({ error: status("app_child_not_allowed"), code: APP_CHILD_NOT_ALLOWED }));
   const body = await readInternalBody();
   const fromBotId = String(body.fromBotId ?? "");
   const senderForResolution = store.bot(fromBotId);
@@ -675,6 +678,7 @@ export async function askBotRoute(bx: AskBotRouteContext): Promise<void> {
       ? { botName: botName(target), text: status("already_asked_done", { name: botName(target) }) }
       : { busy: true, taskId: twin.id, toBotName: botName(target) });
     await charge();
+    assertNotAppChild(fromThreadId, "ask");
     const queued = comms.queueDelegation(
       from,
       { toBotId, message, reason: "asked while busy", depth, approvalAlreadyGranted, ...(peerCardWaived ? { fullAccessWaived: true } : {}), ...(ownerSurfacesByThread.get(internalClaim.threadId) === false ? { notOwnerAudience: true } : {}), ...(isUnattended(fromThreadId) ? { unattended: true } : {}), routineAuthority: routinePeerSource(fromThreadId, fromBotId), executionAudience: sourceExecutionAudience(fromBotId, fromThreadId, true) ?? undefined, eventId: internalEventId, coordination: nextCoordination() },
@@ -728,6 +732,7 @@ export async function askBotRoute(bx: AskBotRouteContext): Promise<void> {
   if (sharedTag?.kind === "team" && sharedWithTeam(currentTarget, sharedTag.team)) {
     // F3 (02-3): the allowance is consumed before the worker's row exists, so the worker's derived trace is on disk ("consumed before dispatch")
     nextCoordination();
+    assertNotAppChild(fromThreadId, "ask");
     const queued = comms.enqueueShared({ fromBotId, sourceThreadId: fromThreadId, toBotId, message,
       admissionKey: roomAskKey(fromThreadId, internalClaim.generation, toBotId, message), ownerAudience: internalClaim.notOwnerAudience !== true,
       now: Date.now(), parentRequestId: roomAskParent(fromBotId, fromThreadId)?.id, tag: sourceExecutionAudience(fromBotId, fromThreadId), routineAuthority: routinePeerSource(fromThreadId, fromBotId), unattended: isUnattended(fromThreadId), ...(internalEventId ? { eventId: internalEventId } : {}) });
@@ -1013,6 +1018,8 @@ export async function checkDelegationRoute(bx: CheckDelegationRouteContext): Pro
 export type DelegateBotRouteContext = Pick<BoundaryPorts, "MAX_COMMS_DEPTH" | "askerWake" | "beginRoomAsk" | "comms" | "connectorThread" | "coordinationBudget" | "fullAccessSkipsPeerCard" | "internalCapabilities" | "isUnattended" | "ownerSurfacesByThread" | "resultEgressDeps" | "roomAskDuplicate" | "roomAskParent" | "roomAskRefused" | "routinePeerSource" | "settleRoomAsk" | "sourceExecutionAudience" | "store" | "taskResolutionDeps"> & Pick<RouteLocals, "eventAction" | "internalClaim" | "internalEventId" | "internalOwner" | "readInternalBody" | "res">;
 export async function delegateBotRoute(bx: DelegateBotRouteContext): Promise<void> {
   const { MAX_COMMS_DEPTH, beginRoomAsk, comms, connectorThread, coordinationBudget, eventAction, fullAccessSkipsPeerCard, internalCapabilities, internalClaim, internalEventId, internalOwner, isUnattended, ownerSurfacesByThread, readInternalBody, res, roomAskDuplicate, roomAskParent, roomAskRefused, routinePeerSource, sourceExecutionAudience, store } = bx;
+  // The hard zero (app-trigger-zero.ts): an app-origin delegation is refused before its body, any card, ledger or queue.
+  if (refuseAppChild({ threadId: internalClaim.threadId, generation: internalClaim.generation }, "delegate")) return sendBot(res, 403, botBody({ error: status("app_child_not_allowed"), code: APP_CHILD_NOT_ALLOWED }));
   const body = await readInternalBody();
   const fromBotId = String(body.fromBotId ?? "");
   const senderForResolution = store.bot(fromBotId);
@@ -1063,6 +1070,7 @@ export async function delegateBotRoute(bx: DelegateBotRouteContext): Promise<voi
   try {
   await charge();
   const peerCardWaived = from.approvePeerComms === true && fullAccessSkipsPeerCard(from.id, fromThreadId);
+  assertNotAppChild(fromThreadId, "delegate");
   const queued = comms.queueDelegation(
     from,
     { toBotId, message, reason, depth, ...(peerCardWaived ? { fullAccessWaived: true } : {}), ...(ownerSurfacesByThread.get(internalClaim.threadId) === false ? { notOwnerAudience: true } : {}), ...(isUnattended(fromThreadId) ? { unattended: true } : {}), routineAuthority: routinePeerSource(fromThreadId, fromBotId), executionAudience: sourceExecutionAudience(fromBotId, fromThreadId, true) ?? undefined, eventId: internalEventId, coordination: (() => { try { return coordinationBudget.advance(internalOwner.coordination, fromBotId, toBotId); } catch (error) { if (coordinationRefusalText(error) !== undefined) unrun(); throw error; } })() },
