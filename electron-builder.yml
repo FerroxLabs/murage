@@ -143,6 +143,10 @@ extraResources:
     to: licenses/fuigo
   - from: dist
     to: ui
+  # 1.0.9 Sentinel: this carries server/sentinel/cli.js (the scanner entry) and server/health/host-boundary.js (the
+  # producer boundary electron/sentinel-host.mjs imports) outside the asar, where ELECTRON_RUN_AS_NODE=1 can run them.
+  # The host copies cli.js to a versioned file in the Sentinel output root, and every OS registration names that copy,
+  # so an update, a moved AppImage or a translocated bundle never changes the file a registered job runs.
   - from: dist-server
     to: server
   # Source-built optional browser helpers; preparation does not register a host.

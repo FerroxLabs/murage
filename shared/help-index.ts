@@ -1065,6 +1065,56 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "- The built-in browser is on for everyone. On Mac, Teach a skill is ready to use from the start.\n- Helper bots carry on. Approvals a helper bot asks for reach you and carry its work on once you answer.\n- One update control. The sidebar has a single update control: one spinner while a new version downloads, and a tap opens the update details.\n- Every reply explains itself. When a reply can't finish, or ends with nothing to show, Murage tells you why in one plain line."
   },
   {
+    "id": "changelog/v1-0-9#tools-on-openai-compatible-engines-in-1-0-9",
+    "title": "What changed in Murage 1.0.9",
+    "description": "Tools on every OpenAI-compatible engine, bot calls, a phone your bots can use, health checks, and No limits that runs your own scripts straight away.",
+    "heading": "Tools on OpenAI-compatible engines in 1.0.9",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.9",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.9",
+    "url": "https://murage.ai/docs/changelog/v1-0-9#tools-on-openai-compatible-engines-in-1-0-9",
+    "text": "- Tools on every OpenAI-compatible engine. Connect any OpenAI-compatible engine and your bots use their tools there too, with the same approval cards and the same Stop as every other engine."
+  },
+  {
+    "id": "changelog/v1-0-9#your-phone-in-1-0-9",
+    "title": "What changed in Murage 1.0.9",
+    "description": "Tools on every OpenAI-compatible engine, bot calls, a phone your bots can use, health checks, and No limits that runs your own scripts straight away.",
+    "heading": "Your phone in 1.0.9",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.9",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.9",
+    "url": "https://murage.ai/docs/changelog/v1-0-9#your-phone-in-1-0-9",
+    "text": "- Bot calls. When something needs you, your bot can call your phone. The lock screen only says Murage is calling; answer to hear what it is, or choose Not now. Calls off for today is in Settings, Notifications, Calls.\n- A phone your bots can use. When you ask, bots can check your calendar and add events, read and add reminders, set alarms and timers, find a contact to start a text or a call, and find things nearby. Each request shows a card on the phone for you to approve.\n- Share to Murage and Ask Murage. Share links, photos and files from any app straight into a chat with a bot, or ask your bots from anywhere on the phone by voice or with one tap.…"
+  },
+  {
+    "id": "changelog/v1-0-9#health-and-backups-in-1-0-9",
+    "title": "What changed in Murage 1.0.9",
+    "description": "Tools on every OpenAI-compatible engine, bot calls, a phone your bots can use, health checks, and No limits that runs your own scripts straight away.",
+    "heading": "Health and backups in 1.0.9",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.9",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.9",
+    "url": "https://murage.ai/docs/changelog/v1-0-9#health-and-backups-in-1-0-9",
+    "text": "- Health checks. A Health card in the Inbox and in Settings shows what Murage's checks found, with one short daily summary when something changed. The checks read only health figures, never your conversations or memories.\n- Backups include your cards. Backups include your question and approval cards, along with everything else Murage keeps.\n- Forget means gone. Forget clears a memory's words from search as well, even across large deletions."
+  },
+  {
+    "id": "changelog/v1-0-9#full-access-and-no-limits-in-1-0-9",
+    "title": "What changed in Murage 1.0.9",
+    "description": "Tools on every OpenAI-compatible engine, bot calls, a phone your bots can use, health checks, and No limits that runs your own scripts straight away.",
+    "heading": "Full access and No limits in 1.0.9",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.9",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.9",
+    "url": "https://murage.ai/docs/changelog/v1-0-9#full-access-and-no-limits-in-1-0-9",
+    "text": "- No limits runs your own scripts straight away, on Mac, Windows and Linux.\n- Fewer cards at Full access. More everyday compound commands run straight through without a card.\n- Turns run on every computer. Where Murage can't add its power protection, the turn still runs."
+  },
+  {
+    "id": "changelog/v1-0-9#everyday-use-in-1-0-9",
+    "title": "What changed in Murage 1.0.9",
+    "description": "Tools on every OpenAI-compatible engine, bot calls, a phone your bots can use, health checks, and No limits that runs your own scripts straight away.",
+    "heading": "Everyday use in 1.0.9",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.9",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.9",
+    "url": "https://murage.ai/docs/changelog/v1-0-9#everyday-use-in-1-0-9",
+    "text": "- Bots connect to the services you choose. Ask a bot to use an API and it can build the connection itself and keep the key you give it.\n- Questions from your tools. When a connected tool needs an answer from you, Claude asks you right in the chat and carries on once you reply.\n- Grok sees your pictures. Grok sees the pictures you send, and a message you send mid-reply joins the turn that is running."
+  },
+  {
     "id": "computers/cloud-and-vps#box-cloud-computer",
     "title": "Cloud computer and your own VPS",
     "description": "Choose a managed Box desktop or a hardened container on a Linux server you own.",
@@ -1357,6 +1407,36 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "where": "Murage docs → Devices → The Murage phone app",
     "url": "https://murage.ai/docs/devices/phone-app#what-the-phone-can-do",
     "text": "From the phone you can read your conversations and send messages, answer approval cards and questions, and edit a message. You can make a voice call to a bot, add pictures to a message, and use your Inbox. You can run a routine now, make a new bot, and watch a bot's browser. For projects you can open the project, read and edit the brief, work on goals and Board cards, read Activity and usage, and stop, pause or resume a project."
+  },
+  {
+    "id": "devices/phone-app#phone-tools",
+    "title": "The Murage phone app",
+    "description": "Pair the Murage phone app with your computer, what it can do, what stays on the computer, and how to unpair a phone.",
+    "heading": "Phone tools",
+    "breadcrumb": "Murage docs → Devices → The Murage phone app",
+    "where": "Murage docs → Devices → The Murage phone app",
+    "url": "https://murage.ai/docs/devices/phone-app#phone-tools",
+    "text": "With phone tools, your bots can use your phone when you ask them to. They can check your calendar and add events, read and add reminders, set alarms and timers, find a contact to start a text or a call, and see roughly where you are for things nearby. A bot only uses phone tools when you ask it for something. Each request shows a card on the phone, and you approve it there. Reading calendar details, contacts and reminders always asks first."
+  },
+  {
+    "id": "devices/phone-app#share-to-murage-and-ask-murage",
+    "title": "The Murage phone app",
+    "description": "Pair the Murage phone app with your computer, what it can do, what stays on the computer, and how to unpair a phone.",
+    "heading": "Share to Murage and Ask Murage",
+    "breadcrumb": "Murage docs → Devices → The Murage phone app",
+    "where": "Murage docs → Devices → The Murage phone app",
+    "url": "https://murage.ai/docs/devices/phone-app#share-to-murage-and-ask-murage",
+    "text": "Share links, photos and files from any app straight into a chat with your bots. Pick Murage in the phone's share sheet, then choose the bot. Ask Murage lets you ask your bots from anywhere on the phone, by voice or with one tap. On Android you can make Murage your phone's assistant app. Sending a new message needs the phone unlocked. A send you already started may finish uploading after the phone locks."
+  },
+  {
+    "id": "devices/phone-app#bot-calls",
+    "title": "The Murage phone app",
+    "description": "Pair the Murage phone app with your computer, what it can do, what stays on the computer, and how to unpair a phone.",
+    "heading": "Bot calls",
+    "breadcrumb": "Murage docs → Devices → The Murage phone app",
+    "where": "Settings → Notifications → Calls",
+    "url": "https://murage.ai/docs/devices/phone-app#bot-calls",
+    "text": "Your bots can call you on the phone when something needs you. The lock screen only shows that Murage is calling, never what the message says. Answer to hear what it is, or choose Not now to dismiss that call. To stop calls for the rest of the day, turn on Calls off for today in Settings → Notifications → Calls in Murage on the computer, and turn it off there when you want calls again."
   },
   {
     "id": "devices/phone-app#what-stays-on-the-computer",
@@ -2285,6 +2365,16 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "where": "Murage docs → Features → Inbox",
     "url": "https://murage.ai/docs/features/inbox#connections-to-restore-and-routines",
     "text": "Connections to restore lists connected apps that need signing in again. Routines shows one line per routine, not per run, with Open latest run or Open the run that failed."
+  },
+  {
+    "id": "features/inbox#health-checks",
+    "title": "Inbox",
+    "description": "Everything that needs you in one place, approvals, questions, engines to sign in to, connections to restore and routine results, with Clear, Dismiss and Snooze.",
+    "heading": "Health checks",
+    "breadcrumb": "Murage docs → Features → Inbox",
+    "where": "Murage docs → Features → Inbox",
+    "url": "https://murage.ai/docs/features/inbox#health-checks",
+    "text": "The Health card in the Inbox, and beside Diagnostics in Settings, shows what Murage's health checks found. Once a day at 09:00 your time, the Inbox gets one short health summary when something is open, changed or recovered. Only two things send a notification on their own: backups that are switched on but have no checked backup, and heavy disk writes that keep going for five minutes while Murage is idle. Your notification settings and quiet hours apply, and the notification only ever says that a health check needs your attention.\n\nA small checker runs on its own every two minutes, even while the app is closed.…"
   },
   {
     "id": "features#overview",
@@ -3437,7 +3527,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Security → Permissions and secrets",
     "where": "Murage docs → Security → Permissions and secrets",
     "url": "https://murage.ai/docs/security/permissions-and-secrets#secret-handling",
-    "text": "- Do not paste API keys into chat.\n- Packaged builds use write-only settings and operating-system-backed encryption where supported.\n- Secret values are scrubbed from public configuration responses and mobile APIs.\n- Per-provider environment injection prevents unrelated agent processes from inheriting credentials they do not use.\n- OAuth provider tokens for connected apps stay with the connected-apps service."
+    "text": "- For a provider Murage supports, save its key in Settings or on the secure card your bot shows, rather than pasting it into chat.\n- For any other service, give your bot the key, or put it in a file git does not track, such as a .env in the project, and tell the bot where it is. The bot keeps it only where you say, sends it only to that service, and never saves it to its memory, its replies or committed files.\n- Packaged builds use write-only settings and operating-system-backed encryption where supported.\n- Secret values are scrubbed from public configuration responses and mobile APIs.…"
   },
   {
     "id": "security/permissions-and-secrets#shared-machines",

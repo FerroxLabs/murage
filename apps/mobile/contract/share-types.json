@@ -1,0 +1,134 @@
+{
+  "version": 1,
+  "notes": [
+    "images and files list the exact keys of IMAGE_MIMES and FILE_MIMES in server/attachments.ts (SHARE_IMAGE_MIMES, SHARE_FILE_MIMES), in the same order; a test pins them. uti is the iOS UTType identifier, ext the extension the server stores.",
+    "HEIC and HEIF photos are converted to JPEG on the phone before upload (heicToJpeg); the server never sees them.",
+    "androidFilter is the MIME list the Android share target and the file picker offer."
+  ],
+  "images": [
+    "image/png",
+    "image/jpeg",
+    "image/gif",
+    "image/webp"
+  ],
+  "imageUtis": {
+    "image/png": "public.png",
+    "image/jpeg": "public.jpeg",
+    "image/gif": "com.compuserve.gif",
+    "image/webp": "org.webmproject.webp"
+  },
+  "files": [
+    {
+      "mime": "text/plain",
+      "uti": "public.plain-text",
+      "ext": ".txt"
+    },
+    {
+      "mime": "text/markdown",
+      "uti": "net.daringfireball.markdown",
+      "ext": ".md"
+    },
+    {
+      "mime": "text/csv",
+      "uti": "public.comma-separated-values-text",
+      "ext": ".csv"
+    },
+    {
+      "mime": "text/tab-separated-values",
+      "uti": "public.tab-separated-values-text",
+      "ext": ".tsv"
+    },
+    {
+      "mime": "application/json",
+      "uti": "public.json",
+      "ext": ".json"
+    },
+    {
+      "mime": "application/pdf",
+      "uti": "com.adobe.pdf",
+      "ext": ".pdf"
+    },
+    {
+      "mime": "application/rtf",
+      "uti": "public.rtf",
+      "ext": ".rtf"
+    },
+    {
+      "mime": "text/rtf",
+      "uti": "public.rtf",
+      "ext": ".rtf"
+    },
+    {
+      "mime": "application/msword",
+      "uti": "com.microsoft.word.doc",
+      "ext": ".doc"
+    },
+    {
+      "mime": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "uti": "org.openxmlformats.wordprocessingml.document",
+      "ext": ".docx"
+    },
+    {
+      "mime": "application/vnd.ms-excel",
+      "uti": "com.microsoft.excel.xls",
+      "ext": ".xls"
+    },
+    {
+      "mime": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "uti": "org.openxmlformats.spreadsheetml.sheet",
+      "ext": ".xlsx"
+    },
+    {
+      "mime": "application/vnd.ms-powerpoint",
+      "uti": "com.microsoft.powerpoint.ppt",
+      "ext": ".ppt"
+    },
+    {
+      "mime": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      "uti": "org.openxmlformats.presentationml.presentation",
+      "ext": ".pptx"
+    },
+    {
+      "mime": "application/vnd.oasis.opendocument.text",
+      "uti": "org.oasis-open.opendocument.text",
+      "ext": ".odt"
+    },
+    {
+      "mime": "application/vnd.oasis.opendocument.spreadsheet",
+      "uti": "org.oasis-open.opendocument.spreadsheet",
+      "ext": ".ods"
+    },
+    {
+      "mime": "application/vnd.oasis.opendocument.presentation",
+      "uti": "org.oasis-open.opendocument.presentation",
+      "ext": ".odp"
+    }
+  ],
+  "heicToJpeg": {
+    "quality": 0.85,
+    "maxEdge": 4096
+  },
+  "androidFilter": [
+    "image/png",
+    "image/jpeg",
+    "image/gif",
+    "image/webp",
+    "text/plain",
+    "text/markdown",
+    "text/csv",
+    "text/tab-separated-values",
+    "application/json",
+    "application/pdf",
+    "application/rtf",
+    "text/rtf",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.ms-powerpoint",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "application/vnd.oasis.opendocument.text",
+    "application/vnd.oasis.opendocument.spreadsheet",
+    "application/vnd.oasis.opendocument.presentation"
+  ]
+}

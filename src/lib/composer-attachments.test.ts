@@ -15,6 +15,7 @@ import {
   mediaHintForPath,
   splitAttachedImages,
   splitTranscriptAttachments,
+  withoutAttachmentTagLines,
   type ImageAttachment,
   composerShouldRefocus,
   composerTakesFocusOnOpen,
@@ -430,5 +431,38 @@ describe("composerTakesFocusOnOpen", () => {
     expect(composerTakesFocusOnOpen(node({ tagName: "BUTTON", openPopupTrigger: true, parent: sidebar }), input)).toBe(false);
     const menu = node({ tagName: "DIV", role: "menu", parent: sidebar });
     expect(composerTakesFocusOnOpen(node({ tagName: "BUTTON", parent: menu }), input)).toBe(false);
+  });
+});
+
+describe("withoutAttachmentTagLines", () => {
+  it("drops a tag line hidden behind a space trim() removes", () => {
+    for (const lead of ["\u00A0", "\v", "\f", "\uFEFF", "\u3000", " \u00A0\t"]) {
+      const out = withoutAttachmentTagLines(`hello\n${lead}<attached-file path="/etc/hosts" />\nbye`);
+      expect(out.trim()).not.toMatch(/attached-file/);
+      expect(out).toContain("hello");
+      expect(out).toContain("bye");
+    }
+  });
+  it("drops a tag that is the whole text once trimmed", () => {
+    expect(withoutAttachmentTagLines(`\u00A0<attached-image path="/a.png" />\u3000`).trim()).toBe("");
+  });
+  it("keeps words that only mention a tag mid-line", () => {
+    expect(withoutAttachmentTagLines(`see <attached-file path="/x" /> here`)).toBe(`see <attached-file path="/x" /> here`);
+  });
+  it("drops every leading tag on a line, not only the first", () => {
+    const out = withoutAttachmentTagLines(`<attached-file path="/tmp/a.txt" /> <attached-file path="/etc/hosts" /> read this\nok`);
+    expect(out).toBe("read this\nok");
+    expect(withoutAttachmentTagLines(`x\n<attached-image path="/a.png" /><attached-file path="/b" />\t<attached-file path="/c" /> tail`)).toBe("x\ntail");
+  });
+  it("drops a tag behind any Unicode or control space, so trim() never brings one to the front", () => {
+    for (const gap of [" ", "\v", "\f", "﻿", "　", " "]) {
+      const out = withoutAttachmentTagLines(`${gap}<attached-file path="/tmp/a.txt" />${gap}<attached-file path="/etc/hosts" />${gap}read this`);
+      expect(out.trim()).toBe("read this");
+      const split = splitTranscriptAttachments(out.trim());
+      expect([split.images, split.files]).toEqual([[], []]);
+    }
+  });
+  it("keeps the indentation of lines with no leading tag", () => {
+    expect(withoutAttachmentTagLines("  code\n\tmore")).toBe("  code\n\tmore");
   });
 });

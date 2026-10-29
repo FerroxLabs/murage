@@ -876,7 +876,8 @@ describe("createOpenAIChatRuntime stream contract", () => {
     );
 
     expect(completed).toMatchObject({ ok: true, stopReason: null });
-    expect(reasoningDeltas(events)).toEqual(["weigh ", "options"]);
+    // joined: reasoning holds back a tail that could open the request key ("s" of "sk-...") until the answer begins (s8)
+    expect(reasoningDeltas(events).join("")).toBe("weigh options");
     expect(replies(events)).toEqual(["answer"]);
   });
 

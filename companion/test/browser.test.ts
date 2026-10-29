@@ -61,7 +61,7 @@ let redeemable = "murage_pair_good";
 const devices: BrowserDeviceStore = {
   redeem: (credential) =>
     credential === redeemable
-      ? { device: { ...DEVICE, createdAt: 1, lastSeenAt: 1 }, token: "murage_raw_bearer_never_leaves" }
+      ? { device: { ...DEVICE, createdAt: 1, lastSeenAt: 1, phoneJobsReady: false, shareAsk: "not-set-up" as const }, token: "murage_raw_bearer_never_leaves" }
       : { error: "That pairing code or link is not right. Check it and try again." },
   openSession: (deviceId) => {
     if (deviceId !== DEVICE.id) return null;

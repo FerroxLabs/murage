@@ -953,6 +953,16 @@ export interface AcpConfig {
 }
 
 /** Per-harness specifics — everything that differs between Grok, Gemini, … */
+/** One engine's names for the mid-turn message contract (see AcpSupport.interjection). */
+export interface AcpInterjection {
+  /** `{ sessionId, text, interjectionId }` -> `{ status: "queued" }` (also double-wrapped). */
+  method: string;
+  /** `{ sessionId, text, interjectionId }` once the engine has taken it. */
+  echoes: readonly string[];
+  /** `{ entries, runningPromptId }`: an `interject-fallback-` turn started, was queued, or the queue went idle. */
+  queueChanged: readonly string[];
+}
+
 export interface AcpSupport {
   driverKind: string;
   /** The engine runs on its own tools and approvals (OpenClaw): Murage hands
@@ -1034,6 +1044,10 @@ export interface AcpSupport {
   /** Whether models behind this ACP harness can consume a referenced image.
    * Most coding agents can open local files; opt out for text-only agents. */
   images?: boolean;
+  /** Messages into a running turn (capabilities.queueing + steer): the engine's
+   * interject request, the echo that confirms one, and its queue rail. Fuigo
+   * and Grok Build (its upstream) share the contract under their own names. */
+  interjection?: AcpInterjection;
   /** Message shown when the CLI is present but not signed in. */
   loginNote: string;
   /** How a user installs this harness's CLI; surfaced by the setup UI. */
@@ -1179,7 +1193,10 @@ export interface AcpSupport {
   /** Apply per-session settings between session/new (or session/load) and the
    * first session/prompt. Some CLIs ignore argv and take the model/mode over
    * the wire instead (droid), so this is the only place the pick can land; a
-   * throw here fails the turn rather than silently running another model. */
+   * throw here fails the turn rather than silently running another model.
+   * A driver that deliberately runs another model resolves with `{ model }`
+   * (reported on session.started) and says so through `notice`; `{ model: null }`
+   * means the model that runs is not known by name, so none is claimed. */
   configureSession?(ctx: {
     request: (method: string, params: unknown, timeoutMs?: number) => Promise<any>;
     sessionId: string;
@@ -1194,7 +1211,9 @@ export interface AcpSupport {
     /** `models.currentModelId` from the same session/new or session/load
      * response, when the agent reported one. */
     currentModelId?: string;
-  }): Promise<void>;
+    /** Post one plain line in this turn (a notice row), e.g. that another model runs this turn. */
+    notice: (line: string) => void;
+  }): Promise<void | { model?: string | null }>;
   /** Extension notification the engine sends, per session, once every MCP
    *  server of that session has settled (connected or unavailable). Fuigo
    *  answers `session/new` before the `mcpServers` it was handed are
@@ -1650,7 +1669,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         asks: Map<string, AcpAskFinish>;
         /** A host-computer action the service asks for (support.hostComputerAskedByMurage). */
         askHostAction?: (call: { name: string; arguments?: unknown }, signal?: AbortSignal) => Promise<"allow" | "deny">;
-        /** Fuigo only: put a message into this running turn (`_fuigo/interject`). */
+        /** Engines with support.interjection: put a message into this running turn (`_fuigo/interject`, `_x.ai/interject`). */
         interject?: (text: string, beforeWrite?: () => void, interjectionId?: string) => Promise<SteerDelivery>;
       }
       const active = new Map<string, Turn>();
@@ -1738,6 +1757,11 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         if (browser) {
           servers.push({ name: "browser", command: browser.command, args: browser.args, env: acpEnv(browser.env) });
         }
+        // 1.0.9 S13b: the owner's phone, under the same name every engine uses. The phone confirms each call itself.
+        const phoneJobs = turn.integrations?.phoneJobs;
+        if (phoneJobs) {
+          servers.push({ name: "phoneJobs", command: phoneJobs.command, args: phoneJobs.args, env: acpEnv(phoneJobs.env) });
+        }
         // The bot's computer, mounted exactly like the Claude driver does.
         // Cloud boxes use the REST adapter; host and sandbox Cua connections
         // expose Cua Driver's official MCP server directly.
@@ -1779,6 +1803,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         if (turn.integrations?.memory) own.set(memoryName, "own:memory");
         if (turn.integrations?.composio) own.set(connectedAppsServerName(turn.integrations.composio.env), "own:connector");
         if (turn.integrations?.browser) own.set("browser", "own:browser");
+        if (turn.integrations?.phoneJobs) own.set("phoneJobs", "own:phoneJobs");
         if (turn.integrations?.computer || turn.integrations?.localComputer) own.set("computer", "own:computer");
         const records: McpMountRecord[] = [];
         for (const server of servers) {
@@ -3101,7 +3126,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           // would answer the question with nothing — and the harness receives
           // the tool's own name so its policy recognizes it too.
           const title = String(toolCall.title ?? "");
-          const questionTool = isQuestionTool(title) ? title : isQuestionTool(kind) ? kind : undefined;
+          const questionTool = isQuestionTool(title) ? bareQuestionToolName(title) : isQuestionTool(kind) ? bareQuestionToolName(kind) : undefined;
           if (ownedMemoryAlias && !turnConfig.fullAuto && !questionTool && state.promptSent &&
             sessionId && params.sessionId === sessionId && !state.settled && !state.cancelRequested &&
             Array.from(rpcPending.values()).some(pending => pending.method === "session/prompt")) {
@@ -3388,7 +3413,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
          *  `interject-fallback-` turn Fuigo runs for it, bounded by the cap. */
         const settleClean = () => {
           if (state.settled) return;
-          if (support.driverKind !== "fuigoAgent" || (!fallback.accepted && interjectionsPending.size === 0)) {
+          if (!support.interjection || (!fallback.accepted && interjectionsPending.size === 0)) {
             settle(true, null);
             return;
           }
@@ -3610,7 +3635,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           // The engine's echo of an interjection. Murage already recorded the
           // steered message when the owner sent it, so the echo only retires
           // the pending id; it never becomes a second user message.
-          if (msg.method === "_fuigo/session/interjection" || msg.method === "fuigo/session/interjection") {
+          if (support.interjection?.echoes.includes(msg.method)) {
             const echoed = msg.params?.interjectionId;
             if (typeof echoed !== "string") return;
             // The echo only retires the id. It is sent when the steer is queued,
@@ -3633,7 +3658,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             fallbackChanged();
             return;
           }
-          if (msg.method === "_fuigo/queue/changed" || msg.method === "fuigo/queue/changed") {
+          if (support.interjection?.queueChanged.includes(msg.method)) {
             handleQueueChanged(msg.params);
             return;
           }
@@ -4049,7 +4074,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             timer = setTimeout(() => resolve({ kind: "timeout" }), ackMs);
             timer.unref?.();
           });
-          const response = request("_fuigo/interject", { sessionId, text, interjectionId }, ackMs).then(
+          const response = request(support.interjection!.method, { sessionId, text, interjectionId }, ackMs).then(
             (res: any) => ({ kind: "response" as const, res }),
             (error: unknown) => ({ kind: "error" as const, error }),
           );
@@ -4187,7 +4212,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         const start = () => {
           if (started) return;
           started = true;
-          active.set(threadId, { stop, interrupt, turnId, asks, ...(support.hostComputerAskedByMurage && controlsHost ? { askHostAction } : {}), ...(support.driverKind === "fuigoAgent" ? { interject } : {}) });
+          active.set(threadId, { stop, interrupt, turnId, asks, ...(support.hostComputerAskedByMurage && controlsHost ? { askHostAction } : {}), ...(support.interjection ? { interject } : {}) });
           emit({ ...base(threadId, turnId), type: "turn.started" });
         };
 
@@ -4632,6 +4657,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             proc!.owner.sessionId = sessionId;
             proc!.retiredSessions.delete(sessionId);
             let selectedModel: string | null = null;
+            let modelUnnamed = false;
             let sessionStarted = false;
             const emitSessionStarted = () => {
               if (sessionStarted) return;
@@ -4641,7 +4667,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 ...base(threadId, turnId),
                 type: "session.started",
                 sessionId,
-                model: selectedModel ?? init?._meta?.modelState?.currentModelId ?? cliTurn.model ?? null,
+                model: selectedModel ?? init?._meta?.modelState?.currentModelId ?? (modelUnnamed ? null : cliTurn.model) ?? null,
               });
             };
 
@@ -4671,7 +4697,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               }
 
               if (support.configureSession) {
-                await support.configureSession({
+                const configured = await support.configureSession({
                   request: (method, params, timeoutMs) =>
                     request(method, params, timeoutMs ?? SESSION_CONFIG_TIMEOUT),
                   sessionId,
@@ -4683,11 +4709,19 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                   ...(typeof sessionResult?.models?.currentModelId === "string"
                     ? { currentModelId: sessionResult.models.currentModelId }
                     : {}),
+                  notice: (line) => {
+                    const itemId = `session-config-notice-${turnId}`;
+                    emit({ ...base(threadId, turnId), type: "item.started", itemId, itemType: "tool", origin: "murage", title: line, toolKind: "notice" });
+                    emit({ ...base(threadId, turnId), type: "item.completed", itemId, itemType: "tool", ok: true });
+                  },
                 });
                 // initialize's currentModelId is the CLI default,
                 // not the model this turn asked for. After a successful pin,
-                // report the slug we set so the UI does not claim otherwise.
-                if (!selectedModel && cliTurn.model) selectedModel = cliTurn.model;
+                // report the slug we set so the UI does not claim otherwise;
+                // a driver that ran another model says which.
+                if (configured && typeof configured.model === "string" && configured.model) selectedModel = configured.model;
+                else if (configured && configured.model === null) modelUnnamed = true;
+                else if (!selectedModel && cliTurn.model) selectedModel = cliTurn.model;
               }
               // The Ask hard stop (ask-stop.ts): the engine's own read-only switch, set before anything is prompted.
               // At Ask a switch that cannot be set refuses the turn; otherwise what an earlier Ask turn set is put back.
@@ -5215,7 +5249,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             localComputerMcp: !config.fullAuto && !support.ownTools,
             folderTrust: support.folderTrust === true,
             ...(support.textOnlyTurn ? { textOnlyTurn: true as const } : {}),
-            ...(support.driverKind === "fuigoAgent" ? { queueing: true } : {}),
+            ...(support.interjection ? { queueing: true } : {}),
           },
           ...(support.textOnlyTurn ? { textOnlyExecutable: () => support.textOnlyExecutable?.(config) ?? config.cli, textOnlyTurn: (turn: import("../../memory/pip-transport.ts").TextOnlyTurnInput) => support.textOnlyTurn!(turn, config) } : {}),
           sendTurn,
@@ -5291,7 +5325,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             return decision.behavior === "allow" ? "allowed-once" : "rejected";
           },
           hasSession: (threadId) => active.has(threadId),
-          ...(support.driverKind === "fuigoAgent" ? {
+          ...(support.interjection ? {
             // A message into the running turn; "rejected" (the caller queues it)
             // when there is no live, unsettled turn or the engine cannot take it,
             // "uncertain" when Fuigo neither answered nor echoed it in time.
@@ -5325,4 +5359,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
       });
     },
   };
+}
+
+/** The question tool's own name (the last `.` or `/` segment, minus an `mcp__server__` prefix), never the model's whole title. */
+function bareQuestionToolName(raw: string): string {
+  const trimmed = raw.trim().replace(/^mcp__.+__/i, "");
+  return trimmed.split(/[./]/).pop() || trimmed;
 }

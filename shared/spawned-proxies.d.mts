@@ -17,6 +17,7 @@ export declare const SPAWNED_PROXY_FILES: Readonly<{
   connectors: string;
   remoteMcp: string;
   phone: string;
+  phoneJobs: string;
   browser: string;
   headlessBrowser: string;
   unifiedBrowser: string;

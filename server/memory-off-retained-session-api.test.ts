@@ -48,6 +48,8 @@ posixOnly("memory off: a retained session that was shown revoked memory is not r
     await expect.poll(() => pendingJobs(bot.threadId), { timeout: 30000 }).toBe(0);
   };
   const argv = (): string[] => JSON.parse(readFileSync(join(fixture.info.dataDir, "claude-dump.json"), "utf8")).argv;
+  // the engine session the latest turn ran in: a resumed launch names it after --resume, a fresh one after --session-id
+  const session = (): string => { const args = argv(), at = args.includes("--resume") ? args.indexOf("--resume") : args.indexOf("--session-id"); expect(at).toBeGreaterThan(-1); return args[at + 1]!; };
   const dispatches = (threadId: string) => log().split("\n").filter(line => line.includes(`claude dispatch thread=${threadId} `));
 
   it("disclose X while active, switch memory off, revoke X, send a direct turn: the session resets", async () => {
@@ -56,10 +58,11 @@ posixOnly("memory off: a retained session that was shown revoked memory is not r
     const bot = created.body.bot as { id: string; threadId: string };
     expect((await api("PATCH", `/api/bots/${bot.id}`, { computer: "off", browser: false, composio: false })).status).toBe(200);
     await turn(bot, "the garden gate is green");
+    const firstSession = session();
     await turn(bot, "and the shed is blue");
-    // the second turn resumed the first one's session
-    expect(argv()).toContain("--resume");
-    const shownSession = argv()[argv().indexOf("--resume") + 1];
+    // the second turn continued the first one's session: the same warm process (its launch argv), or a new one with --resume
+    const shownSession = session();
+    expect(shownSession).toBe(firstSession);
     expect(log()).toMatch(/phase=memory\.assemble.*resumed=true/);
     const given = givenSources(bot.threadId);
     expect(given.length).toBeGreaterThan(0);

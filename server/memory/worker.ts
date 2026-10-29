@@ -82,10 +82,10 @@ async function drain(){
         // At FTS5's segment limit every write fails: compact once (here, in the helper), then write again.
         try{index.upsert(batch.records);}
         catch(error){if(!isSegmentLimitError(error)||!index.recoverSegments||index.recoverSegments()==="none")throw error;index.upsert(batch.records);}
-        // Deletions (forgets and rolled checkpoint versions) were removed without whole-index work: the stepped maintenance
-        // merges them out of the word index when idle. While a failed pass waits out its back-off (purgeFailures), a batch must
+        // Rolled checkpoint versions use stepped maintenance; owner forgets owe the deletion scrub below.
+        // While a failed pass waits out its back-off (purgeFailures), a batch must
         // not restart maintenance or cancel that timer; the back-off resets only when a pass completes.
-        if(index.maintenanceOwed()&&!purgeFailures)void purgeRolledCheckpoints();
+        if(index.maintenanceOwed()&&!index.deletionScrubPending?.()&&!purgeFailures)void purgeRolledCheckpoints();
         const alive=batch.records.filter(r=>!r.deleted&&!r.archived);let embeddingStatus="indexed";
         try {
           for(let at=0,step=indexSlice();at<alive.length;at+=step,step=indexSlice()){
@@ -97,13 +97,41 @@ async function drain(){
         }
         catch {embeddingStatus="unavailable";}
         eligibility.warm([...new Set(alive.map(record=>record.scopeId))]);
+        // Acknowledged at once: an owner forget's physical scrub was made a durable debt in the same index transaction as its removal
+        // (index.ts upsert) and is drained by the scrub timer, one merge for every deletion so far; no batch waits on it (MEMDEL-SIMPLIFY-109).
+        const scrubOwed=Boolean(index.deletionScrubPending?.());
+        if(scrubOwed&&!scrubTimer)armDeletionScrub(SCRUB_STEP_GAP_MS);
         // the batch's writes, charged by the parent to the io-budget (fsWriteBlocks: see reportIo)
-        process.send?.({type:"index-result",requestId:batch.requestId,embeddingStatus,records:batch.records.map(r=>({id:r.id,version:r.version,deleted:r.deleted})),fsWriteBlocks:writtenBlocks()});
+        process.send?.({type:"index-result",requestId:batch.requestId,embeddingStatus,scrubOwed,records:batch.records.map(r=>({id:r.id,version:r.version,deleted:r.deleted})),fsWriteBlocks:writtenBlocks()});
         queryBatchServed=false;
       }
     }
   }catch(error){console.error(`index drain failed: ${describe(error)}`);process.send?.({type:"index-error",reason:"MEMORY_INDEX_FAILED"});}
   finally{busy=false;lastActivity=Date.now();}
+}
+/** The deletion scrub (index.ts scrubDeleted) runs on its own timer, apart from projection batches and after a restart with only the
+ * durable debt: one merge command per step, 50 ms apart, deferring to searches, batches and captures for at most
+ * MAINTENANCE_MAX_DEFER_MS; a lock backs off 1 s doubling to 60 s. The parent hears `scrub-done` when no debt is left. */
+const SCRUB_STEP_GAP_MS=50, SCRUB_RETRY_MS=1000, SCRUB_RETRY_MAX_MS=60_000;
+let scrubTimer:ReturnType<typeof setTimeout>|undefined,scrubFailures=0;
+const scrubClock:MaintenanceClock={deferredSince:null};
+function armDeletionScrub(delay:number){
+  if(scrubTimer)clearTimeout(scrubTimer);
+  scrubTimer=setTimeout(()=>{
+    scrubTimer=undefined;
+    if(!index?.deletionScrubPending?.())return;
+    if(!maintenanceMayRun(scrubClock,busy||queries.length>0||batches.length>0||captures.length>0,Date.now())){
+      armDeletionScrub(MAINTENANCE_POLL_MS);return;
+    }
+    let done=false,blocked=true;
+    try{done=index.scrubDeleted();blocked=index.scrubBlocked;}
+    catch(error){console.error(`deletion scrub failed: ${describe(error)}`);}
+    reportIo();
+    if(done){scrubFailures=0;process.send?.({type:"scrub-done"});return;}
+    if(!blocked)scrubFailures=0;
+    armDeletionScrub(blocked?maintenanceRetryDelayMs(++scrubFailures,SCRUB_RETRY_MS,SCRUB_RETRY_MAX_MS):SCRUB_STEP_GAP_MS);
+  },delay);
+  scrubTimer.unref();
 }
 /** Entries one purge step examines, at most; each step also stops at ROLLED_CHECKPOINT_STEP_MS. */
 const ROLLED_CHECKPOINT_EXAMINED=2048;
@@ -128,6 +156,8 @@ async function purgeRolledCheckpoints(){
       const working=()=>busy||queries.length>0||batches.length>0||captures.length>0;
       await new Promise<void>(resolve=>setTimeout(resolve,working()?MAINTENANCE_POLL_MS:0));
       if(!index)return;
+      // The dedicated scrub timer owns pacing and lock backoff; this pass must not bypass it.
+      if(index.deletionScrubPending?.())break;
       // Quiet: run. Busy: wait, but not past MAINTENANCE_MAX_DEFER_MS since the step was first put off, so sustained load
       // cannot starve the merge a deletion owes (the step is bounded and synchronous, so it cannot interleave with a search).
       if(!maintenanceMayRun(clock,working(),Date.now()))continue;
@@ -144,7 +174,7 @@ async function purgeRolledCheckpoints(){
   }finally{purging=false;reportIo(true);}
   // Deletions that arrived while the last merge ran are owed their own pass at once; otherwise the safety-net pass.
   // A failed pass waits (doubling), never 0: the owed merge is durable, so an immediate retry would fail the same way for ever.
-  if(index)passTimer=setTimeout(()=>void purgeRolledCheckpoints(),purgeFailures?maintenanceRetryDelayMs(purgeFailures,ROLLED_CHECKPOINT_PASS_MS,ROLLED_CHECKPOINT_RETRY_MAX_MS):index.maintenanceOwed()?0:ROLLED_CHECKPOINT_PASS_MS);
+  if(index)passTimer=setTimeout(()=>void purgeRolledCheckpoints(),purgeFailures?maintenanceRetryDelayMs(purgeFailures,ROLLED_CHECKPOINT_PASS_MS,ROLLED_CHECKPOINT_RETRY_MAX_MS):index.maintenanceOwed()&&!index.deletionScrubPending?.()?0:ROLLED_CHECKPOINT_PASS_MS);
   passTimer?.unref();
 }
 /** The postings of entries an earlier build indexed (postings.ts), filled newest first in steps of at most POSTINGS_STEP_MS, only while
@@ -204,6 +234,8 @@ async function fillAgeIndex(){
       await new Promise<void>(resolve=>setTimeout(resolve,working()?MAINTENANCE_POLL_MS:0));
       if(!index)return;
       if(!maintenanceMayRun(clock,working(),Date.now()))continue;
+      // The scrub's durable table cursor must stay attached to the same word tables until completion.
+      if(index.deletionScrubPending?.()){await new Promise<void>(resolve=>setTimeout(resolve,AGE_FILL_BUSY_RETRY_MS));continue;}
       const main=openAuthority();
       if(!main){await new Promise<void>(resolve=>setTimeout(resolve,AGE_FILL_KEYS_POLL_MS));continue;}
       try{
@@ -236,7 +268,7 @@ let warming=false, wasmIdleExitMs=DEFAULT_WASM_IDLE_EXIT_MS, lastActivity=Date.n
 let idleTimer:NodeJS.Timeout|undefined;
 const idleCheck=()=>{
   idleTimer=setTimeout(idleCheck,Math.min(15_000,Math.max(20,Math.floor(wasmIdleExitMs/4))));idleTimer.unref();
-  if(exitRequested||!embeddings?.wasmResident||warming||busy||purging||filling||queries.length||batches.length||captures.length)return;
+  if(exitRequested||!embeddings?.wasmResident||warming||busy||purging||filling||index?.deletionScrubPending?.()||queries.length||batches.length||captures.length)return;
   if(Date.now()-lastActivity<wasmIdleExitMs)return;
   exitRequested=true;process.send?.({type:"idle-exit-request"});
 };
@@ -267,7 +299,9 @@ process.on("message",input=>{
       void fillAgeIndex();
       embeddings=new MemoryEmbeddings(message.modelDirectory,message.manifest,{fallbackDirectory:typeof message.fallbackModelDirectory==="string"?message.fallbackModelDirectory:undefined,strictRoot:message.strictModelRoot===true});
       try{index.prepareModel(embeddings.identity);}catch{/* capacity remains an explicit lexical degradation */}
-      process.send?.({type:"initialised",reset:index.rebuilt,wasm:embeddings.backend==="wasm"});return;
+      const scrubOwed=Boolean(index.deletionScrubPending?.());
+      if(scrubOwed)armDeletionScrub(0);
+      process.send?.({type:"initialised",reset:index.rebuilt,wasm:embeddings.backend==="wasm",scrubOwed});return;
     }
     // WebAssembly only: load the model and run one small inference, then say so. Until "model-ready" a search still gets its
     // words (the parent's cutoffs); nothing waits on this. Native helpers ignore it.

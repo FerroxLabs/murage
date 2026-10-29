@@ -73,6 +73,12 @@ export interface PhoneDevice {
   createdAt: number;
   lastSeenAt: number;
   cloudDesktopAccess: boolean;
+  /** The phone holds a key for phone tools (set a passcode, then pair again, when false). Absent from an older sidecar. */
+  phoneJobsReady?: boolean;
+  /** Share and ask for this phone. Absent from an older sidecar. "turning-off" holds until Murage acknowledges the switch-off. */
+  shareAsk?: "on" | "off" | "not-set-up" | "turning-off";
+  /** The removal was asked for and has not finished. The computer keeps trying; the row stays until it is really gone. Absent from an older sidecar. */
+  removalPending?: boolean;
 }
 
 export interface CompanionState {
@@ -251,6 +257,8 @@ export type CompanionBridge = {
   lanPairing: (enabled: boolean) => Promise<CompanionState>;
   pairing: (open: boolean, expectedToken?: string) => Promise<CompanionState>;
   cloudDesktop: (deviceId: string, allowed: boolean) => Promise<CompanionState>;
+  /** Switch share and ask on or off for one phone. Off answers "off" only once Murage has acknowledged it. */
+  shareAsk: (deviceId: string, allowed: boolean) => Promise<CompanionState>;
   revoke: (deviceId: string) => Promise<CompanionState>;
   /** Re-read Tailscale now, rather than trusting what was true at boot.
    *

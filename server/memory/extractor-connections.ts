@@ -4,9 +4,10 @@ import type { ProviderInstance } from "../contracts.ts";
 import { fluxKey } from "../flux-config.ts";
 import { FLUX_OPENAI_BASE } from "../flux-routing.ts";
 import { isCliLearningInstance } from "../drivers/cli-memory-learning.ts";
+import { healthEngineKind } from "../health/engine-kind.ts";
 import { requestMemoryExtraction, requestMemoryInference, requestMemoryGrounding, type TextOnlyExtractor } from "./extract.ts";
 
-const FLUX_EXTRACTORS = [
+export const FLUX_EXTRACTORS = [
   { instanceId: "@murage/flux-fast", model: "flux-fast", label: "Flux Router · Fast" },
   { instanceId: "@murage/flux-standard", model: "flux-standard", label: "Flux Router · Standard" },
   { instanceId: "@murage/flux-auto", model: "flux-auto", label: "Flux Router · Auto" },
@@ -51,14 +52,14 @@ export function resolveMemoryExtractor(
       const key=readKey();if(!key)throw new Error("MEMORY_EXTRACTOR_UNAVAILABLE");
       return requestMemoryGrounding({url:FLUX_OPENAI_BASE,apiKey:key,model:flux.model},input,Math.min(64,maximumOutputTokens),signal);
     };
-    extract.learningConnection=selected;extract.learningModel=()=>flux.model;
+    extract.learningConnection=selected;extract.learningModel=()=>flux.model;extract.healthEngine="gateway";
     return extract;
   }
   const instance = instances.find(item => item.enabled && item.instanceId === selected);
   if(!instance?.extractMemory)return null;
   const extract:TextOnlyExtractor=instance.extractMemory.bind(instance);
   if(instance.groundMemory)extract.ground=(input,maximum,signal)=>instance.groundMemory!(input,Math.min(64,maximum),signal);
-  extract.learningConnection=selected;extract.learningModel=()=>instance.models?.default;
+  extract.learningConnection=selected;extract.learningModel=()=>instance.models?.default;extract.healthEngine=healthEngineKind(instance.driverKind);
   return extract;
 }
 
@@ -101,6 +102,8 @@ export function resolveLearningConnection(input:{selected:string|null;instances:
   extractor=(text,maximum,signal,dispatch)=>call(config=>dispatch?.purpose?requestMemoryInference(config,text,maximum,signal,dispatch):requestMemoryExtraction(config,text,maximum,signal,dispatch?.messages));
   extractor.ground=(value,maximum,signal)=>call(config=>requestMemoryGrounding(config,value,Math.min(64,maximum),signal));
   extractor.learningModel=()=>providerId?providerModel(input.providerConnections!,providerId):FLUX_EXTRACTORS.find(row=>row.instanceId===selected)?.model;
+  // the transport that answers, by what was chosen: Flux Router is the gateway, an own OpenAI-compatible connection is openai-chat
+  extractor.healthEngine=providerId?"openai-chat":"gateway";
  }else{
   const current=()=> (input.readInstances?.()??input.instances).find(item=>item.instanceId===selected&&item.enabled&&item.extractMemory);
   const initial=current();if(!initial||refusedInstances.has(initial))return none(initial?(isCliLearningInstance(initial)?engineAttention:attention):`${item.label}: This connection is unavailable.`);
@@ -108,6 +111,7 @@ export function resolveLearningConnection(input:{selected:string|null;instances:
   const call=async<T>(invoke:(instance:ProviderInstance)=>Promise<T>)=>{const instance=current();if(!instance||refusedInstances.has(instance)||atLimit(instance))throw Error("MEMORY_EXTRACTOR_UNAVAILABLE");try{return await invoke(instance);}catch(error){const failed=error as {status?:number;limit?:boolean};if([401,403].includes(Number(failed.status)))refusedInstances.add(instance);else if(isCliLearningInstance(instance)&&(failed.limit===true||Number(failed.status)===429))limitedUntil.set(instance,clock()+ENGINE_LIMIT_PAUSE_MS);throw error;}};
   extractor=(text,max,signal,dispatch)=>call(instance=>instance.extractMemory!(text,max,signal,dispatch));
   extractor.learningModel=()=>current()?.models?.default;
+  extractor.healthEngine=healthEngineKind(initial.driverKind);
   if(initial.groundMemory)extractor.ground=(value,maximum,signal)=>call(instance=>{if(!instance.groundMemory)throw Error("MEMORY_EXTRACTOR_UNAVAILABLE");return instance.groundMemory(value,Math.min(64,maximum),signal);});
  }
  if(!extractor)return none(`${item.label}: This connection is unavailable.`);

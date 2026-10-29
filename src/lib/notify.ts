@@ -4,6 +4,7 @@
 import type { Notification } from "../../server/notify.ts";
 import { notificationBridge } from "./cloud-workspace";
 import { notificationSoundsEnabled } from "./notification-sounds";
+import { HEALTH_PAGE_BODY, HEALTH_PAGE_TITLE, type HealthPageNotification } from "../../shared/notification-preferences";
 
 export type NotifyFrame = Notification;
 
@@ -89,4 +90,24 @@ export function showNotification(
     };
     new Notification(frame.title, options).onclick = open;
   }
+}
+
+/** A Health page (1.0.9 Sentinel): installation-scoped, no bot or thread. The OS notification always shows the fixed
+ * generic title and body, whatever the frame or the preview setting carries, so the lock screen never names a model,
+ * a path, a metric or the issue. One per delivery id; a replayed frame is never shown (the caller skips replays). */
+export function isHealthPage(notification: unknown): notification is HealthPageNotification {
+  return typeof notification === "object" && notification !== null && (notification as { kind?: unknown }).kind === "health-page";
+}
+const seenHealthPages = new Set<string>();
+export function showHealthPage(frame: HealthPageNotification, onOpen: () => void): boolean {
+  if (typeof Notification === "undefined" || Notification.permission !== "granted") return false;
+  if (typeof frame.deliveryId !== "string" || seenHealthPages.has(frame.deliveryId)) return false;
+  seenHealthPages.add(frame.deliveryId);
+  if (seenHealthPages.size > 64) seenHealthPages.delete(seenHealthPages.values().next().value!);
+  const notification = new Notification(HEALTH_PAGE_TITLE, {
+    body: HEALTH_PAGE_BODY, tag: "murage:health",
+    ...(notificationSoundsEnabled() ? {} : { silent: true }),
+  });
+  notification.onclick = () => { window.focus(); onOpen(); };
+  return true;
 }

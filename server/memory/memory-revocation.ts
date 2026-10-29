@@ -28,6 +28,7 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync, StatementSync } from "node:sqlite";
 import { lockedError } from "./revocation-index.ts";
 import { beginBackground } from "../database.ts";
+import { scrubWalAfterDelete } from "../wal-maintenance.ts";
 import { noteRevocation, revocationIndexReady, RECORD_REVOCATION_SCAN_SQL, RECORD_TOMBSTONE_AFFECTED, RECORD_TOMBSTONE_REVOCATION_SCAN_TAIL } from "./revocation.ts";
 import { newLearningPurgeCursor, purgeLearningStep, purgeEvolutionBinding, EVOLUTION_BINDING_SUBJECTS, type LearningPurgeCursor, type LearningLookup } from "./evolution-forgetting.ts";
 import { reconcilePipStances } from "./pip-stance.ts";
@@ -36,6 +37,8 @@ import { enqueueReceipts, markerSlice, markerWorkPending, releaseHold } from "./
 import { setFlipWake } from "./receipt-outputs.ts";
 import { setSendFenceDeps } from "./send-fence.ts";
 import { MARKER_SLICE_ROWS } from "./lineage-types.ts";
+import { recordCounter } from "../health/counters.ts";
+import { noteRevocationJobCreated, noteRevocationJobEnded, noteRevocationQueueEmpty } from "../health/pending-revocations.ts";
 
 /** One prepared statement per connection and text: a job runs the same few statements hundreds of thousands of times, and on a
  * plain connection (restore, tests) a fresh statement each time left that many for the collector to finalise in long pauses. */
@@ -49,6 +52,15 @@ function st(db: DatabaseSync, sql: string): StatementSync {
 }
 
 export const REVOCATION_JOB_SUBJECT = "memory-revocation";
+const warnedJobs = new WeakMap<DatabaseSync, Set<string>>();
+/** Failed cleanup needs attention, but retries must not repeat its warning on this connection. */
+export function warnRevocationJobOnce(db: DatabaseSync, rowId: string, message: string): void {
+  let warned = warnedJobs.get(db);
+  if (!warned) warnedJobs.set(db, warned = new Set());
+  if (warned.has(rowId)) return;
+  warned.add(rowId);
+  console.warn(message);
+}
 /** A retained engine session of a thread whose source was forgotten points at this set id, which no set row has: its next
  * check finds the set unprovable and resets the session (replay-lineage.ts sessionOutputRoots), in every memory mode. */
 export const FORGOTTEN_SESSION_SET = "rs-forgotten";
@@ -69,8 +81,6 @@ export type RevocationTarget = { id: string; rev: number | null };
 type Phase = "supporting" | "imports" | "thread" | "scope" | "bring-in" | "pip" | "expand" | "receipts" | "refs" | "bindings" | "learning" | "records-scan" | "all" | "sourcework" | "supersede" | "done";
 export type RevocationJob = {
   v: 2;
-  /** set when the job cannot run (a phase this build does not know): parked as revoked-state row, needs attention, never retried */
-  failed?: string;
   /** the key of its rows in memory_revocation_targets */
   id: string;
   /** the deletion epoch its commit set (all: only receipts made before it) */
@@ -138,6 +148,7 @@ export function createRevocationJob(db: DatabaseSync, job: RevocationJob): strin
   if (scope === undefined || scope === null) return null;
   const id = `${REVOCATION_JOB_SUBJECT}:${job.id}`;
   st(db, "INSERT INTO memory_scope_bindings VALUES(?,?,'system',?,0,'granted',?)").run(id, String(scope), REVOCATION_JOB_SUBJECT, JSON.stringify(job));
+  noteRevocationJobCreated();
   return id;
 }
 
@@ -224,6 +235,12 @@ const heavy = (budget: Budget) => Math.max(1, Math.min(HEAVY_CHUNK, budget.rows)
 const spend = (budget: Budget, n: number) => { budget.rows -= Math.max(1, n); };
 const exhausted = (budget: Budget) => budget.rows <= 0 || performance.now() >= budget.deadline;
 
+/** Sentinel's operation class of each phase step (counts only; GAP-SENTINEL-109 4.2 revocation progress). */
+const PHASE_OPERATION: Readonly<Record<Phase, string>> = {
+  supporting: "tombstone", imports: "tombstone", thread: "lineage-walk", scope: "lineage-walk", "bring-in": "lineage-walk", pip: "state-update",
+  expand: "affect", receipts: "index-update", refs: "index-update", bindings: "state-update", learning: "purge",
+  "records-scan": "index-update", all: "index-update", sourcework: "lineage-walk", supersede: "state-update", done: "state-update",
+};
 /** Advances a job within the budget (caller's transaction). True when it is complete. */
 export function advanceRevocationJob(db: DatabaseSync, job: RevocationJob, rows: number, ms = Number.POSITIVE_INFINITY): boolean {
   const budget: Budget = { rows: Math.max(1, rows), deadline: performance.now() + ms };
@@ -231,12 +248,16 @@ export function advanceRevocationJob(db: DatabaseSync, job: RevocationJob, rows:
     const phase = job.phases[0]!;
     const step = Object.hasOwn(STEPS, phase) ? STEPS[phase] : undefined;
     if (!step) {
-      // a phase this build does not know (a job an earlier or later build persisted) must never wedge the queue: log once, park the job
-      console.warn(`[memory] revocation job ${job.id} has unknown phase ${JSON.stringify(phase)}; parked as failed (needs attention)`);
-      job.failed = `unknown-phase:${String(phase)}`;
-      return false;
+      // A phase another build persisted never leaves cleanup unfinished or wedges the queue (MEMDEL-SIMPLIFY-109): this build walks
+      // the deleted conversations and bots the job names itself, drops the phases it does not know, and runs the rest.
+      warnRevocationJobOnce(db, `${REVOCATION_JOB_SUBJECT}:${job.id}`, `[memory] revocation job ${job.id} has unknown phase ${JSON.stringify(phase)}; its deletions are walked again by this build`);
+      rewalkDeletions(db, job);
+      const known = job.phases.filter(phase => Object.hasOwn(STEPS, phase));
+      job.phases = hasAnyTarget(db, job.id) ? carryPhases(known) : known; job.c = null;
+      continue;
     }
     const finished = step(db, job, budget);
+    recordCounter("io-pressure", PHASE_OPERATION[phase], "none");
     if (finished) {
       job.phases.shift(); job.c = null;
       if ((phase === "receipts" || phase === "refs" || phase === "records-scan" || phase === "all") && job.revoked) {
@@ -342,7 +363,7 @@ function endPlacedSource(db: DatabaseSync, job: RevocationJob, id: string, reaso
   endSource(db, job, id, null);
   // its words: the newest page of versions here, the rest by key in the sourcework phase (revbound r3 A5)
   const revs = st(db, "SELECT revision FROM memory_source_versions WHERE source_id=? ORDER BY revision DESC LIMIT ?").all(id, SOURCE_WORK_ROWS + 1).map(row => Number(row.revision));
-  st(db, "UPDATE memory_source_versions SET payload=?1 WHERE source_id=?2 AND revision IN (SELECT value FROM json_each(?3))").run(payload, id, JSON.stringify(revs.slice(0, SOURCE_WORK_ROWS)));
+  st(db, "UPDATE memory_source_versions SET payload=?1 WHERE source_id=?2 AND revision IN (SELECT value FROM json_each(?3)) AND payload!=?1").run(payload, id, JSON.stringify(revs.slice(0, SOURCE_WORK_ROWS)));
   if (revs.length > SOURCE_WORK_ROWS) queueSourceWork(db, job, [["P", id, null]]);
 }
 // ---- thread: a deleted conversation's sources, through memory_sources_thread (message ids in order, then the few without one)
@@ -381,7 +402,7 @@ function scopeStep(db: DatabaseSync, job: RevocationJob, budget: Budget): boolea
     const id = String(row.id), version = Number(row.version);
     if (!st(db, "SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? AND revision IS NULL").get(id))
       st(db, "INSERT INTO memory_tombstones VALUES(?,'record',?,NULL,NULL,?,'bot-deleted',?)").run(randomUUID(), id, epoch, now);
-    st(db, "UPDATE memory_records SET text='' WHERE id=? AND version=?").run(id, version);
+    st(db, "UPDATE memory_records SET text='' WHERE id=? AND version=? AND text!=''").run(id, version);
     affect(db, job, id, version);
   }
   spend(budget, rows.length);
@@ -501,19 +522,32 @@ export function resetPipStanceParses(): void { pipStanceParses = 0; }
 /** Ends one record version: deleted, its projection receipts queued for deletion, its learning events gone, its id a receipts
  * target, its derived children queued (paged by the expand step, never read whole here). */
 function affect(db: DatabaseSync, job: RevocationJob, id: string, version: number): void {
-  const prior = st(db, "SELECT state FROM memory_records WHERE id=? AND version=?").get(id, version);
+  const prior = st(db, "SELECT state,length(CAST(text AS BLOB)) AS bytes FROM memory_records WHERE id=? AND version=?").get(id, version);
+  // Sentinel (S02 annotation): how often a record is ended, how often it was already deleted, and what the step rewrites.
+  // Counts only, from the row this step reads anyway; the decision below is unchanged.
+  observeAffect(prior);
   if (!prior) return;
-  st(db, "UPDATE memory_records SET state='deleted',owner_pinned=0 WHERE id=? AND version=?").run(id, version);
+  st(db, "UPDATE memory_records SET state='deleted',owner_pinned=0 WHERE id=? AND version=? AND (state!='deleted' OR owner_pinned!=0)").run(id, version);
   // Forget means the words are gone (Learn about me r3 C3): every record a forget ends loses its text in this same step, not only
   // those resting on a deleted conversation. Readers are already refused from the forget's commit; the indexes drop it by id.
   st(db, "UPDATE memory_records SET text='' WHERE id=? AND version=? AND text!=''").run(id, version);
-  // Completed deletion work stays completed (scale finding A6): a receipt already 'deleted' is not queued again.
-  st(db, "UPDATE memory_projection_receipts SET lexical_status='delete-pending',embedding_status='delete-pending' WHERE record_id=? AND record_version=? AND lexical_status!='deleted'").run(id, version);
+  // A rolled checkpoint has a 'deleted' projection while its record is still
+  // archived. Its first actual forget must also scrub old segments and WAL pages.
+  // Repeated visits to an already deleted record keep completed work completed (scale finding A6); an already pending pair needs no rewrite.
+  st(db, "UPDATE memory_projection_receipts SET lexical_status='delete-pending',embedding_status='delete-pending' WHERE record_id=? AND record_version=? AND lexical_status!='delete-pending' AND (lexical_status!='deleted' OR ?=1)").run(id, version, prior.state !== "deleted" ? 1 : 0);
   // (indexed by record; the events naming it as their prior go in the learning phase's rowid windows: evolution-forgetting.ts)
   if (hasTable(db, "memory_learning_events")) st(db, "DELETE FROM memory_learning_events WHERE record_id=? AND record_version=?").run(id, version);
   addTarget(db, job, "r", id);
   // what was derived from it goes too; a record deleted before (by an earlier forget) had its descendants handled then
   if (prior.state !== "deleted") addTarget(db, job, "p", id, version);
+}
+function observeAffect(prior: Record<string, unknown> | undefined): void {
+  recordCounter("io-pressure", "affect-attempts", "none");
+  if (!prior) return;
+  if (prior.state === "deleted") recordCounter("io-pressure", "prior-deleted", "none");
+  else recordCounter("io-pressure", "state-changed", "none");
+  const bytes = Number(prior.bytes);
+  if (Number.isFinite(bytes) && bytes > 0) recordCounter("io-pressure", "bytes-attributed", "none", undefined, bytes);
 }
 function expandStep(db: DatabaseSync, job: RevocationJob, budget: Budget): boolean {
   const c = (job.c ??= { kids: null as null | { id: string; v: number; after: [string, number] | null }, rec: 0, src: null as null | [string, number], ev: null as null | unknown[], scan: null as null | unknown[] | "start" });
@@ -768,10 +802,35 @@ function supersedeStep(db: DatabaseSync, _job: RevocationJob, budget: Budget): b
   spend(budget, rows.length);
   return true;
 }
-/** Parks a job that cannot run: its row stays (evidence for the owner) but leaves the queue. */
-function parkJob(db: DatabaseSync, rowId: string, job: RevocationJob): void {
-  st(db, "UPDATE memory_scope_bindings SET intent=?,state='revoked' WHERE id=?").run(JSON.stringify(job), rowId);
+/** This build's own walk of every deleted conversation and deleted bot a job it cannot run names (an unknown phase, or a format it cannot
+ * read): new job rows with only phases this build knows, so the walk cannot recurse. Only deletions the deny table records are walked
+ * (a thread the owner merely excluded has no thread deny row). Caller's transaction. */
+function rewalkDeletions(db: DatabaseSync, named: Partial<RevocationJob> | null): void {
+  if (!named || typeof named !== "object" || !hasTable(db, "memory_deny")) return;
+  const denied = (kind: string, id: unknown): id is string => typeof id === "string" && Boolean(st(db, "SELECT 1 FROM memory_deny WHERE kind=? AND id=?").get(kind, id));
+  const epoch = Number(st(db, "SELECT deletion_epoch FROM memory_meta WHERE id=1").get()!.deletion_epoch);
+  const list = (value: unknown): unknown[] => Array.isArray(value) ? value : [];
+  for (const thread of new Set([named.thread, ...list(named.threads)].filter(id => denied("thread", id)) as string[])) {
+    const job = forgetJob({ epoch, thread, threads: [thread], cause: "thread-deletion" });
+    job.phases.unshift("thread");
+    createRevocationJob(db, job);
+  }
+  const scopes = [...new Set(list(named.scopes).filter(id => denied("scope", id)) as string[])];
+  if (scopes.length) {
+    const job = forgetJob({ epoch, scopes, cause: "bot-deletion" });
+    job.phases.unshift("scope"); job.phases.splice(job.phases.indexOf("done"), 0, "all");
+    createRevocationJob(db, job);
+  }
 }
+
+/** What a job this build cannot run as written still owes from its own target rows (memdel r2 High #1): a deleted conversation's message
+ * ids (its messages are gone, so only these rows name them for the learning purge), the sources and records it ended, a records
+ * revocation's ids. Each phase here reads only the job's targets and fields every job may lack, so the targets are drained under the
+ * job's own id, then `done` drops them. Kept in this build's order, with the phases the job already had. */
+const CARRY_PHASES: readonly Phase[] = ["bring-in", "pip", "expand", "receipts", "refs", "sourcework", "bindings", "learning", "done"];
+const PHASE_ORDER: readonly Phase[] = ["supporting", "imports", "thread", "scope", "bring-in", "pip", "expand", "receipts", "refs", "records-scan", "bindings", "learning", "all", "sourcework", "supersede", "done"];
+const carryPhases = (known: readonly Phase[]): Phase[] => { const want = new Set([...known, ...CARRY_PHASES]); return PHASE_ORDER.filter(phase => want.has(phase)); };
+const hasAnyTarget = (db: DatabaseSync, jobId: string) => Boolean(st(db, "SELECT 1 FROM memory_revocation_targets WHERE job_id=? LIMIT 1").get(jobId));
 
 const STEPS: Record<Phase, (db: DatabaseSync, job: RevocationJob, budget: Budget) => boolean> = {
   supporting: supportingStep, imports: importsStep, thread: threadStep, scope: scopeStep, "bring-in": bringInStep, pip: pipStep,
@@ -852,7 +911,7 @@ export function lateBuildStep(db: DatabaseSync, rows: number): boolean {
 }
 /** Whether any revocation work is waiting (a job row, or a late build): a start-up VACUUM waits for it (rowid cursors). */
 export function revocationWorkPending(db: DatabaseSync): boolean {
-  try { return markerWorkPending(db) || Boolean(st(db, `SELECT 1 FROM memory_scope_bindings WHERE subject_type='system' AND subject_id='${REVOCATION_JOB_SUBJECT}' AND state='granted' LIMIT 1`).get()); }
+  try { return markerWorkPending(db) || Boolean(st(db, `SELECT 1 FROM memory_scope_bindings WHERE subject_type='system' AND subject_id='${REVOCATION_JOB_SUBJECT}' AND state IN ('granted','revoked') LIMIT 1`).get()); }
   catch { return false; }
 }
 
@@ -886,9 +945,42 @@ const wakeAll = () => { for (const wake of idleWaiters.splice(0)) wake(); };
 /** Told when the runner has no more work (every revoke's marker walked): a held reply may now settle (server/held-replies.ts). */
 let idleHook: (() => void) | null = null;
 export function onRevocationIdle(hook: (() => void) | null): void { idleHook = hook; }
-const ranOut = () => { try { idleHook?.(); } catch (error) { console.warn(`[memory] revocation idle hook: ${error instanceof Error ? error.message : String(error)}`); } };
+const ranOut = () => {
+  // Source payloads and learning text can be removed after the chat's deletion
+  // journal has completed. Scrub those later commits independently; a held log
+  // remains owed to wal-maintenance and never holds up the next deletion.
+  void scrubWalAfterDelete().catch(() => {});
+  try { idleHook?.(); } catch (error) { console.warn(`[memory] revocation idle hook: ${error instanceof Error ? error.message : String(error)}`); }
+};
 const schedule = (delay: number) => { memoryRevocationStats.pauseMs += delay; timer = setTimeout(() => { void tick(); }, delay); timer.unref?.(); };
-const NEXT_JOB = `SELECT id,intent FROM memory_scope_bindings WHERE subject_type='system' AND subject_id='${REVOCATION_JOB_SUBJECT}' AND state='granted' ORDER BY rowid LIMIT 1`;
+/** Granted rows, and rows an earlier build parked as 'revoked' (they finish here like any other: MEMDEL-SIMPLIFY-109). */
+const NEXT_JOB = `SELECT id,intent FROM memory_scope_bindings WHERE subject_type='system' AND subject_id='${REVOCATION_JOB_SUBJECT}' AND state IN ('granted','revoked') ORDER BY rowid LIMIT 1`;
+/** One step of one job row (caller's transaction); `done` when the row is finished and gone. A row in a format this build cannot read
+ * is replaced by this build's walk of the deletions it names, then deleted. Never parked: every row runs until it ends. */
+function stepJobRow(db: DatabaseSync, row: Record<string, unknown>, rows: number, ms = Number.POSITIVE_INFINITY): { done: boolean; job: RevocationJob | null } {
+  let job: RevocationJob | null = null;
+  try { job = JSON.parse(String(row.intent)) as RevocationJob; } catch { /* unreadable: replaced below */ }
+  if (!job || job.v !== 2 || !Array.isArray(job.phases)) {
+    warnRevocationJobOnce(db, String(row.id), "[memory] revocation job unreadable; its deletions are walked again by this build");
+    rewalkDeletions(db, job);
+    // the targets it collected are keyed by its own id (the row's, or the one it names): the row becomes this build's drain of them, in
+    // place, so a deleted conversation's message ids still reach the learning purge (memdel r2 High #1)
+    const own = String(row.id).startsWith(`${REVOCATION_JOB_SUBJECT}:`) ? String(row.id).slice(REVOCATION_JOB_SUBJECT.length + 1) : null;
+    const carried = [typeof (job as { id?: unknown } | null)?.id === "string" ? String((job as { id: string }).id) : null, own].find(id => id !== null && hasAnyTarget(db, id));
+    if (carried) {
+      const drain: RevocationJob = { v: 2, id: carried, phases: carryPhases([]), c: null, cause: "carried-targets" };
+      st(db, "UPDATE memory_scope_bindings SET intent=?,state='granted' WHERE id=?").run(JSON.stringify(drain), String(row.id));
+      return { done: false, job: drain };
+    }
+  } else if (!advanceRevocationJob(db, job, rows, ms)) {
+    const intent = JSON.stringify(job);
+    memoryRevocationStats.maxJobBytes = Math.max(memoryRevocationStats.maxJobBytes, intent.length);
+    st(db, "UPDATE memory_scope_bindings SET intent=?,state='granted' WHERE id=?").run(intent, String(row.id));
+    return { done: false, job };
+  }
+  st(db, "DELETE FROM memory_scope_bindings WHERE id=?").run(String(row.id));
+  return { done: true, job };
+}
 
 async function tick(): Promise<void> {
   timer = null;
@@ -914,31 +1006,24 @@ async function tick(): Promise<void> {
     // the runner's own transaction: what its commit writes to the WAL is measured into the budget's cost estimate (revoke-budget.ts S2)
     const measure = beginRevokeMeasure(db);
     let moved: boolean | "budget" = false;
+    // Sentinel's pending figures (health/pending-revocations.ts), applied only once this transaction commits
+    let jobEnded = false, queueEmpty = false;
     try {
       // the write-time marker first: its pending rows hold lines and memory "checking" until it is done (revoke-marker.ts)
       moved = budgetedMarkerSlice(db, rowsPerSlice, budget, lateBuildStep);
       const row = moved === true ? null : st(db, NEXT_JOB).get();
+      queueEmpty = row === undefined;
       // the minute had no room for the marker (a waiting receipt flip's whole commit, revoke-budget.ts): with no job row to run either,
       // the runner wakes when the minute has room, never stops here
       if (moved === "budget" && !row) { budgetWait = true; more = true; }
       else if (row === null) { more = true; memoryRevocationStats.markerSlices++; }
       else if (row) {
-        let job: RevocationJob | null = null;
-        try { job = JSON.parse(String(row.intent)) as RevocationJob; } catch { /* unreadable: dropped below */ }
-        if (!job || job.v !== 2 || !Array.isArray(job.phases)) {
-          console.warn("[memory] revocation job unreadable; dropped (the deny facts its commit wrote already protect every reader)");
-          st(db, "DELETE FROM memory_scope_bindings WHERE id=?").run(String(row.id));
-        } else if (advanceRevocationJob(db, job, rowsPerSlice, budget)) st(db, "DELETE FROM memory_scope_bindings WHERE id=?").run(String(row.id));
-        else if (job.failed) parkJob(db, String(row.id), job);
-        else {
-          const intent = JSON.stringify(job);
-          memoryRevocationStats.maxJobBytes = Math.max(memoryRevocationStats.maxJobBytes, intent.length);
-          st(db, "UPDATE memory_scope_bindings SET intent=? WHERE id=?").run(intent, String(row.id));
-        }
+        if (stepJobRow(db, row, rowsPerSlice, budget).done) jobEnded = true;
         more = true;
       } else if (lateBuildStep(db, rowsPerSlice)) { more = true; memoryRevocationStats.lateSlices++; }
       memoryRevocationStats.maxWorkMs = Math.max(memoryRevocationStats.maxWorkMs, performance.now() - t0);
       db.exec("COMMIT");
+      if (queueEmpty) noteRevocationQueueEmpty(); else if (jobEnded) noteRevocationJobEnded();
       // measured only when the transaction held the marker's slice and nothing else (a job step or a late build ran otherwise)
       if (moved === true) endRevokeMeasure(db, measure);
     } catch (error) { if (db.isTransaction) { try { db.exec("ROLLBACK"); } catch { /* already rolled back */ } } throw error; }
@@ -972,12 +1057,10 @@ export function runRevocationJobsNow(db: DatabaseSync): number {
   for (;;) {
     if (markerSlice(db, Number.MAX_SAFE_INTEGER, Number.POSITIVE_INFINITY, lateBuildStep)) continue;
     const row = st(db, NEXT_JOB).get();
-    if (!row) return total;
-    const job = JSON.parse(String(row.intent)) as RevocationJob;
-    const finished = advanceRevocationJob(db, job, Number.MAX_SAFE_INTEGER);
-    total += job.total ?? 0;
-    if (!finished && job.failed) parkJob(db, String(row.id), job);
-    else st(db, "DELETE FROM memory_scope_bindings WHERE id=?").run(String(row.id));
+    if (!row) { if (!db.isTransaction) noteRevocationQueueEmpty(); return total; }
+    const step = stepJobRow(db, row, Number.MAX_SAFE_INTEGER);
+    total += step.job?.total ?? 0;
+    if (step.done) noteRevocationJobEnded();
   }
 }
 /** The marker drain (DESIGN-WRITETIME 5, "after the marker drains"; the write-time differential and offline helpers): every revoke's marker
@@ -990,20 +1073,16 @@ export function drainRevokeMarker(db: DatabaseSync, maxSlices = 50_000_000): { s
   for (;;) {
     if (++slices > maxSlices) throw new Error("MEMORY_REVOKE_DRAIN_UNBOUNDED");
     if (own) beginBackground(db, "revoke-drain");
-    let moved = false;
+    let moved = false, ended = false, empty = false;
     try {
       if (markerSlice(db, Number.MAX_SAFE_INTEGER, Number.POSITIVE_INFINITY, lateBuildStep)) moved = true;
       else {
         const row = st(db, NEXT_JOB).get();
-        if (row) {
-          const job = JSON.parse(String(row.intent)) as RevocationJob;
-          const finished = advanceRevocationJob(db, job, Number.MAX_SAFE_INTEGER);
-          if (!finished && job.failed) parkJob(db, String(row.id), job);
-          else st(db, "DELETE FROM memory_scope_bindings WHERE id=?").run(String(row.id));
-          moved = true;
-        }
+        empty = !row;
+        if (row) { ended = stepJobRow(db, row, Number.MAX_SAFE_INTEGER).done; moved = true; }
       }
       if (own) db.exec("COMMIT");
+      if (ended) noteRevocationJobEnded(); else if (empty && own) noteRevocationQueueEmpty();
     } catch (error) {
       if (own && db.isTransaction) { try { db.exec("ROLLBACK"); } catch { /* rolled back */ } }
       if (error instanceof Error && error.message === "MEMORY_REVOKE_NODE_UNREADABLE") return { slices, pending: true };

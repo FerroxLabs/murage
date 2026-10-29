@@ -303,8 +303,23 @@ const acpModels = (process.env.FAKE_ACP_SESSION_MODELS ?? "")
     const [modelId, name] = entry.split("|");
     return name ? { modelId, name } : { modelId };
   });
-const sessionModels = () =>
-  acpModels.length ? { currentModelId: acpModels[0].modelId, availableModels: acpModels } : null;
+// grok-shaped surface (FAKE_ACP_GROK_MODELS_CACHE=1): the bundled list (grok-4.6, grok-4.5; current grok-4.6), plus
+// every `models[].id` of $GROK_HOME/models_cache.json when that file is there, the way grok offers the fetched
+// catalog only once its cache exists. Off unless set.
+const grokCacheModels = (): Array<{ modelId: string }> => {
+  try {
+    const cache = JSON.parse(readFileSync(join(process.env.GROK_HOME ?? "", "models_cache.json"), "utf8")) as { models?: Array<{ id?: unknown }> };
+    return (cache.models ?? []).filter((m) => typeof m?.id === "string").map((m) => ({ modelId: m.id as string }));
+  } catch { return []; }
+};
+const sessionModels = () => {
+  if (process.env.FAKE_ACP_GROK_MODELS_CACHE === "1") {
+    const bundled = [{ modelId: "grok-4.6" }, { modelId: "grok-4.5" }];
+    const extra = grokCacheModels().filter((m) => !bundled.some((b) => b.modelId === m.modelId));
+    return { currentModelId: "grok-4.6", availableModels: [...extra, ...bundled] };
+  }
+  return acpModels.length ? { currentModelId: acpModels[0].modelId, availableModels: acpModels } : null;
+};
 
 const argv = process.argv.slice(2);
 // Explicit assertion fields only, never the inherited environment.
@@ -473,23 +488,25 @@ const fixtureRequested = (text: string, marker: string) => {
   return (lines.pop() ?? "").includes(marker);
 };
 const result = (id: unknown, res: unknown) => out({ jsonrpc: "2.0", id, result: res });
-// `_fuigo/interject`, Fuigo's steer into a running prompt. FAKE_ACP_INTERJECT:
+// `_fuigo/interject`, Fuigo's steer into a running prompt (Grok Build: `_x.ai/interject`,
+// answered on its own `_x.ai/` rail). FAKE_ACP_INTERJECT:
 // "fallback" answers queued and echoes it, then runs it as its own
 // `interject-fallback-` turn after the prompt result (a steer that missed the
 // turn's final drain); "silent" answers nothing and echoes it after
 // FAKE_ACP_LATE_ECHO_MS. Unset: method not found, as other engines answer.
-const strandedInterjections: string[] = [];
+const strandedInterjections: Array<{ text: string; ns: string }> = [];
 let fallbackTurns = 0;
 const runStrandedInterjection = () => {
-  const text = strandedInterjections.shift();
-  if (text === undefined) return;
+  const stranded = strandedInterjections.shift();
+  if (stranded === undefined) return;
+  const { text, ns } = stranded;
   const promptId = `interject-fallback-${++fallbackTurns}`;
   setTimeout(() => {
-    out({ jsonrpc: "2.0", method: "_fuigo/queue/changed", params: { entries: [], runningPromptId: promptId, runningText: text, runningKind: "prompt" } });
+    out({ jsonrpc: "2.0", method: `${ns}/queue/changed`, params: { entries: [], runningPromptId: promptId, runningText: text, runningKind: "prompt" } });
     out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: ` fallback reply #${fallbackTurns}` } } } });
     setTimeout(() => {
-      out({ jsonrpc: "2.0", method: "_fuigo/session_notification", params: { update: { sessionUpdate: "turn_completed", prompt_id: promptId, stop_reason: "end_turn" } } });
-      out({ jsonrpc: "2.0", method: "_fuigo/queue/changed", params: { entries: [] } });
+      out({ jsonrpc: "2.0", method: `${ns}/session_notification`, params: { update: { sessionUpdate: "turn_completed", prompt_id: promptId, stop_reason: "end_turn" } } });
+      out({ jsonrpc: "2.0", method: `${ns}/queue/changed`, params: { entries: [] } });
     }, 300);
   }, 100);
 };
@@ -2209,7 +2226,7 @@ function handle(msg: any) {
               : mode === "question-tool"
               ? {
                   kind: "other",
-                  title: "AskUserQuestion",
+                  title: process.env.FAKE_ACP_QUESTION_TITLE || "AskUserQuestion",
                   rawInput: {
                     questions: [{
                       question: "Which branch should I use?",
@@ -2277,13 +2294,15 @@ function handle(msg: any) {
       result(msg.id, { servers: Object.entries(states).map(([name, status]) => ({ name, session: { enabled: true, status } })) });
       break;
     }
-    case "_fuigo/interject": {
+    case "_fuigo/interject":
+    case "_x.ai/interject": {
       const interjectMode = process.env.FAKE_ACP_INTERJECT;
-      const echo = () => out({ jsonrpc: "2.0", method: "_fuigo/session/interjection", params: { sessionId: msg.params?.sessionId, text: msg.params?.text, interjectionId: msg.params?.interjectionId } });
+      const ns = msg.method === "_x.ai/interject" ? "_x.ai" : "_fuigo";
+      const echo = () => out({ jsonrpc: "2.0", method: `${ns}/session/interjection`, params: { sessionId: msg.params?.sessionId, text: msg.params?.text, interjectionId: msg.params?.interjectionId } });
       if (interjectMode === "fallback") {
         result(msg.id, { result: { status: "queued" } });
         echo();
-        strandedInterjections.push(String(msg.params?.text ?? ""));
+        strandedInterjections.push({ text: String(msg.params?.text ?? ""), ns });
       } else if (interjectMode === "silent") {
         setTimeout(echo, Number(process.env.FAKE_ACP_LATE_ECHO_MS ?? 1000));
       } else if (msg.id !== undefined) out({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "method not found" } });
