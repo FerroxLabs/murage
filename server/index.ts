@@ -937,6 +937,8 @@ import * as vps from "./vps-computer.ts";
 import { awaitBoxWakeAtDispatch, turnTrace } from "./computer-wake.ts";
 import { type StoredAnswerDeps } from "./handoff-replay.ts";
 import { runEventAction, type EventActionHandle, type EventActionSpec } from "./event-limit.ts";
+import { AppTriggerStore, type AppEventRunStore } from "./app-trigger-store.ts";
+import { APP_CHILD_NOT_ALLOWED, AppChildNotAllowed, isAppChildContext, rebuildOwedCards, refuseAppChild, wireAppChildGuard } from "./app-trigger-zero.ts";
 import { isLiveRoutineRunStatus, isOpenRoutineRunStatus, routineRecoveredLine, routineRunCard, RoutineManager, setLimitResetReader, type Routine, type RoutineLimitRefusal, type RoutineRun, type RoutineRunOn, type RoutineRunTrigger } from "./routines.ts";
 import { resolveTurnSelection, type RouteVerdict, type TurnSelectionResult } from "./turn-selection.ts";
 import { LimitStateStore, engineKey, limitUntil } from "./limit-state.ts";
@@ -13213,7 +13215,32 @@ async function interruptRoutineGroupGoal(
   closeOpenApprovals(threadId);
 }
 
+// 1.0.11 APP-TRIGGERS: the connected-app store follows the current messages.db (a restore or data-dir switch swaps it).
+let appTriggerStoreCache: { db: ReturnType<typeof database>; store: AppTriggerStore } | null = null;
+const appTriggerStore = (): AppTriggerStore => {
+  const db = database();
+  if (appTriggerStoreCache?.db !== db) appTriggerStoreCache = { db, store: new AppTriggerStore(db) };
+  return appTriggerStoreCache.store;
+};
+const appRunStore: AppEventRunStore = {
+  create: input => appTriggerStore().create(input),
+  update: (runId, patch, now, expectedState) => appTriggerStore().update(runId, patch, now, expectedState),
+  findById: runId => appTriggerStore().findById(runId),
+  findActive: triggerId => appTriggerStore().findActive(triggerId),
+  findByThread: (threadId, generation) => appTriggerStore().findByThread(threadId, generation),
+  history: (routineId, options) => appTriggerStore().history(routineId, options),
+};
+// The hard zero for child automation reads host lineage from this store; the card is the persisted record.
+wireAppChildGuard({ lineage: {
+  findByThread: (threadId, generation) => appTriggerStore().findByThread(threadId, generation),
+  findById: runId => appTriggerStore().findById(runId),
+  recordChildRefusal: (runId, kind, now) => appTriggerStore().recordChildRefusal(runId, kind, now),
+  markCardWritten: (runId, card) => appTriggerStore().markCardWritten(runId, card),
+  cardsOwed: limit => appTriggerStore().cardsOwed(limit),
+} });
+
 routines = new RoutineManager({
+  appRunStore,
   botMode: (id) => botPermissionMode(store.bot(id)),
   validateInstructionPromotion: (routine, proposal) => procedureReviews?.validateRoutinePromotion(routine, proposal) ?? false,
   validateInstructionEvidence: (context, evidence) => procedureReviews?.validateRoutineEvidence(context, evidence) ?? false,
@@ -13912,6 +13939,9 @@ const agentRoutine = (
         : routine.schedule.type === "limit_reset"
           // 1.0.4 SL-I I3: runs once after the named engine's limit resets
           ? { type: "limit_reset" as const, engine: limitEngineLabel(routine.schedule.engineKey) }
+          // 1.0.11 APP-TRIGGERS: runs when its connected app sends an event, never on a clock
+          : routine.schedule.type === "app_event"
+            ? { type: "app_event" as const }
           : {
             type: "weekly" as const,
             time: routine.schedule.time,
@@ -22589,8 +22619,12 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       const internalEventId = internalOwner.eventId;
       // Hand-offs and new bots made by an event run go through one action ledger (event-limit.ts): identity, counting and execution together.
       const eventReply = (status: number, body: unknown): EventReply => ({ status, body });
+      // An app-origin turn never reaches the event ledger: with no event id runEventAction would run the step directly
+      // (app-trigger-zero.ts). The routes refuse first; this is the same check at the shared wrapper.
       const eventAction = <R,>(spec: Omit<EventActionSpec<R>, "routines" | "bus" | "eventId" | "stillActive">, step: (handle: EventActionHandle) => Promise<R>): Promise<R> =>
-        runEventAction<R>({ ...spec, routines, bus: approvalBus, eventId: internalEventId, stillActive: requireActiveInternal }, step);
+        isAppChildContext(internalClaim.threadId, internalClaim.generation)
+          ? Promise.reject(new AppChildNotAllowed(""))
+          : runEventAction<R>({ ...spec, routines, bus: approvalBus, eventId: internalEventId, stillActive: requireActiveInternal }, step);
       // The one reader of every hand-off outcome (event-limit.ts HandoffOutcome), for the ask and delegate routes alike: a hand-off asked one way and
       // asked again the other way, later or at the same time, gets the first outcome in its own route's shape, with no second execution or charge.
       const assertInternalIdentity = (body: Record<string, unknown>) => {
@@ -23395,6 +23429,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       if (delegationMatch) return await checkDelegationRoute({ askerWake: askerWakePort, connectorThread, delegationMatch, internalClaim, requireActiveInternal, res, resultEgressDeps, store: boundaryStoreView, taskResolutionDeps, url });
       if (method === "POST" && path === "/api/internal/delegate-bot") return await delegateBotRoute({ askerWake: askerWakePort, MAX_COMMS_DEPTH, beginRoomAsk, comms: boundaryCommsPort, connectorThread, coordinationBudget, eventAction, fullAccessSkipsPeerCard, internalCapabilities, internalClaim, internalEventId, internalOwner, isUnattended, ownerSurfacesByThread, readInternalBody, res, resultEgressDeps, roomAskDuplicate, roomAskParent, roomAskRefused: roomAskRefusedStatus, routinePeerSource, settleRoomAsk, sourceExecutionAudience, store: boundaryStoreView, taskResolutionDeps });
       if (method === "POST" && path === "/api/internal/create-bot") {
+        // The hard zero: an app-origin create is refused before its body, the card, the ledger or the workspace check.
+        if (refuseAppChild({ threadId: internalClaim.threadId, generation: internalClaim.generation }, "create")) return json(res, 403, { error: outboundWords(status("app_child_not_allowed")), code: APP_CHILD_NOT_ALLOWED });
         const body = await readInternalBody();
         const fromBotId = String(body.fromBotId ?? "");
         const chief = store.bot(fromBotId);
@@ -31939,6 +31975,8 @@ if (!homeExecutionGate || homeExecutionGate.open()) routines.start();
 startupMark("routines.started");
 // 1.0.4 SL-I: a limit failover a crash interrupted is finished (or cancelled) once, now that a send can run
 setImmediate(() => { try { recoverLimitFailovers(); } catch (error) { console.error("limit failover: boot recovery failed", error); } });
+// 1.0.11 APP-TRIGGERS: a child-refusal card a restart interrupted is written from its receipt; nothing runs again.
+setImmediate(() => { try { rebuildOwedCards(); } catch (error) { console.error("app triggers: refusal cards were not rebuilt", error); } });
 
 /** The scheduler has already pinned instructions and assigned this thread. */
 function procedureRoutineSnapshot(threadId:string):{id:string;instructionRevision:string}|undefined {

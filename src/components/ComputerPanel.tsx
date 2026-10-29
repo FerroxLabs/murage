@@ -201,6 +201,7 @@ function routineScheduleLabel(routine: Routine) {
     return `Every ${routine.schedule.everyMinutes} min`;
   }
   if (routine.schedule.type === "limit_reset") return t("slik.scheduleLimitReset");
+  if (routine.schedule.type === "app_event") return "When a connected app sends an event";
   const days = routine.schedule.weekdays;
   const cadence =
     days.length === 7
