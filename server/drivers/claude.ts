@@ -151,8 +151,21 @@ export function claudeSignedIn(
  * own words (stderr or the spawn error) when it gave no status at all. */
 export interface ClaudeAuthStatus {
   signedIn: boolean;
+  /** How the login is billed, from the CLI's own `authMethod`; absent when the CLI did not say or said something new. */
+  billing?: "metered" | "subscription";
   refusal?: ClaudeLaunchRefusal;
   error?: string;
+}
+
+/** `claude auth status --json` names the login in `authMethod` (Claude Code 2.1.312 `auth status`, read from the
+ *  CLI's own source): "claude.ai" (a Pro/Max/Team sign-in) and "oauth_token" (`claude setup-token`, the same
+ *  subscription) are a subscription; "api_key" (ANTHROPIC_API_KEY or a Console "/login managed key"),
+ *  "api_key_helper" and "third_party" (Bedrock, Vertex, Foundry) are billed per use. "none", a missing field or a
+ *  value a newer CLI adds says nothing, so the display claims neither. */
+export function claudeBillingOf(authMethod: unknown): "metered" | "subscription" | undefined {
+  if (authMethod === "claude.ai" || authMethod === "oauth_token") return "subscription";
+  if (authMethod === "api_key" || authMethod === "api_key_helper" || authMethod === "third_party") return "metered";
+  return undefined;
 }
 
 export function claudeAuthStatus(
@@ -166,7 +179,9 @@ export function claudeAuthStatus(
       try {
         const status: unknown = JSON.parse(stdout);
         if (typeof status === "object" && status !== null && "loggedIn" in status) {
-          resolve({ signedIn: status.loggedIn === true });
+          const signedIn = status.loggedIn === true;
+          const billing = signedIn ? claudeBillingOf((status as { authMethod?: unknown }).authMethod) : undefined;
+          resolve({ signedIn, ...(billing ? { billing } : {}) });
           return;
         }
       } catch { /* no status: read the failure below */ }
@@ -5584,14 +5599,15 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       if (auth.refusal) return { state: "unavailable", version, reason: auth.refusal.message };
       // A probe that gave no status at all (a spawn error, a crash, a launch the OS refused) is not
       // a lost login: the CLI's own words, and "not verified" rather than "sign in", so chat stays open.
-      if (auth.error) return { state: "available", version, reason: auth.error, billing: "subscription" };
+      // How it bills is unknown too, so neither "subscription" nor "API key" is claimed.
+      if (auth.error) return { state: "available", version, reason: auth.error };
       const authenticated = auth.signedIn;
       // Cloud home: the launcher holds a long-lived token; offer its renewal before it lapses.
       const renewSignIn = await cloudClaudeRenewalDue(authenticated);
-      // claudeEnvironment strips ANTHROPIC_API_KEY, so turns run on the
-      // CLI's own login (Pro/Max): the cost it reports is what the call
-      // WOULD bill, not a charge
-      return { state: "available", version, authenticated, billing: "subscription", ...(renewSignIn ? { renewSignIn: true } : {}) };
+      // claudeEnvironment strips ANTHROPIC_API_KEY, but the CLI's own login can still be an API key (a Console
+      // "/login managed key", apiKeyHelper, Bedrock/Vertex): the probe runs on the turn's environment, so its
+      // authMethod is the login a turn bills to. Unknown leaves billing unset ("as reported by the engine").
+      return { state: "available", version, authenticated, ...(auth.billing ? { billing: auth.billing } : {}), ...(renewSignIn ? { renewSignIn: true } : {}) };
     };
 
     /** One-shot Claude call with the prompt on stdin, never argv. Approval

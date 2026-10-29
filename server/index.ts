@@ -259,7 +259,7 @@ import { pushDetail } from "./mobile-push-detail.ts";
 import { respondFromPush } from "./mobile-push-respond.ts";
 import { liveRating, pushRiskFor, ratePushRevision, workspaceInside } from "./mobile-push-risk.ts";
 import { FreshAuthGate, approvalDeviceFrom, approvalDigestSync, type GateResult } from "./approval-fresh-auth.ts";
-import { AnsweredWhere, createPushWarn, settledBy } from "./mobile-push-hooks.ts";
+import { AnsweredWhere, answeredByOwner, createPushWarn, settledBy } from "./mobile-push-hooks.ts";
 import { isIP } from "node:net";
 import { basename, extname, isAbsolute, join, parse, relative, sep } from "node:path";
 
@@ -7274,7 +7274,7 @@ const pushRouteDeps: PushRouteDeps = {
     now: Date.now,
     visible: (threadId) => visibleToCompanion(store, { scope: "thread", threadId }),
     liveRating: (threadId, requestId) => liveRating(pushStore.risk(threadId, requestId), pushLiveContent(threadId, requestId)),
-    card: (threadId, requestId) => { const live = pushCard(threadId, requestId); return live ? { pending: pushCardOpen(threadId, requestId), ...(live.approvalScope ? { scope: live.approvalScope } : {}) } : null; },
+    card: (threadId, requestId) => { const live = pushCard(threadId, requestId); return live ? { pending: pushCardOpen(threadId, requestId), answered: answeredByOwner(live), ...(live.approvalScope ? { scope: live.approvalScope } : {}) } : null; },
     answer: async (threadId, requestId, decision) => {
       try { answeredWhere.note(`${threadId}:${requestId}`, "elsewhere"); } catch (error) { pushWarn("push-answer", error); }
       if (resolvePeerComms(approvalBus, requestId, decision)) return decision === "allow" ? "allowed-once" : "rejected";

@@ -1108,7 +1108,8 @@ describe("ACP turns (fake CLI)", () => {
         await recorder.until((event) => event.type === "turn.completed" && event.turnId === sent.turnId);
         const { argv } = JSON.parse(readFileSync(dump, "utf8")) as { argv: string[] };
         const skips = fullAuto && !enforced;
-        if (engine === "Grok") expect(argv.slice(0, 2)).toEqual(["--permission-mode", skips ? "bypassPermissions" : "default"]);
+        // Grok runs `default` at every level, Full access included (Murage answers its asks; never bypass).
+        if (engine === "Grok") expect(argv.slice(0, 2)).toEqual(["--permission-mode", "default"]);
         if (engine === "Cursor") expect(argv.includes("--force")).toBe(skips);
         if (engine === "Droid") {
           const applied = JSON.parse(readFileSync(`${dump}.config.json`, "utf8"));

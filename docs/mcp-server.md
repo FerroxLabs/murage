@@ -90,7 +90,10 @@ local ports. `MURAGE_MCP_TIMEOUT_MS` can set an HTTP timeout between 1,000 and 1
 | Run work | `send_bot_message`, `send_channel_message`, `wait_for_conversation`, `interrupt_conversation`, `set_bot_model` |
 
 `wait_for_conversation` returns `settled`, `needs-user`, `failed`, `stalled`, or `timed-out`, along with a
-small redacted transcript tail. MCP cancellation is honored while a tool is waiting.
+small redacted transcript tail (`messages`, the last 10, and `hasMore`). Its `target` carries the bot's or
+channel's status fields (`busy`, `activity`, `working`, `activeTaskId` and the rest) and only the waited task as
+`task`, not the owner's whole task list; `list_bots` and `list_channels` list tasks. MCP cancellation is
+honored while a tool is waiting.
 
 ## Safety and data scope
 

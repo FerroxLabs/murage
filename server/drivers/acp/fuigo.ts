@@ -695,20 +695,21 @@ const support: AcpSupport = {
    * and it is NOT accepted after `agent`. The combined form below was run
    * live and honoured the model.
    *
-   * Passing `--permission-mode default` explicitly, rather than omitting it,
-   * is deliberate: it pins the non-fullAuto spawn to ASK, so a
-   * `[permissions] mode` a user set in ~/.fuigo/config.toml for their own
-   * terminal cannot silently auto-approve tool calls inside Murage. Murage's
-   * ACP core answers `session/request_permission` itself, fail-closed, and
-   * that only works if the CLI actually asks.
+   * `--permission-mode default` ALWAYS, at every level, never
+   * bypassPermissions: under bypass Fuigo never asks, so its ask rules and
+   * Murage's guard never see a call. Murage's ACP core answers
+   * `session/request_permission` itself, fail-closed, and answers a fullAuto
+   * turn's asks at once (one-time allow only, allowOnceOnly). Explicit rather
+   * than omitted, so a `[permissions] mode` a user set in ~/.fuigo/config.toml
+   * for their own terminal cannot silently auto-approve calls inside Murage.
    *
    * Long form `--reasoning-effort` on purpose, same as grok: `--effort` is
    * declared as a `visible_alias` (fuigo-pager/src/app/cli.rs:273) and an
    * alias is the part a CLI is free to rename.
    */
-  spawnArgs: (config, turn, ctx) => [
+  spawnArgs: (_config, turn, ctx) => [
     "--permission-mode",
-    config.fullAuto ? "bypassPermissions" : "default",
+    "default",
     // Folder trust (1.0.13, FUIGOTRUST1): `--trust` is a top-level flag like
     // --permission-mode (fuigo-pager/src/app/cli.rs `trust`, hidden alias
     // `--trust-folder`) that grants the PROCESS CWD — the same folder the

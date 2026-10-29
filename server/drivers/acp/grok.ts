@@ -416,6 +416,10 @@ const support: AcpSupport = {
   // read back word for word, and the same prompt without it was not. initialize
   // also advertises promptCapabilities.image; this is the answer before that probe.
   images: true,
+  // Grok Build is the code Fuigo is built from: an allow-always answer would leave a standing grant in the
+  // engine that answers later requests without Murage, Ask-level turns on the same home included. Every
+  // level, Full access included, answers with a one-time allow (or cancels when none is offered).
+  allowOnceOnly: true,
   // Grok Build's own names for the Fuigo contract, proven on a real 1.0.67 turn:
   // `_x.ai/interject` mid-turn answered `{ result: { status: "queued" } }`, echoed
   // `_x.ai/session/interjection` with the same interjectionId, and the reply
@@ -471,14 +475,17 @@ const support: AcpSupport = {
   mcpProgressNotification: "_x.ai/mcp/init_progress",
   mcpListMethod: "_x.ai/mcp/list",
 
-  spawnArgs: (config, turn, ctx) => {
+  spawnArgs: (_config, turn, ctx) => {
     // Fails closed at Ask on a grok its ask rules are not proven on (GROK_ASK_HOLD_MIN).
     requireGrokAskHold(turn.askLevel, ctx?.cliVersion);
     return [
       "--permission-mode",
-      // `default` still runs grok's own read-only shell commands unasked; the scoped config's `[permission] ask`
-      // rules (grok-scope.ts GROK_ASK_RULES) send every shell command, edit and write to Murage instead.
-      config.fullAuto ? "bypassPermissions" : "default",
+      // `default` at every level, never bypassPermissions: under bypass grok never asks, so neither the
+      // scoped config's `[permission] ask` rules (grok-scope.ts GROK_ASK_RULES) nor Murage's guard see a call.
+      // `default` still runs grok's own read-only shell commands unasked; the ask rules send every shell
+      // command, edit and write to Murage, which answers a fullAuto turn's asks itself (core.ts, one-time
+      // allow only, see allowOnceOnly). Explicit, so a mode the owner set for their own terminal cannot apply.
+      "default",
       // Murage owns persistent memory (same flag Fuigo and the headless reflection argv pass).
       "--no-memory",
       "agent",

@@ -3763,6 +3763,29 @@ describe("ClaudeDriver snapshot auth (fake CLI)", () => {
     }
   });
 
+  it("shows how the login bills from the CLI's own authMethod, and claims neither when it is unknown", async () => {
+    process.env.FAKE_CLAUDE_AUTH = "in";
+    await create();
+    try {
+      for (const [method, billing] of [["claude.ai", "subscription"], ["oauth_token", "subscription"], ["api_key", "metered"], ["api_key_helper", "metered"],
+        ["third_party", "metered"], ["something_new", undefined], ["omit", undefined]] as const) {
+        process.env.FAKE_CLAUDE_AUTH_METHOD = method;
+        const snapshot = await instance.snapshot();
+        expect(snapshot, method).toMatchObject({ state: "available", authenticated: true });
+        expect(snapshot.billing, method).toBe(billing);
+      }
+      // A probe that gave no status says nothing about billing either.
+      process.env.FAKE_CLAUDE_AUTH = "unsupported";
+      expect((await instance.snapshot()).billing).toBeUndefined();
+      // Signed out: no billing claimed.
+      process.env.FAKE_CLAUDE_AUTH = "out";
+      process.env.FAKE_CLAUDE_AUTH_METHOD = "api_key";
+      expect((await instance.snapshot()).billing).toBeUndefined();
+    } finally {
+      delete process.env.FAKE_CLAUDE_AUTH_METHOD;
+    }
+  });
+
   it("reports signed out when `auth status` says loggedIn:false", async () => {
     process.env.FAKE_CLAUDE_AUTH = "out";
     await create();
