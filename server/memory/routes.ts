@@ -21,6 +21,7 @@ import { enqueueProcedureCorrectionReview } from "./procedure-review.ts";
 import { revokeRecordDisclosures } from "./revocation.ts";
 import { resolveQuotedEvidence } from "./quote-evidence.ts";
 import { inheritEdge } from "./revoke-commit.ts";
+import { fenceEmailDerivedRecords } from "./email-derived.ts";
 
 /** Resolves the turn-local handles of the dispatch this capability belongs to
  * (MemoryDispatchReceipt.resolveHandle). Absent when no dispatch is live. */
@@ -70,7 +71,9 @@ export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAcc
   try {
     if(path==="/api/internal/memory/search"){
       const input=search.parse(body);
-      const result=bounded(await searchMemory(input.query,access,bridge,{...input,allowance:LineageAllowance.search(recallHydrationLimitMs("tool")),withheldMessage:readerWithheldMessage(access),caller:"tool"}));
+      const found=await searchMemory(input.query,access,bridge,{...input,allowance:LineageAllowance.search(recallHydrationLimitMs("tool")),withheldMessage:readerWithheldMessage(access),caller:"tool"});
+      // bot email (5.4): a hit resting on a source from a marked row is fenced, kind email-derived, and marks this turn
+      const result=bounded({...found,hits:fenceEmailDerivedRecords(database(),found.hits,access.threadId)});
       handles?.noteLookup?.(result.hits.map(hit=>({id:hit.id,version:hit.version,evidence:hit.evidence.map(handle=>({sourceId:String(handle.sourceId),revision:Number(handle.revision)}))})),access);
       options.onRead?.(result.hits.flatMap(hit=>hit.evidence.map(handle=>String(handle.sourceId))));
       return result;
@@ -89,7 +92,7 @@ export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAcc
         return {handle:item.handle,...hydrateDisclosedMemoryRecord(recordId,recordVersion,access,reader)};
       });
       assertMemoryAccess(access);
-      const result=bounded({records});
+      const result=bounded({records:fenceEmailDerivedRecords(database(),records,access.threadId)});
       handles?.noteLookup?.(records.map(record=>({id:record.id,version:record.version,evidence:record.evidence.map(handle=>({sourceId:handle.sourceId,revision:handle.revision}))})),access);
       options.onRead?.(records.flatMap(record=>record.evidence.map(handle=>String(handle.sourceId))));
       return result;

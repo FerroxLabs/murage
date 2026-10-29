@@ -21,7 +21,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { BROWSER_EXTENSION_FILES, classifyDataDirEntry, DATA_DIR_ENTRIES, DATA_DIR_PATTERNS, DATA_DIR_RESTORABLE } from "./data-dir-inventory.ts";
+import { BROWSER_EXTENSION_FILES, classifyDataDirEntry, classifyDataDirEntryForBackup, DATA_DIR_ENTRIES, DATA_DIR_PATTERNS, DATA_DIR_RESTORABLE, isRestorableDataDirName } from "./data-dir-inventory.ts";
 import { scanDataDirWrites, unclassifiedStaticWrites } from "./testing/data-dir-guard.ts";
 
 const ROOT = join(import.meta.dirname, "..");
@@ -193,4 +193,45 @@ it("excludes the pre-v4 memory snapshot from archives",()=>{
 
 it("leaves the memory upgrade's note and unfinished copies out of archives",()=>{
  for(const name of["memory-upgrade-status.json","messages.pre-memory-v3.db.partial","messages.pre-memory-v4.db.partial","memory-upgrade-status.json.4242.tmp","messages.pre-memory-v3.db.partial-journal","messages.pre-memory-v3.db.partial-wal"])expect(classifyDataDirEntry(name)).toMatchObject({backup:"excluded"});
+});
+
+// 1.0.9 Sentinel (GAP-SENTINEL-109 section 3.3): the producer input root is exactly DATA_DIR/health. It is an exact row,
+// classified excluded with its own reason, so a backup leaves it out intentionally rather than listing it as unrecognised.
+describe("the health metadata root (1.0.9 Sentinel)", () => {
+  it("health is an exact excluded row with the runtime-metadata reason, never unrecognised", () => {
+    expect(DATA_DIR_ENTRIES.health).toEqual({ backup: "excluded", why: "Runtime health metadata, rebuilt from minute counters, periodic statistics and committed receipts; not backed up or restored" });
+    expect(classifyDataDirEntry("health")).toBe(DATA_DIR_ENTRIES.health);
+    expect(classifyDataDirEntryForBackup("health")).toBe(DATA_DIR_ENTRIES.health);
+    expect(classifyDataDirEntryForBackup("health").skip).toBeUndefined();
+    expect(DATA_DIR_RESTORABLE).not.toContain("health");
+    expect(isRestorableDataDirName("health")).toBe(false);
+    expect(DATA_DIR_ENTRIES.health?.why).not.toMatch(/\u2014|\b(safe|safely|safety|unsafe)\b/i);
+  });
+
+  it("only the exact name is classified: no sibling, temp or case variant at the root borrows the row", () => {
+    for (const name of ["health.tmp", "health-1", "Health", "HEALTH", "health.json", ".health", "healthy", "health ", "health.current.ndjson"]) {
+      expect(classifyDataDirEntry(name), name).toBeUndefined();
+      expect(classifyDataDirEntryForBackup(name), name).toMatchObject({ backup: "excluded", skip: "unrecognised" });
+    }
+    // the older Cloud readiness scratch keeps its own row
+    expect(classifyDataDirEntry(".murage-health")?.why).toMatch(/^Readiness check scratch directory/);
+  });
+
+  it("the unknown-name rule and every refused row are unchanged", () => {
+    expect(classifyDataDirEntryForBackup("some-new-folder")).toMatchObject({ backup: "excluded", skip: "unrecognised", why: expect.stringMatching(/^Not recognised by Murage/) });
+    const refused = Object.entries(DATA_DIR_ENTRIES).filter(([, entry]) => entry.backup === "refused").map(([name, entry]) => [name, entry.code]);
+    expect(refused).toEqual([["vm-home", "VM_WORKSPACE_BACKUP_UNSUPPORTED"], ["vm-homes", "VM_WORKSPACE_BACKUP_UNSUPPORTED"], [".package-import-transaction", "BACKUP_UNCLASSIFIED_COMPONENT"]]);
+  });
+});
+
+// 1.0.9 Sentinel: the delivery ledger is runtime state, excluded from backup, so a restore never replays a page.
+describe("the Sentinel delivery ledger (1.0.9)", () => {
+  it("is an exact excluded row and never restored", () => {
+    const row = DATA_DIR_ENTRIES["sentinel-delivery.json"];
+    expect(row).toMatchObject({ backup: "excluded" });
+    expect(classifyDataDirEntryForBackup("sentinel-delivery.json")).toBe(row);
+    expect(isRestorableDataDirName("sentinel-delivery.json")).toBe(false);
+    expect(DATA_DIR_RESTORABLE).not.toContain("sentinel-delivery.json");
+    expect(row?.why).not.toMatch(/—|\b(safe|safely|safety|unsafe)\b/i);
+  });
 });

@@ -15,6 +15,7 @@
 //
 // The turn lineage is only ever `host.lineage()` (the turnOutputRoots entry of the authenticated generation): nothing here looks a turn up by
 // thread (no currentTurnLineage, runningTurnFor, writerTurnFor or memberOf).
+import { emailDerivedText, markTurnEmailDerived } from "./email/external-marks.ts";
 import { Buffer } from "node:buffer";
 import { z } from "zod";
 import { database, transaction } from "./database.ts";
@@ -264,7 +265,7 @@ interface Plan {
 
 // ── thread_search ───────────────────────────────────────────────────────────────────────────────────────────────────
 
-function planSearch(access: MemoryAccess, set: readonly string[], args: z.infer<typeof searchArgs>, cutoff: number | undefined): Plan {
+function planSearch(access: MemoryAccess, set: readonly string[], args: z.infer<typeof searchArgs>, cutoff: number | undefined, carried?: () => void): Plan {
   const needle = args.query.trim().toLowerCase();
   const collected: Seen[] = [];
   const seenIds = new Set<string>();
@@ -310,7 +311,7 @@ function planSearch(access: MemoryAccess, set: readonly string[], args: z.infer<
     build(kept, notes) {
       const shown = kept;
       const rest = notes.rest;
-      const hits: Hit[] = shown.map(({ threadId, row }) => ({ threadId, threadTitle: titleOf(threadId), messageId: row.id, at: iso(row.at), speaker: speakerName(row), snippet: snippetOf(row.text, needle) }));
+      const hits: Hit[] = shown.map(({ threadId, row }) => ({ threadId, threadTitle: titleOf(threadId), messageId: row.id, at: iso(row.at), speaker: speakerName(row), snippet: emailDerivedText(row, snippetOf(row.text, needle), carried) }));
       if (notes.truncated && hits.length) hits[hits.length - 1]!.truncated = true;
       const last = shown[shown.length - 1]?.row.at;
       // built inside the release block: the examined row is asked again, so a line forgotten since (or not decidable now) gives no time
@@ -351,7 +352,7 @@ function listThreads(access: MemoryAccess, set: readonly string[], cutoff: numbe
 
 // ── thread_read ─────────────────────────────────────────────────────────────────────────────────────────────────────
 
-function planRead(access: MemoryAccess, set: readonly string[], args: z.infer<typeof readArgs>, released: ReadonlyMap<string, string>): Plan | "not-reachable" {
+function planRead(access: MemoryAccess, set: readonly string[], args: z.infer<typeof readArgs>, released: ReadonlyMap<string, string>, carried?: () => void): Plan | "not-reachable" {
   const threadId = released.get(args.message_id);
   if (!threadId || !set.includes(threadId)) return "not-reachable";
   const anchor = readMessage(threadId, args.message_id);
@@ -389,7 +390,7 @@ function planRead(access: MemoryAccess, set: readonly string[], args: z.infer<ty
     build(kept, notes) {
       const rows = kept.map(({ row }) => {
         const shown = cut(row.text, TEXT_CHARS);
-        return { messageId: row.id, at: iso(row.at), speaker: speakerName(row), text: shown.text, ...(shown.cut ? { truncated: true as const } : {}) };
+        return { messageId: row.id, at: iso(row.at), speaker: speakerName(row), text: emailDerivedText(row, shown.text, carried), ...(shown.cut ? { truncated: true as const } : {}) };
       });
       if (notes.truncated && rows.length) {
         const rowOut = rows[rows.length - 1]! as { truncated?: true };
@@ -476,8 +477,8 @@ export async function threadRecallRoute(tool: ThreadRecallTool, body: unknown, a
   if (!bindTurn(host)) return refuse(host, 409, NOT_ACTIVE_LINE);
 
   let plan: Plan | "not-reachable", listed: ListedThread[] | undefined, listHeld = false;
-  if (tool === "thread_search") plan = planSearch(access, set, args as z.infer<typeof searchArgs>, cutoff);
-  else if (tool === "thread_read") plan = planRead(access, set, args as z.infer<typeof readArgs>, state.released);
+  if (tool === "thread_search") plan = planSearch(access, set, args as z.infer<typeof searchArgs>, cutoff, () => markTurnEmailDerived(host.claim.threadId));
+  else if (tool === "thread_read") plan = planRead(access, set, args as z.infer<typeof readArgs>, state.released, () => markTurnEmailDerived(host.claim.threadId));
   else {
     const listing = listThreads(access, set, cutoff);
     listed = listing.threads; listHeld = listing.held;

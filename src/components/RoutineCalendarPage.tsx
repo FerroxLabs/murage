@@ -462,6 +462,7 @@ function EventEditor({
   const [groupId, setGroupId] = useState(existingRoutine?.groupId ?? "");
   const [runOn, setRunOn] = useState<RoutineRunOn>(existingRoutine?.runOn ?? defaultRunOn ?? "ember");
   const [overlap, setOverlap] = useState<"skip" | "queue">(existingRoutine?.overlap ?? "skip");
+  const [deliverTo, setDeliverTo] = useState<"chat" | "list">(existingRoutine?.deliverTo === "list" ? "list" : "chat");
   const [permissionMode, setPermissionMode] = useState<RoutineLevelChoice>(existingRoutine?.permissionMode ?? permissionModeOf(state.bots.find((bot) => bot.id === botIds[0]) ?? { autoApprove: false, fullAccess: false }));
   const [attachments, setAttachments] = useState<Array<RoutineContextAttachment | CalendarCallAttachment>>(
     existingRoutine?.target === "room-goal" ? [] : existingRoutine?.attachments ?? existingCall?.attachments ?? [],
@@ -553,6 +554,7 @@ function EventEditor({
           timeoutMinutes,
           attachments: routineTarget === "room-goal" ? [] : attachments as RoutineContextAttachment[],
           overlap,
+          ...(routineTarget === "bot" ? { deliverTo } : {}),
           ...(!existingRoutine && routineTarget === "bot" && recurrence !== "none" ? { carryLastReport: true } : {}),
           ...(routineTarget === "bot" ? { permissionMode } : {}),
         };
@@ -605,7 +607,7 @@ function EventEditor({
   const modalRef = useRef<HTMLDivElement>(null);
   const editorDirty = useDirtyBaseline({
     kind, name, description, date, startTime, durationMinutes, timeoutMinutes, recurrence, weekdays, intervalMinutes,
-    botIds, routineTarget, groupId, runOn, overlap, permissionMode, attachments,
+    botIds, routineTarget, groupId, runOn, overlap, deliverTo, permissionMode, attachments,
   });
   useModalDialog(modalRef, onClose, true, editorDirty.isDirty);
 
@@ -763,6 +765,16 @@ function EventEditor({
                       </label>
                       <div className="mt-1.5 text-[10.5px] leading-relaxed text-ink-secondary">{routineOverlapHelp(overlap)}</div>
                       {routineTarget === "bot" && (existingRoutine ? existingRoutine.carryLastReport === true : true) && <div className="mt-3 text-[11.5px] text-ink-secondary">{t("routines.carryLastReport")}</div>}
+                    </div>}
+                    {routineTarget === "bot" && <div className="mt-3">
+                      <label className="flex flex-wrap items-center gap-2 text-[12px] text-ink">
+                        <span>Send results to</span>
+                        <select aria-label="Send results to" value={deliverTo} onChange={(event) => setDeliverTo(event.target.value === "list" ? "list" : "chat")} className="rounded-lg border border-hairline/50 bg-panel px-3 py-2 text-[12px] text-ink outline-none focus:border-accent">
+                          <option value="chat">The chat it was made in</option>
+                          <option value="list">Routines list only</option>
+                        </select>
+                      </label>
+                      <div className="mt-1.5 text-[10.5px] leading-relaxed text-ink-secondary">{deliverTo === "list" ? "Each run stays in the routine's own conversation and on the Routines list." : "When a run finishes, its result, files and images appear in the chat where the routine was set up, or in the bot's main chat if there is none."}</div>
                     </div>}
                     {routineTarget === "bot" && levelBot && <div className="mt-3">
                       <RoutineApprovalLevel value={permissionMode} onChange={setPermissionMode} botName={levelBot.name} botMode={permissionModeOf(levelBot)} />

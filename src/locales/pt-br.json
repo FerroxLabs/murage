@@ -3669,5 +3669,18 @@
   "learnAboutMe.error.conflict": "Esta linha já foi guardada com outras palavras. Cole novamente para revisá-la do zero.",
   "learnAboutMe.importedFrom": "Importado de {provider}, {date}",
   "learnAboutMe.importedFromUndated": "Importado de {provider}, sem data",
-  "memoryReview.forgottenWords": "Esquecido. As palavras dele sumiram."
+  "memoryReview.forgottenWords": "Esquecido. As palavras dele sumiram.",
+  "settings.bot.phoneForBots.title": "Telefone para seus bots",
+  "settings.bot.phoneForBots.description": "Escolha o que seus bots podem usar neste telefone.",
+  "settings.bot.phoneForBots.open": "Abrir",
+  "phone.ask.fromPhone": "Do seu celular",
+  "phone.ask.askAgain": "Perguntar de novo",
+  "phone.ask.settingTitle": "Compartilhar e perguntar a partir deste celular",
+  "phone.ask.settingOff": "Compartilhar e perguntar estão desativados para este celular.",
+  "phone.ask.errorGone": "Esse chat não está mais disponível. Escolha outro.",
+  "phone.ask.errorUpdate": "Atualize o Murage no seu computador para usar isso.",
+  "phone.ask.errorSetup": "Abra o Murage para configurar o compartilhamento de novo.",
+  "phone.removal.pending": "Remoção pendente",
+  "phone.removal.pendingBody": "O Murage continuará tentando remover este celular.",
+  "phone.removal.retry": "Tentar de novo"
 }
