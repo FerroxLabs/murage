@@ -32,6 +32,52 @@ describe("reading the fragment", () => {
   });
 });
 
+// open-hash.json is checked in native-contract.test.ts, which passes unchanged.
+describe("the phone app's fixtures", () => {
+  const read = (name: string) => JSON.parse(readFileSync(fileURLToPath(new URL(`../../apps/mobile/contract/${name}`, import.meta.url)), "utf8")) as Array<Record<string, unknown>>;
+
+  it("reads every compose-hash case as listed and refuses the rest", () => {
+    for (const row of read("compose-hash.json")) {
+      const hash = row.hash as string;
+      if ("parses" in row) {
+        expect(parseOpenHash(hash), String(row.why)).toBeNull();
+      } else if (row.bot) {
+        expect(parseOpenHash(hash), hash).toEqual({ botId: row.bot, compose: true });
+      } else {
+        expect(parseOpenHash(hash), hash).toEqual({ threadId: row.threadId, compose: true, ...(row.again ? { again: row.again } : {}) });
+      }
+    }
+  });
+
+  it("refuses odd compose shapes outright", () => {
+    for (const hash of ["#open=bot:b1", "#open=bot:b1&compose=1&again=m1", "#open=bot:b1&compose=1&msg=m2", "#open=t1&compose=", "#open=t1&compose=1&compose=2", "#open=t1&compose=1&again=m1&again=m2", "#open=bot:b1&compose=true"]) {
+      expect(parseOpenHash(hash), hash).toBeNull();
+    }
+  });
+});
+
+describe("opening a compose link", () => {
+  const bots = [{ id: "bot-1", threadId: "main-thread", tasks: [] }];
+  it("opens the bot's main chat and never dispatches a send", () => {
+    const dispatch = vi.fn();
+    expect(openDeepLink({ botId: "bot-1", compose: true }, { bots, groups: [] }, dispatch)).toBe(true);
+    const types = dispatch.mock.calls.map(([action]) => action.type);
+    expect(types).toEqual(["select", "switchTask"]);
+    expect(dispatch.mock.calls[1]![0]).toMatchObject({ botId: "bot-1", threadId: "main-thread" });
+  });
+  it("opens nothing for a bot this device does not hold", () => {
+    const dispatch = vi.fn();
+    expect(openDeepLink({ botId: "ghost", compose: true }, { bots, groups: [] }, dispatch)).toBe(false);
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+  it("opens a thread link with compose and again the same way as a plain one", () => {
+    const dispatch = vi.fn();
+    expect(openDeepLink({ threadId: "main-thread", compose: true, again: "m1" }, { bots, groups: [] }, dispatch)).toBe(true);
+    expect(dispatch.mock.calls.map(([a]) => a.type)).not.toContain("send");
+    expect(dispatch.mock.calls.map(([a]) => a.type)).not.toContain("focusMessage");
+  });
+});
+
 describe("waiting for the snapshot", () => {
   it("holds a target until ready, then opens it once", () => {
     const open = vi.fn();

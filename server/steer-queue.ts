@@ -22,7 +22,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync, unlinkSync } from "node:fs";
 import { sendFingerprint } from "./send-idempotency.ts";
-import { sendStore, pendingItem } from "./send-store.ts";
+import { sendStore, pendingItem, type SendRow } from "./send-store.ts";
 import type { BotRecord, Message, MessageOrigin } from "./store.ts";
 
 /** The slice of Store this module needs — narrow so tests can fake it. */
@@ -83,6 +83,94 @@ export function queueSteeredMessage(
   return { id: accepted.row.queueId };
 }
 
+/** What one drain runs: the leading run of plain owner rows (they join, as always), or exactly the first row when it is a
+ * share or ask-intent. Third-party words never join an owner line and never ride in an owner turn; the rest waits for the next drain. */
+export function drainBatch(rows: SendRow[]): SendRow[] {
+  const first = rows[0];
+  if (!first) return [];
+  if (first.via !== null) return [first];
+  const end = rows.findIndex((row) => row.via !== null);
+  return end === -1 ? rows : rows.slice(0, end);
+}
+
+/** What a queued start resolves to when the thread was taken (or briefly unavailable) and nothing ran: the rows it drained go back
+ * into the queue where they were (same seq, so nothing accepted later passes them) and the thread is tried again. Any other outcome
+ * (the turn was admitted, or the start failed for a reason of its own) is final for those rows. */
+export const START_REQUEUE = "requeue" as const;
+
+/** Threads whose drained batch is being started right now: from the drain until the start settles (admitted, failed or re-queued).
+ * Nothing else drains on such a thread, so a later batch can never be admitted ahead of it. A start always settles: the
+ * queued start bounds its waits before admission (the writer gate's ceiling, and PREPARE_DEADLINE_MS for the thread fill in
+ * ask-turn-device.ts runQueuedStart); a fill that outlasts its deadline re-queues the rows. */
+const starting = new Map<string, symbol>();
+/** Threads whose last start was re-queued: when they may be tried next, and the one timer that tries them. */
+const retries = new Map<string, { attempt: number; at: number; timer?: ReturnType<typeof setTimeout> }>();
+/** Threads with lines waiting while a turn holds the thread: one timer that looks again, in case that turn's end does not drain. */
+const watches = new Map<string, ReturnType<typeof setTimeout>>();
+const RETRY_MIN_MS = 200;
+const RETRY_MAX_MS = 2_000;
+
+/** True while a drained batch on this thread is being started: a new send must wait behind it, never start ahead of it. */
+export function queuedStartPending(threadId: string): boolean {
+  return starting.has(threadId);
+}
+
+function clearRetry(threadId: string): void {
+  const retry = retries.get(threadId);
+  if (retry?.timer) clearTimeout(retry.timer);
+  retries.delete(threadId);
+}
+
+/** Test helper: forget every start in flight and every retry timer. */
+export function _resetQueuedStarts(): void {
+  starting.clear();
+  for (const threadId of [...retries.keys()]) clearRetry(threadId);
+  for (const timer of watches.values()) clearTimeout(timer);
+  watches.clear();
+}
+
+/** The rows of a start that never ran go back to the queue in place: the same seq (so they stay ahead of everything accepted after
+ * them), the same via, device and origin, and the transcript line each already has (the next drain runs from it, never a copy). */
+function requeueInPlace(rows: SendRow[], lines: Message[]): void {
+  rows.forEach((row, i) => {
+    const line = lines[i];
+    if (!line) return;
+    try { sendStore.requeueStarted(row.seq, line.id, line.text ?? row.text, row.prompt ?? undefined); } catch { /* the row moved on (cancelled or settled): nothing to put back */ }
+  });
+}
+
+/** Try a re-queued thread again after a short back-off (doubling, capped), then keep looking at the cap while its line still waits.
+ * Only a new refusal sets a back-off; a look that finds the thread held leaves any drain free to start the line at once. The one timer
+ * ends when the thread starts its rows again or has nothing left waiting. */
+function scheduleRetry(threadId: string, again: () => void, refused: boolean): void {
+  const retry = retries.get(threadId) ?? { attempt: 0, at: 0 };
+  if (retry.timer) clearTimeout(retry.timer);
+  const delay = refused ? Math.min(RETRY_MAX_MS, RETRY_MIN_MS * 2 ** retry.attempt) : RETRY_MAX_MS;
+  if (refused) { retry.attempt += 1; retry.at = Date.now() + delay; }
+  const watching = watches.get(threadId);
+  if (watching) { clearTimeout(watching); watches.delete(threadId); }
+  retry.timer = setTimeout(() => {
+    retry.timer = undefined;
+    if (retries.get(threadId) !== retry) return;
+    retry.at = 0;
+    try { again(); } catch { /* the next look tries again */ }
+    if (retries.get(threadId) !== retry || retry.timer || starting.has(threadId)) return;
+    let waiting = 0;
+    try { waiting = sendStore.queuedCount(threadId, "bot"); } catch { waiting = 1; }
+    if (waiting > 0) scheduleRetry(threadId, again, false); else clearRetry(threadId);
+  }, delay);
+  retry.timer.unref?.();
+  retries.set(threadId, retry);
+}
+
+/** Lines wait on a thread a turn holds: look again at the cap, once at a time, until they drain or are gone. */
+function watch(threadId: string, again: () => void): void {
+  if (watches.has(threadId) || retries.has(threadId)) return;
+  const timer = setTimeout(() => { watches.delete(threadId); again(); }, RETRY_MAX_MS);
+  timer.unref?.();
+  watches.set(threadId, timer);
+}
+
 /** Drain every queue whose bot is idle: append the held lines (leaf is now
  * the finished turn's last item), then one run per thread whose prompt is
  * the texts joined with newlines. `userMessage` is the last appended line
@@ -99,41 +187,68 @@ export function drainSteeredMessages(
     prompt: string,
     userMessage: Message,
     excludeIds: string[],
-  ) => void | Promise<void>,
+    /** Which kind of batch this is: a share or ask-intent line runs alone, from the phone named here. */
+    batch: { via: "share" | "ask-intent" | null; viaDevice: string | null },
+  ) => void | Promise<unknown>,
   /** Holds a queue the thread's own busy flag cannot see, such as the bot
    * speaking in a room turn (upstream OpenMausBot #1664). */
   isBlocked?: (botId: string, threadId: string) => boolean,
   /** The images a held line binds to the conversation as it lands, exactly
    * as a line sent to an idle bot does (turn-images.ts promote). */
   bindAttachments?: (threadId: string, text: string) => NonNullable<Message["attachments"]>,
+  /** True while a turn holds the thread (the server's direct run, which the busy flag can lag): a re-queued start is not tried
+   * into it, and a start that was admitted does not drain its thread again (that turn's own end drains). */
+  isOccupied?: (botId: string, threadId: string) => boolean,
 ): void {
-  for (const threadId of sendStore.queuedThreads("bot")) {
+  const again = () => drainSteeredMessages(store, run, isBlocked, bindAttachments, isOccupied);
+  const occupied = (botId: string, threadId: string): boolean => { try { return isOccupied?.(botId, threadId) ?? false; } catch { return true; } };
+  // One pass for one thread. True when a share or ask-intent batch was refused whole: nothing ran, so the owner lines queued behind it
+  // are drainable now and the thread goes again (each pass settles at least the rows it refused, so the passes end).
+  const drainOne = (threadId: string): boolean => {
     let waiting;
-    try { waiting = sendStore.queuedRows(threadId, "bot"); } catch { continue; }
+    try { waiting = sendStore.queuedRows(threadId, "bot"); } catch { return false; }
     const first = waiting[0];
-    if (!first) continue;
+    if (!first) return false;
     const bot = store.bot(first.ownerId);
     if (!bot) {
       // the bot was deleted while messages waited: nothing can steer them, and only the owner may
       // discard words, so each is kept as a refused row (never cleared by the system)
       for (const row of waiting) { try { sendStore.refuse(row.seq); } catch { /* retried at the next drain */ } }
-      continue;
+      return false;
     }
-    if (store.taskByThread ? store.taskByThread(bot.id, threadId)?.busy : bot.busy) continue;
-    if (isBlocked?.(first.ownerId, threadId)) continue;
+    if (store.taskByThread ? store.taskByThread(bot.id, threadId)?.busy : bot.busy) return false;
+    if (isBlocked?.(first.ownerId, threadId)) return false;
+    if (starting.has(threadId)) return false;
+    // a re-queued start goes again only once its back-off has passed (its timer tries it then)
+    const retry = retries.get(threadId);
+    if (retry && Date.now() < retry.at) return false;
+    // a turn holds the thread though the busy flag does not show it yet: nothing is drained into it (its end drains; a timer looks too)
+    if (occupied(first.ownerId, threadId)) { watch(threadId, again); return false; }
     // The turn is over, so an unconfirmed steer can no longer be folded into it:
     // it stays unconfirmed (never re-sent) and stops holding the line.
     sendStore.releaseThreadLate(threadId);
-    const rows = sendStore.drainable(threadId, "bot");
-    if (!rows.length) continue;
+    const rows = drainBatch(sendStore.drainable(threadId, "bot"));
+    if (!rows.length) return false;
     // committed to draining: the marker is durable before anything runs
-    try { sendStore.markDispatchedMany(rows.map((row) => row.seq)); } catch { continue; }
+    try { sendStore.markDispatchedMany(rows.map((row) => row.seq)); } catch { return false; }
     const appended: Message[] = [];
     // The engine is told only what committed: a row whose line could not be written became a
     // refused chip, and its words must never also run (the chip would offer a duplicate).
     const committed: typeof rows = [];
     for (const row of rows) {
       let line: Message | undefined;
+      if (row.via !== null) {
+        // Re-read at the drain, not only at admission: a via row runs only while it is still queue-only, still the same
+        // via and still unproven. Anything else is third-party words that lost their fence, so they never run.
+        let fresh: SendRow | undefined;
+        try { fresh = sendStore.bySeq(row.seq); } catch { fresh = undefined; }
+        // A stored file never rides as an owner-style attachment (Message.attachments is images only; the owner's composer
+        // sends files as text paths), and a damaged column is never run with a guess: both fail closed.
+        if (!fresh || !fresh.queueOnly || fresh.via !== row.via || fresh.origin !== "unproven" || fresh.attachmentsMalformed || fresh.attachments?.some((item) => item.kind !== "image")) {
+          try { sendStore.refuse(row.seq); } catch { /* the row stays dispatched; the next start shows it */ }
+          continue;
+        }
+      }
       if (row.existingMessageId) {
         // A line already in the transcript (a steer the engine later declined):
         // it runs from where it is, never a second copy.
@@ -141,7 +256,12 @@ export function drainSteeredMessages(
       }
       if (!line) {
         let attachments: NonNullable<Message["attachments"]> = [];
-        try { attachments = bindAttachments?.(threadId, row.text) ?? []; } catch { attachments = []; }
+        if (row.attachments) {
+          // a via row's images were stored with it: they bind without any pending registration, so a restart loses nothing
+          attachments = row.attachments.flatMap((item) => item.kind === "image" ? [{ kind: "image" as const, path: item.path, mime: item.mime }] : []);
+        } else {
+          try { attachments = bindAttachments?.(threadId, row.text) ?? []; } catch { attachments = []; }
+        }
         try {
           // queueId is the pending-chip identity from the 202; append still
           // assigns a fresh transcript id so replay/exclude keep using message.id.
@@ -156,6 +276,7 @@ export function drainSteeredMessages(
             sendId: row.sendId ?? undefined,
             queueId: row.queueId,
             ...(row.origin ? { origin: row.origin as MessageOrigin } : {}),
+            ...(row.via ? { via: row.via } : {}),
           }, lineId));
         } catch {
           // The line could not be written (the thread went away, or the write failed): the accepted
@@ -173,20 +294,47 @@ export function drainSteeredMessages(
       }
     }
     const last = appended.at(-1);
-    if (!last) continue;
+    if (!last) return rows[0]!.via !== null;
     const prompt = committed.map((row) => row.prompt ?? row.text).join("\n");
-    // The held lines are in the transcript before the run starts, so a run that
-    // cannot start (a session reset that times out, say) loses nothing: the words
-    // stay visible and the caller shows why. A rejection never escapes unhandled.
+    // The held lines are in the transcript before the run starts, so a run that cannot start loses nothing: the words stay visible
+    // and the caller shows why. A start is async (the thread is not taken until it is admitted): until it settles nothing else drains on
+    // this thread, so a later batch is never admitted ahead of it. A start refused because the thread was taken puts its rows back
+    // where they were and is tried again; a rejection never escapes unhandled.
+    let started: unknown;
     try {
-      void Promise.resolve(run(
+      started = run(
         first.ownerId,
         threadId,
         prompt,
         last,
         appended.map((message) => message.id),
-      )).catch(() => {});
+        { via: first.via, viaDevice: first.via ? first.viaDevice : null },
+      );
     } catch { /* same: the lines are already recorded */ }
+    if (started && typeof (started as PromiseLike<unknown>).then === "function") {
+      const token = Symbol(threadId);
+      starting.set(threadId, token);
+      const ownerId = first.ownerId;
+      const settle = (outcome: unknown) => {
+        if (starting.get(threadId) !== token) return;
+        starting.delete(threadId);
+        if (outcome === START_REQUEUE) {
+          requeueInPlace(committed, appended);
+          scheduleRetry(threadId, again, true);
+          return;
+        }
+        clearRetry(threadId);
+        // admitted: the turn now holds the thread and its own end drains; anything else (failed, or a turn already over) drains now
+        if (!occupied(ownerId, threadId)) again();
+      };
+      Promise.resolve(started).then(settle, () => settle(undefined));
+    } else {
+      clearRetry(threadId);
+    }
+    return false;
+  };
+  for (const threadId of sendStore.queuedThreads("bot")) {
+    for (let pass = 0; pass < 64 && drainOne(threadId); pass++) { /* the next pass sees the rows behind a refused via batch */ }
   }
 }
 

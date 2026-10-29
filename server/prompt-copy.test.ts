@@ -301,3 +301,31 @@ describe("prompt copy: every layer a bot can read", () => {
     }
   });
 });
+
+// Open integrations (1.0.9): a bot calls any API the owner asks for, builds
+// its own client, wrapper or MCP, and keeps an owner-given key where the owner
+// says. It still never hunts the computer for keys it was not given.
+describe("prompt copy: open integrations", () => {
+  it("keeps the no-hunting rule and drops the ban on calling providers", () => {
+    expect(TURN_PROMPTS.imageKeys).toContain("Never search the computer for API keys; use only a key the owner hands you or one in a file they name.");
+    expect(TURN_PROMPTS.imageKeys).toContain("You may call any API or service the owner asks for, and write your own client, wrapper or MCP for it.");
+    expect(TURN_PROMPTS.imageKeys).toContain("Store an owner-given key only where they ask, in a place git does not track, such as a git-ignored .env file, read it from there to make the call, and send it only to the service it is for.");
+    expect(TURN_PROMPTS.imageKeys).toContain("Never save it to your memory or put it in a reply, a log or a committed file.");
+    expect(TURN_PROMPTS.imageKeys).not.toMatch(/never call an image provider/i);
+  });
+  it("uses a key the owner already pasted and points at the secure card", () => {
+    expect(TURN_PROMPTS.credential).toContain("Never ask the user to paste credentials into chat.");
+    expect(TURN_PROMPTS.credential).toContain("If the owner has already pasted a key or named a file that holds it, use it rather than refusing, and mention the secure card for next time.");
+  });
+  it("house rules forbid looking for keys but allow storing an owner-given key where asked", () => {
+    expect(DEFAULT_HOUSE_RULES).toContain("Never search the computer for passwords, keys or card numbers, and never ask anyone to paste one into chat.");
+    expect(DEFAULT_HOUSE_RULES).toContain("A key the owner hands you, or a file they name, is for that job only: keep it where they say, out of git, memory and replies, and send it only to its service.");
+    expect(DEFAULT_HOUSE_RULES).toContain("Never keep passwords, keys, card numbers or anything marked private");
+  });
+  it("the image guide's no-keys rule covers the image prompt and generate_image only", () => {
+    const image = bundled.find(skill => skill.manifest.id === "image-generation")!.instructions.replace(/\s+/g, " ");
+    expect(image).toContain("Never paste keys, provider URLs or local file paths into the image prompt or the `generate_image` call: Murage holds the connection and sends the request.");
+    expect(image).toContain("This rule covers image requests only; another API the owner asks you to call takes the key the owner gave you.");
+    expect(image).not.toContain("into a prompt or a tool call");
+  });
+});

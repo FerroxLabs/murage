@@ -80,6 +80,8 @@ const packageSchema = z.object({
         mascotBody: optionalText(40),
       }),
       playbooks: z.array(key).max(40).optional(),
+      /** Bot email (1.0.9, section 7): this bot had an address where it came from. Import keeps email off and offers one. */
+      emailIntent: z.literal("was-on").optional(),
       skills: z.array(key).max(200).optional(),
       /** "draft-only": the installed bot prepares drafts and can never send.
        * Install stamps `draftOnly` on the bot, and the connected-app relay

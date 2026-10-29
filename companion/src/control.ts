@@ -102,6 +102,22 @@ export interface ControlOptions {
   deviceDoor?: () => { mode: "off" | "lan" | "tailnet" | "loopback"; unencrypted: boolean };
   /** Device ids with at least one live authenticated event stream. */
   connectedDeviceIds?: () => string[];
+  /** Plan S5: tell the harness to drop this device's phone job map. Resolves true only when the
+   * harness answered `{ revoked: n }`. Called before the registry removes a device that holds a
+   * phone-jobs token; false means the device stays and the page gets a 502. */
+  revokePhoneJobs?: (deviceId: string) => Promise<boolean>;
+  /** S28: switch share and ask off for a device, harness first (registry write, queued entry, abort of live forwards, then the
+   * harness's acknowledgement). `acknowledged: false` means the harness has not answered yet; the entry stays queued. Throws when
+   * the registry write failed. */
+  revokeShareAsk?: (deviceId: string) => Promise<{ acknowledged: boolean }>;
+  /** S28: true while a revocation for this device has not been acknowledged by the harness. */
+  shareAskPending?: (deviceId: string) => boolean;
+  /** Pauses between the companion's own tries at a removal that has not finished; the last pause repeats. Default 5 s, 15 s, 60 s, then
+   * every 5 minutes. */
+  removalRetryDelaysMs?: number[];
+  /** Queue the harness to drop this device's relay push binding. Called as soon as a removal is pending (and again on each resume), so
+   * a phone being removed stops receiving new pushes without waiting for the registry to drop the record. Idempotent. */
+  revokePush?: (deviceId: string) => void;
   /** Terminate every authenticated event stream owned by a revoked device. */
   disconnectDevice?: (deviceId: string) => void;
   /** Re-read Tailscale after the sidecar has started. People commonly
@@ -307,7 +323,8 @@ export function companionState(options: Omit<ControlOptions, "controlToken" | "r
       currentHostedUrl(options),
     ),
     pairing: pairing ? { code: pairing.code, token: pairing.token, expiresAt: pairing.expiresAt } : null,
-    devices: options.devices.list(),
+    // A switch-off the harness has not acknowledged shows as "turning-off", never "off": the page polls this, not the harness.
+    devices: options.devices.list().map((d) => (options.shareAskPending?.(d.id) ? { ...d, shareAsk: "turning-off" as const } : d)),
     // The pairing screen's answer to a full fleet: the cap, and — only once
     // it is reached — every device least recently seen first, so the one to
     // replace is at the top. Replacing is the ordinary revoke below.
@@ -331,8 +348,91 @@ export function companionState(options: Omit<ControlOptions, "controlToken" | "r
 /** The loopback control plane: the page, its state, and the two writes —
  * open a pairing window, revoke a device. Bound to 127.0.0.1 by the caller,
  * and it refuses anything suggesting it was reached from anywhere else. */
+const DEFAULT_REMOVAL_RETRY_MS = [5_000, 15_000, 60_000, 300_000];
+
+type RemovalOutcome = "done" | "pending" | "missing";
+
+/** Runs a phone's removal as one idempotent sequence (harness job map, jobs token, share and ask, registry) and, while it has not
+ * finished, tries it again by itself on a capped backoff. The pending flag on the device record is what makes this survive a restart:
+ * `resume` picks every flagged device up again. One run per device at a time; a second ask shares the run in flight. */
+function createRemovalRunner(options: ControlOptions) {
+  const delays = options.removalRetryDelaysMs?.length ? options.removalRetryDelaysMs : DEFAULT_REMOVAL_RETRY_MS;
+  const running = new Map<string, Promise<RemovalOutcome>>();
+  const timers = new Map<string, ReturnType<typeof setTimeout>>();
+  const tries = new Map<string, number>();
+  let stopped = false;
+
+  const sequence = async (id: string): Promise<RemovalOutcome> => {
+    const { devices } = options;
+    const record = devices.list().find((d) => d.id === id);
+    if (!record) return "missing";
+    // Every way back in is already refused for a pending device, so its live streams close now rather than when the removal lands.
+    options.disconnectDevice?.(id);
+    try { options.revokePush?.(id); } catch { /* the removal itself still proceeds and retries */ }
+    // The harness job map goes first, the registry last. A device with no phone-jobs token has no job map.
+    if (options.revokePhoneJobs && devices.hasPhoneJobsToken(id)) {
+      let done = false;
+      try { done = await options.revokePhoneJobs(id); } catch { done = false; }
+      if (!done) return "pending";
+      // The harness now bars this phone, but that bar can be lost to a backup downgrade, so the jobs token leaves the registry here.
+      try { devices.clearPhoneJobsToken(id); } catch { return "pending"; }
+    }
+    // Share and ask goes the same way. A device that never had it (and has nothing queued) does not wait on the harness.
+    const holdsAsk = devices.list().find((d) => d.id === id)?.shareAsk !== "not-set-up";
+    if (options.revokeShareAsk && (holdsAsk || options.shareAskPending?.(id))) {
+      let done = false;
+      try { done = (await options.revokeShareAsk(id)).acknowledged; } catch { done = false; }
+      if (!done) return "pending";
+    }
+    let removed: boolean;
+    try { removed = devices.revoke(id); } catch { return "pending"; }
+    if (!removed) return "missing";
+    return "done";
+  };
+
+  const schedule = (id: string) => {
+    if (stopped || timers.has(id)) return;
+    const n = tries.get(id) ?? 0;
+    tries.set(id, n + 1);
+    const timer = setTimeout(() => { timers.delete(id); void attempt(id); }, delays[Math.min(n, delays.length - 1)]);
+    timer.unref?.();
+    timers.set(id, timer);
+  };
+
+  const attempt = (id: string): Promise<RemovalOutcome> => {
+    const inFlight = running.get(id);
+    if (inFlight) return inFlight;
+    const timer = timers.get(id);
+    if (timer) { clearTimeout(timer); timers.delete(id); }
+    const run = sequence(id).catch((): RemovalOutcome => "pending").then((outcome) => {
+      running.delete(id);
+      if (outcome === "pending") schedule(id);
+      else tries.delete(id);
+      return outcome;
+    });
+    running.set(id, run);
+    return run;
+  };
+
+  return {
+    attempt,
+    /** Pick up every removal a previous run left pending. */
+    resume: () => {
+      try {
+        for (const d of options.devices.list()) if (d.removalPending) void attempt(d.id);
+      } catch { /* an unreadable registry has nothing to resume */ }
+    },
+    stop: () => {
+      stopped = true;
+      for (const timer of timers.values()) clearTimeout(timer);
+      timers.clear();
+    },
+  };
+}
+
 export function createControlServer(options: ControlOptions): Server {
-  return createServer((req, res) => {
+  const removals = createRemovalRunner(options);
+  const server = createServer((req, res) => {
     let requestUrl: URL;
     try {
       requestUrl = new URL(req.url ?? "/", "http://127.0.0.1");
@@ -431,7 +531,7 @@ export function createControlServer(options: ControlOptions): Server {
     const changesDevices =
       (method === "POST" && path === "/pairing") ||
       (method === "DELETE" && /^\/devices\/[\w-]+$/.test(path)) ||
-      ((method === "POST" || method === "DELETE") && /^\/devices\/[\w-]+\/(?:cloud-desktop|script-access)$/.test(path));
+      ((method === "POST" || method === "DELETE") && /^\/devices\/[\w-]+\/(?:cloud-desktop|script-access|share-ask)$/.test(path));
     if (changesDevices && !registry.available) {
       return json(res, 503, { error: registryPaused(registry.problem) });
     }
@@ -490,24 +590,49 @@ export function createControlServer(options: ControlOptions): Server {
       }
       return json(res, 200, companionState(options));
     }
+    const shareAsk = path.match(/^\/devices\/([\w-]+)\/share-ask$/);
+    if (shareAsk && (method === "POST" || method === "DELETE")) {
+      const id = shareAsk[1];
+      void (async () => {
+        try {
+          if (!options.devices.setShareAskAllowed(id, method === "POST")) return json(res, 404, { error: "no such device" });
+        } catch {
+          return json(res, 500, { error: "could not save share and ask access" });
+        }
+        if (method === "DELETE" && options.revokeShareAsk) {
+          // Publish to the harness first; the page shows off only once it has answered.
+          let done = false;
+          try { done = (await options.revokeShareAsk(id)).acknowledged; } catch { return json(res, 500, { error: "could not switch share and ask off" }); }
+          if (!done) return json(res, 202, { shareAsk: "turning-off" });
+        }
+        return json(res, 200, companionState(options));
+      })().catch(() => json(res, 500, { error: "could not save share and ask access" }));
+      return;
+    }
     const revoke = path.match(/^\/devices\/([\w-]+)$/);
     if (revoke && method === "DELETE") {
-      let removed: boolean;
-      try {
-        removed = options.devices.revoke(revoke[1]);
-      } catch {
-        // The removal could not be written down. The registry kept the device,
-        // in memory and on disk, so its streams stay exactly as they are and
-        // the page is told the truth: nothing was removed. The detail stays
-        // out of the response, as with cloud desktop access above.
-        return json(res, 500, { error: "could not remove the device" });
-      }
-      if (!removed) return json(res, 404, { error: "no such device" });
-      options.disconnectDevice?.(revoke[1]);
-      return json(res, 200, companionState(options));
+      const id = revoke[1];
+      void (async () => {
+        // The removal is written down as pending before the first harness step, so a restart finds it and the phone's jobs and ask bearers
+        // are refused from here on. If that cannot be saved, nothing has changed and the page is told so. Asking again for a device that is
+        // already pending is "Try again": it runs the sequence now.
+        try {
+          if (!options.devices.markRemovalPending(id)) return json(res, 404, { error: "no such device" });
+        } catch {
+          return json(res, 500, { error: "could not remove the device" });
+        }
+        const outcome = await removals.attempt(id);
+        if (outcome === "missing") return json(res, 404, { error: "no such device" });
+        // Pending is not an error: the device stays on the list as "Removal pending" until the registry has really dropped it.
+        return json(res, outcome === "done" ? 200 : 202, companionState(options));
+      })().catch(() => json(res, 500, { error: "could not remove the device" }));
+      return;
     }
     return json(res, 404, { error: `no route: ${method} ${path}` });
   });
+  server.on("close", removals.stop);
+  removals.resume();
+  return server;
 }
 
 /** How long a pairing window lasts, in whole minutes.

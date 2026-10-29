@@ -149,6 +149,14 @@ describe("capabilities primer", () => {
       expect(primer({ imageInput: "unknown" })).toContain("cannot confirm");
     });
 
+    it("lets the bot call any API the owner asks for, never hunting for keys", () => {
+      const text = primer({ imageInput: "file-reference" });
+      expect(text).toContain("Never hunt the computer for an API key; use only a key the owner hands you or one in a file they name.");
+      expect(text).toContain("You may call any API or service the owner asks for, with your own client, wrapper or MCP.");
+      expect(text).toContain("Keep the key only where they ask, out of git, memory, replies and logs, and send it only to that service.");
+      expect(text).not.toMatch(/never call an image provider/i);
+    });
+
     it("says what the folder costs the bot", () => {
       const untrusted = primer({ folder: "untrusted" });
       // 1.0.4: names what is left out, and says the bot's own files and tools still work

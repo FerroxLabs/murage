@@ -54,7 +54,7 @@ const answer = () => Promise.resolve(state);
 (window as unknown as { muragebox: unknown }).muragebox = {
   companion: {
     state: answer, start: answer, stop: answer, keepAwake: answer, pairing: answer,
-    cloudDesktop: answer, revoke: answer, refreshTailscale: answer, remoteAccess: answer,
+    cloudDesktop: answer, shareAsk: answer, revoke: answer, refreshTailscale: answer, remoteAccess: answer,
   },
   companionAccount: {
     state: () => Promise.resolve({ available: false, status: "signed-out" }),
