@@ -1,0 +1,72 @@
+# Capability records: engines. Schema and rules: scripts/build-capability-db.mjs (CAPABILITY-DB-1010 rev 2).
+schema: 1
+entries:
+  - id: engines.continue-with-chatgpt-grok
+    name: Sign in with a ChatGPT or Grok plan
+    status: can
+    questions:
+      - Can I use my ChatGPT plan in Murage?
+      - Continue with ChatGPT
+      - Use my SuperGrok plan for my bots
+      - Sign in with Grok instead of an API key
+    answer: >
+      Yes. Open Settings, then Models & engines, and under Use a plan you already have press
+      Continue with ChatGPT or Continue with Grok. Your bots can then use the models that come with
+      that plan, and the plan's limits apply.
+    limits: >
+      Desktop app only: on a phone or in a browser, finish sign-in on the computer running Murage.
+      The Grok sign-in is marked Unofficial and needs a SuperGrok or X Premium plan.
+    settings_path: Settings → Models & engines → Use a plan you already have
+    platforms: [mac, windows, linux]
+    engines: [all]
+    anchors:
+      - settings-control:models/plan-sign-in
+      - "file:electron/model-signin-presets.mjs#const DEFAULT_ON = Object.freeze({ chatgpt: true, supergrok: true })"
+      - file:src/components/SubscriptionSignIn.tsx#modelSignIn.grok.unofficial
+    verified: 1.0.10
+    doc: providers#use-a-plan-you-already-have
+    internal: CANNOT-ANSWERS-109 item a. On by default; MURAGE_SIGNIN_CHATGPT or MURAGE_SIGNIN_GROK set to 0 hides a button.
+
+  - id: engines.grok-images
+    name: Make images with Grok
+    status: can
+    questions:
+      - Can Murage make images with Grok?
+      - Use Grok Imagine for image generation
+      - Generate pictures with my xAI key
+    answer: >
+      Yes. With an xAI key added under Models & engines, open Settings, then Tools, then Image
+      generation, pick the xAI connection and choose Grok Imagine Image 2.0. A bot can then make and
+      edit images with it.
+    limits: Choose the Grok Imagine model yourself, because xAI has no default image model.
+    settings_path: Settings → Tools → Image generation
+    platforms: [mac, windows, linux]
+    engines: [all]
+    anchors:
+      - settings-card:webSearch/images
+      - file:server/image-generation.ts#grok-imagine-image-2.0
+    verified: 1.0.10
+    doc: providers#grok-images
+    internal: CANNOT-ANSWERS-109 item b.
+
+  - id: engines.openai-compatible-tools
+    name: Tools on OpenAI-compatible engines
+    status: can
+    questions:
+      - Can an OpenAI-compatible engine use tools?
+      - Does a model on my own OpenAI-compatible endpoint get Murage tools?
+      - Is the OpenAI-compatible engine chat only?
+    answer: >
+      Yes. A bot on an OpenAI-compatible engine, hosted or local, gets Murage's tools: memory, asking
+      other bots, your phone and your own MCP servers, each call through your normal approvals.
+    limits: >
+      It has no shell or file tools of its own and no built-in browser. Draft-only bots and
+      text-only models run without tools, and so does a Murage Cloud home for now.
+    platforms: [mac, windows, linux]
+    engines: [openai-compatible]
+    anchors:
+      - file:server/drivers/openai-chat.ts#buildMcpServers(turn
+      - file:server/drivers/mcp-mounts.ts#export function buildMcpServers
+    verified: 1.0.10
+    internal: CANNOT-ANSWERS-109 item c; docs/custom-engines.md "chat only" is stale (fix/1010-copy rewrites it).
+retired: []

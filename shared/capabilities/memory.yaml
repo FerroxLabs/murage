@@ -1,0 +1,51 @@
+# Capability records: memory. Schema and rules: scripts/build-capability-db.mjs.
+schema: 1
+entries:
+  - id: memory.learn-about-me
+    name: Learn about me from another assistant
+    status: can
+    questions:
+      - Can Murage learn what ChatGPT knows about me?
+      - Import my memories from another AI assistant
+      - Bring over what my old assistant knows about me
+    answer: >
+      Yes. Open Settings, then Memory, then Learn about me. Copy the prompt, run it in the assistant
+      you used before, paste its answer back, and keep or skip each line. Only the lines you keep
+      become memories.
+    limits: >
+      Desktop app only, not on the phone, in a browser or on a bot's own memory page. Memory needs to
+      be on to keep lines.
+    settings_path: Settings → Memory → Learn about me
+    platforms: [mac, windows, linux]
+    engines: [all]
+    anchors:
+      - settings-control:memory/learn-about-me
+      - file:src/components/LearnAboutMe.tsx#if (desktop !== true) return null
+    verified: 1.0.10
+    doc: features/memory-and-learning#memory
+    internal: CANNOT-ANSWERS-109 item f. Point doc at memory-and-learning#learn-about-me once fix/1010-copy lands.
+
+  - id: memory.pin
+    name: Pin a memory so it is always used
+    status: can
+    questions:
+      - Can I pin a memory?
+      - Make a bot always remember something
+      - Pin a fact so every chat uses it
+    answer: >
+      Yes. In Settings, Memory, open a memory and press Pin memory. While memory is on, a pinned
+      memory goes into every turn of the chats that can see it. Press Unpin memory to stop.
+    limits: >
+      Pinned memories share a fixed amount of room, and a smaller local model may leave the last ones
+      out. Only you can pin, from the screen.
+    settings_path: Settings → Memory → Memory and what it learned
+    platforms: [mac, windows, linux]
+    engines: [all]
+    anchors:
+      - settings-card:memory/overview
+      - 'file:src/components/MemoryReview.tsx#action: "pin"'
+      - file:server/memory/bundle.ts#owner_pinned=1
+    verified: 1.0.10
+    doc: features/memory-and-learning#memory
+    internal: KB memory-29; the site-invalidation demonstrator. Pins ride every bundle (bundle.ts pinRows), within PIN_SHARE_DEFAULT.
+retired: []

@@ -880,7 +880,6 @@ shared/error-diagnostic.test.ts	extended
 shared/first-run-chief.test.ts	extended
 shared/flux-desktop-signin-default.test.ts	delete (pending review; runs here until then)
 shared/flux-stream-contract.test.ts	extended
-shared/help-capabilities.test.ts	extended
 shared/help-coverage.test.ts	extended
 shared/host-stop.test.ts	extended
 shared/image-capabilities.test.ts	extended

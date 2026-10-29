@@ -3411,6 +3411,26 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "| Engine | Authentication shape | Notes |\n|---|---|---|\n| Claude | Claude CLI login | Strong support for tools, approvals, sessions, and local computer use |\n| Codex | Codex CLI login | Model discovery, approvals, steering, and computer tools |\n| Grok | Grok CLI login | ACP-based local model catalog and session support |\n| Cursor | Cursor Agent CLI login or API key | ACP driver with live model discovery |\n| Kimi | Kimi CLI login | ACP integration |\n| Droid | Factory Droid CLI login | ACP integration |\n| Antigravity | Google Antigravity CLI login | Default Google consumer engine |…"
   },
   {
+    "id": "providers#use-a-plan-you-already-have",
+    "title": "Agent engines",
+    "description": "Use the agent subscriptions and CLIs you already have.",
+    "heading": "Use a plan you already have",
+    "breadcrumb": "Murage docs → Agent engines",
+    "where": "Settings → Models & engines",
+    "url": "https://murage.ai/docs/providers#use-a-plan-you-already-have",
+    "text": "Sign in with the plan you already pay for and your bots can use the models that come with it. Open Settings → Models & engines in the Murage desktop app and press Continue with ChatGPT or Continue with Grok under Use a plan you already have. Plan limits apply. On a phone or in a browser, finish sign-in on the computer running Murage. The Grok sign-in is marked Unofficial: xAI has not published it for other apps yet, it needs a SuperGrok or X Premium plan, and an xAI API key works instead if it is ever turned off."
+  },
+  {
+    "id": "providers#grok-images",
+    "title": "Agent engines",
+    "description": "Use the agent subscriptions and CLIs you already have.",
+    "heading": "Grok images",
+    "breadcrumb": "Murage docs → Agent engines",
+    "where": "Settings → Tools → Image generation",
+    "url": "https://murage.ai/docs/providers#grok-images",
+    "text": "Bots can make and edit images with Grok. Add an xAI key under Models & engines, then open Settings → Tools → Image generation, pick the xAI connection and choose Grok Imagine Image 2.0. xAI has no default image model, so choose it yourself."
+  },
+  {
     "id": "providers#detection",
     "title": "Agent engines",
     "description": "Use the agent subscriptions and CLIs you already have.",

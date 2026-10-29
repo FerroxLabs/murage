@@ -968,6 +968,14 @@ jobs:
           grep -Eq '^owner: FerroxLabs$' "$update" || { echo "::error::wrong update owner"; exit 1; }
           grep -Eq '^repo: murage-releases$' "$update" || { echo "::error::wrong update repo"; exit 1; }
           node scripts/release-guard.mjs update-feed release/linux-unpacked/resources/app-update.yml
+      - name: "Gate: capability database checked and exported on the candidate sha"
+        # CAPABILITY-DB-1010 section 8: the export the site and the help read is
+        # built from the same sha as the packages, and verify-linux-package.mjs
+        # below matches its db_rev to the bundled server.
+        run: |
+          v=$(node -p "require('./package.json').version")
+          node scripts/build-capability-db.mjs --check
+          node scripts/build-capability-db.mjs --export "release/capability-db-$v.json"
       - name: Verify package contents and metadata
         run: node scripts/verify-linux-package.mjs
       - name: "Gate: local and off-site backup tools are the pinned x64 builds"
@@ -1017,6 +1025,9 @@ jobs:
           v=$(node -p "require('./package.json').version")
           cp "release/Murage-$v-amd64.deb" release/Murage-amd64.deb
           cp "release/Murage-$v-x86_64.AppImage" release/Murage.AppImage
+          # The capability export is NOT listed here: every installed Linux app's updater
+          # (electron/update-signature.mjs verifyLinuxUpdate) refuses a sums file with any
+          # line other than the .deb and the AppImage, so one extra line would stop updates.
           (cd release && sha256sum Murage-$v-amd64.deb Murage-$v-x86_64.AppImage > SHA256SUMS-ubuntu-x64.txt)
       - name: Sign the checksums
         # Audit C8: a checksum file served from the same place as the files it
@@ -1078,6 +1089,7 @@ jobs:
           path: |
             release/*.deb
             release/*.AppImage
+            release/capability-db-*.json
             release/SHA256SUMS-ubuntu-x64.txt
             release/SHA256SUMS-ubuntu-x64.txt.asc
             release/latest-linux.yml
@@ -1151,6 +1163,7 @@ jobs:
             "Murage-$VERSION-x86_64.AppImage"
             Murage-amd64.deb Murage-intel.dmg Murage-setup.exe
             Murage.AppImage Murage.dmg SHA256SUMS-ubuntu-x64.txt
+            "capability-db-$VERSION.json"
           )
           # The Linux checksum signature (audit C8): required whenever the
           # Linux job made one, so a signed release cannot lose it on the way.
@@ -1161,6 +1174,28 @@ jobs:
           done
           test "$(find assets -maxdepth 1 -type f | wc -l | tr -d ' ')" = "${#required[@]}" || {
             echo "::error::unexpected release asset set"; find assets -maxdepth 1 -type f -print; exit 1; }
+      - name: Diff the capability database against the previous release
+        # CAPABILITY-DB-1010 section 5: added, retired, status and fact changes
+        # for the MurageSite note. Fails when an id from the previous export is
+        # neither an entry nor retired. The 1.0.10 bootstrap has no previous
+        # export and reports every entry as added. The diff goes to the job
+        # summary and its own artifact, never into the asset directory.
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          previous="$RUNNER_TEMP/capability-db-previous.json"
+          url=$(curl -fsSL -H "Accept: application/vnd.github+json" https://api.github.com/repos/FerroxLabs/murage-releases/releases/latest \
+            | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=JSON.parse(s);const a=(r.assets||[]).find(x=>/^capability-db-.*\.json$/.test(x.name));process.stdout.write(a?a.browser_download_url:"")})' || true)
+          if [ -n "$url" ]; then curl -fsSL "$url" -o "$previous"; else echo "no previous capability export: bootstrap diff"; fi
+          node scripts/build-capability-db.mjs --diff "$previous" --current "assets/capability-db-$VERSION.json" --diff-out "$RUNNER_TEMP/capability-db-diff.md"
+          cat "$RUNNER_TEMP/capability-db-diff.md" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: capability-db-diff
+          path: ${{ runner.temp }}/capability-db-diff.md
+          if-no-files-found: error
+          retention-days: 30
       - name: Verify every feed hash against the actual bytes
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
