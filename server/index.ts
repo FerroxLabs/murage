@@ -90,6 +90,7 @@ import { scopedCliHomeRoot, setLoginSplitHook, setScopeRetentionHooks } from "./
 import { sweepAllHookEnv } from "./drivers/codex-hook.ts";
 import { foreignBody, remoteBody, scopedBotFrame, sharingWire, wireSharedWork } from "./shared-wire.ts";
 import { automationForTurn,automationRunForTurn, memberTurnProvenance, turnIsBackground } from "./message-automation.ts";
+import { fluxFeatureForAutomation } from "./flux-usage-tags.ts";
 import { backfillMemoryOrigins } from "./memory/origin-backfill.ts";
 import { recordDefaultLearningConnection } from "./memory/learning-ledger.ts";
 import { BrowserExtensionSetup } from "./browser-extension-setup.ts";
@@ -2600,6 +2601,9 @@ const legacyToolNamesByThread = new Map<string, boolean>();
  * stamp every bot row the turn writes (Message.engine), cleared when the turn
  * completes. A row appended with no entry present gets no stamp. */
 const turnEngineByThread = new Map<string, MessageEngine>();
+/** The model Flux served the running turn with and the one asked for (contracts.ts "turn.served-model"), by thread. The engine's
+ * reply rows of that turn store it (Message.servedModel); cleared with turnEngineByThread. */
+const turnServedModelByThread = new Map<string, { turnId?: string; routed: string; requested: string }>();
 
 /** A replayed line with the engine that wrote it, when the row says so. The
  * name is the one the model picker shows for that engine. */
@@ -8278,8 +8282,11 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
     const m = plain.role === "bot" && plain.kind === "activity" && !providerReply && !(event.type === "item.started" && event.itemType === "tool" && event.origin === "engine") ? murageLine(plain) : plain;
     if(m.role==="user"&&!m.automation)m.automation={kind:"message"};
     const turnEngine = m.role === "bot" && !m.engine && m.actorKind !== "murage" && !m.copyOf ? eventEngine : undefined;
+    const served = providerReply && m.role === "bot" && m.kind === "text" ? turnServedModelByThread.get(event.threadId) : undefined;
+    const servedModel = served && (!served.turnId || !event.turnId || served.turnId === event.turnId) ? { routed: served.routed, requested: served.requested } : undefined;
     const stored = { ...(group && m.role === "bot" ? { ...m, from: speaker } : m),
       ...(turnEngine ? { engine: turnEngine } : {}),
+      ...(servedModel ? { servedModel } : {}),
       ...(m.role === "bot" && !m.copyOf && m.actorKind !== "murage" && event.turnId ? { turnId: event.turnId } : {}),
       ...(providerReply ? { provenance: "provider" as const } : {}),
       ...(m.kind === "text" && cutSpeaker ? { removedSpeaker: cutSpeaker } : {}) };
@@ -8993,6 +9000,10 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
       if (bot) turnErrorShown.noteError(event.threadId, event.turnId);
       break;
     }
+    case "turn.served-model":
+      // the model Flux answered with, read at the start of the response: the reply this turn writes next stores it
+      turnServedModelByThread.set(event.threadId, { ...(event.turnId ? { turnId: event.turnId } : {}), routed: event.routed, requested: event.requested });
+      break;
     case "thread.token-usage.updated":
       // running totals for the turn in flight; folded into the task's
       // tally at turn.completed (below) so retries never double-count
@@ -9127,6 +9138,7 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
       }
       // The turn is over: rows appended from here on are not this engine's, unless a newer turn already took the thread.
       if (!replacementOwnsThread) turnEngineByThread.delete(event.threadId);
+      if (!replacementOwnsThread) turnServedModelByThread.delete(event.threadId);
       // K0 output-publication hook: deliberately outside the direct-run lease release below.
       const publishing = outputPublisher.publishTerminalOutputs(event).catch(error => console.error("[output-publication]", redactSecretsInText(String(error instanceof Error ? error.message : error)).slice(0, 200)));
       terminalPublications.set(event.threadId, publishing);
@@ -12627,6 +12639,8 @@ async function startTurnAdmitting(
         // dispatch was started, never by the thread's newest message
         // a card continuation (a card answer, a resumed connector or secret) is always background
         ...(opts?.cardContinuation || turnIsBackground({ automation: opts?.automation ?? userMessage?.automation, automationSource: opts?.automationSource, commsDepth: opts?.commsDepth, cardContinuation: opts?.cardContinuation, projectCardRun: opts?.projectCardRun, memorySkillSource: opts?.memorySkillSource, unattended: opts?.unattended, origin: opts?.origin }) ? { background: true as const } : {}),
+        // the x-flux-feature usage tag of this turn's Flux requests, from the same provenance (flux-usage-tags.ts)
+        usageFeature: opts?.cardContinuation ? "other" as const : fluxFeatureForAutomation(automationForTurn({ automation: opts?.automation ?? userMessage?.automation, automationSource: opts?.automationSource, commsDepth: opts?.commsDepth, cardContinuation: opts?.cardContinuation, projectCardRun: opts?.projectCardRun, memorySkillSource: opts?.memorySkillSource, unattended: opts?.unattended, origin: opts?.origin })?.kind),
         ...(grantedDirs.length ? { addDirs: grantedDirs } : {}),
         onToolSurface: inspectToolSurface,
         notWritten: () => submissionBoundary.notWritten(),
@@ -14883,6 +14897,8 @@ async function sendProjectUsageTurn(instance: ProviderInstance, built: BuiltSend
   let request = requestId ? roomRequest(database(),requestId) : null;
   // background work is told by this dispatch's own request (a routine's), never by the thread's newest message
   if (turn.background === undefined && turnIsBackground({}, request)) turn = { ...turn, background: true };
+  // the usage tag of a turn no dispatch site named: a routine's request, other background work, else conversation
+  if (!turn.usageFeature) turn = { ...turn, usageFeature: request?.fromKind === "routine" || request?.verb === "routine" ? "routine" : turn.background ? "other" : "chat" };
   // first-token timing for the Flux Memory breaker (one site for every engine; foldRuntimeEvent settles it)
   fluxFirstTokenProbe.begin(turn);
   const group = projectGroupForThread(turn.threadId,owner?.botId) ?? (request ? store.group(request.groupId) : undefined);
@@ -18041,6 +18057,7 @@ async function runGroupMemberTurn(
         ...(profile?.draftOnly ? { draftOnly: true as const } : {}),
         // a scheduled team goal (and its continuations) is background work, told by its own provenance
         ...(turnIsBackground({ automation: turnAutomation }) ? { background: true as const } : {}),
+        usageFeature: fluxFeatureForAutomation(turnAutomation?.kind),
       }, roomFence), () => !providerRouteIsCurrent(providerRoute) || abandoned || Boolean(isCancelled?.()), async (accepted) => {
         // Retire before teardown so synchronous/late output cannot settle this
         // room or a replacement while accepted authority is being withdrawn.

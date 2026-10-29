@@ -314,6 +314,8 @@ export interface Message {
   actionCheck?: import("../../shared/reply-action-claims").ActionCheck;
   /** Which engine wrote this reply, when the server stamped it. */
   engine?: import("../../shared/engine-switch").MessageEngine;
+  /** The model Flux Router served this reply with and the one asked for (server store.ts Message.servedModel). */
+  servedModel?: { routed: string; requested: string };
   /** On a closing message: the turn's helpers (sub agents), summarised by the server. Owner threads only. */
   turnHelpers?: TurnHelper[];
   /** screen messages: a frame of the bot's computer (base64) */

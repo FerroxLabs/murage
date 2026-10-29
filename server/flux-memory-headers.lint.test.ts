@@ -32,6 +32,7 @@ const DECIDES = /flux-memory-(headers|wire)/;
 /** Files that mention Flux but make no Flux model request of their own, and why. */
 const NO_REQUEST_OF_THEIR_OWN: Record<string, string> = {
   "flux-config.ts": "reads the key",
+  "flux-usage-tags.ts": "the usage tag values and the Flux host rule; makes no request",
   "opencode-config.ts": "connector plan for opencode.json; the headers ride the per-turn OPENCODE_CONFIG_CONTENT (drivers/acp/opencode-go.ts)",
   "announcements.ts": "a comment; announcements are fetched from Ferrox, not Flux",
   "model-gateway.ts": "a comment; the local gateway never falls back to Flux",
@@ -109,5 +110,51 @@ describe("stays out of the browser bundle", () => {
     const wire = files.find((file) => file.rel === "flux-memory-wire.ts")!.text;
     const code = wire.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
     expect(code).not.toMatch(/^\s*import\s|require\(|node:/m);
+  });
+});
+
+// USAGE-TAGS (1.0.10): every Flux request carries x-flux-feature (and the bot and conversation when known). A file that reaches Flux
+// either tags its requests (through flux-usage-tags.ts or the flux-memory-headers.ts helpers that add the tags) or is listed here
+// with the reason it makes no request of its own, or the reason its requests cannot be tagged.
+const TAGS_USAGE = /flux-usage-tags|fluxCallHeaders|fluxFetch\(|withFluxCallHeaders|fluxTurnDecision|fluxMemorySend|fluxMemoryAtSend/;
+const USAGE_NOT_TAGGED_HERE: Record<string, string> = {
+  "flux-contract-endpoints.ts": "the endpoint registry for the daily contract probe; makes no request",
+  "flux-routing.ts": "routing tables and the codex provider argv; makes no request",
+  "flux-config.ts": "reads the key",
+  "opencode-config.ts": "connector plan; the tags ride OPENCODE_CONFIG_CONTENT from acp/core.ts fluxTurnDecision",
+  "announcements.ts": "a comment; announcements are fetched from Ferrox, not Flux",
+  "model-gateway.ts": "a comment; the local gateway never falls back to Flux",
+  "drivers/agents-proxy.ts": "a tool description",
+  "drivers/codex-catalog.ts": "spawns the codex app-server for its catalog; no Flux request",
+  "drivers/acp/fuigo.ts": "renders decision.headers, which acp/core.ts builds with fluxTurnDecision (tagged)",
+  "drivers/acp/qwen.ts": "renders decision.headers, which acp/core.ts builds with fluxTurnDecision (tagged)",
+  "drivers/acp/opencode-go.ts": "renders decision.headers, which acp/core.ts builds with fluxTurnDecision (tagged)",
+  "memory/extractor-connections.ts": "hands FLUX_OPENAI_BASE to memory/extract.ts, which tags with fluxCallHeaders('memory-extraction')",
+  "voice/stream-route.ts": "the page-facing route; voice/flux-stream.ts opens the tagged Flux socket",
+  "voice/transcribe-route.ts": "the page-facing route; voice/flux-voice.ts makes the tagged request",
+  "decider/index.ts": "wiring; decider/flux.ts makes the tagged request",
+  "tts/elevenlabs.ts": "ElevenLabs; mentions Flux in a comment",
+  "email/runtime.ts": "wiring; email/flux-email-client.ts makes the tagged requests",
+  "email/email-secrets.ts": "bot email key storage; makes no request",
+};
+
+describe("every Flux request carries the usage tags", () => {
+  const reaching = files.filter((file) => REACHES_FLUX(file.text) && file.rel !== "flux-memory-headers.ts" && file.rel !== "flux-usage-tags.ts");
+
+  it("tags its requests, or is listed with the reason it does not", () => {
+    const untagged = reaching.filter((file) => !TAGS_USAGE.test(file.text) && !(file.rel in USAGE_NOT_TAGGED_HERE)).map((file) => file.rel);
+    expect(untagged, "these files reach Flux without the usage tags").toEqual([]);
+  });
+
+  it("keeps the list honest: a listed file still reaches Flux and still does not tag", () => {
+    const names = new Map(reaching.map((file) => [file.rel, file]));
+    const stale = Object.keys(USAGE_NOT_TAGGED_HERE).filter((name) => !names.has(name) || TAGS_USAGE.test(names.get(name)!.text));
+    expect(stale, "remove these from USAGE_NOT_TAGGED_HERE").toEqual([]);
+  });
+
+  it("flux-usage-tags.ts uses no parameter property, enum or namespace (the server process cannot transform them)", () => {
+    const text = files.find((file) => file.rel === "flux-usage-tags.ts")!.text;
+    expect(text).not.toMatch(/constructor\([^)]*\b(private|public|protected|readonly)\s/);
+    expect(text).not.toMatch(/^\s*(export\s+)?(const\s+)?enum\s/m);
   });
 });

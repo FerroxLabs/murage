@@ -80,6 +80,7 @@ import {
 import { handOverInitialTools } from "./connector-cache-harness.ts";
 import { INITIAL_GENERATION, INITIAL_TOOLS_ASK_HARNESS } from "./connector-cache.ts";
 import { catalogApp, knownApps, loadCatalog, type CatalogApp, type CatalogBackend, type CatalogView } from "./app-catalog.ts";
+import { isFluxHost, setFluxUsageHeaders } from "./flux-usage-tags.ts";
 
 export interface ConnectedAccountSummary {
   id: string;
@@ -1111,6 +1112,8 @@ async function brokerRequest(cfg: AppConfig, path: string, init?: RequestInit): 
   // never be what unlocks the user's connected apps.
   headers.set("authorization", `Bearer ${broker.token}`);
   if (init?.body) headers.set("content-type", "application/json");
+  // a broker on Flux Router: the usage tags say what the call is for (flux-usage-tags.ts)
+  if (isFluxHost(broker.url)) setFluxUsageHeaders(headers, { feature: "other" });
   const response = await fetch(`${broker.url}${path}`, {
     ...init,
     headers,
@@ -1505,6 +1508,7 @@ async function relayMcpUpstream(
   }
   const forwarded = transportSessionId && transportSessionBackends.get(transportSessionId) === identity ? transportSessionId : undefined;
   if (forwarded) headers.set("mcp-session-id", forwarded);
+  if (isFluxHost(url)) setFluxUsageHeaders(headers, { feature: "other" });
   beforeDispatch?.();
   let response: Response;
   try {

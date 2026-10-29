@@ -4,6 +4,7 @@ import { httpErrorDetail, providerSentence } from "./provider-error-body.ts";
 import { awaitIntake, isIntakeOpen } from "../harness/intake.ts";
 import { readFluxMemoryResponse } from "../flux-memory-envelope.ts";
 import { fluxMemoryAtSend, fluxMemoryContextForTurn, fluxMemorySend, isFluxUrl, type FluxMemorySend } from "../flux-memory-headers.ts";
+import { fluxUsageForTurn, fluxUsageHeaders, readServedModel } from "../flux-usage-tags.ts";
 import type {
   DriverCreateInput,
   ModelCatalog,
@@ -743,6 +744,11 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       const answer = readFluxMemoryResponse(response.headers);
       if (answer) { try { fluxMemory.onResponse(answer); } catch { /* recording must not fail the turn */ } }
     }
+    // The model Flux served this request with, from the response headers: the start of a stream is all that is seen of it.
+    if (fluxMemory.onServedModel && response.ok && isFluxUrl(endpoint)) {
+      const served = readServedModel(response.headers);
+      if (served) { try { fluxMemory.onServedModel(served); } catch { /* recording must not fail the turn */ } }
+    }
     if (!response.ok) {
       const rawBody = await readBoundedBody(response, requestSignal, RAW_BODY_MAX, true).catch(() => "");
       const body = redact(rawBody);
@@ -1089,8 +1095,17 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     emit({ ...base(threadId, turnId), type: "session.started", sessionId: null, model });
 
     // Flux memory: the turn's context and envelope; the headers and the envelope are decided again at every write (fluxMemoryAtSend).
+    // Usage tags (bot, feature, conversation) ride every request of the turn; the served model is reported once per change.
+    let servedSeen = "";
     const fluxSend = fluxMemorySend(fluxMemoryContextForTurn(turn), {
       ...(turn.fluxMemory ? { envelope: turn.fluxMemory } : {}), ...(turn.onFluxMemory ? { onResponse: turn.onFluxMemory } : {}),
+      usage: fluxUsageHeaders(fluxUsageForTurn(turn)),
+      onServedModel: (served) => {
+        const key = `${served.routed}\n${served.requested}`;
+        if (key === servedSeen) return;
+        servedSeen = key;
+        emit({ ...base(threadId, turnId), type: "turn.served-model", routed: served.routed, requested: served.requested });
+      },
     });
     const notice = (message: string) => emit({ ...base(threadId, turnId), type: "runtime.error", message });
 

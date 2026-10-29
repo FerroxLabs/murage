@@ -22,7 +22,7 @@ import { FUIGO_TOOL_SURFACE, NEUTRAL_TOOL_SURFACE, renderMurageTurn } from "../.
 // before the prompt is sent, and `_meta.isReplay` updates are dropped.
 import { applyProviderRoute, FUIGO_ALLOW_UPSTREAM_ENV, grokResumeBinding, validateProviderTurnRoute } from "../../provider-routing.ts";
 import { isQuestionTool } from "../../auto-approve.ts";
-import { fluxHeaderRefusal, fluxMemoryContextForTurn, fluxMemoryDecision, logFluxMemoryHeaders } from "../../flux-memory-headers.ts";
+import { fluxHeaderRefusal, fluxTurnDecision, logFluxMemoryHeaders } from "../../flux-memory-headers.ts";
 import { fluxSurfaceFor, isFluxModel } from "../../flux-routing.ts";
 import { fuigoMemoryAllowOnce, newFuigoMemoryAlias } from "./fuigo-memory-permission.ts";
 import { ApprovalDeliveryError, approvalWriteReason, deliverApproval, writeAcpResponse, type ApprovalDeliveryFailure, type ApprovalDeliveryResult, type ApprovalWriteCallback } from "./approval-delivery.ts";
@@ -2430,7 +2430,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           ? turn.providerRoute.preset === "flux"
           : (isFluxModel(turn.model) && fluxSurfaceFor(support.driverKind) !== null) || Boolean(support.reachesFlux?.(turn.model, env));
         if (fluxRoutedTurn) {
-          const fluxMemory = fluxMemoryDecision(fluxMemoryContextForTurn(turn));
+          // the memory decision plus the turn's usage tags: every ACP engine renders decision.headers into its own overlay
+          const fluxMemory = fluxTurnDecision(turn);
           const headerRefusal = fluxHeaderRefusal(support.driverKind, fluxMemory);
           if (headerRefusal) throw new Error(headerRefusal);
           if (support.fluxHeaderGate && (support.fluxGateEveryTurn || fluxMemory.capture === "off" || fluxMemory.inject === "off")) {

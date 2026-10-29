@@ -328,6 +328,9 @@ export type RuntimeEvent = RuntimeEventBase &
         folderTrustLate?: "finished" | "stopped" | "failed" | "timeout";
       }
     | { type: "thread.token-usage.updated"; input: number; output: number; cachedInput?: number }
+    /** A Flux response named the model that served it (x-flux-routed-model) and the one asked for (x-flux-original-model), read at
+     * the start of the response. The reply this turn writes next stores it (Message.servedModel). */
+    | { type: "turn.served-model"; routed: string; requested: string }
     // `setup: true` marks a failure the user fixes by installing or
     // configuring something, not by retrying — the UI offers setup instead.
     | { type: "runtime.error"; message: string; details?: string; setup?: boolean; authRequired?: boolean; /** the installed Claude Code is too old for the model */ claudeUpdate?: boolean; errorKind?: string; /** the engine's own upper-case error code (OpenCode's QUOTA_EXCEEDED), read from the RPC error, never from text */ engineCode?: string; /** a reset time the engine reported as data (epoch ms), for limit detection */ limitResetsAt?: number; /** A device-side setup failure the chat words from its code (a bot's engine folder); localFailureEngine names the engine. */ localFailure?: LocalSetupFailure; localFailureEngine?: string; providerError?: ProviderErrorInfo; diagnostic?: RuntimeErrorDiagnostic }
@@ -416,6 +419,9 @@ export interface SendTurnInput {
   /** The thread holds a bank, card or id number (flux-capture-hold.ts), or this turn's text does: Flux Memory capture off, inject on.
    * Set by the server where the turn is sent (index.ts sendProjectUsageTurn). */
   fluxCaptureHold?: boolean;
+  /** What this turn is for, on the x-flux-feature usage tag of its Flux requests (flux-usage-tags.ts). Stamped by the server where
+   * the turn is dispatched; absent = "chat", or "other" for background work. */
+  usageFeature?: import("./flux-usage-tags.ts").FluxFeature;
   text: string;
   model?: string;
   /** Exact server-authorized incoming bytes; never resolve paths in drivers. */

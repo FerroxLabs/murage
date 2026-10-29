@@ -67,6 +67,7 @@ import { FLUX_CODEX_TABLE_HEADERS } from "../flux-memory-wire.ts";
 import { applyFluxSurface, FLUX_CODEX_ENV_KEY, FLUX_CODEX_PROVIDER, FLUX_RESPONSES_BASE } from "../flux-routing.ts";
 import { codexFluxProviderFor, codexHttpHeaderArgs, fluxMemoryContextForTurn, fluxMemoryDecision, logFluxMemoryHeaders } from "../flux-memory-headers.ts";
 import { fluxIdIsRoutable } from "../flux-surface.ts";
+import { engineUsageTagsAllowed, FLUX_FEATURE_HEADER, fluxUsageForTurn, fluxUsageHeaders } from "../flux-usage-tags.ts";
 import { augmentedPath } from "../env-path.ts";
 import { classifyError, computeBackoff, interruptibleDelay, RETRY_MAX_ATTEMPTS } from "./retry.ts";
 import { appendNative } from "./native.ts";
@@ -699,6 +700,12 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         const fluxMemory = fluxMemoryDecision(fluxMemoryContextForTurn(turn));
         const fluxProvider = codexFluxProviderFor(fluxMemory);
         const providerBinding = turn.providerRoute ? applyProviderRoute(DRIVER_KIND, env, turn.providerRoute) : null;
+        // Usage tags (flux-usage-tags.ts): the argv tables are shared by every thread of this app-server, so the tags ride the
+        // `config` of thread/start and thread/resume, which codex applies to that one thread (probed on codex-cli 0.163.0: a
+        // thread started with the override sent its headers; the next thread, started without it, sent the table's alone).
+        // The override replaces the table's http_headers, so it repeats the table's memory headers. A Cloud home renders its
+        // tables through the launcher, which accepts only the memory headers (engineUsageTagsAllowed).
+        const usageTags = engineUsageTagsAllowed() ? fluxUsageHeaders(fluxUsageForTurn(turn)) : {};
         // A Flux connection (a named provider route) carries the headers on its own table.
         // Cloud home: the launcher renders every provider table into config.toml from a typed
         // route and refuses `-c model_providers.*` (CLOUD-ENGINES-DESIGN.md 4.1). A home has no
@@ -966,6 +973,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           model: turn.model ?? null,
           providerRoute: turn.providerRoute ? [turn.providerRoute.connectionId, turn.providerRoute.revision] : null,
           fluxMemory: flux?.applied ? fluxProvider : null,
+          // a thread's tags are fixed when it starts or resumes: a feature change recycles, so the next turn resumes under the new tags
+          fluxUsage: usageTags[FLUX_FEATURE_HEADER] ?? null,
           cwd: turnCwd,
           mcp: Object.fromEntries(Object.entries(stableServers).map(([name, server]) => [name, digest(server)])),
           // the bot's connected-app access: a change relists the tools by recycling
@@ -2199,6 +2208,11 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         const selection = providerBinding ? { model: providerBinding.model, modelProvider: providerBinding.modelProvider } : decodeCodexSelection(turn.model);
         const fluxSelected = Boolean(flux?.applied && !providerBinding && selection.modelProvider === FLUX_CODEX_PROVIDER);
         if (fluxSelected) selection.modelProvider = fluxProvider;
+        const usageTable = !Object.keys(usageTags).length || process.env.MURAGE_CLOUD_ROLE === "home" ? null
+          : fluxSelected ? { provider: fluxProvider, headers: FLUX_CODEX_TABLE_HEADERS[fluxProvider] }
+          : providerBinding?.modelProvider && turn.providerRoute?.preset === "flux" ? { provider: providerBinding.modelProvider, headers: fluxMemory.headers }
+          : null;
+        const threadConfig = usageTable ? { config: { [`model_providers.${usageTable.provider}.http_headers`]: { ...usageTable.headers, ...usageTags } } } : {};
         if (cursor) {
           let resumed: any;
           try {
@@ -2207,7 +2221,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             // Cloud home names the same codexPolicy the launcher renders as the effective one.
             const resumePolicy = process.env.MURAGE_CLOUD_ROLE === "home" ? { sandbox: codexPolicy.sandbox, approvalPolicy: codexPolicy.approval } : policy();
             resumed = await request("thread/resume", {
-              threadId: cursor, ...resumePolicy,
+              threadId: cursor, ...resumePolicy, ...threadConfig,
               ...(selection.model ? { model: selection.model } : {}),
               ...(selection.modelProvider ? { modelProvider: selection.modelProvider } : {}),
             });
@@ -2249,6 +2263,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             model: selection.model,
             ...(selection.modelProvider ? { modelProvider: selection.modelProvider } : {}),
             ...(process.env.MURAGE_CLOUD_ROLE === "home" ? { sandbox: codexPolicy.sandbox, approvalPolicy: codexPolicy.approval } : policy()),
+            ...threadConfig,
             // the Chief's proposal turn leaves no session in the owner's Codex home
             ephemeral: turn.proposalOnly === true,
           });

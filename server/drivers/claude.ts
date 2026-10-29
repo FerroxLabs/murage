@@ -46,7 +46,7 @@ import { engineToolFields } from "./contracts.ts";
 import { claudeToolResultDirs, sessionFolders } from "../own-tool-results.ts";
 import { fluxKey } from "../flux-config.ts";
 import { applyFluxSurface, isFluxModel } from "../flux-routing.ts";
-import { claudeCustomHeadersValue, fluxMemoryContextForTurn, fluxMemoryDecision, logFluxMemoryHeaders, type FluxMemoryDecision } from "../flux-memory-headers.ts";
+import { claudeCustomHeadersValue, fluxMemoryDecision, fluxTurnDecision, logFluxMemoryHeaders, type FluxMemoryDecision } from "../flux-memory-headers.ts";
 import { mergeFluxCatalog } from "../flux-surface.ts";
 import { awaitCliTreeStopped, CLI_CALLER_DEADLINE_MS, cliTreeConfirmedStopped, cliTreeStoppedSignal, forceCliTreeStopped, brokerSocketPath, cliVersionReader, describeSpawnFailure, engineJob, engineProcessPid, execCli, killCliTree, spawnCli, hostPowerKeyField } from "../procs.ts";
 import { cachedCliVersion } from "../cli-version-cache.ts";
@@ -3821,8 +3821,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
 
       // Flux Memory headers are decided per thread audience and are part of the
       // spawn contract: a change of audience, purpose or memory choice differs
-      // in the warm key below and forces a respawn.
-      const fluxMemory = fluxMemoryDecision(fluxMemoryContextForTurn(turn));
+      // in the warm key below and forces a respawn. The usage tags (bot, feature, conversation) ride the same header value.
+      const fluxMemory = fluxTurnDecision(turn);
       const env = claudeEnvironment(turnModel, turnEnvironment, turn.providerRoute, fluxMemory);
       // MCP start-up is Murage's to wait for (gateMcpServers, before the prompt):
       // the CLI's own first-prompt hold is off, and a connect or reconnect ends

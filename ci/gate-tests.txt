@@ -644,6 +644,7 @@ server/drivers/codex.test.ts	all	Codex engine turn behaviour
 server/drivers/engine-stderr-capture.test.ts	all	secrets in engine output never reach the owner (credentials)
 server/drivers/flux-header-matrix.test.ts	all	Flux headers identity, user headers never ride
 server/drivers/flux-memory-at-send.test.ts	all	memory kill switch honoured at every send
+server/drivers/flux-usage-openai-chat.test.ts	all	Flux usage tags on every request and the model Flux answered with
 server/drivers/grok.test.ts	all	Grok turn, redirect into Flux never followed
 server/drivers/headless-browser-proxy.test.ts	all	headless MCP refuses human-held authority
 server/drivers/headless-claude-env.test.ts	all	the reflection Claude child losing the Flux privacy headers its route set (credentials and headers)
@@ -736,6 +737,7 @@ server/flux-key-shape.test.ts	all	only valid Flux keys handed out
 server/flux-memory-direct-calls.test.ts	all	Direct Flux calls send memory off
 server/flux-memory-envelope.test.ts	all	openai-chat Flux turns keep Murage recall and send no envelope Flux ignores
 server/flux-memory-headers.test.ts	all	Who gets which Flux memory headers
+server/flux-usage-tags.test.ts	all	Flux usage tags well formed on every path; no malformed or content-bearing value sent
 server/flux-routing.test.ts	all	Flux surface mapping denies by default
 server/folder-trust-api.test.ts	all	folder trust card before engine starts
 server/folder-trust.test.ts	all	Untrusted folder markers raise trust card
@@ -1572,6 +1574,7 @@ src/lib/live-events.test.ts	all	live events replay delivers without dropping
 src/lib/local-vm-viewer.test.ts	all	is removed from the status a page keeps
 src/lib/markdown-drafts.test.ts	all	markdown drafts bounds and persistence
 src/lib/markdown-fidelity.test.ts	all	Markdown corpus bytes preserved on open
+src/lib/served-model.test.ts	all	answered-by line only when Flux served another model
 src/lib/mcp-add-flow.test.ts	all	never saves secrets when the entry was refused (secrets)
 src/lib/media-resolve.test.ts	all	only files inside conversation root resolve
 src/lib/memory-integrity-feed.test.ts	all	memory health feed shared reader

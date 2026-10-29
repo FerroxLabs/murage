@@ -20,6 +20,7 @@ import { DATA_DIR } from "../../config.ts";
 import { fluxKey } from "../../flux-config.ts";
 import { FLUX_OPENAI_BASE, fluxModelId } from "../../flux-routing.ts";
 import { FLUX_HEADER_REFUSAL, type FluxMemoryDecision } from "../../flux-memory-headers.ts";
+import { isFluxUsageHeader } from "../../flux-usage-tags.ts";
 import { mergeFluxCatalog } from "../../flux-surface.ts";
 import { decodeInjectId, hostApiKey, INJECT_SEP, localHost, mergeLocalInject } from "../local-inject.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
@@ -413,7 +414,7 @@ export function applyHermesFluxMemory(env: Record<string, string | undefined>, d
   }
   const base = overlayBase(env);
   const held = asRecord(asRecord(base.model).extra_headers);
-  const kept = Object.fromEntries(Object.entries(held).filter(([name]) => !name.toLowerCase().startsWith("x-flux-memory")));
+  const kept = Object.fromEntries(Object.entries(held).filter(([name]) => !name.toLowerCase().startsWith("x-flux-memory") && !isFluxUsageHeader(name)));
   writeHermesTurnOverlay(env, { model: { extra_headers: { ...kept, ...decision.headers } } });
 }
 
