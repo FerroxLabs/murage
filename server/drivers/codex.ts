@@ -44,6 +44,7 @@ import { cliSig, engineLaunchFile, knownCliVersion, noteVersionProbe, rememberCl
 import { customMountEntries } from "../custom-mcp-mounts.ts";
 import { codexConfigMcpServerNames, externalMcpRecords, mountedMcpServerNames } from "./codex-mcp-names.ts";
 import type { ExecEnv, McpMountRecord } from "../../shared/mount-identity.ts";
+import { wakeAwareTimeout } from "../sleep-clock.ts";
 import { createPrewarmGate, createTurnMemory, spawnInputsOf, TAKEOVER_FAILED_MESSAGE, warmPool, pastWarmMaxAge, spawnedAtOf } from "./warm-pool.ts";
 import { awaitCliTreeStopped, cliVersionReader, describeSpawnFailure, engineJob, engineProcessPid, execCli, killCliTree, spawnCli, hostPowerKeyField } from "../procs.ts";
 import { cachedCliVersion } from "../cli-version-cache.ts";
@@ -1432,7 +1433,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           const finish: AskFinish = (behavior, message, source = "user", _answers, extra) => {
             behavior = refusal.verdict(behavior);
             if (!asks.delete(requestId)) return;
-            clearTimeout(timer);
+            timer.clear();
             const rewritten = extra?.updatedInput && typeof extra.updatedInput === "object" && !Array.isArray(extra.updatedInput) ? (extra.updatedInput as Record<string, unknown>) : undefined;
             resolveAnswer(behavior === "allow"
               ? refusal.allow({ decision: "allow", ...(rewritten ? { updatedInput: rewritten } : {}) })
@@ -1441,8 +1442,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           };
           finish.narrowKey = { tool: route.tool, text: JSON.stringify(route.toolCall.input ?? route.summary) };
           // The hook's own timeout is the ask bound plus 30 s and the script gives up at the bound: a card cannot outlive the hook.
-          const timer = setTimeout(() => finish("deny", DENY_TIMEOUT_NOTE, "timeout"), HOOK_ASK_BOUND_MS);
-          timer.unref?.();
+          // awake time (1.0.10 C3): the server's own bound does not count a sleep. The script and Codex handler bounds derive from
+          // HOOK_ASK_BOUND_MS; separating the hook transport lifetime from the card lifetime is follow-up F3.
+          const timer = wakeAwareTimeout(() => finish("deny", DENY_TIMEOUT_NOTE, "timeout"), HOOK_ASK_BOUND_MS);
           asks.set(requestId, finish);
           emit({
             ...base(threadId, turnId),
@@ -1622,7 +1624,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         const finish: AskFinish = (behavior, _message, source = "user", answers) => {
           behavior = refusal.verdict(behavior);
           if (!asks.delete(requestId)) return;
-          clearTimeout(timer);
+          timer?.clear();
           if (questions) {
             // Only the owner's validated answers reach Codex. A skip, the
             // timeout or the turn ending is the honest no-answer — empty
@@ -1656,11 +1658,11 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         // question timeout); a permission keeps its 15-minute deny, except in
         // a routine run, whose cards wait until answered or the turn stops
         // (SendTurnInput.holdPermissionAsks).
-        const timer = turn.holdProjectAsks || (!questions && turn.holdPermissionAsks) ? undefined : setTimeout(
+        // awake time (1.0.10 C3): a sleep with the card open does not count toward its deadline
+        const timer = turn.holdProjectAsks || (!questions && turn.holdPermissionAsks) ? undefined : wakeAwareTimeout(
           () => (questions ? finish("deny", undefined, "timeout") : finish("deny", DENY_TIMEOUT_NOTE, "timeout")),
           questions ? QUESTION_TIMEOUT_MS : 15 * 60_000,
         );
-        timer?.unref?.();
         asks.set(requestId, finish);
         const openCard = (execEnv?: ExecEnv) => emit({
           ...base(threadId, turnId),

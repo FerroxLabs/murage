@@ -39,6 +39,7 @@ import { CLAUDE_SIGNIN_ANSWERS_FILE, ClaudeSigninAnswers, type ClaudeSigninScope
 import { writeFileAtomic } from "../atomic.ts";
 import { augmentedPath, envGeneration } from "../env-path.ts";
 import { engineLaunchFile } from "./isolation-cache.ts";
+import { wakeAwareTimeout } from "../sleep-clock.ts";
 import { CLAUDE_ACCOUNT_ENV_KEYS, claudeAccountEnvironment,resolveClaudeConfigDir } from "../claude-accounts.ts";
 import { customMountEntries } from "../custom-mcp-mounts.ts";
 import { toolFilePaths } from "../own-workspace-approval.ts";
@@ -809,7 +810,7 @@ export async function createPermissionBroker(opts: {
         updatedInput?: Record<string, unknown>,
       ) => {
         if (!pending.delete(askId)) return;
-        clearTimeout(timer);
+        timer?.clear();
         try {
           conn.write(JSON.stringify({ t: "answer", id: askId, behavior, message, ...(answers ? { answers } : {}), ...(updatedInput ? { updatedInput } : {}) }) + "\n");
         } catch {}
@@ -818,14 +819,14 @@ export async function createPermissionBroker(opts: {
       // A question left unanswered gets an honest non-answer: Claude sees a
       // deny whose note says nobody answered, never a guess in the owner's
       // name. The card stays behind as Expired with "Send as a message".
-      const timer = opts.holdProjectAsks?.() || (kind === "permission" && opts.holdPermissionAsks?.()) ? undefined : setTimeout(
+      // Awake time (1.0.10 C3): a sleep with the card open does not count toward its deadline.
+      const timer = opts.holdProjectAsks?.() || (kind === "permission" && opts.holdPermissionAsks?.()) ? undefined : wakeAwareTimeout(
         () =>
           kind === "question"
             ? finish("deny", QUESTION_NOTES.timeout(Math.max(1, Math.round(questionTimeoutMs / 60_000))), "timeout")
             : finish("deny", DENY_TIMEOUT_NOTE, "timeout"),
         kind === "question" ? questionTimeoutMs : timeoutMs,
       );
-      timer?.unref?.();
       pending.set(askId, { ask, finish });
       opts.onAsk(ask);
     };
@@ -3351,12 +3352,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       return new Promise<{ allowed: boolean; byOwner: boolean }>((resolve) => {
         const finish = (allowed: boolean, source: AskResolutionSource) => {
           if (!signinAsks.delete(key)) return;
-          clearTimeout(timer);
+          timer?.clear();
           emit({ ...base(threadId, turnId), type: "request.resolved", requestId, behavior: allowed ? "answer" : "deny", source });
           resolve({ allowed, byOwner: source === "user" });
         };
-        const timer = holds ? undefined : setTimeout(() => finish(false, "timeout"), questionTimeoutFor(config.questionTimeoutMs));
-        timer?.unref?.();
+        // awake time (1.0.10 C3)
+        const timer = holds ? undefined : wakeAwareTimeout(() => finish(false, "timeout"), questionTimeoutFor(config.questionTimeoutMs));
         signinAsks.set(key, finish);
         void stopped.then(() => finish(false, "system"));
         emit({
@@ -3413,7 +3414,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         if (elicitations.get(cliRequestId) !== end) return;
         elicitations.delete(cliRequestId);
         elicitAsks.delete(key);
-        clearTimeout(timer);
+        timer?.clear();
         const answered = outcome === "accept" && answers?.length ? answers : null;
         const action = answered ? "accept" : outcome === "accept" ? "decline" : outcome;
         if (write) {
@@ -3425,8 +3426,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         }
         emit({ ...base(threadId, turnId), type: "request.resolved", requestId, behavior: answered ? "answer" : "deny", source });
       };
-      const timer = turn.holdProjectAsks ? undefined : setTimeout(() => end("cancel", "timeout"), questionTimeoutFor(config.questionTimeoutMs));
-      timer?.unref?.();
+      // awake time (1.0.10 C3)
+      const timer = turn.holdProjectAsks ? undefined : wakeAwareTimeout(() => end("cancel", "timeout"), questionTimeoutFor(config.questionTimeoutMs));
       elicitations.set(cliRequestId, end);
       elicitAsks.set(key, { end, questions });
       const first = questions[0]!.question;

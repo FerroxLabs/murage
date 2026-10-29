@@ -56,6 +56,7 @@ import { existsSync, mkdtempSync, rmSync, unlinkSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { sep as pathSep } from "node:path";
 import { MCP_LISTED_FILE_ENV } from "../../mcp-listed.ts";
+import { wakeAwareTimeout, type WakeAwareTimer } from "../../sleep-clock.ts";
 import { stripVTControlCharacters } from "node:util";
 
 import { deleteEnvNames, PROVIDER_CREDENTIAL_ENV, stripRoutingEnv, WORKSPACE_CREDENTIAL_ENV } from "../../config.ts";
@@ -2918,7 +2919,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           const finish: AcpAskFinish = (behavior, source = "user", answers) => {
             if (!asks.delete(requestId)) return;
             traceClose("permission.wait", requestId, behavior);
-            clearTimeout(timer);
+            timer?.clear();
             const picks = behavior === "answer" && answers?.length ? answers : null;
             // a vendor reply that maps to no answer is its cancelled reply, never a guessed one
             const vendorReply = vendor && picks ? vendorAnswer?.(picks) : null;
@@ -2945,8 +2946,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               source,
             });
           };
-          const timer = turn.holdProjectAsks ? undefined : setTimeout(() => finish("deny", "timeout"), QUESTION_TIMEOUT_MS);
-          timer?.unref?.();
+          // awake time (1.0.10 C3): a sleep with the card open does not count toward its deadline
+          const timer = turn.holdProjectAsks ? undefined : wakeAwareTimeout(() => finish("deny", "timeout"), QUESTION_TIMEOUT_MS);
           traceOpen("permission.wait", requestId);
           asks.set(requestId, finish);
           emit({
@@ -2991,7 +2992,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           const finish: AcpAskFinish = (behavior, source = "user", answers) => {
             if (!asks.delete(requestId)) return;
             traceClose("permission.wait", requestId, behavior);
-            clearTimeout(timer);
+            timer?.clear();
             const decision = behavior === "answer" ? folderTrustDecision(answers) : null;
             // FUIGOTRUST2 (6): a late card (the engine had already started)
             // closed by nobody: the turn finished, was stopped, or the ask
@@ -3012,8 +3013,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             if (decision) onDecided(decision);
             else onDecided(source === "user" ? "skipped" : "unanswered");
           };
-          const timer = turn.holdProjectAsks ? undefined : setTimeout(() => finish("deny", "timeout"), QUESTION_TIMEOUT_MS);
-          timer?.unref?.();
+          // awake time (1.0.10 C3): a sleep with the card open does not count toward its deadline
+          const timer = turn.holdProjectAsks ? undefined : wakeAwareTimeout(() => finish("deny", "timeout"), QUESTION_TIMEOUT_MS);
           traceOpen("permission.wait", requestId);
           asks.set(requestId, finish);
           emit({
@@ -3167,7 +3168,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           const clearAsk = () => {
             asks.delete(requestId);
             nativeApprovals.delete(msg.id);
-            clearTimeout(timer);
+            timer?.clear();
           };
           const finish: AcpAskFinish = (behavior, source = "user") => {
             if (!asks.has(requestId)) return false;
@@ -3300,12 +3301,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           // (whose card sends people to Provider settings); request.resolved
           // with source "timeout" is the record. A routine run holds its
           // cards open instead (SendTurnInput.holdPermissionAsks).
-          let timer: ReturnType<typeof setTimeout> | undefined;
+          let timer: WakeAwareTimer | undefined;
+          // awake time (1.0.10 C3): a sleep with the card open does not count toward its deadline
           const armDenyDeadline = () => {
-            clearTimeout(timer);
+            timer?.clear();
             if (turn.holdPermissionAsks) return;
-            timer = setTimeout(() => { finish("deny", "timeout"); }, permissionDenyMs());
-            timer.unref?.();
+            timer = wakeAwareTimeout(() => { finish("deny", "timeout"); }, permissionDenyMs());
           };
           armDenyDeadline();
           traceOpen("permission.wait", requestId);
@@ -4171,15 +4172,15 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           const finish: AcpAskFinish = (behavior, source = "user") => {
             if (!asks.delete(requestId)) return false;
             traceClose("permission.wait", requestId, behavior);
-            clearTimeout(timer);
+            timer?.clear();
             signal?.removeEventListener("abort", withdrawn);
             const allow = behavior === "allow";
             resolveAsk(allow ? "allow" : "deny");
             emit({ ...base(threadId, turnId), type: "request.resolved", requestId, behavior: allow ? "allow" : "deny", source: allow || behavior === "deny" ? source : "system", approvalScope: "local-computer" });
             return true;
           };
-          const timer = turn.holdPermissionAsks ? undefined : setTimeout(() => { finish("deny", "timeout"); }, permissionDenyMs());
-          timer?.unref?.();
+          // awake time (1.0.10 C3)
+          const timer = turn.holdPermissionAsks ? undefined : wakeAwareTimeout(() => { finish("deny", "timeout"); }, permissionDenyMs());
           // the engine withdrew the call (its proxy request closed): the card closes, nothing runs
           const withdrawn = () => { finish("cancel", "system"); };
           signal?.addEventListener("abort", withdrawn, { once: true });

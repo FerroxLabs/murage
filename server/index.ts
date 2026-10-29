@@ -835,6 +835,7 @@ import { beginTurnTrace, endTurnTrace, traceEngineEvent } from "./turn-trace.ts"
 import { notePromptSent, releaseWhenPromptSent } from "./turn-hold.ts";
 import { EarlyBundle, dispatchAccess } from "./early-bundle.ts";
 import { TurnWatchdog } from "./turn-watchdog.ts";
+import { sleepClock } from "./sleep-clock.ts";
 import { fluxConfigured, fluxKey, fluxKeyState, legacyFluxError } from "./flux-config.ts";
 import { describeFluxMemorySource, fluxMemoryReportFor, fluxMemorySettingState, latestFluxMemoryReport, setFluxExternalMemory } from "./flux-memory-envelope.ts";
 import { appDecider, deciderAvailable } from "./decider/index.ts";
@@ -1612,6 +1613,10 @@ if (cloudHome) setCloudBrowserAdmission(bot => !browserCleanup.hasPendingBrowser
 // first waits here (in memory only) and is applied right after the boot copy is read.
 const earlyEmailShellMessages: unknown[] = [];
 let emailShellSink: ((message: unknown) => void) | null = null;
+const isPowerMessage = (message: unknown): message is { type: "murage:power"; state: "suspend" | "resume" } =>
+  (message as { type?: unknown } | undefined)?.type === "murage:power" && ["suspend", "resume"].includes(String((message as { state?: unknown }).state));
+// Counting starts at load, before any card or turn can arm a deadline.
+sleepClock.start();
 const onUtilityParentMessage = (event: { data?: object }) => {
   const message = event?.data;
   try {
@@ -1621,6 +1626,8 @@ const onUtilityParentMessage = (event: { data?: object }) => {
     if (isAppCloseRequest(message)) { closeRequested(); return; }
     // The session is ending (Windows logoff or shutdown): the deferred writes reach disk now, before the OS ends this process.
     if (isAppFlushRequest(message)) { postDesktopPrivateMessage(flushRequested(flushAckPath(message))); return; }
+    // The OS suspended or resumed (powerMonitor in main): sleep is not silence for a card's deadline or the stall watchdog (1.0.10 C3).
+    if (isPowerMessage(message)) { if (message.state === "suspend") sleepClock.suspend(); else sleepClock.resume(); return; }
     // The WhatsApp auth key reply is matched by its own client (channels/whatsapp/auth-key.ts); nothing else reads it.
     if ((message as { type?: unknown } | undefined)?.type === AUTH_KEY_REPLY) return;
     if (modelSignIns.apply(message)) return;
@@ -7401,6 +7408,8 @@ const watchdog = new TurnWatchdog({
   stallMs: TURN_STALL_MS,
   setupStallMs: TURN_SETUP_STALL_MS,
   heartbeatOnlyMs: TURN_HEARTBEAT_ONLY_MS,
+  // time the computer slept is not time the turn was quiet (1.0.10 C3)
+  slept: () => sleepClock.sleptMs(),
   checkMs: 60_000,
   onStall: (turn) => {
     // The room invocation owns its exact generation and provider identity.
@@ -12373,7 +12382,8 @@ async function startTurnAdmitting(
       }
       const outputInstructions = prepareOutputDestination(bot.id, threadId, dispatchClaimId, worksInWorkspace && opts?.runOn !== "cloud", Boolean(integrations.agents));
       projectTurnLeases.markDispatched(dispatchClaimId);
-      submissionBoundary.started();
+      // The attempt is marked started when the adapter is called (directFence.invoked), not here: a throw in the prompt build below
+      // (working context, lessons, a cold lineage check after a restart) sent nothing and is rebuilt, never shown as "Context changed" (1.0.10 C1).
       pre.sync("procedures.pin", () => preparePinnedProcedures(bot.id, threadId, procedurePin, false, procedureContext(bot.id,threadId)));
       // Hoisted so the primer and the driver read ONE trust answer. Scanning
       // twice could disagree if the folder changed between the two calls, and
@@ -12495,6 +12505,7 @@ async function startTurnAdmitting(
       (opts?.projectCardRun ?? opts?.sharedWorkRun)?.dispatch(dispatchClaimId);
       // a turn that runs on the cloud computer has no provider acceptance to wait for: dispatch is the point a restart must not repeat it
       if (opts?.runOn === "cloud") {
+        submissionBoundary.started();
         // recorded before the hand-over: a request that ended meanwhile refuses it (CANCEL-TREE-104 R2), on the quiet cancelled path
         try { opts.delegationRun?.accepted(`cloud:${dispatchClaimId}`); }
         catch (error) {
@@ -12596,7 +12607,7 @@ async function startTurnAdmitting(
       // flipped by a roster or settings change) changes what other audiences may be shown, never what the owner's own prompt holds (1.0.2 Keep all P0)
       // (SL-E r3.2 R1, section 11 (A): a linked person's turn judges "whose memory is this line made of" by its scopes together with S(P), so a
       // hand-off result released into the person's DM never withholds the person's own next turn; every other audience keeps its own set)
-      const directFence: EngineFence = { reader: directOwnerAudience ? { audience: null } : { audience: { owner: surfacesForOwner, scopeIds: lineageReaderScopes({ scopeIds: memoryReceipt ? memoryReceipt.access.scopeIds : [], humanPrincipal }) } }, onRefused: error => submissionBoundary.refuse(error) };
+      const directFence: EngineFence = { reader: directOwnerAudience ? { audience: null } : { audience: { owner: surfacesForOwner, scopeIds: lineageReaderScopes({ scopeIds: memoryReceipt ? memoryReceipt.access.scopeIds : [], humanPrincipal }) } }, onRefused: error => submissionBoundary.refuse(error), invoked: () => submissionBoundary.started() };
       // A session an earlier release started holds the older connected-app tool names in its history, and an
       // engine runs only a tool it was listed: it is mounted the older way, so it resumes and its calls run
       // unchanged. Any session started now is shown only the plain names, and its cursor is marked so.
@@ -14770,13 +14781,14 @@ function projectGroupForThread(threadId: string, botId?: string): GroupRecord | 
   const groupId = bot && store.taskByThread(bot.id,threadId)?.channelProjectDesk?.groupId;
   return groupId ? store.group(groupId) : undefined;
 }
-function sharedOwnerUsageTurn(instance: ProviderInstance, turn: SendTurnInput, owner: { botId: string; generation: string }) {
+function sharedOwnerUsageTurn(instance: ProviderInstance, turn: SendTurnInput, owner: { botId: string; generation: string }, fence: EngineFence) {
   const work = store.bot(owner.botId)?.tasks?.find(t => t.threadId === turn.threadId)?.sharedWork;
   if (!work) return null;
   const message = store.newestMatching(turn.threadId, m => m.role === "user", Number.POSITIVE_INFINITY);
   sharedOwnerUsage.begin(turn.threadId, { generation: owner.generation, botId: owner.botId, teamId: work.teamId, messageId: message?.id ?? owner.generation, engine: instance.driverKind, model: turn.model, startedAt: Date.now(), ownerWaitMs: 0, asks: new Set() });
   return (async () => {
     try {
+      fence.invoked?.();
       const accepted = await instance.adapter.sendTurn({ ...turn, holdPermissionAsks: true, holdProjectAsks: true });
       sharedOwnerUsage.accepted(turn.threadId, owner.generation, accepted.turnId);
       return accepted;
@@ -14886,9 +14898,10 @@ async function sendProjectUsageTurn(instance: ProviderInstance, built: BuiltSend
   // first-token timing for the Flux Memory breaker (one site for every engine; foldRuntimeEvent settles it)
   fluxFirstTokenProbe.begin(turn);
   const group = projectGroupForThread(turn.threadId,owner?.botId) ?? (request ? store.group(request.groupId) : undefined);
-  const sharedTurn = owner && !request ? sharedOwnerUsageTurn(instance, turn, owner) : null;
+  const sharedTurn = owner && !request ? sharedOwnerUsageTurn(instance, turn, owner, fence) : null;
   if (sharedTurn) return sharedTurn;
-  if (!owner || !group) return instance.adapter.sendTurn(turn);
+  // fence.invoked: from the adapter call on, the engine may act before its first write (1.0.10 C1)
+  if (!owner || !group) { fence.invoked?.(); return instance.adapter.sendTurn(turn); }
   if (!request) {
     const lineage = roomLineage(turn.threadId, store.newestMatching(turn.threadId, message=>message.role === "user", Number.POSITIVE_INFINITY)?.origin);
     request = insertRoomRequest(database(),{groupId:group.id,verb:"room_turn",fromKind:"owner",toBotId:owner.botId,targetThreadId:turn.threadId,
@@ -14902,7 +14915,7 @@ async function sendProjectUsageTurn(instance: ProviderInstance, built: BuiltSend
   const run: ProjectUsageRun = {request,generation:owner.generation,botId:owner.botId,engine:instance.driverKind,model:turn.model};
   return dispatchProjectUsageTurn(turn, run, {
     bindings: turnRequestByGeneration, pending: projectUsagePending, turns: projectUsageTurns, project: Boolean(group.channelProject) || isSharedWorkRow(request),
-    send: input => instance.adapter.sendTurn(input),
+    send: input => { fence.invoked?.(); return instance.adapter.sendTurn(input); },
     // scoped to this run: a budget stop that lands after its turn never
     // stops the next turn on the desk thread
     interrupt: reason => {
@@ -17935,7 +17948,7 @@ async function runGroupMemberTurn(
         recordImagesNotSentAfterTurn(threadId, latestUser ? [latestUser.id] : [], leftOut.paths);
         noteImagesNotSent(threadId, latestUser?.id, leftOut.note, bot);
       }
-      submissionBoundary.started();
+      // marked started when the adapter is called (roomFence.invoked), as on the direct path (1.0.10 C1)
       preparePinnedProcedures(bot.id, threadId, procedurePin, false, procedureContext(bot.id,threadId));
       const roomSystemLayers = [...roomLayers, shapeLayer("images", imagePrompt)];
       // The clock rides the message, never the system prompt (nowPrompt).
@@ -18010,7 +18023,7 @@ async function runGroupMemberTurn(
         ...(workingBlock ? working.part.lineageOf : []),
         ...(learnedText ? learnedBlock.lessonIds.map((id): LineageRef => ({ kind: "memory", ref: { kind: "lesson", id } })) : []),
       ])]);
-      const roomFence: EngineFence = { reader: { audience: { owner: roomOwnerAudience, scopeIds: memoryReceipt ? [...memoryReceipt.access.scopeIds] : [] } }, onRefused: error => submissionBoundary.refuse(error) };
+      const roomFence: EngineFence = { reader: { audience: { owner: roomOwnerAudience, scopeIds: memoryReceipt ? [...memoryReceipt.access.scopeIds] : [] } }, onRefused: error => submissionBoundary.refuse(error), invoked: () => submissionBoundary.started() };
       return guardTurnDispatch(sendProjectUsageTurn(instance, {
         onToolSurface: inspectToolSurface,
         beforeSubmit: () => submissionBoundary.beforeSubmit(() => {

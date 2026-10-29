@@ -4990,6 +4990,9 @@ void androidDevice.reclaimOrphan().catch(() => {});
   if(cloudHome?.client?.settleUnfinished)void cloudHome.client.settleUnfinished().catch(()=>console.log("[cloud] door: settle-failed"));
   powerMonitor.on("suspend",()=>backgroundLifecycle?.setSuspended(true));
   powerMonitor.on("resume",()=>backgroundLifecycle?.setSuspended(false));
+  // 1.0.10 C3: the server counts the suspension as sleep, so an open card's deadline and the stall watchdog do not read it as silence.
+  // The server also measures a frozen process itself; this covers a suspension it kept running through (Windows modern standby).
+  for(const state of ["suspend","resume"])powerMonitor.on(state,()=>{try{serverProc?.postMessage({type:"murage:power",state});}catch{/* the server is restarting; its own tick covers a freeze */}});
   // 1.0.9 Sentinel: sleep pauses sampling (no missed-window catch-up); registration and proof run in the background.
   powerMonitor.on("suspend",()=>sentinelHost?.suspend());
   powerMonitor.on("resume",()=>sentinelHost?.resume());

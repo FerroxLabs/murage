@@ -1668,3 +1668,7 @@ server/drivers/openai-chat-tools.test.ts	all	chat engine tool calls ask before t
 server/memory-late-tool-started-api.test.ts	linux+mac	a turn that ran a tool is never re-run after a memory refusal
 server/reload-retain.test.ts	all	engine reload keeps a folder lease while an engine child still runs
 server/memory/memindex-busy-109.test.ts	all	a backup or reader holding the memory index during start-up no longer gets a healthy index set aside, and a set-aside copy holding deleted conversations' words is removed once the new index is open
+server/drivers/claude-sleep-deadline.test.ts	linux+mac	Claude card not denied because the laptop slept
+server/longwork-c1-window-api.test.ts	linux+mac	turn refused before the engine call is rebuilt, never "Context changed"
+server/longwork-sleep-api.test.ts	linux+mac	card not denied at wake after a sleep
+server/sleep-clock.test.ts	all	sleep not counted as silence or toward a card deadline
