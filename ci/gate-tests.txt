@@ -1668,3 +1668,5 @@ server/drivers/openai-chat-tools.test.ts	all	chat engine tool calls ask before t
 server/memory-late-tool-started-api.test.ts	linux+mac	a turn that ran a tool is never re-run after a memory refusal
 server/reload-retain.test.ts	all	engine reload keeps a folder lease while an engine child still runs
 server/memory/memindex-busy-109.test.ts	all	a backup or reader holding the memory index during start-up no longer gets a healthy index set aside, and a set-aside copy holding deleted conversations' words is removed once the new index is open
+server/browser-extension-setup.test.ts	all	after a Chrome extension reinstall, Continue never rebinds the profile by itself
+src/components/BrowserExtensionPanel.test.ts	all	after a Chrome extension reinstall, the owner can pick the new browser profile
