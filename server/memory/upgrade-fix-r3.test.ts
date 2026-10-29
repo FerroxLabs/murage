@@ -416,12 +416,23 @@ it("R2-06: every connection that opens messages.db for writing installs the revi
   // memory/age-index.ts: opens memory-index.db only (the downgrade step's index-file half), never messages.db
   const otherFiles = new Set(["memory/age-index.ts", "engine-fs.ts", "engine-structure-check.ts", "memory/cold-index-build.ts", "memory/optional-index.ts", "memory/provenance-stamp.ts", "wal-maintenance.ts", "memory/postings.ts", "inbox-fill-worker.ts", "send-store.ts", "skill-search.ts", "memory/schema.ts", "memory/testdata/v0161-schema.ts", "memory/index.ts", "installation-database-snapshot.ts", "connected-app-journal.ts", "conversation-deletion.ts", "engine-history-deletion.ts", "memory/root-set-compaction.ts", "memory/root-set-reclaim.ts", "memory/upgrade-counts.ts", "memory/eligibility.ts", "memory/index-reader.ts", "memory/owner-list.ts", "installation-activation.ts", "folder-trust.ts", "memory/revocation-index.bench.mjs"]);
   const found = files.map(path => ({ file: path.slice(root.length + 1).split("\\").join("/"), text: readFileSync(path, "utf8") })).filter(item => /new DatabaseSync\(/.test(item.text));
+  // 1.0.9 Sentinel (GAP-SENTINEL-109): health files open only their own databases, never messages.db, so no revision can move.
+  // health/stats-publisher.ts: its build worker creates a NEW db-stats-<generation>.sqlite inside health/ from observed figures
+  // sentinel/scan.ts: the scanner's own lease file (an OS-held exclusive lock); sentinel/store.ts: its own state.sqlite (issue history)
+  // sentinel/sources.ts: the sealed db-stats generation, opened read-only through an immutable URI
+  // sentinel/scan-fixtures.ts: builds sealed stats fixtures for the scanner suites in a temporary folder
+  // Proven, not just listed: none of them names messages.db or imports the product database module.
+  const healthOwnFiles = new Set(["health/stats-publisher.ts", "sentinel/scan.ts", "sentinel/store.ts", "sentinel/sources.ts", "sentinel/scan-fixtures.ts"]);
   // Proven read-only, not exempted: every connection the file opens passes `readOnly: true`, so SQLite refuses any write on it and no
   // revision can move. transcript-read-worker.ts (rc11-prune, 2c42e8927) is the event-log prune's forgotten-message lookup off the main thread.
   // memory/worker.ts (1.0.3 lane 2): the memory helper's handle on the key table for the age fill of the search index.
   const readOnlyOpeners = new Set(["transcript-read-worker.ts", "memory/worker.ts"]);
   for (const { file, text } of found) {
     if (otherFiles.has(file)) continue;
+    if (healthOwnFiles.has(file)) {
+      expect(text, `${file} must never open messages.db`).not.toMatch(/messages\.db|from "(?:\.\.\/)+database(?:\.ts)?"/);
+      continue;
+    }
     if (readOnlyOpeners.has(file)) {
       const opens = text.match(/new DatabaseSync\([^)]*\)/g) ?? [];
       expect(opens.length, file).toBeGreaterThan(0);

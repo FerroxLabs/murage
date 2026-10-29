@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyNotificationPreferences, notificationPreferencesSchema, resolveNotificationPreferences, type PreferenceNotification } from "../shared/notification-preferences.ts";
+import { HEALTH_PAGE_BODY, HEALTH_PAGE_BODY_KEY, HEALTH_PAGE_TITLE, applyHealthPagePreferences, applyNotificationPreferences, inQuietHours, notificationPreferencesSchema, resolveNotificationPreferences, type PreferenceNotification } from "../shared/notification-preferences.ts";
 
 const notification: PreferenceNotification = { kind: "approval", botId: "bot-click-target", threadId: "thread-click-target", botName: "Private bot", title: "Private title", body: "Private content", avatarUrl: "https://private.invalid/avatar" };
 const at = (time: string) => new Date(`2026-09-06T${time}:00Z`);
@@ -49,5 +49,36 @@ describe("a config with notifications: null", () => {
     expect(resolveNotificationPreferences(null)).toEqual(resolveNotificationPreferences(undefined));
     const approval = { kind: "approval" as const, botId: "b", threadId: "t", title: "Trip Planner", body: "wants to run a command", requestId: "r" };
     expect(applyNotificationPreferences(approval, null, new Date("2026-10-06T06:30:00Z"))).not.toBeNull();
+  });
+});
+
+// 1.0.9 Sentinel (GAP-SENTINEL-109 section 8.2): the Health page is a failures notification with generic text always.
+describe("the Health page through the owner's preferences", () => {
+  const page = { kind: "health-page" as const, installationId: "0123456789abcdef0123456789abcdef", deliveryId: "ab".repeat(16), titleKey: "health.backup.not-protected", bodyKey: HEALTH_PAGE_BODY_KEY, route: "health" as const };
+  it("maps to the failures switch: off means no page", () => {
+    expect(applyHealthPagePreferences(page, { failures: false }, at("12:00"))).toBeNull();
+    expect(applyHealthPagePreferences(page, { attention: false, completion: false, memories: false }, at("12:00"))).not.toBeNull();
+  });
+  it("honours quiet hours, start inclusive and end exclusive, across midnight", () => {
+    const quiet = { quietHours: { enabled: true, start: "22:00", end: "07:00", timeZone: "UTC" } };
+    expect(applyHealthPagePreferences(page, quiet, at("21:59"))).not.toBeNull();
+    expect(applyHealthPagePreferences(page, quiet, at("22:00"))).toBeNull();
+    expect(applyHealthPagePreferences(page, quiet, at("06:59"))).toBeNull();
+    expect(applyHealthPagePreferences(page, quiet, at("07:00"))).not.toBeNull();
+    expect(applyHealthPagePreferences(page, { quietHours: { ...quiet.quietHours, enabled: false } }, at("23:00"))).not.toBeNull();
+  });
+  it("shows only the generic lock-screen text, even with previews on, and keeps the routing fields", () => {
+    for (const prefs of [{ previewContent: true }, { previewContent: false }, undefined]) {
+      const shown = applyHealthPagePreferences({ ...page, title: "No recent verified backup at /Users/x", body: "claude-opus 52 MiB/min" }, prefs, at("12:00"));
+      expect(shown).toEqual({ ...page, title: HEALTH_PAGE_TITLE, body: HEALTH_PAGE_BODY });
+      expect(`${shown?.title} ${shown?.body}`).not.toMatch(/backup|MiB|claude|\/|\d/i);
+    }
+    expect(HEALTH_PAGE_BODY).not.toMatch(/—|\b(safe|safely|safety|unsafe)\b/i);
+  });
+  it("shares the quiet-hours rule with every other notification", () => {
+    const prefs = resolveNotificationPreferences({ quietHours: { enabled: true, start: "09:00", end: "17:00", timeZone: "UTC" } });
+    expect(inQuietHours(prefs, at("09:00"))).toBe(true);
+    expect(inQuietHours(prefs, at("17:00"))).toBe(false);
+    expect(applyNotificationPreferences({ ...notification, kind: "turn-failed" }, prefs, at("12:00"))).toBeNull();
   });
 });

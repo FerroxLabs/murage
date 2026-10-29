@@ -8,7 +8,7 @@ import { isIP } from "node:net";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { CloudSessions, type PairingInput } from "./cloud-sessions.ts";
 import { isOwnerBrowser, ownerBrowserScope, setCloudIdentity } from "./cloud-request-identity.ts";
-import { cloudRouteDecision, cloudRouteNeedsBody, cloudSettingsRead } from "./route-policy.ts";
+import { SENTINEL_OWNER_ROUTE, cloudRouteDecision, cloudRouteNeedsBody, cloudSettingsRead, sentinelCloudDecision } from "./route-policy.ts";
 import { trustedCloudSocket } from "./cloud-home/proxy-socket.ts";
 import { CloudResponseSessions, type CloudResponseBinding } from "./cloud-home/response-sessions.ts";
 import { doorTicketEnvelope, type DoorTicketClaims } from "./cloud-home/b1b-identity.ts";
@@ -118,6 +118,10 @@ export function createCloudRequestAuth(options: CloudAuthOptions) {
       // A paired device lists and forgets itself; anonymous callers reach the handler only to be refused there.
       const deviceSelfRoute = method === "GET" && path === "/api/cloud/devices" || method === "POST" && path === "/api/cloud/devices/forget";
       const bootstrap = management || doorRoute || deviceSelfRoute || method === "POST" && ["/api/cloud/pairing", "/api/cloud/pair", "/api/cloud/challenge", "/api/cloud/refresh"].includes(path);
+      // Sentinel Health reads are the home owner's alone (GAP-SENTINEL-109 section 7): an owner-desktop or owner-phone
+      // session or the passkey owner browser may GET them; a remembered or chat-only browser, the service listener, an
+      // unsigned caller and every write are refused here, before a body is read, and no step-up can widen it.
+      if (SENTINEL_OWNER_ROUTE.test(path) && sentinelCloudDecision(method, scope) !== "allow") { reply(res,403,{error:cloudHomeCopy.pairedDeviceRequired}); return true; }
       // Resolve bearer/cookie and refuse protected anonymous/service requests
       // before attaching a body reader, including when the client never ends it.
       if (!device && !bootstrap && (path === "/api" || path.startsWith("/api/"))

@@ -24,7 +24,7 @@ afterEach(() => {
 
 it("asks for the message's image route with no `w`, unlike the phone-capped paged fetch", async () => {
   const pixels = await fetchOriginalScreenFrame("t1", "m1");
-  expect(fetchMock).toHaveBeenCalledWith("/api/threads/t1/messages/m1/image", { redirect: "error", headers: { "x-murage-surface": "desktop", "x-murage-surface-secret": "synthetic-proof" } });
+  expect(fetchMock).toHaveBeenCalledWith("/api/threads/t1/messages/m1/image", { redirect: "error", cache: "no-store", headers: { "x-murage-surface": "desktop", "x-murage-surface-secret": "synthetic-proof" } });
   expect(pixels?.mime).toBe("image/png");
 });
 
@@ -38,4 +38,9 @@ it("carries the desktop marker with the secret, so the conversation gate reads i
   const headers = fetchMock.mock.calls[0]![1].headers as Record<string, string>;
   expect(headers["x-murage-surface"]).toBe("desktop");
   expect(headers["x-murage-surface-secret"]).toBe("synthetic-proof");
+});
+
+it("never reads a screen capture from the browser's cache, so a copy an older version kept for a year is not shown", async () => {
+  await fetchOriginalScreenFrame("t1", "m1");
+  expect(fetchMock.mock.calls[0]![1].cache).toBe("no-store");
 });

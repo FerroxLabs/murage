@@ -785,6 +785,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         if (turn.integrations?.browser) {
           mount("browser", turn.integrations.browser, true, "own:browser");
         }
+        // 1.0.9 S13b: the owner's phone. Pre-approved (OWN_UNASKED): the authority, the grant and the phone's own card are the gate.
+        if (turn.integrations?.phoneJobs) {
+          mount("phoneJobs", turn.integrations.phoneJobs, true, "own:phoneJobs");
+        }
         // A custom server named like one in the owner's own config.toml would
         // be MERGED with it by the `-c` override, not replace it: a stdio
         // command over a remote `url` entry is "invalid configuration" and
@@ -796,7 +800,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         // The servers that actually get mounted, chosen BEFORE any name is
         // allocated: a skipped server must not reserve its name, and a moved
         // server must not land on a sibling's.
-        const customMcpServers = customMountEntries(turn.integrations?.custom, (name) => name === "murage-memory")
+        const customMcpServers = customMountEntries(turn.integrations?.custom, (name) => name === "murage-memory" || (Boolean(turn.integrations?.phoneJobs) && name === "phoneJobs"))
           .map((mount): [string, { command: string; args: string[]; env: Record<string, string> }] => [mount.name, { command: mount.command, args: mount.args, env: mount.env }])
           // Rule 11: a name holding `__` cannot be told apart from its tools,
           // so it is not mounted and no record is written for it.

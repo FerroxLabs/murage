@@ -77,8 +77,8 @@ describe("Rule 68f and 74c (T106, pure rows)", () => {
     for (const row of INTERACTIVE_CONTINUATIONS) for (const name of row.names) expect(pinned.has(name), `${row.program}: ${name}`).toBe(true);
   });
 
-  it("the absence pins are exactly the six the rule names (delta 2 adds GIT_SSH), and no name is both a value and an absence", () => {
-    expect([...ABSENT_PINS].sort()).toEqual(["BASH_ENV", "CLAUDE_ENV_FILE", "ENV", "GIT_SSH", "POSIXLY_CORRECT", "PYTHONINSPECT"]);
+  it("the absence pins are exactly the six the rule names (delta 2 adds GIT_SSH; 1.0.9 SHELLOPTS and BASHOPTS), and no name is both a value and an absence", () => {
+    expect([...ABSENT_PINS].sort()).toEqual(["BASHOPTS", "BASH_ENV", "CLAUDE_ENV_FILE", "ENV", "GIT_SSH", "POSIXLY_CORRECT", "PYTHONINSPECT", "SHELLOPTS"]);
     const values = valuePins("linux");
     for (const name of ABSENT_PINS) expect(values.has(name)).toBe(false);
     expect(values.get("PAGER")).toBe("cat");

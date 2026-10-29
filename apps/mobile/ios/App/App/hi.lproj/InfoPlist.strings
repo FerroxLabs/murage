@@ -1,0 +1,7 @@
+"NSCalendarsFullAccessUsageDescription" = "आपके कहने पर आपके बॉट आपका कैलेंडर देख सकते हैं और इवेंट जोड़ सकते हैं।";
+"NSCalendarsWriteOnlyAccessUsageDescription" = "आपके कहने पर आपके बॉट आपके कैलेंडर में इवेंट जोड़ सकते हैं।";
+"NSRemindersFullAccessUsageDescription" = "आपके कहने पर आपके बॉट रिमाइंडर पढ़ सकते हैं और जोड़ सकते हैं।";
+"NSContactsUsageDescription" = "आपके बॉट आपके बताए व्यक्ति को खोज सकते हैं, ताकि आपके लिए संदेश या कॉल शुरू कर सकें।";
+"NSLocationWhenInUseUsageDescription" = "जब आप आस-पास की किसी चीज़ के बारे में पूछते हैं, तो आपके बॉट आपकी अनुमानित लोकेशन देख सकते हैं।";
+"NSAlarmKitUsageDescription" = "आपके कहने पर आपके बॉट अलार्म और टाइमर सेट कर सकते हैं।";
+"PhonePreciseLocation" = "जब आप सटीक लोकेशन चालू करते हैं, तो आपके बॉट आपकी सटीक लोकेशन इस्तेमाल कर सकते हैं।";

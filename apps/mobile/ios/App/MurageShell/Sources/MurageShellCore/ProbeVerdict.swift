@@ -7,16 +7,20 @@ public struct ProbeVerdict: Equatable, Sendable {
     public let name: String?
     public let hostCapability: Int64?
     public let approvalProof: Int64?
+    public let phoneJobs: Int64?
+    public let phoneAsk: Int64?
 
-    public init(kind: Kind, name: String?, hostCapability: Int64?, approvalProof: Int64? = nil) {
+    public init(kind: Kind, name: String?, hostCapability: Int64?, approvalProof: Int64? = nil, phoneJobs: Int64? = nil, phoneAsk: Int64? = nil) {
         self.kind = kind
         self.name = name
         self.hostCapability = hostCapability
         self.approvalProof = approvalProof
+        self.phoneJobs = phoneJobs
+        self.phoneAsk = phoneAsk
     }
 
-    public static func full(name: String?, hostCapability: Int64? = nil, approvalProof: Int64? = nil) -> ProbeVerdict {
-        ProbeVerdict(kind: .full, name: name, hostCapability: hostCapability, approvalProof: approvalProof)
+    public static func full(name: String?, hostCapability: Int64? = nil, approvalProof: Int64? = nil, phoneJobs: Int64? = nil, phoneAsk: Int64? = nil) -> ProbeVerdict {
+        ProbeVerdict(kind: .full, name: name, hostCapability: hostCapability, approvalProof: approvalProof, phoneJobs: phoneJobs, phoneAsk: phoneAsk)
     }
     public static let basic = ProbeVerdict(kind: .basic, name: nil, hostCapability: nil)
     public static let unreachable = ProbeVerdict(kind: .unreachable, name: nil, hostCapability: nil)
@@ -30,6 +34,10 @@ public struct ProbeVerdict: Equatable, Sendable {
     /// The computer's `/healthz` says it keeps a phone's approval key (SEC-006).
     public var approvalProofOk: Bool { (approvalProof ?? 0) >= 1 }
 
+    public var phoneAskOk: Bool { kind == .full && (phoneAsk ?? 0) >= 1 }
+
+    public var phoneJobsOk: Bool { kind == .full && (phoneJobs ?? 0) >= 1 }
+
     public static func classify(status: Int?, body: Data?, errorDomain: String?, errorCode: Int?) -> ProbeVerdict {
         if let status {
             // A 401 on /healthz is an older desktop door that does not know the path
@@ -42,7 +50,7 @@ public struct ProbeVerdict: Equatable, Sendable {
             // `mobile` is a door identity, exactly 1; the phone features come from `mobileFeatures`.
             guard JSONInteger.value(json["mobile"]) == 1 else { return .basic }
             let hostCapability = JSONInteger.value(json["mobileFeatures"])
-            return .full(name: (json["name"] as? String).flatMap(WorkspaceBook.cleanName), hostCapability: hostCapability, approvalProof: JSONInteger.value(json["approvalProof"]))
+            return .full(name: (json["name"] as? String).flatMap(WorkspaceBook.cleanName), hostCapability: hostCapability, approvalProof: JSONInteger.value(json["approvalProof"]), phoneJobs: JSONInteger.value(json["phoneJobs"]), phoneAsk: JSONInteger.value(json["phoneAsk"]))
         }
         // A certificate the phone refuses. Any other failure, TLS or not, is a can't-reach.
         if let errorDomain, let errorCode, NavigationFailure.isCertificate(domain: errorDomain, code: errorCode) {

@@ -1,6 +1,7 @@
 import { downgradeTranscriptSeqTo102 } from "./transcript-seq.ts";
 import { existsSync, lstatSync, readFileSync, rmSync, unlinkSync } from "node:fs";
-import { downgradePushRetentionIndexesTo102 } from "./mobile-push-store.ts";
+import { downgradePushPhoneUsedTo102, downgradePushRetentionIndexesTo102 } from "./mobile-push-store.ts";
+import { downgradeBotCallsTo108 } from "./bot-calls-schema.ts";
 import { downgradeMessageIdIndexTo102 } from "./message-id-index.ts";
 import { downgradeOutputPublicationTurnTo102 } from "./artifacts.ts";
 import { dirname, join } from "node:path";
@@ -8,7 +9,7 @@ import { DatabaseSync } from "node:sqlite";
 import { acquireDataDirLeaseForProcess, dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
 import { downgradeMemorySchema, suffixedSessionKeys, type MemoryDowngradeTarget } from "./memory/schema.ts";
 import { downgradeMemoryIndexFile } from "./memory/age-index.ts";
-import { downgradeApplicationSchemaTo101 } from "./installation-app-schema-downgrade.ts";
+import { assertNoPendingPhoneWork, downgradeApplicationSchemaTo101, downgradePhoneObjectsTo108 } from "./installation-app-schema-downgrade.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { foldRoutineStateForDowngrade } from "./routine-runs-journal.ts";
 
@@ -105,8 +106,12 @@ export function resetIncarnatedSessionCursors(root: string, db: DatabaseSync): n
  * first-run backup record (missing means not owed), a Claude turn's settings overlays (claude-private/: only a crash leaves one, and 1.0.2
  * has no turn that reads it), the Claude sign-in card's remembered answers (claude-signin-answers.json: 1.0.2 has no such card, and the card simply asks again) and the frozen-replies recovery cursor (a later 1.0.3 start reads again from the start and
  * changes nothing a second time), and the cloud computer prompt record and its set-aside unreadable copy (cloud-computer-turns.ts: 1.0.2
- * has no such record, and a later 1.0.6 start begins a fresh one). The Cloud-only names are never on a desktop that reinstalls 1.0.2. */
-export const DATA_DIR_NAMES_AFTER_102 = ["claude-private", "claude-signin-answers.json", "draft-only-cwd", "env", "frozen-replies-recovery.json", "learning-paused-left.json", "memory-model-adopted.json", "memory-model-adopted.json.tmp", "memory-repairs.json", "memory-repairs.json.tmp", "pending-grants.json", "setup-backup.json", "cloud-computer-turns.json", "cloud-computer-turns.json.unreadable", "news-signup.json"] as const;
+ * has no such record, and a later 1.0.6 start begins a fresh one), and the health metadata folder (health/, 1.0.9 Sentinel's producer
+ * input root: minute counters, sealed statistics and the backup status manifest, all rebuilt from fresh observations by a later 1.0.9
+ * start; 1.0.2 never reads it), and the health token key next to it (health-key: the key Sentinel's opaque tokens are made with,
+ * made again by a later 1.0.9 start), and the power-guard line note (power-guard-notice.json: a later start may show that one line once
+ * more). The Cloud-only names are never on a desktop that reinstalls 1.0.2. */
+export const DATA_DIR_NAMES_AFTER_102 = ["claude-private", "claude-signin-answers.json", "draft-only-cwd", "env", "frozen-replies-recovery.json", "learning-paused-left.json", "memory-model-adopted.json", "memory-model-adopted.json.tmp", "memory-repairs.json", "memory-repairs.json.tmp", "pending-grants.json", "setup-backup.json", "cloud-computer-turns.json", "cloud-computer-turns.json.unreadable", "news-signup.json", "health", "health-key", "sentinel-delivery.json", "power-guard-notice.json"] as const;
 /** Owner-kept notes written after 1.0.2 (backed up, so they are not in the derived list above), that 1.0.2's backup does not classify
  * either. The follow-model marker (thread-follow-model.ts) only records that the one-time chat model cleanup ran; 1.0.2 never reads
  * it. Removing it lets 1.0.2 take a backup; a later upgrade runs the cleanup once more, which drops only pins proved equal to the
@@ -146,6 +151,13 @@ export function downgradeInstallationMemorySchema(dataDir: string, to: MemoryDow
   if (!hasDatabase && !existsSync(routines)) fail("MEMORY_DATABASE_MISSING");
   const lease = acquireDataDirLeaseForProcess(root);
   try {
+    // A phone line still waiting to send is refused before any change: nothing below may have run when the owner is told to send or cancel it
+    // (the routine folding, the push and transcript columns and the memory step all change the file).
+    if (hasDatabase) {
+      const probe = new DatabaseSync(file, { readOnly: true });
+      // the same wait the main connection gets: a connection still leaving the file holds it for a moment, and the probe waits it out rather than failing
+      try { probe.exec("PRAGMA busy_timeout=5000"); assertNoPendingPhoneWork(probe); } finally { probe.close(); }
+    }
     // Routines first (1.0.2 bgwork): an older release reads only routines.json and plain journal lines, so every
     // cursor a routine state line moved is folded in before it can see the schedule (no occurrence runs twice).
     foldRoutineStateForDowngrade(routines);
@@ -157,13 +169,19 @@ export function downgradeInstallationMemorySchema(dataDir: string, to: MemoryDow
       // Going back to a build before 1.0.2: its waiting handoffs return to delegations.json (the file it reads), the ones whose turn was taken are
       // receipted as interrupted, and every application object 1.0.1 does not know leaves (installation-app-schema-downgrade.ts), all before the memory step.
       // every older build lacks messages.seq and its index (1.0.3): they leave first, whatever the target (transcript-seq.ts)
+      // every older build lacks the bot call tables, their trigger on messages and push_bindings.rings_for_calls (1.0.9): they leave first (bot-calls-schema.ts)
+      downgradeBotCallsTo108(db);
       downgradeTranscriptSeqTo102(db);
       // every older build lacks the push retention indexes (1.0.3): they leave first, whatever the target (mobile-push-store.ts)
       downgradePushRetentionIndexesTo102(db);
+      // every older build lacks push_events.phone_used (1.0.9): the column leaves with the retention indexes, whatever the target (mobile-push-store.ts)
+      downgradePushPhoneUsedTo102(db);
       // every older build lacks the message-id index (1.0.3): it leaves first, whatever the target (message-id-index.ts)
       downgradeMessageIdIndexTo102(db);
       // every older build holds output_publications to its text without turn_id (1.0.3): the column leaves first, whatever the target (artifacts.ts)
       downgradeOutputPublicationTurnTo102(db);
+      // every older build lacks the phone tables and owner_sends's phone columns (1.0.9): they leave first, whatever the target (installation-app-schema-downgrade.ts)
+      downgradePhoneObjectsTo108(db);
       const app = to <= 6 ? downgradeApplicationSchemaTo101(db, dirname(file)) : { exported: 0, interrupted: 0, dropped: 0, rebuilt: 0 };
       // before the memory step, so a stopped run finds the marker again and does it again
       if (to < 10 && reclaimHasRun(db)) resetRetainedSessionCursors(dirname(file));
