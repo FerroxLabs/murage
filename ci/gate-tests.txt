@@ -1668,3 +1668,8 @@ server/drivers/openai-chat-tools.test.ts	all	chat engine tool calls ask before t
 server/memory-late-tool-started-api.test.ts	linux+mac	a turn that ran a tool is never re-run after a memory refusal
 server/reload-retain.test.ts	all	engine reload keeps a folder lease while an engine child still runs
 server/memory/memindex-busy-109.test.ts	all	a backup or reader holding the memory index during start-up no longer gets a healthy index set aside, and a set-aside copy holding deleted conversations' words is removed once the new index is open
+shared/highlevel.test.ts	all	a HighLevel grant looser than read or propose, or an unknown CRM tool, is never accepted
+server/highlevel/tools.test.ts	all	a HighLevel tool call never carries a credential, URL, header or path and is held to its full schema
+server/highlevel/access.test.ts	all	a bot never reads or changes HighLevel records without the owner's explicit grant and exact approval
+server/highlevel/client.test.ts	all	a HighLevel change is never sent twice and no call leaves the fixed host or another sign-in
+server/highlevel/stop.test.ts	all	Stop ends a waiting HighLevel call at once and never starts a token refresh for a stopped turn

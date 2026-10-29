@@ -228,6 +228,8 @@ import { ensurePhonesTables, phoneAskCaller, phoneCaller } from "./phones/gate.t
 import { isDirectOwnerThread } from "./phones/direct-thread.ts";
 import { PhoneAuthorities, phoneMintEligible, type MintFacts } from "./phones/authority.ts";
 import { PhoneJobs } from "./phones/jobs.ts";
+import { HighLevelTurnSignals } from "./highlevel/host.ts";
+import { filterRelayToolListBytes } from "./highlevel/access.ts";
 import { deviceJobPush } from "./phones/job-push.ts";
 import { narrowedCapabilities, normalizePhoneApps } from "../shared/phone-apps.ts";
 import { PHONE_TOOL_NAMES, type PhoneCapability } from "../shared/phone-jobs-contract.ts";
@@ -1845,6 +1847,8 @@ function internalToken(botId: string, threadId: string, generation: string, kind
 /** 1.0.9 phone tools: the authority registry (memory only) and the two module-private symbols that keep minting to one path.
  * The idle-entry symbol is passed only by the fresh idle-entry call in admitDirectSend; the ticket is handed to startTurnAdmitting only from there. */
 const phoneAuthorities = new PhoneAuthorities();
+// Stop for native HighLevel calls (GAP-HIGHLEVEL-109 H3): revokeInternalGeneration ends a waiting call at once.
+const highlevelCalls = new HighLevelTurnSignals();
 /** S12: the phone job state machine. Memory only. S15 wires its park and withdraw hooks to the device-job push. */
 const phoneJobs: PhoneJobs = new PhoneJobs({
   now: () => Date.now(),
@@ -1911,6 +1915,7 @@ function revokeInternalGeneration(threadId: string, generation: string): void {
   phoneDispatchFacts.delete(generation);
   phoneAuthorities.revokeGeneration(generation);
   phoneJobs.turnEnded(generation);
+  highlevelCalls.turnEnded(generation);
   abandonProjectUsageTurn(threadId, generation);
   turnRequestByGeneration.delete(generation);
   if (hostComputerThreads.get(threadId)?.ownerId === generation) hostComputerThreads.delete(threadId);
@@ -1922,6 +1927,7 @@ function revokeInternalGeneration(threadId: string, generation: string): void {
 function revokeInternalThread(threadId: string): void {
   phoneAuthorities.revokeThread(threadId);
   phoneJobs.turnEndedForThread(threadId);
+  highlevelCalls.turnEndedForThread(threadId);
   hostComputerThreads.delete(threadId);
   const owner = internalTurnOwners.get(threadId);
   if (owner) projectTurnLeases.abandon(owner.generation);
@@ -1931,6 +1937,7 @@ function revokeInternalThread(threadId: string): void {
 function revokeInternalBot(botId: string): void {
   phoneAuthorities.revokeBot(botId);
   phoneJobs.turnEndedForBot(botId);
+  highlevelCalls.turnEndedForBot(botId);
   for (const [threadId, entry] of hostComputerThreads) if (entry.botId === botId) hostComputerThreads.delete(threadId);
   for (const owner of internalTurnOwners.values()) if (owner.botId === botId) projectTurnLeases.abandon(owner.generation);
   internalCapabilities.revokeBot(botId);
@@ -1939,6 +1946,7 @@ function revokeInternalBot(botId: string): void {
 function revokeAllInternalTurns(): void {
   phoneAuthorities.revokeAll();
   phoneJobs.turnEndedAll();
+  highlevelCalls.turnEndedAll();
   hostComputerThreads.clear();
   for (const owner of internalTurnOwners.values()) projectTurnLeases.abandon(owner.generation);
   internalCapabilities.revokeAll();
@@ -22520,7 +22528,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       // turn-watchdog-wiring.test.ts reads this line to prove the computer
       // activity route is exempt from the stall watchdog.
       const requiredKind: InternalCapabilityKind = path.startsWith("/api/internal/memory/") ? "memory" : path.startsWith(`${BOX_RELAY_PREFIX}/`) ? "computer" : path.startsWith("/api/internal/connectors/")
-        ? "connectors" : path.startsWith("/api/internal/mcp-remote/") ? "mcp" : path.startsWith("/api/internal/device/") ? "device" : ["/api/internal/computer-control", "/api/internal/computer-activity", "/api/internal/headless-browser", "/api/internal/unified-browser", "/api/internal/host-computer"].includes(path) ? "computer" : "agents";
+        ? "connectors" : path.startsWith("/api/internal/mcp-remote/") ? "mcp" : path.startsWith("/api/internal/device/") ? "device" : path.startsWith("/api/internal/highlevel/") ? "highlevel" : ["/api/internal/computer-control", "/api/internal/computer-activity", "/api/internal/headless-browser", "/api/internal/unified-browser", "/api/internal/host-computer"].includes(path) ? "computer" : "agents";
       if (internalClaim.kind !== requiredKind) return json(res, 403, { error: "capability cannot access this service" });
       // The Chief's New project proposal turn reaches project_propose and nothing else.
       const proposalRefusal = projectProposalToolRefusal(chiefProposals.ignores(internalClaim.threadId), method, path);
@@ -23756,7 +23764,9 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         };
         if (upstream.transportSessionId) headers["mcp-session-id"] = upstream.transportSessionId;
         res.writeHead(upstream.status, headers);
-        return res.end(Buffer.from(upstream.bytes));
+        // a bot never discovers native HighLevel names on the external relay (GAP-HIGHLEVEL-109 section 7)
+        const listed = !Array.isArray(body) && body.method === "tools/list";
+        return res.end(Buffer.from(listed ? filterRelayToolListBytes(upstream.contentType, upstream.bytes) : upstream.bytes));
       }
       // ── the owner's link servers: the relay behind remote-mcp-proxy (spec MCP-LINK 3.8) ──
       const mcpRemoteMatch = /^\/api\/internal\/mcp-remote\/([a-z][a-z0-9_-]{0,31})$/.exec(path);
