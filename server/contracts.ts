@@ -849,6 +849,10 @@ export interface ProviderInstance {
    * with none, is never resumed: the harness starts a fresh session and replays the thread.
    * Absent for an engine with no such contract. */
   readonly sessionContract?: number;
+  /** Plan usage (GAP-PLAN-LIMITS): "native-rpc" when this engine reports plan windows over its own
+   * running process (server/plan-usage.ts). Absent means observation-only: Murage shows the limits
+   * the engine reports on refusal, and plan usage reads as not available. Never a credential reader. */
+  readonly planUsageReporter?: "native-rpc";
   /** True when this engine tracks a refused key itself (keyed by the key, so a new key starts clean); the harness then does not also mark it signed out from its failed turns. */
   readonly tracksKeyRejection?: boolean;
   /** Refresh a live catalog without recreating the provider instance. */
