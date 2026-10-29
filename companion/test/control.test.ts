@@ -214,6 +214,21 @@ describe("the per-launch control token", () => {
     expect((await ask("DELETE", `/devices/${paired.device.id}`)).status).toBe(200);
   });
 
+  it("reports phoneJobsReady per paired device and never the key behind it (1.0.9 S21)", async () => {
+    const opened = await ask("POST", "/pairing", { origin: `http://127.0.0.1:${port}` });
+    const paired = devices.redeem(opened.body.code, "Ready flag phone");
+    if (!("token" in paired)) throw new Error(`pairing failed: ${paired.error}`);
+    try {
+      const state = await ask("GET", "/state");
+      const row = state.body.devices.find((d: { id: string }) => d.id === paired.device.id);
+      expect(row.phoneJobsReady).toBe(false);
+      for (const d of state.body.devices) expect(typeof d.phoneJobsReady).toBe("boolean");
+      expect(JSON.stringify(state.body.devices)).not.toMatch(/approvalKey/);
+    } finally {
+      await ask("DELETE", `/devices/${paired.device.id}`);
+    }
+  });
+
   it("serves the page, which holds no state, without one", async () => {
     const page = await ask("GET", "/", {}, undefined, {});
     expect(page.status).toBe(200);

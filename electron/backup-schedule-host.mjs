@@ -106,6 +106,10 @@ export function createBackupScheduleHost(host) {
     heldBy={occasion,since:heldBy?.occasion===occasion?heldBy.since:now(),bots:error.waitingOnYou};return true;
   };
   const now=()=>host.now?.()??Date.now();
+  // 1.0.9 Sentinel: tell the health publisher (server/health/backup-status.ts, bundled by the shell) about a backup
+  // outcome, always AFTER the coordinator committed it, so a published verification always has its receipt on disk.
+  // The hook reads the committed coordinator state itself; nothing here waits on it or changes because of it.
+  const publishBackupStatus=(result,code)=>{try{void Promise.resolve(host.publishBackupStatus?.({result,code:code??result})).catch(()=>{});}catch{/* Health metadata never changes a backup. */}};
   const verifyIdentityAccess=async()=>{
     const installation=host.installation();
     await host.verifyEncrypted?.();
@@ -340,6 +344,7 @@ export function createBackupScheduleHost(host) {
       // Given up at the ceiling while the worker finished: the timeout stands.
       if(run.abandoned)throw Error("BACKUP_HANDOFF_REJECTED");
       captureStage="receipt-commit";coordinator.clearCaptureFailure?.();coordinator.recordSkipped?.(s.job.id,result.skipped);coordinator.completeHandoff(intent.id,{jobId:s.job.id,installationRef:b.installationRef,destinationRef:b.destinationRef,selectionHash:hash(s.schedule.selection),snapshotId:result.snapshotId,artifactRef:s.job.id,sha256,bytes,verifiedAt:now(),...(intent.upgrade?{candidateId:intent.upgrade.candidateId}:{})});
+      publishBackupStatus("verified");
       // Durable receipt precedes relaunch. A failed return never recaptures.
       stage("return");captureStage="return";if(closed)coordinator.completeReturn(intent.id);
       else await host.relaunch("normal");
@@ -362,6 +367,7 @@ export function createBackupScheduleHost(host) {
         try{coordinator.recordCaptureFailure?.(diagnostic);}catch{/* A note is never worth losing the authoritative state over. */}
       }
       if(intent&&coordinator.status().phase!=="return-pending"&&(claimed||(s.phase==="handoff-armed"&&coordinator.status().phase==="handoff-armed")))try{coordinator.failHandoff(intent.id);}catch{/* Preserve evidence. */}
+      if(coordinator.status().phase==="needs-review")publishBackupStatus("failed");
       lastError="BACKUP_SCHEDULE_REVIEW_REQUIRED";
       // As in abandonOffline, an armed job must stay on the Backup mode page
       // when its failure could not be saved; reopening would run it again.
@@ -418,6 +424,8 @@ export function createBackupScheduleHost(host) {
     // same backup again, so the caller shows the Backup mode page instead.
     lastError="BACKUP_SCHEDULE_REVIEW_REQUIRED";
     coordinator.failHandoff(intent.id);
+    // failHandoff commits the job error capture-unconfirmed, which the health status maps to capture-failed.
+    publishBackupStatus("failed","capture-failed");
     return true;
   }
   const closedResult=(status,reason)=>{
@@ -488,6 +496,23 @@ export function createBackupScheduleHost(host) {
     },
     /** The backup folder's own name (never its path), for the Inbox sentence. */
     async destinationLabel(){const b=await read();return b?path.basename(b.destination):null;},
+    /** 1.0.9 Sentinel (S01): is the latest verification's folder and key the
+     * one backups use NOW? The same references and file checks as a backup
+     * run. true or false when it can be checked (a missing or replaced folder
+     * or key is false); null only when it cannot be: the saved choice is
+     * unreadable or a file check fails for another reason. Never throws. */
+    async bindingCurrent(){
+      let b;try{b=await read();}catch{return null;}
+      if(!b)return false;
+      let s;try{s=coordinator.status();}catch{return null;}
+      if(!receiptCurrent(s,b))return false;
+      try{
+        if(b.installationIdentity!==installationIdentity(host.installation()))return false;
+        if(hash(fingerprint(b.keyFile))!==b.keyFingerprint)return false;
+        if(!lstatSync(b.destination).isDirectory()||realpathSync(b.destination)!==b.destination||installationIdentity(b.destination)!==b.destinationIdentity)return false;
+        return true;
+      }catch(error){return ["ENOENT","ENOTDIR"].includes(error?.code)||error?.message==="BACKUP_REFERENCE_CHANGED"?false:null;}
+    },
     async latestVerifiedArtifact(){
       if(running||activePhases.has(coordinator.status().phase))throw Error("BACKUP_BUSY");
       return currentArtifact();

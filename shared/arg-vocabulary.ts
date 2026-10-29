@@ -305,9 +305,17 @@ export const ENV_PINS: readonly EnvPin[] = [
   { name: "RSYNC_RSH", resolved: true },
   { name: "TERM", value: "dumb" },
   { name: "DEBIAN_FRONTEND", value: "noninteractive" },
+  // 1.0.9 (Astra r5): EMPTY on every platform. An inherited CDPATH moves a relative `cd` (`CDPATH=/dev` puts `cd fd` in
+  // /dev/fd), and the always-ask reader places a script from `cd` with no search. bash, zsh, dash and ksh read an empty
+  // CDPATH as no search list (an empty value names no folder, and nothing is printed), so `cd x` is `./x` as typed.
+  { name: "CDPATH", value: "" },
   { name: "ZDOTDIR", value: "/dev/null", win32: "NUL" },
   { name: "BASH_ENV", absent: true },
   { name: "ENV", absent: true },
+  // 1.0.9 (NOLIMITS-NODE-109-CUT R6, defence in depth): an inherited SHELLOPTS or BASHOPTS turns bash options on at start-up
+  // (`physical` makes `cd` follow links). The always-ask reader allows no `..` in a path, so it does not depend on these.
+  { name: "SHELLOPTS", absent: true },
+  { name: "BASHOPTS", absent: true },
   { name: "CLAUDE_ENV_FILE", absent: true },
   { name: "PYTHONINSPECT", absent: true },
   { name: "POSIXLY_CORRECT", absent: true },

@@ -440,3 +440,20 @@ describe("live transcription flag", () => {
     expect(streamFlagOn({ MURAGE_VOICE_STREAM: "on" })).toBe(true);
   });
 });
+
+describe("malformed request target", () => {
+  it("a target URL() rejects is refused, never thrown out of the upgrade listener", async () => {
+    // upstream af449299b: `GET //[` made `new URL()` throw inside the server's
+    // `upgrade` listener, and the crash observer let the process end
+    const req = { url: "//[", headers: {} } as unknown as Parameters<typeof handleStreamUpgrade>[0];
+    expect(() => handleStreamUpgrade(req, {} as Parameters<typeof handleStreamUpgrade>[1], Buffer.alloc(0), deps)).not.toThrow();
+    expect(handleStreamUpgrade(req, {} as Parameters<typeof handleStreamUpgrade>[1], Buffer.alloc(0), deps)).toBe(false);
+    // over the wire: the socket is dropped and the harness still answers
+    const { connect } = await import("node:net");
+    const sock = connect(port, "127.0.0.1");
+    sock.on("error", () => {});
+    sock.write("GET //[ HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n");
+    await new Promise<void>((r) => sock.once("close", () => r()));
+    expect((await ticket()).status).toBe(200);
+  });
+});

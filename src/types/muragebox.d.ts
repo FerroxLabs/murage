@@ -449,6 +449,11 @@ type SkillRecordingPayload = {
         start(input: { action: "connect" | "replace"; revision: string }): Promise<{ ok: true; status: import("../../shared/flux-connection").FluxConnectionStatus } | { ok: false; code: string; message: string }>;
         cancel(): Promise<void>;
       };
+      /** Bot email: the email:owner desktop sign-in (owner act of turning email on). Never returns a token. */
+      emailOwnerSignin?: {
+        start(): Promise<{ ok: true } | { ok: false; code: string; message: string }>;
+        cancel(): Promise<void>;
+      };
       /** Plan sign-in (ChatGPT, Grok). Never returns a token. */
       modelSignIn?: {
         status(): Promise<{ providers: import("../../shared/model-signin").SignInProviderStatus[]; ready: boolean }>;

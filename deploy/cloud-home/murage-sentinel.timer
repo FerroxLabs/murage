@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Murage Sentinel cadence on a Cloud home: first check a minute after boot, then 120 s after the previous one ends,
+# with up to 15 s of spread. No catch-up after downtime and no wake request.
+[Unit]
+Description=Murage Sentinel health check timer
+
+[Timer]
+OnBootSec=60s
+OnUnitInactiveSec=120s
+RandomizedDelaySec=15s
+AccuracySec=5s
+Unit=murage-sentinel.service
+
+[Install]
+WantedBy=timers.target

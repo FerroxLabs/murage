@@ -8,6 +8,7 @@ public class ScaffoldTest {
     @Test
     public void buildsTheMurageApp() {
         assertEquals("com.murage.mobile", BuildConfig.APPLICATION_ID);
-        assertEquals("1.0.0", BuildConfig.VERSION_NAME);
+        assertEquals("1.0.9", BuildConfig.VERSION_NAME);
+        assertEquals(10009, BuildConfig.VERSION_CODE);
     }
 }

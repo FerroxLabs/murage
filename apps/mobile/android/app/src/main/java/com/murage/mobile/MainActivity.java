@@ -46,6 +46,7 @@ public class MainActivity extends BridgeActivity {
         SplashScreen.installSplashScreen(this);
         registerPlugin(ShellPlugin.class);
         super.onCreate(state);
+        PhoneJobServices.get(this).attach(this, new PhonePermissions(this));
         // Capacitor always loads CapacitorCookies, whose load() makes the WebView's
         // cookie jar the process-wide CookieHandler. Nothing here uses CapacitorHttp
         // or CapacitorCookies, and native HTTP (the probe) must never carry cookies.
@@ -116,8 +117,15 @@ public class MainActivity extends BridgeActivity {
 
     @Override public void onResume() {
         super.onResume();
+        PhoneJobServices.get(this).resumed(this);
+        PhoneShareServices.get(this).foreground();
         recreateIfDead();
         PushRegistrar.get(this).refreshIfDue(); // at most daily: keeps the relay from sweeping an idle registration
+    }
+
+    @Override public void onStop() {
+        PhoneJobServices.get(this).stopped(this);
+        super.onStop();
     }
 
     private void recreateIfDead() {
