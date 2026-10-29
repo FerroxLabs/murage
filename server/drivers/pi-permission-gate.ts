@@ -163,9 +163,9 @@ const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
   // would replace the guard that judges every later call.
   {
     id: "murage-engine-hooks",
-    re: /(?<![\w.-])(?:(?:antigravity-(?:relay|ask|scope)|codex-scope)[. ]*(?:[\\/:]|$|["'\s;|&)>`])|murage-agy-relay|murage-hook\.(?:mjs|cmd|env)\b|ask-hook-[\w.-]*\.cjs\b)/i,
-    read: ["**/native/antigravity-relay/**", "**/native/antigravity-ask/**", "**/native/antigravity-scope/**", "**/native/codex-scope/**", "**/murage-agy-relay*", "**/murage-hook.mjs", "**/murage-hook.cmd", "**/murage-hook.env", "**/ask-hook-*.cjs"],
-    bash: ["*native/antigravity-relay*", "*native/antigravity-ask*", "*native/antigravity-scope*", "*native/codex-scope*", "*murage-agy-relay*", "*murage-hook.mjs*", "*murage-hook.cmd*", "*murage-hook.env*", "*ask-hook-*.cjs*"],
+    re: /(?<![\w.-])(?:(?:antigravity-(?:relay|ask|scope)|codex-scope|fuigo-local-models)[. ]*(?:[\\/:]|$|["'\s;|&)>`])|murage-agy-relay|murage-hook\.(?:mjs|cmd|env)\b|ask-hook-[\w.-]*\.cjs\b)/i,
+    read: ["**/native/antigravity-relay/**", "**/native/antigravity-ask/**", "**/native/antigravity-scope/**", "**/native/codex-scope/**", "**/native/fuigo-local-models/**", "**/murage-agy-relay*", "**/murage-hook.mjs", "**/murage-hook.cmd", "**/murage-hook.env", "**/ask-hook-*.cjs"],
+    bash: ["*native/antigravity-relay*", "*native/antigravity-ask*", "*native/antigravity-scope*", "*native/codex-scope*", "*native/fuigo-local-models*", "*murage-agy-relay*", "*murage-hook.mjs*", "*murage-hook.cmd*", "*murage-hook.env*", "*ask-hook-*.cjs*"],
   },
   // agy 1.4.4 loads the hooks of the workspace's customization root (.agents, .agent, _agents, _agent: hooks.json,
   // plugins.json, plugins/<name>/hooks.json, and agents/*.md, whose front matter can carry hooks) beside Murage's
@@ -203,6 +203,24 @@ const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
     re: /(?:\.fuigo(?![\w-])|FUIGO_HOME)[\s\S]*?(?:(?:config|managed_config|requirements|sandbox)\.toml|permission[^\\/\s"']*\.toml)(?![\w-])|(?:config|managed_config|requirements|sandbox)\.toml(?![\w-])[\s\S]*?(?:\.fuigo(?![\w-])|FUIGO_HOME)/i,
     read: ["~/.fuigo/config.toml", "~/.fuigo/managed_config.toml", "~/.fuigo/requirements.toml", "~/.fuigo/sandbox.toml", "~/.fuigo/sessions/*/permission*.toml", ".fuigo/config.toml"],
     bash: ["*.fuigo/config.toml*", "*.fuigo/managed_config.toml*", "*.fuigo/requirements.toml*", "*.fuigo/sandbox.toml*", "*.fuigo/sessions/*/permission*"],
+  },
+  // FUIGO-SCOPE-1010 G1: the owner's Fuigo and Grok logins are keys, and so is every copy or link of them a bot turn
+  // can reach: the scope's auth.json (Grok links the owner's), a routed home's, the lock beside each, and the file
+  // FUIGO_AUTH_PATH (or a home variable) names. A read is a card at every level, like `.codex/auth.json`.
+  {
+    id: "engine-logins",
+    re: /\.(?:fuigo|grok)[\\/]auth\.json|native[\\/](?:fuigo-scope|grok-scope|provider-turns|grok-provider-context)[\\/][^\s"']*auth\.json|FUIGO_AUTH_PATH|(?:FUIGO|GROK)_HOME\}?[\\/]auth\.json/i,
+    read: ["~/.fuigo/auth.json*", "~/.grok/auth.json*", "**/native/fuigo-scope/**/auth.json*", "**/native/grok-scope/**/auth.json*", "**/native/provider-turns/**/auth.json*", "**/native/grok-provider-context/**/auth.json*"],
+    bash: ["*.fuigo/auth.json*", "*.grok/auth.json*", "*native/fuigo-scope*auth.json*", "*native/grok-scope*auth.json*", "*native/provider-turns*auth.json*", "*native/grok-provider-context*auth.json*", "*FUIGO_AUTH_PATH*", "*FUIGO_HOME*auth.json*", "*GROK_HOME*auth.json*"],
+  },
+  // FUIGO-SCOPE-1010 A2: the files of a bot's Fuigo or Grok home that decide what the engine allows or runs at its next
+  // start (the generated config, the organisation copies, the trust store, the scope marker, session grants, hooks). A
+  // write is a card at every level; the bot's own sessions and saved tool results in the same home are not on this row.
+  {
+    id: "engine-scope-config",
+    re: /native[\\/](?:fuigo|grok)-scope[\\/][^\s"']*?(?:(?:config|requirements|sandbox|trusted_folders)\.toml|managed_config[^\\/\s"']*|\.murage-scope\.json|permission[^\\/\s"']*\.toml|[\\/]hooks(?:[\\/]|$|["'\s]))/i,
+    read: ["**/native/fuigo-scope/**/config.toml", "**/native/fuigo-scope/**/managed_config*", "**/native/fuigo-scope/**/requirements.toml", "**/native/fuigo-scope/**/sandbox.toml", "**/native/fuigo-scope/**/trusted_folders.toml", "**/native/fuigo-scope/**/.murage-scope.json", "**/native/fuigo-scope/**/permission*.toml", "**/native/fuigo-scope/**/hooks/**", "**/native/grok-scope/**/config.toml", "**/native/grok-scope/**/managed_config*", "**/native/grok-scope/**/requirements.toml", "**/native/grok-scope/**/sandbox.toml", "**/native/grok-scope/**/trusted_folders.toml", "**/native/grok-scope/**/.murage-scope.json", "**/native/grok-scope/**/permission*.toml", "**/native/grok-scope/**/hooks/**"],
+    bash: ["*native/fuigo-scope*config.toml*", "*native/fuigo-scope*managed_config*", "*native/fuigo-scope*requirements.toml*", "*native/fuigo-scope*sandbox.toml*", "*native/fuigo-scope*trusted_folders.toml*", "*native/fuigo-scope*.murage-scope.json*", "*native/fuigo-scope*permission*", "*native/fuigo-scope*hooks*", "*native/grok-scope*config.toml*", "*native/grok-scope*managed_config*", "*native/grok-scope*requirements.toml*", "*native/grok-scope*sandbox.toml*", "*native/grok-scope*trusted_folders.toml*", "*native/grok-scope*.murage-scope.json*", "*native/grok-scope*permission*", "*native/grok-scope*hooks*"],
   },
 ];
 
@@ -816,7 +834,7 @@ export const GATE_UNASKED: ReadonlyArray<readonly [string, readonly string[]]> =
   ["own:agents", [
     "list_bots", "get_bot", "check_delegation", "wait_delegation", "get_permission_status", "list_routines", "skills_list",
     "list_reference_packs", "list_prompt_blocks", "get_prompt_block", "list_image_models", "tool_result_read", "murage_help",
-    "project_read_messages", "venue_read_messages",
+    "project_read_messages", "venue_read_messages", "email_list", "email_read",
     "ask_bot", "delegate_bot", "project_assign", "project_accept", "project_card_manage", "project_review_assign",
     "project_criteria", "project_blocked", "project_brief_update", "project_card_update", "project_review_result",
     "project_suggest", "project_summary_update", "project_bring_in",
@@ -824,9 +842,16 @@ export const GATE_UNASKED: ReadonlyArray<readonly [string, readonly string[]]> =
     "project_propose", "propose_outcome", "propose_routine", "propose_routine_action", "request_bot_access", "request_credential", "ask_user", "show_widget", "update_widget",
     "request_browser_connection", "project_done", "add_mcp_server",
     "create_bot", "update_bot", "archive_bot", "restore_bot", "move_bot", "set_team_lead",
-    "send_voice_note", "generate_image", "save_prompt_block", "save_reference_pack",
+    "send_voice_note", "generate_image", "email_send", "email_reply", "email_trust_offer", "save_prompt_block", "save_reference_pack",
   ]],
   ["own:dweb", ["dweb_status", "dweb_repo_status", "dweb_opencode_models"]],
+  // the gate imports nothing of Murage's, so the names are spelled here (a test pins them to PHONE_TOOL_NAMES through OWN_UNASKED)
+  ["own:phoneJobs", [
+    "phone_calendar_read", "phone_calendar_find_free_time", "phone_calendar_add", "phone_calendar_change",
+    "phone_reminders_read", "phone_reminders_add", "phone_reminders_complete",
+    "phone_contacts_search", "phone_contacts_get", "phone_location_get",
+    "phone_alarm_set", "phone_timer_set", "phone_text_compose", "phone_call_dial",
+  ]],
 ];
 function unaskedPair(mountId: string | undefined, tool: string): boolean {
   if (!mountId) return false;

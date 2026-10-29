@@ -229,7 +229,7 @@ describe("grok personal setup isolation", () => {
     expect(existsSync(join(scoped, "sessions"))).toBe(false);
     expect(lstatSync(join(scoped, "config.toml")).isSymbolicLink()).toBe(false);
     // grok reads ~/.agents/skills from HOME, outside GROK_HOME: those are disabled by name in the scoped config
-    expect(readFileSync(join(scoped, "config.toml"), "utf8")).toBe('[models]\ndefault = "grok-4.7"\n\n[skills]\ndisabled = ["shared-dir", "shared-skill"]\n\n[permission]\nask = ["Bash", "Edit", "Write"]\n');
+    expect(readFileSync(join(scoped, "config.toml"), "utf8")).toBe('[models]\ndefault = "grok-4.7"\n\n[skills]\ndisabled = ["shared-dir", "shared-skill"]\n\n[permission]\nask = ["Bash", "Edit", "Write", "Read(**)", "Grep"]\n');
     // grok refreshes the login by resolving the link and renaming onto the TARGET (rig, 1.0.50): the owner's file
     // is updated and the scoped path stays a link
     writeFileSync(join(grok, ".1.tmp"), "REFRESHED");

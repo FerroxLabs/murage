@@ -21,7 +21,7 @@
 // before the `agent` subcommand is silently ACCEPTED and then IGNORED — see
 // the note on `spawnArgs`, which carries the live transcript.
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 
@@ -46,7 +46,10 @@ import {
   mergeLocalInject,
   type LocalHost,
 } from "../local-inject.ts";
-import { quoteToml, readTomlConfigForEdit, removeTomlTables, tomlTables } from "./kimi.ts";
+import { quoteToml } from "./kimi.ts";
+import { FUIGO_LOCAL_PREFIX, fuigoLocalModelDir } from "./fuigo-permission.ts";
+import { scopeFuigoHome } from "./fuigo-scope.ts";
+import { scopedCliHomeRoot } from "../scoped-cli-home.ts";
 import { forceHookGatesOff } from "./hook-gates.ts";
 
 /** CONTRACT with the wiring in flux-routing.ts / builtIn.ts / the picker's
@@ -188,7 +191,18 @@ export function scrubFuigoHandedEnv(
     const kept = Object.entries(child).find(([childName]) => (platform === "win32" ? childName.toUpperCase() === name.toUpperCase() : childName === name));
     if (!kept || kept[1] !== map[name]) delete map[name];
   }
+  // FUIGO-SCOPE-1010 A3: the login pointer and the home are the scope's decision (fuigo-scope.ts setFuigoAuthPath), never the
+  // owner's shell: a Flux-key turn whose captured shell exports FUIGO_AUTH_PATH would otherwise bill the owner's login. Every
+  // spelling of either name goes, and the child's own value (if any) is the one handed on.
+  for (const name of FUIGO_SCOPE_DECIDED_ENV) {
+    const kept = Object.entries(child).find(([childName]) => (platform === "win32" ? childName.toUpperCase() === name : childName === name));
+    deleteEnvNames(map, [name], platform);
+    if (kept && typeof kept[1] === "string") map[name] = kept[1];
+  }
 }
+
+/** Names the bot's scope decides for the turn (FUIGO-SCOPE-1010): the handed map carries the child's value or none. */
+export const FUIGO_SCOPE_DECIDED_ENV = ["FUIGO_AUTH_PATH", "FUIGO_HOME"] as const;
 
 /** The Flux key the child will present, after the scrub, or null. */
 function presentedFuigoKey(env: Record<string, string | undefined>): string | null {
@@ -363,12 +377,30 @@ export function parseFuigoModels(stdout: string): ModelCatalog {
  * 1.0.2 still makes the round trip). A refusal is not an error: core keeps
  * the last usable catalog when this returns no options.
  */
+/** The scope the catalog call runs in: one Murage-owned Fuigo home per owner home, never a bot's. */
+export const FUIGO_CATALOG_SCOPE = "murage-catalog";
+
+/**
+ * FUIGO-SCOPE-1010 P2-catalog (MurageMain ruling): `fuigo models` initialises and rewrites the home it runs in (rig, 1.0.32:
+ * a `[marketplace]` key added to config.toml), so it never runs in the owner's ~/.fuigo. It runs in a Murage-owned home
+ * built by the same scope code as a bot's (filtered owner config, so endpoints and custom models stay; Murage's rules;
+ * the organisation copies). Null when that home cannot be made: then there is no live catalog, never an unscoped call.
+ */
+export function fuigoCatalogEnv(env: Record<string, string | undefined>): Record<string, string | undefined> | null {
+  const scoped = { ...env };
+  try { scopeFuigoHome(scoped, FUIGO_CATALOG_SCOPE); } catch { return null; }
+  if (process.env.MURAGE_CLOUD_ROLE === "home") return scoped; // the Cloud launcher's own home, read-only for the turn
+  return scoped.FUIGO_HOME && scoped.FUIGO_HOME.startsWith(scopedCliHomeRoot("fuigo")) ? scoped : null;
+}
+
 function fetchFuigoModels(
   env: Record<string, string | undefined>,
   config: AcpConfig,
 ): Promise<{ catalog: ModelCatalog; text: string }> {
+  const scoped = fuigoCatalogEnv(env);
+  if (!scoped) return Promise.resolve({ catalog: { default: "", options: [] }, text: "the catalog home could not be set up" });
   return new Promise((resolve) => {
-    execCli(fuigoLaunchFile(env, config), ["models"], { timeout: 10_000, env }, (err, stdout, stderr) => {
+    execCli(fuigoLaunchFile(scoped, config), ["models"], { timeout: 10_000, env: scoped }, (err, stdout, stderr) => {
       const text = `${err?.message ?? ""}\n${stderr ?? ""}\n${stdout ?? ""}`;
       resolve({ catalog: err ? { default: "", options: [] } : parseFuigoModels(stdout), text });
     });
@@ -428,8 +460,6 @@ async function resolveModels(
   return mergeFluxCatalog(await mergeLocalInject(catalog, env), DRIVER_KIND);
 }
 
-/** Prefix of every `[model.*]` table Murage owns in Fuigo's config. */
-const FUIGO_LOCAL_PREFIX = "murage-local-";
 
 /** Stable, bare-safe table name for one server+model. The digest keeps two
  *  model ids that sanitize to the same text apart. */
@@ -461,8 +491,12 @@ function fuigoApiBackend(host: LocalHost, model: string): "chat_completions" | "
 
 /**
  * Spec E1: write a `[model."murage-local-…"]` entry (model, base_url, name,
- * env_key, api_backend, context_window when known) into the config.toml under
- * Fuigo's home (FUIGO_HOME, else ~/.fuigo) and hand back that name for `-m`.
+ * env_key, api_backend, context_window when known) into Murage's own folder
+ * (fuigoLocalModelDir, one file per slug) and hand back that name for `-m`.
+ * FUIGO-SCOPE-1010 V4: the bot's scoped config.toml appends every file of that
+ * folder (fuigo-scope.ts); the owner's ~/.fuigo/config.toml is never written.
+ * resolveTurnModel runs before applyMountEnv, so the file is there before the
+ * scope is built, and it is a rebuild dependency of the scope.
  * Fuigo reads base_url / env_key / api_backend straight off a `[model.*]`
  * override (fuigo-shell config.rs ConfigModelOverride; README "Custom Models"),
  * so no `[model_providers]` table and no default change is needed — Flux
@@ -470,7 +504,6 @@ function fuigoApiBackend(host: LocalHost, model: string): "chat_completions" | "
  * rewritten; a changed one is replaced in place of the old one.
  *
  * The server key goes into the child env under `env_key`, never into the file.
- * A config.toml Murage cannot read is refused, not overwritten (0.1.52 A8).
  */
 export function ensureFuigoLocalModel(modelId: string, env: Record<string, string | undefined> = process.env): string {
   const inject = decodeInjectId(modelId);
@@ -490,32 +523,34 @@ export function ensureFuigoLocalModel(modelId: string, env: Record<string, strin
     ...(window ? [`context_window = ${window}`] : []),
     "",
   ].join("\n");
-  const dir = fuigoHome(env);
-  const path = join(dir, "config.toml");
-  const text = readTomlConfigForEdit(path, env.HOME || env.USERPROFILE || homedir()) ?? "";
-  const existing = tomlTables(text).find((table) => table.name === `model.${slug}`);
-  if (!existing || text.slice(existing.headingStart, existing.end).trim() !== block.trim()) {
-    const { text: without } = removeTomlTables(text, (name) => name === `model.${slug}`);
-    const prefix = without && !without.endsWith("\n") ? `${without}\n\n` : without ? `${without}\n` : "";
+  const dir = fuigoLocalModelDir();
+  const path = join(dir, `${slug}.toml`);
+  let current: string | null = null;
+  try { current = readFileSync(path, "utf8"); } catch { /* not written yet */ }
+  if (current !== block) {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
-    writeFileSync(path, `${prefix}${block}`, { mode: 0o600 });
+    // A2: a temporary file renamed over the name, so a link planted at that name is replaced, never written through.
+    const temporary = `${path}.murage-tmp-${process.pid}`;
+    rmSync(temporary, { force: true });
+    try { writeFileSync(temporary, block, { mode: 0o600, flag: "wx" }); renameSync(temporary, path); } catch (error) { rmSync(temporary, { force: true }); throw error; }
   }
   env[keyEnv] = hostApiKey(host, env);
   return slug;
 }
 
-/** Spec A3: drop every `[model."murage-local-<server>-…"]` table for a removed server. */
+/** Spec A3: drop every `[model."murage-local-<server>-…"]` table for a removed server: its files in Murage's own
+ *  folder, so the next scope rebuild carries none of them (rule 6). Tables earlier versions wrote into the owner's
+ *  ~/.fuigo/config.toml are left there (Murage never writes that file) and are filtered out of every bot's copy. */
 export function removeFuigoLocalHost(
   host: LocalHost,
-  env: Record<string, string | undefined> = process.env,
+  _env: Record<string, string | undefined> = process.env,
 ): "removed" | "absent" {
-  const path = join(fuigoHome(env), "config.toml");
-  const text = readTomlConfigForEdit(path, env.HOME || env.USERPROFILE || homedir());
-  if (text === null) return "absent";
-  const { text: next, removed } = removeTomlTables(text, (name) => name.startsWith(`model.${FUIGO_LOCAL_PREFIX}${host.id}-`));
-  if (!removed) return "absent";
-  writeFileSync(path, next, { mode: 0o600 });
-  return "removed";
+  const dir = fuigoLocalModelDir();
+  let names: string[] = [];
+  try { names = readdirSync(dir); } catch { return "absent"; }
+  const mine = names.filter((name) => name.startsWith(`${FUIGO_LOCAL_PREFIX}${host.id}-`) && name.endsWith(".toml"));
+  for (const name of mine) rmSync(join(dir, name), { force: true });
+  return mine.length ? "removed" : "absent";
 }
 
 /**
@@ -567,9 +602,8 @@ export function isolateFuigoFromExternalMcp(env: Record<string, string | undefin
   }
   // Hooks are the exception to the opt-in rule above: the owner's hooks never run in a bot turn, even when
   // the owner set the gate to 1 (Fuigo 1.0.32 runs them on every run, headless included). See hook-gates.ts.
-  // KNOWN GAP (1.0.7): Fuigo's own ~/.fuigo/hooks has no env gate; HOME/USERPROFILE/FUIGO_HOME stay the
-  // owner's on desktop turns (native login, sessions, tool-result dirs, the bot's git/ssh) until the
-  // Fuigo 1.0.34 managed-hooks-only switch lands.
+  // Fuigo's own ~/.fuigo/hooks have no env gate: a bot turn runs in its own FUIGO_HOME (fuigo-scope.ts,
+  // FUIGO-SCOPE-1010), so the owner's hooks, MCP servers, plugins and session grants are not in it at all.
   forceHookGatesOff(env, "FUIGO");
 }
 
@@ -584,6 +618,13 @@ const support: AcpSupport = {
   // flag. Murage resolves authorized bytes; the transport fixture pins them.
   images: true,
 
+  // `_fuigo/interject` answers `{ status: "queued" }` and echoes `_fuigo/session/interjection`.
+  interjection: {
+    method: "_fuigo/interject",
+    echoes: ["_fuigo/session/interjection", "fuigo/session/interjection"],
+    queueChanged: ["_fuigo/queue/changed", "fuigo/queue/changed"],
+  },
+
   models: STATIC_FUIGO_MODELS,
   resolveModels,
   // A local pick (`host::model`) becomes Murage's own `[model.*]` entry and
@@ -591,6 +632,13 @@ const support: AcpSupport = {
   // because argv is built from this return value; the env key is set on the
   // same child env object the spawn uses. Every other id is passed through.
   resolveTurnModel: (model, env) => (model && decodeInjectId(model) ? ensureFuigoLocalModel(model, env) : model),
+
+  // FUIGO-SCOPE-1010: a bot's Fuigo runs in its own FUIGO_HOME, whose config.toml carries Murage's ask rules, so
+  // every read, search, edit and command reaches Murage's key guard (fuigo-scope.ts). After resolveTurnModel (the
+  // local-model file is written first) and after a provider route (whose own home is never scoped again).
+  scopeKind: "fuigo",
+  applyMountEnv: (env, { botId }) => scopeFuigoHome(env, botId),
+  scopeRoot: (env) => env.FUIGO_HOME,
 
   // `-m <model>` in argv is NOT applied to a session opened with
   // `session/load`: a loaded session keeps the model it had. The engine's own
@@ -688,26 +736,28 @@ const support: AcpSupport = {
    * and it is NOT accepted after `agent`. The combined form below was run
    * live and honoured the model.
    *
-   * Passing `--permission-mode default` explicitly, rather than omitting it,
-   * is deliberate: it pins the non-fullAuto spawn to ASK, so a
-   * `[permissions] mode` a user set in ~/.fuigo/config.toml for their own
-   * terminal cannot silently auto-approve tool calls inside Murage. Murage's
-   * ACP core answers `session/request_permission` itself, fail-closed, and
-   * that only works if the CLI actually asks.
+   * `--permission-mode default` ALWAYS, at every level, never bypassPermissions
+   * (FUIGO-SCOPE-1010): under bypass Fuigo does not prompt for its ask rules on
+   * reads, edits and searches, and in default the bot scope's ask rules
+   * (fuigo-permission.ts) send every shell command, read, edit and search to
+   * Murage, whose key guard holds at every level, No limits included, and whose
+   * levels answer the ordinary ones (core.ts answers a fullAuto turn's asks
+   * itself, allow_once only). Explicit, so a mode a user set for their own
+   * terminal cannot switch it inside Murage.
    *
    * Long form `--reasoning-effort` on purpose, same as grok: `--effort` is
    * declared as a `visible_alias` (fuigo-pager/src/app/cli.rs:273) and an
    * alias is the part a CLI is free to rename.
    */
-  spawnArgs: (config, turn, ctx) => [
+  spawnArgs: (_config, turn, ctx) => [
     "--permission-mode",
-    config.fullAuto ? "bypassPermissions" : "default",
+    "default",
     // Folder trust (1.0.13, FUIGOTRUST1): `--trust` is a top-level flag like
     // --permission-mode (fuigo-pager/src/app/cli.rs `trust`, hidden alias
     // `--trust-folder`) that grants the PROCESS CWD — the same folder the
-    // session/new below names — and persists the grant in the user's own
-    // ~/.fuigo/trusted_folders.toml, so standalone Fuigo agrees with what
-    // the person told Murage. It is passed ONLY when Murage's own record
+    // session/new below names, and persists the grant in the bot's own
+    // scoped trusted_folders.toml (FUIGO-SCOPE-1010; the owner's standalone
+    // Fuigo keeps its own list). It is passed ONLY when Murage's own record
     // says the human trusted this folder (the card, or the folder picker);
     // never from a config default, never in Auto mode on its own. Without
     // it the engine keeps the folder's instructions, MCP servers, skills and

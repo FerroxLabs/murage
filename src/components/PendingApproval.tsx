@@ -79,7 +79,7 @@ export function pendingApprovals(messages: Message[]): Pending[] {
   return messages
     // a publish card carries its own Publish / Not now buttons and is never answered by voice or from the composer
     // a limit offer card is a choice of engine, never a permission (1.0.4 SL-I I5)
-    .filter((m) => m.kind === "options" && m.card?.kind !== "publish" && m.card?.tool !== "murage_limit_offer" && m.card?.requestId && m.card.tool && !m.card.answered && !m.card.dismissed)
+    .filter((m) => m.kind === "options" && m.card?.kind !== "publish" && m.card?.kind !== "email-send" && m.card?.kind !== "email-trust-offer" && m.card?.tool !== "murage_limit_offer" && m.card?.requestId && m.card.tool && !m.card.answered && !m.card.dismissed)
     .map((m) => ({
       message: m,
       requestId: m.card!.requestId!,

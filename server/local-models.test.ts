@@ -5,7 +5,7 @@
 // Every request goes through `guardedFetch`, which only reaches the fake
 // servers started here — the built-in detection ports on this machine
 // (11434, 1234, 8080, 8000, 30000 …) are never contacted.
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -16,6 +16,7 @@ import { LOCAL_DETECTION_TARGETS, type LocalModelsListResponse, type LocalServer
 import { requiresDesktopAuthority } from "./desktop-policy.ts";
 import { ensureDroidInjectModel } from "./drivers/acp/droid.ts";
 import { ensureFuigoLocalModel, fuigoLocalSlug } from "./drivers/acp/fuigo.ts";
+import { fuigoLocalModelDir } from "./drivers/acp/fuigo-permission.ts";
 import { ensureGrokInjectSlug } from "./drivers/acp/grok.ts";
 import { ensureHermesInjectProvider } from "./drivers/acp/hermes.ts";
 import { ensureKimiInjectAlias } from "./drivers/acp/kimi.ts";
@@ -423,7 +424,7 @@ describe("engine writers accept an added server and remove what they wrote (spec
     expect(pi.providers[server.id]!.models[0]).toMatchObject({ contextWindow: 65_536, maxTokens: 16_384 });
     expect(pi.providers[server.id]!.compat).toMatchObject({ supportsDeveloperRole: false, supportsStore: false, maxTokensField: "max_tokens" });
     expect(readFileSync(join(home, ".kimi-code", "config.toml"), "utf8")).toContain("max_context_size = 65536");
-    const fuigoToml = readFileSync(join(home, ".fuigo", "config.toml"), "utf8");
+    const fuigoToml = readFileSync(join(fuigoLocalModelDir(), `${slug}.toml`), "utf8");
     expect(fuigoToml).toContain(`[model."${slug}"]`);
     expect(fuigoToml).toContain(`base_url = "${apiBase}"`);
     expect(fuigoToml).toContain('api_backend = "chat_completions"');
@@ -450,10 +451,11 @@ describe("engine writers accept an added server and remove what they wrote (spec
       join(home, ".factory", "settings.json"),
       join(home, ".kimi-code", "config.toml"),
       join(home, ".grok", "config.toml"),
-      join(home, ".fuigo", "config.toml"),
     ]) {
       expect(readFileSync(file, "utf8"), file).not.toContain(apiBase);
     }
+    // Fuigo's tables live in Murage's own folder (FUIGO-SCOPE-1010 V4): the server's files go with it
+    expect(readdirSync(fuigoLocalModelDir()).filter((name) => name.includes(server.id))).toEqual([]);
     expect(readFileSync(join(home, ".qwen", "settings.json"), "utf8")).toContain("https://api.example.com/v1");
     expect(decodeInjectId(pick)).toBeNull();
     expect(readLocalServers()).toEqual([]);

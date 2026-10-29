@@ -385,8 +385,9 @@ export function engineFolderUnavailable(engine: string, cause?: unknown): ScopeU
   return new ScopeUnavailableError(UNAVAILABLE_MESSAGE, false, { cause, engine });
 }
 /** The owner's settings file that a bot's copy is generated from cannot be read: the copy is removed and the turn is rejected rather than run on stale settings. */
-export function engineConfigInvalid(engine: string, cause?: unknown): ScopeUnavailableError {
-  return new ScopeUnavailableError(`${engine}'s settings file could not be read as valid JSON, so the bot's copy of it was removed and the turn did not start. Fix or remove the file, then try again.`, false, { code: "config-invalid", engine, cause });
+export function engineConfigInvalid(engine: string, cause?: unknown, format: "JSON" | "plain" = "JSON"): ScopeUnavailableError {
+  const read = format === "JSON" ? "could not be read as valid JSON" : "could not be read";
+  return new ScopeUnavailableError(`${engine}'s settings file ${read}, so the bot's copy of it was removed and the turn did not start. Fix or remove the file, then try again.`, false, { code: "config-invalid", engine, cause });
 }
 /** An engine whose version is unknown (the probe failed twice) or older than the first proven one: the turn is rejected and the owner is told to update it. */
 export function engineUpdateRequired(engine: string, found: string | undefined, min: readonly number[]): ScopeUnavailableError {
@@ -618,15 +619,65 @@ export function currentScopeHome(kind: string, path: string, now: number = Date.
   return engineHomeLocked(kind, root, now, true);
 }
 
-/** Write a generated copy by renaming a temporary file over the name: a link or hardlink at that name is replaced, never written through. */
+/** Write a generated copy by renaming a temporary file over the name: a link or hardlink at that name is replaced, never written through
+ *  (nor a link planted at the temporary name: it is removed first and the file is created exclusively). */
 function replaceGenerated(path: string, text: string): void {
   const temporary = `${path}.murage-tmp-${process.pid}`;
   try {
-    writeFileSync(temporary, text, { mode: 0o600 });
+    try { unlinkSync(temporary); } catch { /* none */ }
+    writeFileSync(temporary, text, { mode: 0o600, flag: "wx" });
     renameSync(temporary, path);
   } catch (error) {
     try { unlinkSync(temporary); } catch { /* none */ }
     throw error;
+  }
+}
+
+/**
+ * FUIGO-SCOPE-1010 G2: every folder from DATA_DIR/native down to `path` must be a real directory this process owns. A bot at
+ * Auto or above can `mv` its own engine home aside and link the owner's real one (~/.fuigo, ~/.grok) in its place; a build that
+ * followed that link would write the marker, the lock and the generated config into the owner's home and start the engine there.
+ * Checked with lstat, component by component, so no link is ever followed. A link (or junction) at the scope folder or below it is
+ * removed (the link only, never its target) when `repair` is set, and the scope is then rebuilt from nothing; anything else that
+ * is not a directory we own (a file, another user's folder, a link above the scope folder) refuses the turn.
+ */
+export function assertOwnedScopeChain(path: string, repair: boolean): void {
+  const top = join(DATA_DIR, "native");
+  const rel = relative(top, path);
+  if (rel.startsWith("..") || isAbsolute(rel)) throw new ScopeUnavailableError(UNAVAILABLE_MESSAGE, false);
+  const uid = typeof process.getuid === "function" ? process.getuid() : null;
+  let current = top;
+  const parts = rel === "" ? [] : rel.split(sep);
+  for (let depth = 0; depth <= parts.length; depth++) {
+    if (depth > 0) current = join(current, parts[depth - 1]!);
+    let stat;
+    try { stat = lstatSync(current); } catch { return; } // absent: everything below it is made fresh by mkdir
+    if (stat.isSymbolicLink()) {
+      if (!repair || depth === 0) throw new ScopeUnavailableError(UNAVAILABLE_MESSAGE, true);
+      try { unlinkSync(current); } catch { try { rmdirSync(current); } catch (error) { throw new ScopeUnavailableError(UNAVAILABLE_MESSAGE, false, { cause: error }); } }
+      console.warn(`[scope] a link stood where a bot's engine folder belongs and was removed; the folder is rebuilt: ${current}`);
+      return;
+    }
+    if (!stat.isDirectory() || (uid !== null && stat.uid !== uid)) throw new ScopeUnavailableError(UNAVAILABLE_MESSAGE, false);
+  }
+}
+
+/** The generated copies each build last wrote, by scope root: checked against the disk before every launch (A2). */
+const lastGenerated = new Map<string, { base: string; files: Record<string, string> }>();
+
+/**
+ * FUIGO-SCOPE-1010 A2: a generated copy is security-critical (the bot's `[permission]` table), and the build cache tracks only the
+ * folder and the owner's sources, so a bot that rewrote the copy in place would keep its edit across cached launches. Before every
+ * launch each copy must still be a regular file (not a link) holding exactly what the build wrote; one that is not is replaced.
+ */
+function restoreGenerated(root: string): void {
+  const last = lastGenerated.get(root);
+  if (!last) return;
+  for (const [name, text] of Object.entries(last.files)) {
+    const path = join(last.base, name);
+    let same = false;
+    try { same = lstatSync(path).isFile() && readFileSync(path, "utf8") === text; } catch { /* absent or unreadable: written below */ }
+    if (!same) replaceGenerated(path, text);
   }
 }
 
@@ -640,6 +691,7 @@ function scopeSession(spec: ScopedCliHomeSpec, now: number, resolveGeneration: b
   // Never hand out a scope another process is deleting from, cached or not. Turn paths await awaitScopeStart first.
   // Not just a check: the exclusive lease is TAKEN here and held until the scope is built and its use recorded, so a pruner
   // cannot start (its own acquire fails) between "nobody is pruning" and "this scope is in use".
+  assertOwnedScopeChain(root, true); // G2: never a link anywhere from DATA_DIR/native to the scope folder
   mkdirSync(dirname(root), { recursive: true, mode: 0o700 });
   if (!acquireLease(root)) throw new ScopeUnavailableError(BUSY_MESSAGE, true);
   let result: string;
@@ -647,6 +699,7 @@ function scopeSession(spec: ScopedCliHomeSpec, now: number, resolveGeneration: b
   try {
   result = memoDeps(`${spec.kind}-scope`, id, () => {
     const base = spec.subdir ? join(root, spec.subdir) : root;
+    assertOwnedScopeChain(base, true);
     mkdirSync(base, { recursive: true, mode: 0o700 });
     const state = readMarkerState(root);
     if (state.kind === "unreadable") throw MARKER_UNREADABLE(); // another process is rewriting it, or it is damaged: never rebuilt over, the turn retries
@@ -655,6 +708,7 @@ function scopeSession(spec: ScopedCliHomeSpec, now: number, resolveGeneration: b
     // The generated copies live in the CURRENT generation's own home (a later generation is not a link into generation 0's).
     const genRoot = generationRoot(root, generation);
     const genBase = spec.subdir ? join(genRoot, spec.subdir) : genRoot;
+    assertOwnedScopeChain(genBase, true);
     if (generation > 0) mkdirSync(genBase, { recursive: true, mode: 0o700 });
     // An established generation (an engine was launched on it) never has a login created or relinked in place: a process may hold it.
     const established = earlier?.launched === true; // the marker below declares the scope launched: every build is for a launch
@@ -712,13 +766,18 @@ function scopeSession(spec: ScopedCliHomeSpec, now: number, resolveGeneration: b
     }
     // The generated copies follow the owner's source: written by replacing the file (never through a link or a hardlink that an earlier
     // generation or the owner shares), so a removal or recreation of the source reaches the current generation too.
+    assertOwnedScopeChain(genBase, false);
     for (const [name, text] of Object.entries(generated)) replaceGenerated(join(genBase, name), text);
+    lastGenerated.set(root, { base: genBase, files: generated });
     pathExists(base); // a removed scope is rebuilt on the next turn
     return root;
   });
   // A login shared as a hardlink (no symlink allowed) must still be ONE file with the owner's before the engine starts.
   // When it is not, the scope moves to a new generation (the older one is left exactly as it is).
   home = resolveGeneration ? verifyScopeLogins(result, spec.kind, now) : result;
+  // G2 and A2, on every call (a cached build included): the folder launched is still ours, and its generated copies are the build's.
+  assertOwnedScopeChain(home, false);
+  restoreGenerated(result);
   // the use record (marker mtime) is written while the lease is still ours
   forceTouch(result, now);
   } finally { releaseLease(root); }
