@@ -64,6 +64,17 @@ package's, else the checkout's) before doing anything, and never accept less
 than node 24: the server uses `node:sqlite`. An older runtime is refused with
 the requirement and where it came from, with nothing changed.
 
+### Health checks
+
+`murage start` also runs Murage's health checks as a third owned child: the
+scanner bundled with the server payload (`sentinel/cli.js --watch`), with a
+short environment allowlist and read-only use of `$MURAGE_DATA_DIR/health`. Its
+descriptor and issue history live in `$XDG_STATE_HOME/MurageSentinel/<id>`
+(by default `~/.local/state`), outside the data directory. It stops with the
+harness, and its exit never takes the harness down. Nothing is registered with
+the OS for it, so there is nothing to unregister when the deployment is removed;
+delete that folder to remove the history too.
+
 ### The one door the sidecar does *not* open here
 
 On a desktop the sidecar also opens a **device door on `0.0.0.0:8810`**, so a

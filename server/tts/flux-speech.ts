@@ -111,6 +111,8 @@ export async function readElevenCatalog(endpoint: VoiceEndpoint, call: typeof fe
     const res = await call(`${baseFor(endpoint)}/audio/voices`, {
       method: "GET",
       headers: { authorization: `Bearer ${endpoint.key}`, ...fluxCallHeaders("voice-speech") },
+      // The key must never be replayed to wherever a redirect points.
+      redirect: "error",
       signal: control.signal,
     });
     if (!res.ok) {
@@ -241,6 +243,8 @@ export async function synthesizeClip(text: string, voice: string, endpoint: Voic
         method: "POST",
         headers: { authorization: `Bearer ${endpoint.key}`, "content-type": "application/json", ...(endpoint.via === "flux" ? fluxCallHeaders("voice-speech") : {}) },
         body: JSON.stringify({ model: endpoint.model, input: text, voice: chosen, response_format: "mp3" }),
+        // Neither the key nor the words are replayed to wherever a redirect points.
+        redirect: "error",
         signal: control.signal,
       });
       clearTimeout(timer);

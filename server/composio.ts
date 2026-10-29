@@ -2102,8 +2102,10 @@ async function fetchConnectedServices(cfg: AppConfig): Promise<Record<string, Co
     const response = await brokerRequest(cfg, "/v1/connectors/connected");
     if (!response.ok) await throwStatusFailure(response, "managed inventory");
     const body = connectorServicesResponseSchema.parse(await response.json());
+    // A 200 without a services map is not an inventory: it must never read as "nothing connected" (bot calls free/busy r1).
+    if (!body.services) throw new Error("Connected-app inventory answer had no services list");
     return Object.fromEntries(
-      Object.entries(body.services ?? {}).map(([slug, state]) => [slug, {
+      Object.entries(body.services).map(([slug, state]) => [slug, {
         connected: state.connected,
         pending: state.pending ?? false,
         status: state.status ?? (state.connected ? "ACTIVE" : "not_connected"),

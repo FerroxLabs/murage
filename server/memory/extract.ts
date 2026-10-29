@@ -1,4 +1,5 @@
-import { ExtractionReplyError, extractionOutcomes, type ExtractionFailureReason } from "./extraction-outcomes.ts";
+import { ExtractionReplyError, extractionOutcomes, type ExtractionDeferral, type ExtractionFailureReason } from "./extraction-outcomes.ts";
+import { recordCounter, type ExtractionSettlement } from "../health/counters.ts";
 import { fluxCallHeaders } from "../flux-memory-headers.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
@@ -20,6 +21,9 @@ export interface MemoryGroundingInput { text:string; quote:string; claimType:str
 export interface MemoryExtractionDispatch { policyRevision:string; messages:ReadonlyArray<Readonly<{role:string;content:string}>>; purpose?:"evaluation"|"reflection"|"continuity" }
 export type TextOnlyExtractor=((text:string,maximumOutputTokens:number,signal:AbortSignal,dispatch?:MemoryExtractionDispatch)=>Promise<string>) & {
   learningConnection?:string; learningModel?:()=>string|undefined; reviewOnly?:boolean;
+  /** The health contract's engine category of the transport that answers (health/engine-kind.ts), set by the resolver. Never
+   * inferred from which keys exist. */
+  healthEngine?:import("../../shared/health-protocol.mjs").EngineKind;
   ground?:(input:MemoryGroundingInput,maximumOutputTokens:number,signal:AbortSignal)=>Promise<string>;
 };
 /** What a transport says about one paid reply. A side the provider did not report keeps its full reservation, and the reply counts as
@@ -125,7 +129,8 @@ async function requestMemoryTransport(input:Parameters<typeof requestMemoryExtra
     const refusal=z.object({refusal:z.string().min(1)}).safeParse(choice.message);
     if(refusal.success||stops.some(reason=>reason==="content_filter"||reason==="refusal"))throw new ExtractionReplyError("MEMORY_EXTRACTION_INVALID_RESPONSE","refusal");
     const message=z.object({content:z.string().nullable().optional(),tool_calls:z.array(z.unknown()).optional(),function_call:z.unknown().optional()}).safeParse(choice.message);
-    if(!message.success||message.data.tool_calls?.length||message.data.function_call)throw new ExtractionReplyError("MEMORY_EXTRACTION_INVALID_RESPONSE","schema-mismatch");
+    if(message.success&&(message.data.tool_calls?.length||message.data.function_call))throw new ExtractionReplyError("MEMORY_EXTRACTION_INVALID_RESPONSE","schema-mismatch","tool-call");
+    if(!message.success)throw new ExtractionReplyError("MEMORY_EXTRACTION_INVALID_RESPONSE","schema-mismatch");
     if(!message.data.content?.trim())throw new ExtractionReplyError("MEMORY_EXTRACTION_INVALID_RESPONSE","empty-reply");
     return message.data.content;
   }finally{report();}
@@ -138,20 +143,23 @@ const learningSlot=createInferenceSlot();
 export const continuitySlot=createInferenceSlot();
 
 /** `record` runs inside the reserve transaction only when the call is admitted (consolidate.ts counts attempts with it). */
-export async function extractCandidates(text: string, extractor: TextOnlyExtractor | null, signal: AbortSignal, policy:MemoryEvolutionPolicy=readMemoryEvolutionPolicy(), record?:ReservationRecord, options:{ownerRetry?:boolean}={}) {
-  if(!extractor)return {status:"deferred" as const,reason:"extractor-unavailable",candidates:[]};
+/** `options.shown`: the text the extractor is handed when it differs from the source slice (bot email 5.4: a marked source's slice fenced, kind
+ *  email-derived); candidates are always grounded on the slice itself, so their byte ranges stay the source's. */
+export async function extractCandidates(text: string, extractor: TextOnlyExtractor | null, signal: AbortSignal, policy:MemoryEvolutionPolicy=readMemoryEvolutionPolicy(), record?:ReservationRecord, options:{ownerRetry?:boolean;shown?:string}={}) {
+  if(!extractor){recordCounter("extraction","deferred-unconfigured","none");return {status:"deferred" as const,reason:"extractor-unavailable",candidates:[]};}
   const outcomes=extractionOutcomes.forExtractor(extractor);
-  const defer=(reason:string,retryAfter?:number)=>{extractionOutcomes.deferred(outcomes);return {status:"deferred" as const,reason,candidates:[],retryAfter};};
+  const defer=(reason:string,retryAfter?:number,why:ExtractionDeferral="budget")=>{extractionOutcomes.deferred(outcomes,why);return {status:"deferred" as const,reason,candidates:[],retryAfter};};
   if(!options.ownerRetry&&outcomes.retryAt>Date.now())return defer("extractor-backoff",outcomes.retryAt);
-  if(learningSlot.inFlight)return defer("extractor-busy");
+  if(learningSlot.inFlight)return defer("extractor-busy",undefined,"busy");
   if(!text.trim()||Buffer.byteLength(text)>65536)return defer("source-exceeds-extraction-budget");
-  const messages=Object.freeze(memoryExtractionMessages(text,policy).map(message=>Object.freeze(message)));
+  const messages=Object.freeze(memoryExtractionMessages(options.shown??text,policy).map(message=>Object.freeze(message)));
   const dispatch=Object.freeze({policyRevision:policy.revision,messages});
   const {reserved,output,settle,finish}=reserveExtraction(messages,2000,record);
   if(reserved!==true)return defer(reserved);
   learningSlot.inFlight=true;
+  extractionOutcomes.admitted(outcomes);
   try {
-    const raw=await usageObserver.run(settle,()=>extractor(text,output,AbortSignal.any([signal,AbortSignal.timeout(60000)]),dispatch));
+    const raw=await usageObserver.run(settle,()=>extractor(options.shown??text,output,AbortSignal.any([signal,AbortSignal.timeout(60000)]),dispatch));
     // keep-grounded: one unusable candidate costs only itself, never the whole slice (and its three paid attempts)
     const candidates=parseMemoryExtractionCandidates(text,raw,"keep-grounded");
     extractionOutcomes.completed(outcomes);
@@ -160,7 +168,11 @@ export async function extractCandidates(text: string, extractor: TextOnlyExtract
     // The reason code only (never the reply or the source): a slice that keeps failing says why in the log.
     const reason=extractionFailureReason(error);
     extractionOutcomes.unusable(outcomes,reason);
-    try{console.warn(`[memory] extraction attempt unusable: ${extractionFailureCode(error)} reason=${reason} extractor=${outcomes.extractor} model=${outcomes.model}`);}catch{/* logging is best effort */}
+    // Health counts the same settlement in the transport-independent contract (HTTP and CLI alike): a call the caller
+    // cancelled, a session that ended under it, or an unusable reply by its fixed code. Observation only.
+    const health=extractionHealthOutcome(error,signal.aborted);
+    extractionOutcomes.settled(outcomes,health.outcome,health.code);
+    try{console.warn(`[memory] extraction attempt unusable: ${extractionFailureCode(error)} reason=${reason} extractor=${outcomes.extractor} engine=${outcomes.engine} model=${outcomes.model}`);}catch{/* logging is best effort */}
     return {status:"deferred" as const,reason:"extraction-incomplete",candidates:[],retryAfter:outcomes.retryAt>Date.now()?outcomes.retryAt:undefined};
   }
   finally{try{finish();}finally{learningSlot.inFlight=false;}}
@@ -322,6 +334,26 @@ function extractionFailureReason(error:unknown):ExtractionFailureReason{
   const status=typeof error==="object"&&error!==null&&"status" in error?error.status:undefined;
   if(status===401||status===403||message==="MEMORY_ENGINE_REFUSED")return "refusal";
   return "transport-error";
+}
+/** The health contract's settlement of a failed admitted attempt (GAP-SENTINEL-109 4.2), from fixed codes only: the caller's
+ * own cancel, an engine session that ended under the attempt (interrupted: its outcome is unknown), or an unusable reply split
+ * into not-json|schema|length|tool-call|empty|response-limit|transport|other. HTTP and CLI errors map to the same codes. */
+export function extractionHealthOutcome(error:unknown,cancelled:boolean):{outcome:Exclude<ExtractionSettlement,"complete">;code?:string}{
+  if(cancelled)return {outcome:"cancelled"};
+  if(typeof error==="object"&&error!==null&&(error as {interrupted?:unknown}).interrupted===true)return {outcome:"interrupted"};
+  if(error instanceof ExtractionReplyError){
+    if(error.detail==="tool-call")return {outcome:"unusable",code:"tool-call"};
+    const code=({"empty-reply":"empty","not-json":"not-json","schema-mismatch":"schema","cut-off":"length","transport-error":"transport"} as Record<string,string>)[error.reason];
+    return {outcome:"unusable",code:code??"other"};
+  }
+  if(error instanceof z.ZodError)return {outcome:"unusable",code:"schema"};
+  const message=error instanceof Error?error.message:"";
+  if(message==="MEMORY_EXTRACTION_EMPTY_REPLY")return {outcome:"unusable",code:"empty"};
+  if(message==="MEMORY_EXTRACTION_NOT_JSON")return {outcome:"unusable",code:"not-json"};
+  if(message==="MEMORY_EXTRACTION_RESPONSE_LIMIT")return {outcome:"unusable",code:"response-limit"};
+  if(message==="MEMORY_EXTRACTION_NONE_GROUNDED"||message==="MEMORY_EXTRACTION_INVALID_RESPONSE"||message==="ungrounded span")return {outcome:"unusable",code:"schema"};
+  if(message==="MEMORY_EXTRACTION_LIMIT")return {outcome:"unusable",code:"other"};
+  return {outcome:"unusable",code:"transport"};
 }
 function extractionFailureCode(error:unknown){
   if(error instanceof z.ZodError)return "MEMORY_EXTRACTION_SHAPE_INVALID";

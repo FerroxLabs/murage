@@ -953,6 +953,16 @@ export interface AcpConfig {
 }
 
 /** Per-harness specifics — everything that differs between Grok, Gemini, … */
+/** One engine's names for the mid-turn message contract (see AcpSupport.interjection). */
+export interface AcpInterjection {
+  /** `{ sessionId, text, interjectionId }` -> `{ status: "queued" }` (also double-wrapped). */
+  method: string;
+  /** `{ sessionId, text, interjectionId }` once the engine has taken it. */
+  echoes: readonly string[];
+  /** `{ entries, runningPromptId }`: an `interject-fallback-` turn started, was queued, or the queue went idle. */
+  queueChanged: readonly string[];
+}
+
 export interface AcpSupport {
   driverKind: string;
   /** The engine runs on its own tools and approvals (OpenClaw): Murage hands
@@ -1034,6 +1044,10 @@ export interface AcpSupport {
   /** Whether models behind this ACP harness can consume a referenced image.
    * Most coding agents can open local files; opt out for text-only agents. */
   images?: boolean;
+  /** Messages into a running turn (capabilities.queueing + steer): the engine's
+   * interject request, the echo that confirms one, and its queue rail. Fuigo
+   * and Grok Build (its upstream) share the contract under their own names. */
+  interjection?: AcpInterjection;
   /** Message shown when the CLI is present but not signed in. */
   loginNote: string;
   /** How a user installs this harness's CLI; surfaced by the setup UI. */
@@ -1168,6 +1182,11 @@ export interface AcpSupport {
   classifyError?(error: unknown): ProviderErrorCode | undefined;
   /** Compose the session/prompt text. Default prepends the persona. */
   buildPromptText?(turn: SendTurnInput): string;
+  /** One reading of a permission request's `rawInput`, run once before any reader (the command reader, the card,
+   *  the policy call, the stop line). Undefined: the request is read as sent. `ok: false`: the call could not be
+   *  read and is held as unread (`toolInputMissing`). Hermes: an ask its hook escalated carries a placeholder as
+   *  the command and the real arguments only in the hook's message. */
+  normalizeAsk?(rawInput: unknown): { ok: true; rawInput: Record<string, unknown>; summary: string } | { ok: false; why: string; summary?: string } | undefined;
   /** Rewrite a picker id (`omlx::model`) into the CLI-native id before spawn
    * and session/select. Local inject writers live here so the child sees a
    * model it already knows. */
@@ -1650,7 +1669,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         asks: Map<string, AcpAskFinish>;
         /** A host-computer action the service asks for (support.hostComputerAskedByMurage). */
         askHostAction?: (call: { name: string; arguments?: unknown }, signal?: AbortSignal) => Promise<"allow" | "deny">;
-        /** Fuigo only: put a message into this running turn (`_fuigo/interject`). */
+        /** Engines with support.interjection: put a message into this running turn (`_fuigo/interject`, `_x.ai/interject`). */
         interject?: (text: string, beforeWrite?: () => void, interjectionId?: string) => Promise<SteerDelivery>;
       }
       const active = new Map<string, Turn>();
@@ -1738,6 +1757,11 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         if (browser) {
           servers.push({ name: "browser", command: browser.command, args: browser.args, env: acpEnv(browser.env) });
         }
+        // 1.0.9 S13b: the owner's phone, under the same name every engine uses. The phone confirms each call itself.
+        const phoneJobs = turn.integrations?.phoneJobs;
+        if (phoneJobs) {
+          servers.push({ name: "phoneJobs", command: phoneJobs.command, args: phoneJobs.args, env: acpEnv(phoneJobs.env) });
+        }
         // The bot's computer, mounted exactly like the Claude driver does.
         // Cloud boxes use the REST adapter; host and sandbox Cua connections
         // expose Cua Driver's official MCP server directly.
@@ -1779,6 +1803,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         if (turn.integrations?.memory) own.set(memoryName, "own:memory");
         if (turn.integrations?.composio) own.set(connectedAppsServerName(turn.integrations.composio.env), "own:connector");
         if (turn.integrations?.browser) own.set("browser", "own:browser");
+        if (turn.integrations?.phoneJobs) own.set("phoneJobs", "own:phoneJobs");
         if (turn.integrations?.computer || turn.integrations?.localComputer) own.set("computer", "own:computer");
         const records: McpMountRecord[] = [];
         for (const server of servers) {
@@ -3093,7 +3118,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               message: `${ENGINE} offered no way to ${want === "allow" ? "allow" : "decline"} this request, so Murage cancelled it instead of guessing.`,
             });
 
-          const toolCall = params.toolCall ?? {};
+          const sentToolCall = params.toolCall ?? {};
+          // The engine's own reading of what it sent, once, so every reader below takes the same input.
+          const normalAsk = support.normalizeAsk?.(sentToolCall.rawInput);
+          const toolCall = normalAsk?.ok ? { ...sentToolCall, rawInput: normalAsk.rawInput } : sentToolCall;
           const kind = String(toolCall.kind ?? "");
           // An agent that routes its question tool (e.g. AskUserQuestion)
           // through request_permission names it in the tool call. That tool
@@ -3101,7 +3129,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           // would answer the question with nothing — and the harness receives
           // the tool's own name so its policy recognizes it too.
           const title = String(toolCall.title ?? "");
-          const questionTool = isQuestionTool(title) ? title : isQuestionTool(kind) ? kind : undefined;
+          const questionTool = isQuestionTool(title) ? bareQuestionToolName(title) : isQuestionTool(kind) ? bareQuestionToolName(kind) : undefined;
           if (ownedMemoryAlias && !turnConfig.fullAuto && !questionTool && state.promptSent &&
             sessionId && params.sessionId === sessionId && !state.settled && !state.cancelRequested &&
             Array.from(rpcPending.values()).some(pending => pending.method === "session/prompt")) {
@@ -3132,7 +3160,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           // text, so it only stands in when there is no structured target.
           const commandLine = commandText(toolCall.rawInput?.command);
           const editPaths = !commandLine && (kind === "edit" || kind === "delete" || kind === "move") ? acpToolFilePaths(toolCall) : undefined;
-          const summary = approvalSummary(commandLine ?? (editPaths ? editPaths.join(", ") : String(toolCall.title ?? tool)));
+          const summary = approvalSummary(normalAsk?.summary ?? commandLine ?? (editPaths ? editPaths.join(", ") : String(toolCall.title ?? tool)));
           // The model's title is only a label when the engine named the real
           // target (paths); keep it, marked as the model's, so a move's
           // destination named only in the title is not lost.
@@ -3331,6 +3359,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             // Rules 2, 55: a source that is present but malformed (a rawInput that is not an object, locations that are not a list) makes
             // the whole call unread; it is never dropped or replaced with an empty input.
             ...(() => { const bad = !questionTool && kind ? acpMalformedSource(toolCall) : undefined; return bad ? { toolInputMissing: bad } : {}; })(),
+            // An ask the engine's reader could not read (Hermes: a hook message it does not recognise) is unread.
+            ...(normalAsk && !normalAsk.ok && !questionTool ? { toolInputMissing: normalAsk.why } : {}),
             // Structured, off the wire — never parsed back out of `summary`,
             // which is composed from what the model wrote.
             ...(() => { const filePaths = acpToolFilePaths(toolCall); return filePaths ? { filePaths } : {}; })(),
@@ -3388,7 +3418,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
          *  `interject-fallback-` turn Fuigo runs for it, bounded by the cap. */
         const settleClean = () => {
           if (state.settled) return;
-          if (support.driverKind !== "fuigoAgent" || (!fallback.accepted && interjectionsPending.size === 0)) {
+          if (!support.interjection || (!fallback.accepted && interjectionsPending.size === 0)) {
             settle(true, null);
             return;
           }
@@ -3610,7 +3640,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           // The engine's echo of an interjection. Murage already recorded the
           // steered message when the owner sent it, so the echo only retires
           // the pending id; it never becomes a second user message.
-          if (msg.method === "_fuigo/session/interjection" || msg.method === "fuigo/session/interjection") {
+          if (support.interjection?.echoes.includes(msg.method)) {
             const echoed = msg.params?.interjectionId;
             if (typeof echoed !== "string") return;
             // The echo only retires the id. It is sent when the steer is queued,
@@ -3633,7 +3663,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             fallbackChanged();
             return;
           }
-          if (msg.method === "_fuigo/queue/changed" || msg.method === "fuigo/queue/changed") {
+          if (support.interjection?.queueChanged.includes(msg.method)) {
             handleQueueChanged(msg.params);
             return;
           }
@@ -4049,7 +4079,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             timer = setTimeout(() => resolve({ kind: "timeout" }), ackMs);
             timer.unref?.();
           });
-          const response = request("_fuigo/interject", { sessionId, text, interjectionId }, ackMs).then(
+          const response = request(support.interjection!.method, { sessionId, text, interjectionId }, ackMs).then(
             (res: any) => ({ kind: "response" as const, res }),
             (error: unknown) => ({ kind: "error" as const, error }),
           );
@@ -4187,7 +4217,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         const start = () => {
           if (started) return;
           started = true;
-          active.set(threadId, { stop, interrupt, turnId, asks, ...(support.hostComputerAskedByMurage && controlsHost ? { askHostAction } : {}), ...(support.driverKind === "fuigoAgent" ? { interject } : {}) });
+          active.set(threadId, { stop, interrupt, turnId, asks, ...(support.hostComputerAskedByMurage && controlsHost ? { askHostAction } : {}), ...(support.interjection ? { interject } : {}) });
           emit({ ...base(threadId, turnId), type: "turn.started" });
         };
 
@@ -5215,7 +5245,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             localComputerMcp: !config.fullAuto && !support.ownTools,
             folderTrust: support.folderTrust === true,
             ...(support.textOnlyTurn ? { textOnlyTurn: true as const } : {}),
-            ...(support.driverKind === "fuigoAgent" ? { queueing: true } : {}),
+            ...(support.interjection ? { queueing: true } : {}),
           },
           ...(support.textOnlyTurn ? { textOnlyExecutable: () => support.textOnlyExecutable?.(config) ?? config.cli, textOnlyTurn: (turn: import("../../memory/pip-transport.ts").TextOnlyTurnInput) => support.textOnlyTurn!(turn, config) } : {}),
           sendTurn,
@@ -5291,7 +5321,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             return decision.behavior === "allow" ? "allowed-once" : "rejected";
           },
           hasSession: (threadId) => active.has(threadId),
-          ...(support.driverKind === "fuigoAgent" ? {
+          ...(support.interjection ? {
             // A message into the running turn; "rejected" (the caller queues it)
             // when there is no live, unsettled turn or the engine cannot take it,
             // "uncertain" when Fuigo neither answered nor echoed it in time.
@@ -5325,4 +5355,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
       });
     },
   };
+}
+
+/** The question tool's own name (the last `.` or `/` segment, minus an `mcp__server__` prefix), never the model's whole title. */
+function bareQuestionToolName(raw: string): string {
+  const trimmed = raw.trim().replace(/^mcp__.+__/i, "");
+  return trimmed.split(/[./]/).pop() || trimmed;
 }

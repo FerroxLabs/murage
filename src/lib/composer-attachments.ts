@@ -349,6 +349,24 @@ function hidePastedTextWrappers(text: string): string {
  * transcript, a turn's image collection or a left-out removal treats as one. */
 const ATTACHMENT_TAG = /^[\t ]*<attached-(image|file)\b((?:[\t ]+[A-Za-z_:][\w:.-]*="[^"\r\n]*")*)[\t ]*\/>[\t ]*(?:\r?\n)?/gm;
 
+/** The text with every line that is an attachment tag taken out, by the same rule that reads one back. For words another party wrote
+ * (a phone share's note or text, an ask): only the server's own tags may name a file. */
+export function withoutAttachmentTagLines(text: string): string {
+  // Callers trim the result, so any whitespace (no-break and other Unicode spaces, \v, \f,
+  // U+FEFF) can end up in front of a tag. On each line take off every tag that only
+  // whitespace precedes, then the whitespace after it; a line left blank goes. Lines
+  // with no leading tag keep their indentation.
+  const kept: string[] = [];
+  for (const line of text.split(/\r\n|\n|\r|\u2028|\u2029/)) {
+    let rest = line;
+    while (LEADING_ATTACHMENT_TAG.test(rest)) rest = rest.replace(LEADING_ATTACHMENT_TAG, "").replace(/^\s+/, "");
+    if (rest === line || rest !== "") kept.push(rest);
+  }
+  return kept.join("\n");
+}
+
+const LEADING_ATTACHMENT_TAG = /^\s*<attached-(?:image|file)\b(?:[\t ]+[A-Za-z_:][\w:.-]*="[^"\r\n]*")*[\t ]*\/>/;
+
 /** The decoded path of one tag's attributes, or undefined when it has none. */
 function attachmentTagPath(rawAttributes: string): string | undefined {
   for (const attribute of rawAttributes.matchAll(/\s+([A-Za-z_:][\w:.-]*)="([^"]*)"/g)) {

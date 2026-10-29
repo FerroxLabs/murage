@@ -42,7 +42,8 @@ import { SCAN_DEPTH, SCAN_NODES, SCAN_TOTAL, WRAP_DEPTH } from "./scan-limits.ts
 import { acpToolKey, isMountRecord, isOwnConnector, type McpMountRecord } from "./mount-identity.ts";
 
 /** Which driver filed the ask; its Rule 55 contract table applies. */
-export type EngineKind = "claude" | "codex" | "pi" | "acp" | "antigravity";
+/** "chat": the OpenAI-chat engines (openai-compat, Grok xAI API, minimax), whose MCP asks carry the same facts as Pi's. */
+export type EngineKind = "claude" | "codex" | "pi" | "acp" | "antigravity" | "chat";
 
 /** The engine's own facts about a permission ask (server/contracts.ts
  * request.opened): its structured call, its stamped identity, its ACP kind,

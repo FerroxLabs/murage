@@ -7,6 +7,20 @@
   "count": 1
  },
  {
+  "file": "server/always-ask.ts",
+  "function": "head",
+  "callee": "openSync",
+  "root": "workspace",
+  "count": 1
+ },
+ {
+  "file": "server/always-ask.ts",
+  "function": "head",
+  "callee": "readSync",
+  "root": "workspace",
+  "count": 1
+ },
+ {
   "file": "server/announcements.ts",
   "function": "image",
   "callee": "readFileSync",
@@ -1030,6 +1044,13 @@
  },
  {
   "file": "server/drivers/acp/hermes.ts",
+  "function": "hermesOwnerAllowlistedHooks",
+  "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 2
+ },
+ {
+  "file": "server/drivers/acp/hermes.ts",
   "function": "overlayBase",
   "callee": "readFileSync",
   "root": "engine-home",
@@ -1165,6 +1186,13 @@
   "file": "server/drivers/antigravity.ts",
   "function": "sendTurn",
   "callee": "readFileSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/chat-mcp-client.ts",
+  "function": "linuxZombie",
+  "callee": "readFile",
   "root": "engine-home",
   "count": 1
  },
@@ -1736,6 +1764,55 @@
   "count": 2
  },
  {
+  "file": "server/health/publisher.ts",
+  "function": "append",
+  "callee": "open",
+  "root": "health",
+  "count": 1
+ },
+ {
+  "file": "server/health/publisher.ts",
+  "function": "loadTokenKey",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/health/publisher.ts",
+  "function": "read",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/health/publisher.ts",
+  "function": "read",
+  "callee": "readSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/health/publisher.ts",
+  "function": "readTail",
+  "callee": "openSync",
+  "root": "health",
+  "count": 1
+ },
+ {
+  "file": "server/health/publisher.ts",
+  "function": "readTail",
+  "callee": "readSync",
+  "root": "health",
+  "count": 1
+ },
+ {
+  "file": "server/health/publisher.ts",
+  "function": "replaceManifest",
+  "callee": "openSync",
+  "root": "health",
+  "count": 1
+ },
+ {
   "file": "server/hermes-profiles.ts",
   "function": "readSmall",
   "callee": "readFileSync",
@@ -1768,6 +1845,13 @@
   "function": "openPowerFilter",
   "callee": "openSync",
   "root": "app-resources",
+  "count": 1
+ },
+ {
+  "file": "server/host-power.ts",
+  "function": "readKernelSetting",
+  "callee": "readFileSync",
+  "root": "kernel-settings",
   "count": 1
  },
  {
@@ -2597,6 +2681,20 @@
   "count": 1
  },
  {
+  "file": "server/phones/revocation-tombstone.ts",
+  "function": "readAskTombstone",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/phones/revocation-tombstone.ts",
+  "function": "readTombstone",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
   "file": "server/pid1-reaper-check.ts",
   "function": "readPid1Comm",
   "callee": "readFileSync",
@@ -2776,6 +2874,83 @@
   "function": "loadFile",
   "callee": "readFileSync",
   "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/sentinel/delivery.ts",
+  "function": "read",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/sentinel/paths.ts",
+  "function": "openVerified",
+  "callee": "openSync",
+  "root": "health-or-sentinel-output",
+  "count": 1
+ },
+ {
+  "file": "server/sentinel/paths.ts",
+  "function": "readSmallVerified",
+  "callee": "readSync",
+  "root": "health-or-sentinel-output",
+  "count": 1
+ },
+ {
+  "file": "server/sentinel/publication.ts",
+  "function": "readPublishedView",
+  "callee": "readFileSync",
+  "root": "sentinel-output",
+  "count": 1
+ },
+ {
+  "file": "server/sentinel/scan-fixtures.ts",
+  "function": "writeStats",
+  "callee": "readFileSync",
+  "root": "test-harness",
+  "count": 1
+ },
+ {
+  "file": "server/sentinel/scan.ts",
+  "function": "acquireLease",
+  "callee": "openSync",
+  "root": "sentinel-output",
+  "count": 1
+ },
+ {
+  "file": "server/sentinel/scan.ts",
+  "function": "readFailuresFile",
+  "callee": "readFileSync",
+  "root": "sentinel-output",
+  "count": 1
+ },
+ {
+  "file": "server/sentinel/sources.ts",
+  "function": "prefixDigest",
+  "callee": "readSync",
+  "root": "health",
+  "count": 1
+ },
+ {
+  "file": "server/sentinel/sources.ts",
+  "function": "readSegment",
+  "callee": "readSync",
+  "root": "health",
+  "count": 3
+ },
+ {
+  "file": "server/sentinel/store.ts",
+  "function": "open",
+  "callee": "openSync",
+  "root": "sentinel-output",
+  "count": 1
+ },
+ {
+  "file": "server/sentinel/win-acl.ts",
+  "function": "windowsAclCheck",
+  "callee": "readFileSync",
+  "root": "system-tool-output",
   "count": 1
  },
  {

@@ -47,7 +47,7 @@
 
 import { ENGINE_LOGIN_PATH } from "./cloud-home/engine-login-engines.ts";
 
-export type RouteClass = "desktop" | "conversation" | "companion" | "internal" | "media" | "extension" | "health" | "engine-login";
+export type RouteClass = "desktop" | "conversation" | "companion" | "internal" | "media" | "extension" | "health" | "engine-login" | "phone";
 export interface RoutePolicyEntry {
   methods: readonly string[] | "*";
   path: string | RegExp;
@@ -57,12 +57,21 @@ export interface RoutePolicyEntry {
    * purpose without additional authority; unknown write entries fail closed. */
   cloudWrite?: "ordinary" | "step-up" | "credential" | "body" | "browser-step-up";
   /** The lane whose routes these are, before it merges. */
-  arrives?: "L6" | "L7" | "B2";
+  arrives?: "L6" | "L7" | "B2" | "P109";
 }
 
 export const DESKTOP_ONLY_SENTENCE = "This needs the Murage app on your computer.";
 
 const ID = String.raw`[\w-]+`;
+
+/** Sentinel's owner reads (server/sentinel/owner-api.ts): GET /api/sentinel/summary and /api/sentinel/issues. */
+export const SENTINEL_OWNER_ROUTE = /^\/api\/sentinel\/(?:summary|issues)$/;
+const SENTINEL_CLOUD_OWNER_SCOPES = new Set(["owner-desktop", "owner-phone", "owner-browser"]);
+/** The explicit owner-scoped Cloud rule for Sentinel reads: an owner session may GET; a remembered or chat-only browser,
+ *  the service listener, an anonymous caller and every write are refused. */
+export function sentinelCloudDecision(method: string, scope: string): "allow" | "deny" {
+  return method === "GET" && SENTINEL_CLOUD_OWNER_SCOPES.has(scope) ? "allow" : "deny";
+}
 const re = (source: string) => new RegExp(`^${source}$`);
 
 /** A remembered-owner browser reads the desktop-class owner reads named here (plus the chat-browser classes and the
@@ -89,6 +98,12 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: "*", path: "/api/desktop/resource-ticket", class: "desktop", cloudWrite: "ordinary", why: "POST only (the handler answers 404 otherwise): the desktop window's single-use ticket for one URL-loaded resource (EventSource, image, download link), so the launch proof never rides in a URL; the handler answers 404 on a cloud home" },
   { methods: ["GET"], path: "/api/desktop-secret", class: "health", why: "dev launches only: hands the renderer this launch's secret, and answers 404 whenever the harness is a packaged child (devDesktopSecretOffered)" },
 
+  // ── Sentinel: owner-only Health reads (GAP-SENTINEL-109 section 7) ─────
+  // The desktop owner class, never `health`: installation-wide health is the owner's alone. The handler refuses every
+  // method but GET and every caller that is not the owner (server/sentinel/owner-api.ts); on a Cloud home
+  // cloudRouteDecision admits only owner sessions (sentinelCloudDecision).
+  { methods: "*", path: SENTINEL_OWNER_ROUTE, class: "desktop", cloudWrite: "ordinary", why: "the owner's Health summary and issue pages from Sentinel's last committed view: read-only, fixed filters, no raw evidence, never starts a scan" },
+
   // ── internal: a bot's own capability ─────────────────────────────────
   { methods: "*", path: /^\/api\/model-gateway(?:\/|$)/, class: "internal", cloudWrite: "ordinary", why: "the plan sign-in model gateway (server/model-gateway.ts): an engine inside a bot's turn, proved by its per-turn gateway key; handled before this gate and answers 401 without one" },
   { methods: "*", path: /^\/api\/internal(?:\/|$)/, class: "internal", cloudWrite: "ordinary", why: "the agents, connectors, computer and memory proxies inside a bot's turn; the block answers 401 without a live capability and 403 for the wrong kind or a channel person's refused route" },
@@ -114,7 +129,27 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["POST"], path: re(`/api/groups/${ID}/requests/${ID}/(?:cancel|retry)`), class: "companion", cloudWrite: "ordinary", why: "cancel a waiting request, or ask again after one that ended" },
   { methods: ["POST"], path: re(`/api/groups/${ID}/project/control/(?:stop|pause|resume|redirect)`), class: "companion", cloudWrite: "ordinary", why: "project-wide Stop all, pause, resume and a steering note to the lead: owner-proved (a conversation caller keeps the per-room interrupt)" },
   { methods: "*", path: /^\/api\/bots\/[^/]+\/browser(?:\/frame)?$/, class: "companion", cloudWrite: "ordinary", why: "watching and steering a bot's browser from the phone, for a bot its sidebar shows" },
+  // Bot calls 1.0.9 (docs/contracts/calls-109.yaml): owner routes, the desktop or the phone's companion proof; never a bot.
+  { methods: ["GET"], path: "/api/calls/active", class: "companion", why: "the ringing call and the live sessions, for the conversations the caller sees" },
+  { methods: ["GET"], path: "/api/calls/history", class: "companion", why: "past calls, for the conversations the caller sees" },
+  { methods: ["POST"], path: "/api/calls/off-today", class: "companion", cloudWrite: "ordinary", why: "Calls off for today, owner-wide until local midnight; it returns no names or text" },
+  { methods: ["POST"], path: "/api/calls/turn-end", class: "companion", cloudWrite: "ordinary", why: "Call me when this finishes: marks the running turn of a conversation the caller can see; it returns only ids" },
+  { methods: ["POST"], path: "/api/calls/rearm", class: "companion", cloudWrite: "ordinary", why: "Turn calls back on after a restore, with the current restore token" },
+  { methods: ["POST"], path: "/api/calls/sessions", class: "companion", cloudWrite: "ordinary", why: "the owner opens a call with a bot" },
+  { methods: ["POST"], path: /^\/api\/calls\/sessions\/[\w-]{1,64}\/(?:ticket|end)$/, class: "companion", cloudWrite: "ordinary", why: "the call channel's single-use ticket, and ending a call" },
+  { methods: ["POST"], path: /^\/api\/calls\/[0-9a-f-]{36}\/(?:answer|decline|text-instead|never-again|seen)$/, class: "companion", cloudWrite: "ordinary", why: "the owner answers, declines or settles a bot's call" },
+  { methods: ["GET"], path: /^\/api\/calls\/[0-9a-f-]{36}(?:\/opener)?$/, class: "companion", why: "one call and its opener, in the unlocked app" },
+  { methods: ["GET", "PUT"], path: re(`/api/bots/${ID}/calls/rules`), class: "companion", cloudWrite: "ordinary", why: "the owner's call rules for one bot; restore holds are never taken from input" },
+  { methods: "*", path: /^\/api\/calls\/sessions\/[\w-]{1,64}\/live$/, class: "companion", cloudWrite: "ordinary", why: "the call channel: a websocket served at upgrade behind a single-use ticket bound to the session's device; never an HTTP route" },
+  { methods: ["PATCH"], path: /^\/api\/phone\/bindings\/[\w-]{1,64}$/, class: "companion", cloudWrite: "ordinary", why: "Rings for calls, on one phone" },
   { methods: ["POST"], path: "/api/presence", class: "companion", cloudWrite: "ordinary", why: "a visible desktop or browser tab telling the host someone is at the desk (mobile/v1 H3)" },
+  { methods: "*", path: /^\/api\/phones\/self(?:\/|$)/, class: "phone", cloudWrite: "ordinary", why: "the phone's native runner, proved by the door's phone envelope; the route refuses everyone else, the desktop included" },
+  { methods: ["POST"], path: "/api/phones/revoke", class: "companion", cloudWrite: "ordinary", why: "the companion tells the harness a phone was removed or switched off, so its registration is dropped and the device barred" },
+  { methods: ["POST"], path: "/api/phones/ask-revoke", class: "companion", cloudWrite: "ordinary", why: "the companion tells the harness a phone's share and ask access was removed or switched off, so its ask credential generation is barred (1.0.9 share and ask)" },
+  { methods: ["POST"], path: "/api/phones/minted", class: "companion", cloudWrite: "ordinary", why: "the companion reports a phone job credential it minted, so the harness can match it to a registered device" },
+  { methods: ["GET"], path: "/api/phones", class: "desktop", why: "the owner's desktop lists the registered phones and what each can do" },
+  { methods: ["GET"], path: "/api/phones/offered", class: "companion", why: "the door asks before it mints a phone-jobs token" },
+  { methods: "*", path: /^\/api\/email(?:\/|$)/, class: "companion", cloudWrite: "step-up", why: "bot email owner routes (email/owner-routes.ts): the account switch answers the desktop only, every phone act carries a fresh device proof, and a bot or engine credential is refused first (F18)" },
   { methods: "*", path: /^\/api\/mobile\/push\//, class: "companion", cloudWrite: "ordinary", why: "push enrolment and notification actions, each proved by the companion door (mobile/v1)" },
   { methods: "*", path: re(`/api/threads/${ID}/browser-setup/${ID}`), class: "companion", cloudWrite: "ordinary", why: "answering a bot's browser setup card, like any card: the desktop or the paired phone (mayApprove)" },
   { methods: "*", path: /^\/api\/bots\/[^/]+\/browser-extension$/, class: "companion", cloudWrite: "ordinary", why: "connecting, pausing or stopping a bot's Murage for Chrome session: the desktop or the paired phone (mayApprove)" },
@@ -343,7 +378,7 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
  * desktop gets the same answer for a hidden bot or a bot-to-bot room as for
  * one that does not exist (visibleToCompanion), whatever the route. */
 export function conversationSubject(target: string): { scope: "bot"; botId: string } | { scope: "group"; groupId: string } | null {
-  const bot = /^\/api\/bots\/([\w-]+)\/(?:messages(?:\/[\w-]+\/edit)?|interrupt|message-allow|read|warm|typing|active-branch|engine-commands|avatar\/generate|profile|respond|cards\/[\w-]+|skills|browser-extension(?:\/(?:activity|mode|sites))?|work-threads|tasks(?:\/[\w-]+)?)$/.exec(target);
+  const bot = /^\/api\/bots\/([\w-]+)\/(?:messages(?:\/[\w-]+\/edit)?|calls\/rules|interrupt|message-allow|read|warm|typing|active-branch|engine-commands|avatar\/generate|profile|respond|cards\/[\w-]+|skills|browser-extension(?:\/(?:activity|mode|sites))?|work-threads|tasks(?:\/[\w-]+)?)$/.exec(target);
   if (bot) return { scope: "bot", botId: bot[1]! };
   const group = /^\/api\/groups\/([\w-]+)\/(?:messages|interrupt|read|tasks(?:\/[\w-]+)?|project(?:\/[\w-]+)*|board(?:\/[\w-]+)*|activity|usage|requests(?:\/[\w-]+)*)$/.exec(target);
   if (group) return { scope: "group", groupId: group[1]! };
@@ -390,6 +425,7 @@ export function routeAdmits(routeClassName: RouteClass, caller: RouteCaller): bo
   // bot's shell must not read the fleet, transcripts or search, or send into
   // and stop other bots' conversations.
   if (routeClassName === "conversation") return caller.companion || caller.door;
+  // phone: the proof lives in the route (phoneCaller on the door's phone envelope), like internal.
   return true;
 }
 
@@ -423,6 +459,8 @@ export function cloudRouteDecision(method: string, targetRoute: string, scope: i
   const entry = routePolicy(method,targetRoute);
   const write = !["GET","HEAD","OPTIONS"].includes(method);
   if (targetRoute === "/api/desktop-secret") return "deny";
+  // Installation-wide health is the owner's alone, whatever a scope may read elsewhere.
+  if (SENTINEL_OWNER_ROUTE.test(targetRoute)) return sentinelCloudDecision(method, scope);
   // Remove deletes files for good: local desktop only, never a Cloud home (1.0.4 SL-H)
   if (targetRoute === "/api/storage/attachments/remove") return "deny";
   const credential = write && entry?.cloudWrite === "credential";

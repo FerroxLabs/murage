@@ -1,0 +1,15 @@
+"What do you want to ask?" = "你想问什么？";
+"What do you want to ask %@?" = "你想问%@什么？";
+"Sent to %@. I'll let you know when it answers." = "已发送给%@。收到回复后我会通知你。";
+"Sent to %@. The answer will be in your chat." = "已发送给%@。回复会显示在你的聊天中。";
+"Murage can't reach your computer right now." = "Murage现在无法连接到你的电脑。";
+"Open Murage to set up asking." = "打开Murage以设置提问功能。";
+"Update Murage on your computer to use this." = "更新电脑上的Murage以使用此功能。";
+"That chat is no longer available. Open Murage to pick another." = "该聊天已不可用。打开Murage以选择其他聊天。";
+"Say open Murage to continue." = "说“打开Murage”以继续。";
+"Open in Murage" = "在Murage中打开";
+"Ask in Murage" = "在Murage中提问";
+"Ask Murage" = "询问Murage";
+"Ask a bot" = "询问机器人";
+"Open my chat" = "打开我的聊天";
+"From" = "来自";
