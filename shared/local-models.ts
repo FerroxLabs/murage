@@ -577,9 +577,11 @@ export function isLocalToolTestResult(value: unknown): value is LocalToolTestRes
 /** Which API surface an engine needs from a local server. */
 export type LocalEngineSurface = keyof LocalToolSurfaces;
 
-/** Engines that run tools themselves against a local server. Absent engines
- *  (Antigravity, OpenClaw, Cursor, Gemini, customAcp, openai-compat, grok API) are not
- *  offered local server rows at all — no dead ends (spec UX rule). */
+/** Engines that run tools themselves against a local server, each on the API
+ *  surface its tools test must pass. openai-compat also reaches local servers
+ *  and sends them tools, but lists every model untested (ANY_MODEL_DRIVERS).
+ *  Absent engines (Antigravity, OpenClaw, Cursor, Gemini, customAcp, grok API)
+ *  are not offered local server rows at all, so there are no dead ends (spec UX rule). */
 export const LOCAL_ENGINE_SURFACE: Record<string, LocalEngineSurface> = {
   fuigoAgent: "chat",
   piAgent: "chat",
@@ -615,17 +617,20 @@ export function localEngineLabel(driver: string): string {
 export type LocalEngineSupport =
   /** Runs tools on local models (with a matching surface). */
   | "tools"
-  /** Can talk to a local server but only chats: no tools, no agents. */
-  | "chat-only"
+  /** Runs tools on local models too (OPENAI-TOOLS-109), and lists every live
+   *  local model whatever its tools test said: a model that refuses tools is
+   *  remembered and answers in text, so a role-play model still chats. */
+  | "any-model"
   /** Cannot use a local server. */
   | "none";
 
-/** Chat-only drivers: they reach a server but never send tools (spec E4). */
-export const CHAT_ONLY_DRIVERS: readonly string[] = ["openai-compat", "grok"];
+/** Drivers that list every Local models row, tested or not (spec E4). The
+ *  grok API driver has no local endpoint at all, so it is not one of them. */
+export const ANY_MODEL_DRIVERS: readonly string[] = ["openai-compat"];
 
 export function localEngineSupport(driver: string): LocalEngineSupport {
   if (LOCAL_ENGINE_SURFACE[driver]) return "tools";
-  if (CHAT_ONLY_DRIVERS.includes(driver)) return "chat-only";
+  if (ANY_MODEL_DRIVERS.includes(driver)) return "any-model";
   return "none";
 }
 

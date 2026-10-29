@@ -134,7 +134,8 @@ interface RuntimeOptions<Config> {
   retryScale?: number;
   /** A model this runtime serves from a Local models server instead of
    *  apiUrl: that server's endpoint, key and API model id. The request body is
-   *  the same either way, so no tools are ever sent. */
+   *  the same either way, tools included: a local model gets the mounted tools
+   *  like any other (and the announced-action nudge, nudgeOn below). */
   localEndpoint?: (model: string) => LocalChatEndpoint | null;
   /** OPENAI-TOOLS-109 s2: real tool calling (default true). False keeps today's text-only turns. */
   tools?: boolean;

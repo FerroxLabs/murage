@@ -34,6 +34,13 @@ Start Murage, then configure the MCP client to run:
 Release builds bundle `server/mcp-server.js` and can run it with Electron's embedded Node runtime, so users do
 not need Node.js or pnpm installed.
 
+The installed app keeps no standing key, so first make script access for one bot (see Connection discovery
+below): **Settings → Devices → Advanced → Scripts and other apps**, switch on "Let scripts use a bot", pick
+the bot, choose whether it may also send, and copy the token Murage shows once. Every packaged config then
+carries that token in `MURAGE_TOKEN` and the port in `MURAGE_PORT` (`8799` unless another program held it at
+start, then `18799` or `28799`). A token is refused without an explicit port or URL, so it is never sent while
+probing.
+
 macOS example:
 
 ```json
@@ -42,18 +49,23 @@ macOS example:
     "murage": {
       "command": "/Applications/Murage.app/Contents/MacOS/Murage",
       "args": ["/Applications/Murage.app/Contents/Resources/server/mcp-server.js"],
-      "env": { "ELECTRON_RUN_AS_NODE": "1" }
+      "env": {
+        "ELECTRON_RUN_AS_NODE": "1",
+        "MURAGE_TOKEN": "mcpg_paste-the-token-here",
+        "MURAGE_PORT": "8799"
+      }
     }
   }
 }
 ```
 
 On Windows, use the installed `Murage.exe` as `command`, the adjacent
-`resources\\server\\mcp-server.js` as the argument, and the same `ELECTRON_RUN_AS_NODE=1` environment value.
-The usual per-user install is under `%LOCALAPPDATA%\\Programs\\Murage`.
+`resources\\server\\mcp-server.js` as the argument, and the same three environment values
+(`ELECTRON_RUN_AS_NODE=1`, `MURAGE_TOKEN`, `MURAGE_PORT`). The usual per-user install is under
+`%LOCALAPPDATA%\\Programs\\Murage`.
 
 On Ubuntu `.deb` installs, the executable is normally `/opt/Murage/murage` and the script is
-`/opt/Murage/resources/server/mcp-server.js`. Use the same environment value.
+`/opt/Murage/resources/server/mcp-server.js`. Use the same three environment values.
 
 ## Connection discovery
 
@@ -64,7 +76,8 @@ fallback when another local process already owns port 8799.
 The harness answers its conversation routes (the fleet, transcripts, search) only to a caller that proved who
 it is, so a script on the same computer cannot read them just by reaching the port. The packaged app and the
 headless install keep no standing key on disk. Instead you make script access for one bot: in Murage, open
-Settings, switch on "Let scripts use a bot", pick the bot, and choose whether it may also send. Murage shows the
+**Settings → Devices → Advanced → Scripts and other apps** (on a headless install, Settings → General in your
+browser), switch on "Let scripts use a bot", pick the bot, and choose whether it may also send. Murage shows the
 token once; put it in `MURAGE_TOKEN` and set `MURAGE_PORT` (or `MURAGE_URL`). The harness keeps only a hash of
 the token, so nothing a bot can read in the data folder opens a door. The token reads that bot's conversation
 and, if you allowed it, sends to that bot or stops its turn; it cannot reach other bots, rooms, search or any
@@ -88,6 +101,23 @@ local ports. `MURAGE_MCP_TIMEOUT_MS` can set an HTTP timeout between 1,000 and 1
 | Inspect | `get_system_health`, `list_bots`, `list_channels`, `get_bot_messages`, `get_channel_messages`, `search_messages`, `list_available_models` |
 | Create and organize | `create_bot`, `update_bot_profile`, `create_channel`, `update_channel`, `create_task`, `switch_task`, `rename_task` |
 | Run work | `send_bot_message`, `send_channel_message`, `wait_for_conversation`, `interrupt_conversation`, `set_bot_model` |
+
+### What a one-bot token reaches
+
+A script-access token opens only the routes in `server/mcp-grants.ts` (`mcpGrantAdmits`), all for its one bot:
+
+| Tool | With a read token | With a read-and-send token |
+|---|---|---|
+| `get_system_health` | yes | yes |
+| `list_bots` | lists that bot only | lists that bot only |
+| `get_bot_messages` | that bot's conversations | that bot's conversations |
+| `wait_for_conversation` | that bot's conversations | that bot's conversations |
+| `send_bot_message` | no | yes |
+| `interrupt_conversation` | no | that bot only |
+
+Every other tool (channels, search, creating or editing bots and tasks, models) gets the unknown-route answer.
+`get_bot_messages` and `wait_for_conversation` reach the tasks the bot record lists; an older task outside that
+window needs the task lookup route, which a token does not open. A token never approves anything.
 
 `wait_for_conversation` returns `settled`, `needs-user`, `failed`, `stalled`, or `timed-out`, along with a
 small redacted transcript tail. MCP cancellation is honored while a tool is waiting.

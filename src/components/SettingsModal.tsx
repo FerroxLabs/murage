@@ -244,7 +244,9 @@ export function updatesStatusLine(s: UpdaterState | null): string {
   );
 }
 
-/** The one button for the update in hand: Check, Download, Restart and install, Try again. Shared by the Updates row and the About card. */
+/** The one button for the update in hand: Check, Download, Restart and install, Try again. The About card carries it (the
+ *  page's only update control since 1.0.10). UpdatesRow is no longer on a page; it stays exported because the update-state
+ *  tests and the localization spec render it to check the shared button and status line. */
 function UpdateActionButton({ state: s }: { state: UpdaterState | null }) {
   const updater = window.muragebox?.updater;
   if (!updater || s?.status === "deferred") return null;
@@ -751,7 +753,9 @@ function AboutVersionCard() {
   return (
     <Card title={t("settings.about.versionTitle", { version })} subtitle={window.muragebox?.updater ? updatesStatusLine(s) : undefined}>
       <div className="flex flex-wrap items-center gap-2">
-        <UpdateActionButton state={s} />
+        {/* The page's one update control, as the sidebar footer has one: the version, where the update stands and the
+            action share this card. The "updates" search card lands here; a Cloud window has no updater, so no button. */}
+        {!cloudCardHidden("updates-heading") && <Anchor id="updates-heading"><UpdateActionButton state={s} /></Anchor>}
         {desktop === true && (
           <button
             type="button"
@@ -1322,7 +1326,6 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
             {section === "about" && (
               <>
                 <Anchor id="about-version-heading"><AboutVersionCard /></Anchor>
-                {window.muragebox?.updater && !cloudCardHidden("updates-heading", cloud) && <Anchor id="updates-heading"><UpdatesRow /></Anchor>}
                 {desktop === true && <Anchor id="whats-new-heading"><WhatsNewRow /></Anchor>}
                 {desktop === true && <Anchor id="news-heading"><NewsSignupSettings /></Anchor>}
                 {desktop === true && !cloudCardHidden("setup-heading", cloud) && <Anchor id="setup-heading"><SetupAgainRow /></Anchor>}
