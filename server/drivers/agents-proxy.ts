@@ -811,19 +811,18 @@ const rpcErr = (id: unknown, code: number, message: string) => send({ jsonrpc: "
 const textResult = (id: unknown, text: string, isError = false) =>
   ok(id, { content: [{ type: "text", text }], isError });
 
-/** 15-minute approval wait (server/image-operations.ts IMAGE_APPROVAL_TIMEOUT_MS),
- * the 30-minute render ceiling (server/image-delivery.ts RENDER_CEILING_MS)
- * and a 5-minute margin, so the proxy never gives up on a render first. */
-const GENERATE_IMAGE_DEFAULT_WAIT_MS = 15 * 60_000 + 30 * 60_000 + 5 * 60_000;
-/** A shorter wait for tests only: a whole number of milliseconds, never longer than the default. */
-const GENERATE_IMAGE_TIMEOUT_MS = ((raw: number) => Number.isSafeInteger(raw) && raw > 0 && raw < GENERATE_IMAGE_DEFAULT_WAIT_MS ? raw : GENERATE_IMAGE_DEFAULT_WAIT_MS)(Number(process.env.MURAGE_GENERATE_IMAGE_WAIT_MS));
-const GENERATE_IMAGE_WAIT_MINUTES = Math.max(1, Math.round(GENERATE_IMAGE_TIMEOUT_MS / 60_000));
+/** No proxy deadline by default: the owner's approval card never expires
+ * (GROK-STOPPED F1), and the harness ends the request when the card is answered,
+ * the turn ends, or the render hits its own ceiling (server/image-delivery.ts
+ * RENDER_CEILING_MS). Tests may set a shorter wait: a whole number of milliseconds. */
+const GENERATE_IMAGE_TIMEOUT_MS = ((raw: number) => Number.isSafeInteger(raw) && raw > 0 ? raw : undefined)(Number(process.env.MURAGE_GENERATE_IMAGE_WAIT_MS));
+/** A caller wait that never runs out: the harness bounds the request itself. */
+const untilHarnessAnswers = (ms?: number) => ms === undefined ? new AbortController().signal : AbortSignal.timeout(ms);
+const GENERATE_IMAGE_WAIT_MINUTES = Math.max(1, Math.round((GENERATE_IMAGE_TIMEOUT_MS ?? 60_000) / 60_000));
 /** What the bot is told when that wait itself ends: what happened and what to
  * do next, in words it can pass on. Not the control-channel failure line: the
  * connection did not fail, nothing came back in time. A held card (a
  * routine's) stays open for the owner after the call gives up. */
-/** The 15-minute approval wait (server/publish/publish-ops.ts) plus 10 minutes to upload and check. */
-const PUBLISH_WAIT_MS = 25 * 60_000;
 const PUBLISH_NO_ANSWER = "No answer came back for this publish request, so this call stopped waiting. The approval card may still be open for the owner. Nothing is retried automatically. Tell the owner, and ask again only if they still want it.";
 const GENERATE_IMAGE_NO_ANSWER = `No answer came back for this image request within ${GENERATE_IMAGE_WAIT_MINUTES} minute${GENERATE_IMAGE_WAIT_MINUTES === 1 ? "" : "s"}, `
   + "so this call stopped waiting. The approval card may still be open for the owner, or the render did not finish. "
@@ -1039,7 +1038,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     const body = takeDown ? { siteId: args.site_id, deployId: args.deploy_id } : { folder: args.folder, name: args.site_name, siteId: args.site_id };
     const clean = Object.fromEntries(Object.entries(body).filter(([, value]) => value !== undefined));
     // The harness holds this request open while the owner's card waits, then while it uploads.
-    return jsonToolResult(await apiLong(takeDown ? "/api/internal/take-down-site" : "/api/internal/publish-site", JSON.stringify(clean), AbortSignal.timeout(PUBLISH_WAIT_MS), PUBLISH_NO_ANSWER));
+    return jsonToolResult(await apiLong(takeDown ? "/api/internal/take-down-site" : "/api/internal/publish-site", JSON.stringify(clean), untilHarnessAnswers(), PUBLISH_NO_ANSWER));
   }
   if (name === "needs_owner_now" && NEEDS_OWNER_NOW) {
     // "Noted." whatever happens next: the model never learns whether a call follows (5.10)
@@ -1057,8 +1056,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
   }
   if (name === "generate_image") {
     // The harness holds this request open while the owner's approval card
-    // waits (IMAGE_APPROVAL_TIMEOUT_MS, 15 minutes, in server/image-operations.ts)
-    // and then while the provider renders. Giving up here first would close the
+    // waits (it never expires) and then while the provider renders. Giving up here first would close the
     // request, which cancels the card under the owner as "not answered".
     // An engine that does not enforce required fields (Fuigo's use_tool) can
     // leave request_id out: say so in the tool's own words, not the harness's
@@ -1072,7 +1070,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
       width: args.width, height: args.height, fit: args.fit, n: args.n, outputFormat: args.output_format, outputCompression: args.output_compression,
       background: args.background, seed: args.seed, negativePrompt: args.negative_prompt, condensedFromChars: args.condensed_from_chars,
       referenceIds: args.reference_ids,
-    }), AbortSignal.timeout(GENERATE_IMAGE_TIMEOUT_MS), GENERATE_IMAGE_NO_ANSWER);
+    }), untilHarnessAnswers(GENERATE_IMAGE_TIMEOUT_MS), GENERATE_IMAGE_NO_ANSWER);
     return jsonToolResult(result);
   }
 

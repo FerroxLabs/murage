@@ -576,6 +576,8 @@ export function isolateFuigoFromExternalMcp(env: Record<string, string | undefin
 const support: AcpSupport = {
   driverKind: DRIVER_KIND,
   displayName: "Fuigo",
+  // A bare reject_once ends the prompt: a deny carries a follow-up note instead.
+  rejectNeedsFollowup: true,
   // A cut MCP result is saved in this session's own `mcp/` folder; reading it
   // back is the bot reading its own output (server/own-tool-results.ts).
   toolResultDirs: ({ env, cwd, sessionId }) => fuigoToolResultDirs(fuigoHome(env), sessionFolders(cwd), sessionId),

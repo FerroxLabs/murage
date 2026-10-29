@@ -327,32 +327,36 @@ describe("ClaudeDriver.decodeConfig", () => {
   });
 
   it.skipIf(process.platform === "win32")(
-    "a held turn's permission ask waits past the deny deadline; an ordinary one is denied",
+    "a permission ask waits for the owner on every turn: no deny deadline is armed (Sean 10-29)",
     async () => {
       const dir = mkdtempSync(join(tmpdir(), "murage-broker-hold-"));
       const sock = join(dir, "hold.sock");
-      let hold = true;
+      const asked: string[] = [];
       const resolved: Array<{ id: string; source: string }> = [];
+      const originalTimeout = globalThis.setTimeout;
+      const longTimers: number[] = [];
+      const timerSpy = vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback, delay, ...args) => {
+        if (typeof delay === "number" && delay >= 60_000) longTimers.push(delay);
+        return originalTimeout(callback, delay, ...args);
+      }) as typeof setTimeout);
       const broker = await createPermissionBroker({
         socketPaths: [sock],
-        timeoutMs: 50,
-        holdPermissionAsks: () => hold,
-        onAsk: () => {},
+        onAsk: (ask) => asked.push(ask.id),
         onResolve: (ask) => resolved.push({ id: ask.id, source: ask.source }),
       });
       try {
         const conn = connect(broker.socketPath);
         await new Promise<void>((resolve, reject) => { conn.on("connect", resolve); conn.on("error", reject); });
-        conn.write(JSON.stringify({ t: "ask", id: "held", tool: "Bash", input: { command: "echo hi" } }) + "\n");
-        await new Promise((resolve) => setTimeout(resolve, 200));
-        expect(resolved).toEqual([]);
-        hold = false;
         conn.write(JSON.stringify({ t: "ask", id: "plain", tool: "Bash", input: { command: "echo hi" } }) + "\n");
-        await expect.poll(() => resolved).toEqual([{ id: "plain", source: "timeout" }]);
-        expect(broker.answer("held", "allow")).toBe(true);
-        expect(resolved).toEqual([{ id: "plain", source: "timeout" }, { id: "held", source: "user" }]);
+        await expect.poll(() => asked).toEqual(["plain"]);
+        await new Promise((resolve) => originalTimeout(resolve, 200));
+        expect(longTimers).toEqual([]);
+        expect(resolved).toEqual([]);
+        expect(broker.answer("plain", "allow")).toBe(true);
+        expect(resolved).toEqual([{ id: "plain", source: "user" }]);
         conn.end();
       } finally {
+        timerSpy.mockRestore();
         broker.close();
         removeTempDirSync(dir);
       }

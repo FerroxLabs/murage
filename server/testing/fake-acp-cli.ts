@@ -147,6 +147,14 @@
 //                        "LATE FRAME FROM THE EARLIER SESSION") and a
 //                        session/request_permission (id 9300) naming it; the
 //                        client's reply is appended to FAKE_ACP_LATE_REPLY_LOG
+//   FAKE_ACP_BARE_REJECT_CANCELS=1  Grok Build / Fuigo's rule: a permission
+//                        answered with a reject option and no
+//                        `_meta.followup_message` ends the prompt with
+//                        stopReason "cancelled"; with the follow-up note the
+//                        prompt answers "FOLLOWUP: <note>" and finishes
+//                        end_turn (the tool stays unexecuted).
+//                        =always: every reject ends the prompt "cancelled",
+//                        note or not (an engine that ignores the note)
 //   FAKE_ACP_REJECT_LIVE_LOAD  refuse session/load of a session that is
 //                        already live in this process (an engine that cannot
 //                        re-establish a resident session)
@@ -576,6 +584,10 @@ let pendingPermissionId: number | null = null;
 /** project-propose mode's own permission asks, answered by id. */
 const proposalAsks = new Map<number, (result: any) => void>();
 let onPermissionAnswered: (() => void) | null = null;
+/** FAKE_ACP_BARE_REJECT_CANCELS: the newest permission answer was a reject with no follow-up note. */
+let bareRejectAnswered = false;
+/** FAKE_ACP_BARE_REJECT_CANCELS: the follow-up note a reject carried, which the prompt answers before end_turn. */
+let rejectFollowup: string | null = null;
 /** When the open permission ask was sent (FAKE_ACP_PERMISSION_TIMING_FILE). */
 let permissionAskedAt: number | null = null;
 // folder-trust mode: what the client advertised and whether the folder was
@@ -1008,6 +1020,10 @@ function handle(msg: any) {
   // client's response to our permission request
   if (msg.id !== undefined && (msg.result !== undefined || msg.error !== undefined) && msg.id === pendingPermissionId) {
     pendingPermissionId = null;
+    const chosen = msg.result?.outcome?.optionId;
+    bareRejectAnswered = typeof chosen === "string" && chosen.startsWith("reject")
+      && (process.env.FAKE_ACP_BARE_REJECT_CANCELS === "always" || typeof msg.result?._meta?.followup_message !== "string");
+    rejectFollowup = !bareRejectAnswered && typeof msg.result?._meta?.followup_message === "string" ? msg.result._meta.followup_message : null;
     if (process.env.FAKE_ACP_PERMISSION_TIMING_FILE && permissionAskedAt !== null) {
       appendFileSync(process.env.FAKE_ACP_PERMISSION_TIMING_FILE, `${JSON.stringify({ askedAt: permissionAskedAt, waitMs: Date.now() - permissionAskedAt })}\n`);
       permissionAskedAt = null;
@@ -1565,6 +1581,15 @@ function handle(msg: any) {
         recordMethod("session/prompt.result");
         setImmediate(runStrandedInterjection);
         scheduleLateFrames(msg.params?.sessionId);
+        if (process.env.FAKE_ACP_BARE_REJECT_CANCELS && bareRejectAnswered) {
+          bareRejectAnswered = false;
+          result(msg.id, { stopReason: "cancelled" });
+          return;
+        }
+        if (process.env.FAKE_ACP_BARE_REJECT_CANCELS && rejectFollowup !== null) {
+          out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: `FOLLOWUP: ${rejectFollowup}` } } } });
+          rejectFollowup = null;
+        }
         result(
           msg.id,
           // FAKE_ACP_USAGE_ROOT reproduces opencode 1.18.18's shape: usage at

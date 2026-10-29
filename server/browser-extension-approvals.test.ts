@@ -139,13 +139,16 @@ describe("T22 durable cards", () => {
     f.approvals.resolve("thread", f.card().requestId!, "allow"); f.approvals.cancelBinding("binding");
     expect(f.approvals.consume(query())).toBe(false);
   });
-  it("a card is answerable for 24 hours and no longer", async () => {
+  // GROK-STOPPED F1 (1.0.10): an owner-facing card never expires.
+  it("a waiting card stays answerable past 24 hours, through sweeps", async () => {
     vi.useFakeTimers(); const clock = { t: 5_000_000 }; const f = durable(clock); const result = f.ask(); await vi.advanceTimersByTimeAsync(1000); await result;
     const id = f.card().requestId!;
-    clock.t += CARD_LIFETIME_MS - 1; expect(CARD_LIFETIME_MS).toBe(24 * 3600_000);
-    clock.t += 2;
-    expect(f.approvals.resolve("thread", id, "allow")).toBe(false);
-    expect(f.card()).toMatchObject({ answered: "unavailable", dismissed: true });
+    expect(CARD_LIFETIME_MS).toBe(24 * 3600_000);
+    clock.t += 3 * CARD_LIFETIME_MS; await vi.advanceTimersByTimeAsync(15 * 60_000 + 1);
+    expect(f.approvals.sweep()).toBe(0);
+    expect(f.approvals.resolve("thread", id, "allow")).toBe(true);
+    expect(f.card()).toMatchObject({ answered: "allow", dismissed: false });
+    expect(f.approvals.consume(query())).toBe(true);
   });
   it("an approval that was never used also ends after 24 hours", async () => {
     vi.useFakeTimers(); const clock = { t: 5_000_000 }; const f = durable(clock); const result = f.ask(); await vi.advanceTimersByTimeAsync(1000); await result;
@@ -185,10 +188,10 @@ describe("T22 durable cards", () => {
     expect(again.consume(query())).toBe(false);
     expect(again.consume(query(fresh))).toBe(false);
   });
-  it("RESTART after 24 hours dismisses the card", async () => {
+  it("RESTART after 24 hours keeps a waiting card", async () => {
     vi.useFakeTimers(); const clock = { t: 1_000_000 }; const f = durable(clock); const result = f.ask(); await vi.advanceTimersByTimeAsync(1000); await result;
     clock.t += CARD_LIFETIME_MS + 1; const again = f.make();
-    expect(again.dismissStale()).toBe(1); expect(f.card().dismissed).toBe(true);
+    expect(again.dismissStale()).toBe(0); expect(f.card().dismissed).toBeFalsy(); expect(again.knows(f.card().requestId!)).toBe(true);
   });
   it("cards with no saved record are still dismissed at startup", async () => {
     const f = durable(); f.store.appendMessage("thread", { card: { title: "old", subtitle: "x", options: ["Allow", "Deny"], tool: BROWSER_EXTENSION_APPROVAL_TOOL, requestId: "no-record" } });
@@ -217,9 +220,12 @@ describe("T22 durable cards", () => {
     await f.approvals.drain(); await f.make().drain(); expect(f.continued).toHaveLength(3);
     expect(f.approvals.consume(query())).toBe(true);
   });
-  it("sweep dismisses expired cards", async () => {
+  it("sweep drops an answer left unused for 24 hours, never a waiting card", async () => {
     vi.useFakeTimers(); const clock = { t: 1_000_000 }; const f = durable(clock); const result = f.ask(); await vi.advanceTimersByTimeAsync(1000); await result;
-    expect(f.approvals.sweep()).toBe(0); clock.t += CARD_LIFETIME_MS + 1; expect(f.approvals.sweep()).toBe(1); expect(f.card().dismissed).toBe(true);
+    clock.t += CARD_LIFETIME_MS + 1; expect(f.approvals.sweep()).toBe(0);
+    f.approvals.resolve("thread", f.card().requestId!, "allow");
+    expect(f.approvals.sweep()).toBe(0); clock.t += CARD_LIFETIME_MS + 1; expect(f.approvals.sweep()).toBe(1);
+    expect(f.approvals.consume(query())).toBe(false);
   });
   it("an abort during the in-turn wait cancels the card (no record); durable applies only to a wait that ran out", async () => {
     const f = durable(); const controller = new AbortController(); const result = f.ask({}, { signal: controller.signal }); controller.abort();

@@ -6,10 +6,10 @@ import { createPrivateWindowsDirectory, readPrivateWindowsJson, writePrivateWind
 import type { ApprovalBus } from "./peer-approval.ts";
 import type { BotRecord } from "./store.ts";
 import { murageLine } from "./murage-line.ts";
-// A person decides in their own time (fifteen minutes on a card, then it stays open for 24 hours); the tool call's own deadline is separate.
+// A person decides in their own time: a waiting card never expires (cards-wait 1.0.8, GROK-STOPPED F1). The tool call's own wait (at most fifteen minutes) is separate.
 const MAX_WAIT_MS = 15 * 60_000, MAX_SUMMARY = 12000;
 export const BROWSER_EXTENSION_APPROVAL_TOOL = "browser_extension_action";
-/** T22 (spec 2.8): a card the person has not answered stays answerable this long, even across a restart. */
+/** T22 (spec 2.8): an answer that nothing has used yet lasts this long from the answer. A card still waiting has no end (GROK-STOPPED F1). */
 export const CARD_LIFETIME_MS = 24 * 3600_000;
 const MAX_RECORDS = 256, FILE_VERSION = 1, MAX_FILE_BYTES = 1024 * 1024;
 const HEX = /^[a-f0-9]{64}$/;
@@ -118,7 +118,7 @@ export class BrowserExtensionApprovals {
     const durable = input.binding && this.options.file ? readBinding(input.binding) : undefined;
     if (input.signal?.aborted) return Promise.resolve("cancelled");
     if (durable) {
-      const same = [...this.records.values()].find(record => record.status === "waiting" && record.bindingId === input.bindingId && record.kind === (input.kind ?? "action") && sameBinding(record.binding, durable) && record.expiresAt > this.now());
+      const same = [...this.records.values()].find(record => record.status === "waiting" && record.bindingId === input.bindingId && record.kind === (input.kind ?? "action") && sameBinding(record.binding, durable));
       if (same) return Promise.resolve("waiting");
     }
     if (![input.threadId, input.bindingId, input.bot.id].every(value => typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value)) || !Number.isSafeInteger(input.generation) || input.generation < 1 || !/^[a-f0-9]{64}$/.test(input.digest) || typeof input.summary !== "string" || !input.summary.trim() || input.summary.length > MAX_SUMMARY || !Number.isSafeInteger(waitMs) || waitMs < 1 || waitMs > MAX_WAIT_MS) return Promise.resolve("cancelled");
@@ -188,12 +188,13 @@ export class BrowserExtensionApprovals {
     if (!record || record.threadId !== threadId || record.status !== "waiting") return false;
     const card = this.cardOf(record);
     if (!card || card.answered || card.dismissed) { this.forget(record, true); return false; }
-    // Expired, or the binding is not the one the card was raised for: the card closes and nothing runs.
+    // The binding is not the one the card was raised for: the card closes and nothing runs.
     let valid = false;
-    try { valid = this.now() < record.expiresAt && (this.options.valid?.({ bindingId: record.bindingId, botId: record.botId, threadId: record.threadId, generation: record.binding.generation }) ?? true); } catch { valid = false; }
+    try { valid = (this.options.valid?.({ bindingId: record.bindingId, botId: record.botId, threadId: record.threadId, generation: record.binding.generation }) ?? true); } catch { valid = false; }
     if (!valid) { this.forget(record, true); return false; }
     try { this.bus.store.patchMessage(record.threadId, record.messageId, { card: { ...card, answered: behavior, dismissed: false } }); } catch { this.forget(record, true); return false; }
     record.status = behavior === "allow" ? "allowed" : "denied";
+    record.expiresAt = this.now() + CARD_LIFETIME_MS;
     if (!this.save()) { this.forget(record, true); return false; }
     this.fire(record);
     return true;
@@ -228,10 +229,10 @@ export class BrowserExtensionApprovals {
     for (const pending of [...this.pending.values()]) if (pending.threadId === threadId) pending.finish(false, false);
     for (const record of [...this.records.values()]) if (record.threadId === threadId) this.forget(record, true);
   }
-  /** Close every card past its 24 hours. Called on a timer. */
+  /** Drop every answer unused 24 hours after it was given. A waiting card stays. Called on a timer. */
   sweep(): number {
     let count = 0;
-    for (const record of [...this.records.values()]) if (this.now() >= record.expiresAt) { this.forget(record, true); count++; }
+    for (const record of [...this.records.values()]) if (record.status !== "waiting" && this.now() >= record.expiresAt) { this.forget(record, true); count++; }
     return count;
   }
   /** Start continuations that could not start when the answer came (the bot was busy). Each runs at most once. */
@@ -259,7 +260,7 @@ export class BrowserExtensionApprovals {
     const threads = new Set<string>();
     for (const owner of [...this.bus.store.bots, ...this.bus.store.groups]) { threads.add(owner.threadId); for (const task of owner.tasks ?? []) threads.add(task.threadId); }
     let count = 0;
-    for (const record of [...this.records.values()]) if (this.now() >= record.expiresAt) { this.forget(record, true); count++; }
+    for (const record of [...this.records.values()]) if (record.status !== "waiting" && this.now() >= record.expiresAt) { this.forget(record, true); count++; }
     // the cards still open, through the card index: every one this closes is an unanswered request card
     for (const threadId of threads) for (const message of this.bus.store.openRequestCardRows(threadId)) {
       const card = message.card;
@@ -299,7 +300,7 @@ export class BrowserExtensionApprovals {
         const binding = readBinding(raw?.binding);
         if (!raw || typeof raw !== "object" || !binding || ![raw.requestId, raw.threadId, raw.messageId, raw.botId, raw.bindingId].every(v => typeof v === "string" && /^[A-Za-z0-9_.:-]{1,160}$/.test(v))
           || (raw.kind !== "site" && raw.kind !== "action") || !["waiting", "allowed", "denied"].includes(raw.status as string)
-          || !Number.isSafeInteger(raw.createdAt) || !Number.isSafeInteger(raw.expiresAt) || (raw.expiresAt as number) - (raw.createdAt as number) > CARD_LIFETIME_MS || (raw.continued !== undefined && raw.continued !== true)) throw new Error("invalid_record");
+          || !Number.isSafeInteger(raw.createdAt) || !Number.isSafeInteger(raw.expiresAt) || (raw.expiresAt as number) < (raw.createdAt as number) || (raw.continued !== undefined && raw.continued !== true)) throw new Error("invalid_record");
         loaded.set(raw.requestId as string, { requestId: raw.requestId as string, threadId: raw.threadId as string, messageId: raw.messageId as string, botId: raw.botId as string, bindingId: raw.bindingId as string,
           kind: raw.kind as ApprovalKind, binding, createdAt: raw.createdAt as number, expiresAt: raw.expiresAt as number, status: raw.status as RecordStatus, ...(raw.continued ? { continued: true } : {}) });
       }

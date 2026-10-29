@@ -1050,7 +1050,7 @@ import { workspaceFilesRoute } from "./workspace-files.ts";
 import { mediaAssetsRoute } from "./media-assets.ts";
 import { resolveImageReferenceRoute } from "./image-reference-resolver.ts";
 import { BrowserCheckTurns, runBrowserCheck } from "./browser-check-state.ts";
-import { turnAskStopped, turnOutcome, turnStopped, turnSucceeded, TURN_INTERRUPTED_NOTE, TURN_STOPPED_DESKTOP_ACTION_NOTE, TURN_STOPPED_NOTE } from "./turn-outcome.ts";
+import { deniedTurnStopReason, turnAskStopped, turnOutcome, turnStopped, turnSucceeded, TURN_INTERRUPTED_NOTE, TURN_STOPPED_DESKTOP_ACTION_NOTE, TURN_STOPPED_NOTE } from "./turn-outcome.ts";
 import { emptyTurnLine, failedTurnLine, turnErrorShown, turnProducedSomething, turnWroteText, wantsEmptyTurnLine, wantsFailedTurnLine } from "./failed-turn-line.ts";
 import { hostStoppedActivityName, hostStoppedReason } from "../shared/host-stop.ts";
 import { isSendNoticeCode } from "../shared/send-notice.ts";
@@ -8917,6 +8917,8 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
       break;
     }
     case "request.resolved": {
+      // Who answered, at info level: a card the deadline denied reads source=timeout, never as the owner's deny.
+      console.info(`approvals: resolved bot=${bot?.id ?? speaker?.botId ?? "-"} request=${event.requestId ?? "-"} behavior=${event.behavior} source=${event.source}`);
       if (event.source !== "user" && projectStoppedDesk(event.threadId)) break;
       const projectRequestId = workAdmission.liveTurns({}).find(turn => turn.threadId === event.threadId && (turn.kind === "card_run" || turn.kind === "review"))?.requestId;
       if (projectRequestId) {
@@ -8946,8 +8948,11 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
               expireQuestionCard(event.threadId, existing, event.folderTrustLate);
             }
           } else {
+            // A card the owner did not close (Stop, the turn or engine ending, a restart, an answer the engine could not
+            // take, any automatic close) is "Not answered", never the owner's "Denied" (LONGWORK H2). An "allow" stays "allow" whatever its source: an allow that went through ran the action, so "Not answered" would be untrue (GROK-STOPPED F6, kept on purpose).
+            const unanswered = event.behavior !== "allow" && event.source !== "user";
             store.patchMessage(event.threadId, messageId, {
-              card: { ...existing.card, answered: event.behavior, dismissed: event.source !== "user" },
+              card: { ...existing.card, answered: unanswered ? "unavailable" : event.behavior, dismissed: event.source !== "user" },
             });
           }
         }
@@ -9078,6 +9083,9 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
       // the person did not press Stop, so "Stopped by you" would be untrue.
       // A stop that caught a desktop action mid-flight says so instead.
       const desktopActionStopped = desktopActionCaughtByStop(event.threadId);
+      // The engine ended the prompt itself after a denied ask (no Stop was pressed): the turn's line says so instead.
+      const deniedStopBot = event.deniedBy && turnStopped(event) && !replacementOwnsThread ? bot?.id ?? groupSpeakers.get(event.threadId)?.botId : undefined;
+      if (deniedStopBot && event.deniedBy) noteHostStoppedTurn(event.threadId, deniedStopBot, deniedTurnStopReason(event.deniedBy));
       // Murage's own Ask stop is a stop (never finished work), but the person did not press Stop: ASK_STOP_NOTE already says why.
       const askStopped = turnAskStopped(event);
       // The checking note (if any) is this turn's stopped line; a desktop action caught mid-flight refines its wording.
@@ -12668,11 +12676,6 @@ async function startTurnAdmitting(
         // the engine must send its asks here even when its own instance is
         // set to skip them; Murage answers the rest at once.
         ...turnPermissionEnforcement(bot),
-        // A scheduled or manual routine run: its cards wait for the owner
-        // instead of the engine's 15-minute deny. At its run limit the run
-        // ends as waiting on you (RoutineManager.enforceRunLimits) and the
-        // card still carries the run on when answered.
-        ...(routineLevel ? { holdPermissionAsks: true as const } : {}),
         // a draft-only turn (contracts.ts SendTurnInput.draftOnly; the registry decorator cuts it to its one read surface)
         ...(profile.draftOnly ? { draftOnly: true as const } : {}),
       }, directFence), () => !providerRouteIsCurrent(providerRoute) || !directTurnClaimExists(bot.id, dispatchClaimId, threadId), async (accepted) => {
@@ -14777,7 +14780,7 @@ function sharedOwnerUsageTurn(instance: ProviderInstance, turn: SendTurnInput, o
   sharedOwnerUsage.begin(turn.threadId, { generation: owner.generation, botId: owner.botId, teamId: work.teamId, messageId: message?.id ?? owner.generation, engine: instance.driverKind, model: turn.model, startedAt: Date.now(), ownerWaitMs: 0, asks: new Set() });
   return (async () => {
     try {
-      const accepted = await instance.adapter.sendTurn({ ...turn, holdPermissionAsks: true, holdProjectAsks: true });
+      const accepted = await instance.adapter.sendTurn({ ...turn, holdProjectAsks: true });
       sharedOwnerUsage.accepted(turn.threadId, owner.generation, accepted.turnId);
       return accepted;
     } catch (error) { sharedOwnerUsage.end(turn.threadId, owner.generation); throw error; }
@@ -18036,7 +18039,6 @@ async function runGroupMemberTurn(
         ...(roomSessionMoved || roomMemoryReset ? { sessionReset: true } : {}),
         // Full access still stops at the stop line, so the engine must ask
         ...turnPermissionEnforcement(bot),
-        ...(routineLevel ? { holdPermissionAsks: true as const } : {}),
         // a draft-only turn (contracts.ts SendTurnInput.draftOnly; the registry decorator cuts it to its one read surface)
         ...(profile?.draftOnly ? { draftOnly: true as const } : {}),
         // a scheduled team goal (and its continuations) is background work, told by its own provenance

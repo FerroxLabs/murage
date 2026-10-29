@@ -598,6 +598,7 @@ server/drivers/acp/grok-isolation.test.ts	all	Grok personal plugins and compat c
 server/drivers/acp/grok-own-tools.test.ts	all	Murage own tools on Grok Build never hold an approval card at Auto or Full access
 server/drivers/acp/grok-provider.test.ts	all	Grok provider identity and history replay
 server/drivers/acp/grok-steer.test.ts	all	a message sent mid-reply reaches Grok once, or is queued
+server/drivers/acp/grok-deny-continues.test.ts	all	a denied or unanswered Grok card never ends the turn as the owner's Stop
 server/drivers/acp/hermes-own-tools.test.ts	linux+mac	Hermes runs Murage's own unasked tools with no card; a look-alike server still asks
 server/drivers/acp/hermes.test.ts	all	routeAsks overrides skip-all permissions; bearer token private; upgrade pin
 server/drivers/acp/hook-isolation-106.test.ts	all	a Fuigo or Grok bot turn or reflection on Windows runs the owner's personal hooks or plugins
@@ -1274,6 +1275,7 @@ server/route-policy-api.test.ts	all	unproven callers refused on desktop routes
 server/route-policy.test.ts	all	Every cloud write has reviewed policy
 server/routes/phones.test.ts	all	credentials, pairing and access control
 server/routine-approval-hold-api.test.ts	linux+mac	routine approval card stays open and answerable
+server/grok-deny-unanswered-api.test.ts	linux+mac	an unanswered card reads Not answered and never says Stopped by you
 server/routine-authority.test.ts	all	routine authority levels
 server/routine-brief-approval-diagnosis.test.ts	all	scheduled routine approvals not unattended
 server/routine-carry.test.ts	all	routine run carries the last report
@@ -1530,6 +1532,7 @@ src/components/routine-grant-82.test.ts	all	grant card describes operations in p
 src/components/settings-panel-locale.test.ts	all	bot settings stays in English after the owner picks another language
 src/components/settings-search-keeps-page.test.ts	all	a Settings search throws away an unsaved skill draft, or Tab leaves the Settings dialog through the hidden page
 src/components/widget/WidgetMessage.test.ts	all	a bot widget draws its form, sends what the owner filled and folds once answered
+src/lib/activity-runs.test.ts	all	Worked for counts the turn, not the gap back to an older message
 src/lib/all-chats.test.ts	all	All chats asks, pages, groups and matches messages correctly, at any scale
 src/lib/analytics.test.ts	all	analytics opt-in/out honoured (privacy)
 src/lib/approval-detail.test.ts	all	approval shows true path and command being approved
