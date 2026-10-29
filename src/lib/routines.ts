@@ -3,7 +3,9 @@ export type RoutineSchedule =
   | { type: "daily"; time: string; weekdays: number[] }
   | { type: "interval"; everyMinutes: number; anchorAt: number }
   /** 1.0.4 SL-I I3: runs once each time this engine's limit resets (server/routines.ts) */
-  | { type: "limit_reset"; engineKey: string };
+  | { type: "limit_reset"; engineKey: string }
+  /** 1.0.11 APP-TRIGGERS: started by connected-app events, never by a clock; nextRunAt is always null. */
+  | { type: "app_event"; triggerId: string };
 
 export type RoutineRunOn = "ember" | "cloud";
 
@@ -25,7 +27,7 @@ export interface RoutineContextAttachment {
   size: number;
 }
 
-export type RoutineRunTrigger = "schedule" | "manual" | "webhook" | "channel";
+export type RoutineRunTrigger = "schedule" | "manual" | "webhook" | "channel" | "app";
 
 export type RoutineRunStatus =
   | "queued"
