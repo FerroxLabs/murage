@@ -150,6 +150,16 @@
 //   FAKE_ACP_REJECT_LIVE_LOAD  refuse session/load of a session that is
 //                        already live in this process (an engine that cannot
 //                        re-establish a resident session)
+//   FAKE_ACP_GROK_MODELS_CACHE=1  grok's model surface: advertise the bundled grok-4.6, grok-4.5 (current
+//                        grok-4.6) plus the ids of $GROK_HOME/models_cache.json (`models` as an array of {id}
+//                        or keyed by id), and answer session/set_model for an id not advertised with -32602
+//   FAKE_ACP_GROK_CATALOG_MS=<n> + FAKE_ACP_GROK_CATALOG_IDS=a,b  n ms after session/new, write those ids
+//                        into $GROK_HOME/models_cache.json, advertise them, and send `_x.ai/models/update`
+//                        (grok's background catalog fetch landing). Unset: never
+//   FAKE_ACP_SET_MODEL_STALL=1  never answer session/set_model (the request-timeout case)
+//   FAKE_ACP_SET_MODEL_DELAY_MS=<n>  with the grok surface, refuse the FIRST set_model (-32602) after n ms
+//   FAKE_ACP_SET_MODE_REFUSE=1  session/set_mode answers -32601 while set_model works
+//   Every session/set_model attempt, refused ones included, is listed in $FAKE_ACP_DUMP.setmodel.json.
 //   FAKE_ACP_MCP_READY=1  announce `_fuigo/mcp_initialized {sessionId}` after
 //                        session/new or session/load hands it servers, and —
 //                        like Fuigo — after a resident load only when the
@@ -303,8 +313,24 @@ const acpModels = (process.env.FAKE_ACP_SESSION_MODELS ?? "")
     const [modelId, name] = entry.split("|");
     return name ? { modelId, name } : { modelId };
   });
-const sessionModels = () =>
-  acpModels.length ? { currentModelId: acpModels[0].modelId, availableModels: acpModels } : null;
+// grok-shaped surface (FAKE_ACP_GROK_MODELS_CACHE=1): the bundled list plus every id of $GROK_HOME/models_cache.json,
+// the way grok offers the fetched catalog only once its cache exists; plus the ids a late catalog announced.
+const grokLateIds: string[] = [];
+const grokCacheModels = (): string[] => {
+  try {
+    const cache = JSON.parse(readFileSync(join(process.env.GROK_HOME ?? "", "models_cache.json"), "utf8")) as { models?: unknown };
+    const models = cache.models;
+    if (Array.isArray(models)) return models.map((m) => (m as { id?: unknown })?.id).filter((id): id is string => typeof id === "string");
+    return models && typeof models === "object" ? Object.keys(models) : [];
+  } catch { return []; }
+};
+const grokAdvertised = (): string[] => [...new Set([...grokCacheModels(), ...grokLateIds, "grok-4.6", "grok-4.5"])];
+const sessionModels = () => {
+  if (process.env.FAKE_ACP_GROK_MODELS_CACHE === "1") return { currentModelId: "grok-4.6", availableModels: grokAdvertised().map((modelId) => ({ modelId })) };
+  return acpModels.length ? { currentModelId: acpModels[0].modelId, availableModels: acpModels } : null;
+};
+/** Every session/set_model attempt this run, refused ones included. */
+const setModelAttempts: string[] = [];
 
 const argv = process.argv.slice(2);
 // Explicit assertion fields only, never the inherited environment.
@@ -1108,6 +1134,17 @@ function handle(msg: any) {
         ...(process.env.FAKE_ACP_SESSION_MODES ? { modes: JSON.parse(process.env.FAKE_ACP_SESSION_MODES) } : {}),
       });
       announceMcpReady(newSessionId, servers);
+      const catalogMs = Number(process.env.FAKE_ACP_GROK_CATALOG_MS);
+      if (process.env.FAKE_ACP_GROK_MODELS_CACHE === "1" && Number.isFinite(catalogMs) && catalogMs >= 0 && process.env.FAKE_ACP_GROK_CATALOG_MS) {
+        const ids = (process.env.FAKE_ACP_GROK_CATALOG_IDS ?? "").split(",").filter(Boolean);
+        setTimeout(() => {
+          grokLateIds.push(...ids);
+          try { writeFileSync(join(process.env.GROK_HOME ?? "", "models_cache.json"), JSON.stringify({ models: Object.fromEntries(ids.map((id) => [id, { id }])) })); } catch { /* the announcement still goes */ }
+          // SYNTHETIC frame: grok 1.0.70 sends `_x.ai/models/update` once its background fetch lands (live, 10-29), but its params
+          // were not captured yet; this is one of the shapes acpModelIdsIn reads. Replace with the captured shape at qualification.
+          out({ jsonrpc: "2.0", method: "_x.ai/models/update", params: { sessionId: newSessionId, models: grokAdvertised().map((id) => ({ id })) } });
+        }, catalogMs);
+      }
       // Fuigo 1.0.x and Grok Build advertise their "/" commands right after
       // session/new, before any prompt (session_setup.rs
       // send_available_commands_update). JSON array of ACP AvailableCommand.
@@ -1170,6 +1207,24 @@ function handle(msg: any) {
     case "session/set_model": {
       if (mode === "no-session-config") {
         // an older agent that predates these methods
+        return out({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "method not found" } });
+      }
+      if (msg.method === "session/set_model") {
+        setModelAttempts.push(String(msg.params?.modelId));
+        if (process.env.FAKE_ACP_DUMP) writeFileSync(`${process.env.FAKE_ACP_DUMP}.setmodel.json`, JSON.stringify(setModelAttempts));
+        if (process.env.FAKE_ACP_SET_MODEL_STALL === "1") break;
+        const delayMs = Number(process.env.FAKE_ACP_SET_MODEL_DELAY_MS) || 0;
+        if (delayMs > 0 && process.env.FAKE_ACP_GROK_MODELS_CACHE === "1" && setModelAttempts.length === 1) {
+          // the refusal grok gives after waiting on its fetch in flight (about 5 s live), whatever arrives meanwhile
+          const id = msg.id;
+          setTimeout(() => out({ jsonrpc: "2.0", id, error: { code: -32602, message: "Invalid params" } }), delayMs);
+          break;
+        }
+        if (process.env.FAKE_ACP_GROK_MODELS_CACHE === "1" && !grokAdvertised().includes(String(msg.params?.modelId))) {
+          return out({ jsonrpc: "2.0", id: msg.id, error: { code: -32602, message: "Invalid params" } });
+        }
+      }
+      if (msg.method === "session/set_mode" && process.env.FAKE_ACP_SET_MODE_REFUSE === "1") {
         return out({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "method not found" } });
       }
       if (mode === "set-model-invalid-params" && msg.method === "session/set_model") {

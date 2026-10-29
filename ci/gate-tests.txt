@@ -597,6 +597,7 @@ server/drivers/acp/grok-ask.test.ts	linux+mac	Grok at Ask runs shell commands an
 server/drivers/acp/grok-isolation.test.ts	all	Grok personal plugins and compat closed
 server/drivers/acp/grok-own-tools.test.ts	all	Murage own tools on Grok Build never hold an approval card at Auto or Full access
 server/drivers/acp/grok-provider.test.ts	all	Grok provider identity and history replay
+server/drivers/acp/grok-setmodel.test.ts	all	a fresh Grok scope pins the chosen model on the first turn, or fails with a next step
 server/drivers/acp/grok-steer.test.ts	all	a message sent mid-reply reaches Grok once, or is queued
 server/drivers/acp/hermes-own-tools.test.ts	linux+mac	Hermes runs Murage's own unasked tools with no card; a look-alike server still asks
 server/drivers/acp/hermes.test.ts	all	routeAsks overrides skip-all permissions; bearer token private; upgrade pin

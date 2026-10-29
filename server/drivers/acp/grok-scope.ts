@@ -18,6 +18,8 @@
 //                 ~/.agents skill (grok reads that shared folder from HOME; rig:
 //                 its marker reached the prompt until disabled here) and the
 //                 bot's own `[permission] ask` rules (GROK_ASK_RULES)
+//   models_cache.json  seeded once from the owner's model list cache when the
+//                 scope has none (grokModelsCacheSeed); grok's own afterwards
 // Sessions, history, caches, rules, skills, hooks, plugins and AGENTS.md are the
 // bot's own: the owner's are absent, and one bot never sees another's.
 //
@@ -41,10 +43,11 @@
 // hardlink, so where a symlink is not allowed the turn is rejected with guidance to
 // enable symlinks (Developer Mode); the login is never copied or reconciled
 // (shared-login-link.ts).
+import { closeSync, constants as fsConstants, fstatSync, lstatSync, openSync, readSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { listDir, pathExists, readText } from "../isolation-cache.ts";
+import { listDir, pathExists, readText, trackPath } from "../isolation-cache.ts";
 import { currentScopeHome, engineUpdateRequired, registerScopeReconstructor, scopedCliHome, scopedCliHomeRoot, type ScopedCliHomeSpec } from "../scoped-cli-home.ts";
 
 /** Linked into a bot's scope, even when absent: the login and its lock. Everything else of ~/.grok (sessions, history, personal setup) is not shared; config.toml is a filtered copy. */
@@ -269,6 +272,40 @@ export function realGrokHome(env: Record<string, string | undefined>): string {
   return env.GROK_HOME || join(env.HOME || env.USERPROFILE || homedir(), ".grok");
 }
 
+/** The owner's grok model list cache, as a seed (scoped-cli-home.ts): written into a bot's scope only when the scope has none, so a
+ *  first turn after switching to Grok starts with the catalog the owner's grok already fetched instead of waiting on grok's blocking
+ *  5 s fetch. Derived data grok rewrites itself: no login, no personal setup. Only a regular file (a link is never followed), up to
+ *  GROK_MODELS_CACHE_MAX bytes, and only when it parses as JSON with a `models` member; anything else is left out and the scope's grok
+ *  fetches its own. */
+export const GROK_MODELS_CACHE = "models_cache.json";
+const GROK_MODELS_CACHE_MAX = 4 * 1024 * 1024;
+export function grokModelsCacheSeed(realHome: string): Record<string, string> {
+  const path = join(realHome, GROK_MODELS_CACHE);
+  trackPath(path);
+  let fd: number | undefined;
+  try {
+    const info = lstatSync(path);
+    if (!info.isFile() || info.size > GROK_MODELS_CACHE_MAX) return {};
+    // Opened without following a link (where the platform has O_NOFOLLOW) and checked to be the same file lstat saw.
+    fd = openSync(path, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+    const opened = fstatSync(fd);
+    if (!opened.isFile() || opened.ino !== info.ino || opened.dev !== info.dev || opened.size > GROK_MODELS_CACHE_MAX) return {};
+    // Bounded by the cap itself, not by the size seen a moment ago: a file still growing is left out.
+    const buffer = Buffer.alloc(GROK_MODELS_CACHE_MAX + 1);
+    let read = 0;
+    for (let n; read < buffer.length && (n = readSync(fd, buffer, read, buffer.length - read, read)) > 0;) read += n;
+    if (read > GROK_MODELS_CACHE_MAX) return {};
+    const text = buffer.subarray(0, read).toString("utf8");
+    const parsed = JSON.parse(text) as unknown;
+    if (!parsed || typeof parsed !== "object" || !("models" in parsed)) return {};
+    return { [GROK_MODELS_CACHE]: text };
+  } catch {
+    return {};
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
 function grokScopeSpec(realHome: string, botId: string | undefined, skillsHome: string): ScopedCliHomeSpec {
   return {
     kind: "grok",
@@ -283,6 +320,7 @@ function grokScopeSpec(realHome: string, botId: string | undefined, skillsHome: 
       try { config = readText(join(realHome, "config.toml")); } catch { pathExists(join(realHome, "config.toml")); }
       return { "config.toml": scopedGrokConfigToml(config, agentsSkillNames(skillsHome)) };
     },
+    seed: () => grokModelsCacheSeed(realHome),
   };
 }
 registerScopeReconstructor("grok", ({ realHome, botId, inputs }) => grokScopeSpec(realHome, botId, inputs.skillsHome ?? homedir()));

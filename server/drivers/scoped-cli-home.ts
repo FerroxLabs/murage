@@ -27,7 +27,7 @@
 // time, or beyond a count limit, never one used in the last day, and a login
 // file created only inside a retiring scope is moved into the real folder first.
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, rmdirSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { closeSync, constants as fsConstants, copyFileSync, existsSync, fstatSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, readlinkSync, renameSync, rmSync, rmdirSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync, writeSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { DATA_DIR } from "../config.ts";
@@ -53,6 +53,10 @@ export interface ScopedCliHomeSpec {
   locks?: readonly string[];
   /** Files the scope holds as copies, rewritten on every rebuild (read through isolation-cache). */
   generated?: () => Record<string, string>;
+  /** Files written ONCE into the current generation, only when the name is absent there, and never replaced: from then on the engine's
+   *  own (it rewrites them). While a seeded file still holds the bytes Murage wrote it follows its source: the build that finds the
+   *  source gone removes it, and the name joins the deletion record so no carry or rotation brings an older generation's copy back. */
+  seed?: () => Record<string, string>;
   /** What a fresh process needs, beside the owner folder and bot, to rebuild this spec from the scope's marker (see registerScopeReconstructor). Persisted in the marker. */
   rebuildInputs?: Record<string, string>;
   /** Mirror into this sub-folder of the scope (`.factory` for an engine that takes a HOME); the scope root is returned. */
@@ -111,6 +115,8 @@ interface ScopeMarker {
   generated?: unknown;
   /** Generated names whose owner source was removed (or unusable): no generation carries, copies or rotates them in again from an older generation. Cleared when the owner recreates the source. */
   deletedGenerated?: unknown;
+  /** Seeded names (ScopedCliHomeSpec.seed) and the sha256 of the bytes Murage wrote: the copy that follows the source's deletion. */
+  seeded?: unknown;
   /** How the engine writes its login (see ScopedCliHomeSpec.loginWrites): a later generation may be hardlinked only for "in-place". */
   loginWrites?: unknown;
   /** The login generation engines are launched on now (absent or 0: the scope root itself). See "Login generations" below. */
@@ -630,6 +636,83 @@ function replaceGenerated(path: string, text: string): void {
   }
 }
 
+// ---- Seeds (ScopedCliHomeSpec.seed) ------------------------------------------------------------------------------------
+const SEED_MAX_BYTES = 4 * 1024 * 1024;
+const sha256 = (text: string | Buffer): string => createHash("sha256").update(text).digest("hex");
+
+/** "same" while the scope file still holds exactly the bytes Murage seeded, "different" when the engine rewrote it (or it is not a file,
+ *  or past the cap), "absent", or "unknown" when it could not be read now (the check is kept and tried on the next build). Read once,
+ *  through one descriptor, never past the cap; a carried link of a later generation is read through (it leads to an earlier generation's file). */
+function seedCopyState(path: string, sha: string): "same" | "different" | "absent" | "unknown" {
+  let fd: number | undefined;
+  try {
+    fd = openSync(path, fsConstants.O_RDONLY);
+    const info = fstatSync(fd);
+    if (!info.isFile() || info.size > SEED_MAX_BYTES) return "different";
+    const buffer = Buffer.alloc(SEED_MAX_BYTES + 1);
+    let read = 0;
+    for (let n; read < buffer.length && (n = readSync(fd, buffer, read, buffer.length - read, read)) > 0;) read += n;
+    if (read > SEED_MAX_BYTES) return "different";
+    return sha256(buffer.subarray(0, read)) === sha ? "same" : "different";
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return code === "ENOENT" || code === "ENOTDIR" ? "absent" : "unknown";
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+/** What this build does with the spec's seeds, decided before the marker is written (so the marker records the sha of a copy before it
+ *  exists, never after): `write` the names absent in the current generation, `removed` the earlier copies whose source is gone (Rule 6:
+ *  an unchanged copy, or none left here while an older generation may still hold one), `seeded` the record the marker keeps. */
+function planSeeds(spec: ScopedCliHomeSpec, earlier: ScopeMarker | null, genBase: string, generated: Record<string, string>): { write: string[]; removed: string[]; seeded: Record<string, string>; texts: Record<string, string> } {
+  const plan = { write: [] as string[], removed: [] as string[], seeded: {} as Record<string, string>, texts: {} as Record<string, string> };
+  if (!spec.seed && !earlier?.seeded) return plan;
+  let texts: Record<string, string> = {};
+  try { texts = spec.seed?.() ?? {}; } catch { texts = {}; } // an unusable source is a source that is gone
+  const before = earlier?.seeded && typeof earlier.seeded === "object" ? earlier.seeded as Record<string, unknown> : {};
+  for (const [name, sha] of Object.entries(before)) {
+    if (!validLoginName(name) || typeof sha !== "string") continue;
+    if (name in texts) { plan.seeded[name] = sha; continue; }
+    // The source is gone: the entry is cleared once decided, so this runs once. A copy the engine rewrote is its own state and stays.
+    const state = seedCopyState(join(genBase, name), sha);
+    if (state === "unknown") { plan.seeded[name] = sha; continue; } // not readable now: decided on a later build
+    if (state === "different") continue;
+    try { unlinkSync(join(genBase, name)); } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT" && code !== "ENOTDIR") { plan.seeded[name] = sha; continue; } // still there: tried again on the next build
+    }
+    plan.removed.push(name);
+  }
+  for (const [name, text] of Object.entries(texts)) {
+    if (!validLoginName(name) || spec.share.includes(name) || name in generated) continue;
+    if (present(join(genBase, name))) continue; // the engine's, or an earlier seed: never replaced, never compared
+    plan.write.push(name);
+    plan.texts[name] = text;
+    plan.seeded[name] = sha256(text);
+  }
+  return plan;
+}
+
+/** Publish a seed only while the name is absent: a temporary file hardlinked to the name (atomic for every reader; EEXIST means the
+ *  engine or another turn got there first, which is the wanted outcome), or one exclusive create where the volume refuses hardlinks.
+ *  Never through a link. A seed that cannot be written is left out: the engine fetches its own. */
+function publishSeed(path: string, text: string): void {
+  const temporary = `${path}.murage-seed-${process.pid}`;
+  try {
+    try { unlinkSync(temporary); } catch { /* none */ }
+    writeFileSync(temporary, text, { mode: 0o600, flag: "wx" });
+    try { linkSync(temporary, path); return; } catch (error) { if ((error as NodeJS.ErrnoException).code === "EEXIST") return; }
+    let fd: number | undefined;
+    try {
+      fd = openSync(path, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | (fsConstants.O_NOFOLLOW ?? 0), 0o600);
+      writeSync(fd, text);
+    } catch { /* EEXIST: the engine's; anything else: no seed */ } finally { if (fd !== undefined) closeSync(fd); }
+  } catch { /* no seed */ } finally {
+    try { unlinkSync(temporary); } catch { /* none */ }
+  }
+}
+
 function scopeSession(spec: ScopedCliHomeSpec, now: number, resolveGeneration: boolean): { root: string; home: string } {
   const id = scopeId(spec.realHome, spec.botId);
   const root = join(scopedCliHomeRoot(spec.kind), id);
@@ -673,7 +756,10 @@ function scopeSession(spec: ScopedCliHomeSpec, now: number, resolveGeneration: b
     // A copy whose source is gone (the owner deleted the config) is removed too: only files an earlier build generated, never the engine's own.
     dropOwnedCopies(genBase, earlierGenerated.filter((name) => !(name in generated)), new Set(spec.share), generation > 0);
     // The durable deletion record: every name removed so far and not recreated since. Every carry and rotation excludes these.
-    const deleted = [...new Set([...earlierDeleted, ...earlierGenerated.filter((name) => !(name in generated))])].filter((name) => !(name in generated));
+    const generatedDeleted = [...new Set([...earlierDeleted, ...earlierGenerated.filter((name) => !(name in generated))])].filter((name) => !(name in generated));
+    const seeds = planSeeds(spec, earlier, genBase, generated);
+    // Seed names in the deletion record (a removed copy) leave it when the owner's source is back and the copy is written again.
+    const deleted = [...new Set([...generatedDeleted, ...seeds.removed])].filter((name) => !seeds.write.includes(name));
     // Recorded as dependencies, so the scope is rebuilt when the owner's folder or one of its logins appears.
     const realFolder = pathExists(spec.realHome);
     for (const name of spec.share) {
@@ -699,7 +785,7 @@ function scopeSession(spec: ScopedCliHomeSpec, now: number, resolveGeneration: b
       }
     }
     try {
-      const marker: ScopeMarker = { contract: SESSION_CONTRACT, realHome: spec.realHome, botId: spec.botId ?? null, subdir: spec.subdir ?? "", share: spec.share, cache: spec.cache ?? [], locks: spec.locks ?? [], loginWrites: spec.loginWrites ?? "replace", shareMode, generated: Object.keys(generated), deletedGenerated: deleted, generates: Boolean(spec.generated), rebuildInputs: spec.rebuildInputs ?? {}, owner: ownProcessRecord(), ...(generation > 0 ? { generation } : {}), launched: true, ...(earlier?.launchedAt && typeof earlier.launchedAt === "object" ? { launchedAt: earlier.launchedAt } : {}) };
+      const marker: ScopeMarker = { contract: SESSION_CONTRACT, realHome: spec.realHome, botId: spec.botId ?? null, subdir: spec.subdir ?? "", share: spec.share, cache: spec.cache ?? [], locks: spec.locks ?? [], loginWrites: spec.loginWrites ?? "replace", shareMode, generated: Object.keys(generated), deletedGenerated: deleted, seeded: seeds.seeded, generates: Boolean(spec.generated), rebuildInputs: spec.rebuildInputs ?? {}, owner: ownProcessRecord(), ...(generation > 0 ? { generation } : {}), launched: true, ...(earlier?.launchedAt && typeof earlier.launchedAt === "object" ? { launchedAt: earlier.launchedAt } : {}) };
       writeMarkerFile(root, marker);
     } catch (error) {
       // Never launch on a scope whose launched flag, generation pointer or logins mode was not persisted: the next build would see it as unlaunched and relink in place.
@@ -708,11 +794,13 @@ function scopeSession(spec: ScopedCliHomeSpec, now: number, resolveGeneration: b
     if (generation > 0) {
       // the current generation follows the scope's state: new entries of the earlier folders are carried in
       const loginNames = new Set(spec.share.filter((n) => !(n in generated)));
-      carryGeneration(root, genRoot, generation, spec.subdir ?? "", loginNames, new Set([...Object.keys(generated), ...earlierGenerated]), new Set(), new Set(deleted)); // written (or removed) below, never carried
+      // a name about to be seeded is never carried in from an older generation either: the seed below is its first copy here
+      carryGeneration(root, genRoot, generation, spec.subdir ?? "", loginNames, new Set([...Object.keys(generated), ...earlierGenerated]), new Set(), new Set([...deleted, ...seeds.write])); // written (or removed) below, never carried
     }
     // The generated copies follow the owner's source: written by replacing the file (never through a link or a hardlink that an earlier
     // generation or the owner shares), so a removal or recreation of the source reaches the current generation too.
     for (const [name, text] of Object.entries(generated)) replaceGenerated(join(genBase, name), text);
+    for (const name of seeds.write) publishSeed(join(genBase, name), seeds.texts[name]!);
     pathExists(base); // a removed scope is rebuilt on the next turn
     return root;
   });
