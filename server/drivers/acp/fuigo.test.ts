@@ -46,6 +46,7 @@ import { resetPathCacheForTests, restrictInstallScanDirsForTests } from "../../e
 import { removeTempDir } from "../../testing/cleanup.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
 import { fixtureCredentialFingerprint } from "../../testing/fixture-dump.ts";
+import { fuigoLocalModelDir } from "./fuigo-permission.ts";
 import { ensureFuigoLocalModel, FuigoAgentDriver, fuigoLocalKeyEnv, fuigoLocalSlug, FUIGO_EXTERNAL_MCP_GATES, isolateFuigoFromExternalMcp, parseFuigoModels, scrubFuigoCredentialEnv, STATIC_FUIGO_MODELS } from "./fuigo.ts";
 import { noteFluxKeyRefused, resetFluxKeyHealthForTests } from "../../flux-key-health.ts";
 import { fluxKeyState } from "../../flux-config.ts";
@@ -663,9 +664,10 @@ describe("fuigo argv — the ordering trap", () => {
     expect(dump("agent").argv[1]).toBe("default");
   });
 
-  it("bypasses permissions only under fullAuto", async () => {
+  it("never bypasses permissions, fullAuto included: Fuigo's ask rules prompt only in default (FUIGO-SCOPE-1010)", async () => {
     await runTurn({ model: "flux-auto", fullAuto: true });
-    expect(dump("agent").argv[1]).toBe("bypassPermissions");
+    expect(dump("agent").argv[1]).toBe("default");
+    expect(dump("agent").argv).not.toContain("bypassPermissions");
   });
 
   it("omits -m entirely when the turn names no model", async () => {
@@ -1088,13 +1090,14 @@ describe("Fuigo config writer on Windows", () => {
   });
   afterEach(() => configureLocalServerStore(null));
 
-  it("writes under USERPROFILE with no HOME, base URL in base_url and the key only in the env", () => {
+  it("writes Murage's own table file with no HOME, base URL in base_url and the key only in the env; the owner's file is never written", () => {
     const profile = join(root, "Users", "Some One");
     mkdirSync(profile, { recursive: true });
     const env: Record<string, string | undefined> = { USERPROFILE: profile };
     const slug = ensureFuigoLocalModel(`${SERVER.id}::Qwen3`, env);
     const host = localHost(SERVER.id)!;
-    const toml = readFileSync(join(profile, ".fuigo", "config.toml"), "utf8");
+    expect(existsSync(join(profile, ".fuigo", "config.toml"))).toBe(false);
+    const toml = readFileSync(join(fuigoLocalModelDir(), `${slug}.toml`), "utf8");
     expect(toml).toContain(`[model."${slug}"]`);
     expect(toml).toContain(`base_url = "${SERVER.apiBase}"`);
     expect(toml).toContain(`env_key = "${fuigoLocalKeyEnv(host)}"`);
@@ -1284,7 +1287,9 @@ describe("fuigo local models (spec E1)", () => {
     expect(argv.indexOf("agent")).toBeLessThan(m);
     expect(m).toBeLessThan(argv.indexOf("stdio"));
     expect(env[KEY_ENV]).toBe(fixtureCredentialFingerprint(SERVER.apiKey));
-    const toml = readFileSync(join(home, ".fuigo", "config.toml"), "utf8");
+    // the bot's own scoped config carries the table (FUIGO-SCOPE-1010 V4); the owner's ~/.fuigo is not written
+    expect(existsSync(join(home, ".fuigo", "config.toml"))).toBe(false);
+    const toml = readFileSync(join(env.FUIGO_HOME!, "config.toml"), "utf8");
     expect(toml).toContain(`[model."${slug}"]`);
     expect(toml).toContain('model = "Qwen3.8-27B"');
     expect(toml).toContain(`base_url = "${SERVER.apiBase}"`);
@@ -1293,20 +1298,25 @@ describe("fuigo local models (spec E1)", () => {
     expect(toml).not.toContain(SERVER.apiKey);
   });
 
-  it("keeps the user's own config and does not duplicate or rewrite an identical entry", async () => {
+  it("never writes the user's own config, and the bot's copy has one table per slug, legacy tables included", async () => {
     mkdirSync(join(home, ".fuigo"), { recursive: true });
-    const own = '[cli]\nuse_leader = true\n\n[model.my-cloud]\nmodel = "gpt-5"\n';
+    const slug = fuigoLocalSlug(localHost(SERVER.id)!, "Qwen3.8-27B");
+    // a table an earlier Murage wrote into the owner's file stays there, and is not carried twice (M3)
+    const own = `[cli]\nuse_leader = true\n\n[model.my-cloud]\nmodel = "gpt-5"\n\n[model."${slug}"]\nmodel = "old"\n`;
     writeFileSync(join(home, ".fuigo", "config.toml"), own);
     await runTurn({ model: PICK });
     await instance?.dispose();
     instance = undefined;
     recorder?.stop();
-    const first = readFileSync(join(home, ".fuigo", "config.toml"), "utf8");
+    const first = readFileSync(join(dump("agent").env.FUIGO_HOME!, "config.toml"), "utf8");
     await runTurn({ model: PICK });
-    const second = readFileSync(join(home, ".fuigo", "config.toml"), "utf8");
+    const second = readFileSync(join(dump("agent").env.FUIGO_HOME!, "config.toml"), "utf8");
+    expect(readFileSync(join(home, ".fuigo", "config.toml"), "utf8")).toBe(own);
     expect(second).toBe(first);
-    expect(second.startsWith(own)).toBe(true);
-    expect(second.match(/\[model\."murage-local-/g)).toHaveLength(1);
+    expect(second).toContain('[model.my-cloud]\nmodel = "gpt-5"');
+    expect(second).not.toContain("use_leader = true");
+    expect(second.split(`[model."${slug}"]`)).toHaveLength(2);
+    expect(second).not.toContain('model = "old"');
   });
 
   it("runs a local pick with no Flux key and no fuigo login", async () => {

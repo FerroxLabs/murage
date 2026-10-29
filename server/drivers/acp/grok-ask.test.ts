@@ -18,7 +18,7 @@ const cli = fileURLToPath(new URL("../../testing/fake-acp-cli.ts", import.meta.u
 const homes: string[] = [];
 afterEach(() => { for (const home of homes.splice(0)) removeTempDirSync(home); });
 
-const ASK_LINE = 'ask = ["Bash", "Edit", "Write"]';
+const ASK_LINE = 'ask = ["Bash", "Edit", "Write", "Read(**)", "Grep"]';
 
 /** An owner whose own grok config allows every shell command and edit. */
 function ownerHome(): string {
@@ -56,7 +56,7 @@ async function turn(home: string, version: string, level: "ask" | "auto") {
 
 describe("grok at Ask asks Murage before every shell command, edit and write", () => {
   it("the scoped config carries Murage's ask rules and none of the owner's permission rules, in one [permission] table", () => {
-    expect([...GROK_ASK_RULES]).toEqual(["Bash", "Edit", "Write"]);
+    expect([...GROK_ASK_RULES]).toEqual(["Bash", "Edit", "Write", "Read(**)", "Grep"]);
     const owner = [
       '[models]', 'default = "grok-4.7"', '',
       '[permission]', 'allow = ["Bash", "Edit"]', 'ask = []', '',

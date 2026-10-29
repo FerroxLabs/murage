@@ -74,6 +74,9 @@ import {
   QUESTION_NOTES,
   answersFromMessage,
   fromClaude,
+  fromElicitationForm,
+  fromElicitationUrl,
+  toElicitationContent,
   fromMuragebox,
   toClaudeAnswers,
   toMessageText,
@@ -111,7 +114,8 @@ import { engineClosedLine } from "./stop-copy.ts";
 import { EngineStderrCapture, engineStderrRedacted } from "./acp/core.ts";
 import { connectedAppsServerName } from "../../shared/connected-app-names.ts";
 import type { McpMountRecord } from "../../shared/mount-identity.ts";
-import { OWN_BUILTINS, OWN_UNASKED, type OwnBuiltin } from "../../shared/own-servers.ts";
+import { OWN_BUILTINS, OWN_UNASKED, ownToolListedOnTurn, type OwnBuiltin } from "../../shared/own-servers.ts";
+import { EMAIL_TOOLS_ENV } from "./email-tool-schemas.ts";
 import { inProjectCheck, realDir, realPathInOrder, walkRoot } from "../../shared/in-project.ts";
 import { SENSITIVE_TEXT, claudeSensitiveAskRules } from "../../shared/sensitive-paths.ts";
 import { execEnvHanded, execEnvNow, handedEngineEnv, ownedTurnNames, type HandedEnv } from "../engine-env.ts";
@@ -123,6 +127,7 @@ import { TurnRefusal } from "./turn-refusal.ts";
 import { NarrowDenials } from "../narrow-denials.ts";
 import { appendDecision } from "../decision-log.ts";
 import { EXEC_ENV_FILE, EXEC_KEEP, murageExecPrefix, withExecKeep, writeExecEnvFile } from "./murage-exec.ts";
+import { noteFrontMatterFallback, observeIsolationScan } from "../health/isolation-observer.ts";
 
 /** Whether `claude` has been signed in.
  *
@@ -306,6 +311,13 @@ export function resetClaudeMcpReadinessForTests(): void {
 
 /** How long a settle check waits for the init-time baseline probe. */
 const BASELINE_WAIT_MS = 5_000;
+/** How long a turn whose steer may be unread waits after `result` for the
+ * CLI's follow-up turn. Claude Code 2.1.309 starts it within milliseconds
+ * (its `init` follows the result at once); without one the turn settles. */
+const STEER_FOLLOW_UP_WAIT_MS = 2_000;
+/** A steer written this long before the CLI's last tool result was read at
+ * that point (the CLI reads queued input before the next model call). */
+const STEER_FOLD_MARGIN_MS = 1_000;
 
 /** How long a prewarmed CLI gets to confirm its startup (its first stdout frame: the answer to
  * the `initialize` control request, or `init`). Its MCP config and prompt files are removed only
@@ -551,6 +563,9 @@ interface Ask {
 }
 type AskBehavior = "allow" | "deny" | "answer";
 type AskResolutionSource = "user" | "timeout" | "system" | "auto";
+/** Ends one MCP elicitation: what goes back to the CLI (unless `write` is
+ * false: the CLI withdrew it, or the process is gone) and why. */
+type ElicitEnd = (outcome: "accept" | "decline" | "cancel", source: AskResolutionSource, answers?: readonly QuestionAnswer[], write?: boolean) => void;
 
 const DENY_TIMEOUT_NOTE =
   "Murage: nobody answered this permission request in time. Skip this action and finish what you can without it.";
@@ -600,9 +615,11 @@ export function claudeMountRecords(keys: readonly string[], connectorKey: string
  * there: the CLI runs every tool of a listed server unasked, so phone taps, web_search, register_artifact and
  * dweb_opencode_run would never reach the muragebox broker or the stop line. A mount with no OWN_UNASKED row
  * (phone, browser, computer) gets none, and every one of its calls asks through the broker. */
-export function claudeOwnUnaskedTools(builtin: OwnBuiltin): string[] {
+export function claudeOwnUnaskedTools(builtin: OwnBuiltin, emailMode?: string): string[] {
   const server = OWN_BUILTINS[builtin];
-  return OWN_UNASKED.filter((row) => row.mount === `own:${builtin}`).flatMap((row) => row.tools.map((tool) => `mcp__${server}__${tool}`));
+  // the email tools only on a turn whose email mount listed them (dark launch: with no mode the list is the build without email)
+  return OWN_UNASKED.filter((row) => row.mount === `own:${builtin}`)
+    .flatMap((row) => row.tools.filter((tool) => ownToolListedOnTurn(tool, emailMode)).map((tool) => `mcp__${server}__${tool}`));
 }
 
 /** The broker's own two tools: `approve` is the `--permission-prompt-tool` and `ask_user` is the agent's
@@ -1246,12 +1263,13 @@ export function declaredName(path: string): string | undefined {
       const buffer = Buffer.alloc(FRONT_MATTER_BYTES + 8);
       head = buffer.subarray(0, readSync(fd, buffer, 0, buffer.length, 0)).toString("utf8");
     } finally { closeSync(fd); }
-  } catch { return undefined; }
+  } catch { noteFrontMatterFallback("unreadable"); return undefined; }
   head = head.replace(/^\uFEFF/, "");
-  if (!/^---[ \t]*\r?\n/.test(head)) return undefined;
+  if (!/^---[ \t]*\r?\n/.test(head)) { noteFrontMatterFallback("no-front-matter"); return undefined; }
   const close = /\r?\n---[ \t]*(?:\r?\n|$)/.exec(head.slice(3));
   if (!close) {
     if (head.length > FRONT_MATTER_BYTES) scanWarn(`${path}:front-matter`, `${path}: front matter longer than ${FRONT_MATTER_BYTES} bytes; switched off by file name only`, "info");
+    noteFrontMatterFallback(head.length > FRONT_MATTER_BYTES ? "too-large" : "parse-error");
     return undefined;
   }
   try {
@@ -1259,8 +1277,11 @@ export function declaredName(path: string): string | undefined {
     if (doc.errors.length) throw doc.errors[0];
     const data: unknown = doc.toJS({ maxAliasCount: 50 });
     const name = data && typeof data === "object" ? (data as { name?: unknown }).name : undefined;
-    return typeof name === "string" && name.trim() ? name.trim() : undefined;
+    if (typeof name === "string" && name.trim()) return name.trim();
+    noteFrontMatterFallback("missing-name");
+    return undefined;
   } catch {
+    noteFrontMatterFallback("parse-error");
     scanWarn(`${path}:front-matter`, `${path}: front matter does not parse; switched off by file name only`, "info");
     return undefined;
   }
@@ -2658,7 +2679,8 @@ function isolationSettingsFile(settings: Record<string, unknown>): { path: strin
 /** The isolation flags for a spawn: `--strict-mcp-config` (only Murage's own `--mcp-config`
  * servers run, never the owner's) and `--settings <file>` with claudeIsolationSettings. */
 export function claudeIsolation(env: NodeJS.ProcessEnv, cwd: string, platform: NodeJS.Platform = process.platform, overlayEnv: Readonly<Record<string, string>> = {}): string[] {
-  return ["--strict-mcp-config", "--settings", isolationSettingsFile(claudeIsolationSettings(env, cwd, platform, overlayEnv)).path];
+  // Sentinel S09: one isolation fact per launch with the front-matter fallbacks this scan used (counts only, no file names)
+  return observeIsolationScan("claude", () => ["--strict-mcp-config", "--settings", isolationSettingsFile(claudeIsolationSettings(env, cwd, platform, overlayEnv)).path]);
 }
 
 export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
@@ -2689,6 +2711,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     const narrowDenials = new NarrowDenials();
     /** 14.3 item 2: the open sign-in cards, by thread and request: each settles its turn's hold. */
     const signinAsks = new Map<string, (allowed: boolean, source: AskResolutionSource) => void>();
+    /** MCP-ELICITATION-109: the open elicitation cards, by thread and request. */
+    const elicitAsks = new Map<string, { end: ElicitEnd; questions: readonly QuestionSpec[] }>();
     const accountEnvironment=()=>claudeAccountEnvironment(cloudTurnEnvironment("claudeAgent", {...process.env,...input.environment}, process.env.MURAGE_CLOUD_ROLE === "home" ? [] : ["CLAUDE_CODE_OAUTH_TOKEN"]),process.env.MURAGE_CLOUD_ROLE === "home" ? undefined : config.configDir);
     const prepareTextOnlyTurn = (selection: string, providerRoute?: ProviderTurnRoute) => {
       const account = accountEnvironment();
@@ -2794,6 +2818,20 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       toolsUnavailable?: string[];
       /** "unknown": the CLI could not say whether they were up (see GateOutcome). */
       mcpReadiness?: "unknown";
+      /** When each steer the CLI may not have read yet was written. The CLI
+       * reads queued input only after a tool result, before its next model
+       * call; a tool result drops the steers written well before it. Input
+       * that arrives during the final answer is run as a turn of its own
+       * right after `result` (steerFollowUp): every message queued by then is
+       * joined into that one follow-up turn (probed on 2.1.309). */
+      unreadSteers?: number[];
+      /** A result arrived while a steer may still be unread: the turn waits
+       * briefly for the CLI's own follow-up turn, whose frames are this one's. */
+      steerFollowUp?: { timer: ReturnType<typeof setTimeout>; finish: () => void; usage: { input: number; output: number; cachedInput: number }; total: number | null };
+      /** token totals of results that did not settle the turn (steer follow-ups) */
+      carriedUsage?: { input: number; output: number; cachedInput: number };
+      /** the CLI's running cost total from the last result that did not settle the turn */
+      carriedTotal?: number | null;
     }
     interface BackgroundState {
       tracker: SubtaskTracker;
@@ -2869,6 +2907,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       /** Our own control requests (`mcp_status`, `mcp_reconnect`) waiting for
        * the CLI's control_response, by request id. */
       control?: Map<string, (response: any) => void>;
+      /** MCP elicitations the CLI asked US (control_request `elicitation`) that
+       * wait for the owner's card, by the CLI's request id. Each ends exactly
+       * once: answered, declined, cancelled, or withdrawn by the CLI. */
+      elicitations?: Map<string, ElicitEnd>;
       /** The CLI build this process runs (claudeExecutableIdentity): what
        * `mcp_status` support is remembered under. */
       cliIdentity?: string;
@@ -2955,6 +2997,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       const s = sessions.get(threadId);
       if (!s || s.closing) return;
       s.closing = true;
+      endElicitations(s, "system");
       warmPool.release(s);
       retire(s, threadId);
       if (s.idleTimer) clearTimeout(s.idleTimer);
@@ -3160,6 +3203,16 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       });
     };
 
+    /** A message accepted while a turn waits for a steer's follow-up joins
+     * that follow-up: the wait starts over, so its `init` is not missed. */
+    const extendSteerHold = (t: SessionTurn) => {
+      const held = t.steerFollowUp;
+      if (!held) return;
+      clearTimeout(held.timer);
+      held.timer = setTimeout(held.finish, STEER_FOLLOW_UP_WAIT_MS);
+      held.timer.unref?.();
+    };
+
     /** Writes the steers that waited for `init`, each only if its turn is
      * still the live, unstopped one: a Stop or close in between writes nothing. */
     const flushQueuedSteers = (s: Session, threadId: string, written = true) => {
@@ -3168,7 +3221,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       for (const item of queued ?? []) {
         const live = written && s.turn === item.turn && !item.turn.settled && !item.turn.stopRequested && !s.closing && s.child.exitCode === null;
         if (!live || !steerFenceHolds(item.beforeWrite)) item.resolve(false);
-        else void writeUser(s, threadId, item.text).then(item.resolve);
+        else {
+          (item.turn.unreadSteers ??= []).push(Date.now());
+          extendSteerHold(item.turn);
+          void writeUser(s, threadId, item.text).then(item.resolve);
+        }
       }
     };
     /** One control request to the CLI, answered by its control_response (the
@@ -3313,6 +3370,82 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           questions: [question],
         });
       });
+    };
+    /** Write one control_response to the CLI, if it can still read it. */
+    const writeControlResponse = (s: Session, threadId: string, response: Record<string, unknown>): boolean => {
+      if (s.child.exitCode !== null || !s.child.stdin.writable || s.child.stdin.destroyed) return false;
+      const message = { type: "control_response", response };
+      try {
+        s.child.stdin.write(JSON.stringify(message) + "\n");
+        appendNative(threadId, { dir: "out", source: "claude.sdk.message", msg: message });
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    /** MCP elicitation (MCP-ELICITATION-109): the CLI forwards a tool server's
+     * `elicitation/create` as control_request `elicitation` and waits for our
+     * control_response with no bound of its own. It becomes the SAME question
+     * card ACP and Codex raise (fromElicitationForm / fromElicitationUrl): a
+     * question, so the harness never answers it for the owner at any level.
+     * The owner's answer is `accept` (+ typed content for a form), a skip is
+     * `decline`; the question timeout, Stop, the turn ending and the process
+     * closing are `cancel`. A withdrawal by the CLI closes the card silently. */
+    const openElicitation = (s: Session, threadId: string, cliRequestId: string, request: Record<string, any>) => {
+      const turn = s.turn;
+      const cancelNow = () => writeControlResponse(s, threadId, { subtype: "success", request_id: cliRequestId, response: { action: "cancel" } });
+      if (!turn || turn.settled || turn.stopRequested || s.closing || prewarmTurns.has(turn.turnId)) return void cancelNow();
+      const turnId = turn.turnId;
+      const elicitations = (s.elicitations ??= new Map());
+      if (elicitations.has(cliRequestId)) return;
+      const urlMode = request.mode === "url";
+      const normalized = urlMode ? fromElicitationUrl(request.message, request.url) : fromElicitationForm(request.message, request.requested_schema);
+      // Murage's own name for the mount leads the card; the server's display_name and title are its own words, never the label
+      const label = typeof request.mcp_server_name === "string" && request.mcp_server_name.trim() ? request.mcp_server_name.trim().slice(0, 80) : undefined;
+      if (!normalized.ok) {
+        emit({ ...base(threadId, turnId), type: "runtime.error", message: `${label ?? "A tool server"} asked a question Murage could not show (${normalized.error}); it was told nobody answered` });
+        return void cancelNow();
+      }
+      const questions: QuestionSpec[] = normalized.questions;
+      const requestId = newId();
+      const key = `${threadId}\u0000${requestId}`;
+      const end: ElicitEnd = (outcome, source, answers, write = true) => {
+        if (elicitations.get(cliRequestId) !== end) return;
+        elicitations.delete(cliRequestId);
+        elicitAsks.delete(key);
+        clearTimeout(timer);
+        const answered = outcome === "accept" && answers?.length ? answers : null;
+        const action = answered ? "accept" : outcome === "accept" ? "decline" : outcome;
+        if (write) {
+          writeControlResponse(s, threadId, {
+            subtype: "success",
+            request_id: cliRequestId,
+            response: action === "accept" && !urlMode ? { action, content: toElicitationContent(request.requested_schema, questions, answered!) } : { action },
+          });
+        }
+        emit({ ...base(threadId, turnId), type: "request.resolved", requestId, behavior: answered ? "answer" : "deny", source });
+      };
+      const timer = turn.holdProjectAsks ? undefined : setTimeout(() => end("cancel", "timeout"), questionTimeoutFor(config.questionTimeoutMs));
+      timer?.unref?.();
+      elicitations.set(cliRequestId, end);
+      elicitAsks.set(key, { end, questions });
+      const first = questions[0]!.question;
+      emit({
+        ...base(threadId, turnId),
+        type: "request.opened",
+        requestId,
+        requestType: "question",
+        tool: "elicitation",
+        summary: (label ? `${label}: ${first}` : first).slice(0, 300),
+        // the first question's labels keep voice and older clients working
+        choices: questions[0]!.options.map((option) => option.label),
+        questions,
+      });
+    };
+    /** Every open elicitation on this process ends now: `cancel` to the CLI
+     * while it can still read it, and each card closes. */
+    const endElicitations = (s: Session, source: AskResolutionSource) => {
+      for (const end of [...(s.elicitations?.values() ?? [])]) end("cancel", source);
     };
     // retry bookkeeping lives PER THREAD, not per sendTurn call: a relaunch
     // is a fresh sendTurn, and the attempt cap must survive across launches
@@ -3599,7 +3732,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // publish_site and the other always-ask tools reach the broker.
       if (turn.integrations?.agents) {
         mcpServers.agents = { ...turn.integrations.agents };
-        allowed.push(...claudeOwnUnaskedTools("agents"));
+        allowed.push(...claudeOwnUnaskedTools("agents", turn.integrations.agents.env?.[EMAIL_TOOLS_ENV]));
       }
       if (turn.integrations?.memory) {
         if (Object.hasOwn(turn.integrations.custom ?? {}, "murage-memory")) throw new Error("MEMORY_MCP_NAME_COLLISION");
@@ -3613,6 +3746,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       if (turn.integrations?.phone) {
         mcpServers.phone = { ...turn.integrations.phone };
         allowed.push(...claudeOwnUnaskedTools("phone"));
+      }
+      // 1.0.9: the owner's phone (calendar, reminders, ...). Mounted only when the harness passed it for a turn holding a live phone authority;
+      // every tool of it is pre-allowed (OWN_UNASKED): the live authority, the grant and the phone's own card are the gate, so no desktop card or approval push.
+      if (turn.integrations?.phoneJobs) {
+        mcpServers.phoneJobs = { ...turn.integrations.phoneJobs };
+        allowed.push(...claudeOwnUnaskedTools("phoneJobs"));
       }
       if (turn.integrations?.browser) {
         mcpServers.browser = claudeBrowserMount(turn);
@@ -4344,6 +4483,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // A control request the process can no longer answer ends now, not at its bound.
       child.once("exit", () => {
         for (const answer of [...(session.control?.values() ?? [])]) answer(null);
+        // the server's request died with the process: the cards close
+        for (const end of [...(session.elicitations?.values() ?? [])]) end("cancel", "system", undefined, false);
       });
 
       /** The files the CLI read at its start (MCP config with its credentials, system prompt):
@@ -4366,6 +4507,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         const t = session.turn;
         if (!t || t.settled) return;
         t.settled = true;
+        // the turn is over: an elicitation still open is cancelled, never left waiting
+        endElicitations(session, "system");
+        if (t.steerFollowUp) clearTimeout(t.steerFollowUp.timer);
+        t.steerFollowUp = undefined;
         // A steer still waiting for `init` belongs to this turn, which has
         // ended: it is dropped now, never carried to another turn.
         flushQueuedSteers(session, threadId, false);
@@ -4555,6 +4700,33 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         if ((session.closing || sessions.get(threadId) !== session) && ((o.type === "system" && o.subtype === "init") || !session.turn || session.turn.settled)) return;
         const contentFrame = o.type === "stream_event" || o.type === "assistant" || o.type === "user";
         const taskFrame = o.type === "system" && typeof o.subtype === "string" && (o.subtype.startsWith("task_") || o.subtype === "background_tasks_changed");
+        // Held for a steer's follow-up (the result case): the CLI starts the
+        // turn it runs for input queued during the final answer with `init`.
+        // That follow-up is this turn's own continuation. Anything else first
+        // means no follow-up is coming: the turn settles now, as it would have.
+        // An earlier turn's continuation playing out meanwhile (a background
+        // task's notice, then its own init, frames and result) is neither:
+        // those frames take their usual path and the wait goes on.
+        // A background task's own synthetic result (origin task-notification) is
+        // not the follow-up either: it neither ends the wait nor is adopted.
+        const followUp = session.turn?.steerFollowUp;
+        const notificationResult = o.type === "result" && o.origin?.kind === "task-notification";
+        if (followUp && session.turn && !session.turn.lateContinuation && !taskFrame && !notificationResult) {
+          if (o.type === "system" && o.subtype === "init") {
+            clearTimeout(followUp.timer);
+            session.turn.steerFollowUp = undefined;
+            // Claude Code runs every message queued by then as one follow-up
+            // (joined, probed on 2.1.309); one written just now may be next.
+            if (session.turn.unreadSteers) { const at = Date.now() - STEER_FOLD_MARGIN_MS; session.turn.unreadSteers = session.turn.unreadSteers.filter((written) => written > at); }
+            const carried = (session.turn.carriedUsage ??= { input: 0, output: 0, cachedInput: 0 });
+            carried.input += followUp.usage.input;
+            carried.output += followUp.usage.output;
+            carried.cachedInput += followUp.usage.cachedInput;
+            if (followUp.total !== null) session.turn.carriedTotal = followUp.total;
+          } else if (contentFrame || o.type === "result") {
+            followUp.finish();
+          }
+        }
         // Frames with no open turn were not asked for: a background task's
         // notice or the model's follow-up to it, from a turn that is over.
         // They belong to no turn, and must never be read as the next one's.
@@ -4723,6 +4895,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           case "user":
             for (const b of Array.isArray(o.message?.content) ? o.message.content : []) {
               if (b.type === "tool_result") {
+                // queued input written well before this point goes into the next model call
+                if (session.turn?.unreadSteers) { const at = Date.now() - STEER_FOLD_MARGIN_MS; session.turn.unreadSteers = session.turn.unreadSteers.filter((written) => written > at); }
                 emit({ ...base(threadId, currentTurnId()), type: "item.completed", itemType: "tool", itemId: b.tool_use_id, ok: !b.is_error, result: b.content });
                 // The proxy fails closed when it cannot reach the broker, and its own
                 // stderr only reaches the engine's MCP log: say so in the app log.
@@ -4771,6 +4945,27 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             }
             break;
           }
+          case "control_request": {
+            // A request FROM the CLI. Only an MCP elicitation is served; any
+            // other subtype gets an explicit error at once, so the CLI never
+            // waits on a request nobody here will answer.
+            const requestId = typeof o.request_id === "string" ? o.request_id : null;
+            if (!requestId) break;
+            const request = o.request && typeof o.request === "object" && !Array.isArray(o.request) ? o.request : {};
+            if (request.subtype === "elicitation") openElicitation(session, threadId, requestId, request);
+            else {
+              const subtype = typeof request.subtype === "string" ? request.subtype.slice(0, 80) : "unknown";
+              writeControlResponse(session, threadId, { subtype: "error", request_id: requestId, error: `Murage does not handle control request ${JSON.stringify(subtype)}` });
+            }
+            break;
+          }
+          case "control_cancel_request": {
+            // The CLI withdrew its request (the tool server cancelled it): the
+            // card closes, and nothing is written back.
+            const requestId = typeof o.request_id === "string" ? o.request_id : null;
+            if (requestId) session.elicitations?.get(requestId)?.("cancel", "system", undefined, false);
+            break;
+          }
           case "tool_progress":
             // Upstream #3328 (OpenMausBot, Apache-2.0): Claude Code sends one
             // every 30 s while a tool runs. Forward it as tool activity so a
@@ -4795,6 +4990,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             const foreignResult = session.turn?.lateContinuation === true && o.origin?.kind === "task-notification";
             if (session.turn) session.turn.lateContinuation = false;
             if (foreignResult) break;
+            // Still held for a steer's follow-up: the follow-up's own frames
+            // ended or adopted the wait above, so this result is a background
+            // task's, and it settles nothing.
+            if (session.turn?.steerFollowUp) break;
             if (o.origin?.kind === "task-notification" && !session.turn?.bg?.waiting) break;
             // result.usage is this turn's own figure, "per-turn in
             // streaming-input sessions" even on a retained process. cache
@@ -4840,20 +5039,60 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
               break;
             }
             const heldUsage = session.turn?.bg?.waiting ? session.turn.bg.usage : null;
-            settle(
+            const carried = session.turn?.carriedUsage ?? null;
+            const settleArgs: Parameters<typeof settle> = [
               stoppedResult || (o.is_error !== true && !session.turn?.authFailed && !session.turn?.updateRequired),
               stoppedResult ? "cancelled" : session.turn?.authFailed ? "auth_required" : session.turn?.updateRequired ? "update_required" : o.stop_reason ?? o.terminal_reason ?? null,
-              o.total_cost_usd ?? null,
-              o.usage
+              o.total_cost_usd ?? session.turn?.carriedTotal ?? null,
+              o.usage || carried
                 ? {
-                    input: (o.usage.input_tokens || 0) + (o.usage.cache_read_input_tokens || 0) + (o.usage.cache_creation_input_tokens || 0) + (heldUsage?.input ?? 0),
-                    output: (o.usage.output_tokens || 0) + (heldUsage?.output ?? 0),
-                    ...(typeof o.usage.cache_read_input_tokens === "number"
-                      ? { cachedInput: o.usage.cache_read_input_tokens + (heldUsage?.cachedInput ?? 0) }
+                    input: (o.usage?.input_tokens || 0) + (o.usage?.cache_read_input_tokens || 0) + (o.usage?.cache_creation_input_tokens || 0) + (heldUsage?.input ?? 0) + (carried?.input ?? 0),
+                    output: (o.usage?.output_tokens || 0) + (heldUsage?.output ?? 0) + (carried?.output ?? 0),
+                    ...(typeof o.usage?.cache_read_input_tokens === "number" || carried
+                      ? { cachedInput: (o.usage?.cache_read_input_tokens || 0) + (heldUsage?.cachedInput ?? 0) + (carried?.cachedInput ?? 0) }
                       : {}),
                   }
                 : undefined,
-            );
+            ];
+            // A steer written during the final answer was not read by it: the
+            // CLI answers it in a turn of its own, started (with `init`) right
+            // after this result. Settling now would leave that answer to an
+            // idle process, which is closed for it, and the message the
+            // person saw delivered would be lost. So a result that comes
+            // after a steer the CLI may not have read (written after, or just
+            // before, its last tool result) waits a moment for that follow-up.
+            // (A turn held for background agents that have all reported comes
+            // here with its closing result too: its held usage stays on bg.)
+            const t = session.turn;
+            if (t && !t.settled && settleArgs[0] && !stoppedResult && !t.stopRequested && !session.closing && t.unreadSteers?.length && !(t.bg?.open.size)) {
+              const usage = {
+                input: (o.usage?.input_tokens || 0) + (o.usage?.cache_read_input_tokens || 0) + (o.usage?.cache_creation_input_tokens || 0),
+                output: o.usage?.output_tokens || 0,
+                cachedInput: o.usage?.cache_read_input_tokens || 0,
+              };
+              // The background wait is over; this wait is the turn's now. Its
+              // held usage moves into this result's, and a follow-up that starts
+              // new background agents is held (and capped) afresh.
+              if (t.bg) {
+                if (t.bg.cap) { clearTimeout(t.bg.cap); t.bg.cap = undefined; }
+                if (t.bg.waiting) {
+                  usage.input += t.bg.usage.input; usage.output += t.bg.usage.output; usage.cachedInput += t.bg.usage.cachedInput;
+                  t.bg.usage = { input: 0, output: 0, cachedInput: 0 };
+                  t.bg.waiting = false;
+                }
+              }
+              const finish = () => {
+                if (t.steerFollowUp) clearTimeout(t.steerFollowUp.timer);
+                t.steerFollowUp = undefined;
+                // a Stop or close meanwhile settles the turn on its own path, as cancelled
+                if (session.turn === t && !t.settled && !t.stopRequested && !session.closing) settle(...settleArgs);
+              };
+              const timer = setTimeout(finish, STEER_FOLLOW_UP_WAIT_MS);
+              timer.unref?.();
+              t.steerFollowUp = { timer, finish, usage, total: typeof o.total_cost_usd === "number" ? o.total_cost_usd : null };
+              break;
+            }
+            settle(...settleArgs);
             break;
         }
       };
@@ -5107,6 +5346,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         retry.cancelled = true;
         retryAbort.abort();
         flushQueuedSteers(session, threadId, false);
+        // a Stop mid-elicitation tells the tool server no (cancel) before the process goes
+        endElicitations(session, "system");
         stopSession(session);
       };
       // The pool let this thread's engine go while it was idle: this send starts a fresh one,
@@ -5275,6 +5516,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // if the turn was stopped or the process closed meanwhile.
       if (!s.initHandled) return new Promise<boolean>((resolve) => (s.queuedSteers ??= []).push({ turn: s.turn!, text, beforeWrite, resolve }));
       if (!steerFenceHolds(beforeWrite)) return false;
+      (s.turn.unreadSteers ??= []).push(Date.now());
+      extendSteerHold(s.turn);
       return writeUser(s, threadId, text);
     };
 
@@ -5573,6 +5816,20 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             const allowed = claudeSigninAllowed(decision);
             signinAsk(allowed, "user");
             return allowed ? "answered" : "rejected";
+          }
+          // MCP-ELICITATION-109: an elicitation card is this driver's own too
+          const elicitAsk = elicitAsks.get(`${threadId}\u0000${requestId}`);
+          if (elicitAsk) {
+            if (decision.behavior !== "answer") {
+              elicitAsk.end("decline", "user");
+              return "rejected";
+            }
+            // answers that do not fit the card are not delivered: the card stays, as the broker's do
+            const given = decision.answers?.length ? decision.answers : answersFromMessage(elicitAsk.questions, decision.message);
+            const checked = given ? validateAnswers(elicitAsk.questions, given) : null;
+            if (!checked?.ok) return "unavailable";
+            elicitAsk.end("accept", "user", checked.answers);
+            return "answered";
           }
           // fail-closed by construction: no broker, or an ask that already
           // timed out / settled, is `unavailable` — the caller denies

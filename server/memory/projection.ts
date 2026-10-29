@@ -21,10 +21,12 @@ export function rolledCheckpointSql(alias:string,table="memory_records"):string{
   return `(${alias}.kind='checkpoint' AND ${alias}.state!='active' AND EXISTS(SELECT 1 FROM ${table} rolled WHERE rolled.id=${alias}.id AND rolled.version>${alias}.version))`;
 }
 
-export function hasPendingProjection(db:DatabaseSync):boolean {
+/** Only the removals an owner deletion owes (`delete-pending`): what is still projected with memory off or paused (memdel r2 High #2). */
+const DELETIONS = "p.lexical_status='delete-pending'";
+export function hasPendingProjection(db:DatabaseSync,deletionsOnly=false):boolean {
   return Boolean(db.prepare(`SELECT 1 FROM memory_projection_receipts p
     JOIN memory_records r ON r.id=p.record_id AND r.version=p.record_version
-    WHERE ${PENDING} LIMIT 1`).get());
+    WHERE ${deletionsOnly?DELETIONS:PENDING} LIMIT 1`).get());
 }
 
 /** Records in these scopes whose projection is still pending, at most `limit` (no order: the caller only asks whether the
@@ -46,11 +48,11 @@ export function pendingProjectionRefsAfter(db:DatabaseSync,scopeIds:readonly str
 
 /** `ageKey`: the record's age key (schema.ts RECORD_KEYS_SCHEMA), the rowid of its FTS row in an index in age order; null until the key
  * backfill reaches it (or on a file an older build left without the key table). */
-export function pendingProjectionRecords(db:DatabaseSync,limit=16) {
+export function pendingProjectionRecords(db:DatabaseSync,limit=16,deletionsOnly=false) {
   const keyed=recordKeysPresent(db);
   return db.prepare(`SELECT r.id,r.version,r.scope_id AS scopeId,CASE WHEN r.kind IN ${PIP_ALL_KINDS_SQL} OR ${rolledCheckpointSql("r")} THEN '' ELSE r.text END AS text,CASE WHEN r.kind IN ${PIP_ALL_KINDS_SQL} OR ${rolledCheckpointSql("r")} THEN 'deleted' ELSE r.state END AS state,CASE WHEN r.kind NOT IN ${PIP_ALL_KINDS_SQL} AND r.state!='deleted' AND p.lexical_status!='delete-pending' AND ${rolledCheckpointSql("r")} THEN 1 ELSE 0 END AS rolled,${keyed?"k.age_key":"NULL"} AS ageKey FROM memory_projection_receipts p
     JOIN memory_records r ON r.id=p.record_id AND r.version=p.record_version
     ${keyed?`LEFT JOIN ${RECORD_KEYS_TABLE} k ON k.record_id=r.id AND k.record_version=r.version`:""}
-    WHERE ${PENDING}
+    WHERE ${deletionsOnly?DELETIONS:PENDING}
     ORDER BY p.lexical_status,p.record_id,p.record_version LIMIT ?`).all(limit);
 }

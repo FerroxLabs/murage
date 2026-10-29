@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { writeFileAtomic } from "./atomic.ts";
+import { askTombstonePathFor, mergeIntoAskTombstone, mergeIntoTombstone, tombstonePathFor, type AskTombstoneRow, type TombstoneRow } from "./phones/revocation-tombstone.ts";
 import { dropWriteRevisionTriggers } from "./app-write-revision.ts";
 import { LEGACY_DELEGATIONS_FILE, syncDirectory } from "./pending-delegations-schema.ts";
 import { runBranchChangeSlice } from "./memory/branch-change.ts";
@@ -87,6 +88,15 @@ export const APP_SCHEMA_102_ADDITIONS = Object.freeze({
     "shared_ready_thread",
     "turn_source_copies_copy",
     "turn_source_holds_thread",
+    // bot email (server/email/email-store.ts), 1.0.9: made only when email is in use; dropped with their tables
+    "email_events_received",
+    "email_events_reference",
+    "email_sends_due",
+    "email_sends_generation",
+    "email_sends_hash",
+    "email_sends_inbox",
+    "email_sends_replaces",
+    "email_sends_settled",
   ],
   tables: [
     "app_write_revision",
@@ -105,6 +115,11 @@ export const APP_SCHEMA_102_ADDITIONS = Object.freeze({
     "owner_sends",
     "pending_delegations",
     "pending_delegations_import",
+    // 1.0.9 phone tools and share and ask (server/phones/): created only while the flag is on, so absent from most files
+    "phone_ask_revocations",
+    "phone_receipts",
+    "phone_registrations",
+    "phone_revocations",
     "project_card_delivery_owed",
     "restore_holds",
     "room_request_backfills",
@@ -122,6 +137,16 @@ export const APP_SCHEMA_102_ADDITIONS = Object.freeze({
     "turn_first",
     "turn_source_copies",
     "turn_source_holds",
+    // bot email (server/email/email-store.ts), 1.0.9
+    "email_bindings",
+    "email_event_cursor",
+    "email_events",
+    "email_payloads",
+    "email_policy_sync",
+    "email_sends",
+    "email_tombstones",
+    "email_trust",
+    "email_trusted",
   ],
 });
 
@@ -178,6 +203,103 @@ function pendingOwnerWork(db: DatabaseSync): number {
   if (has(db, "table", "owner_sends")) n += Number((db.prepare("SELECT COUNT(*) AS n FROM owner_sends WHERE NOT ((status IN ('started','delivered','cancelled') OR (status IN ('unconfirmed','failed') AND message_id IS NOT NULL)) AND text='')").get() as { n: number }).n);
   if (has(db, "table", "restore_holds")) n += Number((db.prepare("SELECT COUNT(*) AS n FROM restore_holds").get() as { n: number }).n);
   return n;
+}
+
+/** The 1.0.9 phone objects every older build lacks: the four phone tables and the owner_sends columns a phone's share or ask line uses. They leave first,
+ * whatever the target (installation-memory-downgrade.ts), so a downgraded messages.db holds the text the older build creates and its restore check accepts.
+ * A phone line still waiting to send is refused (dropping queue_only would turn a line that only fills the composer into one that sends). Idempotent. */
+/** owner_sends as 1.0.2 creates it (the text its backup check and a fresh install hold): the table before 1.0.9's phone columns. */
+const OWNER_SENDS_102_DDL = `CREATE TABLE owner_sends (
+  seq INTEGER PRIMARY KEY,
+  kind TEXT NOT NULL CHECK(kind IN ('bot','group')),
+  owner_id TEXT NOT NULL,
+  thread_id TEXT NOT NULL,
+  send_id TEXT,
+  queue_id TEXT NOT NULL UNIQUE,
+  fingerprint TEXT NOT NULL,
+  text TEXT,
+  prompt TEXT,
+  reply_to_id TEXT,
+  origin TEXT,
+  mode TEXT,
+  responder_id TEXT,
+  existing_message_id TEXT,
+  message_id TEXT,
+  status TEXT NOT NULL,
+  dispatched INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  notice TEXT,
+  restore_held INTEGER NOT NULL DEFAULT 0,
+  restore_gen TEXT,
+  stopped INTEGER NOT NULL DEFAULT 0,
+  stop_gen TEXT,
+  action_id TEXT,
+  turn_id TEXT
+)`;
+export const PHONE_OWNER_SENDS_COLUMNS = Object.freeze(["via", "queue_only", "via_device", "attachments"]);
+/** Refuses (DOWNGRADE_WORK_PENDING) while any phone line is still waiting to send: a row that carries any of owner_sends's phone columns and is not
+ * yet delivered, cancelled or answered with its text gone. Reads only. The memory downgrade runs it before its first change, and the phone step runs it again. */
+export function assertNoPendingPhoneWork(db: DatabaseSync): void {
+  if (!has(db, "table", "owner_sends")) return;
+  const present = new Set((db.prepare("PRAGMA table_info(owner_sends)").all() as Array<{ name: string }>).map(column => column.name));
+  const phone = [["queue_only", "queue_only=1"], ["via", "via IS NOT NULL"], ["via_device", "via_device IS NOT NULL"], ["attachments", "attachments IS NOT NULL"]]
+    .filter(([name]) => present.has(name!)).map(([, test]) => test);
+  if (phone.length === 0) return;
+  const open = Number((db.prepare(`SELECT COUNT(*) AS n FROM owner_sends WHERE (${phone.join(" OR ")}) AND NOT ((status IN ('started','delivered','cancelled') OR (status IN ('unconfirmed','failed') AND message_id IS NOT NULL)) AND text='')`).get() as { n: number }).n);
+  if (open > 0) throw Object.assign(new Error(`You have ${open} message${open === 1 ? "" : "s"} from a phone still waiting to send. Send or cancel ${open === 1 ? "it" : "them"}, then try again.`), { code: DOWNGRADE_WORK_PENDING });
+}
+
+export function downgradePhoneObjectsTo108(db: DatabaseSync, hooks: { beforeDrop?: (table: string) => void } = {}): { tables: number; columns: number } {
+  let tables = 0, columns = 0;
+  assertNoPendingPhoneWork(db);
+  // The revocations are set aside beside messages.db before anything changes, so a phone removed while its jobs token was still on disk (or an ask
+  // generation that was revoked) stays barred after a later upgrade. The files only grow, so writing them ahead of the transaction is harmless. A file
+  // that cannot be written (or read, when one is already there) stops the downgrade with nothing changed.
+  if (has(db, "table", "phone_revocations")) {
+    const rows = db.prepare("SELECT device_id, revoked_at, reason FROM phone_revocations").all() as unknown as TombstoneRow[];
+    const path = tombstonePathFor(db);
+    if (rows.length > 0 && path !== null) mergeIntoTombstone(path, rows);
+  }
+  if (has(db, "table", "phone_ask_revocations")) {
+    const rows = db.prepare("SELECT device_id, through FROM phone_ask_revocations").all() as unknown as AskTombstoneRow[];
+    const path = askTombstonePathFor(db);
+    if (rows.length > 0 && path !== null) mergeIntoAskTombstone(path, rows);
+  }
+  const present = has(db, "table", "owner_sends")
+    ? (db.prepare("PRAGMA table_info(owner_sends)").all() as Array<{ name: string }>).map(column => column.name) : [];
+  const mine = PHONE_OWNER_SENDS_COLUMNS.filter(name => present.includes(name));
+  // One transaction: the owner_sends rebuild and the four drops stand together or not at all, so a failure never leaves a file that lost its
+  // revocation tables but is still 1.0.9. The two revocation tables go last.
+  const outer = db.isTransaction;
+  if (!outer) db.exec("BEGIN IMMEDIATE");
+  else db.exec("SAVEPOINT phone_downgrade");
+  try {
+    if (mine.length > 0) {
+      // DROP COLUMN would leave the definition's closing bracket joined to the last column, which is not the text 1.0.2 creates: the table is rebuilt
+      // under its own name to 1.0.2's definition, every other column and row kept, and its indexes made again.
+      const dependents = db.prepare("SELECT type, name, sql FROM sqlite_schema WHERE tbl_name='owner_sends' AND type IN ('index','trigger') AND sql IS NOT NULL").all() as Array<{ type: string; name: string; sql: string }>;
+      for (const dependent of dependents) db.exec(`DROP ${dependent.type.toUpperCase()} ${quoted(dependent.name)}`);
+      db.exec("ALTER TABLE owner_sends RENAME TO owner_sends__phone");
+      db.exec(OWNER_SENDS_102_DDL);
+      const kept = (db.prepare("PRAGMA table_info(owner_sends)").all() as Array<{ name: string }>).map(column => column.name).filter(name => present.includes(name)).map(quoted).join(",");
+      db.exec(`INSERT INTO owner_sends(${kept}) SELECT ${kept} FROM owner_sends__phone`);
+      db.exec("DROP TABLE owner_sends__phone");
+      for (const dependent of dependents) db.exec(dependent.sql);
+      columns += mine.length;
+    }
+    for (const name of ["phone_receipts", "phone_registrations", "phone_ask_revocations", "phone_revocations"]) {
+      if (!has(db, "table", name)) continue;
+      hooks.beforeDrop?.(name);
+      db.exec(`DROP TABLE ${quoted(name)}`);
+      tables++;
+    }
+    db.exec(outer ? "RELEASE phone_downgrade" : "COMMIT");
+  } catch (error) {
+    try { db.exec(outer ? "ROLLBACK TO phone_downgrade; RELEASE phone_downgrade" : "ROLLBACK"); } catch { /* already rolled back */ }
+    throw error;
+  }
+  return { tables, columns };
 }
 
 /** What the owner reads when going back is refused because a finished hand-off's reply is still on its way (the next start of Murage delivers it). */

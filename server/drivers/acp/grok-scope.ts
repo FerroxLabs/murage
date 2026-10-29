@@ -45,7 +45,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { listDir, pathExists, readText } from "../isolation-cache.ts";
-import { currentScopeHome, engineUpdateRequired, registerScopeReconstructor, scopedCliHome, scopedCliHomeRoot, type ScopedCliHomeSpec } from "../scoped-cli-home.ts";
+import { filterTomlPaths } from "./toml-scan.ts";
+import { ownerDenyRules } from "./fuigo-permission.ts";
+import { currentScopeHome, engineConfigInvalid, engineUpdateRequired, registerScopeReconstructor, scopedCliHome, scopedCliHomeRoot, type ScopedCliHomeSpec } from "../scoped-cli-home.ts";
 
 /** Linked into a bot's scope, even when absent: the login and its lock. Everything else of ~/.grok (sessions, history, personal setup) is not shared; config.toml is a filtered copy. */
 export const GROK_LOGIN_ENTRIES = ["auth.json", "auth.json.lock"] as const;
@@ -72,169 +74,16 @@ const PERSONAL_ROOTS = new Set(["mcp_servers", "hooks", "skills", "permission"])
  *  1.0.62 xai-grok-permission-rules; docs "Operations That Never Prompt by Default"), and a rule the owner allows
  *  in ~/.grok or ~/.claude settings approves a call the same way. An `ask` rule outranks both (grok evaluates deny >
  *  ask > allow, before its built-in approvals), so every shell command, edit and write sends
- *  session/request_permission and Murage decides it by the bot's level: a card at Ask. */
-export const GROK_ASK_RULES = ["Bash", "Edit", "Write"] as const;
-
-interface TomlStatement {
-  start: number;
-  end: number;
-  /** "header" is `[a.b]` or `[[a.b]]`; "pair" is `key = value`. */
-  kind: "header" | "pair";
-  /** The decoded key path: `"mcp_servers" . 'x'` is ["mcp_servers", "x"]. */
-  path: string[];
-}
-
-class TomlScanError extends Error {}
-
-/** A tolerant TOML statement scanner: it finds each table header and each key/value pair (with the full extent of a value, even across lines), decoding quoted keys. It does not validate values. */
-function scanToml(text: string): TomlStatement[] {
-  const out: TomlStatement[] = [];
-  let i = 0;
-  const n = text.length;
-  const skipBlank = () => { while (i < n && (text[i] === " " || text[i] === "\t")) i++; };
-  const endOfLine = () => { while (i < n && text[i] !== "\n") i++; if (i < n) i++; };
-  const keyPart = (): string => {
-    skipBlank();
-    const c = text[i];
-    if (c === '"') {
-      let value = "";
-      i++;
-      while (i < n && text[i] !== '"') {
-        if (text[i] === "\n") throw new TomlScanError("newline in key");
-        if (text[i] === "\\") {
-          const e = text[i + 1];
-          const simple: Record<string, string> = { b: "\b", t: "\t", n: "\n", f: "\f", r: "\r", '"': '"', "\\": "\\" };
-          if (e && e in simple) { value += simple[e]; i += 2; continue; }
-          const width = e === "u" ? 4 : e === "U" ? 8 : 0;
-          const hex = width ? text.slice(i + 2, i + 2 + width) : "";
-          if (!width || !new RegExp(`^[0-9a-fA-F]{${width}}$`).test(hex)) throw new TomlScanError("bad escape in key");
-          value += String.fromCodePoint(parseInt(hex, 16));
-          i += 2 + width;
-          continue;
-        }
-        value += text[i++];
-      }
-      if (text[i] !== '"') throw new TomlScanError("unterminated key");
-      i++;
-      return value;
-    }
-    if (c === "'") {
-      const close = text.indexOf("'", i + 1);
-      const nl = text.indexOf("\n", i + 1);
-      if (close < 0 || (nl >= 0 && nl < close)) throw new TomlScanError("unterminated key");
-      const value = text.slice(i + 1, close);
-      i = close + 1;
-      return value;
-    }
-    const m = /^[A-Za-z0-9_-]+/.exec(text.slice(i, i + 256));
-    if (!m) throw new TomlScanError("bad key");
-    i += m[0].length;
-    return m[0];
-  };
-  const keyPath = (): string[] => {
-    const path = [keyPart()];
-    for (;;) {
-      skipBlank();
-      if (text[i] !== ".") return path;
-      i++;
-      path.push(keyPart());
-    }
-  };
-  /** Past one value, inside any nesting and across lines. */
-  const skipValue = () => {
-    let depth = 0;
-    while (i < n) {
-      const c = text[i]!;
-      if (c === '"' || c === "'") {
-        const triple = c.repeat(3);
-        if (text.startsWith(triple, i)) {
-          const close = (() => {
-            let at = i + 3;
-            for (;;) {
-              at = text.indexOf(triple, at);
-              if (at < 0) return -1;
-              if (c === '"' && text[at - 1] === "\\" && text[at - 2] !== "\\") { at++; continue; }
-              let end = at + 3;
-              while (text[end] === c) end++; // up to two extra quotes belong to the string
-              return Math.min(end, at + 5);
-            }
-          })();
-          if (close < 0) throw new TomlScanError("unterminated string");
-          i = close;
-          continue;
-        }
-        i++;
-        while (i < n && text[i] !== c) {
-          if (text[i] === "\n") throw new TomlScanError("newline in string");
-          if (c === '"' && text[i] === "\\") i++;
-          i++;
-        }
-        if (i >= n) throw new TomlScanError("unterminated string");
-        i++;
-        continue;
-      }
-      if (c === "[" || c === "{") { depth++; i++; continue; }
-      if (c === "]" || c === "}") { depth--; i++; if (depth < 0) throw new TomlScanError("unbalanced"); continue; }
-      if (c === "#") { while (i < n && text[i] !== "\n") i++; continue; }
-      if (c === "\n") { if (depth === 0) return; i++; continue; }
-      i++;
-    }
-    if (depth !== 0) throw new TomlScanError("unterminated value");
-  };
-  while (i < n) {
-    const start = i;
-    skipBlank();
-    const c = text[i];
-    if (i >= n) break;
-    if (c === "\n" || c === "\r") { endOfLine(); continue; }
-    if (c === "#") { endOfLine(); continue; }
-    if (c === "[") {
-      i++;
-      const array = text[i] === "[";
-      if (array) i++;
-      const path = keyPath();
-      skipBlank();
-      if (text[i] !== "]") throw new TomlScanError("unterminated header");
-      i++;
-      if (array) { if (text[i] !== "]") throw new TomlScanError("unterminated header"); i++; }
-      endOfLine();
-      out.push({ start, end: i, kind: "header", path });
-      continue;
-    }
-    const path = keyPath();
-    skipBlank();
-    if (text[i] !== "=") throw new TomlScanError("expected =");
-    i++;
-    skipValue();
-    endOfLine();
-    out.push({ start, end: i, kind: "pair", path });
-  }
-  return out;
-}
+ *  session/request_permission and Murage decides it by the bot's level: a card at Ask.
+ *  FUIGO-SCOPE-1010 (Grok fold, V1/V7): file reads and searches reach Murage too. `Read(**)` is path-scoped on
+ *  purpose: a pattern never matches a read with no path (to-do updates, plan mode, a list of the cwd), so those
+ *  never card. `Grep` is bare, so a search with no path argument (the cwd) asks as well; only grep, grep_files and
+ *  glob are of that class. At Full access and No limits Murage answers these itself, allow_once only, no card. */
+export const GROK_ASK_RULES = ["Bash", "Edit", "Write", "Read(**)", "Grep"] as const;
 
 /** grok's config.toml without the `mcp_servers`, `hooks`, `skills` and `permission` tables and keys, whatever way they are written: `[mcp_servers.x]`, `[[hooks.y]]`, a quoted `"mcp_servers" = { ... }` (also across lines), or a dotted `hooks.a.b = ...`. Decided on the parsed key, not the line text. Everything else (models, keys, features, comments) is kept byte for byte. A file this scanner cannot read is not copied at all: grok would not read it either, and none of its text may reach a bot turn. */
 export function filterGrokConfigToml(text: string): string {
-  let statements: TomlStatement[];
-  try { statements = scanToml(text); } catch { return ""; }
-  let out = "";
-  let at = 0;
-  let table: string[] = [];
-  for (const [index, statement] of statements.entries()) {
-    let personal: boolean;
-    let inTable = true;
-    if (statement.kind === "header") {
-      table = statement.path;
-      personal = PERSONAL_ROOTS.has(table[0]!);
-    } else {
-      inTable = table.length > 0;
-      personal = PERSONAL_ROOTS.has([...table, ...statement.path][0]!);
-    }
-    if (!personal) continue;
-    out += text.slice(at, statement.start);
-    // A dropped table takes its comments and blank lines with it, up to the next statement.
-    at = inTable ? (statements[index + 1]?.start ?? text.length) : statement.end;
-  }
-  return out + text.slice(at);
+  return filterTomlPaths(text, (path) => PERSONAL_ROOTS.has(path[0]!));
 }
 
 /** Skill names under ~/.agents/skills (the shared open location grok reads from HOME,
@@ -256,20 +105,30 @@ export function agentsSkillNames(home: string): string[] {
 }
 
 /** The scoped config.toml: the owner's, filtered, plus `[skills] disabled` for ~/.agents skills and the bot's
- *  `[permission] ask` rules (GROK_ASK_RULES). */
-export function scopedGrokConfigToml(ownerConfig: string, agentsSkills: readonly string[]): string {
+ *  `[permission] ask` rules (GROK_ASK_RULES). The owner's own deny rules come back in the same table (FUIGO-SCOPE-1010
+ *  H3: owner denies outrank everything, and grok evaluates deny > ask > allow); one that cannot be carried exactly is
+ *  dropped and logged, and stays enforced in the owner's own grok. */
+export function scopedGrokConfigToml(ownerConfig: string, agentsSkills: readonly string[], log: (line: string) => void = (line) => console.warn(line), denyConfig: string = ownerConfig): string {
   let out = filterGrokConfigToml(ownerConfig);
   const sep = () => (!out || out.endsWith("\n\n") ? "" : out.endsWith("\n") ? "\n" : "\n\n");
   if (agentsSkills.length) out += `${sep()}[skills]\ndisabled = [${agentsSkills.map((name) => JSON.stringify(name)).join(", ")}]\n`;
-  return `${out}${sep()}[permission]\nask = [${GROK_ASK_RULES.map((rule) => JSON.stringify(rule)).join(", ")}]\n`;
+  const owner = ownerDenyRules(denyConfig);
+  for (const dropped of owner.dropped) log(`Grok: an owner deny rule could not be carried into the bot's settings and is enforced only in the owner's own grok: ${dropped}`);
+  const deny = owner.rules.length ? `deny = [${owner.rules.map((rule) => JSON.stringify(rule)).join(", ")}]\n` : "";
+  return `${out}${sep()}[permission]\nask = [${GROK_ASK_RULES.map((rule) => JSON.stringify(rule)).join(", ")}]\n${deny}`;
 }
+
+/** Set by provider-routing.ts on a provider-routed Grok turn: the owner's own grok home, read before GROK_HOME was
+ *  pointed at the per-thread provider home. The scope built over that provider home carries the owner's denies from
+ *  here, never from the provider home (FUIGO-SCOPE-1010 H3, P10 routed). */
+export const MURAGE_GROK_OWNER_HOME = "MURAGE_GROK_OWNER_HOME";
 
 /** The real grok home this env names (an explicit GROK_HOME the owner set, else ~/.grok). */
 export function realGrokHome(env: Record<string, string | undefined>): string {
   return env.GROK_HOME || join(env.HOME || env.USERPROFILE || homedir(), ".grok");
 }
 
-function grokScopeSpec(realHome: string, botId: string | undefined, skillsHome: string): ScopedCliHomeSpec {
+function grokScopeSpec(realHome: string, botId: string | undefined, skillsHome: string, denyHome = realHome): ScopedCliHomeSpec {
   return {
     kind: "grok",
     realHome,
@@ -277,15 +136,25 @@ function grokScopeSpec(realHome: string, botId: string | undefined, skillsHome: 
     share: GROK_LOGIN_ENTRIES,
     locks: ["auth.json.lock"], // shared with the owner's own grok where the owner's exists; never reconciled as a login
     cache: ["logs"], // rig (grok 1.0.x, fake home): logs/unified.jsonl; sessions/ is the conversation and stays
-    rebuildInputs: { skillsHome },
+    rebuildInputs: denyHome === realHome ? { skillsHome } : { skillsHome, denyHome },
     generated: () => {
-      let config = "";
-      try { config = readText(join(realHome, "config.toml")); } catch { pathExists(join(realHome, "config.toml")); }
-      return { "config.toml": scopedGrokConfigToml(config, agentsSkillNames(skillsHome)) };
+      // A5: only a config that is not there is "no settings". One that exists and cannot be read (EACCES, EIO, a folder in its
+      // place) would otherwise drop every owner deny, so the turn is refused (the core never starts it), as Fuigo's is.
+      const read = (home: string) => {
+        const path = join(home, "config.toml");
+        try { return readText(path); } catch (error) {
+          pathExists(path);
+          const code = (error as NodeJS.ErrnoException).code;
+          if (code === "ENOENT" || code === "ENOTDIR") return "";
+          throw engineConfigInvalid("Grok", error, "plain");
+        }
+      };
+      const config = read(realHome);
+      return { "config.toml": scopedGrokConfigToml(config, agentsSkillNames(skillsHome), undefined, denyHome === realHome ? config : read(denyHome)) };
     },
   };
 }
-registerScopeReconstructor("grok", ({ realHome, botId, inputs }) => grokScopeSpec(realHome, botId, inputs.skillsHome ?? homedir()));
+registerScopeReconstructor("grok", ({ realHome, botId, inputs }) => grokScopeSpec(realHome, botId, inputs.skillsHome ?? homedir(), inputs.denyHome ?? realHome));
 
 /** Point GROK_HOME at the scoped home on a proven grok (see the header). Throws when the scope cannot be built. */
 export function scopeGrokHome(env: Record<string, string | undefined>, cliVersion: string | undefined, botId?: string): void {
@@ -294,5 +163,5 @@ export function scopeGrokHome(env: Record<string, string | undefined>, cliVersio
   if (!atLeast(cliVersion, GROK_SCOPED_HOME_MIN)) throw engineUpdateRequired("Grok", cliVersion?.trim() || undefined, GROK_SCOPED_HOME_MIN);
   const realHome = realGrokHome(env);
   if (realHome.startsWith(scopedCliHomeRoot("grok"))) { const current = currentScopeHome("grok", realHome); if (current) env.GROK_HOME = current; return; } // already scoped: its current login generation
-  env.GROK_HOME = scopedCliHome(grokScopeSpec(realHome, botId, env.HOME || env.USERPROFILE || homedir()));
+  env.GROK_HOME = scopedCliHome(grokScopeSpec(realHome, botId, env.HOME || env.USERPROFILE || homedir(), env[MURAGE_GROK_OWNER_HOME] || realHome));
 }

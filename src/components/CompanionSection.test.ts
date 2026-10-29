@@ -28,6 +28,9 @@ import {
   turnOnForCode,
   turnOnPhoneAccess,
   RevokeDeviceConfirm,
+  RemovalPendingNote,
+  ShareAskRow,
+  shareAskRowVisible,
 } from "./CompanionSection";
 
 const account = (status: CompanionAccountState["status"], message?: string): CompanionAccountState => ({
@@ -503,7 +506,7 @@ describe("removing a paired device asks first", () => {
 
   it("calls revoke from exactly one place: the confirm step", () => {
     const src = source();
-    expect(src.match(/companion\.revoke\(/g)?.length).toBe(2); // the Replace flow's own confirm, and this one
+    expect(src.match(/companion\.revoke\(/g)?.length).toBe(3); // the Replace flow's own confirm, this one, and Try again on a pending row
     const confirmCall = src.slice(src.indexOf("<RevokeDeviceConfirm"), src.indexOf("<RevokeDeviceConfirm") + 700);
     expect(confirmCall).toContain("companion.revoke(device.id)");
     expect(confirmCall).toContain("onCancel={() => setRevoking(null)}");
@@ -555,5 +558,80 @@ describe("removing a paired device asks first", () => {
       expect(en[key]).toBeTruthy();
       expect(en[key]).not.toMatch(/\u2014|\bsafe|safety/i);
     }
+  });
+});
+
+describe("per-phone share and ask switch", () => {
+  const row = (shareAsk: "on" | "off" | "not-set-up" | "turning-off", onChange = () => {}) =>
+    renderToStaticMarkup(createElement(ShareAskRow, { name: "Sean's iPhone", shareAsk, busy: false, onChange }));
+  const title = en["phone.ask.settingTitle"];
+  const offLine = en["phone.ask.settingOff"];
+
+  it("renders each state", () => {
+    const on = row("on");
+    expect(on).toContain(title);
+    expect(on).toContain('aria-checked="true"');
+    expect(on).not.toContain('disabled=""');
+    expect(on).not.toContain(offLine);
+
+    const off = row("off");
+    expect(off).toContain('aria-checked="false"');
+    expect(off).not.toContain('disabled=""');
+
+    const notSetUp = row("not-set-up");
+    expect(notSetUp).toContain('aria-checked="false"');
+    expect(notSetUp).toContain('disabled=""');
+    expect(notSetUp).not.toContain(offLine);
+
+    const turning = row("turning-off");
+    expect(turning).toContain('disabled=""');
+    expect(turning).not.toContain(offLine);
+  });
+
+  it("says the off line only after an off answer", () => {
+    expect(row("off")).toContain(offLine);
+    expect(row("on")).not.toContain(offLine);
+    expect(row("turning-off")).not.toContain(offLine);
+    expect(row("not-set-up")).not.toContain(offLine);
+  });
+
+  it("is visible only when share and ask is offered and the sidecar reports a state", () => {
+    expect(shareAskRowVisible(true, "on")).toBe(true);
+    expect(shareAskRowVisible(false, "on")).toBe(false);
+    expect(shareAskRowVisible(null, "on")).toBe(false);
+    expect(shareAskRowVisible(true, undefined)).toBe(false);
+  });
+
+  it("reads the offer from shareAsk alone, independent of phoneTools", () => {
+    const src = readFileSync(fileURLToPath(new URL("./CompanionSection.tsx", import.meta.url)), "utf8");
+    expect(src).toContain('"/api/phones/offered"');
+    expect(src).toContain("answer?.shareAsk === true");
+    expect(src).not.toContain("answer?.offered");
+    expect(src).toContain("companion.shareAsk(device.id,");
+  });
+});
+
+describe("a removal that has not finished", () => {
+  const note = (busy = false, onRetry = () => {}) =>
+    renderToStaticMarkup(createElement(RemovalPendingNote, { name: "Sean's iPhone", busy, onRetry }));
+  const words = () => [en["phone.removal.pending"], en["phone.removal.pendingBody"], en["phone.removal.retry"]].join(" ");
+
+  it("says the removal is pending, that Murage keeps trying, and offers Try again", () => {
+    const html = note();
+    expect(html).toContain("Removal pending");
+    expect(html).toContain("Murage will keep trying to remove this phone.");
+    expect(html).toContain("Try again");
+    expect(html).not.toContain('disabled=""');
+    expect(note(true)).toContain('disabled=""');
+  });
+
+  it("uses plain words: no error, failed, safe, unsafe or safety, and no em dash", () => {
+    expect(words()).not.toMatch(/error|failed|\bsafe|unsafe|safety|\u2014/i);
+  });
+
+  it("the device row shows it from removalPending and Try again runs the same removal", () => {
+    const source = readFileSync(fileURLToPath(new URL("./CompanionSection.tsx", import.meta.url)), "utf8");
+    expect(source).toContain("device.removalPending");
+    expect(source).toMatch(/<RemovalPendingNote[\s\S]*?companion\.revoke\(device\.id\)/);
   });
 });

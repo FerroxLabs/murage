@@ -52,7 +52,9 @@ function bootstrapWiring({ menu = [], selectionActive = false } = {}) {
   const inert = () => { throw new Error("backup branch must stay inert in an ordinary launch"); };
   return {
     createServerConnections, openServerPrompt, dialog: { showErrorBox() {} }, BrowserWindow: null, session: null, Menu, mainWindow: null, desktopSelectionActive: selectionActive,
-    createStartupSplash: () => ({ close() {} }), desktopMark: () => {}, firstStartOfVersion: () => false, FIRST_AFTER_UPDATE_NOTE: "", noteVersionStarted: () => {},  nativeTheme: { shouldUseDarkColors: false }, closedBackupRequested: false, initializeBackupScheduleHost: async () => {}, backupScheduleHost: null, desktopRecoveryMode: false, desktopShutdownStarted: false,
+    createStartupSplash: () => ({ close() {} }), desktopMark: () => {}, firstStartOfVersion: () => false, FIRST_AFTER_UPDATE_NOTE: "", noteVersionStarted: () => {},  nativeTheme: { shouldUseDarkColors: false }, closedBackupRequested: false, initializeBackupScheduleHost: async () => {}, backupScheduleHost: null,
+    // The Sentinel host (sentinel-host.mjs) starts right after ownership; tests that care about its order override it.
+    initializeSentinelHost: async () => {}, sentinelHost: null, desktopRecoveryMode: false, desktopShutdownStarted: false,
     // The live gate is a top-level const in main.mjs, declared before app.whenReady; the startup block only schedules its probe.
     cloudLive: { start() {}, probeOnFocus() {} },
     // A cold-start Cloud link handoff (cloud-link-handoff.mjs) runs first at ready; an ordinary launch has none.
@@ -93,9 +95,9 @@ test("packaged bootstrap claims canonical ownership before credential reads or m
     app:{isPackaged:true,setAsDefaultProtocolClient(){},getPath:()=>"/fixture/home"}, process:{platform:"linux"}, APP_ICON:null,
     loadSecureCredentials:async()=>{events.push("read");return{};}, secureComposioConfig:async()=>events.push("composio"), secureWorkspaceConfig:async()=>events.push("workspace"),
     acquireDesktopDataOwner:()=>{events.push("lease");assert.deepEqual(menu,[["Server"]],"server menu is installed before ownership");}, assertDesktopStartupActive:()=>{},
-    initializeBackupScheduleHost:async()=>events.push("backup-host"),
+    initializeBackupScheduleHost:async()=>events.push("backup-host"), initializeSentinelHost:async()=>events.push("sentinel-host"),
   }, `${bootstrapDependencies} let secureCredentials;`, { menu });
-  assert.deepEqual(events, ["lease", "backup-host", "read", "composio", "workspace"]);
+  assert.deepEqual(events, ["lease", "sentinel-host", "backup-host", "read", "composio", "workspace"]);
   assert.deepEqual(menu, [["Server"]]);
 });
 
@@ -299,6 +301,8 @@ function shutdownFixture({stop=async()=>{},writes=[],backupOperations=[],cleanup
     // are drained before the lease is released. None are private barriers of
     // these tests except backupOperations, which is exercised below.
     stopAutomaticRemoteBackups:()=>{},backupScheduleHost:null,closedBackupRequested:false,
+    // The Sentinel host flushes its desktop producer on exit; it is never a release barrier.
+    sentinelHost:{shutdown:async()=>{}},
     notificationAuthorization:{invalidate(){}},showApprovalNotification:{dispose(){}},modelSignIn:{dispose(){}},mcpServers:{dispose(){}},
     desktopBackupTool:{invalidate(){},settled:()=>Promise.resolve()},backupToolCheck:Promise.resolve(),desktopResticTool:null,remoteBackupAttestation:{abort(){}},
     // The bundled adb daemon is not an owned child: it forks itself off the

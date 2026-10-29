@@ -53,12 +53,22 @@ import { newEventId, newId } from "../contracts.ts";
 import { appendNative } from "./native.ts";
 import { customMountEntries } from "../custom-mcp-mounts.ts";
 import { engineClosedLine } from "./stop-copy.ts";
-import { EngineStderrCapture, engineStderrRedacted } from "./acp/core.ts";
+import { EngineStderrCapture, acpStopReasonMessage, engineStderrRedacted } from "./acp/core.ts";
 import { writeFileAtomic } from "../atomic.ts";
 import { ASK_STOP_NOTE, ASK_STOP_PROMPT, ASK_STOP_REASON, replyCarriesAskStopNote } from "./ask-stop.ts";
 import { ANTIGRAVITY_RELAY_ASK_MS, antigravityMountRecords, antigravityRelayAsk, antigravityWorkspaceHookFiles, awaitRelayHookLoaded, openAntigravityRelay, type AntigravityRelay } from "./antigravity-relay.ts";
 import type { HookAnswer, HookDelivery } from "./codex-hook.ts";
 
+/** What the owner reads when agy ends a turn with a status other than SUCCESS: agy's own words when it gave any, else
+ * the status in plain words that name the AI, as the ACP engines say it (acpStopReasonMessage), never a bare
+ * "Model turn failed: <status>" (upstream d67c1b335 + 2d3990788). The status itself stays the turn's stop reason. */
+export function antigravityResultFailure(payload: { message?: unknown; error?: unknown; status?: unknown }): string {
+  if (typeof payload.message === "string" && payload.message) return payload.message;
+  if (typeof payload.error === "string" && payload.error) return payload.error;
+  const status = typeof payload.status === "string" ? payload.status.trim().toLowerCase() : "";
+  const reason = status === "max_turns" || status === "max_steps" ? "max_turn_requests" : status === "max_output_tokens" ? "max_tokens" : status;
+  return acpStopReasonMessage("Antigravity", reason);
+}
 /** Shown when agy ran under accept-edits, denied an action (a shell command) and wrote no reply. At Auto and Full
  *  access agy runs commands through Murage's check (antigravity-relay.ts), so this line is left for a turn that ran
  *  in accept-edits anyway: an instance that does not skip agy's own permissions, or a turn whose check could not be
@@ -902,11 +912,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
             const stoppedResult = stopRequested && payload.status !== "SUCCESS";
             // After the Ask stop halted the child, its result (whatever its status) ends the turn as that stop.
             if (payload.status !== "SUCCESS" && !stoppedResult && !askStopHalted) {
-              const errorMessage = typeof payload.message === "string" && payload.message 
-                ? payload.message 
-                : typeof payload.error === "string" && payload.error 
-                  ? payload.error 
-                  : `Model turn failed: ${payload.status || "unknown reason"}`;
+              const errorMessage = antigravityResultFailure(payload);
               emit({
                 ...base(threadId, turnId),
                 type: "runtime.error",

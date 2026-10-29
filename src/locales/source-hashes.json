@@ -3672,7 +3672,20 @@
       "settings.workspaceFeature.browser.aria": "135d7882efbe12aa70f57ed83fb30fce5ba47b4e65347e5374caedea4546eb8d",
       "settings.workspaceFeature.recorder.note": "eed9650eb0aa95c847b02ca00565cf05785a152947686dd6920a680d449578ec",
       "settings.workspaceFeature.recorder.aria": "60759db44aed6b2d79d815ee0de225aa26aa7efa4f8c796dbe480e668e968b5c",
-      "settings.workspaceFeature.saveError": "9159403b440931304b8324f993cc7fb3b1cfac365b709fa15b9e34c728bfe77f"
+      "settings.workspaceFeature.saveError": "9159403b440931304b8324f993cc7fb3b1cfac365b709fa15b9e34c728bfe77f",
+      "settings.bot.phoneForBots.title": "ba5a496b875f0e93aff07df4c22fafcb056ca0758c7e720a815a2c7ac5e14cbe",
+      "settings.bot.phoneForBots.description": "08758c96574ad75669fe2855f7cdba8c012825aad8f593a6470f88c967c61495",
+      "settings.bot.phoneForBots.open": "ed077f3d8125d60dca1979c7133601bd187d47c73ed9975028f677e49e709942",
+      "phone.ask.fromPhone": "624fe9a9d5bf71d0516bbce2f516413375e3fdabbd629257cbc9016bea6b4b6b",
+      "phone.ask.askAgain": "0d9ad5efe9f0d7f4a983924daadf05ace3e9ef9cd16d0898ff880dd7302689c3",
+      "phone.ask.settingTitle": "c08f10f162c29ae84e84d0307af6096da0d06c40947aedea184307bf43d71200",
+      "phone.ask.settingOff": "e9580fbc255d3cd0b6736d242d8848726056c551ce9c39fb7b83c9515748d406",
+      "phone.ask.errorGone": "a798a407d845963e615e6f9c4256bd6fec98ca8f838ac929a1d780949defde1f",
+      "phone.ask.errorUpdate": "a7ac312c51de6dccb8f0fcf372ed45b675a014a069ba1c330e68c4af1ac8ba9b",
+      "phone.ask.errorSetup": "211e9d2829f64ffaf4d63b6b1d50904dc7c1edd4775b92241fc9f9e2063cda0f",
+      "phone.removal.pending": "b9c212e984e3699fbf85eb911dae772204b6bd93b4459fca8f618491cad45ad8",
+      "phone.removal.pendingBody": "57b95149ba2186380d3d4df18a98b25f2a5b0f75697ddc1537db591478333aab",
+      "phone.removal.retry": "d8b8392e2c542950ca64867168e4ef87d4ad606882d5898f826b51c6d553988f"
     },
     "es": {
       "room.sendAgainTo": "09448d6ba249453b457ba8c88e2c1c92c3e64b222106cd533ea445ca07c56d95",
@@ -7345,7 +7358,20 @@
       "settings.workspaceFeature.browser.aria": "135d7882efbe12aa70f57ed83fb30fce5ba47b4e65347e5374caedea4546eb8d",
       "settings.workspaceFeature.recorder.note": "eed9650eb0aa95c847b02ca00565cf05785a152947686dd6920a680d449578ec",
       "settings.workspaceFeature.recorder.aria": "60759db44aed6b2d79d815ee0de225aa26aa7efa4f8c796dbe480e668e968b5c",
-      "settings.workspaceFeature.saveError": "9159403b440931304b8324f993cc7fb3b1cfac365b709fa15b9e34c728bfe77f"
+      "settings.workspaceFeature.saveError": "9159403b440931304b8324f993cc7fb3b1cfac365b709fa15b9e34c728bfe77f",
+      "settings.bot.phoneForBots.title": "ba5a496b875f0e93aff07df4c22fafcb056ca0758c7e720a815a2c7ac5e14cbe",
+      "settings.bot.phoneForBots.description": "08758c96574ad75669fe2855f7cdba8c012825aad8f593a6470f88c967c61495",
+      "settings.bot.phoneForBots.open": "ed077f3d8125d60dca1979c7133601bd187d47c73ed9975028f677e49e709942",
+      "phone.ask.fromPhone": "624fe9a9d5bf71d0516bbce2f516413375e3fdabbd629257cbc9016bea6b4b6b",
+      "phone.ask.askAgain": "0d9ad5efe9f0d7f4a983924daadf05ace3e9ef9cd16d0898ff880dd7302689c3",
+      "phone.ask.settingTitle": "c08f10f162c29ae84e84d0307af6096da0d06c40947aedea184307bf43d71200",
+      "phone.ask.settingOff": "e9580fbc255d3cd0b6736d242d8848726056c551ce9c39fb7b83c9515748d406",
+      "phone.ask.errorGone": "a798a407d845963e615e6f9c4256bd6fec98ca8f838ac929a1d780949defde1f",
+      "phone.ask.errorUpdate": "a7ac312c51de6dccb8f0fcf372ed45b675a014a069ba1c330e68c4af1ac8ba9b",
+      "phone.ask.errorSetup": "211e9d2829f64ffaf4d63b6b1d50904dc7c1edd4775b92241fc9f9e2063cda0f",
+      "phone.removal.pending": "b9c212e984e3699fbf85eb911dae772204b6bd93b4459fca8f618491cad45ad8",
+      "phone.removal.pendingBody": "57b95149ba2186380d3d4df18a98b25f2a5b0f75697ddc1537db591478333aab",
+      "phone.removal.retry": "d8b8392e2c542950ca64867168e4ef87d4ad606882d5898f826b51c6d553988f"
     },
     "fr": {
       "room.sendAgainTo": "09448d6ba249453b457ba8c88e2c1c92c3e64b222106cd533ea445ca07c56d95",
@@ -11018,7 +11044,20 @@
       "settings.workspaceFeature.browser.aria": "135d7882efbe12aa70f57ed83fb30fce5ba47b4e65347e5374caedea4546eb8d",
       "settings.workspaceFeature.recorder.note": "eed9650eb0aa95c847b02ca00565cf05785a152947686dd6920a680d449578ec",
       "settings.workspaceFeature.recorder.aria": "60759db44aed6b2d79d815ee0de225aa26aa7efa4f8c796dbe480e668e968b5c",
-      "settings.workspaceFeature.saveError": "9159403b440931304b8324f993cc7fb3b1cfac365b709fa15b9e34c728bfe77f"
+      "settings.workspaceFeature.saveError": "9159403b440931304b8324f993cc7fb3b1cfac365b709fa15b9e34c728bfe77f",
+      "settings.bot.phoneForBots.title": "ba5a496b875f0e93aff07df4c22fafcb056ca0758c7e720a815a2c7ac5e14cbe",
+      "settings.bot.phoneForBots.description": "08758c96574ad75669fe2855f7cdba8c012825aad8f593a6470f88c967c61495",
+      "settings.bot.phoneForBots.open": "ed077f3d8125d60dca1979c7133601bd187d47c73ed9975028f677e49e709942",
+      "phone.ask.fromPhone": "624fe9a9d5bf71d0516bbce2f516413375e3fdabbd629257cbc9016bea6b4b6b",
+      "phone.ask.askAgain": "0d9ad5efe9f0d7f4a983924daadf05ace3e9ef9cd16d0898ff880dd7302689c3",
+      "phone.ask.settingTitle": "c08f10f162c29ae84e84d0307af6096da0d06c40947aedea184307bf43d71200",
+      "phone.ask.settingOff": "e9580fbc255d3cd0b6736d242d8848726056c551ce9c39fb7b83c9515748d406",
+      "phone.ask.errorGone": "a798a407d845963e615e6f9c4256bd6fec98ca8f838ac929a1d780949defde1f",
+      "phone.ask.errorUpdate": "a7ac312c51de6dccb8f0fcf372ed45b675a014a069ba1c330e68c4af1ac8ba9b",
+      "phone.ask.errorSetup": "211e9d2829f64ffaf4d63b6b1d50904dc7c1edd4775b92241fc9f9e2063cda0f",
+      "phone.removal.pending": "b9c212e984e3699fbf85eb911dae772204b6bd93b4459fca8f618491cad45ad8",
+      "phone.removal.pendingBody": "57b95149ba2186380d3d4df18a98b25f2a5b0f75697ddc1537db591478333aab",
+      "phone.removal.retry": "d8b8392e2c542950ca64867168e4ef87d4ad606882d5898f826b51c6d553988f"
     },
     "hi": {
       "room.sendAgainTo": "09448d6ba249453b457ba8c88e2c1c92c3e64b222106cd533ea445ca07c56d95",
@@ -14691,7 +14730,20 @@
       "settings.workspaceFeature.browser.aria": "135d7882efbe12aa70f57ed83fb30fce5ba47b4e65347e5374caedea4546eb8d",
       "settings.workspaceFeature.recorder.note": "eed9650eb0aa95c847b02ca00565cf05785a152947686dd6920a680d449578ec",
       "settings.workspaceFeature.recorder.aria": "60759db44aed6b2d79d815ee0de225aa26aa7efa4f8c796dbe480e668e968b5c",
-      "settings.workspaceFeature.saveError": "9159403b440931304b8324f993cc7fb3b1cfac365b709fa15b9e34c728bfe77f"
+      "settings.workspaceFeature.saveError": "9159403b440931304b8324f993cc7fb3b1cfac365b709fa15b9e34c728bfe77f",
+      "settings.bot.phoneForBots.title": "ba5a496b875f0e93aff07df4c22fafcb056ca0758c7e720a815a2c7ac5e14cbe",
+      "settings.bot.phoneForBots.description": "08758c96574ad75669fe2855f7cdba8c012825aad8f593a6470f88c967c61495",
+      "settings.bot.phoneForBots.open": "ed077f3d8125d60dca1979c7133601bd187d47c73ed9975028f677e49e709942",
+      "phone.ask.fromPhone": "624fe9a9d5bf71d0516bbce2f516413375e3fdabbd629257cbc9016bea6b4b6b",
+      "phone.ask.askAgain": "0d9ad5efe9f0d7f4a983924daadf05ace3e9ef9cd16d0898ff880dd7302689c3",
+      "phone.ask.settingTitle": "c08f10f162c29ae84e84d0307af6096da0d06c40947aedea184307bf43d71200",
+      "phone.ask.settingOff": "e9580fbc255d3cd0b6736d242d8848726056c551ce9c39fb7b83c9515748d406",
+      "phone.ask.errorGone": "a798a407d845963e615e6f9c4256bd6fec98ca8f838ac929a1d780949defde1f",
+      "phone.ask.errorUpdate": "a7ac312c51de6dccb8f0fcf372ed45b675a014a069ba1c330e68c4af1ac8ba9b",
+      "phone.ask.errorSetup": "211e9d2829f64ffaf4d63b6b1d50904dc7c1edd4775b92241fc9f9e2063cda0f",
+      "phone.removal.pending": "b9c212e984e3699fbf85eb911dae772204b6bd93b4459fca8f618491cad45ad8",
+      "phone.removal.pendingBody": "57b95149ba2186380d3d4df18a98b25f2a5b0f75697ddc1537db591478333aab",
+      "phone.removal.retry": "d8b8392e2c542950ca64867168e4ef87d4ad606882d5898f826b51c6d553988f"
     },
     "ja": {
       "room.sendAgainTo": "09448d6ba249453b457ba8c88e2c1c92c3e64b222106cd533ea445ca07c56d95",
@@ -18364,7 +18416,20 @@
       "settings.workspaceFeature.browser.aria": "135d7882efbe12aa70f57ed83fb30fce5ba47b4e65347e5374caedea4546eb8d",
       "settings.workspaceFeature.recorder.note": "eed9650eb0aa95c847b02ca00565cf05785a152947686dd6920a680d449578ec",
       "settings.workspaceFeature.recorder.aria": "60759db44aed6b2d79d815ee0de225aa26aa7efa4f8c796dbe480e668e968b5c",
-      "settings.workspaceFeature.saveError": "9159403b440931304b8324f993cc7fb3b1cfac365b709fa15b9e34c728bfe77f"
+      "settings.workspaceFeature.saveError": "9159403b440931304b8324f993cc7fb3b1cfac365b709fa15b9e34c728bfe77f",
+      "settings.bot.phoneForBots.title": "ba5a496b875f0e93aff07df4c22fafcb056ca0758c7e720a815a2c7ac5e14cbe",
+      "settings.bot.phoneForBots.description": "08758c96574ad75669fe2855f7cdba8c012825aad8f593a6470f88c967c61495",
+      "settings.bot.phoneForBots.open": "ed077f3d8125d60dca1979c7133601bd187d47c73ed9975028f677e49e709942",
+      "phone.ask.fromPhone": "624fe9a9d5bf71d0516bbce2f516413375e3fdabbd629257cbc9016bea6b4b6b",
+      "phone.ask.askAgain": "0d9ad5efe9f0d7f4a983924daadf05ace3e9ef9cd16d0898ff880dd7302689c3",
+      "phone.ask.settingTitle": "c08f10f162c29ae84e84d0307af6096da0d06c40947aedea184307bf43d71200",
+      "phone.ask.settingOff": "e9580fbc255d3cd0b6736d242d8848726056c551ce9c39fb7b83c9515748d406",
+      "phone.ask.errorGone": "a798a407d845963e615e6f9c4256bd6fec98ca8f838ac929a1d780949defde1f",
+      "phone.ask.errorUpdate": "a7ac312c51de6dccb8f0fcf372ed45b675a014a069ba1c330e68c4af1ac8ba9b",
+      "phone.ask.errorSetup": "211e9d2829f64ffaf4d63b6b1d50904dc7c1edd4775b92241fc9f9e2063cda0f",
+      "phone.removal.pending": "b9c212e984e3699fbf85eb911dae772204b6bd93b4459fca8f618491cad45ad8",
+      "phone.removal.pendingBody": "57b95149ba2186380d3d4df18a98b25f2a5b0f75697ddc1537db591478333aab",
+      "phone.removal.retry": "d8b8392e2c542950ca64867168e4ef87d4ad606882d5898f826b51c6d553988f"
     },
     "pt-br": {
       "room.sendAgainTo": "09448d6ba249453b457ba8c88e2c1c92c3e64b222106cd533ea445ca07c56d95",
@@ -22037,7 +22102,20 @@
       "settings.workspaceFeature.browser.aria": "135d7882efbe12aa70f57ed83fb30fce5ba47b4e65347e5374caedea4546eb8d",
       "settings.workspaceFeature.recorder.note": "eed9650eb0aa95c847b02ca00565cf05785a152947686dd6920a680d449578ec",
       "settings.workspaceFeature.recorder.aria": "60759db44aed6b2d79d815ee0de225aa26aa7efa4f8c796dbe480e668e968b5c",
-      "settings.workspaceFeature.saveError": "9159403b440931304b8324f993cc7fb3b1cfac365b709fa15b9e34c728bfe77f"
+      "settings.workspaceFeature.saveError": "9159403b440931304b8324f993cc7fb3b1cfac365b709fa15b9e34c728bfe77f",
+      "settings.bot.phoneForBots.title": "ba5a496b875f0e93aff07df4c22fafcb056ca0758c7e720a815a2c7ac5e14cbe",
+      "settings.bot.phoneForBots.description": "08758c96574ad75669fe2855f7cdba8c012825aad8f593a6470f88c967c61495",
+      "settings.bot.phoneForBots.open": "ed077f3d8125d60dca1979c7133601bd187d47c73ed9975028f677e49e709942",
+      "phone.ask.fromPhone": "624fe9a9d5bf71d0516bbce2f516413375e3fdabbd629257cbc9016bea6b4b6b",
+      "phone.ask.askAgain": "0d9ad5efe9f0d7f4a983924daadf05ace3e9ef9cd16d0898ff880dd7302689c3",
+      "phone.ask.settingTitle": "c08f10f162c29ae84e84d0307af6096da0d06c40947aedea184307bf43d71200",
+      "phone.ask.settingOff": "e9580fbc255d3cd0b6736d242d8848726056c551ce9c39fb7b83c9515748d406",
+      "phone.ask.errorGone": "a798a407d845963e615e6f9c4256bd6fec98ca8f838ac929a1d780949defde1f",
+      "phone.ask.errorUpdate": "a7ac312c51de6dccb8f0fcf372ed45b675a014a069ba1c330e68c4af1ac8ba9b",
+      "phone.ask.errorSetup": "211e9d2829f64ffaf4d63b6b1d50904dc7c1edd4775b92241fc9f9e2063cda0f",
+      "phone.removal.pending": "b9c212e984e3699fbf85eb911dae772204b6bd93b4459fca8f618491cad45ad8",
+      "phone.removal.pendingBody": "57b95149ba2186380d3d4df18a98b25f2a5b0f75697ddc1537db591478333aab",
+      "phone.removal.retry": "d8b8392e2c542950ca64867168e4ef87d4ad606882d5898f826b51c6d553988f"
     },
     "zh": {
       "room.sendAgainTo": "09448d6ba249453b457ba8c88e2c1c92c3e64b222106cd533ea445ca07c56d95",
@@ -25710,7 +25788,20 @@
       "settings.workspaceFeature.browser.aria": "135d7882efbe12aa70f57ed83fb30fce5ba47b4e65347e5374caedea4546eb8d",
       "settings.workspaceFeature.recorder.note": "eed9650eb0aa95c847b02ca00565cf05785a152947686dd6920a680d449578ec",
       "settings.workspaceFeature.recorder.aria": "60759db44aed6b2d79d815ee0de225aa26aa7efa4f8c796dbe480e668e968b5c",
-      "settings.workspaceFeature.saveError": "9159403b440931304b8324f993cc7fb3b1cfac365b709fa15b9e34c728bfe77f"
+      "settings.workspaceFeature.saveError": "9159403b440931304b8324f993cc7fb3b1cfac365b709fa15b9e34c728bfe77f",
+      "settings.bot.phoneForBots.title": "ba5a496b875f0e93aff07df4c22fafcb056ca0758c7e720a815a2c7ac5e14cbe",
+      "settings.bot.phoneForBots.description": "08758c96574ad75669fe2855f7cdba8c012825aad8f593a6470f88c967c61495",
+      "settings.bot.phoneForBots.open": "ed077f3d8125d60dca1979c7133601bd187d47c73ed9975028f677e49e709942",
+      "phone.ask.fromPhone": "624fe9a9d5bf71d0516bbce2f516413375e3fdabbd629257cbc9016bea6b4b6b",
+      "phone.ask.askAgain": "0d9ad5efe9f0d7f4a983924daadf05ace3e9ef9cd16d0898ff880dd7302689c3",
+      "phone.ask.settingTitle": "c08f10f162c29ae84e84d0307af6096da0d06c40947aedea184307bf43d71200",
+      "phone.ask.settingOff": "e9580fbc255d3cd0b6736d242d8848726056c551ce9c39fb7b83c9515748d406",
+      "phone.ask.errorGone": "a798a407d845963e615e6f9c4256bd6fec98ca8f838ac929a1d780949defde1f",
+      "phone.ask.errorUpdate": "a7ac312c51de6dccb8f0fcf372ed45b675a014a069ba1c330e68c4af1ac8ba9b",
+      "phone.ask.errorSetup": "211e9d2829f64ffaf4d63b6b1d50904dc7c1edd4775b92241fc9f9e2063cda0f",
+      "phone.removal.pending": "b9c212e984e3699fbf85eb911dae772204b6bd93b4459fca8f618491cad45ad8",
+      "phone.removal.pendingBody": "57b95149ba2186380d3d4df18a98b25f2a5b0f75697ddc1537db591478333aab",
+      "phone.removal.retry": "d8b8392e2c542950ca64867168e4ef87d4ad606882d5898f826b51c6d553988f"
     }
   }
 }

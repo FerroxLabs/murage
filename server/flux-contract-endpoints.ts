@@ -51,6 +51,9 @@ export const FLUX_CALLER_FILES: Readonly<Record<string, readonly string[]>> = {
   "server/browser-action-checker-connection.ts": ["chat.completions"],
   "server/composio.ts": ["composio.health", "composio.broker"],
   "server/decider/flux.ts": ["decide"],
+  // Bot email (1.0.9) is dark until Flux serves /v1/email/capabilities with enabled: true; its /v1/email/* routes join the probed list
+  // above (and the daily live check) when Flux ships them (BOT-EMAIL-FLUX-CONTRACT). Until then it reaches nothing a probe could answer.
+  "server/email/runtime.ts": [],
   "server/drivers/acp/hermes.ts": ["chat.completions"],
   // On a Cloud home these two hand the launcher a Flux route to render (cloudTurnRender): the engine then calls that base itself.
   "server/drivers/acp/opencode-go.ts": ["chat.completions"],

@@ -9,6 +9,10 @@ import type { ProviderPreset, ProviderProtocol } from "../shared/provider-connec
 import { providerEngineProtocol } from "../shared/provider-engine.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { keepFuigoTurnLogs } from "./fuigo-turn-logs.ts";
+import { copyFuigoOrgPolicy, fuigoHomePermission, fuigoMemoryAllowPatterns } from "./drivers/acp/fuigo-permission.ts";
+import { MURAGE_FUIGO_ROUTED_HOME, realFuigoHome, setFuigoAuthPath } from "./drivers/acp/fuigo-scope.ts";
+import { MURAGE_GROK_OWNER_HOME, realGrokHome } from "./drivers/acp/grok-scope.ts";
+import { readTomlTables } from "./drivers/acp/toml-scan.ts";
 import { z } from "zod";
 /** Server-only, resolved from encrypted custody at admission. */
 export interface ProviderTurnRoute { connectionId: string; preset: ProviderPreset; protocol: ProviderProtocol; baseUrl: string; apiKey: string; model: string; revision: string }
@@ -133,6 +137,8 @@ export function applyProviderRoute(driver: string, env: NodeJS.ProcessEnv, route
     for (const key of ["GROK_CODE_XAI_API_KEY", "GROK_API_KEY", "GROK_API_BASE_URL", "GROK_MODELS_LIST_URL", "GROK_WEB_SEARCH_MODEL"]) delete env[key];
     // The selected endpoint also owns discovery. The documented discovery
     // credential is XAI_API_KEY, populated only with this authorised route key.
+    // The owner's own grok home, named before GROK_HOME moves to the provider home: the bot's scope carries its denies.
+    if (!context.homeRoot) env[MURAGE_GROK_OWNER_HOME] = realGrokHome(env);
     Object.assign(env, { GROK_HOME: home, GROK_MODELS_BASE_URL: routeEndpoint(driver, route), GROK_SESSION_SUMMARY_MODEL: model, XAI_API_KEY: route.apiKey, MURAGE_GROK_PROVIDER_API_KEY: route.apiKey });
     // A plan sign-in route's key is a local gateway key: keep Grok Build's
     // own xAI API probe on the gateway too, so the key never leaves this computer.
@@ -193,7 +199,17 @@ export function applyProviderRoute(driver: string, env: NodeJS.ProcessEnv, route
       writeFileSync(join(home, "config.yaml"), config, { mode: 0o600 });
     } else {
       const name = routedProviderId(route), protocol = { openai: "chat_completions", anthropic: "messages", responses: "responses" }[route.protocol];
+      // The owner's own Fuigo home, read before this turn's home replaces it: its denies, deployment key, organisation
+      // policy and login reach the routed home too (FUIGO-SCOPE-1010 V2, H2, H3). Never written.
+      // A reflection temp home (caller-owned homeRoot) is outside this: it runs text-only with no tools and pins its
+      // own [plugins]/[skills] lines (pip-transport.ts pinReflectionFuigoConfig), so the owner's home is never read.
+      const reflection = Boolean(context?.homeRoot);
+      const ownerHome = realFuigoHome(env);
+      let ownerConfig = "";
+      if (!cloud && !reflection) { try { ownerConfig = readFileSync(join(ownerHome, "config.toml"), "utf8"); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error("Fuigo's settings file could not be read, so the turn did not start. Fix or remove the file, then try again.", { cause: error }); } }
       env.FUIGO_HOME = home; env.MURAGE_PROVIDER_API_KEY = route.apiKey;
+      // This home is Murage's own and already carries the bot's rules: the scope step leaves it as it is.
+      if (!reflection) env[MURAGE_FUIGO_ROUTED_HOME] = home;
       env.FUIGO_API_BASE_URL = routeEndpoint(driver, route);
       env.FUIGO_MODELS_BASE_URL = routeEndpoint(driver, route);
       // A key route pointed straight at xAI (api.x.ai) is refused by Fuigo's
@@ -208,15 +224,21 @@ export function applyProviderRoute(driver: string, env: NodeJS.ProcessEnv, route
       // subscription model here, so no subscription turn ever gets the lift.
       if (fuigoBlocksHost(routeEndpoint(driver, route))) env[FUIGO_ALLOW_UPSTREAM_ENV] = "1";
       const fuigoConfig = `[cli]\nuse_leader = false\n[models]\ndefault = "murage_selected"\nsession_summary = "murage_selected"\nprompt_suggestion = "murage_selected"\nweb_search = "murage_selected"\nimage_description = "murage_selected"\nallowed_models = ["murage_selected"]\n[model_providers.${name}]\nbase_url = ${JSON.stringify(routeEndpoint(driver, route))}\nenv_key = "MURAGE_PROVIDER_API_KEY"\napi_backend = "${protocol}"\nauth_scheme = "${route.protocol === "anthropic" ? "x_api_key" : "bearer"}"\n[model.murage_selected]\nmodel = ${JSON.stringify(route.model)}\nmodel_provider = "${name}"\n`;
-      if (!cloud) writeFileSync(join(home, "config.toml"), fuigoConfig, { mode: 0o600 });
       result.model = "murage_selected";
-      if (context?.memoryTools) {
-        // This config belongs solely to the task-created routed FUIGO_HOME.
-        // Native policy matches actual registered MCP IDs, never display titles.
-        const rules = ["memory_search","memory_get","memory_save","memory_propose_correction","thread_search","thread_list","thread_read"]
-          .map(tool => `{ action = "allow", tool = "mcp", pattern = "murage-memory__${tool}" }`).join(",\n");
-        const permission = `\n[permission]\nrules = [\n${rules}\n]\n`;
-        if (!cloud) writeFileSync(join(home,"config.toml"),permission,{flag:"a",mode:0o600});
+      if (!cloud && reflection) writeFileSync(join(home, "config.toml"), fuigoConfig, { mode: 0o600 });
+      else if (!cloud) {
+        // An owner's deployment key keeps their organisation's policy served to this home (managed_config store.rs).
+        let deploymentKey: string | undefined;
+        try { const key = readTomlTables(ownerConfig).tables.get("endpoints")?.[0]?.deployment_key; if (typeof key === "string") deploymentKey = key; } catch { /* unreadable: none carried */ }
+        // The ONE permission renderer (fuigo-permission.ts): the bot's ask rules, the owner's denies and, for a memory
+        // turn, the memory tools by their registered ids (never display titles). This config belongs solely to the
+        // task-created routed FUIGO_HOME.
+        const permission = fuigoHomePermission(ownerConfig, context?.memoryTools ? fuigoMemoryAllowPatterns() : undefined);
+        writeFileSync(join(home, "config.toml"), `${fuigoConfig}[plugins]\nauto_discover = false\n${deploymentKey ? `[endpoints]\ndeployment_key = ${JSON.stringify(deploymentKey)}\n` : ""}\n${permission}`, { mode: 0o600 });
+        copyFuigoOrgPolicy(ownerHome, home);
+        // The route's model key is named by env_key, which outranks a session token, so the owner's login only
+        // serves the organisation principal check here (agent/config.rs resolve_credentials).
+        setFuigoAuthPath(env, ownerHome, true);
       }
       // Cloud home: the launcher renders $FUIGO_HOME/config.toml (this text plus its pins)
       // from the typed route; the server never sends the file (CLOUD-ENGINES-DESIGN.md 2.2).
