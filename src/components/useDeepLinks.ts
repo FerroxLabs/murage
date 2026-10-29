@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useRef } from "react";
 
 import { useStore, visibleNotificationThread } from "@/state/store";
+import { applyComposeLink } from "@/lib/compose-link";
 import { createDeepLinkQueue, openDeepLink, openHashHref, parseOpenHash } from "@/lib/deep-link";
 import { callNative, nativeAvailable, onNativeEvent } from "@/lib/native-shell";
 import { reportRoute } from "@/lib/native-route";
@@ -20,6 +21,9 @@ export function useDeepLinks() {
         }
         if (!openDeepLink(target, latest.current, dispatch)) {
           dispatch({ type: "error", message: "That conversation isn't available on this device." });
+        } else if (target.compose) {
+          // Prefills and focuses the composer. It cannot send: the owner taps Send.
+          applyComposeLink(target, latest.current);
         }
       }),
     [dispatch],

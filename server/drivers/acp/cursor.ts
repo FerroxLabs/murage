@@ -16,64 +16,13 @@ import { DATA_DIR } from "../../config.ts";
 import type { ModelCatalog, ProviderErrorCode, SendTurnInput } from "../../contracts.ts";
 import { execCli } from "../../procs.ts";
 import { removeLink } from "../../link-removal.ts";
-import { OWN_BUILTINS, OWN_READS } from "../../../shared/own-servers.ts";
+import { OWN_BUILTINS, OWN_HANDLER_CARDED, OWN_READS } from "../../../shared/own-servers.ts";
+import { EMAIL_TOOLS_ENV } from "../email-tool-schemas.ts";
+import { resolveAcpModelId } from "./acp-model-id.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 
-/** Translate an argv `--model` slug into the id this ACP session will accept.
- *
- * Cursor keeps two model namespaces and they do not match. `cursor-agent
- * models` and the `--model` flag speak flat slugs (`auto`, `gpt-5.3-codex`).
- * The ACP session advertises parameterised ids instead
- * (`default[]`, `gpt-5.3-codex[reasoning=medium,fast=false]`), and
- * `session/set_model` accepts *only* those. Sending the argv slug earns
- * `-32602 Invalid params` for every model, not merely unknown ones — which
- * read as "this account cannot use that model" and sent people to check their
- * subscription over a pure id-format mismatch.
- *
- * Matching walks from most to least specific, and `auto` is special-cased
- * because Cursor calls that entry `default[]` while naming it "Auto".
- *
- * Returns null when nothing matches, including when the agent advertised no
- * models at all. The caller then falls back to sending the slug unchanged,
- * which is what older CLIs that ignore the model list still expect.
- */
-export function resolveCursorAcpModelId(
-  available: Array<{ modelId?: string; name?: string }>,
-  wanted: string,
-): string | null {
-  const want = wanted.trim().toLowerCase();
-  if (!want) return null;
-  const ids = available.filter((m) => typeof m?.modelId === "string" && m.modelId);
-  if (!ids.length) return null;
-  const base = (id: string) => id.split("[")[0].trim().toLowerCase();
-
-  const exact = ids.find((m) => m.modelId!.toLowerCase() === want);
-  if (exact) return exact.modelId!;
-
-  // A base can be advertised several times with different parameters, e.g.
-  // `composer-2.5[fast=false]` and `composer-2.5[fast=true]`. The plain slug
-  // means Standard, so prefer the non-fast variant; a `-fast` slug has no base
-  // of its own and means the fast=true variant of the base without the suffix.
-  const isFast = (id: string) => /[[,]\s*fast\s*=\s*true\s*[\],]/i.test(id);
-  const sameBase = ids.filter((m) => base(m.modelId!) === want);
-  const byBase = sameBase.find((m) => !isFast(m.modelId!)) ?? sameBase[0];
-  if (byBase) return byBase.modelId!;
-
-  if (want.endsWith("-fast")) {
-    const stem = want.slice(0, -"-fast".length);
-    const fast = ids.find((m) => base(m.modelId!) === stem && isFast(m.modelId!));
-    if (fast) return fast.modelId!;
-  }
-
-  const byName = ids.find((m) => (m.name ?? "").trim().toLowerCase() === want);
-  if (byName) return byName.modelId!;
-
-  if (want === "auto" || want === "default") {
-    const dflt = ids.find((m) => base(m.modelId!) === "default");
-    if (dflt) return dflt.modelId!;
-  }
-  return null;
-}
+/** Kept under its Cursor name: the matcher itself is shared (acp-model-id.ts). */
+export const resolveCursorAcpModelId = resolveAcpModelId;
 
 export const STATIC_CURSOR_MODELS: ModelCatalog = {
   default: "auto",
@@ -375,6 +324,12 @@ export function cursorOwnReadAllow(turn: Pick<SendTurnInput, "integrations">): s
   };
   if (turn.integrations?.agents) add(turn.integrations.agents.serverName ?? OWN_BUILTINS.agents, "own:agents");
   if (turn.integrations?.memory) add(OWN_BUILTINS.memory, "own:memory");
+  // Bot email (BOT-EMAIL-MURAGE-109 3.2 adapter admission): the handler-carded send tools, by exact name on this turn's own agents mount,
+  // only on a turn the email mount admitted for sending. Their handler applies the bot's email setting and holds on Murage's own card.
+  const agents = turn.integrations?.agents as { serverName?: string; env?: Record<string, string | undefined> } | undefined;
+  if (agents?.env?.[EMAIL_TOOLS_ENV] === "send") {
+    for (const row of OWN_HANDLER_CARDED) if (row.mount === "own:agents") allow.push(`Mcp(${agents.serverName ?? OWN_BUILTINS.agents}:${row.tool})`);
+  }
   return allow;
 }
 

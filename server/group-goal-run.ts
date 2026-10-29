@@ -1,4 +1,5 @@
 import type { GroupDefaultResponder } from "./store.ts";
+import { scanMurageFences } from "../shared/murage-fences.ts";
 
 // Odd by design: coordinator/worker alternation must always leave the final
 // bounded turn to the coordinator for an honest completion decision.
@@ -35,6 +36,34 @@ export function groupGoalCompletionTurnId(
 const bounded = (value: unknown, max: number): string =>
   typeof value === "string" ? value.trim().slice(0, max) : "";
 
+// e13d3aea0's rule, Murage-native: only the lead's own closing envelope steers a run. One quoted earlier in the reply, or
+// inside a code fence (a teammate's words or an example the lead shows), never does, and the goal text a prompt quotes
+// carries no marker that could be echoed back as one.
+const LOOKALIKE_MARKER = /<\s*\/?\s*murage-goal\s*>/gi;
+
+/** The goal text with every control marker look-alike removed, however it is nested (`<murage-<murage-goal>goal>`). */
+export function cleanGoalText(text: string): string {
+  let clean = text;
+  for (let previous = ""; previous !== clean;) {
+    previous = clean;
+    clean = clean.replace(LOOKALIKE_MARKER, "");
+  }
+  return clean;
+}
+
+/** The envelope that ends the reply, outside a code fence, as the payload between its markers; null when the reply does
+ * not end with one. `quoted` says a complete envelope appears elsewhere (mid-reply or fenced), which is never used. */
+export function closingGoalEnvelope(text: string): { payload: string } | { quoted: boolean } {
+  const trimmed = text.trimEnd();
+  const closeAt = trimmed.length - GROUP_GOAL_CONTROL_CLOSE.length;
+  const openAt = trimmed.endsWith(GROUP_GOAL_CONTROL_CLOSE) ? trimmed.lastIndexOf(GROUP_GOAL_CONTROL_OPEN, closeAt) : -1;
+  if (openAt >= 0 && !scanMurageFences(trimmed).codeRanges.some(({ start, end }) => start <= openAt && openAt < end)) {
+    return { payload: trimmed.slice(openAt + GROUP_GOAL_CONTROL_OPEN.length, closeAt).trim() };
+  }
+  const lastClose = text.lastIndexOf(GROUP_GOAL_CONTROL_CLOSE);
+  return { quoted: lastClose >= 0 && text.lastIndexOf(GROUP_GOAL_CONTROL_OPEN, lastClose) >= 0 };
+}
+
 function visibleCoordinatorText(text: string): string {
   let visible = text;
   for (;;) {
@@ -55,15 +84,15 @@ function visibleCoordinatorText(text: string): string {
 }
 
 /** Keep the orchestration envelope out of the human transcript while still
- * accepting ordinary prose before it. The last complete envelope wins: a
- * quoted example earlier in the reply cannot accidentally steer the run. */
+ * accepting ordinary prose before it. Only the envelope that ends the reply,
+ * outside a code fence, counts: a quoted example earlier in the reply, or one
+ * inside a fence, cannot steer the run. */
 export function parseGroupGoalDecision(text: string): ParsedGroupGoalDecision {
-  const closeAt = text.lastIndexOf(GROUP_GOAL_CONTROL_CLOSE);
-  const openAt = closeAt < 0 ? -1 : text.lastIndexOf(GROUP_GOAL_CONTROL_OPEN, closeAt);
-  if (openAt < 0 || closeAt < 0) return { visibleText: visibleCoordinatorText(text), decision: null };
+  const closing = closingGoalEnvelope(text);
+  if (!("payload" in closing)) return { visibleText: visibleCoordinatorText(text), decision: null };
 
   const visibleText = visibleCoordinatorText(text);
-  const payload = text.slice(openAt + GROUP_GOAL_CONTROL_OPEN.length, closeAt).trim();
+  const payload = closing.payload;
   try {
     const raw = JSON.parse(payload) as Record<string, unknown>;
     const status = raw.status;
@@ -131,7 +160,7 @@ export function groupGoalCoordinatorInstructions(args: {
     .join(", ");
   return [
     "You are the lead coordinator for a bounded team goal run.",
-    `Goal: ${args.goal}`,
+    `Goal: ${cleanGoalText(args.goal)}`,
     `Available room members: ${roster}.`,
     `This is team turn ${args.turn} of ${args.maxTurns}; ${args.remainingTurns} turn(s) remain after this one.`,
     ...(args.note ? [`Harness note: ${args.note}`] : []),
@@ -153,7 +182,7 @@ export function groupGoalWorkerInstructions(args: {
 }): string {
   return [
     `You are a specialist contributing to a bounded team goal run led by ${args.coordinatorName}.`,
-    `Goal: ${args.goal}`,
+    `Goal: ${cleanGoalText(args.goal)}`,
     `Your assignment: ${args.assignment}`,
     `This is team turn ${args.turn} of ${args.maxTurns}.`,
     "Do the assigned work now and put concrete results, evidence, or a clear blocker in your reply.",

@@ -29,7 +29,7 @@ vi.mock("@/lib/analytics", async (importOriginal) => ({ ...(await importOriginal
 
 import { FIRST_RUN_COPY } from "@/lib/first-run-copy";
 import { sellsOnPrice } from "@/lib/first-run-copy-rules";
-import { saveHelloAnswer, skipHelloAnswer, type HelloAnswerDeps } from "./FirstRunHelloCard";
+import { helloContinue, helloEmailNote, saveHelloAnswer, skipHelloAnswer, type HelloAnswerDeps } from "./FirstRunHelloCard";
 
 interface Call {
   path: string;
@@ -252,5 +252,48 @@ describe("where the signup is posted from", () => {
     };
     walk(root);
     expect(hits).toEqual([]);
+  });
+});
+
+// A WRONG EMAIL EXPLAINS ITSELF (upstream 7f61ed1fc). Continue used to be
+// held back with nothing said, and Enter in either box did nothing at all.
+describe("a wrong email on the hello card", () => {
+  const note = FIRST_RUN_COPY.hello.welcome.emailInvalid;
+
+  it("asks for the email to be checked, from the button and from Enter alike", () => {
+    expect(helloContinue("Sam", "sam@")).toBe("check-email");
+    expect(helloContinue("Sam", "not an address")).toBe("check-email");
+    // a wrong email is the thing to say even before a name is typed
+    expect(helloContinue("", "sam@example")).toBe("check-email");
+  });
+
+  it("saves with a real address or none, and waits for a name otherwise", () => {
+    expect(helloContinue("Sam", "sam@example.com")).toBe("save");
+    expect(helloContinue("Sam", "  ")).toBe("save");
+    expect(helloContinue("", "")).toBe("need-name");
+    expect(helloContinue(" ", "sam@example.com")).toBe("need-name");
+  });
+
+  it("shows the note only once the box was left or Continue was tried", () => {
+    expect(helloEmailNote("s", false)).toBe("");
+    expect(helloEmailNote("sam@", true)).toBe(note);
+    expect(helloEmailNote("sam@example.com", true)).toBe("");
+    expect(helloEmailNote("", true)).toBe("");
+  });
+
+  it("says what to do in plain words", () => {
+    expect(note).toMatch(/email address/i);
+    expect(note).toMatch(/without one/i);
+  });
+
+  it("is wired to leaving the box, to Enter in both boxes and to the button", () => {
+    const source = readFileSync(fileURLToPath(new URL("./FirstRunHelloCard.tsx", import.meta.url)), "utf8");
+    expect(source).toContain("onBlur={() => setEmailChecked(true)}");
+    expect(source.match(/if \(event\.key === "Enter"\) \{\s*event\.preventDefault\(\);\s*void save\(\);/g)).toHaveLength(2);
+    expect(source).toContain('if (next === "check-email") setEmailChecked(true);');
+    // the button stays pressable for a wrong email, so pressing it can say why
+    expect(source).toContain("disabled={busy || !name.trim()}");
+    expect(source).toContain("aria-disabled={!valid || undefined}");
+    expect(source).toContain('aria-live="polite"');
   });
 });

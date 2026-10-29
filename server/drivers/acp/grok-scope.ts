@@ -12,6 +12,7 @@
 // per bot (scoped-cli-home.ts), holding:
 //   auth.json, auth.json.lock   links to the owner's real login (linked even
 //                 before a first sign-in)
+//   models_cache.json  a copy of the owner's model list cache (grokModelsCacheCopy)
 //   config.toml   a copy without the mcp_servers, hooks, skills and permission
 //                 tables and keys (decided on the parsed key, so quoted keys do
 //                 not slip through), plus `[skills] disabled` naming every
@@ -41,10 +42,11 @@
 // hardlink, so where a symlink is not allowed the turn is rejected with guidance to
 // enable symlinks (Developer Mode); the login is never copied or reconciled
 // (shared-login-link.ts).
+import { closeSync, constants as fsConstants, fstatSync, lstatSync, openSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { listDir, pathExists, readText } from "../isolation-cache.ts";
+import { listDir, pathExists, readText, trackPath } from "../isolation-cache.ts";
 import { currentScopeHome, engineUpdateRequired, registerScopeReconstructor, scopedCliHome, scopedCliHomeRoot, type ScopedCliHomeSpec } from "../scoped-cli-home.ts";
 
 /** Linked into a bot's scope, even when absent: the login and its lock. Everything else of ~/.grok (sessions, history, personal setup) is not shared; config.toml is a filtered copy. */
@@ -269,6 +271,34 @@ export function realGrokHome(env: Record<string, string | undefined>): string {
   return env.GROK_HOME || join(env.HOME || env.USERPROFILE || homedir(), ".grok");
 }
 
+/** The owner's grok model list cache, copied (never linked) into the scope so a bot's grok offers the same models as
+ *  the owner's. Derived data grok refetches itself: no login, no personal setup. Only a regular file is copied (a
+ *  link is never followed), up to GROK_MODELS_CACHE_MAX bytes and only when it parses as JSON; anything else is left
+ *  out and the scope's grok uses its built-in list. It is a generated copy (scoped-cli-home.ts): rewritten by
+ *  temporary file and rename on every build, removed when the owner's is gone, and never one of the shared logins. */
+export const GROK_MODELS_CACHE = "models_cache.json";
+const GROK_MODELS_CACHE_MAX = 4 * 1024 * 1024;
+export function grokModelsCacheCopy(realHome: string): Record<string, string> {
+  const path = join(realHome, GROK_MODELS_CACHE);
+  trackPath(path);
+  let fd: number | undefined;
+  try {
+    const info = lstatSync(path);
+    if (!info.isFile() || info.size > GROK_MODELS_CACHE_MAX) return {};
+    // Opened without following a link (where the platform has O_NOFOLLOW) and checked to be the same file lstat saw.
+    fd = openSync(path, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+    const opened = fstatSync(fd);
+    if (!opened.isFile() || opened.ino !== info.ino || opened.dev !== info.dev || opened.size > GROK_MODELS_CACHE_MAX) return {};
+    const text = readFileSync(fd, "utf8");
+    JSON.parse(text);
+    return { [GROK_MODELS_CACHE]: text };
+  } catch {
+    return {};
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
 function grokScopeSpec(realHome: string, botId: string | undefined, skillsHome: string): ScopedCliHomeSpec {
   return {
     kind: "grok",
@@ -281,7 +311,7 @@ function grokScopeSpec(realHome: string, botId: string | undefined, skillsHome: 
     generated: () => {
       let config = "";
       try { config = readText(join(realHome, "config.toml")); } catch { pathExists(join(realHome, "config.toml")); }
-      return { "config.toml": scopedGrokConfigToml(config, agentsSkillNames(skillsHome)) };
+      return { "config.toml": scopedGrokConfigToml(config, agentsSkillNames(skillsHome)), ...grokModelsCacheCopy(realHome) };
     },
   };
 }

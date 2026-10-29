@@ -29,6 +29,8 @@ public struct PushLedger: Sendable {
     public func binding(origin: String) -> String? { order.first { entries[$0]?.origin == origin } }
     public var total: Int { entries.values.reduce(0) { $0 + $1.badge } }
 
+    public func revision(for collapseKey: String) -> Int? { seen.first { $0.key == collapseKey }?.revision }
+
     public mutating func accept(_ bindingId: String, collapseKey: String, revision: Int, workspaceBadge: Int) -> Accept {
         guard entries[bindingId] != nil else { return .unknown }
         if let at = seen.firstIndex(where: { $0.key == collapseKey }) {

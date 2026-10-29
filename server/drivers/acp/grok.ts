@@ -14,6 +14,7 @@ import { DATA_DIR } from "../../config.ts";
 import { headlessTextOnlyTurn } from "../headless-text-only.ts";
 import { fuigoConfigOverlay } from "../../flux-memory-headers.ts";
 import { listDir, memoDeps, pathExists, readText } from "../isolation-cache.ts";
+import { modelLabel, pickAdvertisedModel } from "./acp-model-id.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 import { fuigoToolResultDirs, sessionFolders } from "../../own-tool-results.ts";
 import { scopeGrokHome } from "./grok-scope.ts";
@@ -406,13 +407,56 @@ export function applyGrokFluxMemory(env: Record<string, string | undefined>, hea
   env.GROK_CONFIG = fuigoConfigOverlay(headers, env.GROK_CONFIG);
 }
 
+/** Pin the turn's model on the open session, resolved against what this session advertised. A Grok install offers
+ *  only the models it knows (a scoped home without the owner's models cache may know fewer), and `session/set_model`
+ *  answers -32602 for any other id. So: the wanted model (exact or resolveAcpModelId match); else the closest
+ *  advertised model of the same family, newest first; else the session's current model. A substitution posts one
+ *  plain line. A provider-routed turn pins its own slug exactly (it is never swapped for a subscription model), and
+ *  a session that advertises nothing gets the slug as before. Only a refusal there fails the turn, with a next step. */
+export async function configureGrokSession({ request, sessionId, turn, sessionModels, currentModelId, notice }: Parameters<NonNullable<AcpSupport["configureSession"]>>[0]): Promise<void | { model?: string }> {
+  if (!turn.model) return;
+  const wanted = turn.model;
+  const pin = async (modelId: string) => {
+    try {
+      await request("session/set_model", { sessionId, modelId });
+    } catch (e) {
+      console.warn(`grok: session/set_model ${JSON.stringify(modelId)} refused: ${(e as Error)?.message ?? e}`);
+      throw new Error(
+        `Grok could not switch this conversation to ${modelLabel(wanted)}. ` +
+          `Update Grok to its latest version, then send the message again, or choose another Grok model in this bot's settings.`,
+      );
+    }
+  };
+  const pick = turn.providerRoute ? ({ kind: "none" } as const) : pickAdvertisedModel(sessionModels ?? [], wanted, currentModelId);
+  if (pick.kind === "none") { await pin(wanted); return; }
+  if (pick.modelId && pick.modelId !== currentModelId) await pin(pick.modelId);
+  if (pick.kind === "substitute") {
+    const running = pick.modelId ? modelLabel(pick.modelId) : "Grok's default model";
+    notice(`Running ${running} for this turn: ${modelLabel(wanted)} is not offered by your Grok install yet.`);
+  }
+  const running = pick.modelId ?? currentModelId;
+  return running ? { model: running } : undefined;
+}
+
 const support: AcpSupport = {
   driverKind: "grokAgent",
   displayName: "Grok",
   // A cut MCP result is saved in this session's own `mcp/` folder; reading it
   // back is the bot reading its own output (server/own-tool-results.ts).
   toolResultDirs: ({ env, cwd, sessionId }) => fuigoToolResultDirs(grokHome(env), sessionFolders(cwd), sessionId),
-  images: false,
+  // Real grok 1.0.67 turn (grok-4.7, 2026-10-28): an inline ACP image block was
+  // read back word for word, and the same prompt without it was not. initialize
+  // also advertises promptCapabilities.image; this is the answer before that probe.
+  images: true,
+  // Grok Build's own names for the Fuigo contract, proven on a real 1.0.67 turn:
+  // `_x.ai/interject` mid-turn answered `{ result: { status: "queued" } }`, echoed
+  // `_x.ai/session/interjection` with the same interjectionId, and the reply
+  // followed it. `_fuigo/interject` is method-not-found there.
+  interjection: {
+    method: "_x.ai/interject",
+    echoes: ["_x.ai/session/interjection"],
+    queueChanged: ["_x.ai/queue/changed"],
+  },
   models: STATIC_GROK_MODELS,
   resolveModels: (env) => mergeLocalInject(readGrokModelCatalog(env), env),
   // Grok's accepted levels vary by model and the CLI validates lazily — a
@@ -482,18 +526,8 @@ const support: AcpSupport = {
   spawnNeedsCliVersion: true,
 
   // -m on argv is necessary but not sufficient: session/new still starts on
-  // [models].default. Pin the slug over the wire, same as Hermes/Droid.
-  async configureSession({ request, sessionId, turn }) {
-    if (!turn.model) return;
-    try {
-      await request("session/set_model", { sessionId, modelId: turn.model });
-    } catch (e) {
-      throw new Error(
-        `Grok rejected model "${turn.model}" via session/set_model: ${(e as Error).message}. ` +
-          `Check that grok is current (1.0.6+ supports it) and that this slug exists in ~/.grok/config.toml.`,
-      );
-    }
-  },
+  // [models].default. Pin the model over the wire, same as Hermes/Droid.
+  configureSession: configureGrokSession,
 
   /** Flux Memory headers: Grok Build shares Fuigo's shell, so the inline `GROK_CONFIG` overlay
    *  (xai-grok-shell config GROK_CONFIG_ENV) carries `[models].extra_headers` the same way. */
