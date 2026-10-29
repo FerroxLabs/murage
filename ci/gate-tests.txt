@@ -639,6 +639,7 @@ server/drivers/codex-hook.test.ts	all	Codex approval policy per version
 server/drivers/codex-isolation.test.ts	all	Codex personal setup isolated per bot
 server/drivers/codex-launch-binary.test.ts	linux+mac	Codex turns refused the default model (an older codex on the shell PATH ran)
 server/drivers/codex-mcp-env-launcher.test.ts	windows	a custom MCP server gets its own secret without it appearing in a process listing
+server/drivers/codex-plan-usage.test.ts	all	Codex plan usage shows the wrong account, leaks account data into logs, or starts work for a meter
 server/drivers/codex-warm.test.ts	all	Codex warm app-server turns
 server/drivers/codex.test.ts	all	Codex engine turn behaviour
 server/drivers/engine-stderr-capture.test.ts	all	secrets in engine output never reach the owner (credentials)
@@ -1135,6 +1136,7 @@ server/phones/offered.test.ts	all	protects user-visible behaviour in core flows
 server/phones/registry.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/phones/rpc.test.ts	all	phone-to-desktop door and its auth
 server/phones/target.test.ts	all	credentials, pairing and access control
+server/plan-usage.test.ts	all	plan usage shows a made-up number, reads a credential, or floods an engine
 server/pm-sends-102-r14.test.ts	all	upgrade backfill; older archives accept the dropped index (downgrade)
 server/pm-sends-102-r15.test.ts	all	owed backfill under upgrade reporter
 server/pm-sends-102-r16.test.ts	all	Owed backfill under heartbeat on slow SQL
