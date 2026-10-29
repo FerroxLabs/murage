@@ -1,0 +1,153 @@
+# Bot calls, contract v2 (Murage 1.0.9). Frozen first, owned by lane S.
+# Design: BOT-CALLS-109 rev 4.2 (sections 3, 5.4, 5.5, 5.7, 6, 7.1, 8).
+# Twins: apps/mobile/contract/push.json v2 (push), shared/bot-calls-contract.ts (numbers and sentences).
+# 1.0.9 is phone phase 1: a time-sensitive alert, the CallView, and /seen. CallKit, PushKit and
+# ConnectionService are 1.0.10 and are not part of this contract.
+version: 2
+
+auth:
+  owner: >-
+    Every route below is owner-authenticated: the desktop owner surface, or a phone's
+    owner companion proof (the same proof the companion routes use today). A bot-scoped
+    request, or a companion request without proof, gets 403 and changes nothing.
+  unlockedOnly: >-
+    Routes marked unlockedOnly return bot names, thread ids or call text. A phone calls
+    them only from the unlocked, foreground app, never from a notification extension.
+
+ids:
+  intentId: "uuid v4; one bot-initiated call attempt (a row of bot_calls). It is also the push requestId."
+  callId: "uuid v4; one call session (a row of bot_call_sessions); every call, bot-initiated or not"
+  sessionId: "uuid v4; the session row's own id"
+  device: "^(desktop|phone):[A-Za-z0-9_-]{1,64}$; desktop:<clientId> or phone:<bindingId>; stable per device"
+
+push:
+  file: apps/mobile/contract/push.json
+  version: 2
+  categories:
+    call: { ios: CALL, android: calls, timeSensitive: always, sound: { ios: murage-call.caf, android: murage_call, seconds: 10 } }
+    call-note: { ios: CALL_NOTE, android: questions }
+  iosActions:
+    CALL:
+      - { id: ANSWER, title: Answer, options: [foreground, authenticationRequired] }
+      - { id: NOT_NOW, title: Not now, options: [authenticationRequired] }
+  payload: "call and call-note carry expiresAt (ms epoch) in aps.murage and in FCM data (decimal string); no other category may"
+  rules:
+    - "an expired call or call-note (now >= expiresAt) is silent"
+    - "a resolved revision for a collapse key the phone is not showing is silent"
+    - "a resolved revision for a ring on screen replaces it and stops its sound"
+    - "lock screen and notification text for call kinds is always the closed text below, at every preview setting"
+  closedText:
+    ring: { title: Murage is calling, body: Answer to hear what it is. }
+    note: { title: Murage, body: Murage has a message for you. }
+  detail:
+    route: "the existing push detail route"
+    rows:
+      - { kind: call, anyPreviewSetting: { title: Murage is calling, body: Answer to hear what it is. } }
+      - { kind: call-note, anyPreviewSetting: { title: Murage, body: Murage has a message for you. } }
+  notNow: "the NOT_NOW action posts /api/calls/{intentId}/decline after the phone reads the ringing intent from GET /api/calls/active"
+  answer: "the ANSWER action opens the app; the app reads GET /api/calls/active and posts /api/calls/{intentId}/answer"
+
+relay:
+  - "the call category is always time-sensitive and uses the call sound"
+  - "the payload key expiresAt is added for call kinds (APNs aps.murage and FCM data)"
+  - "a resolved revision of a call lives max(ring expiry, now + 12 h), inside the relay's 24 h event lifetime"
+
+routes:
+  - method: GET
+    path: /api/calls/active
+    unlockedOnly: true
+    response:
+      ringing: "null | { intentId, botId, botName, threadId, rangAt, deadlineAt }"
+      live: "[{ callId, sessionId, intentId: string|null, botId, threadId, device, openedAt }]"
+      offUntil: "number|null; Calls off for today while it holds (ms epoch), else null (added 2026-10-27, additive)"
+  - method: POST
+    path: /api/calls/turn-end
+    body: { threadId: string, how?: "ring|text_first (default ring)", waitMin?: "10|15|30|60 (text_first only, default 10)" }
+    rules:
+      - "Call me when this finishes: marks the turn running now on that conversation (added 2026-10-27, additive); a turn_end rule and an armed owed row in one transaction, born held during a restore"
+      - "idempotent per turn; 409 not_running when no turn runs, 409 calls_off when the bot's switch is off; 409 calls_off_today (body { error, code: calls_off_today }) while Calls off for today holds, and nothing is queued: the app offers "Turn calls back on" (POST /api/calls/off-today {on:false}) and then sends turn-end again; 404 when the caller cannot see the conversation"
+    responses: { 200: "{ ruleId, turnId }", 400: "{ error }", 404: "{ error }", 409: "{ error: not_running | calls_off | calls_off_today, code?: calls_off_today }" }
+  - method: POST
+    path: /api/calls/off-today
+    body: { on: boolean, tz?: string }
+    rules:
+      - "owner-wide, not per bot; not unlockedOnly (it returns no names or text); a bot caller gets 403"
+      - "on: true stores offUntil = the next local midnight in tz (an IANA zone; the host's zone when tz is missing or invalid); idempotent, recomputed from tz on every call"
+      - "on: false clears it; it survives a restart and lapses on its own at offUntil, with no timer"
+      - "only an Emergency rule (Tier A, caps apply, never during a live call, the calendar still asked) may ring; any other call, timed calls included (the owner turned calls off after booking them), is the card only, with no call-note push (MurageMain 2026-10-27)"
+    responses: { 200: "{ offUntil: number|null }", 400: "{ error }", 403: "{ error }" }
+  - method: POST
+    path: /api/calls/{intentId}/answer
+    body: { device: string }
+    responses:
+      200: "{ sessionId, callId, threadId } (also the answer retry by the same device while its session is live)"
+      409: "{ error: answered_elsewhere | expired }"
+      410: "{ error: gone } (done, or the session ended or is no longer live)"
+  - { method: POST, path: "/api/calls/{intentId}/decline", body: {}, responses: { 200: "{ outcome: declined }", 409: "{ error: not_ringing }" } }
+  - { method: POST, path: "/api/calls/{intentId}/text-instead", body: {}, responses: { 200: "{ outcome: text_instead }", 409: "{ error: not_ringing }" } }
+  - { method: POST, path: "/api/calls/{intentId}/never-again", body: {}, responses: { 200: "{ rule: off | demoted | deleted | sender_removed }" } }
+  - method: POST
+    path: /api/calls/{intentId}/seen
+    body: {}
+    when: "only from a foreground, focused window or app with the card on screen for 2 s; never from rendering a notification, a detail fetch or unread state"
+    responses: { 200: "{ seen: boolean }" }
+  - { method: GET, path: "/api/calls/{intentId}", unlockedOnly: true, response: "{ intentId, botId, threadId, state, outcome, factKind, createdAt, rangAt, endedAt, receipt }" }
+  - { method: GET, path: "/api/calls/{intentId}/opener", unlockedOnly: true, response: "{ text, botId, threadId }; spoken through the existing speech route with the call id header" }
+  - method: POST
+    path: /api/calls/sessions
+    body: { botId: string, threadId: string, device: string }
+    note: "an ordinary owner call; opening one while an intent rings ends that ring as text_instead"
+    responses: { 200: "{ sessionId, callId }" }
+  - { method: POST, path: "/api/calls/sessions/{callId}/ticket", body: { device: string }, responses: { 200: "{ ticket, expiresAt }", 404: "{ error }", 410: "{ error: gone }" } }
+  - method: GET
+    path: "/api/calls/sessions/{callId}/live?ticket={ticket}"
+    protocol: websocket
+    note: "see session below"
+  - { method: POST, path: "/api/calls/sessions/{callId}/end", body: {}, responses: { 200: "{ ended: boolean }" } }
+  - { method: GET, path: "/api/calls/history?before={createdAt}&limit={1..100}", unlockedOnly: true, response: "{ items: [...], next: number|null }" }
+  - { method: GET, path: "/api/bots/{botId}/calls/rules", response: "{ enabled, rules: [...], held: boolean, restoreGen: string|null, quietHours, voice: boolean }" }
+  - method: PUT
+    path: /api/bots/{botId}/calls/rules
+    body: "{ enabled?: boolean, rules: [{ id?, kind, params, label?, how, waitMin?, enabled, emergency }] }"
+    rules:
+      - "an upsert by id; a rule left out is deleted; restore_held and restore_gen are never taken from input"
+      - "tier is derived from kind and never read from input"
+      - "emergency: true on a Tier B kind (routine_problem, needs_owner_now) is 400"
+    responses: { 200: "the GET body", 400: "{ error }", 403: "{ error }" }
+  - { method: POST, path: /api/calls/rearm, body: { restoreGen: string }, responses: { 200: "{ rearmed: number }", 409: "{ error: stale }" } }
+  - { method: PATCH, path: "/api/phone/bindings/{bindingId}", body: { ringsForCalls: boolean }, responses: { 200: "{ ringsForCalls }" } }
+
+session:
+  open: "POST /api/calls/sessions, or the answer route, returns callId"
+  ticket: "POST /api/calls/sessions/{callId}/ticket with the session's own device; single use; lives 60 s"
+  channel: "GET /api/calls/sessions/{callId}/live?ticket=..., a websocket bound to the session's device"
+  serverPing: "a websocket ping frame every 20 s; the client's pong counts as traffic (browsers answer pings on their own)"
+  traffic: "a pong, any client frame, or any call request carrying the header x-murage-call-id (host turn, transcribe, speech, opener)"
+  live: "ended_at is null and the server saw traffic in the last 60 s; nothing else"
+  reconnect: "the client reconnects with the same callId and a new ticket; within 60 s the call continues"
+  ends:
+    lost: "60 s with no traffic"
+    closed: "the end route; nothing relies on it arriving"
+    stopped: "the owner stopped the bot, paused it, deleted it or switched it off"
+    restore: "a restore"
+    backstop: "4 h after opening, a last resort only"
+  serverFrames:
+    - '{ "type": "call.ended", "callId": "...", "reason": "lost|closed|stopped|restore|backstop" }'
+    - '{ "type": "call.live", "seq": 7 }'
+  clientFrames:
+    - '{ "type": "call.alive", "seq": 7 }'
+  heartbeat: "the client sends call.alive every 20 s with a rising seq, whether or not the last one was answered"
+  liveFrame: "the server answers any client frame with call.live while the session is live, echoing its seq"
+  clientEnds: "the server is the only authority: the client ends its call (screen, microphone, audio) on call.ended or a 404/410 ticket; on its own only after 75 s (silence 60 s + 15 s) with no echo arriving, so never before the server ends the session; reconnecting lasts that long"
+  ordinaryOpen: "a failed POST /api/calls/sessions is retried within 60 s; if it still fails the call ends with a short note; a call never runs without a session"
+  restart: "after a harness restart every open session gets 60 s of grace to reconnect"
+
+sse:
+  hints:
+    - '{ "type": "call.ring", "intentId", "botId", "threadId", "deadlineAt" }'
+    - '{ "type": "call.answered", "intentId", "callId", "device" }'
+    - '{ "type": "call.ended", "intentId"?, "callId"? }'
+  note: "hints only; clients re-read GET /api/calls/active"
+
+copy:
+  - "no em dashes; never safe, unsafe or safety; never Composio; no prices"

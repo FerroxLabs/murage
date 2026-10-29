@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { chmod, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { managedFuigoReceipt, nativeFuigoPackage, nativeFuigoTarget, nativeFuigoVersion, probeNativeFuigo, stageNativeFuigo, supportedFuigoVersion, verifyManagedFuigo } from "./fuigo-native-update.ts";
+import { managedFuigoReceipt, nativeFuigoPackage, nativeFuigoTarget, nativeFuigoVersion, offeredFuigoVersion, probeNativeFuigo, QUALIFIED_FUIGO_VERSION, qualifiedFuigoVersion, stageNativeFuigo, supportedFuigoVersion, verifyManagedFuigo } from "./fuigo-native-update.ts";
 import { nativeFixtureAsset, nativeFixtureBinary } from "./testing/fuigo-native-fixture.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
 const roots: string[] = [];
@@ -100,4 +100,20 @@ it.skipIf(process.platform !== "darwin").each(["missing-auth", "auth-required", 
   await chmod(cli, 0o700);
   await expect(probeNativeFuigo(cli, "1.0.10", directory)).rejects.toMatchObject({ code: "FUIGO_INCOMPATIBLE", ...(failure === "auth-required" ? { probeMethod: "authenticate", rpcCode: -32000 } : {}) });
   expect((await readdir(directory)).filter(name => name.startsWith("probe-"))).toEqual([]);
+});
+
+it("caps managed updates at the bundled, qualified Fuigo pin", async () => {
+  const { readFileSync } = await import("node:fs");
+  const pinned = /export const FUIGO_VERSION = "(\d+\.\d+\.\d+)"/.exec(readFileSync(new URL("../scripts/prepare-fuigo.mjs", import.meta.url), "utf8"))?.[1];
+  // One pin: bumping scripts/prepare-fuigo.mjs FUIGO_VERSION must move the cap with it.
+  expect(QUALIFIED_FUIGO_VERSION).toBe(pinned);
+  expect(qualifiedFuigoVersion(QUALIFIED_FUIGO_VERSION)).toBe(true); expect(qualifiedFuigoVersion("1.0.9")).toBe(true);
+  for (const version of ["1.0.35", "1.1.0", "2.0.0", "1.0.8"]) expect(qualifiedFuigoVersion(version)).toBe(false);
+  expect(offeredFuigoVersion("1.0.35")).toBe(QUALIFIED_FUIGO_VERSION); expect(offeredFuigoVersion("2.0.0")).toBe(QUALIFIED_FUIGO_VERSION);
+  expect(offeredFuigoVersion("1.0.10")).toBe("1.0.10"); expect(offeredFuigoVersion(QUALIFIED_FUIGO_VERSION)).toBe(QUALIFIED_FUIGO_VERSION);
+  // An already-installed newer release stays recognised; only offering and staging are capped.
+  expect(supportedFuigoVersion("1.0.35")).toBe(true);
+  const fetcher = vi.fn(async () => { throw new Error("never fetched"); });
+  await expect(stageNativeFuigo({ root: "/nonexistent", id: "fuigo", target: "darwin-arm64", version: "1.0.35", fetcher: fetcher as unknown as typeof fetch })).rejects.toThrow(/not supported/);
+  expect(fetcher).not.toHaveBeenCalled();
 });

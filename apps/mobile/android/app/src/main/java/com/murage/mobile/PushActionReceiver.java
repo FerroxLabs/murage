@@ -14,6 +14,7 @@ import com.murage.mobile.shell.PushOutcome;
 import com.murage.mobile.shell.WorkspaceOrigin;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.BiConsumer;
 import org.json.JSONObject;
 
 /**
@@ -31,6 +32,10 @@ public class PushActionReceiver extends BroadcastReceiver {
     static final int DETAIL_MS = 5000, RESPOND_MS = 10_000;
 
     @Override public void onReceive(Context context, Intent intent) {
+        // P2 acknowledges this action locally. MurageMain owns its server meaning.
+        if (dismissNotNow(intent == null ? null : intent.getAction(),
+                intent == null ? null : intent.getStringExtra("murage.collapseKey"),
+                (tag, id) -> context.getSystemService(NotificationManager.class).cancel(tag, id))) return;
         PendingResult async = goAsync();
         Context app = context.getApplicationContext();
         WORK.execute(() -> {
@@ -53,6 +58,13 @@ public class PushActionReceiver extends BroadcastReceiver {
                 async.finish();
             }
         });
+    }
+
+    /** Local dismissal is scoped to this notification, even before goAsync(). */
+    static boolean dismissNotNow(String action, String collapseKey, BiConsumer<String, Integer> cancel) {
+        if (!CallAnswerRoute.isNotNow(action)) return false;
+        if (collapseKey != null) cancel.accept(collapseKey, 1);
+        return true;
     }
 
     /**

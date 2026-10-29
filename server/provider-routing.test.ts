@@ -14,6 +14,7 @@ import { CodexDriver } from "./drivers/codex.ts";
 import { HermesAgentDriver } from "./drivers/acp/hermes.ts";
 import { FuigoAgentDriver } from "./drivers/acp/fuigo.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { fuigoAskRules, fuigoMemoryAllowPatterns, fuigoPermissionToml } from "./drivers/acp/fuigo-permission.ts";
 const route:ProviderTurnRoute={connectionId:'provider-a',preset:'openai',protocol:'openai',baseUrl:'http://127.0.0.1:49999/v1',apiKey:'fixture-provider-key',model:'fixture-model',revision:'r1'};
 describe('bound provider routes',()=>{
  it('preallows only registered memory tools in an owned routed Fuigo home',()=>{
@@ -21,12 +22,24 @@ describe('bound provider routes',()=>{
   const bound=applyProviderRoute('fuigoAgent',env,route,{threadId:'thread',memoryTools:true});
   try{
    const config=readFileSync(join(env.FUIGO_HOME!,'config.toml'),'utf8');
-   const rules=config.slice(config.indexOf('[permission]'));
+   // FUIGO-SCOPE-1010: one [permission] table, the bot's ask rules and the memory allows side by side
+   expect(config.split('[permission]')).toHaveLength(2);
+   expect(config).toContain(fuigoPermissionToml({ask:fuigoAskRules().ask,memoryAllow:fuigoMemoryAllowPatterns()}));
+   const rules=config.slice(config.indexOf('rules = ['));
    for(const name of ['memory_search','memory_get','memory_save','memory_propose_correction'])expect(rules).toContain(`pattern = "murage-memory__${name}"`);
    expect(rules).not.toContain('*');expect(rules).not.toContain('shell');expect(config).not.toContain(route.apiKey);
+   // the routed home is marked, so the scope step never scopes it again (V2)
+   expect(env.MURAGE_FUIGO_ROUTED_HOME).toBe(env.FUIGO_HOME);
   }finally{bound.cleanup();}
-  const without:NodeJS.ProcessEnv={};const plain=applyProviderRoute('fuigoAgent',without,route,{threadId:'thread'});
-  try{expect(readFileSync(join(without.FUIGO_HOME!,'config.toml'),'utf8')).not.toContain('[permission]');}finally{plain.cleanup();}
+  const owner=mkdtempSync(join(tmpdir(),'routed-owner-'));
+  try{
+   const without:NodeJS.ProcessEnv={HOME:owner};const plain=applyProviderRoute('fuigoAgent',without,route,{threadId:'thread'});
+   try{
+    const config=readFileSync(join(without.FUIGO_HOME!,'config.toml'),'utf8');
+    expect(config).toContain(fuigoPermissionToml({ask:fuigoAskRules().ask}));expect(config).not.toContain('rules = [');
+    expect(without.FUIGO_AUTH_PATH).toBeUndefined();
+   }finally{plain.cleanup();}
+  }finally{removeTempDirSync(owner);}
  });
  it('uses one exact selected endpoint/key without exposing credentials in arguments',()=>{
   for(const driver of ['claudeAgent','codex','qwenAgent','hermesAgent','fuigoAgent']){
@@ -58,10 +71,10 @@ describe('bound provider routes',()=>{
    finally{events.stop();await instance.dispose();removeTempDirSync(home);}
   });
  }
- it('routes Grok API to the exact selected provider with chat-only capabilities',async()=>{
+ it('routes Grok API to the exact selected provider; its MCP set is the chat-tools set (OPENAI-TOOLS-109: agents yes, browser no)',async()=>{
   let received:any;const server=createServer(async(req,res)=>{let body='';for await(const chunk of req)body+=chunk;received={url:req.url,auth:req.headers.authorization,body:JSON.parse(body)};res.setHeader('content-type','text/event-stream');res.end('data: '+JSON.stringify({choices:[{delta:{content:'fixture answer'}}]})+'\n\ndata: [DONE]\n\n');});await new Promise<void>(done=>server.listen(0,'127.0.0.1',done));
   const chosen={...route,baseUrl:`http://127.0.0.1:${(server.address()as{port:number}).port}/v1`};const instance=await GrokDriver.create({instanceId:'fixture-grok',displayName:'Grok API',enabled:true,environment:{},config:GrokDriver.decodeConfig({})});const events=recordEvents(instance.adapter);
-  try{await instance.adapter.sendTurn({threadId:'grok-selected',text:'fake only',model:chosen.model,providerRoute:chosen});await events.until(e=>e.type==='turn.completed');expect(received).toMatchObject({url:'/v1/chat/completions',auth:'Bearer '+route.apiKey,body:{model:route.model}});expect(instance.adapter.capabilities.agentsMcp).not.toBe(true);expect(instance.adapter.capabilities.browserMcp).not.toBe(true);}
+  try{await instance.adapter.sendTurn({threadId:'grok-selected',text:'fake only',model:chosen.model,providerRoute:chosen});await events.until(e=>e.type==='turn.completed');expect(received).toMatchObject({url:'/v1/chat/completions',auth:'Bearer '+route.apiKey,body:{model:route.model}});expect(instance.adapter.capabilities.agentsMcp).toBe(true);expect(instance.adapter.capabilities.browserMcp).not.toBe(true);}
   finally{events.stop();await instance.dispose();await new Promise<void>(done=>server.close(()=>done()));}
  });
 

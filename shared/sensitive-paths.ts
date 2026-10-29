@@ -139,9 +139,9 @@ export const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
   // would replace the guard that judges every later call.
   {
     id: "murage-engine-hooks",
-    re: /(?<![\w.-])(?:(?:antigravity-(?:relay|ask|scope)|codex-scope)[. ]*(?:[\\/:]|$|["'\s;|&)>`])|murage-agy-relay|murage-hook\.(?:mjs|cmd|env)\b|ask-hook-[\w.-]*\.cjs\b)/i,
-    read: ["**/native/antigravity-relay/**", "**/native/antigravity-ask/**", "**/native/antigravity-scope/**", "**/native/codex-scope/**", "**/murage-agy-relay*", "**/murage-hook.mjs", "**/murage-hook.cmd", "**/murage-hook.env", "**/ask-hook-*.cjs"],
-    bash: ["*native/antigravity-relay*", "*native/antigravity-ask*", "*native/antigravity-scope*", "*native/codex-scope*", "*murage-agy-relay*", "*murage-hook.mjs*", "*murage-hook.cmd*", "*murage-hook.env*", "*ask-hook-*.cjs*"],
+    re: /(?<![\w.-])(?:(?:antigravity-(?:relay|ask|scope)|codex-scope|fuigo-scope|grok-scope|fuigo-local-models)[. ]*(?:[\\/:]|$|["'\s;|&)>`])|murage-agy-relay|murage-hook\.(?:mjs|cmd|env)\b|ask-hook-[\w.-]*\.cjs\b)/i,
+    read: ["**/native/antigravity-relay/**", "**/native/antigravity-ask/**", "**/native/antigravity-scope/**", "**/native/codex-scope/**", "**/native/fuigo-scope/**", "**/native/grok-scope/**", "**/native/fuigo-local-models/**", "**/murage-agy-relay*", "**/murage-hook.mjs", "**/murage-hook.cmd", "**/murage-hook.env", "**/ask-hook-*.cjs"],
+    bash: ["*native/antigravity-relay*", "*native/antigravity-ask*", "*native/antigravity-scope*", "*native/codex-scope*", "*native/fuigo-scope*", "*native/grok-scope*", "*native/fuigo-local-models*", "*murage-agy-relay*", "*murage-hook.mjs*", "*murage-hook.cmd*", "*murage-hook.env*", "*ask-hook-*.cjs*"],
   },
   // agy 1.4.4 loads the hooks of the workspace's customization root (.agents, .agent, _agents, _agent: hooks.json,
   // plugins.json, plugins/<name>/hooks.json, and agents/*.md, whose front matter can carry hooks) beside Murage's
@@ -179,6 +179,15 @@ export const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
     re: /(?:\.fuigo(?![\w-])|FUIGO_HOME)[\s\S]*?(?:(?:config|managed_config|requirements|sandbox)\.toml|permission[^\\/\s"']*\.toml)(?![\w-])|(?:config|managed_config|requirements|sandbox)\.toml(?![\w-])[\s\S]*?(?:\.fuigo(?![\w-])|FUIGO_HOME)/i,
     read: ["~/.fuigo/config.toml", "~/.fuigo/managed_config.toml", "~/.fuigo/requirements.toml", "~/.fuigo/sandbox.toml", "~/.fuigo/sessions/*/permission*.toml", ".fuigo/config.toml"],
     bash: ["*.fuigo/config.toml*", "*.fuigo/managed_config.toml*", "*.fuigo/requirements.toml*", "*.fuigo/sandbox.toml*", "*.fuigo/sessions/*/permission*"],
+  },
+  // FUIGO-SCOPE-1010 G1: the owner's Fuigo and Grok logins are keys, and so is every copy or link of them a bot turn
+  // can reach: the scope's auth.json (Grok links the owner's), a routed home's, the lock beside each, and the file
+  // FUIGO_AUTH_PATH (or a home variable) names. A read is a card at every level, like `.codex/auth.json`.
+  {
+    id: "engine-logins",
+    re: /\.(?:fuigo|grok)[\\/]auth\.json|native[\\/](?:fuigo-scope|grok-scope|provider-turns|grok-provider-context)[\\/][^\s"']*auth\.json|FUIGO_AUTH_PATH|(?:FUIGO|GROK)_HOME\}?[\\/]auth\.json/i,
+    read: ["~/.fuigo/auth.json*", "~/.grok/auth.json*", "**/native/fuigo-scope/**/auth.json*", "**/native/grok-scope/**/auth.json*", "**/native/provider-turns/**/auth.json*", "**/native/grok-provider-context/**/auth.json*"],
+    bash: ["*.fuigo/auth.json*", "*.grok/auth.json*", "*native/fuigo-scope*auth.json*", "*native/grok-scope*auth.json*", "*native/provider-turns*auth.json*", "*native/grok-provider-context*auth.json*", "*FUIGO_AUTH_PATH*", "*FUIGO_HOME*auth.json*", "*GROK_HOME*auth.json*"],
   },
 ];
 

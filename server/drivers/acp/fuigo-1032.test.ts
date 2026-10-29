@@ -91,7 +91,7 @@ describe("Fuigo 1.0.32: acceptEdits approves workspace edits, so Murage never pa
     ["Auto with Murage's stop line", { fullAuto: true, enforced: { stopLine: true as const } }, "default"],
     ["Auto routing asks to Murage", { fullAuto: true, enforced: { routeAsks: true as const } }, "default"],
     ["an asking instance", { fullAuto: false }, "default"],
-    ["Full access", { fullAuto: true }, "bypassPermissions"],
+    ["Full access (FUIGO-SCOPE-1010: default at every level)", { fullAuto: true }, "default"],
   ])("%s spawns --permission-mode %s and never acceptEdits", async (_label, options, expected) => {
     const { argv } = await turn(options);
     expect(argv.filter((arg) => arg === "--permission-mode")).toHaveLength(1);

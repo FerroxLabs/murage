@@ -168,6 +168,7 @@ const MARKED_FORWARDS: Record<string, string> = {
   "index.ts :: murageLine(plain)": "the event fold: the turn's own chips carry event.turnId, so they rest on that turn's inputs",
   "voice/voice-notes.ts :: murageLine(row)": "createVoiceNote with no producing turn (a replay); with one the row is the turn's engine output",
   "output-publication.ts :: murageLine(row)": "imageOutputRow with no producing turn named; with one the row is the turn's engine output",
+  "bot-calls-card.ts :: murageLine(row)": "writeCallCard: a bot call's card, words from callCardText (fixed CALL_COPY, the bot's name and a clock time); no engine or bot text",
 };
 
 /** How much of a row's text keys it (file and the row's first characters). */

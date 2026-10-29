@@ -39,11 +39,13 @@ import { CloudDisconnectComputer, DISCONNECT_COPY, cloudDisconnectBridge } from 
 import { ScriptAccessSettings } from "./ScriptAccessSettings";
 import { AboutMeSettings } from "./AboutMeSettings";
 import { NotificationSettings } from "./NotificationSettings";
+import { CallsSettings } from "./CallsSettings";
 import { BackupSettings } from "./BackupSettings";
 import { StorageSettings } from "./StorageSettings";
 import { StartupSettings } from "./StartupSettings";
 import { AnnouncementsSettings } from "./AnnouncementsSettings";
 import { NewsSignupSettings } from "./NewsSignupSettings";
+import { BotEmailAccountCard } from "./BotEmailSettings";
 import { TelegramSettings } from "./TelegramSettings";
 import { SlackSettings } from "./SlackSettings";
 import { WhatsAppSettings } from "./WhatsAppSettings";
@@ -85,6 +87,7 @@ import { APP_VERSION } from "@/lib/whats-new";
 import { sourceCodeLink, sourceVersionLabel } from "@/lib/source-code";
 import { openKeyboardShortcuts, openWhatsNew } from "@/lib/app-events";
 import { copyText } from "@/lib/copy-text";
+import { HealthCard, healthDestination } from "./HealthCard";
 
 export { sectionsForSurface, settingsSectionRedirect } from "@/lib/settings-sections";
 export { settingsSearchResults } from "@/lib/settings-search";
@@ -288,7 +291,7 @@ function AnalyticsRow() {
   return (
     <Card
       title="Usage analytics"
-      subtitle="Anonymous product events: app opened, which features get used. Never conversations, prompts, file contents, or bot output. Your email is only attached if you shared it during setup."
+      subtitle="Anonymous product events: app opened, which features get used. Never conversations, prompts, file contents, or bot output, and never your name or email."
     >
       <Switch
         checked={on}
@@ -614,6 +617,13 @@ export function BrowserProfilesRow() {
       }}>Refresh profiles</button></div> : null}
     </Card>
   );
+}
+
+/** The Health card in Settings: reads its own owner summary; next actions open existing Settings pages. */
+function SettingsHealthRow() {
+  const { dispatch } = useStore();
+  return <HealthCard onOpenBackups={() => dispatch({ type: "toggleAppSettings", open: true, section: "backups" })}
+    onNavigate={action => { const to = healthDestination(action); if (to) dispatch({ type: "toggleAppSettings", open: true, section: to.section, ...(to.anchor ? { anchor: to.anchor } : {}) }); }} />;
 }
 
 /** Writes a redacted diagnostics file to a location the user picks. The
@@ -1248,7 +1258,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
                 </Anchor>
                 {desktop === true && <Anchor id="language-heading"><LanguageRow /></Anchor>}
                 {!inNativeShell() && <Anchor id="send-key-heading"><SendKeyRow /></Anchor>}
-                {desktop === true && <Anchor id="notifications-heading"><NotificationSettings /></Anchor>}
+                {desktop === true && <Anchor id="notifications-heading"><NotificationSettings /><CallsSettings /></Anchor>}
                 {desktop !== true && <p className="text-[12px] text-ink-secondary">{t("settings.general.remoteNote")}</p>}
                 {/* Confirmed remote only. `undefined` renders the neutral
                   * thing, and the desktop has no session to sign out of: the
@@ -1291,6 +1301,8 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
             {desktop === true && section === "webSearch" && <ToolsSettings advanced={advancedFor("webSearch")} cloudImagesOnly={pageComputerOnly} />}
 
             {desktop === true && section === "connections" && <ConnectedAppsSettings advancedOpen={advancedOpen.connections} onAdvancedOpenChange={advancedFor("connections").onOpenChange} />}
+            {/* Settings > Bot email (1.0.9): only while the server says email is on; renders nothing otherwise */}
+            {desktop === true && section === "connections" && <Anchor id="bot-email-heading"><BotEmailAccountCard /></Anchor>}
 
             {desktop === true && section === "channels" && (
               <AdvancedHost>
@@ -1317,6 +1329,9 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
                 <Anchor id="shortcuts-heading"><ShortcutsRow /></Anchor>
                 <Anchor id="previous-version-heading"><PreviousVersionRow /></Anchor>
                 <SourceCodeRow />
+                {/* Health (1.0.9 Sentinel) sits beside Diagnostics and outside every desktop-only guard: the Cloud and
+                    self-host owner see the same card. The summary route answers the owner only. */}
+                <Anchor id="health-heading"><SettingsHealthRow /></Anchor>
                 <AdvancedSection {...advancedFor("about")} summary={t("settings.l1.advanced.about")}>
                   {desktop === true && <Anchor id="announcements-heading"><AnnouncementsSettings /></Anchor>}
                   {!cloudCardHidden("diagnostics-heading", cloud) && <Anchor id="diagnostics-heading"><DiagnosticsRow /></Anchor>}

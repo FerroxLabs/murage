@@ -16,6 +16,15 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const QUESTION = JSON.stringify({ questions: [{ question: "Which channels?", options: [{ label: "Email" }, { label: "Slack" }], multiSelect: true }] });
 
 describe("scanMurageFences", () => {
+  it("reports ranges for ordinary, murage and unterminated code fences", () => {
+    const blocks = ["```json\n{}\n```\n", "~~~murage-question\n{}\n~~~\n", "````\n```\nstill code"];
+    const text = `before\n${blocks[0]}between\n${blocks[1]}after\n${blocks[2]}`;
+    const scan = scanMurageFences(text);
+    expect(scan.codeRanges.map(({ start, end }) => text.slice(start, end))).toEqual(blocks);
+    expect(scan.closed).toHaveLength(1);
+    expect(scan.open).toBeUndefined();
+  });
+
   it("finds closed question and widget fences, each kind numbered on its own (the card and the widget lane match by index)", () => {
     const text = `Hi\n\n\`\`\`murage-question\n${QUESTION}\n\`\`\`\n\n\`\`\`murage-widget\n{"root":1}\n\`\`\`\n\n\`\`\`murage-question\n{}\n\`\`\`\n`;
     const scan = scanMurageFences(text);
@@ -44,6 +53,22 @@ describe("scanMurageFences", () => {
     expect(scanMurageFences("```json\n{}\n```\n").closed).toEqual([]);
     expect(scanMurageFences(`~~~murage-question\n${QUESTION}\n~~~`).closed).toHaveLength(1);
     expect(scanMurageFences(`~~~murage-question\n${QUESTION}\n\`\`\`\n`).open?.kind).toBe("murage-question");
+  });
+});
+
+describe("scanMurageFences line breaks", () => {
+  it.each([["CR", "\r"], ["CRLF", "\r\n"], ["LF", "\n"]])("a %s ends every fence line", (_name, br) => {
+    const text = ["```json", "{}", "```", "```murage-question", "{}", "```", ""].join(br);
+    const scan = scanMurageFences(text);
+    expect(scan.codeRanges).toHaveLength(2);
+    expect(scan.closed.map(({ kind, body }) => ({ kind, body }))).toEqual([{ kind: "murage-question", body: `{}${br}` }]);
+    expect(scan.open).toBeUndefined();
+  });
+  it("a bare CR closer closes the fence, so text after it is outside the code range", () => {
+    const text = "```\rcode\r```\rafter";
+    const { codeRanges } = scanMurageFences(text);
+    expect(codeRanges).toHaveLength(1);
+    expect(text.slice(codeRanges[0]!.end)).toBe("after");
   });
 });
 

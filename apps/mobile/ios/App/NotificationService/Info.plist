@@ -2,6 +2,17 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>en</string>
+		<string>de</string>
+		<string>es</string>
+		<string>fr</string>
+		<string>hi</string>
+		<string>ja</string>
+		<string>pt-BR</string>
+		<string>zh</string>
+	</array>
 	<key>CFBundleDevelopmentRegion</key><string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key><string>Murage</string>
 	<key>CFBundleExecutable</key><string>$(EXECUTABLE_NAME)</string>
