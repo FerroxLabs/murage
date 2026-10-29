@@ -144,7 +144,6 @@ server/browser-extension-read-wiring.test.ts	extended
 server/browser-extension-refusals.test.ts	extended
 server/browser-extension-round2.test.ts	extended
 server/browser-extension-round5.test.ts	delete (pending review; runs here until then)
-server/browser-extension-setup.test.ts	extended
 server/browser-extension-snapshot.test.ts	extended
 server/browser-floor-recipients.test.ts	extended
 server/browser-is-the-place.test.ts	extended
@@ -944,7 +943,6 @@ src/components/BotTeamsSection.test.ts	extended
 src/components/BrowserActivityLog.test.ts	extended
 src/components/BrowserApprovalMode.test.ts	extended
 src/components/BrowserApprovedSites.test.ts	extended
-src/components/BrowserExtensionPanel.test.ts	extended
 src/components/BrowserExternalClients.test.ts	extended
 src/components/BrowserPanel.test.ts	extended
 src/components/BrowserSetupCard.test.ts	extended
