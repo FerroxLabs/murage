@@ -36,6 +36,7 @@ import {
 } from "./codex-hook.ts";
 import { execEnvHanded, execEnvNow, handedEngineEnv, ownedTurnNames, type HandedEnv } from "../engine-env.ts";
 import { NarrowDenials } from "../narrow-denials.ts";
+import { CodexAccountChannel, codexPlanUsageLeanRead, codexPlanUsageSupported } from "../plan-usage.ts";
 import { HookProof, TurnRefusal, hookDidNotStartLine } from "./turn-refusal.ts";
 import { appendDecision } from "../decision-log.ts";
 import { awaitScopeStart } from "./scoped-cli-home.ts";
@@ -147,6 +148,8 @@ interface Conn {
   onOverflow: (overflow: any) => void;
   /** Bytes of a frame the splitter has begun but not finished. Non-zero means a frame started under one owner would finish under the next. */
   buffered: () => number;
+  /** Plan usage (server/plan-usage.ts): takes this process's account frames before any handler or log sees them. */
+  account: CodexAccountChannel;
 }
 
 /** The credential file's path, bound into already-serialized `-c` values:
@@ -1133,8 +1136,21 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         // stays intact, and one frame never holds more than
         // ENGINE_FRAME_MAX_BYTES of the shared process.
         const conn: Conn = reuse?.conn ?? (() => {
-          const made: Conn = { nextId: 1, baseline: undefined, onLine: () => {}, onOverflow: () => {}, buffered: () => 0 };
-          const lines = createBoundedLineSplitter({ onLine: (line) => made.onLine(line), onOverflow: (overflow) => made.onOverflow(overflow) });
+          // Plan usage: a native reporter only on the account's own ChatGPT sign-in, off a Cloud home (its native
+          // context is qualified by the Cloud owner first), on a Codex that reports every bucket. Otherwise the
+          // channel still takes account frames out of the logs and the turn, and reads nothing.
+          const planBinding = !providerBinding && !flux?.applied && !cloudHome && codexPlanUsageSupported(codexVersion || undefined)
+            ? { subjectKey: `codex:${instanceId}:${turn.warmIdentity?.botId ?? "owner"}`, credentialRevision: digest({ home: env.CODEX_HOME ?? null }).slice(0, 16) }
+            : null;
+          const account = new CodexAccountChannel({
+            write: (line) => { child.stdin.write(line); },
+            binding: planBinding,
+            leanRead: codexPlanUsageLeanRead(codexVersion || undefined),
+          });
+          child.once("exit", () => account.close());
+          child.once("error", () => account.close());
+          const made: Conn = { nextId: 1, baseline: undefined, onLine: () => {}, onOverflow: () => {}, buffered: () => 0, account };
+          const lines = createBoundedLineSplitter({ onLine: (line) => { if (!account.intercept(line)) made.onLine(line); }, onOverflow: (overflow) => made.onOverflow(overflow) });
           made.buffered = () => lines.bufferedBytes;
           child.stdout.on("data", (chunk: Buffer) => lines.push(chunk));
           registerIntake(threadId, child.stdout, child);
@@ -2146,6 +2162,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           await request("initialize", { clientInfo: { name: "murage", version: "1" } });
           if (cancelledBeforeStart()) return;
           send({ jsonrpc: "2.0", method: "initialized", params: {} });
+          // the handshake is done: this process may now answer plan usage reads (idempotent; released when it exits)
+          conn.account.ready();
         }
         // Rule 68b: both handlers listed, trusted and enabled before anything is asked of the model; any other listing refuses the
         // turn before a model request. Checked again on a retained process (the trust record lives in the scope's config).
@@ -2546,6 +2564,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
     driverKind: DRIVER_KIND,
     displayName: input.displayName,
     enabled: input.enabled,
+    planUsageReporter: "native-rpc",
     get models() {
       return models;
     },
