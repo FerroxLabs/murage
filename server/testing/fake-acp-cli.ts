@@ -238,6 +238,9 @@
 //   FAKE_ACP_MODE=cancel-other-reason  hold session/prompt open like cancel-ack,
 //                        but answer session/cancel by RESOLVING the prompt with
 //                        a stop reason that is not "cancelled" ("refusal")
+//   FAKE_ACP_MODE=cancel-end-turn  hold session/prompt open with nothing sent
+//                        (no reply, image or tool), then answer session/cancel by
+//                        RESOLVING the prompt with end_turn, as OpenCode does
 //   FAKE_ACP_MODE=stderr-rpc-error|stderr-happy  write more than 8 KiB of stderr
 //                        (ANSI styling, a key-shaped canary, a known last line),
 //                        then fail session/prompt with -32603 or complete it
@@ -1393,6 +1396,11 @@ function handle(msg: any) {
         }
         return;
       }
+      if (mode === "cancel-end-turn") {
+        pendingCancelAckPrompt = msg.id;
+        setInterval(() => {}, 1_000);
+        return;
+      }
       // cancel-ignore (U24): hold session/prompt open and never answer session/cancel, so only the driver's grace timer ends the turn.
       if (mode === "cancel-ack" || mode === "cancel-rpc-error" || mode === "cancel-reject" || mode === "cancel-other-reason" || mode === "cancel-ignore") {
         pendingCancelAckPrompt = msg.id;
@@ -2320,6 +2328,12 @@ function handle(msg: any) {
         const id = pendingCancelAckPrompt;
         pendingCancelAckPrompt = null;
         out({ jsonrpc: "2.0", id, error: { code: -32603, message: "Internal error", data: { message: "turn cancelled by client", error_kind: "cancelled" } } });
+        break;
+      }
+      if (mode === "cancel-end-turn" && pendingCancelAckPrompt !== null) {
+        const id = pendingCancelAckPrompt;
+        pendingCancelAckPrompt = null;
+        result(id, { stopReason: "end_turn" });
         break;
       }
       if (mode === "cancel-other-reason" && pendingCancelAckPrompt !== null) {

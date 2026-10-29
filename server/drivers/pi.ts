@@ -759,6 +759,9 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       const pending = new Map<string, PiAskAnswer>();
       const scopedRequests = new Set<string>();
       let settled = false;
+      // Token use summed over every model round of this turn (adapted from OpenMausBot 97d7c6df3): a tool round ends in
+      // its own turn_end, and pi's usage there covers that round only.
+      let turnUsage: { input: number; output: number } | undefined;
 
       // An explicit pick must land on exactly that provider/model. A bare id
       // carries no provider, so set_model cannot pin it, and prompting anyway
@@ -1179,10 +1182,15 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           case "turn_end":
           case "agent_end": {
             const sr = evt.message?.stopReason;
+            const round = evt.usage ?? evt.message?.usage;
+            // a turn_end is one model round; agent_end counts only when no round reported (it is not another round)
+            if (round && !settled && (evt.type === "turn_end" || !turnUsage)) {
+              turnUsage = { input: (turnUsage?.input ?? 0) + (round.input ?? 0), output: (turnUsage?.output ?? 0) + (round.output ?? 0) };
+            }
             // toolUse means pi ran a tool and auto-continues next turn to
             // answer — settling now would drop the final reply.
             if (sr === "toolUse" || sr === "tool_use" || sr === "tool_calls") return;
-            const usage = evt.usage ?? evt.message?.usage;
+            const usage = turnUsage;
             if (sr === "error" || sr === "failed") {
               emit({
                 ...base(threadId, turnId),

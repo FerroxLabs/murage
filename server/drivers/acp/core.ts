@@ -4990,6 +4990,11 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             // that was still buffered as streamed text.
             if (reason === "end_turn") flushAssistantText();
             if (reason === "end_turn" && !state.cancelRequested && (helpers.open.size > 0 || helpers.wakePending)) holdForHelpers();
+            // A Stop the engine answers with end_turn (OpenCode does) and
+            // nothing to show is the stop it was asked for, never a lost turn
+            // (upstream 4463ba7be): the guard below would put a red "finished
+            // without a reply" card with Retry on a turn the person ended.
+            else if (reason === "end_turn" && state.cancelRequested && !state.producedItem) settle(true, "cancelled");
             else if (reason === "end_turn" && !state.producedItem) {
               // `end_turn` with nothing to show for it (no reply, no image,
               // no tool result) is a lost turn, not a success. A provider can

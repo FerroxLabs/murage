@@ -109,6 +109,24 @@ export function readGrokModelCatalog(env: Record<string, string | undefined> = p
   };
 }
 
+type GrokSessionContext = Parameters<NonNullable<AcpSupport["configureSession"]>>[0];
+
+/** -m on argv is necessary but not sufficient: session/new still starts on [models].default, so the pick is pinned over
+ *  the wire, same as Hermes/Droid. When the session already reports the picked model (a resumed session, or a new one
+ *  that started on it), no set_model is sent: grok rebuilds its harness on that call, which can drop the MCP catalog it
+ *  just confirmed (adapted from OpenMausBot afbc78c5c). */
+export async function configureGrokSession({ request, sessionId, turn, currentModelId }: GrokSessionContext): Promise<void> {
+  if (!turn.model || currentModelId === turn.model) return;
+  try {
+    await request("session/set_model", { sessionId, modelId: turn.model });
+  } catch (e) {
+    throw new Error(
+      `Grok rejected model "${turn.model}" via session/set_model: ${(e as Error).message}. ` +
+        `Check that grok is current (1.0.6+ supports it) and that this slug exists in ~/.grok/config.toml.`,
+    );
+  }
+}
+
 function suggestGrokSlug(host: string, model: string, taken: Set<string>): string {
   let base = `${host}-${model}`.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
   if (!base || !/^[a-z]/.test(base)) base = `m-${base || "model"}`;
@@ -493,19 +511,7 @@ const support: AcpSupport = {
   },
   spawnNeedsCliVersion: true,
 
-  // -m on argv is necessary but not sufficient: session/new still starts on
-  // [models].default. Pin the slug over the wire, same as Hermes/Droid.
-  async configureSession({ request, sessionId, turn }) {
-    if (!turn.model) return;
-    try {
-      await request("session/set_model", { sessionId, modelId: turn.model });
-    } catch (e) {
-      throw new Error(
-        `Grok rejected model "${turn.model}" via session/set_model: ${(e as Error).message}. ` +
-          `Check that grok is current (1.0.6+ supports it) and that this slug exists in ~/.grok/config.toml.`,
-      );
-    }
-  },
+  configureSession: configureGrokSession,
 
   /** Flux Memory headers: Grok Build shares Fuigo's shell, so the inline `GROK_CONFIG` overlay
    *  (xai-grok-shell config GROK_CONFIG_ENV) carries `[models].extra_headers` the same way. */

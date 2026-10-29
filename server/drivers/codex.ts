@@ -384,6 +384,9 @@ export class CodexRpcErrorAnswer extends Error {
 }
 
 /** The turn/start answer bound; tests shorten it (MURAGE_CODEX_RPC_TIMEOUT_MS). */
+/** Codex item types that act on the machine or the world (a command, a file edit, an MCP tool, a web search). */
+const CODEX_ACTING_ITEM_TYPES: ReadonlySet<unknown> = new Set(["commandExecution", "fileChange", "mcpToolCall", "webSearch"]);
+export const CODEX_TOOL_MAY_HAVE_RUN = "A tool action may have run. Check its effects before trying again.";
 const turnStartTimeoutMs = (): number => Number(process.env.MURAGE_CODEX_RPC_TIMEOUT_MS) > 0 ? Number(process.env.MURAGE_CODEX_RPC_TIMEOUT_MS) : 60_000;
 
 export const CodexDriver: ProviderDriver<CodexConfig> = {
@@ -1185,6 +1188,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       let adoptFirstTurn = false;
       let earlyNotificationBytes = 0;
       const earlyNotifications: any[] = [];
+      // A tool item Codex announced before its turn/start answer: if the turn then fails to start, that action may already
+      // have run (adapted from OpenMausBot 7045f15a1). Kept apart from the buffer, which an invalid answer clears first.
+      let earlyToolActivity = false;
       const rpcPending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
 
       const send = (obj: unknown) => {
@@ -1796,6 +1802,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             }
             earlyNotifications.push(msg);
             earlyNotificationBytes += bytes;
+            if (CODEX_ACTING_ITEM_TYPES.has(p.item?.type)) earlyToolActivity = true;
             return;
           }
           if (eventTurnId !== codexTurnId) return;
@@ -2488,7 +2495,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           emit({
             ...base(threadId, turnId),
             type: "runtime.error",
-            message,
+            message: earlyToolActivity ? `${message} ${CODEX_TOOL_MAY_HAVE_RUN}` : message,
             ...(needsAuth ? { setup: true } : {}),
           });
           settle(false, needsAuth ? "auth_required" : "rpc_error");

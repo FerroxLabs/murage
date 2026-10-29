@@ -2184,8 +2184,14 @@ export class RoutineManager {
     return cloneRun(run);
   }
 
+  /** Set by stop() (server shutdown, a restore, a Cloud home pause) and cleared by start(): a tick already in flight
+   * dispatches nothing more once it is set, and its queued runs stay queued for the next start (adapted from
+   * OpenMausBot d5a85c700). */
+  private halted = false;
+
   start() {
     if (this.timer) return;
+    this.halted = false;
     this.startedAt = this.now();
     this.gateOpened = false;
     this.gateForced = false;
@@ -2195,6 +2201,7 @@ export class RoutineManager {
   }
 
   stop() {
+    this.halted = true;
     if (this.busyRetry) clearTimeout(this.busyRetry);
     this.busyRetry = null;
     if (this.timer) clearInterval(this.timer);
@@ -2312,6 +2319,7 @@ export class RoutineManager {
   }
 
   private async tickBody(): Promise<void> {
+    if (this.halted) return;
     if (this.options.dispatchOpen && !this.options.dispatchOpen()) return;
     // Before the guard, on purpose — see enforceRunLimits.
     await this.enforceRunLimits();
@@ -2447,8 +2455,9 @@ export class RoutineManager {
       // a fault on a run that had already left the queue: reported as this tick's own fault once the pass is over, so it
       // still counts in schedulerStatus() (tickFailures) and is never hidden behind a good tick
       let laterFault: unknown;
+      // a stop() while this pass awaited ends it the same way: nothing more leaves the queue
       const recheck = (run: RoutineRun): "go" | "skip" | "replaced" =>
-        this.runsGeneration !== generation ? "replaced" : run.status === "queued" ? "go" : "skip";
+        this.halted || this.runsGeneration !== generation ? "replaced" : run.status === "queued" ? "go" : "skip";
       for (const run of dispatchOrder) {
         // F2: one bad run never holds the queue. Any non-busy throw before the run starts fails THAT run (failRun never
         // throws) and the loop goes on; a run another path settled meanwhile, or one already running, is left as it is.

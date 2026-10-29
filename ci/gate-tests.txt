@@ -104,6 +104,7 @@ scripts/browser-extension-runtime.test.mjs	all	pauses on unapproved navigation (
 scripts/build-murage-cage.test.mjs	linux	engines on Linux get a verified, pinned cage
 scripts/bundle-server-runtime-files.test.mjs	all	packaging, upgrade and release integrity
 scripts/cage-apparmor.test.mjs	linux	Linux engines from source can launch under the power block on Ubuntu 23.10 and later
+scripts/cloudflared-pins.test.mjs	all	packaging, upgrade and release integrity
 scripts/sentinel-bundle-check.test.mjs	all	the health checker ships as a small standalone file that never loads the app, its data or the network
 server/cloud-home/sentinel-units.test.ts	linux	the Cloud health checker runs without root, without network and sees only the health folder
 server/full-access-env-win-108.test.ts	windows	Bounded real PowerShell checks and process-tree cleanup before conversation approvals
@@ -1093,6 +1094,7 @@ server/openai-compat-endpoint-switch.test.ts	all	Replacement key never reaches p
 server/openclaw-delegation.test.ts	all	delegate to OpenClaw teammate reply folds back
 server/output-destination.test.ts	all	task output reaches correct room or desk
 server/output-publication.test.ts	all	Reports from turns published verified
+server/own-file-reads.test.ts	all	unattended routine run stalls asking to read its own SOUL.md or skills
 server/own-tool-results-wiring.test.ts	all	engine reading own tool result still asks otherwise
 server/own-workspace-approval-wiring.test.ts	linux+mac	bot's own bookkeeping edits answered correctly
 server/own-workspace-approval.test.ts	all	Paths approved from structured args only
@@ -1668,3 +1670,10 @@ server/drivers/openai-chat-tools.test.ts	all	chat engine tool calls ask before t
 server/memory-late-tool-started-api.test.ts	linux+mac	a turn that ran a tool is never re-run after a memory refusal
 server/reload-retain.test.ts	all	engine reload keeps a folder lease while an engine child still runs
 server/memory/memindex-busy-109.test.ts	all	a backup or reader holding the memory index during start-up no longer gets a healthy index set aside, and a set-aside copy holding deleted conversations' words is removed once the new index is open
+src/components/chat-obsidian-links.test.ts	all	an obsidian:// note link in a reply opens the note instead of rendering dead
+server/drivers/codex-early-tool-warning.test.ts	all	a Codex turn that failed to start after a tool began says the action may have run
+server/drivers/pi-usage-rounds.test.ts	all	a Pi turn that ran a tool reports every round's tokens, not only the last
+server/drivers/acp/grok-same-model.test.ts	all	Grok keeps its tools when the conversation already runs the picked model
+server/routines-stop-fence.test.ts	all	no routine starts into a shutdown, restore or Cloud home pause; its run waits for the next start
+server/container-browser-locks.test.ts	linux+mac	the bot desktop browser keeps running when only its Cua driver restarts
+server/drivers/openai-chat-gemini-calls.test.ts	all	Gemini (OpenAI-compatible) tool calls run instead of failing every tool turn

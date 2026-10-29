@@ -1929,6 +1929,28 @@ createInterface({ input: process.stdin }).on("line", line => {
     expect(settledAt).toBeGreaterThan(resultAt);
   });
 
+  it("a Stop the engine answers with end_turn and nothing to show is the person's stop, never \"finished without a reply\"", async () => {
+    // OpenCode answers session/cancel by ending the prompt with end_turn, not cancelled (upstream 4463ba7be).
+    const rpcFile = join(scratch, "cancel-end-turn.json");
+    process.env.FAKE_ACP_RPC_DUMP = rpcFile;
+    await create(GrokAgentDriver, "cancel-end-turn");
+    const threadId = `t-cancel-end-turn-${Date.now()}`;
+    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+    await vi.waitFor(() => expect(JSON.parse(readFileSync(rpcFile, "utf8"))).toContain("session/prompt"), { timeout: 4000 });
+    await instance.adapter.interruptTurn(threadId);
+    const done = await recorder.until(event => event.type === "turn.completed", 4000);
+    expect(done).toMatchObject({ turnId, ok: true, stopReason: "cancelled" });
+    expect(recorder.events.filter(event => event.type === "runtime.error")).toEqual([]);
+    const rows = readFileSync(join(NATIVE_DIR, `${threadId}.ndjson`), "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line));
+    const cancelAt = rows.findIndex(row => row.dir === "out" && row.msg?.method === "session/cancel");
+    const resultAt = rows.findIndex(row => row.dir === "in" && row.msg?.result?.stopReason === "end_turn");
+    const settledAt = rows.findIndex(row => row.dir === "lifecycle" && row.msg?.event === "turn_settled");
+    expect(cancelAt).toBeGreaterThan(-1);
+    expect(resultAt).toBeGreaterThan(cancelAt);
+    // settled by the end_turn answer, not by the grace timer winning a race
+    expect(settledAt).toBeGreaterThan(resultAt);
+  });
+
   // The cancel guards are deliberately broad. `interruptTurn` is one call for
   // every interrupter: a user's Stop, the stall watchdog (server/index.ts
   // ~2507) and a provider-settings change (~512) all reach it identically, and

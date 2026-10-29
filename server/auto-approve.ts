@@ -486,6 +486,8 @@ export type AutoVerdictSource =
    * folder. Not a grant and not a mode — the action was never the person's
    * to authorize (see the comment on `ownWorkspace` below). */
   | "own-workspace"
+  /** The bot reading its own files (server/own-file-reads.ts). */
+  | "own-files"
   /** The bot reading back its OWN saved tool result: a read-only command or
    * read tool on a file in this session's own result folder
    * (server/own-tool-results.ts). Not a grant and not a mode. */
@@ -672,6 +674,12 @@ export interface AutoContext {
    * behind the guards, ahead of the unattended and host blocks, because an
    * engine reading what it was just given is not something a person grants. */
   ownToolResults?: boolean;
+  /** The bot reading its own files: its SOUL.md, skills, memory and
+   * conversation folders, never credentials/. Decided in
+   * server/own-file-reads.ts (a read tool or a strictly read-only command,
+   * every path inside the bot's own folders by real path) and set only for a
+   * turn the workspace owner is behind; placed like `ownToolResults`. */
+  ownFileRead?: boolean;
   projectWorkRoots?: boolean;
   /** What the stop line (server/stop-line.ts) found, computed by the caller
    * from the engine's structured input and the bot's own folders and
@@ -1151,6 +1159,9 @@ function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, con
   }
   if (context?.ownToolResults === true && !destructive && !sensitive && !context.scope) {
     return { approve: "read its own saved tool result", source: "own-tool-results" };
+  }
+  if (context?.ownFileRead === true && !destructive && !sensitive && !context.scope) {
+    return { approve: `auto-approved ${tool} (its own files)`, source: "own-files" };
   }
   // Murage's own tools that never ask on Claude or Codex (OWN_UNASKED) reach
   // here from an ACP engine (Fuigo, Grok Build), whose dispatcher asks for

@@ -414,6 +414,7 @@ import { requestOwnerId } from "./request-owner.ts";
 import { approvalKey, approvalHoldNote, isBareCommandGrant, isCommandTool, exactAllowKeyFor, exactCommandForRequest, fullAccessCovers, hasFullAccess, isQuestionGrant, isQuestionTool, realKeyPaths, withoutBareCommandGrants, withoutQuestionGrants, type AutoContext, type FullAccessOrigin } from "./auto-approve.ts";
 import { approvalIsCut, cardAuditSummary, cardDetail } from "./approval-text.ts";
 import { isOwnWorkspaceBookkeeping, ownWorkspaceRoots } from "./own-workspace-approval.ts";
+import { isOwnFileRead } from "./own-file-reads.ts";
 import { isOwnToolResultRead } from "./own-tool-results.ts";
 import { approvalCardGrants } from "./approval-card-grants.ts";
 import { classifyAsk, classifyAskRows, deletesPlacedInside, stopLineKey, type StopHit, type StopLinePlace } from "./stop-line.ts";
@@ -2569,6 +2570,9 @@ const stillWaitingNoted = new Set<string>();
 /** Routine work dispatches only once this module has created everything a dispatch reads: a webhook or channel run
  * can arrive while the module is still being evaluated (it awaits the webhook receiver). Opened as the module's last step. */
 let routineDispatchOpen = false;
+/** Set by the first shutdown step: a turn still in its setup (recall, provider setup, admission) never reaches its engine
+ * once the server is closing, and the routine scheduler stops at the same moment (adapted from OpenMausBot d5a85c700). */
+let turnDispatchClosed = false;
 // a released conversation wakes the shared teams whose head waited on it (shared-ready.ts): one indexed update, no queue walk
 directRuns.onReleased = (threadId, botId) => { sharedThreadFreed(threadId); if (botId) sharedBotFreed(botId); };
 // Owner first (owner-first.ts): background engine work and automatic routines wait while an owner send is running.
@@ -2895,6 +2899,7 @@ function shouldIgnoreProviderEvent(event: RuntimeEvent): boolean {
 }
 
 function directTurnClaimIsCurrent(botId: string, claimId: string, threadId: string): boolean {
+  if (turnDispatchClosed) return false;
   const run=directRuns.get(threadId);
   return run?.generation===claimId&&run.botId===botId&&run.phase!=="stopping"&&run.phase!=="rebuilding"&&store.taskByThread(botId,threadId)?.busy===true;
 }
@@ -8644,6 +8649,22 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
                 filePaths: event.filePaths,
                 dirs: event.toolResultDirs,
               }),
+              // The bot reading its own files (SOUL.md, skills, memory, its
+              // conversation folders), only in a turn the owner is behind (at
+              // the desktop, their own channel message, their routine run):
+              // never a guest's, a webhook's or anyone else's, since the
+              // folder holds the owner's memory.
+              ownFileRead: isWorkspaceOwner(threadHumanPrincipal(event.threadId)) && fullAccessTurnOrigin(event.threadId) !== "other" && isOwnFileRead({
+                dataDir: DATA_DIR,
+                botId: asker.id,
+                threadId: event.threadId,
+                tool: event.tool,
+                ...(isCommandTool(event.tool) ? { command: commandFromToolInput(event.toolCall?.input) } : {}),
+                ...(wholeCommand.commandCwd !== undefined ? { cwd: wholeCommand.commandCwd } : {}),
+                ...(event.filePaths ? { filePaths: event.filePaths } : {}),
+                input: event.toolCall?.input,
+                ...(event.commandShell ? { commandShell: event.commandShell } : {}),
+              }),
             },
           }).verdict
         : null;
@@ -8713,7 +8734,7 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
             else pushMessage({
               role: "bot",
               kind: "activity",
-              tool: { name: verdict.source === "own-tool-results" ? "Read its own saved tool result" : `${settled}: ${summary.slice(0, 120)}`, ok: true },
+              tool: { name: verdict.source === "own-tool-results" ? "Read its own saved tool result" : verdict.source === "own-files" ? "Read its own files" : `${settled}: ${summary.slice(0, 120)}`, ok: true },
             });
             // logged under the same discipline as the chip: only once the
             // provider has actually taken the answer, so the audit log
@@ -12675,7 +12696,7 @@ async function startTurnAdmitting(
         ...(routineLevel ? { holdPermissionAsks: true as const } : {}),
         // a draft-only turn (contracts.ts SendTurnInput.draftOnly; the registry decorator cuts it to its one read surface)
         ...(profile.draftOnly ? { draftOnly: true as const } : {}),
-      }, directFence), () => !providerRouteIsCurrent(providerRoute) || !directTurnClaimExists(bot.id, dispatchClaimId, threadId), async (accepted) => {
+      }, directFence), () => turnDispatchClosed || !providerRouteIsCurrent(providerRoute) || !directTurnClaimExists(bot.id, dispatchClaimId, threadId), async (accepted) => {
         retireProviderTurn(accepted.turnId);
         try {
           if(stopCloseConfirmed(await instance.adapter.interruptTurn(threadId))===false)throw new Error("provider termination is unconfirmed");
@@ -31816,7 +31837,7 @@ const gracefulShutdown = createGracefulShutdown({
     async () => { await serverSentinel.stop(); },
     // First: nothing queued may start while the harness closes; turns this
     // stops free their rooms, and the queue must wait for the next launch.
-    () => { roomEngine.ready = false; projectCardExecutor.stop(); refuseEngineHistoryJobs(); delegatedReplyChecks.stop(); },
+    () => { turnDispatchClosed = true; routines?.stop(); roomEngine.ready = false; projectCardExecutor.stop(); refuseEngineHistoryJobs(); delegatedReplyChecks.stop(); },
     () => stopModelCatalogRefresh(),
     () => announcements.stop(),
     async () => {
