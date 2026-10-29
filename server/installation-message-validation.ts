@@ -1,15 +1,24 @@
 import { z } from "zod";
 import { isCredentialTargetId, isMcpCredentialId } from "../shared/credential-request.ts";
-import type { Message } from "./store.ts";
+import type { Message, OptionCardData } from "./store.ts";
+import type { RoutineRunCardData } from "../shared/routine-run.ts";
+import type { WebhookRequestOperation } from "../shared/routine-request.ts";
 
 // Pure recovery schemas. Do not import runtime managers or normalize historic
 // records: these checks either accept the original object or refuse it.
 export const INSTALLATION_MESSAGE_KINDS = ["text", "options", "activity", "screen", "connector", "mcpSignIn", "secret", "routine.run", "goal.run"] as const satisfies readonly Message["kind"][];
+// Every card kind a shipped feature writes (OptionCardData.kind). A kind missing here refused
+// the whole backup of any installation holding one such card (mcpEnable, 1.0.4 to 1.0.8).
+export const INSTALLATION_CARD_KINDS = ["publish", "mcpEnable", "email-send", "email-trust-offer"] as const satisfies readonly NonNullable<OptionCardData["kind"]>[];
+// Compile-time completeness (INSTALLATION_KINDS_COMPLETE below): a kind or status added to a stored shape without a recovery schema fails the typecheck.
+type Uncovered<All, Listed> = [Exclude<All, Listed>] extends [never] ? true : { uncovered: Exclude<All, Listed> };
 const text = z.string();
 const number = z.number().finite();
 const boolean = z.boolean();
 const strings = z.array(text);
-const runStatus = z.enum(["queued", "running", "waiting", "completed", "failed", "cancelled", "missed"]);
+// "needs-you": a routine run whose limit came while a card waited on the owner (shared/routine-run.ts).
+const RUN_STATUSES = ["queued", "running", "waiting", "needs-you", "completed", "failed", "cancelled", "missed"] as const satisfies readonly RoutineRunCardData["status"][];
+const runStatus = z.enum(RUN_STATUSES);
 const goalStatus = z.enum(["completed", "needs-input", "blocked", "limit-reached", "paused", "stopped", "failed"]);
 const schedule = z.union([
   z.object({ type: z.literal("once"), at: number }).passthrough(),
@@ -23,7 +32,17 @@ const operation = z.union([
   z.object({ action: z.literal("update"), ...manage, changes: definition.partial().extend({ timeoutMinutes: number.nullable().optional() }) }).passthrough(),
   z.object({ action: z.enum(["pause", "resume", "run_now", "delete"]), ...manage }).passthrough(),
 ]);
-const routineRequest = z.object({ version: z.literal(1), requestId: text, botId: text, threadId: text, createdAt: number, operation, appliedAt: number.optional(), resultId: text.optional() }).passthrough();
+const routineRequestCard = z.object({ version: z.literal(1), requestId: text, botId: text, threadId: text, createdAt: number, operation, appliedAt: number.optional(), resultId: text.optional() }).passthrough();
+// A webhook proposed from chat (shared/routine-request.ts WebhookRequestCardData) rides the same routineRequest member.
+const manageWebhook = { webhookId: text, expectedUpdatedAt: number };
+const WEBHOOK_ACTIONS = ["create", "update", "pause", "resume", "delete"] as const satisfies readonly WebhookRequestOperation["action"][];
+const webhookOperation = z.union([
+  z.object({ action: z.literal("create"), webhook: z.object({ id: text, name: text, prompt: text, eventTypes: strings.optional() }).passthrough() }).passthrough(),
+  z.object({ action: z.literal("update"), ...manageWebhook, changes: z.object({ name: text.optional(), prompt: text.optional(), eventTypes: strings.optional() }).passthrough() }).passthrough(),
+  z.object({ action: z.enum(["pause", "resume", "delete"]), ...manageWebhook }).passthrough(),
+]);
+const webhookRequestCard = z.object({ version: z.literal(1), kind: z.literal("webhook"), requestId: text, botId: text, threadId: text, createdAt: number, operation: webhookOperation, appliedAt: number.optional(), resultId: text.optional() }).passthrough();
+const routineRequest = z.union([routineRequestCard, webhookRequestCard]);
 const skillRequest = z.object({ version: z.literal(1), requestId: text, botId: text, threadId: text, stagedId: text, action: z.enum(["create", "update"]), name: text, gist: text, source: text.optional(), preview: text.optional(), sha256: text.optional(), warnings: strings, createdAt: number }).passthrough();
 const candidate = z.object({ slug: text, name: text, skillNames: strings }).passthrough();
 const intake = z.object({ step: z.enum(["open", "narrow", "confirm"]), outcome: z.enum(["profile", "general"]).optional(), candidate: candidate.optional(), choices: z.array(candidate).optional(), asked: z.union([z.literal(1), z.literal(2)]) }).passthrough();
@@ -36,9 +55,16 @@ const publishCard = z.object({
   files: z.array(z.object({ path: text, size: number }).passthrough()).optional(), totalBytes: number.optional(), skipped: strings.optional(),
   progress: z.object({ step: z.enum(["uploading", "checking", "live", "taken-down", "failed"]), fileCount: number.optional(), failure: z.enum(["reconnect", "wait", "too-big", "name-taken", "not-live", "other"]).optional() }).passthrough().optional(),
 }).passthrough();
+// A "Turn on <name>?" card (server/mcp-bot-cards.ts McpEnableCardData), field for field.
+const mcpEnableCard = z.object({
+  name: text, rev: text, botId: text, bot: text, kind: z.enum(["stdio", "remote"]),
+  command: text.optional(), args: strings.optional(), url: text.optional(), transport: z.enum(["http", "sse"]).optional(),
+  pendingKeys: strings, enabled: boolean.optional(), error: text.optional(),
+}).strict();
 const card = z.object({
   title: text, options: strings,
-  kind: z.literal("publish").optional(), publish: publishCard.optional(),
+  // bot email cards (server/email/cards.ts): a backup carries them, mail text stripped (sanitizeStagedEmail); a restore rebuilds them
+  kind: z.enum(INSTALLATION_CARD_KINDS).optional(), publish: publishCard.optional(), mcpEnable: mcpEnableCard.optional(),
   // Older stored approval cards omit subtitle. Recovery never invents one.
   subtitle: text.optional(), answered: text.optional(), dismissed: boolean.optional(), requestId: text.optional(),
   tool: text.optional(), held: text.optional(), allowKey: text.optional(), approvalScope: z.literal("local-computer").optional(),
@@ -60,6 +86,13 @@ const payloads = z.object({
   tool: z.object({ name: text, ok: boolean.optional(), spoken: text.optional(), setup: boolean.optional() }).passthrough().optional(),
   attachments: z.array(z.object({ kind: z.literal("image"), path: text, mime: text }).passthrough()).optional(),
 }).passthrough();
+
+export const INSTALLATION_KINDS_COMPLETE: [
+  Uncovered<Message["kind"], typeof INSTALLATION_MESSAGE_KINDS[number]>,
+  Uncovered<NonNullable<OptionCardData["kind"]>, typeof INSTALLATION_CARD_KINDS[number]>,
+  Uncovered<RoutineRunCardData["status"], typeof RUN_STATUSES[number]>,
+  Uncovered<WebhookRequestOperation["action"], typeof WEBHOOK_ACTIONS[number]>,
+] = [true, true, true, true];
 
 export function validInstallationMessagePayload(value: unknown): boolean {
   return payloads.safeParse(value).success;

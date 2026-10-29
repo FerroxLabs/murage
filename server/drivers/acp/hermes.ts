@@ -33,7 +33,8 @@ import {
   hermesProfileOwnsIdentity,
   isHermesProfileName,
 } from "../../hermes-profiles.ts";
-import { OWN_BUILTINS, OWN_UNASKED, type OwnBuiltin } from "../../../shared/own-servers.ts";
+import { OWN_BUILTINS, OWN_UNASKED, ownToolListedOnTurn, type OwnBuiltin } from "../../../shared/own-servers.ts";
+import { EMAIL_TOOLS_ENV } from "../email-tool-schemas.ts";
 
 const EMPTY: ModelCatalog = { default: "", options: [] };
 
@@ -106,8 +107,9 @@ export const HERMES_OWN_UNASKED_TOOLS: readonly string[] = OWN_UNASKED.flatMap((
 const regexLiteral = (name: string) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /** The hook's `matcher`: Hermes full-matches it against the tool name. */
-export function hermesAskMatcher(hostComputer: boolean): string {
-  const own = HERMES_OWN_UNASKED_TOOLS.map(regexLiteral);
+export function hermesAskMatcher(hostComputer: boolean, phoneJobs = false, emailMode?: string): string {
+  // the email tools are ask-free only on a turn whose email mount listed them (dark launch: no mode, the matcher of the build without email)
+  const own = HERMES_OWN_UNASKED_TOOLS.filter((name) => (phoneJobs || !name.startsWith("mcp__phoneJobs__")) && ownToolListedOnTurn(name.slice(name.lastIndexOf("__") + 2), emailMode)).map(regexLiteral);
   const free = hostComputer ? [...HERMES_ASK_FREE_TOOLS, ...own, "mcp__computer__.*"] : [...HERMES_ASK_FREE_TOOLS, ...own];
   return `(?!(?:${free.join("|")})$).+`;
 }
@@ -122,9 +124,26 @@ const HERMES_OWNER_HOOK_EVENTS = [
   "subagent_start", "subagent_stop", "on_stream_start", "on_stream_delta", "on_stream_end", "on_interim_message",
 ] as const;
 
+/** Beside the overlay's config.yaml: the matchers of every OTHER `pre_tool_call` hook the overlay carries (an
+ *  administrator's, the owner's allowlisted), null for one with no matcher. Such a hook may answer `modify`, and
+ *  Hermes then runs the rewritten arguments after the card judged the original ones (hermes_cli/plugins.py:
+ *  modify results merge and the first approve's message is kept; agent/tool_executor.py runs the merged args).
+ *  The hook program reads this file (its HERMES_MANAGED_DIR is the overlay) and marks a call one of them could
+ *  rewrite, or any call when it cannot read the file, and Murage holds that call as unread. */
+export const HERMES_ASK_SIDECAR = "murage-ask.json";
+
+/** The most the hook's message carries. A call whose arguments do not fit is sent as `truncated: true` with no
+ *  arguments, and Murage holds it as a call it could not read (a card), never judging a cut command. */
+export const HERMES_ASK_MESSAGE_CAP = 16 * 1024;
+
 /** The hook program: whatever tool it is told about, it answers "ask". Hermes only runs it for the tools the
- *  matcher selects, so it needs no list of its own. */
+ *  matcher selects, so it needs no list of its own. Hermes escalates the call to session/request_permission with
+ *  `rawInput.command` set to the placeholder `<tool> (plugin approval rule)` and this message as
+ *  `rawInput.description` (tools/approval.py request_tool_approval; acp_adapter/permissions.py), so the message is
+ *  the call's whole arguments as one JSON object, which `normalizeHermesAsk` reads back on Murage's side. */
 export const HERMES_ASK_HOOK_SOURCE = `"use strict";
+const CAP = ${HERMES_ASK_MESSAGE_CAP};
+const SIDECAR = ${JSON.stringify(HERMES_ASK_SIDECAR)};
 let raw = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => { raw += chunk; });
@@ -132,11 +151,79 @@ process.stdin.on("end", () => {
   let call = {};
   try { call = JSON.parse(raw) || {}; } catch { call = {}; }
   const tool = typeof call.tool_name === "string" && call.tool_name ? call.tool_name : "tool";
-  const input = call.tool_input && typeof call.tool_input === "object" ? call.tool_input : {};
-  const detail = typeof input.command === "string" ? input.command : typeof input.code === "string" ? input.code : JSON.stringify(input);
-  process.stdout.write(JSON.stringify({ action: "approve", message: tool + ": " + String(detail).slice(0, 400) }));
+  const input = call.tool_input && typeof call.tool_input === "object" && !Array.isArray(call.tool_input) ? call.tool_input : {};
+  // another pre_tool_call hook on this turn that runs for this tool could rewrite the call after the card
+  let rewritable = true;
+  try {
+    const path = require("path");
+    const dir = process.env.HERMES_MANAGED_DIR || "";
+    if (!path.isAbsolute(dir)) throw new Error("no overlay");
+    const side = JSON.parse(require("fs").readFileSync(path.join(dir, SIDECAR), "utf8"));
+    if (side && side.v === 1 && Array.isArray(side.others)) rewritable = side.others.some((m) => {
+      if (typeof m !== "string" || !m) return true;
+      try { return new RegExp("^(?:" + m + ")$").test(tool); } catch { return true; }
+    });
+  } catch { rewritable = true; }
+  let message = JSON.stringify({ murage: 1, v: 1, tool, input, truncated: false, rewritable });
+  if (message.length > CAP) message = JSON.stringify({ murage: 1, v: 1, tool, input: null, truncated: true, rewritable });
+  process.stdout.write(JSON.stringify({ action: "approve", message }));
 });
 `;
+
+/** Hermes's placeholder command on a hook-escalated ask (approval.py request_tool_approval `display_target`). */
+const HERMES_HOOK_PLACEHOLDER = /^<([^<>\s]+)> \(plugin approval rule\)$/;
+
+const plainObject = (value: unknown): value is Record<string, unknown> =>
+  !!value && typeof value === "object" && !Array.isArray(value);
+
+export type HermesAskNormal =
+  | { ok: true; tool: string; rawInput: Record<string, unknown>; summary: string }
+  | { ok: false; why: "hermes-hook" | "hermes-hook-rewrite"; summary: string };
+
+/**
+ * One reading of a Hermes ask that Murage's own hook escalated, for every reader after it (the command reader,
+ * the card, the policy call, the stop line, the decision record). Undefined when the request is not a hook
+ * escalation at all (Hermes's own dangerous-command or edit approval), which every reader keeps reading as today.
+ *
+ * A hook escalation carries the placeholder as its command and the hook's message as its description. The
+ * message must be exactly the object HERMES_ASK_HOOK_SOURCE writes, for the same tool, whole (`truncated: false`),
+ * and for `terminal` it must name the command; then a terminal call's input carries the real command and its
+ * workdir, with the request's original fields and the decoded arguments kept beside them, so a scan of every
+ * string still sees all of them. Anything else (an older hook, an owner's own approve hook, a message cut to fit) is a
+ * call Murage could not read: `ok: false`, held as unread, never judged by the placeholder.
+ */
+export function normalizeHermesAsk(rawInput: unknown): HermesAskNormal | undefined {
+  if (!plainObject(rawInput) || typeof rawInput.command !== "string") return undefined;
+  const placeholder = HERMES_HOOK_PLACEHOLDER.exec(rawInput.command);
+  if (!placeholder) return undefined;
+  const tool = placeholder[1]!;
+  // The card shows the raw request: the hook's text as Hermes sent it, beside the tool it names.
+  const bad = { ok: false, why: "hermes-hook", summary: `${tool}: ${typeof rawInput.description === "string" ? rawInput.description : "(no description)"}` } as const;
+  if (typeof rawInput.description !== "string") return bad;
+  let message: unknown;
+  try { message = JSON.parse(rawInput.description); } catch { return bad; }
+  if (!plainObject(message) || message.murage !== 1 || message.v !== 1 || message.tool !== tool || message.truncated !== false || typeof message.rewritable !== "boolean") return bad;
+  const input = message.input;
+  if (!plainObject(input)) return bad;
+  if (tool === "terminal" && (typeof input.command !== "string" || !input.command.trim())) return bad;
+  // Another hook on this turn could rewrite this call after the card: what runs is not what Murage would judge.
+  if (message.rewritable) {
+    const shown = tool === "terminal" ? input.command as string : `${tool}: ${typeof input.code === "string" ? input.code : JSON.stringify(input)}`;
+    return { ok: false, why: "hermes-hook-rewrite", summary: `${shown} (a Hermes hook of yours can change this before it runs, so Murage asks)` };
+  }
+  // The request's own fields stay, and the decoded arguments beside them, so a scan of every string sees all.
+  const kept = { description: rawInput.description, hermesAsk: { tool, placeholder: rawInput.command, input } };
+  if (tool === "terminal") {
+    // Only the fields Hermes's terminal tool runs by (terminal_tool.py, the handler's args) are read at the top:
+    // a `cwd` the model added would be ignored by Hermes but taken as the command's folder by Murage.
+    const workdir = input.workdir;
+    return { ok: true, tool, rawInput: { command: input.command, ...(workdir !== undefined && workdir !== null ? { workdir } : {}), ...kept }, summary: input.command as string };
+  }
+  // Another tool (execute_code, an MCP tool): its arguments are kept and shown, but nothing of them is read as a
+  // shell command or a folder, so the placeholder stays the command and the call is judged as before.
+  const detail = typeof input.code === "string" ? input.code : JSON.stringify(input);
+  return { ok: true, tool, rawInput: { command: rawInput.command, ...kept }, summary: `${tool}: ${detail}` };
+}
 
 function hermesAskDir(env: Record<string, string | undefined>): string {
   return join(env.MURAGE_DATA_DIR || DATA_DIR, "native", "hermes-ask");
@@ -153,7 +240,47 @@ function hermesAskDir(env: Record<string, string | undefined>): string {
  *  HERMES_ACP_AUTO_APPROVE). An owner's shell export of one would skip the hook gate, so the child never sees them. */
 export const HERMES_AUTO_APPROVE_ENV = ["HERMES_YOLO_MODE", "HERMES_ACP_AUTO_APPROVE"] as const;
 
-export function applyHermesAskHook(env: Record<string, string | undefined>, opts: { hostComputer: boolean }): void {
+/** Python's `str.strip()` with no argument (str.isspace), which Hermes applies to a hook's command before it
+ *  compares it with the allowlist (shell_hooks.py `_parse_single_entry`). JavaScript's `trim()` is a different set
+ *  (it also strips U+FEFF and keeps U+001C to U+001F and U+0085), so a consent check must not use it. */
+const PY_SPACE = "\\t\\n\\v\\f\\r\\x1c-\\x1f \\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000";
+const PY_STRIP = new RegExp(`^[${PY_SPACE}]+|[${PY_SPACE}]+$`, "g");
+export const pythonStrip = (text: string): string => text.replace(PY_STRIP, "");
+
+/** The owner's own `pre_tool_call` hooks from the home this child runs in (its config.yaml) that Hermes has
+ *  ALREADY allowlisted for that home (`shell-hooks-allowlist.json`, agent/shell_hooks.py `allowlist_path`, matched
+ *  on event and the stripped command as `_entry_matches` does). The overlay replaces the whole `pre_tool_call`
+ *  list, so without this an owner's approved hook was dropped from every bot turn. A hook the owner never approved
+ *  at a terminal stays out: the turn's HERMES_ACCEPT_HOOKS must accept nothing the owner has not. Read only. */
+export function hermesOwnerAllowlistedHooks(home: string | undefined): unknown[] {
+  if (!home) return [];
+  let config: unknown;
+  let allowlist: unknown;
+  try { config = parseYaml(readFileSync(join(home, "config.yaml"), "utf8")); } catch { return []; }
+  try { allowlist = JSON.parse(readFileSync(join(home, "shell-hooks-allowlist.json"), "utf8").replace(/^\uFEFF/, "")); } catch { return []; }
+  const hooks = plainObject(config) && plainObject(config.hooks) ? config.hooks.pre_tool_call : undefined;
+  const approvals = plainObject(allowlist) && Array.isArray(allowlist.approvals) ? allowlist.approvals : [];
+  if (!Array.isArray(hooks)) return [];
+  const approved = new Set(approvals.filter((e): e is Record<string, unknown> => plainObject(e) && e.event === "pre_tool_call" && typeof e.command === "string").map((e) => e.command as string));
+  return hooks.filter((hook) => plainObject(hook) && typeof hook.command === "string" && pythonStrip(hook.command) !== "" && approved.has(pythonStrip(hook.command)));
+}
+
+/** One entry per event+matcher+command, the first kept (Murage's own hook is first, so its message is the one
+ *  Hermes takes when several approve, hermes_cli/plugins.py `first_approve`). */
+function dedupeHooks(hooks: unknown[]): unknown[] {
+  const seen = new Set<string>();
+  return hooks.filter((hook) => {
+    if (!plainObject(hook)) return true;
+    const matcher = typeof hook.matcher === "string" ? pythonStrip(hook.matcher) : null;
+    const key = JSON.stringify([matcher || null, typeof hook.command === "string" ? pythonStrip(hook.command) : hook.command]);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+
+export function applyHermesAskHook(env: Record<string, string | undefined>, opts: { hostComputer: boolean; phoneJobs?: boolean; emailMode?: string; home?: string }): void {
   for (const name of HERMES_AUTO_APPROVE_ENV) delete env[name];
   const dir = hermesAskDir(env);
   const hash = (text: string) => createHash("sha256").update(text).digest("hex").slice(0, 16);
@@ -174,11 +301,17 @@ export function applyHermesAskHook(env: Record<string, string | undefined>, opts
   const held = base.hooks && typeof base.hooks === "object" && !Array.isArray(base.hooks) ? base.hooks as Record<string, unknown> : {};
   const forward = (p: string) => (process.platform === "win32" ? p.replace(/\\/g, "/") : p);
   const command = `"${forward(process.execPath)}" "${forward(script)}"`;
+  // an administrator's own pre_tool_call hooks stay, after this one, and so do the owner's own that Hermes has
+  // already allowlisted in this child's home; a `block` from any of them still outranks every approve
+  const others = dedupeHooks([
+    ...(Array.isArray(held.pre_tool_call) ? held.pre_tool_call as unknown[] : []),
+    ...hermesOwnerAllowlistedHooks(opts.home),
+  ]).filter((hook) => !(plainObject(hook) && hook.command === command));
+  const sidecar = JSON.stringify({ v: 1, others: others.map((hook) => (plainObject(hook) && typeof hook.matcher === "string" ? pythonStrip(hook.matcher) || null : null)) });
   const hooks = {
     ...held,
     ...Object.fromEntries(HERMES_OWNER_HOOK_EVENTS.map((event) => [event, []])),
-    // an administrator's own pre_tool_call hooks stay, after this one
-    pre_tool_call: [{ matcher: hermesAskMatcher(opts.hostComputer), command, timeout: 10, fail_closed: true }, ...(Array.isArray(held.pre_tool_call) ? held.pre_tool_call as unknown[] : [])],
+    pre_tool_call: [{ matcher: hermesAskMatcher(opts.hostComputer, opts.phoneJobs === true, opts.emailMode), command, timeout: 10, fail_closed: true }, ...others],
   };
   const overlay = stringifyYaml({ ...base, hooks });
   const overlayDir = join(dir, `overlay-${hash(overlay)}`);
@@ -190,10 +323,20 @@ export function applyHermesAskHook(env: Record<string, string | undefined>, opts
     try { chmodSync(overlayDir, 0o700); } catch { /* Windows ignores POSIX modes */ }
     writeFileAtomic(file, overlay, { mode: 0o600 });
   }
+  const sidecarFile = join(overlayDir, HERMES_ASK_SIDECAR);
+  let currentSidecar: string | null = null;
+  try { currentSidecar = readFileSync(sidecarFile, "utf8"); } catch { currentSidecar = null; }
+  if (currentSidecar !== sidecar) writeFileAtomic(sidecarFile, sidecar, { mode: 0o600 });
   env.HERMES_MANAGED_DIR = overlayDir;
   env.HERMES_ACCEPT_HOOKS = "1";
   // the hook runs as `<this program> <script>`; a packaged app is its own node only with this set
   env.ELECTRON_RUN_AS_NODE = "1";
+}
+
+/** The home the child `hermesSpawnArgs` starts runs in: the turn's routed home as is, else the named profile's. */
+export function hermesChildHome(config: HermesProfileConfig, env: Record<string, string | undefined>): string | undefined {
+  if (murageRoutedHome(env)) return resolve(env.HERMES_HOME!);
+  try { return hermesHome(env, hermesProfileOf(config)); } catch { return undefined; }
 }
 
 /** argv for a Hermes child: every spawn names its profile, so a sticky
@@ -921,8 +1064,13 @@ const support: AcpSupport = {
   // turn only (localComputer.scope === "local-computer", as core.ts controlsHost); Murage's computer service asks per
   // action instead. A Local VM or VPS computer carries no scope, so its tools stay on the ask hook and get a card.
   hostComputerAskedByMurage: true,
+  // An ask the ask hook escalated is read from the hook's message: the real command, whole (normalizeHermesAsk).
+  normalizeAsk: (rawInput) => {
+    const normal = normalizeHermesAsk(rawInput);
+    return normal?.ok ? { ok: true, rawInput: normal.rawInput, summary: normal.summary } : normal && { ok: false, why: normal.why, summary: normal.summary };
+  },
   spawnArgs: (config, turn, ctx) => {
-    if (ctx?.env) applyHermesAskHook(ctx.env, { hostComputer: turn?.integrations?.localComputer?.scope === "local-computer" });
+    if (ctx?.env) applyHermesAskHook(ctx.env, { hostComputer: turn?.integrations?.localComputer?.scope === "local-computer", phoneJobs: Boolean(turn?.integrations?.phoneJobs), emailMode: turn?.integrations?.agents?.env?.[EMAIL_TOOLS_ENV], home: hermesChildHome(config, ctx.env) });
     return hermesSpawnArgs(config, ctx?.env);
   },
   /**

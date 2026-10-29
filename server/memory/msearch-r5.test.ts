@@ -110,8 +110,12 @@ function loopHoldMonitor() {
   // Include the final interval even if the measured work never yielded to a tick.
   return { stop: () => { clearInterval(ticker); sample(); return longest; } };
 }
-/** Holds this thread for `ms` of its own CPU time, however busy the host is. */
-const holdThread = (ms: number) => { const until = threadCpuMs() + ms; while (threadCpuMs() < until) { /* spin */ } };
+/** Holds this thread for `ms` of its own CPU time, however busy the host is, and for at least `ms` of wall time: Windows
+ * reports thread CPU time in ~15.6 ms steps, so a CPU-only spin can end that much short of `ms` on the wall clock. */
+const holdThread = (ms: number) => {
+  const cpuUntil = threadCpuMs() + ms, wallUntil = performance.now() + ms;
+  while (threadCpuMs() < cpuUntil || performance.now() < wallUntil) { /* spin */ }
+};
 const bulk = (work: () => void) => { database().exec("BEGIN"); try { work(); } finally { database().exec("COMMIT"); } };
 
 describe("P1: authorization never holds the event loop", () => {

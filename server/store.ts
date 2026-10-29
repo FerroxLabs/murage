@@ -103,8 +103,12 @@ export interface OptionCardData {
   /** Optional owner-approved browser connection with one explicit continuation. */
   browserSetup?: import("../shared/browser-setup-card.ts").BrowserSetupCardData;
   /** A publish approval card (server/publish): never auto-approved, in any access mode. */
-  kind?: "publish" | "mcpEnable";
+  kind?: "publish" | "mcpEnable" | "email-send" | "email-trust-offer";
   publish?: import("../shared/publish-card.ts").PublishCardData;
+  /** Bot email (1.0.9): the card is a view of its email_sends row (server/email/cards.ts); answered only through resolveEmailSend. */
+  emailSend?: import("../shared/email-copy.ts").EmailCardPayload;
+  /** The earned-trust proposal card (BOT-EMAIL-MURAGE-109 3.5): "Add [address]" / "Not now". */
+  emailTrustOffer?: import("../shared/email-copy.ts").EmailTrustOfferPayload;
   /** A "Turn on <name>?" card for a server a bot filed switched off (item 118, server/mcp-bot-cards.ts). */
   mcpEnable?: import("./mcp-bot-cards.ts").McpEnableCardData;
   title: string;
@@ -287,6 +291,9 @@ export function isOwnerOrigin(origin: MessageOrigin | undefined): boolean {
 }
 
 export interface Message {
+  /** Bot email (BOT-EMAIL-MURAGE-109 5.4): a bot text row written by a turn that read outside mail (or carried a row that did). Its words
+   *  reach later readers fenced (kind email-derived), and automatic learning holds what rests on it for the owner. */
+  externalContent?: "email";
   /** The row's number in its thread (messages.seq, transcript-seq.ts): 1..n in storage order, set from the column by the writer
    * (message-db.ts replaceRow, updateMessage) and the one decoder (rowToMessage), never stored in the JSON. Absent while the
    * thread is not numbered yet. The wire carries it only through wireThread (transcript-page.ts). */
@@ -422,6 +429,8 @@ export interface Message {
   queueId?: string;
   /** user messages: see MessageOrigin. Server-written only. */
   origin?: MessageOrigin;
+  /** user messages: the line is third-party words that arrived by a phone share or an ask-intent. Server-written only; patchMessage never changes it. */
+  via?: "share" | "ask-intent";
   /** user messages: the standing instruction a scheduled or manual routine
    * run started with (shared/routine-run-marker.ts). A replayed history
    * labels it as that run. Server-written only. */
@@ -462,6 +471,9 @@ export interface Message {
   /** Server-written (murage-line.ts murageLine): Murage wrote this row into a bot's conversation in its own voice (an error, retry, stop,
    * notice or status line), never the turn's engine. Write-time lineage only; presentation reads actorKind. */
   murageLine?: true;
+  /** Bot calls 1.0.9: the call card of one intent (stable row id `botcall-<intentId>`, server/bot-calls-card.ts). Rewritten in
+   * place by every transition that owes a card, inside that transition's transaction. */
+  botCall?: { intentId: string; botId: string; state: string; outcome: string | null; tier: "A" | "B"; at: number; minutes?: number; ended?: string };
 }
 
 export type { MessageActorKind };
@@ -632,6 +644,9 @@ export interface TaskRecord {
   effortSent?: { instanceId: string; effort: EffortLevel | "default" };
   /** 1.0.4 SL-I I4: the chat is on its bot's limit backup; the row id in limit-failovers.json. */
   limitFailover?: string;
+  /** 1.0.9 phone tools X3: when the first accepted phone call of this thread was made. Set once, cleared only with the task
+   * (deleteTask). Server bookkeeping, never on the wire (wireTask strips it). */
+  phoneUsedAt?: number;
   autoApprove?: boolean;
   /** Full access for this task: above Auto, and only while autoApprove is on. */
   fullAccess?: boolean;
@@ -1158,6 +1173,8 @@ export interface BotRecord {
   /** Whether this bot gets the app's built-in browser (the Browser tab of
    * the computer panel). On unless switched off. */
   browser?: boolean;
+  /** 1.0.9 phone tools: what this bot may ask the owner's phone to do. Absent key = off. Owner-only PATCH (S7). */
+  phoneApps?: import("../shared/phone-apps.ts").PhoneApps;
   /** Id of a named browser profile from config.browserProfiles; absent = the
    * bot's own private session. */
   browserProfile?: string;
@@ -3795,6 +3812,8 @@ export class Store {
         parentId: source.parentId ?? null,
         replyToId: source.replyToId,
         ...(origin ? { origin } : {}),
+        // A fork of a phone line is still a phone line: no caller can launder `via` through an edit.
+        ...(source.via ? { via: source.via } : {}),
         ...(sendId ? { sendId } : {}),
       };
       mdb.appendMessage(threadId, full);
@@ -3828,6 +3847,8 @@ export class Store {
         parentId: source.parentId ?? null,
         replyToId: source.replyToId,
         ...(origin ? { origin } : {}),
+        // A fork of a phone line is still a phone line: no caller can launder `via` through an edit.
+        ...(source.via ? { via: source.via } : {}),
         ...(sendId ? { sendId } : {}),
       };
       mdb.appendMessage(threadId, full);
@@ -3856,7 +3877,9 @@ export class Store {
 
   /** `within` runs in the same transaction as the patch (another row that must change with this message, or not at all); it runs even when the message is
    * gone (the other change is still owed), and if it throws nothing is written, cached or announced. */
-  patchMessage(threadId: string, messageId: string, patch: Partial<Message>, within?: () => void): Message | null {
+  patchMessage(threadId: string, messageId: string, requested: Partial<Message>, within?: () => void): Message | null {
+    // `via` is stamped when the line is written and never changes after.
+    const { via: _via, ...patch } = requested;
     return this.writing(threadId, () => {
       // A thread that is not loaded is not loaded to change one row: the row
       // is read by its key and written back, as a loaded patch writes it.
@@ -4037,6 +4060,9 @@ export class Store {
    * been released, and runs BEFORE the durable deletion so a refusal leaves the bot exactly as it was. */
   botIdGuard?: (id: string) => void;
   releaseBotState?: (id: string) => void;
+  /** Bot email (BOT-EMAIL-MURAGE-109 2.6): the email removal intent rides the deletion proof's transaction (record), is withdrawn in the
+   * rollback when saveBots fails (withdraw), and is committed once saveBots returned (commit). Never waits on the network. */
+  emailDeletion?: { record: (id: string) => void; withdraw: (id: string) => void; commit: (id: string) => void };
 
   deleteBot(id: string): boolean {
     const bot = this.bot(id);
@@ -4053,15 +4079,16 @@ export class Store {
     // The owner's deletion of every conversation of this bot is recorded durably BEFORE the registry forgets the bot:
     // a crash between the two leaves proof for each thread's sends and room requests instead of orphans nobody can purge.
     const botThreadIds = [...new Set([bot.threadId, ...(bot.tasks ?? []).map((t) => t.threadId)])];
-    transaction((db) => { for (const threadId of botThreadIds) recordOwnerDeletion(db, threadId); recordOwnerDeletion(db, botDeletionKey(id)); });
+    transaction((db) => { for (const threadId of botThreadIds) recordOwnerDeletion(db, threadId); recordOwnerDeletion(db, botDeletionKey(id)); this.emailDeletion?.record(id); });
     try {
       this.saveBots(nextBots);
     } catch (error) {
       for (const group of seated) Object.assign(group, priorSeats.get(group.id));
       // the bot is still there: its conversations were not deleted, so the proof written above is withdrawn
-      try { transaction((db) => { for (const threadId of botThreadIds) withdrawOwnerDeletion(db, threadId); withdrawOwnerDeletion(db, botDeletionKey(id)); }); } catch (e) { console.error("store: could not withdraw deletion record", e); }
+      try { transaction((db) => { for (const threadId of botThreadIds) withdrawOwnerDeletion(db, threadId); withdrawOwnerDeletion(db, botDeletionKey(id)); this.emailDeletion?.withdraw(id); }); } catch (e) { console.error("store: could not withdraw deletion record", e); }
       throw error;
     }
+    try { this.emailDeletion?.commit(id); } catch (e) { console.error("store: email removal intent stays for boot", e); }
     this.bots = nextBots;
     this.refreshPendingThreads(botThreadIds);
     this.pruneMessageAllow(id);
@@ -4908,6 +4935,24 @@ export class Store {
   activeTask(botId: string): TaskRecord | undefined {
     const bot = this.bot(botId);
     return bot?.tasks?.find((t) => t.threadId === bot.threadId);
+  }
+
+  /** X3: marks the thread as one that used the owner's phone. Idempotent; the first call stamps and saves at once (not deferred).
+   * Returns false for an unknown thread; throws (after undoing the stamp) when it cannot be saved, so the caller fails closed. */
+  markPhoneUsed(botId: string, threadId: string): boolean {
+    const task = this.taskByThread(botId, threadId);
+    if (!task) return false;
+    if (task.phoneUsedAt !== undefined) return true;
+    task.phoneUsedAt = Date.now();
+    try { this.saveBots(); } catch (error) { delete task.phoneUsedAt; throw error; }
+    return true;
+  }
+
+  /** X3: true when the thread was ever marked. Reads the task record, never a flag. An unknown thread reads false. */
+  threadPhoneMarked(threadId: string): boolean {
+    const bot = this.botByThread(threadId);
+    if (!bot) return false;
+    return this.taskByThread(bot.id, threadId)?.phoneUsedAt !== undefined;
   }
 
   taskByThread(botId: string, threadId: string): TaskRecord | undefined {

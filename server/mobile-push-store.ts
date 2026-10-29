@@ -34,6 +34,8 @@ export interface PushEventRow {
   eventRef: string; bindingId: string; kind: PushKind; category: PushCategory; botId: string; threadId: string;
   requestId: string | null; messageId: string | null; collapseKey: string; threadGroup: string; revision: number;
   timeSensitive: boolean; resolvedBy: ResolvedBy | null; createdAt: number; expiresAt: number;
+  /** X1: the thread's turn used the owner's phone when this row was written. Detail then reads the fixed generic text, never the content. */
+  phoneUsed: boolean;
   holdUntil: number; state: PushEventState; attempts: number; nextAttemptAt: number;
 }
 
@@ -90,6 +92,13 @@ export function initializeMobilePush(db: DatabaseSync): void {
   // RES-009: the host's own record of when a binding's token pair expires.
   // Nullable: a binding from before it has none and keeps publishing.
   if (!bindingColumns.some((column) => column.name === "token_expires_at")) db.exec("ALTER TABLE push_bindings ADD COLUMN token_expires_at INTEGER");
+  // 1.0.9 bot calls: "Rings for calls" per phone (design BOT-CALLS-109 section 3), on by default. Appended by ALTER like preview_content,
+  // so a fresh and an upgraded table end with one definition; the snapshot lists it as optional, and the step back drops it (bot-calls-schema.ts).
+  if (!bindingColumns.some((column) => column.name === "rings_for_calls")) db.exec("ALTER TABLE push_bindings ADD COLUMN rings_for_calls INTEGER NOT NULL DEFAULT 1");
+  // 1.0.9 X1: a push row written while its thread had used the owner's phone is flagged, so its detail is the fixed generic text. ALTER, never in
+  // the CREATE text (installation-database-snapshot lists it as optional). Nullable: a row from before it reads false.
+  const eventColumns = db.prepare("PRAGMA table_info(push_events)").all() as Array<{ name: string }>;
+  if (!eventColumns.some((column) => column.name === "phone_used")) db.exec("ALTER TABLE push_events ADD COLUMN phone_used INTEGER");
   // 1.0.3: PushStore.prune asks every few seconds whether a row of each retained-history table is due; without these each ask read the whole table.
   for (const [name, table, column] of PUSH_RETENTION_103_INDEXES) db.exec(`CREATE INDEX IF NOT EXISTS ${name} ON ${table}(${column})`);
 }
@@ -115,6 +124,15 @@ export function downgradePushRetentionIndexesTo102(db: DatabaseSync): { dropped:
   return { dropped: present.length };
 }
 
+/** 1.0.9 added push_events.phone_used; every older build's table lacks it, so the column leaves whatever the downgrade target (rows and other columns stay). */
+export function downgradePushPhoneUsedTo102(db: DatabaseSync): { dropped: boolean } {
+  if (!db.prepare("SELECT 1 AS present FROM sqlite_schema WHERE type='table' AND name='push_events'").get()) return { dropped: false };
+  const columns = (db.prepare("PRAGMA table_info(push_events)").all() as Array<{ name: string }>).map(column => column.name);
+  if (!columns.includes("phone_used")) return { dropped: false };
+  db.exec("ALTER TABLE push_events DROP COLUMN phone_used");
+  return { dropped: true };
+}
+
 type Row = Record<string, string | number | null>;
 const toBinding = (r: Row): PushBinding => ({
   bindingId: String(r.binding_id), deviceId: String(r.device_id), publisherToken: String(r.publisher_token), createdAt: Number(r.created_at),
@@ -127,6 +145,7 @@ const toEvent = (r: Row): PushEventRow => ({
   messageId: r.message_id === null ? null : String(r.message_id), collapseKey: String(r.collapse_key), threadGroup: String(r.thread_group),
   revision: Number(r.revision), timeSensitive: Number(r.time_sensitive) === 1,
   resolvedBy: r.resolved_by === null ? null : (r.resolved_by as ResolvedBy),
+  phoneUsed: Number(r.phone_used) === 1,
   createdAt: Number(r.created_at), expiresAt: Number(r.expires_at), holdUntil: Number(r.hold_until),
   state: r.state as PushEventState, attempts: Number(r.attempts), nextAttemptAt: Number(r.next_attempt_at),
 });
@@ -162,6 +181,15 @@ export class PushStore {
   }
   setPreviewContent(bindingId: string, enabled: boolean): void {
     this.db.prepare("UPDATE push_bindings SET preview_content=? WHERE binding_id=?").run(enabled ? 1 : 0, bindingId);
+  }
+  /** Whether this phone rings for bot calls (on unless the owner turned it off); null for an unknown binding. */
+  ringsForCalls(bindingId: string): boolean | null {
+    const r = this.db.prepare("SELECT rings_for_calls AS v FROM push_bindings WHERE binding_id=?").get(bindingId) as { v: number } | undefined;
+    return r ? Number(r.v) === 1 : null;
+  }
+  /** Returns whether the binding exists. */
+  setRingsForCalls(bindingId: string, enabled: boolean): boolean {
+    return Number(this.db.prepare("UPDATE push_bindings SET rings_for_calls=? WHERE binding_id=?").run(enabled ? 1 : 0, bindingId).changes) > 0;
   }
   /** Synchronous work only; a savepoint when a caller already opened one. */
   private transaction<T>(operation: () => T): T {
@@ -255,10 +283,10 @@ export class PushStore {
 
   insertEvent(e: PushEventRow): void {
     this.db.prepare(`INSERT INTO push_events (event_ref,binding_id,kind,category,bot_id,thread_id,request_id,message_id,collapse_key,
-      thread_group,revision,time_sensitive,resolved_by,created_at,expires_at,hold_until,state,attempts,next_attempt_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+      thread_group,revision,time_sensitive,resolved_by,created_at,expires_at,hold_until,state,attempts,next_attempt_at,phone_used)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
       e.eventRef, e.bindingId, e.kind, e.category, e.botId, e.threadId, e.requestId, e.messageId, e.collapseKey, e.threadGroup,
-      e.revision, e.timeSensitive ? 1 : 0, e.resolvedBy, e.createdAt, e.expiresAt, e.holdUntil, e.state, e.attempts, e.nextAttemptAt);
+      e.revision, e.timeSensitive ? 1 : 0, e.resolvedBy, e.createdAt, e.expiresAt, e.holdUntil, e.state, e.attempts, e.nextAttemptAt, e.phoneUsed ? 1 : 0);
   }
   event(bindingId: string, eventRef: string): PushEventRow | null {
     const r = this.db.prepare("SELECT * FROM push_events WHERE binding_id=? AND event_ref=?").get(bindingId, eventRef) as Row | undefined;
@@ -330,6 +358,41 @@ export class PushStore {
     this.db.prepare("UPDATE push_events SET state=?,attempts=?,next_attempt_at=? WHERE event_ref=?")
       .run(next.state, next.attempts, next.nextAttemptAt, eventRef);
     return true;
+  }
+  /** The exclusive claim (bot calls 5.5, F60): one statement that wins only while the row still has the state AND the attempt count
+   *  the caller read, so two paths that read the same row can never both claim it. */
+  claim(eventRef: string, expected: Pick<PushEventRow, "state" | "attempts">, patch: Pick<PushEventRow, "state" | "attempts" | "nextAttemptAt">): boolean {
+    return Number(this.db.prepare("UPDATE push_events SET state=?,attempts=?,next_attempt_at=? WHERE event_ref=? AND state=? AND attempts=?")
+      .run(patch.state, patch.attempts, patch.nextAttemptAt, eventRef, expected.state, expected.attempts).changes) === 1;
+  }
+  /** One request's pending rows whose retry time came (sendNow). */
+  dueForRequest(requestId: string, now: number): PushEventRow[] {
+    return (this.db.prepare("SELECT * FROM push_events WHERE request_id=? AND state='pending' AND next_attempt_at<=? ORDER BY created_at, revision, rowid")
+      .all(requestId, now) as Row[]).map(toEvent);
+  }
+  /** Bindings holding any `call` row (ring or its resolution) of the request. */
+  callBindingsForRequest(requestId: string): string[] {
+    return (this.db.prepare("SELECT DISTINCT binding_id FROM push_events WHERE request_id=? AND kind='call' ORDER BY binding_id").all(requestId) as Row[])
+      .map((r) => String(r.binding_id));
+  }
+  latestCallRow(bindingId: string, requestId: string): PushEventRow | null {
+    const r = this.db.prepare("SELECT * FROM push_events WHERE binding_id=? AND request_id=? AND kind='call' ORDER BY revision DESC LIMIT 1")
+      .get(bindingId, requestId) as Row | undefined;
+    return r ? toEvent(r) : null;
+  }
+  /** "May have rung" (5.5): a ring row was claimed (the claim is written before the send, so a lost acknowledgement still shows) or accepted. */
+  callMayHaveRung(bindingId: string, requestId: string): boolean {
+    return this.db.prepare("SELECT 1 AS yes FROM push_events WHERE binding_id=? AND request_id=? AND kind='call' AND category='call' AND (attempts>0 OR state='sent') LIMIT 1")
+      .get(bindingId, requestId) !== undefined;
+  }
+  /** Drops the binding's unsent ring rows of the request, recording who ended it. Notes and resolutions are left alone. */
+  dropUnsentCallRows(bindingId: string, requestId: string, resolvedBy: ResolvedBy): number {
+    return Number(this.db.prepare("UPDATE push_events SET state='dropped', resolved_by=? WHERE binding_id=? AND request_id=? AND kind='call' AND category='call' AND state IN ('held','pending')")
+      .run(resolvedBy, bindingId, requestId).changes);
+  }
+  /** Every unsent call-note row of the bot, whatever its intent's state (5.6). */
+  dropCallNotes(botId: string): number {
+    return Number(this.db.prepare("UPDATE push_events SET state='dropped' WHERE bot_id=? AND kind='call-note' AND state IN ('held','pending')").run(botId).changes);
   }
   /** Attention still waiting on this device: the newest revision of each
    *  collapse key, unexpired, not a resolution, not dropped. */

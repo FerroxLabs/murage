@@ -4,13 +4,15 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pushDetail, type DetailWorld } from "./mobile-push-detail.ts";
+import { GENERIC_TEXT } from "../shared/mobile-push.ts";
+import { vi } from "vitest";
 import type { PushEventRow } from "./mobile-push-store.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const event = (over: Partial<PushEventRow> = {}): PushEventRow => ({
   eventRef: "a".repeat(64), bindingId: "b", kind: "approval", category: "approval", botId: "lena", threadId: "t1", requestId: "req-1",
   messageId: "m1", collapseKey: "c", threadGroup: "g", revision: 1, timeSensitive: true, resolvedBy: null, createdAt: 0, expiresAt: 1,
-  holdUntil: 0, state: "sent", attempts: 1, nextAttemptAt: 0, ...over,
+  holdUntil: 0, state: "sent", attempts: 1, nextAttemptAt: 0, phoneUsed: false, ...over,
 });
 const world = (over: Partial<DetailWorld> = {}): DetailWorld => ({
   bot: () => ({ id: "lena", name: "Lena", threadId: "t1" }),
@@ -20,6 +22,50 @@ const world = (over: Partial<DetailWorld> = {}): DetailWorld => ({
   ...over,
 });
 const noon = new Date("2026-09-27T12:00:00Z");
+
+describe("pushDetail phoneUsed (X1)", () => {
+  it("a flagged row is generic text with previewContent on, before any read (X1)", () => {
+    const message = vi.fn(() => ({ text: "Your 3pm with Dr Lee is moved" }));
+    const bot = vi.fn(() => ({ id: "lena", name: "Lena", threadId: "t1" }));
+    expect(pushDetail(event({ kind: "done", category: "done", phoneUsed: true }), world({ message, bot, previewContent: true }), noon)).toEqual(GENERIC_TEXT.done);
+    expect(message).not.toHaveBeenCalled();
+    expect(bot).not.toHaveBeenCalled();
+  });
+  it.each(["approval", "approval-open", "question", "done"] as const)("a flagged %s row is its own generic text", (category) => {
+    const message = vi.fn(() => ({ text: "private" }));
+    expect(pushDetail(event({ kind: category === "done" ? "done" : category === "question" ? "question" : "approval", category, phoneUsed: true }), world({ message }), noon)).toEqual(GENERIC_TEXT[category]);
+    expect(message).not.toHaveBeenCalled();
+  });
+  it("an unflagged row whose thread is marked at detail time is generic too, with no read", () => {
+    const message = vi.fn(() => ({ text: "private" }));
+    expect(pushDetail(event({ kind: "done", category: "done" }), world({ message, phoneMarked: () => true }), noon)).toEqual(GENERIC_TEXT.done);
+    expect(message).not.toHaveBeenCalled();
+  });
+  it("a mark check that throws reads as marked (fail closed)", () => {
+    const message = vi.fn(() => ({ text: "private" }));
+    expect(pushDetail(event({ kind: "done", category: "done" }), world({ message, phoneMarked: () => { throw new Error("closed"); } }), noon)).toEqual(GENERIC_TEXT.done);
+    expect(message).not.toHaveBeenCalled();
+  });
+  it("an unflagged, unmarked row still reads the content as before", () => {
+    expect(pushDetail(event(), world({ phoneMarked: () => false }), noon).body).toContain("delete 3 files");
+  });
+});
+
+describe("pushDetail device-job", () => {
+  const job = event({ kind: "device-job", category: "device-job", requestId: "op-1", messageId: null });
+  it.each([false, true, undefined])("is the fixed template with previewContent %s and never reads a message", (previewContent) => {
+    let read = 0;
+    const w = world({ previewContent, deviceJob: () => ({ capability: "calendar" }), message: () => { read++; return { text: "SECRET ARGS" }; } });
+    expect(pushDetail(job, w, noon)).toEqual({ title: "Murage", body: "Lena wants to use your calendar. Open Murage to allow it." });
+    expect(read).toBe(0);
+  });
+  it("names the capability from the live job and falls back to the generic text when it is gone", () => {
+    expect(pushDetail(job, world({ deviceJob: () => ({ capability: "calls" }) }), noon).body).toBe("Lena wants to use your phone calls. Open Murage to allow it.");
+    expect(pushDetail(job, world(), noon)).toEqual({ title: "Murage", body: "A bot is asking to use your phone" });
+    expect(pushDetail(job, world({ bot: () => undefined, deviceJob: () => ({ capability: "calendar" }) }), noon)).toEqual({ title: "Murage", body: "A bot is asking to use your phone" });
+    expect(pushDetail(job, world({ deviceJob: () => { throw new Error("closed"); } }), noon)).toEqual({ title: "Murage", body: "A bot is asking to use your phone" });
+  });
+});
 
 describe("pushDetail", () => {
   it.each([undefined, false, "true"])("withholds private titles and bodies without explicit phone consent: %s", previewContent => {

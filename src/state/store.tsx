@@ -7,6 +7,7 @@ import { decideWithFreshAuth } from "@/lib/fresh-auth";
 import { formerChiefOutcome } from "../../shared/chief-handover";
 import { REMEMBERED_EVENT } from "../../shared/learned-chip";
 import { MEMORY_WAITING_EVENT } from "@/lib/memory-waiting-event";
+import { CALL_EVENT } from "@/lib/bot-call-event";
 // Server-backed store. The React app holds no transports of its own:
 // it dispatches typed commands over HTTP and folds the one SSE event
 // stream from the harness server into local state. The reducer stays
@@ -69,7 +70,7 @@ import {
 import type { Routine, RoutineInput, RoutineRun } from "@/lib/routines";
 import type { WebhookAttempt, WebhookIngressStatus, WebhookTrigger } from "@/lib/webhooks";
 import { currentCall } from "@/lib/call";
-import { showNotification } from "@/lib/notify";
+import { isHealthPage, showHealthPage, showNotification } from "@/lib/notify";
 import { speaker } from "@/lib/tts";
 import { refreshAfterFluxKey } from "@/lib/flux-key-paste";
 import { createBotPatchQueue, type BotUpdatePatch } from "./bot-patch-queue";
@@ -125,7 +126,7 @@ import { isQuestionCard, type QuestionAnswer, type QuestionSpec } from "../../sh
 
 export interface OptionCardData {
   /** A publish approval card (server/publish): never auto-approved, never "always allow". */
-  kind?: "publish" | "mcpEnable";
+  kind?: "publish" | "mcpEnable" | "email-send" | "email-trust-offer";
   publish?: import("../../shared/publish-card").PublishCardData;
   /** A "Turn on <name>?" card for a server a bot filed switched off (item 118). */
   mcpEnable?: { name: string; rev: string; botId: string; bot: string; kind: "stdio" | "remote"; command?: string; args?: string[]; url?: string; transport?: "http" | "sse"; pendingKeys: string[]; enabled?: boolean; error?: string };
@@ -196,6 +197,10 @@ export interface OptionCardData {
   /** SL-J J2: Undo put back what this applied routine or webhook change replaced. */
   undone?: boolean;
   routineProposalDigest?: string;
+  /** Bot email (1.0.9): a view of the send's row; its own buttons answer it (EmailSendCard). */
+  emailSend?: import("../../shared/email-copy.ts").EmailCardPayload;
+  /** The earned-trust proposal card (BOT-EMAIL-MURAGE-109 3.5): "Add [address]" / "Not now". */
+  emailTrustOffer?: import("../../shared/email-copy.ts").EmailTrustOfferPayload;
   /** Staged learned-skill change; applied only after the user confirms this card. */
   skillRequest?: SkillRequestCardData;
   /** Present when this card is a turn of the new-bot setup conversation.
@@ -252,6 +257,8 @@ export interface SecretRequestCardData {
 }
 
 export interface Message {
+  /** Bot calls 1.0.9 (design 8): this row is the call card of one intent (server/bot-calls-card.ts); ChatView renders BotCallCard. */
+  botCall?: import("@/lib/bot-calls").BotCallMark;
   /** User rows: the server left this message out of memory as notes exported from another assistant (memory/capture.ts); the chat shows a line under it. */
   memoryNote?: "export-paste";
   /** The row the server saved this message in front of (Store
@@ -264,6 +271,7 @@ export interface Message {
   unvouched?: true;
   actorKind?: "owner" | "person" | "bot" | "murage" | "routine";
   origin?: "desktop" | "companion" | "unproven";
+  via?: "share" | "ask-intent";
   routineRunPrompt?: { routineName: string; trigger?: string };
   requestId?: string;
   workItemId?: string;
@@ -546,6 +554,8 @@ export interface TaskUsage {
 
 export interface Bot {
   id: string;
+  /** 1.0.9 phone tools: what this bot may do on a paired phone. Absent key = off. Present only when the host offers phone tools. */
+  phoneApps?: import("../../shared/phone-apps").PhoneApps;
   threadId: string;
   /** Who can request this bot's work (desktop only; SPEC-X 3.2). */
   sharedWith?: { mode: "none" | "list" | "all"; teams: Array<{ id: string; name: string }> };
@@ -6059,6 +6069,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // A memory the bot just kept (B5m): the open chat attaches its chip under the reply it came from.
       if (frame.kind === "learning.remembered" || frame.kind === "learning.improved") { window.dispatchEvent(new CustomEvent(REMEMBERED_EVENT, { detail: frame })); return; }
       // How many memories wait for the owner (counts only): the shared counts, the badge and the Memory screen move at once.
+      // Bot calls 1.0.9: call.ring / call.answered / call.ended are hints; the ring banner and the Calls settings re-read
+      // GET /api/calls/active on each one (calls-109.yaml sse).
+      if (frame.kind === "call") { window.dispatchEvent(new CustomEvent(CALL_EVENT, { detail: frame })); return; }
       if (frame.kind === "memory.waiting") { window.dispatchEvent(new CustomEvent(MEMORY_WAITING_EVENT, { detail: frame })); return; }
       if (frame.kind === "project.strip" || frame.kind === "project.board" || frame.kind === "room.requests") {
         projectEvents.frame(frame as ProjectFrame);
@@ -6178,6 +6191,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         // in each bot's settings is what gates it, server-side
         case "notify":
           if (frame.notification?.kind === "approval" && replayed) break;
+          // A Health page (1.0.9 Sentinel): generic text only, opens Health; never shown again from a replay.
+          if (isHealthPage(frame.notification)) {
+            if (!replayed) showHealthPage(frame.notification, () => dispatch({ type: "toggleAppSettings", open: true, section: "about", anchor: "health-heading" }));
+            break;
+          }
           // the wrapped dispatch, not rawDispatch: `select` clears the badge
           // in local state either way, but only the wrapper PATCHes
           // unread:false back. Opening a bot from its own notification and

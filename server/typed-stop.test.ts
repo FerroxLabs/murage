@@ -63,9 +63,23 @@ describe("U2: a typed stop's row is born finished, with the waiting messages mar
 describe("G1: only the owner's send route can ask for a typed stop (F7)", () => {
   it("every other acceptBotSend caller (the limit failover resend) passes no typedStop, and admitDirectSend never decides one", () => {
     const source = indexSource();
-    const calls = [...source.matchAll(/acceptBotSend\(\{[^}]*\}/g)].map((match) => match[0]);
+    // each call's whole argument list (balanced parentheses): the owner route spreads its via and owner branches inside one call
+    const calls = [...source.matchAll(/acceptBotSend\(\{/g)].map((match) => {
+      let depth = 0, at = match.index! + "acceptBotSend".length;
+      for (; at < source.length; at++) { if (source[at] === "(") depth++; else if (source[at] === ")" && --depth === 0) break; }
+      return source.slice(match.index!, at + 1);
+    });
     expect(calls.length).toBeGreaterThanOrEqual(2);
     expect(calls.filter((call) => call.includes("typedStop"))).toEqual([expect.stringContaining("typedStop: true")]);
+    // share and ask: the Send again on a phone's via line (queue-only third-party words) passes no typedStop, so a shared "stop" is queued text.
+    // The route has one call: its via branch states ownerActs false and the via standing, and only its owner branch asks for a typed stop.
+    const viaCalls = calls.filter((call) => call.includes("viaStanding"));
+    expect(viaCalls).toHaveLength(1);
+    const viaBranch = /viaStanding \? \{([^}]*)\} : \{([^}]*)\}/.exec(viaCalls[0]!);
+    expect(viaBranch?.[1]).toBe(" ownerActs: false, ...viaStanding ");
+    expect(viaBranch?.[2]).toContain("typedStop: true");
+    expect(viaCalls[0]!.replace(viaBranch![0], "")).not.toContain("typedStop");
+    expect(calls.filter((call) => call.includes("queueOnly") && call.includes("typedStop"))).toEqual([]);
     // the card answer, the late answer and acceptBotSend's ordinary path all reach admitDirectSend, which has no typed-stop branch
     expect([...source.matchAll(/admitDirectSend\(\{[^}]*\}/g)].filter((match) => match[0].includes("typedStop"))).toEqual([]);
   });

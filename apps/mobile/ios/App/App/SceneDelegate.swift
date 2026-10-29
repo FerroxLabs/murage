@@ -13,6 +13,9 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         if connectionOptions.shortcutItem?.type == ShellCoordinator.switchShortcut {
             ShellCoordinator.shared.launcherRequested = true
         }
+        if connectionOptions.shortcutItem?.type == PhoneShareOutbox.shortcut {
+            ShellCoordinator.shared.shareOutboxRequested = true
+        }
         #if DEBUG
         ShellCoordinator.shared.applyDebugArguments(ProcessInfo.processInfo.arguments)
         #endif
@@ -24,6 +27,11 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
 
     func windowScene(_ windowScene: UIWindowScene, performActionFor shortcutItem: UIApplicationShortcutItem, completionHandler: @escaping (Bool) -> Void) {
+        if shortcutItem.type == PhoneShareOutbox.shortcut {
+            ShellCoordinator.shared.showShareOutbox()
+            completionHandler(true)
+            return
+        }
         guard shortcutItem.type == ShellCoordinator.switchShortcut else { completionHandler(false); return }
         ShellCoordinator.shared.showLauncher()
         completionHandler(true)
@@ -51,6 +59,12 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         coverWindow?.isHidden = true
         coverWindow = nil
         PushSetup.becameActive()
+        ShellCoordinator.shared.phoneJobsBecameVisible()
+        PhoneShareOutbox.shared.foreground()
+    }
+
+    func sceneDidEnterBackground(_ scene: UIScene) {
+        ShellCoordinator.shared.phoneJobsBackgrounded()
     }
 
     func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {

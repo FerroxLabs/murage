@@ -38,10 +38,11 @@ import { applyFactsDelta, MAX_ENGINE_ROUNDS } from "./engine-history-run.ts";
 import { inScopeFolder, privateScopeHome, scopeCandidates } from "./engine-closed.ts";
 import { runEngineHistoryOffThread, type EngineDiscovery, type EngineHistoryJob, type EngineHistoryResult } from "./engine-history-offthread.ts";
 import { hasContentSteps, homeKey, pathApiFor, type EnginePlanData, type HomePlanData } from "./engine-plan-core.ts";
-import { scrubWalAfterDelete } from "./wal-maintenance.ts";
+import { scrubWalAfterDelete, walScrubPending } from "./wal-maintenance.ts";
 import { runningAppVersion } from "./memory/app-version.ts";
 import { OPEN_PASS_ENGINES } from "./engine-history-run.ts";
 import { closeThreadLog, threadLogNames, threadSessionLines, threadTempFiles, type SessionReadOptions } from "./harness/event-log.ts";
+import { observeDeletionAttempt, observeDeletionCompleted, observeDeletionEvent, observeDeletionJournal } from "./health/deletion-observer.ts";
 
 const ID = /^[\w-]+$/;
 /** How long a synced-folder line stays on screen. */
@@ -440,11 +441,16 @@ export class ConversationDeletions {
     let parsed: unknown;
     try { parsed = JSON.parse(text); } catch { throw new JournalUnreadableError("it does not parse"); }
     if (!Array.isArray(parsed)) throw new JournalUnreadableError("it is not a list");
-    return (parsed as PendingConversationDeletion[]).filter((entry) => entry && typeof entry.id === "string" && Array.isArray(entry.threadIds));
+    const list = (parsed as PendingConversationDeletion[]).filter((entry) => entry && typeof entry.id === "string" && Array.isArray(entry.threadIds));
+    // Sentinel (S04/S05): the persisted obligations as read, per engine kind; reported only when they changed (restart reconciliation's
+    // first read reports them all). Counts and times only, from the list already parsed here.
+    observeDeletionJournal(list);
+    return list;
   }
 
   private save(entries: PendingConversationDeletion[]): void {
     writeFileAtomic(this.journal, JSON.stringify(entries), { mode: 0o600 });
+    observeDeletionJournal(entries);
   }
 
   private get dir() {
@@ -505,6 +511,7 @@ export class ConversationDeletions {
     };
     this.active.add(entry.id);
     this.save([...this.pending(), entry]);
+    observeDeletionEvent("pending", entry);
     return entry;
   }
 
@@ -680,6 +687,11 @@ export class ConversationDeletions {
     const walWork = scrubWalAfterDelete().catch((error) => { console.warn("conversation deletion: the write-ahead log was not scrubbed yet", error); return false; });
     const ran = await engineWork;
     await walWork;
+    // Revocation jobs, projection receipts and the index's scrub marker own
+    // cleanup retries across restarts. They must never keep a removed chat in
+    // the deletion journal or hold up another deletion. The WAL wait above is
+    // bounded; a missing memory-worker acknowledgement is not awaited here.
+    if (walScrubPending() || this.memoryCleanupPending()) leftovers.push({ what: "Removed; finishing cleanup", where: "local memory; Murage retries automatically" });
     // the homes left for Murage's next update are still owed, for the same reason
     const engines = ran && deferred.length ? {
       ...ran,
@@ -688,6 +700,7 @@ export class ConversationDeletions {
       homeReasons: { ...ran.homeReasons, ...Object.fromEntries([...deferredKeys].map((key) => [key, "helper-unloadable"])) },
     } : ran;
     if (engines) { removed.push(...engines.removed); failed.push(...engines.failed); leftovers.push(...engines.leftovers); }
+    if (engines) observeDeletionAttempt(entry.engineHomes.map((home) => homeKey(home.engine, home.home)), Object.fromEntries(engines.failedHomes.map((key) => [key, engines.homeReasons?.[key]])));
     // Once the retry schedule has run out, what is still owed is named for the owner (it is NOT done) and tried again every few
     // hours and at each start. The words come from ownerNoticeText by reason code; nothing from the engine's error is shown.
     let owedSaved = false;
@@ -715,6 +728,7 @@ export class ConversationDeletions {
     this.waitForOwnTurns(entry, ownTurnKeys.length ? entry.engineHomes.filter((home) => ownTurnKeys.includes(homeKey(home.engine, home.home))) : [], startedAt);
     if (!failed.length && !stillDeferred.length) {
       this.abandon(entry);
+      observeDeletionCompleted(entry);
       const retry = this.retries.get(entry.id);
       if (retry?.timer) clearTimeout(retry.timer);
       this.retries.delete(entry.id);
@@ -1039,6 +1053,7 @@ export class ConversationDeletions {
       ? Math.min(state.attempts < delays.length ? delays[state.attempts]! : this.options.openRetryMs ?? 600_000, 600_000)
       : state.attempts < delays.length ? delays[state.attempts]! : this.options.slowRetryMs ?? 6 * 3_600_000;
     state.attempts++;
+    observeDeletionEvent("retry", entry);
     state.timer = setTimeout(() => {
       state.timer = undefined;
       let current: PendingConversationDeletion | undefined;
@@ -1452,6 +1467,16 @@ export class ConversationDeletions {
       }
     }
     return finished;
+  }
+
+  private memoryCleanupPending(): boolean {
+    try {
+      const db = this.options.database();
+      const has = (name: string) => Boolean(db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?").get(name));
+      if (has("memory_scope_bindings") && db.prepare("SELECT 1 FROM memory_scope_bindings WHERE subject_type='system' AND subject_id='memory-revocation' LIMIT 1").get()) return true;
+      if (has("memory_revoke_jobs") && db.prepare("SELECT 1 FROM memory_revoke_jobs WHERE state IN ('active','undoing','seeding') LIMIT 1").get()) return true;
+      return has("memory_projection_receipts") && Boolean(db.prepare("SELECT 1 FROM memory_projection_receipts WHERE lexical_status='delete-pending' LIMIT 1").get());
+    } catch { return true; }
   }
 
   private hasTable(name: string): boolean {

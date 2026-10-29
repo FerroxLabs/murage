@@ -785,7 +785,9 @@ describe("hermes ask hook: every action asks at Ask (real hermes 0.22.2: an ordi
     const { HERMES_ASK_HOOK_SOURCE } = await import("./hermes.ts");
     const { spawnSync } = await import("node:child_process");
     const run = (stdin: string) => JSON.parse(spawnSync(process.execPath, ["-e", HERMES_ASK_HOOK_SOURCE], { input: stdin, encoding: "utf8" }).stdout);
-    expect(run(JSON.stringify({ tool_name: "terminal", tool_input: { command: "echo PROBE > ran.txt" } }))).toEqual({ action: "approve", message: "terminal: echo PROBE > ran.txt" });
+    expect(run(JSON.stringify({ tool_name: "terminal", tool_input: { command: "echo PROBE > ran.txt" } }))).toEqual({ action: "approve",
+      // run with no overlay beside it, it cannot tell whether another hook could rewrite the call: it says so
+      message: JSON.stringify({ murage: 1, v: 1, tool: "terminal", input: { command: "echo PROBE > ran.txt" }, truncated: false, rewritable: true }) });
     expect(run("not json").action).toBe("approve");
   });
 });

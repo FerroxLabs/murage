@@ -47,6 +47,7 @@ final class ApprovalKeys {
      * fingerprints change: the lock screen remains the gate.
      */
     static String enrol(Context context, WorkspaceOrigin origin) {
+        PhoneAskSetup.forget(context, origin);
         // Never keep a key from an earlier pairing: it goes first, whatever follows.
         remove(origin);
         String alias = ApprovalProof.alias(origin.serialized());
@@ -111,6 +112,39 @@ final class ApprovalKeys {
      * signal cancels the prompt (null when no prompt was started).
      */
     static CancellationSignal sign(Activity activity, WorkspaceOrigin origin, ApprovalProof.Request request, Callback target) {
+        return signPresent(activity, origin, request.message(), request.reason, target);
+    }
+
+    /** Existing public half only. Never creates a key or displays a prompt. */
+    static String phoneJobsPoint(WorkspaceOrigin origin) {
+        try {
+            KeyStore store = KeyStore.getInstance(PROVIDER);
+            store.load(null);
+            java.security.cert.Certificate certificate = store.getCertificate(ApprovalProof.alias(origin.serialized()));
+            return certificate == null ? null : ApprovalProof.rawPointFromSpki(certificate.getPublicKey().getEncoded());
+        } catch (GeneralSecurityException | java.io.IOException | RuntimeException e) { return null; }
+    }
+
+    /** Native-only typed entry; approveWithDevice still reaches only ApprovalProof.Request. */
+    static CancellationSignal signPhoneJobs(Activity activity, PhoneJobsSigner.Request request, Callback target) {
+        String point = phoneJobsPoint(request.origin);
+        if (!request.keyId.equals(com.murage.mobile.shell.PhoneJobsContract.approvalKeyId(point))) {
+            target.error("no_key");
+            return null;
+        }
+        return signPresent(activity, request.origin, request.message(), "Enable phone tools for your bots", target);
+    }
+
+    static CancellationSignal signPhoneAsk(Activity activity, PhoneAskSigner.Request request, Callback target) {
+        String point = phoneJobsPoint(request.origin);
+        if (!request.keyId.equals(com.murage.mobile.shell.PhoneJobsContract.approvalKeyId(point))) {
+            target.error("no_key"); return null;
+        }
+        return signPresent(activity, request.origin, request.message(), activity.getString(R.string.ask_setup_title), target);
+    }
+
+    // Private primitive, reachable only through typed purpose entries.
+    private static CancellationSignal signPresent(Activity activity, WorkspaceOrigin origin, byte[] message, String reason, Callback target) {
         java.util.concurrent.atomic.AtomicBoolean answered = new java.util.concurrent.atomic.AtomicBoolean();
         Callback callback = new Callback() {
             @Override public void ok(String signature) { if (answered.compareAndSet(false, true)) target.ok(signature); }
@@ -118,14 +152,14 @@ final class ApprovalKeys {
             @Override public void error(String code) { if (answered.compareAndSet(false, true)) target.error(code); }
         };
         try {
-            return signOnce(activity, origin, request, callback);
+            return signOnce(activity, origin, message, reason, callback);
         } catch (RuntimeException e) {
             callback.error("unavailable");
             return null;
         }
     }
 
-    private static CancellationSignal signOnce(Activity activity, WorkspaceOrigin origin, ApprovalProof.Request request, Callback callback) {
+    private static CancellationSignal signOnce(Activity activity, WorkspaceOrigin origin, byte[] message, String reason, Callback callback) {
         String alias = ApprovalProof.alias(origin.serialized());
         PrivateKey key;
         try {
@@ -155,7 +189,7 @@ final class ApprovalKeys {
         }
         BiometricPrompt.Builder builder = new BiometricPrompt.Builder(activity)
             .setTitle("Confirm it's you")
-            .setDescription(request.reason);
+            .setDescription(reason);
         if (Build.VERSION.SDK_INT >= 30) {
             builder.setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG | BiometricManager.Authenticators.DEVICE_CREDENTIAL);
         } else {
@@ -178,7 +212,7 @@ final class ApprovalKeys {
                         signer = Signature.getInstance("SHA256withECDSA");
                         signer.initSign(key);
                     }
-                    signer.update(request.message());
+                    signer.update(message);
                     callback.ok(ApprovalProof.base64url(signer.sign()));
                 } catch (KeyPermanentlyInvalidatedException e) {
                     callback.error("no_key");
