@@ -2546,7 +2546,7 @@ HANDED_ENV_PIN = {
     "GIT_EDITOR": "true", "GIT_SEQUENCE_EDITOR": "true", "EDITOR": "true", "VISUAL": "true", "PSQL_EDITOR": "true",
     "PSQLRC": "/dev/null", "GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "", "SSH_ASKPASS": "", "SSH_ASKPASS_REQUIRE": "never",
     "GCM_INTERACTIVE": "0", "GIT_SSH_VARIANT": "ssh", "GIT_SSH_COMMAND": "'ssh' '-o' 'BatchMode=yes'",
-    "RSYNC_RSH": "'ssh' '-o' 'BatchMode=yes'", "DEBIAN_FRONTEND": "noninteractive", "ZDOTDIR": "/dev/null",
+    "RSYNC_RSH": "'ssh' '-o' 'BatchMode=yes'", "DEBIAN_FRONTEND": "noninteractive", "CDPATH": "", "ZDOTDIR": "/dev/null",
 }
 
 # No allowed name may look like a path override; a future edit that allows one fails

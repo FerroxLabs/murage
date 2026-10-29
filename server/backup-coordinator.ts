@@ -54,6 +54,8 @@ const stateSchema = z.object({ version:z.literal(1),revision:z.number().int().no
   job:jobSchema.optional(),seen:z.array(z.string().max(200)).max(256),watermark:z.number().int().nonnegative(),lastVerified:backupReceiptSchema.optional(),lastClosedResult:backupClosedResultSchema.optional(),
 }).strict();
 type State = z.infer<typeof stateSchema>;
+/** The coordinator state exactly as last written durably (1.0.9 Sentinel: health/backup-status.ts projects it). */
+export type BackupCommittedState = Readonly<State>;
 type Job = z.infer<typeof jobSchema>;
 const waitingPhases:Job["phase"][]=["due","waiting-idle","waiting-backup-mode"];
 const settledPhases:Job["phase"][]=["local-verified","skipped","returned","upgrade-complete","upgrade-cancelled"];
@@ -69,6 +71,9 @@ interface Options {
   stateDirectory:string; now?:()=>number; acquire?:()=>Lease;
   claimIdle?:(request:BackupCaptureRequest,signal:AbortSignal)=>Promise<{state:"busy"|"backup-mode-required"}|{state:"claimed";release:()=>Promise<void>}>;
   captureOffline?:(request:BackupCaptureRequest,signal:AbortSignal)=>Promise<BackupReceipt>;
+  /** Told after each durable save, with what was saved (1.0.9 Sentinel's backup status manifest). Its result and any
+   *  throw are ignored: an observer never changes a backup. */
+  onCommitted?:(state:BackupCommittedState)=>void;
 }
 /** Local coordination only. No scheduling timer, OS task, restic or production idle gate. */
 export class BackupCoordinator {
@@ -87,6 +92,8 @@ export class BackupCoordinator {
   private save(state:State){
     const checked=stateSchema.parse(state);mkdirSync(this.options.stateDirectory,{recursive:true,mode:0o700});writeFileAtomic(this.file(),JSON.stringify(checked),{mode:0o600});
     if(!checked.job||!failureMarkerPhases.has(checked.job.phase))this.clearHandoffFailure();
+    // After the commit, never before: a published verification always has its receipt on disk.
+    if(this.options.onCommitted)try{this.options.onCommitted(structuredClone(checked));}catch{/* An observer never changes a backup. */}
   }
   private lease(){mkdirSync(this.options.stateDirectory,{recursive:true,mode:0o700});try{return this.options.acquire?.()??acquireDataDirLeaseForProcess(this.options.stateDirectory);}catch{throw new Error("BACKUP_COORDINATOR_BUSY");}}
   private async releaseIdle(claimed:{release:()=>Promise<void>}|undefined){
@@ -188,6 +195,8 @@ export class BackupCoordinator {
       return parsed.success?{stage:parsed.data.stage,code:parsed.data.code,...(parsed.data.path?{path:parsed.data.path}:{})}:undefined;
     }catch{return undefined;}
   }
+  /** The committed state as it is on disk (a copy), for an observer that republishes it at startup. */
+  committedState():BackupCommittedState{return structuredClone(this.read());}
   status(){const s=this.read();return {enabled:s.schedule.enabled,revision:s.revision,schedule:s.schedule,phase:s.job?.phase??"idle",job:s.job,lastVerified:s.lastVerified,lastClosedResult:s.lastClosedResult,reviewReason:s.job?.phase==="needs-review"?s.job.error:undefined,
     captureFailure:(s.job?.phase==="needs-review"?this.captureFailure():undefined)??this.handoffFailure(s.job),
     lastSkipped:this.lastSkipped(s.lastVerified?.jobId),

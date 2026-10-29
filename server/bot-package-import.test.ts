@@ -196,3 +196,22 @@ it("team member imports ignore project desk and table fields", async () => {
   const profile = importedMemberProfile(member as never, new Set());
   expect(profile).toEqual({ name: "One", title: undefined, description: undefined, color: "green" });
 });
+
+it("bot email (section 7): emailIntent was-on is kept as an offer only; email starts off and no address travels", async () => {
+  const f = await fixture();
+  const manifest = structuredClone(f.manifest) as typeof f.manifest;
+  (manifest.definition.package.agents[0] as Record<string, unknown>).emailIntent = "was-on";
+  const contents = { manifest, payloads: new Map([...f.payloads].map(([path, content]) => [path, Buffer.from(content)])) };
+  const preview = await previewBotPackageContents(contents, { selection: f.options.selection, existingBots: f.options.existingBots });
+  let bot: BotPackageAtomicCommitInput["prepared"]["bots"][number] | undefined;
+  await importBotPackageContents({ ...f.options, contents, expectedArchiveSha256: preview.archiveSha256, expectedReviewHash: preview.reviewHash,
+    atomicCommit: ({ prepared }: BotPackageAtomicCommitInput) => { bot = prepared.bots[0]; } });
+  expect(bot?.installedPackage?.emailIntent).toBe("was-on");
+  expect(JSON.stringify(bot)).not.toMatch(/@murage\.email|emailKey|inbox/);
+  // without the field nothing is recorded
+  const plain = await previewBotPackageContents({ manifest: f.manifest, payloads: contents.payloads }, { selection: f.options.selection, existingBots: f.options.existingBots });
+  let plainBot: typeof bot;
+  await importBotPackageContents({ ...f.options, contents: { manifest: f.manifest, payloads: contents.payloads }, expectedArchiveSha256: plain.archiveSha256, expectedReviewHash: plain.reviewHash,
+    atomicCommit: ({ prepared }: BotPackageAtomicCommitInput) => { plainBot = prepared.bots[0]; } });
+  expect(plainBot?.installedPackage && "emailIntent" in plainBot.installedPackage).toBe(false);
+});

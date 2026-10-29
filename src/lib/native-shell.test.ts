@@ -401,3 +401,82 @@ it("is asked at boot, so synchronous checks have an answer by the first tap", as
   const main = readFileSync(new URL("../main.tsx", import.meta.url), "utf8");
   expect(main).toContain("void nativeHello();");
 });
+
+// 1.0.9 phone tools S22 (F12): the page's bridge never grows a phone, job or
+// token method. Phone jobs travel over the host's own channel, not this one.
+describe("bridge surface guard", () => {
+  const FORBIDDEN = /phone|job|murage_pj|token/i;
+  // issuePushTokens is the existing push-token method; openPhoneForBots (N3) only asks the app to open its own screen, no arguments and no data either way. Both excepted by name.
+  const EXCEPT = new Set(["issuePushTokens", "openPhoneForBots"]);
+
+  it("no NativeMethod name contains phone, job, murage_pj or token", async () => {
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync(new URL("./native-shell.ts", import.meta.url), "utf8");
+    const union = source.match(/export type NativeMethod =([\s\S]*?);\n/)?.[1] ?? "";
+    const names = [...union.replace(/\/\/.*$/gm, "").matchAll(/"(\w+)"/g)].map((m) => m[1]);
+    expect(names.length).toBeGreaterThan(10);
+    for (const name of names.filter((n) => !EXCEPT.has(n))) expect(name, name).not.toMatch(FORBIDDEN);
+  });
+
+  it("no method the parser accepts from a hello contains them, and the parser drops unknown ones", () => {
+    const hello = parseNativeHello({
+      version: 1,
+      methods: ["ready", "approveWithDevice", "phoneJob", "murage_pj_lease", "jobResult", "token", "phone"],
+    });
+    expect(hello).not.toBeNull();
+    for (const name of hello!.methods.filter((n) => !EXCEPT.has(n))) expect(name, name).not.toMatch(FORBIDDEN);
+    expect(hello!.methods).toContain("approveWithDevice");
+  });
+
+  it("every exported name in native-shell.ts is free of phone, job and murage_pj", async () => {
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync(new URL("./native-shell.ts", import.meta.url), "utf8");
+    const exported = [...source.matchAll(/^export (?:async )?(?:function|const|interface|type) (\w+)/gm)].map((m) => m[1]);
+    expect(exported.length).toBeGreaterThan(10);
+    for (const name of exported) expect(name, name).not.toMatch(/phone|job|murage_pj/i);
+  });
+});
+
+// 1.0.9 share and ask S43 (U14): no ask or share credential name crosses the page bridge, and the page never reads one.
+describe("share and ask bridge guard", () => {
+  const FORBIDDEN = /murage_pa|askToken|shareToken|phoneAsk|ask.?token|share.?token/i;
+
+  it("no NativeMethod name or accepted hello method mentions an ask or share credential", async () => {
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync(new URL("./native-shell.ts", import.meta.url), "utf8");
+    const union = source.match(/export type NativeMethod =([\s\S]*?);\n/)?.[1] ?? "";
+    const names = [...union.replace(/\/\/.*$/gm, "").matchAll(/"(\w+)"/g)].map((m) => m[1]);
+    expect(names.length).toBeGreaterThan(10);
+    for (const name of names) expect(name, name).not.toMatch(FORBIDDEN);
+    const hello = parseNativeHello({ version: 1, methods: ["ready", "askToken", "shareToken", "phoneAsk", "murage_pa_x"] });
+    for (const name of hello?.methods ?? []) expect(name, name).not.toMatch(FORBIDDEN);
+  });
+
+  it("neither native channel script defines such a method", async () => {
+    const { readFileSync } = await import("node:fs");
+    for (const path of [
+      "../../apps/mobile/ios/App/MurageShell/Sources/MurageShellCore/ChannelScript.swift",
+      "../../apps/mobile/android/app/src/main/java/com/murage/mobile/shell/ChannelScript.java",
+    ]) {
+      const names = [...readFileSync(new URL(path, import.meta.url), "utf8").matchAll(/\bapi\.(\w+)\s*=/g)].map((m) => m[1]);
+      expect(names.length).toBeGreaterThan(5);
+      for (const name of names) expect(name, name).not.toMatch(FORBIDDEN);
+    }
+  });
+
+  it("nothing in src/ reads murage_pa_ (the ask credential prefix)", async () => {
+    const { readdirSync, readFileSync, statSync } = await import("node:fs");
+    const { fileURLToPath } = await import("node:url");
+    const root = fileURLToPath(new URL("..", import.meta.url));
+    const hits: string[] = [];
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        const full = `${dir}/${name}`;
+        if (statSync(full).isDirectory()) walk(full);
+        else if (/\.(ts|tsx)$/.test(name) && !/\.test\.tsx?$/.test(name) && readFileSync(full, "utf8").includes("murage_pa_")) hits.push(full);
+      }
+    };
+    walk(root);
+    expect(hits).toEqual([]);
+  });
+});

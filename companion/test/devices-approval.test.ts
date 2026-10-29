@@ -185,7 +185,7 @@ describe("the key can never be added after pairing", () => {
 
   it("offers no other way to write a key", () => {
     const proto = Object.getOwnPropertyNames(DeviceRegistry.prototype);
-    expect(proto.filter((n) => /approval/i.test(n))).toEqual(["approvalIdentity"]);
+    expect(proto.filter((n) => /approval/i.test(n))).toEqual(["approvalIdentity", "deviceByApprovalKeyId"]); // both read-only
     expect(proto.filter((n) => /^set\w*key$/i.test(n))).toEqual([]);
   });
 });

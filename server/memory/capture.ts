@@ -1,4 +1,5 @@
 import { authoredTurnPieces } from "../reply-action-guard.ts";
+import { isEmailReadToolName } from "../email/external-marks.ts";
 import { threadHumanPrincipal, isWorkspaceOwner } from "../human-principals.ts";
 import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
@@ -37,7 +38,7 @@ export function captureScopeId(db: DatabaseSync, threadId: string) {
   const id = randomUUID(); db.prepare("INSERT INTO memory_scopes VALUES(?,?,?,'[]',0)").run(id,kind,owner); return id;
 }
 
-export function captureSource(db: DatabaseSync, source: {id: string; threadId: string; messageId?: string; turnId?: string; parentId?: string | null; kind: string; speaker: string; outcome: string; text: string; origin?: {kind:string;channel?:string;connectionId?:string;webhookId?:string;routineId?:string}; engine?: {instanceId:string;model:string;capabilityHash:string}; actionCheck?: Message["actionCheck"]; excluded?: string; occurredAt?: number; actorId?: string; artifactIds?: string[]; action?: { label: string; reportedOutcome: "completed" | "failed"; detail?: string; verification: "tool-reported" }}) {
+export function captureSource(db: DatabaseSync, source: {id: string; threadId: string; messageId?: string; turnId?: string; parentId?: string | null; kind: string; speaker: string; outcome: string; text: string; origin?: {kind:string;channel?:string;connectionId?:string;webhookId?:string;routineId?:string}; engine?: {instanceId:string;model:string;capabilityHash:string}; actionCheck?: Message["actionCheck"]; excluded?: string; externalContent?: "email"; occurredAt?: number; actorId?: string; artifactIds?: string[]; action?: { label: string; reportedOutcome: "completed" | "failed"; detail?: string; verification: "tool-reported" }}) {
   if (!enabled(db)||excludedThread(db,source.threadId)) return;
   // Keep failed outcomes as procedure-learning evidence, never recall work.
   const failedTool = (source.kind === "tool-outcome" || source.kind === "activity") && source.outcome === "failed";
@@ -49,7 +50,7 @@ export function captureSource(db: DatabaseSync, source: {id: string; threadId: s
     ...(source.action ? {action:{...source.action,label:redactSecretsInText(source.action.label),...(source.action.detail ? {detail:redactSecretsInText(source.action.detail)} : {})}} : {}),
     ...source.excluded?{excluded:source.excluded}:{}};
   // engine is metadata like origin: kept in the payload, never in the content hash, no column.
-  const payload = JSON.stringify({...content,...(source.origin?{origin:source.origin}:{}),...(source.engine?{engine:source.engine}:{}),...(source.actionCheck?{actionCheck:source.actionCheck}:{})});
+  const payload = JSON.stringify({...content,...(source.origin?{origin:source.origin}:{}),...(source.externalContent?{externalContent:source.externalContent}:{}),...(source.engine?{engine:source.engine}:{}),...(source.actionCheck?{actionCheck:source.actionCheck}:{})});
   const hash = createHash("sha256").update(JSON.stringify(content)).digest("hex");
   const scope = captureScopeId(db,source.threadId);
   if (db.prepare("SELECT 1 FROM memory_tombstones WHERE (target_type='source' AND target_id=? AND revision IS NULL) OR (target_type='import' AND target_id=? AND content_hash=?)").get(source.id,scope,hash)) return;
@@ -186,7 +187,10 @@ export function captureMessage(db: DatabaseSync, threadId: string, message: Mess
   if (message.kind === "text" && !userText && !finalText) return;
   // An export pasted into chat is left out of memory, and so is the bot's answer to it (PASTE-CAPTURE-FIX 3.2): the row keeps its metadata
   // and an empty payload, retired, its job born complete. Learn about me is where such notes are kept, a line at a time.
-  const leftOut = userText && isExportPaste(message) ? "export-paste" : finalText && answersExportPaste(db, threadId, message) ? "export-paste-reply" : undefined;
+  // Bot email (BOT-EMAIL-MURAGE-109 5.4): what email_read and email_list returned is outside mail, so the row keeps its metadata and an
+  // empty payload, never a source text and never a tool-observation.
+  const leftOut = userText && isExportPaste(message) ? "export-paste" : finalText && answersExportPaste(db, threadId, message) ? "export-paste-reply"
+    : tool && isEmailReadToolName(message.tool!.name) ? "external-mail" : undefined;
   captureSource(db,{id:`message:${threadId}:${message.id}`,threadId,messageId:message.id,turnId:message.turnId,parentId:message.parentId,
     kind:tool?"tool-outcome":message.kind,speaker:message.role === "user"?(isWorkspaceOwner(threadHumanPrincipal(threadId,db))?"owner":"person:"+threadHumanPrincipal(threadId,db).personId):tool?"tool":message.from?.botId??"assistant",
     outcome:tool?(message.tool!.ok?"completed":"failed"):"recorded",
@@ -195,7 +199,9 @@ export function captureMessage(db: DatabaseSync, threadId: string, message: Mess
     ...(userText?{origin:message.automation??{kind:message.origin==="desktop"||message.origin==="companion"?"attended":message.origin==="unproven"?"unproven":"unknown"}}:{}),
     ...(message.role==="bot"&&message.engine?{engine:{instanceId:message.engine.instanceId,model:message.engine.model,capabilityHash:message.engine.capabilityHash}}:{}),
     actionCheck:message.actionCheck,occurredAt:message.at,actorId:message.role==="user"?threadHumanPrincipal(threadId,db).personId:message.from?.botId,artifactIds:message.artifactIds,
-    ...(tool?{action:{label:message.tool!.name,reportedOutcome:message.tool!.ok?"completed" as const:"failed" as const,detail:message.tool!.errorDetails??message.text,verification:"tool-reported" as const}}:{}),
+    // a reply written after reading mail carries that origin: automatic learning holds it for the owner (5.4)
+    ...(message.externalContent==="email"?{externalContent:"email" as const}:{}),
+    ...(tool&&!leftOut?{action:{label:message.tool!.name,reportedOutcome:message.tool!.ok?"completed" as const:"failed" as const,detail:message.tool!.errorDetails??message.text,verification:"tool-reported" as const}}:{}),
     ...(leftOut?{excluded:leftOut}:!userText&&!finalText&&!tool?{excluded:`unsupported-${message.kind}`}:{})});
 }
 
@@ -224,21 +230,25 @@ export function captureBranchChange(db: DatabaseSync, threadId: string, leafId: 
  * The commit writes one deny row for the conversation (deny.ts: every reader refuses its sources from here on) and the epoch
  * bump; its sources are tombstoned, ended and blanked by the durable job's thread phase, a page at a time. */
 export function captureThreadDeletion(db: DatabaseSync, threadId: string) {
+  // deleteThread's BEGIN IMMEDIATE serializes this check with admission. The deny row and the FIRST_LSN receipt are written in the
+  // transaction that admits the deletion's cleanup job (below), and that job row is never parked or dropped: it runs until it ends, an
+  // unknown phase or format included (memory-revocation.ts stepJobRow, MEMDEL-SIMPLIFY-109). So both standing means the cleanup is
+  // finished or still durably owed: a replay of this deletion (the boot reconcile) writes nothing.
+  const committed = Boolean(db.prepare("SELECT 1 FROM memory_deny WHERE kind='thread' AND id=?").get(threadId)) && hasWritetime(db)
+    && Boolean(db.prepare("SELECT 1 FROM memory_deny_line WHERE thread_id=? AND lsn=? AND reason='delete-conversation' LIMIT 1").get(threadId, FIRST_LSN));
+  if (committed) return;
   // The deny row and the epoch bump are written whatever memory captured from the conversation (revbound r3 A1, Fable P1-2): a line
   // carried out of it, or a lesson citing one of its messages, has no source row to be refused by, only the conversation's deny.
   db.exec("UPDATE memory_meta SET deletion_epoch=deletion_epoch+1 WHERE id=1");
   const epoch = Number(db.prepare("SELECT deletion_epoch FROM memory_meta WHERE id=1").get()!.deletion_epoch);
-  const inserted = db.prepare("INSERT OR IGNORE INTO memory_deny(kind,id,epoch,created_at) VALUES('thread',?,?,?)").run(threadId, epoch, Date.now()).changes === 1;
+  db.prepare("INSERT OR IGNORE INTO memory_deny(kind,id,epoch,created_at) VALUES('thread',?,?,?)").run(threadId, epoch, Date.now());
   // write-time: the thread's lines denied, its carries out and captures walked by the marker (revoke-commit.ts). One revoke per deletion
-  // (DELETION-DRAIN-V2 2.5): the deny row's first insert commits it. A retry of the same deletion (the boot reconcile finishing a delete a
-  // crash cut after this transaction, conversation-deletion.ts) finds the row and the revoke's own receipt (revoke-commit.ts commitRevoke:
-  // the thread root's line row at FIRST_LSN under the deletion's cause, written in the same transaction as the revoke, kept after the job
-  // row is pruned and after the thread's range rows coalesce, never merged by restore.ts) and commits no second walk. A deny row with no
-  // receipt (a restore merged it; the owner's deletion record alone, written ahead of the threads by a whole-room or whole-bot deletion,
-  // proves nothing here) commits one: never zero.
-  const committed = !inserted && hasWritetime(db)
-    && Boolean(db.prepare("SELECT 1 FROM memory_deny_line WHERE thread_id=? AND lsn=? AND reason='delete-conversation' LIMIT 1").get(threadId, FIRST_LSN));
-  const revokeId = committed ? 0 : commitRevoke(db, { kind: "thread", threadId, cause: "delete-conversation" });
+  // (DELETION-DRAIN-V2 2.5): a retry of the same deletion (the boot reconcile finishing a delete a crash cut after this transaction,
+  // conversation-deletion.ts) found the revoke's own receipt above (revoke-commit.ts commitRevoke: the thread root's line row at FIRST_LSN
+  // under the deletion's cause, kept after the job row is pruned and after the thread's range rows coalesce, never merged by restore.ts).
+  // A deny row with no receipt (a restore merged it; the owner's deletion record alone, written ahead of the threads by a whole-room or
+  // whole-bot deletion, proves nothing here) commits one: never zero.
+  const revokeId = commitRevoke(db, { kind: "thread", threadId, cause: "delete-conversation" });
   const tracked = revokeId ? { revokeId } : {};
   if (!db.prepare("SELECT 1 FROM memory_sources WHERE thread_id=? LIMIT 1").get(threadId)) {
     // nothing captured: what was learned from this conversation still goes with it (owner-typed feedback text included)

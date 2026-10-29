@@ -35,15 +35,21 @@ export async function modelSizesMatch(directory, manifest) {
   return true;
 }
 
-/** The first component of `directory`, from the filesystem root down, that is a symbolic link; null if none (or if it cannot be read). */
+/** The first component of `directory`, from the filesystem root down, that is a symbolic link (or a Windows junction); null if none.
+ *  A component that cannot be inspected is returned too, so a path that cannot be checked is never trusted. */
 export async function linkedPathComponent(directory) {
   const resolved = path.resolve(directory);
-  const parts = resolved.split(path.sep).filter(Boolean);
-  let current = path.parse(resolved).root;
+  // Walk below the root only: on Windows the root is a drive (C:\) or a UNC share, and splitting the whole path would make
+  // the drive letter a component, so the first lstat (of C:\C:) fails and every link above the model would pass unseen.
+  // An extended UNC path (\\?\UNC\server\share\...) parses with the root \\?\UNC\ alone, so its server and share join the root.
+  let root = path.parse(resolved).root;
+  if (/^\\\\[?.]\\UNC\\$/i.test(root)) root = /^\\\\[?.]\\UNC\\[^\\]+\\[^\\]+\\?/i.exec(resolved)?.[0] ?? root;
+  const parts = resolved.slice(root.length).split(path.sep).filter(Boolean);
+  let current = root;
   for (const part of parts) {
     current = path.join(current, part);
     try { if ((await lstat(current)).isSymbolicLink()) return current; }
-    catch { return null; }
+    catch { return current; }
   }
   return null;
 }
@@ -99,7 +105,7 @@ export function modelSignature(directory, manifest) {
 export async function verifyModelDirectory(directory, manifest, { rejectLinks = false } = {}) {
   if (rejectLinks) {
     const linked = await linkedPathComponent(directory);
-    if (linked) return { ok: false, reason: `${linked} is a symbolic link` };
+    if (linked) return { ok: false, reason: `${linked} is a symbolic link or cannot be checked` };
   }
   const internal = await linkedInternalComponent(directory, manifest);
   if (internal) return { ok: false, reason: `${internal} is a symbolic link` };

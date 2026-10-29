@@ -13,7 +13,8 @@
 // mcpRemoteAudienceRefusal, mcpRemoteBotRefusal, validateRelayBody,
 // rewriteInitializeCapabilities, relayTimeoutFor, safeSessionId,
 // safeProtocolVersion, relayFailure.
-import { GuardedHttpError, guardedRequest, type GuardedBufferResponse } from "../shared/guarded-http.mjs";
+import type { Readable } from "node:stream";
+import { GuardedHttpError, guardedRequest } from "../shared/guarded-http.mjs";
 import { LIMITS } from "../shared/remote-mcp-url.mjs";
 import type { StoredRemoteMcpServer } from "./mcp-registry.ts";
 import type { McpProbeFailureReason } from "./mcp-probe.ts";
@@ -158,7 +159,10 @@ export interface RelayContext {
 }
 
 export type RelayResult =
-  | { ok: true; status: number; contentType: string; sessionId?: string; body: Buffer | string }
+  /** An SSE answer from a streamable HTTP server is a live stream (MCP-ELICITATION-109): a
+   * server's elicitation must reach the engine while its call is still open. It lives as
+   * long as the engine proxy's request does. */
+  | { ok: true; status: number; contentType: string; sessionId?: string; body: Buffer | string | Readable }
   /** `stepUpScopes`: what a 403 insufficient_scope asked for. Kept out of the
    * body the engine reads; the harness puts it on the sign-in card so the next
    * sign-in asks for it (spec 3.7 step 10). */
@@ -215,11 +219,29 @@ function safeHost(url: string): string {
 
 type Auth = ReturnType<typeof resolveRequestAuth>;
 
+type StreamedResponse = { status: number; headers: Record<string, string | string[] | undefined>; stream: Readable; close(): void };
+
+/** The rest of a streamed body as one buffer, by `deadline`. */
+async function readAll(response: StreamedResponse, deadline: number): Promise<Buffer> {
+  let expired = false;
+  const timer = setTimeout(() => { expired = true; response.close(); }, Math.max(0, deadline - Date.now()));
+  try {
+    const chunks: Buffer[] = [];
+    for await (const chunk of response.stream) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    // a body cut at the deadline is no answer, never a partial one
+    if (expired) throw new GuardedHttpError("timeout");
+    return Buffer.concat(chunks);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function viaStreamableHttp(ctx: RelayContext, url: string, host: string, message: Message, timeoutMs: number, auth: Auth): Promise<RelayResult | "unauthorized"> {
-  let response: GuardedBufferResponse;
+  let response: StreamedResponse;
+  const deadline = Date.now() + timeoutMs;
   try {
     response = await guardedRequest({
-      url, method: "POST", kind: "mcp", mode: "request", confirmed: ctx.server.local ?? null,
+      url, method: "POST", kind: "mcp", mode: "request", confirmed: ctx.server.local ?? null, responseMode: "stream",
       signal: ctx.signal, resolver: ctx.resolver, totalMs: timeoutMs, body: JSON.stringify(message),
       headers: {
         "content-type": "application/json", accept: "application/json, text/event-stream", ...auth.headers,
@@ -227,7 +249,7 @@ async function viaStreamableHttp(ctx: RelayContext, url: string, host: string, m
         ...(ctx.sessionId ? { "mcp-session-id": ctx.sessionId } : {}),
         ...(ctx.protocolVersion ? { "mcp-protocol-version": ctx.protocolVersion } : {}),
       },
-    });
+    }) as unknown as StreamedResponse;
   } catch (error) {
     return failed(reasonForGuardedError(error instanceof GuardedHttpError ? error.code : "unreachable"), host);
   }
@@ -235,10 +257,28 @@ async function viaStreamableHttp(ctx: RelayContext, url: string, host: string, m
   if (status === 200 || status === 202) {
     const type = String(Array.isArray(response.headers["content-type"]) ? response.headers["content-type"][0] : response.headers["content-type"] ?? "");
     const contentType = /^application\/json/i.test(type) ? "application/json" : /^text\/event-stream/i.test(type) ? "text/event-stream" : null;
-    if (status === 202) return { ok: true, status: 202, contentType: "application/json", body: Buffer.alloc(0), ...sessionOf(response) };
-    if (!contentType) return failed("wrong-address", host);
-    return { ok: true, status: 200, contentType, body: response.body, ...sessionOf(response) };
+    if (status === 202) {
+      response.close();
+      return { ok: true, status: 202, contentType: "application/json", body: Buffer.alloc(0), ...sessionOf(response) };
+    }
+    if (!contentType) {
+      response.close();
+      return failed("wrong-address", host);
+    }
+    // An SSE answer has no deadline here: the engine's proxy owns the call's
+    // bound (paused while the owner answers the server's question), and the
+    // route ends this stream when the proxy's connection closes.
+    if (contentType === "text/event-stream") return { ok: true, status: 200, contentType, body: response.stream, ...sessionOf(response) };
+    let body: Buffer;
+    try {
+      body = await readAll(response, deadline);
+    } catch (error) {
+      return failed(reasonForGuardedError(error instanceof GuardedHttpError ? error.code : "unreachable"), host);
+    }
+    return { ok: true, status: 200, contentType, body, ...sessionOf(response) };
   }
+  // nothing below reads the body
+  response.close();
   if (status === 401 || status === 403) {
     const classified = classifyUnauthorized({ status, wwwAuthenticate: response.headers["www-authenticate"], sent: auth.bearer ? "bearer" : Object.keys(auth.headers).length > 0 ? "key" : "nothing" });
     if (classified.reason === "sign-in-ended" && status === 401) return "unauthorized";
@@ -256,12 +296,15 @@ async function viaStreamableHttp(ctx: RelayContext, url: string, host: string, m
   return failed(status >= 500 ? "server-error" : "wrong-address", host);
 }
 
-function sessionOf(response: GuardedBufferResponse): { sessionId?: string } {
+function sessionOf(response: Pick<StreamedResponse, "headers">): { sessionId?: string } {
   const id = safeSessionId(response.headers["mcp-session-id"]);
   return id ? { sessionId: id } : {};
 }
 
 async function viaSse(ctx: RelayContext, url: string, host: string, message: Message, timeoutMs: number, auth: Auth): Promise<RelayResult | "unauthorized"> {
+  // A legacy SSE server's own requests arrive on the GET stream with no open
+  // call to carry them back: it is never told the engine takes elicitations.
+  message = rewriteInitializeCapabilities(message, { elicitation: false });
   let sessionId = ctx.sessionId && ctx.sseSessions.has(ctx.sessionId) ? ctx.sessionId : undefined;
   if (!sessionId) {
     // Nothing was sent: the stream this call named is not held here, so resending after a fresh initialize is safe.

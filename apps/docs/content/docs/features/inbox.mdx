@@ -38,3 +38,11 @@ If you don't use that engine, press **I don't use (engine)** and confirm with Tu
 ## Connections to restore and routines
 
 Connections to restore lists connected apps that need signing in again. Routines shows one line per routine, not per run, with Open latest run or Open the run that failed.
+
+## Health checks
+
+The **Health** card in the Inbox, and beside Diagnostics in Settings, shows what Murage's health checks found. Once a day at 09:00 your time, the Inbox gets one short health summary when something is open, changed or recovered. Only two things send a notification on their own: backups that are switched on but have no checked backup, and heavy disk writes that keep going for five minutes while Murage is idle. Your notification settings and quiet hours apply, and the notification only ever says that a health check needs your attention.
+
+A small checker runs on its own every two minutes, even while the app is closed. It reads only health figures that Murage writes for it: backup results, disk write totals, memory learning counts and similar numbers. It never reads your conversations or memories.
+
+The card shows how many issues are open, the most important one in plain words, and when the checks last ran. "No issues found in the checked sources." means every check had fresh information and found nothing. "Some health checks are waiting for fresh information." means a check has not had new figures yet, so the card does not claim more than it saw. Open an issue to see when it started, what was measured, whether it is recovering, and a button that takes you to the place to act on it, such as Backups or Memory settings.
