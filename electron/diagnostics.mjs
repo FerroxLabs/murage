@@ -43,6 +43,7 @@ export const CREDENTIAL_ENV_NAMES = [
   "MURAGE_FLUX_COMPOSIO_BROKER_TOKEN",
   "MURAGE_MCP_SERVER_SECRETS",
   "MURAGE_MCP_COMMIT_TOKEN",
+  "MURAGE_EMAIL_SECRETS",
   // Browser capability files and app-owned state paths are private even
   // though they are not traditional API credentials.
   "MURAGE_BROWSER_CONNECTION",
@@ -373,10 +374,33 @@ export async function collectChannelDiagnostics(readStatus) {
   })));
 }
 
+// 1.0.9 Sentinel self-health in owner-selected diagnostics: enums and bounded counts only (electron/sentinel-host.mjs
+// diagnosticsSummary). Anything outside these closed sets is left out, so no path, name or free text can appear.
+const SENTINEL_ENUMS = Object.freeze({
+  rootState: ["absent", "initializing", "ready", "publishing", "publication-deferred"],
+  registration: ["unregistered", "staged", "registered", "proven", "registration-needed"],
+  mechanism: ["none", "launchd", "task-scheduler", "systemd", "autostart", "supervisor"],
+  heartbeat: ["waiting", "fresh", "stale"],
+});
+const SENTINEL_COUNTS = ["rootDeferred", "revision", "pagesShown", "heartbeatAgeMinutes"];
+
+export function summarizeSentinel(summary) {
+  if (!summary || typeof summary !== "object" || Array.isArray(summary) || summary.available !== true) return { available: false };
+  const out = { available: true };
+  for (const [key, values] of Object.entries(SENTINEL_ENUMS)) if (values.includes(summary[key])) out[key] = summary[key];
+  for (const key of SENTINEL_COUNTS) {
+    const value = summary[key];
+    if (Number.isSafeInteger(value) && value >= 0 && value <= 1_000_000) out[key] = value;
+    else if (key === "heartbeatAgeMinutes" && value === "none") out[key] = "none";
+  }
+  return out;
+}
+
 export function buildDiagnosticsReport({
   appInfo = {},
   configSummary = {},
   channelSummary = {},
+  sentinelSummary = null,
   desktopLogTail,
   logTail,
   now = new Date().toISOString(),
@@ -413,6 +437,9 @@ export function buildDiagnosticsReport({
     }
     for (const [key, value] of Object.entries(summary)) lines.push(`${channel}.${key}=${value}`);
   }
+  lines.push("");
+  lines.push("## Health checks: states and counts only");
+  for (const [key, value] of Object.entries(summarizeSentinel(sentinelSummary))) lines.push(`sentinel.${key}=${value}`);
   lines.push("");
   lines.push("## Desktop crash events: no private details, event metadata only");
   if (desktopLogTail && desktopLogTail.trim()) {

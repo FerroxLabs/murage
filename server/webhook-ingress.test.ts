@@ -1,7 +1,7 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { listenWebhookIngress, MAX_WEBHOOK_BODY_BYTES, webhookCredential, type WebhookIngress } from "./webhook-ingress.ts";
 import { WebhookManager } from "./webhooks.ts";
@@ -115,5 +115,79 @@ describe("webhook-only ingress", () => {
     });
     expect(oversized.status).toBe(413);
     expect(manager.listAttempts().filter((attempt) => attempt.webhookId === manager.list().find((webhook) => webhook.endpointId === endpointId)?.id && attempt.outcome === "rejected").length).toBeGreaterThanOrEqual(3);
+  });
+});
+
+// THE LAST-RESORT CATCH (upstream 95a0787da, with the raw-message half of
+// 51e7a6886). node's HTTP server never looks at the promise an async handler
+// returns, so a throw outside the handler's own try (here, the rejection log
+// in its catch) became an unhandled rejection. And a failure nobody planned
+// for answered the sender with its own message.
+describe("failures nobody planned for", () => {
+  const failingManager = (receive: () => never, recordRejected: () => void) => ({
+    authorize: () => true,
+    recordUnauthorized: () => {},
+    receive,
+    recordRejected,
+  }) as unknown as WebhookManager;
+
+  const withReceiver = async (manager: WebhookManager, run: (baseUrl: string) => Promise<void>) => {
+    const receiver = await listenWebhookIngress(manager, { port: 0 });
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await run(receiver.baseUrl);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(unhandled).toEqual([]);
+      return logged.mock.calls.map((call) => call.map(String).join(" "));
+    } finally {
+      logged.mockRestore();
+      process.off("unhandledRejection", onUnhandled);
+      await new Promise<void>((resolve) => receiver.server.close(() => resolve()));
+    }
+  };
+
+  it("answers 500 when the rejection log itself fails, and keeps serving", async () => {
+    const manager = failingManager(
+      () => { throw Object.assign(new Error("bad payload"), { status: 400 }); },
+      () => { throw new Error("ENOSPC while writing /home/someone/.murage/webhooks.json"); },
+    );
+    const lines = await withReceiver(manager, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/hooks/wh_failing`, { method: "POST", body: "{}" });
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({ error: "Webhook receiver failed" });
+      expect((await fetch(`${baseUrl}/health`)).status).toBe(200);
+    });
+    expect(lines).toEqual(["webhooks: receiver failed (Error)"]);
+  });
+
+  it("never hands the sender, or the log, an unexpected failure's own words", async () => {
+    const manager = failingManager(
+      () => { throw Object.assign(new Error("database is locked at /home/someone/.murage/murage.db"), { code: "SQLITE_BUSY" }); },
+      () => {},
+    );
+    const lines = await withReceiver(manager, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/hooks/wh_failing`, { method: "POST", body: "{}" });
+      expect(response.status).toBe(500);
+      const text = await response.text();
+      expect(text).not.toContain("database is locked");
+      expect(JSON.parse(text)).toEqual({ error: "Webhook receiver failed" });
+    });
+    expect(lines).toEqual(["webhooks: receiver failed (Error SQLITE_BUSY)"]);
+    expect(lines.join("\n")).not.toContain(".murage");
+  });
+
+  it("still words its own refusals for the sender", async () => {
+    const manager = failingManager(
+      () => { throw Object.assign(new Error("This webhook is paused"), { status: 409 }); },
+      () => {},
+    );
+    await withReceiver(manager, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/hooks/wh_failing`, { method: "POST", body: "{}" });
+      expect(response.status).toBe(409);
+      expect(await response.json()).toEqual({ error: "This webhook is paused" });
+    });
   });
 });

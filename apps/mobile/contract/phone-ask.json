@@ -1,0 +1,956 @@
+{
+  "version": 1,
+  "notes": [
+    "Second native-only bearer, murage_pa_, minted on the same two bootstrap routes as murage_pj_ with scope ask. It carries no authority beyond targets, share and ask.",
+    "Signed mint message: UTF-8 of tag murage-phone-ask/1, origin, keyId, nonce and decimal expiresAt joined by LF, no trailing newline. Same signature rules as phone-jobs.json (ECDSA P-256 over SHA-256, ASN.1 DER, base64url). A jobs signature never verifies as an ask mint and the reverse.",
+    "Every body is strict: an unknown key, including via, origin and ownerActs, is refused with 422 and nothing is stored (plan B12).",
+    "Share body is multipart/form-data: part manifest (application/json) first, then item-1 .. item-n in n order, each with filename and the item mime. multipart.body is byte exact (CRLF line ends).",
+    "An entry in an invalid list with a repeat field has a body whose array at repeat.path holds one element; expand it to repeat.count copies before use.",
+    "targets carry no message text anywhere."
+  ],
+  "mint": {
+    "tag": "murage-phone-ask/1",
+    "ttlMs": 60000,
+    "vector": {
+      "origin": "https://desk.example.test",
+      "keyId": "mrECZafL2fN8wF9rShxVs--J6DoOdi-K3SHvG0_LWeI",
+      "nonce": "NS6VBeonKY5a1SRsQFufAEpjhlKFlWwSI9XfkuWm54k",
+      "expiresAt": 1700000060000,
+      "message": "murage-phone-ask/1\nhttps://desk.example.test\nmrECZafL2fN8wF9rShxVs--J6DoOdi-K3SHvG0_LWeI\nNS6VBeonKY5a1SRsQFufAEpjhlKFlWwSI9XfkuWm54k\n1700000060000",
+      "point": "BIZa-d_iR4M5mGzKgF0tJw8lgWgdojY7V3MGu3aIq6XAPmeDsJVzzpUvvBlezo071hcnIGqcLPz9-rnuoGEN-6s",
+      "signature": "MEQCIC7jZ2nTI2Uu7TNEvgn58IqSj2vUISubkQkSBzx3yshzAiAVp8CyQEKIUq9NGUFWJYvpXXAHgylWeP476KQkWSdSRw"
+    },
+    "crossPurpose": {
+      "note": "jobsVector is the phone-jobs.json mint vector: its signature must not verify as an ask mint over the same fields. askVectorAsJobs: this vector's signature must not verify over the jobs-tag message for the same fields.",
+      "jobsVector": {
+        "origin": "https://desk.example.test",
+        "keyId": "CRs0hRJp6cqo5r7XjQQDl05-6Km4X1ufbyIxN-hPGfg",
+        "nonce": "OkuxfhZAnhsXOW6cLSuQ-lVZ5eu3vfIb0uFyyqOALB8",
+        "expiresAt": 1700000060000,
+        "message": "murage-phone-jobs/1\nhttps://desk.example.test\nCRs0hRJp6cqo5r7XjQQDl05-6Km4X1ufbyIxN-hPGfg\nOkuxfhZAnhsXOW6cLSuQ-lVZ5eu3vfIb0uFyyqOALB8\n1700000060000",
+        "point": "BKDuw7UcSRJVx-_liZ4eqItubf-ptrSn8vJl0GX7vzW0CQiGeVQ4ST8kmZHKulsynn5OCbxLOMNVp-4IA6tTBgc",
+        "signature": "MEYCIQCZFIEc_hjZMdlvinVmzj02cUlCBU57xDyPStjM9bwfYQIhAJDjgbW7MAKHBV7C_x6Ifrb2lg11X8I1Sl1wGWk0hVl0"
+      },
+      "askVectorAsJobs": {
+        "message": "murage-phone-jobs/1\nhttps://desk.example.test\nmrECZafL2fN8wF9rShxVs--J6DoOdi-K3SHvG0_LWeI\nNS6VBeonKY5a1SRsQFufAEpjhlKFlWwSI9XfkuWm54k\n1700000060000"
+      }
+    }
+  },
+  "tokenRequest": {
+    "valid": {
+      "keyId": "mrECZafL2fN8wF9rShxVs--J6DoOdi-K3SHvG0_LWeI",
+      "nonce": "NS6VBeonKY5a1SRsQFufAEpjhlKFlWwSI9XfkuWm54k",
+      "expiresAt": 1700000060000,
+      "signature": "MEQCIC7jZ2nTI2Uu7TNEvgn58IqSj2vUISubkQkSBzx3yshzAiAVp8CyQEKIUq9NGUFWJYvpXXAHgylWeP476KQkWSdSRw",
+      "scope": "ask"
+    },
+    "alsoValid": [
+      {
+        "keyId": "mrECZafL2fN8wF9rShxVs--J6DoOdi-K3SHvG0_LWeI",
+        "nonce": "NS6VBeonKY5a1SRsQFufAEpjhlKFlWwSI9XfkuWm54k",
+        "expiresAt": 1700000060000,
+        "signature": "MEQCIC7jZ2nTI2Uu7TNEvgn58IqSj2vUISubkQkSBzx3yshzAiAVp8CyQEKIUq9NGUFWJYvpXXAHgylWeP476KQkWSdSRw",
+        "scope": "jobs"
+      },
+      {
+        "keyId": "mrECZafL2fN8wF9rShxVs--J6DoOdi-K3SHvG0_LWeI",
+        "nonce": "NS6VBeonKY5a1SRsQFufAEpjhlKFlWwSI9XfkuWm54k",
+        "expiresAt": 1700000060000,
+        "signature": "MEQCIC7jZ2nTI2Uu7TNEvgn58IqSj2vUISubkQkSBzx3yshzAiAVp8CyQEKIUq9NGUFWJYvpXXAHgylWeP476KQkWSdSRw"
+      }
+    ],
+    "missingScopeMeans": "jobs",
+    "invalid": [
+      {
+        "why": "scope admin",
+        "body": {
+          "keyId": "mrECZafL2fN8wF9rShxVs--J6DoOdi-K3SHvG0_LWeI",
+          "nonce": "NS6VBeonKY5a1SRsQFufAEpjhlKFlWwSI9XfkuWm54k",
+          "expiresAt": 1700000060000,
+          "signature": "MEQCIC7jZ2nTI2Uu7TNEvgn58IqSj2vUISubkQkSBzx3yshzAiAVp8CyQEKIUq9NGUFWJYvpXXAHgylWeP476KQkWSdSRw",
+          "scope": "admin"
+        }
+      },
+      {
+        "why": "extra key",
+        "body": {
+          "keyId": "mrECZafL2fN8wF9rShxVs--J6DoOdi-K3SHvG0_LWeI",
+          "nonce": "NS6VBeonKY5a1SRsQFufAEpjhlKFlWwSI9XfkuWm54k",
+          "expiresAt": 1700000060000,
+          "signature": "MEQCIC7jZ2nTI2Uu7TNEvgn58IqSj2vUISubkQkSBzx3yshzAiAVp8CyQEKIUq9NGUFWJYvpXXAHgylWeP476KQkWSdSRw",
+          "scope": "ask",
+          "via": "x"
+        }
+      },
+      {
+        "why": "signature missing",
+        "body": {
+          "keyId": "mrECZafL2fN8wF9rShxVs--J6DoOdi-K3SHvG0_LWeI",
+          "nonce": "NS6VBeonKY5a1SRsQFufAEpjhlKFlWwSI9XfkuWm54k",
+          "expiresAt": 1700000060000,
+          "scope": "ask"
+        }
+      }
+    ]
+  },
+  "token": {
+    "pattern": "^murage_pa_[A-Za-z0-9_-]{43}$",
+    "valid": [
+      "murage_pa_g8ztnY2gIfh2ybLRAomEoGQxjpPC4mCu4BJw_EYM6yY",
+      "murage_pa_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    ],
+    "invalid": [
+      "murage_pj_v7x01OCV2cEBcEveHDm-9blHuwmnsBwn1cjVgIhOgIs",
+      "murage_pa_g8ztnY2gIfh2ybLRAomEoGQxjpPC4mCu4BJw_EYM6y",
+      "murage_pa_g8ztnY2gIfh2ybLRAomEoGQxjpPC4mCu4BJw_EYM6yYY",
+      "pa_g8ztnY2gIfh2ybLRAomEoGQxjpPC4mCu4BJw_EYM6yY",
+      "murage_pa_g8ztnY2gIfh2ybLRAomEoGQxjpPC4mCu4BJw+EYM6yY"
+    ]
+  },
+  "targets": {
+    "answer": {
+      "workspace": "Home",
+      "bots": [
+        {
+          "id": "bot-lena",
+          "name": "Lena",
+          "avatar": null,
+          "mainThreadId": "6c1e2f40-5b7d-4a93-8e16-0f2d9a7b3c58"
+        },
+        {
+          "id": "bot-max",
+          "name": "Max",
+          "avatar": "avatars/max.png",
+          "mainThreadId": "b2a4d6f8-1c3e-4057-9a8b-7d6e5f4c3b2a"
+        }
+      ],
+      "recent": [
+        {
+          "botId": "bot-lena",
+          "threadId": "6c1e2f40-5b7d-4a93-8e16-0f2d9a7b3c58",
+          "title": "Friday review",
+          "at": 1700000000000
+        }
+      ]
+    },
+    "recentMax": 8,
+    "invalid": [
+      {
+        "why": "message text in a bot",
+        "body": {
+          "workspace": "Home",
+          "bots": [
+            {
+              "id": "bot-lena",
+              "name": "Lena",
+              "avatar": null,
+              "mainThreadId": "6c1e2f40-5b7d-4a93-8e16-0f2d9a7b3c58",
+              "text": "hi"
+            }
+          ],
+          "recent": []
+        }
+      },
+      {
+        "why": "9 recent",
+        "body": {
+          "workspace": "Home",
+          "bots": [],
+          "recent": [
+            {
+              "botId": "bot-lena",
+              "threadId": "6c1e2f40-5b7d-4a93-8e16-0f2d9a7b3c58",
+              "title": "Friday review",
+              "at": 1700000000000
+            }
+          ]
+        },
+        "repeat": {
+          "path": "recent",
+          "count": 9
+        }
+      },
+      {
+        "why": "avatar missing",
+        "body": {
+          "workspace": "Home",
+          "bots": [
+            {
+              "id": "bot-lena",
+              "name": "Lena",
+              "mainThreadId": "6c1e2f40-5b7d-4a93-8e16-0f2d9a7b3c58"
+            }
+          ],
+          "recent": []
+        }
+      }
+    ]
+  },
+  "share": {
+    "manifest": {
+      "valid": {
+        "shareId": "share_0001_abcdefgh",
+        "botId": "bot-lena",
+        "threadId": "new",
+        "note": "For the Friday review",
+        "text": "Notes from the call",
+        "url": "https://example.test/page",
+        "items": [
+          {
+            "n": 1,
+            "name": "note.txt",
+            "mime": "text/plain",
+            "bytes": 6,
+            "sha256": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03"
+          },
+          {
+            "n": 2,
+            "name": "data.csv",
+            "mime": "text/csv",
+            "bytes": 8,
+            "sha256": "492d5ea496056f1a6a6592241032fab764c321596317930b4fa0e1e8bc3b7470"
+          }
+        ]
+      },
+      "alsoValid": [
+        {
+          "shareId": "share_0002_abcdefgh",
+          "botId": "bot-lena",
+          "threadId": "6c1e2f40-5b7d-4a93-8e16-0f2d9a7b3c58",
+          "text": "Just a line",
+          "items": []
+        },
+        {
+          "shareId": "share_0003_abcdefgh",
+          "botId": "bot-max",
+          "threadId": "new",
+          "url": "https://example.test/a",
+          "items": []
+        }
+      ]
+    },
+    "multipart": {
+      "boundary": "murage-share-boundary-0001",
+      "contentType": "multipart/form-data; boundary=murage-share-boundary-0001",
+      "order": [
+        "manifest",
+        "item-1",
+        "item-n"
+      ],
+      "body": "--murage-share-boundary-0001\r\nContent-Disposition: form-data; name=\"manifest\"\r\nContent-Type: application/json\r\n\r\n{\"shareId\":\"share_0001_abcdefgh\",\"botId\":\"bot-lena\",\"threadId\":\"new\",\"note\":\"For the Friday review\",\"text\":\"Notes from the call\",\"url\":\"https://example.test/page\",\"items\":[{\"n\":1,\"name\":\"note.txt\",\"mime\":\"text/plain\",\"bytes\":6,\"sha256\":\"5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03\"},{\"n\":2,\"name\":\"data.csv\",\"mime\":\"text/csv\",\"bytes\":8,\"sha256\":\"492d5ea496056f1a6a6592241032fab764c321596317930b4fa0e1e8bc3b7470\"}]}\r\n--murage-share-boundary-0001\r\nContent-Disposition: form-data; name=\"item-1\"; filename=\"note.txt\"\r\nContent-Type: text/plain\r\n\r\nhello\n\r\n--murage-share-boundary-0001\r\nContent-Disposition: form-data; name=\"item-2\"; filename=\"data.csv\"\r\nContent-Type: text/csv\r\n\r\na,b\n1,2\n\r\n--murage-share-boundary-0001--\r\n",
+      "items": [
+        {
+          "n": 1,
+          "filename": "note.txt",
+          "mime": "text/plain",
+          "text": "hello\n"
+        },
+        {
+          "n": 2,
+          "filename": "data.csv",
+          "mime": "text/csv",
+          "text": "a,b\n1,2\n"
+        }
+      ]
+    },
+    "answers": {
+      "ok": [
+        {
+          "status": 200,
+          "body": {
+            "state": "sent",
+            "threadId": "6c1e2f40-5b7d-4a93-8e16-0f2d9a7b3c58",
+            "messageId": "m-0001"
+          }
+        },
+        {
+          "status": 200,
+          "body": {
+            "state": "sent",
+            "threadId": "6c1e2f40-5b7d-4a93-8e16-0f2d9a7b3c58",
+            "queueId": "q-0001"
+          }
+        }
+      ],
+      "errors": [
+        {
+          "status": 409,
+          "body": {
+            "error": "This share was already sent a different way.",
+            "code": "conflict"
+          }
+        },
+        {
+          "status": 409,
+          "body": {
+            "error": "That bot or chat is no longer there.",
+            "code": "target_gone"
+          }
+        },
+        {
+          "status": 413,
+          "body": {
+            "error": "That share is too large.",
+            "code": "too_large"
+          }
+        },
+        {
+          "status": 415,
+          "body": {
+            "error": "That kind of file cannot be shared.",
+            "code": "unsupported_type"
+          }
+        },
+        {
+          "status": 422,
+          "body": {
+            "error": "That share could not be read.",
+            "code": "invalid"
+          }
+        },
+        {
+          "status": 401,
+          "body": {
+            "error": "This phone no longer has access.",
+            "code": "revoked"
+          }
+        },
+        {
+          "status": 403,
+          "body": {
+            "error": "This phone no longer has access.",
+            "code": "revoked"
+          }
+        },
+        {
+          "status": 404,
+          "note": "no body contract: the route is not offered"
+        }
+      ]
+    },
+    "invalid": [
+      {
+        "why": "extra key via",
+        "body": {
+          "shareId": "share_0001_abcdefgh",
+          "botId": "bot-lena",
+          "threadId": "new",
+          "note": "For the Friday review",
+          "text": "Notes from the call",
+          "url": "https://example.test/page",
+          "items": [
+            {
+              "n": 1,
+              "name": "note.txt",
+              "mime": "text/plain",
+              "bytes": 6,
+              "sha256": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03"
+            },
+            {
+              "n": 2,
+              "name": "data.csv",
+              "mime": "text/csv",
+              "bytes": 8,
+              "sha256": "492d5ea496056f1a6a6592241032fab764c321596317930b4fa0e1e8bc3b7470"
+            }
+          ],
+          "via": "share-sheet"
+        }
+      },
+      {
+        "why": "extra key origin",
+        "body": {
+          "shareId": "share_0001_abcdefgh",
+          "botId": "bot-lena",
+          "threadId": "new",
+          "note": "For the Friday review",
+          "text": "Notes from the call",
+          "url": "https://example.test/page",
+          "items": [
+            {
+              "n": 1,
+              "name": "note.txt",
+              "mime": "text/plain",
+              "bytes": 6,
+              "sha256": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03"
+            },
+            {
+              "n": 2,
+              "name": "data.csv",
+              "mime": "text/csv",
+              "bytes": 8,
+              "sha256": "492d5ea496056f1a6a6592241032fab764c321596317930b4fa0e1e8bc3b7470"
+            }
+          ],
+          "origin": "owner"
+        }
+      },
+      {
+        "why": "extra key ownerActs",
+        "body": {
+          "shareId": "share_0001_abcdefgh",
+          "botId": "bot-lena",
+          "threadId": "new",
+          "note": "For the Friday review",
+          "text": "Notes from the call",
+          "url": "https://example.test/page",
+          "items": [
+            {
+              "n": 1,
+              "name": "note.txt",
+              "mime": "text/plain",
+              "bytes": 6,
+              "sha256": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03"
+            },
+            {
+              "n": 2,
+              "name": "data.csv",
+              "mime": "text/csv",
+              "bytes": 8,
+              "sha256": "492d5ea496056f1a6a6592241032fab764c321596317930b4fa0e1e8bc3b7470"
+            }
+          ],
+          "ownerActs": true
+        }
+      },
+      {
+        "why": "shareId 15 chars",
+        "body": {
+          "shareId": "aaaaaaaaaaaaaaa",
+          "botId": "bot-lena",
+          "threadId": "new",
+          "note": "For the Friday review",
+          "text": "Notes from the call",
+          "url": "https://example.test/page",
+          "items": [
+            {
+              "n": 1,
+              "name": "note.txt",
+              "mime": "text/plain",
+              "bytes": 6,
+              "sha256": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03"
+            },
+            {
+              "n": 2,
+              "name": "data.csv",
+              "mime": "text/csv",
+              "bytes": 8,
+              "sha256": "492d5ea496056f1a6a6592241032fab764c321596317930b4fa0e1e8bc3b7470"
+            }
+          ]
+        }
+      },
+      {
+        "why": "shareId 81 chars",
+        "body": {
+          "shareId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "botId": "bot-lena",
+          "threadId": "new",
+          "note": "For the Friday review",
+          "text": "Notes from the call",
+          "url": "https://example.test/page",
+          "items": [
+            {
+              "n": 1,
+              "name": "note.txt",
+              "mime": "text/plain",
+              "bytes": 6,
+              "sha256": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03"
+            },
+            {
+              "n": 2,
+              "name": "data.csv",
+              "mime": "text/csv",
+              "bytes": 8,
+              "sha256": "492d5ea496056f1a6a6592241032fab764c321596317930b4fa0e1e8bc3b7470"
+            }
+          ]
+        }
+      },
+      {
+        "why": "shareId bad characters",
+        "body": {
+          "shareId": "share 0001 abcdefgh",
+          "botId": "bot-lena",
+          "threadId": "new",
+          "note": "For the Friday review",
+          "text": "Notes from the call",
+          "url": "https://example.test/page",
+          "items": [
+            {
+              "n": 1,
+              "name": "note.txt",
+              "mime": "text/plain",
+              "bytes": 6,
+              "sha256": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03"
+            },
+            {
+              "n": 2,
+              "name": "data.csv",
+              "mime": "text/csv",
+              "bytes": 8,
+              "sha256": "492d5ea496056f1a6a6592241032fab764c321596317930b4fa0e1e8bc3b7470"
+            }
+          ]
+        }
+      },
+      {
+        "why": "11 items",
+        "body": {
+          "shareId": "share_0001_abcdefgh",
+          "botId": "bot-lena",
+          "threadId": "new",
+          "note": "For the Friday review",
+          "text": "Notes from the call",
+          "url": "https://example.test/page",
+          "items": [
+            {
+              "n": 1,
+              "name": "f1.txt",
+              "mime": "text/plain",
+              "bytes": 1,
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+            },
+            {
+              "n": 2,
+              "name": "f2.txt",
+              "mime": "text/plain",
+              "bytes": 1,
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+            },
+            {
+              "n": 3,
+              "name": "f3.txt",
+              "mime": "text/plain",
+              "bytes": 1,
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+            },
+            {
+              "n": 4,
+              "name": "f4.txt",
+              "mime": "text/plain",
+              "bytes": 1,
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+            },
+            {
+              "n": 5,
+              "name": "f5.txt",
+              "mime": "text/plain",
+              "bytes": 1,
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+            },
+            {
+              "n": 6,
+              "name": "f6.txt",
+              "mime": "text/plain",
+              "bytes": 1,
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+            },
+            {
+              "n": 7,
+              "name": "f7.txt",
+              "mime": "text/plain",
+              "bytes": 1,
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+            },
+            {
+              "n": 8,
+              "name": "f8.txt",
+              "mime": "text/plain",
+              "bytes": 1,
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+            },
+            {
+              "n": 9,
+              "name": "f9.txt",
+              "mime": "text/plain",
+              "bytes": 1,
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+            },
+            {
+              "n": 10,
+              "name": "f10.txt",
+              "mime": "text/plain",
+              "bytes": 1,
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+            },
+            {
+              "n": 11,
+              "name": "f11.txt",
+              "mime": "text/plain",
+              "bytes": 1,
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          ]
+        }
+      },
+      {
+        "why": "item mime outside share-types.json",
+        "body": {
+          "shareId": "share_0001_abcdefgh",
+          "botId": "bot-lena",
+          "threadId": "new",
+          "note": "For the Friday review",
+          "text": "Notes from the call",
+          "url": "https://example.test/page",
+          "items": [
+            {
+              "n": 1,
+              "name": "f1.txt",
+              "mime": "application/zip",
+              "bytes": 1,
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          ]
+        }
+      },
+      {
+        "why": "item mime html",
+        "body": {
+          "shareId": "share_0001_abcdefgh",
+          "botId": "bot-lena",
+          "threadId": "new",
+          "note": "For the Friday review",
+          "text": "Notes from the call",
+          "url": "https://example.test/page",
+          "items": [
+            {
+              "n": 1,
+              "name": "f1.txt",
+              "mime": "text/html",
+              "bytes": 1,
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          ]
+        }
+      },
+      {
+        "why": "items not numbered from 1",
+        "body": {
+          "shareId": "share_0001_abcdefgh",
+          "botId": "bot-lena",
+          "threadId": "new",
+          "note": "For the Friday review",
+          "text": "Notes from the call",
+          "url": "https://example.test/page",
+          "items": [
+            {
+              "n": 2,
+              "name": "f2.txt",
+              "mime": "text/plain",
+              "bytes": 1,
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          ]
+        }
+      },
+      {
+        "why": "items out of order",
+        "body": {
+          "shareId": "share_0001_abcdefgh",
+          "botId": "bot-lena",
+          "threadId": "new",
+          "note": "For the Friday review",
+          "text": "Notes from the call",
+          "url": "https://example.test/page",
+          "items": [
+            {
+              "n": 2,
+              "name": "f2.txt",
+              "mime": "text/plain",
+              "bytes": 1,
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+            },
+            {
+              "n": 1,
+              "name": "f1.txt",
+              "mime": "text/plain",
+              "bytes": 1,
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          ]
+        }
+      },
+      {
+        "why": "item sha256 63 chars",
+        "body": {
+          "shareId": "share_0001_abcdefgh",
+          "botId": "bot-lena",
+          "threadId": "new",
+          "note": "For the Friday review",
+          "text": "Notes from the call",
+          "url": "https://example.test/page",
+          "items": [
+            {
+              "n": 1,
+              "name": "f1.txt",
+              "mime": "text/plain",
+              "bytes": 1,
+              "sha256": "000000000000000000000000000000000000000000000000000000000000000"
+            }
+          ]
+        }
+      },
+      {
+        "why": "item extra key",
+        "body": {
+          "shareId": "share_0001_abcdefgh",
+          "botId": "bot-lena",
+          "threadId": "new",
+          "note": "For the Friday review",
+          "text": "Notes from the call",
+          "url": "https://example.test/page",
+          "items": [
+            {
+              "n": 1,
+              "name": "f1.txt",
+              "mime": "text/plain",
+              "bytes": 1,
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+              "path": "/tmp/x"
+            }
+          ]
+        }
+      },
+      {
+        "why": "threadId not new and not a UUID",
+        "body": {
+          "shareId": "share_0001_abcdefgh",
+          "botId": "bot-lena",
+          "threadId": "thread-1",
+          "note": "For the Friday review",
+          "text": "Notes from the call",
+          "url": "https://example.test/page",
+          "items": [
+            {
+              "n": 1,
+              "name": "note.txt",
+              "mime": "text/plain",
+              "bytes": 6,
+              "sha256": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03"
+            },
+            {
+              "n": 2,
+              "name": "data.csv",
+              "mime": "text/csv",
+              "bytes": 8,
+              "sha256": "492d5ea496056f1a6a6592241032fab764c321596317930b4fa0e1e8bc3b7470"
+            }
+          ]
+        }
+      },
+      {
+        "why": "note over 2000 chars",
+        "body": {
+          "shareId": "share_0001_abcdefgh",
+          "botId": "bot-lena",
+          "threadId": "new",
+          "note": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+          "text": "Notes from the call",
+          "url": "https://example.test/page",
+          "items": [
+            {
+              "n": 1,
+              "name": "note.txt",
+              "mime": "text/plain",
+              "bytes": 6,
+              "sha256": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03"
+            },
+            {
+              "n": 2,
+              "name": "data.csv",
+              "mime": "text/csv",
+              "bytes": 8,
+              "sha256": "492d5ea496056f1a6a6592241032fab764c321596317930b4fa0e1e8bc3b7470"
+            }
+          ]
+        }
+      },
+      {
+        "why": "url not http or https",
+        "body": {
+          "shareId": "share_0001_abcdefgh",
+          "botId": "bot-lena",
+          "threadId": "new",
+          "note": "For the Friday review",
+          "text": "Notes from the call",
+          "url": "file:///etc/hosts",
+          "items": [
+            {
+              "n": 1,
+              "name": "note.txt",
+              "mime": "text/plain",
+              "bytes": 6,
+              "sha256": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03"
+            },
+            {
+              "n": 2,
+              "name": "data.csv",
+              "mime": "text/csv",
+              "bytes": 8,
+              "sha256": "492d5ea496056f1a6a6592241032fab764c321596317930b4fa0e1e8bc3b7470"
+            }
+          ]
+        }
+      },
+      {
+        "why": "nothing to share",
+        "body": {
+          "shareId": "share_0001_abcdefgh",
+          "botId": "bot-lena",
+          "threadId": "new",
+          "items": []
+        }
+      },
+      {
+        "why": "botId missing",
+        "body": {
+          "shareId": "share_0001_abcdefgh",
+          "threadId": "new",
+          "note": "For the Friday review",
+          "text": "Notes from the call",
+          "url": "https://example.test/page",
+          "items": [
+            {
+              "n": 1,
+              "name": "note.txt",
+              "mime": "text/plain",
+              "bytes": 6,
+              "sha256": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03"
+            },
+            {
+              "n": 2,
+              "name": "data.csv",
+              "mime": "text/csv",
+              "bytes": 8,
+              "sha256": "492d5ea496056f1a6a6592241032fab764c321596317930b4fa0e1e8bc3b7470"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "ask": {
+    "request": {
+      "askId": "ask_0001_abcdefghij",
+      "botId": "bot-lena",
+      "text": "What is on my calendar tomorrow?"
+    },
+    "answer": {
+      "state": "sent",
+      "askId": "ask_0001_abcdefghij",
+      "threadId": "6c1e2f40-5b7d-4a93-8e16-0f2d9a7b3c58",
+      "id": "m-0002",
+      "notify": true
+    },
+    "errors": [
+      {
+        "status": 409,
+        "body": {
+          "error": "This ask was already sent a different way.",
+          "code": "conflict"
+        }
+      },
+      {
+        "status": 409,
+        "body": {
+          "error": "That bot is no longer there.",
+          "code": "target_gone"
+        }
+      },
+      {
+        "status": 422,
+        "body": {
+          "error": "That ask could not be read.",
+          "code": "invalid"
+        }
+      },
+      {
+        "status": 401,
+        "body": {
+          "error": "This phone no longer has access.",
+          "code": "revoked"
+        }
+      },
+      {
+        "status": 403,
+        "body": {
+          "error": "This phone no longer has access.",
+          "code": "revoked"
+        }
+      },
+      {
+        "status": 404,
+        "note": "no body contract: the route is not offered"
+      }
+    ],
+    "invalid": [
+      {
+        "why": "extra key via",
+        "body": {
+          "askId": "ask_0001_abcdefghij",
+          "botId": "bot-lena",
+          "text": "What is on my calendar tomorrow?",
+          "via": "ask-sheet"
+        }
+      },
+      {
+        "why": "extra key origin",
+        "body": {
+          "askId": "ask_0001_abcdefghij",
+          "botId": "bot-lena",
+          "text": "What is on my calendar tomorrow?",
+          "origin": "owner"
+        }
+      },
+      {
+        "why": "extra key ownerActs",
+        "body": {
+          "askId": "ask_0001_abcdefghij",
+          "botId": "bot-lena",
+          "text": "What is on my calendar tomorrow?",
+          "ownerActs": true
+        }
+      },
+      {
+        "why": "askId 15 chars",
+        "body": {
+          "askId": "aaaaaaaaaaaaaaa",
+          "botId": "bot-lena",
+          "text": "What is on my calendar tomorrow?"
+        }
+      },
+      {
+        "why": "askId 81 chars",
+        "body": {
+          "askId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "botId": "bot-lena",
+          "text": "What is on my calendar tomorrow?"
+        }
+      },
+      {
+        "why": "botId missing",
+        "body": {
+          "askId": "ask_0001_abcdefghij",
+          "text": "What is on my calendar tomorrow?"
+        }
+      },
+      {
+        "why": "empty text",
+        "body": {
+          "askId": "ask_0001_abcdefghij",
+          "botId": "bot-lena",
+          "text": ""
+        }
+      }
+    ]
+  },
+  "limits": {
+    "maxItems": 10,
+    "maxShareBytes": 62914560,
+    "doorMaxBytes": 67108864,
+    "imageMaxBytes": 10485760,
+    "fileMaxBytes": 26214400,
+    "noteMaxChars": 2000
+  }
+}

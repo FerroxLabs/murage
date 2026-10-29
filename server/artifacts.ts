@@ -96,6 +96,9 @@ export {
   directory as safeArtifactDirectory,
   sourceFile as verifiedArtifactSource,
   fingerprint as artifactSourceFingerprint,
+  // 1.0.9 bot email attachments (server/email/attachments.ts) run registerArtifact's whole verified read, not a copy of it
+  readVerified as readVerifiedArtifactFile,
+  same as sameArtifactStat,
 };
 function readVerified(path: string, limit: number, expected?: Stats) {
   const before = expected ?? lstatSync(path);
@@ -285,6 +288,22 @@ export function listArtifacts(db: DatabaseSync, storageRoot: string, query: Arti
   const total = Number(db.prepare(`SELECT COUNT(*) AS n FROM artifacts WHERE ${predicate}`).get(...args)?.n ?? 0);
   const rows = db.prepare(`SELECT * FROM artifacts WHERE ${predicate} ORDER BY created_at DESC,id LIMIT ? OFFSET ?`).all(...args, pageSize, page * pageSize) as unknown as Row[];
   return { items: rows.map(row => publicRow(row, matching(row, access)!, storageRoot)), total, page, pageSize };
+}
+
+/** ROUTINE-DELIVER-1010: the Files ids of the outputs published in one routine run's own conversation (images and workspace outputs,
+ * by their receipts, made in [from, to] even when a file's card is written later), oldest first, at most `limit`. Read through
+ * output_publications_stage from `from`: the work is the outputs saved since the run started, never the Files history. */
+export function runPublishedArtifactIds(db: DatabaseSync, input: { botId: string; threadId: string; from: number; to: number; limit: number }): string[] {
+  const rows = db.prepare("SELECT artifact_id AS id FROM output_publications INDEXED BY output_publications_stage WHERE stage='registered' AND updated_at>=? AND bot_id=? AND thread_id=? AND created_at>=? AND created_at<=? AND artifact_id IS NOT NULL ORDER BY created_at ASC, id LIMIT ?")
+    .all(input.from, input.botId, input.threadId, input.from, input.to, input.limit) as Array<{ id: string }>;
+  return rows.map(row => row.id);
+}
+
+/** ROUTINE-DELIVER-1010: true while this conversation still has an output it is saving (a receipt retained or attached, touched since
+ * `since`): a routine run's result waits for it. Read through output_publications_stage: the work is the outputs still in flight. */
+export function publicationUnsettled(db: DatabaseSync, input: { botId: string; threadId: string; since: number }): boolean {
+  return db.prepare("SELECT 1 FROM output_publications INDEXED BY output_publications_stage WHERE stage IN ('retained','attached') AND updated_at>=? AND bot_id=? AND thread_id=? LIMIT 1")
+    .get(input.since, input.botId, input.threadId) !== undefined;
 }
 
 export function describeArtifact(db: DatabaseSync, storageRoot: string, id: string, access: ArtifactAccess): Artifact {

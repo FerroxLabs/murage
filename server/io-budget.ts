@@ -11,6 +11,8 @@ import type { DatabaseSync, StatementSync } from "node:sqlite";
 import { turnTraceEnabled } from "./turn-trace.ts";
 import { activeTaskName, oldestLongOp, rateLimited, reportSlowSql, SLOW_SQL_MS } from "./observe.ts";
 import { systemLoad } from "./system-load.ts";
+import { HEALTH_LIMITS, type IoSample, type IoSourceClass } from "../shared/health-protocol.mjs";
+import { recordFact } from "./health/counters.ts";
 
 export const IO_BUDGET_INTERVAL_MS = 60_000;
 export const IO_BUDGET_BYTES_PER_MINUTE = 50 * 1024 * 1024;
@@ -40,6 +42,9 @@ export interface IoBudgetOptions {
   onMemoryWork?: () => void;
   /** The whole computer is overloaded (default: the system-load sampler, which reads nothing until started). */
   systemOverloaded?: () => { overloaded: boolean; why: string } | null;
+  /** Told every judged minute, calm and zero minutes included (1.0.9 Sentinel's io-minute fact). Enums and byte counts
+   *  only: never statement text or a file path. A throw is ignored. */
+  onSample?: (sample: IoSample) => void;
 }
 
 export function readProcess(): IoReading {
@@ -66,6 +71,7 @@ export class IoBudget {
   private isIdle: () => boolean;
   private onMemoryWork?: () => void;
   private systemOverloaded: () => { overloaded: boolean; why: string } | null;
+  private onSample?: (sample: IoSample) => void;
   private deferredSource: string | null = null;
   private deferUntil = 0;
   /** Bytes written in the last minute under a budget of their own (the revoke marker's, revoke-budget.ts): planned, capped there, and
@@ -90,12 +96,14 @@ export class IoBudget {
     this.isIdle = options.isIdle ?? (() => false);
     this.onMemoryWork = options.onMemoryWork;
     this.systemOverloaded = options.systemOverloaded ?? (() => systemLoad.reading());
+    this.onSample = options.onSample;
   }
 
   /** Replace the listener told when the scale changes. */
   setOnScale(listener: (scale: number) => void): void { this.onScale = listener; }
   setIsIdle(read: () => boolean): void { this.isIdle = read; }
   setOnMemoryWork(listener: () => void): void { this.onMemoryWork = listener; }
+  setOnSample(listener: ((sample: IoSample) => void) | undefined): void { this.onSample = listener; }
   /** A reader of the bytes a writer with its own budget wrote in the last minute (null: none), and the most it is believed for (its budget
    *  plus a margin): the exemption is for a writer that keeps to its plan, never a blank cheque. */
   setPlannedBytes(read: (() => number) | null, capBytesPerMinute = Number.POSITIVE_INFINITY): void { this.plannedBytes = read; this.plannedCap = capBytesPerMinute > 0 ? capBytesPerMinute : Number.POSITIVE_INFINITY; }
@@ -253,6 +261,19 @@ export class IoBudget {
       this.setScale(Math.max(1, this.scale / 2));
       if (this.scale === 1) this.deferredSource = null;
     }
+    if (this.onSample) {
+      const intervalMs = reading.at - previous.at;
+      let top: string | undefined, topBytes = -1;
+      for (const [name, bytes] of this.bytes) if (bytes > topBytes) { top = name; topBytes = bytes; }
+      const sample: IoSample = {
+        idle, intervalMs, osBytes, applicationBytes, plannedBytesAllowed: Math.round(planned),
+        chargedBytes: Math.round(Math.max(0, Math.max(osBytes, applicationBytes) - planned)), budgetBytes: budget,
+        cpuFraction: Math.min(1, Math.max(0, Number.isFinite(cpu) ? cpu : 0)), pollScale: this.scale, sourceClass: ioSourceClass(top),
+        // A minute far longer than the timer's is a suspend or a clock jump; the sample is reported but never valid.
+        discontinuity: intervalMs > HEALTH_LIMITS.ioSampleMaxMs,
+      };
+      try { this.onSample(sample); } catch { /* telemetry never changes the watchdog */ }
+    }
     this.bytes.clear();
     return { writeBytesPerMinute, cpu, tripped, source: this.deferredSource };
   }
@@ -308,7 +329,22 @@ export function shortStatement(sql: string): string {
 }
 
 /** The process-wide watchdog. index.ts starts it; database.ts feeds it. */
-export const ioBudget = new IoBudget();
+/** The closed source class a byte source name falls in (1.0.9 Sentinel): the file name of an instrumented database, the
+ *  memory helper, or `other`. Never the name or path itself. */
+export function ioSourceClass(source: string | undefined): IoSourceClass {
+  if (!source) return "other";
+  if (source === "memory-worker") return "memory";
+  const file = source.startsWith("database:") ? source.slice("database:".length).split(/[\\/]/).pop() ?? "" : "";
+  switch (file) {
+    case "messages.db": return "messages-db";
+    case "memory-index.db": return "memory-index-db";
+    case "skill-index.db": return "skill-index-db";
+    case "connected-app-ledger.db": return "connected-app-ledger-db";
+    default: return "other";
+  }
+}
+
+export const ioBudget = new IoBudget({ onSample: sample => recordFact({ kind: "io-minute", ...sample }) });
 
 /** File growth is cumulative across truncation and recreation between samples.
  * Existing bytes form the baseline. In-place rewrites need explicit counters. */

@@ -33,6 +33,29 @@ export function supportedFuigoVersion(version: string): boolean {
   const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
   return !!match && match[1] === "1" && (Number(match[2]) > 0 || Number(match[3]) >= 9);
 }
+/** The highest Fuigo release this Murage version is qualified for: the version
+ * scripts/prepare-fuigo.mjs bundles and the release gates test (FUIGO_VERSION).
+ * A test keeps the two equal, so bumping the bundled pin moves this cap too.
+ * Managed updates never offer or stage a newer release, because later releases
+ * can change the ACP contract Murage speaks (Fuigo 1.0.35 asks for every command
+ * in a folder trusted under folderTrust v1). An owner already on a newer
+ * release is left on it: receipts, rollback and status still accept it. */
+export const QUALIFIED_FUIGO_VERSION = "1.0.32";
+function parts(version: string): number[] { return version.split(".").map(Number); }
+/** True when `a` is a later release than `b` (both x.y.z). */
+export function fuigoVersionNewer(a: string, b: string): boolean {
+  const aa = parts(a), bb = parts(b);
+  for (let i = 0; i < 3; i++) { if (aa[i] !== bb[i]) return aa[i]! > bb[i]!; }
+  return false;
+}
+/** Supported and not newer than the qualified cap: safe to offer and stage. */
+export function qualifiedFuigoVersion(version: string): boolean {
+  return supportedFuigoVersion(version) && !fuigoVersionNewer(version, QUALIFIED_FUIGO_VERSION);
+}
+/** The release managed updates offer for a registry `latest`: never above the cap. */
+export function offeredFuigoVersion(latest: string): string {
+  return /^\d+\.\d+\.\d+$/.test(latest) && fuigoVersionNewer(latest, QUALIFIED_FUIGO_VERSION) ? QUALIFIED_FUIGO_VERSION : latest;
+}
 export function nativeFuigoTarget(bytes: Buffer): string | null {
   // Same executable formats staged by prepare-fuigo/prepare-cloudflared.
   if (bytes.length >= 8 && bytes.readUInt32LE(0) === 0xfeedfacf) {
@@ -222,7 +245,7 @@ export async function managedFuigoReceipt(root: string, id: string, cli?: string
 }
 export async function stageNativeFuigo(options: { root: string; id: string; version: string; target: string; fetcher?: typeof fetch; probe?: FuigoProbe; previousManagedCli?: string }): Promise<string> {
   const { root, id, version, target } = options;
-  if (!/^[A-Za-z0-9][\w.-]{0,79}$/.test(id) || !supportedFuigoVersion(version) || !(FUIGO_TARGETS as readonly string[]).includes(target)) throw new Error("This Fuigo release or platform is not supported by this Murage version.");
+  if (!/^[A-Za-z0-9][\w.-]{0,79}$/.test(id) || !qualifiedFuigoVersion(version) || !(FUIGO_TARGETS as readonly string[]).includes(target)) throw new Error("This Fuigo release or platform is not supported by this Murage version.");
   const fetcher = options.fetcher ?? fetch, packageName = `@fuigo/${target}`;
   const tarball = `${REGISTRY}/@fuigo/${target}/-/${target}-${version}.tgz`;
   const response = await fetcher(`${REGISTRY}/${encodeURIComponent(packageName)}/${version}`, { redirect: "error", signal: AbortSignal.timeout(15000) });

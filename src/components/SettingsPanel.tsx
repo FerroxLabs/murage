@@ -37,6 +37,9 @@ import { VoiceSettings } from "./VoiceSettings";
 import { BOT_PROFILE_LIMITS } from "../../shared/bot-profile";
 import { Switch } from "./SettingsPrimitives";
 import { BotAccessSettings } from "./BotAccessSettings";
+import { PhoneAccessCard } from "./PhoneAccessCard";
+import { PhoneForBotsRow } from "./PhoneForBotsRow";
+import { BotEmailAccessLine, BotEmailSectionHost } from "./BotEmailSettings";
 import { MemoryLauncher } from "./MemoryLauncher";
 import { ContinuityBlock } from "./ContinuityBlock";
 import { activeSettingsRole, settingsRoleLabel, type BotSettingsSection } from "./bot-settings-sections";
@@ -686,6 +689,8 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
           </div>
 
           <BotAccessSettings key={`access-${bot.id}`} botId={bot.id} />
+          <PhoneAccessCard key={`phone-${bot.id}`} bot={bot} />
+          <PhoneForBotsRow />
 
           <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
             <div>
@@ -838,6 +843,11 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
           <SettingsSection id="access" active={section}>
           <WorkingFolder bot={bot} />
           <PublishedSitesPanel bot={bot} />
+          {/* bot email section 8: only for an install that had email on and lost its Flux key */}
+          <BotEmailAccessLine />
+          </SettingsSection>
+          <SettingsSection id="email" active={section}>
+          <BotEmailSectionHost bot={bot} />
           </SettingsSection>
 
 

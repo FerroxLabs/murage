@@ -16,6 +16,7 @@ import { RoutineRunsJournal, routinesCommit } from "./routine-runs-journal.ts";
 import { isTracked, plainCopy, track, untracked } from "./tracked-state.ts";
 import { PersistedStateRecoveryError, readPersistedJson } from "./persisted-state.ts";
 import { redactSecretsInText } from "./redact.ts";
+import { fenceEmailDerived } from "./email/external-marks.ts";
 import { CLOUD_ROUTINE_NOT_YET, PROJECT_CLOSED_COPY, type RoutineRunCardData } from "../shared/routine-run.ts";
 import type { GroupGoalRunStatus } from "../shared/group-goal-run.ts";
 import type { RoutineRequestOperation } from "../shared/routine-request.ts";
@@ -86,6 +87,8 @@ const isOpen = (status: RoutineRunStatus) => OPEN_RUN_STATUSES.includes(status);
 export const isOpenRoutineRunStatus = (status: RoutineRunStatus): boolean => isOpen(status);
 /** Running, waiting, or waiting on you: the run owns a live turn. */
 export const isLiveRoutineRunStatus = (status: RoutineRunStatus): boolean => isLive(status);
+/** The one line a routine's chat gets when a run completes after a failed one, so the failure is not its newest word. */
+export const routineRecoveredLine = (routineName: string): string => `Recovered: ${routineName.trim().slice(0, 120) || "this routine"} finished OK.`;
 
 /** The untouched routines.json from before routine ceilings were pinned. */
 export function routinesPrePinFile(routinesFile: string): string {
@@ -186,9 +189,27 @@ export interface Routine {
   /** Conversation that created this routine in chat. Calendar/import-created
    * routines intentionally have no source, and older files migrate in place. */
   sourceThreadId?: string;
+  /** Where a run's result goes (ROUTINE-DELIVER-1010). Absent means the chat
+   * it was made in (or the bot's main chat when there is none), which is the
+   * default for every routine, old or new. "list": the Routines list only. */
+  deliverTo?: "list";
   nextRunAt: number | null;
   createdAt: number;
   updatedAt: number;
+}
+
+/** How long a settled run whose result is still owed is kept in history and retried (index.ts gives the write up after it). */
+export const ROUTINE_DELIVERY_KEEP_MS = 24 * 60 * 60_000;
+
+export interface RoutineRunDelivery { state: "pending" | "sent" | "off"; threadId?: string }
+
+/** A delivery marker read back from disk: a valid one, or none. */
+function loadRunDelivery(value: unknown): RoutineRunDelivery | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const { state, threadId } = value as { state?: unknown; threadId?: unknown };
+  if (state !== "pending" && state !== "sent" && state !== "off") return undefined;
+  const thread = typeof threadId === "string" ? persistedSourceThreadId.safeParse(threadId) : undefined;
+  return thread?.success && thread.data ? { state, threadId: thread.data } : { state };
 }
 
 /** The most history lines one run keeps. */
@@ -237,9 +258,19 @@ export interface RoutineRun {
   /** Server-owned: the audience of this channel run is not the owner (a WhatsApp group). Carried into startTurn as defence beside the guest principal. */
   notOwnerAudience?: true;
   deliveryId?: string;
+  /** Webhook runs: the event's name, written with the run (bot calls 1.0.9 derive the webhook.event fact from it, so a
+   * crash after the save loses no call: the boot re-scan reads it back). */
+  webhookEventType?: string;
   /** Snapshot the routine's reporting destination. Execution remains on the
    * separate `threadId` so recurring work never contaminates chat context. */
   sourceThreadId?: string;
+  /** ROUTINE-DELIVER-1010: the durable delivery marker of a schedule or manual
+   * bot run. "pending" until its result card has been written in a chat
+   * (`threadId`, recorded before the write when it is not the source chat),
+   * then "sent"; "off" when the routine sends results to the Routines list
+   * only. Absent on runs from before 1.0.10 and on webhook, channel and room
+   * runs, which keep their own delivery. */
+  delivery?: RoutineRunDelivery;
   threadId?: string;
   /** Provider identity for a Telegram turn in a reused conversation. */
   channelTurnId?: string;
@@ -255,6 +286,9 @@ export interface RoutineRun {
   /** When the owner answered a card this run was waiting on after its run
    * limit; the limit counts again from here. */
   resumedAt?: number;
+  /** When this run last became "needs-you" (bot calls 1.0.9): the boot re-scan replays the needs-you fact at THIS instant,
+   * not the run's start, so a long run's fresh needs-you is neither late nor refused by a rule edited since the start. */
+  needsYouAt?: number;
   /** SL-L L4: the run's INITIAL turn is waiting for a busy working folder,
    * computer or browser (its first seat). Status stays "running". While set
    * with no grant and no resume the run limit is not enforced, and a restart
@@ -444,6 +478,8 @@ export interface RoutineInput {
   carryLastReport?: boolean;
   /** A ceiling, or `inherit` / null to pin the bot's current level. */
   permissionMode?: RoutinePermissionMode | "inherit" | null;
+  /** Where results go: "chat" (the default) or "list" (the Routines list only). */
+  deliverTo?: "chat" | "list";
 }
 
 interface RoutineFile {
@@ -519,6 +555,8 @@ export interface RoutineManagerOptions {
    * text row of that conversation written between `from` and `to` is present, was captured, is not forgotten, and the
    * conversation was not deleted (server/routine-carry.ts). Absent: nothing is ever carried. */
   priorReplyCarryable?: (threadId: string, from: number, to: number) => boolean;
+  /** Bot email (5.4): the reply the report came from was written after reading outside mail; the report is handed on fenced. */
+  priorReplyEmailDerived?: (threadId: string, from: number, to: number) => boolean;
   /** Step 0 check for a scheduled bot run: true while this bot should have
    * connected-app tools and they have not registered. The run is deferred
    * (see CONNECTOR_DEFER_DELAYS_MS) instead of running without them. */
@@ -538,6 +576,8 @@ export interface RoutineManagerOptions {
    * conversation is reused only while it does. Without it, every run gets a
    * new task as before. */
   taskExists?: (botId: string, threadId: string) => boolean;
+  /** Whether a room task (a room goal's thread) still exists in its room. */
+  goalTaskExists?: (groupId: string, threadId: string) => boolean;
   /** A bot routine run is about to start in its conversation; `reused` says
    * an earlier run (or the owner) already worked there. */
   onRunDispatch?: (run: RoutineRun, reused: boolean) => void;
@@ -580,6 +620,9 @@ export interface RoutineManagerOptions {
   /** Projects every durable transition into the source conversation. */
   onRunChanged?: (run: RoutineRun) => void;
   onRunFailed?: (run: RoutineRun) => void;
+  /** A run completed and the routine's run before it had failed: the failure is no longer the newest word (upstream
+   *  84b63940c). Called once per recovery, with the failed run it answers. */
+  onRunRecovered?: (run: RoutineRun, failed: RoutineRun) => void;
   /** The run limit came while a card was waiting on the owner. */
   onRunNeedsYou?: (run: RoutineRun) => void;
   /** F2 (1.0.4): false when this group is a project that is closed or ended. Run now refuses such a project's routine. */
@@ -764,6 +807,7 @@ function cloneRun(tracked: RoutineRun): RoutineRun {
     ...(run.humanPrincipal ? { humanPrincipal: plainCopy(run.humanPrincipal) } : {}),
     ...(run.channelOrigin ? { channelOrigin: plainCopy(run.channelOrigin) } : {}),
     ...(run.limitWait ? { limitWait: { ...run.limitWait } } : {}),
+    ...(run.delivery ? { delivery: { ...run.delivery } } : {}),
     attachments: cloneAttachments(run.attachments),
     denials: run.denials ? [...run.denials] : undefined,
     ...(Array.isArray(run.notes) ? { notes: run.notes.filter((note): note is string => typeof note === "string").slice(0, RUN_NOTES_MAX) } : {}),
@@ -905,6 +949,10 @@ function sanitizeInput(input: RoutineInput): Omit<Routine, "id" | "createdAt" | 
   if (input.overlap !== undefined && input.overlap !== "skip" && input.overlap !== "queue") {
     throw new Error("Choose skip or queue for overlapping runs");
   }
+  const deliverTo: unknown = input.deliverTo ?? "chat";
+  if (deliverTo !== "chat" && deliverTo !== "list") {
+    throw new Error("Choose where this routine sends its results");
+  }
   const permissionMode = input.permissionMode === undefined ? null : routinePermissionModeInput(input.permissionMode);
   const schedule = cleanSchedule(input.schedule);
   return {
@@ -922,6 +970,7 @@ function sanitizeInput(input: RoutineInput): Omit<Routine, "id" | "createdAt" | 
     ...(input.overlap === "queue" ? { overlap: "queue" as const } : {}),
     ...(input.carryLastReport === true && target === "bot" && schedule.type !== "once" ? { carryLastReport: true as const } : {}),
     ...(permissionMode ? { permissionMode } : {}),
+    ...(deliverTo === "list" && target === "bot" ? { deliverTo: "list" as const } : {}),
   };
 }
 
@@ -956,6 +1005,10 @@ export class RoutineManager {
   private gateForced = false;
   private lastCatchUpAt: number | null = null;
   private readonly heldByStartup = new Set<string>();
+  /** The task a run's start opened when that start could not be saved, by run id. The run went back to queued; its next
+   *  start uses this task instead of opening another one (upstream f4f2e3d8b + 22bfaa817, every target). In memory only: the
+   *  failed save is exactly what did not record it. */
+  private readonly unsavedStartTasks = new Map<string, string>();
   private readonly deferrals = new Map<string, { attempts: number; notBefore: number }>();
   private readonly file: string;
   private readonly now: () => number;
@@ -1078,6 +1131,7 @@ export class RoutineManager {
               sourceThreadId: persistedSourceThreadId.parse(routine.sourceThreadId),
               threadId: persistedSourceThreadId.parse(routine.threadId),
               overlap: routine.overlap === "queue" ? "queue" : undefined,
+              deliverTo: routine.deliverTo === "list" ? "list" : undefined,
               carryLastReport: routine.carryLastReport === true ? true : undefined,
               permissionMode: loadRoutinePermissionMode(routine.permissionMode) ?? this.options.botMode?.(routine.botId) ?? "ask",
               alwaysAllow: routineGrantKeys(routine.alwaysAllow),
@@ -1085,7 +1139,7 @@ export class RoutineManager {
               lastSkippedAt: Number.isSafeInteger(routine.lastSkippedAt) && routine.lastSkippedAt! >= 0 && routine.lastSkippedAt! <= MAX_DATE_MS ? routine.lastSkippedAt : undefined,
             };
             // Keep optional metadata absent when it has no stored value.
-            for (const key of ["overlap", "carryLastReport", "threadId", "skippedRuns", "lastSkippedAt"] as const) if (loaded[key] === undefined) delete loaded[key];
+            for (const key of ["overlap", "deliverTo", "carryLastReport", "threadId", "skippedRuns", "lastSkippedAt"] as const) if (loaded[key] === undefined) delete loaded[key];
             if (!loaded.alwaysAllow?.length) delete loaded.alwaysAllow;
             delete loaded.failureStreak;
             if (routine.watch !== undefined) {
@@ -1126,8 +1180,10 @@ export class RoutineManager {
               timeoutMinutes: loadTimeoutMinutes(run.timeoutMinutes),
               attachments: loadAttachments(run.attachments),
               sourceThreadId: persistedSourceThreadId.parse(run.sourceThreadId),
+              delivery: loadRunDelivery(run.delivery),
             };
             if (loaded.timeoutMinutes === undefined) delete loaded.timeoutMinutes;
+            if (loaded.delivery === undefined) delete loaded.delivery;
             loaded.event = routineEventForRun(loaded);
             const budget = eventActionBudgetSchema.safeParse(run.eventBudget);
             loaded.eventBudget = budget.success ? budget.data : undefined;
@@ -1617,6 +1673,7 @@ export class RoutineManager {
       attachments: patch.attachments ?? routine.attachments,
       overlap: Object.hasOwn(patch, "overlap") ? patch.overlap : routine.overlap,
       permissionMode: Object.hasOwn(patch, "permissionMode") ? patch.permissionMode : routine.permissionMode,
+      deliverTo: Object.hasOwn(patch, "deliverTo") ? patch.deliverTo : routine.deliverTo,
     });
     clean.permissionMode ??= this.options.botMode?.(clean.botId) ?? "ask";
     if (this.targetState(clean) === "missing") throw new Error(this.missingTargetMessage(clean.target));
@@ -1656,6 +1713,7 @@ export class RoutineManager {
       }
       // Object.assign cannot remove a key, and skip is stored as absence.
       if (clean.overlap !== "queue") delete routine.overlap;
+      if (clean.deliverTo !== "list") delete routine.deliverTo;
       if (patch.enabled === false || reassigned) {
         for (const run of this.runs) {
           if (run.routineId !== routine.id || run.status !== "queued") continue;
@@ -1898,6 +1956,7 @@ export class RoutineManager {
     runOn: RoutineRunOn;
     deliveryId: string;
     receivedAt: number;
+    eventType?: string;
     telegramConnectionId?: string;
     channelOrigin?: ChannelOrigin;
     humanPrincipal?: HumanPrincipal;
@@ -1936,6 +1995,7 @@ export class RoutineManager {
       ...(input.notOwnerAudience === true ? { notOwnerAudience: true as const } : {}),
       webhookId: input.webhookId,
       deliveryId: input.deliveryId,
+      ...(typeof input.eventType === "string" && input.eventType && !input.telegramConnectionId && !input.channelOrigin ? { webhookEventType: input.eventType.slice(0, 200) } : {}),
       attachments: cloneAttachments(attachments),
       createdAt: this.now(),
     };
@@ -2082,6 +2142,8 @@ export class RoutineManager {
   async cancelRun(id: string, interruptGeneration?: string): Promise<RoutineRun | null> {
     const run = this.runs.find((r) => r.id === id);
     if (!run || !isOpen(run.status)) return null;
+    // a cancelled run never starts again: the task an unsaved start kept for it is not kept
+    this.unsavedStartTasks.delete(run.id);
     this.commitMutation(() => {
       run.status = "cancelled";
       if (run.target === "room-goal") run.goalStatus = "stopped";
@@ -2160,6 +2222,51 @@ export class RoutineManager {
     return cloneRun(run);
   }
 
+  /** ROUTINE-DELIVER-1010: one run by id (a copy), or null. */
+  runById(id: string): RoutineRun | null {
+    const run = this.runs.find((item) => item.id === id);
+    return run ? cloneRun(run) : null;
+  }
+
+  /** Records the chat a pending run's result goes to, before the result is first written there, so a retry or a restart writes
+   * to the same chat (routine-delivery.ts decides when a deleted chat may be replaced). Saves this run only, at once; no frame. */
+  recordRunDelivery(runId: string, threadId: string): RoutineRun | null {
+    const run = this.runs.find((item) => item.id === runId);
+    if (!run || run.delivery?.state !== "pending") return run ? cloneRun(run) : null;
+    if (run.delivery.threadId !== threadId) {
+      const before = run.delivery;
+      run.delivery = { state: "pending", threadId };
+      // on disk before the card is written, or not at all: a failed save leaves the old marker and the card unwritten
+      try { this.save({ runs: [run] }); } catch (error) { run.delivery = before; throw error; }
+    }
+    return cloneRun(run);
+  }
+
+  /** When the next run of the same routine started after this one, if one has: a run's files window never reaches into it. */
+  nextRunStartAfter(run: Pick<RoutineRun, "id" | "routineId" | "startedAt">): number | undefined {
+    if (run.startedAt === undefined) return undefined;
+    let next: number | undefined;
+    for (const item of this.runs) {
+      if (item.routineId !== run.routineId || item.id === run.id || item.startedAt === undefined || item.startedAt <= run.startedAt) continue;
+      if (next === undefined || item.startedAt < next) next = item.startedAt;
+    }
+    return next;
+  }
+
+  /** The run's result has been written (or there was nowhere left to write it): never delivered again. */
+  markRunDelivered(runId: string): void {
+    const run = this.runs.find((item) => item.id === runId);
+    if (!run || run.delivery?.state !== "pending" || isOpen(run.status)) return;
+    const before = run.delivery;
+    run.delivery = { ...run.delivery, state: "sent" };
+    try { this.save({ runs: [run] }); } catch (error) { run.delivery = before; throw error; }
+  }
+
+  /** Settled runs whose result was not written yet (a crash between the run's end and its delivery). Read once at start-up. */
+  pendingDeliveries(): RoutineRun[] {
+    return this.runs.filter((run) => run.delivery?.state === "pending" && !isOpen(run.status)).map(cloneRun);
+  }
+
   start() {
     if (this.timer) return;
     this.startedAt = this.now();
@@ -2213,7 +2320,7 @@ export class RoutineManager {
         // is waiting for, and keeps the turn open on the card so answering it
         // carries on. (A room goal keeps its own limit rules.)
         if (run.status === "waiting" && run.target === "bot") {
-          this.commitMutation(() => { run.status = "needs-you"; });
+          this.commitMutation(() => { run.status = "needs-you"; run.needsYouAt = now; });
           this.emitRun(run);
           try { this.options.onRunNeedsYou?.(cloneRun(run)); }
           catch (error) { console.error("routine: waiting-on-you notice failed", error); }
@@ -2594,7 +2701,14 @@ export class RoutineManager {
         let releaseStart: () => void = () => {};
         try { releaseStart = this.options.beginStart?.() ?? releaseStart; } catch { /* no gate: nothing held */ }
         try {
-        const task = run.target === "room-goal"
+        const unsaved = !reusable && !sharedChannel ? this.unsavedStartTasks.get(run.id) : undefined;
+        const keptTask = unsaved && (run.target === "room-goal"
+          ? Boolean(run.groupId && this.options.goalTaskExists?.(run.groupId, unsaved))
+          : !this.options.taskExists || this.options.taskExists(run.botId, unsaved)) ? unsaved : undefined;
+        if (unsaved && !keptTask) this.unsavedStartTasks.delete(run.id);
+        const task = keptTask
+          ? { threadId: keptTask }
+          : run.target === "room-goal"
           ? run.groupId
             ? this.options.createGoalTask?.(run.groupId, run.routineName) ?? null
             : null
@@ -2628,11 +2742,15 @@ export class RoutineManager {
         if (adopted) owner.threadId = task.threadId;
         try {
           this.save({ runs: [run], routines: adopted ? [owner] : [] });
+          this.unsavedStartTasks.delete(run.id);
         } catch (error) {
           // No engine turn has started: a run that could not be recorded as running goes back to queued, so it is
           // retried or failed by the guard below instead of sitting as a running run no engine is working on.
           run.status = "queued";
           run.threadId = before.threadId; run.startedAt = before.startedAt; run.slotAt = before.slotAt; run.attention = before.attention;
+          // The task this start opened is kept for the run's next start: restoring the old thread alone orphaned it, and
+          // every later pass opened another one.
+          if (!reusable && !sharedChannel) this.unsavedStartTasks.set(run.id, task.threadId);
           if (adopted && owner) owner.threadId = before.ownerThreadId;
           if (!wasLiveRoutine) liveRoutines.delete(run.routineId);
           if (!wasLiveThread) liveThreads.delete(task.threadId);
@@ -2830,6 +2948,7 @@ export class RoutineManager {
       // failure: it is waiting on you, and answering carries it on.
       run.cost = event.cost;
       run.turnEnded = true;
+      if (run.status !== "needs-you") run.needsYouAt = this.now();
       run.status = "needs-you";
       this.save({ runs: [run] });
       this.emitRun(run);
@@ -2885,8 +3004,25 @@ export class RoutineManager {
     }
     this.save({ runs: [run] });
     this.emitRun(run);
+    if (run.status === "completed") this.noteRecovery(run);
     if (event.type === "turn.completed") queueMicrotask(() => void this.tick());
     return cloneRun(run);
+  }
+
+  /** The routine's last finished run before `run` failed: say the routine recovered. Best-effort, never throws. */
+  private noteRecovery(run: RoutineRun) {
+    if (!this.options.onRunRecovered) return;
+    let previous: RoutineRun | undefined;
+    for (const other of this.runs) {
+      if (other.id === run.id || other.routineId !== run.routineId || other.finishedAt === undefined) continue;
+      if (other.status !== "failed" && other.status !== "completed") continue;
+      if (other.finishedAt > (run.finishedAt ?? Infinity)) continue;
+      // runs are kept in creation order: on a tie the later one is the newer word
+      if (!previous || other.finishedAt >= previous.finishedAt!) previous = other;
+    }
+    if (previous?.status !== "failed") return;
+    try { this.options.onRunRecovered(cloneRun(run), cloneRun(previous)); }
+    catch (error) { console.error("routine: recovery note failed", error); }
   }
 
   failThread(threadId: string, message: string) {
@@ -2929,6 +3065,7 @@ export class RoutineManager {
       if (status !== "stopped") run.output = safeDetail.slice(0, 2_000) || undefined;
       this.save({ runs: [run] });
       this.emitRun(run);
+      if (run.status === "completed") this.noteRecovery(run);
     }
     queueMicrotask(() => void this.tick());
     return cloneRun(run);
@@ -2962,6 +3099,7 @@ export class RoutineManager {
    * restart the run reloads as it was last saved and is evaluated afresh. Owner notification is best-effort. */
   private failRun(run: RoutineRun, message: string) {
     this.requiredToolCalls.delete(run.id);
+    this.unsavedStartTasks.delete(run.id);
     run.status = "failed";
     run.attention = undefined;
     run.error = redactSecretsInText(message).slice(0, 500);
@@ -3024,7 +3162,10 @@ export class RoutineManager {
     try {
       if (this.options.priorReplyCarryable?.(threadId, prior.startedAt, prior.finishedAt) !== true) return null;
     } catch { return null; }
-    return redactSecretsInText(output).slice(0, 2_000);
+    const report = redactSecretsInText(output).slice(0, 2_000);
+    let derived = true;
+    try { derived = this.options.priorReplyEmailDerived?.(threadId, prior.startedAt, prior.finishedAt) ?? false; } catch { /* fenced */ }
+    return derived ? fenceEmailDerived(report, `routine-run-${prior.id}`) : report;
   }
 
   private newRun(routine: Routine, scheduledFor: number, manual: boolean): RoutineRun {
@@ -3051,6 +3192,8 @@ export class RoutineManager {
       sourceThreadId: routine.sourceThreadId,
       createdAt: this.now(),
     };
+    // ROUTINE-DELIVER-1010: a bot routine's schedule and manual runs report their result in a chat (index.ts deliverRoutineRun).
+    if (routine.target === "bot" && !routine.watch) run.delivery = { state: routine.deliverTo === "list" ? "off" : "pending" };
     if (routine.watch) run.watch = { watchId: routine.id, ownerBotId: routine.watch.ownerBotId, source: plainCopy(routine.watch.state.definition.source), outcome: "pending" };
     run.event = routineEventForRun(run);
     run.eventBudget = newEventActionBudget();
@@ -3313,7 +3456,9 @@ export class RoutineManager {
     let excess = this.runsRaw.length - MAX_RUNS;
     // on the raw list: the cap's own removals are accounted for (`trimmed`), so the list watch must not see them
     for (let index = 0; index < this.runsRaw.length && excess > 0;) {
-      if (isOpen(this.runsRaw[index]!.status)) {
+      // a settled run whose result is still owed to a chat is kept like a live one until it is delivered, for at most a day (ROUTINE-DELIVER-1010)
+      const owed = this.runsRaw[index]!.delivery?.state === "pending" && (this.runsRaw[index]!.finishedAt ?? this.runsRaw[index]!.createdAt) > this.now() - ROUTINE_DELIVERY_KEEP_MS;
+      if (isOpen(this.runsRaw[index]!.status) || owed) {
         index += 1;
         continue;
       }
