@@ -23,4 +23,17 @@
         <item name="windowSplashScreenAnimatedIcon">@drawable/murage_splash_icon</item>
         <item name="postSplashScreenTheme">@style/AppTheme.NoActionBar</item>
     </style>
+    <style name="AppTheme.Sheet" parent="AppTheme">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:windowCloseOnTouchOutside">false</item>
+        <item name="android:windowIsFloating">true</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
+    <!-- An asynchronous keyguard dismissal cannot remain Theme.NoDisplay. -->
+    <style name="AppTheme.AssistUnlock" parent="AppTheme.NoActionBar">
+        <item name="android:windowNoDisplay">false</item>
+        <item name="android:windowIsTranslucent">false</item>
+    </style>
 </resources>

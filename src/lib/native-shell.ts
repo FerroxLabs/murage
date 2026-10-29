@@ -68,7 +68,9 @@ export type NativeMethod =
   // (src/lib/call-diag-forward.ts). A string argument, counts and enums only.
   | "diagLine"
   // SEC-006: native fresh authentication for a high-risk Allow. Both platforms; an older app never lists it and the page says to update.
-  | "approveWithDevice";
+  | "approveWithDevice"
+  // 1.0.9 phone tools: opens the native "Phone for your bots" screen for the workspace on screen. No arguments, no data back.
+  | "openPhoneForBots";
 
 export type NativeEventName = "resume" | "pause" | "notificationOpened" | "backButton" | "callAudio";
 
@@ -124,6 +126,7 @@ const KNOWN_METHODS: ReadonlySet<string> = new Set<NativeMethod>([
   "callSessionClose",
   "diagLine",
   "approveWithDevice",
+  "openPhoneForBots",
 ]);
 
 type Bridge = Record<string, unknown> & { hello: () => unknown };

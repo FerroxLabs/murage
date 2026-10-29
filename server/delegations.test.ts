@@ -1640,6 +1640,20 @@ describe("dropUnreachableDelegations", () => {
     // Nothing else to drop the second time.
     expect(await dropUnreachableDelegations(commsBus)).toBe(0);
   });
+
+  it("keeps sweeping after a pass that found an empty queue (upstream fa0402dbc)", async () => {
+    const store = new Store(selection);
+    const { commsBus } = setupBuses(store);
+    // an empty queue: the sweep reaches no await and settles at once
+    expect(await dropUnreachableDelegations(commsBus)).toBe(0);
+    const from = store.createBot({ name: "Sender", section: "Ops" });
+    const moved = store.createBot({ name: "Moved", section: "Ops" });
+    const gone = queueDelegation(commsBus, from, { toBotId: moved.id, message: "one", depth: 0 }, 2);
+    expect(store.setBotsSection([moved.id], "Sales").ok).toBe(true);
+    // the next roster change sweeps again instead of getting the old settled promise back
+    expect(await dropUnreachableDelegations(commsBus)).toBe(1);
+    expect(pendingDelegationInfo(gone.id!)).toBeNull();
+  });
 });
 
 // 0.1.60 Linux re-test 4, L4-1: a handoff parked on a teammate whose room

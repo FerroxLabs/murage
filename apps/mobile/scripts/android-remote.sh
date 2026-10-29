@@ -5,11 +5,13 @@
 #
 #   scripts/android-remote.sh build   -> apps/mobile/build/app-debug.apk
 #   scripts/android-remote.sh test    -> apps/mobile/build/junit/*.xml
+#   scripts/android-remote.sh release -> apps/mobile/build/app-release.apk (signed, for testers)
+#   scripts/android-remote.sh bundle  -> apps/mobile/build/app-release.aab (signed, for Play)
 #   scripts/android-remote.sh clean   -> deletes the lane's caches and outputs
 #
 # Run `pnpm sync` first: Gradle needs the files `cap sync` generates.
 set -euo pipefail
-cmd=${1:?usage: android-remote.sh build|test|clean}
+cmd=${1:?usage: android-remote.sh build|test|release|bundle|clean}
 HERE=$(cd "$(dirname "$0")/.." && pwd)      # apps/mobile
 HOST=build-host
 LANE=/root/mb-mobile/plan3b
@@ -23,6 +25,8 @@ fi
 case $cmd in
   build) task=assembleDebug ;;
   test) task=testDebugUnitTest ;;
+  release) task=assembleRelease ;;
+  bundle) task=bundleRelease ;;
   *) echo "unknown command $cmd" >&2; exit 2 ;;
 esac
 
@@ -53,17 +57,33 @@ if [[ -d "$HERE/contract" ]]; then rsync -a --delete "$HERE/contract/" "$HOST:$L
 # -L: node_modules/@capacitor/android is a pnpm symlink; ship the real files.
 rsync -aL --delete "$HERE/$CAP/" "$HOST:$LANE/apps-mobile/$CAP/"
 
+# The upload key lives only on the build host in /root/mb-mobile/keys (never in the
+# repo). It is mounted read-only and Gradle reads it through these env vars;
+# without them (build, test) release signing stays off.
+KEYS=/root/mb-mobile/keys
+KEYARGS=""
+if [[ $cmd == release || $cmd == bundle ]]; then
+  ssh "$HOST" "test -f $KEYS/murage-upload.jks && test -f $KEYS/upload.pass" || { echo "upload key missing in $KEYS on $HOST" >&2; exit 1; }
+  KEYARGS="-v $KEYS:/keys:ro -e MURAGE_UPLOAD_STORE=/keys/murage-upload.jks -e MURAGE_UPLOAD_ALIAS=upload -e MURAGE_UPLOAD_PASS_FILE=/keys/upload.pass"
+fi
+
 # dot-android keeps the debug keystore, so every APK has the same signature and
 # installs over the last one without wiping the WebView's cookies.
 ssh "$HOST" "docker run --rm \
   -v $QLANE/apps-mobile:/w -v $QLANE/gradle-home:/gh -v $QLANE/dot-android:/root/.android \
-  -e GRADLE_USER_HOME=/gh -w /w/android ghcr.io/cirruslabs/android-sdk:35 \
+  $KEYARGS -e GRADLE_USER_HOME=/gh -w /w/android ghcr.io/cirruslabs/android-sdk:35 \
   bash -c 'yes | sdkmanager --licenses >/dev/null 2>&1; sdkmanager \"platforms;android-36\" \"build-tools;35.0.0\" >/dev/null 2>&1; chmod +x gradlew; ./gradlew --no-daemon --console=plain $task'"
 
 mkdir -p "$HERE/build"
 if [[ $cmd == build ]]; then
   scp "$HOST:$LANE/apps-mobile/android/app/build/outputs/apk/debug/app-debug.apk" "$HERE/build/app-debug.apk"
   ls -la "$HERE/build/app-debug.apk"
+elif [[ $cmd == release ]]; then
+  scp "$HOST:$LANE/apps-mobile/android/app/build/outputs/apk/release/app-release.apk" "$HERE/build/app-release.apk"
+  ls -la "$HERE/build/app-release.apk"
+elif [[ $cmd == bundle ]]; then
+  scp "$HOST:$LANE/apps-mobile/android/app/build/outputs/bundle/release/app-release.aab" "$HERE/build/app-release.aab"
+  ls -la "$HERE/build/app-release.aab"
 else
   rsync -a --delete "$HOST:$LANE/apps-mobile/android/app/build/test-results/testDebugUnitTest/" "$HERE/build/junit/"
   grep -h -o 'tests="[0-9]*" skipped="[0-9]*" failures="[0-9]*" errors="[0-9]*"' "$HERE/build/junit/"*.xml

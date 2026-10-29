@@ -137,3 +137,34 @@ test("feature switch: explicit off refuses with FLUX_SIGNIN_UNAVAILABLE, explici
   assert.doesNotThrow(() => assertFluxDesktopSigninEnabled({ features: { fluxDesktopSignin: true } }));
   for (const config of [null, {}, { features: {} }]) assert.equal(fluxDesktopSigninEnabledIn(config), FLUX_DESKTOP_SIGNIN_DEFAULT);
 });
+
+test("bot email (2.4, contract r2.5): the token request asks scope email:owner and returns the owner credential, never a plain key", async () => {
+  const { readEmailOwnerToken } = await import("./flux-desktop-signin.mjs");
+  const { EMAIL_OWNER_SCOPE } = await import("./email-secrets.mjs");
+  const plain = new URL(buildAuthorizeUrl({ redirectUri: redirectUriFor(1), challenge: "c", state: "s" }));
+  assert.equal(plain.searchParams.has("scope"), false);
+  assert.equal(JSON.parse(tokenRequest({ code: "c", verifier: "v", redirectUri: "r" }).body).scope, undefined);
+  const flux = await stubFlux();
+  try {
+    const owner = { api_key: "flux-owner-token-fixture", key_prefix: "sk-flux-x", name: "Murage Desktop", key_id: "key_owner_1", scopes: [EMAIL_OWNER_SCOPE] };
+    const { key } = await runFluxDesktopSignin({ ...flux.options, scope: EMAIL_OWNER_SCOPE, readToken: readEmailOwnerToken,
+      fetchImpl: async (url, init) => { await fetch(url, init); return new Response(JSON.stringify(owner)); } });
+    // r2.5: the scope rides the token request body, not the authorize URL
+    assert.equal(flux.seen.token.scope, "email:owner");
+    assert.equal(flux.seen.authorize.has("scope"), false);
+    assert.deepEqual(key, { token: "flux-owner-token-fixture", keyId: "key_owner_1" });
+  } finally { await flux.close(); }
+  for (const scopes of [[], ["email:bot"], undefined]) {
+    const dark = await stubFlux();
+    try {
+      // scopes [] (Flux's bot key switch off) or no email:owner: owner email stays dark, the calm email_dark line, nothing stored
+      await rejects(runFluxDesktopSignin({ ...dark.options, scope: EMAIL_OWNER_SCOPE, readToken: readEmailOwnerToken,
+        fetchImpl: async () => new Response(JSON.stringify({ api_key: "flux-owner-token-fixture", key_id: "key_owner_1", ...(scopes ? { scopes } : {}) })) }), "email_dark");
+    } finally { await dark.close(); }
+  }
+  const noId = await stubFlux();
+  try {
+    await rejects(runFluxDesktopSignin({ ...noId.options, scope: EMAIL_OWNER_SCOPE, readToken: readEmailOwnerToken,
+      fetchImpl: async () => new Response(JSON.stringify({ api_key: "flux-owner-token-fixture", scopes: [EMAIL_OWNER_SCOPE] })) }), "bad_key");
+  } finally { await noId.close(); }
+});

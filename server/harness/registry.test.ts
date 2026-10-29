@@ -48,7 +48,9 @@ describe("ProviderRegistry", () => {
     await registry.load({ a: { driver: "fake" }, b: { driver: "fake" } });
     const sibling = registry.get("b");
     registry.get("a")!.dispose = async () => { throw new Error("CLAUDE_SESSION_NOT_STOPPED: 1 earlier Claude process could not be confirmed stopped"); };
-    await expect(registry.reload(new Set(["a"]), { a: { driver: "fake", enabled: false }, b: { driver: "fake" } })).resolves.toBeUndefined();
+    await expect(registry.reload(new Set(["a"]), { a: { driver: "fake", enabled: false }, b: { driver: "fake" } }))
+      // OPENAI-TOOLS-109 rev 5, H2: the unconfirmed instance is handed back so the caller keeps its threads' leases until it closes
+      .resolves.toEqual([expect.objectContaining({ instanceId: "a" })]);
     expect(registry.get("a")).toBeNull();
     expect(registry.get("b")).toBe(sibling);
     const described = await registry.describe();

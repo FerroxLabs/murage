@@ -63,6 +63,7 @@ public final class WorkspaceViewController: UIViewController, WKNavigationDelega
     private var isReady = false
     /// A page on the origin loaded or called ready(): this computer was reached.
     private var signedInSeen = false
+    var pairedAtOpen = false
     /// The splash is covering the page and waiting for ready() (or a reveal).
     private var splashUp = false
     private var closing = false
@@ -77,6 +78,7 @@ public final class WorkspaceViewController: UIViewController, WKNavigationDelega
     private var crashes: [Date] = []
     /// A notification that arrived while the splash was up, opened on ready().
     private var queuedOpen: PendingOpen?
+    private var queuedIntentHash: String?
     /// True while the page says a call is open (callSessionOpen/Close,
     /// callbar-rereview2.md G3): the one signal that only ever follows
     /// startCall/endCall, never a retry, Resume or `lost` — unlike the
@@ -89,6 +91,8 @@ public final class WorkspaceViewController: UIViewController, WKNavigationDelega
     /// this stuck true.
     private var callSessionOpen = false
     private var approving = false
+    private lazy var phoneAskSetup = PhoneAskSetup(origin: origin)
+    private lazy var phoneForBots = PhoneForBotsSession(origin: origin)
     /// B6: lets the coordinator hold a different computer's notification at
     /// its boundary, the same question `reloadOrKeepPending()` already asks
     /// for a same-origin reload.
@@ -135,9 +139,28 @@ public final class WorkspaceViewController: UIViewController, WKNavigationDelega
         else { load(path: startPath) }
     }
 
+    public override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        PhoneJobServices.shared.attach(self)
+        if signedInSeen || pairedAtOpen { phoneAskSetup.foreground(in: self) }
+    }
+
+    /// Presented only inside this native workspace hierarchy, above its WebView.
+    func presentPhoneJobCard(_ card: UIViewController) -> Bool {
+        guard !closing, viewIfLoaded?.window != nil else { return false }
+        var presenter: UIViewController = self
+        while let presented = presenter.presentedViewController { presenter = presented }
+        guard !presenter.isBeingDismissed, !presenter.isBeingPresented, presenter.viewIfLoaded?.window != nil else { return false }
+        presenter.present(card, animated: false)
+        return card.presentingViewController != nil
+    }
+
     public override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         guard isBeingDismissed || isMovingFromParent else { return }
+        PhoneJobServices.shared.detach(self)
+        phoneForBots.close()
+        phoneAskSetup.close()
         callAudio.close(.controllerClosed)
         observers.forEach(NotificationCenter.default.removeObserver)
         observers.removeAll()
@@ -262,6 +285,10 @@ public final class WorkspaceViewController: UIViewController, WKNavigationDelega
             routes.clearPending(for: origin)
         }
         signedIn()
+        if let hash = queuedIntentHash {
+            queuedIntentHash = nil
+            openIntentHash(hash)
+        }
         ShellLog.timing("ready", ms: ms(since: loadStarted))
         #if DEBUG
         ShellLog.value("webcontent pid", E2EProbe.webContentPID(webView))
@@ -270,8 +297,10 @@ public final class WorkspaceViewController: UIViewController, WKNavigationDelega
     }
 
     private func signedIn() {
+        let first = !signedInSeen
         signedInSeen = true
         onSignedIn?()
+        if first { phoneForBots.refresh(); phoneAskSetup.foreground(in: self) }
     }
 
     /// Only after this workspace reached its computer, and never once closing
@@ -283,8 +312,10 @@ public final class WorkspaceViewController: UIViewController, WKNavigationDelega
 
     /// A page other than "/" loaded: reached, so "Last connected" moves on; touch only, never an add.
     private func loadedInUse() {
+        let first = !signedInSeen
         signedInSeen = true
         stillInUse()
+        if first { phoneForBots.refresh(); phoneAskSetup.foreground(in: self) }
     }
 
     /// Kept for a lowered gate: with mobileFeatures >= 1 required, only a lowered gate reaches basic here.
@@ -339,6 +370,15 @@ public final class WorkspaceViewController: UIViewController, WKNavigationDelega
         ) { result in
             done?((try? result.get()) as? Bool ?? false)
         }
+    }
+
+    /// Intent routes wait for the authenticated page's ready message.
+    func openIntentHash(_ hash: String) {
+        guard !closing else { return }
+        guard isReady else { queuedIntentHash = hash; return }
+        // Arguments remain data. Changing the hash keeps the current page and call.
+        webView.callAsyncJavaScript("window.location.hash = hash", arguments: ["hash": hash],
+                                   in: nil, in: .page, completionHandler: { _ in })
     }
 
     /// A conversation to open now (P17 `queueOpen`, Plan 3's notification
@@ -402,8 +442,16 @@ public final class WorkspaceViewController: UIViewController, WKNavigationDelega
 
     private func observeLifecycle() {
         let center = NotificationCenter.default
+        observers.append(center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, !self.closing else { return }
+                if self.signedInSeen { self.phoneForBots.refresh() }
+                if self.signedInSeen || self.pairedAtOpen { self.phoneAskSetup.foreground(in: self) }
+            }
+        })
         observers.append(center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
+                self?.phoneAskSetup.background()
                 self?.stillInUse()
                 self?.emit("pause")
             }
@@ -509,6 +557,14 @@ public final class WorkspaceViewController: UIViewController, WKNavigationDelega
             guard let line = ChannelArgs.diagLine(request.args) else { ShellLog.channelRefused(.badArgs); reply(nil, ChannelError.badArgs.rawValue); return }
             ShellLog.callDiag(line)
             reply(true, nil)
+        case .openPhoneForBots:
+            do {
+                try PhoneForBotsEntry.open(args: request.args, paired: signedInSeen && !closing) { [self] in
+                    guard presentedViewController == nil else { return }
+                    present(UINavigationController(rootViewController: PhoneForBotsViewController(session: phoneForBots)), animated: true)
+                }
+                reply(nil, nil)
+            } catch { reply(nil, ChannelError.badArgs.rawValue) }
         case .approveWithDevice:
             // SEC-006: allow decisions only. Deny never comes here (no native prompt).
             guard let approval = ApprovalRequest.parse(request.args) else { ShellLog.channelRefused(.badArgs); reply(nil, ChannelError.badArgs.rawValue); return }

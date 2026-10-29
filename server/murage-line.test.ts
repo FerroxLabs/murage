@@ -149,6 +149,7 @@ const FORWARDS: Record<string, string> = {
   "index.ts :: sendNoticeLine(\"lateRefused\")": "the stamped notice helper (tested below)",
   "index.ts :: stored": "the event fold (pushMessage): stamps every chip that is not the engine's, and a bot row of the engine names event.turnId",
   "index.ts :: message": "syncRoutineRunToSource: a routine.run card (message-db.ts MURAGE_KINDS)",
+  "routine-delivery.ts :: message": "deliverRoutineRun (ROUTINE-DELIVER-1010): the run's routine.run result card (message-db.ts MURAGE_KINDS), as syncRoutineRunToSource writes it",
   "voice/voice-notes.ts :: input.turnId ? { ...row, turnId: input.turnId } : murageLine(row)": "createVoiceNote: the producing turn's engine output, or murageLine when no turn made it (tested in voice-notes.test.ts)",
   "chat-widgets.ts :: turnId ? { ...row, turnId } : row": "appendWidget (1.0.6 QW Q4, 0bc0c7c28): the engine's widget names the turn that showed it; with no turn it is an unmarked engine row naming none, which message-db.ts unattributedRefs rests on every open turn's parents (withheld when they are), never Murage's own line",
   "index.ts :: turnId ? { ...row, turnId } : row": "openAnswerAsSendCard (1.0.6 QW Q1, 958352223): the engine's question names the turn that asked it (card.turnId too); with no turn it is an unmarked engine row naming none, which message-db.ts unattributedRefs rests on every open turn's parents, never Murage's own line",
@@ -168,6 +169,7 @@ const MARKED_FORWARDS: Record<string, string> = {
   "index.ts :: murageLine(plain)": "the event fold: the turn's own chips carry event.turnId, so they rest on that turn's inputs",
   "voice/voice-notes.ts :: murageLine(row)": "createVoiceNote with no producing turn (a replay); with one the row is the turn's engine output",
   "output-publication.ts :: murageLine(row)": "imageOutputRow with no producing turn named; with one the row is the turn's engine output",
+  "bot-calls-card.ts :: murageLine(row)": "writeCallCard: a bot call's card, words from callCardText (fixed CALL_COPY, the bot's name and a clock time); no engine or bot text",
 };
 
 /** How much of a row's text keys it (file and the row's first characters). */

@@ -7,8 +7,8 @@ android {
         applicationId "com.murage.mobile"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0.0"
+        versionCode 10009
+        versionName "1.0.9"
         // Play Integrity's cloud project, read from google-services.json (never committed).
         def gs = file('google-services.json')
         def projectNumber = gs.exists() ? new groovy.json.JsonSlurper().parse(gs).project_info.project_number : "0"
@@ -21,8 +21,29 @@ android {
     buildFeatures {
         buildConfig = true
     }
+    // Upload key for tester APKs and Play. Applies only when all three env vars
+    // are set (android-remote.sh sets them on the build host); otherwise release stays
+    // unsigned and debug builds are unchanged. The key itself is never committed.
+    def uploadStore = System.getenv('MURAGE_UPLOAD_STORE')
+    def uploadAlias = System.getenv('MURAGE_UPLOAD_ALIAS')
+    def uploadPassFile = System.getenv('MURAGE_UPLOAD_PASS_FILE')
+    def haveUploadKey = uploadStore && uploadAlias && uploadPassFile
+    if (haveUploadKey) {
+        signingConfigs {
+            upload {
+                storeFile file(uploadStore)
+                keyAlias uploadAlias
+                def pass = new File(uploadPassFile).text.trim()
+                storePassword pass
+                keyPassword pass
+            }
+        }
+    }
     buildTypes {
         release {
+            if (haveUploadKey) {
+                signingConfig signingConfigs.upload
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }

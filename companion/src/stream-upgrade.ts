@@ -19,6 +19,19 @@ const SECRET_QUERY = ["ticket", "keyterms", "client_token"];
 
 const STATUS: Record<number, string> = { 401: "Unauthorized", 403: "Forbidden", 426: "Upgrade Required", 429: "Too Many Requests", 502: "Bad Gateway", 503: "Service Unavailable", 504: "Gateway Timeout" };
 
+/** Every stream this process is forwarding, by its teardown. */
+const openForwards = new Set<() => void>();
+
+/** Ends every call stream being forwarded, upgraded or still in its handshake.
+ *  Shutdown needs it: an upgraded socket no longer belongs to the http server,
+ *  so closeAllConnections() skips it, and close() would wait for the call to
+ *  end on its own. Returns how many were open. */
+export function closeStreamUpgrades(): number {
+  const all = [...openForwards];
+  for (const teardown of all) teardown();
+  return all.length;
+}
+
 export function rejectUpgrade(socket: Duplex, status: number, error: string): void {
   if (socket.destroyed) return;
   // Node drops its own error listener once a socket is handed to an upgrade
@@ -84,9 +97,18 @@ export function forwardStreamUpgrade(
   let untrack: (() => void) | null = null;
   let recheck: ReturnType<typeof setTimeout> | null = null;
   const upstream = httpRequest({ host: "127.0.0.1", port: opts.harnessPort, path: `${url.pathname}${url.search}`, method: "GET", headers });
+  let harness: Duplex | null = null;
+  const teardown = () => {
+    upstream.destroy();
+    harness?.destroy();
+    socket.destroy();
+    release();
+  };
+  openForwards.add(teardown);
   const release = () => {
     if (released) return;
     released = true;
+    openForwards.delete(teardown);
     if (recheck) clearTimeout(recheck);
     untrack?.();
     untrack = null;
@@ -126,6 +148,7 @@ export function forwardStreamUpgrade(
       return;
     }
     upgraded = true;
+    harness = harnessSocket;
     const lines = [`HTTP/1.1 ${res.statusCode} ${res.statusMessage}`];
     for (let i = 0; i < res.rawHeaders.length; i += 2) lines.push(`${res.rawHeaders[i]}: ${res.rawHeaders[i + 1]}`);
     socket.write(`${lines.join("\r\n")}\r\n\r\n`);
