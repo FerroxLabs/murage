@@ -1153,7 +1153,6 @@ src/hooks/use-warm-intent.test.ts	extended
 src/hooks/use-window-drag.test.ts	extended
 src/lib/about-version.test.ts	extended
 src/lib/account-localisation.test.ts	extended
-src/lib/activity-runs.test.ts	extended
 src/lib/anchor-wait.test.ts	extended
 src/lib/app-catalog.test.ts	extended
 src/lib/assemblyai-transcription.test.ts	extended

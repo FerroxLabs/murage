@@ -546,8 +546,9 @@ function removePrivateTempDir(filePath: string | null | undefined): boolean {
 // A headless run that hits a permission acceptEdits doesn't cover should
 // neither stall silently NOR get blanket-denied — it should ask the user.
 // The broker is a net server on a per-turn socket; the proxy (spawned by
-// the claude CLI) forwards asks over it and waits. Unanswered permission
-// asks deny after timeoutMs with a keep-moving note. Unanswered questions
+// the claude CLI) forwards asks over it and waits. A permission ask waits
+// for the owner until it is answered or the turn ends (Sean 10-29: cards
+// wait on every engine, direct chat included). Unanswered questions
 // wait up to 30 minutes and then receive an honest "nobody answered" —
 // never an invented answer presented as the owner's (0.1.52 ASK2).
 interface Ask {
@@ -567,8 +568,6 @@ type AskResolutionSource = "user" | "timeout" | "system" | "auto";
  * false: the CLI withdrew it, or the process is gone) and why. */
 type ElicitEnd = (outcome: "accept" | "decline" | "cancel", source: AskResolutionSource, answers?: readonly QuestionAnswer[], write?: boolean) => void;
 
-const DENY_TIMEOUT_NOTE =
-  "Murage: nobody answered this permission request in time. Skip this action and finish what you can without it.";
 /** The engine wait for a question, overridable per instance
  * (`config.questionTimeoutMs`) and bounded so a typo cannot hold a turn for
  * days or expire a card before a person could read it. */
@@ -697,16 +696,10 @@ export async function createPermissionBroker(opts: {
   onAsk: (ask: Ask) => void;
   onResolve: (resolved: Ask & { behavior: AskBehavior; source: AskResolutionSource }) => void;
   isActive?: () => boolean;
-  timeoutMs?: number;
   /** How long a question waits for the owner (default 30 min). */
   questionTimeoutMs?: number;
-  /** Read when a permission ask arrives: true for a routine run's turn,
-   * whose cards wait until answered or the turn stops instead of the
-   * timeoutMs deny (SendTurnInput.holdPermissionAsks). */
-  holdPermissionAsks?: () => boolean;
   holdProjectAsks?: () => boolean;
 }) {
-  const timeoutMs = opts.timeoutMs ?? 15 * 60_000;
   const questionTimeoutMs = questionTimeoutFor(opts.questionTimeoutMs);
   const pending = new Map<
     string,
@@ -818,12 +811,10 @@ export async function createPermissionBroker(opts: {
       // A question left unanswered gets an honest non-answer: Claude sees a
       // deny whose note says nobody answered, never a guess in the owner's
       // name. The card stays behind as Expired with "Send as a message".
-      const timer = opts.holdProjectAsks?.() || (kind === "permission" && opts.holdPermissionAsks?.()) ? undefined : setTimeout(
-        () =>
-          kind === "question"
-            ? finish("deny", QUESTION_NOTES.timeout(Math.max(1, Math.round(questionTimeoutMs / 60_000))), "timeout")
-            : finish("deny", DENY_TIMEOUT_NOTE, "timeout"),
-        kind === "question" ? questionTimeoutMs : timeoutMs,
+      // A permission card has no deadline: it waits for the owner.
+      const timer = kind === "permission" || opts.holdProjectAsks?.() ? undefined : setTimeout(
+        () => finish("deny", QUESTION_NOTES.timeout(Math.max(1, Math.round(questionTimeoutMs / 60_000))), "timeout"),
+        questionTimeoutMs,
       );
       timer?.unref?.();
       pending.set(askId, { ask, finish });
@@ -2800,8 +2791,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
        * so that text is shown when the turn produced none of its own. */
       engineCommand?: boolean;
       answered?: boolean;
-      /** A routine run: its permission cards wait for the owner. */
-      holdPermissionAsks?: boolean;
       holdProjectAsks?: boolean;
       /** The engine's background sub agents for this turn (see handleLine). */
       bg?: BackgroundState;
@@ -4117,7 +4106,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             boundary: createAttemptBoundary(),
             submission: null,
             engineCommand: Boolean(turn.engineCommand),
-            holdPermissionAsks: turn.holdPermissionAsks === true,
             holdProjectAsks: turn.holdProjectAsks === true,
           };
           startedTurn = started;
@@ -4258,7 +4246,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             // never while an earlier turn's continuation is playing: its asks
             // are not this turn's to open a card for
             isActive: () => { const t = sessions.get(threadId)?.turn; return Boolean(t && !t.lateContinuation); },
-            holdPermissionAsks: () => sessions.get(threadId)?.turn?.holdPermissionAsks === true,
             holdProjectAsks: () => sessions.get(threadId)?.turn?.holdProjectAsks === true,
             questionTimeoutMs: config.questionTimeoutMs,
             onAsk: (ask) => {
@@ -4459,7 +4446,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         boundary: createAttemptBoundary(),
         submission: null,
         engineCommand: Boolean(turn.engineCommand),
-        holdPermissionAsks: turn.holdPermissionAsks === true,
           holdProjectAsks: turn.holdProjectAsks === true,
       };
       const session: Session = {

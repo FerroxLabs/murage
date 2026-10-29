@@ -154,6 +154,9 @@ export type RuntimeEvent = RuntimeEventBase &
          * up (it does not report per-server status); the bot was told they may
          * still be loading. Absent when they were checked. */
         mcpReadiness?: "unknown";
+        /** The engine ended the prompt `cancelled` on its own right after a permission ask was denied, with no Stop or
+         *  host interrupt: who denied it. The person did not press Stop, so the turn's line says why it ended instead. */
+        deniedBy?: "user" | "timeout" | "system";
       }
     /** `summary` is a short human read of the tool's arguments, for engines
      * that hide the real call inside a wrapper tool — without it every chip
@@ -537,12 +540,9 @@ export interface SendTurnInput {
    * and plan, and every file change or command is refused before it runs (server/drivers/ask-stop.ts). Engines
    * that ask for every change ignore it. */
   askLevel?: true;
-  /** A scheduled or manual routine run. Its permission cards wait until the
-   * owner answers them or the turn stops, instead of the drivers' 15-minute
-   * deny: the routine manager ends the run as "waiting on you" at its run
-   * limit and answering the card later carries the same run on. Absent: the
-   * ordinary 15-minute deny. */
-  holdPermissionAsks?: true;
+  /* Permission cards carry no deadline on any turn (Sean 10-29, LONGWORK H4): a card waits until the owner answers
+   * it or the turn stops, on every engine, direct chat and routine alike. A routine run still ends as "waiting on
+   * you" at its run limit (RoutineManager.enforceRunLimits). */
   holdProjectAsks?: true;
   /** The Chief's hidden New project proposal turn (lane N/N2): it answers
    * with a proposal block in its reply; where the turn mounts the agents

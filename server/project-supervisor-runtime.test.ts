@@ -91,7 +91,7 @@ it("shared-owner accounting holds asks and settles a failed send", async () => {
   const sendTurn = vi.fn(async () => { throw Error("shared send failed"); });
   const send = seam("sharedOwnerUsageTurn", { sharedOwnerUsage, store: { bot: () => ({ tasks: [{ threadId: "work", sharedWork: { teamId: "sales" } }] }), messagesFor: () => [{ id: "message", role: "user" }], newestMatching: () => ({ id: "message", role: "user" }) } });
   await expect(send({ driverKind: "fake", adapter: { sendTurn } }, { threadId: "work" }, { botId: "bot", generation: "gen" })).rejects.toThrow("shared send failed");
-  expect(sendTurn).toHaveBeenCalledWith({ threadId: "work", holdPermissionAsks: true, holdProjectAsks: true });
+  expect(sendTurn).toHaveBeenCalledWith({ threadId: "work", holdProjectAsks: true });
   expect(settleSharedOwner).toHaveBeenCalledTimes(1);
   expect(settleSharedOwner).toHaveBeenCalledWith("work", expect.objectContaining({ generation: "gen", teamId: "sales", messageId: "message" }), { ok: false });
   expect(sharedOwnerUsage.has("work")).toBe(false);

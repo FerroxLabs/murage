@@ -409,6 +409,11 @@ export function applyGrokFluxMemory(env: Record<string, string | undefined>, hea
 const support: AcpSupport = {
   driverKind: "grokAgent",
   displayName: "Grok",
+  // The same shell as Fuigo: a bare reject_once ends the prompt as `cancelled`
+  // (10-29: a 15-minute card timeout ended a live image turn as "Stopped by
+  // you"). grok 1.0.70 carries the same `followup_message` permission decision
+  // (`FollowupMessage`, telemetry `decision = followup`), so a deny keeps the turn.
+  rejectNeedsFollowup: true,
   // A cut MCP result is saved in this session's own `mcp/` folder; reading it
   // back is the bot reading its own output (server/own-tool-results.ts).
   toolResultDirs: ({ env, cwd, sessionId }) => fuigoToolResultDirs(grokHome(env), sessionFolders(cwd), sessionId),

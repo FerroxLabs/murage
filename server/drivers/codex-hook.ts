@@ -119,8 +119,12 @@ export const HOOK_ENV_FILE = "murage-hook.env";
 export const HOOK_ENV_DIR = "hook-env";
 export const HOOK_ENV_VAR = "MURAGE_CODEX_HOOK_ENV";
 
-/** The ask bound a hook waits for the owner (the driver's permission deny, codex.ts). */
-export const HOOK_ASK_BOUND_MS = 15 * 60_000;
+/** The longest a hook waits for the owner's answer to its card (codex.ts, antigravity.ts). Cards wait for the owner on
+ *  every engine (Sean 10-29), so this is only the hook's own ceiling, never a 15-minute deny: 20 days keeps the
+ *  script's deadline (below) under Node's longest timer (2^31-1 ms, about 24.8 days). Codex applies no ceiling of its
+ *  own to a PreToolUse hook's timeout (codex-rs hooks/src/engine/discovery.rs clamps only SessionEnd and Interrupt),
+ *  and agy blocks a tool whose hook fails, so a host that ends the hook sooner still fails closed. */
+export const HOOK_ASK_BOUND_MS = 20 * 24 * 60 * 60_000;
 /** `timeout` of both handlers: the ask bound plus 30 s, in seconds (Rule 68a). */
 export const HOOK_TIMEOUT_SEC = Math.ceil(HOOK_ASK_BOUND_MS / 1000) + 30;
 /** The script's own deadline: shorter than the handler timeout, so Codex never times the hook out while the script is alive. */
