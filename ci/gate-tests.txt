@@ -1529,6 +1529,7 @@ src/components/first-run-settled.test.ts	all	first run card settled state from s
 src/components/routine-grant-82.test.ts	all	grant card describes operations in plain words
 src/components/settings-panel-locale.test.ts	all	bot settings stays in English after the owner picks another language
 src/components/settings-search-keeps-page.test.ts	all	a Settings search throws away an unsaved skill draft, or Tab leaves the Settings dialog through the hidden page
+src/components/settings-stubs.test.ts	all	a Settings card or bot section for a feature that is off renders nothing, so the owner cannot find it or learn how to turn it on
 src/components/widget/WidgetMessage.test.ts	all	a bot widget draws its form, sends what the owner filled and folds once answered
 src/lib/all-chats.test.ts	all	All chats asks, pages, groups and matches messages correctly, at any scale
 src/lib/analytics.test.ts	all	analytics opt-in/out honoured (privacy)

@@ -18,8 +18,11 @@ describe("the status read (2.0, section 8)", () => {
     expect(await readEmailStatus(failing(404, { error: "Bot email is not available." }))).toEqual({ kind: "off" });
     expect(await readEmailStatus(failing(404, { error: "x", fluxOff: EMAIL_SETUP_COPY.fluxOff }))).toEqual({ kind: "flux-off", line: EMAIL_SETUP_COPY.fluxOff });
     expect(await readEmailStatus(async () => ({ enabled: false }))).toEqual({ kind: "off" });
+    // a failed read (5xx, network) is not "off": the stub must not claim the account is waiting for a rollout
+    expect(await readEmailStatus(failing(500, { error: "x" }))).toEqual({ kind: "error" });
+    expect(await readEmailStatus(async () => { throw new TypeError("Failed to fetch"); })).toEqual({ kind: "error" });
     expect(emailSectionOffered({ kind: "on", view: VIEW })).toBe(true);
-    for (const state of [{ kind: "off" }, { kind: "loading" }, { kind: "flux-off", line: "x" }] as const) expect(emailSectionOffered(state)).toBe(false);
+    for (const state of [{ kind: "off" }, { kind: "loading" }, { kind: "error" }, { kind: "flux-off", line: "x" }] as const) expect(emailSectionOffered(state)).toBe(false);
   });
 
   it("asks for a fresh capability read when Settings opens", async () => {
