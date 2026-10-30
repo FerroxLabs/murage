@@ -49,6 +49,17 @@ function fixture(overrides={}){
     async arm(){await this.enable();now=Date.parse("2026-09-13T09:01:00Z");await controller.tick();},
     cleanup(){controller.stopPolling();safeWipeSync(root);}};
 }
+test("destination permission failure keeps its named code through the host and coordinator",async()=>{
+  const f=fixture();try{
+    await f.arm();
+    const host=f.create({capture:async()=>{throw Object.assign(new Error("BACKUP_FOLDER_NOT_WRITABLE"),{code:"BACKUP_FOLDER_NOT_WRITABLE"});}});
+    await assert.rejects(host.resumeOffline(),/BACKUP_SCHEDULE_REVIEW_REQUIRED/);
+    const failure=f.coordinator().status().captureFailure;
+    assert.equal(failure.code,"BACKUP_FOLDER_NOT_WRITABLE");
+    assert.equal(failure.stage,"capture");
+    assert.equal(captureFailureSentence(failure),"The last backup stopped while copying your workspace. Murage can't write a file the backup needs. Choose a backup folder you can write to, or fix the permissions on that folder and on the folder that holds Murage's data.");
+  }finally{f.cleanup();}
+});
 test("disabled selection never enables, exposes only labels/refs, and needs explicit consent",async()=>{
   const f=fixture();try{await f.controller.tick();assert.deepEqual(f.calls,[]);const s=await f.controller.selectReferences();assert.equal(s.enabled,false);const encoded=JSON.stringify(s);assert.equal(encoded.includes(f.root),false);assert.equal(encoded.includes("AGE-SECRET"),false);assert.equal(encoded.includes("age1"),false);
     await assert.rejects(f.controller.configure(0,{...choices,...s.refs}),/CONSENT/);assert.equal(f.coordinator().status().enabled,false);
@@ -173,7 +184,7 @@ for(const preUpgrade of [false,true])test(`Return keeps Backup mode and explains
       const response=await pressReturn();
       assert.equal(response.state.error,"BACKUP_STATE_SAVE_FAILED");
       assert.equal(response.state.busy,false);assert.equal(response.hidden,false);
-      assert.equal(response.sentence,"Murage could not save its backup state. Check the disk space and permissions, then press Return to workspace again.");
+      assert.equal(response.sentence,"Murage could not save its backup state. Check free disk space and folder permissions, then choose Return to workspace again.");
       assert.doesNotMatch(response.sentence,/—|\b(?:safe|unsafe|safety)\b/i);
       assert.equal(returns,0);assert.equal(workspace,false);
       assert.equal(coordinator.status().phase,"handoff-armed");

@@ -28,6 +28,7 @@ import { registerCloudHomeIpc } from "./cloud-home-ipc.mjs";
 import { doorLinkFromCommandLine, doorLinkFromDeepLink, parseDoorLink, parseOpenCloudLink } from "./cloud-door-link.mjs";
 import { createCloudLinkQueue } from "./cloud-link-queue.mjs";
 import { handOffDoorLink, needsDoorHandoff, takeStashedDoorLink } from "./cloud-link-handoff.mjs";
+import { configureLinuxPasswordStore } from "./linux-password-store.mjs";
 import { ensureLinuxUrlHandler } from "./linux-url-handler.mjs";
 import { createEngineLoginRelay, registerEngineLoginIpc } from "./cloud-home-engine-login.mjs";
 import { createNotificationAuthorization } from "./notification-authorization.mjs";
@@ -36,7 +37,7 @@ import { BACKUP_MODE_ARGUMENT, BACKUP_TOOL_STUCK_AFTER, createBackupModeControll
 import { BACKUP_SCHEDULE_BINDINGS_KEY, createBackupScheduleHost, firstRunWithoutHost, setUpBackupsRequest } from "./backup-schedule-host.mjs";
 import { BACKUP_UNAVAILABLE_SENTENCES, backupUnavailableCode, captureFailureSentence, describeCaptureError } from "../shared/backup-capture-failure.mjs";
 import { pathWithin } from "../shared/path-identity.mjs";
-import { cloudNoticeStore, createRecoveryKeyFlow, hostCloudFolder, recoveryKeyFolderStore, settleRecoveryKeyRequest } from "./backup-recovery-key.mjs";
+import { cloudNoticeStore, createRecoveryKeyFlow, defaultRecoveryKeyFolder, hostCloudFolder, recoveryKeyAutomaticExclusions, recoveryKeyFolderStore, settleRecoveryKeyRequest } from "./backup-recovery-key.mjs";
 import { CLOSED_DUE_FLAG,CLOSED_DESCRIPTOR_FLAG,parseClosedBackupArguments,readClosedBackupDescriptor,closedProfileEnvironment,assertClosedProfileBinding,closedInstallationIdentity } from "./backup-closed-profile.mjs";
 import { createClosedBackupController,closedControlDirectory } from "./backup-closed-controller.mjs";
 import { tightenOwnedDirectory } from "./private-directory.mjs";
@@ -205,6 +206,8 @@ if (process.env.MURAGE_USER_DATA !== undefined) {
 }
 
 const { desktopCapabilities, nativeDesktopActions } = capabilitiesModule;
+// Keep this outside the profile-isolation slice, but before Electron is ready.
+configureLinuxPasswordStore({ commandLine: app.commandLine });
 // Local crash dumps, started before "ready" as Electron requires and after any
 // user-data move so they land in this profile's app.getPath("crashDumps").
 // Uploads are off and there is no server address (crash-dumps.mjs).
@@ -542,7 +545,7 @@ const backupRecoveryKeys=createRecoveryKeyFlow({
   selectedDestination:()=>backupScheduleHost.selectedDestination(),
   // Only the folder of the last key saved or picked is remembered, never the key.
   folderStore:recoveryKeyFolderStore(path.join(app.getPath("userData"),"backup-key-folder.json")),
-  defaultFolder:()=>app.getPath("documents"),
+  defaultFolder:()=>defaultRecoveryKeyFolder(name=>app.getPath(name)),
   // Where a key is written when nobody is asked: the person's home folder,
   // then (Windows) the local app data folder. Never Documents: that is the
   // folder sync clients take over (OneDrive on Windows, iCloud Desktop and
@@ -558,7 +561,7 @@ const backupRecoveryKeys=createRecoveryKeyFlow({
   rebindKeyFile:file=>backupScheduleHost.rebindKeyFile(file),
   noticeStore:cloudNoticeStore(path.join(app.getPath("userData"),"backup-key-cloud-notice.json")),
   // Never written to without asking, even when an earlier key went there.
-  neverAutomatic:()=>{try{return [app.getPath("documents")];}catch{return [];}},
+  neverAutomatic:()=>recoveryKeyAutomaticExclusions(name=>app.getPath(name)),
   // A picked folder that syncs to the cloud is named before the key goes there.
   confirmCloudFolder:async provider=>{
     const answer=await dialog.showMessageBox(mainWindow??undefined,{title:"Murage",type:"warning",buttons:["Choose another place","Save here"],defaultId:0,cancelId:0,noLink:true,
@@ -569,14 +572,14 @@ const backupRecoveryKeys=createRecoveryKeyFlow({
   // The second copy: somewhere other than the backup folder.
   chooseCopyFile:async suggested=>{
     const answer=await dialog.showSaveDialog(mainWindow??undefined,{title:"Save a copy of your recovery key",buttonLabel:"Save copy",properties:["createDirectory"],
-      defaultPath:suggested??path.join(app.getPath("documents"),"murage-recovery-key.txt"),nameFieldLabel:"Key file:",
+      defaultPath:suggested??path.join(defaultRecoveryKeyFolder(name=>app.getPath(name)),"murage-recovery-key.txt"),nameFieldLabel:"Key file:",
       message:"Save this copy somewhere other than your backup folder: a USB drive, another computer, or your password manager. Without this key nobody, including you, can open your backups."});
     return answer.canceled||!answer.filePath?null:answer.filePath;
   },
   // `suggested` is a name not yet taken in that folder.
   chooseFile:async suggested=>{
     const answer=await dialog.showSaveDialog(mainWindow??undefined,{title:"Save your recovery key",buttonLabel:"Save recovery key",properties:["createDirectory"],
-      defaultPath:suggested??path.join(app.getPath("documents"),"murage-recovery-key.txt"),nameFieldLabel:"Key file:",
+      defaultPath:suggested??path.join(defaultRecoveryKeyFolder(name=>app.getPath(name)),"murage-recovery-key.txt"),nameFieldLabel:"Key file:",
       message:"Keep this key somewhere other than your backup folder, such as a password manager or a USB drive. Without it, backups cannot be restored."});
     return answer.canceled||!answer.filePath?null:answer.filePath;
   },

@@ -369,13 +369,13 @@ test("folders that sync to the cloud are recognized by name on every platform",(
   assert.equal(win("C:\\Users\\Seani\\Documents"),null);
   assert.equal(win("C:\\Users\\Seani\\AppData\\Local\\Murage"),null);
   const mac=folder=>cloudSyncedFolder(folder,{platform:"darwin",env:{}});
-  assert.equal(mac("/Users/sean/Library/Mobile Documents/com~apple~CloudDocs/Keys"),"iCloud Drive");
-  assert.equal(mac("/Users/sean/Library/CloudStorage/GoogleDrive-sean@example.com/My Drive"),"Google Drive");
-  assert.equal(mac("/Users/sean/Library/CloudStorage/OneDrive-Personal"),"OneDrive");
-  assert.equal(mac("/Users/sean/Library/CloudStorage/Dropbox"),"Dropbox");
-  assert.equal(mac("/Users/sean/Dropbox/Keys"),"Dropbox");
-  assert.equal(mac("/Users/sean/Documents"),null);
-  assert.equal(mac("/Users/sean"),null);
+  assert.equal(mac("/Users/alex/Library/Mobile Documents/com~apple~CloudDocs/Keys"),"iCloud Drive");
+  assert.equal(mac("/Users/alex/Library/CloudStorage/GoogleDrive-sean@example.com/My Drive"),"Google Drive");
+  assert.equal(mac("/Users/alex/Library/CloudStorage/OneDrive-Personal"),"OneDrive");
+  assert.equal(mac("/Users/alex/Library/CloudStorage/Dropbox"),"Dropbox");
+  assert.equal(mac("/Users/alex/Dropbox/Keys"),"Dropbox");
+  assert.equal(mac("/Users/alex/Documents"),null);
+  assert.equal(mac("/Users/alex"),null);
   assert.equal(cloudSyncedFolder("/home/sean/Dropbox",{platform:"linux",env:{}}),"Dropbox");
   assert.equal(cloudSyncedFolder("/home/sean",{platform:"linux",env:{}}),null);
   assert.equal(cloudSyncedFolder(null),null);
@@ -545,7 +545,7 @@ test("a key is never made in a folder set aside for asking (Documents), even whe
     assert.equal(path.dirname(flow.createFor(p.destination).file),p.safe);
     assert.deepEqual(readdirSync(documents),[]);
     const main=readFileSync(new URL("./main.mjs",import.meta.url),"utf8");
-    assert.match(main,/neverAutomatic:\(\)=>\{try\{return \[app\.getPath\("documents"\)\];\}catch\{return \[\];\}\}/);
+    assert.match(main,/neverAutomatic:\(\)=>recoveryKeyAutomaticExclusions\(name=>app\.getPath\(name\)\)/);
   }finally{p.cleanup();}
 });
 // Astra r3 #1 and #3: the copy the backups now read must still be the one

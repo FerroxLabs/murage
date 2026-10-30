@@ -217,6 +217,7 @@ server/attachments.test.ts	all	attachment mime refusal and safe storage
 server/authorize-work.test.ts	all	Partitioned bots refuse cross-person work
 server/auto-approve-own-always-ask.test.ts	all	a remembered, task or routine grant never runs publish_site and the other always-ask own tools
 server/auto-approve-reason-log.test.ts	all	Asked verdict reason logs are value-free and rate-limited per bot tool class with suppressed counts
+server/backup-destination-permissions.test.ts	all	read-only backup destinations retain a named actionable permission failure
 server/bot-calls-schema.test.ts	all	bot call tables, rule writes, restore fence and the step back to 1.0.8 keep their data
 server/browser-document-guard-scope.test.ts	all	the page check looks at the bot's own tabs, so owners with many tabs can use their Chrome
 server/drivers/acp/phone-jobs-preallow.test.ts	all	security boundary or path/file access

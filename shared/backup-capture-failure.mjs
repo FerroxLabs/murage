@@ -212,7 +212,7 @@ const REASONS = {
   BACKUP_DISK_FULL:
     "The drive ran out of space while the backup was being written. Free up space on the drive that holds your backup folder, then back up again.",
   BACKUP_FOLDER_NOT_WRITABLE:
-    "This computer didn't let Murage write a file the backup needed. Check that you can create files in your backup folder and in the folder that holds Murage's data, then back up again.",
+    "Murage can't write a file the backup needs. Choose a backup folder you can write to, or fix the permissions on that folder and on the folder that holds Murage's data.",
   BACKUP_FOLDER_UNUSABLE:
     "Murage couldn't make its private working folder inside your backup folder. Choose a folder on this computer's own drive that you can create files in (not a network, removable or linked folder), then back up again.",
   BACKUP_FILE_IN_USE:

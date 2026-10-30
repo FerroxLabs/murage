@@ -47,7 +47,7 @@ function capturedFilesystemError(error:unknown):InstallationSnapshotError{
   const errno=typeof raw?.ioCause?.errno==="string"?raw.ioCause.errno:!leaseCode&&typeof raw?.code==="string"?raw.code:undefined;
   const code=errno==="EEXIST"&&!leaseCode?"DESTINATION_EXISTS"
     :errno==="ENOSPC"?"BACKUP_DISK_FULL"
-    :errno==="EACCES"||errno==="EPERM"?"BACKUP_FOLDER_NOT_WRITABLE"
+    :errno==="EACCES"||errno==="EPERM"||errno==="EROFS"?"BACKUP_FOLDER_NOT_WRITABLE"
     :errno==="EBUSY"?"BACKUP_FILE_IN_USE"
     :leaseCode==="LEASE_BUSY"||leaseCode==="LEASE_CHILD_BUSY"?"RECOVERY_OWNERSHIP_REQUIRED"
     :"ENCRYPTED_BACKUP_FAILED";
@@ -184,7 +184,9 @@ export async function writeEncryptedInstallationBackup(dataDir:string,destinatio
   const parent=dataDirLeasePaths(dirname(destination)).canonicalDataDir,target=join(parent,basename(destination));
   const sourceRoot=dataDirLeasePaths(dataDir).canonicalDataDir;
   if(parent===sourceRoot||parent.startsWith(sourceRoot+sep))fail("DESTINATION_INSIDE_INSTALLATION");
-  try{lstatSync(target);fail("DESTINATION_EXISTS");}catch(error){if((error as NodeJS.ErrnoException).code!=="ENOENT")throw error;}
+  try{lstatSync(target);fail("DESTINATION_EXISTS");}catch(error){
+    if((error as NodeJS.ErrnoException).code!=="ENOENT")throw error instanceof InstallationSnapshotError?error:withCaptureStep(capturedFilesystemError(error),"private-stage");
+  }
   const execute=async(scratch:string,options:EncryptedBackupOptions&{recipient:string;selection:BackupSelection},held?:OfflineInstallation)=>{
   const ciphertext=join(scratch,"backup.age");
   // Plaintext (the stage, the database snapshot, the readback's decrypted
@@ -262,7 +264,12 @@ export async function writeEncryptedInstallationBackup(dataDir:string,destinatio
     // the run folder, owner-only, is swept once this process has gone.
     else if(!unconfirmedClose(failure))try{removeBackupWork(work);}catch{/* swept at the next backup or start */}}
   };
-  if(process.platform!=="win32")return execute(mkdtempSync(join(parent,".murage-encrypted-write-")),options);
+  if(process.platform!=="win32"){
+    let scratch:string;
+    try{scratch=mkdtempSync(join(parent,".murage-encrypted-write-"));}
+    catch(error){throw withCaptureStep(capturedFilesystemError(error),"private-stage");}
+    return execute(scratch,options);
+  }
   let scratch:string|undefined,success=false;
   try{
     // The data-folder lease is taken before the native helper starts and let
