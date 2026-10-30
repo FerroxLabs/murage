@@ -56,6 +56,11 @@ else {
         } }) + "\\n");
         return;
       }
+      if (mode === "many-tools") {
+        const tools = Array.from({ length: 113 }, (_, index) => ({ name: "tool_" + index }));
+        process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: frame.id, result: { tools, ...(process.env.FAKE_MCP_CURSOR ? { nextCursor: process.env.FAKE_MCP_CURSOR } : {}) } }) + "\\n");
+        return;
+      }
       process.stdout.write(JSON.stringify({
         jsonrpc: "2.0",
         id: frame.id,
@@ -93,6 +98,15 @@ describe("custom MCP probe", () => {
       ok: true,
       tools: [{ name: "read_notes", description: "Read saved notes" }],
     });
+  });
+
+  it("keeps 100 tools and says how many the server has", async () => {
+    const probe = (env: Record<string, string>) => probeMcpServer({ command: process.execPath, args: [fakeServer], env: { FAKE_MCP_MODE: "many-tools", ...env }, enabled: false }, 5_000);
+    const whole = await probe({});
+    expect(whole).toMatchObject({ ok: true, toolsTotal: 113 });
+    expect(whole.ok && whole.tools).toHaveLength(100);
+    expect(whole).not.toHaveProperty("toolsMore");
+    await expect(probe({ FAKE_MCP_CURSOR: "page-2" })).resolves.toMatchObject({ ok: true, toolsTotal: 113, toolsMore: true });
   });
 
   it("times out a server that never completes initialization", async () => {

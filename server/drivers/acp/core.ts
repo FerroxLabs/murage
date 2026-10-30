@@ -2,6 +2,7 @@ import { cliSig, engineLaunchFile, knownCliVersion, noteVersionProbe, rememberCl
 import { cloudEngineHome, cloudTurnBot, cloudTurnEnvironment } from "../../cloud-home/turn-process.ts";
 import { renderDriverReplay } from "../../turn-context.ts";
 import { anyMountHoldsStandIn, anyMountIncomplete, clearMountsIncomplete, connectorMountRefOfEnv } from "../turn-credentials.ts";
+import { acpMcpGateLine, acpMcpGateWorthLogging, acpMcpServerDetail, type AcpMcpGateFacts, type AcpMcpServerDetail } from "../mcp-readiness.ts";
 import { McpBackoff, MCP_REQUIRED_WAIT_MS, mcpReconnectWaitMs, mcpRecoveryMs, requiredMcpLabel, toolsMayBeLoadingNotice, toolsUnavailableNotice, unavailableLabels } from "../mcp-readiness.ts";
 import { boundedEnvMs } from "../env-ms.ts";
 import { FUIGO_TOOL_SURFACE, NEUTRAL_TOOL_SURFACE, renderMurageTurn } from "../../murage-tool-surface.ts";
@@ -4377,6 +4378,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             let mcpReadyWaited = false;
             /** How the last MCP-ready wait ended. */
             let mcpOutcome: "ready" | "own_ready" | "timeout" | "aborted" | null = null;
+            /** What the ready wait has cost this turn, for the gate line. */
+            let mcpWaitedMs = 0;
+            /** The engine's own words on each server, kept with the statuses they came with: only the gate line reads them. */
+            const listDetails = new WeakMap<Map<string, string>, Map<string, AcpMcpServerDetail>>();
             /** Each server's status from the engine's list (`mcpListMethod`), or
              *  null when it has none or did not answer. */
             const readStates = async (timeoutMs = 3_000): Promise<Map<string, string> | null> => {
@@ -4389,9 +4394,13 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 const body = Array.isArray(answer?.servers) ? answer : answer?.result;
                 if (!Array.isArray(body?.servers)) return null;
                 const states = new Map<string, string>();
+                const details = new Map<string, AcpMcpServerDetail>();
                 for (const entry of body.servers) {
                   if (entry && typeof entry.name === "string" && typeof entry.session?.status === "string") states.set(entry.name, entry.session.status);
+                  // A disabled or blocked server is listed with a session and no status.
+                  if (entry && typeof entry.name === "string" && entry.session && typeof entry.session === "object") details.set(entry.name, acpMcpServerDetail(entry.session));
                 }
+                listDetails.set(states, details);
                 return states;
               } catch (error) {
                 if (buildKey && methodNotFound(error)) acpMcpListUnsupported.add(buildKey);
@@ -4404,6 +4413,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             const waitMcpReady = async (): Promise<boolean> => {
               mcpReadyWaited = true;
               mcpDeadline ??= Date.now() + mcpRecoveryMs();
+              const waitStartedAt = Date.now();
               const mcpDone = turnTrace(threadId).span("mcp.ready.wait", { servers: mcpServers.length });
               const id = sessionId!;
               const names = mcpServers.map(server => server.name);
@@ -4434,6 +4444,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 void poll;
               }
               mcpOutcome = outcome;
+              mcpWaitedMs += Date.now() - waitStartedAt;
               mcpDone(outcome);
               if (state.settled) return false;
               if (state.cancelRequested) { settle(true, "cancelled"); return false; }
@@ -4826,6 +4837,24 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               const notReady = (states: Map<string, string>) => requiredNames.filter(name => states.has(name) && (states.get(name) !== "ready" || holdsStandIn(name)));
               // A required server the list does not name at all is unknown, not ready.
               const absentFrom = (states: Map<string, string>) => requiredNames.filter(name => !states.has(name));
+              const gateStartedAt = Date.now();
+              let gateReconnected: string[] = [];
+              let gateBackedOff: string[] = [];
+              // Everything the wait learned, one line per turn, as the Claude gate logs it: fixed words, counts and server names only.
+              const logGate = (states: Map<string, string> | null, missing: string[]) => {
+                const buildKey = proc?.mcpBuildKey;
+                const gate: AcpMcpGateFacts = {
+                  threadId, engine: DRIVER_KIND, waitedMs: mcpWaitedMs + Date.now() - gateStartedAt, waitOutcome: mcpOutcome,
+                  required: requiredNames, mounted: mcpServers.map(server => server.name),
+                  reconnected: gateReconnected, backedOff: gateBackedOff, missing,
+                  standIn: requiredNames.filter(holdsStandIn), states, details: states ? listDetails.get(states) ?? null : null,
+                  ...(states ? {} : { unchecked: buildKey && acpMcpListUnsupported.has(buildKey) ? "unsupported" as const : "no-answer" as const }),
+                };
+                if (!acpMcpGateWorthLogging(gate)) return;
+                const line = acpMcpGateLine(gate);
+                console.info(line);
+                appendNative(threadId, { dir: "out", source: SOURCE, msg: { mcpGate: line } });
+              };
               let states = await readStates();
               if (state.settled) return;
               if (state.cancelRequested) { settle(true, "cancelled"); return; }
@@ -4834,11 +4863,13 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 // A server that keeps failing is not reconnected on every turn.
                 const backoffKey = (name: string) => `${threadId}\0${name}`;
                 const retry = missing.filter(name => !acpMcpBackoff.blocked(backoffKey(name)));
+                gateBackedOff = missing.filter(name => !retry.includes(name));
                 // One deadline for the turn: what the ready wait left of it.
                 mcpDeadline ??= Date.now() + mcpRecoveryMs();
                 const windowMs = Math.min(mcpReconnectWaitMs(), mcpDeadline - Date.now());
                 if (retry.length && windowMs >= Math.min(1_000, mcpReconnectWaitMs())) {
                   lifecycle.record("mcp_reconnect");
+                  gateReconnected = retry;
                   const marker = String(Date.now());
                   const reconnecting = mcpServers.map(server => retry.includes(server.name)
                     ? { ...server, env: [...(server.env ?? []).filter((item: { name: string }) => item.name !== "MURAGE_MCP_RECONNECT"), { name: "MURAGE_MCP_RECONNECT", value: marker }] }
@@ -4869,11 +4900,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 // waits for the real list), so the bot is not told they are missing.
                 const unavailable = statusNotReady(states);
                 requiredMissing = unavailable.length || !absent.length ? unavailableLabels(unavailable) : null;
-                if (requiredMissing?.length) {
-                  state.toolsUnavailable = requiredMissing;
-                  console.info(`acp mcp gate thread=${threadId} engine=${DRIVER_KIND} missing=${unavailable.join(",")}`);
-                }
-              }
+                if (requiredMissing?.length) state.toolsUnavailable = requiredMissing;
+                logGate(states, unavailable);
+              } else logGate(null, []);
             }
             // The process tree before the prompt goes out (MCP servers included): a
             // child beyond it once the turn settles is the turn's leftover work.

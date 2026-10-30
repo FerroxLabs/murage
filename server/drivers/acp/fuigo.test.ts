@@ -313,7 +313,8 @@ process.stdin.on("data", (d) => {
       // marker takes FUIGO_FAKE_MCP_RECONNECT_TO (default: unchanged).
       if (process.env.FUIGO_FAKE_DUMP_DIR) appendFileSync(join(process.env.FUIGO_FAKE_DUMP_DIR, "mcp-list.log"), JSON.stringify(m.params) + "\\n");
       const states = { ...JSON.parse(process.env.FUIGO_FAKE_MCP_LIST), ...reconnected };
-      ok({ result: { servers: Object.entries(states).map(([name, status]) => ({ name, type: "stdio", command: "x", source: "session", session: { enabled: true, status } })) } });
+      const extra = JSON.parse(process.env.FUIGO_FAKE_MCP_LIST_SESSION ?? "{}");
+      ok({ result: { servers: Object.entries(states).map(([name, status]) => ({ name, type: "stdio", command: "x", source: "session", session: { enabled: true, status, ...extra[name] } })) } });
     } else if (m.method === "_fuigo/interject") {
       // FUIGO_FAKE_INTERJECT: "ok" (default) queues and echoes; "nomethod" is
       // method-not-found, as a build without the extension answers;
@@ -1501,6 +1502,32 @@ describe("fuigo waits for MCP readiness before the first prompt", () => {
     const text = (JSON.parse(readFileSync(join(dumps, "prompt.json"), "utf8")).prompt as Array<{ text?: string }>).map((part) => part.text ?? "").join("\n");
     expect(text).toContain(toolsUnavailableNotice(["connected apps"]));
     expect(lifecycleEvents(threadId, turnId).map((row) => row.event)).toContain("mcp_reconnect");
+  });
+
+  it("(i2) the gate line says each server's status, the wait and the reason, and no engine text", async () => {
+    process.env.MURAGE_MCP_RECONNECT_WAIT_MS = "300";
+    const lines: string[] = [];
+    const info = vi.spyOn(console, "info").mockImplementation((...args: unknown[]) => { lines.push(args.join(" ")); });
+    onTestFinished(() => info.mockRestore());
+    const { threadId } = await start({
+      FUIGO_FAKE_MCP: "ready",
+      FUIGO_FAKE_MCP_LIST: JSON.stringify({ murage_connectors: "unavailable", agents: "ready" }),
+      FUIGO_FAKE_MCP_LIST_SESSION: JSON.stringify({
+        murage_connectors: { unavailableReason: `MCP server 'murage_connectors' handshake failed: ${["sk", "live", "fixture", "marker", "0042"].join("-")} at /Users/jane/x` },
+        agents: { tools: [{ name: "send" }, { name: "read" }] },
+      }),
+    }, { ...COMPOSIO, ...AGENTS });
+    const done = await recorder!.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true, toolsUnavailable: ["connected apps"] });
+    const gate = lines.filter((line) => line.startsWith("acp mcp gate"));
+    expect(gate).toHaveLength(1);
+    expect(gate[0]).toContain(`thread=${threadId} engine=fuigoAgent waitedMs=`);
+    expect(gate[0]).toContain("readiness=degraded");
+    expect(gate[0]).toContain("reconnected=murage_connectors backedOff=none missing=murage_connectors");
+    expect(gate[0]).toContain("notConnected=murage_connectors:unavailable reasons=murage_connectors:handshake-failed");
+    expect(gate[0]).toMatch(/tools=.*agents:2/);
+    expect(gate[0]).not.toContain("sk-live");
+    expect(gate[0]).not.toContain("jane");
   });
 
   it("(j) a reconnect that brings connected apps up runs the turn with no notice", async () => {
