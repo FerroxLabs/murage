@@ -98,3 +98,10 @@ test("skipped items read the same on the Backup mode page and the Backups page",
   ]);
   for (const line of samples.flatMap(sample => backupSkippedLines(sample))) assert.doesNotMatch(line, /—|[A-Z]{2,}_[A-Z_]+/);
 });
+
+test("1.0.12: a full disk names both drives, in a backup and in a restore, and never the recovery key", () => {
+  for (const action of ["backup-encrypted", "restore-encrypted-new", "inspect-encrypted"]) {
+    const text = sentence("BACKUP_DISK_FULL", { action });
+    assert.equal(text, "There isn't enough free space to finish. Free up space on this computer's drive and on the drive that holds your backup folder, then try again.");
+  }
+});
