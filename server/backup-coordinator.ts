@@ -289,7 +289,7 @@ export class BackupCoordinator {
     const candidate=this.checkedCandidate(input),job=s.job,intent=job?.handoff,r=job?.receipt;
     if(!job||intent?.id!==id||!intent.upgrade||this.checkedCandidate(intent.upgrade).candidateId!==candidate.candidateId
       ||canonicalUpdateDescriptor(intent.upgrade)!==canonicalUpdateDescriptor(candidate)
-      ||!s.schedule.enabled||!s.schedule.preUpgrade||job.revision!==s.revision||intent.expiresAt<=this.now()
+      ||!s.schedule.enabled||!s.schedule.preUpgrade||job.revision!==s.revision
       ||intent.bindingRevision!==bindingRevision||intent.installationIdentity!==installationIdentity
       ||!r||r.candidateId!==candidate.candidateId||r.jobId!==job.id||r.artifactRef!==job.id
       ||r.installationRef!==s.schedule.installationRef||r.destinationRef!==s.schedule.destinationRef||r.selectionHash!==hash(s.schedule.selection)

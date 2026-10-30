@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 import test from "node:test";
 import { createHash, randomUUID } from "node:crypto";
-import { appendFileSync,copyFileSync,mkdirSync,mkdtempSync,readFileSync,readdirSync,realpathSync,renameSync,rmSync,statSync,writeFileSync } from "node:fs";
+import { appendFileSync,copyFileSync,mkdirSync,mkdtempSync,readFileSync,readdirSync,realpathSync,renameSync,rmSync,statSync,truncateSync,writeFileSync } from "node:fs";
 import { createRequire,syncBuiltinESMExports } from "node:module";
 import { EventEmitter } from "node:events";
 import { tmpdir } from "node:os";
@@ -54,9 +54,23 @@ test("disabled selection never enables, exposes only labels/refs, and needs expl
     await assert.rejects(f.controller.configure(0,{...choices,...s.refs}),/CONSENT/);assert.equal(f.coordinator().status().enabled,false);
   }finally{f.cleanup();}
 });
+test("1.0.12: the worker's notes become one timed log line per step and reach the window, and a broken window changes nothing",async()=>{
+  const f=fixture();try{await f.arm();const lines=[],shown=[];
+    const host=f.create({reportOutcome:line=>lines.push(line),reportWorkerProgress:note=>{shown.push(note.step);throw Error("window gone");},capture:async request=>{
+      request.onProgress({step:"encrypt",elapsedMs:10,done:5,total:9});request.onProgress({step:"encrypt",elapsedMs:40,done:9,total:9});request.onProgress({step:"readback",elapsedMs:70});request.onProgress({step:"nonsense",elapsedMs:80});request.onProgress({step:"done",elapsedMs:100});
+      return f.host.capture(request);}});
+    assert.deepEqual(await host.resumeOffline(),{verified:true});
+    const steps=lines.filter(line=>line.startsWith("backup step "));
+    assert.equal(steps.length,2);
+    assert.match(steps[0],/^backup step \{"job":"[^"]{1,8}","step":"encrypt","ms":60,"bytes":9\}$/);
+    assert.match(steps[1],/^backup step \{"job":"[^"]{1,8}","step":"readback","ms":30\}$/);
+    assert.deepEqual(shown,["encrypt","encrypt","readback","nonsense","done"]);
+    assert.equal(lines.filter(line=>line.startsWith("backup local verified")).length,1);
+  }finally{f.cleanup();}
+});
 test("a backup run logs one outcome line per step: started, local written, verified with bytes and how, and no paths",async()=>{
   const f=fixture();try{await f.arm();const lines=[];await f.create({reportOutcome:line=>lines.push(line)}).resumeOffline();
-    assert.equal(lines.length,3);assert.match(lines[0],/^backup started \{"job":"[^"]{1,8}","closed":false\}$/);assert.match(lines[1],/^backup local written \{"job":"[^"]{1,8}","bytes":\d+\}$/);assert.match(lines[2],/^backup local verified \{"job":"[^"]{1,8}","bytes":\d+,"how":"file re-read and its sha256 matched/);
+    assert.equal(lines.length,4);assert.match(lines[0],/^backup started \{"job":"[^"]{1,8}","closed":false\}$/);assert.match(lines[1],/^backup budget \{"job":"[^"]{1,8}","ms":\d+,"stored":\d+\}$/);assert.match(lines[2],/^backup local written \{"job":"[^"]{1,8}","bytes":\d+\}$/);assert.match(lines[3],/^backup local verified \{"job":"[^"]{1,8}","bytes":\d+,"how":"file re-read and its sha256 matched/);
     for(const line of lines){assert.doesNotMatch(line,/[\\/]/);assert.doesNotMatch(line,/\/Users\/|\.age|recipient|identity/i);}
   }finally{f.cleanup();}
 });
@@ -67,11 +81,11 @@ test("a backup that left a stray file out completes verified and logs one skippe
     const capture=async request=>({...await f.host.capture(request),skipped});
     await f.create({capture,reportOutcome:line=>lines.push(line)}).resumeOffline();
     assert.equal(f.coordinator().status().phase,"return-pending");
-    assert.equal(lines.length,4);assert.match(lines[2],/^backup local verified /);
+    assert.equal(lines.length,5);assert.match(lines[3],/^backup local verified /);
     assert.equal(lines.filter(line=>line.startsWith("backup skipped ")).length,1);
-    const logged=JSON.parse(lines[3].slice("backup skipped ".length));
+    const logged=JSON.parse(lines[4].slice("backup skipped ".length));
     assert.deepEqual(logged,{job:logged.job,count:3,reasons:{unrecognised:1,rebuildable:1},names:["config.json.bak-20260918-openaicompat"]});
-    assert.match(logged.job,/^[^"]{1,8}$/);assert.doesNotMatch(lines[3],/workspaces|node_modules|[\\]/);
+    assert.match(logged.job,/^[^"]{1,8}$/);assert.doesNotMatch(lines[4],/workspaces|node_modules|[\\]/);
   }finally{f.cleanup();}
 });
 test("two owners complete armed restart, verified receipt then normal return without replay",async()=>{
@@ -422,11 +436,10 @@ test("pre-upgrade missing policy cannot be opted in and policy is rechecked on c
   const f=fixture({assertUpgradeAllowed:undefined});try{await assert.rejects(f.enable(true),/UNAVAILABLE/);}finally{f.cleanup();}
   const g=fixture();try{await g.enable(true);await g.controller.requestUpgrade(updateCandidate());await g.create().resumeOffline();await assert.rejects(g.create({assertUpgradeAllowed:async()=>{throw Error("CUSTOM_PROFILE");}}).markUpgradeInstallRequested(updateCandidate()),/CUSTOM_PROFILE/);assert.equal(g.coordinator().status().phase,"return-pending");}finally{g.cleanup();}
 });
-test("pre-upgrade expired, rotated, missing or mismatched receipt stays pending without installer authority",async()=>{
-  for(const mode of ["expiry","binding","receipt","artifact","candidate","disabled"]){const f=fixture();try{
+test("pre-upgrade rotated, missing or mismatched receipt stays pending without installer authority",async()=>{
+  for(const mode of ["binding","receipt","artifact","candidate","disabled"]){const f=fixture();try{
     await f.enable(true);await f.controller.requestUpgrade(updateCandidate());await f.create().resumeOffline();
     const file=path.join(f.root,"control","backup-coordinator.json"),state=JSON.parse(readFileSync(file));
-    if(mode==="expiry")f.setNow(Date.parse("2026-09-13T09:00:00Z"));
     if(mode==="binding")f.rotate();
     if(mode==="receipt"){delete state.job.receipt;writeFileSync(file,JSON.stringify(state));}
     if(mode==="candidate"){state.job.receipt.candidateId=updateCandidate("9.0.1").candidateId;writeFileSync(file,JSON.stringify(state));}
@@ -1227,5 +1240,84 @@ test("1.0.9 Sentinel S01: bindingCurrent answers the live folder/key check, null
     assert.equal(await f.create().bindingCurrent(),false,"a replaced key file is not the verified one");
     rmSync(f.keyFile);
     assert.equal(await f.create().bindingCurrent(),false,"a missing key file is not current");
+  }finally{f.cleanup();}
+});
+
+// 1.0.13 BACKUP-BUDGET-A: one time limit, decided before the relaunch, carried on it, never written down.
+const MIN=60_000,sizedDatabase=(installation,bytes)=>{const file=path.join(installation,"messages.db");writeFileSync(file,"");truncateSync(file,bytes);};
+function budgetFixture({bytes=9*1024**3,runMs=31*MIN}={}){
+  const seen={relaunch:[],request:null,noted:[]};let f;
+  f=fixture(({installation})=>{sizedDatabase(installation,bytes);return{
+    relaunch:async(mode,argument)=>{seen.relaunch.push(argument);f.calls.push(mode);},
+    noteBudget:budget=>seen.noted.push({...budget,phase:f.coordinator().status().phase}),
+  };});
+  const capture=f.host.capture;
+  const longCapture=async request=>{seen.request=request;f.setNow(f.host.now()+runMs);return capture(request);};
+  return{f,seen,longCapture,argv:()=>["murage","--murage-backup-mode",seen.relaunch.at(-1)]};
+}
+test("a run past 30:30 under the new budget completes, and the ceiling stands off",async()=>{
+  const {f,seen,longCapture,argv}=budgetFixture();try{
+    await f.arm();
+    assert.match(seen.relaunch[0],/^--murage-backup-budget=[0-9a-f-]{36}:\d+$/);
+    const host=f.create({capture:longCapture,argv});
+    const ceilingMs=host.offlineCeilingMs();assert.equal(ceilingMs,87*MIN);
+    let scheduled;
+    const outcome=await runOfflineBackup({run:()=>host.resumeOffline(),abandon:()=>{throw Error("given up");},returnToWorkspace:async()=>{},shutdownStarted:()=>false,showBackupMode:()=>{},destroyProgress:()=>{},ceilingMs,setTimer:(_fn,ms)=>{scheduled=ms;return 1;},clearTimer:()=>{}});
+    assert.equal(outcome,"verified");assert.equal(scheduled,87*MIN);
+    assert.equal(seen.request.maxDurationMs,82*MIN);
+    assert.equal(f.coordinator().status().phase,"return-pending");
+    assert.deepEqual(seen.noted.map(n=>[n.budgetMs,n.phase]),[[82*MIN,"offline-claimed"]]);
+    assert.equal(f.coordinator().status().job.handoff.id,seen.noted[0].handoffId);
+  }finally{f.cleanup();}
+});
+test("nothing about the budget is written to the coordinator state",async()=>{
+  const {f,seen,longCapture,argv}=budgetFixture();try{
+    await f.arm();await f.create({capture:longCapture,argv}).resumeOffline();
+    const state=readFileSync(path.join(f.root,"control","backup-coordinator.json"),"utf8");
+    assert.equal(state.includes("budget"),false);assert.equal(JSON.parse(state).schedule.maxDurationMs,60000);assert.ok(seen.request);
+    assert.deepEqual(readdirSync(path.join(f.root,"control")).filter(name=>name.includes("budget")),[]);
+  }finally{f.cleanup();}
+});
+test("a missing, stale, doubled or out-of-range budget argument runs on the stored limit",async()=>{
+  for(const argv of [argument=>[],argument=>[argument,argument],argument=>[argument.replace(/[0-9a-f]{8}-/,"00000000-")],argument=>[argument.replace(/:\d+$/,":14400001")],argument=>[argument.replace(/:\d+$/,":59999")]]){
+    const {f,seen}=budgetFixture();try{
+      await f.arm();const host=f.create({capture:async request=>{seen.request=request;return f.host.capture(request);},argv:()=>argv(seen.relaunch[0])});
+      assert.equal(host.offlineCeilingMs(),35*MIN);await host.resumeOffline();assert.equal(seen.request.maxDurationMs,60000);
+    }finally{f.cleanup();}
+  }
+});
+test("a database whose size cannot be read means the stored limit, not a smaller estimate",async()=>{
+  const fs=createRequire(import.meta.url)("node:fs"),original=fs.lstatSync;
+  const {f,seen}=budgetFixture();try{
+    fs.lstatSync=(file,...rest)=>{if(String(file).endsWith("messages.db-wal"))throw Object.assign(Error("drive error"),{code:"EIO"});return original(file,...rest);};syncBuiltinESMExports();
+    await f.arm();assert.ok(seen.relaunch[0].endsWith(":60000"));
+  }finally{fs.lstatSync=original;syncBuiltinESMExports();f.cleanup();}
+});
+test("an empty database gets the plain margin",async()=>{
+  const {f,seen}=budgetFixture({bytes:0});try{
+    await f.arm();assert.ok(seen.relaunch[0].endsWith(":"+10*MIN));
+  }finally{f.cleanup();}
+});
+test("a manual run after a long one also counts how long that took",async()=>{
+  const {f,seen,longCapture,argv}=budgetFixture({bytes:1024,runMs:50*MIN});try{
+    await f.arm();const host=f.create({capture:longCapture,argv});await host.resumeOffline();host.completeReturn();
+    const next=f.create();await next.runNow(f.coordinator().status().revision);
+    assert.ok(seen.relaunch.at(-1).endsWith(":"+(110*MIN)));
+  }finally{f.cleanup();}
+});
+test("an install after a long pre-upgrade backup passes",async()=>{
+  const {f,seen,longCapture,argv}=budgetFixture({runMs:40*MIN}),candidate=updateCandidate();try{
+    await f.enable(true);assert.equal((await f.controller.requestUpgrade(candidate)).status,"deferred");
+    assert.equal(seen.relaunch.length,1);await f.create({capture:longCapture,argv}).resumeOffline();assert.equal(seen.request.maxDurationMs,82*MIN);
+    const next=f.create();await next.verifyUpgrade(candidate);assert.equal((await next.markUpgradeInstallRequested(candidate)).status,"continue");
+    await f.create().completeUpgrade(candidate.version);assert.equal(f.coordinator().status().phase,"upgrade-complete");
+  }finally{f.cleanup();}
+});
+test("a closed-app run takes its budget from memory",async()=>{
+  const {f,seen,longCapture}=budgetFixture();try{
+    await f.enable(false,true);f.setNow(Date.parse("2026-09-13T09:01:00Z"));
+    const result=await f.create({assertClosedStartup:async()=>{},capture:longCapture}).runClosedDue();
+    assert.equal(result.status,"verified");assert.equal(seen.request.maxDurationMs,82*MIN);assert.equal(seen.relaunch.length,0);
+    assert.equal(seen.noted[0].budgetMs,82*MIN);
   }finally{f.cleanup();}
 });

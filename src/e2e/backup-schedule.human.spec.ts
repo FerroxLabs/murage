@@ -26,7 +26,7 @@ test.afterAll(async()=>{await vite?.close();safeWipeSync(cache);});
 // "Choose destination and recovery key" → "Choose backup folder and recovery key";
 // "Enable scheduled backups" → "Turn on daily backups"; "Disable schedule" → "Turn off";
 // "Daily time" → "Time each day"; "Timezone" → "Time zone"; "Catch-up window (hours)" →
-// "Late start allowed (hours)"; "Maximum run duration (minutes)" → "Maximum run time (minutes)";
+// "Late start allowed (hours)"; "Maximum run duration (minutes)" → "Maximum run time (minutes)" → "Minimum time allowed (minutes)";
 // "Allow Murage to close an idle workspace for this backup and reopen it afterward." →
 // "Murage may close and reopen this window when it's idle to take the backup.";
 // "Remote backup (optional)" → "Off-site copy (optional)"; "Refresh remote backup status" →
@@ -88,7 +88,7 @@ async function setup(page:Page,withRemote=false,optional=false){
 async function fill(page:Page){
  await page.getByLabel("Time each day",{exact:true}).fill("22:15");await page.getByLabel("Time zone",{exact:true}).fill("Asia/Bangkok");
  await openPanel(page,"Advanced");
- await page.getByLabel("Late start allowed (hours)",{exact:true}).fill("2");await page.getByLabel("Maximum backup size (GiB)",{exact:true}).fill("1");await page.getByLabel("Maximum run time (minutes)",{exact:true}).fill("10");
+ await page.getByLabel("Late start allowed (hours)",{exact:true}).fill("2");await page.getByLabel("Maximum backup size (GiB)",{exact:true}).fill("1");await page.getByLabel("Minimum time allowed (minutes)",{exact:true}).fill("10");
 }
 // A permission with the reassurance attached, never an instruction to quit.
 const CONSENT="Allow Murage to close and reopen its own window when it's idle, so it can take the backup. Murage does that itself, so you never need to quit it.";
@@ -189,7 +189,7 @@ test("pre-upgrade opt-in is capability gated, preserves schedule choices and ren
  for(const width of [390,820,1440])await inspect(page,info,"pre-upgrade-enabled",width);
  await disable.click();await expect(preUpgrade).toBeChecked();await expect(preUpgrade).toBeEnabled();const second=await page.evaluate(()=>(window as any).calls.filter((call:any)=>call.action==="configure")[1]);const{allowIdleRestart,...saved}=first.choices;expect(second).toEqual({action:"configure",revision:2,choices:{...saved,enabled:false}});
  await page.evaluate(()=>{(window as any).state.preUpgradeSupported=false;});await refreshSchedule(page);await expect(preUpgrade).toHaveCount(0);await expect(page.getByRole("region",{name:"Set up backups"}).getByText("Pre-upgrade backups are unavailable in this app.",{exact:false})).toBeVisible();await expect(enable).toBeDisabled();expect(await page.evaluate(()=>(window as any).state.schedule.preUpgrade)).toBe(true);
- await page.evaluate(()=>{(window as any).state.preUpgradeSupported=true;});await refreshSchedule(page);await expect(preUpgrade).toBeChecked();await expect(page.getByLabel("Time each day",{exact:true})).toHaveValue("22:15");await expect(page.getByLabel("Maximum run time (minutes)",{exact:true})).toHaveValue("10");
+ await page.evaluate(()=>{(window as any).state.preUpgradeSupported=true;});await refreshSchedule(page);await expect(preUpgrade).toBeChecked();await expect(page.getByLabel("Time each day",{exact:true})).toHaveValue("22:15");await expect(page.getByLabel("Minimum time allowed (minutes)",{exact:true})).toHaveValue("10");
  const setupCard=page.getByRole("region",{name:"Set up backups"});
  for(const[phase,label,locked]of [["install-requested","Update installation requested",true],["upgrade-complete","Update completed after backup",false],["upgrade-cancelled","Update cancelled",false]]as const){await page.evaluate(phase=>{(window as any).state.phase=phase;},phase);await refreshSchedule(page);await expect(setupCard.getByText(label,{exact:false})).toBeVisible();if(locked)await expect(preUpgrade).toBeDisabled();else await expect(preUpgrade).toBeEnabled();}
  await consent.check();await preUpgrade.uncheck();await expect(consent).not.toBeChecked();await expect(enable).toBeDisabled();await consent.check();await enable.click();const last=await page.evaluate(()=>(window as any).calls.filter((call:any)=>call.action==="configure").at(-1));expect(last.choices).toEqual({...first.choices,preUpgrade:false});expect(errors).toEqual([]);

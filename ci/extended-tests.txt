@@ -97,6 +97,7 @@ server/backup-exfat.test.ts	extended
 server/backup-failure-naming.test.ts	extended
 server/backup-failure-notice-api.test.ts	extended
 server/backup-many-files.test.ts	extended
+server/backup-real-full-disk.test.ts
 server/backup-waiting-api.test.ts	extended
 server/backup-waiting.test.ts	extended
 server/blake3.test.ts	extended

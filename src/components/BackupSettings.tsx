@@ -403,8 +403,8 @@ function ScheduleAdvanced({s}:{s:ScheduleController}) {
       <p id="backup-catchup-help" className="text-[12px] text-ink-secondary">If Murage is busy or closed at backup time, how late the backup may still start: 1 minute to 168 hours.</p>
       <label className="block text-[13px] text-ink-secondary">Maximum backup size (GiB)<input type="number" min={1/(1024**3)} max={1024} step="any" value={draft.size} onChange={event=>s.edit("size",event.target.value)} className={scheduleInput} aria-describedby="backup-size-help"/></label>
       <p id="backup-size-help" className="text-[12px] text-ink-secondary">1 GiB is about 1.07 GB. More than zero and up to 1,024 GiB.</p>
-      <label className="block text-[13px] text-ink-secondary">Maximum run time (minutes)<input type="number" min={1/60} max={30} step="any" value={draft.duration} onChange={event=>s.edit("duration",event.target.value)} className={scheduleInput} aria-describedby="backup-duration-help"/></label>
-      <p id="backup-duration-help" className="text-[12px] text-ink-secondary">1 second to 30 minutes.</p>
+      <label className="block text-[13px] text-ink-secondary">Minimum time allowed (minutes)<input type="number" min={1/60} max={30} step="any" value={draft.duration} onChange={event=>s.edit("duration",event.target.value)} className={scheduleInput} aria-describedby="backup-duration-help"/></label>
+      <p id="backup-duration-help" className="text-[12px] text-ink-secondary">1 second to 30 minutes. Larger workspaces get more time, up to 4 hours.</p>
       {status.preUpgradeSupported===true&&<div className="flex min-h-11 items-center justify-between gap-3 py-2 text-[13px] text-ink">
         <span id="backup-pre-upgrade-label">Back up before installing an in-app update.</span>
         <Switch aria-labelledby="backup-pre-upgrade-label" checked={draft.preUpgrade} onClick={()=>s.edit("preUpgrade",!draft.preUpgrade)} className={switchFocus}/>

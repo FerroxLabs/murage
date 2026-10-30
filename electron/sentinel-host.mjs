@@ -234,6 +234,11 @@ export function createSentinelHost(options) {
       return next;
     },
 
+    /** The time limit of the capture about to start, held for that handoff. Not a commit: nothing is published here. */
+    backupBudget(budget) {
+      try { backupProducer?.noteCaptureBudget?.(budget); } catch { /* Health metadata never changes a backup. */ }
+    },
+
     suspend() {
       suspended = true;
       try { counters?.setLifecycle("suspending"); } catch { /* counts only */ }
