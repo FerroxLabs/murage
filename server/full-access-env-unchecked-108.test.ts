@@ -7,7 +7,8 @@ import { execEnvNow, handedPinsOf, promptFactsOf, type HandedEnv } from "./engin
 import { invalidateEnvCapture } from "./env-path.ts";
 import { envInfoOf, type ExecEnv } from "../shared/mount-identity.ts";
 import * as procs from "./procs.ts";
-import { SCAN_DEPTH } from "../shared/scan-limits.ts";
+import { CHECK_MS, CHECK_RETRY_MS, CHECK_WINDOWS_MS, CHECK_WINDOWS_RETRY_MS, SCAN_DEPTH } from "../shared/scan-limits.ts";
+import { routineTurnApproval, type RoutinePermissionMode } from "./routine-permissions.ts";
 
 const levels: AutoApprover[] = [{}, { autoApprove: true }, { autoApprove: true, fullAccess: true }, { autoApprove: true, fullAccess: true, noLimits: true }];
 const cwd = "/work/repo";
@@ -33,7 +34,62 @@ beforeEach(() => {
 });
 afterEach(() => { Object.defineProperty(process, "platform", platformDescriptor); vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
-describe("108 E1 owner-only unchecked environment waiver", () => {
+describe("the one retry of a timed-out environment check", () => {
+  const timedOut = () => Object.assign(new Error("fixture timeout"), { killed: true });
+  const printed = `${Object.entries(hand.env).map(([name, value]) => `${name}=${value}`).join("\0")}\0\0\0${cwd}\n`;
+  it("a slow first try that answers on the longer budget passes with no hold", async () => {
+    const budgets: unknown[] = [];
+    vi.spyOn(procs, "execCli").mockImplementation((_file, _args, opts, cb) => {
+      budgets.push((opts as { timeout?: number }).timeout);
+      if (budgets.length === 1) cb(timedOut(), ""); else cb(null, printed, "");
+    });
+    const record = await execEnvNow("slow", ["/bin/sh", "-c"], hand, cwd);
+    expect(budgets).toEqual([CHECK_MS, CHECK_RETRY_MS]);
+    expect(record.unchecked).toBeUndefined(); expect(record.unread).toBeUndefined();
+    expect(record.env).toEqual(hand.env);
+  });
+  it("a second timeout stays a timeout and there is no third try", async () => {
+    const run = vi.spyOn(procs, "execCli").mockImplementation((_file, _args, _opts, cb) => { cb(timedOut(), ""); });
+    const record = await execEnvNow("slow", ["/bin/sh", "-c"], hand, cwd);
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(record.unchecked).toEqual({ reason: "timeout" });
+  });
+  it("Windows retries on its own longer budget", async () => {
+    Object.defineProperty(process, "platform", { ...platformDescriptor, value: "win32" });
+    const budgets: unknown[] = [];
+    vi.spyOn(procs, "execCli").mockImplementation((_file, _args, opts, cb) => { budgets.push((opts as { timeout?: number }).timeout); cb(timedOut(), ""); });
+    await execEnvNow("slow", ["C:\\Program Files\\Git\\bin\\bash.exe", "-c"], hand, "C:\\work");
+    expect(budgets).toEqual([CHECK_WINDOWS_MS, CHECK_WINDOWS_RETRY_MS]);
+  });
+  it("a launch failure or an integrity failure is not retried", async () => {
+    const run = vi.spyOn(procs, "execCli").mockImplementation((_file, _args, _opts, cb) => { cb(Object.assign(new Error("fixture"), { code: "ENOENT" }), ""); });
+    await execEnvNow("slow", ["/fixture/missing-shell", "-c"], hand, cwd);
+    expect(run).toHaveBeenCalledTimes(1);
+    run.mockReset();
+    run.mockImplementation((_file, _args, _opts, cb) => { cb(null, "", "fixture stderr"); });
+    expect((await execEnvNow("slow2", ["/bin/sh", "-c"], hand, cwd)).unread).toBeDefined();
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("a routine's level decides its waiver", () => {
+  const unchecked = { env: hand.env, absent: hand.absent, cwd, shell: ["/bin/sh", "-c"], capture: "session", unchecked: { reason: "timeout" } } as ExecEnv;
+  const fullBot: AutoApprover = { autoApprove: true, fullAccess: true };
+  const judge = (bot: AutoApprover, permissionMode: RoutinePermissionMode) => routineTurnApproval({ bot, run: { permissionMode }, tool: "shell", summary: "echo fixture",
+    context: context(unchecked, "echo fixture", { fullAccessOrigin: "routine" }) }).verdict;
+  it("a routine at Full access runs; a routine at Auto or Ask on a Full access bot keeps the hold", () => {
+    expect(judge(fullBot, "full").approve).not.toBeNull();
+    expect(judge(fullBot, "auto")).toMatchObject({ approve: null, rule: expect.stringContaining("could not check the shell environment") });
+    expect(judge(fullBot, "ask").approve).toBeNull();
+  });
+  it("a routine that fails an integrity check is still held at Full access", () => {
+    const unread = { ...unchecked, unchecked: undefined, env: {}, absent: [], unread: { code: "U20", cause: "the shell environment check wrote to stderr" } } as ExecEnv;
+    expect(routineTurnApproval({ bot: fullBot, run: { permissionMode: "full" }, tool: "shell", summary: "echo fixture",
+      context: context(unread, "echo fixture", { fullAccessOrigin: "routine" }) }).verdict).toMatchObject({ approve: null, rule: expect.stringContaining("could not check the shell environment") });
+  });
+});
+
+describe("E1 unchecked environment waiver: the owner and a routine at Full access", () => {
   it.each(["spawn-failed", "timeout", "cooldown"])("allows owner Full/No limits with a %s probe and preserves handed pins", async failure => {
     const run = vi.spyOn(procs, "execCli").mockImplementation((_file, _args, _opts, cb) => {
       cb(Object.assign(new Error("fixture failure"), { code: failure === "spawn-failed" ? "ENOENT" : undefined, killed: failure !== "spawn-failed" }), "");
@@ -41,7 +97,7 @@ describe("108 E1 owner-only unchecked environment waiver", () => {
     const form = [failure === "spawn-failed" ? "/fixture/missing-shell" : "/bin/sh", "-c"];
     let record = await execEnvNow("owner", form, hand, cwd);
     if (failure === "cooldown") record = await execEnvNow("owner", form, hand, cwd);
-    expect(run).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledTimes(failure === "spawn-failed" ? 1 : 2); // a timeout gets its one retry; a cooldown runs nothing
     expect(record.env).toEqual(hand.env); expect(record.absent).toEqual(hand.absent);
     expect(record.unread).toBeUndefined(); expect(record.unchecked).toBeDefined();
     expect(envInfoOf(record).unchecked).toEqual(record.unchecked);
@@ -61,6 +117,11 @@ describe("108 E1 owner-only unchecked environment waiver", () => {
       for (const patch of [
         { fullAccessOrigin: "routine", routineLevel: true },
         { fullAccessOrigin: "routine", routineLevel: true, automated: true },
+      ] satisfies Partial<AutoContext>[]) expect(verdict(bot, record, "echo fixture", patch).approve, JSON.stringify(patch)).not.toBeNull();
+      for (const patch of [
+        { fullAccessOrigin: "routine" }, // no routine level was applied to this bot
+        { fullAccessOrigin: "routine", routineLevel: true, unattended: true },
+        { fullAccessOrigin: "routine", routineLevel: true, channelOwner: true },
         { fullAccessOrigin: "owner-channel", channelOwner: true },
         { fullAccessOrigin: "other", unattended: true }, { fullAccessOrigin: undefined },
       ] satisfies Partial<AutoContext>[]) {

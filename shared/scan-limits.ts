@@ -46,6 +46,9 @@ export const CAPTURE_BYTES = 1024 * 1024;
 /** Rule 74d: the consistency check of the pinned shell form. */
 export const CHECK_MS = 2_000;
 export const CHECK_WINDOWS_MS = 10_000;
+/** The one retry of a check that ran out of its budget above. */
+export const CHECK_RETRY_MS = 6_000;
+export const CHECK_WINDOWS_RETRY_MS = 30_000;
 export const CHECK_BYTES = 1024 * 1024;
 
 /** Rule 75d: each git configuration file the disk-fact callback reads. */
