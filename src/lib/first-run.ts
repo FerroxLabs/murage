@@ -28,7 +28,7 @@
 import { useSyncExternalStore } from "react";
 
 import { FIRST_RUN_COPY } from "@/lib/first-run-copy";
-import type { SetupStep, SetupView } from "../../shared/setup";
+import type { SetupStep, SetupStepView, SetupView } from "../../shared/setup";
 
 // ── the words the phase bar says ───────────────────────────────────────
 // The five phases, named the way the approved simulation names them, in its
@@ -43,12 +43,15 @@ import type { SetupStep, SetupView } from "../../shared/setup";
 // built from `view.steps`, which comes off the wire, so an unknown id still
 // draws a pill labelled with the id rather than vanishing from a list of what
 // is left to do.
+// 1.0.12 renamed them (UX-FIRSTRUN-SCALE-1012 §1.1): "Flux Router" says the
+// product the Chief is about to ask for, "your first job" says what the card
+// asks, and "done" is honest. Same count, same order, same computation.
 const PHASE_NAMES: Record<string, string> = {
-  hello: "who you are",
+  hello: "you",
   detect: "what is here",
-  flux: "switch it on",
-  chat: "first chat",
-  flow: "do the thing",
+  flux: "Flux Router",
+  chat: "your first job",
+  flow: "done",
 };
 
 /** The pill's own text. A middle dot, not a dash of any kind: the house rules
@@ -79,7 +82,44 @@ export const FIRST_RUN_PHASES = {
    *  still there for everyone. The words do not change, because they are the
    *  whole promise: this is a list, not a gate. */
   footer: "Close this whenever you like. Nothing in it stops you using Murage, and all of it stays in your chat.",
+  /** Every pill done or passed over (§1.8). The strip says so, then closes
+   *  itself after the next navigation. */
+  allSet: "All set. Close this whenever you like.",
+  /** What a waiting pill is waiting on, said in its tooltip (§1.1). */
+  waiting: {
+    internet: "Waiting on the internet",
+    flux: "Waiting on Flux Router",
+    engine: "Waiting on something to think with",
+    apps: "Waiting on your connected apps",
+  },
 } as const;
+
+/**
+ * What a blocked pill is waiting on, in the words its tooltip says.
+ *
+ * The internet comes first: with no connection every other wait is the same
+ * wait. Otherwise the block's own reason decides. A payment refusal on the
+ * Flux step is Flux Router; the same refusal later is the engine the Chief is
+ * on, which is "something to think with" until it clears.
+ */
+export function firstRunWaitingOn(
+  step: Pick<SetupStepView, "id" | "block">,
+  online: boolean,
+): string {
+  const words = FIRST_RUN_PHASES.waiting;
+  if (!online) return words.internet;
+  switch (step.block?.reason) {
+    case "flux-key-needed":
+    case "flux-choice-needed":
+      return words.flux;
+    case "payment-required":
+      return step.id === "flux" ? words.flux : words.engine;
+    case "apps-unreadable":
+      return words.apps;
+    default:
+      return words.engine;
+  }
+}
 
 // ── opening it from anywhere ───────────────────────────────────────────
 // A module latch rather than a store action, for the same reason SetupPanel
@@ -142,6 +182,25 @@ export function useFirstRunPhaseLatch(): FirstRunPhaseLatch {
   return useSyncExternalStore(subscribe, readFirstRunPhases, readFirstRunPhases);
 }
 
+/** The renderer's own connection, which the server cannot see. Unknown
+ *  (no `navigator`) reads as online, so a test or an odd host never shows a
+ *  wait that is not happening. */
+function subscribeOnline(listener: () => void): () => void {
+  window.addEventListener("online", listener);
+  window.addEventListener("offline", listener);
+  return () => {
+    window.removeEventListener("online", listener);
+    window.removeEventListener("offline", listener);
+  };
+}
+export function readOnline(): boolean {
+  return typeof navigator === "undefined" || navigator.onLine !== false;
+}
+export function useOnline(): boolean {
+  return useSyncExternalStore(subscribeOnline, readOnline, () => true);
+}
+
+
 // ── the one question ───────────────────────────────────────────────────
 
 /**
@@ -178,10 +237,11 @@ export function firstRunPhasesVisible(
   // that predates the field.
   if (view.conversationLive === true) {
     started = true;
-    return view.next !== null;
+    return stillShowing(view);
   }
   if (firstRunActive(view)) {
     started = true;
+    if (view.next !== null) sawOpen = true;
     return true;
   }
   // STARTING AND CONTINUING ARE DIFFERENT QUESTIONS, and this used to answer
@@ -197,8 +257,34 @@ export function firstRunPhasesVisible(
   // server/setup-conversation.ts hit this first and says so in `conversationLive`.
   // This is the same rule on the client: once the flow has been seen to start,
   // it stays on screen until there is nothing left to do.
-  return started && view.next !== null;
+  return started && stillShowing(view);
 }
+
+/**
+ * Open steps keep the bar up. The moment the last one settles, the bar stays
+ * one more beat to say "All set" (§1.8), but only for somebody who watched it
+ * run in this session, and only until they move somewhere else.
+ */
+function stillShowing(view: SetupView): boolean {
+  if (view.next !== null) {
+    sawOpen = true;
+    return true;
+  }
+  return sawOpen && !allSetDismissed;
+}
+
+/** Every pill is done or passed over, so the bar carries its closing line. */
+export function firstRunAllSet(view: SetupView | null | undefined): boolean {
+  return Boolean(view) && view!.next === null;
+}
+
+/** The person moved on after "All set". The bar has said it, and goes. */
+export function dismissFirstRunAllSet(): void {
+  allSetDismissed = true;
+}
+
+let sawOpen = false;
+let allSetDismissed = false;
 
 /**
  * Does the first run own the main view right now?
@@ -246,6 +332,8 @@ let started = false;
 /** Tests own their own world; nothing in the app clears this. */
 export function forgetFirstRunStarted(): void {
   started = false;
+  sawOpen = false;
+  allSetDismissed = false;
 }
 
 // ── the pills ──────────────────────────────────────────────────────────
@@ -266,6 +354,8 @@ export interface FirstRunPhaseRow {
   /** The short word the pill carries for assistive technology, or "" when the
    *  label says enough. */
   state: string;
+  /** For a waiting pill, what it is waiting on (its tooltip); "" otherwise. */
+  waiting: string;
 }
 
 /**
@@ -290,7 +380,7 @@ export interface FirstRunPhaseRow {
  * contradiction is to draw the step the person is still on rather than hide
  * the thing they are being asked to do.
  */
-export function firstRunPhaseRows(view: SetupView): FirstRunPhaseRow[] {
+export function firstRunPhaseRows(view: SetupView, online = true): FirstRunPhaseRow[] {
   const shown = view.steps.filter(
     (step) =>
       !(
@@ -300,12 +390,17 @@ export function firstRunPhaseRows(view: SetupView): FirstRunPhaseRow[] {
       ),
   );
   return shown.map((step, index) => {
+    // OFFLINE IS A WAIT, NOT A STEP STATE. The server cannot see this
+    // renderer's connection, so the pill the person is on waits on the
+    // internet when the Flux step needs it and there is none (§1.9). Done and
+    // passed-over pills keep their marks: nothing about them is waiting.
+    const offlineWait = !online && view.next === step.id && step.id === "flux" && step.status === "open";
     const mark: FirstRunPhaseMark =
       step.status === "done"
         ? "done"
         : step.status === "skipped"
           ? "skipped"
-          : step.status === "blocked"
+          : step.status === "blocked" || offlineWait
             ? "blocked"
             : view.next === step.id
               ? "now"
@@ -318,6 +413,7 @@ export function firstRunPhaseRows(view: SetupView): FirstRunPhaseRow[] {
       label: firstRunPhaseLabel(index + 1, name),
       mark,
       state: FIRST_RUN_PHASES.state[mark],
+      waiting: mark === "blocked" ? firstRunWaitingOn(step, online) : "",
     };
   });
 }
