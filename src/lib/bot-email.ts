@@ -9,34 +9,54 @@ import { useEffect, useState } from "react";
 import { api } from "@/state/store";
 import { respondWithFreshAuth } from "./fresh-auth";
 import { emailOwnerActionCard, emailOwnerActionRequestId, type EmailBotView, type EmailOwnerAction, type EmailStatusView } from "../../shared/email-copy.ts";
+import { EMAIL_STATUS_EVENT } from "./email-status-event";
 
 export type Api = (path: string, init?: RequestInit) => Promise<unknown>;
-/** What the status route said: on (with the view), off (show nothing), or off with the section 8 Flux line. */
-export type EmailStatusState = { kind: "loading" } | { kind: "off" } | { kind: "flux-off"; line: string } | { kind: "on"; view: EmailStatusView };
+/** What the status route said: on (with the view), checking (a key is saved and Flux has not given a definitive answer yet, never off; after
+ *  a read with no definitive answer it carries a plain note in place of the word),
+ *  off (show nothing), or off with the section 8 Flux line. */
+export type EmailStatusState = { kind: "loading" } | { kind: "checking"; note?: string } | { kind: "off" } | { kind: "flux-off"; line: string } | { kind: "on"; view: EmailStatusView };
+
+/** EMAIL-CAPS-CACHE-1011: the last status the server gave in this app session. A read that fails (a 500, a 502, a malformed body, no
+ *  answer) keeps it, so a failed read never turns email off or hides it; only the server's own answer changes it. */
+let held: EmailStatusState | null = null;
+export function heldEmailStatus(): EmailStatusState | null { return held; }
+export function resetHeldEmailStatus(): void { held = null; }
 
 export async function readEmailStatus(call: Api = api, refresh = false): Promise<EmailStatusState> {
+  let next: EmailStatusState;
   try {
-    const view = await call(`/api/email/status${refresh ? "?refresh=1" : ""}`) as EmailStatusView;
-    return view && view.enabled === true ? { kind: "on", view } : { kind: "off" };
+    const view = await call(`/api/email/status${refresh ? "?refresh=1" : ""}`) as (EmailStatusView & { checking?: unknown; note?: unknown }) | null;
+    if (view && typeof view === "object" && view.enabled === true) next = { kind: "on", view };
+    else if (view && typeof view === "object" && view.checking === true) next = typeof view.note === "string" && view.note ? { kind: "checking", note: view.note } : { kind: "checking" };
+    else if (view && typeof view === "object" && (view as { enabled?: unknown }).enabled === false) next = { kind: "off" };
+    else return held ?? { kind: "checking" };
   } catch (error) {
-    const body = (error as { body?: { fluxOff?: unknown } }).body;
-    return typeof body?.fluxOff === "string" ? { kind: "flux-off", line: body.fluxOff } : { kind: "off" };
+    const failure = error as { status?: unknown; body?: { fluxOff?: unknown } };
+    // only the route's own 404 means off (with the section 8 line when the server sends it); anything else keeps the last status
+    if (failure?.status !== 404) return held ?? { kind: "checking" };
+    next = typeof failure.body?.fluxOff === "string" ? { kind: "flux-off", line: failure.body.fluxOff } : { kind: "off" };
   }
+  held = next;
+  return next;
 }
 
-/** The status, read once per mount (Settings open re-reads the capability, 2.0). */
+/** The status, read once per mount (Settings open re-reads the capability, 2.0) and again whenever the server says a read landed. */
 export function useEmailStatus(refresh = false): EmailStatusState {
-  const [state, setState] = useState<EmailStatusState>({ kind: "loading" });
+  const [state, setState] = useState<EmailStatusState>(() => held ?? { kind: "loading" });
   useEffect(() => {
     let live = true;
-    void readEmailStatus(api, refresh).then(next => { if (live) setState(next); });
-    return () => { live = false; };
+    const read = (fresh: boolean) => { void readEmailStatus(api, fresh).then(next => { if (live) setState(next); }); };
+    read(refresh);
+    const again = () => read(false);
+    window.addEventListener(EMAIL_STATUS_EVENT, again);
+    return () => { live = false; window.removeEventListener(EMAIL_STATUS_EVENT, again); };
   }, [refresh]);
   return state;
 }
 
-/** Is a bot settings section offered? `email` only while the status says on. */
-export function emailSectionOffered(status: EmailStatusState): boolean { return status.kind === "on"; }
+/** Is a bot settings section offered? `email` while the status says on, or checking (no definitive answer yet is never off). */
+export function emailSectionOffered(status: EmailStatusState): boolean { return status.kind === "on" || status.kind === "checking"; }
 
 export const OWNER_ROUTE: Record<EmailOwnerAction, string> = {
   setup: "setup", retry: "retry", pause: "pause", resume: "resume", remove: "remove", keep: "keep", reconnect: "reconnect", policy: "policy",

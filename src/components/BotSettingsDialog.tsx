@@ -14,8 +14,9 @@ export function BotSettingsDialog({ bot, onClose }: { bot: Bot; onClose?: () => 
   const { state, dispatch } = useStore(), dialog = useRef<HTMLDialogElement>(null), content = useRef<HTMLDivElement>(null);
   const opener = useRef<HTMLElement | null>(null);
   const desktop = useDesktopSurface();
-  // bot email (1.0.9): the Email section is offered only while the server says email is on (dark launch)
-  const emailOn = emailSectionOffered(useEmailStatus());
+  // bot email (1.0.9): the Email section is offered while the server says email is on, or checking (EMAIL-CAPS-CACHE-1011: no
+  // definitive answer yet is never off). Opening a bot's settings re-reads the capability (M4); the shared store keeps the last state.
+  const emailOn = emailSectionOffered(useEmailStatus(true));
   // A deep link (intent) wins; otherwise the profile reopens where the person last was.
   const [section, setSection] = useState<BotSettingsSection>(() =>
     state.botSettingsIntent?.section

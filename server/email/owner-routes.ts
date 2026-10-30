@@ -8,6 +8,9 @@
 //     exact act (emailOwnerActionCard), and the account switch is desktop only.
 // Dark launch: until the capability probe says enabled: true, every route answers one not-available refusal and nothing else (the status
 // route adds the section 8 Flux line only for an install that once had email on and has lost its Flux key).
+// EMAIL-CAPS-CACHE-1011: the status route answers from the last definitive answer and never waits for #31 (?refresh=1 starts the read in
+// the background; the app reads again on the emailStatus socket frame). With a key saved and no definitive answer yet it answers
+// "Checking" (200), never off.
 import type { BindingRow } from "./email-store.ts";
 import { LIVE_BINDING_STATES, OPEN_SEND_STATES, TERMINAL_SEND_STATES, type SendState } from "./email-store.ts";
 import type { EmailRuntime } from "./runtime.ts";
@@ -16,7 +19,7 @@ import { filteredReason, isFilteredMail } from "./inbound.ts";
 import { addrSpec } from "./tools.ts";
 import {
   activityLine, bindingFailureLine, EMAIL_OWNER_COPY, EMAIL_POLICY_COPY, EMAIL_SETUP_COPY, emailOwnerActionCard, emailOwnerActionRequestId, headerChip,
-  ownerRouteLine, type EmailBotView, type EmailOwnerAction, type EmailStatusView, type EmailTrustEntry,
+  ownerRouteLine, EMAIL_STATUS_COPY, type EmailBotView, type EmailCheckingView, type EmailOwnerAction, type EmailStatusView, type EmailTrustEntry,
 } from "../../shared/email-copy.ts";
 
 export type OwnerRouteAnswer = { status: number; body: Record<string, unknown> };
@@ -65,8 +68,14 @@ export async function emailOwnerRoute(deps: OwnerRouteDeps, request: OwnerRouteR
   // F18: a bot or engine credential never reaches an owner route, on or off
   if (request.botCredential || request.surface === null) return refuse(403, EMAIL_OWNER_COPY.ownerOnly);
   try {
-    if (request.path === "/api/email/status" && request.method === "GET" && request.query.get("refresh") === "1" && deps.fluxKeyPresent()) {
-      try { await deps.runtime.probe.refresh(); } catch { /* the last answer stands */ }
+    const status = request.path === "/api/email/status" && request.method === "GET";
+    if (status && request.query.get("refresh") === "1" && deps.fluxKeyPresent()) void deps.runtime.probe.refresh().catch(() => undefined);
+    // rule 4: a saved key with no definitive answer yet is Checking, never off
+    if (status && deps.fluxKeyPresent() && !deps.runtime.enabled() && deps.runtime.probe.checking()) {
+      // Checking always has a read on its way (a key saved after boot has had none), and after a read with no definitive answer it says so
+      deps.runtime.probe.ensureRead();
+      const checking: EmailCheckingView = { enabled: false, checking: true, accountRef: deps.runtime.probe.accountRef(), ...(deps.runtime.probe.stale() ? { note: EMAIL_STATUS_COPY.checkingNote } : {}) };
+      return { status: 200, body: checking as unknown as Record<string, unknown> };
     }
     if (!deps.runtime.enabled()) {
       // section 8: the Flux line only for an install that had email on and has lost its key; never for one that never had it (dark wins)
@@ -155,6 +164,16 @@ async function statusView(deps: OwnerRouteDeps, desktop: boolean): Promise<Email
     ...(others?.length ? { otherSetups: others } : {}),
     // 2.4, section 8: whether owner acts can run, and the owner token's health
     ownerSignedIn: Boolean(deps.runtime.secrets?.owner()), ownerKeyLine: deps.runtime.ownerKeyLine?.() ?? null,
+    ...statusStamp(deps),
+  };
+}
+
+/** EMAIL-CAPS-CACHE-1011: which saved key the answer belongs to (a fingerprint), when it was read, and rule 5's note after a failed read. */
+function statusStamp(deps: OwnerRouteDeps): Pick<EmailStatusView, "accountRef" | "readAt" | "staleNote"> {
+  const accountRef = deps.runtime.probe.accountRef(), readAt = deps.runtime.probe.readAt();
+  return {
+    ...(accountRef ? { accountRef } : {}), ...(typeof readAt === "number" ? { readAt } : {}),
+    ...(deps.runtime.probe.stale() ? { staleNote: EMAIL_STATUS_COPY.staleNote } : {}),
   };
 }
 
@@ -163,6 +182,9 @@ async function account(deps: OwnerRouteDeps, request: OwnerRouteRequest): Promis
   const body = record(request.body);
   const services = deps.runtime.services()!;
   if (body.on === true) {
+    // EMAIL-CAPS-CACHE-1011: consent never rests on an answer read only from disk; with no #31 answer in this run, read it now
+    if (!deps.runtime.probe.readInSession()) { try { await deps.runtime.probe.refresh(); } catch { /* answered below */ } }
+    if (!deps.runtime.probe.readInSession()) return refuse(503, EMAIL_STATUS_COPY.consentOffline, { code: "flux_unavailable" });
     const terms = typeof body.acceptTermsVersion === "string" ? body.acceptTermsVersion : deps.runtime.probe.current()?.terms_version;
     if (!terms) return refuse(400, ownerRouteLine("terms_not_accepted"), { code: "terms_not_accepted" });
     const answer = await deps.runtime.client.enable(terms);

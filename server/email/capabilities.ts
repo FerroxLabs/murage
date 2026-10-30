@@ -4,7 +4,14 @@
 // The launch switch (design 2.0, F28): nothing about bot email shows, mounts or polls unless GET /v1/email/capabilities answers
 // enabled: true for the saved account. The answer is cached per saved account, re-read on demand (boot, opening Settings) and after any
 // 403 email_not_enabled or 503 capability_unavailable. Price and limits are read from the response only; nothing here hard-codes them.
+//
+// EMAIL-CAPS-CACHE-1011 (1.0.11 scope): only a DEFINITIVE answer changes the state, and the last one is kept on disk (caps-file.ts) for
+// the saved key, so a launch or a network failure never hides email or turns it off. Definitive: a 200 whose body is a plain object with a
+// boolean `enabled` (isEnabled decides), a 401 (dead key) or a 402 (plan has no email), both off. Everything else (403, 404, other 4xx,
+// 429, 5xx, timeout, no network, a bad body) changes nothing and is re-read on a backoff until a definitive answer lands. Account
+// isolation is boot-time: the file is read at boot only when its fingerprint matches the saved key; any other file is dropped.
 import type { Capabilities, FluxEmailClient } from "./flux-email-client.ts";
+import { dropCapsFile, readCapsFile, writeCapsFile } from "./caps-file.ts";
 
 /** Codes that make the cached answer stale. */
 export const CAPABILITY_REFRESH_CODES: ReadonlySet<string> = new Set(["email_not_enabled", "capability_unavailable"]);
@@ -14,16 +21,57 @@ export interface CapabilityProbeOptions {
   /** A stable, non-secret reference to the saved account (for example a fingerprint of its key); null when no account is saved. */
   accountRef: () => string | null;
   now?: () => number;
+  /** DATA_DIR/email-capabilities.json; without it the probe keeps memory only (as 1.0.10). */
+  capsFile?: string;
+  /** Called after every read of the current account lands (definitive or not), so the app can read the status again. */
+  onRead?: () => void;
+  log?: (line: string) => void;
 }
 
 const OUTAGE_REREAD_MS = 30_000;
+/** After a read with no definitive answer the next waits 30 s, 60 s, 2 min, 4 min, then 5 min until one lands. */
+export const PROBE_RETRY_MS: readonly number[] = [30_000, 60_000, 120_000, 240_000, 300_000];
+const RETRY_AFTER_MAX_MS = 3_600_000;
+
+type Entry = { caps: Capabilities; readAt: number };
+
+/** A 200 body the state may be set from: a plain object carrying a boolean `enabled` (an array or `{}` is not one). */
+export function isCapabilitiesBody(body: unknown): body is Capabilities {
+  return Boolean(body) && typeof body === "object" && !Array.isArray(body) && typeof (body as { enabled?: unknown }).enabled === "boolean";
+}
 
 export class EmailCapabilityProbe {
-  private readonly cache = new Map<string, { caps: Capabilities; readAt: number }>();
-  private readonly inflight = new Map<string, Promise<Capabilities | null>>();
+  private readonly cache = new Map<string, Entry>();
+  private readonly inflight = new Map<string, { generation: number; read: Promise<Capabilities | null> }>();
   private readonly listeners = new Set<(enabled: boolean) => void>();
+  /** Per account: when the last read that gave no definitive answer landed (the stale note and the outage throttle). */
+  private readonly failedAt = new Map<string, number>();
+  private readonly attemptAt = new Map<string, number>();
+  /** Accounts with a definitive answer read in this process (not only from the file). */
+  private readonly readThisSession = new Set<string>();
+  private failures = 0;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Bumped by stop(): an answer that started before it writes nothing, tells no one and schedules nothing. */
+  private generation = 0;
   private readonly options: CapabilityProbeOptions;
   constructor(options: CapabilityProbeOptions) { this.options = options; }
+
+  private now(): number { return (this.options.now ?? Date.now)(); }
+
+  /** Boot: take the file's answer when it belongs to the saved key; a file for another key is dropped, never shown. Local only. */
+  hydrate(): void {
+    const path = this.options.capsFile;
+    const account = this.options.accountRef();
+    if (!path || !account) return;
+    const entry = readCapsFile(path);
+    if (!entry) return;
+    if (entry.accountRef !== account) {
+      dropCapsFile(path);
+      this.options.log?.("[email] capability cache belonged to another Flux key; dropped, reading again");
+      return;
+    }
+    if (!this.cache.has(account)) this.cache.set(account, { caps: entry.caps, readAt: entry.readAt });
+  }
 
   /** The cached answer for the saved account, if read. */
   current(): Capabilities | undefined {
@@ -33,6 +81,35 @@ export class EmailCapabilityProbe {
 
   /** True only when the saved account's last answer said enabled: true (r2.5: the platform flag) and passed the #33 checks (isEnabled). */
   emailEnabled(): boolean { return isEnabled(this.current()); }
+
+  /** A key is saved and no definitive answer is known for it yet: "Checking", never off. */
+  checking(): boolean {
+    const account = this.options.accountRef();
+    return Boolean(account) && !this.cache.has(account!);
+  }
+
+  accountRef(): string | null { return this.options.accountRef(); }
+
+  /** When the current account's last definitive answer was read. */
+  readAt(): number | undefined {
+    const account = this.options.accountRef();
+    return account ? this.cache.get(account)?.readAt : undefined;
+  }
+
+  /** A read after the last definitive answer gave none (rule 5: show the last status with the note). */
+  stale(): boolean {
+    const account = this.options.accountRef();
+    if (!account) return false;
+    const failed = this.failedAt.get(account);
+    const readAt = this.cache.get(account)?.readAt;
+    return failed !== undefined && (readAt === undefined || failed >= readAt);
+  }
+
+  /** A definitive answer for the current account was read in this process (consent never rests on the file alone). */
+  readInSession(): boolean {
+    const account = this.options.accountRef();
+    return Boolean(account) && this.readThisSession.has(account!);
+  }
 
   /** The price line and its surfaces, exactly as Flux gave them; undefined when absent. Desktop only (the caller checks the shell). */
   priceNote(): { note: string; surfaces: string[] } | undefined {
@@ -48,25 +125,79 @@ export class EmailCapabilityProbe {
 
   onChange(listener: (enabled: boolean) => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
 
-  /** Re-reads the answer. An unreadable answer is never enabled: true. */
+  /** Ends the re-read backoff; an answer already on its way is dropped when it lands. */
+  stop(): void {
+    this.generation++;
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
+    this.failures = 0;
+  }
+
+  /** Re-reads the answer. Only a definitive answer changes it (see the header); an unreadable answer is never enabled: true. */
   async refresh(): Promise<Capabilities | null> {
     const account = this.options.accountRef();
     if (!account) return null;
+    const generation = this.generation;
     const running = this.inflight.get(account);
-    if (running) return running;
+    if (running && running.generation === generation) return running.read;
     const read = (async () => {
-      const before = this.emailEnabled();
+      this.attemptAt.set(account, this.now());
       const outcome = await this.options.client.capabilities();
-      if (outcome.kind === "ok") this.cache.set(account, { caps: outcome.body, readAt: (this.options.now ?? Date.now)() });
-      // a definite answer that is not a body (401, 403) turns email off; an uncertain one (no answer) keeps the last answer, so a network
-      // blip never unmounts tools, and with no last answer nothing is enabled
-      else if (outcome.kind !== "uncertain" || !this.cache.has(account)) this.cache.set(account, { caps: { enabled: false }, readAt: (this.options.now ?? Date.now)() });
+      if (generation !== this.generation) {
+        this.options.log?.("[email] stale capability answer dropped");
+        return this.cache.get(account)?.caps ?? null;
+      }
+      const before = this.emailEnabled();
+      let definitive: Capabilities | null = null;
+      if (outcome.kind === "ok" && outcome.status === 200 && isCapabilitiesBody(outcome.body)) definitive = outcome.body;
+      else if (outcome.kind === "refused" && (outcome.status === 401 || outcome.status === 402)) definitive = { enabled: false };
+      if (definitive) {
+        const readAt = this.now();
+        this.cache.set(account, { caps: definitive, readAt });
+        this.failedAt.delete(account);
+        this.readThisSession.add(account);
+        if (this.options.accountRef() === account) {
+          this.failures = 0;
+          if (this.retryTimer) clearTimeout(this.retryTimer);
+          this.retryTimer = null;
+          if (this.options.capsFile) {
+            try { writeCapsFile(this.options.capsFile, { accountRef: account, caps: definitive, readAt }); }
+            catch (error) { this.options.log?.(`[email] capability cache not saved: ${(error as NodeJS.ErrnoException)?.code ?? "write failed"}`); }
+          }
+        }
+      } else {
+        this.failedAt.set(account, this.now());
+        const status = "status" in outcome && outcome.status !== undefined ? String(outcome.status) : outcome.kind === "uncertain" ? outcome.reason : "none";
+        this.options.log?.(`[email] capability read gave no definitive answer (${status}); keeping the last status`);
+        if (this.options.accountRef() === account) this.scheduleRetry(outcome);
+      }
       const after = this.emailEnabled();
       if (before !== after) for (const listener of this.listeners) { try { listener(after); } catch { /* a listener never decides the probe */ } }
+      if (this.options.accountRef() === account) { try { this.options.onRead?.(); } catch { /* the app reads on its next open */ } }
       return this.cache.get(account)?.caps ?? null;
     })();
-    this.inflight.set(account, read);
-    try { return await read; } finally { this.inflight.delete(account); }
+    this.inflight.set(account, { generation, read });
+    try { return await read; } finally { if (this.inflight.get(account)?.read === read) this.inflight.delete(account); }
+  }
+
+  /** Starts a read unless one is running or a backoff re-read is already due, so a status read can never turn into a read loop. */
+  ensureRead(): void {
+    const account = this.options.accountRef();
+    if (!account || this.retryTimer || this.inflight.has(account)) return;
+    void this.refresh().catch(() => undefined);
+  }
+
+  private scheduleRetry(outcome: Awaited<ReturnType<FluxEmailClient["capabilities"]>>): void {
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    let wait = PROBE_RETRY_MS[Math.min(this.failures, PROBE_RETRY_MS.length - 1)]!;
+    this.failures++;
+    // 503 capability_unavailable may name its own wait (retry_after_s); it is honoured, bounded to an hour
+    if (outcome.kind === "refused" && outcome.status === 503) {
+      const after = Number(outcome.error?.fields?.retry_after_s);
+      if (Number.isFinite(after) && after > 0) wait = Math.min(after * 1000, RETRY_AFTER_MAX_MS);
+    }
+    this.retryTimer = setTimeout(() => { this.retryTimer = null; void this.refresh().catch(() => undefined); }, wait);
+    (this.retryTimer as { unref?: () => void }).unref?.();
   }
 
   /** Called with every refusal code a Flux email call returns; a launch-switch code re-reads the answer. */
@@ -74,8 +205,8 @@ export class EmailCapabilityProbe {
     if (!CAPABILITY_REFRESH_CODES.has(code)) return;
     // section 8: an outage answer re-reads at most every 30 s (a backoff's local answers never storm #31)
     const account = this.options.accountRef();
-    const readAt = account ? this.cache.get(account)?.readAt : undefined;
-    if (code === "capability_unavailable" && readAt !== undefined && (this.options.now ?? Date.now)() - readAt < OUTAGE_REREAD_MS) return;
+    const last = account ? Math.max(this.cache.get(account)?.readAt ?? -Infinity, this.attemptAt.get(account) ?? -Infinity) : -Infinity;
+    if (code === "capability_unavailable" && Number.isFinite(last) && this.now() - last < OUTAGE_REREAD_MS) return;
     await this.refresh();
   }
 }
