@@ -96,7 +96,29 @@ const MESSAGE_URLS = /slack\.com\/api\/chat\.|hooks\.slack\.com|api\.telegram\.o
 const SQL_DESTRUCTIVE = /\bDROP\s+(TABLE|DATABASE|SCHEMA|VIEW|COLLECTION)\b|\bTRUNCATE\s+(TABLE\s+)?[`"\w]|\bDELETE\s+FROM\b|\bFLUSH(ALL|DB)\b|\.dropDatabase\s*\(/i;
 
 /** A delete through code rather than a delete command. */
-const CODE_DELETE = /\b(rmtree|rmSync|rmdirSync|unlinkSync|os\.remove|os\.unlink|os\.rmdir|shutil\.rmtree|fs\.rm|fs\.unlink|fs\.promises\.(rm|unlink)|FileUtils\.rm(_rf|_r|_f)?|File\.delete|Remove-Item|send2trash|trashItem|removeItem|recycleURLs|rimraf|unlink|rmdir)\b|\.unlink\(/;
+const CODE_DELETE = /\b(rmtree|rmSync|rmdirSync|unlinkSync|os\.remove|os\.unlink|os\.rmdir|shutil\.rmtree|fs\.rm|fs\.unlink|fs\.promises\.(rm|unlink)|FileUtils\.rm(_rf|_r|_f)?|File\.delete|Remove-Item|send2trash|trashItem|removeItem|recycleURLs|rimraf|unlink|rmdir|os\.RemoveAll|remove_dir_all|remove_file|Directory\.Delete|File\.Delete)\b|\.unlink\(|\.(Delete|DeleteFile|DeleteDirectory)\s*\(/;
+/** The delete programs `shellHit` judges as commands. */
+const DELETE_VERBS = /^(rm|rmdir|unlink|trash|shred|srm)$/;
+/** Words that open a branch or a loop body (`then rm "$T"`): the program is the word after them. */
+const SHELL_KEYWORDS: ReadonlySet<string> = new Set(["if", "then", "else", "elif", "do", "while", "until", "!", "{", "time"]);
+/** A literal path as the first argument of a call, or as the receiver of a method delete (`Path("/tmp/x").unlink()`). */
+const CALL_LITERAL = /^\s*\(\s*(['"])((?:~|\/|\.\.?\/)[^'"]*)\1/;
+const RECEIVER_LITERAL = /\(\s*(['"])((?:~|\/|\.\.?\/)[^'"]*)\1\s*\)\s*$/;
+/** Fix round (Grok Medium, Astra High 3): some delete call in this code names its target by anything but a literal
+ * path (`shutil.rmtree(os.environ["TARGET"])`, `p.unlink()`), so a literal placed for another call never stands in. */
+function codeDeleteUnplaced(code: string): boolean {
+  for (const m of code.matchAll(new RegExp(CODE_DELETE.source, "g"))) {
+    const end = m.index + m[0].length;
+    if (m[0].endsWith("(")) {
+      if (!RECEIVER_LITERAL.test(code.slice(Math.max(0, m.index - 4096), m.index))) return true;
+      continue;
+    }
+    const after = code.slice(end);
+    if (!/^\s*\(/.test(after)) continue;
+    if (!CALL_LITERAL.test(after)) return true;
+  }
+  return false;
+}
 /** AppleScript or JXA deleting something: Finder's `delete`, `move … to
  * trash`, emptying the Trash, System Events' `delete`, JXA `.delete()`. */
 const APPLESCRIPT_DELETE = /\bdelete\b|\bmove\b[\s\S]*\bto\s+(the\s+)?trash\b|\bempty\s+(the\s+)?trash\b|\.delete\s*\(|trashItem|removeItem|recycleURLs/i;
@@ -643,7 +665,14 @@ function shellHit(line: string, place: StopLinePlace, depth = 0): StopHit | null
   // `export f=…`) are known values, so a target spelled through one is
   // placed like a literal. Anything else with a `$` stays unknown.
   const vars = new Map<string, string>([["HOME", place.home]]);
-  for (const raw of commands) {
+  // fix round (Astra High 3): the delete commands this reader judged itself, so a delete verb it never reached (in a
+  // branch it could not follow, past a broken quote) is unknown even when another delete was placed
+  let judgedDeletes = 0;
+  for (const whole of commands) {
+    // a shell keyword that opens a branch or a loop body is not the program: `then rm "$T"` runs rm
+    let lead = 0;
+    while (lead < whole.length && SHELL_KEYWORDS.has(whole[lead]!.text)) lead++;
+    const raw = lead ? whole.slice(lead) : whole;
     // a command inside a substitution (`x=$(rm -rf …)`) runs too
     if (depth < 3) {
       for (const word of raw) {
@@ -666,7 +695,8 @@ function shellHit(line: string, place: StopLinePlace, depth = 0): StopHit | null
       if (args.some((word) => word.dynamic)) { found.unknownDelete ??= short(line); continue; }
       const posix = [...script.matchAll(/POSIX\s+file\s+"([^"]+)"/gi)].map((m) => m[1]!);
       const literals = posix.length ? posix : [...script.matchAll(/['"]((?:~|\/|\.\.?\/)[^'"]*)['"]/g)].map((m) => m[1]!);
-      if (!literals.length) found.unknownDelete ??= short(line);
+      // fix round (Grok Medium): one delete call with a literal never places another whose target is a value
+      if (!literals.length || name !== "osascript" && codeDeleteUnplaced(script)) found.unknownDelete ??= short(line);
       for (const lit of literals) found.deletes.push(resolveWord({ text: lit, dynamic: false }, cwd, place.home));
       continue;
     }
@@ -691,18 +721,24 @@ function shellHit(line: string, place: StopLinePlace, depth = 0): StopHit | null
         continue;
       }
     }
+    if (DELETE_VERBS.test(name)) judgedDeletes++;
+    judgedDeletes += args.filter((word) => word.text === "-delete").length;
     const hit = commandHit(name, args, ops, cwd, place, found, line);
     if (hit) return hit;
   }
   if (found.other) return found.other;
   // a delete through code (python -c, node -e): judged by the literal paths
-  // it names, and by nothing at all when it names none
-  if (!found.deletes.length && !found.unknownDelete && complex && CODE_DELETE.test(scan)) {
+  // it names, and by nothing at all when it names none. 1.0.10 (A2): tracked
+  // on its own, so a delete placed elsewhere in the line (`rm ./a; python3 -c
+  // '...rmtree(p)'`) never stands in for one this reader could not place
+  if (!found.unknownDelete && complex && CODE_DELETE.test(scan)) {
     const literals = [...scan.matchAll(/['"]((?:~|\/|\.\.?\/)[^'"]*)['"]/g)].map((m) => m[1]!);
-    if (!literals.length) found.unknownDelete = short(line);
+    if (!literals.length || codeDeleteUnplaced(scan)) found.unknownDelete = short(line);
     for (const lit of literals) found.deletes.push(resolveWord({ text: lit, dynamic: false }, cwd, place.home));
   }
-  if (complex && !found.unknownDelete && /\b(rm|rmdir|unlink|trash|shred|srm)\b|-delete\b/.test(words) && !found.deletes.length) {
+  // fix round (Astra High 3): more delete verbs in the line than delete commands this reader judged: one it could not
+  // reach is unknown, whatever else was placed
+  if (complex && !found.unknownDelete && (words.match(/\b(rm|rmdir|unlink|trash|shred|srm)\b|-delete\b/g)?.length ?? 0) > judgedDeletes) {
     found.unknownDelete = short(line);
   }
   return deleteHit(found, place, line);
@@ -1182,10 +1218,13 @@ function psHit(line: string, place: StopLinePlace, depth = 0): StopHit | null {
   // a delete this reader did not follow: a method on an object
   // (`(Get-Item x).Delete()`), text run through Invoke-Expression. Read on
   // the line without its here-string bodies, which are judged above.
+  // 1.0.10 (A2): a method delete is never placed, so it is unknown even when
+  // another delete in the line was placed (`Remove-Item ./scratch;
+  // (Get-Item $env:TARGET).Delete()`)
+  if (!found.unknownDelete && /\.(Delete|DeleteFile|DeleteDirectory|MoveToRecycleBin)\s*\(/i.test(flat)) found.unknownDelete = short(line);
   if (!found.deletes.length && !found.unknownDelete) {
-    const methodDelete = /\.(Delete|DeleteFile|DeleteDirectory|MoveToRecycleBin)\s*\(/i.test(flat);
     const hidden = (complex || /\b(iex|invoke-expression)\b/i.test(flat)) && /\b(remove-item|del|erase|rd|rmdir|ri|rm)\b|::delete/i.test(flat);
-    if (methodDelete || hidden) found.unknownDelete = short(line);
+    if (hidden) found.unknownDelete = short(line);
   }
   return deleteHit(found, place, line);
 }
