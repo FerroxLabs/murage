@@ -3690,6 +3690,16 @@ function fuigoHomeForTrust(instance: Pick<ProviderInstance, "instanceId" | "driv
   if (!instance || instance.driverKind !== "fuigoAgent" || providerRouted) return null;
   return fuigoHomeFromEnv({ ...process.env, ...instanceConfigs(cfg)[instance.instanceId]?.environment });
 }
+/** The thread desk Murage itself makes for this bot and thread
+ * (`taskWorkspacePath`, partition-aware), or "" when an id is refused: an
+ * empty desk has no desk shape, so nothing matches it. */
+function managedDeskFor(botId: string, threadId: string): string {
+  try {
+    return taskWorkspacePath(DATA_DIR, botId, threadId);
+  } catch {
+    return "";
+  }
+}
 /** The record the driver decides from, for an engine that gates folders;
  * undefined for every other engine. `cwd` undefined = the home folder,
  * which Fuigo never gates. `providerRouted` = the turn runs on a provider
@@ -3707,8 +3717,11 @@ function folderTrustForTurn(instance: ProviderInstance, cwd: string | undefined,
   // links to the skills it pinned runs trusted with no card
   // (managed-workspace-trust.ts); nothing is recorded, so every turn decides
   // again from what the desk holds then.
+  // The desk is the one Murage made for this bot and thread, partition-aware
+  // (a team hand-off or project desk lives under a partition root, 1.0.8
+  // THREAD-TRUST-108); an id it refuses means no desk, so the card stays.
   const recorded = folderTrust.decision(scan.folder, { fuigoHome });
-  const decision = recorded ?? (managed && !scan.upstreamTrusted && managedWorkspaceAutoTrust(cwd, scan, { dataDir: DATA_DIR, ...managed }) ? "trust" as const : undefined);
+  const decision = recorded ?? (managed && !scan.upstreamTrusted && managedWorkspaceAutoTrust(cwd, scan, { dataDir: DATA_DIR, ...managed, desk: managedDeskFor(managed.botId, managed.threadId) }) ? "trust" as const : undefined);
   return { key: scan.key, folder: scan.folder, sources: scan.sources, ...(decision ? { decision } : {}), ...(scan.upstreamTrusted ? { upstreamTrusted: true as const } : {}) };
 }
 /** Full access with "approve setup requests" on (server/full-access.ts)
