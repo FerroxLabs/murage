@@ -11,7 +11,7 @@
 // sandbox and the bot's own computer, not a regex.
 
 import { CONNECTED_APPS_SERVER, sameToolGrant } from "../shared/connected-app-names.ts";
-import { actionGrantKey, actionGrantRead, actionGrantSet, commandArgument, placeArgumentScan, resolveCall, type GrantCall, type ResolvedCall } from "../shared/app-action-grant.ts";
+import { actionGrantKey, actionGrantRead, actionGrantSet, commandArgument, placeArgumentScan, resolveCall, STAMP_SPELLING_WHY, type GrantCall, type ResolvedCall } from "../shared/app-action-grant.ts";
 import { isStopLineKey, stopFindings, stopLineKey, stopLineKeyCovers, type StopHit } from "./stop-line.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { alwaysAskCommand, alwaysAskNote, alwaysAskRoutineCommand, type CarvedTarget, unreadableHit, type AlwaysAskHit, type UnseenOptions } from "./always-ask.ts";
@@ -892,6 +892,7 @@ function askReasonClass(verdict: AutoVerdict): string {
     if (rule.startsWith(U19_WORDS)) return "unread-call:U19";
     if (rule === "the call was cut before it could be checked") return "unread-call:truncated";
     if (rule === "the call's arguments run past what the key guard reads") return "unread-call:scan";
+    if (rule.endsWith(STAMP_SPELLING_WHY)) return "unread-call:stamp-spelling";
     if (rule.startsWith("the tool this runs cannot be proven:")) return "unread-call:identity";
     if (rule.startsWith("the call does not carry what this tool needs")) return "unread-call:contract";
     return "unread-call:actions";
@@ -1117,7 +1118,11 @@ function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, con
   const pinShell = isPowerShellTool(tool) || (isCommandTool(tool) && context?.call?.commandShell === "pwsh") ? "pwsh" : undefined;
   const pinUnknown = promptText === undefined ? null : pinOverrideIn(promptText, context?.handedPins ?? NO_PINS, pinShell) ?? windowsBash?.map(payload => pinOverrideIn(payload, context?.handedPins ?? NO_PINS)).find(Boolean) ?? null;
   const unread = context?.envUnread ? `${U20_WORDS}: ${context.envUnread}`
-    : context?.envUnchecked && !(context.fullAccessOrigin === "owner" && hasFullAccess(bot)) ? `${U20_WORDS}: ${context.envUnchecked.reason === "launch-failed" ? "Murage could not start the shell to check its environment" : "the environment check took too long"}`
+    // ISSUE-PERMS-1010 A: a check that could not finish is waived wherever Full access covers the turn (the owner's own
+    // turn, stated as such, and a routine run judged at Full access or No limits), never at Ask or Auto, never for "other"; the
+    // owner's channel message and an unstated origin keep the 1.0.8 E1 hold. Rev 3 #7(a): the stored origin is read first
+    // here, so a turn whose record says someone else started it is never waived, whatever its routine level
+    : context?.envUnchecked && !((context.fullAccessOrigin === "owner" || (origin === "routine" && context.fullAccessOrigin !== "other" && context.fullAccessOrigin !== "owner-channel")) && fullAccessCovers(bot, origin)) ? `${U20_WORDS}: ${context.envUnchecked.reason === "launch-failed" ? "Murage could not start the shell to check its environment" : "the environment check took too long"}`
     : pinUnknown ? `${U19_WORDS}: ${pinUnknown}`
     // 1.0.10 (NOLIMITS-CARDS 1C, narrowed by A3): at Full access and No limits, on a turn they cover, a cut call is not
     // held for what nobody read only where the cut part cannot be a path this computer reads: a file edit whose path
