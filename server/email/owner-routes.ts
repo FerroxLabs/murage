@@ -71,7 +71,15 @@ export async function emailOwnerRoute(deps: OwnerRouteDeps, request: OwnerRouteR
     if (!deps.runtime.enabled()) {
       // section 8: the Flux line only for an install that had email on and has lost its key; never for one that never had it (dark wins)
       const fluxOff = request.path === "/api/email/status" && !deps.fluxKeyPresent() && deps.runtime.everEnabled();
-      return refuse(404, EMAIL_OWNER_COPY.notAvailable, fluxOff ? { fluxOff: EMAIL_SETUP_COPY.fluxOff } : {});
+      // 1.0.11: what Flux said about the saved key, never a hidden card. 401: the key stopped working (Sign in with Flux again); 403
+      // email_scope_required: a valid key without email scope (Sign in with Flux mints the email:owner key); a 200 with eligible: false or
+      // a 403 account state: its own line. A transient answer (429, 5xx) adds nothing.
+      const gate = request.path === "/api/email/status" && deps.fluxKeyPresent() ? deps.runtime.probe.accountGate() : null;
+      const extra = fluxOff ? { fluxOff: EMAIL_SETUP_COPY.fluxOff }
+        : gate?.kind === "dead_key" ? { fluxRefused: gate.line }
+          : gate?.kind === "sign_in" ? { fluxSignIn: gate.line }
+            : gate ? { fluxLine: gate.line } : {};
+      return refuse(404, EMAIL_OWNER_COPY.notAvailable, extra);
     }
     return await enabledRoute(deps, request);
   } catch {
@@ -155,6 +163,8 @@ async function statusView(deps: OwnerRouteDeps, desktop: boolean): Promise<Email
     ...(others?.length ? { otherSetups: others } : {}),
     // 2.4, section 8: whether owner acts can run, and the owner token's health
     ownerSignedIn: Boolean(deps.runtime.secrets?.owner()), ownerKeyLine: deps.runtime.ownerKeyLine?.() ?? null,
+    // 1.0.11: an account already on with eligible: false (credit, capacity) still hears why
+    reasonLine: deps.runtime.probe.eligibilityReasonLine(),
   };
 }
 

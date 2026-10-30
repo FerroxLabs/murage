@@ -28,6 +28,10 @@ export const EMAIL_LINES = {
   waiting: "This email is waiting for the owner. You will see the outcome later; carry on.",
   paused: "Your email is paused. Tell the owner; do not try another way to reach this person.",
   billingHold: "Sending is on hold for this account.",
+  /** 1.0.11: 402 premium_locked is the plan, not a hold. */
+  notInPlan: "The owner's plan doesn't include email. Tell the owner if this cannot wait.",
+  /** 1.0.11: 403 email_not_enabled on a send: the owner has not turned email on. */
+  emailOff: "Email is off for this account. The owner can turn it on in Settings > Bot email.",
   closing: "This email address is closing, so sending is off. Tell the owner; do not try another way to reach this person.",
   dailyCap: "You have sent today's emails. You can send more after midnight UTC.",
   accountCap: "Your bots have sent today's emails together. You can send more after midnight UTC.",
@@ -60,7 +64,8 @@ export function codeLine(code: string | null | undefined): string {
     case "daily_send_cap_reached": return EMAIL_LINES.dailyCap;
     case "account_send_cap_reached": return EMAIL_LINES.accountCap;
     case "bot_paused": case "bot_pause_requires_support": case "account_email_paused": case "paused": return EMAIL_LINES.paused;
-    case "billing_hold": case "premium_locked": case "credit_unresolved": return EMAIL_LINES.billingHold;
+    case "billing_hold": case "credit_unresolved": return EMAIL_LINES.billingHold;
+    case "premium_locked": return EMAIL_LINES.notInPlan;
     case "inbox_closing": return EMAIL_LINES.closing;
     case "recipient_blocked": case "recipient_cooldown": return EMAIL_LINES.blocked;
     case "too_many_held": return EMAIL_LINES.tooManyHeld;
@@ -71,7 +76,8 @@ export function codeLine(code: string | null | undefined): string {
     case "rate_limit_error": case "first_contact_limit_reached": return EMAIL_LINES.rateLimit;
     case "key_budget_reached": return EMAIL_LINES.resting;
     case "capability_unavailable": return EMAIL_LINES.capacity;
-    case "email_not_enabled": case "account_off": case "inbox_not_found": case "inbox_pending_owner": return EMAIL_UNAVAILABLE;
+    case "email_not_enabled": return EMAIL_LINES.emailOff;
+    case "account_off": case "inbox_not_found": case "inbox_pending_owner": return EMAIL_UNAVAILABLE;
     case "message_not_found": case "thread_not_found": return EMAIL_LINES.notFound;
     default: return EMAIL_LINES.couldNotSend;
   }

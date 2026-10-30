@@ -15,7 +15,7 @@ export function bindingFailureLine(code: string | null | undefined): string {
     case "username_unavailable": return "That address is taken. Pick another username and press Retry.";
     case "invalid_request": return "That username or name cannot be used. Use letters, numbers, dots or dashes, then press Retry.";
     case "inbox_limit_reached": return "Your account has reached its number of bot addresses. Remove one, then press Retry.";
-    case "premium_locked": return "Bot email is not available on your account yet. Press Retry later.";
+    case "premium_locked": return FLUX_EMAIL_ANSWER_COPY.plan;
     case "email_not_enabled": return "Bot email is off for your account. Turn it on in Settings > Bot email, then press Retry.";
     default: return "Murage could not finish setting up this address. Press Retry, or Remove it.";
   }
@@ -44,7 +44,12 @@ export function activityLine(state: string, why: string | null, code: string | n
   if (state === "withdrawn" && code === "owner_resent") return "Sent again as a new email";
   if (state === "withdrawn") return "Not sent: withdrawn";
   if (state === "expired") return "Not sent: it ran out waiting";
-  if (state === "refused") return "Not sent: Flux did not accept it";
+  if (state === "refused") {
+    // 1.0.11: a scope, switch or plan answer says what the owner can do; anything else keeps the plain line
+    const answer = fluxEmailAnswer(0, code);
+    if (answer.line && (answer.kind === "sign_in" || answer.kind === "turn_on" || answer.kind === "plan")) return `Not sent: ${answer.line.charAt(0).toLowerCase()}${answer.line.slice(1).replace(/\.$/, "")}`;
+    return "Not sent: Flux did not accept it";
+  }
   return null;
 }
 
@@ -100,8 +105,11 @@ export const EMAIL_POLICY_COPY = {
 export const EMAIL_KEY_HEALTH_COPY = {
   rejected: "Email is not reachable: Flux did not accept the saved key.",
   email_off: "Bot email is off for your account. Turn it on in Settings > Bot email.",
-  not_eligible: "Bot email is not available on your account yet.",
+  not_eligible: "Your plan doesn't include email.",
+  /** 1.0.11: 403 email_scope_required on the owner token: a valid key without email scope. Signing in mints the email:owner key. */
+  scope: "Sign in with Flux to connect email.",
   paused: "Email is paused.",
+  /** Internal only: a 503/5xx backoff runs, but the owner sees no state change (key-health line() returns null for it). */
   outage: "Email is busy at Flux right now. Murage tries again shortly.",
 } as const;
 
@@ -119,6 +127,9 @@ export const EMAIL_SETUP_COPY = {
   removeConfirm: (address: string, bot: string) => `Remove ${address}? ${bot} stops sending and receiving now. Mail is deleted after 30 days and this address can't be used again.`,
   accountOff: "Bot email is off for this account. Turn it on in Settings > Bot email.",
   fluxOff: "Email addresses for bots come with Flux. Connect Flux in Settings to use them.",
+  /** 1.0.11: the capability read on the saved Flux key answered 401 (the key was revoked or Flux does not know it). */
+  fluxKeyRefused: "Your Flux key stopped working. Sign in with Flux again.",
+  fluxSignIn: "Sign in with Flux",
 } as const;
 
 /** Section 6 header chip for a binding state (and open cards). */
@@ -208,11 +219,16 @@ export function ownerRouteLine(code: string | null | undefined): string {
     case "bot_pause_requires_support": case "account_email_paused": return EMAIL_OWNER_COPY.supportPausedLine;
     case "not_paused": return "Email is not paused.";
     case "still_paused": return "Flux keeps this pause in place for now. The reason shows above; contact support if it does not clear.";
-    case "email_scope_required": return "Flux did not accept the saved email key for this step. Reconnect email in Settings.";
+    case "email_scope_required": return FLUX_EMAIL_ANSWER_COPY.signIn;
+    case "email_not_enabled": return FLUX_EMAIL_ANSWER_COPY.turnOn;
+    case "bot_paused": return "Sending is paused for this bot. Choose Resume in the bot's Email settings to send again.";
+    case "inbox_pending_owner": return "This address is waiting for you to finish setting it up. Open the bot's Email settings and press Retry.";
+    case "recipient_blocked": return "This person is blocked, so the email did not go out. You can change that in the bot's Email settings.";
+    case "recipient_approval_required": return "This person needs your OK first. Answer the email card to send it.";
     case "suppression_locked": return "This person asked not to be emailed, so the entry stays.";
     case "owner_required": case "unauthorized": case "key_expired": return EMAIL_OWNER_COPY.ownerSignIn;
     case "terms_not_accepted": return "Accept the email terms to turn bot email on.";
-    case "premium_locked": return "Bot email is not available on your account yet.";
+    case "premium_locked": return FLUX_EMAIL_ANSWER_COPY.plan;
     case "sends_in_flight": return "An email is still on its way. Reconnect once it has settled.";
     case "rotation_expired": return "Reconnect took too long to finish. Press Reconnect again.";
     case "revoke_pending": return "The new key is saved. Murage finishes retiring the old one shortly.";
@@ -223,6 +239,46 @@ export function ownerRouteLine(code: string | null | undefined): string {
     case "restore_window_passed": return "The 30 days to keep this address have ended. Give the bot a new address.";
     case "inbox_account_mismatch": return "This address belongs to another bot or account, so Murage left it as it is.";
     default: return EMAIL_OWNER_COPY.actionFailed;
+  }
+}
+
+/** 1.0.11: what one Flux email answer means for the owner (codes verified against the Flux proxy, master). Only a 401 is a dead key;
+ *  a 403 is always a scope, account or bot state; 429, 5xx and 503 capability_unavailable are transient and change nothing on screen. */
+export const FLUX_EMAIL_ANSWER_COPY = {
+  deadKey: EMAIL_SETUP_COPY.fluxKeyRefused,
+  signIn: "Sign in with Flux to connect email.",
+  turnOn: "Turn on email in Settings > Bot email.",
+  notYet: "Not on for your account yet.",
+  addCredit: "Add credit to use email.",
+  full: "Email is full right now. Try again later.",
+  plan: "Your plan doesn't include email.",
+} as const;
+export type FluxEmailAnswerKind = "dead_key" | "sign_in" | "turn_on" | "plan" | "account_state" | "transient" | "other";
+/** 403 codes that are an account or bot state (never a dead key). */
+export const FLUX_EMAIL_STATE_CODES: ReadonlySet<string> = new Set([
+  "owner_required", "account_email_paused", "bot_paused", "bot_pause_requires_support", "inbox_pending_owner", "recipient_blocked",
+  "recipient_approval_required", "suppression_locked",
+]);
+/** One answer (HTTP status, Flux code) to its kind and owner line; `line` is null when nothing changes on screen. Status 0 = only the
+ *  code is known (a stored send row). */
+export function fluxEmailAnswer(status: number, code: string | null | undefined): { kind: FluxEmailAnswerKind; line: string | null } {
+  if (status === 401) return { kind: "dead_key", line: FLUX_EMAIL_ANSWER_COPY.deadKey };
+  if (status === 429 || status >= 500 || code === "capability_unavailable") return { kind: "transient", line: null };
+  switch (code) {
+    case "email_scope_required": return { kind: "sign_in", line: FLUX_EMAIL_ANSWER_COPY.signIn };
+    case "email_not_enabled": return { kind: "turn_on", line: FLUX_EMAIL_ANSWER_COPY.turnOn };
+    case "premium_locked": return { kind: "plan", line: FLUX_EMAIL_ANSWER_COPY.plan };
+  }
+  if (code && FLUX_EMAIL_STATE_CODES.has(code)) return { kind: "account_state", line: ownerRouteLine(code) };
+  return { kind: "other", line: null };
+}
+/** A 200 from GET /v1/email/capabilities with eligible: false: the owner line for its reason (null for a reason Flux has not named). */
+export function eligibilityLine(reason: string | null | undefined): string | null {
+  switch (reason) {
+    case "not_rolled_out": case "support_denied": return FLUX_EMAIL_ANSWER_COPY.notYet;
+    case "not_funded": return FLUX_EMAIL_ANSWER_COPY.addCredit;
+    case "capacity": return FLUX_EMAIL_ANSWER_COPY.full;
+    default: return null;
   }
 }
 
@@ -250,6 +306,8 @@ export interface EmailStatusView {
   ownerSignedIn?: boolean;
   /** Section 8: the owner token's health line, when Flux refused it, paused or is busy. */
   ownerKeyLine?: string | null;
+  /** 1.0.11: the capabilities answer said eligible: false with a reason while the account is on (not funded, full). */
+  reasonLine?: string | null;
 }
 export interface EmailTrustEntry { entry: string; source: string; sourceLabel: string }
 export interface EmailBotView {
