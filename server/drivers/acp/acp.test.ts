@@ -1108,7 +1108,8 @@ describe("ACP turns (fake CLI)", () => {
         await recorder.until((event) => event.type === "turn.completed" && event.turnId === sent.turnId);
         const { argv } = JSON.parse(readFileSync(dump, "utf8")) as { argv: string[] };
         const skips = fullAuto && !enforced;
-        if (engine === "Grok") expect(argv.slice(0, 2)).toEqual(["--permission-mode", skips ? "bypassPermissions" : "default"]);
+        // Grok runs `default` at every level, Full access included (Murage answers its asks; never bypass).
+        if (engine === "Grok") expect(argv.slice(0, 2)).toEqual(["--permission-mode", "default"]);
         if (engine === "Cursor") expect(argv.includes("--force")).toBe(skips);
         if (engine === "Droid") {
           const applied = JSON.parse(readFileSync(`${dump}.config.json`, "utf8"));
@@ -1214,7 +1215,9 @@ describe("ACP turns (fake CLI)", () => {
     await instance.adapter.respondToRequest("t-perm-deny-once", (opened as any).requestId, { behavior: "deny" });
     expect(await recorder.until((e) => e.type === "request.resolved")).toMatchObject({ behavior: "deny", source: "user" });
     await recorder.until((e) => e.type === "turn.completed");
-    expect(JSON.parse(readFileSync(dump, "utf8")).decision).toEqual({ outcome: { outcome: "selected", optionId: "reject-once" } });
+    // Grok ends a prompt on a bare reject, so the one-time reject carries the follow-up note (GROK-812MIN-STOPPED).
+    expect(JSON.parse(readFileSync(dump, "utf8")).decision).toEqual({ outcome: { outcome: "selected", optionId: "reject-once" },
+      _meta: { followup_message: expect.stringMatching(/^The user denied this operation\./) } });
   });
 
   it.each(["allow", "deny", "full-auto"] as const)("never widens a one-request answer to always-only options: %s", async (behavior) => {
@@ -1260,7 +1263,7 @@ createInterface({ input: process.stdin }).on("line", line => {
       : { outcome: { outcome: "cancelled" } });
   });
 
-  it.each(["deny", "allow", "cancel", "timeout", "teardown", "other-engine", "question", "reject-always", "full-auto"] as const)(
+  it.each(["deny", "allow", "cancel", "teardown", "other-engine", "question", "reject-always", "full-auto"] as const)(
     "Fuigo denial continuation wire boundary: %s", async (scenario) => {
       const dump = join(scratch, "fuigo-denial.json");
       const cli = join(scratch, "denial-cli.mjs");
@@ -1290,23 +1293,20 @@ createInterface({ input: process.stdin }).on("line", line => {
       chmodSync(cli, 0o755);
       const driver = createAcpDriver({ ...SELECT_MODEL_SUPPORT,
         driverKind: scenario === "other-engine" ? "other-test" : FuigoAgentDriver.driverKind,
+        // Fuigo and Grok declare it (fuigo.ts, grok.ts); an engine that does not gets a bare reject.
+        ...(scenario === "other-engine" ? {} : { rejectNeedsFollowup: true as const }),
         selectModel: undefined,
       });
       instance = await driver.create({ instanceId: "denial-test", displayName: "Denial Test", environment: {}, enabled: true,
         config: { cli, fullAuto: scenario === "full-auto" } });
       recorder = recordEvents(instance.adapter);
-      // Shorten only this exact production permission deadline; real child I/O
-      // and every other timer keep their ordinary behavior.
-      const originalTimeout = globalThis.setTimeout;
-      const timerSpy = scenario === "timeout" ? vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback, delay, ...args) =>
-        originalTimeout(callback, delay === 15 * 60_000 ? 100 : delay, ...args)) as typeof setTimeout) : null;
-      try {
+      {
         const { turnId } = await instance.adapter.sendTurn({ threadId: "denial-wire", text: "go" });
         if (scenario !== "full-auto") {
           const opened = await recorder.until(event => event.type === "request.opened");
           if (scenario === "cancel") await instance.adapter.interruptTurn("denial-wire", turnId);
           else if (scenario === "teardown") await instance.dispose();
-          else if (scenario !== "timeout") await instance.adapter.respondToRequest("denial-wire", (opened as any).requestId,
+          else await instance.adapter.respondToRequest("denial-wire", (opened as any).requestId,
             { behavior: scenario === "allow" ? "allow" : "deny" });
         }
         await recorder.until(event => event.type === "turn.completed");
@@ -1324,19 +1324,12 @@ createInterface({ input: process.stdin }).on("line", line => {
         if (scenario === "deny") {
           expect(observed.decision).toEqual({ ...expected, _meta: { followup_message: "The user denied this operation. Do not retry it, bypass the denial, or perform an equivalent action through another tool. Keep the operation unexecuted and explain the limitation and any safe alternatives without taking further action." } });
           expect(recorder.events.find(event => event.type === "request.resolved")).toMatchObject({ behavior: "deny", source: "user" });
-        } else if (scenario === "timeout") {
-          // An unanswered card is not an engine failure: no error card (whose
-          // copy points at Provider settings), and Fuigo is told to carry on
-          // without the action instead of treating the deny as a Stop.
-          expect(observed.decision).toEqual({ ...expected, _meta: { followup_message: "Nobody answered this permission request in time. Do not retry it or perform an equivalent action through another tool. Finish what you can without it and say what was skipped." } });
-          expect(recorder.events.find(event => event.type === "request.resolved")).toMatchObject({ behavior: "deny", source: "timeout" });
-          expect(recorder.events.filter(event => event.type === "runtime.error" && /answered/i.test(event.message))).toEqual([]);
         } else expect(observed.decision).toEqual(scenario === "reject-always" ? { outcome: { outcome: "cancelled" } } : expected);
-      } finally { timerSpy?.mockRestore(); }
+      }
     },
   );
 
-  it("a turn that holds its permission asks keeps the card open past 15 minutes (routine runs)", async () => {
+  it("a permission card waits past 15 minutes on every turn, direct chat included (Sean 10-29)", async () => {
     const dump = join(scratch, "hold-asks.json");
     const cli = join(scratch, "hold-asks-cli.mjs");
     writeFileSync(cli, `#!/usr/bin/env node
@@ -1370,8 +1363,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     const driver = createAcpDriver({ ...SELECT_MODEL_SUPPORT, driverKind: FuigoAgentDriver.driverKind, selectModel: undefined });
     instance = await driver.create({ instanceId: "hold-test", displayName: "Hold Test", environment: {}, enabled: true, config: { cli, fullAuto: false } });
     recorder = recordEvents(instance.adapter);
-    // The production deadline would fire within 100 ms here; a held ask must
-    // never arm it.
+    // The old 15-minute deadline would fire within 100 ms here; no turn arms it any more.
     const originalTimeout = globalThis.setTimeout;
     const delays: number[] = [];
     const timerSpy = vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback, delay, ...args) => {
@@ -1379,7 +1371,7 @@ createInterface({ input: process.stdin }).on("line", line => {
       return originalTimeout(callback, delay === 15 * 60_000 ? 100 : delay, ...args);
     }) as typeof setTimeout);
     try {
-      await instance.adapter.sendTurn({ threadId: "hold-wire", text: "go", holdPermissionAsks: true });
+      await instance.adapter.sendTurn({ threadId: "hold-wire", text: "go" });
       const opened = await recorder.until(event => event.type === "request.opened");
       await new Promise(resolve => originalTimeout(resolve, 400));
       expect(delays).toEqual([]);
@@ -1446,7 +1438,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     const timer = vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback, delay, ...args) =>
       original(callback, delay === QUESTION_TIMEOUT_MS ? 50 : delay, ...args)) as typeof setTimeout);
     try {
-      await instance.adapter.sendTurn({ threadId: "project-question", text: "choose", holdProjectAsks: true, holdPermissionAsks: true });
+      await instance.adapter.sendTurn({ threadId: "project-question", text: "choose", holdProjectAsks: true });
       const opened = await recorder.until(event => event.type === "request.opened");
       expect(opened).toMatchObject({ requestType: "question" });
       await new Promise(resolve => original(resolve, 200));
@@ -1926,6 +1918,28 @@ createInterface({ input: process.stdin }).on("line", line => {
     const settledAt = rows.findIndex(row => row.dir === "lifecycle" && row.msg?.event === "turn_settled");
     expect(cancelAt).toBeGreaterThan(-1);
     expect(resultAt).toBeGreaterThan(cancelAt);
+    expect(settledAt).toBeGreaterThan(resultAt);
+  });
+
+  it("a Stop the engine answers with end_turn and nothing to show is the person's stop, never \"finished without a reply\"", async () => {
+    // OpenCode answers session/cancel by ending the prompt with end_turn, not cancelled (upstream 4463ba7be).
+    const rpcFile = join(scratch, "cancel-end-turn.json");
+    process.env.FAKE_ACP_RPC_DUMP = rpcFile;
+    await create(GrokAgentDriver, "cancel-end-turn");
+    const threadId = `t-cancel-end-turn-${Date.now()}`;
+    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+    await vi.waitFor(() => expect(JSON.parse(readFileSync(rpcFile, "utf8"))).toContain("session/prompt"), { timeout: 4000 });
+    await instance.adapter.interruptTurn(threadId);
+    const done = await recorder.until(event => event.type === "turn.completed", 4000);
+    expect(done).toMatchObject({ turnId, ok: true, stopReason: "cancelled" });
+    expect(recorder.events.filter(event => event.type === "runtime.error")).toEqual([]);
+    const rows = readFileSync(join(NATIVE_DIR, `${threadId}.ndjson`), "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line));
+    const cancelAt = rows.findIndex(row => row.dir === "out" && row.msg?.method === "session/cancel");
+    const resultAt = rows.findIndex(row => row.dir === "in" && row.msg?.result?.stopReason === "end_turn");
+    const settledAt = rows.findIndex(row => row.dir === "lifecycle" && row.msg?.event === "turn_settled");
+    expect(cancelAt).toBeGreaterThan(-1);
+    expect(resultAt).toBeGreaterThan(cancelAt);
+    // settled by the end_turn answer, not by the grace timer winning a race
     expect(settledAt).toBeGreaterThan(resultAt);
   });
 

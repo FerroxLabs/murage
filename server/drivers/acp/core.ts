@@ -22,7 +22,7 @@ import { FUIGO_TOOL_SURFACE, NEUTRAL_TOOL_SURFACE, renderMurageTurn } from "../.
 // before the prompt is sent, and `_meta.isReplay` updates are dropped.
 import { applyProviderRoute, FUIGO_ALLOW_UPSTREAM_ENV, grokResumeBinding, validateProviderTurnRoute } from "../../provider-routing.ts";
 import { isQuestionTool } from "../../auto-approve.ts";
-import { fluxHeaderRefusal, fluxMemoryContextForTurn, fluxMemoryDecision, logFluxMemoryHeaders } from "../../flux-memory-headers.ts";
+import { fluxHeaderRefusal, fluxTurnDecision, logFluxMemoryHeaders } from "../../flux-memory-headers.ts";
 import { fluxSurfaceFor, isFluxModel } from "../../flux-routing.ts";
 import { fuigoMemoryAllowOnce, newFuigoMemoryAlias } from "./fuigo-memory-permission.ts";
 import { ApprovalDeliveryError, approvalWriteReason, deliverApproval, writeAcpResponse, type ApprovalDeliveryFailure, type ApprovalDeliveryResult, type ApprovalWriteCallback } from "./approval-delivery.ts";
@@ -56,6 +56,7 @@ import { existsSync, mkdtempSync, rmSync, unlinkSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { sep as pathSep } from "node:path";
 import { MCP_LISTED_FILE_ENV } from "../../mcp-listed.ts";
+import { wakeAwareTimeout } from "../../sleep-clock.ts";
 import { stripVTControlCharacters } from "node:util";
 
 import { deleteEnvNames, PROVIDER_CREDENTIAL_ENV, stripRoutingEnv, WORKSPACE_CREDENTIAL_ENV } from "../../config.ts";
@@ -996,6 +997,10 @@ export interface AcpSupport {
    *  included, through the workspace's `.fuigo/agents/<id>.md` first, so a repo file could replace the bot's
    *  system prompt and permission mode). No mode is set, so the turn stays in the engine's default. */
   noSessionModes?: true;
+  /** The engine ends the whole prompt as `cancelled` on a bare `reject_once` (Fuigo 1.0.13, Grok Build: the same
+   *  xai-grok-shell, whose permission decisions include `FollowupMessage`). A deny from the owner or the card's own
+   *  deadline then carries `_meta.followup_message`, so the tool stays denied and the turn carries on without it. */
+  rejectNeedsFollowup?: true;
   /** Answer a permission request only with a one-time allow, at every level, Full access included: an
    *  allow-always option would leave a grant in the engine that answers later requests without Murage
    *  (Fuigo 1.0.32 remembered Bash grants). With no one-time allow on offer, Murage cancels the request. */
@@ -1182,6 +1187,11 @@ export interface AcpSupport {
   classifyError?(error: unknown): ProviderErrorCode | undefined;
   /** Compose the session/prompt text. Default prepends the persona. */
   buildPromptText?(turn: SendTurnInput): string;
+  /** One reading of a permission request's `rawInput`, run once before any reader (the command reader, the card,
+   *  the policy call, the stop line). Undefined: the request is read as sent. `ok: false`: the call could not be
+   *  read and is held as unread (`toolInputMissing`). Hermes: an ask its hook escalated carries a placeholder as
+   *  the command and the real arguments only in the hook's message. */
+  normalizeAsk?(rawInput: unknown): { ok: true; rawInput: Record<string, unknown>; summary: string } | { ok: false; why: string; summary?: string } | undefined;
   /** Rewrite a picker id (`omlx::model`) into the CLI-native id before spawn
    * and session/select. Local inject writers live here so the child sees a
    * model it already knows. */
@@ -1272,10 +1282,6 @@ export interface AcpSupport {
  *  rather than passed through as NaN, which would disarm the timeout entirely. */
 const envOr = (key: string, fallback: number): number => boundedEnvMs(process.env[key], fallback);
 const INIT_TIMEOUT = envOr("MURAGE_ACP_INIT_MS", 60_000);
-/** How long an unanswered permission card waits before it is denied. Read
- * lazily so a fixture can shorten it; a routine run's cards never use it
- * (SendTurnInput.holdPermissionAsks). */
-const permissionDenyMs = (): number => envOr("MURAGE_PERMISSION_DENY_MS", 15 * 60_000);
 /** Longest the first prompt waits for `AcpSupport.mcpReadyNotification`.
  *  Past it the prompt is sent anyway (the model is told the servers are still
  *  connecting, which is the old behaviour) and a `mcp_ready_timeout`
@@ -1598,10 +1604,6 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
   const DRIVER_KIND = support.driverKind;
   const SOURCE = support.nativeSource;
   const decodeConfig = decodeAcpConfig(support.defaultCli, support.decodeExtra);
-  // Fuigo reads a bare reject_once as a Stop; this note keeps the turn going
-  // without the action when nobody answered the card in time.
-  const DENY_TIMEOUT_FOLLOWUP =
-    "Nobody answered this permission request in time. Do not retry it or perform an equivalent action through another tool. Finish what you can without it and say what was skipped.";
   /** Sessions an Ask turn put in the engine's read-only session mode (support.askStop.sessionMode). */
   const askStopModeSessions = new Set<string>();
 
@@ -2430,7 +2432,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           ? turn.providerRoute.preset === "flux"
           : (isFluxModel(turn.model) && fluxSurfaceFor(support.driverKind) !== null) || Boolean(support.reachesFlux?.(turn.model, env));
         if (fluxRoutedTurn) {
-          const fluxMemory = fluxMemoryDecision(fluxMemoryContextForTurn(turn));
+          // the memory decision plus the turn's usage tags: every ACP engine renders decision.headers into its own overlay
+          const fluxMemory = fluxTurnDecision(turn);
           const headerRefusal = fluxHeaderRefusal(support.driverKind, fluxMemory);
           if (headerRefusal) throw new Error(headerRefusal);
           if (support.fluxHeaderGate && (support.fluxGateEveryTurn || fluxMemory.capture === "off" || fluxMemory.inject === "off")) {
@@ -2512,7 +2515,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         const startEpoch = epochOf(threadId);
         // `producedItem`: the turn emitted something a person can see (a reply,
         // an image, a tool result). An end_turn without one is a lost turn.
-        const state = { settled: false, finished: false, failed: false, promptSent: false, cancelRequested: false, text: "", producedItem: false, toolsUnavailable: [] as string[], mcpReadiness: undefined as "unknown" | undefined };
+        const state = { settled: false, finished: false, failed: false, promptSent: false, cancelRequested: false, text: "", producedItem: false, toolsUnavailable: [] as string[], mcpReadiness: undefined as "unknown" | undefined,
+          /** Who denied the newest permission ask this turn delivered (cleared by a delivered allow). An engine that then
+           *  ends the prompt `cancelled` without Murage asking it to stopped because of that deny, not a Stop. */
+          deniedBy: undefined as "user" | "timeout" | "system" | undefined };
         // Existing 256 KiB diagnostic cap, preserving the start before any
         // redaction. Never keep a second raw tail that can lose a PEM header.
         let stderrDiagnostic = "", stderrDiagnosticTruncated = false;
@@ -2874,7 +2880,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             emit({ ...base(threadId, turnId), type: "item.started", itemId, itemType: "tool", origin: "murage", title: ASK_STOP_NOTE, toolKind: "notice" });
             emit({ ...base(threadId, turnId), type: "item.completed", itemId, itemType: "tool", ok: true });
           }
-          emit({ ...base(threadId, turnId), type: "turn.completed", ok, stopReason, cost: null, ...(settledUsage ? { usage: settledUsage } : {}), ...(settledCharge !== undefined ? { charge: settledCharge } : {}), ...(state.toolsUnavailable.length ? { toolsUnavailable: state.toolsUnavailable } : {}), ...(state.mcpReadiness ? { mcpReadiness: state.mcpReadiness } : {}) });
+          // The engine ended the prompt itself right after a deny (no Stop, no host interrupt): say whose deny it was.
+          const deniedBy = ok && stopReason === "cancelled" && !state.cancelRequested ? state.deniedBy : undefined;
+          emit({ ...base(threadId, turnId), type: "turn.completed", ok, stopReason, cost: null, ...(deniedBy ? { deniedBy } : {}), ...(settledUsage ? { usage: settledUsage } : {}), ...(settledCharge !== undefined ? { charge: settledCharge } : {}), ...(state.toolsUnavailable.length ? { toolsUnavailable: state.toolsUnavailable } : {}), ...(state.mcpReadiness ? { mcpReadiness: state.mcpReadiness } : {}) });
           if (!park) stop(cause); // the agent process does not exit on its own
           forgetPrewarm();
         };
@@ -2918,7 +2926,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           const finish: AcpAskFinish = (behavior, source = "user", answers) => {
             if (!asks.delete(requestId)) return;
             traceClose("permission.wait", requestId, behavior);
-            clearTimeout(timer);
+            timer?.clear();
             const picks = behavior === "answer" && answers?.length ? answers : null;
             // a vendor reply that maps to no answer is its cancelled reply, never a guessed one
             const vendorReply = vendor && picks ? vendorAnswer?.(picks) : null;
@@ -2945,8 +2953,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               source,
             });
           };
-          const timer = turn.holdProjectAsks ? undefined : setTimeout(() => finish("deny", "timeout"), QUESTION_TIMEOUT_MS);
-          timer?.unref?.();
+          // awake time (1.0.10 C3): a sleep with the card open does not count toward its deadline
+          const timer = turn.holdProjectAsks ? undefined : wakeAwareTimeout(() => finish("deny", "timeout"), QUESTION_TIMEOUT_MS);
           traceOpen("permission.wait", requestId);
           asks.set(requestId, finish);
           emit({
@@ -2991,7 +2999,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           const finish: AcpAskFinish = (behavior, source = "user", answers) => {
             if (!asks.delete(requestId)) return;
             traceClose("permission.wait", requestId, behavior);
-            clearTimeout(timer);
+            timer?.clear();
             const decision = behavior === "answer" ? folderTrustDecision(answers) : null;
             // FUIGOTRUST2 (6): a late card (the engine had already started)
             // closed by nobody: the turn finished, was stopped, or the ask
@@ -3012,8 +3020,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             if (decision) onDecided(decision);
             else onDecided(source === "user" ? "skipped" : "unanswered");
           };
-          const timer = turn.holdProjectAsks ? undefined : setTimeout(() => finish("deny", "timeout"), QUESTION_TIMEOUT_MS);
-          timer?.unref?.();
+          // awake time (1.0.10 C3): a sleep with the card open does not count toward its deadline
+          const timer = turn.holdProjectAsks ? undefined : wakeAwareTimeout(() => finish("deny", "timeout"), QUESTION_TIMEOUT_MS);
           traceOpen("permission.wait", requestId);
           asks.set(requestId, finish);
           emit({
@@ -3113,7 +3121,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               message: `${ENGINE} offered no way to ${want === "allow" ? "allow" : "decline"} this request, so Murage cancelled it instead of guessing.`,
             });
 
-          const toolCall = params.toolCall ?? {};
+          const sentToolCall = params.toolCall ?? {};
+          // The engine's own reading of what it sent, once, so every reader below takes the same input.
+          const normalAsk = support.normalizeAsk?.(sentToolCall.rawInput);
+          const toolCall = normalAsk?.ok ? { ...sentToolCall, rawInput: normalAsk.rawInput } : sentToolCall;
           const kind = String(toolCall.kind ?? "");
           // An agent that routes its question tool (e.g. AskUserQuestion)
           // through request_permission names it in the tool call. That tool
@@ -3152,7 +3163,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           // text, so it only stands in when there is no structured target.
           const commandLine = commandText(toolCall.rawInput?.command);
           const editPaths = !commandLine && (kind === "edit" || kind === "delete" || kind === "move") ? acpToolFilePaths(toolCall) : undefined;
-          const summary = approvalSummary(commandLine ?? (editPaths ? editPaths.join(", ") : String(toolCall.title ?? tool)));
+          const summary = approvalSummary(normalAsk?.summary ?? commandLine ?? (editPaths ? editPaths.join(", ") : String(toolCall.title ?? tool)));
           // The model's title is only a label when the engine named the real
           // target (paths); keep it, marked as the model's, so a move's
           // destination named only in the title is not lost.
@@ -3167,7 +3178,6 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           const clearAsk = () => {
             asks.delete(requestId);
             nativeApprovals.delete(msg.id);
-            clearTimeout(timer);
           };
           const finish: AcpAskFinish = (behavior, source = "user") => {
             if (!asks.has(requestId)) return false;
@@ -3223,13 +3233,14 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               id: msg.id,
               result: optionId ? {
                 outcome: { outcome: "selected", optionId },
-                // Fuigo 1.0.13 treats a bare reject_once as turn cancellation.
-                // Its response-level feedback extension keeps the tool denied
-                // while allowing a safe explanation in this same native turn.
-                ...(support.driverKind === "fuigoAgent" && !turnConfig.fullAuto && !questionTool &&
-                  behavior === "deny" && (source === "user" || source === "timeout") &&
+                // Fuigo 1.0.13 and Grok Build treat a bare reject_once as turn
+                // cancellation (support.rejectNeedsFollowup). Their response-level
+                // feedback extension keeps the tool denied while allowing a safe
+                // explanation in this same native turn.
+                ...(support.rejectNeedsFollowup && !turnConfig.fullAuto && !questionTool &&
+                  behavior === "deny" && source === "user" &&
                   options.some(option => option.optionId === optionId && option.kind === "reject_once")
-                  ? { _meta: { followup_message: source === "timeout" ? DENY_TIMEOUT_FOLLOWUP : "The user denied this operation. Do not retry it, bypass the denial, or perform an equivalent action through another tool. Keep the operation unexecuted and explain the limitation and any safe alternatives without taking further action." } }
+                  ? { _meta: { followup_message: "The user denied this operation. Do not retry it, bypass the denial, or perform an equivalent action through another tool. Keep the operation unexecuted and explain the limitation and any safe alternatives without taking further action." } }
                   : {}),
               } : cancelled,
             };
@@ -3258,6 +3269,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 return { ok: false, reason: "engine_stopped", terminal: true };
               }
               traceClose("permission.wait", requestId, behavior);
+              state.deniedBy = optionId && behavior === "allow" ? undefined : optionId ? source : "system";
               emit({
                 ...base(threadId, turnId),
                 type: "request.resolved",
@@ -3272,9 +3284,6 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               approvalDeliveryStop.signal.removeEventListener("abort", stopped);
               if (delivery === current) {
                 delivery = undefined;
-                // The deadline may have fired while this answer was in flight.
-                // A definite miss leaves a live ask that still needs a deadline.
-                if (asks.has(requestId) && !current.uncertain && !state.settled) armDenyDeadline();
               }
             };
             delivery = current;
@@ -3295,19 +3304,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             });
             return current.promise;
           };
-          // An unanswered card denies after 15 minutes. That is the owner not
-          // answering, not an engine failure, so it raises no runtime error
-          // (whose card sends people to Provider settings); request.resolved
-          // with source "timeout" is the record. A routine run holds its
-          // cards open instead (SendTurnInput.holdPermissionAsks).
-          let timer: ReturnType<typeof setTimeout> | undefined;
-          const armDenyDeadline = () => {
-            clearTimeout(timer);
-            if (turn.holdPermissionAsks) return;
-            timer = setTimeout(() => { finish("deny", "timeout"); }, permissionDenyMs());
-            timer.unref?.();
-          };
-          armDenyDeadline();
+          // The card waits for the owner on every turn, direct chat and routine alike (Sean 10-29, H4): it closes
+          // only on an answer, on Stop, or when the turn or engine ends. There is no deny deadline.
           traceOpen("permission.wait", requestId);
           asks.set(requestId, finish);
           nativeApprovals.set(msg.id, { paramsKey, requestId });
@@ -3351,6 +3349,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             // Rules 2, 55: a source that is present but malformed (a rawInput that is not an object, locations that are not a list) makes
             // the whole call unread; it is never dropped or replaced with an empty input.
             ...(() => { const bad = !questionTool && kind ? acpMalformedSource(toolCall) : undefined; return bad ? { toolInputMissing: bad } : {}; })(),
+            // An ask the engine's reader could not read (Hermes: a hook message it does not recognise) is unread.
+            ...(normalAsk && !normalAsk.ok && !questionTool ? { toolInputMissing: normalAsk.why } : {}),
             // Structured, off the wire — never parsed back out of `summary`,
             // which is composed from what the model wrote.
             ...(() => { const filePaths = acpToolFilePaths(toolCall); return filePaths ? { filePaths } : {}; })(),
@@ -4164,22 +4164,19 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
          *  mount unasked, so the host-computer route asks here before each call
          *  reaches the computer, with the tool's exact name and arguments. The
          *  card is the one a stamped MCP call on this turn's own mount gets;
-         *  a deny, a timeout or the turn ending (asks are cancelled) stops it. */
+         *  a deny or the turn ending (asks are cancelled) stops it; like every card it waits for the owner. */
         const askHostAction = (call: { name: string; arguments?: unknown }, signal?: AbortSignal): Promise<"allow" | "deny"> => new Promise((resolveAsk) => {
           if (signal?.aborted || state.settled || state.cancelRequested || !controlsHost || !/^[A-Za-z0-9_.-]{1,128}$/.test(call.name)) return resolveAsk("deny");
           const requestId = newId();
           const finish: AcpAskFinish = (behavior, source = "user") => {
             if (!asks.delete(requestId)) return false;
             traceClose("permission.wait", requestId, behavior);
-            clearTimeout(timer);
             signal?.removeEventListener("abort", withdrawn);
             const allow = behavior === "allow";
             resolveAsk(allow ? "allow" : "deny");
             emit({ ...base(threadId, turnId), type: "request.resolved", requestId, behavior: allow ? "allow" : "deny", source: allow || behavior === "deny" ? source : "system", approvalScope: "local-computer" });
             return true;
           };
-          const timer = turn.holdPermissionAsks ? undefined : setTimeout(() => { finish("deny", "timeout"); }, permissionDenyMs());
-          timer?.unref?.();
           // the engine withdrew the call (its proxy request closed): the card closes, nothing runs
           const withdrawn = () => { finish("cancel", "system"); };
           signal?.addEventListener("abort", withdrawn, { once: true });
@@ -4990,6 +4987,11 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             // that was still buffered as streamed text.
             if (reason === "end_turn") flushAssistantText();
             if (reason === "end_turn" && !state.cancelRequested && (helpers.open.size > 0 || helpers.wakePending)) holdForHelpers();
+            // A Stop the engine answers with end_turn (OpenCode does) and
+            // nothing to show is the stop it was asked for, never a lost turn
+            // (upstream 4463ba7be): the guard below would put a red "finished
+            // without a reply" card with Retry on a turn the person ended.
+            else if (reason === "end_turn" && state.cancelRequested && !state.producedItem) settle(true, "cancelled");
             else if (reason === "end_turn" && !state.producedItem) {
               // `end_turn` with nothing to show for it (no reply, no image,
               // no tool result) is a lost turn, not a success. A provider can

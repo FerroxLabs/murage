@@ -4194,7 +4194,7 @@ ipcMain.handle("flux-signin:start", async (_event, input) => {
   const revision = typeof input?.revision === "string" ? input.revision : "";
   try {
     let config = null;
-    try { config = JSON.parse(fs.readFileSync(path.join(ownedDesktopDataDir(), "config.json"), "utf8")); } catch { /* unreadable config means the switch is off */ }
+    try { config = JSON.parse(fs.readFileSync(path.join(ownedDesktopDataDir(), "config.json"), "utf8")); } catch { /* unreadable config follows the default (on) */ }
     assertFluxDesktopSigninEnabled(config);
     const { key } = await runFluxDesktopSignin({ openExternal: (url) => shell.openExternal(url) });
     const status = await mutateFluxConnectionInMain({ action, revision, key });
@@ -4209,12 +4209,13 @@ ipcMain.handle("flux-signin:cancel", () => { cancelFluxDesktopSignin(); });
 // Bot email (BOT-EMAIL-MURAGE-109 2.4): the owner act of turning email on obtains the email:owner token from the same PKCE desktop flow,
 // stores it encrypted and hands it to the server over the private port. The token never reaches the renderer, an engine or config.flux.
 ipcMain.handle("email-owner-signin:start", async () => {
-  const gate = await modelSignInGate();
-  if (gate) return { ok: false, code: gate.error, message: "Murage could not keep the sign-in on this computer." };
   try {
     let config = null;
-    try { config = JSON.parse(fs.readFileSync(path.join(ownedDesktopDataDir(), "config.json"), "utf8")); } catch { /* unreadable config means the switch is off */ }
+    try { config = JSON.parse(fs.readFileSync(path.join(ownedDesktopDataDir(), "config.json"), "utf8")); } catch { /* unreadable config follows the default (on) */ }
+    // the explicit-off switch answers first, before the storage gate (Astra 1.0.11 L)
     assertFluxDesktopSigninEnabled(config);
+    const gate = await modelSignInGate();
+    if (gate) return { ok: false, code: gate.error, message: "Murage could not keep the sign-in on this computer." };
     const { key: owner } = await runFluxDesktopSignin({ openExternal: (url) => shell.openExternal(url), scope: EMAIL_OWNER_SCOPE, readToken: readEmailOwnerToken });
     await updateSecureCredentialDocument((current) => withEmailOwner(current, owner), undefined, { skipUnchanged: true });
     serverProc?.postMessage({ type: EMAIL_OWNER_MESSAGE, owner });
@@ -4990,6 +4991,9 @@ void androidDevice.reclaimOrphan().catch(() => {});
   if(cloudHome?.client?.settleUnfinished)void cloudHome.client.settleUnfinished().catch(()=>console.log("[cloud] door: settle-failed"));
   powerMonitor.on("suspend",()=>backgroundLifecycle?.setSuspended(true));
   powerMonitor.on("resume",()=>backgroundLifecycle?.setSuspended(false));
+  // 1.0.10 C3: the server counts the suspension as sleep, so an open card's deadline and the stall watchdog do not read it as silence.
+  // The server also measures a frozen process itself; this covers a suspension it kept running through (Windows modern standby).
+  for(const state of ["suspend","resume"])powerMonitor.on(state,()=>{try{serverProc?.postMessage({type:"murage:power",state});}catch{/* the server is restarting; its own tick covers a freeze */}});
   // 1.0.9 Sentinel: sleep pauses sampling (no missed-window catch-up); registration and proof run in the background.
   powerMonitor.on("suspend",()=>sentinelHost?.suspend());
   powerMonitor.on("resume",()=>sentinelHost?.resume());

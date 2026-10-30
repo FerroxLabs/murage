@@ -107,8 +107,8 @@ it("does not hold the Inbox projection to its byte-exact text: it is derived dat
   initializeInbox(f.db);
   f.db.exec(`DROP TRIGGER inbox_project_delete;
     CREATE TRIGGER inbox_project_delete AFTER DELETE ON messages BEGIN /* an earlier release's wording */ DELETE FROM inbox_raw WHERE thread_id=OLD.thread_id AND message_id=OLD.id; END;
-    DROP INDEX inbox_raw_rank_4; CREATE INDEX inbox_raw_rank_4 ON inbox_raw(source_key,at DESC);
-    DROP INDEX setup_marks_tail_4; CREATE INDEX setup_marks_tail_4 ON setup_marks(thread_id,at);`);
+    DROP INDEX inbox_raw_rank_5; CREATE INDEX inbox_raw_rank_5 ON inbox_raw(source_key,at DESC);
+    DROP INDEX setup_marks_tail_5; CREATE INDEX setup_marks_tail_5 ON setup_marks(thread_id,at);`);
   expect(await snapshotInstallationDatabase(f.data, f.target)).toMatchObject({ status: "copied", messages: 1 });
   // a trigger that is not the projection's is still refused
   const hostile = fixture();

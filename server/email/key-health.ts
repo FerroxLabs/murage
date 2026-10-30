@@ -22,6 +22,9 @@ export interface KeyHealthRecord { state: KeyHealthState; keyId: string | null; 
 export const KEY_HEALTH_LINES: Record<Exclude<KeyHealthState, "ok">, string> = EMAIL_KEY_HEALTH_COPY;
 
 const REJECTED_CODES: ReadonlySet<string> = new Set(["key_expired", "key_revoked", "invalid_api_key", "unauthorized", "invalid_key", "http_401"]);
+/** Flux did not accept the key itself: any 401, or a 403 (or other refusal) carrying a key-rejection code. A 403 email_not_enabled or a
+ *  pause is NOT a key problem (the key is fine; email is off or paused). */
+export function isKeyRejection(status: number, code: string): boolean { return status === 401 || REJECTED_CODES.has(code); }
 const PAUSE_CODES: ReadonlySet<string> = new Set(["bot_paused", "account_email_paused"]);
 export const KEY_BACKOFF_BASE_MS = 2_000;
 export const KEY_BACKOFF_CEILING_MS = 300_000;

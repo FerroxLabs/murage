@@ -109,6 +109,24 @@ export function readGrokModelCatalog(env: Record<string, string | undefined> = p
   };
 }
 
+type GrokSessionContext = Parameters<NonNullable<AcpSupport["configureSession"]>>[0];
+
+/** -m on argv is necessary but not sufficient: session/new still starts on [models].default, so the pick is pinned over
+ *  the wire, same as Hermes/Droid. When the session already reports the picked model (a resumed session, or a new one
+ *  that started on it), no set_model is sent: grok rebuilds its harness on that call, which can drop the MCP catalog it
+ *  just confirmed (adapted from OpenMausBot afbc78c5c). */
+export async function configureGrokSession({ request, sessionId, turn, currentModelId }: GrokSessionContext): Promise<void> {
+  if (!turn.model || currentModelId === turn.model) return;
+  try {
+    await request("session/set_model", { sessionId, modelId: turn.model });
+  } catch (e) {
+    throw new Error(
+      `Grok rejected model "${turn.model}" via session/set_model: ${(e as Error).message}. ` +
+        `Check that grok is current (1.0.6+ supports it) and that this slug exists in ~/.grok/config.toml.`,
+    );
+  }
+}
+
 function suggestGrokSlug(host: string, model: string, taken: Set<string>): string {
   let base = `${host}-${model}`.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
   if (!base || !/^[a-z]/.test(base)) base = `m-${base || "model"}`;
@@ -409,6 +427,11 @@ export function applyGrokFluxMemory(env: Record<string, string | undefined>, hea
 const support: AcpSupport = {
   driverKind: "grokAgent",
   displayName: "Grok",
+  // The same shell as Fuigo: a bare reject_once ends the prompt as `cancelled`
+  // (10-29: a 15-minute card timeout ended a live image turn as "Stopped by
+  // you"). grok 1.0.70 carries the same `followup_message` permission decision
+  // (`FollowupMessage`, telemetry `decision = followup`), so a deny keeps the turn.
+  rejectNeedsFollowup: true,
   // A cut MCP result is saved in this session's own `mcp/` folder; reading it
   // back is the bot reading its own output (server/own-tool-results.ts).
   toolResultDirs: ({ env, cwd, sessionId }) => fuigoToolResultDirs(grokHome(env), sessionFolders(cwd), sessionId),
@@ -416,6 +439,10 @@ const support: AcpSupport = {
   // read back word for word, and the same prompt without it was not. initialize
   // also advertises promptCapabilities.image; this is the answer before that probe.
   images: true,
+  // Grok Build is the code Fuigo is built from: an allow-always answer would leave a standing grant in the
+  // engine that answers later requests without Murage, Ask-level turns on the same home included. Every
+  // level, Full access included, answers with a one-time allow (or cancels when none is offered).
+  allowOnceOnly: true,
   // Grok Build's own names for the Fuigo contract, proven on a real 1.0.67 turn:
   // `_x.ai/interject` mid-turn answered `{ result: { status: "queued" } }`, echoed
   // `_x.ai/session/interjection` with the same interjectionId, and the reply
@@ -471,14 +498,17 @@ const support: AcpSupport = {
   mcpProgressNotification: "_x.ai/mcp/init_progress",
   mcpListMethod: "_x.ai/mcp/list",
 
-  spawnArgs: (config, turn, ctx) => {
+  spawnArgs: (_config, turn, ctx) => {
     // Fails closed at Ask on a grok its ask rules are not proven on (GROK_ASK_HOLD_MIN).
     requireGrokAskHold(turn.askLevel, ctx?.cliVersion);
     return [
       "--permission-mode",
-      // `default` still runs grok's own read-only shell commands unasked; the scoped config's `[permission] ask`
-      // rules (grok-scope.ts GROK_ASK_RULES) send every shell command, edit and write to Murage instead.
-      config.fullAuto ? "bypassPermissions" : "default",
+      // `default` at every level, never bypassPermissions: under bypass grok never asks, so neither the
+      // scoped config's `[permission] ask` rules (grok-scope.ts GROK_ASK_RULES) nor Murage's guard see a call.
+      // `default` still runs grok's own read-only shell commands unasked; the ask rules send every shell
+      // command, edit and write to Murage, which answers a fullAuto turn's asks itself (core.ts, one-time
+      // allow only, see allowOnceOnly). Explicit, so a mode the owner set for their own terminal cannot apply.
+      "default",
       // Murage owns persistent memory (same flag Fuigo and the headless reflection argv pass).
       "--no-memory",
       "agent",
@@ -493,19 +523,7 @@ const support: AcpSupport = {
   },
   spawnNeedsCliVersion: true,
 
-  // -m on argv is necessary but not sufficient: session/new still starts on
-  // [models].default. Pin the slug over the wire, same as Hermes/Droid.
-  async configureSession({ request, sessionId, turn }) {
-    if (!turn.model) return;
-    try {
-      await request("session/set_model", { sessionId, modelId: turn.model });
-    } catch (e) {
-      throw new Error(
-        `Grok rejected model "${turn.model}" via session/set_model: ${(e as Error).message}. ` +
-          `Check that grok is current (1.0.6+ supports it) and that this slug exists in ~/.grok/config.toml.`,
-      );
-    }
-  },
+  configureSession: configureGrokSession,
 
   /** Flux Memory headers: Grok Build shares Fuigo's shell, so the inline `GROK_CONFIG` overlay
    *  (xai-grok-shell config GROK_CONFIG_ENV) carries `[models].extra_headers` the same way. */

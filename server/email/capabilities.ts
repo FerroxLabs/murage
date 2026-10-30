@@ -5,6 +5,7 @@
 // enabled: true for the saved account. The answer is cached per saved account, re-read on demand (boot, opening Settings) and after any
 // 403 email_not_enabled or 503 capability_unavailable. Price and limits are read from the response only; nothing here hard-codes them.
 import type { Capabilities, FluxEmailClient } from "./flux-email-client.ts";
+import { isKeyRejection } from "./key-health.ts";
 
 /** Codes that make the cached answer stale. */
 export const CAPABILITY_REFRESH_CODES: ReadonlySet<string> = new Set(["email_not_enabled", "capability_unavailable"]);
@@ -20,6 +21,8 @@ const OUTAGE_REREAD_MS = 30_000;
 
 export class EmailCapabilityProbe {
   private readonly cache = new Map<string, { caps: Capabilities; readAt: number }>();
+  /** Accounts whose last definite answer was a 401: Flux no longer accepts the saved account key (revoked or unknown). */
+  private readonly keyRefused = new Set<string>();
   private readonly inflight = new Map<string, Promise<Capabilities | null>>();
   private readonly listeners = new Set<(enabled: boolean) => void>();
   private readonly options: CapabilityProbeOptions;
@@ -29,6 +32,13 @@ export class EmailCapabilityProbe {
   current(): Capabilities | undefined {
     const account = this.options.accountRef();
     return account ? this.cache.get(account)?.caps : undefined;
+  }
+
+  /** True when Flux answered the saved account's last capability read with 401 (or 403 key_revoked/invalid_api_key): the key stopped working, so the owner signs in again.
+   *  A later readable answer (or a different saved key, which is a different account ref) clears it. */
+  accountKeyRefused(): boolean {
+    const account = this.options.accountRef();
+    return account ? this.keyRefused.has(account) : false;
   }
 
   /** True only when the saved account's last answer said enabled: true (r2.5: the platform flag) and passed the #33 checks (isEnabled). */
@@ -57,6 +67,10 @@ export class EmailCapabilityProbe {
     const read = (async () => {
       const before = this.emailEnabled();
       const outcome = await this.options.client.capabilities();
+      if (outcome.kind === "ok") this.keyRefused.delete(account);
+      // a 401, or a 403 with a key-rejection code (key_revoked, invalid_api_key, ...): the key stopped working. A 403 email_not_enabled
+      // is the dark launch, never a dead key.
+      else if (outcome.kind === "refused") { if (isKeyRejection(outcome.status, outcome.code)) this.keyRefused.add(account); else this.keyRefused.delete(account); }
       if (outcome.kind === "ok") this.cache.set(account, { caps: outcome.body, readAt: (this.options.now ?? Date.now)() });
       // a definite answer that is not a body (401, 403) turns email off; an uncertain one (no answer) keeps the last answer, so a network
       // blip never unmounts tools, and with no last answer nothing is enabled
