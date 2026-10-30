@@ -138,6 +138,17 @@ export function externalWebUrl(rawUrl) {
 }
 
 /**
+ * The Cloud-home window's link policy: the same check as externalWebUrl, and https only. That page is run by a home,
+ * not by this computer, so it gets the narrower of the two.
+ * Returns the normalized URL string, or throws without echoing the input.
+ */
+export function cloudExternalWebUrl(rawUrl) {
+  const url = externalWebUrl(rawUrl);
+  if (new URL(url).protocol !== "https:") throw new Error("Only secure web links can be opened");
+  return url;
+}
+
+/**
  * Decide what a main-window `window.open` does. Every popup is denied; a
  * credential-free web URL opens in the default browser, and the startup error
  * page's exact server-log link (a data: page, see buildErrorPage) opens that
@@ -192,19 +203,28 @@ export function createMainWindowOpenHandler({ openExternal, openDiagnosticsLog, 
  * the URL is even parsed, so a foreign, subframe or navigated-away caller
  * learns nothing about the link policy and nothing is opened.
  *
- * @param {{ isTrustedSender: (event: any) => boolean, openExternal: (url: string) => Promise<unknown> }} deps
+ * A Cloud-home window's top frame is the one other sender, and gets cloudExternalWebUrl.
+ *
+ * @param {{ isTrustedSender: (event: any) => boolean, isCloudSender?: (event: any) => boolean, openExternal: (url: string) => Promise<unknown> }} deps
  */
-export function createOpenExternalHandler({ isTrustedSender, openExternal }) {
-  return async (event, rawUrl) => {
-    let trusted = false;
+export function createOpenExternalHandler({ isTrustedSender, isCloudSender, openExternal }) {
+  const passes = (gate, event) => {
     try {
-      trusted = isTrustedSender(event) === true;
+      return gate?.(event) === true;
     } catch {
-      trusted = false;
+      return false;
     }
-    if (!trusted) throw new Error("Web links can be opened only from the main Murage window");
-    await openExternal(externalWebUrl(rawUrl));
-    return true;
+  };
+  return async (event, rawUrl) => {
+    if (passes(isTrustedSender, event)) {
+      await openExternal(externalWebUrl(rawUrl));
+      return true;
+    }
+    if (passes(isCloudSender, event)) {
+      await openExternal(cloudExternalWebUrl(rawUrl));
+      return true;
+    }
+    throw new Error("Web links can be opened only from the main Murage window");
   };
 }
 

@@ -180,6 +180,8 @@ type SkillRecordingPayload = {
       reachable(): Promise<{ ok: true } | { ok: false; code: string; message: string }>;
       /** Settings: disconnect this computer from this window's own home. Main then closes the window and shows the Connect panel. */
       disconnectThisComputer?(): Promise<{ disconnected: true }>;
+      /** Open an https link in the default browser. Main validates it; a Cloud-home window gets https only. */
+      openExternal?(url: string): Promise<boolean>;
     };
     muragebox?: {
       platform: NodeJS.Platform;

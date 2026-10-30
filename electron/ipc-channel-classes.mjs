@@ -39,7 +39,7 @@ export const CLOUD_REFUSED_PATTERNS = Object.freeze([
 
 /** Cloud-safe channels. Keep this list short; promote a channel only with a reason. */
 export const CLOUD_SAFE_CHANNELS = Object.freeze([
-  "desktop:open-external", // main re-validates: a credential-free web URL, opened in the default browser
+  "desktop:open-external", // main re-validates: a credential-free web URL (https only from a Cloud-home window), opened in the default browser
   "desktop:unread-count", // a number; main applies it to the main window only
   "approval-notification:show", // an OS notification; main validates the payload
 ]);

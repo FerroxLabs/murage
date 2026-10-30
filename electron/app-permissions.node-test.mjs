@@ -8,6 +8,7 @@ import { readFileSync } from "node:fs";
 import {
   appPermissionAllowed,
   createMainWindowOpenHandler,
+  cloudExternalWebUrl,
   createOpenExternalHandler,
   externalWebUrl,
   mainAppPermissionCheckAllowed,
@@ -303,6 +304,52 @@ test("untrusted senders are refused before the address is examined", async () =>
   await assert.rejects(throwingGate(main.event, "https://example.com/"), /only from the main Murage window/);
 });
 
+function cloudIpcFixture(main, { isCloudSender } = {}) {
+  const opened = [];
+  const handler = createOpenExternalHandler({
+    isTrustedSender: ownedMainSenderGate({ window: () => main.window, origin: () => ORIGIN }),
+    isCloudSender: isCloudSender ?? ((event) => event?.cloud === true),
+    openExternal: async (url) => { opened.push(url); },
+  });
+  return { handler, opened };
+}
+
+test("a Cloud-home window opens https links and nothing else", async () => {
+  const main = mainWindowFixture();
+  const { handler, opened } = cloudIpcFixture(main);
+  const cloud = { cloud: true };
+  assert.equal(await handler(cloud, "https://composio.example/connect?state=abc"), true);
+  assert.equal(await handler(cloud, "HTTPS://Example.com/a b"), true);
+  assert.deepEqual(opened, ["https://composio.example/connect?state=abc", "https://example.com/a%20b"], "the normalized address is what opens");
+  opened.length = 0;
+  for (const url of ["http://example.com/", "http://127.0.0.1:6080/vnc.html"])
+    await assert.rejects(handler(cloud, url), /Only secure web links/);
+  for (const url of ["file:///etc/hosts", "murage-home://h-abc/", "javascript:alert(1)", "data:text/html,x", "blob:https://example.com/1", "x-apple.systempreferences:com.apple", "mailto:a@example.com"])
+    await assert.rejects(handler(cloud, url), /Only web links/);
+  await assert.rejects(handler(cloud, "https://user:pass@example.com"), /credentials/);
+  for (const url of [undefined, 5, "nonsense", {}])
+    await assert.rejects(handler(cloud, url), /web address/);
+  assert.deepEqual(opened, []);
+});
+
+test("the Cloud rule does not reach the main window, and a failing Cloud gate refuses", async () => {
+  const main = mainWindowFixture();
+  const { handler, opened } = cloudIpcFixture(main);
+  assert.equal(await handler(main.event, "http://127.0.0.1:6080/vnc.html"), true, "the main window keeps http");
+  assert.deepEqual(opened, ["http://127.0.0.1:6080/vnc.html"]);
+  for (const isCloudSender of [() => false, () => "yes", () => { throw new Error("boom"); }]) {
+    const fixture = cloudIpcFixture(main, { isCloudSender });
+    await assert.rejects(fixture.handler({ cloud: true }, "https://example.com/"), /only from the main Murage window/);
+    await assert.rejects(fixture.handler({ cloud: true }, "file:///etc/hosts"), /only from the main Murage window/, "refused before the address is examined");
+    assert.deepEqual(fixture.opened, []);
+  }
+});
+
+test("cloudExternalWebUrl normalizes like externalWebUrl", () => {
+  assert.equal(cloudExternalWebUrl("HTTPS://Example.com"), "https://example.com/");
+  assert.throws(() => cloudExternalWebUrl("HTTP://example.com"), /Only secure web links/);
+});
+
 test("an operating-system open failure reaches the renderer", async () => {
   const main = mainWindowFixture();
   const { handler } = ipcFixture(main.window, { openExternal: async () => { throw new Error("No application"); } });
@@ -313,7 +360,7 @@ test("an operating-system open failure reaches the renderer", async () => {
 
 test("main.mjs routes both external-link entry points and the default session through this policy", () => {
   const main = readFileSync(new URL("./main.mjs", import.meta.url), "utf8");
-  assert.match(main, /ipcMain\.handle\("desktop:open-external", createOpenExternalHandler\(\{\s*isTrustedSender: ownedMainSenderGate\(\{ window: \(\) => mainWindow, origin: trustedRendererOrigin \}\)/);
+  assert.match(main, /ipcMain\.handle\("desktop:open-external", createOpenExternalHandler\(\{\s*isTrustedSender: ownedMainSenderGate\(\{ window: \(\) => mainWindow, origin: trustedRendererOrigin \}\),\s*isCloudSender: \(event\) => cloudHome\?\.isCloudSender\(event\) === true,/);
   assert.match(main, /win\.webContents\.setWindowOpenHandler\(createMainWindowOpenHandler\(\{/);
   assert.doesNotMatch(main, /setWindowOpenHandler\(\(\{ url \}\) => \{\s*shell\.openExternal\(url\)/, "raw popup forwarding is gone");
   assert.match(main, /session\.defaultSession\.setPermissionRequestHandler\([^]*?mainAppPermissionRequestAllowed\(/);

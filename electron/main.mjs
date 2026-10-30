@@ -3903,10 +3903,12 @@ ipcMain.handle("desktop:skin", (_event, skin) => {
 });
 
 // Connector login, plugin/team links and browser-panel "open in browser" all
-// come from the owned main window's top frame. Any other sender is refused
-// before the address is parsed; the address must be credential-free http(s).
+// come from the owned main window's top frame. A Cloud-home window's top frame
+// may ask too, https only. Any other sender is refused before the address is
+// parsed; the address must be credential-free http(s).
 ipcMain.handle("desktop:open-external", createOpenExternalHandler({
   isTrustedSender: ownedMainSenderGate({ window: () => mainWindow, origin: trustedRendererOrigin }),
+  isCloudSender: (event) => cloudHome?.isCloudSender(event) === true,
   openExternal: (url) => shell.openExternal(url),
 }));
 
