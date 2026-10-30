@@ -594,6 +594,7 @@ server/drivers/acp/fuigo-write-readable.test.ts	all	plain file writes from Fuigo
 server/drivers/acp/fuigo.test.ts	all	Fuigo engine turn behaviour
 server/drivers/acp/gemini-qwen-isolation.test.ts	all	Gemini personal setup isolated per bot
 server/drivers/acp/grok-ask.test.ts	linux+mac	Grok at Ask runs shell commands and writes files with no approval card
+server/drivers/acp/grok-setmodel.test.ts	all	a fresh grok process pins the chosen model once its model list loads, or fails with a next step
 server/drivers/acp/grok-isolation.test.ts	all	Grok personal plugins and compat closed
 server/drivers/acp/grok-own-tools.test.ts	all	Murage own tools on Grok Build never hold an approval card at Auto or Full access
 server/drivers/acp/grok-provider.test.ts	all	Grok provider identity and history replay
@@ -1668,3 +1669,5 @@ server/drivers/openai-chat-tools.test.ts	all	chat engine tool calls ask before t
 server/memory-late-tool-started-api.test.ts	linux+mac	a turn that ran a tool is never re-run after a memory refusal
 server/reload-retain.test.ts	all	engine reload keeps a folder lease while an engine child still runs
 server/memory/memindex-busy-109.test.ts	all	a backup or reader holding the memory index during start-up no longer gets a healthy index set aside, and a set-aside copy holding deleted conversations' words is removed once the new index is open
+server/nolimits-cards-1010.test.ts	all	No limits bots stop raising cards on the owner's own routines and DMs; the never-list, key guard and Full access stop line still card
+server/composio-retry-1010.test.ts	all	connected apps survive a jittery link: the probe and a never-sent call retry, a maybe-sent call is never repeated

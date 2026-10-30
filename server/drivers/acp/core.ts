@@ -1208,7 +1208,21 @@ export interface AcpSupport {
     /** `models.currentModelId` from the same session/new or session/load
      * response, when the agent reported one. */
     currentModelId?: string;
+    /** The turn's engine environment (the same object spawnArgs saw). */
+    env?: Record<string, string | undefined>;
+    /** With `modelsUpdateNotification`: the ids of the latest such notification on this process (already arrived, or arriving
+     *  within `ms`, while one status chip titled `title` shows), `ids: null` when it came in a shape with no readable id list,
+     *  null at the bound, "aborted" when the turn ended or was stopped first. */
+    awaitModelsUpdate?(ms: number, title: string): Promise<{ ids: string[] | null } | null | "aborted">;
+    /** True once any stop reached this turn (Stop, Stop All, shutdown, the process closing or the turn's end): nothing more goes to
+     *  the engine. Read it again right before each request; a stop can land on any await. */
+    cancelled?(): boolean;
+    /** One `model_pin` lifecycle record for this turn's pin (no slugs, no paths). */
+    recordModelPin?(fields: { outcome: "ok" | "repinned" | "timeout" | "unlisted" | "error" | "aborted"; waitedMs: number; cacheAtSpawn?: boolean }): void;
   }): Promise<void>;
+  /** Extension notification the engine sends when its model catalog changed (grok `_x.ai/models/update`): recorded per process
+   *  and handed to configureSession's awaitModelsUpdate. */
+  modelsUpdateNotification?: string;
   /** Extension notification the engine sends, per session, once every MCP
    *  server of that session has settled (connected or unavailable). Fuigo
    *  answers `session/new` before the `mcpServers` it was handed are
@@ -1467,6 +1481,25 @@ function osProcessAlive(pid: number | undefined): boolean {
  * requests in time: the engine and the step in plain words, never the
  * JSON-RPC method. "timed out" stays in it: the Inbox groups it with other
  * passing provider trouble (server/inbox-rollup.ts). */
+/** configureSession's context (AcpSupport.configureSession). */
+export type AcpSessionContext = Parameters<NonNullable<AcpSupport["configureSession"]>>[0];
+
+/** Model ids in a model-catalog notification, top level only: `models` as an array of `{id}` or `{modelId}` (or strings), or as an
+ *  object keyed by id (every value an entry object), or `availableModels[].modelId`. Only a COMPLETE list counts, since only a complete
+ *  list can show a model is absent: null when no shape matches, when any entry has no string id, or past 256 entries. */
+export function acpModelIdsIn(params: unknown): string[] | null {
+  const p = params && typeof params === "object" ? params as { models?: unknown; availableModels?: unknown } : null;
+  if (!p) return null;
+  const idOf = (entry: unknown): unknown => (typeof entry === "string" ? entry : entry && typeof entry === "object" ? (entry as { id?: unknown; modelId?: unknown }).id ?? (entry as { modelId?: unknown }).modelId : undefined);
+  const entryObject = (value: unknown) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+  let raw: unknown[] | null = null;
+  if (Array.isArray(p.models)) raw = p.models.map(idOf);
+  else if (entryObject(p.models) && Object.values(p.models as object).every(entryObject)) raw = Object.keys(p.models as object);
+  else if (Array.isArray(p.availableModels)) raw = p.availableModels.map((entry) => (entry && typeof entry === "object" ? (entry as { modelId?: unknown }).modelId : undefined));
+  if (!raw || raw.length > 256) return null;
+  return raw.every((id) => typeof id === "string" && id.length > 0) ? raw as string[] : null;
+}
+
 export function acpRequestTimeoutMessage(engine: string, method: string): string {
   const step = method === "initialize" || method === "authenticate" ? " while starting"
     : method === "session/new" || method === "session/load" ? " while opening the conversation"
@@ -1887,6 +1920,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         readonly mcpReadySessions: Set<string>;
         /** latest `{total, connected}` the engine reported per session */
         readonly mcpProgress: Map<string, { total: number; connected: number }>;
+        /** the latest `modelsUpdateNotification` this process sent (ids null: no readable id list) */
+        modelsUpdate?: { ids: string[] | null };
         /** the engine build this process runs (acpBuildKey), once a turn waited on it: its
          *  list answer (method-not-found or not) is remembered under it */
         mcpBuildKey?: string;
@@ -2174,6 +2209,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           if (typeof readyId === "string" && readyId) proc.mcpReadySessions.add(readyId);
         }
         if (support.mcpProgressNotification && msg.method === support.mcpProgressNotification) recordMcpProgress(proc, msg.params);
+        if (support.modelsUpdateNotification && msg.method === support.modelsUpdateNotification) proc.modelsUpdate = { ids: acpModelIdsIn(msg.params) };
       };
 
       /** Keep the engine's latest connect counts for a session. */
@@ -2512,7 +2548,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         const startEpoch = epochOf(threadId);
         // `producedItem`: the turn emitted something a person can see (a reply,
         // an image, a tool result). An end_turn without one is a lost turn.
-        const state = { settled: false, finished: false, failed: false, promptSent: false, cancelRequested: false, text: "", producedItem: false, toolsUnavailable: [] as string[], mcpReadiness: undefined as "unknown" | undefined };
+        const state = { settled: false, finished: false, failed: false, promptSent: false, cancelRequested: false, stopRequested: false, text: "", producedItem: false, toolsUnavailable: [] as string[], mcpReadiness: undefined as "unknown" | undefined };
         // Existing 256 KiB diagnostic cap, preserving the start before any
         // redaction. Never keep a second raw tail that can lose a PEM header.
         let stderrDiagnostic = "", stderrDiagnosticTruncated = false;
@@ -2564,6 +2600,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // stdout, so a notification that arrives BEFORE the session/new
         // response is kept, not lost.
         let releaseMcpWait: (() => void) | null = null;
+        /** configureSession's wait for `modelsUpdateNotification` (awaitModelsUpdate): woken by the notification, the turn's end or a stop. */
+        let releaseModelsWait: (() => void) | null = null;
         const failureObservations = createFuigoFailureObservations();
         let interruptTimer: ReturnType<typeof setTimeout> | null = null;
         const rpcPending = new Map<
@@ -2678,8 +2716,13 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             send({ jsonrpc: "2.0", id, method, params });
           });
 
+        /** Any stop reached this turn. Stop All and shutdown call `stop` without `cancelRequested`, which also decides whether a
+         *  session/cancel went out and whether the process parks, so `stopRequested` is the wider latch for "send the engine nothing more". */
+        const turnHalted = () => state.settled || state.cancelRequested || state.stopRequested || disposed || Boolean(proc?.closing) || Boolean(proc?.dead);
         // Requesting termination is not closure; the teardown observes close.
         const stop = (reason: LifecycleStopReason) => {
+          state.stopRequested = true;
+          releaseModelsWait?.();
           lifecycle.record("stop_requested", {
             reason,
             pid: child?.pid ?? null,
@@ -2833,6 +2876,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           for (const subtask of helpers.tracker.endAll(false)) emitSubtask(subtask);
           if (interruptTimer) clearTimeout(interruptTimer);
           releaseMcpWait?.();
+          releaseModelsWait?.();
           // FUIGOTRUST2 (1): a routed turn's per-turn FUIGO_HOME is removed
           // on the child's close — but a turn that never spawned (its card
           // timed out, was stopped, or its launch threw) has no child.
@@ -3624,6 +3668,11 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             if (msg.params?.sessionId === sessionId) releaseMcpWait?.();
             return;
           }
+          if (support.modelsUpdateNotification && msg.method === support.modelsUpdateNotification) {
+            if (proc) proc.modelsUpdate = { ids: acpModelIdsIn(msg.params) };
+            releaseModelsWait?.();
+            return;
+          }
           // Vendor side-channels (e.g. grok's `_x.ai/*`) are teed to the
           // native log but never normalized: the prompt result is the settle.
           // Fuigo and Grok Build (its upstream) send the same sub agent updates
@@ -3906,7 +3955,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             promptSent: state.promptSent,
           });
           if (!state.settled) {
-            if (state.cancelRequested) {
+            if (state.cancelRequested || state.stopRequested) {
               settle(true, "cancelled");
               stderrDiagnostic = "";
               return;
@@ -3954,6 +4003,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           // A turn still waiting for MCP readiness has sent no prompt: the
           // waiter wakes and settles it as cancelled at once.
           releaseMcpWait?.();
+          releaseModelsWait?.();
           if (!child) {
             // Nothing spawned yet: the turn is waiting on its folder-trust
             // card. Stop settles it as cancelled at once (the card is closed
@@ -3984,6 +4034,37 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         /** The per-server list showed every mounted server settled: the wait
          *  below ends as ready without a notification. */
         let mcpListShowsSettled = false;
+        /** configureSession's bounded wait for the engine's model catalog announcement (AcpSupport.modelsUpdateNotification). One
+         *  status chip shows only while it waits; one that already arrived on this process answers at once. */
+        const awaitModelsUpdate = (ms: number, title: string): Promise<{ ids: string[] | null } | null | "aborted"> => {
+          const arrived = () => (proc?.modelsUpdate ? { ids: proc.modelsUpdate.ids ? [...proc.modelsUpdate.ids] : null } : null);
+          // A stop or the turn's end outranks an announcement already recorded: nothing is pinned again after either.
+          if (turnHalted()) return Promise.resolve("aborted");
+          const now = arrived();
+          if (now) return Promise.resolve(now);
+          return new Promise((resolve) => {
+            const itemId = `models-wait-${turnId}`;
+            const finish = (outcome: { ids: string[] | null } | null | "aborted") => {
+              if (releaseModelsWait !== release) return;
+              releaseModelsWait = null;
+              clearTimeout(timer);
+              emit({ ...base(threadId, turnId), type: "item.completed", itemId, itemType: "tool", ok: outcome !== null && outcome !== "aborted" });
+              // A listener of that event may have stopped the turn.
+              resolve(turnHalted() ? "aborted" : outcome);
+            };
+            const release = () => {
+              if (turnHalted()) return finish("aborted");
+              const got = arrived();
+              if (got) finish(got);
+            };
+            releaseModelsWait = release;
+            const timer = setTimeout(() => finish(null), ms);
+            timer.unref?.();
+            // After the hook and the timer: a listener of this event may stop the turn, and a stop reaches the wait through the hook.
+            emit({ ...base(threadId, turnId), type: "item.started", itemId, itemType: "tool", origin: "murage", title });
+            release();
+          });
+        };
         const awaitMcpReady = (id: string, ownMounts: number, needsAllSettled = false, boundMs?: number) =>
           new Promise<"ready" | "own_ready" | "timeout" | "aborted">((resolve) => {
             const ready = proc?.mcpReadySessions ?? new Set<string>();
@@ -4652,6 +4733,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             proc!.owner.sessionId = sessionId;
             proc!.retiredSessions.delete(sessionId);
             let selectedModel: string | null = null;
+            // Set only once the model pin (selectModel, configureSession) succeeded: a failed, refused or timed-out pin reports
+            // no model at all, never the session/new snapshot, the initialize default or the wanted slug.
+            let pinConfirmed = false;
             let sessionStarted = false;
             const emitSessionStarted = () => {
               if (sessionStarted) return;
@@ -4661,7 +4745,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 ...base(threadId, turnId),
                 type: "session.started",
                 sessionId,
-                model: selectedModel ?? init?._meta?.modelState?.currentModelId ?? cliTurn.model ?? null,
+                model: pinConfirmed ? (selectedModel ?? init?._meta?.modelState?.currentModelId ?? cliTurn.model ?? null) : null,
               });
             };
 
@@ -4690,6 +4774,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 }
               }
 
+              if (!support.configureSession) pinConfirmed = true;
               if (support.configureSession) {
                 await support.configureSession({
                   request: (method, params, timeoutMs) =>
@@ -4703,7 +4788,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                   ...(typeof sessionResult?.models?.currentModelId === "string"
                     ? { currentModelId: sessionResult.models.currentModelId }
                     : {}),
+                  env,
+                  ...(support.modelsUpdateNotification ? { awaitModelsUpdate } : {}),
+                  cancelled: turnHalted,
+                  recordModelPin: (fields) => lifecycle.record("model_pin", { method: "session/set_model", ...fields }),
                 });
+                pinConfirmed = true;
                 // initialize's currentModelId is the CLI default,
                 // not the model this turn asked for. After a successful pin,
                 // report the slug we set so the UI does not claim otherwise.
@@ -4751,6 +4841,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               throw error;
             }
             emitSessionStarted();
+            // A stop while the session was being set up (a model pin can wait for the engine's catalog) ends the turn here:
+            // nothing is prompted after it.
+            if (state.settled) return;
+            if (turnHalted()) { settle(true, "cancelled"); return; }
             // Fuigo: the servers in `mcpServers` start connecting at
             // session/new; prompting before they settle hands the model a
             // "currently connecting, do not use" reminder on its first step.
@@ -4927,6 +5021,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               : textTurn.system
                 ? `${textTurn.system}\n\n${textTurn.text}`
                 : textTurn.text;
+            // Every wait above checks a user's Stop; this one also covers Stop All and shutdown, with no await left before the write.
+            if (state.settled) return;
+            if (turnHalted()) { settle(true, "cancelled"); return; }
             // The submission fence (SendTurnInput.beforeSubmit), for every
             // ACP engine: no await separates it from the session/prompt write
             // below. A refusal writes nothing. Before sendTurn handed the id
@@ -4939,6 +5036,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               settle(false, "submission_refused");
               return;
             }
+            // The fence is the harness's own code and can stop this turn. Nothing is written after a stop, and what the fence recorded
+            // for this write is withdrawn.
+            if (turnHalted()) { turn.notWritten?.(); settle(true, "cancelled"); return; }
             state.promptSent = true; turnTrace(threadId).once("prompt.sent");
             promptStartedAt = Date.now();
             const promptIdleMs = acpPromptIdleTimeoutMs();
@@ -5039,7 +5139,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             }
           } catch (e) {
             if (!state.settled) {
-              if (state.cancelRequested) { settle(true, "cancelled"); return; }
+              if (state.cancelRequested || state.stopRequested) { settle(true, "cancelled"); return; }
               const message = e instanceof Error ? e.message : String(e);
               const code = support.classifyError?.(e);
               const providerError = classifyProviderError(e);

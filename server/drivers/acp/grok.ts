@@ -3,18 +3,19 @@
 // (~/.grok/auth.json), NOT the xAI API key (that driver is drivers/grok.ts).
 // The generic protocol runtime lives in acp/core.ts; this file is only the
 // per-harness quirks. Verified against grok 1.0.0.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { ModelCatalog } from "../../contracts.ts";
+import { boundedEnvMs } from "../env-ms.ts";
 import { decodeInjectId, hostApiKey, localHost, mergeLocalInject, type LocalHost } from "../local-inject.ts";
 import { readTomlConfigForEdit, removeTomlTables } from "./kimi.ts";
 import { DATA_DIR } from "../../config.ts";
 import { headlessTextOnlyTurn } from "../headless-text-only.ts";
 import { fuigoConfigOverlay } from "../../flux-memory-headers.ts";
 import { listDir, memoDeps, pathExists, readText } from "../isolation-cache.ts";
-import { createAcpDriver, type AcpSupport } from "./core.ts";
+import { createAcpDriver, type AcpSupport, type AcpSessionContext } from "./core.ts";
 import { fuigoToolResultDirs, sessionFolders } from "../../own-tool-results.ts";
 import { scopeGrokHome } from "./grok-scope.ts";
 import { forceHookGatesOff } from "./hook-gates.ts";
@@ -107,6 +108,92 @@ export function readGrokModelCatalog(env: Record<string, string | undefined> = p
     default: configuredDefault && seen.has(configuredDefault) ? configuredDefault : STATIC_GROK_MODELS.default,
     options,
   };
+}
+
+/** grok's announcement that its background catalog fetch landed (live, grok 1.0.70): the session's model list changed. */
+export const GROK_MODELS_UPDATE = "_x.ai/models/update";
+/** grok's model list cache in its home: only looked at (stat, never opened) for the model_pin record's cacheAtSpawn. */
+const GROK_MODELS_CACHE = "models_cache.json";
+/** How long one refused pin of a model grok has not listed yet waits for that announcement: grok's next two background tries after a
+ *  failed startup fetch (about 5 s each, 5 s then 10 s apart). */
+export const grokModelsWaitMs = (): number => boundedEnvMs(process.env.MURAGE_GROK_MODELS_WAIT_MS, 25_000);
+export const GROK_MODELS_WAIT_TITLE = "Loading Grok's model list";
+
+// Each line puts the next step inside the 160-character turn error (ERROR_MESSAGE_MAX): the model id is shown to at most 24 characters,
+// and the engine's reason goes last, where a cut costs least.
+const shownModel = (model: string): string => (model.length > 24 ? `${model.slice(0, 23)}…` : model);
+export const grokModelsTimeoutLine = (model: string): string =>
+  `Grok's model list had not loaded yet, so this chat could not switch to ${shownModel(model)}. Retry in a moment, or pick another Grok model.`;
+export const grokModelUnlistedLine = (model: string): string =>
+  `Grok's model list for this account does not include ${shownModel(model)}. Choose another Grok model in this bot's settings.`;
+export const grokModelErrorLine = (model: string, reason: string): string =>
+  `Grok could not switch to ${shownModel(model)}. Try again or pick another Grok model in this bot's settings; if it repeats, update Grok. (${reason})`;
+
+/** A JSON-RPC refusal of set_model (an Error the core built from the engine's answer, with its numeric code and method);
+ *  a request timeout is a plain Error with no code and never counts. */
+const isSetModelRefusal = (error: unknown): boolean => {
+  const e = error as { code?: unknown; acpMethod?: unknown } | null;
+  return typeof e?.code === "number" && e.code === -32602 && e.acpMethod === "session/set_model";
+};
+
+/** Whether the scope held grok's model list cache when this turn's grok was spawned (spawnArgs runs just before the spawn,
+ *  on the turn's own env object): the fact the kill criterion's warm-cache threshold reads from the model_pin record. */
+const cacheAtSpawn = new WeakMap<Record<string, string | undefined>, boolean>();
+function noteCacheAtSpawn(env: Record<string, string | undefined> | undefined): void {
+  if (!env?.GROK_HOME) return;
+  let held = false;
+  // followed: a later login generation holds the cache as a carried link to an earlier generation's file, which grok reads
+  try { held = statSync(join(env.GROK_HOME, GROK_MODELS_CACHE)).isFile(); } catch { held = false; }
+  cacheAtSpawn.set(env, held);
+}
+
+/** Pin the chosen model exactly; never another one. A refusal (-32602) of a model the session did NOT advertise, on a session
+ *  that advertised a list, means grok's startup catalog fetch had not landed (a fresh grok process on a slow network): wait
+ *  once, bounded, for grok's own `_x.ai/models/update`, then pin once more. Decided from the error code and the advertised
+ *  list only (no file is read on this path). Anything else fails the turn at once with a next step. */
+export async function configureGrokSession(ctx: AcpSessionContext): Promise<void> {
+  const { request, sessionId, turn } = ctx;
+  const model = turn.model;
+  if (!model) return;
+  const held = ctx.env ? cacheAtSpawn.get(ctx.env) : undefined;
+  const record = (outcome: "ok" | "repinned" | "timeout" | "unlisted" | "error" | "aborted", waitedMs = 0) =>
+    ctx.recordModelPin?.({ outcome, waitedMs, ...(held !== undefined ? { cacheAtSpawn: held } : {}) });
+  const reason = (error: unknown) => (error as Error)?.message ?? String(error);
+  const pin = () => request("session/set_model", { sessionId, modelId: model });
+  const stopped = () => Boolean(ctx.cancelled?.());
+  const aborted = (waitedMs = 0): Error => {
+    record("aborted", waitedMs);
+    return new Error("The turn was stopped before Grok's model list loaded.");
+  };
+  if (stopped()) throw aborted();
+  try {
+    await pin();
+    record("ok");
+    return;
+  } catch (first) {
+    if (stopped()) throw aborted();
+    const advertised = ctx.sessionModels.some((option) => option.modelId === model);
+    if (!isSetModelRefusal(first) || !ctx.sessionModels.length || advertised || !ctx.awaitModelsUpdate) {
+      record("error");
+      throw new Error(grokModelErrorLine(model, reason(first)));
+    }
+  }
+  const startedAt = Date.now();
+  const update = await ctx.awaitModelsUpdate(grokModelsWaitMs(), GROK_MODELS_WAIT_TITLE);
+  const waitedMs = Date.now() - startedAt;
+  // No await between this check and the second pin's write: a stop that landed anywhere in the wait is seen here.
+  if (update === "aborted" || stopped()) throw aborted(waitedMs);
+  if (update === null) { record("timeout", waitedMs); throw new Error(grokModelsTimeoutLine(model)); }
+  // ids null: the announcement came in a shape Murage cannot list; grok's own answer to one more pin decides
+  if (update.ids && !update.ids.includes(model)) { record("unlisted", waitedMs); throw new Error(grokModelUnlistedLine(model)); }
+  try {
+    await pin();
+  } catch (second) {
+    if (stopped()) throw aborted(waitedMs);
+    record("error", waitedMs);
+    throw new Error(grokModelErrorLine(model, reason(second)));
+  }
+  record("repinned", waitedMs);
 }
 
 function suggestGrokSlug(host: string, model: string, taken: Set<string>): string {
@@ -470,10 +557,12 @@ const support: AcpSupport = {
   mcpReadyNotification: "_x.ai/mcp_initialized",
   mcpProgressNotification: "_x.ai/mcp/init_progress",
   mcpListMethod: "_x.ai/mcp/list",
+  modelsUpdateNotification: GROK_MODELS_UPDATE,
 
   spawnArgs: (config, turn, ctx) => {
     // Fails closed at Ask on a grok its ask rules are not proven on (GROK_ASK_HOLD_MIN).
     requireGrokAskHold(turn.askLevel, ctx?.cliVersion);
+    noteCacheAtSpawn(ctx?.env);
     return [
       "--permission-mode",
       // `default` still runs grok's own read-only shell commands unasked; the scoped config's `[permission] ask`
@@ -495,17 +584,7 @@ const support: AcpSupport = {
 
   // -m on argv is necessary but not sufficient: session/new still starts on
   // [models].default. Pin the slug over the wire, same as Hermes/Droid.
-  async configureSession({ request, sessionId, turn }) {
-    if (!turn.model) return;
-    try {
-      await request("session/set_model", { sessionId, modelId: turn.model });
-    } catch (e) {
-      throw new Error(
-        `Grok rejected model "${turn.model}" via session/set_model: ${(e as Error).message}. ` +
-          `Check that grok is current (1.0.6+ supports it) and that this slug exists in ~/.grok/config.toml.`,
-      );
-    }
-  },
+  configureSession: configureGrokSession,
 
   /** Flux Memory headers: Grok Build shares Fuigo's shell, so the inline `GROK_CONFIG` overlay
    *  (xai-grok-shell config GROK_CONFIG_ENV) carries `[models].extra_headers` the same way. */

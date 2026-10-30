@@ -248,6 +248,9 @@ describe("ACP turns (fake CLI)", () => {
     delete process.env.FAKE_ACP_PID_FILE;
     delete process.env.FAKE_ACP_TERM;
     delete process.env.FAKE_ACP_TERM_MS;
+    delete process.env.FAKE_ACP_EXIT_GATE;
+    delete process.env.FAKE_ACP_SESSION_NEW_REFUSE_GATE;
+    delete process.env.FAKE_ACP_RPC_DUMP;
     delete process.env.MURAGE_PROVIDER_CLOSE_MS;
     delete process.env.XAI_API_KEY;
     delete process.env.OPENCODE_API_KEY;
@@ -369,6 +372,67 @@ describe("ACP turns (fake CLI)", () => {
     expect(await recorder.until((e) => e.type === "turn.completed" && e.turnId === next.turnId)).toMatchObject({ ok: true });
     expect(passes).toBe(1);
     expect(JSON.parse(readFileSync(rpcFile, "utf8")) as string[]).toContain("session/prompt");
+  });
+
+  describe.each([["grokAgent", () => GrokAgentDriver], ["another ACP driver", () => SelectModelDriver]] as const)("a stop that is not a user's Stop: %s", (_name, driver) => {
+    const rpcs = (file: string): string[] => existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) as string[] : [];
+    const until = async (seen: () => boolean) => { while (!seen()) await new Promise((resolve) => setTimeout(resolve, 10)); };
+    const errors = (turnId: string) => recorder.events.filter((e) => e.type === "runtime.error" && e.turnId === turnId);
+
+    it.each(["stopAll", "interrupt"] as const)("%s inside the submission fence writes no prompt and withdraws the fence's bookkeeping", async (how) => {
+      const rpcFile = join(scratch, "stopped-fence.json");
+      process.env.FAKE_ACP_RPC_DUMP = rpcFile;
+      await create(driver());
+      const threadId = `t-fence-${how}`;
+      let notWritten = 0;
+      let stopping: Promise<unknown> | undefined;
+      const { turnId } = await instance.adapter.sendTurn({
+        threadId, text: "hi", notWritten: () => { notWritten++; },
+        beforeSubmit: () => { stopping = (how === "stopAll" ? instance.adapter.stopAll() : instance.adapter.interruptTurn(threadId)).catch(() => undefined); },
+      });
+      expect(await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId)).toMatchObject({ ok: true, stopReason: "cancelled" });
+      await stopping;
+      expect(notWritten).toBe(1);
+      expect(errors(turnId)).toEqual([]);
+      expect(rpcs(rpcFile)).not.toContain("session/prompt");
+    });
+
+    it("a request that fails after Stop All, its child still closing, is a cancelled turn", async () => {
+      const rpcFile = join(scratch, "stopped-setup.json");
+      const refuse = join(scratch, "refuse-session");
+      const exit = join(scratch, "exit");
+      Object.assign(process.env, { FAKE_ACP_RPC_DUMP: rpcFile, FAKE_ACP_SESSION_NEW_REFUSE_GATE: refuse, FAKE_ACP_TERM: "gate", FAKE_ACP_EXIT_GATE: exit });
+      await create(driver());
+      const { turnId } = await instance.adapter.sendTurn({ threadId: "t-setup-stopped", text: "hi" });
+      await until(() => rpcs(rpcFile).includes("session/new"));
+      const stopping = instance.adapter.stopAll().catch(() => undefined);
+      writeFileSync(refuse, "");
+      expect(await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId)).toMatchObject({ ok: true, stopReason: "cancelled" });
+      writeFileSync(exit, "");
+      await stopping;
+      expect(errors(turnId)).toEqual([]);
+    });
+
+    it("the same request failing with no stop stays an engine failure", async () => {
+      const refuse = join(scratch, "refuse-session");
+      writeFileSync(refuse, "");
+      process.env.FAKE_ACP_SESSION_NEW_REFUSE_GATE = refuse;
+      await create(driver());
+      const { turnId } = await instance.adapter.sendTurn({ threadId: "t-setup-failed", text: "hi" });
+      expect(await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId)).toMatchObject({ ok: false, stopReason: "rpc_error" });
+      expect(errors(turnId)).toHaveLength(1);
+    });
+
+    it("Stop All while the prompt is open ends the turn as cancelled when the child closes", async () => {
+      const rpcFile = join(scratch, "stopped-prompt.json");
+      process.env.FAKE_ACP_RPC_DUMP = rpcFile;
+      await create(driver(), "hang");
+      const { turnId } = await instance.adapter.sendTurn({ threadId: "t-prompt-stopped", text: "hi" });
+      await until(() => rpcs(rpcFile).includes("session/prompt"));
+      await instance.adapter.stopAll();
+      expect(await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId)).toMatchObject({ ok: true, stopReason: "cancelled" });
+      expect(errors(turnId)).toEqual([]);
+    });
   });
 
   it("normalizes a full turn into the canonical event sequence", async () => {
