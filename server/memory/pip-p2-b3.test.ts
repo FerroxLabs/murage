@@ -1085,3 +1085,63 @@ describe("AUDIT2 round 2", () => {
     } finally { prepare.mockRestore(); }
   });
 });
+
+// 1.0.8 owner zone: the owner's zone can change between two trace days. The next day's window starts right after the
+// last one ended, so a move west leaves no hours that no day reads.
+describe("the daily trace across a change of the owner's zone", () => {
+  const bootTz = process.env.TZ;
+  afterEach(() => { if (bootTz === undefined) delete process.env.TZ; else process.env.TZ = bootTz; });
+
+  it("reads the hours between Bangkok's last day and Chicago's next one into the next day", async () => {
+    const { maybeTraceEpisodeSliced } = await import("./pip-reflect.ts");
+    const between = async () => {};
+    process.env.TZ = "Asia/Bangkok";
+    owner("bangkok-morning", Date.parse("2025-10-09T10:00:00+07:00"), "Morning note.");
+    // 10 October 03:00 in Bangkok, 9 October 15:00 in Chicago: after Bangkok's 9 October, before Chicago's 10 October
+    owner("seam", Date.parse("2025-10-09T20:00:00Z"), "Evening note.");
+    owner("chicago-lunch", Date.parse("2025-10-10T12:00:00-05:00"), "Lunch note.");
+    const r = rig();
+    r.clock.now = Date.parse("2025-10-10T12:00:00+07:00");
+    expect(await maybeTraceEpisodeSliced(r.deps, r.bot, between)).toBe(true);
+    expect(state().lastTraceDay).toBe("2025-10-09");
+    expect(state().lastTraceEnd).toBe(Date.parse("2025-10-09T23:59:59.999+07:00"));
+    process.env.TZ = "America/Chicago";
+    r.clock.now = Date.parse("2025-10-11T13:00:00-05:00");
+    expect(await maybeTraceEpisodeSliced(r.deps, r.bot, between)).toBe(true);
+    expect(state().lastTraceDay).toBe("2025-10-10");
+    const texts = listEpisodes(database(), "moss").filter(e => e.trace).map(e => e.text);
+    expect(texts).toContainEqual(expect.stringMatching(/^On 2025-10-09 we talked: 1 message in /));
+    expect(texts).toContainEqual(expect.stringMatching(/^On 2025-10-10 we talked: 2 messages in /));
+  });
+});
+
+// Astra r2: a last trace day written before 1.0.8 has no lastTraceEnd. Its end is pinned in the old zone just before
+// the zone changes (index.ts PUT /api/owner/timezone), so the next window still starts where that day ended.
+describe("a trace day written before 1.0.8 across a change of the owner's zone", () => {
+  const bootTz = process.env.TZ;
+  afterEach(() => { if (bootTz === undefined) delete process.env.TZ; else process.env.TZ = bootTz; });
+
+  it("pins the legacy day's end in the old zone, so the hours before Chicago's next day are still read", async () => {
+    const { maybeTraceEpisodeSliced, pinTraceDayEnds } = await import("./pip-reflect.ts");
+    const between = async () => {};
+    process.env.TZ = "Asia/Bangkok";
+    owner("bangkok-morning", Date.parse("2025-10-09T10:00:00+07:00"), "Morning note.");
+    // 10 October 03:00 in Bangkok, 9 October 15:00 in Chicago: after Bangkok's 9 October, before Chicago's 10 October
+    owner("seam", Date.parse("2025-10-09T20:00:00Z"), "Evening note.");
+    owner("chicago-lunch", Date.parse("2025-10-10T12:00:00-05:00"), "Lunch note.");
+    const r = rig();
+    // the state an install before 1.0.8 left: a traced 9 October, no end recorded for it
+    mutateReflect("moss", (s) => { s.lastTraceDay = "2025-10-09"; delete s.lastTraceEnd; });
+    expect(state().lastTraceEnd).toBeUndefined();
+    expect(pinTraceDayEnds()).toBe(1);
+    expect(state().lastTraceEnd).toBe(Date.parse("2025-10-09T23:59:59.999+07:00"));
+    // a second pin moves nothing
+    expect(pinTraceDayEnds()).toBe(0);
+    process.env.TZ = "America/Chicago";
+    r.clock.now = Date.parse("2025-10-11T13:00:00-05:00");
+    expect(await maybeTraceEpisodeSliced(r.deps, r.bot, between)).toBe(true);
+    expect(state().lastTraceDay).toBe("2025-10-10");
+    const texts = listEpisodes(database(), "moss").filter(e => e.trace).map(e => e.text);
+    expect(texts).toContainEqual(expect.stringMatching(/^On 2025-10-10 we talked: 2 messages in /));
+  });
+});

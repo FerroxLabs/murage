@@ -20,6 +20,7 @@ import type { PromptFacts } from "../shared/prompt-capable.ts";
 import { CHECK_BYTES, CHECK_MS, CHECK_WINDOWS_MS } from "../shared/scan-limits.ts";
 import type { EnvCapture, ExecEnv } from "../shared/mount-identity.ts";
 import { captureOwnerEnv, environmentProbeProgram, envGeneration, installPathTail, invalidateEnvCapture, onEnvInvalidate, type OwnerEnv } from "./env-path.ts";
+import { ownerTimeZone } from "./owner-time-zone.ts";
 import { execCli } from "./procs.ts";
 import { askTouchesStartup, ownerStartupOf, rememberHand } from "./startup-files.ts";
 
@@ -170,7 +171,19 @@ export async function handedEngineEnv(options: Parameters<typeof handEnv>[1] = {
     for (const [name, value] of Object.entries(cloudBase)) if (typeof value === "string") env[name] = value;
     return handEnv({ env, capture: "session" }, { ...options, run: options.run ?? cloudNoRun, keepPath: true });
   }
-  return handEnv(await captureOwnerEnv(), options);
+  return handEnv(await captureOwnerEnv(), withOwnerTimeZone(options));
+}
+
+/** 1.0.8 owner zone: the owner's zone (owner-time-zone.ts, the zone this server's own clock follows) is handed to
+ *  the engine as TZ. The captured owner map is kept for the session and was taken before the owner chose (or changed)
+ *  a zone, and the drivers hand only the names they set differently from this process, so without this an engine's
+ *  `date` and its tools read the old zone while the clock line names the new one. It goes in first among the extras,
+ *  so a driver that sets TZ itself still wins; and it is part of the handed map, which the process reuse checks
+ *  digest (Codex, ACP) or key on (Claude), so a change starts a fresh engine process. On Windows the owner map is
+ *  this process's own environment read live on every hand, TZ included, so it already follows. */
+export function withOwnerTimeZone<T extends { platform?: NodeJS.Platform; extra?: Record<string, string> }>(options: T): T & { extra?: Record<string, string> } {
+  if ((options.platform ?? process.platform) === "win32") return options;
+  return { ...options, extra: { TZ: ownerTimeZone(), ...options.extra } };
 }
 
 const PER_PROCESS = new Set(["_", "SHLVL", "OLDPWD", "PWD"]);

@@ -358,8 +358,11 @@ const appConfigSchema = z.object({
     byoKey: optionalText,
     baseUrl: optionalText,
   }).strict().optional(),
-  /** Non-secret profile details shown in the sidebar. */
-  profile: z.object({ name: optionalText, email: optionalText }).optional(),
+  /** Non-secret profile details shown in the sidebar. `timeZone` is the
+   * owner's IANA zone (1.0.8, owner-time-zone.ts); empty or absent follows
+   * this computer. Read leniently: a value that is not a zone follows the
+   * computer instead of failing the whole config. */
+  profile: z.object({ name: optionalText, email: optionalText, timeZone: optionalText }).optional(),
   /** UI language override (BCP-47, lowercase). Empty/absent = follow the
    * system language. Unknown tags degrade to English in the renderer. */
   language: optionalText,
@@ -429,7 +432,7 @@ export interface AppConfig {
   webSearch?: { provider?: "engine" | "auto" | "flux" | "tavily" | "exa" | "firecrawl" | "off"; tavilyApiKey?: string; exaApiKey?: string; firecrawlApiKey?: string };
   flux?: { apiKey?: string; memory?: { enabled?: boolean; inject?: boolean; owner?: boolean; spaces?: boolean; external?: boolean }; connectionAliases?: import("../electron/flux-credential-policy.mjs").FluxAlias[] };
   decider?: { enabled?: boolean; provider?: "flux"; jobs?: { roomRouting?: boolean }; byoKey?: string; baseUrl?: string };
-  profile?: { name?: string; email?: string };
+  profile?: { name?: string; email?: string; timeZone?: string };
   rooms?: { turnTimeoutMinutes: number };
   /** Shared preserves the historical singleton. Per-bot gives every bot a
    * separate container, durable workspace, viewer and lease. */
@@ -559,6 +562,12 @@ export function parseConfigPatch(value: JsonValue): ConfigPatch {
       new Error("mcpServers is managed from the MCP servers panel on the desktop, not this route"),
       { status: 400 },
     );
+  }
+  // The owner's time zone is applied to the running server as it is saved, so
+  // it has one door: PUT /api/owner/timezone (owner-time-zone.ts).
+  const profile = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, JsonValue>).profile : undefined;
+  if (profile && typeof profile === "object" && !Array.isArray(profile) && Object.hasOwn(profile, "timeZone")) {
+    throw Object.assign(new Error("Change the time zone in Settings, under Time zone."), { status: 400 });
   }
   const parsed = appConfigPatchSchema.safeParse(value);
   if (!parsed.success) {

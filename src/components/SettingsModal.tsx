@@ -38,6 +38,7 @@ import { CloudDevicesSettings } from "./cloud/CloudDevicesSettings";
 import { CloudDisconnectComputer, DISCONNECT_COPY, cloudDisconnectBridge } from "./cloud/CloudDisconnectComputer";
 import { ScriptAccessSettings } from "./ScriptAccessSettings";
 import { AboutMeSettings } from "./AboutMeSettings";
+import { TimeZoneSettings } from "./TimeZoneSettings";
 import { NotificationSettings } from "./NotificationSettings";
 import { CallsSettings } from "./CallsSettings";
 import { BackupSettings } from "./BackupSettings";
@@ -1250,6 +1251,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
                     <ProfileFields />
                   </Card>
                 </Anchor>
+                {desktop === true && <Anchor id="time-zone-heading"><TimeZoneSettings /></Anchor>}
                 {desktop === true && <AboutMeSettings />}
                 <Anchor id="appearance-heading">
                   <Card title={t("settings.appearance.title")} subtitle={t("settings.appearance.note")}>

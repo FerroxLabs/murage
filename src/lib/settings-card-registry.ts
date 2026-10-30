@@ -32,6 +32,7 @@ const GENERAL: SettingsCard[] = [
   card("appearance", "general", "appearance-heading", { keywords: ["skin", "theme", "appearance", "dark", "light"], surface: "any" }),
   card("sidebar-density", "general", "sidebar-density-heading", { keywords: ["sidebar", "density", "rail", "compact"], advanced: true }),
   card("language", "general", "language-heading", { keywords: ["language", "translation"] }),
+  card("time-zone", "general", "time-zone-heading", { keywords: ["time zone", "timezone", "zone", "clock", "daylight saving", "dst", "calendar times"] }),
   card("notifications", "general", "notifications-heading", { keywords: ["notifications", "sound", "sounds", "mute", "chime", "quiet hours", "privacy", "previews"] }),
   card("startup", "general", "startup-heading", { keywords: ["startup", "background", "tray", "login", "sign in"], advanced: true }),
   card("analytics", "general", "analytics-heading", { keywords: ["analytics"], surface: "any", advanced: true }),

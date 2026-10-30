@@ -104,7 +104,7 @@ function projectConfig(value: unknown, omit: (path: string, reason: string) => v
   if (!object(value)) fail("INVALID_CONFIG_COMPONENT");
   const projected: JsonObject = {};
   const fields: Record<string, Record<string, string>> = {
-    profile: { name: "string", email: "string" },
+    profile: { name: "string", email: "string", timeZone: "string" },
     rooms: { turnTimeoutMinutes: "number" },
     localVm: { mode: "string", maxInstances: "number" },
     features: { browser: "boolean", skillRecorder: "boolean", showToolCalls: "boolean" },
