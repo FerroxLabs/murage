@@ -31,6 +31,10 @@ export const DENIED_SOURCE = (s: string) => `(${DENIED_PLACE(s)} OR ${BRANCH_CHA
 /** A record alias `r` sits in a denied scope (one seek). */
 export const DENIED_RECORD_SCOPE = (r: string) => `(${ANY_DENY} AND EXISTS (SELECT 1 FROM memory_deny dn WHERE dn.kind='scope' AND dn.id=${r}.scope_id))`;
 
+/** Whether the owner excluded the conversation from memory: the list saved by memory settings, read from what is committed. */
+export function threadExcluded(db: DatabaseSync, threadId: string): boolean {
+  return Boolean(db.prepare("SELECT 1 FROM memory_scope_bindings b,json_each(b.intent,'$.excludedThreadIds') e WHERE b.id='memory-owner-settings' AND e.value=? LIMIT 1").get(threadId));
+}
 /** Whether the conversation itself was deleted (one seek). */
 export function threadDenied(db: DatabaseSync, threadId: string): boolean {
   return Boolean(db.prepare("SELECT 1 FROM memory_deny WHERE kind='thread' AND id=?").get(threadId));
