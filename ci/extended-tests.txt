@@ -369,6 +369,7 @@ server/inbox-activity-writes.test.ts	extended
 server/inbox-fill-hold.test.ts	extended
 server/inbox-first-fill.test.ts	extended
 server/inbox-learning-paused.test.ts	extended
+server/inbox-needs-you-count.growth.test.ts	extended
 server/inbox-rollup.test.ts	extended
 server/inbox-version.test.ts	extended
 server/inbox.base-equivalence.test.ts	extended
