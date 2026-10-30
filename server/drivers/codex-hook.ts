@@ -652,38 +652,118 @@ export class CodexHookGate {
 // ---------------------------------------------------------------------------------------------------------------------
 // Rule 68e: the delivery as a decision
 
-/** apply_patch destinations: `*** Add File:`, `*** Update File:`, `*** Delete File:` and `*** Move to:` headers. A patch that is not
- *  one whole well-formed envelope is unread (null). */
-export function parseApplyPatch(patch: unknown): { destinations: string[]; added: Map<string, string> } | null {
+/** Rust `char::is_whitespace` (ISSUE-PERMS-1010 Rev 3): what both engines trim the patch text and its lines with. */
+const RUST_WS = "\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000";
+const RUST_TRIM = new RegExp(`^[${RUST_WS}]+|[${RUST_WS}]+$`, "g");
+/** The union of Rust and JS whitespace (JS adds U+FEFF): a marker line is found after this trim, so no spelling hides one. */
+const ANY_TRIM = new RegExp(`^[${RUST_WS}\\uFEFF]+|[${RUST_WS}\\uFEFF]+$`, "g");
+const rustTrim = (s: string): string => s.replace(RUST_TRIM, "");
+const anyTrim = (s: string): string => s.replace(ANY_TRIM, "");
+const PATCH_HEREDOC = new Set(["<<EOF", "<<'EOF'", "<<\"EOF\""]);
+
+/** apply_patch destinations: `*** Add File:`, `*** Update File:`, `*** Delete File:` and `*** Move to:` headers.
+ *  ISSUE-PERMS-1010 Rev 3: one strict reader that accepts only a patch Fuigo and Codex both read the same way, hunk for
+ *  hunk. Anything either engine might read differently (an indented or padded `***` line, an unknown marker, an empty
+ *  Update) is unread (null), and the call keeps its card. */
+export function parseApplyPatch(patch: unknown): { destinations: string[]; added: Map<string, string>; removed: string[] } | null {
   if (typeof patch !== "string" || Buffer.byteLength(patch, "utf8") > GATE_MESSAGE_BYTES) return null;
-  const lines = patch.replace(/\r\n/g, "\n").split("\n");
-  while (lines.length && lines[lines.length - 1] === "") lines.pop();
-  if (lines[0] !== "*** Begin Patch" || lines[lines.length - 1] !== "*** End Patch") return null;
+  // 1. the envelope, as both engines: trim, Rust lines() (split on \n, one trailing \r dropped), Begin/End trimmed
+  const all = rustTrim(patch).split("\n").map((l) => (l.endsWith("\r") ? l.slice(0, -1) : l));
+  const enveloped = (ls: string[]): boolean => ls.length >= 2 && rustTrim(ls[0]!) === "*** Begin Patch" && rustTrim(ls[ls.length - 1]!) === "*** End Patch";
+  let lines: string[];
+  if (enveloped(all)) lines = all;
+  // the heredoc closer is exactly EOF (GrokBuild subset M1: `NOTEOF`, ` EOF` or `XEOF` closes nothing, so the patch is unread)
+  else if (all.length >= 4 && PATCH_HEREDOC.has(all[0]!) && all[all.length - 1] === "EOF" && enveloped(all.slice(1, -1))) lines = all.slice(1, -1);
+  else return null;
+
   const destinations: string[] = [];
   const added = new Map<string, string[]>();
+  // ISSUE-PERMS-1010 B: the paths a patch takes away (a Delete File, and the old name of an Update that a Move to renames),
+  // so a caller that judges deletes (the stop line) sees them as deletes, never as edits
+  const removed: string[] = [];
+  type Mode = "start" | "add" | "delete" | "update";
+  let mode: Mode = "start";
   let current: string | null = null;
+  // the Update hunk being read: its chunks, the lines in the last chunk, whether the last line was its header, and End of File
+  let chunks = 0;
+  let chunkLines = 0;
+  let justHeader = false;
+  let ended = false;
+  const updateComplete = (): boolean => mode !== "update" || (chunks > 0 && chunkLines > 0);
   for (const line of lines.slice(1, -1)) {
-    const header = /^\*\*\* (Add File|Update File|Delete File|Move to): (.+)$/.exec(line);
-    if (header) {
-      const path = header[2]!;
-      if (!path.trim()) return null;
-      destinations.push(path);
-      // Rule 64: every body a destination receives is read (an Update's added lines too, and a Move carries the update's body to
-      // its new name), so a template file is never written unread
-      if (header[1] === "Move to" && current) { added.set(path, added.get(current)!); continue; }
-      current = header[1] === "Delete File" ? null : path;
-      if (current && !added.has(current)) added.set(current, []);
+    const trimmed = anyTrim(line);
+    if (trimmed.startsWith("***")) {
+      // 2. a marker line has no whitespace around it at all, in any hunk, and is one of the known markers by position
+      if (line !== trimmed) return null;
+      const header = /^\*\*\* (Add File|Delete File|Update File): (.*)$/.exec(line);
+      if (header) {
+        const path = header[2]!;
+        if (!path || path !== anyTrim(path) || !updateComplete()) return null;
+        destinations.push(path);
+        mode = header[1] === "Add File" ? "add" : header[1] === "Delete File" ? "delete" : "update";
+        if (mode === "delete") {
+          removed.push(path);
+          current = null;
+        } else {
+          current = path;
+          // Rule 64: every body a destination receives is read (an Update's added lines too)
+          if (!added.has(path)) added.set(path, []);
+        }
+        chunks = 0;
+        chunkLines = 0;
+        justHeader = mode === "update";
+        ended = false;
+        continue;
+      }
+      const move = /^\*\*\* Move to: (.*)$/.exec(line);
+      if (move) {
+        const path = move[1]!;
+        if (mode !== "update" || !justHeader || !current || !path || path !== anyTrim(path)) return null;
+        destinations.push(path);
+        removed.push(current);
+        // a Move carries the Update's body to its new name
+        added.set(path, added.get(current)!);
+        justHeader = false;
+        continue;
+      }
+      if (line === "*** End of File" && mode === "update" && chunks > 0 && chunkLines > 0 && !ended) {
+        ended = true;
+        justHeader = false;
+        continue;
+      }
+      return null;
+    }
+    // 3. body lines, as both engines
+    if (mode !== "update") {
+      if (mode === "add" && line.startsWith("+")) {
+        added.get(current!)!.push(line.slice(1));
+        continue;
+      }
+      return null;
+    }
+    justHeader = false;
+    if (line === "@@" || line.startsWith("@@ ")) {
+      if (chunks > 0 && chunkLines === 0) return null;
+      chunks++;
+      chunkLines = 0;
+      ended = false;
       continue;
     }
-    if (line.startsWith("*** ")) return null;
-    if (line === "" || line.startsWith("@@") || line === "*** End of File" || /^[ +\-]/.test(line)) {
-      if (current && line.startsWith("+")) added.get(current)!.push(line.slice(1));
+    // after End of File only an empty line, an `@@` line or a header follows
+    if (ended) {
+      if (line === "") continue;
+      return null;
+    }
+    if (line === "" || /^[ +\-]/.test(line)) {
+      if (chunks === 0) chunks = 1;
+      chunkLines++;
+      if (line.startsWith("+")) added.get(current!)!.push(line.slice(1));
       continue;
     }
     return null;
   }
-  if (!destinations.length) return null;
-  return { destinations, added: new Map([...added].map(([k, v]) => [k, v.join("\n")])) };
+  if (!destinations.length || !updateComplete()) return null;
+  return { destinations, added: new Map([...added].map(([k, v]) => [k, v.join("\n")])), removed };
 }
 
 export type HookRoute =
@@ -744,7 +824,8 @@ export function routeDelivery(delivery: HookDelivery, ctx: RouteContext): HookRo
     // the destinations travel with the allow, stored real, so the tripwire matches the started change on where it lands (Rule 67)
     if (reals.length === parsed.destinations.length) return { route: "allow", final: true, why: "own-workspace", destinations: reals, cwd };
     return { route: "ask", tool: "edit", summary: parsed.destinations.join(", "), destinations: parsed.destinations, cwd,
-      toolCall: { name: "edit", input: { paths: parsed.destinations, cwd } } };
+      // ISSUE-PERMS-1010 Rev 3 G2: what the patch takes away travels with the ask, so the stop line judges it as a delete
+      toolCall: { name: "edit", input: { paths: parsed.destinations, cwd, ...(parsed.removed.length ? { removed: parsed.removed } : {}) } } };
   }
 
   if (name.startsWith("mcp__")) {

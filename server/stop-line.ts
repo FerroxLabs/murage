@@ -30,6 +30,7 @@
 // in, so it is table-tested without touching a disk.
 import { actionGrantSet, resolveCall, stampedToolCall, type GrantCall } from "../shared/app-action-grant.ts";
 import { requiredFields } from "./drivers/contracts.ts";
+import { parseApplyPatch } from "./drivers/codex-hook.ts";
 import { canonicalConnectedAppToolName } from "../shared/connected-app-names.ts";
 import { posix } from "node:path";
 import { EXACT_COMMAND_MAX_CHARS, normalizeCommand } from "../shared/exact-command.ts";
@@ -96,7 +97,29 @@ const MESSAGE_URLS = /slack\.com\/api\/chat\.|hooks\.slack\.com|api\.telegram\.o
 const SQL_DESTRUCTIVE = /\bDROP\s+(TABLE|DATABASE|SCHEMA|VIEW|COLLECTION)\b|\bTRUNCATE\s+(TABLE\s+)?[`"\w]|\bDELETE\s+FROM\b|\bFLUSH(ALL|DB)\b|\.dropDatabase\s*\(/i;
 
 /** A delete through code rather than a delete command. */
-const CODE_DELETE = /\b(rmtree|rmSync|rmdirSync|unlinkSync|os\.remove|os\.unlink|os\.rmdir|shutil\.rmtree|fs\.rm|fs\.unlink|fs\.promises\.(rm|unlink)|FileUtils\.rm(_rf|_r|_f)?|File\.delete|Remove-Item|send2trash|trashItem|removeItem|recycleURLs|rimraf|unlink|rmdir)\b|\.unlink\(/;
+const CODE_DELETE = /\b(rmtree|rmSync|rmdirSync|unlinkSync|os\.remove|os\.unlink|os\.rmdir|shutil\.rmtree|fs\.rm|fs\.unlink|fs\.promises\.(rm|unlink)|FileUtils\.rm(_rf|_r|_f)?|File\.delete|Remove-Item|send2trash|trashItem|removeItem|recycleURLs|rimraf|unlink|rmdir|os\.RemoveAll|remove_dir_all|remove_file|Directory\.Delete|File\.Delete)\b|\.unlink\(|\.(Delete|DeleteFile|DeleteDirectory)\s*\(/;
+/** The delete programs `shellHit` judges as commands. */
+const DELETE_VERBS = /^(rm|rmdir|unlink|trash|shred|srm)$/;
+/** Words that open a branch or a loop body (`then rm "$T"`): the program is the word after them. */
+const SHELL_KEYWORDS: ReadonlySet<string> = new Set(["if", "then", "else", "elif", "do", "while", "until", "!", "{", "time"]);
+/** A literal path as the first argument of a call, or as the receiver of a method delete (`Path("/tmp/x").unlink()`). */
+const CALL_LITERAL = /^\s*\(\s*(['"])((?:~|\/|\.\.?\/)[^'"]*)\1/;
+const RECEIVER_LITERAL = /\(\s*(['"])((?:~|\/|\.\.?\/)[^'"]*)\1\s*\)\s*$/;
+/** Fix round (Grok Medium, Astra High 3): some delete call in this code names its target by anything but a literal
+ * path (`shutil.rmtree(os.environ["TARGET"])`, `p.unlink()`), so a literal placed for another call never stands in. */
+function codeDeleteUnplaced(code: string): boolean {
+  for (const m of code.matchAll(new RegExp(CODE_DELETE.source, "g"))) {
+    const end = m.index + m[0].length;
+    if (m[0].endsWith("(")) {
+      if (!RECEIVER_LITERAL.test(code.slice(Math.max(0, m.index - 4096), m.index))) return true;
+      continue;
+    }
+    const after = code.slice(end);
+    if (!/^\s*\(/.test(after)) continue;
+    if (!CALL_LITERAL.test(after)) return true;
+  }
+  return false;
+}
 /** AppleScript or JXA deleting something: Finder's `delete`, `move … to
  * trash`, emptying the Trash, System Events' `delete`, JXA `.delete()`. */
 const APPLESCRIPT_DELETE = /\bdelete\b|\bmove\b[\s\S]*\bto\s+(the\s+)?trash\b|\bempty\s+(the\s+)?trash\b|\.delete\s*\(|trashItem|removeItem|recycleURLs/i;
@@ -643,7 +666,14 @@ function shellHit(line: string, place: StopLinePlace, depth = 0): StopHit | null
   // `export f=…`) are known values, so a target spelled through one is
   // placed like a literal. Anything else with a `$` stays unknown.
   const vars = new Map<string, string>([["HOME", place.home]]);
-  for (const raw of commands) {
+  // fix round (Astra High 3): the delete commands this reader judged itself, so a delete verb it never reached (in a
+  // branch it could not follow, past a broken quote) is unknown even when another delete was placed
+  let judgedDeletes = 0;
+  for (const whole of commands) {
+    // a shell keyword that opens a branch or a loop body is not the program: `then rm "$T"` runs rm
+    let lead = 0;
+    while (lead < whole.length && SHELL_KEYWORDS.has(whole[lead]!.text)) lead++;
+    const raw = lead ? whole.slice(lead) : whole;
     // a command inside a substitution (`x=$(rm -rf …)`) runs too
     if (depth < 3) {
       for (const word of raw) {
@@ -653,7 +683,13 @@ function shellHit(line: string, place: StopLinePlace, depth = 0): StopHit | null
         }
       }
     }
-    if (assignAll(raw, vars, cwd)) continue;
+    // final round: an assignment in a branch or a loop body (`then D=/; else D=./x; fi`) may or may not run, so the
+    // variable it sets is no known value afterwards (1.0.9 never read such a word as an assignment)
+    const before = lead ? new Map(vars) : undefined;
+    if (assignAll(raw, vars, cwd)) {
+      if (before) for (const [name, value] of [...vars]) if (before.get(name) !== value) vars.delete(name);
+      continue;
+    }
     const cmd = raw.map((word) => expand(word, vars));
     const prog = program(cmd);
     if (!prog) continue;
@@ -666,7 +702,8 @@ function shellHit(line: string, place: StopLinePlace, depth = 0): StopHit | null
       if (args.some((word) => word.dynamic)) { found.unknownDelete ??= short(line); continue; }
       const posix = [...script.matchAll(/POSIX\s+file\s+"([^"]+)"/gi)].map((m) => m[1]!);
       const literals = posix.length ? posix : [...script.matchAll(/['"]((?:~|\/|\.\.?\/)[^'"]*)['"]/g)].map((m) => m[1]!);
-      if (!literals.length) found.unknownDelete ??= short(line);
+      // fix round (Grok Medium): one delete call with a literal never places another whose target is a value
+      if (!literals.length || name !== "osascript" && codeDeleteUnplaced(script)) found.unknownDelete ??= short(line);
       for (const lit of literals) found.deletes.push(resolveWord({ text: lit, dynamic: false }, cwd, place.home));
       continue;
     }
@@ -691,18 +728,24 @@ function shellHit(line: string, place: StopLinePlace, depth = 0): StopHit | null
         continue;
       }
     }
+    if (DELETE_VERBS.test(name)) judgedDeletes++;
+    judgedDeletes += args.filter((word) => word.text === "-delete").length;
     const hit = commandHit(name, args, ops, cwd, place, found, line);
     if (hit) return hit;
   }
   if (found.other) return found.other;
   // a delete through code (python -c, node -e): judged by the literal paths
-  // it names, and by nothing at all when it names none
-  if (!found.deletes.length && !found.unknownDelete && complex && CODE_DELETE.test(scan)) {
+  // it names, and by nothing at all when it names none. 1.0.10 (A2): tracked
+  // on its own, so a delete placed elsewhere in the line (`rm ./a; python3 -c
+  // '...rmtree(p)'`) never stands in for one this reader could not place
+  if (!found.unknownDelete && complex && CODE_DELETE.test(scan)) {
     const literals = [...scan.matchAll(/['"]((?:~|\/|\.\.?\/)[^'"]*)['"]/g)].map((m) => m[1]!);
-    if (!literals.length) found.unknownDelete = short(line);
+    if (!literals.length || codeDeleteUnplaced(scan)) found.unknownDelete = short(line);
     for (const lit of literals) found.deletes.push(resolveWord({ text: lit, dynamic: false }, cwd, place.home));
   }
-  if (complex && !found.unknownDelete && /\b(rm|rmdir|unlink|trash|shred|srm)\b|-delete\b/.test(words) && !found.deletes.length) {
+  // fix round (Astra High 3): more delete verbs in the line than delete commands this reader judged: one it could not
+  // reach is unknown, whatever else was placed
+  if (complex && !found.unknownDelete && (words.match(/\b(rm|rmdir|unlink|trash|shred|srm)\b|(?<![\w-])-delete(?![\w-])/g)?.length ?? 0) > judgedDeletes) {
     found.unknownDelete = short(line);
   }
   return deleteHit(found, place, line);
@@ -1182,10 +1225,13 @@ function psHit(line: string, place: StopLinePlace, depth = 0): StopHit | null {
   // a delete this reader did not follow: a method on an object
   // (`(Get-Item x).Delete()`), text run through Invoke-Expression. Read on
   // the line without its here-string bodies, which are judged above.
+  // 1.0.10 (A2): a method delete is never placed, so it is unknown even when
+  // another delete in the line was placed (`Remove-Item ./scratch;
+  // (Get-Item $env:TARGET).Delete()`)
+  if (!found.unknownDelete && /\.(Delete|DeleteFile|DeleteDirectory|MoveToRecycleBin)\s*\(/i.test(flat)) found.unknownDelete = short(line);
   if (!found.deletes.length && !found.unknownDelete) {
-    const methodDelete = /\.(Delete|DeleteFile|DeleteDirectory|MoveToRecycleBin)\s*\(/i.test(flat);
     const hidden = (complex || /\b(iex|invoke-expression)\b/i.test(flat)) && /\b(remove-item|del|erase|rd|rmdir|ri|rm)\b|::delete/i.test(flat);
-    if (methodDelete || hidden) found.unknownDelete = short(line);
+    if (hidden) found.unknownDelete = short(line);
   }
   return deleteHit(found, place, line);
 }
@@ -1681,7 +1727,8 @@ function appHit(call: ToolCall, place: StopLinePlace): StopHit | null {
  * home, whose commands are read as PowerShell. */
 export function deletesPlacedInside(command: string, given: StopLinePlace): boolean {
   const place = canonPlace(given);
-  if (WIN_CANON.test(place.home)) return false;
+  // ISSUE-PERMS-1010 G3: a command that names the patch helper deletes what its patch says, which this reader never places
+  if (WIN_CANON.test(place.home) || APPLY_PATCH_WORD.test(command)) return false;
   const real = (path: string) => realIn(place, path);
   const realHome = real(clean(place.home));
   if (realHome === null) return false;
@@ -1718,6 +1765,9 @@ export function deletesPlacedInside(command: string, given: StopLinePlace): bool
     return placed !== null && roots.some((root) => within(root, placed));
   });
 }
+
+/** ISSUE-PERMS-1010 G3: the patch helper, in any spelling an engine runs (`apply_patch`, `applypatch`, any case). */
+const APPLY_PATCH_WORD = /apply_?patch/i;
 
 function commandText(tool: string, input: unknown, summary: string): string | undefined {
   const bare = tool.toLowerCase().replace(/^mcp__.+__/, "").split(/[./]/).pop()!;
@@ -1782,6 +1832,10 @@ export function classifyStopLine(tool: string, input: unknown, summary: string, 
   const command = commandText(tool, input, summary);
   // a Windows engine's commands run in PowerShell, and so do a PowerShell tool's anywhere
   const powershell = POWERSHELL_TOOLS.has(tool.toLowerCase().replace(/^mcp__.+__/, "").split(/[./]/).pop()!);
+  // ISSUE-PERMS-1010 G3 (1.0.10, designs/ISSUE-PERMS-DESIGN-1010.md section 3 item 4): Codex keeps an apply_patch helper on
+  // the shell's PATH, and which input it applies depends on the shell around it. So any shell text that names it, in any
+  // spelling and on any OS, is a delete nobody can place. No form is accepted; this only adds a stop to the 1.0.9 reader.
+  if (command !== undefined && APPLY_PATCH_WORD.test(command)) return deleteHit({ deletes: [], unknownDelete: short(command) }, place, command);
   if (command !== undefined) return powershell || WIN_CANON.test(place.home) ? psHit(command, place) : shellHit(command, place);
   const paths = deleteToolPaths(tool, input);
   if (paths) {
@@ -1808,10 +1862,30 @@ export function classifyAsk(
 ): StopHit | null {
   const stamped = stampedToolCall(ask);
   if (stamped === null) return { kind: "delete", what: "Murage could not tell which tool this runs, so it is waiting for you." };
+  // ISSUE-PERMS-1010 Rev 3 G2: the Codex driver's apply_patch ask carries what the patch takes away as `removed` on its
+  // edit call; each is a delete, judged from the delivery's folder. A Murage-built input only ever adds a stop: a
+  // `removed` that is not a list of paths stops as a delete nobody can place. It is judged BEFORE the contract below
+  // (Astra/GrokBuild subset M1): Codex's edit contract reads `changes`, so a contract miss would otherwise answer first
+  // and the card would say "could not read this call" instead of naming the outside delete. Only the Codex route answers
+  // first (its ask carries no stamp, so nothing below could); any other engine's `removed` still only adds a stop last.
+  const editInput = ask.toolCall?.name === "edit" && ask.toolCall.input && typeof ask.toolCall.input === "object"
+    ? ask.toolCall.input as { removed?: unknown; cwd?: unknown } : undefined;
+  const editRemoved = editInput && "removed" in editInput
+    ? (Array.isArray(editInput.removed) && editInput.removed.length && editInput.removed.every((p) => typeof p === "string" && p !== "") ? editInput.removed as string[] : [])
+    : undefined;
+  const editHit = editRemoved
+    ? classifyStopLine("delete", { paths: editRemoved }, ask.summary, typeof editInput!.cwd === "string" && editInput!.cwd ? { ...given, cwd: editInput!.cwd } : given)
+    : null;
+  if (editHit && ask.engine === "codex") return editHit;
   // Rule 25: a call its driver's contract cannot read whole stops too.
   if (!requiredFields(ask.engine, resolveCall(ask), ask).ok) return { kind: "delete", what: "Murage could not read this call whole, so it is waiting for you." };
   const first = stamped ? classifyStopLine(stamped.name, stamped.input, ask.summary, given) : null;
-  return first ?? classifyStopLine(ask.toolCall?.name ?? ask.tool, ask.toolCall?.input, ask.summary, given);
+  // ISSUE-PERMS-1010 B: a stamped codex apply_patch is judged by what it does to each path: every file it deletes, and the
+  // old name of every file it moves, is a delete for the stop line (an unreadable patch already stopped on its contract)
+  const removed = !first && stamped?.name === "apply_patch" && ask.toolIdentity?.namespace === "codex" && stamped.input && typeof stamped.input === "object"
+    ? parseApplyPatch((stamped.input as { patch?: unknown }).patch)?.removed : undefined;
+  const patchHit = removed?.length ? classifyStopLine("delete", { paths: removed }, ask.summary, given) : null;
+  return first ?? patchHit ?? editHit ?? classifyStopLine(ask.toolCall?.name ?? ask.tool, ask.toolCall?.input, ask.summary, given);
 }
 
 /** Whether a hit's place names several recipients at once. */

@@ -556,6 +556,26 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "- Image handling is up to date. Murage uses the latest image library for previews and thumbnails.\n- Backups on Windows wait for a slow start. On a busy Windows computer, setting up owner-only backup files now waits longer, so the step completes."
   },
   {
+    "id": "changelog/v1-0-10#full-access-and-no-limits-in-1-0-10",
+    "title": "What changed in Murage 1.0.10",
+    "description": "At No limits and Full access, your bots run their routines and your own direct messages at the level you chose.",
+    "heading": "Full access and No limits in 1.0.10",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.10",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.10",
+    "url": "https://murage.ai/docs/changelog/v1-0-10#full-access-and-no-limits-in-1-0-10",
+    "text": "- Your level means it. At No limits and Full access, your bots run their routines and your own direct messages at the level you chose, without stopping to ask.\n- Routines keep your level. A routine runs at the level you chose, and so do the bots it hands work to and the follow-up turns it wakes.\n- Your own messages count as you. Direct messages you send your bot from your own Telegram, Slack or Discord run at the bot's level. You can turn this off in Settings.\n- Long writes run straight through. Long file writes run at No limits and Full access without a card.\n- The never-list still stands.…"
+  },
+  {
+    "id": "changelog/v1-0-10#connected-apps-in-1-0-10",
+    "title": "What changed in Murage 1.0.10",
+    "description": "At No limits and Full access, your bots run their routines and your own direct messages at the level you chose.",
+    "heading": "Connected apps in 1.0.10",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.10",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.10",
+    "url": "https://murage.ai/docs/changelog/v1-0-10#connected-apps-in-1-0-10",
+    "text": "- Steady on a patchy connection. Murage tries again before it calls your connected apps out of reach, so your routines keep their apps."
+  },
+  {
     "id": "changelog/v1-0-2#memory-in-1-0-2",
     "title": "What changed in Murage 1.0.2",
     "description": "Memory stays quick on long histories and asks you about the things that need you, startup and search stay smooth, group chats pick the right bot, Murage for Chrome reads like the app, and new Ferrox Labs teams join the library.",
@@ -1525,7 +1545,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → Approvals and inspector",
     "where": "Murage docs → Features → Approvals and inspector",
     "url": "https://murage.ai/docs/features/approvals-and-inspector#full-access-and-the-stop-line",
-    "text": "Under Full access a bot runs commands, edits files and contacts other bots without asking. It still stops and asks at a few lines that matter:\n- deleting anything outside its own folder, including through Finder, scripts and code;\n- paying for anything;\n- messaging someone new or posting in public, such as a first comment, issue or release on a GitHub repository;\n- reading your keys and passwords.\n\nMessages to you, your own linked accounts and the person a channel conversation is with never stop. Engines under Full access send their permission asks to Murage, so these checks hold for Claude Code, Codex, Pi and ACP engines alike.…"
+    "text": "Under Full access a bot runs commands, edits files and contacts other bots without asking. It still stops and asks at a few lines that matter:\n- deleting anything outside its own folder, including through code in the command itself;\n- paying for anything;\n- messaging someone new or posting in public, such as a first comment, issue or release on a GitHub repository;\n- reading your keys and passwords.\n\nMessages to you, your own linked accounts and the person a channel conversation is with never stop. Engines under Full access send their permission asks to Murage, so these checks hold for Claude Code, Codex, Pi and ACP engines alike.…"
   },
   {
     "id": "features/approvals-and-inspector#no-limits",
