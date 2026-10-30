@@ -241,6 +241,7 @@ server/backup-bot-folder.test.ts	all	bot folder backup keeps real work, lists om
 server/backup-card-kinds-108.test.ts	all	A chat holding question, approval or widget cards still backs up instead of refusing the whole backup
 server/backup-channel-run.test.ts	all	backup runs after channel messages and routine runs
 server/backup-coordinator.test.ts	all	backup scheduling, handoff and enablement rules
+server/backup-disk-full-1012.test.ts	all	A full disk during a backup is named as a full disk
 server/backup-ebusy.test.ts	all	Locked files skipped, own records stop backup
 server/backup-follow-model-marker.test.ts	all	Chat model cleanup marker backs up with bots
 server/backup-frozen-replies-cursor.test.ts	all	Recovery cursor never stops a backup
@@ -1463,6 +1464,7 @@ shared/approval-digest.test.ts	all	push delivery and approval integrity
 shared/arg-vocabulary-ssh.test.ts	all	security boundary or path/file access
 shared/arg-vocabulary.test.ts	all	security boundary or path/file access
 shared/backup-capture-cause.test.ts	all	protects user-visible behaviour in core flows
+shared/backup-progress.test.ts	all	Backup progress notes never change a backup
 shared/chief-handover.test.ts	all	keeps the former Chief leading its team when it can
 shared/exact-command.test.ts	all	protects user-visible behaviour in core flows
 shared/financial-ids.test.ts	all	the vectors are for this rule version

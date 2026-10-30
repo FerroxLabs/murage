@@ -2,11 +2,12 @@ import { normalizeBackupAgeDiagnostic } from "./backup-age-attestation.mjs";
 import { captureFailurePath, normalizeCaptureCause } from "../shared/backup-capture-failure.mjs";
 import { awaitOwnedWork } from "./server-child-lifecycle.mjs";
 import { recoveryDesktopSummary } from "./installation-recovery-protocol.mjs";
+import { BACKUP_PROGRESS_MESSAGE, normalizeBackupProgress } from "../shared/backup-progress.mjs";
 
 const fail = code => Object.assign(new Error(code), { code });
 /** Keep an exact utility child tracked until exit and stdout completion.
  * Raw stderr is drained, not forwarded to the recovery UI or logs. */
-export async function runInstallationRecoveryWorker({ fork, entry, args, env, track, readIdentity, timeoutMs = 20 * 60_000 }) {
+export async function runInstallationRecoveryWorker({ fork, entry, args, env, track, readIdentity, onProgress, timeoutMs = 20 * 60_000 }) {
   const child = fork(entry, args, { env, stdio: ["ignore", "pipe", "pipe"] });
   const lifecycle = track(child);
   let bytes = 0, output = "", exitCode = null, invalidOutput = false;
@@ -17,6 +18,11 @@ export async function runInstallationRecoveryWorker({ fork, entry, args, env, tr
   const drained = new Promise(resolve => {
     child.on("message", raw => {
       const message = raw?.data ?? raw;
+      // One-way and for the log and window only: never part of the result.
+      if(message?.type===BACKUP_PROGRESS_MESSAGE){
+        if(args[0]==="backup-encrypted"&&typeof onProgress==="function")try{const note=normalizeBackupProgress(message);if(note)onProgress(note);}catch{/* A progress note never changes the backup. */}
+        return;
+      }
       if(message?.type==="murage:recovery-input-ready"){
         if(inputUsed||typeof readIdentity!=="function"||!args[0]?.includes("encrypted")||!/^[a-f0-9-]{36}$/.test(message.nonce)){
           invalidOutput=true;resolve();void lifecycle.stop().catch(()=>{});return;

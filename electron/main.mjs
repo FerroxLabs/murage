@@ -3233,6 +3233,7 @@ async function runDesktopRecovery(operation, parameters, separate = null) {
     args, env, track: trackOwnedServerChild,
     ...(operation.includes("encrypted") ? {readIdentity:parameters.readIdentity} : {}),
     ...(operation==="backup-encrypted"&&parameters.maxDurationMs!==undefined?{timeoutMs:parameters.maxDurationMs+30_000}:{}),
+    ...(operation==="backup-encrypted"&&typeof parameters.onProgress==="function"?{onProgress:parameters.onProgress}:{}),
   });
     // Undoing the restore of a separate installation leaves nothing for the
     // selection to open: hand the next start back to the original (D2).
@@ -4695,6 +4696,7 @@ async function initializeBackupScheduleHost(){
     firstRunChanged:()=>firstRunBackupChanged(),
     reportOutcome:line=>slog(line),
     reportProgress:name=>backupProgress?.stage(name),
+    reportWorkerProgress:progress=>backupProgress?.worker(progress),
     reportCaptureFailure:(failure,handoff)=>{
       try{fs.mkdirSync(LOG_DIR,{recursive:true});fs.appendFileSync(path.join(LOG_DIR,"server.log"),`[${new Date().toISOString()}] backup capture failed ${JSON.stringify({...failure,...handoff})}\n`,{mode:0o600});}catch{/* Logging never changes backup authority or result. */}
     },
