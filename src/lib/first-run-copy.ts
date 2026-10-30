@@ -200,24 +200,33 @@ export const FIRST_RUN_COPY = {
      * was always true, which is what the field is really for.
      */
     welcome: {
-      // Sean's Halbert wording, 10-26 (single opt-in, so no confirm line). The
-      // setup guide is the reason to give a real address; it leads the card.
-      heading: "Where should I send your setup guide?",
-      lead:
-        "We've put together a short guide to getting the most out of Murage from day one, and I'd like to send it to you. "
-        + "Tell me your name so I know who I'm working for, and your email so the guide is yours, along with every new "
-        + "release, insight, how-to and tutorial we put out. "
-        + "Or just press Skip.",
+      // UX-FIRSTRUN-SCALE-1012 §1.3, Card 1, verbatim. The Chief speaks first,
+      // then the card's own heading. The setup guide and the news are still
+      // what the email is for (single opt-in, Sean 10-26), said in the helper
+      // under the field rather than in a paragraph above both fields.
+      chief: "Hi. I am your Chief of Staff. Tell me what to call you and I will get the rest ready.",
+      heading: "Hello",
       nameLabel: "Your name",
       namePlaceholder: "What should I call you?",
       emailLabel: "Your email (optional)",
       emailPlaceholder: "you@example.com",
+      emailHelper: "For your setup guide and news. Nothing else.",
       /** Shown once the email box is left, or Continue or Enter is pressed, with an address that is not one. */
       emailInvalid: "That email address doesn't look right. Fix it, or clear the box to continue without one.",
       submit: "Continue",
       working: "Saving",
       skip: "Skip",
       detecting: "While you type, I am having a look around this computer to see what is already here.",
+      /** The same footer once the look around has landed (§1.3): what was
+       *  found, said in one line, so the wait explained itself and then
+       *  answered. Built by `probeLine` from the setup view. */
+      probe: {
+        signedIn: (name: string) => `Found ${name}, signed in.`,
+        signedOut: (name: string) => `Found ${name}, not signed in yet.`,
+        local: (model: string) => `Found ${model} running on this computer.`,
+        bundled: "Found the engine that came in the box.",
+        many: (first: string, second: string) => `Found ${first} and ${second}. Details next.`,
+      },
       /** How a bot learns, said once, in plain words. It promises a note only when something was kept (design 7 and 12a). */
       learnLine: "Tell any bot how you like replies, like shorter, warmer or in bullet points, and it starts right away. For anything bigger, it asks you with one tap.",
       failure: "That did not save. Try once more, or skip it and carry on.",
@@ -242,8 +251,11 @@ export const FIRST_RUN_COPY = {
      */
     detect: {
       heading: "What is already here.",
-      /** An engine pointed at a model on this machine. */
-      localDetail: "Nothing you type leaves this computer.",
+      /** An engine pointed at a model on a loopback host (server/setup.ts
+       *  localModelOf). It describes where the model runs and nothing more:
+       *  1.0.12 makes no promise about where typed text goes (test:
+       *  first-run-no-privacy-promise). */
+      localDetail: "Runs on this computer.",
       /** A remote engine the person signed in to themselves. Not named by
        *  vendor: the reading knows the engine, not whose account it is on. */
       cloudDetail: "Signed in on your own account.",
@@ -256,6 +268,16 @@ export const FIRST_RUN_COPY = {
       offDetail: "Installed, nobody signed in.",
       readyTag: "ready when you want it",
       offTag: "one command away",
+      /** §1.4: the one row the Chief is actually on. Proven by
+       *  `view.chiefInstanceId`, never guessed, so at most one row says it. */
+      usingTag: "using this now",
+      /** §1.4 Variant A, the Chief's opening on a machine that had help. */
+      foundChief: "You already had help on this computer. I found it and connected it. Nothing to install.",
+      /** §1.4 Variant D, a named local model the Chief is on right now. */
+      localChief: (model: string) => `Found ${model} running on this computer, and I am using it now.`,
+      /** §1.4: the level, said once as an example rather than as a label.
+       *  Shown only while the Chief really is on Ask. */
+      askLevel: "I start on Ask: I read and draft on my own, and I ask before I send, buy or change anything outside my folder.",
       more: (count: number) => `and ${count} more on this computer`,
       hide: "Hide them",
       /**
@@ -267,8 +289,8 @@ export const FIRST_RUN_COPY = {
        * calendar or their apps. Saying both halves is what makes the next
        * screen an offer rather than a pitch.
        */
-      closing: "That is enough for me to answer you. It is not enough for me to do the interesting part.",
-      action: "Show me the interesting part",
+      closing: "They answer to you in here now, and they still work exactly as they did on their own.",
+      action: "Next",
       /** The one control on this card could not record that the report had
        *  been read. Said where it happened, and the button stays. */
       failure: "That did not go through. Press it again whenever you like.",
@@ -312,6 +334,13 @@ export const FIRST_RUN_COPY = {
      * this file bans.
      */
     "signed-out": {
+      /** §1.4 Variant B, the Chief's line, verbatim. The rows below name it. */
+      chief: "There is an AI tool on this computer that nobody is signed in to. Sign in and it is yours to use in here.",
+      /** The sign-in block's own line. The engine's sign-in is a command it
+       *  ships, so the block says how long it takes and then shows it. */
+      signInLead: "Sign in takes a minute.",
+      /** The ghost that moves on without signing in. */
+      leave: "Leave it for now",
       second: "Sign in and it is yours to use in here, working exactly as it does on its own.",
       third: "Or leave it. What is already running carries on either way.",
       /**
@@ -384,9 +413,12 @@ export const FIRST_RUN_COPY = {
       // rule that has said "three is the ceiling" since the file was written.
       // Nothing was asserting it. The words are unchanged; the two-word
       // sentences that were doing the work of one clause are now one clause.
+      // §1.5: the lead under the heading IS the framing line, one per
+      // machine (`fluxRecommendation`). This is the signed-in framing, kept
+      // as `lead` so a caller with no view still reads a true sentence.
       lead:
-        "You should not have to know which AI is good at what. Flux Router picks for you, every time you ask: "
-        + "big job, big model, quick job, quick model. You just get the answer.",
+        "Optional, and worth it. You are already up and running, and this adds all the latest AI models, with Flux Auto "
+        + "sending each job to the best one, plus your apps, pictures and transcription on top.",
       /**
        * THE SECOND OPENING, ON A MACHINE WHERE DETECTION NEVER RAN.
        *
@@ -409,9 +441,7 @@ export const FIRST_RUN_COPY = {
         {
           id: "routing",
           title: "Smart routing",
-          body:
-            "every question goes to the AI that handles it best. The biggest one is not always the best one. "
-            + "Often it is just the slowest",
+          body: "all the latest AI models, with Flux Auto sending each job to the best one",
           state: "live",
         },
         {
@@ -421,15 +451,9 @@ export const FIRST_RUN_COPY = {
           state: "live",
         },
         {
-          id: "models",
-          title: "All the latest models",
-          body: "one key. Not an account each with OpenAI, Anthropic, Google and xAI",
-          state: "live",
-        },
-        {
           id: "pictures",
           title: "Pictures",
-          body: "make them right in the chat. Or hand over four and ask for a change",
+          body: "make them right in the chat",
           state: "live",
         },
         {
@@ -439,20 +463,9 @@ export const FIRST_RUN_COPY = {
           // that reason: the second one promises an answer out loud.
           id: "dictation",
           title: "Talk instead of type",
-          body: "say it out loud. Works from your phone too, not just this computer",
+          body: "say it out loud, from your phone too",
           state: "live",
           speech: "transcription",
-        },
-        {
-          // LIVE SINCE 0.1.59, AND IT SAYS WHICH HALF OF SPEECH IT IS. The
-          // bot's side of a call and a reply read out loud go through the
-          // Flux key's speech route (server/tts/flux-speech.ts). It was
-          // "Coming soon" until that shipped.
-          id: "voice",
-          title: "Voice mode",
-          body: "call a bot and talk it through out loud. It answers in its own voice",
-          state: "live",
-          speech: "synthesis",
         },
       ] as readonly FirstRunFluxFeature[],
       keyCaveat: "Your key stays in this computer's keychain. It never appears in our conversation.",
@@ -513,7 +526,9 @@ export const FIRST_RUN_COPY = {
        * system voices; the Flux key configures neither. The test now walks
        * every string in this file instead of a hand-picked four.
        */
-      recommendationBonus: "Optional, and worth it. You are already up and running, and this adds all the latest models, your apps, pictures and transcription on top.",
+      recommendationBonus:
+        "Optional, and worth it. You are already up and running, and this adds all the latest AI models, with Flux Auto "
+        + "sending each job to the best one, plus your apps, pictures and transcription on top.",
       /** Visually hidden on the connect screen: the heading above it has
        *  already said what this is, and a second label would be a second
        *  reading of the same sentence. */
@@ -538,6 +553,20 @@ export const FIRST_RUN_COPY = {
       dismiss: "Not now",
       saved: "Connected, and the key is locked away on this computer. It never appears in our conversation.",
       failure: "That key did not connect. Check it and try again, or carry on without it.",
+      /** §1.9 offline: the card's footer once a button that needs the
+       *  internet is pressed with no connection. The buttons stay. */
+      offline: "This needs the internet. I will pick it up the moment you are connected.",
+      /** §1.9 allowance used up (the `payment-required` block on this step). */
+      allowanceHeading: "Flux Router has used its allowance for this month.",
+      allowanceLead: "Raise it in Flux Router and I carry on at once.",
+      allowanceOpen: "Open Flux Router",
+      /** §1.9: another engine is signed in, so the first job can run there. */
+      allowanceUseOther: (name: string) => `Use ${name} for now`,
+      allowanceSwitched: (name: string) => `Flux Router is paused for now, so I am using ${name}. Your apps wait for Flux Router.`,
+      /** §1.5 bare decline: the Chief line, and the card stays open. */
+      notNowBare: "Noted. Then I do need something else to think with, or I am only a nice window.",
+      /** §1.9 no engine at all: the jobs are visible and inactive behind this. */
+      jobsWaiting: "These start the moment I have something to think with. Connect Flux Router above, or sign in to an AI tool you already have.",
     },
     "no-key": {
       body: "Noted. We carry on with what is on this machine, and that is plenty to be going on with.",
@@ -615,22 +644,22 @@ export const FIRST_RUN_COPY = {
         {
           id: "brief",
           title: "Brief me every morning",
-          sub: "What is fixed, what is owed, what will slip.",
+          sub: "Calendar, email and news in one page, every morning at 8.",
         },
         {
           id: "day",
           title: "Organise my day",
-          sub: "Today's commitments, in an order that survives the first phone call.",
+          sub: "Turns today's calendar and inbox into a short plan.",
         },
         {
           id: "notes",
           title: "Make sense of these notes",
-          sub: "Paste anything. Get back what matters and what to do next.",
+          sub: "Paste or drop notes; get the decisions, the next steps and who owns them.",
         },
         {
           id: "research",
           title: "Look into something for me",
-          sub: "I search the live web and read what comes back, then tell you what I found.",
+          sub: "A researched answer, in a few minutes.",
         },
         {
           id: "business",
@@ -639,7 +668,7 @@ export const FIRST_RUN_COPY = {
           // installed, and with no package in front of it to read. The
           // crew screen counts because it has the reading; this row cannot,
           // so it stops claiming a number rather than claiming a stale one.
-          sub: "Your crew and a Monday review, set up in one go.",
+          sub: "Chasing, filing, replying. I set up a crew for it.",
         },
       ] as readonly FirstRunJobRowCopy[],
       /** What one missing thing is called out loud. Shared by the tag on a
@@ -651,6 +680,14 @@ export const FIRST_RUN_COPY = {
         googlecalendar: "Google Calendar",
       },
       tags: {
+        /** §1.6: the first row's mark, because it is the job that runs again
+         *  tomorrow without being asked. */
+        recommended: "Recommended",
+        /** §1.6: a tag appears only when a connection is missing, and it
+         *  says what this job will ask for, in this job's own words. */
+        brief: "asks for Gmail or your calendar if you want them in it",
+        day: "needs your calendar",
+        business: "asks for the apps it needs as it goes",
         ready: "ready now",
         flux: "needs Flux Router",
         /** Followed by one need label. */
@@ -676,7 +713,7 @@ export const FIRST_RUN_COPY = {
       },
       /** The way out for somebody whose thing is not on the list. Goes
        *  straight to the notes box, which asks for nothing. */
-      escape: "Or just tell me what you need",
+      escape: "Or just tell me what is on today.",
       /**
        * BLANK MACHINE, NO KEY, AND THEY TYPED SOMETHING ANYWAY.
        *
@@ -703,7 +740,8 @@ export const FIRST_RUN_COPY = {
         headingOne: "One thing, and then I can do it.",
         /** Follows a count, from two upwards. */
         headingManyTail: "things, and then I can do it.",
-        lead: "Everything this job needs is on this screen. Nothing else gets asked, and you can stop after any of them.",
+        /** §1.7, the Chief's line over everything the job needs. */
+        lead: "On it. Everything this job needs is on one screen, and you can stop after any of it.",
         /**
          * The reason on each row, written for the job in hand.
          *
@@ -736,6 +774,13 @@ export const FIRST_RUN_COPY = {
          * a row cannot, is say which of the two this is.
          */
         unreadable: "I could not read your connected accounts just now, so some of these may already be on.",
+        /** §1.9 apps unreadable, on the brief, which runs without them. */
+        unreadableBrief: "Your connected apps cannot be read right now. The brief runs without them and tries again tomorrow.",
+        /** §1.7: the connect buttons say what they connect. */
+        connectLabels: {
+          gmail: "Connect Gmail",
+          googlecalendar: "Connect your calendar",
+        },
       },
       /**
        * THE BOX. Three of them, one per job that asks for something.
@@ -877,7 +922,13 @@ export const FIRST_RUN_COPY = {
        * server template's own default.
        */
       morning: {
-        heading: "Want this waiting for you every morning?",
+        /** §1.7, the routine offer, one line and two buttons. */
+        heading: "Would you like one of these every weekday at 8?",
+        yes: "Yes, every weekday at 8",
+        no: "Not now",
+        /** "Morning brief saved. Next run tomorrow at 8:00 am." The day is
+         *  worked out from today, because a Friday's next weekday is Monday. */
+        savedPrefix: "Morning brief saved. Next run",
         bodyPrefix: "Built at",
         bodyTail: "on weekdays and waiting here when you open this computer. It never goes to your inbox.",
         /**
@@ -1100,6 +1151,23 @@ export const FIRST_RUN_COPY = {
       added: "Running",
       dismiss: "That is enough for now",
       failure: "That one could not be set up. Try again in a moment.",
+    },
+    /** §1.8, Card 6: Done. Three rows, each one sentence and one button. */
+    done: {
+      chief: "That is you set up. Ask me for anything, or just tell me what is on today.",
+      work: { title: "Put me to work", line: "Say what is on your plate and I start.", button: "Start" },
+      hire: {
+        title: "Hire your first teammate",
+        line: "One sentence about the job. I set it up for your yes.",
+        button: "Hire a bot",
+        say: "I would like to hire a teammate and give them a job.",
+      },
+      phone: { title: "Reach me from your phone", line: "Scan this and you can reach me from your phone.", button: "Show the code" },
+      phoneNeeds: {
+        title: "Your phone needs one more thing",
+        line: "Your phone cannot find this computer yet. I can set that up for you.",
+        button: "Walk me through it",
+      },
     },
     next: {
       title: "So, what shall we do?",
@@ -1413,6 +1481,67 @@ export function briefButtonLabel(time: string): string {
   return `Set my brief for ${clockLabel(time)}`;
 }
 
-/** The default the brief card opens on. Early enough to be there first,
- *  late enough that nobody is reading it in the dark. */
-export const FIRST_RUN_BRIEF_TIME = "07:00";
+/** The time the first-run brief runs. §1.6 to §1.8 say "every morning at 8"
+ *  on the row, the offer and the confirmation, so the request says 08:00 too
+ *  (POST /api/setup/routine takes the time it is sent). */
+export const FIRST_RUN_BRIEF_TIME = "08:00";
+
+const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
+
+/**
+ * "Morning brief saved. Next run tomorrow at 8:00 am." (§1.7)
+ *
+ * The routine runs on weekdays at `time`, so the line names the run the
+ * scheduler will really make: "today" before the hour on a weekday,
+ * "tomorrow" when that is a weekday, otherwise the weekday by name. `now` is the
+ * owner's own clock, the same one the routine is scheduled against.
+ */
+export function briefSavedLine(time: string, now: Date): string {
+  const words = FIRST_RUN_COPY.flow["do-it"].morning;
+  // The same walk the scheduler takes (server/routines.ts, next daily
+  // occurrence): the first weekday whose run time is still ahead of `now`, so
+  // a Friday save at 07:00 says "today", not Monday.
+  const [hour, minute] = time.split(":").map(Number);
+  let ahead = 1;
+  for (let offset = 0; offset <= 7; offset++) {
+    const at = new Date(now);
+    at.setDate(at.getDate() + offset);
+    at.setHours(hour, minute, 0, 0);
+    const day = at.getDay();
+    if (at.getTime() > now.getTime() && day >= 1 && day <= 5) {
+      ahead = offset;
+      break;
+    }
+  }
+  const when = ahead === 0 ? "today" : ahead === 1 ? "tomorrow" : WEEKDAY_NAMES[(now.getDay() + ahead) % 7];
+  return `${words.savedPrefix} ${when} at ${clockLabel(time)}.`;
+}
+
+/**
+ * The hello card's footer once the look around has landed (§1.3).
+ *
+ * Built from the setup view's own readings, so it can only name what was
+ * really found. Null while there is nothing to report, and the "while you
+ * type" line stays.
+ */
+export function probeLine(view: {
+  agents: readonly { name: string; installed: boolean; localModel?: { model: string } }[];
+  signedOutAgents: readonly { name: string }[];
+} | null | undefined): string | null {
+  if (!view) return null;
+  const words = FIRST_RUN_COPY.hello.welcome.probe;
+  const local = view.agents.find((agent) => agent.localModel?.model.trim());
+  const signedIn = view.agents.filter((agent) => agent.installed && !agent.localModel);
+  const found: string[] = [
+    ...signedIn.map((agent) => agent.name.trim()).filter(Boolean),
+    ...(local ? ["a local model"] : []),
+    ...view.signedOutAgents.map((agent) => agent.name.trim()).filter(Boolean),
+  ];
+  if (found.length > 1) return words.many(found[0], found[1]);
+  if (signedIn.length === 1 && signedIn[0].name.trim()) return words.signedIn(signedIn[0].name.trim());
+  if (local?.localModel) return words.local(local.localModel.model.trim());
+  const out = view.signedOutAgents.find((agent) => agent.name.trim());
+  if (out) return words.signedOut(out.name.trim());
+  if (view.agents.some((agent) => !agent.installed)) return words.bundled;
+  return null;
+}

@@ -136,6 +136,7 @@ server/sentinel/publication.test.ts	all	the Health list stays small and consiste
 server/sentinel/scan.test.ts	all	a health check that crashes or overlaps another never counts or pages twice
 server/sentinel/supervisor.test.ts	all	a stuck health check is stopped within 5 seconds and runs without app credentials
 server/sentinel/cli.test.ts	all	the health checker never loads the app, its database, engines or network code
+server/setup-chief-local.test.ts	all	first run claims a local model only on this computer
 server/thread-permissions-bulk-108.test.ts	all	Owner-only previewed raises persist one roster and leave higher levels and grants intact
 server/full-access-driver-108.test.ts	all	Fake Codex, Fuigo and Grok asks carry checked environments into approval verdicts
 scripts/check-linux-glibc-floor.test.mjs	linux	the Linux app starts on older supported distros
@@ -1455,6 +1456,7 @@ shared/phone-apps.test.ts	all	protects user-visible behaviour in core flows
 shared/phone-ask-contract.test.ts	all	security boundary or path/file access
 shared/phone-jobs-contract.test.ts	all	security boundary or path/file access
 shared/web-safe-imports.test.ts	all	the web app failing to load because it imports server-only code
+src/components/FirstRunNoPrivacyPromise.test.ts	all	first run promises nothing about where typed text goes
 src/components/notebook-save-gate.test.ts	all	the notebook Save waits for a loaded revision
 server/writer-roots.test.ts	all	one writer per work root
 server/writetime-r11c.test.ts	all	short secret copied into note withheld
