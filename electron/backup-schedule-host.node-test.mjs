@@ -54,6 +54,20 @@ test("disabled selection never enables, exposes only labels/refs, and needs expl
     await assert.rejects(f.controller.configure(0,{...choices,...s.refs}),/CONSENT/);assert.equal(f.coordinator().status().enabled,false);
   }finally{f.cleanup();}
 });
+test("1.0.12: the worker's notes become one timed log line per step and reach the window, and a broken window changes nothing",async()=>{
+  const f=fixture();try{await f.arm();const lines=[],shown=[];
+    const host=f.create({reportOutcome:line=>lines.push(line),reportWorkerProgress:note=>{shown.push(note.step);throw Error("window gone");},capture:async request=>{
+      request.onProgress({step:"encrypt",elapsedMs:10,done:5,total:9});request.onProgress({step:"encrypt",elapsedMs:40,done:9,total:9});request.onProgress({step:"readback",elapsedMs:70});request.onProgress({step:"nonsense",elapsedMs:80});request.onProgress({step:"done",elapsedMs:100});
+      return f.host.capture(request);}});
+    assert.deepEqual(await host.resumeOffline(),{verified:true});
+    const steps=lines.filter(line=>line.startsWith("backup step "));
+    assert.equal(steps.length,2);
+    assert.match(steps[0],/^backup step \{"job":"[^"]{1,8}","step":"encrypt","ms":60,"bytes":9\}$/);
+    assert.match(steps[1],/^backup step \{"job":"[^"]{1,8}","step":"readback","ms":30\}$/);
+    assert.deepEqual(shown,["encrypt","encrypt","readback","nonsense","done"]);
+    assert.equal(lines.filter(line=>line.startsWith("backup local verified")).length,1);
+  }finally{f.cleanup();}
+});
 test("a backup run logs one outcome line per step: started, local written, verified with bytes and how, and no paths",async()=>{
   const f=fixture();try{await f.arm();const lines=[];await f.create({reportOutcome:line=>lines.push(line)}).resumeOffline();
     assert.equal(lines.length,3);assert.match(lines[0],/^backup started \{"job":"[^"]{1,8}","closed":false\}$/);assert.match(lines[1],/^backup local written \{"job":"[^"]{1,8}","bytes":\d+\}$/);assert.match(lines[2],/^backup local verified \{"job":"[^"]{1,8}","bytes":\d+,"how":"file re-read and its sha256 matched/);
