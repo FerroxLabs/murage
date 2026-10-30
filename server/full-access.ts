@@ -14,10 +14,11 @@
 // and a webhook payload can never turn it on, and the first time for each bot
 // the request must carry proof that the owner confirmed the warning.
 //
-// Two per-bot options widen it, both off unless the owner turns them on from
-// the desktop, and both doing nothing while Full access is off:
+// Two per-bot options widen it, both doing nothing while Full access is off:
 // `fullAccessChannelMessages` lets the owner's own Telegram, Slack and
-// Discord messages run under it, and `fullAccessSetupRequests` lets it
+// Discord DMs run under it (1.0.10: on unless the owner turns it off; group
+// chats and senders not bound to the owner never count), and
+// `fullAccessSetupRequests`, off unless the owner turns it on, lets it
 // approve setup requests (a learned skill, a routine proposal, a folder's own
 // instructions). Connecting an app is never approved for the owner: its
 // sign-in happens in the owner's browser.
