@@ -37,7 +37,7 @@
 // `unison`, a cloud CLI's delete-sync) removes from its destination whatever
 // the source lacks: the destination is read as `rm -rf` reads its paths.
 
-import { isPlain, lex, literalText, renderWord, Unreadable, type Part, type Quote, type Word } from "./shell/lex.ts";
+import { isPlain, lex, literalText, MAX_TEXT_CHARS, renderWord, Unreadable, type Part, type Quote, type Word } from "./shell/lex.ts";
 import { looksLikePowerShell, nestedProgram, POWERSHELLS, walkCmd, walkNestedInput, walkPwsh } from "./shell/pwsh.ts";
 import {
   candidatesOf, deviceInWord, deviceReadPosition, fork, HOME, HOME_PARENT, homeSpelled, interpreterKey, isAnchored, isDeviceWrite, newContext, normalizePath, REMOTE_ELEVATED, resolveFrom,
@@ -69,6 +69,11 @@ export interface AlwaysAskHit {
    * unseen script Full access and No limits would run, but for this reader
    * limit; the card names the fix. */
   unseenWhy?: UnseenWhy;
+  /** `unreadable` only (1.0.10, NOLIMITS-CARDS 1B): the reader itself could not follow this text (a quote, heredoc,
+   * substitution, operator or dialect it does not model), and nothing the reader DID read asks. A value-free class.
+   * Security findings, budgets and a cut card never carry it. Full access and No limits, on a turn they cover, pass it
+   * only after `alwaysAskOpaqueCommand` (the never-list byte scan and both dialects) finds nothing. */
+  readerFailure?: string;
 }
 
 const WHAT: Record<AlwaysAskRule, string> = {
@@ -130,7 +135,137 @@ export function unreadableHit(): AlwaysAskHit {
 /** Preserve security-bearing exceptions even when they share the unreadable rule. */
 function readerFailure(error: Unreadable): AlwaysAskHit {
   if (error.message.endsWith(REMOTE_ELEVATED)) return { rule: "unreadable", what: REMOTE_ELEVATED_WHAT };
-  return hit("unreadable");
+  // 1.0.10 (NOLIMITS-CARDS 1B, the 108-D tags): only the reader's own limits; opaque code findings, device, loader,
+  // indirect, folder and shadow findings and the length cap stay held at every level. A reader budget (depth, nesting,
+  // too many values) is the reader's own limit (A10): the byte scan reads every byte up to MAX_TEXT_CHARS
+  // A script file the reader does not see, by any spelling (`pwsh -File x.ps1`, a script a value names or the text
+  // wrote), and downloaded text, are unseen code, never a reader failure (GrokBuild G1)
+  const security = /encoded|loaded first|loads code|startup|names a catastrophe|names a disk|runs a catastrophe|elevated|runs a script|script file|a script this text wrote|a file a value names|downloaded/i.test(error.message);
+  return { ...hit("unreadable"), ...(RESIDUAL_READER.has(error.reason) && !security ? { readerFailure: error.reason } : {}) };
+}
+
+const RESIDUAL_READER: ReadonlySet<string> = new Set(["quote", "heredoc", "substitution", "operator", "syntax", "escape", "wrapper-option", "dynamic-name", "dynamic-eval", "branch", "pwsh", "dialect", "cmd", "expansion", "depth", "nesting"]);
+
+/** Encoded or downloaded code run by a shell: a small marker scan, no decoding (108-D). */
+export function encodedExecutionHold(text: string): boolean {
+  const encodedShell = /\b(?:powershell|pwsh)(?:\.exe)?\b/i.test(text)
+    && /(?:^|[\s"'])-(?:e|ec|ea|en|enc|enco|encod|encode|encoded|encodedc|encodedco|encodedcom|encodedcomm|encodedcomma|encodedcomman|encodedcommand|encodedarguments)(?=[\s:"']|$)/i.test(text);
+  const decoder = /\bbase64\s+(?:-d|-D|--decode)\b|\b(?:FromBase64String|atob|b64decode)\s*\(/i.test(text);
+  const remote = /\b(?:curl|wget|fetch)(?:\.exe)?\b|\b(?:Invoke-WebRequest|Invoke-RestMethod|iwr|irm|DownloadString)\b/i.test(text);
+  const pipeExecutor = /\|\s*(?:\/(?:[\w.-]+\/)*)?(?:sh|bash|zsh|dash|ksh|fish|sudo|eval|iex|invoke-expression|python3?|node|perl|ruby)\b/i.test(text);
+  const evalExecutor = /\b(?:eval|iex|invoke-expression|exec)\b|\b(?:sh|bash|zsh)\s+-c\s+["']?\$\(/i.test(text);
+  return encodedShell || (decoder || remote) && (pipeExecutor || evalExecutor);
+}
+
+/** Every delete, truncate or sync-delete spelling the never-list scan looks for, in any shell, anywhere in the text. */
+const RAW_DELETE = /(?:^|[^\w-])(?:rm|rmdir|unlink|shred|srm|trash|rimraf|del|erase|rd|ri|remove-item|rmtree|unison|rclone)(?:\.exe)?(?![\w-])|-delete\b|--delete\w*|--remove-source-files|\bclear-content\b|\brm_rf\b|\bremoveSync\b|\brmSync\b|\brmdirSync\b|\bunlinkSync\b|\bremove_dir_all\b|\bremove_file\b|\bos\.(?:remove|unlink|rmdir|RemoveAll|Remove)\b|\bos\.removedirs\b|\bshutil\b|\.(?:unlink|rmdir|rmtree|rm|rm_r|rm_rf|rm_f|remove_entry\w*)\s*\(|\bfs\.(?:rm|rmdir|unlink|promises)\b|\bFileUtils\.(?:rm\w*|remove\w*)|\bFile\.Delete|\bDirectory\.Delete|\.Delete\s*\(|\bunlink\s*\(|\bRemoveAll\b|(?:^|[^<>&|\d])>\s*[/~$%]/i;
+/** Whole-disk programs and device writes, in any shell. */
+const RAW_DISK = /(?:^|[^\w-])(?:mkfs(?:\.\w+)?|wipefs|newfs\w*|fdisk|sfdisk|gdisk|parted|diskpart|format-volume|clear-disk|initialize-disk|blkdiscard|hdparm)(?:\.exe)?(?![\w-])|\bdiskutil\s+(?:secure)?(?:erase|zero|partition|apfs\s+delete|reformat)|\bof\s*=\s*["']?\/dev\/|>\s*["']?\/dev\/(?!null\b|stdout\b|stderr\b|tty\b|fd\/)|\\\\\.\\physicaldrive|(?:^|[^\w-])format(?:\.com)?\s+["']?[a-z]:/i;
+/** Fork-bomb shapes: a function that pipes into itself in the background, `%0|%0`. */
+const RAW_FORK = /([\w:.]+)\s*\(\s*\)\s*\{[^}]*\1\s*\|\s*\1|%0\s*\|\s*%0|\bfork\s*\(\s*\)\s*;?\s*\}?\s*while|while\s*\(?\s*(?:true|1)\s*\)?\s*[;{:]?\s*(?:do\s+)?fork/i;
+/** Code that names the home folder by asking for it (`os.homedir()`, `Path.home()`, `process.env.HOME`): with a delete
+ * anywhere in the same text, it asks as a delete of the home folder (1.0.10). */
+const RAW_HOME_API = /\bhomedir\s*\(|\bPath\.home\s*\(|\bexpanduser\s*\(|\bDir\.home\b|\bhome_dir\s*\(|\bUserHomeDir\s*\(|\bgetenv\s*\(\s*["']?(?:HOME|USERPROFILE)|\benviron\s*(?:\[|\.get\s*\()\s*["'](?:HOME|USERPROFILE)|\bprocess\.env\s*(?:\.|\[\s*["'])(?:HOME|USERPROFILE)\b|\bENV\s*\[\s*["'](?:HOME|USERPROFILE)|\$env:(?:USERPROFILE|HOME)|GetFolderPath|SpecialFolder|\$ENV\{\s*["']?(?:HOME|USERPROFILE)/i;
+/** Spellings of the home folder and the drive root the path reader does not know on its own. */
+const RAW_HOME_WORD = /^(?:~|~\/|\$HOME|\$\{HOME\}|\$env:(?:USERPROFILE|HOME|HOMEDRIVE)|%USERPROFILE%|%HOMEPATH%|%HOMEDRIVE%|%SystemDrive%|%SystemRoot%|%windir%|[a-z]:|[a-z]:[\\/]|[a-z]:[\\/](?:users|windows|program files[^\\/]*)(?:[\\/][^\\/]*)?|\\|\/)(?:[\\/]?\*|[\\/]\.)?[\\/]?$/i;
+
+/** 1.0.10 (NOLIMITS-CARDS fix round): `$'...'` (ANSI-C quoting) written out as bash reads it: `\xHH`, `\NNN`,
+ * `\uHHHH`, `\UHHHHHHHH`, `\cX` and the one-letter escapes. An escape it does not know is kept as its letter. */
+export function decodeAnsiC(text: string): string {
+  const ONE: Record<string, string> = { n: "\n", t: "\t", r: "\r", a: "\x07", b: "\b", e: "\x1b", E: "\x1b", f: "\f", v: "\v" };
+  return text.replace(/\$'((?:[^'\\]|\\[\s\S])*)'/g, (_whole, body: string) => body.replace(/\\(x[0-9a-fA-F]{1,2}|u[0-9a-fA-F]{1,4}|U[0-9a-fA-F]{1,8}|[0-7]{1,3}|c[\s\S]|[\s\S])/g, (_esc, esc: string) => {
+    const lead = esc[0]!;
+    if ((lead === "x" || lead === "u" || lead === "U") && esc.length > 1) {
+      const point = parseInt(esc.slice(1), 16);
+      return point <= 0x10ffff ? String.fromCodePoint(point) : "";
+    }
+    if (/[0-7]/.test(lead)) return String.fromCharCode(parseInt(esc, 8) & 0xff);
+    if (lead === "c" && esc.length === 2) return String.fromCharCode(esc.charCodeAt(1) & 0x1f);
+    return ONE[lead] ?? lead;
+  }));
+}
+
+/** The raw text as a shell would most plainly hand it on: ANSI-C escapes decoded, `${NAME}` written `$NAME` (and
+ * `${NAME:-x}` as `$NAME :-x`), backslash escapes and every quote taken out. Never split a `${...}` apart. */
+export function normalizeRawShell(text: string): string {
+  return decodeAnsiC(text)
+    .replace(/\$\{([A-Za-z_]\w*)\}/g, "$$$1")
+    .replace(/\$\{([A-Za-z_]\w*)(?=[^\w}])/g, "$$$1 ")
+    .replace(/\\([\s\S])/g, "$1")
+    .replace(/["'`]/g, "");
+}
+
+/** 1.0.10 (NOLIMITS-CARDS 1B): the never-list over every byte of a command, with no lexer, so a text the reader could
+ * not follow cannot shorten it. Coarse on purpose: any whole-disk program or device write, any fork-bomb shape, and any
+ * delete verb anywhere together with any word anywhere that names the drive root, the home folder, a system folder or
+ * a volume asks, as the never-list does. Every check runs over the raw text and its normalized copy
+ * (`normalizeRawShell`), so `m"kfs".ext4` and `"${HOME}"` meet the same rows as `mkfs.ext4` and `$HOME`. */
+export function neverListRawScan(text: string): AlwaysAskHit | null {
+  if (text.length > MAX_TEXT_CHARS) return hit("unreadable");
+  const plain = text.replace(/\\(?=[^\\])/g, "").replace(/["'`]/g, "");
+  const texts = [text, normalizeRawShell(text), plain];
+  for (const one of texts) {
+    if (RAW_FORK.test(one)) return hit("fork-bomb");
+    if (RAW_DISK.test(one)) return hit("disk-erase");
+    if (encodedExecutionHold(one)) return hit("unreadable");
+  }
+  if (!texts.some((one) => RAW_DELETE.test(one))) return null;
+  if (texts.some((one) => RAW_HOME_API.test(one))) return hit("delete-home");
+  for (const one of texts.slice(1)) {
+    for (const raw of one.split(/[\s;|&(){}<>,=\[\]]+/)) {
+      if (!raw) continue;
+      // `--target=/`, `of=~`: the value after an option's `=` is a word too (split above); `..` walking above home
+      const word = raw.replace(/^-+[\w-]*:/, "");
+      if (RAW_HOME_WORD.test(word)) return hit("delete-home");
+      if (/(?:^|\/)\.\.(?:\/|$)/.test(word) && /^(?:~|\$HOME)/.test(word)) return hit("delete-home");
+      if (visitor.catastrophic?.(word)) return hit("delete-system-folder");
+    }
+  }
+  return null;
+}
+
+/** 1.0.10 (NOLIMITS-CARDS 1B, fail closed): marks of a text no coarse scan can be trusted to read. A reader-waived
+ * command that carries any of them keeps its card: a parameter expansion, ANSI-C quoting, a command substitution, a
+ * backtick, a program name spelled with a quote or a backslash, a shell branch or loop around rm, mv, dd or mkfs, and
+ * any delete verb at all. A card beats a clever parse. */
+export function opaqueMarker(text: string): string | null {
+  if (/\$\{|\$'|\$\(|`/.test(text)) return "expansion";
+  const normal = normalizeRawShell(text);
+  for (const one of [text, normal]) {
+    if (/\b(?:then|do|else)\b/i.test(one) && /\b(?:rm|mv|dd|mkfs)\b/i.test(one)) return "branch";
+  }
+  for (const statement of text.split(/[;&|\n(){}]|\b(?:then|do|else|elif)\b/)) {
+    const words = statement.trim().split(/\s+/).filter(Boolean);
+    const program = words.find((word) => !/^[A-Za-z_]\w*=/.test(word));
+    if (program && /["'\\]/.test(program)) return "program";
+  }
+  const plain = text.replace(/\\(?=[^\\])/g, "").replace(/["'`]/g, "");
+  if ([text, normal, plain].some((one) => RAW_DELETE.test(one))) return "delete";
+  return null;
+}
+
+/** 1.0.10 (NOLIMITS-CARDS 1B): the reads a reader-waived command must pass first: the never-list byte scan, the
+ * fail-closed marker scan (`opaqueMarker`), both shell readings of the raw text, then each newline-separated statement
+ * on its own in both dialects, so a complete line before a broken one is read as itself. A hit that is not itself a
+ * residual reader failure or an admitted unseen script asks. */
+export function alwaysAskOpaqueCommand(text: string, cwd?: string, home?: string, options: UnseenOptions = {}): AlwaysAskHit | null {
+  const raw = neverListRawScan(text);
+  if (raw) return raw;
+  if (opaqueMarker(text) !== null) return hit("unreadable");
+  const lines = text.split(/\r?\n/).filter((line) => line.trim());
+  for (const piece of lines.length > 1 ? [text, ...lines] : [text]) {
+    for (const shell of [undefined, "pwsh"] as const) {
+      let literal: AlwaysAskHit | null;
+      try {
+        literal = readWhole(piece, cwd, shell, undefined, home, options);
+      } catch (error) {
+        if (!(error instanceof Unreadable)) throw error;
+        literal = readerFailure(error);
+      }
+      if (literal && literal.readerFailure === undefined && literal.unseenScript !== true) return literal;
+    }
+  }
+  return null;
 }
 
 /** Top-level folders the system runs from (macOS, Linux). A delete of one of
@@ -1233,7 +1368,7 @@ export function alwaysAskCommand(text: string | undefined, cwd?: string, mode: "
     // Keep foreign executors held without mistaking Elixir iex for PowerShell.
     const foreignExecutor = foreignExecutorIn(text, shell !== undefined);
     return !found && mode === "command" && foreignExecutor
-      ? hit("unreadable")
+      ? { ...hit("unreadable"), readerFailure: "foreign-executor" }
       : found;
   } catch (error) {
     if (!(error instanceof Unreadable)) throw error;
@@ -1277,7 +1412,7 @@ export function alwaysAskRoutineCommand(text: string | undefined, cwd?: string, 
     return carved.length > 0 ? { hit: null, valueTarget: carved } : { hit: null };
   } catch (error) {
     if (!(error instanceof Unreadable)) throw error;
-    return { hit: error.message.endsWith(REMOTE_ELEVATED) ? { rule: "unreadable", what: REMOTE_ELEVATED_WHAT } : hit("unreadable") };
+    return { hit: readerFailure(error) };
   } finally {
     carved = null;
     carveScope = null;
@@ -1299,6 +1434,7 @@ function readWhole(text: string, cwd: string | undefined, shell?: "pwsh", window
     if (windowsBash) return hit("unreadable");
     const admits = unseenShapeAdmits(text, unseen.paths, cwd, shell, home, options);
     if (admits === true) return { ...hit("unreadable"), unseenScript: true };
+    // (GrokBuild G1: a script outside the admitted shape keeps asking at every level, never tagged as a reader failure)
     return admits === null ? hit("unreadable") : { ...hit("unreadable"), unseenWhy: admits };
   } finally {
     unseen = null;

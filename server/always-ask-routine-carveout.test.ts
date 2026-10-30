@@ -93,7 +93,8 @@ describe("routine carve-out: the verdict", () => {
     expect(verdict.valueTarget).toEqual([{ tool: "a redirect", target: '"$OUT"' }]);
   });
 
-  it("the owner's own turn with the same command still asks", () => {
+  it("the owner's own turn with the same command still asks (1.0.10 1B fail closed: a command substitution keeps the card)", () => {
+    expect(autoVerdict(AUTO, "Bash", VALUE_WRITE, owner(VALUE_WRITE))).toMatchObject({ approve: null, source: "always-ask", rule: "unreadable" });
     expect(autoVerdict(NO_LIMITS, "Bash", VALUE_WRITE, owner(VALUE_WRITE))).toMatchObject({ approve: null, source: "always-ask", rule: "unreadable" });
   });
 
@@ -104,7 +105,9 @@ describe("routine carve-out: the verdict", () => {
   });
 
   it("a peer turn, a cut card, host control and a non-command tool keep the full check", () => {
+    // 1.0.10 (1B fail closed): a command substitution is never waived, so a peer turn keeps the card too
     expect(autoVerdict(NO_LIMITS, "Bash", VALUE_WRITE, routine(VALUE_WRITE, { routineCarveOut: undefined }))).toMatchObject({ source: "always-ask" });
+    expect(autoVerdict(AUTO, "Bash", VALUE_WRITE, routine(VALUE_WRITE, { routineCarveOut: undefined }))).toMatchObject({ source: "always-ask" });
     expect(autoVerdict(NO_LIMITS, "Bash", VALUE_WRITE, routine(VALUE_WRITE, { inputCut: true }))).toMatchObject({ source: "always-ask" });
     expect(autoVerdict(NO_LIMITS, "Bash", VALUE_WRITE, routine(VALUE_WRITE, { scope: "local-computer" }))).toMatchObject({ approve: null });
     expect(autoVerdict(NO_LIMITS, "Bash", VALUE_WRITE, { automated: true, routineLevel: true, routineCarveOut: true })).toMatchObject({ source: "always-ask" });

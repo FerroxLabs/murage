@@ -1,7 +1,8 @@
 // Full access's two per-bot extras, as rules: the owner's own messages from
 // Telegram, Slack and Discord, and setup requests (installing skills,
-// proposing routines, trusting folders). Both are off unless the owner turns
-// them on from the desktop, and both do nothing unless Full access is on.
+// proposing routines, trusting folders). 1.0.10 (NOLIMITS-CARDS r2): the
+// channel option is on unless the owner turns it off; setup requests are off
+// unless the owner turns them on. Both do nothing unless Full access is on.
 // The HTTP wiring is pinned in full-access-options-api.test.ts.
 import { describe, expect, it } from "vitest";
 
@@ -11,6 +12,7 @@ import { fullAccessApprovesSetup, fullAccessOptionsChange } from "./full-access.
 const full = { autoApprove: true, fullAccess: true, alwaysAllow: [] };
 const auto = { autoApprove: true, fullAccess: false, alwaysAllow: [] };
 const channels = { ...full, fullAccessChannelMessages: true };
+const channelsOff = { ...full, fullAccessChannelMessages: false };
 const setup = { ...full, fullAccessSetupRequests: true };
 
 /** A turn started by the owner's own Telegram, Slack or Discord message:
@@ -18,11 +20,12 @@ const setup = { ...full, fullAccessSetupRequests: true };
 const ownerChannel = { unattended: true, automated: true, channelOwner: true } as const;
 
 describe("owner channel messages under Full access", () => {
-  it("still ask by default, exactly as Auto judges an unattended turn", () => {
-    const verdict = autoVerdict(full, "Bash", "cat ~/.zshrc", ownerChannel);
+  it("run under Full access by default; turned off, they ask exactly as Auto judges an unattended turn", () => {
+    expect(autoVerdict(full, "Bash", "ls", ownerChannel).source).toBe("full-access");
+    const verdict = autoVerdict(channelsOff, "Bash", "cat ~/.zshrc", ownerChannel);
     expect(verdict.approve).toBeNull();
     expect(verdict).toEqual(autoVerdict(auto, "Bash", "cat ~/.zshrc", ownerChannel));
-    expect(autoVerdict(full, "Bash", "ls", ownerChannel).source).toBe("unattended-block");
+    expect(autoVerdict(channelsOff, "Bash", "ls", ownerChannel).source).toBe("unattended-block");
   });
 
   it("run under Full access once the owner allows it", () => {
@@ -44,9 +47,10 @@ describe("owner channel messages under Full access", () => {
     expect(autoVerdict(channels, "Bash", "cat ~/.zshrc", { automated: true }).source).toBe("sensitive-guard");
   });
 
-  it("only a real boolean counts: a missing or odd stored value is off", () => {
-    expect(fullAccessCovers({ ...full, fullAccessChannelMessages: "yes" as unknown as boolean }, "owner-channel")).toBe(false);
-    expect(fullAccessCovers(full, "owner-channel")).toBe(false);
+  it("only a stored false turns it off: a missing or odd stored value leaves it on", () => {
+    expect(fullAccessCovers({ ...full, fullAccessChannelMessages: "yes" as unknown as boolean }, "owner-channel")).toBe(true);
+    expect(fullAccessCovers(full, "owner-channel")).toBe(true);
+    expect(fullAccessCovers(channelsOff, "owner-channel")).toBe(false);
     expect(fullAccessCovers(channels, "owner-channel")).toBe(true);
     expect(fullAccessCovers(channels, "other")).toBe(false);
     expect(fullAccessCovers(full, "owner")).toBe(true);
@@ -76,8 +80,9 @@ describe("setup requests under Full access", () => {
     expect(fullAccessApprovesSetup({ ...setup, fullAccessChannelMessages: true }, "other")).toBe(false);
   });
 
-  it("from the owner's channel messages only when both options are on", () => {
-    expect(fullAccessApprovesSetup(setup, "owner-channel")).toBe(false);
+  it("from the owner's channel messages only when both options are on (the channel one by default)", () => {
+    expect(fullAccessApprovesSetup(setup, "owner-channel")).toBe(true);
+    expect(fullAccessApprovesSetup({ ...setup, fullAccessChannelMessages: false }, "owner-channel")).toBe(false);
     expect(fullAccessApprovesSetup({ ...setup, fullAccessChannelMessages: true }, "owner-channel")).toBe(true);
   });
 });

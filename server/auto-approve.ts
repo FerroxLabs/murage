@@ -14,16 +14,18 @@ import { CONNECTED_APPS_SERVER, sameToolGrant } from "../shared/connected-app-na
 import { actionGrantKey, actionGrantRead, actionGrantSet, commandArgument, placeArgumentScan, resolveCall, type GrantCall, type ResolvedCall } from "../shared/app-action-grant.ts";
 import { isStopLineKey, stopFindings, stopLineKey, stopLineKeyCovers, type StopHit } from "./stop-line.ts";
 import { redactSecretsInText } from "./redact.ts";
-import { alwaysAskCommand, alwaysAskNote, alwaysAskRoutineCommand, type CarvedTarget, unreadableHit, type AlwaysAskHit, type UnseenOptions } from "./always-ask.ts";
+import { alwaysAskCommand, alwaysAskOpaqueCommand, alwaysAskNote, decodeAnsiC, alwaysAskRoutineCommand, type CarvedTarget, unreadableHit, type AlwaysAskHit, type UnseenOptions } from "./always-ask.ts";
 import { commandCwdFromToolInput, commandFromToolInput, exactCommandKey, isExactCommandKey, routineExactGrantCovers, type ExactCommand } from "../shared/exact-command.ts";
 import { approvalSummaryIsCut } from "../shared/approval-summary.ts";
 import { SENSITIVE_RULES } from "../shared/sensitive-paths.ts";
-import { globKeyRead } from "../shared/sensitive-globs.ts";
+import { globKeyRead, KEY_SAMPLES } from "../shared/sensitive-globs.ts";
 import { powershellRunner } from "./shell/pwsh.ts";
 import { lex, Unreadable, type Part, type Word } from "./shell/lex.ts";
 import { braceCandidates } from "./shell/walk.ts";
 import { requiredFields } from "./drivers/contracts.ts";
 import { homedir } from "node:os";
+import { lstatSync, opendirSync, realpathSync } from "node:fs";
+import { isAbsolute, join as joinPath, parse as parsePath, resolve as resolvePath } from "node:path";
 import { realPathInOrder, win32Canonical, type PlaceOptions } from "../shared/in-project.ts";
 import { isOwnAlwaysAsk, isOwnComputerRead, isOwnHandlerCarded, isOwnQuiet, isOwnUnasked, ownAlwaysAskByName } from "../shared/own-servers.ts";
 import { APP_LOOKUPS, ownAppTool } from "../shared/app-action-words.ts";
@@ -149,9 +151,12 @@ function matchFirst(rules: readonly RegExp[], text: string): string | null {
  * under a dot folder there (`~/.*rc`, `~/*\/config.toml`, `$HOME/.fu*o/x`): no reader can say which key file that
  * is, so it is held as one. A command the lexer cannot read gives undefined; the always-ask reader holds those.
  */
-export function dequotedShellText(text: string, depth = 0): { text: string; globText: string; homeGlob?: string } | undefined {
+/** The reader-budget hold of `dequotedShellText`: substitutions nested past its depth. */
+export const DEQUOTE_TOO_DEEP = "substitutions nested too deep to read";
+
+export function dequotedShellText(text: string, depth = 0, expand: string[] = []): { text: string; globText: string; homeGlob?: string; expand?: string[] } | undefined {
   // past this depth the text is not read: held, never handed on with its quotes
-  if (depth > 4) return { text: "", globText: "", homeGlob: "substitutions nested too deep to read" };
+  if (depth > 4) return { text: "", globText: "", homeGlob: DEQUOTE_TOO_DEEP };
   let tokens;
   try { tokens = lex(text); } catch (error) {
     if (error instanceof Unreadable) return undefined;
@@ -174,14 +179,14 @@ export function dequotedShellText(text: string, depth = 0): { text: string; glob
         // `${X:-w}`, `${X:+w}`, `${X=w}`: the operand is a value bash may hand on. After `#`, `%`, `/`, `^`, `,` or
         // `:` it is a pattern, a replacement or an offset: its words still meet the rows, its globs match nothing
         const value = /^:?[-=+?]$/.test(part.op ?? "");
-        if (value) homeGlob ??= homeGlobIn(part.word);
+        if (value) homeGlob ??= homeGlobIn(part.word, expand);
         const operand = render(part.word.parts, forGlob);
         return `$${part.name} ${forGlob && !value ? operand.replace(/[*?[\]]/g, "_") : operand} `;
       }
       case "glob": return part.text;
       case "brace": return "";
       case "subst": case "arith": case "procsub": {
-        const inner = dequotedShellText(part.text, depth + 1);
+        const inner = dequotedShellText(part.text, depth + 1, expand);
         if (inner?.homeGlob) homeGlob ??= inner.homeGlob;
         return inner ? ` ${forGlob ? inner.globText : inner.text} ` : ` ${part.text} `;
       }
@@ -190,7 +195,7 @@ export function dequotedShellText(text: string, depth = 0): { text: string; glob
   for (const token of tokens) {
     // an unquoted heredoc body runs its substitutions: the body is read as words of its own
     if (token.kind === "op" && token.heredoc && !token.heredoc.quoted && /\$\(|`/.test(token.heredoc.body)) {
-      const body = dequotedShellText(token.heredoc.body, depth + 1)
+      const body = dequotedShellText(token.heredoc.body, depth + 1, expand)
         ?? { text: "", globText: "", homeGlob: "a heredoc substitution the reader could not read" };
       out.push(body.text); globOut.push(body.globText);
       homeGlob ??= body.homeGlob;
@@ -198,23 +203,28 @@ export function dequotedShellText(text: string, depth = 0): { text: string; glob
     }
     if (token.kind !== "word") continue;
     const word: Word = token.word;
-    homeGlob ??= homeGlobIn(word);
+    homeGlob ??= homeGlobIn(word, expand);
     let candidates: Word[];
     try { candidates = braceCandidates(word); } catch { candidates = [word]; homeGlob ??= "a brace with too many values"; }
     for (const candidate of candidates) { out.push(render(candidate.parts, false)); globOut.push(render(candidate.parts, true)); }
   }
-  return { text: out.join(" "), globText: globOut.join(" "), ...(homeGlob ? { homeGlob } : {}) };
+  return { text: out.join(" "), globText: globOut.join(" "), ...(homeGlob ? { homeGlob } : {}), ...(depth === 0 && expand.length ? { expand } : {}) };
 }
 
-/** A glob or brace in the first segment under the home folder, or in any segment at or below a dot folder there. */
-function homeGlobIn(word: Word): string | undefined {
+/** A glob or brace in the first segment under the home folder, or in any segment at or below a dot folder there.
+ * 1.0.10 (NOLIMITS-CARDS 1D/A4): a glob in a dot folder no key row names is not held here; its pattern is added to
+ * `expand`, and the key guard expands it on disk (`AutoContext.globExpand`) and meets every match with the key rows. */
+function homeGlobIn(word: Word, expand?: string[]): string | undefined {
   const [first] = word.parts;
   if (!first) return undefined;
   const homeVarNames = new Set(["HOME", "USERPROFILE"]);
   let text = "";
   let anchored = first.kind === "tilde" || (first.kind === "var" && homeVarNames.has(first.name));
   let start = anchored ? 0 : -1;
-  for (const part of word.parts) {
+  let dotGlob = false;
+  for (const [k, part] of word.parts.entries()) {
+    // the home anchor itself (`~`, `$HOME`) is not a segment under home (1.0.10)
+    if (k === 0 && anchored) continue;
     if (part.kind === "lit") {
       text += part.text;
       if (!anchored) {
@@ -227,10 +237,95 @@ function homeGlobIn(word: Word): string | undefined {
     if (part.kind !== "glob" && part.kind !== "brace") { text += "\u0001"; continue; }
     const under = text.slice(start).replace(/^[\\/]+/, "");
     const segments = under.split(/[\\/]+/);
-    if (segments.length <= 1 || segments.slice(0, -1).some((segment) => segment.startsWith("."))) return `a ${part.kind} in a path under the home folder`;
+    // 1.0.10 (NOLIMITS-CARDS 1D): a glob inside a dot folder holds only when that folder could hold a key file. A
+    // glob in the first segment, or after a part no reader can name, still holds; any other glob (`~/.mybot/*.md`)
+    // is judged by globKeyRead against every key row, as a glob anywhere else is.
+    if (segments.length <= 1) return `a ${part.kind} in a path under the home folder`;
+    const folders = segments.slice(0, -1);
+    if (folders.some((segment) => segment.startsWith("."))) {
+      if (folders.some((segment) => segment.includes("\u0001")) || keyFolderPrefix(folders)) return `a ${part.kind} in a path under the home folder`;
+      // a brace there is a list of literal names the rows read; a glob is expanded on disk
+      if (part.kind === "glob" || part.alts.some((alt) => alt.parts.some((one) => one.kind === "glob"))) dotGlob = true;
+    }
     text += "\u0001";
   }
+  if (!dotGlob) return undefined;
+  const pattern = globPattern(word);
+  if (pattern === undefined || expand === undefined) return "a glob in a path under the home folder";
+  expand.push(pattern);
   return undefined;
+}
+
+/** A home-anchored word as a glob pattern (`~/.mybot/*.md`), or undefined when a part is not literal text or a glob. */
+function globPattern(word: Word): string | undefined {
+  let out = "";
+  for (const [k, part] of word.parts.entries()) {
+    if (part.kind === "lit" || part.kind === "glob") out += part.text;
+    else if (k === 0 && part.kind === "tilde" && !part.user) out += "~";
+    else if (k === 0 && part.kind === "var" && !part.word && (part.name === "HOME" || part.name === "USERPROFILE")) out += "~";
+    else return undefined;
+  }
+  return out;
+}
+
+/** 1.0.10 (NOLIMITS-CARDS 1B): the key guard's copy of a command the lexer could not read (a reader-waived command
+ * reaches the guard only at Full access and No limits). Quotes and backslashes are taken out and each `{a,b}` is
+ * written out both ways, so `cat ~/.ss"h/id_rsa` with a stray quote meets the same rows; a glob or brace under home
+ * is held by the same rule as `homeGlobIn`. Coarse on purpose: it can only hold more. */
+export function rawDequotedText(text: string, pwsh = false): { text: string; globText: string; homeGlob?: string; expand?: string[] } {
+  // PowerShell: a backslash is a path separator and the backtick the escape (GrokBuild G2)
+  // bash: `$'\x2enetrc'` is decoded before its backslashes go (fix round, Astra High 2)
+  const plain = (pwsh ? text.replace(/`(.)/g, "$1").replace(/\\/g, "/") : decodeAnsiC(text).replace(/\\(.)/g, "$1")).replace(/["'`]/g, "").replace(/\$\{(HOME|USERPROFILE)\}/g, "$$$1");
+  const words: string[] = [];
+  let homeGlob: string | undefined;
+  const expand: string[] = [];
+  for (const word of plain.split(/[\s;|&()<>]+/)) {
+    if (!word) continue;
+    let expanded = [word];
+    for (let k = 0; k < 4 && expanded.some((one) => /\{[^{}]*,[^{}]*\}/.test(one)) && expanded.length < 256; k++) {
+      expanded = expanded.flatMap((one) => {
+        const m = /\{([^{}]*,[^{}]*)\}/.exec(one);
+        return m ? m[1]!.split(",").map((alt) => one.slice(0, m.index) + alt + one.slice(m.index + m[0].length)) : [one];
+      });
+    }
+    if (/[{}]/.test(expanded.join(" ")) && /^(?:~|\$HOME|\$USERPROFILE|\/Users\/|\/home\/|\/root|[A-Za-z]:[\\/]Users)/i.test(word)) homeGlob ??= "a brace in a path under the home folder";
+    for (const one of expanded) {
+      words.push(one);
+      homeGlob ??= rawHomeGlob(one, expand);
+    }
+  }
+  const joined = words.join(" ");
+  return { text: joined, globText: joined, ...(homeGlob ? { homeGlob } : {}), ...(expand.length ? { expand } : {}) };
+}
+
+/** `homeGlobIn` over plain text: a glob in the first segment under home, or inside a dot folder a key row names. */
+function rawHomeGlob(word: string, expand: string[]): string | undefined {
+  const home = /^(?:~|\$HOME|\$USERPROFILE|\$env:USERPROFILE|%USERPROFILE%|\/Users\/[^/\\]+|\/home\/[^/\\]+|\/root|[A-Za-z]:[\\/]Users[\\/][^\\/]+)(?=[\\/]|$)/i.exec(word);
+  if (!home) return undefined;
+  const segments = word.slice(home[0].length).replace(/^[\\/]+/, "").split(/[\\/]+/);
+  const at = segments.findIndex((segment) => /[*?[]/.test(segment));
+  if (at < 0) return undefined;
+  if (at === 0) return "a glob in a path under the home folder";
+  const folders = segments.slice(0, at);
+  if (!folders.some((segment) => segment.startsWith("."))) return undefined;
+  if (keyFolderPrefix(folders)) return "a glob in a path under the home folder";
+  // a dot folder no key row names: expanded on disk by the key guard (A4)
+  expand.push(`~/${segments.join("/")}`);
+  return undefined;
+}
+
+/** Home-anchored key rows, as their folder segments under home (`~/.ssh/**` gives [".ssh"]), case-folded. */
+const HOME_KEY_FOLDERS: readonly string[][] = KEY_SAMPLES
+  .filter((sample) => sample.segments[0] === "~")
+  .map((sample) => sample.segments.slice(1, -1).map((segment) => segment.toLowerCase()));
+
+/** The folders a glob sits in, under home, lead to or lie inside a folder some key row names. */
+function keyFolderPrefix(folders: readonly string[]): boolean {
+  const mine = folders.map((segment) => segment.toLowerCase());
+  return HOME_KEY_FOLDERS.some((key) => {
+    const n = Math.min(key.length, mine.length);
+    return n > 0 && key.slice(0, n).every((segment, k) => segment === mine[k]);
+  });
 }
 
 export function looksSensitive(text: string): boolean {
@@ -449,15 +544,16 @@ export function hasNoLimits(bot: AutoApprover | null | undefined): boolean {
  * a turn whose origin could not be proven. */
 export type FullAccessOrigin = "owner" | "owner-channel" | "routine" | "other";
 
-/** Does Full access cover a turn from this origin? The owner's channel
- * messages only when the bot's option says so. A routine run is covered when
+/** Does Full access cover a turn from this origin? The owner's own channel
+ * DMs unless the owner turned the bot's option off. A routine run is covered when
  * the level it is judged at is Full access or No limits: the caller has
  * already applied the routine's level to `bot`, so the flags ARE that level.
  * Everything else never. */
 export function fullAccessCovers(bot: AutoApprover | null | undefined, origin: FullAccessOrigin): boolean {
   if (!hasFullAccess(bot)) return false;
   if (origin === "owner" || origin === "routine") return true;
-  return origin === "owner-channel" && bot?.fullAccessChannelMessages === true;
+  // 1.0.10 (NOLIMITS-CARDS r2): on unless the owner turned it off
+  return origin === "owner-channel" && bot?.fullAccessChannelMessages !== false;
 }
 
 /** Why a verdict landed the way it did. `unattended-block` exists only in
@@ -538,6 +634,8 @@ export interface AutoVerdict {
   /** Plain words for the held card: what the bot is about to do and why it
    * stopped (the stop line's `what`). */
   note?: string;
+  /** 1.0.10 (r5): for an unreadable hold, the value-free reader class (a lexer reason, `raw-scan`, `held`) for the log. */
+  reader?: string;
   /** Set only on an approval of a scheduled or manual routine run's command
    * that went through under the routine carve-out: a write or delete whose
    * target is held in a value: each tool and target expression it passed
@@ -606,6 +704,11 @@ export interface AutoContext {
    *  with the cause at every level, as any call that could not be read whole. */
   envUnread?: string;
   envUnchecked?: import("../shared/mount-identity.ts").ExecEnv["unchecked"];
+  /** 1.0.10 (NOLIMITS-CARDS A4): a bounded on-disk glob expansion for the key guard (index.ts: no `**`, at most
+   * 2,000 entries, each match given with its real path too). Null for an error or a result over budget. A leading
+   * `~/` stands for this computer's home folder. Unset (tests that do not pass it, the relayed computer), a glob in a
+   * home dot folder holds as a key read. */
+  globExpand?: (pattern: string, cwd?: string) => readonly string[] | null;
   /** the turn was started by an outside event, with nobody at the keyboard */
   unattended?: boolean;
   /** the request controls the user's active desktop */
@@ -843,7 +946,7 @@ function askReasonClass(verdict: AutoVerdict): string {
 }
 
 /** One ask line per bot/tool/class/minute; the next line reports suppressed repeats. */
-function logAsked(bot: AutoApprover, tool: string, verdict: AutoVerdict): void {
+function logAsked(bot: AutoApprover, tool: string, verdict: AutoVerdict, context?: AutoContext): void {
   if (verdict.approve !== null) return;
   const botId = bot.id && /^[\w-]{1,128}$/.test(bot.id) ? bot.id : "unknown";
   const toolName = /^[a-zA-Z][\w.:-]{0,127}$/.test(tool) ? tool : "unknown";
@@ -851,7 +954,12 @@ function logAsked(bot: AutoApprover, tool: string, verdict: AutoVerdict): void {
   const previous = askedWindows.get(key);
   if (previous && now - previous.at < ASK_LOG_MS && now >= previous.at) { previous.suppressed++; return; }
   askedWindows.set(key, { at: now, suppressed: 0 });
-  console.info(`approvals: asked bot=${botId} tool=${toolName} reason=${reason} suppressed=${previous?.suppressed ?? 0}`);
+  // 1.0.10 (NOLIMITS-CARDS r5): who started the turn and what kind of command it was, value-free, so a report can
+  // tell an owner's turn from a webhook from the log alone
+  const origin = fullAccessOriginOf(context);
+  const cmd = !isCommandTool(tool) && context?.exactCommand === undefined ? "none" : isPowerShellTool(tool) || context?.call?.commandShell === "pwsh" ? "pwsh" : "shell";
+  const reader = verdict.reader ? ` reader=${verdict.reader}` : "";
+  console.info(`approvals: asked bot=${botId} tool=${toolName} reason=${reason} origin=${origin} unattended=${context?.unattended ? 1 : 0} cmd=${cmd}${reader} suppressed=${previous?.suppressed ?? 0}`);
 }
 
 export function autoVerdict(bot: AutoApprover, tool: string, summary: string, context?: AutoContext): AutoVerdict {
@@ -870,7 +978,7 @@ export function autoVerdict(bot: AutoApprover, tool: string, summary: string, co
       console.error(`auto-approve: verdict failed (${error instanceof Error ? error.name : typeof error}), asking${error instanceof Error && error.stack ? `\n${error.stack.split("\n").slice(1, 6).join("\n")}` : ""}`);
     } catch { /* the ask stands */ }
   }
-  try { logAsked(bot, tool, verdict); } catch { /* the verdict stands */ }
+  try { logAsked(bot, tool, verdict, context); } catch { /* the verdict stands */ }
   return verdict;
 }
 
@@ -923,6 +1031,7 @@ function autoVerdictOf(
         ? unreadableHit()
         : alwaysAskCommand(summary, cwd, commandTool ? "command" : "text", shell, windowsBash, home, unseen);
   }
+  const rawCommands = text === undefined ? [] : [text];
   if (!catastrophe || catastrophe.unseenScript === true || catastrophe.rule === "unreadable") {
     // A command a wrapper or an MCP tool carries (Fuigo's `use_tool` around the cloud computer's exec) is judged like
     // the engine's own shell tool asking: the card title is the model's, the command inside is what runs.
@@ -930,6 +1039,7 @@ function autoVerdictOf(
     // unless it too is only an unseen script.
     const innerCommand = commandArgument(resolvedCall.kind === "engine" || resolvedCall.kind === "mcp" ? resolvedCall.input : context?.call?.toolCall?.input);
     if (innerCommand !== undefined && innerCommand !== text) {
+      rawCommands.push(innerCommand);
       const inner = alwaysAskCommand(innerCommand, cwd, "command", shell, windowsBash, home, unseen);
       if (inner && (!catastrophe || inner.unseenScript !== true)) catastrophe = inner;
     }
@@ -943,10 +1053,32 @@ function autoVerdictOf(
   // its unseen script asks there, as in 1.0.8
   if (catastrophe?.unseenScript === true && context?.scope === "local-computer") catastrophe = { ...unreadableHit(), unseenWhy: "relayed" };
   const unseenCovered = catastrophe?.unseenScript === true && fullAccessCovers(bot, fullAccessOriginOf(context));
-  if (catastrophe && !unseenCovered) return { approve: null, source: "always-ask", rule: catastrophe.rule, note: alwaysAskNote(catastrophe) };
+  // 1.0.10 (NOLIMITS-CARDS 1B, 108-D restored): Unreadable is our bug, never a hold. At Full access and No limits, on a
+  // turn they cover, a text the reader could not follow (and in which nothing it did read asks) does not hold, once the
+  // engine's whole command is in hand and every raw text passes the never-list byte scan and both shell readings
+  // (alwaysAskOpaqueCommand). The key guard and, at Full access, the stop line still read it below: an unparseable
+  // line with a delete verb is a stop-line card at Full access (ruling (d)). A cut card, a cut call and a call whose
+  // identity or contract is not proven keep the hold. Ask and Auto keep it too.
+  const readerWaived = catastrophe?.readerFailure !== undefined && commandTool && text !== undefined
+    && fullAccessCovers(bot, fullAccessOriginOf(context)) && context?.inputCut !== true && context?.call?.truncated !== true
+    && context?.scope !== "local-computer"
+    && (context?.call === undefined || ((resolvedCall.kind === "engine" || resolvedCall.kind === "mcp")
+      && requiredFields(context.call.engine, resolvedCall, context.call).ok));
+  const readerClass = catastrophe?.readerFailure;
+  if (readerWaived) {
+    catastrophe = null;
+    for (const raw of rawCommands) {
+      catastrophe = alwaysAskOpaqueCommand(raw, cwd, home, unseen);
+      if (catastrophe) break;
+    }
+  }
+  if (catastrophe && !unseenCovered) {
+    const reader = catastrophe.rule !== "unreadable" ? undefined : readerWaived ? "raw-scan" : catastrophe.readerFailure ?? (readerClass ? readerClass : "held");
+    return { approve: null, source: "always-ask", rule: catastrophe.rule, note: alwaysAskNote(catastrophe), ...(reader ? { reader } : {}) };
+  }
   // a carved command is guarded on its whole text too, so a key or a
   // destructive step past the card's cut summary still holds
-  const verdict = verdictPastAlwaysAsk(bot, tool, summary, context, windowsBash?.length ? [text ?? summary, ...windowsBash].join("\n") : valueTarget !== undefined ? text : undefined, windowsBash);
+  const verdict = verdictPastAlwaysAsk(bot, tool, summary, context, windowsBash?.length ? [text ?? summary, ...windowsBash].join("\n") : valueTarget !== undefined || readerWaived ? text : undefined, windowsBash, readerWaived ? rawCommands : undefined);
   return valueTarget !== undefined && verdict.approve ? { ...verdict, valueTarget } : verdict;
 }
 
@@ -961,12 +1093,12 @@ const OWN_ALWAYS_ASK_CARDS: ReadonlySet<AutoVerdictSource> = new Set<AutoVerdict
  * allowance, no routine grant. Auto mode's own answer is the same as for any
  * tool. A card it raises offers no grant (source always-ask); a guard keeps its
  * name. Full access keeps its contract and its grants. */
-function verdictPastAlwaysAsk(bot: AutoApprover, tool: string, summary: string, context: AutoContext | undefined, wholeText?: string, windowsBash?: readonly string[]): AutoVerdict {
+function verdictPastAlwaysAsk(bot: AutoApprover, tool: string, summary: string, context: AutoContext | undefined, wholeText?: string, windowsBash?: readonly string[], waived?: readonly string[]): AutoVerdict {
   const own = fullAccessCovers(bot, fullAccessOriginOf(context)) ? undefined : ownAlwaysAskOf(tool, resolveCall(context?.call), context?.call);
-  if (!own) return verdictWithGrants(bot, tool, summary, context, wholeText, windowsBash);
+  if (!own) return verdictWithGrants(bot, tool, summary, context, wholeText, windowsBash, waived);
   const ungranted: AutoApprover = { ...bot, alwaysAllow: undefined };
   const stripped: AutoContext | undefined = context && { ...context, taskAllowanceKeys: undefined, stopAllowedForTask: undefined, routineAllow: undefined };
-  const verdict = verdictWithGrants(ungranted, tool, summary, stripped, wholeText, windowsBash);
+  const verdict = verdictWithGrants(ungranted, tool, summary, stripped, wholeText, windowsBash, waived);
   if (verdict.approve || !OWN_ALWAYS_ASK_CARDS.has(verdict.source)) return verdict;
   return { approve: null, source: "always-ask", rule: `own-always-ask ${own}`, note: OWN_ALWAYS_ASK_NOTE };
 }
@@ -981,7 +1113,156 @@ function fullAccessOriginOf(context: AutoContext | undefined): FullAccessOrigin 
     : "owner";
 }
 
-function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, context: AutoContext | undefined, wholeText?: string, windowsBash?: readonly string[]): AutoVerdict {
+/** 1.0.10 (NOLIMITS-CARDS A4): a glob in a home dot folder no key row names (`~/.mybot/*.md`) is expanded on disk, a
+ * bounded expansion the caller supplies (`AutoContext.globExpand`), and every match, links followed, meets the key
+ * rows. A key match, an expansion that fails or runs over its budget, and a caller with no expansion hold. */
+function expandedKeyHit(patterns: readonly string[], context: AutoContext | undefined): string | null {
+  const held = "a glob in a path under the home folder could name a key file";
+  const expandGlob = context?.globExpand;
+  if (!expandGlob || context?.scope === "local-computer") return held;
+  const home = context?.promptFacts?.home;
+  for (const pattern of patterns) {
+    if (pattern.includes("**")) return held;
+    let matches: readonly string[] | null;
+    try { matches = expandGlob(home && pattern.startsWith("~/") ? `${home.replace(/[\\/]+$/, "")}${pattern.slice(1)}` : pattern, context?.commandCwd); } catch { return held; }
+    if (matches === null) return held;
+    for (const match of matches) {
+      const rule = matchFirst(SENSITIVE, match);
+      if (rule) return rule;
+    }
+  }
+  return null;
+}
+
+/** At most this many entries from one expansion (A4); more holds. */
+export const GLOB_EXPAND_MAX = 2000;
+
+/** Fix round (Astra Medium 7): the walk's own budgets. Past any of them the expansion gives null, which holds. */
+export const GLOB_VISIT_MAX = 5000;
+export const GLOB_EXPAND_MS = 50;
+export interface GlobBudget { visits: number; matches: number; ms: number }
+
+/** One path segment as a matcher, or null when it holds no glob. `*` and `?` never cross a separator; a leading dot is
+ * matched too (more matches can only hold more). An unclosed `[` is literal. */
+function segmentMatcher(segment: string): RegExp | null {
+  if (!/[*?[]/.test(segment)) return null;
+  let out = "";
+  for (let k = 0; k < segment.length; k++) {
+    const ch = segment[k]!;
+    if (ch === "*") { out += "[^/\\\\]*"; continue; }
+    if (ch === "?") { out += "[^/\\\\]"; continue; }
+    if (ch === "[") {
+      let at = k + 1;
+      if (segment[at] === "!" || segment[at] === "^") at++;
+      if (segment[at] === "]") at++;
+      const close = segment.indexOf("]", at);
+      if (close !== -1) {
+        let body = segment.slice(k + 1, close);
+        const negate = body.startsWith("!") || body.startsWith("^");
+        if (negate) body = body.slice(1);
+        out += `[${negate ? "^" : ""}${body.replace(/[\\\]^]/g, (c) => `\\${c}`)}]`;
+        k = close;
+        continue;
+      }
+    }
+    out += ch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+  return new RegExp(`^${out}$`, process.platform === "win32" ? "i" : "");
+}
+
+/** 1.0.10 (NOLIMITS-CARDS A4; fix round, Astra Medium 7): the on-disk expansion index.ts hands the key guard. A
+ * bounded walk, one directory read per glob segment, read entry by entry: no `**`, at most GLOB_VISIT_MAX entries
+ * looked at, GLOB_EXPAND_MAX matches and GLOB_EXPAND_MS of time, each match given as spelled and at its real place
+ * (links followed). A link that cannot be followed, a folder that cannot be read, an error or any budget spent gives
+ * null, which holds. A leading `~/` is this computer's home folder. */
+export function boundedGlobExpand(pattern: string, cwd?: string, budget: GlobBudget = { visits: GLOB_VISIT_MAX, matches: GLOB_EXPAND_MAX, ms: GLOB_EXPAND_MS }): readonly string[] | null {
+  if (pattern.includes("**")) return null;
+  const joined = pattern.startsWith("~/") ? `${homedir().replace(/[\\/]+$/, "")}/${pattern.slice(2)}` : pattern;
+  const spelled = process.platform === "win32" ? joined.replace(/\\/g, "/") : joined;
+  if (!isAbsolute(spelled) && !cwd) return null;
+  const full = isAbsolute(spelled) ? spelled : resolvePath(cwd ?? "/", spelled);
+  const root = parsePath(full).root;
+  const segments = full.slice(root.length).split(/[\\/]+/).filter(Boolean);
+  const started = Date.now();
+  let visits = 0;
+  const missing = (error: unknown) => ["ENOENT", "ENOTDIR"].includes(String((error as { code?: unknown })?.code));
+  try {
+    let current = [root];
+    for (const segment of segments) {
+      const matcher = segmentMatcher(segment);
+      const next: string[] = [];
+      for (const dir of current) {
+        if (!matcher) { next.push(joinPath(dir, segment)); continue; }
+        let handle;
+        try { handle = opendirSync(dir); } catch (error) { if (missing(error)) continue; return null; }
+        try {
+          for (let entry = handle.readSync(); entry !== null; entry = handle.readSync()) {
+            if (++visits > budget.visits || Date.now() - started > budget.ms) return null;
+            if (!matcher.test(entry.name)) continue;
+            next.push(joinPath(dir, entry.name));
+            if (next.length > budget.matches) return null;
+          }
+        } finally {
+          handle.closeSync();
+        }
+      }
+      current = next;
+      if (!current.length) return [];
+    }
+    const out: string[] = [];
+    for (const match of current) {
+      try { lstatSync(match); } catch (error) { if (missing(error)) continue; return null; }
+      out.push(match);
+      // a link that cannot be followed throws here: held
+      const real = realpathSync.native(match);
+      if (real !== match) out.push(real);
+    }
+    return out.length > budget.matches ? null : out;
+  } catch {
+    return null;
+  }
+}
+
+type DequotedRead = { text: string; globText: string; homeGlob?: string; expand?: string[] };
+/** One text for the key guard: as bash hands it on, or its quote-stripped copy when the lexer cannot read it. With
+ * `deepFallback`, a read held only for its nesting depth is joined by the quote-stripped copy of the whole text, and the
+ * depth itself no longer holds. */
+function dequotedRead(part: string, deepFallback: boolean): DequotedRead {
+  const read = dequotedShellText(part);
+  if (!read) return rawDequotedText(part);
+  if (!deepFallback || read.homeGlob !== DEQUOTE_TOO_DEEP) return read;
+  const raw = rawDequotedText(part);
+  const expand = [...(read.expand ?? []), ...(raw.expand ?? [])];
+  return { text: `${read.text}\n${raw.text}`, globText: `${read.globText}\n${raw.globText}`, ...(raw.homeGlob ? { homeGlob: raw.homeGlob } : {}), ...(expand.length ? { expand } : {}) };
+}
+
+/** File-edit tools whose cut part is the file's content, not a path (1.0.10 A3). */
+const FILE_EDIT_TOOLS: ReadonlySet<string> = new Set(["write", "edit", "multiedit", "notebookedit"]);
+/** The cut markers a driver writes into a value it shortened. */
+const CUT_MARK = /…\[\d+ bytes more\]|\[truncated/;
+
+/** 1.0.10 (NOLIMITS-CARDS 1C/A3): a cut call whose cut part cannot be a path this computer reads. */
+function cutCallReadable(tool: string, context: AutoContext | undefined, resolved: ResolvedCall): boolean {
+  if (isCommandTool(tool)) return false;
+  // (b) Murage's own connected-apps workbench, on its proven own mount
+  if (resolved.kind === "mcp" && resolved.own && /(?:^|_)REMOTE_WORKBENCH$/i.test(resolved.tool)) return true;
+  // (a) a file edit (the engine's own edit tools, an ACP edit) with no command field, whose path field was read whole;
+  // never an MCP tool, whatever it is called
+  if (resolved.kind === "mcp" || resolved.kind === "unproven" || /^mcp__/i.test(tool)) return false;
+  const name = resolved.kind === "engine" ? resolved.name.toLowerCase() : bareToolName(tool);
+  const edit = FILE_EDIT_TOOLS.has(name) || FILE_EDIT_TOOLS.has(bareToolName(tool)) || context?.call?.toolKind === "edit";
+  if (!edit) return false;
+  const input = resolved.kind === "engine" ? resolved.input : context?.call?.toolCall?.input;
+  if (commandArgument(input) !== undefined) return false;
+  const body = input && typeof input === "object" && !Array.isArray(input) ? input as Record<string, unknown> : undefined;
+  const path = body ? ["file_path", "path", "notebook_path"].map((key) => body[key]).find((value) => typeof value === "string" && value.trim()) as string | undefined : undefined;
+  if (path !== undefined) return !CUT_MARK.test(path);
+  return (context?.realPaths?.length ?? 0) > 0;
+}
+
+/** `waived` (1.0.10 1B, GrokBuild G2): the raw texts of a reader-waived command; the key guard always reads their
+ * dequoted fallback copy too, in either shell. */
+function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, context: AutoContext | undefined, wholeText?: string, windowsBash?: readonly string[], waived?: readonly string[]): AutoVerdict {
   // Full access raises almost no card — not the destructive guard, not the
   // host-control guard — for a turn the owner started. It still stops at the
   // stop line and the key guard (below). A turn started by a webhook, a
@@ -1021,7 +1302,12 @@ function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, con
   const unread = context?.envUnread ? `${U20_WORDS}: ${context.envUnread}`
     : context?.envUnchecked && !(context.fullAccessOrigin === "owner" && hasFullAccess(bot)) ? `${U20_WORDS}: ${context.envUnchecked.reason === "launch-failed" ? "Murage could not start the shell to check its environment" : "the environment check took too long"}`
     : pinUnknown ? `${U19_WORDS}: ${pinUnknown}`
-    : context?.call?.truncated ? "the call was cut before it could be checked"
+    // 1.0.10 (NOLIMITS-CARDS 1C, narrowed by A3): at Full access and No limits, on a turn they cover, a cut call is not
+    // held for what nobody read only where the cut part cannot be a path this computer reads: a file edit whose path
+    // was read whole (the cut part is the file's content), and Murage's own connected-apps workbench (its code runs in
+    // the Flux sandbox, never here). The key guard below still reads every part it has. No grant is ever made from a
+    // cut call (approvalKey, actionGrantRead). Every other cut call, any command, and `scan.cut` keep the hold.
+    : context?.call?.truncated && !(fullAccessCovers(bot, origin) && cutCallReadable(tool, context, resolved)) ? "the call was cut before it could be checked"
     : scan.cut ? "the call's arguments run past what the key guard reads"
     : resolved.kind === "unproven" ? `the tool this runs cannot be proven: ${resolved.why}`
     : grantRead?.unread ? `Murage could not read every action in this call: ${grantRead.unread}`
@@ -1035,14 +1321,21 @@ function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, con
   const commandGlobText = isCommandTool(tool) || commandParts.length || wholeText !== undefined ? [isCommandTool(tool) ? summary : "", ...commandParts, wholeText ?? "", context?.commandText ?? ""].join("\n") : "";
   // 1.0.7: the same rows over the command as bash hands it on (quotes removed, braces multiplied out), and a glob
   // or brace that picks a home folder entry, which no reader can name
-  const dequoted = pinShell === "pwsh" && !windowsBash?.length || !commandGlobText.trim() ? undefined : (() => {
+  const dequoted = (pinShell === "pwsh" && !windowsBash?.length || !commandGlobText.trim()) && !waived?.length ? undefined : (() => {
     // each text on its own: a card summary cut mid-quote must not hide the engine's whole command
-    const reads = (pinShell === "pwsh" ? windowsBash ?? [] : [isCommandTool(tool) ? summary : "", ...commandParts, wholeText ?? "", context?.commandText ?? ""]).filter((part) => part.trim()).map((part) => dequotedShellText(part));
+    // fix round (Astra Critical 5): at Full access and No limits, on a turn they cover, a readable text whose
+    // substitutions nest past the reader's depth is not a key read for that alone: its quote-stripped copy meets the
+    // rows instead. Ask and Auto keep the hold.
+    const deepFallback = fullAccessCovers(bot, origin);
+    const reads = (pinShell === "pwsh" && !windowsBash?.length || !commandGlobText.trim() ? [] : (pinShell === "pwsh" ? windowsBash ?? [] : [isCommandTool(tool) ? summary : "", ...commandParts, wholeText ?? "", context?.commandText ?? ""]).filter((part) => part.trim()).map((part) => dequotedRead(part, deepFallback)));
+    // a reader-waived command: its fallback copy is read whatever the shell (G2)
+    for (const raw of waived ?? []) reads.push(rawDequotedText(raw, pinShell === "pwsh"));
     const read = reads.filter((one): one is NonNullable<typeof one> => one !== undefined);
-    return read.length ? { text: read.map((one) => one.text).join("\n"), globText: read.map((one) => one.globText).join("\n"), homeGlob: read.find((one) => one.homeGlob)?.homeGlob } : undefined;
+    return read.length ? { text: read.map((one) => one.text).join("\n"), globText: read.map((one) => one.globText).join("\n"), homeGlob: read.find((one) => one.homeGlob)?.homeGlob, expand: read.flatMap((one) => one.expand ?? []) } : undefined;
   })();
   const keyHit = (): string | null => unread ?? localHold ?? matchFirst(SENSITIVE, keyText) ?? globKeyRead(commandGlobText)
-    ?? (dequoted ? matchFirst(SENSITIVE, dequoted.text) ?? globKeyRead(dequoted.globText) ?? (dequoted.homeGlob ? `${dequoted.homeGlob} could name a key file` : null) : null);
+    ?? (dequoted ? matchFirst(SENSITIVE, dequoted.text) ?? globKeyRead(dequoted.globText) ?? (dequoted.homeGlob ? `${dequoted.homeGlob} could name a key file` : null) : null)
+    ?? (dequoted?.expand?.length ? expandedKeyHit(dequoted.expand, context) : null);
   const sensitive = destructive ? null : keyHit();
   const sensitiveSource: AutoVerdictSource = unread ? "unread-call" : "sensitive-guard";
   // The stop line outranks every mode, Full access included: deleting
@@ -1052,9 +1345,10 @@ function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, con
   // recipient (never the bare tool name, which is why an older `Bash:rm` or
   // `mcp__stripe__create_charge` grant cannot reach it). A turn nobody is
   // at uses neither: it holds the card, as every other unattended grant does.
-  // No limits lifts the stop line for exactly the turns Full access covers;
-  // a webhook, routine or someone else's turn is judged as before.
-  const stop = origin !== "routine" && hasNoLimits(bot) && fullAccessCovers(bot, origin) ? null : context?.stopLine ?? null;
+  // No limits lifts the stop line for exactly the turns Full access covers,
+  // the owner's own routine runs at a No limits level included (1.0.10 A5);
+  // a webhook or someone else's turn is judged as before. Full access keeps it.
+  const stop = hasNoLimits(bot) && fullAccessCovers(bot, origin) ? null : context?.stopLine ?? null;
   const routineGrants = context?.routineLevel === true && !context.unattended && context.scope !== "local-computer"
     ? context.routineAllow ?? []
     : [];

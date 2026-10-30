@@ -37,9 +37,10 @@ describe("the follow-through turn of the owner's own routine", () => {
     expect(wake("ask", "unlimited").approve).toBeNull();
   });
 
-  it("the stop line and the key guard still hold at No limits on a routine turn", () => {
+  it("the key guard still holds at No limits on a routine turn; the stop line holds at Full access (No limits lifts it, 1.0.10 A5)", () => {
     const stop: StopHit = { kind: "delete", place: "/Users/x/Documents", what: "Deletes files outside its folder" };
-    expect(wake("unlimited", "unlimited", { stopLine: stop })).toMatchObject({ approve: null, source: "stop-line" });
+    expect(wake("full", "full", { stopLine: stop })).toMatchObject({ approve: null, source: "stop-line" });
+    expect(wake("unlimited", "unlimited", { stopLine: stop })).toMatchObject({ source: "no-limits" });
     const key = routineTurnApproval({ bot: bot("unlimited"), run: { permissionMode: "unlimited" }, tool: "Bash", summary: "cat ~/.ssh/id_ed25519", context: { stopLine: null } }).verdict;
     expect(key.approve).toBeNull();
   });
