@@ -7,6 +7,14 @@ const context = {}; context.globalThis = context;
 vm.runInNewContext(readFileSync(new URL("./recovery/messages.js", import.meta.url), "utf8"), context);
 const { messages, captureMessages, fallback, sentence } = context.murageRecoveryMessages;
 
+test("backup folder permissions and invalid key locations have plain actionable copy", () => {
+  for (const action of [undefined, "backup", "backup-encrypted"]) {
+    assert.equal(sentence("BACKUP_FOLDER_NOT_WRITABLE", { action }), "Murage can't write a file the backup needs. Choose a backup folder you can write to, or fix the permissions on that folder and on the folder that holds Murage's data.");
+    assert.equal(sentence("BACKUP_RECOVERY_KEY_LOCATION_INVALID", { action }), "That location can't be used. Choose another folder; nothing was saved.");
+  }
+  assert.equal(sentence("BACKUP_STATE_SAVE_FAILED"), "Murage could not save its backup state. Check free disk space and folder permissions, then choose Return to workspace again.");
+});
+
 // Every refusal code the recovery path can raise, read from the code that
 // raises it, so a new one without a sentence fails here.
 function raisedCodes() {
