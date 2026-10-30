@@ -411,7 +411,8 @@ import { GRANT_SCHEMA, isAppShapeKey, isStaleGrant, withoutStaleGrants } from ".
 import { actionGrantSet, stampedToolCall, type GrantCall } from "../shared/app-action-grant.ts";
 import { grantRequestFor, routineCardFields, routineDecisionKeys } from "./approval-grant-request.ts";
 import { requestOwnerId } from "./request-owner.ts";
-import { approvalKey, approvalHoldNote, isBareCommandGrant, isCommandTool, exactAllowKeyFor, exactCommandForRequest, fullAccessCovers, hasFullAccess, isQuestionGrant, isQuestionTool, realKeyPaths, withoutBareCommandGrants, withoutQuestionGrants, type AutoContext, type FullAccessOrigin } from "./auto-approve.ts";
+import { toolApprovalUnattended, unattendedMarkAction } from "./unattended-mark.ts";
+import { approvalKey, approvalHoldNote, boundedGlobExpand, isBareCommandGrant, isCommandTool, exactAllowKeyFor, exactCommandForRequest, fullAccessCovers, hasFullAccess, isQuestionGrant, isQuestionTool, realKeyPaths, withoutBareCommandGrants, withoutQuestionGrants, type AutoContext, type FullAccessOrigin } from "./auto-approve.ts";
 import { approvalIsCut, cardAuditSummary, cardDetail } from "./approval-text.ts";
 import { isOwnWorkspaceBookkeeping, ownWorkspaceRoots } from "./own-workspace-approval.ts";
 import { isOwnToolResultRead } from "./own-tool-results.ts";
@@ -8489,7 +8490,7 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
       // the keyboard, never because an outside event started it: its tool approvals are that routine's, at the ceiling it carries.
       // NOLIMITS-PROJECT-ROUTINE-107: the same for the owner's own routine run in a project room (queued as an unattended room request)
       const routineWake = unattended ? routineWakeCeiling(event.threadId) ?? (asker ? projectRoomRoutineCeiling(event.threadId, asker) : undefined) : undefined;
-      const toolUnattended = unattended && !routineWake;
+      const toolUnattended = toolApprovalUnattended(unattended, routineWake);
       // A question tool filed as a permission (Claude's AskUserQuestion via
       // the permission host, Pi `select`, a Codex form elicitation) is still
       // a question: never auto-approved, never remembered, never reviewed.
@@ -8597,6 +8598,9 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
               })(),
               ...(event.localHold ? { localHold: event.localHold } : {}),
               ...(inputCut ? { inputCut: true } : {}),
+              // 1.0.10 (NOLIMITS-CARDS A4): a glob in a home dot folder is expanded on this disk, bounded, and each
+              // match meets the key rows (the relayed computer gets no expansion and holds)
+              ...(event.approvalScope === "local-computer" ? {} : { globExpand: boundedGlobExpand }),
               // the routine carve-out: only a direct scheduled or manual run,
               // whose history records what it lets through (below)
               ...(routineLevel && routineOriginThreads.has(event.threadId) ? { routineCarveOut: true } : {}),
@@ -10979,9 +10983,13 @@ async function startTurnAdmitting(
   // never overwrites the audience of the turn already running on the thread.
   ownerSurfacesByThread.set(threadId,surfacesForOwner);
   // a webhook turn, or one inherited from a bot already running unattended
-  if (opts?.automationSource === "webhook" || opts?.automationSource === "channel" || opts?.unattended) markUnattended(threadId);
-  // a person typing into this bot ends the unattended window immediately
-  else if (opts?.automationSource === undefined && !opts?.commsDepth && !opts?.cardContinuation) clearUnattended(threadId);
+  // a person typing into this bot ends the unattended window immediately; 1.0.10 (NOLIMITS-CARDS r1): so does a scheduled
+  // or manual run of the owner's own routine. It is the owner's standing instruction, not an outside event: a mark left by
+  // an earlier channel or webhook turn in this thread must not turn the run, and every peer it asks, into a turn nobody
+  // started (it carded a plain Read at No limits, 10-31 23:13:59Z). The rule itself: unattended-mark.ts
+  const markAction = unattendedMarkAction(opts, humanIsOwner);
+  if (markAction === "mark") markUnattended(threadId);
+  else if (markAction === "clear") clearUnattended(threadId);
   // A scheduled or manual routine run is judged at its routine's level (its
   // own, or the bot's level right now), not at whatever this run's task
   // copied when it was made. The level is applied here, before the run's
@@ -11031,7 +11039,7 @@ async function startTurnAdmitting(
     : undefined;
   // who this turn is for, as Full access reads it (fullAccessTurnOrigin)
   const fullAccessOrigin: FullAccessOrigin = !humanIsOwner ? "other"
-    : opts?.automationSource === "channel" ? "owner-channel"
+    : opts?.automationSource === "channel" ? opts?.notOwnerAudience === true ? "other" : "owner-channel"
     : opts?.unattended ? "other" // (an explicitly unattended turn never had a routine level or an inherited ceiling before wakes did)
     : routineLevel || inheritedRoutine ? "routine"
     : opts?.automationSource !== undefined || opts?.unattended || isUnattended(threadId) ? "other" : "owner";
@@ -19160,7 +19168,8 @@ function fullAccessTurnOrigin(threadId: string): FullAccessOrigin {
   if (!isWorkspaceOwner(threadHumanPrincipal(threadId))) return "other";
   if (routinePeerSources.has(threadId) && !isUnattended(threadId)) return "routine";
   const run = routines?.activeRunOrigin(threadId);
-  if (run) return run.triggerSource === "channel" && run.humanPrincipal !== undefined && isWorkspaceOwner(run.humanPrincipal) ? "owner-channel"
+  // 1.0.10 (NOLIMITS-CARDS r3): only the owner's own DM; a group or any audience besides the owner stays "other"
+  if (run) return run.triggerSource === "channel" && run.humanPrincipal !== undefined && isWorkspaceOwner(run.humanPrincipal) && run.notOwnerAudience !== true ? "owner-channel"
     : routineRunLevel(threadId) ? "routine" : "other";
   return isUnattended(threadId) ? "other" : "owner";
 }

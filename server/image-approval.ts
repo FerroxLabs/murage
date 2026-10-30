@@ -19,8 +19,8 @@
 //     card;
 //   - the turn is one Full access itself would cover (auto-approve.ts
 //     fullAccessCovers): the owner at the desktop, the owner's routine at its
-//     level, the owner's own channel message only with the bot's channel
-//     option. A webhook or any unattended turn asks. The setting widens the
+//     level, the owner's own channel DM unless the bot's channel option is
+//     off. A webhook, a group or any other unattended turn asks. The setting widens the
 //     LEVEL, never who is listening;
 //   - the optional "ask again after N images in one turn" has not been hit.
 //
@@ -58,24 +58,24 @@ export type ImageApprovalDecision =
   | { ask: true; reason: "setting" | "audience" | "unattended" | "origin" | "level" | "loop-guard" };
 
 /** Does the bot's own channel option let the owner's channel message through?
- *
- * For IMAGES this branch never opens in the running app, and that is on
- * purpose: the owner's own Telegram, Slack and Discord messages (and a routine
- * run a channel started) are marked unattended when the turn is dispatched, and
- * an unattended turn always shows the card (above). So `fullAccessChannelMessages`
- * covers peer contact and setup requests but not images: for an image, the
- * owner's channel messages always get the card. It fails closed. The branch is
- * kept so this function answers the same question Full access does. */
+ * 1.0.10 (NOLIMITS-CARDS r2, A7): on unless the owner turned it off. The
+ * owner's own channel DM is marked unattended when it is dispatched; at Full
+ * access or No limits, with the option not off, that mark does not hold an
+ * image (`decideImageApproval`). A group, another sender and every other
+ * unattended turn still get the card. */
 function originAllowed(origin: FullAccessOrigin, level: ImageApprovalFacts["level"]): boolean {
   if (origin === "owner" || origin === "routine") return true;
-  return origin === "owner-channel" && level?.fullAccessChannelMessages === true;
+  return origin === "owner-channel" && level?.fullAccessChannelMessages !== false;
 }
 
 export function decideImageApproval(facts: ImageApprovalFacts): ImageApprovalDecision {
   const setting = facts.setting ?? "follow";
   if (setting === "ask") return { ask: true, reason: "setting" };
   if (!facts.ownerAudience) return { ask: true, reason: "audience" };
-  if (facts.unattended === true) return { ask: true, reason: "unattended" };
+  // the owner's own proven channel DM (fullAccessTurnOrigin gives "owner-channel" only for the owner's DM, never a
+  // group or a sender not bound to the owner) at a level that covers it
+  const ownerChannel = facts.origin === "owner-channel" && hasFullAccess(facts.level) && originAllowed(facts.origin, facts.level);
+  if (facts.unattended === true && !ownerChannel) return { ask: true, reason: "unattended" };
   if (!originAllowed(facts.origin, facts.level)) return { ask: true, reason: "origin" };
   let basis: Extract<ImageApprovalDecision, { ask: false }>["basis"];
   if (setting === "allow") basis = "the Images setting";
