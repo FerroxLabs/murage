@@ -17,7 +17,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { delimiter, win32 } from "node:path";
 import { ABSENT_PINS, ENV_PINS, isPowerShellProgram, resolvePins, valuePins, type PinRun, type SshResolution } from "../shared/arg-vocabulary.ts";
 import type { PromptFacts } from "../shared/prompt-capable.ts";
-import { CHECK_BYTES, CHECK_MS, CHECK_WINDOWS_MS } from "../shared/scan-limits.ts";
+import { CHECK_BYTES, CHECK_MS, CHECK_RETRY_MS, CHECK_WINDOWS_MS, CHECK_WINDOWS_RETRY_MS } from "../shared/scan-limits.ts";
 import type { EnvCapture, ExecEnv } from "../shared/mount-identity.ts";
 import { captureOwnerEnv, environmentProbeProgram, envGeneration, installPathTail, invalidateEnvCapture, onEnvInvalidate, type OwnerEnv } from "./env-path.ts";
 import { execCli } from "./procs.ts";
@@ -336,7 +336,7 @@ function checkExecEnv(at: number, session: string, shell: readonly string[], han
   const previous = failures.get(key);
   if (previous && Date.now() < previous.until) return Promise.resolve(failedCheck(previous.reason, "Murage will retry the shell check on a later command. You can review this command now."));
   const executable = environmentProbeProgram(shell[0] ?? "");
-  const run: Promise<CheckResult> = new Promise<CheckResult>((resolve) => {
+  const attempt = (budget: number) => new Promise<CheckResult>((resolve) => {
     const [program, ...args] = shell;
     if (!program) return resolve(failedCheck("no-shell-form", "no shell form"));
     if (process.env.MURAGE_CLOUD_ROLE === "home") return resolve(failedCheck("cloud-home", "a Cloud home's launcher sets the engine's environment"));
@@ -351,7 +351,7 @@ function checkExecEnv(at: number, session: string, shell: readonly string[], han
     // Git Bash prints its folder through its own mounts (/tmp is the user's
     // TEMP), so on Windows it names the folder as Windows does (`pwd -W`).
     const script = powershell ? powerShellEnvProbe(nonce) : `if [ -f /usr/bin/env ]; then /usr/bin/env -0; elif [ -f /bin/env ]; then /bin/env -0; else exit 1; fi && printf '\\0' && ${process.platform === "win32" ? "pwd -W" : "pwd"}`;
-    execCli(executable, [...args, script], { absoluteExecutable: true, env: handed.env, cwd, timeout: process.platform === "win32" ? CHECK_WINDOWS_MS : CHECK_MS, maxBuffer: CHECK_BYTES }, (error, stdout, stderr) => {
+    execCli(executable, [...args, script], { absoluteExecutable: true, env: handed.env, cwd, timeout: budget, maxBuffer: CHECK_BYTES }, (error, stdout, stderr) => {
       // An envelope, even partial/malformed, is evidence to check before an
       // operational error. Never hide integrity findings behind stderr/exit.
       const result = stdout.length > 0
@@ -364,7 +364,10 @@ function checkExecEnv(at: number, session: string, shell: readonly string[], han
       if (error) return resolve(result ? failedCheck("did-not-finish", "the shell environment check did not finish") : operationalFailure(error, executable, cwd));
       resolve(result ?? failedCheck("invalid-envelope"));
     });
-  }).catch((error): CheckResult => operationalFailure(error, executable, cwd)).then(result => {
+  }).catch((error): CheckResult => operationalFailure(error, executable, cwd));
+  // A slow shell (a cold PowerShell, a busy machine) gets one more try with a longer budget before the command is held.
+  const windows = process.platform === "win32";
+  const run: Promise<CheckResult> = attempt(windows ? CHECK_WINDOWS_MS : CHECK_MS).then(result => !result.ok && result.reason === "timeout" ? attempt(windows ? CHECK_WINDOWS_RETRY_MS : CHECK_RETRY_MS) : result).then(result => {
     if (checks.get(key) === run) {
       if (result.ok) failures.delete(key);
       else { checks.delete(key); rememberFailure(key, session, result.reason); }
