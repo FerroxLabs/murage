@@ -16,7 +16,8 @@
 
 import { useMemo, useState, type ReactNode } from "react";
 
-import { FIRST_RUN_COPY, foundAgentsLine, localModelLine, lookedAroundLine, signedOutAgentsLine, stepHeadingFor } from "@/lib/first-run-copy";
+import { FIRST_RUN_COPY, stepHeadingFor } from "@/lib/first-run-copy";
+import { permissionModeOf } from "@/lib/permission-mode";
 import { inNativeShell } from "@/lib/native-shell";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { firstRunDetection, type FirstRunEngineRow } from "@/lib/first-run-detect";
@@ -103,7 +104,7 @@ function firstRunCardBody(bot: Bot, message: Message, variant: SetupCardVariant,
     case "welcome":
       return <FirstRunHelloCard settled={settled} />;
     case "found":
-      return <FirstRunAgentsCard settled={settled} />;
+      return <FirstRunAgentsCard bot={bot} settled={settled} />;
     case "bare":
       return <FirstRunBareAgentsCard settled={settled} onward />;
     case "signed-out":
@@ -111,7 +112,14 @@ function firstRunCardBody(bot: Bot, message: Message, variant: SetupCardVariant,
     case "sample-brief":
       return <FirstRunSampleBriefCard />;
     case "key":
-      return <FirstRunFluxCard settled={settled} />;
+      // §1.5: the example brief is the Flux card's hook, shown first,
+      // because the picture earns the ask. One card key, two parts.
+      return (
+        <div className="w-full min-w-0">
+          <FirstRunSampleBriefCard hook />
+          <FirstRunFluxCard settled={settled} />
+        </div>
+      );
     case "no-key":
       return <FirstRunNoKeyCard />;
     case "jobs":
@@ -179,7 +187,7 @@ function firstRunCardBody(bot: Bot, message: Message, variant: SetupCardVariant,
  * machine's sentence instead. "I found your agents" on a machine with none
  * is the exact small lie this variant exists to avoid.
  */
-function FirstRunAgentsCard({ settled }: { settled: boolean }) {
+function FirstRunAgentsCard({ bot, settled }: { bot: Bot; settled: boolean }) {
   const { view } = useSetupView();
   const [expanded, setExpanded] = useState(false);
   const detect = FIRST_RUN_COPY.agents.detect;
@@ -188,22 +196,20 @@ function FirstRunAgentsCard({ settled }: { settled: boolean }) {
   const found = view.agents.filter((agent) => agent.installed);
   if (found.length === 0) return <FirstRunBareAgentsCard needsKey settled={settled} onward />;
 
-  // A local model is named by its MODEL, never by the connection Murage
-  // reaches it through. "You already had OpenAI-compatible (OpenRouter /
-  // Groq)" was the Chief's opening line to somebody whose model was on their
-  // own hard disk, and it was wrong twice: an engine id, and two cloud
-  // vendors that had nothing to do with them.
-  const local = found.find((agent) => agent.localModel)?.localModel;
-  const rest = found.filter((agent) => !agent.localModel).map((agent) => agent.name);
+  // §1.4 Variant D: the Chief is on a named local model, so it says which
+  // one (and, in 1.0.12, nothing about where typed text goes). Proven ONLY by
+  // `chiefLocalModel`, the Chief's own selected model on a loopback host, and
+  // its engine being one that can answer here. Never the engine's default
+  // model and never just a registered host: unsure is the Variant A line.
+  const chiefEngineHere = !!view.chiefInstanceId && found.some((agent) => agent.id === view.chiefInstanceId);
+  const onLocal = chiefEngineHere ? view.chiefLocalModel : undefined;
+  // The level, said once as an example, and only while it is true.
+  const onAsk = permissionModeOf(bot) === "ask";
 
   return (
     <FirstRunBubble>
-      <FirstRunLine>{lookedAroundLine(view.ownerName)}</FirstRunLine>
+      <FirstRunLine>{onLocal?.model.trim() ? detect.localChief(onLocal.model.trim()) : detect.foundChief}</FirstRunLine>
       <div className="mt-2 text-[15px] font-semibold text-ink">{detect.heading}</div>
-
-      {local && <FirstRunLine>{localModelLine(local.model, local.host)}</FirstRunLine>}
-      {rest.length > 0 && <FirstRunLine>{foundAgentsLine(rest)}</FirstRunLine>}
-      <FirstRunLine>{FIRST_RUN_COPY.agents.found.second}</FirstRunLine>
 
       {/* EVERYTHING RUNNABLE GETS A ROW, and then the rest collapses. On the
           owner's own machine, which has eighteen engines on it, the detailed
@@ -235,6 +241,7 @@ function FirstRunAgentsCard({ settled }: { settled: boolean }) {
       )}
 
       <FirstRunLine quiet>{detect.closing}</FirstRunLine>
+      {onAsk && <FirstRunLine quiet>{detect.askLevel}</FirstRunLine>}
       <FirstRunDetectOnward settled={settled} />
     </FirstRunBubble>
   );
@@ -258,7 +265,7 @@ function FirstRunAgentsCard({ settled }: { settled: boolean }) {
  * `settled` hides it rather than disabling it. A report that has been read is
  * history, and history does not carry a live button.
  */
-function FirstRunDetectOnward({ settled }: { settled: boolean }) {
+function FirstRunDetectOnward({ settled, label, ghost = false }: { settled: boolean; label?: string; ghost?: boolean }) {
   const [acted, setActed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState("");
@@ -282,9 +289,9 @@ function FirstRunDetectOnward({ settled }: { settled: boolean }) {
 
   if (acted || settled) return null;
   return (
-    <div className="mt-3">
-      <button type="button" disabled={busy} onClick={() => void onward()} className={`${FIRST_RUN_PRIMARY} ${FIRST_RUN_FOCUS}`}>
-        {detect.action}
+    <div className="mt-3 flex flex-col items-end">
+      <button type="button" disabled={busy} onClick={() => void onward()} className={`${ghost ? FIRST_RUN_QUIET : FIRST_RUN_PRIMARY} ${FIRST_RUN_FOCUS}`}>
+        {label ?? detect.action}
       </button>
       <FirstRunFailure message={failure} />
     </div>
@@ -339,7 +346,7 @@ function FirstRunEngineRowView({ row }: { row: FirstRunEngineRow }) {
  * already inert, but this is generated markup carrying the owner's own name,
  * and the established gate is better than a second opinion about it.
  */
-function FirstRunSampleBriefCard() {
+function FirstRunSampleBriefCard({ hook = false }: { hook?: boolean }) {
   const sanitizer = useSanitizerReady(); // markup made before the sanitizer loaded is empty: draw again when it arrives
   const { view } = useSetupView();
   const [whole, setWhole] = useState(false);
@@ -390,14 +397,23 @@ function FirstRunSampleBriefCard() {
     // to the frame has to be allowed to shrink, or the widest one wins.
     <div className="w-full min-w-0">
       <FirstRunBubble>
+        {/* §1.4 Variant C: on a machine with nothing to think with, the
+            detection report never ran, so the Chief says what it found here,
+            before the picture. */}
+        {hook && view.nothingToThinkWith && (
+          <>
+            <FirstRunLine>{FIRST_RUN_COPY.agents["bare-needs-key"].body}</FirstRunLine>
+            <FirstRunLine>{FIRST_RUN_COPY.agents["bare-needs-key"].second}</FirstRunLine>
+          </>
+        )}
         <FirstRunLine>{copy.body}</FirstRunLine>
-        <FirstRunLine>{copy.second}</FirstRunLine>
+        {!hook && <FirstRunLine>{copy.second}</FirstRunLine>}
       </FirstRunBubble>
 
       <figure className="mt-3 w-full min-w-0 max-w-full overflow-hidden rounded-2xl border border-hairline/50 bg-card">
         <figcaption className="flex items-center justify-between gap-3 border-b border-hairline/40 px-4 py-2.5">
           <span className="text-[12.5px] font-semibold uppercase tracking-[0.12em] text-ink-secondary">
-            {copy.sheetLabel}
+            {hook ? copy.frameTitle : copy.sheetLabel}
           </span>
           <button
             type="button"
@@ -416,12 +432,14 @@ function FirstRunSampleBriefCard() {
           // Tall enough that the first decision is never cut in half, and an
           // expanded height that clears the whole example rather than a
           // guess at it.
-          className={`block w-full min-w-0 max-w-full bg-white ${whole ? "h-[82rem]" : "h-[40rem]"}`}
+          className={`block w-full min-w-0 max-w-full bg-white ${whole ? "h-[82rem]" : hook ? "h-[24rem]" : "h-[40rem]"}`}
         />
       </figure>
 
       <FirstRunBubble>
-        <FirstRunLine quiet>{copy.third}</FirstRunLine>
+        {/* The line under the frame (§1.5). The parked card asked its own
+            question here; as the Flux card's hook, the offer follows instead. */}
+        <FirstRunLine quiet>{hook ? copy.second : copy.third}</FirstRunLine>
       </FirstRunBubble>
     </div>
   );
@@ -477,7 +495,6 @@ function FirstRunBareAgentsCard({
  */
 function FirstRunSignedOutAgentsCard({ settled }: { settled: boolean }) {
   const { view, refresh } = useSetupView();
-  const [shown, setShown] = useState(false);
   const [copied, setCopied] = useState("");
   const copy = FIRST_RUN_COPY.agents["signed-out"];
 
@@ -511,25 +528,21 @@ function FirstRunSignedOutAgentsCard({ settled }: { settled: boolean }) {
   const commands = waiting
     .map((agent) => ({ name: agent.name, command: agent.signInCommand }))
     .filter((row): row is { name: string; command: string } => Boolean(row.command));
+  const detection = firstRunDetection(view);
 
+  // §1.4 Variant B. The Chief's line, the row it is about, and the sign-in
+  // block right there in the card: no extra press to reveal it.
   return (
     <FirstRunBubble>
-      <FirstRunLine>{signedOutAgentsLine(waiting.map((agent) => agent.name))}</FirstRunLine>
-      <FirstRunLine>{copy.second}</FirstRunLine>
-      <FirstRunLine>{canCarryOn ? copy.third : copy.thirdBare}</FirstRunLine>
-      {!settled && !shown && commands.length > 0 && (
-        <div className="mt-3 flex flex-wrap gap-2">
-          <button
-            type="button"
-            className={`${FIRST_RUN_PRIMARY} ${FIRST_RUN_FOCUS}`}
-            onClick={() => setShown(true)}
-          >
-            {copy.action}
-          </button>
-        </div>
-      )}
-      {shown && (
+      <FirstRunLine>{copy.chief}</FirstRunLine>
+      <ul className="mt-3 grid gap-1.5">
+        {detection.collapsed.map((row) => (
+          <FirstRunEngineRowView key={row.id} row={row} />
+        ))}
+      </ul>
+      {!settled && commands.length > 0 && (
         <div className="mt-3 space-y-2">
+          <p className="text-[13px] text-ink-secondary">{copy.signInLead}</p>
           {commands.map((row) => (
             <div key={row.name} className="rounded-lg border border-hairline/40 bg-inset px-3 py-2">
               <p className="text-[13px] text-ink-secondary">{copy.commandFor(row.name)}</p>
@@ -548,17 +561,22 @@ function FirstRunSignedOutAgentsCard({ settled }: { settled: boolean }) {
               </div>
             </div>
           ))}
-          <button
-            type="button"
-            className={`${FIRST_RUN_CHIP} ${FIRST_RUN_FOCUS}`}
-            onClick={() => refresh()}
-          >
-            {copy.recheck}
-          </button>
         </div>
       )}
-      {/* "Or leave it" is a real answer, and it needs somewhere to go. */}
-      <FirstRunDetectOnward settled={settled} />
+      {/* "Leave it for now" is a real answer, and it needs somewhere to go.
+          What leaving it means is said under it, and on a machine with
+          nothing else running it says so rather than reassuring. */}
+      {!settled && (
+        <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+          <FirstRunDetectOnward settled={settled} label={copy.leave} ghost />
+          {commands.length > 0 && (
+            <button type="button" className={`${FIRST_RUN_PRIMARY} ${FIRST_RUN_FOCUS}`} onClick={() => refresh()}>
+              {copy.recheck}
+            </button>
+          )}
+        </div>
+      )}
+      <FirstRunLine quiet>{canCarryOn ? copy.third : copy.thirdBare}</FirstRunLine>
     </FirstRunBubble>
   );
 }

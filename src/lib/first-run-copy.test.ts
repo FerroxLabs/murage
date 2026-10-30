@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import { fluxRecommendation } from "@/components/FirstRunFluxCard";
 import {
+  FIRST_RUN_BRIEF_TIME,
   FIRST_RUN_COPY,
   botsEyebrowLine,
   briefButtonLabel,
+  briefSavedLine,
+  probeLine,
   clockLabel,
   foundAgentsLine,
   greetingLine,
@@ -175,15 +178,13 @@ describe("first run copy: the things the flow promises", () => {
     const order = flux.features.map((row) => row.id);
     expect(order[0], "routing does not lead the card").toBe("routing");
     expect(order[1], "the apps do not follow routing").toBe("apps");
-    // Pictures and dictation are the media rows, and they come after the
-    // models claim rather than in front of it.
-    for (const media of ["pictures", "dictation"]) {
-      expect.soft(order.indexOf(media), media).toBeGreaterThan(order.indexOf("models"));
-    }
+    // Pictures and dictation are the media rows (§1.5: four rows), and they
+    // come after the routing and apps claims rather than in front of them.
+    expect(order).toEqual(["routing", "apps", "pictures", "dictation"]);
     const apps = flux.features.find((row) => row.id === "apps")!;
     expect(apps.title).toContain("500+ apps");
     for (const named of ["Gmail", "Slack", "Notion", "GitHub"]) expect(apps.body).toContain(named);
-    expect(flux.features.some((row) => /all the latest/i.test(row.title))).toBe(true);
+    expect(flux.features.some((row) => /all the latest/i.test(row.body))).toBe(true);
     expect(flux.recommendation.toLowerCase()).toContain("recommended");
   });
 
@@ -294,12 +295,13 @@ describe("first run copy: the things the flow promises", () => {
     }
   });
 
-  it("says voice mode works now, the bot talking back, and not coming soon", () => {
-    // 0.1.59 ships the Flux speech route (server/tts/flux-speech.ts), so the
-    // row that said "Coming soon" was selling short something that works.
-    const voice = features.find((row) => row.id === "voice");
-    expect(voice).toMatchObject({ state: "live", speech: "synthesis" });
-    expect(voice!.body).not.toMatch(/soon/i);
+  it("says talking instead of typing works now, and not coming soon", () => {
+    // 1.0.12 §1.5 folds voice into one row, "Talk instead of type". It is
+    // live, it is transcription, and it never says soon.
+    const talk = features.find((row) => row.id === "dictation");
+    expect(talk).toMatchObject({ state: "live", speech: "transcription" });
+    expect(talk!.body).not.toMatch(/soon/i);
+    expect(features.some((row) => row.id === "voice"), "the 1.0.12 card has four rows").toBe(false);
   });
 
   it("will not let a transcription row promise an answer out loud", () => {
@@ -547,8 +549,8 @@ describe("what the key card claims, to whom", () => {
       expect.soft(line, line).not.toMatch(/composio/i);
     }
     expect(key.features[0].title).toMatch(/routing/i);
-    expect(key.lead).toMatch(/picks for you/i);
-    expect(key.features.some((row) => /all the latest/i.test(row.title))).toBe(true);
+    expect(key.lead).toMatch(/best one/i);
+    expect(key.features.some((row) => /all the latest/i.test(row.body))).toBe(true);
   });
 });
 
@@ -609,5 +611,53 @@ describe("first run copy: the sentence builders", () => {
     for (const line of [greetingLine("Sean"), greetingLine("")]) {
       expect.soft(line, line).not.toMatch(/thank you|got that|saved|recorded/i);
     }
+  });
+});
+
+describe("first run copy: the 1.0.12 lines (UX-FIRSTRUN-SCALE-1012 §1)", () => {
+  it("opens with the Chief and the Hello heading, and says what the email is for", () => {
+    const hello = FIRST_RUN_COPY.hello.welcome;
+    expect(hello.chief).toBe("Hi. I am your Chief of Staff. Tell me what to call you and I will get the rest ready.");
+    expect(hello.heading).toBe("Hello");
+    expect(hello.emailHelper).toBe("For your setup guide and news. Nothing else.");
+  });
+
+  it("reports what the look around found in one line, and only what it found", () => {
+    const reading = (over: Partial<{ agents: { name: string; installed: boolean; localModel?: { model: string } }[]; signedOutAgents: { name: string }[] }>) =>
+      ({ agents: [], signedOutAgents: [], ...over });
+    expect(probeLine(null)).toBeNull();
+    expect(probeLine(reading({}))).toBeNull();
+    expect(probeLine(reading({ agents: [{ name: "Claude Code", installed: true }] }))).toBe("Found Claude Code, signed in.");
+    expect(probeLine(reading({ signedOutAgents: [{ name: "Codex" }] }))).toBe("Found Codex, not signed in yet.");
+    expect(probeLine(reading({ agents: [{ name: "Local", installed: true, localModel: { model: "Qwen3 27B" } }] })))
+      .toBe("Found Qwen3 27B running on this computer.");
+    expect(probeLine(reading({ agents: [{ name: "Fuigo", installed: false }] }))).toBe("Found the engine that came in the box.");
+    expect(probeLine(reading({ agents: [{ name: "Claude Code", installed: true }, { name: "L", installed: true, localModel: { model: "q" } }] })))
+      .toBe("Found Claude Code and a local model. Details next.");
+  });
+
+  it("names the next weekday the brief runs, never a weekend", () => {
+    // 2026-10-29 is a Thursday, 10-30 a Friday, 10-31 a Saturday.
+    expect(briefSavedLine("08:00", new Date(2026, 9, 29, 12))).toBe("Morning brief saved. Next run tomorrow at 8:00 am.");
+    expect(briefSavedLine("08:00", new Date(2026, 9, 30, 12))).toBe("Morning brief saved. Next run Monday at 8:00 am.");
+    expect(briefSavedLine("08:00", new Date(2026, 9, 31, 12))).toBe("Morning brief saved. Next run Monday at 8:00 am.");
+    expect(briefSavedLine("08:00", new Date(2026, 10, 1, 12))).toBe("Morning brief saved. Next run tomorrow at 8:00 am.");
+    // Before the hour on a weekday the scheduler runs today (Friday 07:00).
+    expect(briefSavedLine("08:00", new Date(2026, 9, 30, 7))).toBe("Morning brief saved. Next run today at 8:00 am.");
+    expect(briefSavedLine("08:00", new Date(2026, 9, 30, 8))).toBe("Morning brief saved. Next run Monday at 8:00 am.");
+    expect(briefSavedLine("08:00", new Date(2026, 10, 1, 7))).toBe("Morning brief saved. Next run tomorrow at 8:00 am.");
+  });
+
+  it("runs the first-run brief at 8, the hour every line about it says", () => {
+    expect(FIRST_RUN_BRIEF_TIME).toBe("08:00");
+    expect(FIRST_RUN_COPY.chat.jobs.rows[0].sub).toMatch(/every morning at 8\./);
+    expect(FIRST_RUN_COPY.flow["do-it"].morning.yes).toBe("Yes, every weekday at 8");
+  });
+
+  it("offers four Flux rows, routing first, and names the apps by example", () => {
+    const rows = FIRST_RUN_COPY.flux.key.features.map((row) => row.title);
+    expect(rows).toEqual(["Smart routing", "500+ apps", "Pictures", "Talk instead of type"]);
+    expect(FIRST_RUN_COPY.flux.key.features[1].body).toMatch(/Gmail, Slack, Notion, GitHub/);
+    expect(FIRST_RUN_COPY.flux.key.submit).toBe("Connect Flux Router");
   });
 });

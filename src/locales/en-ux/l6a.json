@@ -1,0 +1,30 @@
+{
+  "ux": {
+    "l6a": {
+      "screens": {
+        "firstRun": {
+          "you": {
+            "title": "Getting set up: you",
+            "tip": "Tell your Chief of Staff what to call you. Your email is optional and only brings your setup guide and news."
+          },
+          "whatIsHere": {
+            "title": "Getting set up: what is here",
+            "tip": "The AI tools already on this computer. The one marked using this now is the one answering you."
+          },
+          "fluxRouter": {
+            "title": "Getting set up: Flux Router",
+            "tip": "One key adds the latest AI models, 500+ apps like Gmail, Slack, Notion and GitHub, pictures and talking instead of typing. Not now is fine when something else is already answering."
+          },
+          "firstJob": {
+            "title": "Getting set up: your first job",
+            "tip": "Pick one job and the Chief does it now. It asks only for what that job needs, when it needs it."
+          },
+          "done": {
+            "title": "Getting set up: done",
+            "tip": "You are set up. Ask for anything, hire a teammate, or reach your bots from your phone. Type /setup to see this list again."
+          }
+        }
+      }
+    }
+  }
+}
