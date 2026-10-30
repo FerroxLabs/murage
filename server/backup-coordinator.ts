@@ -5,7 +5,7 @@ import { z } from "zod";
 import { acquireDataDirLeaseForProcess } from "./data-dir-lease.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { canonicalUpdateDescriptor, parseUpdateCandidate, type UpdateCandidate } from "../shared/update-candidate.mjs";
-import { BACKUP_CAPTURE_CODES, BACKUP_CAPTURE_STAGES, captureFailurePath, skippedDisplayPath } from "../shared/backup-capture-failure.mjs";
+import { BACKUP_CAPTURE_CODES, BACKUP_CAPTURE_STAGES, captureFailurePath, reviewCaptureFailure, skippedDisplayPath } from "../shared/backup-capture-failure.mjs";
 import { BACKUP_SKIP_REASONS } from "../shared/backup-limits.ts";
 import { backupScheduleSchema, backupReceiptSchema, backupReferenceSchema, backupHandoffSchema, backupClosedResultSchema, latestBackupOccurrence, type BackupClosedResult, type BackupHandoff, type BackupSchedule, type BackupReceipt } from "../shared/backup-schedule.ts";
 
@@ -188,17 +188,35 @@ export class BackupCoordinator {
     return record;
   }
   clearCaptureFailure(){try{rmSync(this.failureFile(),{force:true});}catch{/* A retained note never blocks a backup. */}}
-  private captureFailure(){
+  private failureNote(){
     try{
       const stat=lstatSync(this.failureFile());if(!stat.isFile()||stat.isSymbolicLink()||stat.size>4*1024)return undefined;
       const parsed=captureFailureSchema.safeParse(JSON.parse(readFileSync(this.failureFile(),"utf8")));
-      return parsed.success?{stage:parsed.data.stage,code:parsed.data.code,...(parsed.data.path?{path:parsed.data.path}:{})}:undefined;
+      return parsed.success?parsed.data:undefined;
     }catch{return undefined;}
+  }
+  /** The note about THIS job. One written before its attempt began is about an
+   * earlier backup: it stays on disk until a backup succeeds, so it must not
+   * explain a later crash. */
+  private captureFailure(job:Job){
+    const note=this.failureNote();
+    if(!note||(note.at!==undefined&&note.at<(job.attemptAt??job.scheduledAt)))return undefined;
+    return {stage:note.stage,code:note.code,...(note.path?{path:note.path}:{})};
+  }
+  /** A stop the owner cleared while nothing has been backed up since (BACKUP-SILENT-STOP).
+   * The note lives until a backup succeeds. A failed reopen ("return") comes
+   * after the receipt, so it never means no backup. */
+  private retainedFailure(s:State){
+    if(s.job?.phase==="needs-review")return undefined;
+    const note=this.failureNote();
+    if(!note||note.at===undefined||note.stage==="return"||(s.lastVerified&&note.at<=s.lastVerified.verifiedAt))return undefined;
+    return {stage:note.stage,code:note.code,...(note.path?{path:note.path}:{})};
   }
   /** The committed state as it is on disk (a copy), for an observer that republishes it at startup. */
   committedState():BackupCommittedState{return structuredClone(this.read());}
   status(){const s=this.read();return {enabled:s.schedule.enabled,revision:s.revision,schedule:s.schedule,phase:s.job?.phase??"idle",job:s.job,lastVerified:s.lastVerified,lastClosedResult:s.lastClosedResult,reviewReason:s.job?.phase==="needs-review"?s.job.error:undefined,
-    captureFailure:(s.job?.phase==="needs-review"?this.captureFailure():undefined)??this.handoffFailure(s.job),
+    captureFailure:s.job?.phase==="needs-review"?this.captureFailure(s.job)??this.handoffFailure(s.job)??reviewCaptureFailure(s.job.error):this.handoffFailure(s.job),
+    retainedFailure:this.retainedFailure(s),
     lastSkipped:this.lastSkipped(s.lastVerified?.jobId),
     message:s.job?.phase==="waiting-backup-mode"?"Due, waiting for Backup mode":s.job?.phase==="waiting-idle"?"Due, waiting for idle":s.job?.phase==="needs-review"?"Interrupted backup needs review; it will not run again automatically":undefined};}
   configure(expectedRevision:number,input:unknown){

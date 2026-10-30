@@ -42,7 +42,7 @@ import { createClosedBackupController,closedControlDirectory } from "./backup-cl
 import { tightenOwnedDirectory } from "./private-directory.mjs";
 import { relaunchBlockedCode, relaunchDesktop } from "./desktop-relaunch.mjs";
 import { backupRefusal } from "./backup-waiting.mjs";
-import { announceBackupFailure, announceBackupResult } from "./backup-failure-notice.mjs";
+import { announceBackupFailure, announceBackupResult, backupStopCommitted, serialAnnouncer } from "./backup-failure-notice.mjs";
 import { windowsElevated } from "./windows-elevation.mjs";
 import { createNativeClosedBackupProvider } from "./backup-closed-native.mjs";
 import { createRemotePasswordStore } from "./backup-remote-password.mjs";
@@ -4423,7 +4423,7 @@ async function firstRunBackupChanged(){
   if(desktopShutdownStarted||desktopRecoveryMode||!serverReady||!desktopSurfaceSecret)return;
   try{await harnessJson("/api/setup/backup",{});}catch{/* the harness re-derives on its next read */}
 }
-async function announceLastBackupFailure(){
+async function announceLastBackupFailureNow(){
   for(let tries=0;tries<120&&!(serverReady&&desktopSurfaceSecret)&&!desktopShutdownStarted;tries++)await new Promise(resolve=>setTimeout(resolve,1000));
   if(!backupScheduleHost||desktopShutdownStarted||desktopRecoveryMode||!serverReady||!desktopSurfaceSecret)return;
   let folderName;try{folderName=await backupScheduleHost.destinationLabel();}catch{/* the sentence says "your backup folder" */}
@@ -4436,6 +4436,7 @@ async function announceLastBackupFailure(){
       notice.show();
     }});
 }
+const announceLastBackupFailure=serialAnnouncer(announceLastBackupFailureNow);
 /** 1.0.7: a Back up now that worked says so once Murage reopens (one
  * notification per backup; daily backups stay quiet). */
 async function announceLastBackupResult(){
@@ -4601,7 +4602,9 @@ async function initializeBackupScheduleHost(){
   closedTrace("coordinator imported");
   const stateDirectory=closedControlDirectory(installation);
   // 1.0.9 Sentinel: the backup-status manifest follows each durable commit of this coordinator (never ahead of it).
-  const coordinator=new BackupCoordinator({stateDirectory,onCommitted:state=>sentinelHost?.backupCommitted(state)});
+  // Every path into review commits here. Told on the next turn, after any note
+  // the same step writes; Backup mode and closed runs are told after they reopen.
+  const coordinator=new BackupCoordinator({stateDirectory,onCommitted:state=>{sentinelHost?.backupCommitted(state);if(backupStopCommitted(state)&&!desktopRecoveryMode)setImmediate(()=>{void announceLastBackupFailure().catch(()=>{});});}});
   closedTrace("coordinator ready");
   const provider=createNativeClosedBackupProvider({home:app.getPath("home")});
   closedBackupController=createClosedBackupController({

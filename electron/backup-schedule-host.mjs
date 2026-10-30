@@ -275,7 +275,16 @@ export function createBackupScheduleHost(host) {
   async function clearReview(expectedRevision){
     if(!Number.isSafeInteger(expectedRevision)||expectedRevision<0)throw Error("INVALID_BACKUP_REQUEST");
     if(running)throw Error("BACKUP_BUSY");
-    coordinator.clearReview(expectedRevision);coordinator.clearCaptureFailure?.();lastError=null;
+    // Clearing lets the schedule run again; it doesn't make a backup. The reason
+    // stays in the failure note until one succeeds. The notice comes down on
+    // that success, not on this press, so a note that can't be saved keeps the
+    // job in review: the note is the only record once the job is gone.
+    const {phase,captureFailure}=coordinator.status();
+    if(phase==="needs-review"&&captureFailure)try{coordinator.recordCaptureFailure?.(captureFailure);}catch{
+      lastError="BACKUP_STATE_SAVE_FAILED";
+      throw Object.assign(new Error(lastError),{code:lastError});
+    }
+    coordinator.clearReview(expectedRevision);lastError=null;
     return publicStatus();
   }
   /** User-requested backup through the same handoff a due daily run takes.

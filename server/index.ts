@@ -411,6 +411,7 @@ import { GRANT_SCHEMA, isAppShapeKey, isStaleGrant, withoutStaleGrants } from ".
 import { actionGrantSet, stampedToolCall, type GrantCall } from "../shared/app-action-grant.ts";
 import { grantRequestFor, routineCardFields, routineDecisionKeys } from "./approval-grant-request.ts";
 import { requestOwnerId } from "./request-owner.ts";
+import { toolApprovalUnattended, unattendedMarkAction } from "./unattended-mark.ts";
 import { approvalKey, approvalHoldNote, isBareCommandGrant, isCommandTool, exactAllowKeyFor, exactCommandForRequest, fullAccessCovers, hasFullAccess, isQuestionGrant, isQuestionTool, realKeyPaths, withoutBareCommandGrants, withoutQuestionGrants, type AutoContext, type FullAccessOrigin } from "./auto-approve.ts";
 import { approvalIsCut, cardAuditSummary, cardDetail } from "./approval-text.ts";
 import { isOwnWorkspaceBookkeeping, ownWorkspaceRoots } from "./own-workspace-approval.ts";
@@ -8489,7 +8490,7 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
       // the keyboard, never because an outside event started it: its tool approvals are that routine's, at the ceiling it carries.
       // NOLIMITS-PROJECT-ROUTINE-107: the same for the owner's own routine run in a project room (queued as an unattended room request)
       const routineWake = unattended ? routineWakeCeiling(event.threadId) ?? (asker ? projectRoomRoutineCeiling(event.threadId, asker) : undefined) : undefined;
-      const toolUnattended = unattended && !routineWake;
+      const toolUnattended = toolApprovalUnattended(unattended, routineWake);
       // A question tool filed as a permission (Claude's AskUserQuestion via
       // the permission host, Pi `select`, a Codex form elicitation) is still
       // a question: never auto-approved, never remembered, never reviewed.
@@ -10979,9 +10980,12 @@ async function startTurnAdmitting(
   // never overwrites the audience of the turn already running on the thread.
   ownerSurfacesByThread.set(threadId,surfacesForOwner);
   // a webhook turn, or one inherited from a bot already running unattended
+  // a person typing into this bot ends the unattended window immediately; 1.0.10 (NOLIMITS-CARDS r1): so does a scheduled
+  // or manual run of the owner's own routine. It is the owner's standing instruction, not an outside event: a mark left by
+  // an earlier channel or webhook turn in this thread must not turn the run, and every peer it asks, into a turn nobody
+  // started (it carded a plain Read at No limits, 10-31 23:13:59Z). The rule itself: unattended-mark.ts
   if (opts?.automationSource === "webhook" || opts?.automationSource === "channel" || opts?.unattended) markUnattended(threadId);
-  // a person typing into this bot ends the unattended window immediately
-  else if (opts?.automationSource === undefined && !opts?.commsDepth && !opts?.cardContinuation) clearUnattended(threadId);
+  else if (unattendedMarkAction(opts, humanIsOwner) === "clear") clearUnattended(threadId);
   // A scheduled or manual routine run is judged at its routine's level (its
   // own, or the bot's level right now), not at whatever this run's task
   // copied when it was made. The level is applied here, before the run's
@@ -11031,7 +11035,7 @@ async function startTurnAdmitting(
     : undefined;
   // who this turn is for, as Full access reads it (fullAccessTurnOrigin)
   const fullAccessOrigin: FullAccessOrigin = !humanIsOwner ? "other"
-    : opts?.automationSource === "channel" ? "owner-channel"
+    : opts?.automationSource === "channel" ? opts?.notOwnerAudience === true ? "other" : "owner-channel"
     : opts?.unattended ? "other" // (an explicitly unattended turn never had a routine level or an inherited ceiling before wakes did)
     : routineLevel || inheritedRoutine ? "routine"
     : opts?.automationSource !== undefined || opts?.unattended || isUnattended(threadId) ? "other" : "owner";
@@ -19160,7 +19164,8 @@ function fullAccessTurnOrigin(threadId: string): FullAccessOrigin {
   if (!isWorkspaceOwner(threadHumanPrincipal(threadId))) return "other";
   if (routinePeerSources.has(threadId) && !isUnattended(threadId)) return "routine";
   const run = routines?.activeRunOrigin(threadId);
-  if (run) return run.triggerSource === "channel" && run.humanPrincipal !== undefined && isWorkspaceOwner(run.humanPrincipal) ? "owner-channel"
+  // 1.0.10 (NOLIMITS-CARDS r3): only the owner's own DM; a group or any audience besides the owner stays "other"
+  if (run) return run.triggerSource === "channel" && run.humanPrincipal !== undefined && isWorkspaceOwner(run.humanPrincipal) && run.notOwnerAudience !== true ? "owner-channel"
     : routineRunLevel(threadId) ? "routine" : "other";
   return isUnattended(threadId) ? "other" : "owner";
 }
@@ -21757,7 +21762,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       // audit A-01), dropped by normalizeCaptureFailure unless it is one.
       // `folder`: the backup folder's own name, never its path, so the Inbox
       // names the missing folder the way Settings does (0.1.60 Windows final L1).
-      const input=z.object({action:z.enum(["report","clear"]),stage:z.string().max(40).optional(),code:z.string().max(80).optional(),path:z.string().max(1024).optional(),folder:z.string().max(120).optional(),notify:z.boolean().optional()}).strict().safeParse(await readBody(req));
+      const input=z.object({action:z.enum(["report","clear"]),stage:z.string().max(40).optional(),code:z.string().max(80).optional(),path:z.string().max(1024).optional(),folder:z.string().max(120).optional(),notify:z.boolean().optional(),next:z.enum(["paused","retry","off"]).optional()}).strict().safeParse(await readBody(req));
       if(!input.success)return json(res,400,{error:"INVALID_BACKUP_FAILURE_NOTICE"});
       // The notice counts in the Inbox `decisions` badge: say it changed.
       if(input.data.action==="clear"){backupFailedNotice=null;announceInboxChanged();return json(res,200,{cleared:true});}
@@ -21765,7 +21770,10 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       if(!failure)return json(res,400,{error:"INVALID_BACKUP_FAILURE_NOTICE"});
       // Backups that can't run at all say what to do in their own words;
       // there is nothing to clear (0.1.60 Windows final D1).
-      const sentence=BACKUP_UNAVAILABLE_CODES.includes(failure.code)?captureFailureSentence(failure):`${captureFailureSentence(failure,{folderName:input.data.folder})} Open Settings, then Backups, to clear it and back up again.`;
+      // `next`: daily backups are paused until the owner clears this, or they
+      // cleared it and no backup has succeeded since (BACKUP-SILENT-STOP).
+      const step=input.data.next==="retry"||input.data.next==="off"?`Daily backups are ${input.data.next==="off"?"off":"back on"}. Open Settings, then Backups, and choose Back up now.`:`${input.data.next==="paused"?"Daily backups are paused. ":""}Open Settings, then Backups, to clear it and back up again.`;
+      const sentence=BACKUP_UNAVAILABLE_CODES.includes(failure.code)?captureFailureSentence(failure):`${captureFailureSentence(failure,{folderName:input.data.folder})} ${step}`;
       backupFailedNotice={sentence,at:Date.now()};announceInboxChanged();
       // The desktop shows the one notification itself (it owns the window
       // and knows it is the first report of this failure); a banner routed

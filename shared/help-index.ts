@@ -556,6 +556,26 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "- Image handling is up to date. Murage uses the latest image library for previews and thumbnails.\n- Backups on Windows wait for a slow start. On a busy Windows computer, setting up owner-only backup files now waits longer, so the step completes."
   },
   {
+    "id": "changelog/v1-0-10#full-access-and-no-limits-in-1-0-10",
+    "title": "What changed in Murage 1.0.10",
+    "description": "At No limits and Full access, your bots run their routines and your own direct messages at the level you chose.",
+    "heading": "Full access and No limits in 1.0.10",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.10",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.10",
+    "url": "https://murage.ai/docs/changelog/v1-0-10#full-access-and-no-limits-in-1-0-10",
+    "text": "- Your level means it. At No limits and Full access, your bots run their routines and your own direct messages at the level you chose, without stopping to ask.\n- Routines keep your level. A routine runs at the level you chose, and so do the bots it hands work to and the follow-up turns it wakes.\n- Your own messages count as you. Direct messages you send your bot from your own Telegram, Slack or Discord run at the bot's level. You can turn this off in Settings.\n- Long writes run straight through. Long file writes run at No limits and Full access without a card.\n- The never-list still stands.…"
+  },
+  {
+    "id": "changelog/v1-0-10#connected-apps-in-1-0-10",
+    "title": "What changed in Murage 1.0.10",
+    "description": "At No limits and Full access, your bots run their routines and your own direct messages at the level you chose.",
+    "heading": "Connected apps in 1.0.10",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.10",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.10",
+    "url": "https://murage.ai/docs/changelog/v1-0-10#connected-apps-in-1-0-10",
+    "text": "- Steady on a patchy connection. Murage tries again before it calls your connected apps out of reach, so your routines keep their apps."
+  },
+  {
     "id": "changelog/v1-0-2#memory-in-1-0-2",
     "title": "What changed in Murage 1.0.2",
     "description": "Memory stays quick on long histories and asks you about the things that need you, startup and search stay smooth, group chats pick the right bot, Murage for Chrome reads like the app, and new Ferrox Labs teams join the library.",

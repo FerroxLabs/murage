@@ -117,6 +117,15 @@ describe.skipIf(process.platform === "win32")("a backup that stopped is announce
       expect(inbox.backupFailed.sentence).toMatch(/Open Settings, then Backups/);
       expect(inbox.backupFailed.sentence).not.toMatch(/recovery key|BACKUP_|\u2014/);
     }
+    // BACKUP-SILENT-STOP: the row says the schedule stopped, and what to do once it runs again.
+    const paused = await request("POST", "/api/backup-failure-notice", { action: "report", stage: "unknown", code: "RECOVERY_OPERATION_FAILED", notify: true, next: "paused" });
+    expect(paused.body.sentence).toMatch(/Daily backups are paused\. Open Settings, then Backups, to clear it and back up again\.$/);
+    const retry = await request("POST", "/api/backup-failure-notice", { action: "report", stage: "unknown", code: "RECOVERY_OPERATION_FAILED", notify: false, next: "retry" });
+    expect(retry.body.sentence).toMatch(/Daily backups are back on\. Open Settings, then Backups, and choose Back up now\.$/);
+    expect(retry.body.sentence).not.toMatch(/BACKUP_|RECOVERY_|\u2014/);
+    const off = await request("POST", "/api/backup-failure-notice", { action: "report", stage: "unknown", code: "RECOVERY_OPERATION_FAILED", notify: false, next: "off" });
+    expect(off.body.sentence).toMatch(/Daily backups are off\. Open Settings, then Backups, and choose Back up now\.$/);
+    expect((await request("POST", "/api/backup-failure-notice", { action: "report", stage: "unknown", code: "RECOVERY_OPERATION_FAILED", next: "other" })).status).toBe(400);
     // A code outside the closed set is never passed through.
     await request("POST", "/api/backup-failure-notice", { action: "report", stage: "capture", code: "SOMETHING_PRIVATE" });
     expect((await request("GET", "/api/inbox?view=decisions")).body.backupFailed.sentence).not.toContain("SOMETHING_PRIVATE");

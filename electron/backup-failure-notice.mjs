@@ -7,6 +7,11 @@
 // backup, the desktop now tells the server (POST /api/backup-failure-notice):
 // the Inbox shows what failed and what to do for as long as backups need
 // review, and one notification goes out per failure, not per start.
+//
+// BACKUP-SILENT-STOP (1.0.13): any job in review is reported, recorded reason
+// or not, and the row stays up after the review is cleared until a backup
+// actually succeeds. Nothing new is stored: the job, the existing failure note
+// and the announced key say all of it.
 import {readFileSync,writeFileSync,renameSync} from "node:fs";
 import path from "node:path";
 import {normalizeCaptureFailure} from "../shared/backup-capture-failure.mjs";
@@ -18,14 +23,29 @@ const FILE="backup-failure-announced.json";
  * and the item inside the data folder it named, leave this function; `key`
  * stays on this computer. */
 export function backupFailureNotice(status,announcedKey,folderName){
- const failure=status?.phase==="needs-review"?normalizeCaptureFailure(status.captureFailure):null;
+ const review=status?.phase==="needs-review";
+ // With no reason on record this is the unknown failure, never "nothing to say".
+ const failure=review?normalizeCaptureFailure(status.captureFailure??{}):normalizeCaptureFailure(status?.retainedFailure);
  if(!failure)return{body:{action:"clear"},key:null};
  const job=typeof status.job?.id==="string"?status.job.id.slice(0,200):"";
  const key=`${job}:${failure.stage}:${failure.code}`;
  // The item inside the data folder, when the refusal names one (audit A-01).
  // The missing folder by its own name, as Settings says it (0.1.60 Windows final L1).
  const folder=failure.code==="BACKUP_FOLDER_MISSING"&&typeof folderName==="string"&&folderName.length<=120?folderName:null;
- return{body:{action:"report",stage:failure.stage,code:failure.code,...(failure.path?{path:failure.path}:{}),...(folder?{folder}:{}),notify:key!==announcedKey},key};
+ const detail={action:"report",stage:failure.stage,code:failure.code,...(failure.path?{path:failure.path}:{}),...(folder?{folder}:{})};
+ // Already announced before the owner cleared it: the row stays, no second notification.
+ if(!review)return{body:{...detail,notify:false,next:status.enabled?"retry":"off"},key:null};
+ return{body:{...detail,notify:key!==announcedKey,...(status.enabled?{next:"paused"}:{})},key};
+}
+
+/** True for the commit that stops the schedule, whichever path wrote it. */
+export function backupStopCommitted(state){return state?.job?.phase==="needs-review";}
+
+/** One announcement at a time: two overlapping ones would both read "not yet
+ * announced" and show the same notification twice. */
+export function serialAnnouncer(announce){
+ let tail=Promise.resolve();
+ return()=>{tail=tail.catch(()=>{}).then(()=>announce());return tail;};
 }
 
 export function readAnnouncedFailure(userData){
