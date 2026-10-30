@@ -42,6 +42,8 @@ import { loadPlainApproval } from "@/lib/plain-approval";
 import { canPrefetchWhenIdle, loadBotSettings, loadedBotSettings, preloadBotSettings, subscribeBotSettings } from "@/lib/preload-bot-settings";
 import { LazyBoundary, retryableLazy } from "@/components/LazyBoundary";
 import { TermsGate } from "@/components/TermsGate";
+import { HelpHost } from "@/components/help/HelpHost";
+import { feedbackSurface } from "@/lib/feedback-surface";
 
 // Opened by a tap, so loaded by one (spec §6). Settings alone pulls in every
 // settings page and, through House rules and the skill editor, Tiptap; a phone
@@ -517,6 +519,13 @@ function Shell() {
         dispatch={dispatch}
         isCallTargetCovered={isCallTargetCovered}
         uncoverCallTarget={uncoverCallTarget}
+      />
+      {/* 1.0.12 UX slice 4: the "?" help panel, its tab and keys (? and Cmd/Ctrl+/), on every surface. */}
+      <HelpHost
+        surface={feedbackSurface(desktop, isCloudOrigin())}
+        noEngines={noEngines}
+        enginesOff={enginesOff}
+        firstRun={setupOwnsView && setupView ? { next: setupView.next, chiefBotId: setupView.chiefBotId, blocked: setupView.blocked } : null}
       />
       </BotListDrawerProvider>
       </div>
